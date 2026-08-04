@@ -64,6 +64,24 @@ func mergeFile(c *Config, path string) error {
 	if len(raw.SkillPaths) > 0 {
 		c.SkillPaths = raw.SkillPaths
 	}
+	if raw.Permissions.Mode != "" {
+		c.Permissions.Mode = raw.Permissions.Mode
+	}
+	if !raw.Permissions.SessionAllow {
+		c.Permissions.SessionAllow = false
+	}
+	if len(raw.Permissions.AutoApprove) > 0 {
+		c.Permissions.AutoApprove = raw.Permissions.AutoApprove
+	}
+	if len(raw.Permissions.AlwaysPrompt) > 0 {
+		c.Permissions.AlwaysPrompt = raw.Permissions.AlwaysPrompt
+	}
+	if len(raw.Permissions.Disabled) > 0 {
+		c.Permissions.Disabled = raw.Permissions.Disabled
+	}
+	if len(raw.MCPServers) > 0 {
+		c.MCPServers = raw.MCPServers
+	}
 
 	// The `models` map holds a `default` string alongside model entries.
 	for k, v := range raw.Models {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/skills"
 )
 
@@ -18,7 +19,9 @@ func testRegistry() *model.Registry {
 	})
 }
 
-func nilBuilder(alias string, r agent.Renderer) (*agent.Agent, error) { return nil, nil }
+func nilBuilder(alias string, r agent.Renderer, _ permissions.ApprovalFunc) (*agent.Agent, error) {
+	return nil, nil
+}
 
 // sized returns a model that has received a WindowSizeMsg (viewport ready).
 func sized(m ShellModel) ShellModel {

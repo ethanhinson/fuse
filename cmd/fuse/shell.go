@@ -9,6 +9,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tui"
 )
@@ -38,10 +39,18 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 	skillBlock := set.SystemPromptBlock()
 
-	// build binds an agent to the given renderer and the currently-selected
-	// alias for one turn.
-	build := func(a string, r agent.Renderer) (*agent.Agent, error) {
-		return buildAgentWithRenderer(cfg, reg, a, r, verbose, skillBlock)
+	// Build the tool registry once for the session; MCP servers live for the
+	// duration of the shell process.
+	toolReg, mcpMgr, err := buildSessionRegistry(cfg)
+	if err != nil {
+		fmt.Fprintf(stderr, "session registry error: %v\n", err)
+		return 1
+	}
+	defer mcpMgr.Close()
+
+	// build binds an agent to the given renderer and approval func for one turn.
+	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
+		return buildAgentWithRenderer(cfg, reg, a, r, verbose, skillBlock, toolReg, approve)
 	}
 
 	m := tui.NewShellModel(alias, verbose, reg, set.SlashCommands(), build)
