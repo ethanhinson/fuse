@@ -2,6 +2,10 @@
 
 **7 changes** — ✅ 7 done
 
+```mermaid
+graph TD
+```
+
 <details><summary>✅ Archive — done (7)</summary>
 
 | # | Title | Merged |
