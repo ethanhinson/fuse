@@ -1,6 +1,12 @@
 # Backlog
 
-**8 changes** — 🔵 1 implemented · ✅ 7 done
+**9 changes** — 🟡 1 proposed · 🔵 1 implemented · ✅ 7 done
+
+## 🟡 Proposed (1)
+
+| # | Title | Priority | Type | Readiness |
+|---|-------|----------|------|-----------|
+| [0009](active/0009-mcp-management-cli.md) | `fuse mcps` MCP Server Management CLI + `/mcps` Shell Built-in | `medium` | `feat` | build-ready |
 
 ## 🔵 Implemented — awaiting merge (1)
 
@@ -11,6 +17,7 @@
 ```mermaid
 graph TD
   0007 --> 0008
+  0007 --> 0009
   0007:::done
   classDef done fill:#d3f9d8;
 ```
