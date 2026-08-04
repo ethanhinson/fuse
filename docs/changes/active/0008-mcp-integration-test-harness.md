@@ -2,7 +2,7 @@
 id: 8
 slug: mcp-integration-test-harness
 title: MCP Integration Test Harness (Docker Compose + Playwright)
-status: in-progress
+status: implemented
 priority: medium
 type: chore
 created: 2026-08-04
@@ -13,12 +13,12 @@ discovered_from: []
 adrs: [1]
 spec: docs/superpowers/specs/0008-mcp-integration-test-harness.md
 plan: docs/superpowers/plans/0008-mcp-integration-test-harness.md
-results:
+results: docs/results/2026-08-04-mcp-integration-test-harness-results.md
 trivial: false
 auto_groomable: false
 branch: feat/mcp-integration-test-harness
-claimed_at: 2026-08-04T19:38:16Z
-pr:
+claimed_at: 2026-08-04T19:40:15Z
+pr: https://github.com/ethanhinson/fuse/pull/8
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [0008-mcp-integration-test-harness.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0008-mcp-integration-test-harness.md) |
 | Plan | [0008-mcp-integration-test-harness.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-integration-test-harness/docs/superpowers/plans/0008-mcp-integration-test-harness.md) |
+| Results | [2026-08-04-mcp-integration-test-harness-results.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-integration-test-harness/docs/results/2026-08-04-mcp-integration-test-harness-results.md) |
+| PR | [#8](https://github.com/ethanhinson/fuse/pull/8) |
 | ADRs | [ADR-0001](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0001-playwright-integration-driver-cdn.md) |
 <!-- docket:artifacts:end -->
 
