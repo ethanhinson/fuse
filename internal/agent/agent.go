@@ -24,6 +24,7 @@ type Renderer interface {
 	ToolCall(name, args string)
 	ToolResult(name string, res tools.Result)
 	Errorf(format string, a ...any)
+	Tokens(input, output int) // called after each gateway round-trip
 }
 
 // Agent binds a model, a tool set, a renderer, and run limits.

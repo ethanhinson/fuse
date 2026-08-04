@@ -31,13 +31,11 @@ func TestRendererToolResultError(t *testing.T) {
 	}
 }
 
-func TestRendererAssistantAndHeader(t *testing.T) {
+func TestRendererAssistant(t *testing.T) {
 	var buf bytes.Buffer
 	r := NewRenderer(&buf, false)
-	r.ModelHeader("deepseek-flash")
 	r.Assistant("hi there")
-	out := buf.String()
-	if !strings.Contains(out, "deepseek-flash") || !strings.Contains(out, "hi there") {
-		t.Errorf("output = %q", out)
+	if !strings.Contains(buf.String(), "hi there") {
+		t.Errorf("output = %q", buf.String())
 	}
 }

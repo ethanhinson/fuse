@@ -39,6 +39,7 @@ func (nopRenderer) Assistant(string)                {}
 func (nopRenderer) ToolCall(string, string)         {}
 func (nopRenderer) ToolResult(string, tools.Result) {}
 func (nopRenderer) Errorf(string, ...any)           {}
+func (nopRenderer) Tokens(int, int)                 {}
 
 func TestRunStopsWhenNoToolCalls(t *testing.T) {
 	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "final answer"}}}

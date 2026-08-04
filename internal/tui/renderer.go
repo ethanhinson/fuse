@@ -29,11 +29,6 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// ModelHeader prints a rule naming the model that is about to respond.
-func (r *Renderer) ModelHeader(name string) {
-	fmt.Fprintf(r.w, "\n── %s ──────────────\n", name)
-}
-
 // Assistant prints model prose.
 func (r *Renderer) Assistant(text string) {
 	fmt.Fprintf(r.w, "%s\n", text)
@@ -65,3 +60,6 @@ func (r *Renderer) ToolResult(name string, res tools.Result) {
 func (r *Renderer) Errorf(format string, a ...any) {
 	fmt.Fprintf(r.w, "! "+format+"\n", a...)
 }
+
+// Tokens is a no-op for one-shot mode.
+func (r *Renderer) Tokens(_, _ int) {}
