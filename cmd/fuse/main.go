@@ -47,17 +47,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	modelAlias := fs.String("model", "", "model alias to run (default: config default)")
 	verbose := fs.Bool("verbose", false, "render full tool args and output")
+	trace := fs.Bool("trace", false, "dump raw gateway JSON to stderr")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
-		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] \"<task>\"")
+		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace] \"<task>\"")
 		return 2
 	}
 	task := rest[0]
 
-	a, modelID, err := buildAgent(cfg, reg, *modelAlias, stdout, *verbose, "")
+	var traceW io.Writer
+	if *trace {
+		traceW = stderr
+	}
+	a, modelID, err := buildAgent(cfg, reg, *modelAlias, stdout, *verbose, "", traceW)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1

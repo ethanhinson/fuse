@@ -15,6 +15,7 @@ type Adapter struct {
 	baseURL string
 	key     string
 	hc      *http.Client
+	trace   io.Writer // when non-nil, raw JSON req/resp are written here
 }
 
 // NewAdapter builds an Adapter. baseURL is the gateway root, e.g.
@@ -24,6 +25,15 @@ func NewAdapter(baseURL, key string, hc *http.Client) *Adapter {
 		hc = http.DefaultClient
 	}
 	return &Adapter{baseURL: strings.TrimRight(baseURL, "/"), key: key, hc: hc}
+}
+
+// WithTrace returns a copy of the adapter that writes raw JSON request and
+// response bodies to w (e.g. os.Stderr). Each request/response pair is
+// surrounded by ── REQ ── / ── RESP ── markers.
+func (a *Adapter) WithTrace(w io.Writer) *Adapter {
+	cp := *a
+	cp.trace = w
+	return &cp
 }
 
 // wire types mirror the OpenAI-compatible JSON payloads.
@@ -54,10 +64,11 @@ type wireTool struct {
 }
 
 type wireReq struct {
-	Model     string        `json:"model"`
-	Messages  []wireMessage `json:"messages"`
-	Tools     []wireTool    `json:"tools,omitempty"`
-	MaxTokens int           `json:"max_tokens,omitempty"`
+	Model      string        `json:"model"`
+	Messages   []wireMessage `json:"messages"`
+	Tools      []wireTool    `json:"tools,omitempty"`
+	MaxTokens  int           `json:"max_tokens,omitempty"`
+	ToolChoice string        `json:"tool_choice,omitempty"`
 }
 
 type wireResp struct {
@@ -66,9 +77,17 @@ type wireResp struct {
 	} `json:"choices"`
 }
 
+func prettyJSON(b []byte) []byte {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, b, "", "  "); err != nil {
+		return b
+	}
+	return buf.Bytes()
+}
+
 // Complete sends a completion request and returns the assistant reply.
 func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionResp, error) {
-	payload := wireReq{Model: req.Model, MaxTokens: req.MaxTokens}
+	payload := wireReq{Model: req.Model, MaxTokens: req.MaxTokens, ToolChoice: req.ToolChoice}
 	for _, m := range req.Messages {
 		wm := wireMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
 		for _, tc := range m.ToolCalls {
@@ -91,6 +110,9 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	if err != nil {
 		return CompletionResp{}, err
 	}
+	if a.trace != nil {
+		fmt.Fprintf(a.trace, "\n── REQ ──\n%s\n", prettyJSON(body))
+	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
@@ -107,6 +129,9 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	raw, err := io.ReadAll(res.Body)
 	if err != nil {
 		return CompletionResp{}, err
+	}
+	if a.trace != nil {
+		fmt.Fprintf(a.trace, "\n── RESP ──\n%s\n", prettyJSON(raw))
 	}
 	if res.StatusCode != http.StatusOK {
 		return CompletionResp{}, fmt.Errorf("gateway status %d: %s", res.StatusCode, strings.TrimSpace(string(raw)))

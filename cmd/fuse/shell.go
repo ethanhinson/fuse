@@ -125,7 +125,7 @@ func (st *shellState) handleSlash(line string, out io.Writer) bool {
 
 // runPrompt appends the user line to history and runs one agent loop over it.
 func (st *shellState) runPrompt(line string, out io.Writer) {
-	a, _, err := buildAgent(st.cfg, st.reg, st.alias, out, st.verbose, st.systemPrompt())
+	a, _, err := buildAgent(st.cfg, st.reg, st.alias, out, st.verbose, st.systemPrompt(), nil)
 	if err != nil {
 		fmt.Fprintf(out, "error: %v\n", err)
 		return

@@ -51,7 +51,7 @@ func defaultToolRegistry() *tools.Registry {
 // buildAgent resolves a model alias and constructs a ready-to-run Agent along
 // with the resolved gateway model id. The persona system prompt is always
 // prepended; extra is appended (e.g. a skill listing block from shell mode).
-func buildAgent(cfg config.Config, reg *model.Registry, alias string, out io.Writer, verbose bool, extra string) (*agent.Agent, string, error) {
+func buildAgent(cfg config.Config, reg *model.Registry, alias string, out io.Writer, verbose bool, extra string, traceW io.Writer) (*agent.Agent, string, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
@@ -60,6 +60,9 @@ func buildAgent(cfg config.Config, reg *model.Registry, alias string, out io.Wri
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
 	}
 	adapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, http.DefaultClient)
+	if traceW != nil {
+		adapter = adapter.WithTrace(traceW)
+	}
 	toolReg := defaultToolRegistry()
 	renderer := tui.NewRenderer(out, verbose)
 	maxTokens := mc.MaxTokens

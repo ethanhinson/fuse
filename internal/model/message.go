@@ -29,10 +29,11 @@ type ToolSchema struct {
 
 // CompletionReq is a single completion request.
 type CompletionReq struct {
-	Model     string
-	Messages  []Message
-	Tools     []ToolSchema
-	MaxTokens int
+	Model      string
+	Messages   []Message
+	Tools      []ToolSchema
+	MaxTokens  int
+	ToolChoice string // "auto" (default), "none" (force text), "required"
 }
 
 // CompletionResp is the assistant's reply.
