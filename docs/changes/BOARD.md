@@ -1,9 +1,18 @@
 # Backlog
 
-**7 changes** — ✅ 7 done
+**8 changes** — 🟡 1 proposed · ✅ 7 done
+
+## 🟡 Proposed (1)
+
+| # | Title | Priority | Type | Readiness |
+|---|-------|----------|------|-----------|
+| [0008](active/0008-mcp-integration-test-harness.md) | MCP Integration Test Harness (Docker Compose + Playwright) | `medium` | `chore` | build-ready |
 
 ```mermaid
 graph TD
+  0007 --> 0008
+  0007:::done
+  classDef done fill:#d3f9d8;
 ```
 
 <details><summary>✅ Archive — done (7)</summary>
