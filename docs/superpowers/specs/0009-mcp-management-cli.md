@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0009 — `fuse mcps` MCP Server Management CLI + `/mcps` Shell Built-in](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0009-mcp-management-cli.md)**
+> ↩ **[Change 0009 — `fuse mcps` MCP Server Management CLI + `/mcps` Shell Built-in](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-04-0009-mcp-management-cli.md)**
 <!-- docket:backlink:end -->
 
 # `fuse mcps` — MCP Server Management CLI + `/mcps` Shell Built-in
