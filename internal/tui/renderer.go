@@ -29,11 +29,6 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// ModelHeader prints a rule naming the model that is about to respond.
-func (r *Renderer) ModelHeader(name string) {
-	fmt.Fprintf(r.w, "\n── %s ──────────────\n", name)
-}
-
 // Assistant prints model prose.
 func (r *Renderer) Assistant(text string) {
 	fmt.Fprintf(r.w, "%s\n", text)

@@ -1,66 +1,59 @@
 package main
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
-	"github.com/ethanhinson/fuse/internal/skills"
+	"github.com/ethanhinson/fuse/internal/tui"
 )
 
-func testState() *shellState {
+type discard struct{}
+
+func (discard) Write(p []byte) (int, error) { return len(p), nil }
+
+// buildAgentWithRenderer must resolve a known alias and return a usable agent
+// bound to the injected renderer. Slash-command and key-binding semantics now
+// live on tui.ShellModel and are covered by the internal/tui tests.
+func TestBuildAgentWithRenderer(t *testing.T) {
 	cfg := config.Default()
 	reg := model.DefaultRegistry()
-	set, _ := skills.Load(nil)
-	return &shellState{
-		cfg:        cfg,
-		reg:        reg,
-		alias:      reg.Default,
-		skillBlock: set.SystemPromptBlock(),
-		slash:      set.SlashCommands(),
+	r := tui.NewRenderer(discard{}, false)
+
+	a, err := buildAgentWithRenderer(cfg, reg, reg.Default, r, false, "block")
+	if err != nil {
+		t.Fatalf("buildAgentWithRenderer: %v", err)
+	}
+	if a == nil {
+		t.Fatal("expected a non-nil agent")
 	}
 }
 
-func TestReplExitCommand(t *testing.T) {
-	st := testState()
-	var out bytes.Buffer
-	code := replLoop(strings.NewReader("/exit\n"), &out, st)
-	if code != 0 {
-		t.Fatalf("exit code = %d", code)
+func TestBuildAgentWithRendererUnknownAlias(t *testing.T) {
+	cfg := config.Default()
+	reg := model.DefaultRegistry()
+	r := tui.NewRenderer(discard{}, false)
+	if _, err := buildAgentWithRenderer(cfg, reg, "no-such-model", r, false, ""); err == nil {
+		t.Fatal("expected error for unknown alias")
 	}
 }
 
-func TestReplModelSwitch(t *testing.T) {
-	st := testState()
-	var out bytes.Buffer
-	replLoop(strings.NewReader("/model kimi\n/exit\n"), &out, st)
-	if st.alias != "kimi" {
-		t.Errorf("alias = %q, want kimi", st.alias)
+// The runShell-side builder closure must satisfy tui.AgentBuilder and, when
+// wired into a ShellModel, produce a view that starts on the requested alias.
+func TestShellModelBuilderWiring(t *testing.T) {
+	cfg := config.Default()
+	reg := model.DefaultRegistry()
+	var build tui.AgentBuilder = func(alias string, r agent.Renderer) (*agent.Agent, error) {
+		return buildAgentWithRenderer(cfg, reg, alias, r, false, "")
 	}
-	if !strings.Contains(out.String(), "kimi") {
-		t.Errorf("switch not acknowledged: %q", out.String())
-	}
-}
-
-func TestReplUnknownModelSwitchRejected(t *testing.T) {
-	st := testState()
-	var out bytes.Buffer
-	replLoop(strings.NewReader("/model nope\n/exit\n"), &out, st)
-	if st.alias == "nope" {
-		t.Error("unknown model must not be adopted")
-	}
-	if !strings.Contains(out.String(), "nope") {
-		t.Errorf("rejection not reported: %q", out.String())
-	}
-}
-
-func TestReplVerboseToggle(t *testing.T) {
-	st := testState()
-	var out bytes.Buffer
-	replLoop(strings.NewReader("/verbose\n/exit\n"), &out, st)
-	if !st.verbose {
-		t.Error("verbose should be enabled after /verbose")
+	m := tui.NewShellModel(reg.Default, false, reg, nil, build)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	view := next.(tui.ShellModel).View()
+	if !strings.Contains(view, reg.Default) {
+		t.Errorf("view missing alias %q: %q", reg.Default, view)
 	}
 }
