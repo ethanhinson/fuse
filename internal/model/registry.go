@@ -35,8 +35,8 @@ func DefaultRegistry() *Registry {
 		"kimi":           {ID: "cloud/kimi-k3", MaxTokens: 8192, Persona: "research"},
 		"glm":            {ID: "cloud/glm-5.2", MaxTokens: 8192, Persona: "general"},
 		"qwen-cloud":     {ID: "cloud/qwen3-8b", MaxTokens: 4096, Persona: "general"},
-		"qwen-coder":     {ID: "local/qwen3-coder:30b", MaxTokens: 4096, Persona: "coding"},
-		"qwen-local":     {ID: "local/qwen3.6:27b", MaxTokens: 4096, Persona: "reasoning", SystemPrefix: "/no_think"},
+		"qwen-coder":     {ID: "local/qwen-coder-7b", MaxTokens: 4096, Persona: "coding"},
+		"qwen-local":     {ID: "local/qwen-7b", MaxTokens: 4096, Persona: "general"},
 		"llama":          {ID: "local/llama3.1:8b", MaxTokens: 2048, Persona: "general"},
 		"claude":         {ID: "claude/sonnet", MaxTokens: 8192, Persona: "general"},
 	})

@@ -10,8 +10,8 @@ func TestDefaultRegistryContainsNamedModels(t *testing.T) {
 		"kimi":           "cloud/kimi-k3",
 		"glm":            "cloud/glm-5.2",
 		"qwen-cloud":     "cloud/qwen3-8b",
-		"qwen-coder":     "local/qwen3-coder:30b",
-		"qwen-local":     "local/qwen3.6:27b",
+		"qwen-coder":     "local/qwen-coder-7b",
+		"qwen-local":     "local/qwen-7b",
 		"llama":          "local/llama3.1:8b",
 		"claude":         "claude/sonnet",
 	}
