@@ -1,12 +1,12 @@
 # Backlog
 
-**1 changes** — 🟢 1 in progress
+**1 changes** — 🔵 1 implemented
 
-## 🟢 In progress (1)
+## 🔵 Implemented — awaiting merge (1)
 
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0001](active/0001-fuse.md) | Fuse — Multi-Model Agent Harness | `high` | `feat` | [spec](../superpowers/specs/0001-fuse.md) | `feat/fuse` |
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0001](active/0001-fuse.md) | Fuse — Multi-Model Agent Harness | `high` | `feat` | [#1](https://github.com/ethanhinson/fuse/pull/1) |  |
 
 ```mermaid
 graph TD
