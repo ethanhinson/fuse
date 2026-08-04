@@ -1,0 +1,37 @@
+# Integration test infrastructure for the MCP client stack (change 0008).
+# Started/torn down by TestMain in internal/mcp/integration_test.go, and by
+# `make test-integration` / the CI workflow. Two services only — bearer and
+# OAuth2 proxying is done in-process (httptest) to avoid extra containers.
+services:
+  # The official MCP reference/test server, exposing echo/add/longRunningOperation
+  # tools, resources, and prompts. No external API key required. --transport sse
+  # activates HTTP/SSE mode on port 3001.
+  mcp-everything:
+    image: node:22-alpine
+    # The launcher takes the transport as a positional arg ([stdio|sse|streamableHttp]);
+    # `sse` listens on port 3001 by default.
+    command: >
+      sh -c "npx --yes @modelcontextprotocol/server-everything sse"
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/sse"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # Mock OAuth2 authorization server. The `default` issuer is configured for
+  # auto-login/auto-approve (see mock-oauth2-config.json) so the Playwright
+  # redirect needs no interactive credential entry, while still exercising the
+  # real authorize -> callback -> token-exchange flow.
+  mock-oauth2:
+    image: ghcr.io/navikt/mock-oauth2-server:2.2.1
+    ports:
+      - "8080:8080"
+    environment:
+      - JSON_CONFIG_PATH=/config.json
+    volumes:
+      - ./mock-oauth2-config.json:/config.json:ro
+    # No container healthcheck: this is a distroless image without a shell or
+    # wget, so an in-container probe can never pass. Readiness is gated
+    # host-side (TestMain's waitForServices, the CI wait loop, and `make`).

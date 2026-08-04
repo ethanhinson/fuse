@@ -1,0 +1,19 @@
+{
+  "interactiveLogin": false,
+  "httpServer": "NettyWrapper",
+  "tokenCallbacks": [
+    {
+      "issuerId": "default",
+      "requestMappings": [
+        {
+          "requestParam": "scope",
+          "match": "*",
+          "claims": {
+            "sub": "fuse-test-user",
+            "aud": ["fuse-test"]
+          }
+        }
+      ]
+    }
+  ]
+}
