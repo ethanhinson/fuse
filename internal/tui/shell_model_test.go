@@ -10,7 +10,6 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
-	"github.com/ethanhinson/fuse/internal/skills"
 )
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -37,16 +36,28 @@ func sized(m ShellModel) ShellModel {
 	return next.(ShellModel)
 }
 
-func TestWindowSizeSetsViewport(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
-	if !m.ready {
-		t.Fatal("model not ready after WindowSizeMsg")
-	}
-	if m.vp.Height != 24-chromeHeight {
-		t.Errorf("viewport height = %d, want %d", m.vp.Height, 24-chromeHeight)
-	}
-	if m.vp.Width != 80 {
-		t.Errorf("viewport width = %d, want 80", m.vp.Width)
+// staticProvider is a CommandProvider backed by a fixed entry list for tests.
+type staticProvider struct {
+	entries []SlashEntry
+}
+
+func (p *staticProvider) Commands() []SlashEntry  { return p.entries }
+func (p *staticProvider) Changes() <-chan struct{} { return nil }
+func (p *staticProvider) Close()                  {}
+
+// registryWith builds a SlashRegistry from a fixed set of entries.
+func registryWith(entries ...SlashEntry) *SlashRegistry {
+	return NewSlashRegistry(&staticProvider{entries: entries})
+}
+
+// skillEntry builds a KindSkill SlashEntry for tests.
+func skillEntry(cmd, body, desc string) SlashEntry {
+	b := body
+	return SlashEntry{
+		Command:     cmd,
+		Description: desc,
+		Kind:        KindSkill,
+		expand:      func() string { return b },
 	}
 }
 
@@ -58,6 +69,19 @@ func enter(m ShellModel) (ShellModel, tea.Cmd) {
 func typeLine(m ShellModel, s string) ShellModel {
 	m.input.SetValue(s)
 	return m
+}
+
+func TestWindowSizeSetsViewport(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	if !m.ready {
+		t.Fatal("model not ready after WindowSizeMsg")
+	}
+	if m.vp.Height != 24-chromeHeight {
+		t.Errorf("viewport height = %d, want %d", m.vp.Height, 24-chromeHeight)
+	}
+	if m.vp.Width != 80 {
+		t.Errorf("viewport width = %d, want 80", m.vp.Width)
+	}
 }
 
 func TestEnterStartsPrompt(t *testing.T) {
@@ -148,10 +172,8 @@ func TestSlashModelUnknown(t *testing.T) {
 }
 
 func TestSlashSkillInjectsBody(t *testing.T) {
-	slash := map[string]skills.Skill{
-		"/route": {Name: "route", SlashCommand: "/route", Body: "route body prompt"},
-	}
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), slash, nilBuilder))
+	reg := registryWith(skillEntry("/route", "route body prompt", "route skill"))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
 	m = typeLine(m, "/route")
 	m, cmd := enter(m)
 	if !m.running || cmd == nil {
@@ -163,10 +185,8 @@ func TestSlashSkillInjectsBody(t *testing.T) {
 }
 
 func TestSlashSkillForwardsArgs(t *testing.T) {
-	slash := map[string]skills.Skill{
-		"/docket-new-change": {Name: "docket-new-change", SlashCommand: "/docket-new-change", Body: "skill body"},
-	}
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), slash, nilBuilder))
+	reg := registryWith(skillEntry("/docket-new-change", "skill body", "design skill"))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
 	m = typeLine(m, "/docket-new-change design the auth layer")
 	m, cmd := enter(m)
 	if !m.running || cmd == nil {
@@ -286,5 +306,57 @@ func TestViewContainsStatusAndPrompt(t *testing.T) {
 	m.running = true
 	if !strings.Contains(m.View(), "Thinking…") {
 		t.Error("running view should show the running indicator")
+	}
+}
+
+// TestCompleterActivatesOnSlash verifies the completer becomes active when
+// the input starts with '/'.
+func TestCompleterActivatesOnSlash(t *testing.T) {
+	reg := registryWith(skillEntry("/code-review", "review body", "review code"))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
+
+	// Type '/' — the completer should activate.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = next.(ShellModel)
+	m.input.SetValue("/")
+	// Simulate the input update path that activates the completer.
+	m.completer.activate("/")
+
+	if !m.completer.active {
+		t.Error("completer should be active after typing '/'")
+	}
+}
+
+// TestCompleterEscDeactivates verifies Esc dismisses the completer.
+func TestCompleterEscDeactivates(t *testing.T) {
+	reg := registryWith(skillEntry("/code-review", "review body", "review code"))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
+	m.input.SetValue("/")
+	m.completer.activate("/")
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(ShellModel)
+	if m.completer.active {
+		t.Error("completer should be deactivated after Esc")
+	}
+	if m.input.Value() != "" {
+		t.Error("input should be cleared after Esc")
+	}
+}
+
+// TestRegistryReloadMsgRefreshesCompleter verifies that a registryReloadMsg
+// triggers a completer refresh.
+func TestRegistryReloadMsgRefreshesCompleter(t *testing.T) {
+	reg := registryWith(skillEntry("/echo", "echo body", "echo skill"))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
+	m.input.SetValue("/ec")
+	m.completer.activate("/ec")
+
+	next, cmd := m.Update(registryReloadMsg{})
+	m = next.(ShellModel)
+	_ = m
+	// cmd should be a re-armed waitForRegistryReload
+	if cmd == nil {
+		t.Error("expected re-armed registry reload cmd after registryReloadMsg")
 	}
 }

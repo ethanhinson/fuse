@@ -2,14 +2,30 @@
 package mcp
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"strconv"
 	"sync"
 	"sync/atomic"
 )
+
+// defaultLogCap is the default stderr ring buffer capacity per server.
+// Override with FUSE_MCP_LOG_LINES env var.
+const defaultLogCap = 200
+
+func logCap() int {
+	if s := os.Getenv("FUSE_MCP_LOG_LINES"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultLogCap
+}
 
 // jsonrpcRequest is a JSON-RPC 2.0 request frame.
 type jsonrpcRequest struct {
@@ -43,6 +59,45 @@ type StdioClient struct {
 	counter atomic.Uint64
 	done    chan struct{}
 	once    sync.Once
+
+	logMu   sync.Mutex
+	logRing []string
+	logCap  int
+}
+
+// LogLines returns the last n lines of stderr (or all available if n <= 0).
+func (c *StdioClient) LogLines(n int) []string {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	if n <= 0 || n >= len(c.logRing) {
+		out := make([]string, len(c.logRing))
+		copy(out, c.logRing)
+		return out
+	}
+	start := len(c.logRing) - n
+	out := make([]string, n)
+	copy(out, c.logRing[start:])
+	return out
+}
+
+// appendLog adds a line to the ring buffer, evicting the oldest when full.
+func (c *StdioClient) appendLog(line string) {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	if len(c.logRing) >= c.logCap {
+		copy(c.logRing, c.logRing[1:])
+		c.logRing[len(c.logRing)-1] = line
+	} else {
+		c.logRing = append(c.logRing, line)
+	}
+}
+
+// PID returns the process ID of the server process, or 0 if not started.
+func (c *StdioClient) PID() int {
+	if c.cmd == nil || c.cmd.Process == nil {
+		return 0
+	}
+	return c.cmd.Process.Pid
 }
 
 // newStdioClient spawns the server process and starts the read pump.
@@ -61,6 +116,10 @@ func newStdioClient(name string, command []string, env []string) (*StdioClient, 
 	if err != nil {
 		return nil, fmt.Errorf("mcp %q stdout pipe: %w", name, err)
 	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("mcp %q stderr pipe: %w", name, err)
+	}
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("mcp %q start: %w", name, err)
@@ -73,9 +132,19 @@ func newStdioClient(name string, command []string, env []string) (*StdioClient, 
 		dec:     json.NewDecoder(stdout),
 		pending: map[string]chan jsonrpcResponse{},
 		done:    make(chan struct{}),
+		logCap:  logCap(),
 	}
 	go c.readPump()
+	go c.drainStderr(stderrPipe)
 	return c, nil
+}
+
+// drainStderr reads stderr line by line into the ring buffer.
+func (c *StdioClient) drainStderr(r io.Reader) {
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		c.appendLog(sc.Text())
+	}
 }
 
 // readPump drains the server's stdout and fans responses to waiting callers.

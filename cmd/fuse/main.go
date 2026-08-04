@@ -40,6 +40,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 0
 		case "shell":
 			return runShell(args[1:], cfg, reg, stdout, stderr)
+		case "mcps":
+			return runMCPs(args[1:], cfg, stdout, stderr)
 		case "mcp-server":
 			return runMCPServer(args[1:], cfg, stdout, stderr)
 		}

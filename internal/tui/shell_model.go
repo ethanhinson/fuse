@@ -16,7 +16,6 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
-	"github.com/ethanhinson/fuse/internal/skills"
 )
 
 // chromeHeight is the number of terminal rows reserved for the status line,
@@ -35,6 +34,9 @@ type approvalState struct {
 	req    PermissionRequestMsg
 	render string // pre-rendered approval block text
 }
+
+// registryReloadMsg fires when any CommandProvider signals a change.
+type registryReloadMsg struct{}
 
 // ShellModel is the bubbletea model backing `fuse shell`: a scrollable
 // transcript viewport above a single-line input prompt, driven by agent
@@ -60,18 +62,20 @@ type ShellModel struct {
 	history  []model.Message
 	approval *approvalState // non-nil while waiting for user's y/s/n
 
-	md    *glamour.TermRenderer // nil until first WindowSizeMsg; recreated on resize
-	reg   *model.Registry
-	slash map[string]skills.Skill
-	build AgentBuilder
+	md        *glamour.TermRenderer // nil until first WindowSizeMsg; recreated on resize
+	reg       *model.Registry
+	slashReg  *SlashRegistry
+	completer *slashCompleter
+	build     AgentBuilder
 }
 
 // NewShellModel builds a ShellModel. alias is the starting model alias;
-// verbose controls tool arg/output truncation; slash is the skill slash-command
-// map; build constructs an agent bound to a renderer. glamourStyle is a fixed
-// glamour style name ("dark", "light", etc.) detected before the TUI starts so
-// glamour never queries the terminal from inside the bubbletea event loop.
-func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.Registry, slash map[string]skills.Skill, build AgentBuilder) ShellModel {
+// verbose controls tool arg/output truncation; slashReg is the slash command
+// registry; build constructs an agent bound to a renderer. glamourStyle is a
+// fixed glamour style name ("dark", "light", etc.) detected before the TUI
+// starts so glamour never queries the terminal from inside the bubbletea event
+// loop. slashReg may be nil (all slash commands then return unknown).
+func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.Registry, slashReg *SlashRegistry, build AgentBuilder) ShellModel {
 	in := textinput.New()
 	in.Placeholder = "type a task, /model NAME, /verbose, /exit"
 	in.Prompt = ""
@@ -83,6 +87,11 @@ func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.R
 	sp.Spinner = spinner.Dot
 	sp.Style = spinnerStyle
 
+	var completer *slashCompleter
+	if slashReg != nil {
+		completer = newSlashCompleter(slashReg)
+	}
+
 	m := ShellModel{
 		vp:           vp,
 		input:        in,
@@ -92,7 +101,8 @@ func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.R
 		glamourStyle: glamourStyle,
 		ch:           make(chan tea.Msg, 64),
 		reg:          reg,
-		slash:        slash,
+		slashReg:     slashReg,
+		completer:    completer,
 		build:        build,
 	}
 	m.appendLine(fmt.Sprintf("Fuse  %s", alias))
@@ -107,13 +117,26 @@ func (m ShellModel) Channel() chan tea.Msg { return m.ch }
 
 // Init focuses input and arms the first message wait plus cursor blink.
 func (m ShellModel) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, waitForMsg(m.ch))
+	cmds := []tea.Cmd{textinput.Blink, waitForMsg(m.ch)}
+	if m.slashReg != nil {
+		cmds = append(cmds, waitForRegistryReload(m.slashReg.Changes()))
+	}
+	return tea.Batch(cmds...)
 }
 
 // waitForMsg blocks on the channel and delivers the next event into Update.
 // Re-armed after every received event so the loop stays subscribed.
 func waitForMsg(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg { return <-ch }
+}
+
+// waitForRegistryReload blocks on the registry change channel and returns a
+// registryReloadMsg. Re-armed on every receipt.
+func waitForRegistryReload(ch <-chan struct{}) tea.Cmd {
+	return func() tea.Msg {
+		<-ch
+		return registryReloadMsg{}
+	}
 }
 
 // Update handles keys, window resize, and agent events.
@@ -157,6 +180,17 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, spinCmd // keep spinning
 		}
 		return m, nil // let it stop once the agent is done
+
+	case registryReloadMsg:
+		if m.completer != nil {
+			m.completer.refresh()
+		}
+		m.refreshViewport(m.vp.AtBottom())
+		var cmd tea.Cmd
+		if m.slashReg != nil {
+			cmd = waitForRegistryReload(m.slashReg.Changes())
+		}
+		return m, cmd
 
 	case AssistantMsg:
 		text := msg.Text
@@ -250,6 +284,13 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleApprovalKey(msg)
 	}
 
+	// While the completer is active, intercept navigation keys.
+	if m.completer != nil && m.completer.active {
+		if handled, model, cmd := m.handleCompleterKey(msg); handled {
+			return model, cmd
+		}
+	}
+
 	switch msg.Type {
 	case tea.KeyCtrlC, tea.KeyCtrlD:
 		return m, tea.Quit
@@ -270,15 +311,84 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.input.Reset()
+		if m.completer != nil {
+			m.completer.deactivate()
+		}
 		if strings.HasPrefix(line, "/") {
 			return m.handleSlash(line)
 		}
 		return m.startPrompt(line)
 	}
 
+	// Let the text input handle the key first.
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+
+	// Update completer filter based on new input.
+	if m.completer != nil && !m.running {
+		val := m.input.Value()
+		if strings.HasPrefix(val, "/") {
+			m.completer.activate(val)
+		} else {
+			m.completer.deactivate()
+		}
+		m.refreshViewport(m.vp.AtBottom())
+	}
+
 	return m, cmd
+}
+
+// handleCompleterKey handles Up/Down/Esc/Enter while the completer is active.
+// Returns (true, model, cmd) when the key was consumed, (false, _, _) otherwise.
+func (m ShellModel) handleCompleterKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyUp:
+		m.completer.moveUp()
+		m.refreshViewport(m.vp.AtBottom())
+		return true, m, nil
+	case tea.KeyDown:
+		m.completer.moveDown()
+		m.refreshViewport(m.vp.AtBottom())
+		return true, m, nil
+	case tea.KeyEsc:
+		m.completer.deactivate()
+		m.input.Reset()
+		m.refreshViewport(m.vp.AtBottom())
+		return true, m, nil
+	case tea.KeyEnter:
+		if len(m.completer.visible) == 0 || m.running {
+			return false, m, nil
+		}
+		entry := m.completer.selected()
+		expansion := entry.Expansion()
+		m.completer.deactivate()
+
+		if entry.Kind == KindMCP {
+			// MCP expansion is a complete prompt template — inject into input
+			// for the user to append arguments, then leave (don't submit).
+			m.input.SetValue(expansion)
+			m.input.CursorEnd()
+			m.refreshViewport(m.vp.AtBottom())
+			return true, m, nil
+		}
+		// Builtin / skill: inject the command and submit immediately.
+		m.input.Reset()
+		if !m.running {
+			next, cmd := m.dispatchSlashEntry(entry, expansion)
+			return true, next, cmd
+		}
+		return true, m, nil
+	}
+	return false, m, nil
+}
+
+// dispatchSlashEntry runs the slash logic for a selected completer entry.
+func (m ShellModel) dispatchSlashEntry(entry SlashEntry, expansion string) (tea.Model, tea.Cmd) {
+	line := strings.TrimSpace(expansion)
+	if line == "" {
+		line = entry.Command
+	}
+	return m.handleSlash(line)
 }
 
 // handleApprovalKey handles y/s/n/Escape while waiting for permission input.
@@ -331,14 +441,57 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.appendLine(fmt.Sprintf("switched to %s", name))
 		return m, nil
 	}
-	if sk, ok := m.slash[cmd]; ok {
-		body := sk.Body
+
+	// Look up in the slash registry.
+	if m.slashReg != nil {
+		matches := m.slashReg.Filter(cmd)
+		for _, e := range matches {
+			if e.Command == cmd {
+				return m.handleSlashEntry(e, fields)
+			}
+		}
+	}
+
+	m.appendLine(fmt.Sprintf("unknown command %s", cmd))
+	return m, nil
+}
+
+// handleSlashEntry dispatches a resolved SlashEntry from the registry.
+func (m ShellModel) handleSlashEntry(e SlashEntry, fields []string) (tea.Model, tea.Cmd) {
+	switch e.Kind {
+	case KindBuiltin:
+		// Builtins were already handled in handleSlash's switch; this path
+		// handles custom builtins added via the registry (currently none).
+		return m, nil
+	case KindSkill:
+		// Skills store their body in the registry snapshot via filter.
+		// The SlashEntry.expand() for skills returns "/cmd " — we need the body.
+		// Since skills are in the SlashRegistry from SkillProvider which uses
+		// skills.Load(), we re-look up the full body via the entry's command.
+		// The SkillProvider doesn't store the body in SlashEntry.expand() — it
+		// only stores the command string for injection. For actual execution we
+		// call startPrompt with the body obtained from the skills.Set.
+		// HOWEVER: the ShellModel no longer has a direct reference to the
+		// skills.Set. The spec says "Skills and built-ins continue to dispatch
+		// via the existing switch + skill-body injection."
+		//
+		// To support skill body injection without a direct Set reference, the
+		// SkillProvider stores body in the expand() closure. We call expand()
+		// and trim — if it's just "/cmd ", it means we need the skill body.
+		// The SkillProvider must store the actual body in expand(). Let's
+		// update SkillProvider to do that.
+		body := strings.TrimSpace(e.Expansion())
 		if len(fields) > 1 {
 			body += "\n\nARGUMENTS: " + strings.Join(fields[1:], " ")
 		}
 		return m.startPrompt(body)
+	case KindMCP:
+		expansion := e.Expansion()
+		m.input.SetValue(expansion)
+		m.input.CursorEnd()
+		m.refreshViewport(m.vp.AtBottom())
+		return m, nil
 	}
-	m.appendLine(fmt.Sprintf("unknown command %s", cmd))
 	return m, nil
 }
 
@@ -483,6 +636,13 @@ func (m *ShellModel) refreshViewport(followBottom bool) {
 	content := strings.Join(m.lines, "\n")
 	if m.pendingCall != "" {
 		content += "\n" + m.spinner.View() + " " + m.pendingCall
+	}
+	// Prepend completer overlay above the content.
+	if m.completer != nil && m.completer.active {
+		overlay := m.completer.View(m.vp.Width)
+		if overlay != "" {
+			content = content + "\n" + overlay
+		}
 	}
 	if m.vp.Width > 0 {
 		content = wordwrap.String(content, m.vp.Width)
