@@ -1,12 +1,12 @@
 # Backlog
 
-**2 changes** — 🟡 1 proposed · ✅ 1 done
+**2 changes** — 🟢 1 in progress · ✅ 1 done
 
-## 🟡 Proposed (1)
+## 🟢 In progress (1)
 
-| # | Title | Priority | Type | Readiness |
-|---|-------|----------|------|-----------|
-| [0002](active/0002-tui-mvp-makefile.md) | Bubbletea TUI MVP + Makefile | `high` | `feat` | build-ready |
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0002](active/0002-tui-mvp-makefile.md) | Bubbletea TUI MVP + Makefile | `high` | `feat` | [spec](../superpowers/specs/0002-tui-mvp-makefile.md) | `feat/tui-mvp-makefile` |
 
 ```mermaid
 graph TD
