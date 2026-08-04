@@ -24,8 +24,12 @@ jobs:
           wait_for() {
             local url="$1"
             for i in $(seq 1 90); do
-              if curl -sf -o /dev/null "$url"; then
-                echo "ready: $url"
+              # --max-time 3: prevents curl from hanging on SSE/streaming
+              # endpoints that never close. Accept any 2xx-4xx; "000" means
+              # the server isn't up yet.
+              code=$(curl -s --max-time 3 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
+              if [[ "${code}" -ge 200 && "${code}" -lt 500 ]]; then
+                echo "ready: $url (HTTP ${code})"
                 return 0
               fi
               sleep 2
