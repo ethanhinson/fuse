@@ -2,7 +2,7 @@
 id: 10
 slug: shell-slash-command-ui
 title: Shell Slash-Command Autocomplete + MCP & Skill Invocation
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-04
@@ -17,7 +17,7 @@ results:
 trivial: false
 auto_groomable: false
 branch: feat/0010-shell-slash-command-ui
-claimed_at: 2026-08-04T00:00:00Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/9
 blocked_by:
 reconciled: false
