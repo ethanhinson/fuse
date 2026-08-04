@@ -1,12 +1,12 @@
 # Backlog
 
-**1 changes** — 🟡 1 proposed
+**1 changes** — 🟢 1 in progress
 
-## 🟡 Proposed (1)
+## 🟢 In progress (1)
 
-| # | Title | Priority | Type | Readiness |
-|---|-------|----------|------|-----------|
-| [0001](active/0001-fuse.md) | Fuse — Multi-Model Agent Harness | `high` | `feat` | build-ready |
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0001](active/0001-fuse.md) | Fuse — Multi-Model Agent Harness | `high` | `feat` | [spec](../superpowers/specs/0001-fuse.md) | `feat/fuse` |
 
 ```mermaid
 graph TD
