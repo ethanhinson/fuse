@@ -2,7 +2,7 @@
 id: 2
 slug: tui-mvp-makefile
 title: Bubbletea TUI MVP + Makefile
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-03
@@ -13,12 +13,12 @@ discovered_from: [1]
 adrs: []
 spec: docs/superpowers/specs/0002-tui-mvp-makefile.md
 plan: docs/superpowers/plans/2026-08-04-tui-mvp-makefile.md
-results:
+results: docs/results/2026-08-04-tui-mvp-makefile-results.md
 trivial: false
 auto_groomable: false
 branch: feat/tui-mvp-makefile
-claimed_at: 2026-08-04T04:58:03Z
-pr:
+claimed_at: 2026-08-04T05:17:37Z
+pr: https://github.com/ethanhinson/fuse/pull/2
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [0002-tui-mvp-makefile.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0002-tui-mvp-makefile.md) |
 | Plan | [2026-08-04-tui-mvp-makefile.md](https://github.com/ethanhinson/fuse/blob/feat/tui-mvp-makefile/docs/superpowers/plans/2026-08-04-tui-mvp-makefile.md) |
+| Results | [2026-08-04-tui-mvp-makefile-results.md](https://github.com/ethanhinson/fuse/blob/feat/tui-mvp-makefile/docs/results/2026-08-04-tui-mvp-makefile-results.md) |
+| PR | [#2](https://github.com/ethanhinson/fuse/pull/2) |
 <!-- docket:artifacts:end -->
 
 ## Why
