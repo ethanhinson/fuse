@@ -448,6 +448,127 @@ broken         stdio      none    error     -
 
 ---
 
+## 12. Load tests — upper bounds and throttle validation
+
+Build tag `//go:build loadtest` — separate from the unit suite and the `integration` tag. Run with `go test -tags loadtest -v ./internal/tui/... ./internal/mcp/...`. No external infrastructure required (all load tests use temp dirs and in-process fakes).
+
+**Purpose:** the 50 ms (skills) and 200 ms (MCP) debounce values are initial guesses. The load tests define the targets the implementation must meet, and their output is the evidence that confirms or adjusts those values before the PR merges.
+
+### 12a. `internal/tui/slash_registry_load_test.go` — filter performance at scale
+
+```go
+// BenchmarkRegistryFilter seeds the registry with N synthetic entries
+// (split 10% builtin, 40% skill, 50% MCP across 5 fake servers) and
+// benchmarks Filter("ec") — a 2-char mid-word match representing worst-case
+// scan cost. Run with go test -bench=. -benchtime=5s -tags loadtest.
+//
+// Pass targets (enforced via b.ReportMetric + t.Errorf):
+//   N=100   → median < 50 µs
+//   N=1000  → median < 500 µs
+//   N=5000  → median < 2.5 ms   (upper practical bound for one user's setup)
+//   N=10000 → recorded only; no hard cap (informational)
+func BenchmarkRegistryFilter_100(b *testing.B)   { benchFilter(b, 100) }
+func BenchmarkRegistryFilter_1000(b *testing.B)  { benchFilter(b, 1000) }
+func BenchmarkRegistryFilter_5000(b *testing.B)  { benchFilter(b, 5000) }
+func BenchmarkRegistryFilter_10000(b *testing.B) { benchFilter(b, 10000) }
+```
+
+**Throttle signal:** if N=1000 breaches 500 µs, switch `Filter` from `strings.Contains` to a pre-built index (e.g. sorted slice + binary search on prefix, or a trie for prefix-only matching). Decision deferred to implementation; the benchmark is the gate.
+
+```go
+// BenchmarkRegistryFilter_Typing simulates a human typing "/code-rev" at
+// 120 WPM (~100 ms/keystroke) with 1000 entries in the registry.
+// Each sub-benchmark corresponds to one additional character typed.
+// Pass target: every Filter call < 1 ms (100× headroom over keystroke interval).
+func BenchmarkRegistryFilter_Typing(b *testing.B)
+```
+
+### 12b. `internal/tui/skill_provider_load_test.go` — burst install + debounce validation
+
+```go
+// TestSkillProvider_BurstInstall copies 50 synthetic skill directories into a
+// temp skill dir simultaneously (via 50 goroutines) and asserts:
+//   1. The provider emits ≤ 5 reload signals within 2 s (debounce collapses the burst).
+//   2. All 50 skills are present in Commands() after the last signal.
+//   3. No data races (run with -race).
+//
+// If signal count > 5, the debounce window should be widened.
+// Calibration target: burst of N dir-creates → ≤ ceil(N/10) signals.
+func TestSkillProvider_BurstInstall(t *testing.T)
+
+// TestSkillProvider_RapidEdit simulates a user iterating on a SKILL.md —
+// 20 writes to the same file in 100 ms — and asserts:
+//   1. ≤ 3 reload signals within 1 s.
+//   2. Commands() reflects the final version of the file.
+func TestSkillProvider_RapidEdit(t *testing.T)
+
+// TestSkillProvider_MissingDirRetry verifies that a skill dir created after
+// the provider starts is picked up within 35 s (the 30 s retry ticker + slack).
+func TestSkillProvider_MissingDirRetry(t *testing.T)
+```
+
+### 12c. `internal/tui/mcp_provider_load_test.go` — config-file change and reconnect throttle
+
+```go
+// TestMCPProvider_BulkAdd writes 10 new fake MCP server entries to a temp
+// config file in one atomic rename (write to temp + os.Rename — the same
+// pattern config/writer.go uses) and asserts:
+//   1. Exactly 1 reload signal fires within 500 ms (single config write = single signal).
+//   2. All 10 servers' tools appear in Commands() after the signal.
+//   3. The existing (pre-add) server is still present and unchanged.
+//
+// Fake MCP servers: in-process httptest.Server instances that respond to
+// tools/list with a canned JSON payload — no Docker, no real MCP protocol.
+func TestMCPProvider_BulkAdd(t *testing.T)
+
+// TestMCPProvider_RemoveOne writes a config file with 3 servers, waits for
+// initial load, removes 1 server entry (atomic rename), and asserts:
+//   1. Removed server's tools absent from Commands() within 500 ms.
+//   2. Remaining 2 servers' tools still present.
+//   3. manager.Stop() was called exactly once (verified via a call-counted fake).
+func TestMCPProvider_RemoveOne(t *testing.T)
+
+// TestMCPProvider_DebounceRapidWrites writes the config file 10 times in
+// 50 ms (simulating a non-atomic writer or a flaky editor) and asserts:
+//   1. ≤ 3 reload signals within 1 s.
+//   2. Commands() reflects the final config state.
+// If signal count > 3, increase the MCP debounce window above 200 ms.
+func TestMCPProvider_DebounceRapidWrites(t *testing.T)
+
+// BenchmarkMCPProvider_Reconnect measures the time from config write to
+// Commands() reflecting the new server, with fake servers that respond to
+// tools/list in < 1 ms.
+//
+// Pass target: p95 < 300 ms end-to-end (200 ms debounce + 100 ms reconnect budget).
+// If p95 > 300 ms on real (non-fake) servers, increase the reconnect timeout
+// or parallelize StartAndDiscover calls across added servers.
+func BenchmarkMCPProvider_Reconnect(b *testing.B)
+```
+
+### 12d. `internal/tui/slash_registry_load_test.go` (continued) — concurrent provider reloads
+
+```go
+// TestSlashRegistry_ConcurrentReload fires 100 goroutines, each triggering
+// one provider signal, while 10 goroutines concurrently call Filter().
+// Asserts no panics, no data races (-race), and Filter() always returns a
+// non-nil slice.
+func TestSlashRegistry_ConcurrentReload(t *testing.T)
+```
+
+### Throttle decision table
+
+| Measurement | Target | Action if breached |
+|---|---|---|
+| `Filter` at N=1000 | < 500 µs | Add prefix index or trie |
+| `Filter` at N=5000 | < 2.5 ms | Limit registry to top-N by recency or priority |
+| Skill burst (50 installs) signals | ≤ 5 | Widen skill debounce above 50 ms |
+| MCP rapid writes (10 in 50 ms) signals | ≤ 3 | Widen MCP debounce above 200 ms |
+| MCP reconnect p95 end-to-end | < 300 ms | Parallelize `StartAndDiscover` calls |
+
+The implementation chooses the debounce values first, runs the load tests, and adjusts until all targets pass. Results are recorded in the PR description.
+
+---
+
 ## New dependency
 
 `github.com/fsnotify/fsnotify` — file-system event watcher (BSD-2-Clause). Used by both `SkillProvider` and `MCPProvider`. Already used in the Go ecosystem by Viper, Air, etc.
