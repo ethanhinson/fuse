@@ -99,11 +99,16 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp.Height = h
 		m.input.Width = msg.Width
 		m.ready = true
-		m.refreshViewport()
+		m.refreshViewport(true)
 		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		return m, cmd
 
 	case AssistantMsg:
 		m.appendLine(msg.Text)
@@ -153,13 +158,13 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case tea.KeyCtrlL:
 		m.lines = nil
-		m.refreshViewport()
+		m.refreshViewport(true)
 		return m, nil
-	case tea.KeyUp, tea.KeyPgUp:
-		m.vp.LineUp(1)
+	case tea.KeyPgUp:
+		m.vp.HalfViewUp()
 		return m, nil
-	case tea.KeyDown, tea.KeyPgDown:
-		m.vp.LineDown(1)
+	case tea.KeyPgDown:
+		m.vp.HalfViewDown()
 		return m, nil
 	case tea.KeyEnter:
 		line := strings.TrimSpace(m.input.Value())
@@ -249,20 +254,23 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 // appendLine adds one logical line (which may itself contain newlines) and
 // refreshes the viewport.
 func (m *ShellModel) appendLine(s string) {
+	atBottom := !m.ready || m.vp.AtBottom()
 	for _, l := range strings.Split(s, "\n") {
 		m.lines = append(m.lines, l)
 	}
-	m.refreshViewport()
+	m.refreshViewport(atBottom)
 }
 
-// refreshViewport joins the accumulated lines into the viewport and scrolls to
-// the bottom. No-op before the first WindowSizeMsg sizes the viewport.
-func (m *ShellModel) refreshViewport() {
+// refreshViewport sets viewport content and, when followBottom is true,
+// scrolls to the bottom. No-op before the first WindowSizeMsg sizes the viewport.
+func (m *ShellModel) refreshViewport(followBottom bool) {
 	if !m.ready {
 		return
 	}
 	m.vp.SetContent(strings.Join(m.lines, "\n"))
-	m.vp.GotoBottom()
+	if followBottom {
+		m.vp.GotoBottom()
+	}
 }
 
 var (

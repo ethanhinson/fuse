@@ -45,7 +45,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 
 	m := tui.NewShellModel(alias, verbose, reg, set.SlashCommands(), build)
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithOutput(stdout))
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(stdout))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(stderr, "tui error: %v\n", err)
 		return 1
