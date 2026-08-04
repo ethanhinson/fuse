@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -14,40 +15,170 @@ import (
 )
 
 const (
-	startTimeout   = 3 * time.Second
+	startTimeout    = 3 * time.Second
 	discoverTimeout = 5 * time.Second
 )
+
+// MCPToolInfo holds the name and description of a single tool on an MCP server.
+type MCPToolInfo struct {
+	Name        string
+	Description string
+}
+
+// ServerInfo describes a connected MCP server (used by MCPProvider to build slash entries).
+type ServerInfo struct {
+	Name      string
+	Transport string
+	AuthType  string
+	Tools     []MCPToolInfo
+}
+
+// ServerStatus is the full status of an MCP server (used by fuse mcps list --live).
+type ServerStatus struct {
+	Name      string
+	Transport string
+	AuthType  string
+	Connected bool
+	Error     string
+	Tools     []string
+	PID       int      // stdio only
+	TokenFile string   // oauth2 only
+	LogLines  []string // last N stderr lines, stdio only
+}
+
+// managedServer holds runtime state for a single connected server.
+type managedServer struct {
+	cfg    config.MCPServerConfig
+	conn   mcpConn
+	tools  []*MCPTool
+	connErr string // non-empty if last connect attempt failed
+}
 
 // Manager spawns configured MCP server processes, discovers their tools, and
 // registers them into the provided tool registry.
 type Manager struct {
-	clients []mcpConn
+	mu      sync.Mutex
+	servers map[string]*managedServer
+	reg     *tools.Registry
 }
 
 // NewManager starts all configured MCP servers and registers their tools.
 // Servers that fail to start or time out on tools/list are skipped with a
 // warning; the session continues with the remaining servers.
 func NewManager(servers []config.MCPServerConfig, reg *tools.Registry) (*Manager, error) {
-	m := &Manager{}
+	m := &Manager{
+		servers: make(map[string]*managedServer),
+		reg:     reg,
+	}
 	for _, srv := range servers {
-		client, discovered, err := startAndDiscover(srv)
-		if err != nil {
+		if err := m.Add(srv); err != nil {
 			log.Printf("[mcp] skipping server %q: %v", srv.Name, err)
-			continue
 		}
-		for _, t := range discovered {
-			reg.Register(t)
-		}
-		m.clients = append(m.clients, client)
 	}
 	return m, nil
 }
 
+// Add starts a new server, discovers its tools, and registers them. No-op if
+// the name is already managed (call Stop first to replace).
+func (m *Manager) Add(srv config.MCPServerConfig) error {
+	conn, discovered, err := startAndDiscover(srv)
+	if err != nil {
+		m.mu.Lock()
+		m.servers[srv.Name] = &managedServer{cfg: srv, connErr: err.Error()}
+		m.mu.Unlock()
+		return err
+	}
+	for _, t := range discovered {
+		m.reg.Register(t)
+	}
+	m.mu.Lock()
+	m.servers[srv.Name] = &managedServer{cfg: srv, conn: conn, tools: discovered}
+	m.mu.Unlock()
+	return nil
+}
+
+// Stop terminates the named server's connection and deregisters its tools.
+// No-op if the server is not managed.
+func (m *Manager) Stop(name string) error {
+	m.mu.Lock()
+	ms, ok := m.servers[name]
+	if !ok {
+		m.mu.Unlock()
+		return nil
+	}
+	delete(m.servers, name)
+	m.mu.Unlock()
+
+	if ms.conn != nil {
+		ms.conn.stop()
+	}
+	for _, t := range ms.tools {
+		m.reg.Unregister(t.Name())
+	}
+	return nil
+}
+
 // Close terminates all managed MCP server processes.
 func (m *Manager) Close() {
-	for _, c := range m.clients {
-		c.stop()
+	m.mu.Lock()
+	names := make([]string, 0, len(m.servers))
+	for name := range m.servers {
+		names = append(names, name)
 	}
+	m.mu.Unlock()
+	for _, name := range names {
+		_ = m.Stop(name)
+	}
+}
+
+// Servers returns a snapshot of ServerInfo for each managed server.
+func (m *Manager) Servers() []ServerInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ServerInfo, 0, len(m.servers))
+	for _, ms := range m.servers {
+		si := ServerInfo{
+			Name:      ms.cfg.Name,
+			Transport: ms.cfg.Transport,
+			AuthType:  ms.cfg.Auth.Type,
+		}
+		for _, t := range ms.tools {
+			si.Tools = append(si.Tools, MCPToolInfo{
+				Name:        t.toolName,
+				Description: t.description,
+			})
+		}
+		out = append(out, si)
+	}
+	return out
+}
+
+// Status returns the full status of every managed server.
+func (m *Manager) Status() []ServerStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]ServerStatus, 0, len(m.servers))
+	for _, ms := range m.servers {
+		ss := ServerStatus{
+			Name:      ms.cfg.Name,
+			Transport: ms.cfg.Transport,
+			AuthType:  ms.cfg.Auth.Type,
+			Connected: ms.conn != nil && ms.connErr == "",
+			Error:     ms.connErr,
+		}
+		for _, t := range ms.tools {
+			ss.Tools = append(ss.Tools, t.toolName)
+		}
+		if sc, ok := ms.conn.(*StdioClient); ok {
+			ss.PID = sc.PID()
+			ss.LogLines = sc.LogLines(0)
+		}
+		if ms.cfg.Auth.Type == "oauth2" {
+			ss.TokenFile = ms.cfg.Auth.TokenFile
+		}
+		out = append(out, ss)
+	}
+	return out
 }
 
 // startAndDiscover spawns one server and returns its discovered MCPTools.

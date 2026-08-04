@@ -42,6 +42,20 @@ func (r *Registry) Register(t Tool) {
 	r.byName[t.Name()] = t
 }
 
+// Unregister removes a tool by name. No-op if not present.
+func (r *Registry) Unregister(name string) {
+	if _, ok := r.byName[name]; !ok {
+		return
+	}
+	delete(r.byName, name)
+	for i, n := range r.order {
+		if n == name {
+			r.order = append(r.order[:i], r.order[i+1:]...)
+			break
+		}
+	}
+}
+
 // Schemas returns the model-facing schema for every registered tool.
 func (r *Registry) Schemas() []model.ToolSchema {
 	out := make([]model.ToolSchema, 0, len(r.order))

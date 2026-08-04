@@ -69,6 +69,13 @@ func buildSessionRegistry(cfg config.Config, skillLookup func(string) (skills.Sk
 	return toolReg, mgr, nil
 }
 
+// buildSessionRegistryNoMCP builds a tool registry without starting MCP
+// servers. Used by runShell where MCPProvider owns the server lifecycle.
+func buildSessionRegistryNoMCP(cfg config.Config, skillLookup func(string) (skills.Skill, bool)) (*tools.Registry, error) {
+	_ = cfg
+	return defaultToolRegistry(skillLookup), nil
+}
+
 // buildAgent resolves a model alias and constructs a ready-to-run Agent along
 // with the resolved gateway model id. The persona system prompt is always
 // prepended; extra is appended (e.g. a skill listing block from shell mode).
