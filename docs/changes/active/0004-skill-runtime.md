@@ -1,0 +1,55 @@
+---
+id: 4
+slug: skill-runtime
+title: Skill Runtime
+status: proposed
+priority: high
+type: feat
+created: 2026-08-04
+updated: 2026-08-04
+depends_on: [2]
+related: [1, 2, 3]
+discovered_from: []
+adrs: []
+spec: docs/superpowers/specs/0004-skill-runtime.md
+trivial: false
+auto_groomable: false
+branch:
+claimed_at:
+pr:
+blocked_by:
+reconciled: false
+---
+
+## Artifacts
+
+<!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [0004-skill-runtime.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0004-skill-runtime.md) |
+<!-- docket:artifacts:end -->
+
+## Why
+
+Phase 1 shipped skill discovery but not skill execution. Skills show up in the system prompt block, but the model cannot invoke other skills from within a skill body, most third-party skills (docket, codeindex) have no slash command because they don't set `slash_command` frontmatter, and slash commands with trailing arguments silently drop those arguments.
+
+The result: `/docket-status` doesn't appear as a command, and even if it did, the model calling `skill("docket-convention")` inside it would fail. The skill system is wired up through the whole stack except the last mile.
+
+## What changes
+
+- **`skill` tool** — new tool in the tool registry. Model calls `skill({"name": "docket-convention"})` and gets the skill body back as a tool result. Works for any installed skill. Fuse equivalent of Claude Code's `Skill` tool.
+- **Auto-derived slash commands** — `SlashCommands()` falls back to `/<name>` when `slash_command` is unset. Docket and codeindex skills become slash-accessible without modifying their files.
+- **Args forwarding** — `handleSlash` appends `\n\nARGUMENTS: <rest>` to the skill body. Matches the Claude Code convention docket skills already read.
+- **Additional frontmatter fields** — `context` and `agent` parsed and stored on `Skill` for future subagent dispatch.
+- **Wiring** — `buildAgentCore` receives a `skillLookup` function and registers the skill tool; `runShell`'s build closure passes `set.Lookup`.
+
+## Out of scope
+
+- `context: fork` subagent dispatch.
+- Trigger-based auto-invocation.
+- Hooks.
+- `fuse skills` list subcommand.
+
+## Open questions
+
+None — design settled.
