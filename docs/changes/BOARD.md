@@ -7,12 +7,12 @@
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0010](active/0010-shell-slash-command-ui.md) | Shell Slash-Command Autocomplete + MCP & Skill Invocation | `medium` | `feat` | build-ready |
-| [0011](active/0011-deep-research.md) | Deep Research Mode — Web Search + Fan-out Synthesis | `high` | `feat` | build-ready |
+| [0011](active/0011-deep-research.md) | Deep Research Mode — Web Search + Fan-out Synthesis | `high` | `feat` | ⏳ waiting on #12 — not yet built |
 
 ```mermaid
 graph TD
   0010
-  0011
+  0012 --> 0011
 ```
 
 <details><summary>✅🗑️ Archive — done + killed (9)</summary>
