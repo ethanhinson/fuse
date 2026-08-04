@@ -2,7 +2,7 @@
 id: 4
 slug: skill-runtime
 title: Skill Runtime
-status: in_progress
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-04
