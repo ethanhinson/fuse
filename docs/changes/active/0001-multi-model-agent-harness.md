@@ -1,0 +1,70 @@
+---
+id: 1
+slug: multi-model-agent-harness
+title: Multi-Model Agent Harness (`mh`)
+status: proposed
+priority: high
+type: feat
+created: 2026-08-03
+updated: 2026-08-03
+depends_on: []
+related: []
+discovered_from: []
+adrs: []
+spec: docs/superpowers/specs/0001-multi-model-agent-harness.md
+plan:
+results:
+trivial: false
+auto_groomable: false
+branch:
+pr:
+blocked_by:
+reconciled: false
+---
+
+## Artifacts
+
+<!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [0001-multi-model-agent-harness.md](https://github.com/ethanhinson/model-harness/blob/docket/docs/superpowers/specs/0001-multi-model-agent-harness.md) |
+<!-- docket:artifacts:end -->
+
+## Why
+
+We have three strong, independent pieces: a code navigation engine (codeindex), a unified model gateway (LiteLLM at :4000 with 11 models), and a first-class Claude harness (Claude Code). But only Claude gets the full tool suite. DeepSeek, Qwen, Kimi, GLM, and local Ollama models can all use function calling through the gateway — proven by model-council.py — but they run without code navigation, without skills, without hooks, and without session management.
+
+The model harness (`mh`) closes that gap by building a model-agnostic Go agent runtime where Claude is one spoke in the wheel, not the designated orchestrator. Every configured model gets the same tool surface: bash execution, surgical file edits, web search, codeindex blast-radius navigation, and the shared skill ecosystem.
+
+## What changes
+
+- New Go project: `model-harness` repository with `mh` binary
+- Core agent loop compatible with any OpenAI-compatible model endpoint (all models via LiteLLM gateway)
+- Tool registry: bash, read_file, write_file, edit_file, list_directory, web_search, codeindex_impact, codeindex_callers, codeindex_search, spawn_subagent
+- Model registry: all 11 gateway models named (`deepseek-flash`, `qwen-coder`, `kimi`, `claude`, etc.)
+- Skills system: SKILL.md discovery from `~/.harness/skills/`, `~/.claude/skills/`, `~/.grok/skills/` (full Claude Code + Grok Build compatibility)
+- Hooks: PreToolUse, PostToolUse, Stop, SessionStart, SubagentStop — compatible with Claude Code hook schema
+- Subagents: `spawn_subagent` tool enabling multi-model composition within a single session
+- Session management: persist, resume, and compress long sessions
+- Built-in skills: `/route`, `/compare`, `/docket`, `/impact`, `/explore`, `/summary`
+- Configuration via `~/.harness/config.yml`; per-project `.harness.local.yml` overrides
+
+## Out of scope
+
+- Web UI or REST API (CLI/TTY only in this change)
+- Model fine-tuning, weight management, or local model serving (that's Ollama's job)
+- Replacing Claude Code (they coexist; harness is for when you want a non-Claude primary)
+- A new plugin marketplace (use skills dirs; marketplace is a future change)
+- GUI/IDE integrations (a future change, after the Go SDK is stable)
+- Streaming output to programmatic callers (human TTY first)
+
+## Open questions
+
+- Does codeindex need any changes to support being called as a library vs. subprocess from the harness? (Check the Go SDK in code-indexer/sdk/go)
+- Should routing live entirely in config rules, or does a small local classifier (e.g., task-keyword → model persona) justify the complexity?
+- For `spawn_subagent` with `worktree: true` — does the harness manage worktree lifecycle, or delegate to `git worktree` directly and clean up on SubagentStop?
+- Phase 2 timing for hooks and subagents — should they be gated behind the phase 1 smoke test, or developed in parallel by a subagent?
+
+## Reconcile log
+
+<!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
