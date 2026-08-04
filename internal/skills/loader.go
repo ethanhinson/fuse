@@ -69,15 +69,27 @@ func Load(dirs []string) (*Set, error) {
 func (s *Set) All() []Skill { return s.skills }
 
 // SlashCommands maps each skill's slash command (including the leading slash)
-// to its skill. Skills without a slash command are omitted.
+// to its skill. When slash_command frontmatter is unset, falls back to /<name>.
 func (s *Set) SlashCommands() map[string]Skill {
 	out := map[string]Skill{}
 	for _, sk := range s.skills {
-		if sk.SlashCommand != "" {
-			out[sk.SlashCommand] = sk
+		key := sk.SlashCommand
+		if key == "" {
+			key = "/" + sk.Name
 		}
+		out[key] = sk
 	}
 	return out
+}
+
+// Lookup finds a skill by name. Returns false if not found.
+func (s *Set) Lookup(name string) (Skill, bool) {
+	for _, sk := range s.skills {
+		if sk.Name == name {
+			return sk, true
+		}
+	}
+	return Skill{}, false
 }
 
 // SystemPromptBlock renders a compact listing of available skills for

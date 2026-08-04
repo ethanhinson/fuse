@@ -59,6 +59,63 @@ func TestLoadEmptyWhenNoDirs(t *testing.T) {
 	}
 }
 
+func TestSlashCommandsAutoDerived(t *testing.T) {
+	a := t.TempDir()
+	// skill without slash_command — should get /<name> auto-derived
+	writeSkill(t, a, "docket-status", "---\nname: docket-status\ndescription: show board\n---\nbody\n")
+	set, err := Load([]string{a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmds := set.SlashCommands()
+	if _, ok := cmds["/docket-status"]; !ok {
+		t.Error("auto-derived /docket-status not in SlashCommands")
+	}
+}
+
+func TestSlashCommandsExplicitWins(t *testing.T) {
+	a := t.TempDir()
+	writeSkill(t, a, "s", "---\nname: my-skill\nslash_command: /ms\n---\nbody\n")
+	set, err := Load([]string{a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmds := set.SlashCommands()
+	if _, ok := cmds["/ms"]; !ok {
+		t.Error("explicit slash_command /ms should be present")
+	}
+	if _, ok := cmds["/my-skill"]; ok {
+		t.Error("auto-derived /my-skill should not appear when explicit slash_command is set")
+	}
+}
+
+func TestLookupFound(t *testing.T) {
+	a := t.TempDir()
+	writeSkill(t, a, "conv", "---\nname: docket-convention\ndescription: the contract\n---\nconvention body\n")
+	set, err := Load([]string{a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sk, ok := set.Lookup("docket-convention")
+	if !ok {
+		t.Fatal("expected Lookup to find docket-convention")
+	}
+	if sk.Body != "convention body" {
+		t.Errorf("body = %q", sk.Body)
+	}
+}
+
+func TestLookupNotFound(t *testing.T) {
+	set, err := Load(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ok := set.Lookup("missing")
+	if ok {
+		t.Fatal("expected Lookup to return false for unknown skill")
+	}
+}
+
 func TestLoadFirstDirWinsOnDuplicateName(t *testing.T) {
 	a := t.TempDir()
 	b := t.TempDir()

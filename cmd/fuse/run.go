@@ -10,6 +10,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tui"
 )
@@ -38,8 +39,9 @@ func mergeEntry(reg *model.Registry, alias string, mc model.ModelConfig) *model.
 	return model.NewRegistry(reg.Default, entries)
 }
 
-// defaultToolRegistry builds the full built-in tool registry.
-func defaultToolRegistry() *tools.Registry {
+// defaultToolRegistry builds the full built-in tool registry. skillLookup is
+// optional — when non-nil, a skill tool is added to the registry.
+func defaultToolRegistry(skillLookup func(string) (skills.Skill, bool)) *tools.Registry {
 	r := tools.NewRegistry()
 	for _, t := range tools.DefaultTools() {
 		r.Register(t)
@@ -47,13 +49,17 @@ func defaultToolRegistry() *tools.Registry {
 	for _, t := range tools.CodeindexTools() {
 		r.Register(t)
 	}
+	if skillLookup != nil {
+		r.Register(tools.NewSkillTool(skillLookup))
+	}
 	return r
 }
 
 // buildSessionRegistry builds a tool registry for a session, starting MCP
-// servers if configured. The caller is responsible for calling mgr.Close().
-func buildSessionRegistry(cfg config.Config) (*tools.Registry, *mcp.Manager, error) {
-	toolReg := defaultToolRegistry()
+// servers if configured. skillLookup wires the skill tool; pass nil to omit
+// it. The caller is responsible for calling mgr.Close().
+func buildSessionRegistry(cfg config.Config, skillLookup func(string) (skills.Skill, bool)) (*tools.Registry, *mcp.Manager, error) {
+	toolReg := defaultToolRegistry(skillLookup)
 	mgr, err := mcp.NewManager(cfg.MCPServers, toolReg)
 	if err != nil {
 		return nil, nil, err
@@ -69,9 +75,9 @@ func buildAgent(cfg config.Config, reg *model.Registry, alias string, out io.Wri
 	if alias == "" {
 		alias = reg.Default
 	}
-	toolReg := defaultToolRegistry()
-	// MCP servers started inline for one-shot; we accept leaking them since the
-	// process exits immediately after.
+	// One-shot mode: no skill tool (nil lookup), MCP servers started inline and
+	// leaked (process exits immediately after).
+	toolReg := defaultToolRegistry(nil)
 	_, _ = mcp.NewManager(cfg.MCPServers, toolReg)
 	return buildAgentCore(cfg, reg, alias, tui.NewRenderer(out, verbose), extra, traceW, toolReg, permissions.AlwaysApprove)
 }

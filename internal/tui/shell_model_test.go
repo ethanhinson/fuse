@@ -154,6 +154,25 @@ func TestSlashSkillInjectsBody(t *testing.T) {
 	}
 }
 
+func TestSlashSkillForwardsArgs(t *testing.T) {
+	slash := map[string]skills.Skill{
+		"/docket-new-change": {Name: "docket-new-change", SlashCommand: "/docket-new-change", Body: "skill body"},
+	}
+	m := sized(NewShellModel("alpha", false, testRegistry(), slash, nilBuilder))
+	m = typeLine(m, "/docket-new-change design the auth layer")
+	m, cmd := enter(m)
+	if !m.running || cmd == nil {
+		t.Fatal("skill with args should start a prompt run")
+	}
+	if len(m.history) != 1 {
+		t.Fatalf("expected 1 history entry, got %d", len(m.history))
+	}
+	got := m.history[0].Content
+	if got != "skill body\n\nARGUMENTS: design the auth layer" {
+		t.Errorf("prompt with args = %q", got)
+	}
+}
+
 func TestSlashUnknown(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
 	m = typeLine(m, "/bogus")

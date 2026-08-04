@@ -40,8 +40,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	skillBlock := set.SystemPromptBlock()
 
 	// Build the tool registry once for the session; MCP servers live for the
-	// duration of the shell process.
-	toolReg, mcpMgr, err := buildSessionRegistry(cfg)
+	// duration of the shell process. Pass set.Lookup so the skill tool is
+	// available to the model.
+	toolReg, mcpMgr, err := buildSessionRegistry(cfg, set.Lookup)
 	if err != nil {
 		fmt.Fprintf(stderr, "session registry error: %v\n", err)
 		return 1

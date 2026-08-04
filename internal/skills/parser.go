@@ -14,6 +14,8 @@ type Skill struct {
 	Name         string
 	Description  string
 	SlashCommand string
+	Context      string // e.g. "fork" — stored for future subagent dispatch
+	Agent        string // subagent type hint — stored for future dispatch
 	Body         string
 	Path         string
 }
@@ -23,6 +25,8 @@ type frontmatter struct {
 	Name         string `yaml:"name"`
 	Description  string `yaml:"description"`
 	SlashCommand string `yaml:"slash_command"`
+	Context      string `yaml:"context"`
+	Agent        string `yaml:"agent"`
 }
 
 // ParseSkill splits YAML frontmatter (delimited by leading `---` lines) from
@@ -53,6 +57,8 @@ func ParseSkill(path string, data []byte) (Skill, error) {
 		Name:         fm.Name,
 		Description:  fm.Description,
 		SlashCommand: fm.SlashCommand,
+		Context:      fm.Context,
+		Agent:        fm.Agent,
 		Body:         body,
 		Path:         path,
 	}, nil

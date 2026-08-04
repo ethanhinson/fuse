@@ -22,7 +22,7 @@ func (discard) Write(p []byte) (int, error) { return len(p), nil }
 func TestBuildAgentWithRenderer(t *testing.T) {
 	cfg := config.Default()
 	reg := model.DefaultRegistry()
-	toolReg := defaultToolRegistry()
+	toolReg := defaultToolRegistry(nil)
 	r := tui.NewRenderer(discard{}, false)
 
 	a, err := buildAgentWithRenderer(cfg, reg, reg.Default, r, false, "block", toolReg, permissions.AlwaysApprove)
@@ -37,7 +37,7 @@ func TestBuildAgentWithRenderer(t *testing.T) {
 func TestBuildAgentWithRendererUnknownAlias(t *testing.T) {
 	cfg := config.Default()
 	reg := model.DefaultRegistry()
-	toolReg := defaultToolRegistry()
+	toolReg := defaultToolRegistry(nil)
 	r := tui.NewRenderer(discard{}, false)
 	if _, err := buildAgentWithRenderer(cfg, reg, "no-such-model", r, false, "", toolReg, permissions.AlwaysApprove); err == nil {
 		t.Fatal("expected error for unknown alias")
@@ -49,7 +49,7 @@ func TestBuildAgentWithRendererUnknownAlias(t *testing.T) {
 func TestShellModelBuilderWiring(t *testing.T) {
 	cfg := config.Default()
 	reg := model.DefaultRegistry()
-	toolReg := defaultToolRegistry()
+	toolReg := defaultToolRegistry(nil)
 	var build tui.AgentBuilder = func(alias string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		return buildAgentWithRenderer(cfg, reg, alias, r, false, "", toolReg, approve)
 	}

@@ -314,7 +314,11 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if sk, ok := m.slash[cmd]; ok {
-		return m.startPrompt(sk.Body)
+		body := sk.Body
+		if len(fields) > 1 {
+			body += "\n\nARGUMENTS: " + strings.Join(fields[1:], " ")
+		}
+		return m.startPrompt(body)
 	}
 	m.appendLine(fmt.Sprintf("unknown command %s", cmd))
 	return m, nil
