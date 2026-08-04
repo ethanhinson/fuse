@@ -1,0 +1,77 @@
+// Package tools provides the tool registry and the built-in tools every model
+// can call.
+package tools
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/ethanhinson/fuse/internal/model"
+)
+
+// Result is the outcome of a tool execution.
+type Result struct {
+	Output  string
+	IsError bool
+}
+
+// Tool is a single named, schema-described, executable capability.
+type Tool interface {
+	Name() string
+	Description() string
+	Parameters() map[string]any
+	Execute(ctx context.Context, args string) Result
+}
+
+// Registry holds tools keyed by name in registration order.
+type Registry struct {
+	order  []string
+	byName map[string]Tool
+}
+
+// NewRegistry returns an empty registry.
+func NewRegistry() *Registry {
+	return &Registry{byName: map[string]Tool{}}
+}
+
+// Register adds a tool. Re-registering a name overwrites it but keeps order.
+func (r *Registry) Register(t Tool) {
+	if _, exists := r.byName[t.Name()]; !exists {
+		r.order = append(r.order, t.Name())
+	}
+	r.byName[t.Name()] = t
+}
+
+// Schemas returns the model-facing schema for every registered tool.
+func (r *Registry) Schemas() []model.ToolSchema {
+	out := make([]model.ToolSchema, 0, len(r.order))
+	for _, name := range r.order {
+		t := r.byName[name]
+		out = append(out, model.ToolSchema{
+			Name:        t.Name(),
+			Description: t.Description(),
+			Parameters:  t.Parameters(),
+		})
+	}
+	return out
+}
+
+// Execute runs the named tool, returning an error Result if it is unknown.
+func (r *Registry) Execute(ctx context.Context, name, args string) Result {
+	t, ok := r.byName[name]
+	if !ok {
+		return Result{IsError: true, Output: fmt.Sprintf("unknown tool %q", name)}
+	}
+	return t.Execute(ctx, args)
+}
+
+// DefaultTools returns the Phase 1 built-in tool set.
+func DefaultTools() []Tool {
+	return []Tool{
+		NewBash(),
+		NewReadFile(),
+		NewWriteFile(),
+		NewEditFile(),
+		NewListDirectory(),
+	}
+}
