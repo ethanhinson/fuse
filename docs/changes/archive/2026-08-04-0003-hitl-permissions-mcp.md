@@ -2,11 +2,11 @@
 id: 3
 slug: hitl-permissions-mcp
 title: HITL Permission Layer + MCP Client Integration
-status: in_progress
+status: done
 priority: high
 type: feat
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-04
 depends_on: [2]
 related: [1, 2]
 discovered_from: []
