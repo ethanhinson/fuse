@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable: false
 branch: feat/tui-mvp-makefile
-claimed_at: 2026-08-04T04:53:56Z
+claimed_at: 2026-08-04T04:58:03Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -56,3 +56,16 @@ The bubbletea TUI makes the shell feel like a real tool: scrollable transcript, 
 ## Open questions
 
 - Fallback behavior when stdout is not a TTY (piped output) — bubbletea handles it; document rather than special-case.
+
+## Reconcile log
+
+### 2026-08-04
+
+Reconciled against `origin/main` before planning. Findings:
+
+- **Premises hold.** No `Makefile`, no Charm dependencies in `go.mod` (only `gopkg.in/yaml.v3`), and none of `internal/tui/events.go`, `internal/tui/tea_renderer.go`, `internal/tui/shell_model.go` exist yet. `cmd/fuse/shell.go` still uses the `bufio.Scanner` `replLoop`; one-shot mode (`cmd/fuse/main.go` → `tui.NewRenderer`) is untouched. No work has been done elsewhere; scope stands as specced.
+- **Interface match confirmed.** `agent.Renderer` (in `internal/agent/agent.go`) is exactly `Assistant(text)`, `ToolCall(name, args)`, `ToolResult(name, tools.Result)`, `Errorf(format, ...any)` — the four methods the spec's `TeaRenderer` implements. `func (a *Agent) Run(ctx, []model.Message) ([]model.Message, error)` matches the spec's agent goroutine signature verbatim. `ModelHeader` is a concrete-only `*tui.Renderer` method, not part of the interface, so `TeaRenderer` need not implement it.
+- **Pre-existing note (not new scope):** the Phase 1 results file records that `*tui.Renderer.ModelHeader` is now orphaned and `cmd/fuse/shell.go` inlines the same rule literal. This change removes `replLoop` and its inlined header, so the plan should decide whether the TUI status line supersedes `ModelHeader` and whether to drop the now-fully-dead method. Folded into planning as a cleanup consideration, not a scope expansion.
+- Go version is `go 1.26.5`; Charm deps are pure-Go (no CGO), consistent with the spec.
+
+No scope change; spec left as-is. `reconciled: true`.
