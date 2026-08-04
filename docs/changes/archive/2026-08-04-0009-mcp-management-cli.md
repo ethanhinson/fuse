@@ -2,7 +2,7 @@
 id: 9
 slug: mcp-management-cli
 title: "`fuse mcps` MCP Server Management CLI + `/mcps` Shell Built-in"
-status: proposed
+status: killed
 priority: medium
 type: feat
 created: 2026-08-04
@@ -17,7 +17,7 @@ results:
 trivial: false
 auto_groomable: false
 branch:
-claimed_at:
+claimed_at: 
 pr:
 blocked_by:
 reconciled: false
@@ -48,3 +48,7 @@ There is currently no way to inspect, add, or remove MCP servers without hand-ed
 - Hot-reload of the MCP manager without restarting the shell.
 - Log streaming / tail-f.
 - In-place field editing (remove + add is the workflow).
+
+## Why killed
+
+absorbed into change 0010 (shell slash-command autocomplete); scope fully superseded
