@@ -6,7 +6,7 @@
 
 | # | Title | Priority | Type | Spec | Branch |
 |---|-------|----------|------|------|--------|
-| [0008](active/0008-mcp-integration-test-harness.md) | MCP Integration Test Harness (Docker Compose + Playwright) | `medium` | `chore` | [spec](../superpowers/specs/0008-mcp-integration-test-harness.md) | `` |
+| [0008](active/0008-mcp-integration-test-harness.md) | MCP Integration Test Harness (Docker Compose + Playwright) | `medium` | `chore` | [spec](../superpowers/specs/0008-mcp-integration-test-harness.md) | `feat/mcp-integration-test-harness` |
 
 ```mermaid
 graph TD
