@@ -125,14 +125,16 @@ func (s *sseTestServerFull) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 
-	messagesURL := "http://" + r.Host + "/messages"
-	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", messagesURL)
-	flusher.Flush()
-
+	// Register the channel BEFORE flushing the endpoint event so that any
+	// broadcast triggered by the client's first POST always finds a listener.
 	ch := make(chan string, 16)
 	s.mu.Lock()
 	s.sseConns = append(s.sseConns, ch)
 	s.mu.Unlock()
+
+	messagesURL := "http://" + r.Host + "/messages"
+	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", messagesURL)
+	flusher.Flush()
 
 	for {
 		select {
