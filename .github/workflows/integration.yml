@@ -1,0 +1,52 @@
+name: Integration
+
+on: [push, pull_request]
+
+jobs:
+  mcp-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Playwright browsers
+        run: go run github.com/mxschmitt/playwright-go/cmd/playwright install --with-deps chromium
+
+      - name: Start MCP services
+        run: docker compose -f internal/mcp/testdata/docker-compose.yml up -d
+
+      - name: Wait for services
+        run: |
+          set -e
+          wait_for() {
+            local url="$1"
+            for i in $(seq 1 90); do
+              # --max-time 3: prevents curl from hanging on SSE/streaming
+              # endpoints that never close. Accept any 2xx-4xx; "000" means
+              # the server isn't up yet.
+              code=$(curl -s --max-time 3 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
+              if [[ "${code}" -ge 200 && "${code}" -lt 500 ]]; then
+                echo "ready: $url (HTTP ${code})"
+                return 0
+              fi
+              sleep 2
+            done
+            echo "timed out waiting for $url" >&2
+            return 1
+          }
+          wait_for http://localhost:8080/default/.well-known/openid-configuration
+          wait_for http://localhost:3001/sse
+
+      - name: Run integration tests
+        run: go test -tags integration -v -timeout 300s ./internal/mcp/...
+
+      - name: Service logs on failure
+        if: failure()
+        run: docker compose -f internal/mcp/testdata/docker-compose.yml logs
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f internal/mcp/testdata/docker-compose.yml down -v
