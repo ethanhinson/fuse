@@ -2,7 +2,7 @@
 id: 6
 slug: tui-markdown-rendering
 title: Terminal Markdown Rendering
-status: proposed
+status: done
 priority: medium
 type: feat
 created: 2026-08-04
@@ -14,11 +14,11 @@ adrs: []
 spec: docs/superpowers/specs/0006-tui-markdown-rendering.md
 trivial: false
 auto_groomable: false
-branch:
-claimed_at:
-pr:
+branch: feat/tui-markdown-rendering
+claimed_at: 
+pr: https://github.com/ethanhinson/fuse/pull/7
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -27,6 +27,7 @@ reconciled: false
 | Artifact | Link |
 |---|---|
 | Spec | [0006-tui-markdown-rendering.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0006-tui-markdown-rendering.md) |
+| PR | [#7](https://github.com/ethanhinson/fuse/pull/7) |
 <!-- docket:artifacts:end -->
 
 ## Why
