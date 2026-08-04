@@ -2,7 +2,7 @@
 id: 2
 slug: tui-mvp-makefile
 title: Bubbletea TUI MVP + Makefile
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-03
@@ -17,7 +17,7 @@ results: docs/results/2026-08-04-tui-mvp-makefile-results.md
 trivial: false
 auto_groomable: false
 branch: feat/tui-mvp-makefile
-claimed_at: 2026-08-04T05:17:37Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/2
 blocked_by:
 reconciled: true
