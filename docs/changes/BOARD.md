@@ -1,24 +1,23 @@
 # Backlog
 
-**9 changes** — 🟡 1 proposed · ✅ 8 done
+**10 changes** — 🟡 1 proposed · ✅ 8 done · 🗑️ 1 killed
 
 ## 🟡 Proposed (1)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0009](active/0009-mcp-management-cli.md) | `fuse mcps` MCP Server Management CLI + `/mcps` Shell Built-in | `medium` | `feat` | build-ready |
+| [0010](active/0010-shell-slash-command-ui.md) | Shell Slash-Command Autocomplete + MCP & Skill Invocation | `medium` | `feat` | build-ready |
 
 ```mermaid
 graph TD
-  0007 --> 0009
-  0007:::done
-  classDef done fill:#d3f9d8;
+  0010
 ```
 
-<details><summary>✅ Archive — done (8)</summary>
+<details><summary>✅🗑️ Archive — done + killed (9)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0009](archive/2026-08-04-0009-mcp-management-cli.md) | `fuse mcps` MCP Server Management CLI + `/mcps` Shell Built-in | 2026-08-04 |
 | [0008](archive/2026-08-04-0008-mcp-integration-test-harness.md) | MCP Integration Test Harness (Docker Compose + Playwright) | 2026-08-04 |
 | [0007](archive/2026-08-04-0007-mcp-http-oauth.md) | Remote MCP Servers via HTTP/SSE Transport + OAuth 2.0 | 2026-08-04 |
 | [0006](archive/2026-08-04-0006-tui-markdown-rendering.md) | Terminal Markdown Rendering | 2026-08-04 |
