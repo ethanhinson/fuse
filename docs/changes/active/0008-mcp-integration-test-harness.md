@@ -16,8 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable: false
-branch:
-claimed_at: 2026-08-04T19:04:38Z
+branch: feat/mcp-integration-test-harness
+claimed_at: 2026-08-04T19:11:55Z
 pr:
 blocked_by:
 reconciled: true
