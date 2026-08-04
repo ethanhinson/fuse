@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/muesli/reflow/wordwrap"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -360,8 +361,10 @@ func formatTokens(n int) string {
 }
 
 // refreshViewport sets viewport content and, when followBottom is true, scrolls
-// to the bottom. When a tool call is in flight, its animated spinner line is
-// appended after the settled lines. No-op before the first WindowSizeMsg.
+// to the bottom. Content is word-wrapped to the viewport width so long lines
+// (assistant prose, tool output) don't run off screen. When a tool call is in
+// flight its animated spinner line is appended after the settled lines.
+// No-op before the first WindowSizeMsg.
 func (m *ShellModel) refreshViewport(followBottom bool) {
 	if !m.ready {
 		return
@@ -370,14 +373,25 @@ func (m *ShellModel) refreshViewport(followBottom bool) {
 	if m.pendingCall != "" {
 		content += "\n" + m.spinner.View() + " " + m.pendingCall
 	}
+	if m.vp.Width > 0 {
+		content = wordwrap.String(content, m.vp.Width)
+	}
 	m.vp.SetContent(content)
 	if followBottom {
 		m.vp.GotoBottom()
 	}
 }
 
-// View renders the status line, transcript, a separator rule, and the prompt.
+// View renders the transcript, a separator rule, the input prompt, and a fixed
+// status line at the very bottom.
 func (m ShellModel) View() string {
+	width := m.vp.Width
+	if width < 1 {
+		width = 40
+	}
+	rule := ruleStyle.Render(strings.Repeat("─", width))
+	prompt := promptAliasStyle.Render("["+m.alias+"]") + " > " + m.input.View()
+
 	var status string
 	if m.running {
 		elapsed := formatElapsed(time.Since(m.runStart))
@@ -393,19 +407,13 @@ func (m ShellModel) View() string {
 		status = statusModelStyle.Render(m.alias)
 	}
 
-	width := m.vp.Width
-	if width < 1 {
-		width = 40
-	}
-	rule := ruleStyle.Render(strings.Repeat("─", width))
-	prompt := promptAliasStyle.Render("["+m.alias+"]") + " > " + m.input.View()
 	var b strings.Builder
-	b.WriteString(status)
-	b.WriteByte('\n')
 	b.WriteString(m.vp.View())
 	b.WriteByte('\n')
 	b.WriteString(rule)
 	b.WriteByte('\n')
 	b.WriteString(prompt)
+	b.WriteByte('\n')
+	b.WriteString(status)
 	return b.String()
 }
