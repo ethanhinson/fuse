@@ -17,8 +17,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -196,13 +194,18 @@ func newBearerProxy(t *testing.T, upstream *url.URL, token string) *httptest.Ser
 	return srv
 }
 
-// newOAuthProxy returns an httptest.Server that validates a Bearer JWT against
-// the mock-oauth2 JWKS endpoint, then reverse-proxies to upstream. It performs
-// a coarse validation: the token must be present and accepted by the issuer's
-// userinfo/introspection-equivalent check (here: non-empty Bearer whose header
-// parses). Missing/blank token -> 401. Closed automatically when t ends.
+// newOAuthProxy returns an httptest.Server that requires a Bearer token, then
+// reverse-proxies to upstream (SSE-safe). Validation is deliberately coarse:
+// the token must be a present, well-formed Bearer. The token under test is
+// minted by the real mock-oauth2 flow, so its presence proves the client
+// completed the OAuth2 authorization and attached the resulting access token —
+// which is what this harness asserts. Full JWKS signature verification is out
+// of scope (mock-oauth2 already signs with its own keys). issuerURL is recorded
+// for symmetry with the production discovery flow and future strict validation.
+// Missing/blank token -> 401. Closed automatically when t ends.
 func newOAuthProxy(t *testing.T, upstream *url.URL, issuerURL string) *httptest.Server {
 	t.Helper()
+	_ = issuerURL // reserved for future strict JWKS validation
 	rp := newSSEProxy(upstream)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
@@ -210,10 +213,6 @@ func newOAuthProxy(t *testing.T, upstream *url.URL, issuerURL string) *httptest.
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		// The presence of a well-formed Bearer token minted by the mock issuer
-		// is sufficient for this harness — the goal is to prove the client
-		// acquired and attached a real token from the OAuth2 flow, not to
-		// re-implement full JWT verification (mock-oauth2 signs with its JWKS).
 		rp.ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)
@@ -285,17 +284,3 @@ func (p *sseReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-
-// mustFreePort returns an available localhost TCP port (used defensively where
-// a test needs to know a port is free before a subprocess binds it).
-func mustFreePort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("free port: %v", err)
-	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
-}
-
-var _ = io.Discard // keep io imported for helper evolution
