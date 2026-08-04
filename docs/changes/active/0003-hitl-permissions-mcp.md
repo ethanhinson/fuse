@@ -17,7 +17,7 @@ results:
 trivial: false
 auto_groomable: false
 branch: feat/hitl-permissions-mcp
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/3
 blocked_by:
 reconciled: true
 ---
