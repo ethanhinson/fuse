@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0002-tui-mvp-makefile.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0002-tui-mvp-makefile.md) |
-| Plan | [2026-08-04-tui-mvp-makefile.md](https://github.com/ethanhinson/fuse/blob/feat/tui-mvp-makefile/docs/superpowers/plans/2026-08-04-tui-mvp-makefile.md) |
-| Results | [2026-08-04-tui-mvp-makefile-results.md](https://github.com/ethanhinson/fuse/blob/feat/tui-mvp-makefile/docs/results/2026-08-04-tui-mvp-makefile-results.md) |
+| Plan | [2026-08-04-tui-mvp-makefile.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-04-tui-mvp-makefile.md) |
+| Results | [2026-08-04-tui-mvp-makefile-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-04-tui-mvp-makefile-results.md) |
 | PR | [#2](https://github.com/ethanhinson/fuse/pull/2) |
 <!-- docket:artifacts:end -->
 
