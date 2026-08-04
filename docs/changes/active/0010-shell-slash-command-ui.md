@@ -33,24 +33,25 @@ reconciled: false
 
 ## Why
 
-The fuse shell has a bare slash-dispatch with no discovery surface. Users must memorize command names; MCP tools are completely invisible in the shell even though the MCP client stack is fully operational. This change makes the shell self-documenting and brings MCP tools into the shell conversation without new execution machinery.
+The fuse shell has a bare slash-dispatch with no discovery surface. Users must memorize command names; MCP tools are completely invisible in the shell; skills installed mid-session require a restart to appear (a known Claude Code pain point — skills added to `~/.claude/skills` while the shell is running are silently ignored). This change makes the shell self-documenting, live-reloading, and brings MCP tools into the shell conversation.
 
-Change 0009 (`fuse mcps` CLI + `/mcps` shell built-in) is absorbed here — its scope is expanded to include the full autocomplete UI, and the `/mcps` shell built-in is replaced by the richer per-tool entries in the autocomplete list.
+Change 0009 (`fuse mcps` CLI + `/mcps` shell built-in) is absorbed here — the `/mcps` shell built-in is replaced by per-tool autocomplete entries, and the management CLI scope is preserved.
 
 ## What changes
 
-- A `SlashRegistry` that aggregates built-in commands, loaded skills, and MCP tools from the running manager into one filterable list.
-- A `slashCompleter` bubbletea sub-model: typing `/` opens an overlay with kind tags (`[builtin]`, `[skill]`, `[mcp:server]`) and descriptions; arrow keys navigate; Enter selects and injects the expansion; Esc dismisses.
-- MCP tools expand to a natural-language prompt template ("Use the `echo` tool from the `everything` MCP server…") — the agent routes through the existing tool executor, no new execution path.
+- A `CommandProvider` interface — built-ins, skills, and MCP tools each implement the same source contract; a `SlashRegistry` aggregates them uniformly (Cline/Grok-Build pattern).
+- **Live skill reloading** — `fsnotify` watches `~/.fuse/skills`, `~/.claude/skills`, `~/.grok/skills`; new/changed/removed skills appear in autocomplete without restarting the shell.
+- **Live MCP reloading** — `fsnotify` watches `~/.fuse/config.yml`; when `fuse mcps add/remove` writes the config (from any terminal), the shell detects the change and reconnects only the delta within ~200 ms.
+- A `slashCompleter` bubbletea sub-model: typing `/` opens an overlay with kind tags (`[builtin]`, `[skill]`, `[mcp:server]`) and descriptions; arrow keys navigate; Enter injects the expansion; Esc dismisses.
+- MCP tools expand to a natural-language prompt template — the agent routes through the existing tool executor, no new execution path.
 - `fuse mcps` top-level CLI (absorbed from 0009): `list [--live]`, `add`, `remove`, `tools`, `logs`.
-- `Manager.Status() []ServerStatus` + stderr ring buffer on stdio servers (absorbed from 0009).
-- `internal/config/writer.go` for additive YAML writes (`AddMCPServer` / `RemoveMCPServer`).
+- `Manager.Status()`, `Manager.Stop()`, stderr ring buffer, `internal/config/writer.go` (absorbed from 0009).
 
 ## Out of scope
 
 - Structured argument forms for MCP tools — natural-language expansion only.
-- In-shell MCP management (`/mcps` list/add/remove) — that is the `fuse mcps` CLI.
-- New MCP servers or transport types — only what is already connected at startup appears in the list.
+- In-shell MCP management as slash commands — `fuse mcps` CLI is the path.
+- Watching config for non-MCP changes (model list, auth config, etc.).
 
 ## Open questions
 

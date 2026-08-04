@@ -10,12 +10,16 @@
 
 ## Overview
 
-The fuse shell's current `/`-dispatch is a bare `switch` with no discovery surface. Users must memorize command names; MCP tools are invisible in the shell. This change adds:
+The fuse shell's current `/`-dispatch is a bare `switch` with no discovery surface. Users must memorize command names; MCP tools are invisible in the shell; skills installed mid-session require a restart to appear (a known Claude Code pain point). This change adds:
 
-1. A **filterable slash-command autocomplete overlay** in the TUI — `/` triggers a list of all commands with kind tags and descriptions; typing narrows the list; arrow keys and Enter select.
-2. A **unified `SlashRegistry`** that aggregates built-ins, skills, and MCP tools from the running manager.
-3. **MCP tools as natural-language prompt expansions** — selecting a tool injects a prompt template that the agent resolves through the existing tool executor (no new execution path).
-4. A **`fuse mcps` top-level CLI** (absorbed from change 0009) for MCP server management and inspection.
+1. A **`CommandProvider` interface** — built-ins, skills, and MCP tools each implement the same source contract; the registry aggregates them uniformly.
+2. **Live skill reloading** — `fsnotify` watches the three skill dirs (`~/.fuse/skills`, `~/.claude/skills`, `~/.grok/skills`); new/changed/removed skills appear in autocomplete without restarting.
+3. **Live MCP reloading** — `fsnotify` watches `~/.fuse/config.yml`; when `fuse mcps add/remove` writes the config (from any terminal), the shell detects the change, diffs the server list, and reconnects only the delta.
+4. A **filterable slash-command autocomplete overlay** — `/` triggers a list of all commands with kind tags and descriptions; typing narrows the list; arrow keys and Enter select.
+5. **MCP tools as natural-language prompt expansions** — selecting a tool injects a prompt template the agent resolves through the existing tool executor.
+6. A **`fuse mcps` top-level CLI** (absorbed from 0009) for MCP server management.
+
+Prior art studied: Cline (source-tagged registry, separate skill/MCP load concerns), Grok-Build (unified `Namespace:tool` registry, tools as first-class entries), OpenCode (MCP as sidebar plugin — not autocomplete).
 
 ---
 
@@ -23,26 +27,30 @@ The fuse shell's current `/`-dispatch is a bare `switch` with no discovery surfa
 
 | Path | Purpose |
 |---|---|
-| `internal/tui/slash_registry.go` | `SlashEntry`, `SlashRegistry`, `NewSlashRegistry` |
+| `internal/tui/provider.go` | `CommandProvider` interface + `SlashEntry`, `SlashKind` |
+| `internal/tui/slash_registry.go` | `SlashRegistry` — aggregates providers, filters, subscription fan-out |
+| `internal/tui/builtin_provider.go` | `BuiltinProvider` — static built-in commands |
+| `internal/tui/skill_provider.go` | `SkillProvider` — wraps `*skills.Set`, fsnotify dir-watcher |
+| `internal/tui/mcp_provider.go` | `MCPProvider` — wraps `*mcp.Manager`, config-file watcher + incremental reload |
 | `internal/tui/slash_completer.go` | `slashCompleter` bubbletea sub-model (overlay, filter, cursor) |
 | `cmd/fuse/mcps.go` | `runMCPs` — routes `fuse mcps [subcommand]` |
-| `internal/config/writer.go` | `AddMCPServer` / `RemoveMCPServer` — YAML node surgery on `~/.fuse/config.yml` |
+| `internal/config/writer.go` | `AddMCPServer` / `RemoveMCPServer` — YAML node surgery |
 
 ## Modified files
 
 | Path | Change |
 |---|---|
-| `internal/mcp/manager.go` | Add `ServerStatus`, `Manager.Servers() []ServerInfo`, `Manager.Status() []ServerStatus`, stderr ring buffer |
-| `internal/tui/shell_model.go` | Replace `slash map[string]skills.Skill` with `*SlashRegistry`; wire `slashCompleter` into Update/View |
-| `cmd/fuse/shell.go` | Build `SlashRegistry` from skills + MCP manager; pass to `NewShellModel` |
+| `internal/mcp/manager.go` | `ServerStatus`, `Manager.Status()`, `Manager.Servers()`, `Manager.Reconnect()`, stderr ring buffer |
+| `internal/tui/shell_model.go` | Replace `slash map[string]skills.Skill` with `*SlashRegistry`; wire subscription loop + `registryReloadMsg` into Update/View |
+| `cmd/fuse/shell.go` | Build providers, construct `SlashRegistry`, pass to `NewShellModel` |
 | `cmd/fuse/main.go` | `case "mcps": return runMCPs(args[1:], cfg, stdout, stderr)` |
 
 ---
 
-## 1. `internal/tui/slash_registry.go` — the unified command registry
+## 1. `internal/tui/provider.go` — the provider contract
 
 ```go
-// SlashKind tags the origin of a slash command for display.
+// SlashKind identifies the source of a slash command for display.
 type SlashKind string
 
 const (
@@ -53,42 +61,89 @@ const (
 
 // SlashEntry is one item in the autocomplete list.
 type SlashEntry struct {
-    // Command is the canonical slash name, e.g. "/model", "/code-review",
-    // "/mcp:everything/echo". For built-ins with arguments the name omits the
-    // argument placeholder ("/model", not "/model NAME").
-    Command     string
-    // Syntax is the display hint shown in the list beside Command,
-    // e.g. "NAME" for /model, empty for most others.
-    Syntax      string
-    Description string
+    Command     string    // e.g. "/model", "/code-review", "/mcp:everything/echo"
+    Syntax      string    // arg hint shown beside Command, e.g. "NAME" for /model
+    Description string    // one-line description
     Kind        SlashKind
-    // Server is populated for KindMCP entries.
-    Server      string
-    // expand returns the string to inject into the shell input when this
-    // entry is selected. For built-ins and skills this is Command itself
-    // (possibly with a trailing space); for MCP tools it is a natural-language
-    // prompt template.
+    Server      string    // populated for KindMCP
     expand      func() string
 }
 
 // Expansion returns the text to inject into the shell input on selection.
 func (e SlashEntry) Expansion() string { return e.expand() }
 
-// SlashRegistry aggregates all slash-command entries from all sources.
-type SlashRegistry struct {
-    entries []SlashEntry
-}
+// CommandProvider is a live source of slash commands.
+type CommandProvider interface {
+    // Commands returns the current snapshot of entries from this source.
+    // Called on every registry refresh — must be safe for concurrent calls.
+    Commands() []SlashEntry
 
-// NewSlashRegistry builds the registry from the three sources.
-// mcpServers is a slice of (serverName, toolName, toolDescription) triples
-// read from the manager after startup.
-func NewSlashRegistry(
-    skills map[string]skills.Skill,
-    mcpTools []MCPToolInfo,
-) *SlashRegistry
+    // Changes returns a channel that receives a signal (struct{}{}) whenever
+    // the provider's command set may have changed. The registry fan-out loop
+    // listens to all provider channels and issues a registryReloadMsg on any
+    // signal. A nil channel marks a static provider (built-ins).
+    Changes() <-chan struct{}
+
+    // Close releases any background resources (file watchers, goroutines).
+    Close()
+}
 ```
 
-### Built-in entries (always registered, order preserved)
+---
+
+## 2. `internal/tui/slash_registry.go` — the aggregator
+
+```go
+type SlashRegistry struct {
+    providers []CommandProvider
+    reload    chan struct{} // unified fan-out; the shell model reads this
+}
+
+// NewSlashRegistry starts the fan-out goroutine and returns a ready registry.
+func NewSlashRegistry(providers ...CommandProvider) *SlashRegistry
+
+// All returns the current union of all providers' entries, preserving
+// provider order (built-ins first, then skills, then MCP tools).
+func (r *SlashRegistry) All() []SlashEntry
+
+// Filter returns entries whose Command or Description contains f (case-insensitive).
+// Empty f returns All().
+func (r *SlashRegistry) Filter(f string) []SlashEntry
+
+// Reload signals all providers that were flagged dirty; called by the shell
+// model on registryReloadMsg. Providers that detect no real change return the
+// same entries; the completer re-filters regardless.
+func (r *SlashRegistry) Reload()
+
+// Changes returns the unified channel — one signal covers any provider change.
+func (r *SlashRegistry) Changes() <-chan struct{}
+
+// Close stops the fan-out goroutine and closes all providers.
+func (r *SlashRegistry) Close()
+```
+
+### Fan-out goroutine
+
+```go
+// Started in NewSlashRegistry. Selects over every non-nil provider.Changes()
+// channel; on any signal, drains the channel (debounce: 50 ms window) then
+// sends once on r.reload. Stops when r.reload is closed.
+```
+
+50 ms debounce prevents a burst of fsnotify events (e.g. a skill dir copy) from flooding the UI with reloads.
+
+---
+
+## 3. `internal/tui/builtin_provider.go` — static built-ins
+
+```go
+// BuiltinProvider is a static CommandProvider. Changes() returns nil.
+type BuiltinProvider struct{}
+
+func NewBuiltinProvider() *BuiltinProvider
+```
+
+Built-in entries (in display order):
 
 | Command | Syntax | Description |
 |---|---|---|
@@ -97,172 +152,293 @@ func NewSlashRegistry(
 | `/verbose` | | Toggle verbose tool output |
 | `/model` | `NAME` | Switch model (e.g. sonnet, opus) |
 
-### Skill entries
+---
 
-One entry per skill in the `slash` map. `Description` comes from `Skill.Description`; `Command` from `Skill.SlashCommand`; `Kind = KindSkill`; `expand` returns the slash command name (the existing handler injects `sk.Body` at dispatch time).
-
-### MCP tool entries
+## 4. `internal/tui/skill_provider.go` — live skill reloading
 
 ```go
-// MCPToolInfo is the minimal tool descriptor the slash registry needs.
-// Built by cmd/fuse/shell.go from mgr.Servers() at shell startup.
+type SkillProvider struct {
+    dirs    []string      // from skills.DefaultDirs()
+    mu      sync.RWMutex
+    entries []SlashEntry
+    ch      chan struct{}
+    watcher *fsnotify.Watcher
+}
+
+func NewSkillProvider(dirs []string) (*SkillProvider, error)
+```
+
+### Startup
+
+`NewSkillProvider` loads all skills via `skills.Load(dirs)`, builds initial entries, then starts a background goroutine that:
+
+1. Calls `watcher.Add(dir)` for each directory in `dirs` that exists (missing dirs are skipped — watcher retries them on a 30-second ticker in case they are created later).
+2. Selects on `watcher.Events` and `watcher.Errors`.
+
+### Entry construction from a `skills.Skill`
+
+```go
+SlashEntry{
+    Command:     sk.SlashCommand or ("/" + sk.Name),
+    Description: sk.Description,
+    Kind:        KindSkill,
+    expand:      func() string { return entry.Command + " " },
+}
+```
+
+### Reload on fsnotify event
+
+On any `fsnotify.Event` under a watched dir: re-run `skills.Load(dirs)` in full (simple, correct — avoids incremental merge logic). Under the write lock, replace `entries`. Signal `ch`. The 50 ms debounce in the registry fan-out absorbs rapid bursts.
+
+### Missing-dir retry
+
+On a 30-second ticker: attempt `watcher.Add` for any dirs in `dirs` not yet watched. Supports installing the `~/.fuse/skills` directory (or `~/.claude/skills`) after the shell starts.
+
+---
+
+## 5. `internal/tui/mcp_provider.go` — live MCP reloading
+
+```go
+type MCPProvider struct {
+    configPath string        // resolved ~/.fuse/config.yml
+    toolReg    *tools.Registry
+    mu         sync.RWMutex
+    entries    []SlashEntry
+    mgr        *mcp.Manager  // current manager; replaced on reload
+    servers    []ServerInfo  // last-known server list from mgr.Servers()
+    ch         chan struct{}
+    watcher    *fsnotify.Watcher
+}
+
+func NewMCPProvider(configPath string, cfg config.Config, toolReg *tools.Registry) (*MCPProvider, error)
+```
+
+### Startup
+
+`NewMCPProvider` constructs the initial `mcp.Manager` (same path as today's `buildSessionRegistry`), builds initial entries from `mgr.Servers()`, then watches `configPath` for changes.
+
+### Config-file change → incremental reconnect
+
+On `fsnotify.Write` on `configPath`:
+
+1. Re-parse `config.Config` from disk.
+2. Diff `cfg.MCPServers` against `p.servers` by `Name`:
+   - **Added** servers: call `mcp.StartAndDiscover(srv, toolReg)` to connect and register tools; append to manager.
+   - **Removed** servers: call `mgr.Stop(name)` to terminate the connection and deregister its tools.
+   - **Unchanged** servers: no action.
+3. Update `p.servers`, rebuild `p.entries` from `mgr.Servers()`.
+4. Signal `p.ch`.
+
+Debounce: 200 ms (config writes are larger than skill-file events; give the writer time to flush).
+
+### Entry construction from a `ServerInfo` / tool
+
+```go
+SlashEntry{
+    Command:     "/mcp:" + srv.Name + "/" + tool.Name,
+    Description: tool.Description,
+    Kind:        KindMCP,
+    Server:      srv.Name,
+    expand: func() string {
+        return fmt.Sprintf(
+            "Use the %s tool from the %s MCP server. %s Arguments: ",
+            tool.Name, srv.Name, tool.Description,
+        )
+    },
+}
+```
+
+---
+
+## 6. `internal/mcp/manager.go` additions (absorbed from 0009)
+
+### `ServerInfo` and `Manager.Servers()`
+
+Used by `MCPProvider` to build slash entries and diff on reload.
+
+```go
 type MCPToolInfo struct {
-    Server      string // e.g. "everything"
-    Tool        string // e.g. "echo"
+    Name        string
     Description string
 }
-```
 
-`Command` = `"/mcp:" + server + "/" + tool` (matches `MCPTool.Name()`'s existing format).
-`Kind = KindMCP`. `expand` returns:
-
-```
-Use the [tool] tool from the [server] MCP server. [description] Arguments: 
-```
-
-(Trailing space so the user can continue typing arguments immediately.)
-
-### Filtering
-
-```go
-// Filter returns entries whose Command contains the filter string (case-insensitive).
-// An empty filter returns all entries.
-func (r *SlashRegistry) Filter(f string) []SlashEntry
-```
-
----
-
-## 2. `internal/tui/slash_completer.go` — the overlay sub-model
-
-`slashCompleter` is a plain struct (not a `tea.Model` itself — it is driven by `ShellModel.Update`). It holds:
-
-```go
-type slashCompleter struct {
-    reg     *SlashRegistry
-    filter  string      // everything after the leading "/"
-    visible []SlashEntry
-    cursor  int
-    active  bool
-}
-```
-
-### Activation rules (in `ShellModel.Update`)
-
-- `active` becomes `true` when the input value starts with exactly `"/"` (one character) and the cursor is at position 0 or 1.
-- `active` becomes `false` on `Esc`, on Enter (after selection), or when the input no longer starts with `"/"`.
-- While `active`, every `KeyMsg` that would normally update the text input instead:
-  - `Up` / `Down`: move `cursor`, clamped to `[0, len(visible)-1]`.
-  - `Enter`: call `selected()` (see below), dismiss, and submit the expansion as the shell prompt.
-  - `Esc`: dismiss, clear the input.
-  - Any other printable key: pass through to the text input AND re-filter (`filter = input[1:]`).
-
-### `selected()` — expansion
-
-On Enter:
-1. If the entry `Kind == KindBuiltin` or `KindSkill`: inject `entry.Expansion()` into the input, close the completer, and let the existing `handleSlash` logic handle dispatch on submit.
-2. If `Kind == KindMCP`: inject `entry.Expansion()` (the natural-language template) into the input, position the cursor after "Arguments: ", close the completer. The user completes the sentence and submits — the agent dispatches via the existing tool executor.
-
-### Rendering (`View` fragment)
-
-Rendered below the text input field using `lipgloss`. Maximum visible rows: 8 (scroll if more). Each row:
-
-```
-  ▸ /echo          [mcp:everything]   Echoes back any string
-    /get-sum        [mcp:everything]   Returns the sum of two numbers
-    /code-review    [skill]            Review code for correctness
-    /model          [builtin]  NAME    Switch model
-```
-
-- Selected row highlighted with the shell's accent color.
-- `[kind:server]` or `[kind]` tag right-aligned within a fixed-width column.
-- Description truncated to terminal width minus fixed columns.
-- Rows beyond 8 are hidden; "↓ N more" appears at the bottom when scrolled.
-
----
-
-## 3. `internal/mcp/manager.go` — Status API + log capture (absorbed from 0009)
-
-### `ServerStatus` and `Manager.Status()`
-
-```go
-type ServerStatus struct {
-    Name      string
-    Transport string   // "stdio" | "http"
-    AuthType  string   // "none" | "bearer" | "oauth2"
-    Connected bool
-    Error     string   // non-empty when Connected == false
-    Tools     []string // tool names registered; nil if not yet connected
-    PID       int      // stdio only; 0 if not running
-    TokenFile string   // oauth2 only; resolved path
-    LogLines  []string // last N stderr lines (stdio only)
-}
-
-func (m *Manager) Status() []ServerStatus
-```
-
-### `Manager.Servers() []ServerInfo`
-
-Used by `cmd/fuse/shell.go` to populate the slash registry at startup:
-
-```go
 type ServerInfo struct {
-    Name  string
-    Tools []MCPToolInfo
+    Name      string
+    Transport string
+    AuthType  string
+    Tools     []MCPToolInfo
 }
 
 func (m *Manager) Servers() []ServerInfo
 ```
 
-Built during `startAndDiscover`: store the `(serverName, toolName, description)` triples alongside the registered `*MCPTool` list.
+### `Manager.Stop(name string) error`
+
+Terminates the connection to the named server and deregisters its tools from the tool registry. No-op if the server is not running.
+
+### `ServerStatus` and `Manager.Status()` (for `fuse mcps` CLI)
+
+```go
+type ServerStatus struct {
+    Name      string
+    Transport string
+    AuthType  string
+    Connected bool
+    Error     string
+    Tools     []string
+    PID       int      // stdio only
+    TokenFile string   // oauth2 only
+    LogLines  []string // last N stderr lines, stdio only
+}
+
+func (m *Manager) Status() []ServerStatus
+```
 
 ### Stderr ring buffer
 
-Each stdio server's stderr is captured into a per-server `[]string` ring buffer (cap 200 lines, configurable via `FUSE_MCP_LOG_LINES` env). `cmd.Stderr` is wired to a `lineCapture` writer that appends under a mutex, discarding oldest lines when full.
+Each stdio server's stderr → per-server `[]string` ring (cap 200 lines, `FUSE_MCP_LOG_LINES` env override). `cmd.Stderr` wired to a `lineCapture` writer under a mutex; oldest lines discarded when full.
 
 ---
 
-## 4. `internal/config/writer.go` — Additive YAML writes (absorbed from 0009)
+## 7. `internal/tui/slash_completer.go` — the overlay sub-model
 
-Config writes target `~/.fuse/config.yml` only (never the local override). Strategy: **YAML node surgery** — unmarshal to `*yaml.Node`, locate or create the `mcp_servers` sequence node, append/replace/delete the target entry, re-marshal preserving all other keys and comments.
+`slashCompleter` is a plain struct driven by `ShellModel.Update` (not a `tea.Model` itself).
 
 ```go
-// AddMCPServer appends or replaces the server with cfg.Name in ~/.fuse/config.yml.
-// Creates the file if absent. Changes take effect on next fuse startup.
+type slashCompleter struct {
+    reg     *SlashRegistry
+    filter  string
+    visible []SlashEntry
+    cursor  int
+    active  bool
+    offset  int   // scroll offset for >8 items
+}
+```
+
+### Activation rules
+
+- `active = true` when input value starts with `"/"` (one or more chars).
+- `active = false` on Esc, on Enter (after selection), or when input no longer starts with `"/"`.
+- On `registryReloadMsg`: call `c.refresh()` — re-filter from current `reg.All()`.
+
+### Key handling while active
+
+| Key | Action |
+|---|---|
+| `Up` | move cursor up (wraps; scrolls offset) |
+| `Down` | move cursor down (wraps; scrolls offset) |
+| `Enter` | inject `selected().Expansion()` into input; close completer; submit if KindMCP (expansion is a complete prompt), else leave in input for editing |
+| `Esc` | dismiss; clear input |
+| printable | pass to text input AND re-filter (`filter = input[1:]`) |
+
+**Enter semantics by kind:**
+- `KindBuiltin` / `KindSkill`: inject the command into the input field; the existing `handleSlash` dispatch runs on submit.
+- `KindMCP`: inject the full expansion template into the input field, position cursor after `"Arguments: "`, leave for the user to complete before submitting.
+
+### Rendering
+
+```
+  ▸ /echo           [mcp:everything]  Echoes back any string
+    /get-sum         [mcp:everything]  Returns the sum of two numbers
+    /code-review     [skill]           Review code for correctness
+    /model    NAME   [builtin]         Switch model
+    ↓ 3 more
+```
+
+- Max 8 rows visible; `↓ N more` / `↑ N more` scroll indicators.
+- Selected row highlighted with accent color (lipgloss).
+- Kind tag right-aligned in a fixed 18-char column. Server name included for MCP: `[mcp:everything]`.
+- Description truncated to terminal width minus fixed columns.
+
+---
+
+## 8. `internal/tui/shell_model.go` — subscription loop
+
+### `registryReloadMsg`
+
+```go
+type registryReloadMsg struct{}
+```
+
+### Subscription tea.Cmd
+
+```go
+func waitForRegistryReload(ch <-chan struct{}) tea.Cmd {
+    return func() tea.Msg {
+        <-ch
+        return registryReloadMsg{}
+    }
+}
+```
+
+Returned in `Init()` and re-armed in every `Update` that handles `registryReloadMsg` — the standard bubbletea long-running subscription pattern (mirrors the existing `waitForMsg(m.ch)` pattern for agent output).
+
+### `NewShellModel` signature change
+
+```go
+// Before:  slash map[string]skills.Skill
+// After:   reg *SlashRegistry
+func NewShellModel(alias string, verbose bool, glamourStyle string,
+    reg *model.Registry, slashReg *SlashRegistry, build AgentBuilder) ShellModel
+```
+
+### `handleSlash` update
+
+Skills and built-ins continue to dispatch via the existing `switch` + skill-body injection. The `slash map[string]skills.Skill` field is replaced by `slashReg *SlashRegistry`; `handleSlash` calls `slashReg.Filter(cmd)` to resolve the entry, then dispatches by `Kind`.
+
+---
+
+## 9. `cmd/fuse/shell.go` — wiring
+
+```go
+builtins := tui.NewBuiltinProvider()
+
+skillProv, err := tui.NewSkillProvider(skills.DefaultDirs())
+if err != nil { /* non-fatal: log and continue with empty skills */ }
+
+mcpProv, err := tui.NewMCPProvider(config.Path(), cfg, toolReg)
+if err != nil { /* non-fatal: log and continue with no MCP entries */ }
+
+slashReg := tui.NewSlashRegistry(builtins, skillProv, mcpProv)
+defer slashReg.Close()
+
+m := tui.NewShellModel(alias, verbose, glamourStyle, modelReg, slashReg, build)
+```
+
+`buildSessionRegistry` no longer needs to return `mcpMgr` separately — `MCPProvider` owns the manager lifecycle. If other callers need the manager (e.g. a future `/status` command), expose it via `mcpProv.Manager()`.
+
+---
+
+## 10. `internal/config/writer.go` — YAML node surgery (absorbed from 0009)
+
+```go
+// AddMCPServer appends or replaces the named server in ~/.fuse/config.yml.
+// The fsnotify watcher on the running shell detects the file change and
+// reconnects within ~200 ms.
 func AddMCPServer(cfg config.MCPServerConfig) error
 
-// RemoveMCPServer removes the server named name from ~/.fuse/config.yml.
-// No-op (no error) if the name is not present.
+// RemoveMCPServer removes the named server from ~/.fuse/config.yml.
+// No-op if the name is not present.
 func RemoveMCPServer(name string) error
 ```
 
+Auth flags for `fuse mcps add`: `--auth none|bearer|oauth2`, `--token TOKEN`, `--client-id ID --client-secret SECRET [--scopes S1,S2]`.
+
 ---
 
-## 5. `cmd/fuse/mcps.go` — subcommand routing (absorbed from 0009)
+## 11. `cmd/fuse/mcps.go` — subcommand routing (absorbed from 0009)
 
 ```
-fuse mcps                        → list (static, from config)
-fuse mcps list [--live]          → static list; --live dials fresh connections
-fuse mcps add  --name N --transport stdio --command "CMD ARGS"
-               --transport http  --url URL [--auth none|bearer|oauth2] [auth flags]
+fuse mcps                    → list (static, from config)
+fuse mcps list [--live]      → static; --live dials fresh connections
+fuse mcps add  --name N --transport stdio --command "CMD" [auth flags]
+               --transport http --url URL [auth flags]
 fuse mcps remove NAME
-fuse mcps tools [NAME]           → list tools per server (requires live manager or --live)
-fuse mcps logs  [NAME]           → last N stderr lines (stdio servers only)
+fuse mcps tools [NAME]       → list tools per server
+fuse mcps logs  [NAME]       → last N stderr lines (stdio only)
 ```
 
-Auth flags for `add`: `--token TOKEN` (bearer), `--client-id ID --client-secret SECRET [--scopes S1,S2]` (oauth2).
-
-### `fuse mcps` / `fuse mcps list` (static output)
-
-```
-NAME           TRANSPORT  AUTH
-filesystem     stdio      none
-brave-search   http       bearer
-```
-
-### `fuse mcps list --live`
-
-Dials each server, calls `tools/list`, closes. Adds STATUS and TOOLS columns. OAuth2 with no cached token shows `no-token`; failed servers show `error` with one-line reason.
-
+`--live` list output:
 ```
 NAME           TRANSPORT  AUTH    STATUS    TOOLS
 filesystem     stdio      none    ok        3
@@ -272,26 +448,19 @@ broken         stdio      none    error     -
 
 ---
 
-## 6. `cmd/fuse/shell.go` — wiring
+## New dependency
 
-```go
-// After buildSessionRegistry returns mgr:
-infos := mgr.Servers()
-var mcpTools []tui.MCPToolInfo
-for _, srv := range infos {
-    mcpTools = append(mcpTools, srv.Tools...)
-}
-reg := tui.NewSlashRegistry(set.SlashCommands(), mcpTools)
-m := tui.NewShellModel(alias, verbose, glamourStyle, modelReg, reg, build)
-```
-
-`NewShellModel` signature changes: `slash map[string]skills.Skill` → `reg *SlashRegistry`.
+`github.com/fsnotify/fsnotify` — file-system event watcher (BSD-2-Clause). Used by both `SkillProvider` and `MCPProvider`. Already used in the Go ecosystem by Viper, Air, etc.
 
 ---
 
+## Out of scope
+
+- Structured argument forms for MCP tool arguments (natural-language expansion only).
+- In-shell MCP management as slash commands — `fuse mcps` is the CLI path.
+- Watching the config file for non-MCP changes (model list, auth config, etc.).
+- Skill dir watching triggers full reload, not incremental merge — simple and correct for the expected low churn rate.
+
 ## Open questions
 
-- **Empty manager**: when no MCP servers are configured, `mgr.Servers()` returns nil — the registry contains only built-ins and skills. No special handling needed.
-- **Failed servers at startup**: already skipped by `NewManager`'s existing warning-and-continue logic. Their tools simply do not appear in the registry.
-- **`/mcps` shell built-in**: dropped. The autocomplete list surfaces MCP tool availability; `fuse mcps` (CLI) handles management. No in-shell management command needed.
-- **MCP tools with argument schemas**: the expansion template is always natural-language ("Arguments: "); structured arg forms are out of scope.
+None — design fully specified above.
