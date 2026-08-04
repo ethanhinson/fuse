@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0008 — MCP Integration Test Harness (Docker Compose + Playwright)](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0008-mcp-integration-test-harness.md)**
+> ↩ **[Change 0008 — MCP Integration Test Harness (Docker Compose + Playwright)](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-04-0008-mcp-integration-test-harness.md)**
 <!-- docket:backlink:end -->
 
 # MCP Integration Test Harness
