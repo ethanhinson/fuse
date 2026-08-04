@@ -1,3 +1,7 @@
+<!-- docket:backlink:start (generated — do not hand-edit) -->
+> ↩ **[Change 0001 — Fuse — Multi-Model Agent Harness](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0001-fuse.md)**
+<!-- docket:backlink:end -->
+
 # Fuse — Multi-Model Agent Harness (Phase 1) — results
 
 Change: #0001 · Branch: feat/fuse · PR: <set on open> · Plan: docs/superpowers/plans/2026-08-04-fuse-phase1.md · ADRs: none
