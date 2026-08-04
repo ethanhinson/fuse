@@ -1,6 +1,13 @@
 # Backlog
 
-**7 changes** — 🟡 2 proposed · ✅ 3 done
+**7 changes** — 🟢 2 in progress · 🟡 2 proposed · ✅ 3 done
+
+## 🟢 In progress (2)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0004](active/0004-skill-runtime.md) | Skill Runtime | `high` | `feat` | [spec](../superpowers/specs/0004-skill-runtime.md) | `feat/skill-runtime` |
+| [0007](active/0007-mcp-http-oauth.md) | Remote MCP Servers via HTTP/SSE Transport + OAuth 2.0 | `high` | `feat` | [spec](../) | `feat/mcp-http-oauth` |
 
 ## 🟡 Proposed (2)
 
@@ -11,9 +18,12 @@
 
 ```mermaid
 graph TD
+  0002 --> 0004
   0002 --> 0005
   0002 --> 0006
+  0003 --> 0007
   0002:::done
+  0003:::done
   classDef done fill:#d3f9d8;
 ```
 
