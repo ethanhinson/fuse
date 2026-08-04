@@ -2,7 +2,7 @@
 id: 6
 slug: tui-markdown-rendering
 title: Terminal Markdown Rendering
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-04
@@ -14,8 +14,8 @@ adrs: []
 spec: docs/superpowers/specs/0006-tui-markdown-rendering.md
 trivial: false
 auto_groomable: false
-branch:
-claimed_at:
+branch: feat/tui-markdown-rendering
+claimed_at: 2026-08-04T07:27:33Z
 pr:
 blocked_by:
 reconciled: false
