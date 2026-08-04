@@ -21,7 +21,7 @@ const (
 // Manager spawns configured MCP server processes, discovers their tools, and
 // registers them into the provided tool registry.
 type Manager struct {
-	clients []*StdioClient
+	clients []mcpConn
 }
 
 // NewManager starts all configured MCP servers and registers their tools.
@@ -51,14 +51,33 @@ func (m *Manager) Close() {
 }
 
 // startAndDiscover spawns one server and returns its discovered MCPTools.
-func startAndDiscover(srv config.MCPServerConfig) (*StdioClient, []*MCPTool, error) {
-	env := buildEnv(srv.Env)
+func startAndDiscover(srv config.MCPServerConfig) (mcpConn, []*MCPTool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), startTimeout+discoverTimeout)
 	defer cancel()
 
-	client, err := newStdioClient(srv.Name, srv.Command, env)
-	if err != nil {
-		return nil, nil, err
+	var client mcpConn
+	var err error
+
+	switch srv.Transport {
+	case "http", "sse":
+		if srv.URL == "" {
+			return nil, nil, fmt.Errorf("mcp server %q: transport %q requires a url", srv.Name, srv.Transport)
+		}
+		token, authErr := GetAccessToken(srv.Name, srv.URL, srv.Auth)
+		if authErr != nil {
+			return nil, nil, fmt.Errorf("mcp server %q: auth: %w", srv.Name, authErr)
+		}
+		client, err = newHTTPClient(srv.Name, srv.URL, token)
+		if err != nil {
+			return nil, nil, err
+		}
+	default:
+		// "stdio" or "" — existing behavior.
+		env := buildEnv(srv.Env)
+		client, err = newStdioClient(srv.Name, srv.Command, env)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	discCtx, discCancel := context.WithTimeout(ctx, discoverTimeout)

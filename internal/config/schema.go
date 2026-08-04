@@ -33,12 +33,23 @@ type PermissionsConfig struct {
 	Disabled     []string `yaml:"disabled"`      // tool names fully disabled (Enabled: false)
 }
 
+// MCPAuthConfig holds authentication settings for an HTTP MCP server.
+type MCPAuthConfig struct {
+	Type         string   `yaml:"type"`          // none | bearer | oauth2
+	ClientID     string   `yaml:"client_id"`     // optional; absent = dynamic registration
+	ClientSecret string   `yaml:"client_secret"` // optional; used as bearer token for type=bearer
+	Scopes       []string `yaml:"scopes"`
+	TokenFile    string   `yaml:"token_file"` // optional; default ~/.fuse/mcp-tokens/<name>.json
+}
+
 // MCPServerConfig describes a single MCP server to spawn.
 type MCPServerConfig struct {
 	Name      string            `yaml:"name"`
-	Transport string            `yaml:"transport"` // stdio only in phase 1
-	Command   []string          `yaml:"command"`
+	Transport string            `yaml:"transport"` // stdio | http
+	Command   []string          `yaml:"command"`   // stdio only
+	URL       string            `yaml:"url"`       // http only
 	Env       map[string]string `yaml:"env"`
+	Auth      MCPAuthConfig     `yaml:"auth"` // http only
 }
 
 // Config is the fully resolved fuse configuration.
