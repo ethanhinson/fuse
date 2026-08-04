@@ -375,9 +375,9 @@ func (m *ShellModel) appendLine(s string) {
 // appendResultLines renders a tool result indented under the previous bullet.
 // For file-reading tools it adds a line-number gutter:
 //
-//	  └  1 │ package main
-//	     2 │
-//	     3 │ import …
+//	  └ 1 │ package main
+//	    2 │
+//	    3 │ import …
 //
 // All other results use the plain prefix form:
 //
@@ -394,15 +394,15 @@ func (m *ShellModel) appendResultLines(out string, isError bool, toolName string
 			if isError {
 				rendered = "  " + errorArrowStyle.Render("✗") + " " + errorTextStyle.Render(l)
 			} else if useGutter {
-				g := gutterStyle.Render(fmt.Sprintf("%*d", gutterW, i+1)) + gutterStyle.Render(" │ ")
+				g := gutterStyle.Render(fmt.Sprintf("%*d │ ", gutterW, i+1))
 				rendered = resultPrefixStyle.Render("  └") + " " + g + l
 			} else {
 				rendered = resultPrefixStyle.Render("  └") + " " + l
 			}
 		} else {
 			if useGutter {
-				g := gutterStyle.Render(fmt.Sprintf("%*d", gutterW, i+1)) + gutterStyle.Render(" │ ")
-				rendered = "     " + g + l
+				g := gutterStyle.Render(fmt.Sprintf("%*d │ ", gutterW, i+1))
+				rendered = "    " + g + l
 			} else {
 				rendered = "    " + l
 			}
