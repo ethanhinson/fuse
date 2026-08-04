@@ -196,7 +196,10 @@ func TestToolCallTruncation(t *testing.T) {
 
 func TestToolResultErrorPrefix(t *testing.T) {
 	m := sized(NewShellModel("alpha", true, testRegistry(), nil, nilBuilder))
-	next, _ := m.Update(ToolResultMsg{Name: "bash", IsError: true, Output: "boom"})
+	// Send a ToolCallMsg first so pendingCall is set before the result arrives.
+	next, _ := m.Update(ToolCallMsg{Name: "bash", Args: "x"})
+	m = next.(ShellModel)
+	next, _ = m.Update(ToolResultMsg{Name: "bash", IsError: true, Output: "boom"})
 	m = next.(ShellModel)
 	if !strings.Contains(strings.Join(m.lines, "\n"), "✗ boom") {
 		t.Error("expected error-prefixed tool result")

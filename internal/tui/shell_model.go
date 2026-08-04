@@ -145,6 +145,10 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.verbose {
 			args = truncate(args, previewLimit)
 		}
+		// Blank line before each bullet for visual breathing room.
+		if len(m.lines) > 0 {
+			m.lines = append(m.lines, "")
+		}
 		// Store the call text as pending; it's rendered with the live spinner
 		// frame in refreshViewport until the result arrives.
 		m.pendingCall = toolNameStyle.Render(msg.Name) + toolArgsStyle.Render("("+args+")")
@@ -161,7 +165,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.verbose {
 			out = truncate(out, previewLimit)
 		}
-		m.appendResultLines(out, msg.IsError)
+		m.appendResultLines(out, msg.IsError, msg.Name)
 		return m, waitForMsg(m.ch)
 
 	case AgentErrMsg:
@@ -313,27 +317,51 @@ func (m *ShellModel) appendLine(s string) {
 	m.refreshViewport(atBottom)
 }
 
-// appendResultLines renders a tool result indented under the previous bullet:
+// appendResultLines renders a tool result indented under the previous bullet.
+// For file-reading tools it adds a line-number gutter:
+//
+//	  └  1 │ package main
+//	     2 │
+//	     3 │ import …
+//
+// All other results use the plain prefix form:
 //
 //	  └ first line
 //	    subsequent lines…
-func (m *ShellModel) appendResultLines(out string, isError bool) {
+func (m *ShellModel) appendResultLines(out string, isError bool, toolName string) {
 	atBottom := !m.ready || m.vp.AtBottom()
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	useGutter := !isError && isFileReadTool(toolName) && len(lines) > 1
+	gutterW := len(fmt.Sprintf("%d", len(lines))) // digits needed for widest line number
 	for i, l := range lines {
 		var rendered string
 		if i == 0 {
 			if isError {
 				rendered = "  " + errorArrowStyle.Render("✗") + " " + errorTextStyle.Render(l)
+			} else if useGutter {
+				g := gutterStyle.Render(fmt.Sprintf("%*d", gutterW, i+1)) + gutterStyle.Render(" │ ")
+				rendered = resultPrefixStyle.Render("  └") + " " + g + l
 			} else {
 				rendered = resultPrefixStyle.Render("  └") + " " + l
 			}
 		} else {
-			rendered = "    " + l
+			if useGutter {
+				g := gutterStyle.Render(fmt.Sprintf("%*d", gutterW, i+1)) + gutterStyle.Render(" │ ")
+				rendered = "     " + g + l
+			} else {
+				rendered = "    " + l
+			}
 		}
 		m.lines = append(m.lines, rendered)
 	}
 	m.refreshViewport(atBottom)
+}
+
+// isFileReadTool returns true for tools whose output is file content and
+// therefore benefits from a line-number gutter.
+func isFileReadTool(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.Contains(lower, "read") || lower == "view" || strings.Contains(lower, "file")
 }
 
 // tick fires once per second while the agent is running, driving the elapsed

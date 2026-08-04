@@ -39,4 +39,7 @@ var (
 
 	// Transcript — assistant prose
 	assistantStyle = lipgloss.NewStyle().Foreground(colNormal)
+
+	// Transcript — file-content gutter (line numbers + │ bar)
+	gutterStyle = lipgloss.NewStyle().Foreground(colMuted)
 )
