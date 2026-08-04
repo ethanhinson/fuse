@@ -2,7 +2,7 @@
 id: 5
 slug: tui-gutter-indent-fix
 title: Fix file-read gutter indentation in TUI
-status: in-progress
+status: implemented
 priority: medium
 type: fix
 created: 2026-08-04
@@ -16,7 +16,7 @@ trivial: true
 auto_groomable: false
 branch: feat/tui-gutter-indent-fix
 claimed_at: 2026-08-04T07:24:12Z
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/6
 blocked_by:
 reconciled: false
 ---
