@@ -49,8 +49,9 @@ func defaultToolRegistry() *tools.Registry {
 }
 
 // buildAgent resolves a model alias and constructs a ready-to-run Agent along
-// with the resolved gateway model id.
-func buildAgent(cfg config.Config, reg *model.Registry, alias string, out io.Writer, verbose bool, systemPrompt string) (*agent.Agent, string, error) {
+// with the resolved gateway model id. The persona system prompt is always
+// prepended; extra is appended (e.g. a skill listing block from shell mode).
+func buildAgent(cfg config.Config, reg *model.Registry, alias string, out io.Writer, verbose bool, extra string) (*agent.Agent, string, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
@@ -65,6 +66,7 @@ func buildAgent(cfg config.Config, reg *model.Registry, alias string, out io.Wri
 	if maxTokens == 0 {
 		maxTokens = cfg.MaxTokens
 	}
+	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, extra)
 	a := agent.New(adapter, toolReg, renderer, mc.ID, systemPrompt, cfg.MaxTurns, maxTokens)
 	return a, mc.ID, nil
 }
