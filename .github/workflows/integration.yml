@@ -25,10 +25,13 @@ jobs:
             local url="$1"
             for i in $(seq 1 90); do
               # --max-time 3: prevents curl from hanging on SSE/streaming
-              # endpoints that never close. Accept any 2xx-4xx; "000" means
-              # the server isn't up yet.
-              code=$(curl -s --max-time 3 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
-              if [[ "${code}" -ge 200 && "${code}" -lt 500 ]]; then
+              # endpoints that never close the connection.
+              # "; true" suppresses set -e on curl's timeout exit (28) while
+              # preserving the HTTP status code curl writes to stdout before
+              # timing out — so SSE endpoints that return 200 headers but
+              # stream forever are correctly detected as ready.
+              code=$(curl -s --max-time 3 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null; true)
+              if [[ "${code}" -ge 200 && "${code}" -lt 500 ]] 2>/dev/null; then
                 echo "ready: $url (HTTP ${code})"
                 return 0
               fi
