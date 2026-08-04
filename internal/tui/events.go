@@ -4,6 +4,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/permissions"
 )
 
 // Message types carrying agent output from the agent goroutine back into the
@@ -35,6 +36,19 @@ type TokensMsg struct {
 	Output int
 }
 
+// PermissionRequestMsg is sent by the PermissionGate when a tool call needs
+// user approval. RespCh receives exactly one ApprovalResponse.
+type PermissionRequestMsg struct {
+	Request permissions.ApprovalRequest
+	RespCh  chan<- approvalResponse
+}
+
+// approvalResponse carries the user's decision back to the gate goroutine.
+type approvalResponse struct {
+	Approved       bool
+	AllowForSession bool
+}
+
 // tickMsg is emitted by the per-second timer while the agent is running.
 type tickMsg struct{}
 
@@ -46,5 +60,6 @@ var _ = []tea.Msg{
 	AgentErrMsg{},
 	AgentDoneMsg{},
 	TokensMsg{},
+	PermissionRequestMsg{},
 	tickMsg{},
 }

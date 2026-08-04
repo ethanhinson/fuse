@@ -7,7 +7,9 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tui"
 )
@@ -36,7 +38,7 @@ func mergeEntry(reg *model.Registry, alias string, mc model.ModelConfig) *model.
 	return model.NewRegistry(reg.Default, entries)
 }
 
-// defaultToolRegistry builds the full Phase 1 tool registry.
+// defaultToolRegistry builds the full built-in tool registry.
 func defaultToolRegistry() *tools.Registry {
 	r := tools.NewRegistry()
 	for _, t := range tools.DefaultTools() {
@@ -48,33 +50,46 @@ func defaultToolRegistry() *tools.Registry {
 	return r
 }
 
+// buildSessionRegistry builds a tool registry for a session, starting MCP
+// servers if configured. The caller is responsible for calling mgr.Close().
+func buildSessionRegistry(cfg config.Config) (*tools.Registry, *mcp.Manager, error) {
+	toolReg := defaultToolRegistry()
+	mgr, err := mcp.NewManager(cfg.MCPServers, toolReg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return toolReg, mgr, nil
+}
+
 // buildAgent resolves a model alias and constructs a ready-to-run Agent along
 // with the resolved gateway model id. The persona system prompt is always
 // prepended; extra is appended (e.g. a skill listing block from shell mode).
+// One-shot mode: always uses AlwaysApprove (no interactive user available).
 func buildAgent(cfg config.Config, reg *model.Registry, alias string, out io.Writer, verbose bool, extra string, traceW io.Writer) (*agent.Agent, string, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
-	return buildAgentCore(cfg, reg, alias, tui.NewRenderer(out, verbose), extra, traceW)
+	toolReg := defaultToolRegistry()
+	// MCP servers started inline for one-shot; we accept leaking them since the
+	// process exits immediately after.
+	_, _ = mcp.NewManager(cfg.MCPServers, toolReg)
+	return buildAgentCore(cfg, reg, alias, tui.NewRenderer(out, verbose), extra, traceW, toolReg, permissions.AlwaysApprove)
 }
 
 // buildAgentWithRenderer builds an agent that renders through r (used by the
-// bubbletea shell, which injects a TeaRenderer). verbose is unused here because
-// the injected renderer owns its own verbosity; it is accepted to keep the
-// call site symmetric with buildAgent and document intent.
-func buildAgentWithRenderer(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string) (*agent.Agent, error) {
+// bubbletea shell, which injects a TeaRenderer).
+func buildAgentWithRenderer(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
 	_ = verbose
-	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, nil)
+	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, nil, toolReg, approve)
 	return a, err
 }
 
 // buildAgentCore resolves alias and constructs an Agent bound to renderer r,
-// returning the resolved gateway model id. The persona system prompt is always
-// prepended; extra is appended (e.g. a skill listing block from shell mode).
-func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer) (*agent.Agent, string, error) {
+// returning the resolved gateway model id.
+func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, toolReg *tools.Registry, approve permissions.ApprovalFunc) (*agent.Agent, string, error) {
 	mc, err := reg.Resolve(alias)
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
@@ -83,12 +98,12 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	if traceW != nil {
 		adapter = adapter.WithTrace(traceW)
 	}
-	toolReg := defaultToolRegistry()
+	gate := permissions.New(cfg.Permissions, toolReg, approve)
 	maxTokens := mc.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = cfg.MaxTokens
 	}
 	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
-	a := agent.New(adapter, toolReg, r, mc.ID, systemPrompt, cfg.MaxTurns, maxTokens)
+	a := agent.New(adapter, gate, r, mc.ID, systemPrompt, cfg.MaxTurns, maxTokens)
 	return a, mc.ID, nil
 }

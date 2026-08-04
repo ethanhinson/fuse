@@ -42,4 +42,13 @@ var (
 
 	// Transcript — file-content gutter (line numbers + │ bar)
 	gutterStyle = lipgloss.NewStyle().Foreground(colMuted)
+
+	// Permission approval block
+	approvalBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(colAmber).
+				Padding(0, 1).
+				MarginTop(1)
+	approvalHeaderStyle = lipgloss.NewStyle().Foreground(colAmber).Bold(true)
+	approvalKeysStyle   = lipgloss.NewStyle().Foreground(colMuted)
 )

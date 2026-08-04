@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -40,3 +42,22 @@ func (r *TeaRenderer) Tokens(input, output int) {
 
 // TeaRenderer satisfies the agent.Renderer interface.
 var _ agent.Renderer = (*TeaRenderer)(nil)
+
+// NewTeaApprovalFunc returns a permissions.ApprovalFunc that sends a
+// PermissionRequestMsg to ch and blocks until the TUI responds.
+func NewTeaApprovalFunc(ch chan<- tea.Msg) permissions.ApprovalFunc {
+	return func(ctx context.Context, req permissions.ApprovalRequest) (bool, bool, error) {
+		respCh := make(chan approvalResponse, 1)
+		select {
+		case ch <- PermissionRequestMsg{Request: req, RespCh: respCh}:
+		case <-ctx.Done():
+			return false, false, ctx.Err()
+		}
+		select {
+		case resp := <-respCh:
+			return resp.Approved, resp.AllowForSession, nil
+		case <-ctx.Done():
+			return false, false, ctx.Err()
+		}
+	}
+}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/skills"
 )
 
@@ -22,9 +23,17 @@ import (
 const chromeHeight = 3
 
 // AgentBuilder constructs an agent that renders through the given Renderer.
+// approve is the HITL gate function for the current turn.
 // cmd/fuse injects its buildAgent via this signature so the model stays
 // decoupled from gateway/config wiring and is testable with a stub.
-type AgentBuilder func(alias string, r agent.Renderer) (*agent.Agent, error)
+type AgentBuilder func(alias string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error)
+
+// approvalState holds the in-flight permission request and the channel to
+// send the user's decision back to the waiting gate goroutine.
+type approvalState struct {
+	req    PermissionRequestMsg
+	render string // pre-rendered approval block text
+}
 
 // ShellModel is the bubbletea model backing `fuse shell`: a scrollable
 // transcript viewport above a single-line input prompt, driven by agent
@@ -45,8 +54,9 @@ type ShellModel struct {
 	inputTokens  int
 	outputTokens int
 
-	ch      chan tea.Msg
-	history []model.Message
+	ch       chan tea.Msg
+	history  []model.Message
+	approval *approvalState // non-nil while waiting for user's y/s/n
 
 	reg   *model.Registry
 	slash map[string]skills.Skill
@@ -181,8 +191,20 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingCall = ""
 		m.history = msg.History
 		m.running = false
+		m.approval = nil
 		m.input.Focus()
 		m.refreshViewport(m.vp.AtBottom())
+		return m, waitForMsg(m.ch)
+
+	case PermissionRequestMsg:
+		// Settle any pending spinner line before showing the block.
+		if m.pendingCall != "" {
+			m.lines = append(m.lines, toolBulletStyle.Render("●")+" "+m.pendingCall)
+			m.pendingCall = ""
+		}
+		block := renderApprovalBlock(msg.Request.ToolName, msg.Request.Preview)
+		m.appendLine(block)
+		m.approval = &approvalState{req: msg, render: block}
 		return m, waitForMsg(m.ch)
 
 	case TokensMsg:
@@ -205,6 +227,11 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes key bindings.
 func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// While an approval is pending, intercept y/s/n/Escape before normal input.
+	if m.approval != nil {
+		return m.handleApprovalKey(msg)
+	}
+
 	switch msg.Type {
 	case tea.KeyCtrlC, tea.KeyCtrlD:
 		return m, tea.Quit
@@ -234,6 +261,29 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+// handleApprovalKey handles y/s/n/Escape while waiting for permission input.
+func (m ShellModel) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyCtrlC || msg.Type == tea.KeyCtrlD {
+		return m, tea.Quit
+	}
+	ch := m.approval.req.RespCh
+	switch strings.ToLower(msg.String()) {
+	case "y":
+		m.approval = nil
+		ch <- approvalResponse{Approved: true, AllowForSession: false}
+	case "s":
+		m.approval = nil
+		ch <- approvalResponse{Approved: true, AllowForSession: true}
+	case "n", "escape":
+		m.approval = nil
+		ch <- approvalResponse{Approved: false}
+	default:
+		// Ignore any other key while awaiting approval.
+		return m, nil
+	}
+	return m, waitForMsg(m.ch)
 }
 
 // handleSlash ports the pre-TUI slash semantics: /exit & /quit quit; /verbose
@@ -286,7 +336,8 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	build := m.build
 
 	run := func() tea.Msg {
-		a, err := build(alias, NewTeaRenderer(ch))
+		approve := NewTeaApprovalFunc(ch)
+		a, err := build(alias, NewTeaRenderer(ch), approve)
 		if err != nil {
 			ch <- AgentErrMsg{Err: err.Error()}
 			ch <- AgentDoneMsg{History: history}
@@ -364,6 +415,16 @@ func isFileReadTool(name string) bool {
 	return strings.Contains(lower, "read") || lower == "view" || strings.Contains(lower, "file")
 }
 
+// renderApprovalBlock returns the styled inline permission-request block.
+func renderApprovalBlock(toolName, previewText string) string {
+	return approvalBorderStyle.Render(
+		approvalHeaderStyle.Render("⚠  Permission required") + "\n\n" +
+			"  Tool:  " + toolName + "\n" +
+			"  Cmd:   " + previewText + "\n\n" +
+			approvalKeysStyle.Render("  [y] allow once   [s] allow for session   [n] deny"),
+	)
+}
+
 // tick fires once per second while the agent is running, driving the elapsed
 // timer in the status bar.
 func tick() tea.Cmd {
@@ -421,7 +482,12 @@ func (m ShellModel) View() string {
 	prompt := promptAliasStyle.Render("["+m.alias+"]") + " > " + m.input.View()
 
 	var status string
-	if m.running {
+	switch {
+	case m.approval != nil:
+		status = approvalHeaderStyle.Render("⚠") + " " +
+			statusRunStyle.Render("Awaiting permission…") + " " +
+			ruleStyle.Render("press y · s · n")
+	case m.running:
 		elapsed := formatElapsed(time.Since(m.runStart))
 		tok := formatTokens(m.inputTokens)
 		meta := elapsed
@@ -431,7 +497,7 @@ func (m ShellModel) View() string {
 		status = m.spinner.View() + " " +
 			statusRunStyle.Render("Thinking…") + " " +
 			ruleStyle.Render("("+meta+")")
-	} else {
+	default:
 		status = statusModelStyle.Render(m.alias)
 	}
 
