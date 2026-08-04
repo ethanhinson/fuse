@@ -17,7 +17,7 @@ results:
 trivial: false
 auto_groomable: false
 branch: feat/mcp-integration-test-harness
-claimed_at: 2026-08-04T19:11:55Z
+claimed_at: 2026-08-04T19:14:01Z
 pr:
 blocked_by:
 reconciled: true
@@ -42,15 +42,15 @@ The MCP client stack (stdio, HTTP/SSE, bearer, OAuth2 PKCE) was built change-by-
 - In-process `httptest.Server` bearer and OAuth2 proxy helpers — no extra Docker containers for auth.
 - GitHub Actions workflow (`.github/workflows/integration.yml`, net-new — no `.github/` exists yet) that installs Playwright Chromium, starts Compose, and runs `go test -tags integration`.
 - `make test-integration` target (appended to the existing `Makefile`).
-- One-line production wiring in `cmd/fuse/main.go`: a `case "mcp-server"` dispatch so the already-present `runMCPServer` is reachable via the CLI (required for the stdio integration test to spawn `fuse mcp-server`). See the reconcile log.
+
+**No production code.** The `case "mcp-server"` CLI dispatch (needed for the stdio test to spawn `fuse mcp-server`) is already merged on `origin/main` (commit `9b566ec`), so this change touches only test code, testdata, CI, and Make. See the reconcile log.
 
 ## Out of scope
 
-- Changes to non-test production code **beyond** the single `case "mcp-server"` CLI dispatch line above.
+- Any changes to production code. The `mcp-server` implementation and its CLI dispatch are already merged on `origin/main`; this change adds only tests, testdata, CI, and Make.
 - mTLS / client-certificate auth.
 - Load testing.
 - `fuse mcp-server` HTTP transport (not yet implemented).
-- The untracked working-tree files (`internal/mcp/server.go`, `cmd/fuse/cli_adapter.go`, `internal/hitl/`) — not on the integration branch, not part of this change.
 
 ## Open questions
 
@@ -95,3 +95,13 @@ So the `fuse mcp-server` subcommand's implementation is **unmerged work-in-progr
 2. Or, if that server code is being tracked under a different in-flight change, merge that change first, then re-run 0008.
 
 The reconcile work above (spec + body corrections) is durable and remains valid for the eventual build.
+
+### 2026-08-04 — RESUME reconcile (prior blocker resolved)
+
+Re-claimed and re-reconciled against the advanced integration branch (`origin/main` now at `9b566ec`, "feat: add mcp-server subcommand, HITL relay, and CLI adapter"). The prior halt's hard blocker is **resolved**: the previously-untracked `mcp-server` implementation — `internal/hitl/`, `internal/mcp/server.go`, `cmd/fuse/cli_adapter.go`, and the `case "mcp-server"` routing in `cmd/fuse/main.go` — is now committed and merged to `origin/main`. Verified on a clean `origin/main` checkout: `go build ./...` exits 0.
+
+**Scope reduced — this change now touches ZERO production code.** The one-line `case "mcp-server"` CLI dispatch the prior pass planned to add to `cmd/fuse/main.go` is **already present on `origin/main`** (`main.go:43`). The former "narrows out-of-scope to permit one production line" carve-out is withdrawn: 0008 is now purely test code, testdata, CI, and Make. Body "What changes"/"Out of scope" and the spec's stdio reconcile note, "New files" summary, and "Out of scope" were all updated to match.
+
+**Signatures re-verified against `origin/main` — all match the spec verbatim:** `newStdioClient(name string, command []string, env []string) (*StdioClient, error)`, `newHTTPClient(name, baseURL, bearerToken string) (*httpClient, error)`, the unexported `mcpConn` interface (`internal/mcp/conn.go`), `GetAccessToken(serverName, serverURL string, cfg config.MCPAuthConfig) (string, error)`, `tokenFilePath(serverName, override string)`, `MCPAuthConfig` (bearer token carried in `ClientSecret`; `ClientID`/`Scopes`/`TokenFile` present), and `runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) int`. The stdio test's `bash`-tool assertion is valid: `runMCPServer` registers `defaultToolRegistry(nil)` → `DefaultTools()` includes `NewBash()` (`internal/tools/registry.go:71`).
+
+No obsolescence, no fundamental invalidation — design intact, scope narrowed. `auto_capture` is disabled, so no stubs minted; no adjacent follow-up work surfaced that warrants capture.

@@ -100,7 +100,7 @@ Spawns the `fuse` binary with the `mcp-server` subcommand via the in-package `ne
 
 Binary lookup order: `$FUSE_BINARY` env var → `go build -o` into `t.TempDir()` → `go run ./cmd/fuse`.
 
-**Reconcile note — CLI dispatch wiring (production touch).** `cmd/fuse/mcp_server.go` (`runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) int`) exists on the integration branch, but `cmd/fuse/main.go`'s subcommand `switch` on the integration branch routes **only** `models` and `shell` — there is **no `case "mcp-server"`**. So `fuse mcp-server` is not reachable via the CLI as of the base commit, and this stdio test would spawn a subprocess that falls through to the default task run. This change therefore includes a **one-line production wiring** in `cmd/fuse/main.go`: add `case "mcp-server": return runMCPServer(args[1:], cfg, stdout, stderr)` alongside the existing cases. This narrows the original "no non-test production code" out-of-scope claim to permit exactly this dispatch wiring (see *Out of scope*). Note: the working tree may already carry an uncommitted variant of this wiring plus an untracked `internal/mcp/server.go` / `cmd/fuse/cli_adapter.go`; those are NOT on the integration branch and MUST NOT be relied upon — the feature branch is cut from `origin/main` and the wiring is (re)applied there deliberately.
+**Reconcile note (2026-08-04, second pass) — CLI dispatch is now already wired on `origin/main`.** The prior reconcile pass planned a one-line production touch (`case "mcp-server"` in `cmd/fuse/main.go`) because that dispatch was missing on the base branch. It is **no longer missing**: the `mcp-server` implementation (`internal/hitl/`, `internal/mcp/server.go`, `cmd/fuse/cli_adapter.go`) plus the `case "mcp-server": return runMCPServer(args[1:], cfg, stdout, stderr)` routing were committed to `origin/main` (commit `9b566ec`, "feat: add mcp-server subcommand, HITL relay, and CLI adapter") — this was the very work whose absence halted the prior run. `go build ./...` on `origin/main` now passes, and `fuse mcp-server` is reachable via the CLI as shipped. **This change therefore touches ZERO production code** — it is purely test code, testdata, CI, and Make. The stdio test spawns `fuse mcp-server` and exercises the already-wired path unchanged. (`runMCPServer` registers `defaultToolRegistry(nil)`, whose `DefaultTools()` includes the `bash` tool asserted below.)
 
 ### 2 — HTTP, no auth
 
@@ -215,7 +215,7 @@ test-integration:
 | `internal/mcp/testdata/mock-oauth2-config.json` | mock-oauth2 issuer config |
 | `.github/workflows/integration.yml` | CI job |
 
-No new packages. The **only** production-code touch is the one-line `case "mcp-server"` dispatch added to `cmd/fuse/main.go` (see the stdio reconcile note); everything else is test code, testdata, CI, and Make. The `.github/` directory and the `.github/workflows/integration.yml` file are **net-new** — the integration branch has no `.github/` today. The `test-integration` target is appended to the existing root `Makefile` (which currently exposes `build`/`install`/`test`/`lint` only). Module path is `github.com/ethanhinson/fuse`, Go 1.26.5.
+No new packages. **No production-code touch at all** — the `case "mcp-server"` dispatch is already on `origin/main` (see the stdio reconcile note); everything here is test code, testdata, CI, and Make. The `.github/` directory and the `.github/workflows/integration.yml` file are **net-new** — the integration branch has no `.github/` today. The `test-integration` target is appended to the existing root `Makefile` (which currently exposes `build`/`install`/`test`/`lint` only). Module path is `github.com/ethanhinson/fuse`, Go 1.26.5.
 
 ---
 
@@ -231,4 +231,4 @@ No new packages. The **only** production-code touch is the one-line `case "mcp-s
 - Testing the `mcp-server` HTTP transport (it only exposes stdio today)
 - Load or chaos testing
 - Token revocation flow
-- **Any production-code change beyond the single `case "mcp-server"` CLI dispatch line** in `cmd/fuse/main.go` (reconcile-added). The untracked working-tree files (`internal/mcp/server.go`, `cmd/fuse/cli_adapter.go`, `internal/hitl/`) are explicitly NOT part of this change and are not on the integration branch.
+- **Any production-code change.** As of `origin/main` `9b566ec` the `mcp-server` implementation (`internal/hitl/`, `internal/mcp/server.go`, `cmd/fuse/cli_adapter.go`) and its `case "mcp-server"` CLI dispatch are already merged, so this change adds no production code — only tests, testdata, CI, and Make.
