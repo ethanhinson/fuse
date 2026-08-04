@@ -7,9 +7,10 @@ import (
 
 // ModelConfig is a resolved model entry inside the registry.
 type ModelConfig struct {
-	ID        string
-	MaxTokens int
-	Persona   string
+	ID           string
+	MaxTokens    int
+	Persona      string
+	SystemPrefix string // prepended before the persona system prompt; for model-specific directives
 }
 
 // Registry maps model aliases to their resolved gateway configuration.
@@ -35,7 +36,7 @@ func DefaultRegistry() *Registry {
 		"glm":            {ID: "cloud/glm-5.2", MaxTokens: 8192, Persona: "general"},
 		"qwen-cloud":     {ID: "cloud/qwen3-8b", MaxTokens: 4096, Persona: "general"},
 		"qwen-coder":     {ID: "local/qwen3-coder:30b", MaxTokens: 4096, Persona: "coding"},
-		"qwen-local":     {ID: "local/qwen3.6:27b", MaxTokens: 4096, Persona: "reasoning"},
+		"qwen-local":     {ID: "local/qwen3.6:27b", MaxTokens: 4096, Persona: "reasoning", SystemPrefix: "/no_think"},
 		"llama":          {ID: "local/llama3.1:8b", MaxTokens: 2048, Persona: "general"},
 		"claude":         {ID: "claude/sonnet", MaxTokens: 8192, Persona: "general"},
 	})

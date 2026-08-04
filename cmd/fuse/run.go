@@ -20,7 +20,7 @@ func registryFromConfig(cfg config.Config) *model.Registry {
 		reg.Default = cfg.Models.Default
 	}
 	for alias, mc := range cfg.Models.Entries {
-		reg = mergeEntry(reg, alias, model.ModelConfig{ID: mc.ID, MaxTokens: mc.MaxTokens, Persona: mc.Persona})
+		reg = mergeEntry(reg, alias, model.ModelConfig{ID: mc.ID, MaxTokens: mc.MaxTokens, Persona: mc.Persona, SystemPrefix: mc.SystemPrefix})
 	}
 	return reg
 }
@@ -69,7 +69,7 @@ func buildAgent(cfg config.Config, reg *model.Registry, alias string, out io.Wri
 	if maxTokens == 0 {
 		maxTokens = cfg.MaxTokens
 	}
-	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, extra)
+	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
 	a := agent.New(adapter, toolReg, renderer, mc.ID, systemPrompt, cfg.MaxTurns, maxTokens)
 	return a, mc.ID, nil
 }

@@ -30,10 +30,16 @@ func PersonaPrompt(persona string) string {
 	return personaPrompts["general"]
 }
 
-// ComposeSystemPrompt builds the final system prompt by combining the persona
-// base with any caller-supplied block (e.g. a skill listing).
-func ComposeSystemPrompt(persona, extra string) string {
+// ComposeSystemPrompt builds the final system prompt. The order is:
+//
+//	prefix (model-specific directive, e.g. "/no_think")
+//	persona base prompt
+//	extra block (e.g. skill listing from shell mode)
+func ComposeSystemPrompt(persona, prefix, extra string) string {
 	base := PersonaPrompt(persona)
+	if prefix != "" {
+		base = prefix + "\n" + base
+	}
 	if extra == "" {
 		return base
 	}
