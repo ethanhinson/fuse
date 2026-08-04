@@ -33,5 +33,10 @@ func (r *TeaRenderer) Errorf(format string, a ...any) {
 	r.ch <- AgentErrMsg{Err: fmt.Sprintf(format, a...)}
 }
 
+// Tokens forwards per-turn gateway token counts.
+func (r *TeaRenderer) Tokens(input, output int) {
+	r.ch <- TokensMsg{Input: input, Output: output}
+}
+
 // TeaRenderer satisfies the agent.Renderer interface.
 var _ agent.Renderer = (*TeaRenderer)(nil)

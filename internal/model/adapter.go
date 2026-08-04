@@ -75,6 +75,10 @@ type wireResp struct {
 	Choices []struct {
 		Message wireMessage `json:"message"`
 	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
 func prettyJSON(b []byte) []byte {
@@ -145,7 +149,11 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		return CompletionResp{}, fmt.Errorf("gateway returned no choices")
 	}
 	msg := wr.Choices[0].Message
-	out := CompletionResp{Content: msg.Content}
+	out := CompletionResp{
+		Content:      msg.Content,
+		InputTokens:  wr.Usage.PromptTokens,
+		OutputTokens: wr.Usage.CompletionTokens,
+	}
 	for _, tc := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
 	}

@@ -29,6 +29,15 @@ type AgentErrMsg struct{ Err string }
 // AgentDoneMsg signals the agent turn finished, carrying the updated history.
 type AgentDoneMsg struct{ History []model.Message }
 
+// TokensMsg carries per-turn token counts from the gateway response.
+type TokensMsg struct {
+	Input  int
+	Output int
+}
+
+// tickMsg is emitted by the per-second timer while the agent is running.
+type tickMsg struct{}
+
 // Compile-time documentation that each value satisfies tea.Msg.
 var _ = []tea.Msg{
 	AssistantMsg{},
@@ -36,4 +45,6 @@ var _ = []tea.Msg{
 	ToolResultMsg{},
 	AgentErrMsg{},
 	AgentDoneMsg{},
+	TokensMsg{},
+	tickMsg{},
 }

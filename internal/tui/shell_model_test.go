@@ -181,7 +181,7 @@ func TestToolCallTruncation(t *testing.T) {
 	next, _ := m.Update(ToolCallMsg{Name: "bash", Args: long})
 	m = next.(ShellModel)
 	joined := strings.Join(m.lines, "\n")
-	if !strings.Contains(joined, "→ bash(") || !strings.Contains(joined, "…") {
+	if !strings.Contains(joined, "bash(") || !strings.Contains(joined, "…") {
 		t.Errorf("expected truncated tool call, got: %q", joined)
 	}
 
@@ -250,7 +250,7 @@ func TestViewContainsStatusAndPrompt(t *testing.T) {
 		t.Error("view should contain the prompt")
 	}
 	m.running = true
-	if !strings.Contains(m.View(), "running…") {
+	if !strings.Contains(m.View(), "Thinking…") {
 		t.Error("running view should show the running indicator")
 	}
 }

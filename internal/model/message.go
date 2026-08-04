@@ -38,8 +38,10 @@ type CompletionReq struct {
 
 // CompletionResp is the assistant's reply.
 type CompletionResp struct {
-	Content   string
-	ToolCalls []ToolCall
+	Content      string
+	ToolCalls    []ToolCall
+	InputTokens  int // prompt tokens reported by the gateway
+	OutputTokens int // completion tokens reported by the gateway
 }
 
 // AsMessage converts the response into an assistant Message for appending to

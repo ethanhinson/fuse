@@ -22,13 +22,14 @@ var (
 	// Transcript — model turn header
 	headerStyle = lipgloss.NewStyle().Foreground(colMuted)
 
-	// Transcript — tool calls
-	toolArrowStyle = lipgloss.NewStyle().Foreground(colGreen)
-	toolNameStyle  = lipgloss.NewStyle().Foreground(colCyan)
-	toolArgsStyle  = lipgloss.NewStyle().Foreground(colMuted)
+	// Transcript — tool calls  (● name(args))
+	toolBulletStyle = lipgloss.NewStyle().Foreground(colGreen)
+	toolNameStyle   = lipgloss.NewStyle().Foreground(colCyan)
+	toolArgsStyle   = lipgloss.NewStyle().Foreground(colMuted)
 
-	// Transcript — tool results
-	resultArrowStyle = lipgloss.NewStyle().Foreground(colMuted)
+	// Transcript — tool results (  └ …)
+	resultPrefixStyle = lipgloss.NewStyle().Foreground(colMuted)
+	resultArrowStyle  = lipgloss.NewStyle().Foreground(colMuted) // kept for compat
 	errorArrowStyle  = lipgloss.NewStyle().Foreground(colRed)
 	errorTextStyle   = lipgloss.NewStyle().Foreground(colRed)
 

@@ -39,6 +39,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			a.renderer.Errorf("model error: %v", err)
 			return messages, err
 		}
+		a.renderer.Tokens(resp.InputTokens, resp.OutputTokens)
 
 		if resp.Content != "" {
 			a.renderer.Assistant(resp.Content)

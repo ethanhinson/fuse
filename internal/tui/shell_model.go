@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -35,6 +36,10 @@ type ShellModel struct {
 	verbose bool
 	running bool
 	ready   bool // first WindowSizeMsg seen (viewport sized)
+
+	runStart     time.Time
+	inputTokens  int
+	outputTokens int
 
 	ch      chan tea.Msg
 	history []model.Message
@@ -118,7 +123,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.verbose {
 			args = truncate(args, previewLimit)
 		}
-		line := toolArrowStyle.Render("→") + " " +
+		line := toolBulletStyle.Render("●") + " " +
 			toolNameStyle.Render(msg.Name) +
 			toolArgsStyle.Render("("+args+")")
 		m.appendLine(line)
@@ -129,13 +134,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.verbose {
 			out = truncate(out, previewLimit)
 		}
-		var line string
-		if msg.IsError {
-			line = errorArrowStyle.Render("✗") + " " + errorTextStyle.Render(out)
-		} else {
-			line = resultArrowStyle.Render("←") + " " + out
-		}
-		m.appendLine(line)
+		m.appendResultLines(out, msg.IsError)
 		return m, waitForMsg(m.ch)
 
 	case AgentErrMsg:
@@ -147,6 +146,17 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = false
 		m.input.Focus()
 		return m, waitForMsg(m.ch)
+
+	case TokensMsg:
+		m.inputTokens += msg.Input
+		m.outputTokens += msg.Output
+		return m, waitForMsg(m.ch)
+
+	case tickMsg:
+		if m.running {
+			return m, tick()
+		}
+		return m, nil
 	}
 
 	// Forward anything else (e.g. cursor blink) to the input.
@@ -227,6 +237,9 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	m.appendLine(headerStyle.Render(fmt.Sprintf("\n── %s ──────────────", m.alias)))
 	m.history = append(m.history, model.Message{Role: "user", Content: line})
 	m.running = true
+	m.runStart = time.Now()
+	m.inputTokens = 0
+	m.outputTokens = 0
 
 	ch := m.ch
 	alias := m.alias
@@ -250,9 +263,9 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 		ch <- AgentDoneMsg{History: updated}
 		return nil
 	}
-	// run returns nil and only sends onto the channel; waitForMsg picks up the
-	// events. Launch it as a tea.Cmd so bubbletea runs it off the event loop.
-	return m, run
+	// run sends events onto the channel; waitForMsg picks them up.
+	// tick drives the live elapsed-time counter in the status bar.
+	return m, tea.Batch(run, tick())
 }
 
 // appendLine adds one logical line (which may itself contain newlines) and
@@ -263,6 +276,53 @@ func (m *ShellModel) appendLine(s string) {
 		m.lines = append(m.lines, l)
 	}
 	m.refreshViewport(atBottom)
+}
+
+// appendResultLines renders a tool result indented under the previous bullet:
+//
+//	  └ first line
+//	    subsequent lines…
+func (m *ShellModel) appendResultLines(out string, isError bool) {
+	atBottom := !m.ready || m.vp.AtBottom()
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	for i, l := range lines {
+		var rendered string
+		if i == 0 {
+			if isError {
+				rendered = "  " + errorArrowStyle.Render("✗") + " " + errorTextStyle.Render(l)
+			} else {
+				rendered = resultPrefixStyle.Render("  └") + " " + l
+			}
+		} else {
+			rendered = "    " + l
+		}
+		m.lines = append(m.lines, rendered)
+	}
+	m.refreshViewport(atBottom)
+}
+
+// tick fires once per second while the agent is running, driving the elapsed
+// timer in the status bar.
+func tick() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return tickMsg{} })
+}
+
+func formatElapsed(d time.Duration) string {
+	s := int(d.Seconds())
+	if s < 60 {
+		return fmt.Sprintf("%ds", s)
+	}
+	return fmt.Sprintf("%dm %ds", s/60, s%60)
+}
+
+func formatTokens(n int) string {
+	if n == 0 {
+		return ""
+	}
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
 // refreshViewport sets viewport content and, when followBottom is true,
@@ -279,10 +339,21 @@ func (m *ShellModel) refreshViewport(followBottom bool) {
 
 // View renders the status line, transcript, a separator rule, and the prompt.
 func (m ShellModel) View() string {
-	status := statusModelStyle.Render(m.alias)
+	var status string
 	if m.running {
-		status += "  " + statusRunStyle.Render("running…")
+		elapsed := formatElapsed(time.Since(m.runStart))
+		tok := formatTokens(m.inputTokens)
+		meta := elapsed
+		if tok != "" {
+			meta += " · ↑ " + tok + " tokens"
+		}
+		status = statusRunStyle.Render("*") + " " +
+			statusRunStyle.Render("Thinking…") + " " +
+			ruleStyle.Render("("+meta+")")
+	} else {
+		status = statusModelStyle.Render(m.alias)
 	}
+
 	width := m.vp.Width
 	if width < 1 {
 		width = 40

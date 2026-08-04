@@ -60,3 +60,6 @@ func (r *Renderer) ToolResult(name string, res tools.Result) {
 func (r *Renderer) Errorf(format string, a ...any) {
 	fmt.Fprintf(r.w, "! "+format+"\n", a...)
 }
+
+// Tokens is a no-op for one-shot mode.
+func (r *Renderer) Tokens(_, _ int) {}
