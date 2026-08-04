@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -111,7 +110,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case AssistantMsg:
-		m.appendLine(msg.Text)
+		m.appendLine(assistantStyle.Render(msg.Text))
 		return m, waitForMsg(m.ch)
 
 	case ToolCallMsg:
@@ -119,23 +118,28 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.verbose {
 			args = truncate(args, previewLimit)
 		}
-		m.appendLine(fmt.Sprintf("→ %s(%s)", msg.Name, args))
+		line := toolArrowStyle.Render("→") + " " +
+			toolNameStyle.Render(msg.Name) +
+			toolArgsStyle.Render("("+args+")")
+		m.appendLine(line)
 		return m, waitForMsg(m.ch)
 
 	case ToolResultMsg:
-		prefix := "←"
-		if msg.IsError {
-			prefix = "✗"
-		}
 		out := msg.Output
 		if !m.verbose {
 			out = truncate(out, previewLimit)
 		}
-		m.appendLine(fmt.Sprintf("%s %s", prefix, out))
+		var line string
+		if msg.IsError {
+			line = errorArrowStyle.Render("✗") + " " + errorTextStyle.Render(out)
+		} else {
+			line = resultArrowStyle.Render("←") + " " + out
+		}
+		m.appendLine(line)
 		return m, waitForMsg(m.ch)
 
 	case AgentErrMsg:
-		m.appendLine("! " + msg.Err)
+		m.appendLine(agentErrStyle.Render("! " + msg.Err))
 		return m, waitForMsg(m.ch)
 
 	case AgentDoneMsg:
@@ -220,7 +224,7 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 // startPrompt appends the user line, marks running, and returns a cmd that runs
 // one agent turn in a goroutine, forwarding output onto the channel.
 func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
-	m.appendLine(fmt.Sprintf("\n── %s ──────────────", m.alias))
+	m.appendLine(headerStyle.Render(fmt.Sprintf("\n── %s ──────────────", m.alias)))
 	m.history = append(m.history, model.Message{Role: "user", Content: line})
 	m.running = true
 
@@ -273,29 +277,25 @@ func (m *ShellModel) refreshViewport(followBottom bool) {
 	}
 }
 
-var (
-	statusStyle = lipgloss.NewStyle().Bold(true)
-	ruleStyle   = lipgloss.NewStyle().Faint(true)
-)
-
 // View renders the status line, transcript, a separator rule, and the prompt.
 func (m ShellModel) View() string {
-	status := m.alias
+	status := statusModelStyle.Render(m.alias)
 	if m.running {
-		status += "  running…"
+		status += "  " + statusRunStyle.Render("running…")
 	}
 	width := m.vp.Width
 	if width < 1 {
 		width = 40
 	}
 	rule := ruleStyle.Render(strings.Repeat("─", width))
+	prompt := promptAliasStyle.Render("["+m.alias+"]") + " > " + m.input.View()
 	var b strings.Builder
-	b.WriteString(statusStyle.Render(status))
+	b.WriteString(status)
 	b.WriteByte('\n')
 	b.WriteString(m.vp.View())
 	b.WriteByte('\n')
 	b.WriteString(rule)
 	b.WriteByte('\n')
-	b.WriteString(fmt.Sprintf("[%s] > %s", m.alias, m.input.View()))
+	b.WriteString(prompt)
 	return b.String()
 }
