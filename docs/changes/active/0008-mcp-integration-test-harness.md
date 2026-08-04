@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable: false
 branch: feat/mcp-integration-test-harness
-claimed_at: 2026-08-04T18:55:37Z
+claimed_at: 2026-08-04T19:01:11Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -40,16 +40,32 @@ The MCP client stack (stdio, HTTP/SSE, bearer, OAuth2 PKCE) was built change-by-
 - Docker Compose file (`internal/mcp/testdata/`) with two services: `@modelcontextprotocol/server-everything` (the official MCP reference/test server over HTTP/SSE) and `ghcr.io/navikt/mock-oauth2-server`.
 - `//go:build integration`-tagged tests in `internal/mcp/` covering four scenarios: stdio (`fuse mcp-server` subprocess), HTTP no auth, HTTP bearer token, and HTTP OAuth2 with Playwright (`playwright-go`) driving the full browser authorization flow.
 - In-process `httptest.Server` bearer and OAuth2 proxy helpers — no extra Docker containers for auth.
-- GitHub Actions workflow (`.github/workflows/integration.yml`) that installs Playwright Chromium, starts Compose, and runs `go test -tags integration`.
-- `make test-integration` target.
+- GitHub Actions workflow (`.github/workflows/integration.yml`, net-new — no `.github/` exists yet) that installs Playwright Chromium, starts Compose, and runs `go test -tags integration`.
+- `make test-integration` target (appended to the existing `Makefile`).
+- One-line production wiring in `cmd/fuse/main.go`: a `case "mcp-server"` dispatch so the already-present `runMCPServer` is reachable via the CLI (required for the stdio integration test to spawn `fuse mcp-server`). See the reconcile log.
 
 ## Out of scope
 
-- Changes to non-test production code.
+- Changes to non-test production code **beyond** the single `case "mcp-server"` CLI dispatch line above.
 - mTLS / client-certificate auth.
 - Load testing.
 - `fuse mcp-server` HTTP transport (not yet implemented).
+- The untracked working-tree files (`internal/mcp/server.go`, `cmd/fuse/cli_adapter.go`, `internal/hitl/`) — not on the integration branch, not part of this change.
 
 ## Open questions
 
 None — design fully specified in the linked spec.
+
+## Reconcile log
+
+### 2026-08-04
+
+Reconciled against the current integration branch (`origin/main`), the linked spec, related changes (0003 stdio MCP + permission gate; 0007 HTTP/SSE + OAuth), and the actual `internal/mcp/` + `cmd/fuse/` code. Change 0007 (`depends_on: [7]`) is `done`. Findings folded into the spec and this body:
+
+1. **`MCPAuthConfig` has no `Token` field.** The struct lives in `internal/config/schema.go`; for `Type: "bearer"` the token is carried in `ClientSecret` (field comment: "used as bearer token for type=bearer"). The spec's `MCPAuthConfig{Type: "bearer", Token: ...}` snippet was corrected to `config.MCPAuthConfig{Type: "bearer", ClientSecret: ...}`.
+2. **`GetAccessToken(serverName, serverURL string, cfg config.MCPAuthConfig)`** — the config type is `config.MCPAuthConfig` (package-qualified). OAuth2 config fields (`ClientID`/`ClientSecret`/`Scopes`/`TokenFile`) match verbatim; `TokenFile` overrides the default `~/.fuse/mcp-tokens/<name>.json` via `tokenFilePath`.
+3. **Transport constructors are unexported** (`newStdioClient`, `newHTTPClient`) and the `mcpConn` interface is unexported — so the integration tests must be **in-package** (`package mcp`, not `mcp_test`). Spec updated to state this.
+4. **`fuse mcp-server` is not routed on `origin/main`.** `cmd/fuse/mcp_server.go` defines `runMCPServer(...)`, but `cmd/fuse/main.go`'s subcommand `switch` routes only `models` and `shell` — there is no `case "mcp-server"`. The stdio test spawns `fuse mcp-server`, so this change adds the one-line dispatch to `main.go`. This narrows the original "no non-test production code" out-of-scope to permit exactly that line. The uncommitted working-tree variant of this wiring (plus untracked `internal/mcp/server.go`, `cmd/fuse/cli_adapter.go`, `internal/hitl/`) is NOT on `origin/main` and is explicitly excluded — the feature branch is cut fresh from `origin/main`.
+5. Confirmed net-new: no `.github/` directory on `origin/main`; `Makefile` has no `test-integration` target. Module `github.com/ethanhinson/fuse`, Go 1.26.5.
+
+No obsolescence, no fundamental invalidation — scope adjusted, design intact. `auto_capture` is disabled, so no stubs minted.

@@ -88,7 +88,7 @@ Fetches JWKS from `{issuerURL}/default/jwks.json` at startup, caches keys, valid
 
 ## Test scenarios
 
-All tests live in `internal/mcp/` with the `//go:build integration` tag. `TestMain` runs `docker compose -f testdata/docker-compose.yml up -d`, polls health endpoints, defers `docker compose down`.
+All tests live in `internal/mcp/` with the `//go:build integration` tag. They are **in-package** (`package mcp`, not `mcp_test`) because the transport constructors and client types they exercise are **unexported**: `newStdioClient(name string, command []string, env []string) (*StdioClient, error)` and `newHTTPClient(name, baseURL, bearerToken string) (*httpClient, error)`, both satisfying the unexported `mcpConn` interface (`call`, `stop`) in `conn.go`. `TestMain` runs `docker compose -f testdata/docker-compose.yml up -d`, polls health endpoints, defers `docker compose down`.
 
 ### 1 — Stdio: `fuse mcp-server`
 
@@ -96,9 +96,11 @@ All tests live in `internal/mcp/` with the `//go:build integration` tag. `TestMa
 TestIntegration_Stdio
 ```
 
-Spawns the `fuse` binary with the `mcp-server` subcommand via `StdioClient`. Calls `initialize` + `tools/list`, asserts that the response includes at least the `bash` tool (a known built-in). Verifies the permission gate is wired (tools are listed, not executed). No Docker dependency.
+Spawns the `fuse` binary with the `mcp-server` subcommand via the in-package `newStdioClient` constructor. Calls `initialize` + `tools/list`, asserts that the response includes at least the `bash` tool (a known built-in). Verifies the permission gate is wired (tools are listed, not executed). No Docker dependency.
 
 Binary lookup order: `$FUSE_BINARY` env var → `go build -o` into `t.TempDir()` → `go run ./cmd/fuse`.
+
+**Reconcile note — CLI dispatch wiring (production touch).** `cmd/fuse/mcp_server.go` (`runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) int`) exists on the integration branch, but `cmd/fuse/main.go`'s subcommand `switch` on the integration branch routes **only** `models` and `shell` — there is **no `case "mcp-server"`**. So `fuse mcp-server` is not reachable via the CLI as of the base commit, and this stdio test would spawn a subprocess that falls through to the default task run. This change therefore includes a **one-line production wiring** in `cmd/fuse/main.go`: add `case "mcp-server": return runMCPServer(args[1:], cfg, stdout, stderr)` alongside the existing cases. This narrows the original "no non-test production code" out-of-scope claim to permit exactly this dispatch wiring (see *Out of scope*). Note: the working tree may already carry an uncommitted variant of this wiring plus an untracked `internal/mcp/server.go` / `cmd/fuse/cli_adapter.go`; those are NOT on the integration branch and MUST NOT be relied upon — the feature branch is cut from `origin/main` and the wiring is (re)applied there deliberately.
 
 ### 2 — HTTP, no auth
 
@@ -114,7 +116,13 @@ Dials `httpClient` directly to `mcp-everything` at `http://localhost:3001`. Call
 TestIntegration_HTTP_Bearer
 ```
 
-Starts `newBearerProxy` in front of `mcp-everything`. Configures `MCPAuthConfig{Type: "bearer", Token: "test-token-xyz"}`. Sub-test `wrongToken`: provides a bad token, expects `GetAccessToken`-backed client to receive 401. Sub-test `correctToken`: correct token, `tools/call` succeeds.
+Starts `newBearerProxy` in front of `mcp-everything`. **Reconcile note — `MCPAuthConfig` has no `Token` field.** For `Type: "bearer"` the token is carried in `ClientSecret` (see `internal/config/schema.go`: `ClientSecret` is documented "used as bearer token for type=bearer"). Configure:
+
+```go
+config.MCPAuthConfig{Type: "bearer", ClientSecret: "test-token-xyz"}
+```
+
+`GetAccessToken(serverName, serverURL, cfg)` returns `cfg.ClientSecret` for the bearer type; that value is then handed to `newHTTPClient(name, baseURL, bearerToken)`. Sub-test `wrongToken`: build the client with a bad bearer token, expect the proxy to return 401. Sub-test `correctToken`: correct token, `tools/call` succeeds.
 
 ### 4 — HTTP, OAuth2 (Playwright)
 
@@ -122,10 +130,10 @@ Starts `newBearerProxy` in front of `mcp-everything`. Configures `MCPAuthConfig{
 TestIntegration_HTTP_OAuth2
 ```
 
-Starts `newOAuthProxy` in front of `mcp-everything`. Config:
+Starts `newOAuthProxy` in front of `mcp-everything`. Config (the struct is `config.MCPAuthConfig`; all fields below exist verbatim on the integration branch):
 
 ```go
-MCPAuthConfig{
+config.MCPAuthConfig{
     Type:         "oauth2",
     ClientID:     "fuse-test",
     ClientSecret: "secret",
@@ -133,6 +141,8 @@ MCPAuthConfig{
     TokenFile:    filepath.Join(t.TempDir(), "tokens.json"),
 }
 ```
+
+`GetAccessToken(serverName, serverURL string, cfg config.MCPAuthConfig) (string, error)` routes `type=oauth2` through the browser flow. `TokenFile` is the override consumed by the unexported `tokenFilePath(serverName, cfg.TokenFile)` — when set (as here) it is used directly; when empty it defaults to `~/.fuse/mcp-tokens/<serverName>.json`. Setting `TokenFile` into `t.TempDir()` keeps the test hermetic (no writes to the real home dir).
 
 Flow:
 1. `GetAccessToken` detects no cached token → starts local callback server → opens authorization URL.
@@ -205,7 +215,7 @@ test-integration:
 | `internal/mcp/testdata/mock-oauth2-config.json` | mock-oauth2 issuer config |
 | `.github/workflows/integration.yml` | CI job |
 
-No new packages. No changes to non-test production code.
+No new packages. The **only** production-code touch is the one-line `case "mcp-server"` dispatch added to `cmd/fuse/main.go` (see the stdio reconcile note); everything else is test code, testdata, CI, and Make. The `.github/` directory and the `.github/workflows/integration.yml` file are **net-new** — the integration branch has no `.github/` today. The `test-integration` target is appended to the existing root `Makefile` (which currently exposes `build`/`install`/`test`/`lint` only). Module path is `github.com/ethanhinson/fuse`, Go 1.26.5.
 
 ---
 
@@ -221,3 +231,4 @@ No new packages. No changes to non-test production code.
 - Testing the `mcp-server` HTTP transport (it only exposes stdio today)
 - Load or chaos testing
 - Token revocation flow
+- **Any production-code change beyond the single `case "mcp-server"` CLI dispatch line** in `cmd/fuse/main.go` (reconcile-added). The untracked working-tree files (`internal/mcp/server.go`, `cmd/fuse/cli_adapter.go`, `internal/hitl/`) are explicitly NOT part of this change and are not on the integration branch.
