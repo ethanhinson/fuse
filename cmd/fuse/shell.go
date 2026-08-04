@@ -11,7 +11,6 @@ import (
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/skills"
-	"github.com/ethanhinson/fuse/internal/tui"
 )
 
 // shellState is the mutable state of an interactive session.
@@ -131,8 +130,11 @@ func (st *shellState) runPrompt(line string, out io.Writer) {
 		fmt.Fprintf(out, "error: %v\n", err)
 		return
 	}
-	renderer := tui.NewRenderer(out, st.verbose)
-	renderer.ModelHeader(st.alias)
+	// The agent already renders its turn output through the renderer injected
+	// by buildAgent; emit only the per-turn model header here so exactly one
+	// renderer handles a given turn (header + body) with no orphaned instance
+	// and no redundant per-turn renderer allocation.
+	fmt.Fprintf(out, "\n── %s ──────────────\n", st.alias)
 	st.history = append(st.history, model.Message{Role: "user", Content: line})
 	updated, err := a.Run(context.Background(), st.history)
 	if err != nil {
