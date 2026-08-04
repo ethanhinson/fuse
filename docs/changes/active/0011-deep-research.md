@@ -7,7 +7,7 @@ priority: high
 type: feat
 created: 2026-08-04
 updated: 2026-08-04
-depends_on: []
+depends_on: [12]
 related: [10]
 discovered_from: []
 adrs: []
@@ -55,6 +55,5 @@ This also establishes the `internal/research` package as the first explicit suba
 
 ## Open questions
 
-1. **Subagent dependency id**: The subagent architecture change is being designed separately in docket. Once that id is known, add it to `depends_on` here — the implementation should block on that landing first, or at minimum be reviewed alongside it.
-2. **robots.txt compliance**: Always-on vs. opt-out flag — see spec.
-3. **Local result cache**: Default-off SQLite cache for dev ergonomics — see spec.
+1. **robots.txt compliance**: Always-on vs. opt-out flag — see spec.
+2. **Local result cache**: Default-off SQLite cache for dev ergonomics — see spec.
