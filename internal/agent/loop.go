@@ -76,11 +76,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			return messages, nil
 		}
 
-		// On a compat turn, if the model somehow still called tools (model bug),
-		// treat it as an unrecoverable loop — the compat layer has been exhausted.
+		// On a compat turn, if the model still emits tool calls despite no schemas
+		// being sent, it is hallucinating them. Discard the spurious calls and
+		// return — the text content was already rendered and appended above.
 		if isCompatTurn {
-			a.renderer.Errorf("aborting: model called tools despite compat intervention (no schemas sent)")
-			return messages, ErrLoopDetected
+			return messages, nil
 		}
 
 		fps := make([]string, 0, len(resp.ToolCalls))
