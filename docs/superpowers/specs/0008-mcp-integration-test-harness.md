@@ -25,8 +25,9 @@ Two services only — auth proxies are in-process to avoid extra containers.
 ```yaml
 mcp-everything:
   image: node:22-alpine
+  # transport is a positional arg ([stdio|sse|streamableHttp]); `sse` binds :3001.
   command: >
-    sh -c "npx --yes @modelcontextprotocol/server-everything --transport sse --port 3001"
+    sh -c "npx --yes @modelcontextprotocol/server-everything sse"
   ports:
     - "3001:3001"
   healthcheck:
@@ -49,14 +50,11 @@ mock-oauth2:
     - JSON_CONFIG_PATH=/config.json
   volumes:
     - ./mock-oauth2-config.json:/config.json:ro
-  healthcheck:
-    test: ["CMD", "wget", "-qO-", "http://localhost:8080/default/.well-known/openid-configuration"]
-    interval: 2s
-    timeout: 5s
-    retries: 15
+  # No container healthcheck — distroless image (no shell/wget). Readiness is
+  # gated host-side (TestMain's waitForServices, the CI wait loop, and make).
 ```
 
-`mock-oauth2-config.json` configures a single `default` issuer with auto-approve enabled (no real user interaction required when Playwright follows the redirect). The Playwright step still exercises the real redirect → callback → token exchange flow.
+`mock-oauth2-config.json` sets `interactiveLogin: false` on a single `default` issuer, so the authorize endpoint auto-redirects to the callback with a code (no user interaction). The Playwright step still exercises the real redirect → callback → token exchange flow.
 
 ---
 
@@ -108,7 +106,7 @@ Binary lookup order: `$FUSE_BINARY` env var → `go build -o` into `t.TempDir()`
 TestIntegration_HTTP_NoAuth
 ```
 
-Dials `httpClient` directly to `mcp-everything` at `http://localhost:3001`. Calls `tools/list`, asserts `echo` and `add` tools appear. Calls `tools/call` with `echo` → verifies round-trip result. No auth config.
+Dials `httpClient` directly to `mcp-everything` at `http://localhost:3001`. Calls `tools/list`, asserts `echo` and `get-sum` tools appear (reconcile: the current `server-everything` exposes `get-sum`, not `add`). Calls `tools/call` with `echo` (result text `"Echo: <message>"`) and `get-sum` (`{a,b}` → sum) → verifies both round-trips. No auth config.
 
 ### 3 — HTTP, bearer token
 
@@ -145,14 +143,14 @@ config.MCPAuthConfig{
 `GetAccessToken(serverName, serverURL string, cfg config.MCPAuthConfig) (string, error)` routes `type=oauth2` through the browser flow. `TokenFile` is the override consumed by the unexported `tokenFilePath(serverName, cfg.TokenFile)` — when set (as here) it is used directly; when empty it defaults to `~/.fuse/mcp-tokens/<serverName>.json`. Setting `TokenFile` into `t.TempDir()` keeps the test hermetic (no writes to the real home dir).
 
 Flow:
-1. `GetAccessToken` detects no cached token → starts local callback server → opens authorization URL.
-2. Playwright (`playwright-go`) navigates to the URL in a headless Chromium browser.
-3. `mock-oauth2` auto-approves, redirects to the local callback with a code.
+1. `GetAccessToken` detects no cached token → starts local callback server → **shells out** (`open`/`xdg-open`) to open the authorization URL. It does NOT return that URL to the caller, and production code is not changed. To observe the URL, the test prepends a temp dir to `PATH` holding an `open`/`xdg-open` shim that writes its argument to a file; the test polls that file (**reconcile note — zero-production-change browser-open capture**).
+2. Playwright (`playwright-go`) navigates the captured URL in a headless Chromium browser.
+3. `mock-oauth2` (`interactiveLogin: false`) auto-redirects to the local callback with a code.
 4. `GetAccessToken` exchanges code for tokens, persists to `TokenFile`, returns access token.
 5. Client calls `tools/list` through the OAuth2 proxy — succeeds.
-6. Token is expired artificially (`t.Setenv` or direct write to `TokenFile`) → next call triggers silent refresh via `refresh_token` (no browser, no Playwright).
+6. The persisted access token is expired (direct rewrite of `TokenFile`) → next call triggers silent refresh via `refresh_token` (no browser, no Playwright). The refresh sub-test skips if the issuer returned no `refresh_token`.
 
-Playwright is initialized once in `TestMain` via `playwright.Install()` + `playwright.Run()`. In CI, Chromium runs headless automatically.
+Playwright is initialized once in `TestMain` via `playwright.Install()` + `playwright.Run()`, headless in CI. **Reconcile/ADR-0001 — driver CDN.** `playwright-go` is pinned to **v0.5001.0** and `PLAYWRIGHT_DOWNLOAD_HOST` is overridden to the live Microsoft CDN, because that version's default `playwright.azureedge.net` CDN was retired (404 on all platforms) and its bundled driver (1.50.1) is only still served on the Microsoft host. The override is set test-only (in `TestMain` and as a CI job env var); when the driver or Docker is unavailable the OAuth2 test **skips gracefully**. See ADR-0001.
 
 ---
 

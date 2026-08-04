@@ -10,14 +10,14 @@ updated: 2026-08-04
 depends_on: [7]
 related: [3, 7]
 discovered_from: []
-adrs: []
+adrs: [1]
 spec: docs/superpowers/specs/0008-mcp-integration-test-harness.md
 plan: docs/superpowers/plans/0008-mcp-integration-test-harness.md
 results:
 trivial: false
 auto_groomable: false
 branch: feat/mcp-integration-test-harness
-claimed_at: 2026-08-04T19:15:30Z
+claimed_at: 2026-08-04T19:38:16Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [0008-mcp-integration-test-harness.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0008-mcp-integration-test-harness.md) |
 | Plan | [0008-mcp-integration-test-harness.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-integration-test-harness/docs/superpowers/plans/0008-mcp-integration-test-harness.md) |
+| ADRs | [ADR-0001](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0001-playwright-integration-driver-cdn.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
