@@ -1,16 +1,20 @@
 # Backlog
 
-**11 changes** — 🟡 1 proposed · ✅ 9 done · 🗑️ 1 killed
+**12 changes** — 🟡 2 proposed · ✅ 9 done · 🗑️ 1 killed
 
-## 🟡 Proposed (1)
+## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0011](active/0011-deep-research.md) | Deep Research Mode — Web Search + Fan-out Synthesis | `high` | `feat` | ⏳ waiting on #12 — not yet built |
+| [0012](active/0012-subagent-ux.md) | First-Class Subagent UX — Spawn, Tree Visualization & Inspect | `high` | `feat` | build-ready |
 
 ```mermaid
 graph TD
   0012 --> 0011
+  0010 --> 0012
+  0010:::done
+  classDef done fill:#d3f9d8;
 ```
 
 <details><summary>✅🗑️ Archive — done + killed (10)</summary>
