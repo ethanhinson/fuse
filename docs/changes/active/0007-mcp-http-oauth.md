@@ -2,7 +2,7 @@
 id: 7
 slug: mcp-http-oauth
 title: Remote MCP Servers via HTTP/SSE Transport + OAuth 2.0
-status: in_progress
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-04
