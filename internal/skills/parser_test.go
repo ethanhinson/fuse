@@ -22,6 +22,20 @@ func TestParseSkillFrontmatter(t *testing.T) {
 	}
 }
 
+func TestParseSkillContextAndAgent(t *testing.T) {
+	src := []byte("---\nname: docket-status\ncontext: fork\nagent: docket-status\n---\nbody\n")
+	s, err := ParseSkill("/x/SKILL.md", src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Context != "fork" {
+		t.Errorf("context = %q, want fork", s.Context)
+	}
+	if s.Agent != "docket-status" {
+		t.Errorf("agent = %q, want docket-status", s.Agent)
+	}
+}
+
 func TestParseSkillNoFrontmatterIsError(t *testing.T) {
 	_, err := ParseSkill("/x/SKILL.md", []byte("just a body\n"))
 	if err == nil {
