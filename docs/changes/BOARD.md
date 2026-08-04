@@ -1,18 +1,18 @@
 # Backlog
 
-**5 changes** — 🟡 2 proposed · ✅ 3 done
+**6 changes** — 🟡 2 proposed · ✅ 3 done
 
 ## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0004](active/0004-skill-runtime.md) | Skill Runtime | `high` | `feat` | build-ready |
 | [0005](active/0005-tui-gutter-indent-fix.md) | Fix file-read gutter indentation in TUI | `medium` | `fix` | build-ready |
+| [0006](active/0006-tui-markdown-rendering.md) | Terminal Markdown Rendering | `medium` | `feat` | build-ready |
 
 ```mermaid
 graph TD
-  0002 --> 0004
   0002 --> 0005
+  0002 --> 0006
   0002:::done
   classDef done fill:#d3f9d8;
 ```
