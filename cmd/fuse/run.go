@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
@@ -100,6 +102,22 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
 	}
+
+	// Models with ID prefix "cli/" bypass the LiteLLM gateway and route through
+	// the CLIAdapter, which spawns claude --print with fuse mcp-server attached.
+	if strings.HasPrefix(mc.ID, "cli/") {
+		fuseExe, err := os.Executable()
+		if err != nil {
+			return nil, "", fmt.Errorf("cli adapter: resolve binary: %w", err)
+		}
+		cliAdapter := newCLIAdapter(fuseExe, approve)
+		gate := permissions.New(cfg.Permissions, toolReg, approve)
+		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
+		// maxTokens is not forwarded to the CLI; Claude controls its own limits.
+		a := agent.New(cliAdapter, gate, r, mc.ID, systemPrompt, cfg.MaxTurns, 0)
+		return a, mc.ID, nil
+	}
+
 	adapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, http.DefaultClient)
 	if traceW != nil {
 		adapter = adapter.WithTrace(traceW)

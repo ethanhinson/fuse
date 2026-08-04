@@ -39,6 +39,9 @@ func DefaultRegistry() *Registry {
 		"qwen-local":     {ID: "local/qwen-7b", MaxTokens: 4096, Persona: "general"},
 		"llama":          {ID: "local/llama3.1:8b", MaxTokens: 2048, Persona: "general"},
 		"claude":         {ID: "claude/sonnet", MaxTokens: 8192, Persona: "general"},
+		// claude-max routes to the CLIAdapter (fuse mcp-server bridge) rather
+		// than the LiteLLM gateway. ID prefix "cli/" is the discriminator.
+		"claude-max": {ID: "cli/claude-max", MaxTokens: 0, Persona: "coding"},
 	})
 }
 
