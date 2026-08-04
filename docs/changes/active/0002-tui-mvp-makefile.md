@@ -2,11 +2,11 @@
 id: 2
 slug: tui-mvp-makefile
 title: Bubbletea TUI MVP + Makefile
-status: proposed
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-04
 depends_on: []
 related: [1]
 discovered_from: [1]
@@ -16,8 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable: false
-branch:
-claimed_at:
+branch: feat/tui-mvp-makefile
+claimed_at: 2026-08-04T04:53:56Z
 pr:
 blocked_by:
 reconciled: false
