@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -11,6 +12,13 @@ import (
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/skills"
 )
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// plainLines strips ANSI escape codes and joins model lines for content checks.
+func plainLines(m ShellModel) string {
+	return ansiRE.ReplaceAllString(strings.Join(m.lines, "\n"), "")
+}
 
 func testRegistry() *model.Registry {
 	return model.NewRegistry("alpha", map[string]model.ModelConfig{
@@ -30,7 +38,7 @@ func sized(m ShellModel) ShellModel {
 }
 
 func TestWindowSizeSetsViewport(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	if !m.ready {
 		t.Fatal("model not ready after WindowSizeMsg")
 	}
@@ -53,7 +61,7 @@ func typeLine(m ShellModel, s string) ShellModel {
 }
 
 func TestEnterStartsPrompt(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m = typeLine(m, "do a thing")
 	m, cmd := enter(m)
 	if !m.running {
@@ -71,7 +79,7 @@ func TestEnterStartsPrompt(t *testing.T) {
 }
 
 func TestEnterWhileRunningIsNoop(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true
 	m = typeLine(m, "ignored")
 	m, cmd := enter(m)
@@ -84,7 +92,7 @@ func TestEnterWhileRunningIsNoop(t *testing.T) {
 }
 
 func TestEnterEmptyIsNoop(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m = typeLine(m, "   ")
 	m, cmd := enter(m)
 	if cmd != nil || m.running {
@@ -94,7 +102,7 @@ func TestEnterEmptyIsNoop(t *testing.T) {
 
 func TestSlashExitQuits(t *testing.T) {
 	for _, cmdStr := range []string{"/exit", "/quit"} {
-		m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+		m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 		m = typeLine(m, cmdStr)
 		_, cmd := enter(m)
 		if cmd == nil {
@@ -107,7 +115,7 @@ func TestSlashExitQuits(t *testing.T) {
 }
 
 func TestSlashVerboseToggles(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m = typeLine(m, "/verbose")
 	m, _ = enter(m)
 	if !m.verbose {
@@ -119,7 +127,7 @@ func TestSlashVerboseToggles(t *testing.T) {
 }
 
 func TestSlashModelSwitch(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m = typeLine(m, "/model beta")
 	m, _ = enter(m)
 	if m.alias != "beta" {
@@ -128,7 +136,7 @@ func TestSlashModelSwitch(t *testing.T) {
 }
 
 func TestSlashModelUnknown(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m = typeLine(m, "/model nope")
 	m, _ = enter(m)
 	if m.alias != "alpha" {
@@ -143,7 +151,7 @@ func TestSlashSkillInjectsBody(t *testing.T) {
 	slash := map[string]skills.Skill{
 		"/route": {Name: "route", SlashCommand: "/route", Body: "route body prompt"},
 	}
-	m := sized(NewShellModel("alpha", false, testRegistry(), slash, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), slash, nilBuilder))
 	m = typeLine(m, "/route")
 	m, cmd := enter(m)
 	if !m.running || cmd == nil {
@@ -158,7 +166,7 @@ func TestSlashSkillForwardsArgs(t *testing.T) {
 	slash := map[string]skills.Skill{
 		"/docket-new-change": {Name: "docket-new-change", SlashCommand: "/docket-new-change", Body: "skill body"},
 	}
-	m := sized(NewShellModel("alpha", false, testRegistry(), slash, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), slash, nilBuilder))
 	m = typeLine(m, "/docket-new-change design the auth layer")
 	m, cmd := enter(m)
 	if !m.running || cmd == nil {
@@ -174,7 +182,7 @@ func TestSlashSkillForwardsArgs(t *testing.T) {
 }
 
 func TestSlashUnknown(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m = typeLine(m, "/bogus")
 	m, cmd := enter(m)
 	if cmd != nil || m.running {
@@ -186,10 +194,10 @@ func TestSlashUnknown(t *testing.T) {
 }
 
 func TestAssistantMsgAppendsAndRearms(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	next, cmd := m.Update(AssistantMsg{Text: "hello world"})
 	m = next.(ShellModel)
-	if !strings.Contains(strings.Join(m.lines, "\n"), "hello world") {
+	if !strings.Contains(plainLines(m), "hello world") {
 		t.Error("assistant text not appended")
 	}
 	if cmd == nil {
@@ -201,14 +209,14 @@ func TestToolCallTruncation(t *testing.T) {
 	long := strings.Repeat("x", previewLimit+50)
 
 	// Tool call text lives in pendingCall until a result settles it.
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	next, _ := m.Update(ToolCallMsg{Name: "bash", Args: long})
 	m = next.(ShellModel)
 	if !strings.Contains(m.pendingCall, "bash(") || !strings.Contains(m.pendingCall, "…") {
 		t.Errorf("expected truncated pending call, got: %q", m.pendingCall)
 	}
 
-	mv := sized(NewShellModel("alpha", true, testRegistry(), nil, nilBuilder))
+	mv := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
 	nv, _ := mv.Update(ToolCallMsg{Name: "bash", Args: long})
 	mv = nv.(ShellModel)
 	if strings.Contains(mv.pendingCall, "…") {
@@ -217,7 +225,7 @@ func TestToolCallTruncation(t *testing.T) {
 }
 
 func TestToolResultErrorPrefix(t *testing.T) {
-	m := sized(NewShellModel("alpha", true, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
 	// Send a ToolCallMsg first so pendingCall is set before the result arrives.
 	next, _ := m.Update(ToolCallMsg{Name: "bash", Args: "x"})
 	m = next.(ShellModel)
@@ -229,7 +237,7 @@ func TestToolResultErrorPrefix(t *testing.T) {
 }
 
 func TestAgentDoneClearsRunning(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true
 	hist := []model.Message{{Role: "user", Content: "x"}, {Role: "assistant", Content: "y"}}
 	next, cmd := m.Update(AgentDoneMsg{History: hist})
@@ -246,7 +254,7 @@ func TestAgentDoneClearsRunning(t *testing.T) {
 }
 
 func TestCtrlLClears(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.appendLine("some content")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
 	m = next.(ShellModel)
@@ -256,7 +264,7 @@ func TestCtrlLClears(t *testing.T) {
 }
 
 func TestCtrlCQuits(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatal("expected quit cmd")
@@ -267,7 +275,7 @@ func TestCtrlCQuits(t *testing.T) {
 }
 
 func TestViewContainsStatusAndPrompt(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	v := m.View()
 	if !strings.Contains(v, "alpha") {
 		t.Error("view should contain the model alias")

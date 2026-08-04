@@ -44,12 +44,13 @@ type ShellModel struct {
 	input   textinput.Model
 	spinner spinner.Model
 
-	lines       []string
-	pendingCall string // styled tool-call text in flight; "" when idle
-	alias       string
-	verbose     bool
-	running     bool
-	ready       bool // first WindowSizeMsg seen (viewport sized)
+	lines        []string
+	pendingCall  string // styled tool-call text in flight; "" when idle
+	alias        string
+	verbose      bool
+	running      bool
+	ready        bool   // first WindowSizeMsg seen (viewport sized)
+	glamourStyle string // fixed glamour style; detected before TUI starts
 
 	runStart     time.Time
 	inputTokens  int
@@ -67,8 +68,10 @@ type ShellModel struct {
 
 // NewShellModel builds a ShellModel. alias is the starting model alias;
 // verbose controls tool arg/output truncation; slash is the skill slash-command
-// map; build constructs an agent bound to a renderer.
-func NewShellModel(alias string, verbose bool, reg *model.Registry, slash map[string]skills.Skill, build AgentBuilder) ShellModel {
+// map; build constructs an agent bound to a renderer. glamourStyle is a fixed
+// glamour style name ("dark", "light", etc.) detected before the TUI starts so
+// glamour never queries the terminal from inside the bubbletea event loop.
+func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.Registry, slash map[string]skills.Skill, build AgentBuilder) ShellModel {
 	in := textinput.New()
 	in.Placeholder = "type a task, /model NAME, /verbose, /exit"
 	in.Prompt = ""
@@ -81,15 +84,16 @@ func NewShellModel(alias string, verbose bool, reg *model.Registry, slash map[st
 	sp.Style = spinnerStyle
 
 	m := ShellModel{
-		vp:      vp,
-		input:   in,
-		spinner: sp,
-		alias:   alias,
-		verbose: verbose,
-		ch:      make(chan tea.Msg, 64),
-		reg:     reg,
-		slash:   slash,
-		build:   build,
+		vp:           vp,
+		input:        in,
+		spinner:      sp,
+		alias:        alias,
+		verbose:      verbose,
+		glamourStyle: glamourStyle,
+		ch:           make(chan tea.Msg, 64),
+		reg:          reg,
+		slash:        slash,
+		build:        build,
 	}
 	m.appendLine(fmt.Sprintf("Fuse  %s", alias))
 	m.appendLine("Type a task, /model NAME to switch, /verbose to toggle, /exit to quit.")
@@ -125,7 +129,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.Width = msg.Width
 		m.ready = true
 		if r, err := glamour.NewTermRenderer(
-			glamour.WithAutoStyle(),
+			glamour.WithStylePath(m.glamourStyle),
 			glamour.WithWordWrap(msg.Width),
 		); err == nil {
 			m.md = r
@@ -482,6 +486,12 @@ func (m *ShellModel) refreshViewport(followBottom bool) {
 	}
 	if m.vp.Width > 0 {
 		content = wordwrap.String(content, m.vp.Width)
+	}
+	// Pad the top so sparse content sticks to the bottom like a chat interface.
+	if m.vp.Height > 0 {
+		if lineCount := strings.Count(content, "\n") + 1; lineCount < m.vp.Height {
+			content = strings.Repeat("\n", m.vp.Height-lineCount) + content
+		}
 	}
 	m.vp.SetContent(content)
 	if followBottom {

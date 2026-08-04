@@ -12,7 +12,7 @@ import (
 // TestPermissionRequestRendersBlock verifies that a PermissionRequestMsg causes
 // an approval block to appear in the transcript.
 func TestPermissionRequestRendersBlock(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)
@@ -43,7 +43,7 @@ func TestPermissionRequestRendersBlock(t *testing.T) {
 
 // TestApprovalKeyY verifies that pressing 'y' sends an approved response.
 func TestApprovalKeyY(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)
@@ -74,7 +74,7 @@ func TestApprovalKeyY(t *testing.T) {
 
 // TestApprovalKeyS verifies that pressing 's' sends session approval.
 func TestApprovalKeyS(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)
@@ -97,7 +97,7 @@ func TestApprovalKeyS(t *testing.T) {
 
 // TestApprovalKeyN verifies that pressing 'n' sends a denial.
 func TestApprovalKeyN(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)
@@ -120,7 +120,7 @@ func TestApprovalKeyN(t *testing.T) {
 
 // TestApprovalViewStatus verifies that the status bar shows the approval prompt.
 func TestApprovalViewStatus(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)

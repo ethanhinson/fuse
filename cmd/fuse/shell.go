@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -54,7 +55,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		return buildAgentWithRenderer(cfg, reg, a, r, verbose, skillBlock, toolReg, approve)
 	}
 
-	m := tui.NewShellModel(alias, verbose, reg, set.SlashCommands(), build)
+	// Detect glamour style before entering alt-screen so we never query the
+	// terminal from inside the bubbletea event loop (the OSC 11 / CPR responses
+	// would be read as keyboard input by bubbletea and appear in the text field).
+	glamourStyle := os.Getenv("GLAMOUR_STYLE")
+	if glamourStyle == "" {
+		glamourStyle = "dark"
+	}
+
+	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, set.SlashCommands(), build)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(stdout))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(stderr, "tui error: %v\n", err)
