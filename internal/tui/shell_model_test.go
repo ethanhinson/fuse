@@ -177,18 +177,19 @@ func TestAssistantMsgAppendsAndRearms(t *testing.T) {
 
 func TestToolCallTruncation(t *testing.T) {
 	long := strings.Repeat("x", previewLimit+50)
+
+	// Tool call text lives in pendingCall until a result settles it.
 	m := sized(NewShellModel("alpha", false, testRegistry(), nil, nilBuilder))
 	next, _ := m.Update(ToolCallMsg{Name: "bash", Args: long})
 	m = next.(ShellModel)
-	joined := strings.Join(m.lines, "\n")
-	if !strings.Contains(joined, "bash(") || !strings.Contains(joined, "…") {
-		t.Errorf("expected truncated tool call, got: %q", joined)
+	if !strings.Contains(m.pendingCall, "bash(") || !strings.Contains(m.pendingCall, "…") {
+		t.Errorf("expected truncated pending call, got: %q", m.pendingCall)
 	}
 
 	mv := sized(NewShellModel("alpha", true, testRegistry(), nil, nilBuilder))
 	nv, _ := mv.Update(ToolCallMsg{Name: "bash", Args: long})
 	mv = nv.(ShellModel)
-	if strings.Contains(strings.Join(mv.lines, "\n"), "…") {
+	if strings.Contains(mv.pendingCall, "…") {
 		t.Error("verbose tool call should not be truncated")
 	}
 }

@@ -14,6 +14,7 @@ var (
 	// Status bar
 	statusModelStyle = lipgloss.NewStyle().Bold(true).Foreground(colNormal)
 	statusRunStyle   = lipgloss.NewStyle().Foreground(colAmber)
+	spinnerStyle     = lipgloss.NewStyle().Foreground(colAmber)
 
 	// Chrome
 	ruleStyle        = lipgloss.NewStyle().Foreground(colMuted)

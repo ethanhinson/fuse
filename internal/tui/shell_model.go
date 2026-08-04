@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,14 +29,16 @@ type AgentBuilder func(alias string, r agent.Renderer) (*agent.Agent, error)
 // transcript viewport above a single-line input prompt, driven by agent
 // output arriving on a channel from a TeaRenderer.
 type ShellModel struct {
-	vp    viewport.Model
-	input textinput.Model
+	vp      viewport.Model
+	input   textinput.Model
+	spinner spinner.Model
 
-	lines   []string
-	alias   string
-	verbose bool
-	running bool
-	ready   bool // first WindowSizeMsg seen (viewport sized)
+	lines       []string
+	pendingCall string // styled tool-call text in flight; "" when idle
+	alias       string
+	verbose     bool
+	running     bool
+	ready       bool // first WindowSizeMsg seen (viewport sized)
 
 	runStart     time.Time
 	inputTokens  int
@@ -60,9 +63,14 @@ func NewShellModel(alias string, verbose bool, reg *model.Registry, slash map[st
 
 	vp := viewport.New(0, 0)
 
+	sp := spinner.New()
+	sp.Spinner = spinner.Dot
+	sp.Style = spinnerStyle
+
 	m := ShellModel{
 		vp:      vp,
 		input:   in,
+		spinner: sp,
 		alias:   alias,
 		verbose: verbose,
 		ch:      make(chan tea.Msg, 64),
@@ -114,6 +122,19 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp, cmd = m.vp.Update(msg)
 		return m, cmd
 
+	case spinner.TickMsg:
+		var spinCmd tea.Cmd
+		m.spinner, spinCmd = m.spinner.Update(msg)
+		// Refresh viewport when a tool call is in flight so the spinner frame
+		// updates in place on the pending-call line.
+		if m.pendingCall != "" {
+			m.refreshViewport(m.vp.AtBottom())
+		}
+		if m.running {
+			return m, spinCmd // keep spinning
+		}
+		return m, nil // let it stop once the agent is done
+
 	case AssistantMsg:
 		m.appendLine(assistantStyle.Render(msg.Text))
 		return m, waitForMsg(m.ch)
@@ -123,13 +144,18 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.verbose {
 			args = truncate(args, previewLimit)
 		}
-		line := toolBulletStyle.Render("●") + " " +
-			toolNameStyle.Render(msg.Name) +
-			toolArgsStyle.Render("("+args+")")
-		m.appendLine(line)
+		// Store the call text as pending; it's rendered with the live spinner
+		// frame in refreshViewport until the result arrives.
+		m.pendingCall = toolNameStyle.Render(msg.Name) + toolArgsStyle.Render("("+args+")")
+		m.refreshViewport(true)
 		return m, waitForMsg(m.ch)
 
 	case ToolResultMsg:
+		// Settle the pending bullet to a static ● now that we have the result.
+		if m.pendingCall != "" {
+			m.lines = append(m.lines, toolBulletStyle.Render("●")+" "+m.pendingCall)
+			m.pendingCall = ""
+		}
 		out := msg.Output
 		if !m.verbose {
 			out = truncate(out, previewLimit)
@@ -138,13 +164,20 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForMsg(m.ch)
 
 	case AgentErrMsg:
+		// Settle any pending call before showing the error.
+		if m.pendingCall != "" {
+			m.lines = append(m.lines, toolBulletStyle.Render("●")+" "+m.pendingCall)
+			m.pendingCall = ""
+		}
 		m.appendLine(agentErrStyle.Render("! " + msg.Err))
 		return m, waitForMsg(m.ch)
 
 	case AgentDoneMsg:
+		m.pendingCall = ""
 		m.history = msg.History
 		m.running = false
 		m.input.Focus()
+		m.refreshViewport(m.vp.AtBottom())
 		return m, waitForMsg(m.ch)
 
 	case TokensMsg:
@@ -172,6 +205,7 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case tea.KeyCtrlL:
 		m.lines = nil
+		m.pendingCall = ""
 		m.refreshViewport(true)
 		return m, nil
 	case tea.KeyPgUp:
@@ -264,8 +298,8 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 		return nil
 	}
 	// run sends events onto the channel; waitForMsg picks them up.
-	// tick drives the live elapsed-time counter in the status bar.
-	return m, tea.Batch(run, tick())
+	// tick drives the elapsed-time counter; spinner.Tick starts the animation.
+	return m, tea.Batch(run, tick(), m.spinner.Tick)
 }
 
 // appendLine adds one logical line (which may itself contain newlines) and
@@ -325,13 +359,18 @@ func formatTokens(n int) string {
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
-// refreshViewport sets viewport content and, when followBottom is true,
-// scrolls to the bottom. No-op before the first WindowSizeMsg sizes the viewport.
+// refreshViewport sets viewport content and, when followBottom is true, scrolls
+// to the bottom. When a tool call is in flight, its animated spinner line is
+// appended after the settled lines. No-op before the first WindowSizeMsg.
 func (m *ShellModel) refreshViewport(followBottom bool) {
 	if !m.ready {
 		return
 	}
-	m.vp.SetContent(strings.Join(m.lines, "\n"))
+	content := strings.Join(m.lines, "\n")
+	if m.pendingCall != "" {
+		content += "\n" + m.spinner.View() + " " + m.pendingCall
+	}
+	m.vp.SetContent(content)
 	if followBottom {
 		m.vp.GotoBottom()
 	}
@@ -347,7 +386,7 @@ func (m ShellModel) View() string {
 		if tok != "" {
 			meta += " · ↑ " + tok + " tokens"
 		}
-		status = statusRunStyle.Render("*") + " " +
+		status = m.spinner.View() + " " +
 			statusRunStyle.Render("Thinking…") + " " +
 			ruleStyle.Render("("+meta+")")
 	} else {
