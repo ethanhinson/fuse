@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/muesli/reflow/wordwrap"
 
 	"github.com/ethanhinson/fuse/internal/agent"
@@ -58,6 +59,7 @@ type ShellModel struct {
 	history  []model.Message
 	approval *approvalState // non-nil while waiting for user's y/s/n
 
+	md    *glamour.TermRenderer // nil until first WindowSizeMsg; recreated on resize
 	reg   *model.Registry
 	slash map[string]skills.Skill
 	build AgentBuilder
@@ -122,6 +124,12 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp.Height = h
 		m.input.Width = msg.Width
 		m.ready = true
+		if r, err := glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(msg.Width),
+		); err == nil {
+			m.md = r
+		}
 		m.refreshViewport(true)
 		return m, nil
 
@@ -147,7 +155,13 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil // let it stop once the agent is done
 
 	case AssistantMsg:
-		m.appendLine(assistantStyle.Render(msg.Text))
+		text := msg.Text
+		if m.md != nil {
+			if rendered, err := m.md.Render(text); err == nil {
+				text = strings.TrimRight(rendered, "\n")
+			}
+		}
+		m.appendLine(assistantStyle.Render(text))
 		return m, waitForMsg(m.ch)
 
 	case ToolCallMsg:
