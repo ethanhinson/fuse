@@ -1,12 +1,12 @@
 # Backlog
 
-**8 changes** — 🟢 1 in progress · ✅ 7 done
+**8 changes** — 🔵 1 implemented · ✅ 7 done
 
-## 🟢 In progress (1)
+## 🔵 Implemented — awaiting merge (1)
 
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0008](active/0008-mcp-integration-test-harness.md) | MCP Integration Test Harness (Docker Compose + Playwright) | `medium` | `chore` | [spec](../superpowers/specs/0008-mcp-integration-test-harness.md) | `feat/mcp-integration-test-harness` |
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0008](active/0008-mcp-integration-test-harness.md) | MCP Integration Test Harness (Docker Compose + Playwright) | `medium` | `chore` | [#8](https://github.com/ethanhinson/fuse/pull/8) |  |
 
 ```mermaid
 graph TD
