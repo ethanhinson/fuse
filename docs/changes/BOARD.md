@@ -1,12 +1,12 @@
 # Backlog
 
-**8 changes** — 🟡 1 proposed · ✅ 7 done
+**8 changes** — 🟢 1 in progress · ✅ 7 done
 
-## 🟡 Proposed (1)
+## 🟢 In progress (1)
 
-| # | Title | Priority | Type | Readiness |
-|---|-------|----------|------|-----------|
-| [0008](active/0008-mcp-integration-test-harness.md) | MCP Integration Test Harness (Docker Compose + Playwright) | `medium` | `chore` | build-ready |
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0008](active/0008-mcp-integration-test-harness.md) | MCP Integration Test Harness (Docker Compose + Playwright) | `medium` | `chore` | [spec](../superpowers/specs/0008-mcp-integration-test-harness.md) | `feat/mcp-integration-test-harness` |
 
 ```mermaid
 graph TD
