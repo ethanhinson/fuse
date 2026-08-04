@@ -1,0 +1,352 @@
+<!-- docket:backlink:start (generated — do not hand-edit) -->
+> ↩ **[Change 0001 — Multi-Model Agent Harness (`mh`)](https://github.com/ethanhinson/model-harness/blob/docket/docs/changes/active/0001-multi-model-agent-harness.md)**
+<!-- docket:backlink:end -->
+
+# Spec: Multi-Model Agent Harness (`mh`)
+
+## Context
+
+The existing stack has three strong, independent pieces that do not yet speak a common language:
+
+1. **codeindex** — Go-based code navigation engine (blast-radius, call graphs, symbol lookup) with a Claude Code plugin, but not available to any other model
+2. **LiteLLM gateway** (`:4000`) — 11 models unified under an OpenAI-compatible API: local Ollama (`local/*`) and OpenRouter cloud (`cloud/*`) models, plus `claude/*` via Anthropic; all confirmed tool-capable
+3. **Claude Code** — production-grade agent harness, but Claude-only; other models get a minimal Python script (`model-council.py`) with no parity
+
+The gap: DeepSeek, Qwen, Kimi, GLM, and local models all support function-calling through the gateway, but they run without code navigation, without the skill system, without hooks, and without proper session management. Claude gets a first-class harness; every other model gets a prototype.
+
+The model harness closes that gap. Claude is one model in the ecosystem — a spoke in the wheel — not the designated orchestrator.
+
+## Goals
+
+1. **Model-agnostic runtime** — any configured model can be the primary agent; the harness is not coupled to Claude or any single provider
+2. **Code navigation for all** — codeindex tools (`impact`, `callers`, `callees`, `search`) available in the tool registry for every model, same token savings as the Claude Code plugin
+3. **Skill compatibility** — SKILL.md files from `~/.claude/skills/`, `~/.grok/skills/`, and `~/.harness/skills/` all work; skills written for Claude Code run here without modification
+4. **Gateway-native** — the LiteLLM gateway is the sole model transport; no per-model adapter code, no duplicate API key handling
+5. **Claude as peer** — `claude/sonnet` (and other Claude models) are entries in the model registry like any other; they route through the gateway
+
+## Non-goals (v1)
+
+- A web UI or REST server (CLI only)
+- Model fine-tuning or weight management
+- Building a new plugin marketplace (use `~/.harness/skills/` for now)
+- Replacing Claude Code for users who prefer it (they coexist)
+- Real-time streaming output to a programmatic caller (TTY focus first)
+
+---
+
+## Architecture
+
+### Binary: `mh`
+
+Single Go binary. Installed to `/usr/local/bin/mh`. Statically linked except CGO dependencies (codeindex uses tree-sitter + SQLite via CGO — same requirements as `codeindex` itself).
+
+```
+mh [--model <name>] [--skill <name>] [--session <id>] "<task>"
+mh shell                   # interactive REPL
+mh models                  # list configured models
+mh skills                  # list discovered skills
+mh session list            # list saved sessions
+mh session resume <id>     # resume a session
+```
+
+### Repository structure
+
+```
+model-harness/
+├── cmd/
+│   └── mh/              # CLI entry point, flag parsing, top-level dispatch
+├── internal/
+│   ├── agent/           # Core agent loop (model.go, loop.go, message.go)
+│   ├── tools/           # Tool implementations + registry
+│   │   ├── bash.go      # Shell execution (sandboxed, timeout, working dir)
+│   │   ├── edit.go      # Surgical file edits (unified diff application)
+│   │   ├── read.go      # File reading (with line-range support)
+│   │   ├── write.go     # File write/create
+│   │   ├── search.go    # Web search (Tavily API)
+│   │   ├── codeindex.go # codeindex integration (impact, callers, callees, search)
+│   │   └── registry.go  # Tool registration + JSON Schema export
+│   ├── model/           # Model adapter layer
+│   │   ├── adapter.go   # OpenAI-compat client (wraps gateway)
+│   │   ├── registry.go  # Named model configs (deepseek-flash, qwen-coder, etc.)
+│   │   └── router.go    # Task-based routing (explicit, auto, cascade, parallel)
+│   ├── skills/          # SKILL.md discovery + invocation
+│   │   ├── loader.go    # Scan ~/.harness/skills/, ~/.claude/skills/, ~/.grok/skills/
+│   │   ├── parser.go    # SKILL.md frontmatter parser (YAML)
+│   │   └── invoker.go   # Skill injection into agent context
+│   ├── hooks/           # Lifecycle hook execution
+│   │   ├── types.go     # PreToolUse, PostToolUse, Stop, SessionStart, SubagentStop
+│   │   ├── loader.go    # Load hooks.json from skill/plugin dirs
+│   │   └── runner.go    # Execute hooks, handle blocking vs. non-blocking
+│   ├── session/         # Session management
+│   │   ├── store.go     # Persist sessions to ~/.harness/sessions/<id>.json
+│   │   ├── resume.go    # Load and replay session context
+│   │   └── compress.go  # Context window compression for long sessions
+│   ├── config/          # Configuration loading
+│   │   ├── schema.go    # Config struct + defaults
+│   │   └── loader.go    # ~/.harness/config.yml + .harness.local.yml
+│   └── tui/             # Terminal UI
+│       ├── renderer.go  # Message, tool call, and result rendering
+│       └── spinner.go   # Progress indicators for tool execution
+├── sdk/                 # Embeddable SDK for building custom harnesses
+│   └── go/              # Go module: harness.Agent, harness.Tool, harness.Run()
+├── docs/
+│   ├── skills/          # Built-in skills (see Skills section)
+│   └── config.md        # Configuration reference
+├── go.mod
+└── go.sum
+```
+
+---
+
+## Core agent loop
+
+```go
+// internal/agent/loop.go
+func (a *Agent) Run(ctx context.Context, task string) error {
+    messages := []Message{{Role: "user", Content: task}}
+
+    for turn := 0; turn < a.config.MaxTurns; turn++ {
+        a.hooks.Fire(PreTurn, HookCtx{Turn: turn, Messages: messages})
+
+        resp, err := a.model.Complete(ctx, CompletionReq{
+            Messages:   messages,
+            Tools:      a.tools.Schemas(),
+            MaxTokens:  a.config.MaxTokens,
+        })
+        if err != nil {
+            return err
+        }
+
+        a.tui.RenderAssistant(resp.Content)
+        messages = append(messages, resp.AsMessage())
+
+        if len(resp.ToolCalls) == 0 {
+            a.hooks.Fire(Stop, HookCtx{Final: resp.Content})
+            return nil
+        }
+
+        for _, call := range resp.ToolCalls {
+            a.hooks.Fire(PreToolUse, HookCtx{Tool: call})
+            result := a.tools.Execute(ctx, call)
+            a.hooks.Fire(PostToolUse, HookCtx{Tool: call, Result: result})
+            a.tui.RenderToolResult(call, result)
+            messages = append(messages, toolResultMessage(call.ID, result))
+        }
+    }
+
+    return ErrMaxTurnsReached
+}
+```
+
+Key properties:
+- **Stateless turns** — the loop is pure function over messages; resuming a session is appending to the messages slice
+- **Context cancellation** — every tool execution respects `ctx`; long-running bash commands can be interrupted
+- **Loop detection** — identical consecutive tool-call fingerprints abort after 3 repeats (proven necessary from model-council.py experience with thinking models)
+
+---
+
+## Tool registry
+
+Tools are registered with their JSON Schema, executed by name. Every model sees the same tool set.
+
+| Tool | Inspired by | Description |
+|---|---|---|
+| `bash` | Claude Code, Grok Build | Shell execution; timeout; working directory |
+| `read_file` | Claude Code, Grok Build | Read file content with optional line range |
+| `write_file` | Claude Code | Create/overwrite a file |
+| `edit_file` | Claude Code | Surgical edit: old_string → new_string with uniqueness check |
+| `web_search` | Claude Code | Tavily search API; respects `TAVILY_API_KEY` |
+| `codeindex_impact` | codeindex plugin | Callers + callees for a symbol; blast-radius pre-edit |
+| `codeindex_callers` | codeindex plugin | Direct callers of a symbol |
+| `codeindex_search` | codeindex plugin | Semantic/lexical symbol search |
+| `list_directory` | Claude Code | Directory listing with optional glob |
+| `spawn_subagent` | Grok Build | Spawn a child agent; returns when done or hits max turns |
+
+### `codeindex` integration
+
+The harness calls the `codeindex` binary (must be on PATH or `CODEINDEX_BIN`). Same requirement as the Claude Code plugin. The integration wraps the same three operations (`impact`, `callers`, `search`) with identical output format — so skills and hooks written for the Claude Code codeindex plugin work unmodified in the harness.
+
+The post-edit hook from the codeindex plugin is also ported: after any `edit_file` or `write_file` call that touches a known symbol, inject a ≤150-token blast-radius note (same as the Claude Code plugin, measured to increase branch-out rate by 62%).
+
+### `spawn_subagent`
+
+```go
+type SubagentReq struct {
+    Model          string   // e.g. "local/qwen3-coder:30b"; defaults to config.subagent_default
+    Task           string
+    CapabilityMode string   // "read-only" | "read-write" | "execute" | "all"
+    Worktree       bool     // isolate in a fresh git worktree
+    Tools          []string // override: empty = inherit parent tool set
+}
+```
+
+This is what makes multi-model composition possible. Example: a DeepSeek primary agent spawns a `local/qwen3-coder:30b` subagent for a specific refactor, then a `cloud/kimi-k3` subagent for a research step.
+
+---
+
+## Model registry
+
+Models are configured in `~/.harness/config.yml`. The gateway URL and key are set once; individual model entries name the gateway path:
+
+```yaml
+gateway:
+  url: http://localhost:4000/v1
+  key: llm-gateway-local
+
+models:
+  default: deepseek-flash
+
+  deepseek-flash:
+    id: cloud/deepseek-v4-flash
+    max_tokens: 8192
+    persona: coding
+
+  deepseek-pro:
+    id: cloud/deepseek-v4-pro
+    max_tokens: 8192
+    persona: coding
+
+  kimi:
+    id: cloud/kimi-k3
+    max_tokens: 8192
+    persona: research
+
+  glm:
+    id: cloud/glm-5.2
+    max_tokens: 8192
+    persona: general
+
+  qwen-cloud:
+    id: cloud/qwen3-8b
+    max_tokens: 4096
+    persona: general
+
+  qwen-coder:
+    id: local/qwen3-coder:30b
+    max_tokens: 4096
+    persona: coding
+
+  qwen-local:
+    id: local/qwen3.6:27b
+    max_tokens: 4096
+    persona: reasoning
+
+  llama:
+    id: local/llama3.1:8b
+    max_tokens: 2048
+    persona: general
+
+  claude:
+    id: claude/sonnet          # routes through LiteLLM gateway → Anthropic
+    max_tokens: 8192
+    persona: general
+
+subagents:
+  default: qwen-coder          # default model for spawned subagents
+  explore: kimi                # subagent type → model mapping (Grok Build pattern)
+  plan: deepseek-pro
+```
+
+### Routing modes
+
+| Mode | How it works | When to use |
+|---|---|---|
+| Explicit | `mh --model deepseek-flash "task"` | User knows what they want |
+| Auto | Tags in task text → model selector | `mh "write a Go function..."` → qwen-coder |
+| Cascade | Try cheap/fast; escalate on tool-call failure or low-confidence | General use |
+| Parallel | Fan out to N models; return best by heuristic | Comparison / research tasks |
+
+---
+
+## Skills system
+
+Skill discovery scans three paths in order:
+1. `~/.harness/skills/`
+2. `~/.claude/skills/` (Claude Code compatibility)
+3. `~/.grok/skills/` (Grok Build compatibility)
+
+Each directory entry that contains a `SKILL.md` is a skill. SKILL.md frontmatter:
+```yaml
+---
+name: codeindex:impact
+description: Blast-radius navigation for a symbol
+triggers:
+  - when: "editing a function or type"
+    auto_invoke: true
+slash_command: /codeindex:impact
+---
+```
+
+Skills are injected into the agent's system context (for auto-invoke) or triggered by slash command in the shell. Same mechanism as Claude Code and Grok Build — skills written for either work here.
+
+**Built-in skills (shipped with the harness):**
+
+| Skill | Slash command | Description |
+|---|---|---|
+| `multi-model:route` | `/route` | Analyze a task and recommend which model to use |
+| `multi-model:compare` | `/compare` | Run the same task on two models; diff the results |
+| `docket:status` | `/docket` | Show the current project's docket board |
+| `docket:new` | `/docket:new` | Start a new docket change from within a harness session |
+| `codeindex:impact` | `/impact` | Blast-radius for a symbol (proxied from codeindex plugin) |
+| `codeindex:explore` | `/explore` | Feature exploration: semantic search → impact |
+| `session:summary` | `/summary` | Summarize current session for handoff |
+
+---
+
+## Hooks
+
+Hook schema is compatible with Claude Code's `hooks.json` format. Hooks live in `~/.harness/hooks.json` or per-skill `hooks.json` files. Events:
+
+| Event | Timing | Blocking |
+|---|---|---|
+| `PreToolUse` | Before any tool executes | Yes (can reject/modify) |
+| `PostToolUse` | After tool returns | No |
+| `Stop` | When agent finishes | No |
+| `SessionStart` | On session open | No |
+| `SubagentStop` | When a subagent finishes | No |
+| `UserPromptSubmit` | Before sending user message to model | Yes (can inject context) |
+
+The codeindex plugin's `UserPromptSubmit` hook (the 155-token availability note) and post-edit hook work unmodified through this system.
+
+---
+
+## Configuration
+
+`~/.harness/config.yml` (user-global) + `.harness.local.yml` in the project root (machine-local, gitignored).
+
+Per-project overrides allow `default_model`, `tools`, and `skills` to differ per codebase without touching global config.
+
+Key environment variables (all already in `~/.zshrc`):
+- `LLM_GATEWAY_URL=http://localhost:4000/v1`
+- `LLM_GATEWAY_KEY=llm-gateway-local`
+- `TAVILY_API_KEY` (web search)
+- `CODEINDEX_BIN` (optional; defaults to `codeindex` on PATH)
+
+---
+
+## Phase 1 build plan
+
+The spec is the full vision. Phase 1 delivers a working harness that proves the architecture end-to-end:
+
+1. **Core agent loop** — `internal/agent/` with LiteLLM gateway adapter; no skills, no hooks yet
+2. **Tool registry** — bash, read_file, write_file, edit_file, list_directory
+3. **codeindex integration** — `codeindex_impact` and `codeindex_callers` tools wired up
+4. **Model registry** — all 11 models from the gateway named in default config
+5. **Basic CLI** — `mh --model <name> "<task>"` works end-to-end
+6. **Loop detection** — fingerprint-based dedup (ported from model-council.py experience)
+7. **Skills loader** — discovery from the three paths; inject into system context; slash commands in shell mode
+8. **`mh shell`** — interactive REPL with tool output rendering
+
+Phase 2 delivers hooks, subagents, session persistence, web_search, and the built-in skills.
+
+---
+
+## Key design decisions
+
+**Go over TypeScript/Python:** codeindex is Go with a Go SDK; native library integration avoids subprocess overhead for every code navigation call. Go's single-binary distribution means `go build -o /usr/local/bin/mh ./cmd/mh` is the entire install. CGO is already required by codeindex anyway.
+
+**Gateway-only model access:** All models route through the LiteLLM gateway. This means the harness has zero model-specific adapter code. Adding a new model is one line in `~/.harness/config.yml`. The gateway handles retry, logging, cost tracking, and OpenAI-compat normalization.
+
+**No Claude orchestrator:** Routing decisions are made by explicit flag, rule-based auto-routing, or a lightweight built-in skill (`/route`). Claude does not have a privileged position. Any model can invoke any tool. Any model can spawn subagents. This is the architectural difference from model-council.py.
+
+**SKILL.md compatibility as a first-class goal:** The skill file format must be byte-compatible with Claude Code's format. This way, any skill developed for Claude Code works in the harness, and any skill developed for the harness works in Claude Code. The harness grows the shared skill ecosystem rather than forking it.
