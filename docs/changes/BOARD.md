@@ -1,24 +1,23 @@
 # Backlog
 
-**11 changes** — 🟡 2 proposed · ✅ 8 done · 🗑️ 1 killed
+**11 changes** — 🟡 1 proposed · ✅ 9 done · 🗑️ 1 killed
 
-## 🟡 Proposed (2)
+## 🟡 Proposed (1)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0010](active/0010-shell-slash-command-ui.md) | Shell Slash-Command Autocomplete + MCP & Skill Invocation | `medium` | `feat` | build-ready |
 | [0011](active/0011-deep-research.md) | Deep Research Mode — Web Search + Fan-out Synthesis | `high` | `feat` | ⏳ waiting on #12 — not yet built |
 
 ```mermaid
 graph TD
-  0010
   0012 --> 0011
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (9)</summary>
+<details><summary>✅🗑️ Archive — done + killed (10)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0010](archive/2026-08-04-0010-shell-slash-command-ui.md) | Shell Slash-Command Autocomplete + MCP & Skill Invocation | 2026-08-04 |
 | [0009](archive/2026-08-04-0009-mcp-management-cli.md) | `fuse mcps` MCP Server Management CLI + `/mcps` Shell Built-in | 2026-08-04 |
 | [0008](archive/2026-08-04-0008-mcp-integration-test-harness.md) | MCP Integration Test Harness (Docker Compose + Playwright) | 2026-08-04 |
 | [0007](archive/2026-08-04-0007-mcp-http-oauth.md) | Remote MCP Servers via HTTP/SSE Transport + OAuth 2.0 | 2026-08-04 |
