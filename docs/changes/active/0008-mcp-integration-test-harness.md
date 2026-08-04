@@ -12,12 +12,12 @@ related: [3, 7]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/0008-mcp-integration-test-harness.md
-plan:
+plan: docs/superpowers/plans/0008-mcp-integration-test-harness.md
 results:
 trivial: false
 auto_groomable: false
 branch: feat/mcp-integration-test-harness
-claimed_at: 2026-08-04T19:14:01Z
+claimed_at: 2026-08-04T19:15:30Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0008-mcp-integration-test-harness.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0008-mcp-integration-test-harness.md) |
+| Plan | [0008-mcp-integration-test-harness.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-integration-test-harness/docs/superpowers/plans/0008-mcp-integration-test-harness.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
