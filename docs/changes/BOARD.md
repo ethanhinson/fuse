@@ -1,6 +1,6 @@
 # Backlog
 
-**6 changes** — 🟡 2 proposed · ✅ 3 done
+**7 changes** — 🟡 2 proposed · ✅ 3 done
 
 ## 🟡 Proposed (2)
 
