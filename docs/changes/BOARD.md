@@ -6,7 +6,7 @@
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0001](active/0001-multi-model-agent-harness.md) | Multi-Model Agent Harness (`mh`) | `high` | `feat` | build-ready |
+| [0001](active/0001-fuse.md) | Fuse — Multi-Model Agent Harness | `high` | `feat` | build-ready |
 
 ```mermaid
 graph TD
