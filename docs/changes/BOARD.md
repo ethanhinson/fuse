@@ -1,12 +1,12 @@
 # Backlog
 
-**2 changes** — 🟢 1 in progress · ✅ 1 done
+**2 changes** — 🔵 1 implemented · ✅ 1 done
 
-## 🟢 In progress (1)
+## 🔵 Implemented — awaiting merge (1)
 
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0002](active/0002-tui-mvp-makefile.md) | Bubbletea TUI MVP + Makefile | `high` | `feat` | [spec](../superpowers/specs/0002-tui-mvp-makefile.md) | `feat/tui-mvp-makefile` |
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0002](active/0002-tui-mvp-makefile.md) | Bubbletea TUI MVP + Makefile | `high` | `feat` | [#2](https://github.com/ethanhinson/fuse/pull/2) |  |
 
 ```mermaid
 graph TD
