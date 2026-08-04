@@ -2,7 +2,7 @@
 id: 4
 slug: skill-runtime
 title: Skill Runtime
-status: proposed
+status: in_progress
 priority: high
 type: feat
 created: 2026-08-04
@@ -14,11 +14,11 @@ adrs: []
 spec: docs/superpowers/specs/0004-skill-runtime.md
 trivial: false
 auto_groomable: false
-branch:
+branch: feat/skill-runtime
 claimed_at:
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/4
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
