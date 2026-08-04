@@ -16,8 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable: false
-branch: feat/mcp-integration-test-harness
-claimed_at: 2026-08-04T19:01:11Z
+branch:
+claimed_at: 2026-08-04T19:04:38Z
 pr:
 blocked_by:
 reconciled: true
@@ -69,3 +69,29 @@ Reconciled against the current integration branch (`origin/main`), the linked sp
 5. Confirmed net-new: no `.github/` directory on `origin/main`; `Makefile` has no `test-integration` target. Module `github.com/ethanhinson/fuse`, Go 1.26.5.
 
 No obsolescence, no fundamental invalidation — scope adjusted, design intact. `auto_capture` is disabled, so no stubs minted.
+
+### 2026-08-04 — HALTED at plan/build (blocking precondition: integration branch does not compile)
+
+`docket-implement-next` cut a feature branch from `origin/main` and discovered a hard blocker that prevents reaching a PR, so the run **halted** for a human (the feature worktree + branch were removed since no code landed; the change stays `in-progress` with `claimed_at` refreshed and `branch:` cleared so the reclaim lease can self-heal if abandoned).
+
+**Blocker: `origin/main` does not build.** `go build ./...` on `origin/main` fails:
+
+```
+cmd/fuse/mcp_server.go:10:2: no required module provides package github.com/ethanhinson/fuse/internal/hitl
+```
+
+`cmd/fuse/mcp_server.go` was committed to `origin/main` (last at `aa33c2e`, change 0006's merge) and imports `internal/hitl` + `internal/permissions` and calls `mcp.NewServer(...)` (which would live in `internal/mcp/server.go`) and `defaultToolRegistry(nil)`. But on `origin/main`:
+- `internal/hitl/` **does not exist** (present only as an untracked dir in the primary working tree),
+- `internal/mcp/server.go` (defining `mcp.NewServer`) **does not exist** (untracked),
+- `cmd/fuse/cli_adapter.go` **does not exist** (untracked),
+- `cmd/fuse/main.go` / `run.go` carry uncommitted modifications in the primary tree.
+
+So the `fuse mcp-server` subcommand's implementation is **unmerged work-in-progress** sitting only in the primary working tree — it belongs to its own change/PR that must land on `origin/main` first. Change 0008's entire premise (an end-to-end harness that spawns `fuse mcp-server` and exercises the MCP client stack) cannot be built or even compiled against a base branch that does not compile.
+
+**This is an undeclared dependency, not a scope tweak.** Change 0008's frontmatter only lists `depends_on: [7]` (done). It has an unrecorded hard dependency on the change that commits the `mcp-server` server implementation (`internal/hitl`, `internal/mcp/server.go`, `cmd/fuse/cli_adapter.go`, and the `cmd/fuse/main.go` mcp-server routing). That change must be filed/merged to `origin/main` before 0008 is build-ready.
+
+**Human action required (any one of):**
+1. Commit the `mcp-server` implementation (the currently-untracked `internal/hitl/`, `internal/mcp/server.go`, `cmd/fuse/cli_adapter.go`, plus the `main.go` routing) as its own change and merge it to `main` so `go build ./...` passes; then add it to 0008's `depends_on:` and re-run `docket-implement-next` for 0008.
+2. Or, if that server code is being tracked under a different in-flight change, merge that change first, then re-run 0008.
+
+The reconcile work above (spec + body corrections) is durable and remains valid for the eventual build.
