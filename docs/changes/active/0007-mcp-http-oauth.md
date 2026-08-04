@@ -16,7 +16,7 @@ trivial: false
 auto_groomable: false
 branch: feat/mcp-http-oauth
 claimed_at: 2026-08-04T00:00:00Z
-pr:
+pr: 5
 blocked_by:
 reconciled: true
 ---
