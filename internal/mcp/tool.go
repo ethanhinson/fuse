@@ -17,7 +17,7 @@ type mcpToolDef struct {
 
 // MCPTool wraps a single MCP server tool as a tools.Tool.
 type MCPTool struct {
-	client      *StdioClient
+	client      mcpConn
 	serverName  string
 	toolName    string
 	description string
