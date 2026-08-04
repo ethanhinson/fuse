@@ -2,7 +2,7 @@
 id: 3
 slug: hitl-permissions-mcp
 title: HITL Permission Layer + MCP Client Integration
-status: proposed
+status: in_progress
 priority: high
 type: feat
 created: 2026-08-03
@@ -16,10 +16,10 @@ plan:
 results:
 trivial: false
 auto_groomable: false
-branch:
+branch: feat/hitl-permissions-mcp
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
