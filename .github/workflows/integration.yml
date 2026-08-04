@@ -5,10 +5,6 @@ on: [push, pull_request]
 jobs:
   mcp-integration:
     runs-on: ubuntu-latest
-    env:
-      # The pinned playwright-go's default driver CDN (playwright.azureedge.net)
-      # was retired; the live Microsoft CDN still serves this driver version.
-      PLAYWRIGHT_DOWNLOAD_HOST: https://playwright.download.prss.microsoft.com/dbazure/download/playwright
     steps:
       - uses: actions/checkout@v4
 
@@ -17,7 +13,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Install Playwright browsers
-        run: go run github.com/playwright-community/playwright-go/cmd/playwright install --with-deps chromium
+        run: go run github.com/mxschmitt/playwright-go/cmd/playwright install --with-deps chromium
 
       - name: Start MCP services
         run: docker compose -f internal/mcp/testdata/docker-compose.yml up -d

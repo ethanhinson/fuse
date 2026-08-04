@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/playwright-community/playwright-go"
+	"github.com/mxschmitt/playwright-go"
 )
 
 // Package-level availability flags, set by TestMain and read by the
@@ -41,10 +41,6 @@ const (
 	mockOAuthIssuerURL  = "http://localhost:8080/default"
 	mockOAuthHealthURL  = "http://localhost:8080/default/.well-known/openid-configuration"
 	composeFile         = "testdata/docker-compose.yml"
-
-	// The live Microsoft CDN that still serves the driver bundled by the pinned
-	// playwright-go version. Overridable via PLAYWRIGHT_DOWNLOAD_HOST.
-	defaultPlaywrightDownloadHost = "https://playwright.download.prss.microsoft.com/dbazure/download/playwright"
 )
 
 func TestMain(m *testing.M) {
@@ -75,15 +71,6 @@ func runMain(m *testing.M) int {
 
 	// Playwright is best-effort: install + launch once. If either fails, the
 	// OAuth2 test skips (via requirePlaywright); nothing else is affected.
-	//
-	// playwright-go v0.5001.0 defaults its driver download to the retired
-	// playwright.azureedge.net CDN (now 404 on every platform). Redirect it to
-	// the live Microsoft CDN unless the caller already set a host. This is the
-	// only host on which this pinned driver version (1.50.1) is still served;
-	// see the OAuth2 test's docs and the change's ADR.
-	if os.Getenv("PLAYWRIGHT_DOWNLOAD_HOST") == "" {
-		_ = os.Setenv("PLAYWRIGHT_DOWNLOAD_HOST", defaultPlaywrightDownloadHost)
-	}
 	if err := playwright.Install(&playwright.RunOptions{Browsers: []string{"chromium"}}); err != nil {
 		fmt.Fprintf(os.Stderr, "[integration] playwright install failed (%v) — OAuth2 test will skip\n", err)
 	} else if p, err := playwright.Run(); err != nil {
