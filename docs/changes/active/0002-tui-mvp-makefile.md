@@ -12,7 +12,7 @@ related: [1]
 discovered_from: [1]
 adrs: []
 spec: docs/superpowers/specs/0002-tui-mvp-makefile.md
-plan:
+plan: docs/superpowers/plans/2026-08-04-tui-mvp-makefile.md
 results:
 trivial: false
 auto_groomable: false
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0002-tui-mvp-makefile.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0002-tui-mvp-makefile.md) |
+| Plan | [2026-08-04-tui-mvp-makefile.md](https://github.com/ethanhinson/fuse/blob/feat/tui-mvp-makefile/docs/superpowers/plans/2026-08-04-tui-mvp-makefile.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
