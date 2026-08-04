@@ -1,0 +1,14 @@
+# docket:start (managed by docket — do not hand-edit)
+.docket/
+.worktrees/
+.claude/settings.local.json
+.docket.local.yml
+.claude/agents/docket-*.md
+.codex/agents/docket-*.md
+.cursor/agents/docket-*.md
+.agents/agents/docket-*.md
+.kiro/agents/docket-*.md
+.windsurf/agents/docket-*.md
+.codex/agents/docket-*.toml
+.cursor/rules/docket-dispatch.mdc
+# docket:end
