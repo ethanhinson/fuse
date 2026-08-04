@@ -2,7 +2,7 @@
 id: 8
 slug: mcp-integration-test-harness
 title: MCP Integration Test Harness (Docker Compose + Playwright)
-status: implemented
+status: done
 priority: medium
 type: chore
 created: 2026-08-04
@@ -17,7 +17,7 @@ results: docs/results/2026-08-04-mcp-integration-test-harness-results.md
 trivial: false
 auto_groomable: false
 branch: feat/mcp-integration-test-harness
-claimed_at: 2026-08-04T19:40:15Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/8
 blocked_by:
 reconciled: true
