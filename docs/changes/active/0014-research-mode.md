@@ -17,7 +17,7 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/research-mode
-claimed_at: 2026-08-05T17:00:33Z
+claimed_at: 2026-08-05T17:12:57Z
 pr:
 blocked_by:
 reconciled: true
@@ -113,3 +113,36 @@ All other substrates (Registry.Subset force-including `spawn_agent`, PermissionG
 present and match the spec. No `internal/research/` package or web tools exist yet
 (clean slate). Auto-capture disabled — no follow-up stubs minted; nothing adjacent
 surfaced beyond the in-scope deltas above.
+
+### 2026-08-05 — HALTED at build (concurrent writer on the shared feature worktree)
+
+This implementer run **halted during Step 5 (build)** — abort-and-report — because a
+**second, concurrent actor is committing to the same `feat/research-mode` branch in the
+same worktree** (`/Users/ethanhinson/dev/fuse/.worktrees/research-mode`), interleaving
+commits with this run seconds apart. Evidence (feature-branch `git log`, all authored
+2026-08-05 ~11:01–11:06 local):
+
+- `dd26c5f` docs — this run's plan commit.
+- `f86cf58` docs — a **duplicate** plan file created by the other actor.
+- `1b88532` docs — the other actor de-duplicating the plans.
+- `61e1d30` feat — this run's Task 1 (SearchProvider iface + bounded HTTP helper), via a
+  dispatched build worker; the worker also reported finding **pre-existing uncommitted
+  Task-9 config edits** it (correctly) did not touch.
+- `3bd9664` feat — the other actor's Task-9 `[research]` config block.
+
+The docket **claim on `origin/docket` is this run's and uncontested** (`claimed_at`
+17:00:33Z, my `plan:` path, tip `109272b`) — so this is **not** a claim-race the CAS
+should have caught; it is a shared-clone collision, the state the convention explicitly
+forbids ("Two agents must NOT share one local clone — each needs its own"). There is no
+autonomous, safe way to reconcile a live concurrent writer on this run's own worktree:
+continuing would keep interleaving commits and force adopting another agent's files,
+both prohibited.
+
+**Disposition: `halted`.** Change left `in-progress` with `claimed_at` refreshed (reclaim
+lease self-heals if abandoned). No PR opened. The other actor's commits were **not**
+discarded and the worktree was **not** removed (it may hold the other run's live work).
+**Human action needed:** determine which run should own change 14, stop the duplicate,
+give each implementer its own clone, then resume a single clean build. Task 1's helper
+(`internal/research/http.go` + `provider.go`, commit `61e1d30`) and the other actor's
+Task-9 config (`3bd9664`) are on the branch but were produced under interleaving and
+should be reviewed before trusting.
