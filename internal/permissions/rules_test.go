@@ -46,11 +46,11 @@ func TestEvalRules_Precedence(t *testing.T) {
 			want:        VerdictAllow,
 		},
 		{
-			desc:         "ask pattern from cfg.Ask forces ask over an allow rule",
-			cmd:          "git status",
-			auto:         AutoConfig{Ask: []string{"bash:git status"}},
-			autoApprove:  []string{"bash:git *"},
-			want:         VerdictAsk,
+			desc:        "ask pattern from cfg.Ask forces ask over an allow rule",
+			cmd:         "git status",
+			auto:        AutoConfig{Ask: []string{"bash:git status"}},
+			autoApprove: []string{"bash:git *"},
+			want:        VerdictAsk,
 		},
 		{
 			desc:         "ask pattern from alwaysPrompt forces ask over an allow rule",

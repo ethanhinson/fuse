@@ -27,9 +27,9 @@ type ModelsConfig struct {
 
 // PermissionsConfig controls the HITL gate behaviour.
 type PermissionsConfig struct {
-	Mode         string   `yaml:"mode"`          // off | prompt-all | smart | auto (default: smart)
-	SessionAllow bool     `yaml:"session_allow"` // whether [s]ession option appears
-	AutoApprove  []string `yaml:"auto_approve"`  // patterns promoted beyond the safe list
+	Mode         string     `yaml:"mode"`          // off | prompt-all | smart | auto (default: smart)
+	SessionAllow bool       `yaml:"session_allow"` // whether [s]ession option appears
+	AutoApprove  []string   `yaml:"auto_approve"`  // patterns promoted beyond the safe list
 	AlwaysPrompt []string   `yaml:"always_prompt"` // patterns demoted to always-prompt
 	Disabled     []string   `yaml:"disabled"`      // tool names fully disabled (Enabled: false)
 	Auto         AutoConfig `yaml:"auto"`          // auto-mode classifier + static rule surface
@@ -157,8 +157,8 @@ type rawResearchConfig struct {
 // Default returns the zero-config built-in configuration.
 func Default() Config {
 	return Config{
-		Gateway:   Gateway{URL: "http://localhost:4000/v1", Key: "llm-gateway-local"},
-		Models:    ModelsConfig{Default: "deepseek-flash", Entries: map[string]ModelConfig{}},
+		Gateway:  Gateway{URL: "http://localhost:4000/v1", Key: "llm-gateway-local"},
+		Models:   ModelsConfig{Default: "deepseek-flash", Entries: map[string]ModelConfig{}},
 		MaxTurns: 25,
 		// Per-turn output ceiling. 16384 (up from 8192) so a full research
 		// synthesis — report body plus its numbered source list — is not cut
