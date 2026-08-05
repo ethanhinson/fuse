@@ -205,6 +205,32 @@ func TestHangWrapGutterContinuation(t *testing.T) {
 	}
 }
 
+// TestHangWrapLongTokenInsideGutter (spec Test 2): a single unbroken token
+// (URL / link target) longer than the content column hard-wraps inside the
+// gutter — continuations carry the cont prefix and no row overflows.
+func TestHangWrapLongTokenInsideGutter(t *testing.T) {
+	first := "  └ 1 │ "
+	cont := "      │ "
+	url := "https://example.com/" + strings.Repeat("segment", 12)
+	width := 24
+	rows := hangWrap(transcriptLine{first: first, cont: cont, text: url}, width)
+	if len(rows) < 2 {
+		t.Fatalf("long token did not hard-wrap: %d rows", len(rows))
+	}
+	for i, r := range rows {
+		if w := printWidth(r); w > width {
+			t.Errorf("row %d overflows width %d: %q (w=%d)", i, width, r, w)
+		}
+		if i == 0 {
+			if !strings.HasPrefix(r, first) {
+				t.Errorf("row0 missing gutter first prefix: %q", r)
+			}
+		} else if !strings.HasPrefix(r, cont) {
+			t.Errorf("row %d escaped the gutter: %q", i, r)
+		}
+	}
+}
+
 // TestHangWrapPrintableWidth (spec Test 5): ANSI escapes in first/cont don't
 // count toward width — a styled prefix wraps the same as its plain equivalent.
 func TestHangWrapPrintableWidth(t *testing.T) {
