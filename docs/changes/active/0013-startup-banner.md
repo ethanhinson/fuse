@@ -2,11 +2,11 @@
 id: 13
 slug: startup-banner
 title: ASCII art startup banner — shell init & fuse help
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-08-05
 depends_on: []
 related: [12]
 discovered_from: []
@@ -16,8 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable: false
-branch:
-claimed_at:
+branch: feat/startup-banner
+claimed_at: 2026-08-05T07:38:48Z
 pr:
 blocked_by:
 reconciled: false
