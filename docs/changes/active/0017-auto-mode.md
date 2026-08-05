@@ -12,7 +12,7 @@ related: [3, 12, 16]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-05-auto-mode-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-05-auto-mode-plan.md
 results:
 trivial: false
 auto_groomable:
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-05-auto-mode-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-05-auto-mode-design.md) |
+| Plan | [2026-08-05-auto-mode-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode/docs/superpowers/plans/2026-08-05-auto-mode-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
