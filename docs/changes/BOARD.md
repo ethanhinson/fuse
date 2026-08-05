@@ -1,12 +1,17 @@
 # Backlog
 
-**14 changes** — 🟡 2 proposed · ✅ 10 done · 🗑️ 2 killed
+**14 changes** — 🟢 1 in progress · 🟡 1 proposed · ✅ 10 done · 🗑️ 2 killed
 
-## 🟡 Proposed (2)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0013](active/0013-startup-banner.md) | ASCII art startup banner — shell init & fuse help | `medium` | `feat` | [spec](../superpowers/specs/2026-08-04-startup-banner-design.md) | `feat/startup-banner` |
+
+## 🟡 Proposed (1)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0013](active/0013-startup-banner.md) | ASCII art startup banner — shell init & fuse help | `medium` | `feat` | build-ready |
 | [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | needs-brainstorm |
 
 ```mermaid
