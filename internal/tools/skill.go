@@ -20,7 +20,10 @@ func NewSkillTool(lookup func(string) (skills.Skill, bool)) Tool {
 
 func (t *skillTool) Name() string { return "skill" }
 func (t *skillTool) Description() string {
-	return "Load an installed skill by name and return its full body."
+	return "Load a skill's instructions by name and return its full body. " +
+		"Call this BEFORE attempting any task that matches an available skill's " +
+		"description; the returned body is the authoritative procedure to follow " +
+		"for that task, not optional reference material."
 }
 func (t *skillTool) Parameters() map[string]any {
 	return map[string]any{

@@ -15,6 +15,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/session"
+	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tui"
 	"github.com/ethanhinson/fuse/internal/version"
@@ -48,6 +49,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 0
 		case "shell":
 			return runShell(args[1:], cfg, reg, stdout, stderr)
+		case "research-probe":
+			return runResearchProbe(args[1:], cfg, reg, stdout, stderr)
 		case "mcps":
 			return runMCPs(args[1:], cfg, stdout, stderr)
 		case "mcp-server":
@@ -58,6 +61,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "  fuse <task>       run an agent on a one-shot task")
 			fmt.Fprintln(stdout, "  fuse models       list configured model aliases")
 			fmt.Fprintln(stdout, "  fuse shell        start an interactive agent shell")
+			fmt.Fprintln(stdout, "  fuse research-probe \"<q>\"  run + observe the research flow headlessly")
 			fmt.Fprintln(stdout, "  fuse mcps         list connected MCP servers")
 			fmt.Fprintln(stdout, "  fuse help         show this help")
 			return 0
@@ -99,9 +103,21 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// Spill dir for truncated tool outputs (recoverable via grep/read_file).
 	tools.SetSpillDir(filepath.Join(filepath.Dir(session.DefaultLogDir()), "tool-output"))
 
-	// Build a tool registry with spawn_agent wired up for one-shot mode.
-	toolReg := defaultToolRegistry(nil)
+	// Skills: load the real set (including the embedded research skill) so
+	// one-shot mode can invoke a matching skill, exactly like shell mode. The
+	// skill tool needs a real lookup and the skills directive must ride in the
+	// system prompt — without both, `fuse "<task>"` can never call a skill.
+	skillSet, serr := skills.LoadWithEmbedded(skills.DefaultDirs())
+	if serr != nil {
+		fmt.Fprintf(stderr, "skills error: %v\n", serr)
+		return 1
+	}
+	oneShotSystemBlock := skillSet.SystemPromptBlock() + spawnAgentBlock
+
+	// Build a tool registry with spawn_agent AND the skill tool wired up.
+	toolReg := defaultToolRegistry(cfg.Research, skillSet.Lookup)
 	tree := agent.NewAgentTree(*modelAlias, *modelAlias)
+	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
 
 	var makeSpawnFunc func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc
@@ -115,7 +131,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 				if terr != nil {
 					return "", terr
 				}
-				childToolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(childNode, childNode.Depth)))
+				childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
 
 				r := tui.NewRenderer(stdout, *verbose)
 				modelID := opts.ModelID
@@ -127,7 +143,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 				if opts.SystemPrompt != "" {
 					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, opts.Label)
 				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, spawnAgentBlock, childToolReg, permissions.AlwaysApprove, traceW, opts.Label)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, permissions.AlwaysApprove, traceW, opts.Label)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -158,9 +174,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return done.Result, done.Err
 		}
 	}
-	toolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(rootNode, 0)))
+	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
 
-	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), spawnAgentBlock, traceW, "root", toolReg, permissions.AlwaysApprove)
+	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, permissions.AlwaysApprove)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1

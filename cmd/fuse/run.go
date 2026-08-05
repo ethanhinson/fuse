@@ -76,9 +76,11 @@ func mergeEntry(reg *model.Registry, alias string, mc model.ModelConfig) *model.
 	return model.NewRegistry(reg.Default, entries)
 }
 
-// defaultToolRegistry builds the full built-in tool registry. skillLookup is
+// defaultToolRegistry builds the full built-in tool registry. research supplies
+// the web_search/web_fetch backends (provider resolution is lazy, so a missing
+// key only surfaces when those tools are actually called). skillLookup is
 // optional — when non-nil, a skill tool is added to the registry.
-func defaultToolRegistry(skillLookup func(string) (skills.Skill, bool)) *tools.Registry {
+func defaultToolRegistry(research config.ResearchConfig, skillLookup func(string) (skills.Skill, bool)) *tools.Registry {
 	r := tools.NewRegistry()
 	for _, t := range tools.DefaultTools() {
 		r.Register(t)
@@ -86,6 +88,8 @@ func defaultToolRegistry(skillLookup func(string) (skills.Skill, bool)) *tools.R
 	for _, t := range tools.CodeindexTools() {
 		r.Register(t)
 	}
+	r.Register(tools.NewWebSearch(research))
+	r.Register(tools.NewWebFetch(research))
 	if skillLookup != nil {
 		r.Register(tools.NewSkillTool(skillLookup))
 	}
@@ -95,8 +99,7 @@ func defaultToolRegistry(skillLookup func(string) (skills.Skill, bool)) *tools.R
 // buildSessionRegistryNoMCP builds a tool registry without starting MCP
 // servers. Used by runShell where MCPProvider owns the server lifecycle.
 func buildSessionRegistryNoMCP(cfg config.Config, skillLookup func(string) (skills.Skill, bool)) (*tools.Registry, error) {
-	_ = cfg
-	return defaultToolRegistry(skillLookup), nil
+	return defaultToolRegistry(cfg.Research, skillLookup), nil
 }
 
 // buildAgentWithRendererAndTrace is like buildAgentWithRenderer but also

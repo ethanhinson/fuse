@@ -14,6 +14,8 @@ func TestDefaultRegistryContainsNamedModels(t *testing.T) {
 		"qwen-local":     "local/qwen-7b",
 		"llama":          "local/llama3.1:8b",
 		"claude":         "claude/sonnet",
+		"sonnet-5":       "claude/sonnet-5",
+		"minimax":        "cloud/minimax-m3",
 	}
 	for alias, id := range want {
 		mc, err := r.Resolve(alias)
@@ -29,6 +31,22 @@ func TestDefaultRegistryContainsNamedModels(t *testing.T) {
 	}
 	if r.Default != "deepseek-flash" {
 		t.Errorf("default = %q", r.Default)
+	}
+}
+
+// TestCapableAliasesHaveSynthesisHeadroom: the capable cloud models used to
+// drive research must have an output ceiling large enough for a full cited
+// report (body + numbered source list). 8192 truncated sonnet-5 mid-report.
+func TestCapableAliasesHaveSynthesisHeadroom(t *testing.T) {
+	r := DefaultRegistry()
+	for _, alias := range []string{"sonnet-5", "minimax", "deepseek-pro", "kimi", "glm"} {
+		mc, err := r.Resolve(alias)
+		if err != nil {
+			t.Fatalf("resolve %s: %v", alias, err)
+		}
+		if mc.MaxTokens < 16384 {
+			t.Errorf("%s max_tokens = %d, want >= 16384 for synthesis headroom", alias, mc.MaxTokens)
+		}
 	}
 }
 

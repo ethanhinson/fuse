@@ -16,15 +16,32 @@ type SpawnFunc func(
 	tools []string,
 ) (result string, err error)
 
+// BudgetFunc reports the tree-global spawn budget at call time: how many child
+// agents have been created so far and the ceiling. A max of 0 means no budget
+// is configured. The runtime supplies this so the model never counts its own
+// spawns — the count is machine-authored, injected fresh into every result.
+type BudgetFunc func() (used, max int)
+
 // SpawnAgentTool is the spawn_agent built-in tool, allowing LLMs to spawn
 // child agents as part of a task.
 type SpawnAgentTool struct {
-	spawn SpawnFunc
+	spawn  SpawnFunc
+	budget BudgetFunc // optional; when set and max>0, a budget line is injected
 }
 
-// NewSpawnAgentTool creates a spawn_agent tool with the given spawn function.
+// NewSpawnAgentTool creates a spawn_agent tool with the given spawn function
+// and no budget injection.
 func NewSpawnAgentTool(spawn SpawnFunc) *SpawnAgentTool {
 	return &SpawnAgentTool{spawn: spawn}
+}
+
+// NewSpawnAgentToolWithBudget creates a spawn_agent tool that appends a
+// machine-generated budget line to every successful spawn result, computed from
+// budget at result time. This is the injection that steers a model to stop
+// spawning as the budget nears exhaustion — visible at exactly the decision
+// point where it chooses whether to spawn again.
+func NewSpawnAgentToolWithBudget(spawn SpawnFunc, budget BudgetFunc) *SpawnAgentTool {
+	return &SpawnAgentTool{spawn: spawn, budget: budget}
 }
 
 // Name returns the tool name.
@@ -91,9 +108,29 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, args string) Result {
 		input.Tools,
 	)
 	if err != nil {
+		// Error results carry the error verbatim (which, for a budget-exhausted
+		// spawn, already tells the model to stop) — never a budget line.
 		return Result{IsError: true, Output: fmt.Sprintf("spawn_agent: %v", err)}
 	}
-	return Result{Output: result}
+	return Result{Output: result + t.budgetLine()}
+}
+
+// budgetLine returns the machine-generated budget suffix to append to a
+// successful spawn result, or "" when no budget is configured. The count is
+// read fresh at result time so it is accurate at the model's next decision.
+func (t *SpawnAgentTool) budgetLine() string {
+	if t.budget == nil {
+		return ""
+	}
+	used, max := t.budget()
+	if max <= 0 {
+		return ""
+	}
+	remaining := max - used
+	if remaining < 0 {
+		remaining = 0
+	}
+	return fmt.Sprintf("\n\nagent budget: %d/%d used (%d remaining)", used, max, remaining)
 }
 
 var _ Tool = (*SpawnAgentTool)(nil)

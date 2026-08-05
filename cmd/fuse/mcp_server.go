@@ -23,7 +23,7 @@ import (
 // Note: MCP servers configured in ~/.fuse/config.yml are NOT spawned here to
 // avoid recursive server chains. Only Fuse's native tools are exposed.
 func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) int {
-	toolReg := defaultToolRegistry(nil) // native tools only; no skill tool in MCP server mode
+	toolReg := defaultToolRegistry(cfg.Research, nil) // native tools only; no skill tool in MCP server mode
 
 	var approve permissions.ApprovalFunc
 	if socketPath := os.Getenv("FUSE_HITL_SOCKET"); socketPath != "" {

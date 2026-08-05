@@ -19,6 +19,69 @@ func TestDefaultHasGatewayAndModels(t *testing.T) {
 	}
 }
 
+func TestDefaultMaxTokensCeilingIsGenerous(t *testing.T) {
+	// The per-turn output ceiling must be large enough for a full research
+	// synthesis (report body + numbered source list). 8192 truncated sonnet-5's
+	// report before its source list; 16384 gives comfortable headroom.
+	c := Default()
+	if c.MaxTokens < 16384 {
+		t.Errorf("default MaxTokens = %d, want >= 16384 (synthesis headroom)", c.MaxTokens)
+	}
+}
+
+func TestDefaultAgentsMaxSpawns(t *testing.T) {
+	c := Default()
+	if c.Agents.MaxSpawns != 16 {
+		t.Errorf("default Agents.MaxSpawns = %d, want 16", c.Agents.MaxSpawns)
+	}
+}
+
+func TestLoadAgentsMaxSpawnsOverride(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "agents:\n  max_spawns: 32\n"
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Agents.MaxSpawns != 32 {
+		t.Errorf("Agents.MaxSpawns = %d, want 32 (override)", c.Agents.MaxSpawns)
+	}
+}
+
+func TestLoadAgentsMaxSpawnsUnsetKeepsDefault(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A config file that does NOT mention agents must keep the default.
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte("max_turns: 30\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Agents.MaxSpawns != 16 {
+		t.Errorf("Agents.MaxSpawns = %d, want 16 (unset keeps default)", c.Agents.MaxSpawns)
+	}
+}
+
 func TestLoadFileMergesOverModelsAndDefault(t *testing.T) {
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home")

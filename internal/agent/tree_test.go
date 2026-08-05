@@ -6,6 +6,34 @@ import (
 	"time"
 )
 
+func TestSpawnBudgetCountsChildrenNotRoot(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	tree.SetMaxSpawns(16)
+
+	used, max := tree.SpawnBudget()
+	if used != 0 || max != 16 {
+		t.Fatalf("fresh tree budget = %d/%d, want 0/16 (root excluded)", used, max)
+	}
+
+	rootID := tree.RootID()
+	tree.addNode(&AgentNode{ID: newNodeID(), ParentID: rootID, Label: "c1"})
+	tree.addNode(&AgentNode{ID: newNodeID(), ParentID: rootID, Label: "c2"})
+
+	used, max = tree.SpawnBudget()
+	if used != 2 || max != 16 {
+		t.Errorf("after 2 spawns budget = %d/%d, want 2/16", used, max)
+	}
+}
+
+func TestSpawnBudgetZeroMaxMeansUnset(t *testing.T) {
+	// A tree whose max was never set reports max 0 — the spawner treats that as
+	// "no budget configured" and does not enforce one.
+	tree := NewAgentTree("root", "m")
+	if _, max := tree.SpawnBudget(); max != 0 {
+		t.Errorf("unset max = %d, want 0", max)
+	}
+}
+
 func TestNewAgentTree(t *testing.T) {
 	tree := NewAgentTree("root", "claude-3-5-sonnet")
 	if tree.RootID() == "" {

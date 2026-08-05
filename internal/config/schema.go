@@ -34,6 +34,28 @@ type PermissionsConfig struct {
 	Disabled     []string `yaml:"disabled"`      // tool names fully disabled (Enabled: false)
 }
 
+// CustomProviderConfig describes a user-supplied JSON search endpoint,
+// shaped by default for a SearXNG `/search?format=json` response.
+type CustomProviderConfig struct {
+	URL          string            `yaml:"url"`
+	Headers      map[string]string `yaml:"headers"`
+	ResultsPath  string            `yaml:"results_path"`
+	TitleField   string            `yaml:"title_field"`
+	URLField     string            `yaml:"url_field"`
+	SnippetField string            `yaml:"snippet_field"`
+}
+
+// ResearchConfig controls the research mode: which search provider to use and
+// the crawl/extraction limits applied when gathering sources.
+type ResearchConfig struct {
+	Provider      string               `yaml:"provider"` // brave | tavily | custom | "" (auto)
+	MaxQueries    int                  `yaml:"max_queries"`
+	MaxResults    int                  `yaml:"max_results"`
+	MaxContentKB  int                  `yaml:"max_content_kb"`
+	RespectRobots bool                 `yaml:"respect_robots"`
+	Custom        CustomProviderConfig `yaml:"custom"`
+}
+
 // MCPAuthConfig holds authentication settings for an HTTP MCP server.
 type MCPAuthConfig struct {
 	Type         string   `yaml:"type"`          // none | bearer | oauth2
@@ -62,6 +84,17 @@ type Config struct {
 	MaxTokens   int
 	Permissions PermissionsConfig
 	MCPServers  []MCPServerConfig
+	Research    ResearchConfig
+	Agents      AgentsConfig
+}
+
+// AgentsConfig controls the subagent runtime. MaxSpawns is a tree-global
+// budget: the total number of child agents a single root turn may create, ever,
+// counted against the append-only AgentTree. It backstops runaway fan-out; the
+// budget line injected into each spawn_agent result is what steers the model to
+// stop before it is reached.
+type AgentsConfig struct {
+	MaxSpawns int `yaml:"max_spawns"`
 }
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
@@ -73,6 +106,25 @@ type rawConfig struct {
 	MaxTokens   int                    `yaml:"max_tokens"`
 	Permissions PermissionsConfig      `yaml:"permissions"`
 	MCPServers  []MCPServerConfig      `yaml:"mcp_servers"`
+	Research    rawResearchConfig      `yaml:"research"`
+	Agents      rawAgentsConfig        `yaml:"agents"`
+}
+
+// rawAgentsConfig mirrors AgentsConfig on-disk.
+type rawAgentsConfig struct {
+	MaxSpawns int `yaml:"max_spawns"`
+}
+
+// rawResearchConfig mirrors ResearchConfig on-disk. RespectRobots is a pointer
+// so YAML can distinguish an omitted key (keep the true default) from an
+// explicit `respect_robots: false`; a plain bool zero-value cannot.
+type rawResearchConfig struct {
+	Provider      string               `yaml:"provider"`
+	MaxQueries    int                  `yaml:"max_queries"`
+	MaxResults    int                  `yaml:"max_results"`
+	MaxContentKB  int                  `yaml:"max_content_kb"`
+	RespectRobots *bool                `yaml:"respect_robots"`
+	Custom        CustomProviderConfig `yaml:"custom"`
 }
 
 // Default returns the zero-config built-in configuration.
@@ -80,11 +132,29 @@ func Default() Config {
 	return Config{
 		Gateway:   Gateway{URL: "http://localhost:4000/v1", Key: "llm-gateway-local"},
 		Models:    ModelsConfig{Default: "deepseek-flash", Entries: map[string]ModelConfig{}},
-		MaxTurns:  25,
-		MaxTokens: 8192,
+		MaxTurns: 25,
+		// Per-turn output ceiling. 16384 (up from 8192) so a full research
+		// synthesis — report body plus its numbered source list — is not cut
+		// mid-generation; still configurable per-model and via `max_tokens`.
+		MaxTokens: 16384,
 		Permissions: PermissionsConfig{
 			Mode:         "smart",
 			SessionAllow: true,
+		},
+		Research: ResearchConfig{
+			MaxQueries:    5,
+			MaxResults:    5,
+			MaxContentKB:  50,
+			RespectRobots: true,
+			Custom: CustomProviderConfig{
+				ResultsPath:  "results",
+				TitleField:   "title",
+				URLField:     "url",
+				SnippetField: "content",
+			},
+		},
+		Agents: AgentsConfig{
+			MaxSpawns: 16,
 		},
 	}
 }

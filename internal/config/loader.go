@@ -83,6 +83,49 @@ func mergeFile(c *Config, path string) error {
 		c.MCPServers = raw.MCPServers
 	}
 
+	if raw.Research.Provider != "" {
+		c.Research.Provider = raw.Research.Provider
+	}
+	if raw.Research.MaxQueries != 0 {
+		c.Research.MaxQueries = raw.Research.MaxQueries
+	}
+	if raw.Research.MaxResults != 0 {
+		c.Research.MaxResults = raw.Research.MaxResults
+	}
+	if raw.Research.MaxContentKB != 0 {
+		c.Research.MaxContentKB = raw.Research.MaxContentKB
+	}
+	// RespectRobots defaults true, so a plain zero-check cannot tell "unset"
+	// from "false" when a research block is present; a pointer lets an omitted
+	// key keep the default while `respect_robots: false` still takes effect.
+	if raw.Research.RespectRobots != nil {
+		c.Research.RespectRobots = *raw.Research.RespectRobots
+	}
+	if raw.Research.Custom.URL != "" {
+		c.Research.Custom.URL = raw.Research.Custom.URL
+	}
+	if len(raw.Research.Custom.Headers) > 0 {
+		c.Research.Custom.Headers = raw.Research.Custom.Headers
+	}
+	if raw.Research.Custom.ResultsPath != "" {
+		c.Research.Custom.ResultsPath = raw.Research.Custom.ResultsPath
+	}
+	if raw.Research.Custom.TitleField != "" {
+		c.Research.Custom.TitleField = raw.Research.Custom.TitleField
+	}
+	if raw.Research.Custom.URLField != "" {
+		c.Research.Custom.URLField = raw.Research.Custom.URLField
+	}
+	if raw.Research.Custom.SnippetField != "" {
+		c.Research.Custom.SnippetField = raw.Research.Custom.SnippetField
+	}
+
+	// Agents budget: a nonzero override replaces the default; an omitted key
+	// (zero) keeps the built-in 16.
+	if raw.Agents.MaxSpawns != 0 {
+		c.Agents.MaxSpawns = raw.Agents.MaxSpawns
+	}
+
 	// The `models` map holds a `default` string alongside model entries.
 	for k, v := range raw.Models {
 		if k == "default" {

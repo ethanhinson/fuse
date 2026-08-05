@@ -59,7 +59,7 @@ func (p *SkillProvider) addWatches() {
 
 // reload re-runs skills.Load and updates entries under the write lock.
 func (p *SkillProvider) reload() {
-	set, err := skills.Load(p.dirs)
+	set, err := skills.LoadWithEmbedded(p.dirs)
 	if err != nil {
 		log.Printf("[skill_provider] reload error: %v", err)
 		return

@@ -196,13 +196,38 @@ type TreeUpdate struct {
 
 // AgentTree is the shared state for the spawn tree.
 type AgentTree struct {
-	mu       sync.RWMutex
-	nodes    map[string]*AgentNode
-	rootID   string
-	out      chan TreeUpdate // buffered 256
-	dirty    map[string]bool
-	spawnSem chan struct{} // width cap for concurrently running local children
+	mu        sync.RWMutex
+	nodes     map[string]*AgentNode
+	rootID    string
+	out       chan TreeUpdate // buffered 256
+	dirty     map[string]bool
+	spawnSem  chan struct{} // width cap for concurrently running local children
+	maxSpawns int           // tree-global spawn budget (total children ever); 0 = unset
 
+}
+
+// SetMaxSpawns sets the tree-global spawn budget — the total number of child
+// agents any spawn may create over the whole tree's life. 0 leaves it unset
+// (no budget enforced). Set once at construction time, before any spawn.
+func (t *AgentTree) SetMaxSpawns(n int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.maxSpawns = n
+}
+
+// SpawnBudget reports how much of the tree-global spawn budget is used and its
+// ceiling. `used` is the number of child agents created so far (every node
+// except the root — the tree is append-only, so this only grows); `max` is the
+// configured ceiling, 0 when unset. This is the count the runtime injects into
+// each spawn_agent result so the model never has to tally its own spawns.
+func (t *AgentTree) SpawnBudget() (used, max int) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	used = len(t.nodes) - 1 // exclude the root node
+	if used < 0 {
+		used = 0
+	}
+	return used, t.maxSpawns
 }
 
 // NewAgentTree creates a new tree with the given root node label and model.

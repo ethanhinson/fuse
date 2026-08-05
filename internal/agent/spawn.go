@@ -11,6 +11,12 @@ import (
 // ErrMaxDepthExceeded is returned when a spawn would exceed MaxDepth.
 var ErrMaxDepthExceeded = errors.New("agent: max spawn depth exceeded")
 
+// ErrSpawnBudgetExhausted is returned when a spawn would exceed the tree-global
+// spawn budget (AgentTree.SetMaxSpawns). It is the backstop behind the injected
+// budget line: the model is told the budget each spawn, and if it spawns past
+// the ceiling anyway this refuses rather than letting fan-out run away.
+var ErrSpawnBudgetExhausted = errors.New("agent: spawn budget exhausted")
+
 // SpawnOpts configures a child agent spawn.
 type SpawnOpts struct {
 	Label        string
@@ -79,6 +85,14 @@ func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (AgentHandle, error
 	newDepth := s.depth + 1
 	if newDepth > MaxDepth {
 		return AgentHandle{}, fmt.Errorf("%w: depth %d > %d", ErrMaxDepthExceeded, newDepth, MaxDepth)
+	}
+	// Tree-global spawn budget backstop. The injected budget line should make
+	// this rare; the refusal makes runaway fan-out impossible. Only enforced
+	// when a budget is configured (max > 0).
+	if s.tree != nil {
+		if used, max := s.tree.SpawnBudget(); max > 0 && used >= max {
+			return AgentHandle{}, fmt.Errorf("%w: %d/%d spawns used — proceed with the results you already have and do not spawn again", ErrSpawnBudgetExhausted, used, max)
+		}
 	}
 	return s.spawnLocal(ctx, opts, newDepth)
 }
