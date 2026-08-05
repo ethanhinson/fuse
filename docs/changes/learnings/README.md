@@ -23,6 +23,10 @@ One curated finding per file; this index is the hint surface. Load it, then read
 - [completer-entry-bypass-dispatch](completer-entry-bypass-dispatch.md) — When a completer selects an entry, dispatch via the entry object directly — not via the text-parsing path that re-parses expansion as a command string · also: architecture, bubbletea
 - [sanitize-untrusted-bytes-fixed-width-tui](sanitize-untrusted-bytes-fixed-width-tui.md) — Any bytes the model or a tool produced can shear a fixed-width TUI — strip ESC/C0/C1/CR, expand tabs (compositor counts \t as one cell, terminal expands it), NUL-sniff binaries before display, and hard-wrap so no line exceeds pane width · also: rendering, sanitization, bubbletea, terminal
 
+## workflow
+
+- [verify-from-feature-worktree-binary](verify-from-feature-worktree-binary.md) — make build/install act on whatever checkout is the CWD — when a human reports a worktree-built feature missing or broken, check which binary they ran (main checkout vs .worktrees/<slug>) before hunting a code defect · also: verification, worktrees, go
+
 ## yaml
 
 - [yaml-plain-scalar-colon-space](yaml-plain-scalar-colon-space.md) — YAML rejects unquoted ': ' in plain scalars — extract free-text fields (name, description) via a line reader, not yaml.Unmarshal · also: parsing, go
