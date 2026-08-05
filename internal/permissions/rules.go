@@ -142,6 +142,206 @@ func isDangerous(seg Segment) bool {
 	return false
 }
 
+// readOnlyUtils are argv[0] basenames that are read-only with ANY arguments —
+// they have no mutating mode worth flag-inspecting. env is deliberately absent:
+// it is already fail-closed by the parser as an arbitrary-arg wrapper, so it
+// never reaches here.
+var readOnlyUtils = map[string]bool{
+	"ls":       true,
+	"cat":      true,
+	"pwd":      true,
+	"wc":       true,
+	"head":     true,
+	"tail":     true,
+	"grep":     true,
+	"rg":       true,
+	"echo":     true,
+	"which":    true,
+	"dirname":  true,
+	"basename": true,
+	"date":     true,
+	"true":     true,
+	"false":    true,
+	"test":     true,
+}
+
+// readOnlyGitSubcommands are git subcommands that are always read-only (no
+// mutating flag form worth inspecting). branch/remote/config/tag are handled
+// separately because they have both read and mutating forms.
+var readOnlyGitSubcommands = map[string]bool{
+	"status":    true,
+	"log":       true,
+	"diff":      true,
+	"show":      true,
+	"rev-parse": true,
+	"describe":  true,
+	"blame":     true,
+}
+
+// findMutatingActions are find primaries that execute a command or mutate the
+// filesystem. Any of them makes a find invocation unsafe.
+var findMutatingActions = map[string]bool{
+	"-exec":    true,
+	"-execdir": true,
+	"-delete":  true,
+	"-fprint":  true,
+	"-fprintf": true,
+	"-ok":      true,
+	"-okdir":   true,
+}
+
+// allSegmentsReadOnlySafe reports whether EVERY segment is independently on the
+// built-in read-only safe list. An empty segment set is not safe (nothing to
+// prove safe). This is the per-segment AND that lets Task 7's gate short-circuit
+// a wholly read-only command to allow; a single unsafe segment sinks the whole.
+func allSegmentsReadOnlySafe(segments []Segment) bool {
+	if len(segments) == 0 {
+		return false
+	}
+	for _, seg := range segments {
+		if !isReadOnlySafe(seg) {
+			return false
+		}
+	}
+	return true
+}
+
+// isReadOnlySafe classifies a single parsed segment against the built-in
+// read-only bash allowlist with flag-inspecting conditionals (the Codex
+// is_safe_command shape). It fails toward unsafe: any argv[0] not enumerated,
+// or any enumerated command in a form not provably read-only, is unsafe.
+//
+// The parser (splitSegments) guarantees seg.Name is a bare basename and that no
+// path-qualified argv[0] (./sed) or arbitrary-arg wrapper ever reaches here.
+func isReadOnlySafe(seg Segment) bool {
+	if readOnlyUtils[seg.Name] {
+		return true
+	}
+	switch seg.Name {
+	case "find":
+		return isSafeFind(seg.Args)
+	case "git":
+		return isSafeGit(seg.Args)
+	case "sed":
+		return isSafeSed(seg.Args)
+	default:
+		return false
+	}
+}
+
+// isSafeFind reports whether a find invocation is read-only: it is safe unless
+// it names a mutating/exec primary (-exec, -delete, …).
+func isSafeFind(args []string) bool {
+	for _, a := range args {
+		if findMutatingActions[a] {
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeGit reports whether a git invocation is a read-only subcommand form.
+// When in doubt about a subcommand it returns false (fail toward the human) —
+// only forms proven read-only are admitted.
+func isSafeGit(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	sub := args[0]
+	rest := args[1:]
+	if readOnlyGitSubcommands[sub] {
+		return true
+	}
+	switch sub {
+	case "branch":
+		return isSafeGitBranch(rest)
+	case "remote":
+		return isSafeGitRemote(rest)
+	case "config":
+		return isSafeGitConfig(rest)
+	case "tag":
+		return isSafeGitTag(rest)
+	default:
+		return false
+	}
+}
+
+// isSafeGitBranch is safe only as a list: no args, or only list flags. Any
+// non-flag argument (a branch name) or a mutating flag (-d/-D/-m/…) is unsafe.
+func isSafeGitBranch(args []string) bool {
+	listFlags := map[string]bool{"--list": true, "-l": true, "-a": true, "-r": true, "-v": true}
+	for _, a := range args {
+		if !listFlags[a] {
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeGitRemote is safe as a bare listing, `-v`, or `show`; every mutating
+// subcommand (add/remove/rename/set-url/…) is unsafe.
+func isSafeGitRemote(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	switch args[0] {
+	case "-v", "--verbose", "show":
+		return true
+	default:
+		return false
+	}
+}
+
+// isSafeGitConfig is safe only in the explicit read forms --get / --list;
+// anything else (a bare `config key value` set) is unsafe.
+func isSafeGitConfig(args []string) bool {
+	for _, a := range args {
+		if a == "--get" || a == "--get-all" || a == "--list" || a == "-l" {
+			return true
+		}
+	}
+	return false
+}
+
+// isSafeGitTag is safe only as a list: no args, or only the list flags -l /
+// --list. A tag name (creation) or any other form is unsafe.
+func isSafeGitTag(args []string) bool {
+	for _, a := range args {
+		if a != "-l" && a != "--list" {
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeSed is read-only only in the non-mutating `-n …p` print form: it must
+// carry -n (or a combined -n… flag) and must NOT carry -i (in-place). Any other
+// form is unsafe (cannot be proven read-only).
+func isSafeSed(args []string) bool {
+	hasN := false
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			continue // a script or file operand, not a flag.
+		}
+		if a == "--in-place" || strings.HasPrefix(a, "--in-place") {
+			return false
+		}
+		if strings.HasPrefix(a, "--") {
+			continue // some other long option; -n must still be proven below.
+		}
+		// A short-flag group like -n, -np, or -ni. Any 'i' in the group means
+		// in-place (mutating) ⇒ unsafe; an 'n' contributes the print form.
+		group := a[1:]
+		if strings.ContainsRune(group, 'i') {
+			return false
+		}
+		if strings.ContainsRune(group, 'n') {
+			hasN = true
+		}
+	}
+	return hasN
+}
+
 // matchesSegment matches patterns against a single segment's reconstructed
 // bash subject line (e.g. "bash:git status"), per-segment against the parsed
 // argv rather than the raw source text.

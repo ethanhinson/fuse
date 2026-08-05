@@ -42,10 +42,12 @@ var arbitraryArgWrappers = map[string]bool{
 	"docker": true,
 	"eval":   true,
 	"exec":   true,
-	// timeout takes a duration then an arbitrary inner command. Peeling it
-	// safely requires the read-only/allow list (a later task) to classify the
-	// inner target; at the deterministic parse floor it is fail-closed
-	// ("timeout-then-unknown"), never trusted to inherit an allow.
+	// timeout takes a duration then an arbitrary inner command. The read-only
+	// safe-list classifier (isReadOnlySafe in rules.go) now exists, so a future
+	// task MAY peel timeout — but that requires stripping timeout's own flags
+	// AND its mandatory duration argument here in shellparse.go, plus new corpus
+	// rows. Kept fail-closed for now ("timeout-then-unknown"): the conservative
+	// posture costs a human prompt, never a bypass.
 	"timeout": true,
 }
 
