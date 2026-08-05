@@ -2,7 +2,7 @@
 id: 17
 slug: auto-mode
 title: Auto mode — layered safe/unsafe classification for autonomous tool approval
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-05
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/auto-mode
+claimed_at: 2026-08-05T21:26:46Z
 pr:
 blocked_by:
 reconciled: false
