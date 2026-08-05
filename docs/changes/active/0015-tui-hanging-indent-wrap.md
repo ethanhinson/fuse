@@ -2,7 +2,7 @@
 id: 15
 slug: tui-hanging-indent-wrap
 title: Hanging-indent wrapping for the shell transcript
-status: proposed
+status: in-progress
 priority: medium
 type: fix
 created: 2026-08-05
@@ -16,8 +16,9 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/tui-hanging-indent-wrap
 pr:
+claimed_at: 2026-08-05T08:28:09Z
 blocked_by:
 reconciled: false
 ---
