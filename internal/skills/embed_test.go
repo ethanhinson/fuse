@@ -28,6 +28,38 @@ func TestEmbeddedReturnsResearchSkill(t *testing.T) {
 	}
 }
 
+// TestEmbeddedResearchCarriesBudgetGuidance locks in the runaway-fan-out fix:
+// the embedded research skill must reference the injected spawn-budget line and
+// require a final cited synthesis, so a future edit cannot silently drop the
+// budget-aware guidance this change added.
+func TestEmbeddedResearchCarriesBudgetGuidance(t *testing.T) {
+	emb, err := Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body string
+	for i := range emb {
+		if emb[i].Name == "research" {
+			body = emb[i].Body
+			break
+		}
+	}
+	if body == "" {
+		t.Fatal("embedded research skill not found or empty")
+	}
+	for _, want := range []string{
+		"agent budget:",       // references the injected budget line
+		"never count it",      // tells the model not to tally its own spawns
+		"MUST NOT call spawn", // children never spawn
+		"Completion contract", // the final-synthesis requirement
+		"numbered source list",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("embedded research body missing %q", want)
+		}
+	}
+}
+
 func TestLoadWithEmbeddedIncludesResearchOnEmptyDirs(t *testing.T) {
 	set, err := LoadWithEmbedded([]string{"/nonexistent/dir"})
 	if err != nil {

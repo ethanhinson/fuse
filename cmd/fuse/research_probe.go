@@ -96,8 +96,10 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// The recorder Log: one shared sink; each agent gets its own Recorder.
 	logSink := probe.NewLog()
 
-	// Agent tree, so the spawn hierarchy is captured for the summary.
+	// Agent tree, so the spawn hierarchy is captured for the summary. The
+	// tree-global spawn budget is what the injected budget line reports.
 	tree := agent.NewAgentTree(alias, alias)
+	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
 
 	// Self-referential spawn factory, mirroring shell.go. The only difference
@@ -115,7 +117,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				if terr != nil {
 					return "", terr
 				}
-				childToolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(childNode, childNode.Depth)))
+				childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
 
 				label := childNode.Label
 				if label == "" {
@@ -159,7 +161,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 			return done.Result, done.Err
 		}
 	}
-	toolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(rootNode, 0)))
+	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
 
 	// Root renderer: tree node + recorder, same MultiRenderer shape as children.
 	rootR := tui.NewMultiRenderer(

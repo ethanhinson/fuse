@@ -120,6 +120,12 @@ func mergeFile(c *Config, path string) error {
 		c.Research.Custom.SnippetField = raw.Research.Custom.SnippetField
 	}
 
+	// Agents budget: a nonzero override replaces the default; an omitted key
+	// (zero) keeps the built-in 16.
+	if raw.Agents.MaxSpawns != 0 {
+		c.Agents.MaxSpawns = raw.Agents.MaxSpawns
+	}
+
 	// The `models` map holds a `default` string alongside model entries.
 	for k, v := range raw.Models {
 		if k == "default" {

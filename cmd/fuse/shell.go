@@ -120,8 +120,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		defer sessLog.Close()
 	}
 
-	// Agent tree for subagent tracking.
+	// Agent tree for subagent tracking. The tree-global spawn budget backstops
+	// runaway fan-out; its count feeds the budget line injected into results.
 	tree := agent.NewAgentTree(alias, alias)
+	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
 
 	// SpawnFunc factory — self-referential so child agents get their own spawner.
@@ -139,7 +141,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 					return "", terr
 				}
 				// Replace spawn_agent with one wired to the child's spawner.
-				childToolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(childNode, childNode.Depth)))
+				childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
 
 				r := tui.NewNodeRenderer(childNode, childTree)
 				// Child agents inherit the parent's permission config (disabled tools
@@ -209,7 +211,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 
 	// Register spawn_agent in the tool registry before any agent runs.
-	toolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(rootNode, 0)))
+	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
 
 	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build)
 	m = m.WithTree(tree)

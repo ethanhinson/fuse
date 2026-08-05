@@ -32,6 +32,51 @@ func TestSpawnerDepthLimit(t *testing.T) {
 	})
 }
 
+// TestSpawnBudgetBackstop verifies the tree-global spawn budget refuses a spawn
+// once the tree is at its ceiling, with ErrSpawnBudgetExhausted — the backstop
+// that makes the injected budget line safe if the model ignores it.
+func TestSpawnBudgetBackstop(t *testing.T) {
+	t.Run("refuses_at_ceiling", func(t *testing.T) {
+		tree := NewAgentTree("root", "m")
+		tree.SetMaxSpawns(2)
+		// Pre-fill the tree to the ceiling (2 children already created).
+		rootID := tree.RootID()
+		tree.addNode(&AgentNode{ID: newNodeID(), ParentID: rootID, Label: "c1"})
+		tree.addNode(&AgentNode{ID: newNodeID(), ParentID: rootID, Label: "c2"})
+
+		s := NewSpawner(WithTree(tree))
+		_, err := s.Spawn(context.Background(), SpawnOpts{Label: "over"})
+		if !errors.Is(err, ErrSpawnBudgetExhausted) {
+			t.Fatalf("expected ErrSpawnBudgetExhausted at ceiling, got %v", err)
+		}
+	})
+
+	t.Run("allows_below_ceiling", func(t *testing.T) {
+		tree := NewAgentTree("root", "m")
+		tree.SetMaxSpawns(4)
+		s := NewSpawner(WithTree(tree))
+		h, err := s.Spawn(context.Background(), SpawnOpts{Label: "ok"})
+		if err != nil {
+			t.Fatalf("spawn below ceiling should succeed, got %v", err)
+		}
+		<-h.Done
+	})
+
+	t.Run("unset_budget_never_refuses", func(t *testing.T) {
+		tree := NewAgentTree("root", "m") // no SetMaxSpawns
+		rootID := tree.RootID()
+		for i := 0; i < 50; i++ {
+			tree.addNode(&AgentNode{ID: newNodeID(), ParentID: rootID})
+		}
+		s := NewSpawner(WithTree(tree))
+		h, err := s.Spawn(context.Background(), SpawnOpts{Label: "ok"})
+		if err != nil {
+			t.Fatalf("unset budget must not refuse, got %v", err)
+		}
+		<-h.Done
+	})
+}
+
 // TestSpawnWidthCap verifies the tree-global semaphore bounds concurrently
 // RUNNING children; excess spawns queue as pending rather than all executing.
 func TestSpawnWidthCap(t *testing.T) {

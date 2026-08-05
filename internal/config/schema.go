@@ -85,6 +85,16 @@ type Config struct {
 	Permissions PermissionsConfig
 	MCPServers  []MCPServerConfig
 	Research    ResearchConfig
+	Agents      AgentsConfig
+}
+
+// AgentsConfig controls the subagent runtime. MaxSpawns is a tree-global
+// budget: the total number of child agents a single root turn may create, ever,
+// counted against the append-only AgentTree. It backstops runaway fan-out; the
+// budget line injected into each spawn_agent result is what steers the model to
+// stop before it is reached.
+type AgentsConfig struct {
+	MaxSpawns int `yaml:"max_spawns"`
 }
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
@@ -97,6 +107,12 @@ type rawConfig struct {
 	Permissions PermissionsConfig      `yaml:"permissions"`
 	MCPServers  []MCPServerConfig      `yaml:"mcp_servers"`
 	Research    rawResearchConfig      `yaml:"research"`
+	Agents      rawAgentsConfig        `yaml:"agents"`
+}
+
+// rawAgentsConfig mirrors AgentsConfig on-disk.
+type rawAgentsConfig struct {
+	MaxSpawns int `yaml:"max_spawns"`
 }
 
 // rawResearchConfig mirrors ResearchConfig on-disk. RespectRobots is a pointer
@@ -133,6 +149,9 @@ func Default() Config {
 				URLField:     "url",
 				SnippetField: "content",
 			},
+		},
+		Agents: AgentsConfig{
+			MaxSpawns: 16,
 		},
 	}
 }

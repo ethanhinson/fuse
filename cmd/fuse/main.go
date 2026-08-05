@@ -105,6 +105,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// Build a tool registry with spawn_agent wired up for one-shot mode.
 	toolReg := defaultToolRegistry(cfg.Research, nil)
 	tree := agent.NewAgentTree(*modelAlias, *modelAlias)
+	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
 
 	var makeSpawnFunc func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc
@@ -118,7 +119,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 				if terr != nil {
 					return "", terr
 				}
-				childToolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(childNode, childNode.Depth)))
+				childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
 
 				r := tui.NewRenderer(stdout, *verbose)
 				modelID := opts.ModelID
@@ -161,7 +162,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return done.Result, done.Err
 		}
 	}
-	toolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(rootNode, 0)))
+	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
 
 	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), spawnAgentBlock, traceW, "root", toolReg, permissions.AlwaysApprove)
 	if err != nil {

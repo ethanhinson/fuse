@@ -79,6 +79,19 @@ research:
     snippet_field: content
 ```
 
+### The `[agents]` config block
+
+```yaml
+agents:
+  max_spawns: 16        # tree-global spawn budget: the total number of child
+                        # agents one root turn may create, ever. The runtime
+                        # appends a line like `agent budget: 7/16 used (9
+                        # remaining)` to every spawn_agent result so the model
+                        # can stop before it fans out too wide, and refuses the
+                        # spawn outright once the ceiling is reached. Bounds
+                        # runaway fan-out in the research flow.
+```
+
 ### Observing the research flow — `research-probe`
 
 The research flow is emergent and prompt-driven: the model diversifies a
