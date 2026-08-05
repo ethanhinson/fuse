@@ -1,8 +1,39 @@
 # Backlog
 
-**17 changes** — 🟡 1 proposed · ✅ 13 done · 🗑️ 3 killed
+**31 changes** — 🟡 15 proposed · ✅ 13 done · 🗑️ 3 killed
 
-## 🟡 Proposed (1)
+## 🟡 Proposed (15)
+
+### Group A — MCP evolution (changes 18–22)
+
+| # | Title | Priority | Type | Dependencies |
+|---|-------|----------|------|-------------|
+| [0018](active/0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | `high` | `feat` | 7 |
+| [0019](active/0019-mcp-capability-negotiation.md) | MCP capability negotiation — structured init handshake | `high` | `feat` | 3, 7 |
+| [0020](active/0020-mcp-progress-streaming.md) | MCP `$/progress` notifications and streaming tool results | `medium` | `feat` | 19 |
+| [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | 19 |
+| [0022](active/0022-mcp-websocket-transport.md) | WebSocket transport for MCP | `low` | `feat` | 7 |
+| [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | 3 |
+
+### Group B — Multi-agent orchestration (changes 23–26)
+
+| # | Title | Priority | Type | Dependencies |
+|---|-------|----------|------|-------------|
+| [0023](active/0023-agent-blackboard.md) | Shared result blackboard for inter-agent communication | `high` | `feat` | 12 |
+| [0024](active/0024-structured-delegation.md) | Structured delegation — expected result schemas for spawn_agent | `medium` | `feat` | 12 |
+| [0025](active/0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | `medium` | `feat` | 12, 23 |
+| [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | 12, 23, 24 |
+
+### Group C — Context management (changes 27–30)
+
+| # | Title | Priority | Type | Dependencies |
+|---|-------|----------|------|-------------|
+| [0027](active/0027-context-summarization.md) | Anchored context summarization at compression threshold | `high` | `feat` | 12 |
+| [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | 27 |
+| [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | 12 |
+| [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | 27 |
+
+### Existing
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -11,6 +42,14 @@
 ```mermaid
 graph TD
   0017
+  0018 --> 0019
+  0019 --> 0020
+  0019 --> 0021
+  0023 --> 0025
+  0023 --> 0026
+  0024 --> 0026
+  0027 --> 0028
+  0027 --> 0030
 ```
 
 <details><summary>✅🗑️ Archive — done + killed (16)</summary>
