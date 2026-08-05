@@ -2,7 +2,7 @@
 id: 17
 slug: auto-mode
 title: Auto mode — layered safe/unsafe classification for autonomous tool approval
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-05
@@ -13,12 +13,12 @@ discovered_from: []
 adrs: [5, 6]
 spec: docs/superpowers/specs/2026-08-05-auto-mode-design.md
 plan: docs/superpowers/plans/2026-08-05-auto-mode-plan.md
-results:
+results: docs/results/2026-08-05-auto-mode-results.md
 trivial: false
 auto_groomable:
 branch: feat/auto-mode
-claimed_at: 2026-08-05T23:42:49Z
-pr:
+claimed_at: 2026-08-05T23:45:24Z
+pr: https://github.com/ethanhinson/fuse/pull/15
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-05-auto-mode-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-05-auto-mode-design.md) |
 | Plan | [2026-08-05-auto-mode-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode/docs/superpowers/plans/2026-08-05-auto-mode-plan.md) |
+| Results | [2026-08-05-auto-mode-results.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode/docs/results/2026-08-05-auto-mode-results.md) |
+| PR | [#15](https://github.com/ethanhinson/fuse/pull/15) |
 | ADRs | [ADR-0005](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
 <!-- docket:artifacts:end -->
 
