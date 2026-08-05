@@ -1,6 +1,6 @@
 # Backlog
 
-**17 changes** — 🟡 1 proposed · 🔵 1 implemented · ✅ 12 done · 🗑️ 3 killed
+**17 changes** — 🟡 1 proposed · ✅ 13 done · 🗑️ 3 killed
 
 ## 🟡 Proposed (1)
 
@@ -8,26 +8,18 @@
 |---|-------|----------|------|-----------|
 | [0017](active/0017-auto-mode.md) | Auto mode — layered safe/unsafe classification for autonomous tool approval | `medium` | `feat` | build-ready |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | [#13](https://github.com/ethanhinson/fuse/pull/13) |  |
-
 ```mermaid
 graph TD
-  0012 --> 0014
   0017
-  0012:::done
-  classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (15)</summary>
+<details><summary>✅🗑️ Archive — done + killed (16)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
 | [0016](archive/2026-08-05-0016-one-shot-cli-approvals.md) | Remove the AlwaysApprove one-shot bypass; surface approvals at the CLI | 2026-08-05 |
 | [0015](archive/2026-08-05-0015-tui-hanging-indent-wrap.md) | Hanging-indent wrapping for the shell transcript | 2026-08-05 |
+| [0014](archive/2026-08-05-0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | 2026-08-05 |
 | [0013](archive/2026-08-05-0013-startup-banner.md) | ASCII art startup banner — shell init & fuse help | 2026-08-05 |
 | [0012](archive/2026-08-05-0012-subagent-ux.md) | First-Class Subagent UX — Spawn, Tree Visualization & Inspect | 2026-08-05 |
 | [0011](archive/2026-08-05-0011-deep-research.md) | Deep Research Mode — Web Search + Fan-out Synthesis | 2026-08-05 |
