@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0013 — ASCII art startup banner — shell init & fuse help](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0013-startup-banner.md)**
+> ↩ **[Change 0013 — ASCII art startup banner — shell init & fuse help](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-05-0013-startup-banner.md)**
 <!-- docket:backlink:end -->
 
 # Startup Banner Design — Change 0013

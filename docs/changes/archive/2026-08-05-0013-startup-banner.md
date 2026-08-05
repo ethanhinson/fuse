@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-04-startup-banner-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-04-startup-banner-design.md) |
-| Plan | [2026-08-05-startup-banner-plan.md](https://github.com/ethanhinson/fuse/blob/feat/startup-banner/docs/superpowers/plans/2026-08-05-startup-banner-plan.md) |
-| Results | [2026-08-05-startup-banner-results.md](https://github.com/ethanhinson/fuse/blob/feat/startup-banner/docs/results/2026-08-05-startup-banner-results.md) |
+| Plan | [2026-08-05-startup-banner-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-05-startup-banner-plan.md) |
+| Results | [2026-08-05-startup-banner-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-05-startup-banner-results.md) |
 | PR | [#11](https://github.com/ethanhinson/fuse/pull/11) |
 <!-- docket:artifacts:end -->
 
