@@ -11,7 +11,7 @@ depends_on: []
 related: [3, 12, 16]
 discovered_from: []
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-05-auto-mode-design.md
 plan:
 results:
 trivial: false
@@ -25,6 +25,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-08-05-auto-mode-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-05-auto-mode-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
@@ -79,33 +82,25 @@ string only — its docs admit `Bash(git *)` auto-approves
   injection defense) and its verdict is enforced by the gate, never returned
   to the actor model as advisory text.
 - **Fallback posture**: blocked/uncertain actions surface as approval prompts
-  when interactive; deny with a clear error when not (aligns with 0016's
-  non-TTY posture).
-- Config surface for the mode and its rule lists in `PermissionsConfig`.
+  when interactive; deny with a clear error when not.
+- **Subsumes change 0016** (killed as absorbed): the `AlwaysApprove` one-shot
+  bypass is removed from every construction site, one-shot runs get a TTY y/N
+  approval prompt, non-TTY runs deny-by-default with an explicit
+  `--approve-all` opt-in — the configured permission policy means the same
+  thing in every entry point.
+- **Trust boundary**: permission-loosening keys (`mode`, `auto_approve`,
+  `session_allow`, `auto.*`) are ignored from the repo-plantable
+  `.fuse.local.yml` with a warning; tightening keys stay honored.
+- Config surface for the mode and its rule lists in `PermissionsConfig`
+  (`permissions.auto.classifier_model` etc.).
 
 ## Out of scope
 
 - OS-level sandboxing (Seatbelt/Landlock/bubblewrap) as an enforcement
   backstop — the right final layer, but its own change if pursued.
-- The one-shot CLI approval surface itself (change 0016).
-- The MCP server HITL relay (`internal/hitl`).
-- Replacing or removing the existing smart mode defaults.
-
-## Open questions
-
-- Ordering vs. 0016 (one-shot approvals): auto mode needs a prompt/deny
-  fallback channel in every entry point — does it depend on 0016 or subsume
-  it?
-- Which model runs the classifier, and through what plumbing (the subagent
-  runtime? a direct cheap-model call?)? Latency and token cost per tool call.
-- Single-stage or two-stage classifier (cheap block-biased filter → CoT
-  review on flagged actions, per Claude Code's design)?
-- Does auto mode replace smart mode's internals (the AST layer is strictly
-  better than first-token matching) or sit beside it?
-- Where do user rule lists live, and is trust config kept out of
-  repo-committed files so a cloned repo can't self-authorize?
-- Escalation thresholds: after N blocks, pause auto mode and fall back to
-  prompting?
+- The MCP server HITL relay (`internal/hitl`); `fuse mcp-server`'s no-socket
+  `AlwaysApprove` fallback (follow-up candidate).
+- Two-stage classifier; signed policy envelopes; hook system.
 
 ## Research notes (input for the brainstorm)
 
