@@ -100,7 +100,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	tools.SetSpillDir(filepath.Join(filepath.Dir(session.DefaultLogDir()), "tool-output"))
 
 	// Build a tool registry with spawn_agent wired up for one-shot mode.
-	toolReg := defaultToolRegistry(nil)
+	toolReg := defaultToolRegistry(cfg.Research, nil)
 	tree := agent.NewAgentTree(*modelAlias, *modelAlias)
 	rootNode := tree.Node(tree.RootID())
 
