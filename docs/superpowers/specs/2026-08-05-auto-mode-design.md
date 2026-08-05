@@ -160,7 +160,7 @@ permissions:
   always_prompt: ["bash:git push*"]
   disabled: []
   auto:
-    classifier_model: haiku      # models-registry alias; unset ⇒ session default + warning
+    classifier_model: deepseek-flash  # models-registry alias; unset ⇒ session default + warning
     deny: []                     # extra deny patterns, per-segment
     ask: []                      # extra ask patterns, per-segment
 ```

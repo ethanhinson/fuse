@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/auto-mode
-claimed_at: 2026-08-05T21:26:46Z
+claimed_at: 2026-08-05T21:30:32Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -225,3 +225,37 @@ Codehamr):
   bounding (timeout clamp, process-group kill, bounded output capture).
 
 ## Reconcile log
+
+### 2026-08-05 — reconcile pass (build claim)
+
+Reconciled the change + spec against current `main` code (Explore ground-truth
+pass). Every spec assumption verified TRUE against the tree:
+
+- `internal/permissions` structure intact — `gate.go`, `policy.go`,
+  `patterns.go`, `cache.go`; three modes `smart`/`off`/`prompt-all` live in
+  `policy.go`; `firstToken`/`matchesAny` in `patterns.go`; the hardcoded
+  read-only safe list (`read_file`, `list_directory`, `grep`, `codeindex_*`)
+  is present.
+- `PermissionsConfig` in `internal/config/schema.go` (lines ~28–35) is the
+  config surface to extend.
+- `AlwaysApprove` construction sites confirmed at `cmd/fuse/main.go:144,146,179`
+  and `cmd/fuse/shell.go:150` — the removal targets for D8.
+- The LiteLLM gateway entry point is `internal/model/adapter.go:212`
+  (`Adapter.Complete`) with per-attempt timeout, response-header timeout,
+  retries, and labeled traces — the classifier plumbing (D7) rides this.
+- `.fuse.local.yml` CWD merge is `internal/config/loader.go:23`, with **no**
+  trust filtering today — D9 is net-new, as designed.
+- Expected-absent confirmed absent (these are exactly what 0017 builds): auto
+  mode, `--approve-all`, trust-boundary filtering.
+
+**One drift item, fixed this pass:** the spec's Config-surface sketch used
+`classifier_model: haiku`, but no `haiku` alias exists in the model registry
+(`internal/model/registry.go` `DefaultRegistry` aliases: `deepseek-flash`,
+`deepseek-pro`, `kimi`, `glm`, `qwen-cloud`, `qwen-coder`, `qwen-local`,
+`llama`, `claude`, `sonnet-5`, `minimax`, `claude-max`). Swapped the example to
+the real alias `deepseek-flash`. Behavior is unchanged — unset ⇒ session default
+model + startup warning.
+
+No scope change; no work found already done elsewhere; no new constraints to
+fold in. Module `github.com/ethanhinson/fuse`, Go 1.26.5; tests are
+table-driven with `stubTool`/`newTestRegistry` helpers (informs the plan).
