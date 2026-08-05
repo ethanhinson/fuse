@@ -161,6 +161,7 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 
 	doneCh := make(chan SpawnDone, 1)
 	childCtx, cancel := context.WithCancel(ctx)
+	node.SetCancel(cancel) // allows tree.CancelNode to stop this node
 
 	go func() {
 		defer cancel()
@@ -181,7 +182,11 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		}
 
 		if runErr != nil {
-			node.Finish(StatusError, runErr.Error())
+			if errors.Is(runErr, context.Canceled) {
+				node.Finish(StatusCancelled, "")
+			} else {
+				node.Finish(StatusError, runErr.Error())
+			}
 		} else {
 			node.Finish(StatusDone, "")
 		}

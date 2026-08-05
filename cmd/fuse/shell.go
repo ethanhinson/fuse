@@ -84,18 +84,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 	defer slashReg.Close()
 
-	// Inject aggressive spawn_agent guidance. Models need explicit, imperative
-	// instructions to parallelize — advisory language is consistently ignored.
-	skillBlock += "\n\n## Parallel subagents — use spawn_agent aggressively\n" +
-		"You have a `spawn_agent` tool. Use it whenever you can split work into independent parts:\n" +
-		"- Reading multiple files, packages, or repos → spawn one agent per source\n" +
-		"- Researching N topics → spawn N agents simultaneously\n" +
-		"- Any step with independent sub-steps → spawn agents for each\n\n" +
-		"Call ALL spawns BEFORE blocking on any result (fire-and-forget, then join).\n" +
-		"Never read 3+ files sequentially when you can spawn agents to read them in parallel.\n" +
-		"Never do N sequential researches when they are independent.\n" +
-		"The child agent receives its own full tool set and runs to completion; its final\n" +
-		"assistant message is returned as the result string."
+	// Inject aggressive spawn_agent guidance (shared with one-shot mode).
+	skillBlock += spawnAgentBlock
 
 	traceFile := ""
 	for i := 0; i < len(args)-1; i++ {

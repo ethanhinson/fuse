@@ -103,6 +103,7 @@ type AgentNode struct {
 	RemoteExec  bool
 	RemoteJobID string
 	children    []string
+	cancel      func() // set by Spawner; called by CancelNode
 	mu          sync.Mutex
 }
 
@@ -111,6 +112,30 @@ func (n *AgentNode) AddEvent(e AgentEvent) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.Events = append(n.Events, e)
+}
+
+// CopyEvents returns a thread-safe snapshot of the node's event list.
+func (n *AgentNode) CopyEvents() []AgentEvent {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]AgentEvent, len(n.Events))
+	copy(out, n.Events)
+	return out
+}
+
+// UpdateTokens atomically increments the node's token counters.
+func (n *AgentNode) UpdateTokens(in, out int) {
+	n.mu.Lock()
+	n.TokensIn += in
+	n.TokensOut += out
+	n.mu.Unlock()
+}
+
+// SetCancel stores the context cancel func so CancelNode can stop this node.
+func (n *AgentNode) SetCancel(f func()) {
+	n.mu.Lock()
+	n.cancel = f
+	n.mu.Unlock()
 }
 
 // Finish transitions the node to a terminal state.
@@ -257,6 +282,23 @@ func (t *AgentTree) secretsStore() secrets.SecretsStore {
 }
 
 // RegisterRemote adds a named RemoteExecutor (id="" for the default).
+// CancelNode calls the cancel func stored on the named node, stopping the
+// node and (via context propagation) its entire subtree.
+func (t *AgentTree) CancelNode(id string) {
+	t.mu.RLock()
+	n := t.nodes[id]
+	t.mu.RUnlock()
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	f := n.cancel
+	n.mu.Unlock()
+	if f != nil {
+		f()
+	}
+}
+
 func (t *AgentTree) RegisterRemote(id string, exec RemoteExecutor) {
 	t.remotesMu.Lock()
 	defer t.remotesMu.Unlock()

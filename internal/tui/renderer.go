@@ -121,6 +121,7 @@ func (r *NodeRenderer) Errorf(format string, a ...any) {
 }
 
 func (r *NodeRenderer) Tokens(input, output int) {
+	r.node.UpdateTokens(input, output)
 	r.node.AddEvent(agent.AgentEvent{
 		Kind:    agent.KindTokens,
 		Payload: map[string]any{"in": input, "out": output},

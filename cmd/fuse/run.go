@@ -17,6 +17,22 @@ import (
 	"github.com/ethanhinson/fuse/internal/tui"
 )
 
+// spawnAgentBlock is the system-prompt block that tells models to use spawn_agent.
+// Shared between one-shot and shell mode so behaviour is identical across both.
+const spawnAgentBlock = `
+
+## Parallel subagents — use spawn_agent aggressively
+You have a ` + "`spawn_agent`" + ` tool. Use it whenever you can split work into independent parts:
+- Reading multiple files, packages, or repos → spawn one agent per source
+- Researching N topics → spawn N agents simultaneously
+- Any step with independent sub-steps → spawn agents for each
+
+Call ALL spawns BEFORE blocking on any result (fire-and-forget, then join).
+Never read 3+ files sequentially when you can spawn agents to read them in parallel.
+Never do N sequential researches when they are independent.
+The child agent receives its own full tool set and runs to completion; its final
+assistant message is returned as the result string.`
+
 // registryFromConfig builds a model.Registry, starting from the built-in
 // default and overlaying any config-defined entries.
 func registryFromConfig(cfg config.Config) *model.Registry {

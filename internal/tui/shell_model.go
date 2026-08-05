@@ -635,9 +635,17 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	history := m.history
 	build := m.build
 
+	tree := m.tree // capture for closure
 	run := func() tea.Msg {
 		approve := NewTeaApprovalFunc(ch)
-		a, err := build(alias, NewTeaRenderer(ch), approve)
+		var r agent.Renderer = NewTeaRenderer(ch)
+		if tree != nil {
+			rootNode := tree.Node(tree.RootID())
+			if rootNode != nil {
+				r = NewMultiRenderer(r, NewNodeRenderer(rootNode, tree))
+			}
+		}
+		a, err := build(alias, r, approve)
 		if err != nil {
 			ch <- AgentErrMsg{Err: err.Error()}
 			ch <- AgentDoneMsg{History: history}
@@ -945,6 +953,9 @@ func (m ShellModel) View() string {
 			ruleStyle.Render("("+meta+")")
 	default:
 		status = statusModelStyle.Render(m.alias)
+		if m.tree != nil {
+			status += "  " + ruleStyle.Render("Tab → agents")
+		}
 	}
 
 	var b strings.Builder
