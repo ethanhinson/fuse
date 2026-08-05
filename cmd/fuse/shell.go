@@ -42,7 +42,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 
 	skillDirs := skills.DefaultDirs()
 
-	set, err := skills.Load(skillDirs)
+	set, err := skills.LoadWithEmbedded(skillDirs)
 	if err != nil {
 		fmt.Fprintf(stderr, "skills error: %v\n", err)
 		return 1

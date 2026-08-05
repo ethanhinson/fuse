@@ -71,6 +71,33 @@ func Load(dirs []string) (*Set, error) {
 	return set, nil
 }
 
+// LoadWithEmbedded runs Load(dirs) and then folds in the compiled-in embedded
+// skills for any name not already present. Filesystem skills always win: a user
+// skill named "research" shadows the embedded one (first-wins preserved), and
+// embedded skills rank lowest.
+func LoadWithEmbedded(dirs []string) (*Set, error) {
+	set, err := Load(dirs)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, sk := range set.skills {
+		seen[sk.Name] = true
+	}
+	emb, err := Embedded()
+	if err != nil {
+		return nil, err
+	}
+	for _, sk := range emb {
+		if seen[sk.Name] {
+			continue
+		}
+		seen[sk.Name] = true
+		set.skills = append(set.skills, sk)
+	}
+	return set, nil
+}
+
 // All returns every loaded skill in discovery order.
 func (s *Set) All() []Skill { return s.skills }
 
