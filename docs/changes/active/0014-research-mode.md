@@ -12,12 +12,12 @@ related: [10, 11, 12]
 discovered_from: [11]
 adrs: []
 spec: docs/superpowers/specs/2026-08-05-research-mode-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-05-research-mode.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/research-mode
-claimed_at: 2026-08-05T16:57:49Z
+claimed_at: 2026-08-05T17:00:33Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-05-research-mode-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-05-research-mode-design.md) |
+| Plan | [2026-08-05-research-mode.md](https://github.com/ethanhinson/fuse/blob/feat/research-mode/docs/superpowers/plans/2026-08-05-research-mode.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
