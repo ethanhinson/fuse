@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0011 — Deep Research Mode — Web Search + Fan-out Synthesis](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0011-deep-research.md)**
+> ↩ **[Change 0011 — Deep Research Mode — Web Search + Fan-out Synthesis](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-05-0011-deep-research.md)**
 <!-- docket:backlink:end -->
 
 # Deep Research Mode — Web Search + Fan-out Synthesis
