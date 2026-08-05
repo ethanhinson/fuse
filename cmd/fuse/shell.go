@@ -84,6 +84,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 	defer slashReg.Close()
 
+	// Append spawn_agent guidance so every model knows when to use it.
+	// Models do not spontaneously parallelize without explicit instruction.
+	skillBlock += "\n\n## Parallel subagents\n" +
+		"When a task has independent subtasks (research across multiple sources, " +
+		"processing multiple files, fan-out queries), use the `spawn_agent` tool " +
+		"to delegate each subtask to a parallel child agent. The child runs to " +
+		"completion and returns its result as a string. Spawn multiple agents " +
+		"before waiting for any of them when the subtasks have no dependencies."
+
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		return buildAgentWithRenderer(cfg, reg, a, r, verbose, skillBlock, toolReg, approve)
 	}
