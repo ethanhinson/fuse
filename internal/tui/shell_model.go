@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -67,6 +68,13 @@ type ShellModel struct {
 	slashReg  *SlashRegistry
 	completer *slashCompleter
 	build     AgentBuilder
+
+	// Subagent tree and inline summary tracking.
+	tree         *agent.AgentTree
+	agentsActive bool
+	agentsModel  *AgentsModel
+	inlineByLabel map[string]*inlineAgentState
+	inlineByNode  map[string]*inlineAgentState
 }
 
 // NewShellModel builds a ShellModel. alias is the starting model alias;
@@ -115,11 +123,22 @@ func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.R
 // against this channel.
 func (m ShellModel) Channel() chan tea.Msg { return m.ch }
 
+// WithTree attaches an agent tree for subagent spawn tracking and live /agents view.
+func (m ShellModel) WithTree(t *agent.AgentTree) ShellModel {
+	m.tree = t
+	m.inlineByLabel = make(map[string]*inlineAgentState)
+	m.inlineByNode = make(map[string]*inlineAgentState)
+	return m
+}
+
 // Init focuses input and arms the first message wait plus cursor blink.
 func (m ShellModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{textinput.Blink, waitForMsg(m.ch)}
 	if m.slashReg != nil {
 		cmds = append(cmds, waitForRegistryReload(m.slashReg.Changes()))
+	}
+	if m.tree != nil {
+		cmds = append(cmds, waitForTreeUpdate(m.tree))
 	}
 	return tea.Batch(cmds...)
 }
@@ -141,7 +160,53 @@ func waitForRegistryReload(ch <-chan struct{}) tea.Cmd {
 
 // Update handles keys, window resize, and agent events.
 func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Agents overlay: most messages delegate to AgentsModel.
+	if m.agentsActive && m.agentsModel != nil {
+		switch msg := msg.(type) {
+		case agentsExitMsg:
+			m.agentsActive = false
+			m.agentsModel = nil
+			return m, nil
+		case treeUpdateMsg:
+			newModel, _ := m.agentsModel.Update(msg)
+			m.agentsModel = newModel.(*AgentsModel)
+			if m.tree != nil {
+				return m, waitForTreeUpdate(m.tree)
+			}
+			return m, nil
+		case tea.WindowSizeMsg:
+			m.agentsModel.width = msg.Width
+			m.agentsModel.height = msg.Height
+			// Also update the shell model's own size for when we return.
+			h := msg.Height - chromeHeight
+			if h < 1 {
+				h = 1
+			}
+			m.vp.Width = msg.Width
+			m.vp.Height = h
+			m.input.Width = msg.Width
+			m.ready = true
+			return m, nil
+		case tea.KeyMsg:
+			newModel, cmd := m.agentsModel.Update(msg)
+			m.agentsModel = newModel.(*AgentsModel)
+			return m, cmd
+		default:
+			return m, nil
+		}
+	}
+
 	switch msg := msg.(type) {
+	case treeUpdateMsg:
+		if m.tree != nil {
+			node := m.tree.Node(msg.nodeID)
+			if node != nil && node.Depth == 1 {
+				m.updateInlineAgent(node)
+			}
+			return m, waitForTreeUpdate(m.tree)
+		}
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		h := msg.Height - chromeHeight
 		if h < 1 {
@@ -203,6 +268,39 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForMsg(m.ch)
 
 	case ToolCallMsg:
+		// spawn_agent: insert a live inline block instead of the spinner line.
+		if msg.Name == "spawn_agent" && m.tree != nil {
+			var input struct {
+				Label  string `json:"label"`
+				Remote bool   `json:"remote"`
+			}
+			_ = json.Unmarshal([]byte(msg.Args), &input)
+			if input.Label != "" {
+				if len(m.lines) > 0 {
+					m.lines = append(m.lines, "")
+				}
+				block := &inlineAgentState{label: input.Label, lineIdx: len(m.lines)}
+				if m.inlineByLabel == nil {
+					m.inlineByLabel = make(map[string]*inlineAgentState)
+				}
+				m.inlineByLabel[input.Label] = block
+				var runLine string
+				if input.Remote {
+					runLine = renderInlineRemoteRunning(input.Label, "0s", 0, 0)
+				} else {
+					runLine = renderInlineRunning(input.Label, "0s", 0, 0)
+				}
+				parts := strings.SplitN(runLine, "\n", 2)
+				m.lines = append(m.lines, parts[0])
+				if len(parts) > 1 {
+					m.lines = append(m.lines, parts[1])
+				} else {
+					m.lines = append(m.lines, "")
+				}
+				m.refreshViewport(true)
+				return m, waitForMsg(m.ch)
+			}
+		}
 		args := msg.Args
 		if !m.verbose {
 			args = truncate(args, previewLimit)
@@ -218,6 +316,10 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, waitForMsg(m.ch)
 
 	case ToolResultMsg:
+		// spawn_agent: the inline block already shows the final state; skip.
+		if msg.Name == "spawn_agent" && m.tree != nil {
+			return m, waitForMsg(m.ch)
+		}
 		// Settle the pending bullet to a static ● now that we have the result.
 		if m.pendingCall != "" {
 			m.lines = append(m.lines, toolBulletStyle.Render("●")+" "+m.pendingCall)
@@ -294,6 +396,10 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlC, tea.KeyCtrlD:
 		return m, tea.Quit
+	case tea.KeyTab:
+		if m.completer == nil || !m.completer.active {
+			return m.enterAgentsView()
+		}
 	case tea.KeyCtrlL:
 		m.lines = nil
 		m.pendingCall = ""
@@ -429,6 +535,8 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 	switch cmd {
 	case "/exit", "/quit":
 		return m, tea.Quit
+	case "/agents":
+		return m.enterAgentsView()
 	case "/verbose":
 		m.verbose = !m.verbose
 		m.appendLine(fmt.Sprintf("verbose = %v", m.verbose))
@@ -537,6 +645,89 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	// run sends events onto the channel; waitForMsg picks them up.
 	// tick drives the elapsed-time counter; spinner.Tick starts the animation.
 	return m, tea.Batch(run, tick(), m.spinner.Tick)
+}
+
+// enterAgentsView switches to the AgentsModel overlay.
+func (m ShellModel) enterAgentsView() (tea.Model, tea.Cmd) {
+	if m.tree == nil {
+		m.appendLine("no agent tree active")
+		return m, nil
+	}
+	m.agentsModel = NewAgentsModel(m.tree)
+	m.agentsModel.width = m.vp.Width
+	m.agentsModel.height = m.vp.Height + chromeHeight
+	m.agentsActive = true
+	return m, nil
+}
+
+// updateInlineAgent refreshes the two-line inline block for a depth-1 child node.
+func (m *ShellModel) updateInlineAgent(node *agent.AgentNode) {
+	if m.inlineByLabel == nil {
+		return
+	}
+	// Find or create the tracking entry.
+	block, ok := m.inlineByNode[node.ID]
+	if !ok {
+		if b, ok2 := m.inlineByLabel[node.Label]; ok2 {
+			b.nodeID = node.ID
+			if m.inlineByNode == nil {
+				m.inlineByNode = make(map[string]*inlineAgentState)
+			}
+			m.inlineByNode[node.ID] = b
+			block = b
+		}
+	}
+	if block == nil || block.lineIdx+1 >= len(m.lines) {
+		return
+	}
+
+	elapsed := "0s"
+	if !node.StartedAt.IsZero() {
+		dur := time.Since(node.StartedAt)
+		if !node.EndedAt.IsZero() {
+			dur = node.EndedAt.Sub(node.StartedAt)
+		}
+		elapsed = fmt.Sprintf("%.0fs", dur.Seconds())
+	}
+
+	var rendered string
+	switch node.Status {
+	case agent.StatusRunning, agent.StatusPending:
+		if node.RemoteExec {
+			rendered = renderInlineRemoteRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
+		} else {
+			rendered = renderInlineRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
+		}
+	case agent.StatusDone:
+		result := ""
+		for _, e := range node.Events {
+			if e.Kind == agent.KindDone {
+				if r, ok2 := e.Payload["result"].(string); ok2 {
+					result = r
+				}
+			}
+		}
+		rendered = renderInlineDone(elapsed, node.TokensIn, node.TokensOut, result)
+	case agent.StatusError:
+		errMsg := ""
+		for _, e := range node.Events {
+			if e.Kind == agent.KindError {
+				if s, ok2 := e.Payload["error"].(string); ok2 {
+					errMsg = s
+				}
+			}
+		}
+		rendered = renderInlineError(elapsed, node.TokensIn, node.TokensOut, errMsg)
+	default:
+		return
+	}
+
+	parts := strings.SplitN(rendered, "\n", 2)
+	m.lines[block.lineIdx] = parts[0]
+	if len(parts) > 1 {
+		m.lines[block.lineIdx+1] = parts[1]
+	}
+	m.refreshViewport(m.vp.AtBottom())
 }
 
 // appendLine adds one logical line (which may itself contain newlines) and
@@ -666,8 +857,12 @@ func (m *ShellModel) refreshViewport(followBottom bool) {
 }
 
 // View renders the transcript, a separator rule, the input prompt, and a fixed
-// status line at the very bottom.
+// status line at the very bottom. When the agents overlay is active it
+// delegates entirely to AgentsModel.View().
 func (m ShellModel) View() string {
+	if m.agentsActive && m.agentsModel != nil {
+		return m.agentsModel.View()
+	}
 	width := m.vp.Width
 	if width < 1 {
 		width = 40

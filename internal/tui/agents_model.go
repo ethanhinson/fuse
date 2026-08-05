@@ -36,10 +36,8 @@ func NewAgentsModel(t *agent.AgentTree) *AgentsModel {
 	return m
 }
 
-// Init starts watching for tree updates.
-func (m *AgentsModel) Init() tea.Cmd {
-	return waitForTreeUpdate(m.tree)
-}
+// Init is a no-op; the parent ShellModel owns the tree-update subscription.
+func (m *AgentsModel) Init() tea.Cmd { return nil }
 
 // waitForTreeUpdate blocks on the tree's update channel and delivers it as a
 // treeUpdateMsg. Re-armed after every received event.
@@ -60,7 +58,7 @@ func (m *AgentsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case treeUpdateMsg:
 		m.nodes = m.tree.Nodes()
-		return m, waitForTreeUpdate(m.tree)
+		return m, nil
 
 	case tea.KeyMsg:
 		if m.detail {

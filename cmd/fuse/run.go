@@ -102,6 +102,43 @@ func buildAgentWithRenderer(cfg config.Config, reg *model.Registry, alias string
 	return a, err
 }
 
+// buildChildAgent builds an agent with an explicitly provided system prompt,
+// bypassing persona composition. Used when spawn_agent sets system_prompt.
+func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.ApprovalFunc) (*agent.Agent, error) {
+	if alias == "" {
+		alias = reg.Default
+	}
+	mc, err := reg.Resolve(alias)
+	if err != nil {
+		return nil, fmt.Errorf("model %q: %w", alias, err)
+	}
+	if strings.HasPrefix(mc.ID, "cli/") {
+		fuseExe, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("cli adapter: resolve binary: %w", err)
+		}
+		gate := permissions.New(cfg.Permissions, toolReg, approve)
+		return agent.New(newCLIAdapter(fuseExe, approve), gate, r, mc.ID, systemPrompt, cfg.MaxTurns, 0), nil
+	}
+	adapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, http.DefaultClient)
+	gate := permissions.New(cfg.Permissions, toolReg, approve)
+	maxTokens := mc.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = cfg.MaxTokens
+	}
+	return agent.New(adapter, gate, r, mc.ID, systemPrompt, cfg.MaxTurns, maxTokens), nil
+}
+
+// lastAssistantText returns the content of the last assistant message in msgs.
+func lastAssistantText(msgs []model.Message) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "assistant" && msgs[i].Content != "" {
+			return msgs[i].Content
+		}
+	}
+	return ""
+}
+
 // buildAgentCore resolves alias and constructs an Agent bound to renderer r,
 // returning the resolved gateway model id.
 func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, toolReg *tools.Registry, approve permissions.ApprovalFunc) (*agent.Agent, string, error) {

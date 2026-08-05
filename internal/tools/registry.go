@@ -102,6 +102,19 @@ func (r *Registry) Subset(names []string) (*Registry, []string) {
 	return out, unknown
 }
 
+// Clone returns a shallow copy of the registry with the same tool references.
+func (r *Registry) Clone() *Registry {
+	out := &Registry{
+		order:  make([]string, len(r.order)),
+		byName: make(map[string]Tool, len(r.byName)),
+	}
+	copy(out.order, r.order)
+	for k, v := range r.byName {
+		out.byName[k] = v
+	}
+	return out
+}
+
 // DefaultTools returns the Phase 1 built-in tool set.
 func DefaultTools() []Tool {
 	return []Tool{

@@ -92,6 +92,10 @@ func (g *SpawnGroup) Join(ctx context.Context) ([]SpawnDone, error) {
 	return results, nil
 }
 
+// ChildBuilder runs a local child agent. node is the child's already-created
+// AgentNode in the tree. It returns the final result text.
+type ChildBuilder func(ctx context.Context, opts SpawnOpts, node *AgentNode, tree *AgentTree) (string, error)
+
 // Option configures a Spawner.
 type Option func(*Spawner)
 
@@ -104,11 +108,15 @@ func WithNode(n *AgentNode) Option { return func(s *Spawner) { s.node = n } }
 // WithSpawnDepth sets the current spawn depth.
 func WithSpawnDepth(depth int) Option { return func(s *Spawner) { s.depth = depth } }
 
+// WithChildBuilder injects the local child-agent runner into a Spawner.
+func WithChildBuilder(fn ChildBuilder) Option { return func(s *Spawner) { s.buildChild = fn } }
+
 // Spawner provides the Spawn method for creating child agents.
 type Spawner struct {
-	tree  *AgentTree
-	node  *AgentNode
-	depth int
+	tree       *AgentTree
+	node       *AgentNode
+	depth      int
+	buildChild ChildBuilder
 }
 
 // NewSpawner creates a Spawner with the provided options.
@@ -155,6 +163,8 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 	childCtx, cancel := context.WithCancel(ctx)
 
 	go func() {
+		defer cancel()
+
 		node.mu.Lock()
 		node.Status = StatusRunning
 		node.StartedAt = time.Now()
@@ -163,15 +173,22 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 			s.tree.Emit(TreeUpdate{NodeID: node.ID})
 		}
 
-		// Local spawns complete synchronously in the spawn_agent tool's Execute.
-		// The spawner itself just manages node lifecycle; the tool drives execution.
-		_ = childCtx
+		var result string
+		var runErr error
 
-		node.Finish(StatusDone, "")
+		if s.buildChild != nil {
+			result, runErr = s.buildChild(childCtx, opts, node, s.tree)
+		}
+
+		if runErr != nil {
+			node.Finish(StatusError, runErr.Error())
+		} else {
+			node.Finish(StatusDone, "")
+		}
 		if s.tree != nil {
 			s.tree.Emit(TreeUpdate{NodeID: node.ID})
 		}
-		doneCh <- SpawnDone{Result: opts.Task}
+		doneCh <- SpawnDone{Result: result, Err: runErr}
 	}()
 
 	return AgentHandle{NodeID: node.ID, Done: doneCh, cancel: cancel}, nil

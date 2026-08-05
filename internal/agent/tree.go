@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -284,6 +285,35 @@ func (t *AgentTree) lookupIntent(id string) IntentPlugin {
 		return p
 	}
 	return NilIntentPlugin{}
+}
+
+// StartDirtyFlusher starts a background goroutine that periodically flushes
+// coalesced dirty-map updates into the out channel. ctx cancels the flusher.
+func (t *AgentTree) StartDirtyFlusher(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				t.mu.Lock()
+				dirty := t.dirty
+				t.dirty = map[string]bool{}
+				t.mu.Unlock()
+				for id := range dirty {
+					select {
+					case t.out <- TreeUpdate{NodeID: id}:
+					default:
+						t.mu.Lock()
+						t.dirty[id] = true
+						t.mu.Unlock()
+					}
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 // newNodeID generates a time-ordered unique node ID.
