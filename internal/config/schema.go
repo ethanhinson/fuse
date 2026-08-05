@@ -30,8 +30,17 @@ type PermissionsConfig struct {
 	Mode         string   `yaml:"mode"`          // off | prompt-all | smart (default: smart)
 	SessionAllow bool     `yaml:"session_allow"` // whether [s]ession option appears
 	AutoApprove  []string `yaml:"auto_approve"`  // patterns promoted beyond the safe list
-	AlwaysPrompt []string `yaml:"always_prompt"` // patterns demoted to always-prompt
-	Disabled     []string `yaml:"disabled"`      // tool names fully disabled (Enabled: false)
+	AlwaysPrompt []string   `yaml:"always_prompt"` // patterns demoted to always-prompt
+	Disabled     []string   `yaml:"disabled"`      // tool names fully disabled (Enabled: false)
+	Auto         AutoConfig `yaml:"auto"`          // auto-mode classifier + static rule surface
+}
+
+// AutoConfig configures auto mode: the classifier model alias and the static
+// deny/ask pattern lists layered around it. No behaviour is wired here yet.
+type AutoConfig struct {
+	ClassifierModel string   `yaml:"classifier_model"`
+	Deny            []string `yaml:"deny"`
+	Ask             []string `yaml:"ask"`
 }
 
 // CustomProviderConfig describes a user-supplied JSON search endpoint,

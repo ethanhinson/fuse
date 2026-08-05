@@ -79,6 +79,15 @@ func mergeFile(c *Config, path string) error {
 	if len(raw.Permissions.Disabled) > 0 {
 		c.Permissions.Disabled = raw.Permissions.Disabled
 	}
+	if raw.Permissions.Auto.ClassifierModel != "" {
+		c.Permissions.Auto.ClassifierModel = raw.Permissions.Auto.ClassifierModel
+	}
+	if len(raw.Permissions.Auto.Deny) > 0 {
+		c.Permissions.Auto.Deny = raw.Permissions.Auto.Deny
+	}
+	if len(raw.Permissions.Auto.Ask) > 0 {
+		c.Permissions.Auto.Ask = raw.Permissions.Auto.Ask
+	}
 	if len(raw.MCPServers) > 0 {
 		c.MCPServers = raw.MCPServers
 	}

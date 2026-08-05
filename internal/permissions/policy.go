@@ -13,6 +13,10 @@ const (
 	ModeOff
 	// ModePromptAll prompts for every call, ignoring the safe list.
 	ModePromptAll
+	// ModeAuto layers deterministic rules and a classifier for autonomous
+	// approval. The gate pipeline is wired in a later task; this value only
+	// exists so the mode can be parsed and configured.
+	ModeAuto
 )
 
 // ParseMode converts a yaml string to PermissionMode.
@@ -22,6 +26,8 @@ func ParseMode(s string) PermissionMode {
 		return ModeOff
 	case "prompt-all":
 		return ModePromptAll
+	case "auto":
+		return ModeAuto
 	default:
 		return ModeSmart
 	}

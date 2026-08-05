@@ -122,6 +122,45 @@ models:
 	}
 }
 
+func TestLoadPermissionsAutoBlock(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `
+permissions:
+  mode: auto
+  auto:
+    classifier_model: deepseek-flash
+    deny: ["bash:rm *"]
+    ask: ["bash:curl *"]
+`
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Permissions.Mode != "auto" {
+		t.Errorf("mode = %q, want auto", c.Permissions.Mode)
+	}
+	if c.Permissions.Auto.ClassifierModel != "deepseek-flash" {
+		t.Errorf("Auto.ClassifierModel = %q, want deepseek-flash", c.Permissions.Auto.ClassifierModel)
+	}
+	if len(c.Permissions.Auto.Deny) != 1 || c.Permissions.Auto.Deny[0] != "bash:rm *" {
+		t.Errorf("Auto.Deny = %v, want [bash:rm *]", c.Permissions.Auto.Deny)
+	}
+	if len(c.Permissions.Auto.Ask) != 1 || c.Permissions.Auto.Ask[0] != "bash:curl *" {
+		t.Errorf("Auto.Ask = %v, want [bash:curl *]", c.Permissions.Auto.Ask)
+	}
+}
+
 func TestLoadAbsentReturnsDefault(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
