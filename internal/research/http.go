@@ -214,6 +214,19 @@ func (c *Client) doOnce(ctx context.Context, req *http.Request) (*http.Response,
 	}
 	req = req.Clone(attemptCtx)
 
+	// Rewind the body for each attempt. Clone shares the same drained
+	// io.ReadCloser, and http.Client.Do only auto-invokes GetBody for its own
+	// redirect handling — never for this caller-driven retry loop. Without this
+	// reset a retried POST (e.g. Tavily) sends an empty body on attempt 2+.
+	if req.GetBody != nil {
+		body, gerr := req.GetBody()
+		if gerr != nil {
+			cancel()
+			return nil, gerr, false, 0
+		}
+		req.Body = body
+	}
+
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		cancel()
