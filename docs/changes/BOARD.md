@@ -1,12 +1,12 @@
 # Backlog
 
-**15 changes** — 🟡 1 proposed · ✅ 12 done · 🗑️ 2 killed
+**15 changes** — 🟢 1 in progress · ✅ 12 done · 🗑️ 2 killed
 
-## 🟡 Proposed (1)
+## 🟢 In progress (1)
 
-| # | Title | Priority | Type | Readiness |
-|---|-------|----------|------|-----------|
-| [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | build-ready |
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | [spec](../superpowers/specs/2026-08-05-research-mode-design.md) | `feat/research-mode` |
 
 ```mermaid
 graph TD
