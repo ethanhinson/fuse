@@ -18,9 +18,9 @@ trivial: false
 auto_groomable:
 branch: feat/tui-hanging-indent-wrap
 pr:
-claimed_at: 2026-08-05T08:28:09Z
+claimed_at: 2026-08-05T08:29:21Z
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -66,3 +66,24 @@ it constant. Follow-up to 0005 (gutter alignment) and 0006 (glamour markdown).
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-05 — reconcile before build
+
+Re-read the change body + spec against related changes 5 and 6 (both `done`),
+the ADR ledger, and the current `internal/tui/shell_model.go`. Findings:
+
+- **Design still valid, no scope change.** Every code anchor the spec cites is
+  present and semantically unchanged: `m.lines` is still `[]string`
+  (pre-concatenated), the flat wrap `content = wrap.String(wordwrap.String(
+  content, m.vp.Width), m.vp.Width)` with its load-bearing bottom-anchor comment
+  is now at `refreshViewport` around line 1099 (spec cited 1093-1099),
+  `appendResultLines` at line 945, `previewResult` at line 433, the
+  `AssistantMsg` handler in the same block the spec references.
+- **Line-number drift only.** Anchors moved ~+6 lines from change 0013
+  (startup-banner, merged as PR #11) — additive, untouching the wrap path. The
+  spec's line citations are approximate; the code structure is intact.
+- **Naming nit (cosmetic).** The model type is `ShellModel` (exported), not the
+  spec's lowercase `shellModel`. Plan/build use the real name; no design impact.
+
+No adjacent follow-up work surfaced (auto-capture is disabled this repo).
+Scope, tests, and out-of-scope list carry forward unchanged.
