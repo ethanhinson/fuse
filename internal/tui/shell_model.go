@@ -1131,30 +1131,46 @@ func (m *ShellModel) refreshViewport(followBottom bool) {
 	if !m.ready {
 		return
 	}
-	flat := make([]string, len(m.lines))
-	for i, l := range m.lines {
-		flat[i] = l.first + l.text
+	// Settled transcript lines wrap per-line with a hanging indent from their
+	// stored structure — re-flowed on every refresh and resize so continuations
+	// stay in the gutter and no emitted row exceeds the viewport width.
+	var rows []string
+	if m.vp.Width > 0 {
+		for _, l := range m.lines {
+			rows = append(rows, hangWrap(l, m.vp.Width)...)
+		}
+	} else {
+		for _, l := range m.lines {
+			rows = append(rows, l.first+l.text)
+		}
 	}
-	content := strings.Join(flat, "\n")
+	content := strings.Join(rows, "\n")
+
+	// Transient rows the refresh composes itself (spinner + pending-call line,
+	// completer overlay) are not stored transcriptLines; keep them on the flat
+	// wordwrap+wrap path, appended after the wrapped settled block.
+	var transient string
 	if n := len(m.pendingCalls); n > 0 {
 		line := m.spinner.View() + " " + m.pendingCalls[0].text
 		if n > 1 {
 			line += ruleStyle.Render(fmt.Sprintf("  (+%d queued)", n-1))
 		}
-		content += "\n" + line
+		transient += "\n" + line
 	}
-	// Prepend completer overlay above the content.
 	if m.completer != nil && m.completer.active {
 		overlay := m.completer.View(m.vp.Width)
 		if overlay != "" {
-			content = content + "\n" + overlay
+			transient += "\n" + overlay
 		}
 	}
-	if m.vp.Width > 0 {
-		// wordwrap breaks at spaces; wrap hard-breaks anything still wider
-		// than the viewport (long URLs, minified JSON) — overflowing lines
-		// wrap in the terminal itself and desync the bottom-anchor math.
-		content = wrap.String(wordwrap.String(content, m.vp.Width), m.vp.Width)
+	if transient != "" {
+		if m.vp.Width > 0 {
+			// wordwrap breaks at spaces; wrap hard-breaks anything still wider
+			// than the viewport (long URLs, minified JSON) — overflowing lines
+			// wrap in the terminal itself and desync the bottom-anchor math.
+			transient = wrap.String(wordwrap.String(transient, m.vp.Width), m.vp.Width)
+		}
+		content += transient
 	}
 	// Pad the top so sparse content sticks to the bottom like a chat interface.
 	if m.vp.Height > 0 {

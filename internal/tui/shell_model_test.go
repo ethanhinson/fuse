@@ -251,6 +251,101 @@ func TestHangWrapPlainAndErrorIndent(t *testing.T) {
 	}
 }
 
+// vpRows returns the emitted viewport rows (top-pad blank lines dropped).
+func vpRows(m ShellModel) []string {
+	var rows []string
+	for _, r := range strings.Split(m.vp.View(), "\n") {
+		if strings.TrimSpace(ansiRE.ReplaceAllString(r, "")) != "" {
+			rows = append(rows, r)
+		}
+	}
+	return rows
+}
+
+// TestRefreshViewportNoRowExceedsWidth (spec Test 3): no emitted visual row
+// exceeds the viewport width, including wrapped gutter continuations.
+func TestRefreshViewportNoRowExceedsWidth(t *testing.T) {
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 20})
+	m = next.(ShellModel)
+	// A file-read result whose lines are wider than the viewport.
+	next, _ = m.Update(ToolCallMsg{Name: "read_file", Args: "x"})
+	m = next.(ShellModel)
+	out := "one two three four five six seven eight nine ten\nsecond line also quite long here yes"
+	next, _ = m.Update(ToolResultMsg{Name: "read_file", Output: out})
+	m = next.(ShellModel)
+	for _, r := range vpRows(m) {
+		if w := printWidth(r); w > m.vp.Width {
+			t.Errorf("row printable width %d > viewport %d: %q", w, m.vp.Width, r)
+		}
+	}
+}
+
+// TestRefreshViewportUsesHangWrap (spec Test 1): refreshViewport wraps stored
+// transcriptLines through hangWrap, so a prefixed line's continuation rows
+// carry the cont prefix and stay inside the gutter — never escaping to column 0.
+func TestRefreshViewportUsesHangWrap(t *testing.T) {
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 24, Height: 20})
+	m = next.(ShellModel)
+	m.lines = append(m.lines, transcriptLine{
+		first: "  └ 1 │ ",
+		cont:  "      │ ",
+		text:  "one two three four five six seven eight nine ten eleven",
+	})
+	m.refreshViewport(true)
+	rows := vpRows(m)
+	var sawCont bool
+	for _, r := range rows {
+		if strings.HasPrefix(ansiRE.ReplaceAllString(r, ""), "      │ ") {
+			sawCont = true
+		}
+		if w := printWidth(r); w > m.vp.Width {
+			t.Errorf("row width %d > %d: %q", w, m.vp.Width, r)
+		}
+	}
+	if !sawCont {
+		t.Errorf("no gutter continuation row — refreshViewport did not hangWrap:\n%s",
+			strings.Join(rows, "\n"))
+	}
+}
+
+// TestRefreshViewportResizeReflows (spec Test 4): wrapping happens at refresh
+// time from the stored structure — resizing narrower re-wraps with no
+// double-wrap artifacts, and every row still fits the new width.
+func TestRefreshViewportResizeReflows(t *testing.T) {
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	m = next.(ShellModel)
+	next, _ = m.Update(ToolCallMsg{Name: "read_file", Args: "x"})
+	m = next.(ShellModel)
+	out := "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu\nsecond line here also fairly long content to force wrapping"
+	next, _ = m.Update(ToolResultMsg{Name: "read_file", Output: out})
+	m = next.(ShellModel)
+	// Resize narrower — content must re-flow from the stored transcriptLines.
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 28, Height: 20})
+	m = next.(ShellModel)
+	rowsNarrow := vpRows(m)
+	for _, r := range rowsNarrow {
+		if w := printWidth(r); w > m.vp.Width {
+			t.Errorf("after shrink, row width %d > %d: %q", w, m.vp.Width, r)
+		}
+	}
+	// Resize wider again — no accumulated double-wrap: wide render fits and the
+	// content is intact (both original words survive the round-trip).
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	m = next.(ShellModel)
+	wide := ansiRE.ReplaceAllString(strings.Join(vpRows(m), "\n"), "")
+	if !strings.Contains(wide, "alpha") || !strings.Contains(wide, "lambda") {
+		t.Errorf("content lost after resize round-trip:\n%s", wide)
+	}
+	for _, r := range vpRows(m) {
+		if w := printWidth(r); w > m.vp.Width {
+			t.Errorf("after regrow, row width %d > %d: %q", w, m.vp.Width, r)
+		}
+	}
+}
+
 func TestEnterWhileRunningIsNoop(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true
