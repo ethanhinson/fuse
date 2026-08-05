@@ -42,16 +42,22 @@ delivered by driving the EXISTING subagent fan-out instead of building its own.
 
 Groomed 2026-08-05: the design is **skill-driven** — the model orchestrates via an
 embedded skill and parallel `spawn_agent`; Go ships only the search/fetch tools.
-Search is **Brave-only** in v1 (the same engine that, per public evidence, powers
+Search is **Brave-first** (the same engine that, per public evidence, powers
 Claude's own web search — Anthropic just holds the key server-side and re-bills;
-fuse users bring their own `BRAVE_SEARCH_API_KEY` at half the effective price).
+fuse users bring their own `BRAVE_SEARCH_API_KEY` at half the effective price),
+with Tavily as the second hosted adapter and a config-driven custom HTTP provider
+as the user-land extension point for self-hosted engines like SearXNG.
 Full rationale and evidence in the spec.
 
 ## What changes
 
-- `SearchProvider` interface + a single `BraveSearchProvider` adapter (Brave web
-  search REST API, `X-Subscription-Token`). Resolution: `research.provider` config
-  → `BRAVE_SEARCH_API_KEY` env → loud error naming the setup path.
+- `SearchProvider` interface with three v1 adapters: `BraveSearchProvider`
+  (primary; Brave web search REST API, `X-Subscription-Token`), `TavilyProvider`
+  (`TAVILY_API_KEY`), and a config-driven `CustomHTTPProvider` — URL template +
+  JSON field mappings, defaults matching SearXNG's JSON shape — so users plug in
+  self-hosted engines without a fuse release. Resolution: `research.provider`
+  config → Brave env → Tavily env → custom if configured → loud error naming the
+  setup paths.
 - `web_fetch` tool — HTTP fetch + readability extraction, robots.txt gate (on by
   default, `research.respect_robots: false` override), per-domain rate limiting,
   word-boundary truncation; and a `web_search` tool over the provider. Both
@@ -68,8 +74,8 @@ Full rationale and evidence in the spec.
 
 ## Out of scope
 
-- Other search adapters — Exa, Tavily, SearXNG, MCP-search — and any keyless
-  search path (future changes; the interface is the extension point).
+- Exa and MCP-search adapters (future changes). No dedicated SearXNG adapter —
+  self-hosters use the custom HTTP provider. No zero-config keyless default.
 - Any new bespoke orchestration/fan-out mechanism, Go query-gen, or Go synthesis
   code — the 0012 runtime plus the model own the flow.
 - PDF and non-HTML content extraction — skipped with a note.

@@ -42,7 +42,7 @@ with the 0004 skill runtime at startup. `/research` works with no user setup bey
 the Brave key; a user skill of the same name shadows the embedded one (standard
 skill-runtime precedence).
 
-### D3 — Brave only in v1
+### D3 — Brave primary + Tavily in v1; user-extensible beyond that
 
 Evidence gathered during the groom: Claude's web search is Anthropic's **server-side**
 API tool (`web_search_20250305`, $10/1k searches, results returned encrypted), and its
@@ -58,9 +58,12 @@ credit. Signup: api-dashboard.search.brave.com (card required; the free *tier* w
 retired 2026-02, replaced by $5/month free *credits*). Free-credit attribution
 requirement is satisfied by a Brave Search line in fuse's README.
 
-`SearchProvider` remains an interface so Exa/Tavily/SearXNG/MCP adapters can land as
-future changes; none ship in v1. **Provider resolution:** explicit `research.provider`
-config → `BRAVE_SEARCH_API_KEY` env → loud error naming the setup path. Resolution
+v1 ships two hosted adapters — **Brave** (primary) and **Tavily** — plus a
+config-driven **custom HTTP provider** (D6) as the user-land extension point, so a
+self-hosted engine like SearXNG needs configuration, not a fuse release. Exa and
+MCP-search remain future changes. **Provider resolution:** explicit
+`research.provider` config → `BRAVE_SEARCH_API_KEY` env → `TAVILY_API_KEY` env →
+`[research.custom]` if configured → loud error naming all setup paths. Resolution
 happens at first use and fails loudly; no silent fallbacks at query time.
 
 ### D4 — robots.txt on by default, config override
@@ -73,6 +76,14 @@ overrides for dev/testing.
 
 Dropped from scope (was a 0011 dev convenience). File a follow-up stub only if
 re-fetch pain shows up in practice.
+
+### D6 — User-land extensibility via a generic HTTP provider (amended post-groom, 2026-08-05)
+
+Rather than shipping a per-engine SearXNG adapter, v1 ships `CustomHTTPProvider` — a
+`SearchProvider` driven entirely by config: a URL template plus JSON field mappings.
+Users opt into SearXNG (or any JSON-speaking search endpoint) in user land; fuse
+ships no engine-specific code. The field-mapping defaults match SearXNG's
+`/search?format=json` response shape, so a SearXNG user sets only the URL.
 
 ## Components
 
@@ -103,6 +114,28 @@ type SearchProvider interface {
 - **Build-time evaluation:** Brave's newer "LLM Context" endpoint returns
   AI-optimized content and could reduce fetch volume; evaluate when building, adopt
   only if it demonstrably beats web-endpoint + readability extraction.
+
+### `internal/research/tavily.go` — TavilyProvider
+
+- `POST https://api.tavily.com/search` (Bearer `TAVILY_API_KEY`) with
+  `{query, max_results}`; JSON response → `[]SearchResult`.
+- Tavily returns extracted page content alongside results; when present it seeds
+  `Snippet`, letting the skill skip `web_fetch` for sources whose returned content
+  already suffices.
+- Same HTTP bounds/retry/trace discipline as Brave.
+
+### `internal/research/custom.go` — CustomHTTPProvider (user-land extension point)
+
+- Driven by `[research.custom]`: a `url` template with `{query}`/`{count}`
+  placeholders, optional `headers` (for instances behind auth), and JSON field
+  mappings — `results_path`, `title_field`, `url_field`, `snippet_field` —
+  defaulting to SearXNG's `format=json` shape (`results[]` / `title` / `url` /
+  `content`).
+- GET, JSON responses only; same bounds/retry/trace discipline as the hosted
+  adapters. Selected explicitly (`research.provider: custom`) or as the last
+  auto-resolution step when the block is configured.
+- README documents the SearXNG example: only
+  `url: "https://searx.example.com/search?q={query}&format=json"` is needed.
 
 ### `internal/research/scraper.go` — fetch + extraction (carried from 0011)
 
@@ -152,11 +185,21 @@ invokes the research skill with the query. No Go pipeline behind it.
 
 ```go
 type ResearchConfig struct {
-    Provider      string // "brave" | "" (auto: env scan)
+    Provider      string // "brave" | "tavily" | "custom" | "" (auto: Brave env → Tavily env → custom)
     MaxQueries    int    // default 5 (facet count hint passed to the skill)
     MaxResults    int    // default 5 (per web_search call)
     MaxContentKB  int    // default 50 (web_fetch truncation)
     RespectRobots bool   // default true
+    Custom        CustomProviderConfig // [research.custom] — see D6
+}
+
+type CustomProviderConfig struct {
+    URL          string            // template with {query} / {count}; empty = not configured
+    Headers      map[string]string // optional
+    ResultsPath  string            // default "results" (SearXNG shape)
+    TitleField   string            // default "title"
+    URLField     string            // default "url"
+    SnippetField string            // default "content"
 }
 ```
 
@@ -165,7 +208,9 @@ type ResearchConfig struct {
 | Path | Purpose |
 |---|---|
 | `internal/research/provider.go` | `SearchProvider` + `SearchResult` |
-| `internal/research/brave.go` | Brave adapter |
+| `internal/research/brave.go` | Brave adapter (primary) |
+| `internal/research/tavily.go` | Tavily adapter |
+| `internal/research/custom.go` | config-driven custom HTTP adapter (user-land extension point) |
 | `internal/research/scraper.go` | fetch, robots gate, readability extraction, rate limit |
 | `internal/tools/web_search.go` | `web_search` built-in tool |
 | `internal/tools/web_fetch.go` | `web_fetch` built-in tool |
@@ -176,9 +221,13 @@ type ResearchConfig struct {
 
 ## Testing
 
-- `BraveSearchProvider`: `httptest`-backed — happy path, 429/`Retry-After`, 5xx retry
-  exhaustion, malformed JSON. Test doubles mutex-guarded per the
+- Providers (`Brave`, `Tavily`, `CustomHTTP`): `httptest`-backed — happy path,
+  429/`Retry-After`, 5xx retry exhaustion, malformed JSON; custom additionally:
+  field-mapping defaults (SearXNG-shaped fixture), overridden mappings, unconfigured
+  block excluded from auto-resolution. Test doubles mutex-guarded per the
   mutex-test-double learning.
+- Resolution order: config beats env; Brave env beats Tavily env; custom last;
+  loud error when nothing resolves.
 - Scraper: fixture HTML → extraction; robots-disallowed refusal; override honored;
   non-HTML skip; truncation at boundary; per-domain rate limit.
 - Tools: registration, Subset inclusion, sanitized output.
@@ -187,9 +236,10 @@ type ResearchConfig struct {
 
 ## Out of scope
 
-- Other search adapters — Exa, Tavily, SearXNG, MCP-search (future changes; the
-  interface is the extension point).
-- Any keyless search path.
+- Exa and MCP-search adapters (future changes). No dedicated SearXNG adapter —
+  self-hosters plug SearXNG in through the custom HTTP provider (D6).
+- Any zero-config keyless search path — the custom provider is opt-in
+  configuration, not a shipped default.
 - Any new orchestration/fan-out mechanism; any Go query-gen or synthesis code.
 - PDF/non-HTML extraction; news-specific features; result cache; in-report editing
   or export.
