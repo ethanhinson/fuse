@@ -10,6 +10,10 @@ One curated finding per file; this index is the hint surface. Load it, then read
 
 - [dirent-isdir-skips-symlinks](dirent-isdir-skips-symlinks.md) — DirEntry.IsDir() skips symlinked directories — fall back to os.Stat when it returns false · also: filesystem, testing ⟨needs promotion⟩
 
+## http
+
+- [rewind-request-body-on-manual-retry](rewind-request-body-on-manual-retry.md) — A caller-driven retry loop that reuses/clones an *http.Request must reset req.Body from req.GetBody() before each attempt — http.Client.Do only auto-invokes GetBody for its own redirect handling, so a retried POST silently sends an empty body on attempt 2+ · also: retries, request-body, go, getbody ⟨needs promotion⟩
+
 ## llm
 
 - [bound-every-model-call](bound-every-model-call.md) — Every model call needs a per-attempt timeout, a response-header timeout, bounded retries, and a labeled trace entry — http.DefaultClient hangs are silent multi-minute stalls, and untraced child agents make them invisible · also: http, timeouts, retries, observability, tracing ⟨needs promotion⟩
