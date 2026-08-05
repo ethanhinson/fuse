@@ -1,13 +1,18 @@
 # Backlog
 
-**15 changes** — 🟡 2 proposed · ✅ 11 done · 🗑️ 2 killed
+**15 changes** — 🟢 1 in progress · 🟡 1 proposed · ✅ 11 done · 🗑️ 2 killed
 
-## 🟡 Proposed (2)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0015](active/0015-tui-hanging-indent-wrap.md) | Hanging-indent wrapping for the shell transcript | `medium` | `fix` | [spec](../superpowers/specs/0015-tui-hanging-indent-wrap.md) | `feat/tui-hanging-indent-wrap` |
+
+## 🟡 Proposed (1)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | needs-brainstorm |
-| [0015](active/0015-tui-hanging-indent-wrap.md) | Hanging-indent wrapping for the shell transcript | `medium` | `fix` | build-ready |
 
 ```mermaid
 graph TD
