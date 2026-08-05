@@ -236,9 +236,9 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case spinner.TickMsg:
 		var spinCmd tea.Cmd
 		m.spinner, spinCmd = m.spinner.Update(msg)
-		// Refresh viewport when a tool call is in flight so the spinner frame
-		// updates in place on the pending-call line.
-		if m.pendingCall != "" {
+		// Refresh when a tool call is in flight (spinner glyph) or when inline
+		// agent blocks are running (elapsed counter updates on every frame).
+		if m.pendingCall != "" || m.hasRunningInline() {
 			m.refreshViewport(m.vp.AtBottom())
 		}
 		if m.running {
@@ -368,6 +368,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		if m.running {
+			m.refreshInlineBlocks()
 			return m, tick()
 		}
 		return m, nil
@@ -645,6 +646,52 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	// run sends events onto the channel; waitForMsg picks them up.
 	// tick drives the elapsed-time counter; spinner.Tick starts the animation.
 	return m, tea.Batch(run, tick(), m.spinner.Tick)
+}
+
+// hasRunningInline returns true if any tracked inline agent block is still running.
+func (m *ShellModel) hasRunningInline() bool {
+	if m.tree == nil {
+		return false
+	}
+	for nodeID := range m.inlineByNode {
+		n := m.tree.Node(nodeID)
+		if n != nil && (n.Status == agent.StatusRunning || n.Status == agent.StatusPending) {
+			return true
+		}
+	}
+	return false
+}
+
+// refreshInlineBlocks updates the elapsed counter for every running inline block.
+// Called on each tickMsg so the display doesn't appear frozen during slow LLM calls.
+func (m *ShellModel) refreshInlineBlocks() {
+	if m.tree == nil || len(m.inlineByNode) == 0 {
+		return
+	}
+	for nodeID, block := range m.inlineByNode {
+		node := m.tree.Node(nodeID)
+		if node == nil || block.lineIdx+1 >= len(m.lines) {
+			continue
+		}
+		if node.Status != agent.StatusRunning && node.Status != agent.StatusPending {
+			continue
+		}
+		elapsed := "0s"
+		if !node.StartedAt.IsZero() {
+			elapsed = fmt.Sprintf("%.0fs", time.Since(node.StartedAt).Seconds())
+		}
+		var runLine string
+		if node.RemoteExec {
+			runLine = renderInlineRemoteRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
+		} else {
+			runLine = renderInlineRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
+		}
+		parts := strings.SplitN(runLine, "\n", 2)
+		m.lines[block.lineIdx] = parts[0]
+		if len(parts) > 1 {
+			m.lines[block.lineIdx+1] = parts[1]
+		}
+	}
 }
 
 // enterAgentsView switches to the AgentsModel overlay.
