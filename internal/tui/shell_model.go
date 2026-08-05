@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/muesli/reflow/ansi"
 	"github.com/muesli/reflow/wordwrap"
 	"github.com/muesli/reflow/wrap"
 
@@ -68,6 +69,18 @@ func renderApprovalRecord(r approvalRecord) string {
 
 // registryReloadMsg fires when any CommandProvider signals a change.
 type registryReloadMsg struct{}
+
+// transcriptLine is one logical transcript row stored with its decoration kept
+// separate from its content so continuation rows can carry a different prefix
+// than the first row. Prefix and content are stored apart (rather than one
+// pre-concatenated string) so refreshViewport can re-wrap with a hanging indent
+// from the stored structure on every refresh and resize.
+type transcriptLine struct {
+	first string // styled prefix for the first visual row (may be "")
+	cont  string // styled prefix for continuation rows; same printable width as first
+	text  string // the content (sanitized, possibly styled)
+	pre   bool   // pre-wrapped upstream (glamour); skip wordwrap, hard-wrap safety only
+}
 
 // pendingToolCall is an announced-but-unresolved tool call. A batched model
 // response announces every call before any result arrives, so these queue
@@ -133,9 +146,9 @@ func (m *ShellModel) recordApproval(req PermissionRequestMsg, decision string, a
 func (m *ShellModel) settlePendingCalls() {
 	for _, pc := range m.pendingCalls {
 		if len(m.lines) > 0 {
-			m.lines = append(m.lines, "")
+			m.lines = append(m.lines, transcriptLine{})
 		}
-		m.lines = append(m.lines, toolBulletStyle.Render("●")+" "+pc.text)
+		m.lines = append(m.lines, transcriptLine{text: toolBulletStyle.Render("●") + " " + pc.text})
 	}
 	m.pendingCalls = nil
 }
@@ -148,7 +161,7 @@ type ShellModel struct {
 	input   textinput.Model
 	spinner spinner.Model
 
-	lines        []string
+	lines        []transcriptLine
 	pendingCalls []pendingToolCall // FIFO of announced-but-unresolved tool calls
 	alias        string
 	verbose      bool
@@ -366,7 +379,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				text = strings.TrimRight(rendered, "\n")
 			}
 		}
-		m.appendLine(assistantStyle.Render(text))
+		m.appendPre(assistantStyle.Render(text))
 		return m, nil
 
 	case ToolCallMsg:
@@ -378,7 +391,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = json.Unmarshal([]byte(msg.Args), &input)
 			if input.Label != "" {
 				if len(m.lines) > 0 {
-					m.lines = append(m.lines, "")
+					m.lines = append(m.lines, transcriptLine{})
 				}
 				block := &inlineAgentState{label: input.Label, lineIdx: len(m.lines)}
 				if m.inlineByLabel == nil {
@@ -387,11 +400,11 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inlineByLabel[input.Label] = block
 				runLine := renderInlineRunning(input.Label, "0s", 0, 0)
 				parts := strings.SplitN(runLine, "\n", 2)
-				m.lines = append(m.lines, parts[0])
+				m.lines = append(m.lines, transcriptLine{text: parts[0]})
 				if len(parts) > 1 {
-					m.lines = append(m.lines, parts[1])
+					m.lines = append(m.lines, transcriptLine{text: parts[1]})
 				} else {
-					m.lines = append(m.lines, "")
+					m.lines = append(m.lines, transcriptLine{})
 				}
 				m.refreshViewport(true)
 				return m, nil
@@ -424,9 +437,9 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			pc := m.pendingCalls[0]
 			m.pendingCalls = m.pendingCalls[1:]
 			if len(m.lines) > 0 {
-				m.lines = append(m.lines, "")
+				m.lines = append(m.lines, transcriptLine{})
 			}
-			m.lines = append(m.lines, toolBulletStyle.Render("●")+" "+pc.text)
+			m.lines = append(m.lines, transcriptLine{text: toolBulletStyle.Render("●") + " " + pc.text})
 		}
 		out := msg.Output
 		if !m.verbose {
@@ -458,10 +471,12 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// inline blocks scroll away, but the run's shape shouldn't.
 		if m.tree != nil {
 			if summary := renderTreeSummary(m.tree, m.runStart); len(summary) > 0 {
-				m.lines = append(m.lines, subagentFooterStyle.Render(
+				m.lines = append(m.lines, transcriptLine{text: subagentFooterStyle.Render(
 					fmt.Sprintf("  ↳ %d subagent(s) this turn — Tab to inspect events", len(summary)),
-				))
-				m.lines = append(m.lines, summary...)
+				)})
+				for _, s := range summary {
+					m.lines = append(m.lines, transcriptLine{text: s})
+				}
 			}
 		}
 		m.refreshViewport(m.vp.AtBottom())
@@ -829,9 +844,9 @@ func (m *ShellModel) refreshInlineBlocks() {
 		}
 		runLine := renderInlineRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
 		parts := strings.SplitN(runLine, "\n", 2)
-		m.lines[block.lineIdx] = parts[0]
+		m.lines[block.lineIdx] = transcriptLine{text: parts[0]}
 		if len(parts) > 1 {
-			m.lines[block.lineIdx+1] = parts[1]
+			m.lines[block.lineIdx+1] = transcriptLine{text: parts[1]}
 		}
 	}
 }
@@ -914,9 +929,9 @@ func (m *ShellModel) updateInlineAgent(live *agent.AgentNode) {
 	}
 
 	parts := strings.SplitN(rendered, "\n", 2)
-	m.lines[block.lineIdx] = parts[0]
+	m.lines[block.lineIdx] = transcriptLine{text: parts[0]}
 	if len(parts) > 1 {
-		m.lines[block.lineIdx+1] = parts[1]
+		m.lines[block.lineIdx+1] = transcriptLine{text: parts[1]}
 	}
 	m.refreshViewport(m.vp.AtBottom())
 }
@@ -926,7 +941,19 @@ func (m *ShellModel) updateInlineAgent(live *agent.AgentNode) {
 func (m *ShellModel) appendLine(s string) {
 	atBottom := !m.ready || m.vp.AtBottom()
 	for _, l := range strings.Split(s, "\n") {
-		m.lines = append(m.lines, l)
+		m.lines = append(m.lines, transcriptLine{text: l})
+	}
+	m.refreshViewport(atBottom)
+}
+
+// appendPre adds pre-wrapped content (glamour assistant output) one row per
+// line with pre:true, so refreshViewport skips wordwrap and applies only the
+// hard-wrap safety net — glamour's margins and indented blocks are preserved
+// instead of being re-folded to column 0.
+func (m *ShellModel) appendPre(s string) {
+	atBottom := !m.ready || m.vp.AtBottom()
+	for _, l := range strings.Split(s, "\n") {
+		m.lines = append(m.lines, transcriptLine{text: l, pre: true})
 	}
 	m.refreshViewport(atBottom)
 }
@@ -950,26 +977,35 @@ func (m *ShellModel) appendResultLines(out string, isError bool, toolName string
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	useGutter := !isError && isFileReadTool(toolName) && len(lines) > 1
 	gutterW := len(fmt.Sprintf("%d", len(lines))) // digits needed for widest line number
+	// Continuation prefix for gutter rows: the gutter rule with a blank number,
+	// styled to match. Its printable width equals the first-row gutter prefix
+	// ("  └ " / "    " + "N │ "), so content columns align across wrapped rows.
+	gutterCont := gutterStyle.Render("    " + strings.Repeat(" ", gutterW) + " │ ")
 	for i, l := range lines {
-		var rendered string
-		if i == 0 {
-			if isError {
-				rendered = "  " + errorArrowStyle.Render("✗") + " " + errorTextStyle.Render(l)
-			} else if useGutter {
-				g := gutterStyle.Render(fmt.Sprintf("%*d │ ", gutterW, i+1))
-				rendered = resultPrefixStyle.Render("  └") + " " + g + l
+		var tl transcriptLine
+		tl.text = l
+		switch {
+		case isError:
+			tl.first = "  " + errorArrowStyle.Render("✗") + " "
+			tl.cont = "    "
+			tl.text = errorTextStyle.Render(l)
+		case useGutter:
+			g := gutterStyle.Render(fmt.Sprintf("%*d │ ", gutterW, i+1))
+			if i == 0 {
+				tl.first = resultPrefixStyle.Render("  └") + " " + g
 			} else {
-				rendered = resultPrefixStyle.Render("  └") + " " + l
+				tl.first = "    " + g
 			}
-		} else {
-			if useGutter {
-				g := gutterStyle.Render(fmt.Sprintf("%*d │ ", gutterW, i+1))
-				rendered = "    " + g + l
+			tl.cont = gutterCont
+		default:
+			if i == 0 {
+				tl.first = resultPrefixStyle.Render("  └") + " "
 			} else {
-				rendered = "    " + l
+				tl.first = "    "
 			}
+			tl.cont = "    "
 		}
-		m.lines = append(m.lines, rendered)
+		m.lines = append(m.lines, tl)
 	}
 	m.refreshViewport(atBottom)
 }
@@ -1068,6 +1104,45 @@ func formatTokens(n int) string {
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
+// hangWrap wraps a single transcriptLine to width with a hanging indent: the
+// first visual row carries l.first, every continuation row carries l.cont (of
+// equal printable width), so wrapped content stays inside the prefix column
+// instead of escaping to column 0. It guarantees no emitted row exceeds the
+// viewport width (constraint 1) — the hard-wrap pass is the safety net for long
+// unbreakable tokens (URLs, minified JSON).
+//
+// Width math is printable-width aware: styled prefixes carry ANSI escapes that
+// must not count toward the column budget (constraint 3).
+func hangWrap(l transcriptLine, width int) []string {
+	// contentW is the room left for text after the first-row prefix. Clamp to a
+	// floor (matching buildEventViewLines) so pathological widths degrade to
+	// narrow-but-correct instead of emitting empty rows.
+	contentW := width - ansi.PrintableRuneWidth(l.first)
+	if contentW < 8 {
+		contentW = 8
+	}
+
+	if l.pre {
+		// Glamour already wrapped at its render width; don't re-wordwrap (that
+		// folds code blocks and blockquote indents to column 0). Apply only the
+		// hard-wrap safety net so a shrink resize can't overflow the viewport.
+		wrapped := wrap.String(l.text, width)
+		return strings.Split(wrapped, "\n")
+	}
+
+	wrapped := wrap.String(wordwrap.String(l.text, contentW), contentW)
+	rows := strings.Split(wrapped, "\n")
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		if i == 0 {
+			out[i] = l.first + r
+		} else {
+			out[i] = l.cont + r
+		}
+	}
+	return out
+}
+
 // refreshViewport sets viewport content and, when followBottom is true, scrolls
 // to the bottom. Content is word-wrapped to the viewport width so long lines
 // (assistant prose, tool output) don't run off screen. When a tool call is in
@@ -1077,26 +1152,46 @@ func (m *ShellModel) refreshViewport(followBottom bool) {
 	if !m.ready {
 		return
 	}
-	content := strings.Join(m.lines, "\n")
+	// Settled transcript lines wrap per-line with a hanging indent from their
+	// stored structure — re-flowed on every refresh and resize so continuations
+	// stay in the gutter and no emitted row exceeds the viewport width.
+	var rows []string
+	if m.vp.Width > 0 {
+		for _, l := range m.lines {
+			rows = append(rows, hangWrap(l, m.vp.Width)...)
+		}
+	} else {
+		for _, l := range m.lines {
+			rows = append(rows, l.first+l.text)
+		}
+	}
+	content := strings.Join(rows, "\n")
+
+	// Transient rows the refresh composes itself (spinner + pending-call line,
+	// completer overlay) are not stored transcriptLines; keep them on the flat
+	// wordwrap+wrap path, appended after the wrapped settled block.
+	var transient string
 	if n := len(m.pendingCalls); n > 0 {
 		line := m.spinner.View() + " " + m.pendingCalls[0].text
 		if n > 1 {
 			line += ruleStyle.Render(fmt.Sprintf("  (+%d queued)", n-1))
 		}
-		content += "\n" + line
+		transient += "\n" + line
 	}
-	// Prepend completer overlay above the content.
 	if m.completer != nil && m.completer.active {
 		overlay := m.completer.View(m.vp.Width)
 		if overlay != "" {
-			content = content + "\n" + overlay
+			transient += "\n" + overlay
 		}
 	}
-	if m.vp.Width > 0 {
-		// wordwrap breaks at spaces; wrap hard-breaks anything still wider
-		// than the viewport (long URLs, minified JSON) — overflowing lines
-		// wrap in the terminal itself and desync the bottom-anchor math.
-		content = wrap.String(wordwrap.String(content, m.vp.Width), m.vp.Width)
+	if transient != "" {
+		if m.vp.Width > 0 {
+			// wordwrap breaks at spaces; wrap hard-breaks anything still wider
+			// than the viewport (long URLs, minified JSON) — overflowing lines
+			// wrap in the terminal itself and desync the bottom-anchor math.
+			transient = wrap.String(wordwrap.String(transient, m.vp.Width), m.vp.Width)
+		}
+		content += transient
 	}
 	// Pad the top so sparse content sticks to the bottom like a chat interface.
 	if m.vp.Height > 0 {

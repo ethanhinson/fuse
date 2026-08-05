@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/muesli/reflow/ansi"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -18,9 +19,20 @@ import (
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
+// flattenLines renders the transcript store back into the flat pre-concatenated
+// strings the transcript used to hold — first + text per line — so content
+// assertions can inspect the store independent of wrap decisions.
+func flattenLines(m ShellModel) []string {
+	out := make([]string, len(m.lines))
+	for i, l := range m.lines {
+		out[i] = l.first + l.text
+	}
+	return out
+}
+
 // plainLines strips ANSI escape codes and joins model lines for content checks.
 func plainLines(m ShellModel) string {
-	return ansiRE.ReplaceAllString(strings.Join(m.lines, "\n"), "")
+	return ansiRE.ReplaceAllString(strings.Join(flattenLines(m), "\n"), "")
 }
 
 func testRegistry() *model.Registry {
@@ -122,6 +134,380 @@ func TestNewShellModel_ShowsBanner(t *testing.T) {
 	}
 }
 
+// TestAppendLineStoresTranscriptLines verifies appendLine splits on newlines
+// into one zero-prefix transcriptLine per row (pre:false, no first/cont prefix)
+// and that the flattened render is behavior-preserving at a wide viewport.
+func TestAppendLineStoresTranscriptLines(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m.lines = nil // drop banner lines so we inspect only what we append
+	m.appendLine("a\nb")
+	if len(m.lines) != 2 {
+		t.Fatalf("appendLine(\"a\\nb\") -> %d lines, want 2", len(m.lines))
+	}
+	for i, want := range []string{"a", "b"} {
+		l := m.lines[i]
+		if l.first != "" || l.cont != "" {
+			t.Errorf("line %d: want zero prefix, got first=%q cont=%q", i, l.first, l.cont)
+		}
+		if l.pre {
+			t.Errorf("line %d: want pre=false", i)
+		}
+		if l.text != want {
+			t.Errorf("line %d: text = %q, want %q", i, l.text, want)
+		}
+	}
+	// Behavior-preserving at wide viewport: flattened content matches the raw text.
+	if got := strings.Join(flattenLines(m), "\n"); got != "a\nb" {
+		t.Errorf("flattened = %q, want %q", got, "a\nb")
+	}
+}
+
+// printWidth is the printable-rune width of s (ANSI escapes excluded) — the
+// same measure hangWrap budgets against, so wide/multi-byte glyphs (└, ✗)
+// count as their display columns, not their byte length.
+func printWidth(s string) int {
+	return ansi.PrintableRuneWidth(s)
+}
+
+// TestHangWrapGutterContinuation (spec Test 1): a gutter line wider than the
+// viewport wraps; continuation rows carry the cont prefix, the content column
+// stays aligned, and nothing lands at column 0.
+func TestHangWrapGutterContinuation(t *testing.T) {
+	first := "  └ 1 │ "
+	cont := "      │ "
+	l := transcriptLine{
+		first: first,
+		cont:  cont,
+		text:  "one two three four five six seven eight nine ten eleven twelve",
+	}
+	width := 24
+	rows := hangWrap(l, width)
+	if len(rows) < 2 {
+		t.Fatalf("expected wrapping into multiple rows, got %d: %#v", len(rows), rows)
+	}
+	if !strings.HasPrefix(rows[0], first) {
+		t.Errorf("first row missing first prefix: %q", rows[0])
+	}
+	for i := 1; i < len(rows); i++ {
+		if !strings.HasPrefix(rows[i], cont) {
+			t.Errorf("continuation row %d missing cont prefix: %q", i, rows[i])
+		}
+		// Content column aligned: cont has same printable width as first.
+		if rows[i][:len(cont)] != cont {
+			t.Errorf("continuation row %d prefix not aligned: %q", i, rows[i])
+		}
+	}
+	// Nothing at column 0: every row starts with a space (the prefixes do).
+	for i, r := range rows {
+		if r == "" || r[0] != ' ' {
+			t.Errorf("row %d starts at column 0: %q", i, r)
+		}
+	}
+}
+
+// TestHangWrapLongTokenInsideGutter (spec Test 2): a single unbroken token
+// (URL / link target) longer than the content column hard-wraps inside the
+// gutter — continuations carry the cont prefix and no row overflows.
+func TestHangWrapLongTokenInsideGutter(t *testing.T) {
+	first := "  └ 1 │ "
+	cont := "      │ "
+	url := "https://example.com/" + strings.Repeat("segment", 12)
+	width := 24
+	rows := hangWrap(transcriptLine{first: first, cont: cont, text: url}, width)
+	if len(rows) < 2 {
+		t.Fatalf("long token did not hard-wrap: %d rows", len(rows))
+	}
+	for i, r := range rows {
+		if w := printWidth(r); w > width {
+			t.Errorf("row %d overflows width %d: %q (w=%d)", i, width, r, w)
+		}
+		if i == 0 {
+			if !strings.HasPrefix(r, first) {
+				t.Errorf("row0 missing gutter first prefix: %q", r)
+			}
+		} else if !strings.HasPrefix(r, cont) {
+			t.Errorf("row %d escaped the gutter: %q", i, r)
+		}
+	}
+}
+
+// TestHangWrapPrintableWidth (spec Test 5): ANSI escapes in first/cont don't
+// count toward width — a styled prefix wraps the same as its plain equivalent.
+func TestHangWrapPrintableWidth(t *testing.T) {
+	text := "alpha beta gamma delta epsilon zeta eta theta iota"
+	width := 20
+	plain := hangWrap(transcriptLine{first: "  └ ", cont: "    ", text: text}, width)
+	styled := hangWrap(transcriptLine{
+		first: "\x1b[2m  └ \x1b[0m",
+		cont:  "\x1b[2m    \x1b[0m",
+		text:  text,
+	}, width)
+	if len(plain) != len(styled) {
+		t.Fatalf("ANSI prefix changed row count: plain=%d styled=%d", len(plain), len(styled))
+	}
+	// Every emitted row's printable width must fit inside the viewport.
+	for i, r := range styled {
+		if w := printWidth(r); w > width {
+			t.Errorf("styled row %d printable width %d > viewport %d: %q", i, w, width, r)
+		}
+	}
+}
+
+// TestHangWrapPlainAndErrorIndent (spec Test 6): plain (└) and error (✗)
+// results indent continuations 4 spaces.
+func TestHangWrapPlainAndErrorIndent(t *testing.T) {
+	text := "one two three four five six seven eight nine ten eleven twelve thirteen"
+	width := 20
+	for _, tc := range []struct{ name, first, cont string }{
+		{"plain", "  └ ", "    "},
+		{"error", "  ✗ ", "    "},
+	} {
+		rows := hangWrap(transcriptLine{first: tc.first, cont: tc.cont, text: text}, width)
+		if len(rows) < 2 {
+			t.Fatalf("%s: expected multiple rows, got %d", tc.name, len(rows))
+		}
+		for i := 1; i < len(rows); i++ {
+			if !strings.HasPrefix(rows[i], "    ") {
+				t.Errorf("%s: continuation row %d not indented 4 spaces: %q", tc.name, i, rows[i])
+			}
+			if printWidth(rows[i]) > width {
+				t.Errorf("%s: row %d exceeds width: %q", tc.name, i, rows[i])
+			}
+		}
+	}
+}
+
+// vpRows returns the emitted viewport rows (top-pad blank lines dropped).
+func vpRows(m ShellModel) []string {
+	var rows []string
+	for _, r := range strings.Split(m.vp.View(), "\n") {
+		if strings.TrimSpace(ansiRE.ReplaceAllString(r, "")) != "" {
+			rows = append(rows, r)
+		}
+	}
+	return rows
+}
+
+// TestRefreshViewportNoRowExceedsWidth (spec Test 3): no emitted visual row
+// exceeds the viewport width, including wrapped gutter continuations.
+func TestRefreshViewportNoRowExceedsWidth(t *testing.T) {
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 20})
+	m = next.(ShellModel)
+	// A file-read result whose lines are wider than the viewport.
+	next, _ = m.Update(ToolCallMsg{Name: "read_file", Args: "x"})
+	m = next.(ShellModel)
+	out := "one two three four five six seven eight nine ten\nsecond line also quite long here yes"
+	next, _ = m.Update(ToolResultMsg{Name: "read_file", Output: out})
+	m = next.(ShellModel)
+	for _, r := range vpRows(m) {
+		if w := printWidth(r); w > m.vp.Width {
+			t.Errorf("row printable width %d > viewport %d: %q", w, m.vp.Width, r)
+		}
+	}
+}
+
+// TestRefreshViewportUsesHangWrap (spec Test 1): refreshViewport wraps stored
+// transcriptLines through hangWrap, so a prefixed line's continuation rows
+// carry the cont prefix and stay inside the gutter — never escaping to column 0.
+func TestRefreshViewportUsesHangWrap(t *testing.T) {
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 24, Height: 20})
+	m = next.(ShellModel)
+	m.lines = append(m.lines, transcriptLine{
+		first: "  └ 1 │ ",
+		cont:  "      │ ",
+		text:  "one two three four five six seven eight nine ten eleven",
+	})
+	m.refreshViewport(true)
+	rows := vpRows(m)
+	var sawCont bool
+	for _, r := range rows {
+		if strings.HasPrefix(ansiRE.ReplaceAllString(r, ""), "      │ ") {
+			sawCont = true
+		}
+		if w := printWidth(r); w > m.vp.Width {
+			t.Errorf("row width %d > %d: %q", w, m.vp.Width, r)
+		}
+	}
+	if !sawCont {
+		t.Errorf("no gutter continuation row — refreshViewport did not hangWrap:\n%s",
+			strings.Join(rows, "\n"))
+	}
+}
+
+// TestRefreshViewportResizeReflows (spec Test 4): wrapping happens at refresh
+// time from the stored structure — resizing narrower re-wraps with no
+// double-wrap artifacts, and every row still fits the new width.
+func TestRefreshViewportResizeReflows(t *testing.T) {
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	m = next.(ShellModel)
+	next, _ = m.Update(ToolCallMsg{Name: "read_file", Args: "x"})
+	m = next.(ShellModel)
+	out := "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu\nsecond line here also fairly long content to force wrapping"
+	next, _ = m.Update(ToolResultMsg{Name: "read_file", Output: out})
+	m = next.(ShellModel)
+	// Resize narrower — content must re-flow from the stored transcriptLines.
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 28, Height: 20})
+	m = next.(ShellModel)
+	rowsNarrow := vpRows(m)
+	for _, r := range rowsNarrow {
+		if w := printWidth(r); w > m.vp.Width {
+			t.Errorf("after shrink, row width %d > %d: %q", w, m.vp.Width, r)
+		}
+	}
+	// Resize wider again — no accumulated double-wrap: wide render fits and the
+	// content is intact (both original words survive the round-trip).
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	m = next.(ShellModel)
+	wide := ansiRE.ReplaceAllString(strings.Join(vpRows(m), "\n"), "")
+	if !strings.Contains(wide, "alpha") || !strings.Contains(wide, "lambda") {
+		t.Errorf("content lost after resize round-trip:\n%s", wide)
+	}
+	for _, r := range vpRows(m) {
+		if w := printWidth(r); w > m.vp.Width {
+			t.Errorf("after regrow, row width %d > %d: %q", w, m.vp.Width, r)
+		}
+	}
+}
+
+// findResultLines returns the transcriptLines appended by appendResultLines —
+// everything after the last tool-call bullet (text starting with the ● glyph).
+func resultLinesOnly(m ShellModel) []transcriptLine {
+	last := -1
+	for i, l := range m.lines {
+		if strings.HasPrefix(ansiRE.ReplaceAllString(l.text, ""), "● ") {
+			last = i
+		}
+	}
+	return m.lines[last+1:]
+}
+
+// TestAppendResultLinesGutterPrefixes (spec Tests 1, 6): a multi-line file-read
+// result stores gutter transcriptLines whose first/cont match the producer
+// table, with equal printable widths so content columns align; the prefix lives
+// in first/cont, the content only in text.
+func TestAppendResultLinesGutterPrefixes(t *testing.T) {
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m.lines = nil
+	m.appendResultLines("first\nsecond\nthird", false, "read_file")
+	rl := resultLinesOnly(m)
+	if len(rl) != 3 {
+		t.Fatalf("got %d result lines, want 3", len(rl))
+	}
+	// Row 1: first = "  └ N │ ", content = "first".
+	if got := ansiRE.ReplaceAllString(rl[0].first, ""); got != "  └ 1 │ " {
+		t.Errorf("row1 first = %q, want %q", got, "  └ 1 │ ")
+	}
+	if rl[0].text != "first" {
+		t.Errorf("row1 text = %q, want prefix stripped to %q", rl[0].text, "first")
+	}
+	// Row i>1: first = "    N │ ".
+	if got := ansiRE.ReplaceAllString(rl[1].first, ""); got != "    2 │ " {
+		t.Errorf("row2 first = %q, want %q", got, "    2 │ ")
+	}
+	// Continuation prefix is the blank-numbered gutter rule, equal width to first.
+	for i, l := range rl {
+		if printWidth(l.first) != printWidth(l.cont) {
+			t.Errorf("row %d: first width %d != cont width %d (columns misalign)",
+				i, printWidth(l.first), printWidth(l.cont))
+		}
+		if got := ansiRE.ReplaceAllString(l.cont, ""); got != "      │ " {
+			t.Errorf("row %d cont = %q, want %q", i, got, "      │ ")
+		}
+		if l.pre {
+			t.Errorf("row %d: result line must not be pre", i)
+		}
+	}
+}
+
+// TestAppendResultLinesPlainAndError (spec Test 6): plain results use  └ / 4sp,
+// error results use  ✗ / 4sp, with the content in text and no gutter.
+func TestAppendResultLinesPlainAndError(t *testing.T) {
+	// Plain (single line so useGutter is false).
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m.lines = nil
+	m.appendResultLines("only line", false, "bash")
+	rl := resultLinesOnly(m)
+	if len(rl) != 1 {
+		t.Fatalf("plain: got %d lines, want 1", len(rl))
+	}
+	if got := ansiRE.ReplaceAllString(rl[0].first, ""); got != "  └ " {
+		t.Errorf("plain first = %q, want %q", got, "  └ ")
+	}
+	if got := ansiRE.ReplaceAllString(rl[0].cont, ""); got != "    " {
+		t.Errorf("plain cont = %q, want 4 spaces", got)
+	}
+	if rl[0].text != "only line" {
+		t.Errorf("plain text = %q", rl[0].text)
+	}
+
+	// Multi-line plain: row i>1 first is 4 spaces, cont 4 spaces.
+	m2 := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m2.lines = nil
+	m2.appendResultLines("aaa\nbbb", false, "bash")
+	rl2 := resultLinesOnly(m2)
+	if len(rl2) != 2 {
+		t.Fatalf("multiline plain: got %d lines, want 2", len(rl2))
+	}
+	if got := ansiRE.ReplaceAllString(rl2[1].first, ""); got != "    " {
+		t.Errorf("plain row2 first = %q, want 4 spaces", got)
+	}
+
+	// Error result.
+	me := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	me.lines = nil
+	me.appendResultLines("boom", true, "bash")
+	rle := resultLinesOnly(me)
+	if len(rle) != 1 {
+		t.Fatalf("error: got %d lines, want 1", len(rle))
+	}
+	if got := ansiRE.ReplaceAllString(rle[0].first, ""); got != "  ✗ " {
+		t.Errorf("error first = %q, want %q", got, "  ✗ ")
+	}
+	if got := ansiRE.ReplaceAllString(rle[0].cont, ""); got != "    " {
+		t.Errorf("error cont = %q, want 4 spaces", got)
+	}
+}
+
+// TestAssistantMsgIsPreWrapped (spec Test 3): assistant glamour output is
+// stored pre:true (skips wordwrap), and after the viewport shrinks the
+// hard-wrap safety net keeps every emitted row inside the new width.
+func TestAssistantMsgIsPreWrapped(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	before := len(m.lines)
+	long := "This is a fairly long assistant response with enough words that glamour " +
+		"will wrap it at the render width and it should not be re-folded to column zero."
+	next, _ := m.Update(AssistantMsg{Text: long})
+	m = next.(ShellModel)
+	added := m.lines[before:]
+	if len(added) == 0 {
+		t.Fatal("assistant message appended no lines")
+	}
+	var sawPre bool
+	for _, l := range added {
+		if l.pre {
+			sawPre = true
+		}
+		if l.first != "" || l.cont != "" {
+			t.Errorf("assistant line should have no prefix, got first=%q cont=%q", l.first, l.cont)
+		}
+	}
+	if !sawPre {
+		t.Error("assistant glamour line not marked pre:true")
+	}
+	// Shrink the viewport — the pre hard-wrap safety net must fire so no
+	// emitted row overflows the narrower width.
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 30, Height: 20})
+	m = next.(ShellModel)
+	for _, r := range vpRows(m) {
+		if w := printWidth(r); w > m.vp.Width {
+			t.Errorf("after shrink, assistant row width %d > %d: %q", w, m.vp.Width, r)
+		}
+	}
+}
+
 func TestEnterWhileRunningIsNoop(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true
@@ -165,7 +551,7 @@ func TestSlashVerboseToggles(t *testing.T) {
 	if !m.verbose {
 		t.Error("verbose should be true after toggle")
 	}
-	if !strings.Contains(strings.Join(m.lines, "\n"), "verbose = true") {
+	if !strings.Contains(strings.Join(flattenLines(m), "\n"), "verbose = true") {
 		t.Error("expected verbose confirmation line")
 	}
 }
@@ -186,7 +572,7 @@ func TestSlashModelUnknown(t *testing.T) {
 	if m.alias != "alpha" {
 		t.Errorf("alias should stay alpha, got %q", m.alias)
 	}
-	if !strings.Contains(strings.Join(m.lines, "\n"), `unknown model "nope"`) {
+	if !strings.Contains(strings.Join(flattenLines(m), "\n"), `unknown model "nope"`) {
 		t.Error("expected unknown-model line")
 	}
 }
@@ -228,7 +614,7 @@ func TestSlashUnknown(t *testing.T) {
 	if cmd != nil || m.running {
 		t.Error("unknown command should not start a run")
 	}
-	if !strings.Contains(strings.Join(m.lines, "\n"), "unknown command /bogus") {
+	if !strings.Contains(strings.Join(flattenLines(m), "\n"), "unknown command /bogus") {
 		t.Error("expected unknown command line")
 	}
 }
@@ -310,7 +696,7 @@ func TestToolResultErrorPrefix(t *testing.T) {
 	m = next.(ShellModel)
 	next, _ = m.Update(ToolResultMsg{Name: "bash", IsError: true, Output: "boom"})
 	m = next.(ShellModel)
-	if !strings.Contains(strings.Join(m.lines, "\n"), "✗ boom") {
+	if !strings.Contains(strings.Join(flattenLines(m), "\n"), "✗ boom") {
 		t.Error("expected error-prefixed tool result")
 	}
 }
@@ -426,7 +812,7 @@ func TestCompleterEnterDispatchesSkill(t *testing.T) {
 	if len(m.history) != 1 || m.history[0].Content != "show the board" {
 		t.Errorf("expected skill body as prompt, got %+v", m.history)
 	}
-	for _, line := range m.lines {
+	for _, line := range flattenLines(m) {
 		if strings.Contains(ansiRE.ReplaceAllString(line, ""), "unknown command") {
 			t.Errorf("got 'unknown command' instead of dispatching skill: %q", line)
 		}
