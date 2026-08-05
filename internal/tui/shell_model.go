@@ -166,14 +166,19 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case agentsExitMsg:
 			m.agentsActive = false
 			m.agentsModel = nil
-			return m, nil
+			// Re-arm the channel consumer so the shell is responsive again.
+			return m, waitForMsg(m.ch)
 		case treeUpdateMsg:
 			newModel, _ := m.agentsModel.Update(msg)
 			m.agentsModel = newModel.(*AgentsModel)
+			// treeUpdateMsg arrives from waitForTreeUpdate, not waitForMsg, so
+			// we re-arm both: tree updates keep the view live, and waitForMsg
+			// keeps the agent channel drained so it never backs up or blocks.
+			cmds := []tea.Cmd{waitForMsg(m.ch)}
 			if m.tree != nil {
-				return m, waitForTreeUpdate(m.tree)
+				cmds = append(cmds, waitForTreeUpdate(m.tree))
 			}
-			return m, nil
+			return m, tea.Batch(cmds...)
 		case tea.WindowSizeMsg:
 			m.agentsModel.width = msg.Width
 			m.agentsModel.height = msg.Height
@@ -186,13 +191,19 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.Height = h
 			m.input.Width = msg.Width
 			m.ready = true
+			// WindowSizeMsg comes from bubbletea, not from waitForMsg — no re-arm needed.
 			return m, nil
 		case tea.KeyMsg:
 			newModel, cmd := m.agentsModel.Update(msg)
 			m.agentsModel = newModel.(*AgentsModel)
+			// KeyMsg comes from bubbletea, not from waitForMsg — no re-arm needed.
 			return m, cmd
 		default:
-			return m, nil
+			// Any message from the agent channel (AssistantMsg, ToolCallMsg, etc.)
+			// arrives here while the overlay is open. Discard it visually but MUST
+			// re-arm waitForMsg — failing to do so drops the consumer goroutine and
+			// freezes the shell permanently.
+			return m, waitForMsg(m.ch)
 		}
 	}
 
@@ -951,6 +962,9 @@ func (m ShellModel) View() string {
 		status = m.spinner.View() + " " +
 			statusRunStyle.Render("Thinking…") + " " +
 			ruleStyle.Render("("+meta+")")
+		if m.tree != nil {
+			status += "  " + ruleStyle.Render("Tab → agents")
+		}
 	default:
 		status = statusModelStyle.Render(m.alias)
 		if m.tree != nil {
