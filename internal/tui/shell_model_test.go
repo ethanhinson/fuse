@@ -114,6 +114,12 @@ func TestNewShellModel_ShowsBanner(t *testing.T) {
 			t.Errorf("scrollback missing %q\nscrollback:\n%s", want, got)
 		}
 	}
+	// The banner replaces the old two-line welcome — its text must be gone.
+	for _, gone := range []string{"Fuse  alpha", "Type a task"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("scrollback still contains old welcome text %q\nscrollback:\n%s", gone, got)
+		}
+	}
 }
 
 func TestEnterWhileRunningIsNoop(t *testing.T) {

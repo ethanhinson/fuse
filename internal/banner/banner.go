@@ -19,11 +19,11 @@ const tmpl = `    ______    __  __   _____   ______
  / __/     / /_/ /   ___/ / / /___
 /_/        \____/   /____/ /_____/
 
-  multi-model agent harness  •  v%s
+  multi-model agent harness  --  v%s
 
-  fuse run <agent>   start an agent session
-  fuse mcps          list connected MCP servers
-  fuse help          show all commands
+  fuse "<task>"   run an agent on a one-shot task
+  fuse shell      start an interactive agent shell
+  fuse help       show all commands
 `
 
 // String returns the startup banner with version interpolated. The result

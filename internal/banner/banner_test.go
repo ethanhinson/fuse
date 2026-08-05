@@ -11,8 +11,8 @@ func TestString_ContainsVersion(t *testing.T) {
 	for _, want := range []string{
 		"9.9.9",
 		`\____/`,
-		"fuse run",
-		"fuse mcps",
+		`fuse "<task>"`,
+		"fuse shell",
 		"fuse help",
 		"multi-model agent harness",
 	} {
@@ -33,12 +33,18 @@ func TestPrint_WritesSameAsString(t *testing.T) {
 	}
 }
 
-func TestString_NoTabsNoEsc(t *testing.T) {
+func TestString_PlainASCII(t *testing.T) {
 	got := String("0.0.0")
 	if strings.ContainsRune(got, '\t') {
 		t.Error("String output contains a tab")
 	}
 	if strings.ContainsRune(got, '\x1b') {
 		t.Error("String output contains an ESC byte")
+	}
+	// The package contract is plain ASCII only — no runes above 0x7f.
+	for i, r := range got {
+		if r > 0x7f {
+			t.Errorf("String output contains non-ASCII rune %q (U+%04X) at byte %d", r, r, i)
+		}
 	}
 }
