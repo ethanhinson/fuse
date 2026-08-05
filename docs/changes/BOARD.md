@@ -4,52 +4,49 @@
 
 ## 🟡 Proposed (15)
 
-### Group A — MCP evolution (changes 18–22)
-
-| # | Title | Priority | Type | Dependencies |
-|---|-------|----------|------|-------------|
-| [0018](active/0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | `high` | `feat` | 7 |
-| [0019](active/0019-mcp-capability-negotiation.md) | MCP capability negotiation — structured init handshake | `high` | `feat` | 3, 7 |
-| [0020](active/0020-mcp-progress-streaming.md) | MCP `$/progress` notifications and streaming tool results | `medium` | `feat` | 19 |
-| [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | 19 |
-| [0022](active/0022-mcp-websocket-transport.md) | WebSocket transport for MCP | `low` | `feat` | 7 |
-| [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | 3 |
-
-### Group B — Multi-agent orchestration (changes 23–26)
-
-| # | Title | Priority | Type | Dependencies |
-|---|-------|----------|------|-------------|
-| [0023](active/0023-agent-blackboard.md) | Shared result blackboard for inter-agent communication | `high` | `feat` | 12 |
-| [0024](active/0024-structured-delegation.md) | Structured delegation — expected result schemas for spawn_agent | `medium` | `feat` | 12 |
-| [0025](active/0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | `medium` | `feat` | 12, 23 |
-| [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | 12, 23, 24 |
-
-### Group C — Context management (changes 27–30)
-
-| # | Title | Priority | Type | Dependencies |
-|---|-------|----------|------|-------------|
-| [0027](active/0027-context-summarization.md) | Anchored context summarization at compression threshold | `high` | `feat` | 12 |
-| [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | 27 |
-| [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | 12 |
-| [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | 27 |
-
-### Existing
-
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0017](active/0017-auto-mode.md) | Auto mode — layered safe/unsafe classification for autonomous tool approval | `medium` | `feat` | build-ready |
+| [0018](active/0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | `high` | `feat` | needs-brainstorm |
+| [0019](active/0019-mcp-capability-negotiation.md) | MCP capability negotiation — structured init handshake | `high` | `feat` | needs-brainstorm |
+| [0020](active/0020-mcp-progress-streaming.md) | MCP `$/progress` notifications and streaming tool results | `medium` | `feat` | ⏳ waiting on #19 — not yet built |
+| [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | ⏳ waiting on #19 — not yet built |
+| [0022](active/0022-mcp-websocket-transport.md) | WebSocket transport for MCP | `low` | `feat` | needs-brainstorm |
+| [0023](active/0023-agent-blackboard.md) | Shared result blackboard for inter-agent communication | `high` | `feat` | needs-brainstorm |
+| [0024](active/0024-structured-delegation.md) | Structured delegation — expected result schemas for spawn_agent | `medium` | `feat` | needs-brainstorm |
+| [0025](active/0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | `medium` | `feat` | ⏳ waiting on #23 — not yet built |
+| [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | ⏳ waiting on #23 — not yet built |
+| [0027](active/0027-context-summarization.md) | Anchored context summarization at compression threshold | `high` | `feat` | needs-brainstorm |
+| [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | ⏳ waiting on #27 — not yet built |
+| [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | needs-brainstorm |
+| [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
+| [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | build-ready |
 
 ```mermaid
 graph TD
   0017
-  0018 --> 0019
+  0007 --> 0018
+  0003 --> 0019
+  0007 --> 0019
   0019 --> 0020
   0019 --> 0021
+  0007 --> 0022
+  0012 --> 0023
+  0012 --> 0024
+  0012 --> 0025
   0023 --> 0025
+  0012 --> 0026
   0023 --> 0026
   0024 --> 0026
+  0012 --> 0027
   0027 --> 0028
+  0012 --> 0029
   0027 --> 0030
+  0003 --> 0031
+  0003:::done
+  0007:::done
+  0012:::done
+  classDef done fill:#d3f9d8;
 ```
 
 <details><summary>✅🗑️ Archive — done + killed (16)</summary>
