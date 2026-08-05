@@ -30,24 +30,29 @@ A plain-text ASCII banner printed at two call sites: interactive shell startup a
 
 ### Package
 
-`internal/banner/banner.go` — one exported function:
+`internal/banner/banner.go` — the canonical banner in one place, exposed two ways:
 
 ```go
+// String returns the startup banner with version interpolated.
+func String(version string) string
+
 // Print writes the startup banner to w.
 func Print(w io.Writer, version string)
 ```
 
-The banner string is a package-level constant (the wordmark lines) with `version` interpolated via `fmt.Fprintf`. No dependencies beyond `fmt` and `io`.
+The banner is a package-level constant (the wordmark + quickstart lines) with `version` interpolated. `Print` wraps `String`. No dependencies beyond `fmt` and `io`. (`String` exists because the interactive call site injects the banner into a TUI scrollback buffer, not a raw writer — see call site 1.)
 
 ### Call sites
 
-1. **Shell init** — wherever the interactive REPL loop currently starts (e.g. `cmd/fuse/main.go` or the shell entrypoint), call `banner.Print(os.Stdout, version)` once, before the prompt appears. Guard with `isatty(os.Stdout.Fd())` so piped/scripted invocations stay clean.
+> **Reconciled 2026-08-05** against `origin/main` `a38c893`. The two call-site details below supersede the pre-build draft; the banner content, package, and version source are unchanged.
 
-2. **`fuse help`** — at the top of the help output, before the command list. Same call, same function.
+1. **Shell init — into the TUI scrollback, not a raw stdout print.** The interactive shell is an alt-screen bubbletea TUI (`cmd/fuse/shell.go`, `tea.WithAltScreen()`), so a stdout print before `p.Run()` is erased by the alt-screen switch. `NewShellModel` (`internal/tui/shell_model.go`, ~lines 218-219) already writes a two-line welcome into scrollback via `appendLine`; replace/augment that with `banner.String(version.Version)` so the banner appears at the top of the session scrollback. No `isatty` guard is needed here — the TUI only runs interactively by construction.
+
+2. **`fuse help` — a new subcommand.** No `help` subcommand exists today; `cmd/fuse/main.go` dispatches `models`/`shell`/`mcps`/`mcp-server` + the default task run, with only a one-line stderr usage string (`main.go:66`). Add a `help` case to the dispatch that prints `banner.Print(stdout, version.Version)` followed by the command list. Also prepend the banner to the existing no-args usage output.
 
 ### Version source
 
-Use the same `version` string already threaded through the binary (via `-ldflags` or `debug.ReadBuildInfo`). No new mechanism needed.
+`internal/version.Version` (`internal/version/version.go`) — the single version constant already used across the binary. No new mechanism.
 
 ## What is NOT included
 

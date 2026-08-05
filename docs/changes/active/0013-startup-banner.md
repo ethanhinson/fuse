@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable: false
 branch: feat/startup-banner
-claimed_at: 2026-08-05T07:38:48Z
+claimed_at: 2026-08-05T07:40:00Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -52,3 +52,15 @@ Fuse has no identity at the terminal. Every time the shell starts you get a blan
 ## Open questions
 
 None — design settled in brainstorm session.
+
+## Reconcile log
+
+### 2026-08-05 — implementer reconcile (pre-plan)
+
+Reconciled the spec against current `origin/main` (`a38c893`). Design intent (a plain-ASCII orientation banner at two call sites) is sound and unchanged; two call-site details are adjusted to fit reality:
+
+- **Version source confirmed** — `internal/version.Version` (`internal/version/version.go`) already exists and is the single version string; the banner uses it. No new mechanism, as the spec assumed.
+- **Call site "shell init" — TUI scrollback, not a raw stdout print.** The spec assumed a plain REPL where `banner.Print(os.Stdout, ...)` before the prompt would be visible. The interactive shell is actually an **alt-screen bubbletea TUI** (`cmd/fuse/shell.go`, `tea.WithAltScreen()`); a stdout print before `p.Run()` is wiped by the alt-screen switch. `NewShellModel` (`internal/tui/shell_model.go:218-219`) already emits a two-line welcome (`"Fuse  <alias>"` + a quickstart hint) into scrollback via `appendLine` — that is the real orientation surface. The banner replaces/augments those lines, rendered into scrollback so it survives the alt-screen. The `banner` package therefore also exposes the banner as a string (not only a `Print(w, version)`), so the TUI can inject it via `appendLine`; the exact API is the plan's call.
+- **Call site "`fuse help`" — the subcommand does not exist yet; creating it is in-scope.** `cmd/fuse/main.go` dispatches `models`/`shell`/`mcps`/`mcp-server` + the default task run; the only help-like output is a one-line stderr usage string (`main.go:66`). The spec names `fuse help` as a call site and lists it in the quickstart, so a `help` subcommand is added that prints the banner followed by the command list. The banner also prepends the existing no-args usage output.
+
+No obsolescence, no fundamental invalidation — scope-adjusted only. No material adjacent follow-up work surfaced (auto-capture is disabled this repo regardless).
