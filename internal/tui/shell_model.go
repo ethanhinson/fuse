@@ -69,6 +69,18 @@ func renderApprovalRecord(r approvalRecord) string {
 // registryReloadMsg fires when any CommandProvider signals a change.
 type registryReloadMsg struct{}
 
+// transcriptLine is one logical transcript row stored with its decoration kept
+// separate from its content so continuation rows can carry a different prefix
+// than the first row. Prefix and content are stored apart (rather than one
+// pre-concatenated string) so refreshViewport can re-wrap with a hanging indent
+// from the stored structure on every refresh and resize.
+type transcriptLine struct {
+	first string // styled prefix for the first visual row (may be "")
+	cont  string // styled prefix for continuation rows; same printable width as first
+	text  string // the content (sanitized, possibly styled)
+	pre   bool   // pre-wrapped upstream (glamour); skip wordwrap, hard-wrap safety only
+}
+
 // pendingToolCall is an announced-but-unresolved tool call. A batched model
 // response announces every call before any result arrives, so these queue
 // FIFO and each result renders paired with its own call text — otherwise a
@@ -133,9 +145,9 @@ func (m *ShellModel) recordApproval(req PermissionRequestMsg, decision string, a
 func (m *ShellModel) settlePendingCalls() {
 	for _, pc := range m.pendingCalls {
 		if len(m.lines) > 0 {
-			m.lines = append(m.lines, "")
+			m.lines = append(m.lines, transcriptLine{})
 		}
-		m.lines = append(m.lines, toolBulletStyle.Render("●")+" "+pc.text)
+		m.lines = append(m.lines, transcriptLine{text: toolBulletStyle.Render("●") + " " + pc.text})
 	}
 	m.pendingCalls = nil
 }
@@ -148,7 +160,7 @@ type ShellModel struct {
 	input   textinput.Model
 	spinner spinner.Model
 
-	lines        []string
+	lines        []transcriptLine
 	pendingCalls []pendingToolCall // FIFO of announced-but-unresolved tool calls
 	alias        string
 	verbose      bool
@@ -378,7 +390,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = json.Unmarshal([]byte(msg.Args), &input)
 			if input.Label != "" {
 				if len(m.lines) > 0 {
-					m.lines = append(m.lines, "")
+					m.lines = append(m.lines, transcriptLine{})
 				}
 				block := &inlineAgentState{label: input.Label, lineIdx: len(m.lines)}
 				if m.inlineByLabel == nil {
@@ -387,11 +399,11 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.inlineByLabel[input.Label] = block
 				runLine := renderInlineRunning(input.Label, "0s", 0, 0)
 				parts := strings.SplitN(runLine, "\n", 2)
-				m.lines = append(m.lines, parts[0])
+				m.lines = append(m.lines, transcriptLine{text: parts[0]})
 				if len(parts) > 1 {
-					m.lines = append(m.lines, parts[1])
+					m.lines = append(m.lines, transcriptLine{text: parts[1]})
 				} else {
-					m.lines = append(m.lines, "")
+					m.lines = append(m.lines, transcriptLine{})
 				}
 				m.refreshViewport(true)
 				return m, nil
@@ -424,9 +436,9 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			pc := m.pendingCalls[0]
 			m.pendingCalls = m.pendingCalls[1:]
 			if len(m.lines) > 0 {
-				m.lines = append(m.lines, "")
+				m.lines = append(m.lines, transcriptLine{})
 			}
-			m.lines = append(m.lines, toolBulletStyle.Render("●")+" "+pc.text)
+			m.lines = append(m.lines, transcriptLine{text: toolBulletStyle.Render("●") + " " + pc.text})
 		}
 		out := msg.Output
 		if !m.verbose {
@@ -458,10 +470,12 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// inline blocks scroll away, but the run's shape shouldn't.
 		if m.tree != nil {
 			if summary := renderTreeSummary(m.tree, m.runStart); len(summary) > 0 {
-				m.lines = append(m.lines, subagentFooterStyle.Render(
+				m.lines = append(m.lines, transcriptLine{text: subagentFooterStyle.Render(
 					fmt.Sprintf("  ↳ %d subagent(s) this turn — Tab to inspect events", len(summary)),
-				))
-				m.lines = append(m.lines, summary...)
+				)})
+				for _, s := range summary {
+					m.lines = append(m.lines, transcriptLine{text: s})
+				}
 			}
 		}
 		m.refreshViewport(m.vp.AtBottom())
@@ -829,9 +843,9 @@ func (m *ShellModel) refreshInlineBlocks() {
 		}
 		runLine := renderInlineRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
 		parts := strings.SplitN(runLine, "\n", 2)
-		m.lines[block.lineIdx] = parts[0]
+		m.lines[block.lineIdx] = transcriptLine{text: parts[0]}
 		if len(parts) > 1 {
-			m.lines[block.lineIdx+1] = parts[1]
+			m.lines[block.lineIdx+1] = transcriptLine{text: parts[1]}
 		}
 	}
 }
@@ -914,9 +928,9 @@ func (m *ShellModel) updateInlineAgent(live *agent.AgentNode) {
 	}
 
 	parts := strings.SplitN(rendered, "\n", 2)
-	m.lines[block.lineIdx] = parts[0]
+	m.lines[block.lineIdx] = transcriptLine{text: parts[0]}
 	if len(parts) > 1 {
-		m.lines[block.lineIdx+1] = parts[1]
+		m.lines[block.lineIdx+1] = transcriptLine{text: parts[1]}
 	}
 	m.refreshViewport(m.vp.AtBottom())
 }
@@ -926,7 +940,7 @@ func (m *ShellModel) updateInlineAgent(live *agent.AgentNode) {
 func (m *ShellModel) appendLine(s string) {
 	atBottom := !m.ready || m.vp.AtBottom()
 	for _, l := range strings.Split(s, "\n") {
-		m.lines = append(m.lines, l)
+		m.lines = append(m.lines, transcriptLine{text: l})
 	}
 	m.refreshViewport(atBottom)
 }
@@ -969,7 +983,7 @@ func (m *ShellModel) appendResultLines(out string, isError bool, toolName string
 				rendered = "    " + l
 			}
 		}
-		m.lines = append(m.lines, rendered)
+		m.lines = append(m.lines, transcriptLine{text: rendered})
 	}
 	m.refreshViewport(atBottom)
 }
@@ -1077,7 +1091,11 @@ func (m *ShellModel) refreshViewport(followBottom bool) {
 	if !m.ready {
 		return
 	}
-	content := strings.Join(m.lines, "\n")
+	flat := make([]string, len(m.lines))
+	for i, l := range m.lines {
+		flat[i] = l.first + l.text
+	}
+	content := strings.Join(flat, "\n")
 	if n := len(m.pendingCalls); n > 0 {
 		line := m.spinner.View() + " " + m.pendingCalls[0].text
 		if n > 1 {

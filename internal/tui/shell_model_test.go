@@ -18,9 +18,20 @@ import (
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
+// flattenLines renders the transcript store back into the flat pre-concatenated
+// strings the transcript used to hold — first + text per line — so content
+// assertions can inspect the store independent of wrap decisions.
+func flattenLines(m ShellModel) []string {
+	out := make([]string, len(m.lines))
+	for i, l := range m.lines {
+		out[i] = l.first + l.text
+	}
+	return out
+}
+
 // plainLines strips ANSI escape codes and joins model lines for content checks.
 func plainLines(m ShellModel) string {
-	return ansiRE.ReplaceAllString(strings.Join(m.lines, "\n"), "")
+	return ansiRE.ReplaceAllString(strings.Join(flattenLines(m), "\n"), "")
 }
 
 func testRegistry() *model.Registry {
@@ -122,6 +133,34 @@ func TestNewShellModel_ShowsBanner(t *testing.T) {
 	}
 }
 
+// TestAppendLineStoresTranscriptLines verifies appendLine splits on newlines
+// into one zero-prefix transcriptLine per row (pre:false, no first/cont prefix)
+// and that the flattened render is behavior-preserving at a wide viewport.
+func TestAppendLineStoresTranscriptLines(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m.lines = nil // drop banner lines so we inspect only what we append
+	m.appendLine("a\nb")
+	if len(m.lines) != 2 {
+		t.Fatalf("appendLine(\"a\\nb\") -> %d lines, want 2", len(m.lines))
+	}
+	for i, want := range []string{"a", "b"} {
+		l := m.lines[i]
+		if l.first != "" || l.cont != "" {
+			t.Errorf("line %d: want zero prefix, got first=%q cont=%q", i, l.first, l.cont)
+		}
+		if l.pre {
+			t.Errorf("line %d: want pre=false", i)
+		}
+		if l.text != want {
+			t.Errorf("line %d: text = %q, want %q", i, l.text, want)
+		}
+	}
+	// Behavior-preserving at wide viewport: flattened content matches the raw text.
+	if got := strings.Join(flattenLines(m), "\n"); got != "a\nb" {
+		t.Errorf("flattened = %q, want %q", got, "a\nb")
+	}
+}
+
 func TestEnterWhileRunningIsNoop(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true
@@ -165,7 +204,7 @@ func TestSlashVerboseToggles(t *testing.T) {
 	if !m.verbose {
 		t.Error("verbose should be true after toggle")
 	}
-	if !strings.Contains(strings.Join(m.lines, "\n"), "verbose = true") {
+	if !strings.Contains(strings.Join(flattenLines(m), "\n"), "verbose = true") {
 		t.Error("expected verbose confirmation line")
 	}
 }
@@ -186,7 +225,7 @@ func TestSlashModelUnknown(t *testing.T) {
 	if m.alias != "alpha" {
 		t.Errorf("alias should stay alpha, got %q", m.alias)
 	}
-	if !strings.Contains(strings.Join(m.lines, "\n"), `unknown model "nope"`) {
+	if !strings.Contains(strings.Join(flattenLines(m), "\n"), `unknown model "nope"`) {
 		t.Error("expected unknown-model line")
 	}
 }
@@ -228,7 +267,7 @@ func TestSlashUnknown(t *testing.T) {
 	if cmd != nil || m.running {
 		t.Error("unknown command should not start a run")
 	}
-	if !strings.Contains(strings.Join(m.lines, "\n"), "unknown command /bogus") {
+	if !strings.Contains(strings.Join(flattenLines(m), "\n"), "unknown command /bogus") {
 		t.Error("expected unknown command line")
 	}
 }
@@ -310,7 +349,7 @@ func TestToolResultErrorPrefix(t *testing.T) {
 	m = next.(ShellModel)
 	next, _ = m.Update(ToolResultMsg{Name: "bash", IsError: true, Output: "boom"})
 	m = next.(ShellModel)
-	if !strings.Contains(strings.Join(m.lines, "\n"), "✗ boom") {
+	if !strings.Contains(strings.Join(flattenLines(m), "\n"), "✗ boom") {
 		t.Error("expected error-prefixed tool result")
 	}
 }
@@ -426,7 +465,7 @@ func TestCompleterEnterDispatchesSkill(t *testing.T) {
 	if len(m.history) != 1 || m.history[0].Content != "show the board" {
 		t.Errorf("expected skill body as prompt, got %+v", m.history)
 	}
-	for _, line := range m.lines {
+	for _, line := range flattenLines(m) {
 		if strings.Contains(ansiRE.ReplaceAllString(line, ""), "unknown command") {
 			t.Errorf("got 'unknown command' instead of dispatching skill: %q", line)
 		}
