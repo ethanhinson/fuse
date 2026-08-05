@@ -53,60 +53,26 @@ type MCPServerConfig struct {
 	Auth      MCPAuthConfig     `yaml:"auth"` // http only
 }
 
-// SecretsConfig describes the secrets store and encryption backend.
-type SecretsConfig struct {
-	Store      string           `yaml:"store"`     // "env" | "sops" | "encrypted-file"
-	SopsFile   string           `yaml:"sops_file"` // for store: sops
-	Encryption EncryptionConfig `yaml:"encryption"`
-}
-
-// EncryptionConfig describes the encryption provider.
-type EncryptionConfig struct {
-	Provider string `yaml:"provider"` // "age" | "sops" | "passthrough"
-	KeyFile  string `yaml:"key_file"` // for age provider
-}
-
-// IntentPluginConfig describes an optional intent plugin for remote execution.
-type IntentPluginConfig struct {
-	Kind              string `yaml:"kind"` // "docket" | "openspec" | ""
-	Image             string `yaml:"image"`
-	GitRemoteURL      string `yaml:"git_remote_url"`
-	GitToken          string `yaml:"git_token"` // ${ENV_VAR}-expanded at wiring time
-	IntegrationBranch string `yaml:"integration_branch"`
-}
-
-// RemoteExecutorConfig describes an optional remote agent executor.
-type RemoteExecutorConfig struct {
-	URL          string             `yaml:"url"`
-	TokenSecret  string             `yaml:"token_secret"`
-	PublicKey    string             `yaml:"public_key"`
-	IntentPlugin IntentPluginConfig `yaml:"intent_plugin"`
-}
-
 // Config is the fully resolved fuse configuration.
 type Config struct {
-	Gateway        Gateway
-	Models         ModelsConfig
-	SkillPaths     []string
-	MaxTurns       int
-	MaxTokens      int
-	Permissions    PermissionsConfig
-	MCPServers     []MCPServerConfig
-	Secrets        SecretsConfig
-	RemoteExecutor RemoteExecutorConfig
+	Gateway     Gateway
+	Models      ModelsConfig
+	SkillPaths  []string
+	MaxTurns    int
+	MaxTokens   int
+	Permissions PermissionsConfig
+	MCPServers  []MCPServerConfig
 }
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
 type rawConfig struct {
-	Gateway        Gateway                `yaml:"gateway"`
-	Models         map[string]interface{} `yaml:"models"`
-	SkillPaths     []string               `yaml:"skill_paths"`
-	MaxTurns       int                    `yaml:"max_turns"`
-	MaxTokens      int                    `yaml:"max_tokens"`
-	Permissions    PermissionsConfig      `yaml:"permissions"`
-	MCPServers     []MCPServerConfig      `yaml:"mcp_servers"`
-	Secrets        SecretsConfig          `yaml:"secrets"`
-	RemoteExecutor RemoteExecutorConfig   `yaml:"remote_executor"`
+	Gateway     Gateway                `yaml:"gateway"`
+	Models      map[string]interface{} `yaml:"models"`
+	SkillPaths  []string               `yaml:"skill_paths"`
+	MaxTurns    int                    `yaml:"max_turns"`
+	MaxTokens   int                    `yaml:"max_tokens"`
+	Permissions PermissionsConfig      `yaml:"permissions"`
+	MCPServers  []MCPServerConfig      `yaml:"mcp_servers"`
 }
 
 // Default returns the zero-config built-in configuration.

@@ -124,16 +124,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 				return childResult(msgs, rerr)
 			}),
 		)
-		return func(ctx context.Context, label, task, systemPrompt, modelID, remoteID, intentPlugin string, toolsList []string, remote bool) (string, error) {
+		return func(ctx context.Context, label, task, systemPrompt, modelID string, toolsList []string) (string, error) {
 			opts := agent.SpawnOpts{
-				Label:          label,
-				Task:           task,
-				SystemPrompt:   systemPrompt,
-				ModelID:        modelID,
-				Remote:         remote,
-				RemoteID:       remoteID,
-				IntentPluginID: intentPlugin,
-				Tools:          toolsList,
+				Label:        label,
+				Task:         task,
+				SystemPrompt: systemPrompt,
+				ModelID:      modelID,
+				Tools:        toolsList,
 			}
 			handle, herr := spawner.Spawn(ctx, opts)
 			if herr != nil {

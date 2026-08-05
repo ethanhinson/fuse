@@ -30,14 +30,6 @@ func Load() (Config, error) {
 	if v := os.Getenv("LLM_GATEWAY_KEY"); v != "" {
 		c.Gateway.Key = v
 	}
-	if v := os.Getenv("FUSE_REMOTE_URL"); v != "" {
-		c.RemoteExecutor.URL = v
-	}
-	// FUSE_REMOTE_TOKEN stores the bearer token directly in the env.
-	// Point TokenSecret at the env var name so EnvSecretsStore resolves it.
-	if os.Getenv("FUSE_REMOTE_TOKEN") != "" && c.RemoteExecutor.TokenSecret == "" {
-		c.RemoteExecutor.TokenSecret = "FUSE_REMOTE_TOKEN"
-	}
 	return c, nil
 }
 
@@ -89,12 +81,6 @@ func mergeFile(c *Config, path string) error {
 	}
 	if len(raw.MCPServers) > 0 {
 		c.MCPServers = raw.MCPServers
-	}
-	if raw.RemoteExecutor.URL != "" {
-		c.RemoteExecutor = raw.RemoteExecutor
-	}
-	if raw.Secrets.Store != "" {
-		c.Secrets = raw.Secrets
 	}
 
 	// The `models` map holds a `default` string alongside model entries.

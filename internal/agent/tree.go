@@ -8,8 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/ethanhinson/fuse/internal/secrets"
 )
 
 // MaxDepth is the maximum allowed spawn depth.
@@ -94,24 +92,22 @@ type AgentEvent struct {
 
 // AgentNode represents one agent in the spawn tree.
 type AgentNode struct {
-	ID          string
-	ParentID    string
-	Label       string
-	Model       string
-	Status      NodeStatus
-	Depth       int
-	StartedAt   time.Time
-	EndedAt     time.Time
-	TokensIn    int
-	TokensOut   int
-	CostUSD     float64
-	Events      []AgentEvent
-	RemoteExec  bool
-	RemoteJobID string
-	children    []string
-	cancel      func() // set by Spawner; called by CancelNode
-	yields      int    // concurrent spawn_agent waits currently yielding this node's slot
-	mu          sync.Mutex
+	ID        string
+	ParentID  string
+	Label     string
+	Model     string
+	Status    NodeStatus
+	Depth     int
+	StartedAt time.Time
+	EndedAt   time.Time
+	TokensIn  int
+	TokensOut int
+	CostUSD   float64
+	Events    []AgentEvent
+	children  []string
+	cancel    func() // set by Spawner; called by CancelNode
+	yields    int    // concurrent spawn_agent waits currently yielding this node's slot
+	mu        sync.Mutex
 }
 
 // AddEvent appends an event to the node, thread-safe.
@@ -169,18 +165,17 @@ func (n *AgentNode) Finish(status NodeStatus, errMsg string) {
 // Events are deliberately NOT included — they can be large and most consumers
 // only need counters; call CopyEvents when the log itself is needed.
 type NodeView struct {
-	ID         string
-	ParentID   string
-	Label      string
-	Model      string
-	Status     NodeStatus
-	Depth      int
-	StartedAt  time.Time
-	EndedAt    time.Time
-	TokensIn   int
-	TokensOut  int
-	CostUSD    float64
-	RemoteExec bool
+	ID        string
+	ParentID  string
+	Label     string
+	Model     string
+	Status    NodeStatus
+	Depth     int
+	StartedAt time.Time
+	EndedAt   time.Time
+	TokensIn  int
+	TokensOut int
+	CostUSD   float64
 }
 
 // Snapshot returns a consistent view of the node's mutable state.
@@ -188,18 +183,17 @@ func (n *AgentNode) Snapshot() NodeView {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return NodeView{
-		ID:         n.ID,
-		ParentID:   n.ParentID,
-		Label:      n.Label,
-		Model:      n.Model,
-		Status:     n.Status,
-		Depth:      n.Depth,
-		StartedAt:  n.StartedAt,
-		EndedAt:    n.EndedAt,
-		TokensIn:   n.TokensIn,
-		TokensOut:  n.TokensOut,
-		CostUSD:    n.CostUSD,
-		RemoteExec: n.RemoteExec,
+		ID:        n.ID,
+		ParentID:  n.ParentID,
+		Label:     n.Label,
+		Model:     n.Model,
+		Status:    n.Status,
+		Depth:     n.Depth,
+		StartedAt: n.StartedAt,
+		EndedAt:   n.EndedAt,
+		TokensIn:  n.TokensIn,
+		TokensOut: n.TokensOut,
+		CostUSD:   n.CostUSD,
 	}
 }
 
@@ -218,13 +212,6 @@ type AgentTree struct {
 	dirty    map[string]bool
 	spawnSem chan struct{} // width cap for concurrently running local children
 
-	remotes   map[string]RemoteExecutor
-	remotesMu sync.RWMutex
-	intents   map[string]IntentPlugin
-	intentsMu sync.RWMutex
-
-	secretsSt secrets.SecretsStore
-	secretsMu sync.RWMutex
 }
 
 // NewAgentTree creates a new tree with the given root node label and model.
@@ -241,8 +228,6 @@ func NewAgentTree(rootLabel, rootModel string) *AgentTree {
 		rootID:   root.ID,
 		out:      make(chan TreeUpdate, 256),
 		dirty:    map[string]bool{},
-		remotes:  map[string]RemoteExecutor{},
-		intents:  map[string]IntentPlugin{},
 		spawnSem: make(chan struct{}, MaxConcurrentSpawns),
 	}
 }
@@ -391,23 +376,6 @@ func (t *AgentTree) NextSeq() int64 {
 	return t.seq.Add(1)
 }
 
-// SetSecrets installs the secrets store. Thread-safe.
-func (t *AgentTree) SetSecrets(s secrets.SecretsStore) {
-	t.secretsMu.Lock()
-	defer t.secretsMu.Unlock()
-	t.secretsSt = s
-}
-
-// secretsStore returns the installed store, defaulting to &EnvSecretsStore{}.
-func (t *AgentTree) secretsStore() secrets.SecretsStore {
-	t.secretsMu.RLock()
-	defer t.secretsMu.RUnlock()
-	if t.secretsSt != nil {
-		return t.secretsSt
-	}
-	return &secrets.EnvSecretsStore{}
-}
-
 // acquireSpawnSlot blocks until a spawn slot is free or ctx ends. Returns
 // false when the context was cancelled first. Nil-safe: without a tree (or a
 // sem) there is no cap.
@@ -484,36 +452,6 @@ func (t *AgentTree) CancelNode(id string) {
 	if f != nil {
 		f()
 	}
-}
-
-func (t *AgentTree) RegisterRemote(id string, exec RemoteExecutor) {
-	t.remotesMu.Lock()
-	defer t.remotesMu.Unlock()
-	t.remotes[id] = exec
-}
-
-// lookupRemote finds a RemoteExecutor by id.
-func (t *AgentTree) lookupRemote(id string) RemoteExecutor {
-	t.remotesMu.RLock()
-	defer t.remotesMu.RUnlock()
-	return t.remotes[id]
-}
-
-// RegisterIntent adds a named IntentPlugin (id="" for the default).
-func (t *AgentTree) RegisterIntent(id string, plugin IntentPlugin) {
-	t.intentsMu.Lock()
-	defer t.intentsMu.Unlock()
-	t.intents[id] = plugin
-}
-
-// lookupIntent finds an IntentPlugin by id, falling back to NilIntentPlugin.
-func (t *AgentTree) lookupIntent(id string) IntentPlugin {
-	t.intentsMu.RLock()
-	defer t.intentsMu.RUnlock()
-	if p, ok := t.intents[id]; ok {
-		return p
-	}
-	return NilIntentPlugin{}
 }
 
 // StartDirtyFlusher starts a background goroutine that periodically flushes

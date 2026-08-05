@@ -12,9 +12,8 @@ import (
 // The wiring code in cmd/fuse adapts agent.Spawner.Spawn to this signature.
 type SpawnFunc func(
 	ctx context.Context,
-	label, task, systemPrompt, model, remoteID, intentPlugin string,
+	label, task, systemPrompt, model string,
 	tools []string,
-	remote bool,
 ) (result string, err error)
 
 // SpawnAgentTool is the spawn_agent built-in tool, allowing LLMs to spawn
@@ -63,18 +62,6 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Optional model ID (defaults to the parent's model).",
 			},
-			"remote": map[string]any{
-				"type":        "boolean",
-				"description": "If true, dispatch to a remote executor.",
-			},
-			"remote_id": map[string]any{
-				"type":        "string",
-				"description": "Named remote executor; empty string = default.",
-			},
-			"intent_plugin": map[string]any{
-				"type":        "string",
-				"description": "Named intent plugin; empty string = nil plugin.",
-			},
 		},
 		"required": []string{"label", "task"},
 	}
@@ -86,9 +73,6 @@ type spawnAgentInput struct {
 	SystemPrompt string   `json:"system_prompt"`
 	Tools        []string `json:"tools"`
 	Model        string   `json:"model"`
-	Remote       bool     `json:"remote"`
-	RemoteID     string   `json:"remote_id"`
-	IntentPlugin string   `json:"intent_plugin"`
 }
 
 // Execute parses the input, spawns a child agent, and blocks until it completes.
@@ -104,9 +88,7 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, args string) Result {
 	result, err := t.spawn(
 		ctx,
 		input.Label, input.Task, input.SystemPrompt, input.Model,
-		input.RemoteID, input.IntentPlugin,
 		input.Tools,
-		input.Remote,
 	)
 	if err != nil {
 		return Result{IsError: true, Output: fmt.Sprintf("spawn_agent: %v", err)}

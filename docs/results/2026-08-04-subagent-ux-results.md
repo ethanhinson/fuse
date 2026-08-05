@@ -136,6 +136,20 @@ offered in every request — the model simply preferred direct whole-file reads
 - Model-call failures carry model, payload size, attempts, and duration in
   both the UI error and labeled `── ERROR ──` trace blocks.
 
+## Descope (2026-08-05): local-only subagents
+
+Remote execution (SSE executor, containerized/Kubernetes runtimes), the
+`IntentPlugin` system (docket/openspec write-back), and secrets management
+(`SecretsStore`/`EncryptionProvider`, sops/age) were **removed from the
+branch**. Getting the local subagent runtime production-solid consumed the
+whole change; the remote path had known unresolved issues from the
+architecture review (plaintext git tokens in encrypted mode, no https
+enforcement, error-body reflection, Collect ordering) and no runtime to test
+against. The design lives on in the spec and in git history; re-introduction
+should be its own change, starting from the review's remote/secrets findings.
+This also removes the `filippo.io/age` dependency and the
+`secrets`/`remote_executor` config surface.
+
 ## Deviations from the original spec (known, deliberate)
 
 - **Children run `permissions.AlwaysApprove`**, not the spec'd
@@ -159,7 +173,6 @@ offered in every request — the model simply preferred direct whole-file reads
 - Phase 4: single `AgentEvent` vocabulary; `Renderer` → `Emit(event)`.
 - Context Tier 2: anchored LLM compaction with segment store (designed in
   the context-management doc).
-- Remote/secrets fixes from the review not yet applied: git tokens plaintext
-  in dispatch JSON even in encrypted mode; no https enforcement; dispatch
-  error bodies reflected unsanitized into model context; `Collect` ordering
-  race.
+- Remote/secrets: descoped entirely (see above); the review's remote/secrets
+  findings become the starting checklist for the future re-introduction
+  change.

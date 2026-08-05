@@ -13,11 +13,8 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
-	"github.com/ethanhinson/fuse/internal/integrations/docket"
-	"github.com/ethanhinson/fuse/internal/integrations/openspec"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
-	"github.com/ethanhinson/fuse/internal/secrets"
 	"github.com/ethanhinson/fuse/internal/session"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -127,37 +124,6 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	tree := agent.NewAgentTree(alias, alias)
 	rootNode := tree.Node(tree.RootID())
 
-	// Secrets store.
-	var secretsStore secrets.SecretsStore
-	switch cfg.Secrets.Store {
-	case "sops":
-		s, serr2 := secrets.NewSopsSecretsStore(cfg.Secrets.SopsFile, "")
-		if serr2 != nil {
-			log.Printf("secrets: sops store: %v; falling back to env", serr2)
-			secretsStore = &secrets.EnvSecretsStore{}
-		} else {
-			secretsStore = s
-		}
-	default:
-		secretsStore = &secrets.EnvSecretsStore{}
-	}
-	tree.SetSecrets(secretsStore)
-
-	// Remote executor and intent plugin from config.
-	if cfg.RemoteExecutor.URL != "" {
-		// HTTPClient nil → bounded dispatch client + header-bounded stream client
-		// (an overall timeout here would kill any SSE stream longer than it).
-		exec := &agent.SSERemoteExecutor{
-			BaseURL:     cfg.RemoteExecutor.URL,
-			TokenSecret: cfg.RemoteExecutor.TokenSecret,
-			PublicKey:   cfg.RemoteExecutor.PublicKey,
-		}
-		tree.RegisterRemote("", exec)
-	}
-	if cfg.RemoteExecutor.IntentPlugin.Kind != "" {
-		tree.RegisterIntent("", buildIntentPlugin(cfg.RemoteExecutor.IntentPlugin))
-	}
-
 	// SpawnFunc factory — self-referential so child agents get their own spawner.
 	var makeSpawnFunc func(parentNode *agent.AgentNode, parentDepth int) tools.SpawnFunc
 	makeSpawnFunc = func(parentNode *agent.AgentNode, parentDepth int) tools.SpawnFunc {
@@ -219,16 +185,13 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			}),
 		)
 
-		return func(ctx context.Context, label, task, systemPrompt, modelID, remoteID, intentPlugin string, toolsList []string, remote bool) (string, error) {
+		return func(ctx context.Context, label, task, systemPrompt, modelID string, toolsList []string) (string, error) {
 			opts := agent.SpawnOpts{
-				Label:          label,
-				Task:           task,
-				SystemPrompt:   systemPrompt,
-				ModelID:        modelID,
-				Remote:         remote,
-				RemoteID:       remoteID,
-				IntentPluginID: intentPlugin,
-				Tools:          toolsList,
+				Label:        label,
+				Task:         task,
+				SystemPrompt: systemPrompt,
+				ModelID:      modelID,
+				Tools:        toolsList,
 			}
 			handle, herr := spawner.Spawn(ctx, opts)
 			if herr != nil {
@@ -266,27 +229,4 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		return 1
 	}
 	return 0
-}
-
-// buildIntentPlugin constructs the IntentPlugin from config.
-func buildIntentPlugin(cfg config.IntentPluginConfig) agent.IntentPlugin {
-	token := os.ExpandEnv(cfg.GitToken)
-	switch cfg.Kind {
-	case "docket":
-		return &docket.DocketIntentPlugin{
-			GitRemoteURL:      cfg.GitRemoteURL,
-			GitToken:          token,
-			Image:             cfg.Image,
-			IntegrationBranch: cfg.IntegrationBranch,
-		}
-	case "openspec":
-		return &openspec.OpenSpecIntentPlugin{
-			GitRemoteURL:      cfg.GitRemoteURL,
-			GitToken:          token,
-			Image:             cfg.Image,
-			IntegrationBranch: cfg.IntegrationBranch,
-		}
-	default:
-		return agent.NilIntentPlugin{}
-	}
 }

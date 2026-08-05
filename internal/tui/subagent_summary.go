@@ -39,12 +39,6 @@ func renderInlineError(elapsed string, tokIn, tokOut int, errMsg string) string 
 		elapsed, formatTokens(tokIn), formatTokens(tokOut), errMsg)
 }
 
-// renderInlineRemoteRunning is the running block with a ☁ prefix for remote agents.
-func renderInlineRemoteRunning(label, elapsed string, tokIn, tokOut int) string {
-	return fmt.Sprintf("▶ spawn_agent(%q) ☁\n  ● Running · %s · ↑%s ↓%s tokens",
-		sanitizeDisplay(label), elapsed, formatTokens(tokIn), formatTokens(tokOut))
-}
-
 // renderTreeSummary renders a compact tree of this turn's child agents for
 // the transcript, so the run's shape survives in chat history after the
 // live inline blocks scroll away. Nodes from earlier turns (started before
@@ -85,17 +79,13 @@ func renderTreeSummary(tree *agent.AgentTree, since time.Time) []string {
 			branch = "└─"
 		}
 		indent := strings.Repeat("   ", n.Depth-minDepth)
-		cloud := ""
-		if n.RemoteExec {
-			cloud = "☁ "
-		}
 		meta := nodeElapsed(n)
 		if n.TokensIn > 0 || n.TokensOut > 0 {
 			meta += " ↑" + formatTokens(n.TokensIn) + " ↓" + formatTokens(n.TokensOut)
 		}
 		out = append(out, "  "+gutterStyle.Render(indent+branch)+" "+
 			glyphStyle(n.Status).Render(glyphForStatus(n.Status))+" "+
-			cloud+sanitizeDisplay(truncate(n.Label, 48))+" "+
+			sanitizeDisplay(truncate(n.Label, 48))+" "+
 			gutterStyle.Render(meta))
 	}
 	return out

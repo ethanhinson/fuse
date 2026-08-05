@@ -371,8 +371,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// spawn_agent: insert a live inline block instead of the spinner line.
 		if msg.Name == "spawn_agent" && m.tree != nil {
 			var input struct {
-				Label  string `json:"label"`
-				Remote bool   `json:"remote"`
+				Label string `json:"label"`
 			}
 			_ = json.Unmarshal([]byte(msg.Args), &input)
 			if input.Label != "" {
@@ -384,12 +383,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.inlineByLabel = make(map[string]*inlineAgentState)
 				}
 				m.inlineByLabel[input.Label] = block
-				var runLine string
-				if input.Remote {
-					runLine = renderInlineRemoteRunning(input.Label, "0s", 0, 0)
-				} else {
-					runLine = renderInlineRunning(input.Label, "0s", 0, 0)
-				}
+				runLine := renderInlineRunning(input.Label, "0s", 0, 0)
 				parts := strings.SplitN(runLine, "\n", 2)
 				m.lines = append(m.lines, parts[0])
 				if len(parts) > 1 {
@@ -831,12 +825,7 @@ func (m *ShellModel) refreshInlineBlocks() {
 		if !node.StartedAt.IsZero() {
 			elapsed = fmt.Sprintf("%.0fs", time.Since(node.StartedAt).Seconds())
 		}
-		var runLine string
-		if node.RemoteExec {
-			runLine = renderInlineRemoteRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
-		} else {
-			runLine = renderInlineRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
-		}
+		runLine := renderInlineRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
 		parts := strings.SplitN(runLine, "\n", 2)
 		m.lines[block.lineIdx] = parts[0]
 		if len(parts) > 1 {
@@ -897,11 +886,7 @@ func (m *ShellModel) updateInlineAgent(live *agent.AgentNode) {
 	var rendered string
 	switch node.Status {
 	case agent.StatusRunning, agent.StatusPending:
-		if node.RemoteExec {
-			rendered = renderInlineRemoteRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
-		} else {
-			rendered = renderInlineRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
-		}
+		rendered = renderInlineRunning(node.Label, elapsed, node.TokensIn, node.TokensOut)
 	case agent.StatusDone:
 		result := ""
 		for _, e := range live.CopyEvents() {

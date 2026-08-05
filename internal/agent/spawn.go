@@ -7,22 +7,20 @@ import (
 	"runtime/debug"
 	"sync"
 	"time"
-
-	"github.com/ethanhinson/fuse/internal/secrets"
 )
+
+// ErrMaxDepthExceeded is returned when a spawn would exceed MaxDepth.
+var ErrMaxDepthExceeded = errors.New("agent: max spawn depth exceeded")
 
 // SpawnOpts configures a child agent spawn.
 type SpawnOpts struct {
-	Label          string
-	Task           string
-	SystemPrompt   string
-	Tools          []string
-	ModelID        string
-	MaxTurns       int
-	MaxTokens      int
-	Remote         bool
-	RemoteID       string
-	IntentPluginID string
+	Label        string
+	Task         string
+	SystemPrompt string
+	Tools        []string
+	ModelID      string
+	MaxTurns     int
+	MaxTokens    int
 }
 
 // SpawnDone carries the result of a completed child agent.
@@ -129,15 +127,11 @@ func NewSpawner(opts ...Option) *Spawner {
 	return s
 }
 
-// Spawn creates a child agent. For local spawns it runs in a goroutine; for
-// remote spawns it dispatches via the tree's registered RemoteExecutor.
+// Spawn creates a child agent running locally in a goroutine.
 func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (AgentHandle, error) {
 	newDepth := s.depth + 1
 	if newDepth > MaxDepth {
 		return AgentHandle{}, fmt.Errorf("%w: depth %d > %d", ErrMaxDepthExceeded, newDepth, MaxDepth)
-	}
-	if opts.Remote {
-		return s.spawnRemote(ctx, opts, newDepth)
 	}
 	return s.spawnLocal(ctx, opts, newDepth)
 }
@@ -220,222 +214,6 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 			s.tree.Emit(TreeUpdate{NodeID: node.ID})
 		}
 		doneCh <- SpawnDone{Result: result, Err: runErr}
-	}()
-
-	return AgentHandle{NodeID: node.ID, Done: doneCh, cancel: cancel}, nil
-}
-
-func (s *Spawner) spawnRemote(ctx context.Context, opts SpawnOpts, depth int) (AgentHandle, error) {
-	if s.tree == nil {
-		return AgentHandle{}, fmt.Errorf("%w: no agent tree configured", ErrNoRemoteExecutor)
-	}
-
-	exec := s.tree.lookupRemote(opts.RemoteID)
-	if exec == nil {
-		return AgentHandle{}, fmt.Errorf("%w: id=%q", ErrNoRemoteExecutor, opts.RemoteID)
-	}
-
-	plugin := s.tree.lookupIntent(opts.IntentPluginID)
-
-	// Resolve intent synchronously before node creation.
-	rc, err := plugin.Resolve(ctx, opts)
-	if err != nil {
-		return AgentHandle{}, fmt.Errorf("%w: %v", ErrIntentResolveFailed, err)
-	}
-
-	// Resolve secrets synchronously before node creation.
-	store := s.tree.secretsStore()
-	sseExec, isSse := exec.(*SSERemoteExecutor)
-
-	var bearerToken string
-	if isSse && sseExec.TokenSecret != "" {
-		tok, err := store.Get(ctx, sseExec.TokenSecret)
-		if err != nil {
-			if errors.Is(err, secrets.ErrSecretNotFound) {
-				return AgentHandle{}, fmt.Errorf("%w: %s", ErrSecretNotFound, sseExec.TokenSecret)
-			}
-			return AgentHandle{}, fmt.Errorf("%w: %v", ErrSecretsStoreFailure, err)
-		}
-		bearerToken = tok
-	}
-
-	if rc.Clone != nil && rc.Clone.TokenSecret != "" {
-		tok, err := store.Get(ctx, rc.Clone.TokenSecret)
-		if err != nil {
-			if errors.Is(err, secrets.ErrSecretNotFound) {
-				return AgentHandle{}, fmt.Errorf("%w: %s", ErrSecretNotFound, rc.Clone.TokenSecret)
-			}
-			return AgentHandle{}, fmt.Errorf("%w: %v", ErrSecretsStoreFailure, err)
-		}
-		rc.Clone.ResolvedToken = tok
-	}
-
-	var writeBackToken string
-	if rc.WriteBackTokenSecret != "" {
-		tok, err := store.Get(ctx, rc.WriteBackTokenSecret)
-		if err != nil {
-			if errors.Is(err, secrets.ErrSecretNotFound) {
-				return AgentHandle{}, fmt.Errorf("%w: %s", ErrSecretNotFound, rc.WriteBackTokenSecret)
-			}
-			return AgentHandle{}, fmt.Errorf("%w: %v", ErrSecretsStoreFailure, err)
-		}
-		writeBackToken = tok
-	}
-
-	var containerSecrets *secrets.ContainerSecrets
-	if len(rc.SecretRefs) > 0 {
-		pubKey := ""
-		if isSse {
-			pubKey = sseExec.PublicKey
-		}
-		cs, err := store.ExportForContainer(ctx, rc.SecretRefs, pubKey)
-		if err != nil {
-			return AgentHandle{}, fmt.Errorf("%w: export secrets: %v", ErrSecretsStoreFailure, err)
-		}
-		containerSecrets = cs
-	}
-
-	// Create node after all secret resolution succeeds.
-	parentID := ""
-	if s.node != nil {
-		parentID = s.node.ID
-	}
-	node := &AgentNode{
-		ID:         newNodeID(),
-		ParentID:   parentID,
-		Label:      opts.Label,
-		Model:      opts.ModelID,
-		Status:     StatusPending,
-		Depth:      depth,
-		StartedAt:  time.Now(),
-		RemoteExec: true,
-	}
-	s.tree.addNode(node)
-	s.tree.Emit(TreeUpdate{NodeID: node.ID})
-
-	// Build the dispatch request.
-	req := RemoteDispatchRequest{
-		Label:           opts.Label,
-		Task:            opts.Task,
-		SystemPrompt:    opts.SystemPrompt,
-		Tools:           opts.Tools,
-		ModelID:         opts.ModelID,
-		MaxTurns:        opts.MaxTurns,
-		MaxTokens:       opts.MaxTokens,
-		ParentNodeID:    parentID,
-		Depth:           depth,
-		Image:           rc.Image,
-		Env:             rc.Env,
-		Bundle:          rc.Bundle,
-		WriteBackBranch: rc.WriteBackBranch,
-		WriteBackRemote: rc.WriteBackRemote,
-		WriteBackToken:  writeBackToken,
-		Files:           rc.Files,
-	}
-	if rc.Clone != nil {
-		req.Clone = &GitCloneSpec{
-			URL:           rc.Clone.URL,
-			Ref:           rc.Clone.Ref,
-			ResolvedToken: rc.Clone.ResolvedToken,
-		}
-	}
-	if containerSecrets != nil {
-		if containerSecrets.EncryptedBundle != nil {
-			req.EncryptedSecrets = containerSecrets.EncryptedBundle
-			req.SecretsAlgorithm = containerSecrets.BundleAlgorithm
-		} else {
-			req.Secrets = containerSecrets.Env
-		}
-	}
-
-	// Clone SSE executor with the resolved token.
-	var dispatchExec RemoteExecutor = exec
-	if isSse {
-		copy := *sseExec
-		copy.resolvedToken = bearerToken
-		dispatchExec = &copy
-	}
-
-	childCtx, cancel := context.WithCancel(ctx)
-	eventCh, err := dispatchExec.Dispatch(childCtx, req)
-	if err != nil {
-		cancel()
-		return AgentHandle{}, fmt.Errorf("%w: %v", ErrRemoteDispatchFailed, err)
-	}
-
-	doneCh := make(chan SpawnDone, 1)
-	go func() {
-		defer cancel()
-		node.mu.Lock()
-		node.Status = StatusRunning
-		node.mu.Unlock()
-		s.tree.Emit(TreeUpdate{NodeID: node.ID})
-
-		var result string
-		var spawnErr error
-		var sawTerminal bool
-
-		for evt := range eventCh {
-			node.AddEvent(evt)
-			s.tree.Emit(TreeUpdate{NodeID: node.ID})
-
-			switch evt.Kind {
-			case KindDone:
-				sawTerminal = true
-				if r, ok := evt.Payload["result"].(string); ok {
-					result = r
-				}
-			case KindError:
-				sawTerminal = true
-				// The stream-lost sentinel is matched by the locally synthesized
-				// event's Name — never by error text, which the remote controls.
-				if evt.Name == streamLostEventName {
-					spawnErr = ErrRemoteStreamLost
-				} else if e, ok := evt.Payload["error"].(string); ok {
-					spawnErr = errors.New(e)
-				} else {
-					spawnErr = fmt.Errorf("remote error event %q", evt.Name)
-				}
-			}
-		}
-
-		// The channel can close with NO terminal event — on ctx cancellation the
-		// stream goroutine just returns. That must not be reported as success:
-		// a cancelled job is cancelled, and any other silent close is a lost
-		// stream, not a completed one.
-		if !sawTerminal {
-			if childCtx.Err() != nil {
-				node.Finish(StatusCancelled, "")
-				s.tree.Emit(TreeUpdate{NodeID: node.ID})
-				doneCh <- SpawnDone{Err: context.Canceled}
-				return
-			}
-			spawnErr = ErrRemoteStreamLost
-		}
-
-		if spawnErr != nil {
-			node.Finish(StatusError, spawnErr.Error())
-		} else {
-			node.Finish(StatusDone, "")
-		}
-		s.tree.Emit(TreeUpdate{NodeID: node.ID})
-
-		finalResult := SpawnDone{Result: result, Err: spawnErr}
-		doneCh <- finalResult
-
-		// Async collect (non-fatal).
-		go func() {
-			collectErr := plugin.Collect(context.Background(), finalResult, rc)
-			if collectErr != nil {
-				node.AddEvent(AgentEvent{
-					Kind:    KindError,
-					Name:    "collect",
-					Payload: map[string]any{"error": collectErr.Error()},
-					TS:      time.Now(),
-				})
-				s.tree.Emit(TreeUpdate{NodeID: node.ID})
-			}
-		}()
 	}()
 
 	return AgentHandle{NodeID: node.ID, Done: doneCh, cancel: cancel}, nil

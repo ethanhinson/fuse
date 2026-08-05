@@ -306,9 +306,6 @@ func (m *AgentsModel) renderNodeRow(n agent.NodeView, selected bool, w int) stri
 	edge := m.edgePrefix(n)
 	label := sanitizeDisplay(n.Label) // model-controlled; tabs/controls shear columns
 	cloud := ""
-	if n.RemoteExec {
-		cloud = "☁ "
-	}
 
 	glyph := glyphForStatus(n.Status)
 	elapsed := nodeElapsed(n)
@@ -557,9 +554,6 @@ func eventFullContent(evt agent.AgentEvent) string {
 
 func (m *AgentsModel) renderDetailHeader(n agent.NodeView, w int) string {
 	label := sanitizeDisplay(n.Label)
-	if n.RemoteExec {
-		label += " ☁"
-	}
 
 	glyph := glyphStyle(n.Status).Render(glyphForStatus(n.Status))
 	elapsed := nodeElapsed(n)
