@@ -2,7 +2,7 @@
 id: 14
 slug: research-mode
 title: Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime
-status: proposed
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-05
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/research-mode
+claimed_at: 2026-08-05T16:47:14Z
 pr:
 blocked_by:
 reconciled: false
