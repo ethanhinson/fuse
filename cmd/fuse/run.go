@@ -94,11 +94,24 @@ func buildAgent(cfg config.Config, reg *model.Registry, alias string, out io.Wri
 // buildAgentWithRenderer builds an agent that renders through r (used by the
 // bubbletea shell, which injects a TeaRenderer).
 func buildAgentWithRenderer(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc) (*agent.Agent, error) {
+	return buildAgentWithRendererAndTrace(cfg, reg, alias, r, verbose, extra, toolReg, approve, "")
+}
+
+// buildAgentWithRendererAndTrace is like buildAgentWithRenderer but also opens
+// traceFile (when non-empty) and writes raw API request/response JSON there.
+func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceFile string) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
 	_ = verbose
-	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, nil, toolReg, approve)
+	var traceW io.Writer
+	if traceFile != "" {
+		f, err := os.OpenFile(traceFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err == nil {
+			traceW = f
+		}
+	}
+	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, toolReg, approve)
 	return a, err
 }
 

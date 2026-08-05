@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/tools"
 )
 
 // ErrMaxTurns is returned when the loop exhausts its turn budget.
@@ -59,19 +61,64 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			return messages, ErrLoopDetected
 		}
 
-		for _, call := range resp.ToolCalls {
-			a.renderer.ToolCall(call.Name, call.Arguments)
-			res := a.tools.Execute(ctx, call.Name, call.Arguments)
-			a.renderer.ToolResult(call.Name, res)
-			messages = append(messages, model.Message{
-				Role:       "tool",
-				ToolCallID: call.ID,
-				Name:       call.Name,
-				Content:    res.Output,
-			})
-		}
+		toolMsgs := a.executeTools(ctx, resp.ToolCalls)
+		messages = append(messages, toolMsgs...)
 	}
 	return messages, ErrMaxTurns
+}
+
+// toolResult pairs a call with its outcome, preserving order for the history.
+type toolResult struct {
+	call model.ToolCall
+	res  tools.Result
+}
+
+// executeTools runs the tool calls from a single model response. When the
+// response contains 2+ spawn_agent calls they run concurrently; all other
+// combinations execute sequentially to avoid tool-state conflicts.
+func (a *Agent) executeTools(ctx context.Context, calls []model.ToolCall) []model.Message {
+	results := make([]toolResult, len(calls))
+
+	// Parallel path: 2+ spawn_agent calls can safely run concurrently.
+	// Each goroutine announces its own ToolCall before starting Execute so the
+	// TUI has the label entry in inlineByLabel before tree updates fire.
+	allSpawn := len(calls) >= 2
+	for _, c := range calls {
+		if c.Name != "spawn_agent" {
+			allSpawn = false
+			break
+		}
+	}
+
+	if allSpawn {
+		var wg sync.WaitGroup
+		for i, call := range calls {
+			wg.Add(1)
+			go func(i int, call model.ToolCall) {
+				defer wg.Done()
+				a.renderer.ToolCall(call.Name, call.Arguments)
+				results[i] = toolResult{call: call, res: a.tools.Execute(ctx, call.Name, call.Arguments)}
+			}(i, call)
+		}
+		wg.Wait()
+	} else {
+		for i, call := range calls {
+			a.renderer.ToolCall(call.Name, call.Arguments)
+			results[i] = toolResult{call: call, res: a.tools.Execute(ctx, call.Name, call.Arguments)}
+		}
+	}
+
+	msgs := make([]model.Message, 0, len(calls))
+	for _, r := range results {
+		a.renderer.ToolResult(r.call.Name, r.res)
+		msgs = append(msgs, model.Message{
+			Role:       "tool",
+			ToolCallID: r.call.ID,
+			Name:       r.call.Name,
+			Content:    r.res.Output,
+		})
+	}
+	return msgs
 }
 
 // withSystem prepends the system prompt (if any) to the message slice sent to

@@ -347,6 +347,13 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = false
 		m.approval = nil
 		m.input.Focus()
+		// After the synthesis text potentially scrolls inline blocks off screen,
+		// append a compact footer so the user knows agents ran and can Tab to inspect.
+		if len(m.inlineByNode) > 0 {
+			m.lines = append(m.lines, subagentFooterStyle.Render(
+				fmt.Sprintf("  ↳ %d child agent(s) ran — Tab to inspect tree", len(m.inlineByNode)),
+			))
+		}
 		m.refreshViewport(m.vp.AtBottom())
 		return m, waitForMsg(m.ch)
 
@@ -619,6 +626,9 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	m.runStart = time.Now()
 	m.inputTokens = 0
 	m.outputTokens = 0
+	// Reset per-turn inline tracking so the footer counter starts fresh.
+	m.inlineByLabel = make(map[string]*inlineAgentState)
+	m.inlineByNode = make(map[string]*inlineAgentState)
 
 	ch := m.ch
 	alias := m.alias

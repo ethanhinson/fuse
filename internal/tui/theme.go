@@ -43,6 +43,9 @@ var (
 	// Transcript — file-content gutter (line numbers + │ bar)
 	gutterStyle = lipgloss.NewStyle().Foreground(colMuted)
 
+	// Transcript — subagent batch footer (shown after AgentDone when agents ran)
+	subagentFooterStyle = lipgloss.NewStyle().Foreground(colMuted).Italic(true)
+
 	// Permission approval block
 	approvalBorderStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
