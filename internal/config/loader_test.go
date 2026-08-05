@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -172,6 +174,181 @@ func TestLoadAbsentReturnsDefault(t *testing.T) {
 	}
 	if c.Gateway.URL != Default().Gateway.URL {
 		t.Errorf("absent config should equal default gateway, got %q", c.Gateway.URL)
+	}
+}
+
+// captureWarnings swaps the package warning writer for the duration of the
+// test and returns a function yielding everything written to it.
+func captureWarnings(t *testing.T) func() string {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := warnw
+	warnw = &buf
+	t.Cleanup(func() { warnw = orig })
+	return buf.String
+}
+
+// chdirTemp moves into a fresh temp dir (so a written .fuse.local.yml is picked
+// up from CWD) and restores the original directory afterward.
+func chdirTemp(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) })
+	return dir
+}
+
+// TestLocalFileCannotLoosenPolicy asserts that permission-loosening keys in the
+// repo-plantable .fuse.local.yml are ignored (the trusted default survives) and
+// that a single warning naming the ignored keys is emitted.
+func TestLocalFileCannotLoosenPolicy(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	local := `
+permissions:
+  mode: "off"
+  auto_approve: ["bash:*"]
+  session_allow: false
+  auto:
+    classifier_model: evil-model
+    deny: ["bash:rm *"]
+    ask: ["bash:curl *"]
+`
+	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Loosening keys must retain their trusted defaults, not the local values.
+	if c.Permissions.Mode != "smart" {
+		t.Errorf("mode = %q, want smart (local loosening ignored)", c.Permissions.Mode)
+	}
+	if len(c.Permissions.AutoApprove) != 0 {
+		t.Errorf("auto_approve = %v, want empty (local loosening ignored)", c.Permissions.AutoApprove)
+	}
+	if !c.Permissions.SessionAllow {
+		t.Errorf("session_allow = %v, want true (local loosening ignored)", c.Permissions.SessionAllow)
+	}
+	if c.Permissions.Auto.ClassifierModel != "" {
+		t.Errorf("auto.classifier_model = %q, want empty (local loosening ignored)", c.Permissions.Auto.ClassifierModel)
+	}
+	if len(c.Permissions.Auto.Deny) != 0 || len(c.Permissions.Auto.Ask) != 0 {
+		t.Errorf("auto block leaked from local: deny=%v ask=%v", c.Permissions.Auto.Deny, c.Permissions.Auto.Ask)
+	}
+
+	w := warnings()
+	if w == "" {
+		t.Fatal("expected a startup warning naming ignored keys, got none")
+	}
+	for _, key := range []string{"permissions.mode", "permissions.auto_approve", "permissions.session_allow", "permissions.auto"} {
+		if !strings.Contains(w, key) {
+			t.Errorf("warning %q does not mention %q", w, key)
+		}
+	}
+	// Exactly one aggregated warning line.
+	if got := strings.Count(strings.TrimRight(w, "\n"), "\n"); got != 0 {
+		t.Errorf("expected one aggregated warning line, got %d newlines in %q", got, w)
+	}
+}
+
+// TestTrustedFileMayLoosenPolicy asserts the same loosening keys ARE honored
+// when they come from the trusted ~/.fuse/config.yml.
+func TestTrustedFileMayLoosenPolicy(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	trusted := `
+permissions:
+  mode: "off"
+  auto_approve: ["bash:*"]
+  session_allow: false
+  auto:
+    classifier_model: my-model
+`
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(trusted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Permissions.Mode != "off" {
+		t.Errorf("mode = %q, want off (trusted loosening honored)", c.Permissions.Mode)
+	}
+	if len(c.Permissions.AutoApprove) != 1 || c.Permissions.AutoApprove[0] != "bash:*" {
+		t.Errorf("auto_approve = %v, want [bash:*]", c.Permissions.AutoApprove)
+	}
+	if c.Permissions.SessionAllow {
+		t.Errorf("session_allow = %v, want false (trusted honored)", c.Permissions.SessionAllow)
+	}
+	if c.Permissions.Auto.ClassifierModel != "my-model" {
+		t.Errorf("auto.classifier_model = %q, want my-model", c.Permissions.Auto.ClassifierModel)
+	}
+	if w := warnings(); w != "" {
+		t.Errorf("trusted file must not warn, got %q", w)
+	}
+}
+
+// TestLocalFileMayTightenPolicy asserts tightening keys (always_prompt,
+// disabled) from the repo-plantable file ARE honored and do not warn.
+func TestLocalFileMayTightenPolicy(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	local := `
+permissions:
+  always_prompt: ["bash:git push *"]
+  disabled: ["web_fetch"]
+`
+	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Permissions.AlwaysPrompt) != 1 || c.Permissions.AlwaysPrompt[0] != "bash:git push *" {
+		t.Errorf("always_prompt = %v, want [bash:git push *] (local tightening honored)", c.Permissions.AlwaysPrompt)
+	}
+	if len(c.Permissions.Disabled) != 1 || c.Permissions.Disabled[0] != "web_fetch" {
+		t.Errorf("disabled = %v, want [web_fetch] (local tightening honored)", c.Permissions.Disabled)
+	}
+	if w := warnings(); w != "" {
+		t.Errorf("tightening-only local file must not warn, got %q", w)
 	}
 }
 

@@ -113,10 +113,23 @@ type rawConfig struct {
 	SkillPaths  []string               `yaml:"skill_paths"`
 	MaxTurns    int                    `yaml:"max_turns"`
 	MaxTokens   int                    `yaml:"max_tokens"`
-	Permissions PermissionsConfig      `yaml:"permissions"`
+	Permissions rawPermissionsConfig   `yaml:"permissions"`
 	MCPServers  []MCPServerConfig      `yaml:"mcp_servers"`
 	Research    rawResearchConfig      `yaml:"research"`
 	Agents      rawAgentsConfig        `yaml:"agents"`
+}
+
+// rawPermissionsConfig mirrors PermissionsConfig on-disk. SessionAllow is a
+// pointer so the loader can distinguish an omitted key from an explicit
+// `session_allow: false`; a plain bool zero-value cannot, and the distinction
+// matters for the trust-boundary check on the repo-plantable .fuse.local.yml.
+type rawPermissionsConfig struct {
+	Mode         string     `yaml:"mode"`
+	SessionAllow *bool      `yaml:"session_allow"`
+	AutoApprove  []string   `yaml:"auto_approve"`
+	AlwaysPrompt []string   `yaml:"always_prompt"`
+	Disabled     []string   `yaml:"disabled"`
+	Auto         AutoConfig `yaml:"auto"`
 }
 
 // rawAgentsConfig mirrors AgentsConfig on-disk.

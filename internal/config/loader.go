@@ -2,11 +2,17 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// warnw is where startup trust-boundary warnings are written. It defaults to
+// stderr and is swappable in tests.
+var warnw io.Writer = os.Stderr
 
 // Load resolves configuration by starting from Default(), merging
 // ~/.fuse/config.yml if present, then .fuse.local.yml in the CWD if present,
@@ -16,11 +22,13 @@ func Load() (Config, error) {
 
 	home, err := os.UserHomeDir()
 	if err == nil {
-		if err := mergeFile(&c, filepath.Join(home, ".fuse", "config.yml")); err != nil {
+		if err := mergeFile(&c, filepath.Join(home, ".fuse", "config.yml"), true); err != nil {
 			return c, err
 		}
 	}
-	if err := mergeFile(&c, ".fuse.local.yml"); err != nil {
+	// .fuse.local.yml is repo-plantable (untrusted): permission-loosening keys
+	// are ignored so a checked-in file cannot weaken the gate.
+	if err := mergeFile(&c, ".fuse.local.yml", false); err != nil {
 		return c, err
 	}
 
@@ -34,8 +42,10 @@ func Load() (Config, error) {
 }
 
 // mergeFile applies a YAML file onto c if the file exists. A missing file is
-// not an error; a malformed file is.
-func mergeFile(c *Config, path string) error {
+// not an error; a malformed file is. When trusted is false the source is
+// repo-plantable (e.g. .fuse.local.yml): permission-LOOSENING keys are ignored
+// with an aggregated startup warning, while tightening keys stay honored.
+func mergeFile(c *Config, path string, trusted bool) error {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -64,29 +74,50 @@ func mergeFile(c *Config, path string) error {
 	if len(raw.SkillPaths) > 0 {
 		c.SkillPaths = raw.SkillPaths
 	}
+	// Permission-loosening keys are honored only from a trusted source. From an
+	// untrusted (repo-plantable) source they are inert and each present one is
+	// collected for a single aggregated startup warning.
+	var ignored []string
 	if raw.Permissions.Mode != "" {
-		c.Permissions.Mode = raw.Permissions.Mode
+		if trusted {
+			c.Permissions.Mode = raw.Permissions.Mode
+		} else {
+			ignored = append(ignored, "permissions.mode")
+		}
 	}
-	if !raw.Permissions.SessionAllow {
-		c.Permissions.SessionAllow = false
+	// session_allow (a *bool) is only a loosening override when explicitly set.
+	if raw.Permissions.SessionAllow != nil {
+		if trusted {
+			c.Permissions.SessionAllow = *raw.Permissions.SessionAllow
+		} else {
+			ignored = append(ignored, "permissions.session_allow")
+		}
 	}
 	if len(raw.Permissions.AutoApprove) > 0 {
-		c.Permissions.AutoApprove = raw.Permissions.AutoApprove
+		if trusted {
+			c.Permissions.AutoApprove = raw.Permissions.AutoApprove
+		} else {
+			ignored = append(ignored, "permissions.auto_approve")
+		}
 	}
+	// Tightening keys stay honored from either source.
 	if len(raw.Permissions.AlwaysPrompt) > 0 {
 		c.Permissions.AlwaysPrompt = raw.Permissions.AlwaysPrompt
 	}
 	if len(raw.Permissions.Disabled) > 0 {
 		c.Permissions.Disabled = raw.Permissions.Disabled
 	}
-	if raw.Permissions.Auto.ClassifierModel != "" {
-		c.Permissions.Auto.ClassifierModel = raw.Permissions.Auto.ClassifierModel
+	// The whole permissions.auto.* block is loosening surface.
+	if raw.Permissions.Auto.ClassifierModel != "" || len(raw.Permissions.Auto.Deny) > 0 || len(raw.Permissions.Auto.Ask) > 0 {
+		if trusted {
+			c.Permissions.Auto = raw.Permissions.Auto
+		} else {
+			ignored = append(ignored, "permissions.auto")
+		}
 	}
-	if len(raw.Permissions.Auto.Deny) > 0 {
-		c.Permissions.Auto.Deny = raw.Permissions.Auto.Deny
-	}
-	if len(raw.Permissions.Auto.Ask) > 0 {
-		c.Permissions.Auto.Ask = raw.Permissions.Auto.Ask
+	if !trusted && len(ignored) > 0 {
+		fmt.Fprintf(warnw, "warning: %s ignores permission-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
+			path, strings.Join(ignored, ", "))
 	}
 	if len(raw.MCPServers) > 0 {
 		c.MCPServers = raw.MCPServers
