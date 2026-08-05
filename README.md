@@ -78,3 +78,28 @@ research:
     url_field: url
     snippet_field: content
 ```
+
+### Observing the research flow — `research-probe`
+
+The research flow is emergent and prompt-driven: the model diversifies a
+question into facets, fans out one subagent per facet, and each child searches
+and fetches on its own. That is hard to watch in the interactive shell (it
+scrolls past) and unreachable from one-shot `fuse "<task>"` mode (which never
+loads a skill slash command). `research-probe` runs the **real** flow — the
+embedded `research` skill, the real `web_search`/`web_fetch` tools against your
+configured provider, the real `spawn_agent` fan-out, talking to the live
+gateway — headless and fully recorded, then prints an inspectable digest:
+
+```sh
+export TAVILY_API_KEY=...        # or BRAVE_SEARCH_API_KEY
+fuse research-probe --model kimi "What is Litestream and how does it back up SQLite?"
+```
+
+It prints the spawn tree (root + one node per facet, with status), the census
+of searches and fetches, every unique search query and fetched URL, and the
+root's final synthesized report — or a clear "did not synthesize a report" line
+when the flow fans out but never converges. Flags: `--model <alias>` picks the
+driver model, `--trace <file>` also writes the raw gateway request/response
+JSON, and `--timeout <dur>` bounds the whole run (default 3m). Nothing about the
+agents is faked — the recorder is just an `agent.Renderer` layered over the
+production wiring, so what you see is exactly what `/research` does.

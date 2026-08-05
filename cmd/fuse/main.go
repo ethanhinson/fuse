@@ -48,6 +48,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 0
 		case "shell":
 			return runShell(args[1:], cfg, reg, stdout, stderr)
+		case "research-probe":
+			return runResearchProbe(args[1:], cfg, reg, stdout, stderr)
 		case "mcps":
 			return runMCPs(args[1:], cfg, stdout, stderr)
 		case "mcp-server":
@@ -58,6 +60,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "  fuse <task>       run an agent on a one-shot task")
 			fmt.Fprintln(stdout, "  fuse models       list configured model aliases")
 			fmt.Fprintln(stdout, "  fuse shell        start an interactive agent shell")
+			fmt.Fprintln(stdout, "  fuse research-probe \"<q>\"  run + observe the research flow headlessly")
 			fmt.Fprintln(stdout, "  fuse mcps         list connected MCP servers")
 			fmt.Fprintln(stdout, "  fuse help         show this help")
 			return 0
