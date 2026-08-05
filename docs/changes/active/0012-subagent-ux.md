@@ -6,21 +6,21 @@ status: proposed
 priority: high
 type: feat
 created: 2026-08-04
-updated: 2026-08-04
+updated: 2026-08-05
 depends_on: [10]
 related: [10, 11]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-04-subagent-ux-design.md
 plan:
-results:
+results: docs/results/2026-08-04-subagent-ux-results.md
 trivial: false
 auto_groomable: false
-branch:
-claimed_at:
-pr:
+branch: feat/0012-subagent-ux
+claimed_at: 2026-08-04
+pr: "https://github.com/ethanhinson/fuse/pull/10"
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -35,24 +35,48 @@ reconciled: false
 
 Every serious AI agent harness eventually hits the same wall: a single-agent loop can't parallelize work, can't isolate risky operations, and can't scale to large codebases. The leaders (Claude Code, LangGraph, OpenHands) all have subagent primitives, but their UX is uniformly poor — a flat spinner, no inspection, no observability. Claude Code's own users have 20+ open issues for subagent visibility, all closed as not planned. This change makes subagents a first-class UX primitive in fuse: spawnable by the model or by skills, observable live in a spatial tree, inspectable per-node, and dispatchable to remote containerized runtimes with structured git-based write-back.
 
-Change 0011 (deep-research) depends on this change's `agent.Spawn`/`SpawnGroup` API for its query fan-out; the subagent architecture unblocks that work.
+Change 0011 (deep-research) plans its own goroutine fan-out with subagent dispatch as an upgrade path; `agent.Spawner.Spawn` is the primitive it would build on.
 
 ## What changes
 
 - `spawn_agent` built-in tool — LLM-callable; spawns a child agent and returns its result.
-- `agent.Spawn(ctx, SpawnOpts) (*AgentHandle, error)` — programmatic API for skill/code-driven orchestration; `SpawnGroup`/`Join` for fan-out.
+- `agent.Spawner.Spawn(ctx, SpawnOpts) (AgentHandle, error)` — programmatic API for skill/code-driven orchestration. (A `SpawnGroup` join helper existed and was removed as dead code — fan-out runs through parallel `spawn_agent` batches; 0011 can reintroduce a join shaped to its needs, with slot-yielding.)
 - `AgentTree` + `AgentNode` data model — ULID-keyed, thread-safe, append-only events, JSONL session log.
 - Spatial ASCII tree TUI (`/agents` + `Tab`) — 3-zone layout with box-drawing edges, `☁` prefix for remote nodes, `●◐○✓✕` status glyphs, 40/60 tree/detail split, drill-down event transcript.
 - Inline depth-1 summaries in the main conversation transcript (running / done / error states).
-- Remote execution over SSE (`RemoteExecutor` / `SSERemoteExecutor`) — dispatch to a containerized runtime, stream `AgentEvent`s back live, reconnect via `Last-Event-ID`.
-- `IntentPlugin` system — pluggable interface resolving container image, git clone spec, write-back branch, and injected files before dispatch; `DocketIntentPlugin` and `OpenSpecIntentPlugin` as reference implementations.
-- Secrets management — `SecretsStore` (where secrets live) + `EncryptionProvider` (how they are encrypted); `EnvSecretsStore` (default), `SopsSecretsStore` (SOPS-encrypted file, age/KMS/PGP via SOPS's own backend); optional age-encrypted bundle transport for container secret injection.
-- `MaxDepth = 5` hard limit, enforced synchronously before node creation.
-- Permission snapshot-clone for local children; remote agents own their own permission gate.
-- Tool scoping via `Registry.Subset` — `spawn_agent` force-included; unknowns dropped with a node event.
+- `MaxDepth = 5` hard limit, enforced synchronously before node creation; `MaxConcurrentSpawns = 8` tree-global width cap (queued children stay visible as pending).
+- Permission handling for local children: **currently `AlwaysApprove`** (deviation from the spec'd snapshot-clone — see results doc; `CloneForChild` re-enable is Phase 3 follow-up now that the approval queue exists).
+- Tool scoping via `Registry.Subset` — `spawn_agent` force-included; unknown tool names fail the spawn with the names listed (tool-error feedback loop; supersedes "dropped with a node event").
+
+### Hardening from live testing + architecture review (same branch)
+
+Five production failure classes were found live (approval-slot deadlock,
+unbounded model calls, context ballooning, nested-spawn width-cap deadlock,
+tab/binary display shear) plus a four-reviewer architecture review; the
+fixes landed on this branch across two hardening rounds. Full detail in the
+[results doc](../../../../docs/results/2026-08-04-subagent-ux-results.md),
+[architecture review](../../../../docs/reviews/2026-08-04-subagent-architecture-review.md),
+and [context-management design](../../../../docs/designs/context-management.md).
+Highlights:
+
+- Approval FIFO queue (fixes two deadlocks); Esc-deny fix; `Program.Send`
+  bridges replacing the entire waitForMsg re-arm machinery; race-safe
+  `NodeView` snapshots for all TUI reads.
+- Bounded, diagnosable model calls (timeouts, retries, labeled trace with
+  per-agent REQ/RESP/RETRY/ERROR blocks; children traced too).
+- Remote lifecycle: cancel → `StatusCancelled` (was success), split
+  dispatch/stream HTTP clients, 4MiB SSE scanner, progress-reset retry budget.
+- Context management replacing interim hard caps: spill-file truncation
+  (lossless; full output on disk with recovery pointer), 1000-line
+  `read_file` window, new safe-listed `grep` tool, hybrid token accounting
+  with per-model `context_window`, recency pruning at 85% + prune-and-retry
+  on provider length rejections.
+- TUI: batched call/result pairing, detail-pane follow-tail + wheel scroll,
+  partial child transcripts preserved on budget exhaustion.
 
 ## Out of scope
 
+- **Remote execution, containers/Kubernetes runtimes, intent plugins, and secrets management — descoped 2026-08-05.** Subagents are local-only for now; the SSE executor, `IntentPlugin` system, and `SecretsStore`/`EncryptionProvider` were removed from the branch after live testing showed the local runtime alone was a full change's worth of complexity. The removed design remains in the spec and git history (pre-`local-only` commits) for a future change.
 - Streaming partial child prose into the parent transcript — the parent sees only the final tool result.
 - Cross-session resume of a remote job after the local process exits.
 - Compact-depth toggle in the explore view (truncation row format is spec'd for forward-compat; toggle is deferred).
@@ -61,4 +85,7 @@ Change 0011 (deep-research) depends on this change's `agent.Spawn`/`SpawnGroup` 
 
 ## Open questions
 
-None — design fully specified in the linked spec.
+None — design fully specified in the linked spec. Follow-on work discovered
+during hardening (transcript store, `harness.Factory` layering +
+`CloneForChild` re-enable, event-vocabulary consolidation, Tier-2 compaction,
+remote/secrets fixes) is enumerated in the results doc for future stubs.
