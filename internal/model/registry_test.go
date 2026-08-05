@@ -14,6 +14,8 @@ func TestDefaultRegistryContainsNamedModels(t *testing.T) {
 		"qwen-local":     "local/qwen-7b",
 		"llama":          "local/llama3.1:8b",
 		"claude":         "claude/sonnet",
+		"sonnet-5":       "claude/sonnet-5",
+		"minimax":        "cloud/minimax-m3",
 	}
 	for alias, id := range want {
 		mc, err := r.Resolve(alias)

@@ -40,6 +40,11 @@ func DefaultRegistry() *Registry {
 		"qwen-local":     {ID: "local/qwen-7b", MaxTokens: 4096, Persona: "general"},
 		"llama":          {ID: "local/llama3.1:8b", MaxTokens: 2048, Persona: "general"},
 		"claude":         {ID: "claude/sonnet", MaxTokens: 8192, Persona: "general"},
+		// Claude Sonnet 5 via the gateway's OpenRouter route (distinct from the
+		// credit-blocked Anthropic "claude/sonnet" route above).
+		"sonnet-5": {ID: "claude/sonnet-5", MaxTokens: 8192, Persona: "general"},
+		// MiniMax M3, a cheap agentic gateway model.
+		"minimax": {ID: "cloud/minimax-m3", MaxTokens: 8192, Persona: "general"},
 		// claude-max routes to the CLIAdapter (fuse mcp-server bridge) rather
 		// than the LiteLLM gateway. ID prefix "cli/" is the discriminator.
 		"claude-max": {ID: "cli/claude-max", MaxTokens: 0, Persona: "coding"},
