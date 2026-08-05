@@ -2,7 +2,7 @@
 id: 15
 slug: tui-hanging-indent-wrap
 title: Hanging-indent wrapping for the shell transcript
-status: in-progress
+status: implemented
 priority: medium
 type: fix
 created: 2026-08-05
@@ -17,8 +17,8 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/tui-hanging-indent-wrap
-pr:
-claimed_at: 2026-08-05T08:29:21Z
+pr: https://github.com/ethanhinson/fuse/pull/12
+claimed_at: 2026-08-05T08:55:17Z
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [0015-tui-hanging-indent-wrap.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0015-tui-hanging-indent-wrap.md) |
 | Plan | [0015-tui-hanging-indent-wrap.md](https://github.com/ethanhinson/fuse/blob/feat/tui-hanging-indent-wrap/docs/superpowers/plans/0015-tui-hanging-indent-wrap.md) |
+| PR | [#12](https://github.com/ethanhinson/fuse/pull/12) |
 <!-- docket:artifacts:end -->
 
 ## Why
