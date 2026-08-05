@@ -36,18 +36,51 @@ type PermissionGate struct {
 	cache   *ApprovalCache
 	approve ApprovalFunc
 	inner   *tools.Registry
+
+	// classifier is the auto-mode probabilistic layer. It is nil outside auto
+	// mode and nil in auto mode when no classifier was injected — a nil
+	// classifier makes the residual gray area fail closed to a human ask.
+	classifier *Classifier
+	// workspaceRoot is the pre-canonicalized (filepath.EvalSymlinks) workspace
+	// directory used by the auto-mode heuristic for path scoping. The gate
+	// canonicalizes once at construction and passes it to classifyHeuristic.
+	workspaceRoot string
+}
+
+// Option configures optional auto-mode dependencies on a PermissionGate. The
+// three-argument New(...) form stays behaviour-identical for smart/off/
+// prompt-all; auto-mode wiring is purely additive via options.
+type Option func(*PermissionGate)
+
+// WithClassifier injects the auto-mode classifier. Passing nil (or omitting the
+// option) leaves the gate's residual gray area to fail closed to a human ask.
+func WithClassifier(c *Classifier) Option {
+	return func(g *PermissionGate) { g.classifier = c }
+}
+
+// WithWorkspaceRoot sets the pre-canonicalized workspace root used for auto-mode
+// path scoping. The caller MUST canonicalize with filepath.EvalSymlinks before
+// passing it (the heuristic compares against the real, symlink-resolved path).
+func WithWorkspaceRoot(root string) Option {
+	return func(g *PermissionGate) { g.workspaceRoot = root }
 }
 
 // New builds a PermissionGate. approve is called when user input is needed;
-// pass AlwaysApprove for non-interactive (one-shot) sessions.
-func New(cfg config.PermissionsConfig, inner *tools.Registry, approve ApprovalFunc) *PermissionGate {
-	return &PermissionGate{
+// pass AlwaysApprove for non-interactive (one-shot) sessions. Auto-mode
+// dependencies (a classifier, a workspace root) are supplied additively via
+// opts so existing three-argument callers compile and behave unchanged.
+func New(cfg config.PermissionsConfig, inner *tools.Registry, approve ApprovalFunc, opts ...Option) *PermissionGate {
+	g := &PermissionGate{
 		mode:    ParseMode(cfg.Mode),
 		cfg:     cfg,
 		cache:   newApprovalCache(),
 		approve: approve,
 		inner:   inner,
 	}
+	for _, opt := range opts {
+		opt(g)
+	}
+	return g
 }
 
 // Schemas delegates to the inner registry so agent.New receives the full
@@ -65,7 +98,11 @@ func (g *PermissionGate) Execute(ctx context.Context, name, args string) tools.R
 		return tools.Result{IsError: true, Output: fmt.Sprintf("tool %q is disabled", name)}
 	}
 	if !policy.AutoApprove {
-		return tools.Result{IsError: true, Output: "tool call denied by user"}
+		msg := "tool call denied by user"
+		if policy.DenyReason != "" {
+			msg = policy.DenyReason
+		}
+		return tools.Result{IsError: true, Output: msg}
 	}
 	return g.inner.Execute(ctx, name, args)
 }
@@ -90,6 +127,21 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	if g.cache.Check(name, args) {
 		policy.AutoApprove = true
 		return policy, nil
+	}
+
+	if g.mode == ModeAuto {
+		verdict, reason := g.resolveAuto(ctx, name, args)
+		switch verdict {
+		case VerdictAllow:
+			policy.AutoApprove = true
+			return policy, nil
+		case VerdictDeny:
+			// A deny is not an error: return a non-auto-approve policy carrying
+			// the layer-named reason so the model can retry with a different call.
+			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason}, nil
+		default:
+			// VerdictAsk ⇒ fall through to the shared human-approval block below.
+		}
 	}
 
 	if g.mode == ModeSmart {
@@ -123,16 +175,103 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	return policy, nil
 }
 
+// resolveAuto runs the auto-mode pipeline and returns a Verdict plus, on a
+// deny, a layer-named denial reason (empty otherwise). Layer order:
+//
+//  1. Split segments (bash only). ErrUnparseable ⇒ ask (fail toward the human;
+//     an unparseable command is not routed to the classifier).
+//  2. evalRules: Deny ⇒ deny (terminal); Allow ⇒ allow; Ask ⇒ continue.
+//  3. allSegmentsReadOnlySafe ⇒ allow.
+//  4. classifyHeuristic: Deny ⇒ deny; Allow ⇒ allow; Ask ⇒ continue.
+//  5. classifier (if wired): its verdict is final. If nil ⇒ ask (fail closed).
+//
+// Non-bash tools carry no shell command: an onSafeList tool ⇒ allow; otherwise
+// route to the classifier with the raw args as the command (or ask if none).
+func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (Verdict, string) {
+	if name != "bash" {
+		if onSafeList(name) {
+			return VerdictAllow, ""
+		}
+		return g.classifyOrAsk(ctx, name, args)
+	}
+
+	command := bashCommand(args)
+
+	// 1. Static floor: parse into segments. Unparseable fails toward the human.
+	segments, err := splitSegments(command)
+	if err != nil {
+		return VerdictAsk, ""
+	}
+
+	// 2. Deterministic rules. Deny is terminal; allow is a positive auto-approve.
+	switch evalRules(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt) {
+	case VerdictDeny:
+		return VerdictDeny, "denied by auto-mode rules layer: " + command
+	case VerdictAllow:
+		return VerdictAllow, ""
+	}
+
+	// 3. Read-only safe list short-circuit.
+	if allSegmentsReadOnlySafe(segments) {
+		return VerdictAllow, ""
+	}
+
+	// 4. Heuristics: egress boundary / path scoping. Ask ⇒ continue to classifier.
+	switch classifyHeuristic(segments, g.workspaceRoot) {
+	case VerdictDeny:
+		return VerdictDeny, "denied by auto-mode heuristic layer: " + command
+	case VerdictAllow:
+		return VerdictAllow, ""
+	}
+
+	// 5. Classifier (final) or fail-closed ask.
+	return g.classifyOrAsk(ctx, name, command)
+}
+
+// classifyOrAsk consults the injected classifier for a final verdict, or fails
+// closed to VerdictAsk when no classifier is wired. A classifier deny carries a
+// layer-named reason.
+func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string) (Verdict, string) {
+	if g.classifier == nil {
+		return VerdictAsk, ""
+	}
+	// User-message history is not plumbed into the gate for Task 7; the
+	// classifier still functions from the pending-call turn alone.
+	switch g.classifier.Classify(ctx, nil, name, command) {
+	case VerdictAllow:
+		return VerdictAllow, ""
+	case VerdictDeny:
+		return VerdictDeny, "denied by auto-mode classifier: " + command
+	default:
+		return VerdictAsk, ""
+	}
+}
+
+// bashCommand extracts the shell command string from a bash tool's JSON args,
+// mirroring makePreview. A non-bash or unparseable args string yields "", which
+// splitSegments treats as an empty (unresolved) command.
+func bashCommand(args string) string {
+	var v struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(args), &v); err == nil {
+		return v.Command
+	}
+	return ""
+}
+
 // CloneForChild returns a child permission gate seeded from a snapshot of this
 // gate's approval cache. The child's approval prompts will be prefixed [label].
 // Child approvals do not propagate back to the parent gate.
 func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
 	return &PermissionGate{
-		mode:    g.mode,
-		cfg:     g.cfg,
-		cache:   g.cache.Clone(),
-		approve: prefixedApprove(label, g.approve),
-		inner:   g.inner,
+		mode:          g.mode,
+		cfg:           g.cfg,
+		cache:         g.cache.Clone(),
+		approve:       prefixedApprove(label, g.approve),
+		inner:         g.inner,
+		classifier:    g.classifier.cloneForChild(),
+		workspaceRoot: g.workspaceRoot,
 	}
 }
 

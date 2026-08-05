@@ -123,6 +123,22 @@ func warnf(w io.Writer, format string, args ...any) {
 	fmt.Fprintf(w, format+"\n", args...)
 }
 
+// cloneForChild returns a copy of the classifier for a child gate: it shares the
+// completer client and resolved modelID but gets an independent snapshot of the
+// verdict cache (via cache.Clone), so child verdicts do not propagate back to
+// the parent. It is nil-safe — a nil classifier clones to nil — so CloneForChild
+// can call it unconditionally.
+func (c *Classifier) cloneForChild() *Classifier {
+	if c == nil {
+		return nil
+	}
+	return &Classifier{
+		client:  c.client,
+		modelID: c.modelID,
+		cache:   c.cache.Clone(),
+	}
+}
+
 // Classify returns a block-biased verdict for a pending tool call. userMessages
 // are the user-authored turns of the conversation; toolName and command are the
 // pending call (command is the human-readable command for a bash tool, or the

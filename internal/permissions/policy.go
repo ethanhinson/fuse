@@ -37,6 +37,12 @@ func ParseMode(s string) PermissionMode {
 type ToolPolicy struct {
 	Enabled     bool
 	AutoApprove bool
+	// DenyReason, when non-empty, carries a layer-named explanation for an
+	// auto-mode denial (e.g. "denied by auto-mode rules layer: <cmd>"). It is
+	// empty for the legacy smart/off/prompt-all deny path, which surfaces the
+	// fixed "tool call denied by user" message. Execute prefers DenyReason when
+	// set. A deny is not an error: the model may retry with a different call.
+	DenyReason string
 }
 
 // safeList is the baseline set of built-in read-only tools that always
