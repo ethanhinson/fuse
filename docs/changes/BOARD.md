@@ -1,6 +1,6 @@
 # Backlog
 
-**14 changes** — 🟢 1 in progress · 🟡 1 proposed · ✅ 10 done · 🗑️ 2 killed
+**15 changes** — 🟢 1 in progress · 🟡 2 proposed · ✅ 10 done · 🗑️ 2 killed
 
 ## 🟢 In progress (1)
 
@@ -8,16 +8,18 @@
 |---|-------|----------|------|------|--------|
 | [0013](active/0013-startup-banner.md) | ASCII art startup banner — shell init & fuse help | `medium` | `feat` | [spec](../superpowers/specs/2026-08-04-startup-banner-design.md) | `feat/startup-banner` |
 
-## 🟡 Proposed (1)
+## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | needs-brainstorm |
+| [0015](active/0015-tui-hanging-indent-wrap.md) | Hanging-indent wrapping for the shell transcript | `medium` | `fix` | build-ready |
 
 ```mermaid
 graph TD
   0013
   0012 --> 0014
+  0015
   0012:::done
   classDef done fill:#d3f9d8;
 ```
