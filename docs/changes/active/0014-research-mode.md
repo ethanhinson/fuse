@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/research-mode
-claimed_at: 2026-08-05T16:47:14Z
+claimed_at: 2026-08-05T16:57:49Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -89,3 +89,26 @@ Full rationale and evidence in the spec.
 Context endpoint replaces some fetch volume — lives in the spec.)
 
 ## Reconcile log
+
+### 2026-08-05 — implementer reconcile (claim of feat/research-mode)
+
+Reconciled against current `origin/main`. Dependency 0012 (subagent runtime) is `done`
+(archived); related 0010/0011 also archived. The design is intact and build-ready — no
+fundamental invalidation. Three build-time constraints folded into the spec, none
+scope-breaking:
+
+1. **Embedded skill (D2)** — the skill loader (`internal/skills/loader.go`) is
+   filesystem-discovery only; there is no `go:embed` path yet. Build must add an
+   embedded-skill source ranked lowest so a user `research` skill still shadows it.
+2. **Config is YAML, not TOML** — `internal/config/schema.go` uses `yaml:` tags +
+   `rawConfig` mirror + `Default()`; `ResearchConfig` plugs in there (mirror the
+   `PermissionsConfig` block).
+3. **No `Retry-After` parsing exists** — the model adapter has bounded retries/backoff/
+   trace but not `Retry-After`; the research HTTP layer builds that fresh, mirroring the
+   adapter's discipline.
+
+All other substrates (Registry.Subset force-including `spawn_agent`, PermissionGate,
+`sanitizeDisplay`, spill truncation, glamour render, slash builtin provider) verified
+present and match the spec. No `internal/research/` package or web tools exist yet
+(clean slate). Auto-capture disabled — no follow-up stubs minted; nothing adjacent
+surfaced beyond the in-scope deltas above.

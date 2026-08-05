@@ -42,6 +42,17 @@ with the 0004 skill runtime at startup. `/research` works with no user setup bey
 the Brave key; a user skill of the same name shadows the embedded one (standard
 skill-runtime precedence).
 
+**Reconcile 2026-08-05 — no embedded-skill path exists yet.** The current skill loader
+(`internal/skills/loader.go`) is filesystem-discovery only: it scans `~/.fuse/skills`,
+`~/.claude/skills`, `~/.grok/skills` for `<name>/SKILL.md` with first-wins dedup, and
+has **no `go:embed` source**. The build must therefore *add* an embedded-skill source
+to the loader — parsed by the existing `parser.go` frontmatter path — and order it so
+user directories still win (embedded ranks **lowest** in the first-wins scan, giving
+free shadowing). The embedded skill is authored in the `SKILL.md` frontmatter shape the
+parser already requires (`name:`, optional `slash_command:`/`description:`), not a bare
+`skills/research.md`; the file-table row below is a source-tree location, registered via
+`go:embed`, not a discovery directory.
+
 ### D3 — Brave primary + Tavily in v1; user-extensible beyond that
 
 Evidence gathered during the groom: Claude's web search is Anthropic's **server-side**
@@ -183,6 +194,15 @@ invokes the research skill with the query. No Go pipeline behind it.
 
 ### Config — `[research]` in fuse config
 
+**Reconcile 2026-08-05 — config is YAML, not TOML.** fuse config is YAML
+(`~/.fuse/config.yml` + `.fuse.local.yml`), parsed in `internal/config/schema.go` via
+a top-level `Config` struct with `yaml:` tags, a `rawConfig` unmarshal mirror, and a
+`Default()` fallback (the `PermissionsConfig` block is the template to mirror). The
+`ResearchConfig`/`CustomProviderConfig` structs below are correct as Go shapes; they
+gain `yaml:"…"` tags, a `Research ResearchConfig` field on `Config`, a mirror entry in
+`rawConfig`, and defaults in `Default()`. The `[research]` / `[research.custom]` naming
+is the logical block; on disk it is the YAML `research:` / `research.custom:` mapping.
+
 ```go
 type ResearchConfig struct {
     Provider      string // "brave" | "tavily" | "custom" | "" (auto: Brave env → Tavily env → custom)
@@ -248,3 +268,27 @@ type CustomProviderConfig struct {
 
 1. Whether Brave's LLM Context endpoint replaces some `web_fetch` volume (D3 note) —
    decide from a quick spike during build, not now.
+
+## Reconcile notes (2026-08-05, implementer)
+
+Verified against current `main`; the design holds. Three build-time deltas folded in
+above, none invalidating:
+
+- **Substrates confirmed present and named:** subagent runtime + fan-out
+  (`internal/agent/`: `Spawner.Spawn`, `MaxDepth=5`, `MaxConcurrentSpawns=8`, slot
+  semaphore); tool `Registry` + `Subset(names)` which force-includes `spawn_agent`
+  (`internal/tools/registry.go`), tool interface
+  `Name()/Description()/Parameters()/Execute(ctx,args) Result` (template: `read.go`);
+  `PermissionGate` with session cache + 3-source merge + one-shot auto-approve
+  (`internal/permissions/`); `sanitizeDisplay` (`internal/tui/renderer.go`); spill-file
+  truncation (`internal/tools/spill.go`); glamour markdown render
+  (`internal/tui/shell_model.go`); slash builtin provider
+  (`internal/tui/builtin_provider.go`); bounded HTTP/retry/trace pattern to mirror
+  (`internal/model/adapter.go`). No `internal/research/` or web tools exist yet — clean
+  slate as expected.
+- **D2 embedded skill:** no `go:embed` path exists in the skill loader today — must be
+  added (see D2 reconcile note).
+- **Config YAML not TOML:** see the Config reconcile note.
+- **Retry-After:** the model adapter has bounded attempts + backoff + labeled trace but
+  no `Retry-After` parsing; the research HTTP discipline builds that fresh, mirroring
+  the adapter's timeout/attempt/trace shape.
