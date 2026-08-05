@@ -391,6 +391,15 @@ func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
 	}
 }
 
+// PrefixApproval wraps an ApprovalFunc so a child/subagent's prompts are
+// prefixed with [label] and routed through the same parent approval channel,
+// exactly like CloneForChild does internally. Entry points that build child
+// gates directly (rather than via CloneForChild) use this so subagent approvals
+// surface on the parent's channel instead of bypassing it.
+func PrefixApproval(label string, fn ApprovalFunc) ApprovalFunc {
+	return prefixedApprove(label, fn)
+}
+
 // prefixedApprove wraps an ApprovalFunc so that prompts are prefixed with
 // [label] to identify which child agent is asking.
 func prefixedApprove(label string, fn ApprovalFunc) ApprovalFunc {
