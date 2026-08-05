@@ -110,7 +110,7 @@ func TestAgentTreeEmitNonBlocking(t *testing.T) {
 	}
 }
 
-func TestAgentTreeNodes(t *testing.T) {
+func TestAgentTreeSnapshotAllOrder(t *testing.T) {
 	tree := NewAgentTree("root", "m")
 	rootID := tree.RootID()
 
@@ -120,7 +120,7 @@ func TestAgentTreeNodes(t *testing.T) {
 	grandchild := &AgentNode{ID: newNodeID(), ParentID: child.ID, Label: "grandchild"}
 	tree.addNode(grandchild)
 
-	nodes := tree.Nodes()
+	nodes := tree.SnapshotAll()
 
 	if len(nodes) != 3 {
 		t.Fatalf("expected 3 nodes, got %d", len(nodes))
@@ -161,7 +161,6 @@ func TestEventKind_String(t *testing.T) {
 		kind EventKind
 		want string
 	}{
-		{KindSpawned, "spawned"},
 		{KindAssistant, "assistant"},
 		{KindToolCall, "tool_call"},
 		{KindToolResult, "tool_result"},

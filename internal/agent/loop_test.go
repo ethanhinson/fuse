@@ -116,14 +116,6 @@ func (c *capturingCompleter) Complete(ctx context.Context, req model.CompletionR
 	return model.CompletionResp{Content: "done"}, nil
 }
 
-// bigOutputExec returns an oversized result for every tool call.
-type bigOutputExec struct{ out string }
-
-func (b *bigOutputExec) Schemas() []model.ToolSchema { return nil }
-func (b *bigOutputExec) Execute(context.Context, string, string) tools.Result {
-	return tools.Result{Output: b.out}
-}
-
 // TestRunPrunesOldToolResultsWhenOverBudget verifies the loop stubs old tool
 // results (never user/assistant messages) instead of failing the turn.
 func TestRunPrunesOldToolResultsWhenOverBudget(t *testing.T) {

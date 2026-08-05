@@ -51,20 +51,6 @@ func (c *slashCompleter) deactivate() {
 	c.visible = nil
 }
 
-// update re-filters based on the latest input value.
-func (c *slashCompleter) update(input string) {
-	if !strings.HasPrefix(input, "/") {
-		c.deactivate()
-		return
-	}
-	c.active = true
-	newFilter := filterFrom(input)
-	if newFilter != c.filter {
-		c.filter = newFilter
-		c.refresh()
-	}
-}
-
 // refresh re-queries the registry and resets cursor/offset when results change.
 func (c *slashCompleter) refresh() {
 	c.visible = c.reg.Filter(c.filter)

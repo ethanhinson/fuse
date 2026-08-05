@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -51,8 +50,7 @@ func (s NodeStatus) String() string {
 type EventKind int
 
 const (
-	KindSpawned EventKind = iota
-	KindAssistant
+	KindAssistant EventKind = iota
 	KindToolCall
 	KindToolResult
 	KindTokens
@@ -62,8 +60,6 @@ const (
 
 func (k EventKind) String() string {
 	switch k {
-	case KindSpawned:
-		return "spawned"
 	case KindAssistant:
 		return "assistant"
 	case KindToolCall:
@@ -87,7 +83,6 @@ type AgentEvent struct {
 	Name    string
 	Payload map[string]any
 	TS      time.Time
-	Seq     int64
 }
 
 // AgentNode represents one agent in the spawn tree.
@@ -102,7 +97,6 @@ type AgentNode struct {
 	EndedAt   time.Time
 	TokensIn  int
 	TokensOut int
-	CostUSD   float64
 	Events    []AgentEvent
 	children  []string
 	cancel    func() // set by Spawner; called by CancelNode
@@ -175,7 +169,6 @@ type NodeView struct {
 	EndedAt   time.Time
 	TokensIn  int
 	TokensOut int
-	CostUSD   float64
 }
 
 // Snapshot returns a consistent view of the node's mutable state.
@@ -193,7 +186,6 @@ func (n *AgentNode) Snapshot() NodeView {
 		EndedAt:   n.EndedAt,
 		TokensIn:  n.TokensIn,
 		TokensOut: n.TokensOut,
-		CostUSD:   n.CostUSD,
 	}
 }
 
@@ -208,7 +200,6 @@ type AgentTree struct {
 	nodes    map[string]*AgentNode
 	rootID   string
 	out      chan TreeUpdate // buffered 256
-	seq      atomic.Int64
 	dirty    map[string]bool
 	spawnSem chan struct{} // width cap for concurrently running local children
 
@@ -240,30 +231,6 @@ func (t *AgentTree) Node(id string) *AgentNode {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.nodes[id]
-}
-
-// Nodes returns all nodes in depth-first insertion order.
-func (t *AgentTree) Nodes() []*AgentNode {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	out := make([]*AgentNode, 0, len(t.nodes))
-	var visit func(id string)
-	visit = func(id string) {
-		n, ok := t.nodes[id]
-		if !ok {
-			return
-		}
-		out = append(out, n)
-		n.mu.Lock()
-		children := make([]string, len(n.children))
-		copy(children, n.children)
-		n.mu.Unlock()
-		for _, cid := range children {
-			visit(cid)
-		}
-	}
-	visit(t.rootID)
-	return out
 }
 
 // SnapshotAll returns snapshots of every node in depth-first insertion order.
@@ -370,11 +337,6 @@ func (t *AgentTree) Emit(update TreeUpdate) {
 
 // Updates returns the channel for receiving tree updates.
 func (t *AgentTree) Updates() <-chan TreeUpdate { return t.out }
-
-// NextSeq returns the next global event sequence number.
-func (t *AgentTree) NextSeq() int64 {
-	return t.seq.Add(1)
-}
 
 // acquireSpawnSlot blocks until a spawn slot is free or ctx ends. Returns
 // false when the context was cancelled first. Nil-safe: without a tree (or a

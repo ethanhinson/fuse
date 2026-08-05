@@ -14,31 +14,18 @@ import (
 
 // LogEntry is one line in the JSONL session log.
 type LogEntry struct {
-	TS          time.Time      `json:"ts"`
-	NodeID      string         `json:"node_id"`
-	ParentID    string         `json:"parent_id,omitempty"`
-	Label       string         `json:"label,omitempty"`
-	Depth       int            `json:"depth,omitempty"`
-	Kind        string         `json:"kind"`
-	Name        string         `json:"name,omitempty"`
-	Payload     map[string]any `json:"payload,omitempty"`
-	Tokens      *TokenCounts   `json:"tokens,omitempty"`
-	Remote      bool           `json:"remote,omitempty"`
-	RemoteJobID string         `json:"remote_job_id,omitempty"`
-	Seq         int64          `json:"seq,omitempty"`
-}
-
-// TokenCounts carries in/out token counts for a log entry.
-type TokenCounts struct {
-	In  int `json:"in"`
-	Out int `json:"out"`
+	TS       time.Time `json:"ts"`
+	NodeID   string    `json:"node_id"`
+	ParentID string    `json:"parent_id,omitempty"`
+	Label    string    `json:"label,omitempty"`
+	Depth    int       `json:"depth,omitempty"`
+	Kind     string    `json:"kind"`
 }
 
 // Logger writes JSONL session log entries to a file.
 type Logger struct {
-	f    *os.File
-	w    *bufio.Writer
-	path string
+	f *os.File
+	w *bufio.Writer
 }
 
 // DefaultLogDir returns ~/.fuse/sessions.
@@ -60,7 +47,7 @@ func NewLogger(dir string) (*Logger, error) {
 	if err != nil {
 		return nil, fmt.Errorf("session log create: %w", err)
 	}
-	return &Logger{f: f, w: bufio.NewWriter(f), path: path}, nil
+	return &Logger{f: f, w: bufio.NewWriter(f)}, nil
 }
 
 // Write appends a log entry to the session file.
@@ -80,52 +67,6 @@ func (l *Logger) Close() error {
 		return err
 	}
 	return l.f.Close()
-}
-
-// Path returns the underlying log file path.
-func (l *Logger) Path() string { return l.path }
-
-// ReplayEntry represents a reconstructed node during replay.
-type ReplayEntry struct {
-	NodeID      string
-	ParentID    string
-	Label       string
-	Depth       int
-	Remote      bool
-	RemoteJobID string
-	Events      []LogEntry
-}
-
-// Replay reads a JSONL session log and reconstructs a map of nodes keyed by ID.
-func Replay(path string) (map[string]*ReplayEntry, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("replay open %s: %w", path, err)
-	}
-	defer f.Close()
-
-	nodes := map[string]*ReplayEntry{}
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		var entry LogEntry
-		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			continue
-		}
-		n, ok := nodes[entry.NodeID]
-		if !ok {
-			n = &ReplayEntry{
-				NodeID:      entry.NodeID,
-				ParentID:    entry.ParentID,
-				Label:       entry.Label,
-				Depth:       entry.Depth,
-				Remote:      entry.Remote,
-				RemoteJobID: entry.RemoteJobID,
-			}
-			nodes[entry.NodeID] = n
-		}
-		n.Events = append(n.Events, entry)
-	}
-	return nodes, scanner.Err()
 }
 
 // SweepOld deletes session log files older than maxAge from dir. Non-fatal.

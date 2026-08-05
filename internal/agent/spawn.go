@@ -29,15 +29,12 @@ type SpawnDone struct {
 	Err    error
 }
 
-// AgentHandle holds a reference to a spawned child agent.
+// AgentHandle holds a reference to a spawned child agent. Cancellation goes
+// through the tree (AgentNode.SetCancel / Tree.CancelNode), not the handle.
 type AgentHandle struct {
 	NodeID string
 	Done   <-chan SpawnDone
-	cancel context.CancelFunc
 }
-
-// Cancel cancels the child agent's context.
-func (h *AgentHandle) Cancel() { h.cancel() }
 
 // Wait blocks until the child agent completes and returns its result.
 func (h *AgentHandle) Wait() SpawnDone { return <-h.Done }
@@ -216,5 +213,5 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		doneCh <- SpawnDone{Result: result, Err: runErr}
 	}()
 
-	return AgentHandle{NodeID: node.ID, Done: doneCh, cancel: cancel}, nil
+	return AgentHandle{NodeID: node.ID, Done: doneCh}, nil
 }

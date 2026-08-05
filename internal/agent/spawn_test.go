@@ -14,7 +14,7 @@ func makeInstantSpawner(result string) func(ctx context.Context, opts SpawnOpts)
 	return func(ctx context.Context, opts SpawnOpts) (AgentHandle, error) {
 		ch := make(chan SpawnDone, 1)
 		ch <- SpawnDone{Result: result}
-		return AgentHandle{NodeID: "test", Done: ch, cancel: func() {}}, nil
+		return AgentHandle{NodeID: "test", Done: ch}, nil
 	}
 }
 
@@ -181,7 +181,7 @@ func TestSpawnGroupJoinCancel(t *testing.T) {
 	blocker := func(ctx context.Context, opts SpawnOpts) (AgentHandle, error) {
 		ch := make(chan SpawnDone, 1)
 		// never sends on ch; Join will observe ctx cancel
-		return AgentHandle{NodeID: "block", Done: ch, cancel: func() {}}, nil
+		return AgentHandle{NodeID: "block", Done: ch}, nil
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

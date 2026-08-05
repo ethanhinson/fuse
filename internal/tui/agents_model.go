@@ -561,12 +561,7 @@ func (m *AgentsModel) renderDetailHeader(n agent.NodeView, w int) string {
 	if n.TokensIn > 0 || n.TokensOut > 0 {
 		tokens = " ↑" + formatTokens(n.TokensIn) + " ↓" + formatTokens(n.TokensOut)
 	}
-	cost := ""
-	if n.CostUSD > 0 {
-		cost = fmt.Sprintf(" $%.3f", n.CostUSD)
-	}
-
-	rightPlain := glyphForStatus(n.Status) + " " + elapsed + tokens + cost
+	rightPlain := glyphForStatus(n.Status) + " " + elapsed + tokens
 	lw := lipgloss.Width(label)
 	rw := lipgloss.Width(rightPlain)
 	space := w - lw - rw - 2
@@ -574,7 +569,7 @@ func (m *AgentsModel) renderDetailHeader(n agent.NodeView, w int) string {
 		space = 1
 	}
 
-	rightS := glyph + lipgloss.NewStyle().Foreground(colMuted).Render(" "+elapsed+tokens+cost)
+	rightS := glyph + lipgloss.NewStyle().Foreground(colMuted).Render(" "+elapsed+tokens)
 	return fitLine(
 		lipgloss.NewStyle().Foreground(colNormal).Render(label)+
 			strings.Repeat(" ", space)+rightS,
@@ -659,8 +654,6 @@ func detailKind(k agent.EventKind) string {
 		return "result   "
 	case agent.KindError:
 		return "error    "
-	case agent.KindSpawned:
-		return "spawned  "
 	case agent.KindDone:
 		return "done     "
 	default:

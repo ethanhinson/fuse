@@ -17,7 +17,7 @@ type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
 
-// buildAgentWithRenderer must resolve a known alias and return a usable agent
+// buildAgentWithRendererAndTrace must resolve a known alias and return a usable agent
 // bound to the injected renderer.
 func TestBuildAgentWithRenderer(t *testing.T) {
 	cfg := config.Default()
@@ -25,7 +25,7 @@ func TestBuildAgentWithRenderer(t *testing.T) {
 	toolReg := defaultToolRegistry(nil)
 	r := tui.NewRenderer(discard{}, false)
 
-	a, err := buildAgentWithRenderer(cfg, reg, reg.Default, r, false, "block", toolReg, permissions.AlwaysApprove)
+	a, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, r, false, "block", toolReg, permissions.AlwaysApprove, nil, "")
 	if err != nil {
 		t.Fatalf("buildAgentWithRenderer: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestBuildAgentWithRendererUnknownAlias(t *testing.T) {
 	reg := model.DefaultRegistry()
 	toolReg := defaultToolRegistry(nil)
 	r := tui.NewRenderer(discard{}, false)
-	if _, err := buildAgentWithRenderer(cfg, reg, "no-such-model", r, false, "", toolReg, permissions.AlwaysApprove); err == nil {
+	if _, err := buildAgentWithRendererAndTrace(cfg, reg, "no-such-model", r, false, "", toolReg, permissions.AlwaysApprove, nil, ""); err == nil {
 		t.Fatal("expected error for unknown alias")
 	}
 }
@@ -51,7 +51,7 @@ func TestShellModelBuilderWiring(t *testing.T) {
 	reg := model.DefaultRegistry()
 	toolReg := defaultToolRegistry(nil)
 	var build tui.AgentBuilder = func(alias string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
-		return buildAgentWithRenderer(cfg, reg, alias, r, false, "", toolReg, approve)
+		return buildAgentWithRendererAndTrace(cfg, reg, alias, r, false, "", toolReg, approve, nil, "")
 	}
 	m := tui.NewShellModel(reg.Default, false, "dark", reg, nil, build)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
