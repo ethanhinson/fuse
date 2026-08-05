@@ -69,6 +69,17 @@ type Classifier struct {
 	cache   *verdictCache
 }
 
+// NewClassifier builds an auto-mode Classifier over a real *model.Adapter and
+// *model.Registry. It is the exported seam CLI construction sites use to wire
+// the classifier: a real *model.Adapter satisfies the unexported completer
+// interface (compile-time asserted at classifier.go:28) and a real
+// *model.Registry satisfies resolver, so the body delegates straight to
+// newClassifier without widening the narrow interfaces. warn may be nil (the
+// startup fallback warning is then suppressed).
+func NewClassifier(client *model.Adapter, reg *model.Registry, cfg AutoConfig, warn io.Writer) *Classifier {
+	return newClassifier(client, reg, cfg, warn)
+}
+
 // newClassifier builds a Classifier over an injected completer (production
 // passes a real *model.Adapter; tests pass a stub). It resolves
 // cfg.ClassifierModel via reg; an unset OR unknown alias falls back to the

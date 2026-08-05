@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -115,6 +116,52 @@ func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alia
 	return a, err
 }
 
+// workspaceRoot returns the canonical (symlink-resolved) working directory used
+// as the auto-mode path-scoping root. It never panics: an error from os.Getwd
+// yields "" (the gate treats an empty root conservatively), and an error from
+// filepath.EvalSymlinks falls back to the raw cwd.
+func workspaceRoot() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		return resolved
+	}
+	return cwd
+}
+
+// autoModeOptions returns the permission-gate options that wire the auto-mode
+// classifier, workspace root, and interactive posture — but ONLY when the
+// configured mode is auto. In every other mode it returns nil, so
+// permissions.New stays byte-for-byte behaviour-equivalent to the pre-wiring
+// three-argument form.
+//
+// The classifier gets a DEDICATED gateway adapter built from cfg.Gateway and
+// labeled with permissions.ClassifierTraceLabel, so its verdict calls are
+// attributable separately from the actor's calls (which carry the actor trace
+// label). This is deliberately independent of the actor adapter — including on
+// the cli/ paths, where the actor routes through the CLIAdapter but the
+// classifier still needs a real gateway adapter for its own verdict calls.
+func autoModeOptions(cfg config.Config, reg *model.Registry, traceW io.Writer) []permissions.Option {
+	if permissions.ParseMode(cfg.Permissions.Mode) != permissions.ModeAuto {
+		return nil
+	}
+	clsAdapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
+	if traceW != nil {
+		clsAdapter = clsAdapter.WithTraceLabel(traceW, permissions.ClassifierTraceLabel)
+	}
+	// No user-facing warning writer is cleanly in scope at these builders; the
+	// constructor is nil-safe, so pass nil rather than plumb a new parameter
+	// through several signatures just for the one-time startup fallback warning.
+	cls := permissions.NewClassifier(clsAdapter, reg, cfg.Permissions.Auto, nil)
+	return []permissions.Option{
+		permissions.WithClassifier(cls),
+		permissions.WithWorkspaceRoot(workspaceRoot()),
+		permissions.WithInteractive(stdinIsTerminal()),
+	}
+}
+
 // buildChildAgent builds an agent with an explicitly provided system prompt,
 // bypassing persona composition. Used when spawn_agent sets system_prompt.
 func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string) (*agent.Agent, error) {
@@ -130,14 +177,14 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 		if err != nil {
 			return nil, fmt.Errorf("cli adapter: resolve binary: %w", err)
 		}
-		gate := permissions.New(cfg.Permissions, toolReg, approve)
+		gate := permissions.New(cfg.Permissions, toolReg, approve, autoModeOptions(cfg, reg, traceW)...)
 		return agent.New(newCLIAdapter(fuseExe, approve), gate, r, mc.ID, systemPrompt, cfg.MaxTurns, 0), nil
 	}
 	adapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
 	if traceW != nil {
 		adapter = adapter.WithTraceLabel(traceW, traceLabel)
 	}
-	gate := permissions.New(cfg.Permissions, toolReg, approve)
+	gate := permissions.New(cfg.Permissions, toolReg, approve, autoModeOptions(cfg, reg, traceW)...)
 	maxTokens := mc.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = cfg.MaxTokens
@@ -229,7 +276,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 			return nil, "", fmt.Errorf("cli adapter: resolve binary: %w", err)
 		}
 		cliAdapter := newCLIAdapter(fuseExe, approve)
-		gate := permissions.New(cfg.Permissions, toolReg, approve)
+		gate := permissions.New(cfg.Permissions, toolReg, approve, autoModeOptions(cfg, reg, traceW)...)
 		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
 		// maxTokens is not forwarded to the CLI; Claude controls its own limits.
 		a := agent.New(cliAdapter, gate, r, mc.ID, systemPrompt, cfg.MaxTurns, 0)
@@ -240,7 +287,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	if traceW != nil {
 		adapter = adapter.WithTraceLabel(traceW, traceLabel)
 	}
-	gate := permissions.New(cfg.Permissions, toolReg, approve)
+	gate := permissions.New(cfg.Permissions, toolReg, approve, autoModeOptions(cfg, reg, traceW)...)
 	maxTokens := mc.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = cfg.MaxTokens
