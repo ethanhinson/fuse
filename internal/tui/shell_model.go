@@ -16,8 +16,10 @@ import (
 	"github.com/muesli/reflow/wrap"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/banner"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/version"
 )
 
 // chromeHeight is the number of terminal rows reserved for the status line,
@@ -215,8 +217,8 @@ func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.R
 		completer:    completer,
 		build:        build,
 	}
-	m.appendLine(fmt.Sprintf("Fuse  %s", alias))
-	m.appendLine("Type a task, /model NAME to switch, /verbose to toggle, /exit to quit.")
+	m.appendLine(banner.String(version.Version))
+	m.appendLine(fmt.Sprintf("model: %s — /model NAME to switch, /verbose to toggle, /exit to quit", alias))
 	return m
 }
 

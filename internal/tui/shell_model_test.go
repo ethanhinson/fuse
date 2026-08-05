@@ -13,6 +13,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/version"
 )
 
 var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -102,6 +103,22 @@ func TestEnterStartsPrompt(t *testing.T) {
 	}
 	if m.input.Value() != "" {
 		t.Error("input not reset after submit")
+	}
+}
+
+func TestNewShellModel_ShowsBanner(t *testing.T) {
+	m := NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder)
+	got := plainLines(m)
+	for _, want := range []string{`'########:'##`, version.Version, "alpha"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("scrollback missing %q\nscrollback:\n%s", want, got)
+		}
+	}
+	// The banner replaces the old two-line welcome — its text must be gone.
+	for _, gone := range []string{"Fuse  alpha", "Type a task"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("scrollback still contains old welcome text %q\nscrollback:\n%s", gone, got)
+		}
 	}
 }
 

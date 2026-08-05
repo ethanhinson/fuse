@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/ethanhinson/fuse/internal/version"
 )
 
 func TestModelsSubcommandLists(t *testing.T) {
@@ -27,6 +29,33 @@ func TestNoTaskIsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "usage") && !strings.Contains(errb.String(), "task") {
 		t.Errorf("stderr = %q", errb.String())
+	}
+}
+
+func TestRun_Help(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var out, errb bytes.Buffer
+	code := run([]string{"help"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errb.String())
+	}
+	s := out.String()
+	for _, want := range []string{`'########:'##`, version.Version, "models", "shell", "mcps", "help"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("help output missing %q\noutput:\n%s", want, s)
+		}
+	}
+}
+
+func TestRun_NoArgs_ShowsBanner(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var out, errb bytes.Buffer
+	code := run(nil, &out, &errb)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), `'########:'##`) {
+		t.Errorf("no-args stderr missing banner wordmark\nstderr:\n%s", errb.String())
 	}
 }
 
