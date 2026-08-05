@@ -1,18 +1,18 @@
 # Backlog
 
-**15 changes** — 🟢 1 in progress · 🟡 1 proposed · ✅ 11 done · 🗑️ 2 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0015](active/0015-tui-hanging-indent-wrap.md) | Hanging-indent wrapping for the shell transcript | `medium` | `fix` | [spec](../superpowers/specs/0015-tui-hanging-indent-wrap.md) | `feat/tui-hanging-indent-wrap` |
+**15 changes** — 🟡 1 proposed · 🔵 1 implemented · ✅ 11 done · 🗑️ 2 killed
 
 ## 🟡 Proposed (1)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | needs-brainstorm |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0015](active/0015-tui-hanging-indent-wrap.md) | Hanging-indent wrapping for the shell transcript | `medium` | `fix` | [#12](https://github.com/ethanhinson/fuse/pull/12) |  |
 
 ```mermaid
 graph TD
