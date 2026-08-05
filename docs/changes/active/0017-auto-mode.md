@@ -47,6 +47,20 @@ without `off`'s blanket risk.
 
 ## What changes
 
+**Settled direction (human, 2026-08-05): model the design on Grok Build's
+permission pipeline** (`xai-org/grok-build`) — the fullest open-source
+implementation of the layered stack. Concretely: an ordered authorization
+pipeline of hooks → deny > ask > allow rules with default-Deny → remembered
+per-project grants → built-in read-only list → mode policy; per-segment
+command splitting on `&&`/`||`/`;`/`|`/newlines including inside `bash -c`;
+fail-closed single-unit prompting for unparseable commands (`$()`,
+backticks, control flow); a dangerous-command list that re-prompts over
+remembered grants; and an auto-mode classifier for the residual gray area.
+**One deliberate deviation:** Grok matches *allow* rules against the whole
+string only — its docs admit `Bash(git *)` auto-approves
+`git status && rm -rf /`. Fuse evaluates allow rules per-segment too
+(Claude Code's behavior), closing that hole.
+
 - A new permission mode `auto` in the gate, alongside smart/off/prompt-all.
 - **Deterministic static layer** (first, fast, auditable): deny-first
   allow/ask/deny rules; real shell parsing (e.g. `mvdan.cc/sh` gives a bash
