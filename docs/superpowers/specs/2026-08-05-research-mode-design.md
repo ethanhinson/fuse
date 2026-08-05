@@ -1,0 +1,200 @@
+<!-- docket:backlink:start (generated — do not hand-edit) -->
+> ↩ **[Change 0014 — Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0014-research-mode.md)**
+<!-- docket:backlink:end -->
+
+# Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime
+
+**Spec for change 0014** · groomed 2026-08-05 (interactive brainstorm)
+
+---
+
+## Overview
+
+`/research <query>` produces a cited research report by driving the **existing 0012
+subagent runtime** with two new Go tools and one embedded skill. The model — not Go —
+orchestrates: it diversifies the question into 4–5 search facets, spawns one subagent
+per facet (search → fetch), and synthesizes a cited report. Go ships exactly two
+primitives (`web_search`, `web_fetch`) and the markdown skill that directs the flow.
+
+This is the salvage of killed change 0011: its ecosystem survey, Brave/provider
+research, scraper design, and citation format carry over; its bespoke
+`ResearchOrchestrator`, `query_gen.go`, and `synthesizer.go` are **deliberately not
+built** — the 0012 runtime plus the model replace all three.
+
+## Decisions (settled in the groom, with rationale)
+
+### D1 — Skill-driven, not Go-orchestrated
+
+The research flow lives in a markdown skill executed by the model, which fans out via
+parallel `spawn_agent` batches. Zero new orchestration code; the 0012 runtime provides
+width capping, slot yielding, context management, tracing, and the TUI agent tree for
+free. The flow is tunable without recompiling. Accepted trade-off: run shape
+(facet count, dedup discipline, citation format) is prompt-enforced, not code-enforced.
+
+This mirrors what Claude Code actually does: its WebSearch/WebFetch tools run
+search+fetch in secondary conversations to keep the main context clean — the same
+shape as one subagent per facet.
+
+### D2 — The skill is an embedded built-in
+
+The research skill markdown ships inside the fuse binary (`go:embed`) and registers
+with the 0004 skill runtime at startup. `/research` works with no user setup beyond
+the Brave key; a user skill of the same name shadows the embedded one (standard
+skill-runtime precedence).
+
+### D3 — Brave only in v1
+
+Evidence gathered during the groom: Claude's web search is Anthropic's **server-side**
+API tool (`web_search_20250305`, $10/1k searches, results returned encrypted), and its
+engine is by all evidence **Brave** — Brave appeared on Anthropic's subprocessor list
+2025-03-19, Simon Willison found `BraveSearchParams` in the tool schema and identical
+citations between Claude and Brave. Claude users never set a search key only because
+Anthropic holds the Brave key server-side and re-bills through the Anthropic bill.
+
+fuse has no vendor in the middle (models arrive via LiteLLM; none operate a search
+backend), so the user holds the key: **BYO `BRAVE_SEARCH_API_KEY`** — same engine
+Claude uses, $5/1k direct (vs $10/1k re-billed), first ~$5/month free via Brave's
+credit. Signup: api-dashboard.search.brave.com (card required; the free *tier* was
+retired 2026-02, replaced by $5/month free *credits*). Free-credit attribution
+requirement is satisfied by a Brave Search line in fuse's README.
+
+`SearchProvider` remains an interface so Exa/Tavily/SearXNG/MCP adapters can land as
+future changes; none ship in v1. **Provider resolution:** explicit `research.provider`
+config → `BRAVE_SEARCH_API_KEY` env → loud error naming the setup path. Resolution
+happens at first use and fails loudly; no silent fallbacks at query time.
+
+### D4 — robots.txt on by default, config override
+
+`web_fetch` checks robots.txt per host (fetched once, cached per session) and refuses
+disallowed URLs with a note in the tool result. `research.respect_robots: false`
+overrides for dev/testing.
+
+### D5 — No local result cache
+
+Dropped from scope (was a 0011 dev convenience). File a follow-up stub only if
+re-fetch pain shows up in practice.
+
+## Components
+
+### `internal/research/provider.go` — interface (carried from 0011)
+
+```go
+type SearchResult struct {
+    Title   string
+    URL     string
+    Snippet string
+}
+
+type SearchProvider interface {
+    Search(ctx context.Context, query string, maxResults int) ([]SearchResult, error)
+    Name() string
+}
+```
+
+### `internal/research/brave.go` — BraveSearchProvider
+
+- `GET https://api.search.brave.com/res/v1/web/search?q=...&count=N` with
+  `X-Subscription-Token` header; JSON response → `[]SearchResult`.
+- Snippet-only (no page content) — `web_fetch` supplies content, exactly the
+  WebSearch/WebFetch split Claude Code has.
+- Bounded per the bound-every-model-call learning's discipline generalized to HTTP:
+  per-attempt timeout, bounded retries on 429/5xx honoring `Retry-After`, and a
+  labeled trace entry.
+- **Build-time evaluation:** Brave's newer "LLM Context" endpoint returns
+  AI-optimized content and could reduce fetch volume; evaluate when building, adopt
+  only if it demonstrably beats web-endpoint + readability extraction.
+
+### `internal/research/scraper.go` — fetch + extraction (carried from 0011)
+
+1. HTTP GET, 10 s per-URL deadline; robots.txt gate per D4.
+2. `text/html` → strip script/style/nav/header/footer/aside →
+   `go-shiori/go-readability` main-body extraction → tag-strip fallback (always
+   produces something). Non-HTML (PDF etc.) skipped with a note in the tool result.
+3. Word-boundary truncation at `research.max_content_kb` (default 50).
+4. Token-bucket rate limit: 2 req/s per domain.
+
+### `internal/tools/web_search.go`, `internal/tools/web_fetch.go` — tool registration
+
+- Registered as ordinary built-ins in the Registry → available to the main agent and
+  to subagents via `Registry.Subset`; the research skill force-includes both.
+- **Permission posture:** both are network reads; they go through the PermissionGate
+  like any tool (session-allow works). Default policy left to the existing 3-source
+  merge; users may safe-list in config. One-shot mode auto-approves as usual.
+- **Sanitization:** fetched web content is hostile input — tool output goes through
+  the 0012 sanitization path (strip ESC/C0/C1/CR, tab expansion, NUL-sniff) before
+  TUI display, per the sanitize-untrusted-bytes learning. Content handed to the model
+  is plain extracted text.
+- Large outputs ride 0012's spill-file truncation; no new caps invented here.
+
+### Embedded skill — `research`
+
+The flow prose, at minimum directing the model to:
+
+1. Reformulate the question into 4–5 facets covering: direct answer, background,
+   recent developments, counterarguments/caveats, practical examples.
+2. Spawn one subagent per facet **in a single parallel batch** (runtime width cap
+   applies; queued children stay visible). Each child: `web_search` → pick the most
+   promising results → `web_fetch` each → return per-facet findings **with URLs**.
+3. Deduplicate sources by URL across facets in the parent.
+4. Synthesize one report: executive summary, titled sections, `[N]` citation markers,
+   numbered source list. Rendered as normal markdown in the transcript (0006
+   markdown rendering; no new TUI work).
+
+Nested spawn depth stays at 1 for research (children do not spawn); the runtime's
+slot-yield behavior (slot-cap learning) applies regardless.
+
+### `/research <query>` — slash built-in (change 0010 dispatch)
+
+Thin: validates a non-empty query, resolves the provider (fail loud per D3), and
+invokes the research skill with the query. No Go pipeline behind it.
+
+### Config — `[research]` in fuse config
+
+```go
+type ResearchConfig struct {
+    Provider      string // "brave" | "" (auto: env scan)
+    MaxQueries    int    // default 5 (facet count hint passed to the skill)
+    MaxResults    int    // default 5 (per web_search call)
+    MaxContentKB  int    // default 50 (web_fetch truncation)
+    RespectRobots bool   // default true
+}
+```
+
+## New / modified files
+
+| Path | Purpose |
+|---|---|
+| `internal/research/provider.go` | `SearchProvider` + `SearchResult` |
+| `internal/research/brave.go` | Brave adapter |
+| `internal/research/scraper.go` | fetch, robots gate, readability extraction, rate limit |
+| `internal/tools/web_search.go` | `web_search` built-in tool |
+| `internal/tools/web_fetch.go` | `web_fetch` built-in tool |
+| `skills/research.md` (embedded) | the research flow skill |
+| `internal/tui/…` (builtin provider) | register `/research` |
+| config package | `ResearchConfig` + `[research]` block |
+| `README.md` | Brave Search attribution + key setup |
+
+## Testing
+
+- `BraveSearchProvider`: `httptest`-backed — happy path, 429/`Retry-After`, 5xx retry
+  exhaustion, malformed JSON. Test doubles mutex-guarded per the
+  mutex-test-double learning.
+- Scraper: fixture HTML → extraction; robots-disallowed refusal; override honored;
+  non-HTML skip; truncation at boundary; per-domain rate limit.
+- Tools: registration, Subset inclusion, sanitized output.
+- Skill flow: prompt-driven, so end-to-end shape is verified manually via the agent
+  tree TUI rather than unit-tested.
+
+## Out of scope
+
+- Other search adapters — Exa, Tavily, SearXNG, MCP-search (future changes; the
+  interface is the extension point).
+- Any keyless search path.
+- Any new orchestration/fan-out mechanism; any Go query-gen or synthesis code.
+- PDF/non-HTML extraction; news-specific features; result cache; in-report editing
+  or export.
+
+## Open questions (build-time)
+
+1. Whether Brave's LLM Context endpoint replaces some `web_fetch` volume (D3 note) —
+   decide from a quick spike during build, not now.
