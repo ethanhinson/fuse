@@ -10,14 +10,14 @@ updated: 2026-08-05
 depends_on: [12]
 related: [10, 11, 12]
 discovered_from: [11]
-adrs: []
+adrs: [2, 3, 4]
 spec: docs/superpowers/specs/2026-08-05-research-mode-design.md
 plan: docs/superpowers/plans/2026-08-05-research-mode.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/research-mode
-claimed_at: 2026-08-05T17:12:57Z
+claimed_at: 2026-08-05T17:47:06Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-05-research-mode-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-05-research-mode-design.md) |
 | Plan | [2026-08-05-research-mode.md](https://github.com/ethanhinson/fuse/blob/feat/research-mode/docs/superpowers/plans/2026-08-05-research-mode.md) |
+| ADRs | [ADR-0002](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0002-research-mode-skill-driven-on-subagent-runtime.md), [ADR-0003](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0003-built-in-skills-embedded-below-user-skills.md), [ADR-0004](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0004-byo-search-key-brave-primary-provider-resolution.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
