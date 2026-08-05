@@ -8,6 +8,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0002](0002-research-mode-skill-driven-on-subagent-runtime.md) — Research mode is skill-driven on the subagent runtime, not Go-orchestrated (Accepted) ← change #14
 - [ADR-0003](0003-built-in-skills-embedded-below-user-skills.md) — Built-in skills ship embedded via go:embed and rank below user skills (Accepted) ← change #14
 - [ADR-0004](0004-byo-search-key-brave-primary-provider-resolution.md) — BYO search key with Brave-primary provider resolution and a config-driven custom HTTP provider (Accepted) ← change #14
+- [ADR-0005](0005-per-segment-allow-rule-evaluation.md) — Per-segment allow-rule evaluation — a deliberate deviation from the Grok Build reference (Accepted) ← change #17
 
 ## Superseded / Reversed
 
