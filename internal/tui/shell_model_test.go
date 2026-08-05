@@ -445,6 +445,43 @@ func TestAppendResultLinesPlainAndError(t *testing.T) {
 	}
 }
 
+// TestAssistantMsgIsPreWrapped (spec Test 3): assistant glamour output is
+// stored pre:true (skips wordwrap), and after the viewport shrinks the
+// hard-wrap safety net keeps every emitted row inside the new width.
+func TestAssistantMsgIsPreWrapped(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	before := len(m.lines)
+	long := "This is a fairly long assistant response with enough words that glamour " +
+		"will wrap it at the render width and it should not be re-folded to column zero."
+	next, _ := m.Update(AssistantMsg{Text: long})
+	m = next.(ShellModel)
+	added := m.lines[before:]
+	if len(added) == 0 {
+		t.Fatal("assistant message appended no lines")
+	}
+	var sawPre bool
+	for _, l := range added {
+		if l.pre {
+			sawPre = true
+		}
+		if l.first != "" || l.cont != "" {
+			t.Errorf("assistant line should have no prefix, got first=%q cont=%q", l.first, l.cont)
+		}
+	}
+	if !sawPre {
+		t.Error("assistant glamour line not marked pre:true")
+	}
+	// Shrink the viewport — the pre hard-wrap safety net must fire so no
+	// emitted row overflows the narrower width.
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 30, Height: 20})
+	m = next.(ShellModel)
+	for _, r := range vpRows(m) {
+		if w := printWidth(r); w > m.vp.Width {
+			t.Errorf("after shrink, assistant row width %d > %d: %q", w, m.vp.Width, r)
+		}
+	}
+}
+
 func TestEnterWhileRunningIsNoop(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true

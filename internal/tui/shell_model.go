@@ -379,7 +379,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				text = strings.TrimRight(rendered, "\n")
 			}
 		}
-		m.appendLine(assistantStyle.Render(text))
+		m.appendPre(assistantStyle.Render(text))
 		return m, nil
 
 	case ToolCallMsg:
@@ -942,6 +942,18 @@ func (m *ShellModel) appendLine(s string) {
 	atBottom := !m.ready || m.vp.AtBottom()
 	for _, l := range strings.Split(s, "\n") {
 		m.lines = append(m.lines, transcriptLine{text: l})
+	}
+	m.refreshViewport(atBottom)
+}
+
+// appendPre adds pre-wrapped content (glamour assistant output) one row per
+// line with pre:true, so refreshViewport skips wordwrap and applies only the
+// hard-wrap safety net — glamour's margins and indented blocks are preserved
+// instead of being re-folded to column 0.
+func (m *ShellModel) appendPre(s string) {
+	atBottom := !m.ready || m.vp.AtBottom()
+	for _, l := range strings.Split(s, "\n") {
+		m.lines = append(m.lines, transcriptLine{text: l, pre: true})
 	}
 	m.refreshViewport(atBottom)
 }
