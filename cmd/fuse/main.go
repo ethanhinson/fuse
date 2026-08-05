@@ -10,12 +10,14 @@ import (
 	"path/filepath"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/banner"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/session"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tui"
+	"github.com/ethanhinson/fuse/internal/version"
 )
 
 func main() {
@@ -50,6 +52,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runMCPs(args[1:], cfg, stdout, stderr)
 		case "mcp-server":
 			return runMCPServer(args[1:], cfg, stdout, stderr)
+		case "help":
+			banner.Print(stdout, version.Version)
+			fmt.Fprintln(stdout, "commands:")
+			fmt.Fprintln(stdout, "  fuse <task>       run an agent on a one-shot task")
+			fmt.Fprintln(stdout, "  fuse models       list configured model aliases")
+			fmt.Fprintln(stdout, "  fuse shell        start an interactive agent shell")
+			fmt.Fprintln(stdout, "  fuse mcps         list connected MCP servers")
+			fmt.Fprintln(stdout, "  fuse help         show this help")
+			return 0
 		}
 	}
 
@@ -63,6 +74,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
+		banner.Print(stderr, version.Version)
 		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] \"<task>\"")
 		return 2
 	}
