@@ -7,9 +7,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
+	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/session"
+	"github.com/ethanhinson/fuse/internal/tools"
+	"github.com/ethanhinson/fuse/internal/tui"
 )
 
 func main() {
@@ -51,22 +57,98 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	modelAlias := fs.String("model", "", "model alias to run (default: config default)")
 	verbose := fs.Bool("verbose", false, "render full tool args and output")
-	trace := fs.Bool("trace", false, "dump raw gateway JSON to stderr")
+	traceFile := fs.String("trace", "", "write raw gateway JSON to this file (- = stderr)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
-		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace] \"<task>\"")
+		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] \"<task>\"")
 		return 2
 	}
 	task := rest[0]
 
 	var traceW io.Writer
-	if *trace {
-		traceW = stderr
+	switch *traceFile {
+	case "":
+		// no trace
+	case "-":
+		traceW = &syncWriter{w: stderr}
+	default:
+		w, closeTrace := openTraceWriter(*traceFile)
+		if w == nil {
+			fmt.Fprintf(stderr, "trace: cannot open %s\n", *traceFile)
+			return 1
+		}
+		defer closeTrace()
+		traceW = w
 	}
-	a, modelID, err := buildAgent(cfg, reg, *modelAlias, stdout, *verbose, "", traceW)
+
+	// Spill dir for truncated tool outputs (recoverable via grep/read_file).
+	tools.SetSpillDir(filepath.Join(filepath.Dir(session.DefaultLogDir()), "tool-output"))
+
+	// Build a tool registry with spawn_agent wired up for one-shot mode.
+	toolReg := defaultToolRegistry(nil)
+	tree := agent.NewAgentTree(*modelAlias, *modelAlias)
+	rootNode := tree.Node(tree.RootID())
+
+	var makeSpawnFunc func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc
+	makeSpawnFunc = func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
+		spawner := agent.NewSpawner(
+			agent.WithTree(tree),
+			agent.WithNode(parentNode),
+			agent.WithSpawnDepth(depth),
+			agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
+				childToolReg, terr := childToolRegistry(toolReg, opts.Tools)
+				if terr != nil {
+					return "", terr
+				}
+				childToolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(childNode, childNode.Depth)))
+
+				r := tui.NewRenderer(stdout, *verbose)
+				modelID := opts.ModelID
+				if modelID == "" {
+					modelID = *modelAlias
+				}
+				var a *agent.Agent
+				var aerr error
+				if opts.SystemPrompt != "" {
+					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, opts.Label)
+				} else {
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, spawnAgentBlock, childToolReg, permissions.AlwaysApprove, traceW, opts.Label)
+				}
+				if aerr != nil {
+					return "", aerr
+				}
+				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
+				return childResult(msgs, rerr)
+			}),
+		)
+		return func(ctx context.Context, label, task, systemPrompt, modelID string, toolsList []string) (string, error) {
+			opts := agent.SpawnOpts{
+				Label:        label,
+				Task:         task,
+				SystemPrompt: systemPrompt,
+				ModelID:      modelID,
+				Tools:        toolsList,
+			}
+			handle, herr := spawner.Spawn(ctx, opts)
+			if herr != nil {
+				return "", herr
+			}
+			// Yield this agent's spawn slot while blocked on the child —
+			// parents holding slots while their children queue is a deadlock.
+			tree.YieldSlot(parentNode)
+			done := handle.Wait()
+			if !tree.UnyieldSlot(ctx, parentNode) {
+				return "", ctx.Err()
+			}
+			return done.Result, done.Err
+		}
+	}
+	toolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(rootNode, 0)))
+
+	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), spawnAgentBlock, traceW, "root", toolReg, permissions.AlwaysApprove)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1

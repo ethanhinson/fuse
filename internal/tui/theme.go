@@ -31,8 +31,8 @@ var (
 	// Transcript — tool results (  └ …)
 	resultPrefixStyle = lipgloss.NewStyle().Foreground(colMuted)
 	resultArrowStyle  = lipgloss.NewStyle().Foreground(colMuted) // kept for compat
-	errorArrowStyle  = lipgloss.NewStyle().Foreground(colRed)
-	errorTextStyle   = lipgloss.NewStyle().Foreground(colRed)
+	errorArrowStyle   = lipgloss.NewStyle().Foreground(colRed)
+	errorTextStyle    = lipgloss.NewStyle().Foreground(colRed)
 
 	// Transcript — agent error lines (! prefix)
 	agentErrStyle = lipgloss.NewStyle().Foreground(colRed)
@@ -42,6 +42,9 @@ var (
 
 	// Transcript — file-content gutter (line numbers + │ bar)
 	gutterStyle = lipgloss.NewStyle().Foreground(colMuted)
+
+	// Transcript — subagent batch footer (shown after AgentDone when agents ran)
+	subagentFooterStyle = lipgloss.NewStyle().Foreground(colMuted).Italic(true)
 
 	// Permission approval block
 	approvalBorderStyle = lipgloss.NewStyle().

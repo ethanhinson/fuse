@@ -75,10 +75,10 @@ func dynamicRegister(meta *authServerMeta, serverName string) (clientID, clientS
 		return "", "", fmt.Errorf("server has no registration_endpoint")
 	}
 	body, _ := json.Marshal(map[string]any{
-		"client_name":   "fuse-mcp-" + serverName,
-		"redirect_uris": []string{"http://localhost"},
-		"grant_types":   []string{"authorization_code"},
-		"response_types": []string{"code"},
+		"client_name":                "fuse-mcp-" + serverName,
+		"redirect_uris":              []string{"http://localhost"},
+		"grant_types":                []string{"authorization_code"},
+		"response_types":             []string{"code"},
 		"token_endpoint_auth_method": "client_secret_post",
 	})
 	resp, err := http.Post(meta.RegistrationEndpoint, "application/json", bytes.NewReader(body)) //nolint:noctx

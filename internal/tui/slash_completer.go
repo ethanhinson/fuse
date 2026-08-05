@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	completerMaxRows  = 8
-	kindTagWidth      = 18
+	completerMaxRows = 8
+	kindTagWidth     = 18
 )
 
 var (
@@ -49,20 +49,6 @@ func (c *slashCompleter) deactivate() {
 	c.offset = 0
 	c.filter = ""
 	c.visible = nil
-}
-
-// update re-filters based on the latest input value.
-func (c *slashCompleter) update(input string) {
-	if !strings.HasPrefix(input, "/") {
-		c.deactivate()
-		return
-	}
-	c.active = true
-	newFilter := filterFrom(input)
-	if newFilter != c.filter {
-		c.filter = newFilter
-		c.refresh()
-	}
 }
 
 // refresh re-queries the registry and resets cursor/offset when results change.

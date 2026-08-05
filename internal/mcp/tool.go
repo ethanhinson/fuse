@@ -24,8 +24,8 @@ type MCPTool struct {
 	inputSchema map[string]any
 }
 
-func (t *MCPTool) Name() string              { return "mcp:" + t.serverName + "/" + t.toolName }
-func (t *MCPTool) Description() string       { return t.description }
+func (t *MCPTool) Name() string               { return "mcp:" + t.serverName + "/" + t.toolName }
+func (t *MCPTool) Description() string        { return t.description }
 func (t *MCPTool) Parameters() map[string]any { return t.inputSchema }
 
 // Execute calls tools/call on the MCP server and wraps the result.

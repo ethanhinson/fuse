@@ -48,9 +48,9 @@ type ServerStatus struct {
 
 // managedServer holds runtime state for a single connected server.
 type managedServer struct {
-	cfg    config.MCPServerConfig
-	conn   mcpConn
-	tools  []*MCPTool
+	cfg     config.MCPServerConfig
+	conn    mcpConn
+	tools   []*MCPTool
 	connErr string // non-empty if last connect attempt failed
 }
 

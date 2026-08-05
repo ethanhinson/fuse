@@ -12,8 +12,8 @@ import (
 )
 
 // TeaRenderer implements agent.Renderer by forwarding each event as a tea.Msg
-// onto a channel that the bubbletea ShellModel drains via waitForMsg. This lets
-// the agent run in a goroutine while the UI stays on the bubbletea event loop.
+// onto a channel that the StartBridges pump delivers into the program. This
+// lets the agent run in a goroutine while the UI stays on the event loop.
 type TeaRenderer struct{ ch chan<- tea.Msg }
 
 // NewTeaRenderer builds a TeaRenderer that sends onto ch.

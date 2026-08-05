@@ -38,6 +38,7 @@ type ToolPolicy struct {
 var safeList = map[string]bool{
 	"read_file":      true,
 	"list_directory": true,
+	"grep":           true,
 }
 
 // onSafeList returns true for the hard-coded safe set and all codeindex_* tools.

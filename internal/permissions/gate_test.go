@@ -11,8 +11,8 @@ import (
 // stubTool is a minimal tools.Tool for testing.
 type stubTool struct{ name string }
 
-func (s stubTool) Name() string              { return s.name }
-func (s stubTool) Description() string       { return "stub" }
+func (s stubTool) Name() string               { return s.name }
+func (s stubTool) Description() string        { return "stub" }
 func (s stubTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
 func (s stubTool) Execute(_ context.Context, _ string) tools.Result {
 	return tools.Result{Output: "ran " + s.name}

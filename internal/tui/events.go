@@ -45,7 +45,7 @@ type PermissionRequestMsg struct {
 
 // approvalResponse carries the user's decision back to the gate goroutine.
 type approvalResponse struct {
-	Approved       bool
+	Approved        bool
 	AllowForSession bool
 }
 

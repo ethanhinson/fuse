@@ -175,14 +175,15 @@ func TestSlashCompleterUpdate(t *testing.T) {
 		t.Fatalf("initial: want 2, got %d", len(c.visible))
 	}
 
-	c.update("/ec")
+	// handleKey drives filtering through activate on every input change.
+	c.activate("/ec")
 	if len(c.visible) != 1 || c.visible[0].Command != "/echo" {
-		t.Errorf("after update('/ec'): visible = %v", c.visible)
+		t.Errorf("after activate('/ec'): visible = %v", c.visible)
 	}
 
-	// Non-slash input deactivates.
-	c.update("hello")
+	// Non-slash input deactivates (handleKey calls deactivate).
+	c.deactivate()
 	if c.active {
-		t.Error("non-slash input should deactivate completer")
+		t.Error("deactivate should clear active state")
 	}
 }

@@ -26,7 +26,7 @@ func (p *fakeProvider) Commands() []SlashEntry {
 	return out
 }
 func (p *fakeProvider) Changes() <-chan struct{} { return p.ch }
-func (p *fakeProvider) Close()                  {}
+func (p *fakeProvider) Close()                   {}
 
 func (p *fakeProvider) push(entries []SlashEntry) {
 	p.mu.Lock()

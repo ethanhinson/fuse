@@ -10,10 +10,11 @@ type Gateway struct {
 
 // ModelConfig is a single named model entry.
 type ModelConfig struct {
-	ID           string `yaml:"id"`
-	MaxTokens    int    `yaml:"max_tokens"`
-	Persona      string `yaml:"persona"`
-	SystemPrefix string `yaml:"system_prefix"` // prepended before persona prompt (e.g. "/no_think" for Qwen3)
+	ID            string `yaml:"id"`
+	MaxTokens     int    `yaml:"max_tokens"`
+	ContextWindow int    `yaml:"context_window"` // model context size in tokens; 0 = harness default
+	Persona       string `yaml:"persona"`
+	SystemPrefix  string `yaml:"system_prefix"` // prepended before persona prompt (e.g. "/no_think" for Qwen3)
 }
 
 // ModelsConfig holds the default model alias and all named entries.

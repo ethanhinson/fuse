@@ -40,6 +40,18 @@ func cacheKey(toolName, args string) string {
 	return fmt.Sprintf("%s:%x", toolName, h[:4])
 }
 
+// Clone returns a snapshot copy of the cache. Mutations to the clone do not
+// propagate to the original and vice versa.
+func (c *ApprovalCache) Clone() *ApprovalCache {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	clone := newApprovalCache()
+	for k := range c.allowed {
+		clone.allowed[k] = struct{}{}
+	}
+	return clone
+}
+
 // normalizeArgs round-trips JSON to produce a canonical representation.
 // Falls back to the raw string on parse failure.
 func normalizeArgs(args string) string {

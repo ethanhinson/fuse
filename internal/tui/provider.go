@@ -13,9 +13,9 @@ const (
 
 // SlashEntry is one item in the autocomplete list.
 type SlashEntry struct {
-	Command     string    // e.g. "/model", "/code-review", "/mcp:everything/echo"
-	Syntax      string    // arg hint shown beside Command, e.g. "NAME" for /model
-	Description string    // one-line description
+	Command     string // e.g. "/model", "/code-review", "/mcp:everything/echo"
+	Syntax      string // arg hint shown beside Command, e.g. "NAME" for /model
+	Description string // one-line description
 	Kind        SlashKind
 	Server      string // populated for KindMCP
 	expand      func() string

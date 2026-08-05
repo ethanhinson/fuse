@@ -36,6 +36,11 @@ type Agent struct {
 	systemPrompt string
 	maxTurns     int
 	maxTokens    int
+
+	// ContextWindow is the model's context size in tokens; 0 uses the
+	// default (128k). The loop prunes old tool results when the estimated
+	// request approaches this budget.
+	ContextWindow int
 }
 
 // New builds an Agent. modelID is the gateway model id; systemPrompt, when

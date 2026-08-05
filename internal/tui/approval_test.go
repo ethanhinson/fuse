@@ -6,12 +6,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/permissions"
 )
 
-// TestPermissionRequestRendersBlock verifies that a PermissionRequestMsg causes
-// an approval block to appear in the transcript.
-func TestPermissionRequestRendersBlock(t *testing.T) {
+// TestPermissionRequestShowsOverlayThenCompactsOnAnswer: the pending modal
+// renders as a live overlay (not in the transcript); answering dismisses it
+// and leaves a compact timestamped decision record in the transcript.
+func TestPermissionRequestShowsOverlayThenCompactsOnAnswer(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true
 
@@ -25,19 +27,60 @@ func TestPermissionRequestRendersBlock(t *testing.T) {
 		RespCh: respCh,
 	})
 	m = next.(ShellModel)
+	if cmd != nil {
+		t.Error("channel messages should not return a subscription cmd")
+	}
+	if len(m.approvals) != 1 {
+		t.Fatalf("approvals queue len = %d, want 1", len(m.approvals))
+	}
 
-	content := strings.Join(m.lines, "\n")
-	if !strings.Contains(content, "Permission required") {
-		t.Error("approval block should contain 'Permission required'")
+	// Pending: modal visible in the VIEW, absent from the transcript lines.
+	view := ansiRE.ReplaceAllString(m.View(), "")
+	if !strings.Contains(view, "Permission required") {
+		t.Error("pending approval should render as a view overlay")
 	}
-	if !strings.Contains(content, "bash") {
-		t.Error("approval block should contain the tool name")
+	if strings.Contains(plainLines(m), "Permission required") {
+		t.Error("modal must not be written into the transcript")
 	}
-	if m.approval == nil {
-		t.Fatal("approval state should be set after PermissionRequestMsg")
+
+	// Answer with session-allow: modal gone, compact record present.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = next.(ShellModel)
+	view = ansiRE.ReplaceAllString(m.View(), "")
+	if strings.Contains(view, "Permission required") {
+		t.Error("modal should disappear once answered")
 	}
-	if cmd == nil {
-		t.Error("expected re-armed waitForMsg cmd")
+	rec := plainLines(m)
+	if !strings.Contains(rec, "bash: rm -rf /tmp/x") || !strings.Contains(rec, "allowed for session") {
+		t.Errorf("compact decision record missing: %q", rec)
+	}
+	if len(m.approvalLog) != 1 {
+		t.Errorf("approval log len = %d, want 1", len(m.approvalLog))
+	}
+}
+
+// TestApprovalsCommandListsDecisions: /approvals recalls the session log.
+func TestApprovalsCommandListsDecisions(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m.running = true
+	respCh := make(chan approvalResponse, 1)
+	next, _ := m.Update(PermissionRequestMsg{
+		Request: permissions.ApprovalRequest{ToolName: "bash", Preview: "bash: make deploy"},
+		RespCh:  respCh,
+	})
+	m = next.(ShellModel)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = next.(ShellModel)
+	m.running = false
+
+	m = typeLine(m, "/approvals")
+	m, _ = enter(m)
+	out := plainLines(m)
+	if !strings.Contains(out, "Permission decisions (1)") {
+		t.Errorf("/approvals header missing: %q", out)
+	}
+	if !strings.Contains(out, "make deploy") || !strings.Contains(out, "denied") {
+		t.Errorf("/approvals should list the denial: %q", out)
 	}
 }
 
@@ -56,8 +99,8 @@ func TestApprovalKeyY(t *testing.T) {
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	m = next.(ShellModel)
 
-	if m.approval != nil {
-		t.Error("approval state should be cleared after responding")
+	if len(m.approvals) != 0 {
+		t.Error("approvals queue should be empty after responding")
 	}
 	select {
 	case resp := <-respCh:
@@ -115,6 +158,189 @@ func TestApprovalKeyN(t *testing.T) {
 		}
 	default:
 		t.Fatal("no response sent to respCh after pressing 'n'")
+	}
+}
+
+// TestConcurrentApprovalsQueueFIFO verifies that two requests arriving before
+// any keypress are BOTH answered, in order — the historical bug overwrote the
+// first request's RespCh, deadlocking its gate goroutine forever.
+func TestConcurrentApprovalsQueueFIFO(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m.running = true
+
+	ch1 := make(chan approvalResponse, 1)
+	ch2 := make(chan approvalResponse, 1)
+	next, _ := m.Update(PermissionRequestMsg{
+		Request: permissions.ApprovalRequest{ToolName: "bash", Preview: "[worker-1] bash: ls"},
+		RespCh:  ch1,
+	})
+	m = next.(ShellModel)
+	next, _ = m.Update(PermissionRequestMsg{
+		Request: permissions.ApprovalRequest{ToolName: "bash", Preview: "[worker-2] bash: pwd"},
+		RespCh:  ch2,
+	})
+	m = next.(ShellModel)
+
+	if len(m.approvals) != 2 {
+		t.Fatalf("queue len = %d, want 2", len(m.approvals))
+	}
+
+	// First keypress answers the FIRST request only.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = next.(ShellModel)
+	select {
+	case resp := <-ch1:
+		if !resp.Approved {
+			t.Error("first request should be approved")
+		}
+	default:
+		t.Fatal("first RespCh not answered — queue orphaned it")
+	}
+	select {
+	case <-ch2:
+		t.Fatal("second request answered prematurely")
+	default:
+	}
+
+	// Second keypress answers the second.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	m = next.(ShellModel)
+	select {
+	case resp := <-ch2:
+		if resp.Approved {
+			t.Error("second request should be denied")
+		}
+	default:
+		t.Fatal("second RespCh not answered")
+	}
+	if len(m.approvals) != 0 {
+		t.Errorf("queue should be empty, len = %d", len(m.approvals))
+	}
+}
+
+// TestApprovalSurvivesOverlayExit verifies a pending approval is not dropped
+// when the user exits the agents overlay — the historical bug nil'd the overlay
+// model along with the request, deadlocking the gate.
+func TestApprovalSurvivesOverlayExit(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m = m.WithTree(agent.NewAgentTree("root", "alpha"))
+	m.running = true
+
+	// Enter the agents overlay.
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(ShellModel)
+	if !m.agentsActive {
+		t.Fatal("overlay should be active after Tab")
+	}
+
+	// Approval arrives while the overlay is open.
+	respCh := make(chan approvalResponse, 1)
+	next, _ = m.Update(PermissionRequestMsg{
+		Request: permissions.ApprovalRequest{ToolName: "bash", Preview: "bash: ls"},
+		RespCh:  respCh,
+	})
+	m = next.(ShellModel)
+	if len(m.approvals) != 1 {
+		t.Fatalf("queue len = %d, want 1 while overlay active", len(m.approvals))
+	}
+
+	// Answer it from within the overlay; the shell-owned queue handles the key.
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = next.(ShellModel)
+	select {
+	case resp := <-respCh:
+		if !resp.Approved {
+			t.Error("expected approval")
+		}
+	default:
+		t.Fatal("RespCh not answered while overlay active")
+	}
+}
+
+// TestAgentEventsFlowDuringOverlay verifies channel messages fall through to
+// the shared handler while the agents overlay is open — before Program.Send,
+// the overlay branch drained assistant text without appending it, so prose
+// arriving mid-overlay was lost from the transcript.
+func TestAgentEventsFlowDuringOverlay(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m = m.WithTree(agent.NewAgentTree("root", "alpha"))
+	m.running = true
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = next.(ShellModel)
+	if !m.agentsActive {
+		t.Fatal("overlay should be active after Tab")
+	}
+
+	next, _ = m.Update(AssistantMsg{Text: "prose arriving mid-overlay"})
+	m = next.(ShellModel)
+	if !m.agentsActive {
+		t.Error("overlay should remain active across channel messages")
+	}
+	if !strings.Contains(plainLines(m), "prose arriving mid-overlay") {
+		t.Error("assistant text arriving during overlay must land in the transcript")
+	}
+
+	// Turn end while overlay open: state updates, overlay stays.
+	next, _ = m.Update(AgentDoneMsg{})
+	m = next.(ShellModel)
+	if m.running {
+		t.Error("running should clear on AgentDoneMsg during overlay")
+	}
+	if !m.agentsActive {
+		t.Error("overlay should survive AgentDoneMsg")
+	}
+}
+
+// TestEscDeniesApproval verifies the Esc key denies (bubbletea names it "esc").
+func TestEscDeniesApproval(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m.running = true
+
+	respCh := make(chan approvalResponse, 1)
+	next, _ := m.Update(PermissionRequestMsg{
+		Request: permissions.ApprovalRequest{ToolName: "bash", Preview: "bash: ls"},
+		RespCh:  respCh,
+	})
+	m = next.(ShellModel)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(ShellModel)
+
+	select {
+	case resp := <-respCh:
+		if resp.Approved {
+			t.Error("Esc should deny")
+		}
+	default:
+		t.Fatal("no response sent after Esc")
+	}
+}
+
+// TestTurnEndDrainsApprovals verifies queued approvals are denied when the
+// turn ends, so no gate goroutine is left blocked forever.
+func TestTurnEndDrainsApprovals(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m.running = true
+
+	respCh := make(chan approvalResponse, 1)
+	next, _ := m.Update(PermissionRequestMsg{
+		Request: permissions.ApprovalRequest{ToolName: "bash", Preview: "bash: ls"},
+		RespCh:  respCh,
+	})
+	m = next.(ShellModel)
+	next, _ = m.Update(AgentDoneMsg{})
+	m = next.(ShellModel)
+
+	select {
+	case resp := <-respCh:
+		if resp.Approved {
+			t.Error("drained approval should be denied")
+		}
+	default:
+		t.Fatal("turn end should answer queued approvals")
+	}
+	if len(m.approvals) != 0 {
+		t.Errorf("queue should be drained, len = %d", len(m.approvals))
 	}
 }
 

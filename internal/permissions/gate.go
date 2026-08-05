@@ -123,6 +123,28 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	return policy, nil
 }
 
+// CloneForChild returns a child permission gate seeded from a snapshot of this
+// gate's approval cache. The child's approval prompts will be prefixed [label].
+// Child approvals do not propagate back to the parent gate.
+func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
+	return &PermissionGate{
+		mode:    g.mode,
+		cfg:     g.cfg,
+		cache:   g.cache.Clone(),
+		approve: prefixedApprove(label, g.approve),
+		inner:   g.inner,
+	}
+}
+
+// prefixedApprove wraps an ApprovalFunc so that prompts are prefixed with
+// [label] to identify which child agent is asking.
+func prefixedApprove(label string, fn ApprovalFunc) ApprovalFunc {
+	return func(ctx context.Context, req ApprovalRequest) (bool, bool, error) {
+		req.Preview = "[" + label + "] " + req.Preview
+		return fn(ctx, req)
+	}
+}
+
 // makePreview builds the human-readable one-liner for the approval block.
 func makePreview(name, args string) string {
 	if name == "bash" {
