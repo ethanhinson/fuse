@@ -250,3 +250,155 @@ func TestAsMessage(t *testing.T) {
 		t.Fatalf("as message = %+v", m)
 	}
 }
+
+// sseServer returns an httptest server that streams the given SSE lines with a
+// text/event-stream content type, flushing after each so the client sees
+// headers (and the first byte) immediately — this is what makes time-to-first-
+// byte, not time-to-full-generation, the header-timeout metric.
+func sseServer(t *testing.T, chunks []string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl, _ := w.(http.Flusher)
+		if fl != nil {
+			fl.Flush() // send headers before any data
+		}
+		for _, c := range chunks {
+			io.WriteString(w, "data: "+c+"\n\n")
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+		io.WriteString(w, "data: [DONE]\n\n")
+		if fl != nil {
+			fl.Flush()
+		}
+	}))
+}
+
+// TestCompleteRequestsStreaming: the request body must ask for streaming so
+// LiteLLM does not buffer the whole (possibly minutes-long) generation before
+// sending any headers.
+func TestCompleteRequestsStreaming(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, okCompletion)
+	}))
+	defer srv.Close()
+
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	if _, err := a.Complete(context.Background(), CompletionReq{Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	var sent map[string]any
+	if err := json.Unmarshal([]byte(gotBody), &sent); err != nil {
+		t.Fatal(err)
+	}
+	if sent["stream"] != true {
+		t.Errorf("request must set stream:true, got %v", sent["stream"])
+	}
+}
+
+// TestCompleteParsesSSEStream: a text/event-stream response is reassembled into
+// content plus tool calls, with tool-call arguments fragmented across chunks
+// (as real providers stream them) concatenated in order, and usage read from
+// the final chunk.
+func TestCompleteParsesSSEStream(t *testing.T) {
+	srv := sseServer(t, []string{
+		`{"choices":[{"delta":{"role":"assistant","content":"Hello"}}]}`,
+		`{"choices":[{"delta":{"content":", world"}}]}`,
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"query\":"}}]}}]}`,
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"litestream\"}"}}]}}]}`,
+		`{"choices":[{"delta":{}}],"usage":{"prompt_tokens":11,"completion_tokens":22}}`,
+	})
+	defer srv.Close()
+
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	resp, err := a.Complete(context.Background(), CompletionReq{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Content != "Hello, world" {
+		t.Errorf("content = %q, want %q", resp.Content, "Hello, world")
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %+v, want 1", resp.ToolCalls)
+	}
+	tc := resp.ToolCalls[0]
+	if tc.ID != "call_1" || tc.Name != "web_search" || tc.Arguments != `{"query":"litestream"}` {
+		t.Errorf("reassembled tool call = %+v", tc)
+	}
+	if resp.InputTokens != 11 || resp.OutputTokens != 22 {
+		t.Errorf("usage = in %d out %d, want 11/22", resp.InputTokens, resp.OutputTokens)
+	}
+}
+
+// TestCompleteSSEMultipleToolCalls: parallel tool calls stream interleaved by
+// index and must reassemble into distinct calls in index order.
+func TestCompleteSSEMultipleToolCalls(t *testing.T) {
+	srv := sseServer(t, []string{
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":"f0","arguments":"{}"}}]}}]}`,
+		`{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"b","type":"function","function":{"name":"f1","arguments":"{\"x\":1}"}}]}}]}`,
+	})
+	defer srv.Close()
+
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	resp, err := a.Complete(context.Background(), CompletionReq{Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.ToolCalls) != 2 {
+		t.Fatalf("want 2 tool calls, got %+v", resp.ToolCalls)
+	}
+	if resp.ToolCalls[0].Name != "f0" || resp.ToolCalls[1].Name != "f1" {
+		t.Errorf("tool calls out of order: %+v", resp.ToolCalls)
+	}
+	if resp.ToolCalls[1].Arguments != `{"x":1}` {
+		t.Errorf("second call args = %q", resp.ToolCalls[1].Arguments)
+	}
+}
+
+// TestCompleteSSETracesReassembled: the trace must still record a RESP block for
+// a streamed response, so --trace stays useful with streaming on.
+func TestCompleteSSETracesReassembled(t *testing.T) {
+	srv := sseServer(t, []string{
+		`{"choices":[{"delta":{"content":"streamed reply"}}]}`,
+	})
+	defer srv.Close()
+
+	var buf bytes.Buffer
+	a := NewAdapter(srv.URL, "k", srv.Client()).WithTraceLabel(&buf, "root")
+	if _, err := a.Complete(context.Background(), CompletionReq{Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "── RESP [root] ──") {
+		t.Errorf("streamed trace missing RESP block:\n%s", out)
+	}
+	if !strings.Contains(out, "streamed reply") {
+		t.Errorf("streamed trace missing reassembled content:\n%s", out)
+	}
+}
+
+// TestCompleteSSEErrorEventIsError: an error object streamed as an SSE data
+// event (LiteLLM's mid-stream error shape) surfaces as an error, not a silent
+// empty completion.
+func TestCompleteSSEErrorEventIsError(t *testing.T) {
+	srv := sseServer(t, []string{
+		`{"error":{"message":"upstream exploded","type":"server_error"}}`,
+	})
+	defer srv.Close()
+
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	a.MaxAttempts = 1
+	_, err := a.Complete(context.Background(), CompletionReq{Model: "m"})
+	if err == nil {
+		t.Fatal("expected an error from a streamed error event")
+	}
+	if !strings.Contains(err.Error(), "upstream exploded") {
+		t.Errorf("error should carry the streamed message: %v", err)
+	}
+}
