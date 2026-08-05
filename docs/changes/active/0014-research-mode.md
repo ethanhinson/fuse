@@ -2,7 +2,7 @@
 id: 14
 slug: research-mode
 title: Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-05
@@ -13,12 +13,12 @@ discovered_from: [11]
 adrs: [2, 3, 4]
 spec: docs/superpowers/specs/2026-08-05-research-mode-design.md
 plan: docs/superpowers/plans/2026-08-05-research-mode.md
-results:
+results: docs/results/2026-08-05-research-mode-results.md
 trivial: false
 auto_groomable:
 branch: feat/research-mode
-claimed_at: 2026-08-05T17:47:06Z
-pr:
+claimed_at: 2026-08-05T17:49:08Z
+pr: https://github.com/ethanhinson/fuse/pull/13
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-05-research-mode-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-05-research-mode-design.md) |
 | Plan | [2026-08-05-research-mode.md](https://github.com/ethanhinson/fuse/blob/feat/research-mode/docs/superpowers/plans/2026-08-05-research-mode.md) |
+| Results | [2026-08-05-research-mode-results.md](https://github.com/ethanhinson/fuse/blob/feat/research-mode/docs/results/2026-08-05-research-mode-results.md) |
+| PR | [#13](https://github.com/ethanhinson/fuse/pull/13) |
 | ADRs | [ADR-0002](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0002-research-mode-skill-driven-on-subagent-runtime.md), [ADR-0003](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0003-built-in-skills-embedded-below-user-skills.md), [ADR-0004](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0004-byo-search-key-brave-primary-provider-resolution.md) |
 <!-- docket:artifacts:end -->
 
