@@ -1,6 +1,6 @@
 # Backlog
 
-**15 changes** — 🟡 2 proposed · 🔵 1 implemented · ✅ 10 done · 🗑️ 2 killed
+**15 changes** — 🟡 2 proposed · ✅ 11 done · 🗑️ 2 killed
 
 ## 🟡 Proposed (2)
 
@@ -9,25 +9,19 @@
 | [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | needs-brainstorm |
 | [0015](active/0015-tui-hanging-indent-wrap.md) | Hanging-indent wrapping for the shell transcript | `medium` | `fix` | build-ready |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0013](active/0013-startup-banner.md) | ASCII art startup banner — shell init & fuse help | `medium` | `feat` | [#11](https://github.com/ethanhinson/fuse/pull/11) |  |
-
 ```mermaid
 graph TD
-  0013
   0012 --> 0014
   0015
   0012:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (12)</summary>
+<details><summary>✅🗑️ Archive — done + killed (13)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0013](archive/2026-08-05-0013-startup-banner.md) | ASCII art startup banner — shell init & fuse help | 2026-08-05 |
 | [0012](archive/2026-08-05-0012-subagent-ux.md) | First-Class Subagent UX — Spawn, Tree Visualization & Inspect | 2026-08-05 |
 | [0011](archive/2026-08-05-0011-deep-research.md) | Deep Research Mode — Web Search + Fan-out Synthesis | 2026-08-05 |
 | [0010](archive/2026-08-04-0010-shell-slash-command-ui.md) | Shell Slash-Command Autocomplete + MCP & Skill Invocation | 2026-08-04 |
