@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0014 — Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0014-research-mode.md)**
+> ↩ **[Change 0014 — Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-05-0014-research-mode.md)**
 <!-- docket:backlink:end -->
 
 # Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime
