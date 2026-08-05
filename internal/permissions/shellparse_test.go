@@ -83,6 +83,13 @@ func TestSplitSegments(t *testing.T) {
 			cmd:  "lsof -i",
 			want: []seg{{name: "lsof", args: []string{"-i"}}},
 		},
+		{
+			// A trailing `# …` comment is stripped by the parser: the
+			// commented-out `rm -rf /` is inert, not a smuggled segment.
+			desc: "trailing comment is inert, not a smuggled segment",
+			cmd:  "ls # rm -rf /",
+			want: []seg{{name: "ls", args: nil}},
+		},
 	}
 
 	for _, tc := range cases {
@@ -138,6 +145,8 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"bash with script file (no -c)", "bash script.sh"},
 		{"sh -c with no script word", "sh -c"},
 		{"xargs wrapper", "xargs rm"},
+		{"env wrapper with assignment", "env FOO=bar rm -rf /"},
+		{"env wrapper bare inner", "env rm x"},
 		{"npx wrapper", "npx cowsay hi"},
 		{"sudo wrapper", "sudo rm -rf /"},
 		{"timeout then unknown", "timeout 5 somebinary"},

@@ -65,6 +65,46 @@ research:
     url: "https://searx.example.com/search?q={query}&format=json"
 ```
 
+### The `[permissions]` config block
+
+```yaml
+permissions:
+  mode: smart           # off | prompt-all | smart | auto (default: smart)
+  session_allow: true   # whether the [s]ession "allow for this session" option appears
+  auto_approve: []      # per-segment allow patterns (see note below): "bash:git *", ...
+  always_prompt: []     # patterns demoted to always-prompt, e.g. "bash:git push*"
+  disabled: []          # tool names fully disabled (never runnable), e.g. "web_fetch"
+  auto:                 # auto-mode surface (only consulted when mode: auto)
+    classifier_model: deepseek-flash   # alias that judges gray-area commands; NEVER a chat alias
+    deny: []            # extra always-deny per-segment patterns, e.g. "bash:npm publish*"
+    ask: []             # extra always-ask per-segment patterns (override an allow)
+```
+
+`mode: auto` runs commands without a human prompt when they are provably safe.
+It is layered: a bash command is split into its simple-command **segments**
+(across `&&`, `||`, `;`, `|`, newlines, and the body of `bash -c`/`sh -c`), and
+**each segment is evaluated independently** — static deny/ask rules first, then
+the read-only safe list, then path/egress heuristics, and only genuinely
+ambiguous segments reach the `classifier_model`. Deny beats ask beats allow; a
+command that cannot be parsed fails closed.
+
+**`auto_approve` (and `auto.deny`/`auto.ask`) are per-segment, not first-token
+prefixes.** A pattern only approves the segment it matches, so `git status &&
+rm -rf ~` is **not** auto-approved by `bash:git *`: the `git status` segment
+matches and the `rm -rf ~` segment does not, and one un-approved segment denies
+the whole command. There is no way to whitelist a leading `git` into approving a
+trailing `rm`. Wrapping (`sh -c "rm x"`), command substitution (`$(...)` /
+backticks), env-assignment prefixes (`FOO=bar cmd`), and path-qualified argv0
+(`/usr/bin/rm`) all fail closed rather than slip past a prefix match.
+
+**Trust boundary.** The permission-*loosening* keys — `mode`, `session_allow`,
+`auto_approve`, and the entire `auto` block — are honored **only** from the
+trusted `~/.fuse/config.yml`. A repo-plantable `.fuse.local.yml` cannot weaken
+the gate: those keys are ignored there (with a startup warning), so a checked-in
+file cannot flip a clone into `auto` mode or self-approve. Only the *tightening*
+keys `always_prompt` and `disabled` take effect from `.fuse.local.yml`. Set
+anything that grants trust in your own `~/.fuse/config.yml`.
+
 ### The `[research]` config block
 
 ```yaml

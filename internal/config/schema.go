@@ -27,7 +27,7 @@ type ModelsConfig struct {
 
 // PermissionsConfig controls the HITL gate behaviour.
 type PermissionsConfig struct {
-	Mode         string   `yaml:"mode"`          // off | prompt-all | smart (default: smart)
+	Mode         string   `yaml:"mode"`          // off | prompt-all | smart | auto (default: smart)
 	SessionAllow bool     `yaml:"session_allow"` // whether [s]ession option appears
 	AutoApprove  []string `yaml:"auto_approve"`  // patterns promoted beyond the safe list
 	AlwaysPrompt []string   `yaml:"always_prompt"` // patterns demoted to always-prompt
@@ -36,7 +36,12 @@ type PermissionsConfig struct {
 }
 
 // AutoConfig configures auto mode: the classifier model alias and the static
-// deny/ask pattern lists layered around it. No behaviour is wired here yet.
+// deny/ask pattern lists layered around it. In auto mode a bash command is
+// split into per-segment simple commands and each is run through a layered
+// pipeline — static rules (Deny/Ask plus the built-in dangerous set) win first,
+// then the read-only safe list auto-approves, then path/egress heuristics, and
+// only genuinely gray-area segments reach the classifier model. Deny always
+// beats Ask always beats allow, and an unparseable command fails closed.
 type AutoConfig struct {
 	ClassifierModel string   `yaml:"classifier_model"`
 	Deny            []string `yaml:"deny"`
