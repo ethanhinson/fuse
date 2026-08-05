@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/muesli/reflow/ansi"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -158,6 +159,95 @@ func TestAppendLineStoresTranscriptLines(t *testing.T) {
 	// Behavior-preserving at wide viewport: flattened content matches the raw text.
 	if got := strings.Join(flattenLines(m), "\n"); got != "a\nb" {
 		t.Errorf("flattened = %q, want %q", got, "a\nb")
+	}
+}
+
+// printWidth is the printable-rune width of s (ANSI escapes excluded) — the
+// same measure hangWrap budgets against, so wide/multi-byte glyphs (└, ✗)
+// count as their display columns, not their byte length.
+func printWidth(s string) int {
+	return ansi.PrintableRuneWidth(s)
+}
+
+// TestHangWrapGutterContinuation (spec Test 1): a gutter line wider than the
+// viewport wraps; continuation rows carry the cont prefix, the content column
+// stays aligned, and nothing lands at column 0.
+func TestHangWrapGutterContinuation(t *testing.T) {
+	first := "  └ 1 │ "
+	cont := "      │ "
+	l := transcriptLine{
+		first: first,
+		cont:  cont,
+		text:  "one two three four five six seven eight nine ten eleven twelve",
+	}
+	width := 24
+	rows := hangWrap(l, width)
+	if len(rows) < 2 {
+		t.Fatalf("expected wrapping into multiple rows, got %d: %#v", len(rows), rows)
+	}
+	if !strings.HasPrefix(rows[0], first) {
+		t.Errorf("first row missing first prefix: %q", rows[0])
+	}
+	for i := 1; i < len(rows); i++ {
+		if !strings.HasPrefix(rows[i], cont) {
+			t.Errorf("continuation row %d missing cont prefix: %q", i, rows[i])
+		}
+		// Content column aligned: cont has same printable width as first.
+		if rows[i][:len(cont)] != cont {
+			t.Errorf("continuation row %d prefix not aligned: %q", i, rows[i])
+		}
+	}
+	// Nothing at column 0: every row starts with a space (the prefixes do).
+	for i, r := range rows {
+		if r == "" || r[0] != ' ' {
+			t.Errorf("row %d starts at column 0: %q", i, r)
+		}
+	}
+}
+
+// TestHangWrapPrintableWidth (spec Test 5): ANSI escapes in first/cont don't
+// count toward width — a styled prefix wraps the same as its plain equivalent.
+func TestHangWrapPrintableWidth(t *testing.T) {
+	text := "alpha beta gamma delta epsilon zeta eta theta iota"
+	width := 20
+	plain := hangWrap(transcriptLine{first: "  └ ", cont: "    ", text: text}, width)
+	styled := hangWrap(transcriptLine{
+		first: "\x1b[2m  └ \x1b[0m",
+		cont:  "\x1b[2m    \x1b[0m",
+		text:  text,
+	}, width)
+	if len(plain) != len(styled) {
+		t.Fatalf("ANSI prefix changed row count: plain=%d styled=%d", len(plain), len(styled))
+	}
+	// Every emitted row's printable width must fit inside the viewport.
+	for i, r := range styled {
+		if w := printWidth(r); w > width {
+			t.Errorf("styled row %d printable width %d > viewport %d: %q", i, w, width, r)
+		}
+	}
+}
+
+// TestHangWrapPlainAndErrorIndent (spec Test 6): plain (└) and error (✗)
+// results indent continuations 4 spaces.
+func TestHangWrapPlainAndErrorIndent(t *testing.T) {
+	text := "one two three four five six seven eight nine ten eleven twelve thirteen"
+	width := 20
+	for _, tc := range []struct{ name, first, cont string }{
+		{"plain", "  └ ", "    "},
+		{"error", "  ✗ ", "    "},
+	} {
+		rows := hangWrap(transcriptLine{first: tc.first, cont: tc.cont, text: text}, width)
+		if len(rows) < 2 {
+			t.Fatalf("%s: expected multiple rows, got %d", tc.name, len(rows))
+		}
+		for i := 1; i < len(rows); i++ {
+			if !strings.HasPrefix(rows[i], "    ") {
+				t.Errorf("%s: continuation row %d not indented 4 spaces: %q", tc.name, i, rows[i])
+			}
+			if printWidth(rows[i]) > width {
+				t.Errorf("%s: row %d exceeds width: %q", tc.name, i, rows[i])
+			}
+		}
 	}
 }
 

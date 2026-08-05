@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
+	"github.com/muesli/reflow/ansi"
 	"github.com/muesli/reflow/wordwrap"
 	"github.com/muesli/reflow/wrap"
 
@@ -1080,6 +1081,45 @@ func formatTokens(n int) string {
 		return fmt.Sprintf("%d", n)
 	}
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
+}
+
+// hangWrap wraps a single transcriptLine to width with a hanging indent: the
+// first visual row carries l.first, every continuation row carries l.cont (of
+// equal printable width), so wrapped content stays inside the prefix column
+// instead of escaping to column 0. It guarantees no emitted row exceeds the
+// viewport width (constraint 1) — the hard-wrap pass is the safety net for long
+// unbreakable tokens (URLs, minified JSON).
+//
+// Width math is printable-width aware: styled prefixes carry ANSI escapes that
+// must not count toward the column budget (constraint 3).
+func hangWrap(l transcriptLine, width int) []string {
+	// contentW is the room left for text after the first-row prefix. Clamp to a
+	// floor (matching buildEventViewLines) so pathological widths degrade to
+	// narrow-but-correct instead of emitting empty rows.
+	contentW := width - ansi.PrintableRuneWidth(l.first)
+	if contentW < 8 {
+		contentW = 8
+	}
+
+	if l.pre {
+		// Glamour already wrapped at its render width; don't re-wordwrap (that
+		// folds code blocks and blockquote indents to column 0). Apply only the
+		// hard-wrap safety net so a shrink resize can't overflow the viewport.
+		wrapped := wrap.String(l.text, width)
+		return strings.Split(wrapped, "\n")
+	}
+
+	wrapped := wrap.String(wordwrap.String(l.text, contentW), contentW)
+	rows := strings.Split(wrapped, "\n")
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		if i == 0 {
+			out[i] = l.first + r
+		} else {
+			out[i] = l.cont + r
+		}
+	}
+	return out
 }
 
 // refreshViewport sets viewport content and, when followBottom is true, scrolls
