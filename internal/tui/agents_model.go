@@ -7,6 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/reflow/wordwrap"
+	"github.com/muesli/reflow/wrap"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 )
@@ -14,17 +16,9 @@ import (
 // agentsExitMsg is returned to the parent ShellModel when AgentsModel exits.
 type agentsExitMsg struct{}
 
-// treeUpdateMsg signals that an agent tree update has arrived.
+// treeUpdateMsg signals that an agent tree update has arrived. Delivered by
+// the StartBridges pump; no subscription command is needed.
 type treeUpdateMsg struct{ nodeID string }
-
-// waitForTreeUpdate blocks on the tree's update channel and delivers it as a
-// treeUpdateMsg. Re-armed after every received event.
-func waitForTreeUpdate(t *agent.AgentTree) tea.Cmd {
-	return func() tea.Msg {
-		u := <-t.Updates()
-		return treeUpdateMsg{nodeID: u.NodeID}
-	}
-}
 
 // AgentsModel renders the spatial agent tree overlay (Tab / /agents).
 // Layout: 40% tree panel | 1-char divider | 60% detail panel.
@@ -35,19 +29,25 @@ func waitForTreeUpdate(t *agent.AgentTree) tea.Cmd {
 //	Detail: j/k scroll    g/G top/bottom  q/esc/tab back-to-tree
 type AgentsModel struct {
 	tree         *agent.AgentTree
-	nodes        []*agent.AgentNode // depth-first snapshot, refreshed on tree update
-	nodeByID     map[string]*agent.AgentNode
+	nodes        []agent.NodeView // depth-first snapshot, refreshed on tree update
+	nodeByID     map[string]agent.NodeView
 	lastChildOf  map[string]string // parentID → last child's ID
 	selected     int
+	treeScroll   int // first visible row of the tree pane
 	inDetail     bool
-	detailScroll int
+	detailScroll int  // first visible event row in the detail list
+	followTail   bool // selection sticks to the newest event until user moves up
+	eventSel     int  // selected event (index into displayEvents)
+	eventCount   int  // len(displayEvents) as of last render, for key clamping
+	inEventView  bool // full-content view of the selected event
+	eventScroll  int  // scroll offset within the expanded event
 	width        int
 	height       int
 }
 
 // NewAgentsModel creates an AgentsModel backed by the given tree.
 func NewAgentsModel(t *agent.AgentTree) *AgentsModel {
-	m := &AgentsModel{tree: t}
+	m := &AgentsModel{tree: t, followTail: true}
 	m.refreshSnapshot()
 	return m
 }
@@ -63,7 +63,14 @@ func (m *AgentsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	case treeUpdateMsg:
 		m.refreshSnapshot()
+	case tea.MouseMsg:
+		m.handleMouse(msg)
 	case tea.KeyMsg:
+		// Approval popups are owned by ShellModel (which intercepts keys while
+		// its queue is non-empty), so only navigation keys arrive here.
+		if m.inEventView {
+			return m.handleEventViewKey(msg)
+		}
 		if m.inDetail {
 			return m.handleDetailKey(msg)
 		}
@@ -94,11 +101,14 @@ func (m *AgentsModel) View() string {
 	}
 
 	divChar := lipgloss.NewStyle().Foreground(colMuted).Render("│")
-	var b strings.Builder
+	lines := make([]string, h)
 	for i := 0; i < h; i++ {
-		b.WriteString(fitLine(treeLines[i], treeW))
-		b.WriteString(divChar)
-		b.WriteString(fitLine(detailLines[i], detailW))
+		lines[i] = fitLine(treeLines[i], treeW) + divChar + fitLine(detailLines[i], detailW)
+	}
+
+	var b strings.Builder
+	for i, line := range lines {
+		b.WriteString(line)
 		if i < h-1 {
 			b.WriteByte('\n')
 		}
@@ -128,6 +138,8 @@ func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter", "tab":
 		m.inDetail = true
 		m.detailScroll = 0
+		m.eventSel = 0
+		m.followTail = true // land on the newest event of the chosen node
 	case "x":
 		if n > 0 && m.selected < n {
 			m.tree.CancelNode(m.nodes[m.selected].ID)
@@ -141,33 +153,140 @@ func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *AgentsModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "j", "down":
-		m.detailScroll++
-	case "k", "up":
-		if m.detailScroll > 0 {
-			m.detailScroll--
+		if m.eventSel < m.eventCount-1 {
+			m.eventSel++
 		}
+		m.followTail = m.eventSel >= m.eventCount-1
+	case "k", "up":
+		if m.eventSel > 0 {
+			m.eventSel--
+		}
+		m.followTail = false
 	case "g":
-		m.detailScroll = 0
+		m.eventSel = 0
+		m.followTail = false
 	case "G":
-		m.detailScroll = 9999
+		m.followTail = true
+	case "enter":
+		if m.eventCount > 0 {
+			m.inEventView = true
+			m.eventScroll = 0
+		}
 	case "q", "esc", "tab":
 		m.inDetail = false
 		m.detailScroll = 0
+		m.followTail = true
 	}
 	return m, nil
 }
 
+// handleEventViewKey scrolls within one expanded event.
+func (m *AgentsModel) handleEventViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "j", "down":
+		m.eventScroll++
+	case "k", "up":
+		if m.eventScroll > 0 {
+			m.eventScroll--
+		}
+	case "g":
+		m.eventScroll = 0
+	case "G":
+		m.eventScroll = 1 << 30 // clamped at render time
+	case "q", "esc", "tab":
+		m.inEventView = false
+		m.eventScroll = 0
+	}
+	return m, nil
+}
+
+// handleMouse: the wheel follows the active pane — node selection in the
+// tree, event selection in the detail list, content scroll in an expanded
+// event.
+func (m *AgentsModel) handleMouse(msg tea.MouseMsg) {
+	up := msg.Button == tea.MouseButtonWheelUp
+	down := msg.Button == tea.MouseButtonWheelDown
+	if !up && !down {
+		return
+	}
+	switch {
+	case m.inEventView:
+		if up {
+			m.eventScroll -= 3
+			if m.eventScroll < 0 {
+				m.eventScroll = 0
+			}
+		} else {
+			m.eventScroll += 3 // clamped at render time
+		}
+	case m.inDetail:
+		if up {
+			if m.eventSel > 0 {
+				m.eventSel--
+			}
+			m.followTail = false
+		} else {
+			if m.eventSel < m.eventCount-1 {
+				m.eventSel++
+			}
+			m.followTail = m.eventSel >= m.eventCount-1
+		}
+	default: // tree pane
+		if up && m.selected > 0 {
+			m.selected--
+		}
+		if down && m.selected < len(m.nodes)-1 {
+			m.selected++
+		}
+	}
+}
+
 // ─── tree panel ───────────────────────────────────────────────────────────────
 
-// buildTreeLines returns m.height lines for the tree panel (last line = help bar).
+// buildTreeLines returns m.height lines for the tree panel (last line = help
+// bar), scrolled so the selected node is always visible — big trees overflow
+// the pane and must window, not clip.
 func (m *AgentsModel) buildTreeLines(w int) []string {
 	rows := m.renderTreeRows(w)
 	help := treeHelpStyle.Render("j/k select  enter inspect  x cancel  esc exit")
 
-	for len(rows) < m.height-1 {
-		rows = append(rows, "")
+	visRows := m.height - 1
+	if visRows < 1 {
+		visRows = 1
 	}
-	return append(rows[:m.height-1], help)
+	// Keep the selection inside the window.
+	if m.selected < m.treeScroll {
+		m.treeScroll = m.selected
+	}
+	if m.selected >= m.treeScroll+visRows {
+		m.treeScroll = m.selected - visRows + 1
+	}
+	if maxScroll := len(rows) - visRows; m.treeScroll > maxScroll {
+		m.treeScroll = maxScroll
+	}
+	if m.treeScroll < 0 {
+		m.treeScroll = 0
+	}
+	end := m.treeScroll + visRows
+	if end > len(rows) {
+		end = len(rows)
+	}
+	window := rows[m.treeScroll:end]
+
+	// Overflow indicators so a windowed tree doesn't read as the whole tree —
+	// but never at the cost of hiding the selected row itself.
+	if m.treeScroll > 0 && m.selected != m.treeScroll {
+		window[0] = fitLine(treeHelpStyle.Render(fmt.Sprintf("↑ %d more…", m.treeScroll)), w)
+	}
+	if hidden := len(rows) - end; hidden > 0 && m.selected != end-1 {
+		window[len(window)-1] = fitLine(treeHelpStyle.Render(fmt.Sprintf("↓ %d more…", hidden)), w)
+	}
+
+	out := append([]string{}, window...)
+	for len(out) < m.height-1 {
+		out = append(out, "")
+	}
+	return append(out[:m.height-1], help)
 }
 
 func (m *AgentsModel) renderTreeRows(w int) []string {
@@ -183,8 +302,9 @@ func (m *AgentsModel) renderTreeRows(w int) []string {
 
 // renderNodeRow renders one tree row to exactly w cells.
 // Three zones: [edge+cloud+label] [dot fill] [glyph+elapsed+tokens]
-func (m *AgentsModel) renderNodeRow(n *agent.AgentNode, selected bool, w int) string {
+func (m *AgentsModel) renderNodeRow(n agent.NodeView, selected bool, w int) string {
 	edge := m.edgePrefix(n)
+	label := sanitizeDisplay(n.Label) // model-controlled; tabs/controls shear columns
 	cloud := ""
 	if n.RemoteExec {
 		cloud = "☁ "
@@ -198,7 +318,7 @@ func (m *AgentsModel) renderNodeRow(n *agent.AgentNode, selected bool, w int) st
 	}
 	right := glyph + " " + elapsed + tokens
 
-	prefixPlain := edge + cloud + n.Label
+	prefixPlain := edge + cloud + label
 	leftW := lipgloss.Width(prefixPlain)
 	rightW := lipgloss.Width(right)
 
@@ -218,7 +338,7 @@ func (m *AgentsModel) renderNodeRow(n *agent.AgentNode, selected bool, w int) st
 	if cloud != "" {
 		cloudS = lipgloss.NewStyle().Foreground(colAmber).Render(cloud)
 	}
-	labelS := lipgloss.NewStyle().Foreground(colNormal).Render(n.Label)
+	labelS := lipgloss.NewStyle().Foreground(colNormal).Render(label)
 	dotsS := lipgloss.NewStyle().Foreground(colMuted).Render("  " + dots + "  ")
 	glyphS := glyphStyle(n.Status).Render(glyph)
 	rightS := glyphS + lipgloss.NewStyle().Foreground(colMuted).Render(" "+elapsed+tokens)
@@ -227,15 +347,15 @@ func (m *AgentsModel) renderNodeRow(n *agent.AgentNode, selected bool, w int) st
 }
 
 // edgePrefix builds the box-drawing edge for n using isLastChild lookups.
-func (m *AgentsModel) edgePrefix(n *agent.AgentNode) string {
+func (m *AgentsModel) edgePrefix(n agent.NodeView) string {
 	if n.Depth == 0 {
 		return ""
 	}
-	var chain []*agent.AgentNode
-	cur := m.nodeByID[n.ParentID]
-	for cur != nil && cur.Depth > 0 {
-		chain = append([]*agent.AgentNode{cur}, chain...)
-		cur = m.nodeByID[cur.ParentID]
+	var chain []agent.NodeView
+	cur, ok := m.nodeByID[n.ParentID]
+	for ok && cur.Depth > 0 {
+		chain = append([]agent.NodeView{cur}, chain...)
+		cur, ok = m.nodeByID[cur.ParentID]
 	}
 	prefix := ""
 	for _, anc := range chain {
@@ -255,43 +375,188 @@ func (m *AgentsModel) edgePrefix(n *agent.AgentNode) string {
 
 // ─── detail panel ─────────────────────────────────────────────────────────────
 
-// buildDetailLines returns m.height lines for the detail panel.
+// displayEvents filters the raw event list to the rows the detail pane shows
+// (token events are noise); m.eventSel indexes into THIS slice.
+func displayEvents(events []agent.AgentEvent) []agent.AgentEvent {
+	out := events[:0:0]
+	for _, e := range events {
+		if e.Kind != agent.KindTokens {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// buildDetailLines returns m.height lines for the detail panel: either the
+// event list (one selectable row per event) or, after enter, the full
+// word-wrapped content of the selected event.
 func (m *AgentsModel) buildDetailLines(w int) []string {
 	if len(m.nodes) == 0 || m.selected >= len(m.nodes) {
 		return []string{lipgloss.NewStyle().Foreground(colMuted).Render("Select a node to inspect.")}
 	}
 
 	n := m.nodes[m.selected]
-	events := n.CopyEvents()
+	// Events aren't carried in the snapshot (they can be large); take a
+	// race-safe copy from the live node only for the selected one.
+	var events []agent.AgentEvent
+	if live := m.tree.Node(n.ID); live != nil {
+		events = live.CopyEvents()
+	}
+	visible := displayEvents(events)
+	m.eventCount = len(visible)
+
+	if m.inEventView && len(visible) > 0 {
+		return m.buildEventViewLines(n, visible, w)
+	}
+	m.inEventView = false
 
 	header := m.renderDetailHeader(n, w)
 	rule := lipgloss.NewStyle().Foreground(colMuted).Render(strings.Repeat("─", w))
-	evtLines := m.renderEventLines(n, events, w)
-	help := treeHelpStyle.Render("j/k scroll  g/G top/bottom  esc back")
 
-	all := append([]string{header, rule}, evtLines...)
+	rows := m.height - 3 // header + rule + help
+	if rows < 1 {
+		rows = 1
+	}
 
-	// Clamp scroll.
-	maxScroll := len(all) - (m.height - 2)
+	var evtLines []string
+	if len(visible) == 0 {
+		// An eventless pane reads as "broken"; say what the node is doing.
+		muted := lipgloss.NewStyle().Foreground(colMuted)
+		switch n.Status {
+		case agent.StatusPending:
+			evtLines = []string{muted.Render("Queued — waiting for a spawn slot (" +
+				fmt.Sprintf("%d concurrent max", agent.MaxConcurrentSpawns) + ")…")}
+		case agent.StatusRunning:
+			evtLines = []string{muted.Render("Starting — no events yet…")}
+		case agent.StatusCancelled:
+			evtLines = []string{muted.Render("Cancelled before producing events.")}
+		}
+	} else {
+		// Selection: follow the newest event until the user moves off it.
+		if m.followTail || m.eventSel >= len(visible)-1 {
+			m.eventSel = len(visible) - 1
+			m.followTail = true
+		}
+		if m.eventSel < 0 {
+			m.eventSel = 0
+		}
+		// Keep the selection in the visible window.
+		if m.eventSel < m.detailScroll {
+			m.detailScroll = m.eventSel
+		}
+		if m.eventSel >= m.detailScroll+rows {
+			m.detailScroll = m.eventSel - rows + 1
+		}
+		all := m.renderEventLines(n, visible, w)
+		endIdx := m.detailScroll + rows
+		if endIdx > len(all) {
+			endIdx = len(all)
+		}
+		if m.detailScroll < len(all) {
+			evtLines = all[m.detailScroll:endIdx]
+		}
+	}
+	help := treeHelpStyle.Render("j/k select  enter expand  g/G first/last  esc back")
+
+	out := append([]string{header, rule}, evtLines...)
+	for len(out) < m.height-1 {
+		out = append(out, "")
+	}
+	return append(out[:m.height-1], help)
+}
+
+// buildEventViewLines renders one event's COMPLETE content, word-wrapped and
+// scrollable — the drill-in for output that every list view truncates.
+func (m *AgentsModel) buildEventViewLines(n agent.NodeView, visible []agent.AgentEvent, w int) []string {
+	if m.eventSel >= len(visible) {
+		m.eventSel = len(visible) - 1
+	}
+	if m.eventSel < 0 {
+		m.eventSel = 0
+	}
+	evt := visible[m.eventSel]
+
+	ts := " 0.0s"
+	if !n.StartedAt.IsZero() {
+		ts = fmt.Sprintf("%05.1fs", evt.TS.Sub(n.StartedAt).Seconds())
+	}
+	title := fmt.Sprintf("event %d/%d  [%s]  %s  %s", m.eventSel+1, len(visible), ts,
+		strings.TrimSpace(detailKind(evt.Kind)), evt.Name)
+	header := fitLine(lipgloss.NewStyle().Foreground(colNormal).Bold(true).Render(title), w)
+	rule := lipgloss.NewStyle().Foreground(colMuted).Render(strings.Repeat("─", w))
+
+	wrapW := w - 1
+	if wrapW < 8 {
+		wrapW = 8
+	}
+	// wordwrap breaks at spaces; wrap hard-breaks anything still over width
+	// (long tokens, minified JSON) so no line can overflow the pane and
+	// desync the terminal's row layout.
+	body := wrap.String(wordwrap.String(sanitizeDisplay(eventFullContent(evt)), wrapW), wrapW)
+	lines := strings.Split(body, "\n")
+	for i, l := range lines {
+		lines[i] = fitLine(l, w)
+	}
+
+	rows := m.height - 3
+	if rows < 1 {
+		rows = 1
+	}
+	maxScroll := len(lines) - rows
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
-	scroll := m.detailScroll
-	if scroll > maxScroll {
-		scroll = maxScroll
+	if m.eventScroll > maxScroll {
+		m.eventScroll = maxScroll
 	}
-	if scroll > 0 && scroll < len(all) {
-		all = all[scroll:]
+	if m.eventScroll < 0 {
+		m.eventScroll = 0
 	}
+	end := m.eventScroll + rows
+	if end > len(lines) {
+		end = len(lines)
+	}
+	window := lines[m.eventScroll:end]
 
-	for len(all) < m.height-1 {
-		all = append(all, "")
+	help := treeHelpStyle.Render("j/k scroll  g/G top/bottom  esc back to events")
+	out := append([]string{header, rule}, window...)
+	for len(out) < m.height-1 {
+		out = append(out, "")
 	}
-	return append(all[:m.height-1], help)
+	return append(out[:m.height-1], help)
 }
 
-func (m *AgentsModel) renderDetailHeader(n *agent.AgentNode, w int) string {
-	label := n.Label
+// eventFullContent returns an event's complete payload, untruncated.
+func eventFullContent(evt agent.AgentEvent) string {
+	switch evt.Kind {
+	case agent.KindAssistant:
+		if t, ok := evt.Payload["text"].(string); ok {
+			return t
+		}
+	case agent.KindToolCall:
+		args, _ := evt.Payload["args"].(string)
+		return evt.Name + "(" + args + ")"
+	case agent.KindToolResult:
+		if o, ok := evt.Payload["output"].(string); ok {
+			return o
+		}
+	case agent.KindError:
+		if e, ok := evt.Payload["error"].(string); ok {
+			return e
+		}
+	case agent.KindDone:
+		if r, ok := evt.Payload["result"].(string); ok {
+			return r
+		}
+	}
+	if evt.Name != "" {
+		return evt.Name
+	}
+	return "(no content)"
+}
+
+func (m *AgentsModel) renderDetailHeader(n agent.NodeView, w int) string {
+	label := sanitizeDisplay(n.Label)
 	if n.RemoteExec {
 		label += " ☁"
 	}
@@ -323,13 +588,11 @@ func (m *AgentsModel) renderDetailHeader(n *agent.AgentNode, w int) string {
 	)
 }
 
-func (m *AgentsModel) renderEventLines(n *agent.AgentNode, events []agent.AgentEvent, w int) []string {
+// renderEventLines renders one selectable row per (pre-filtered) event; the
+// row at m.eventSel is highlighted.
+func (m *AgentsModel) renderEventLines(n agent.NodeView, events []agent.AgentEvent, w int) []string {
 	var lines []string
-	for _, evt := range events {
-		if evt.Kind == agent.KindTokens {
-			continue
-		}
-
+	for i, evt := range events {
 		ts := " 0.0s"
 		if !n.StartedAt.IsZero() {
 			ts = fmt.Sprintf("%05.1fs", evt.TS.Sub(n.StartedAt).Seconds())
@@ -344,9 +607,15 @@ func (m *AgentsModel) renderEventLines(n *agent.AgentNode, events []agent.AgentE
 			maxContent = 4
 		}
 
-		content := detailContent(evt, maxContent)
-		prefix := lipgloss.NewStyle().Foreground(colMuted).Render(prefixPlain)
+		content := sanitizeDisplay(detailContent(evt, maxContent))
 
+		if i == m.eventSel {
+			// Selected row: plain reverse video so it reads as a cursor.
+			lines = append(lines, fitLine(lipgloss.NewStyle().Reverse(true).Render(prefixPlain+content), w))
+			continue
+		}
+
+		prefix := lipgloss.NewStyle().Foreground(colMuted).Render(prefixPlain)
 		var contentS string
 		switch evt.Kind {
 		case agent.KindAssistant:
@@ -360,7 +629,6 @@ func (m *AgentsModel) renderEventLines(n *agent.AgentNode, events []agent.AgentE
 		default:
 			contentS = lipgloss.NewStyle().Foreground(colMuted).Render(content)
 		}
-
 		lines = append(lines, fitLine(prefix+contentS, w))
 	}
 	return lines
@@ -369,8 +637,8 @@ func (m *AgentsModel) renderEventLines(n *agent.AgentNode, events []agent.AgentE
 // ─── snapshot helpers ─────────────────────────────────────────────────────────
 
 func (m *AgentsModel) refreshSnapshot() {
-	m.nodes = m.tree.Nodes()
-	m.nodeByID = make(map[string]*agent.AgentNode, len(m.nodes))
+	m.nodes = m.tree.SnapshotAll()
+	m.nodeByID = make(map[string]agent.NodeView, len(m.nodes))
 	for _, n := range m.nodes {
 		m.nodeByID[n.ID] = n
 	}
@@ -498,7 +766,7 @@ func glyphStyle(s agent.NodeStatus) lipgloss.Style {
 	}
 }
 
-func nodeElapsed(n *agent.AgentNode) string {
+func nodeElapsed(n agent.NodeView) string {
 	if n.StartedAt.IsZero() {
 		return "–"
 	}

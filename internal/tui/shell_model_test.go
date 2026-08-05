@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -41,9 +44,9 @@ type staticProvider struct {
 	entries []SlashEntry
 }
 
-func (p *staticProvider) Commands() []SlashEntry  { return p.entries }
+func (p *staticProvider) Commands() []SlashEntry   { return p.entries }
 func (p *staticProvider) Changes() <-chan struct{} { return nil }
-func (p *staticProvider) Close()                  {}
+func (p *staticProvider) Close()                   {}
 
 // registryWith builds a SlashRegistry from a fixed set of entries.
 func registryWith(entries ...SlashEntry) *SlashRegistry {
@@ -213,34 +216,73 @@ func TestSlashUnknown(t *testing.T) {
 	}
 }
 
-func TestAssistantMsgAppendsAndRearms(t *testing.T) {
+func TestAssistantMsgAppends(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	next, cmd := m.Update(AssistantMsg{Text: "hello world"})
 	m = next.(ShellModel)
 	if !strings.Contains(plainLines(m), "hello world") {
 		t.Error("assistant text not appended")
 	}
-	if cmd == nil {
-		t.Error("expected re-armed waitForMsg cmd")
+	// Program.Send delivery: channel messages need no re-armed subscription cmd.
+	if cmd != nil {
+		t.Error("channel messages should not return a subscription cmd")
 	}
 }
 
 func TestToolCallTruncation(t *testing.T) {
 	long := strings.Repeat("x", previewLimit+50)
 
-	// Tool call text lives in pendingCall until a result settles it.
+	// Tool call text queues until its result settles it.
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	next, _ := m.Update(ToolCallMsg{Name: "bash", Args: long})
 	m = next.(ShellModel)
-	if !strings.Contains(m.pendingCall, "bash(") || !strings.Contains(m.pendingCall, "…") {
-		t.Errorf("expected truncated pending call, got: %q", m.pendingCall)
+	if len(m.pendingCalls) != 1 {
+		t.Fatalf("pendingCalls len = %d, want 1", len(m.pendingCalls))
+	}
+	if !strings.Contains(m.pendingCalls[0].text, "bash(") || !strings.Contains(m.pendingCalls[0].text, "…") {
+		t.Errorf("expected truncated pending call, got: %q", m.pendingCalls[0].text)
 	}
 
 	mv := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
 	nv, _ := mv.Update(ToolCallMsg{Name: "bash", Args: long})
 	mv = nv.(ShellModel)
-	if strings.Contains(mv.pendingCall, "…") {
+	if strings.Contains(mv.pendingCalls[0].text, "…") {
 		t.Error("verbose tool call should not be truncated")
+	}
+}
+
+// TestBatchedCallsPairWithResults verifies a batch of announced calls renders
+// as call+result pairs, not one bullet followed by unbroken result soup.
+func TestBatchedCallsPairWithResults(t *testing.T) {
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	for _, p := range []string{"a.go", "b.go", "c.go"} {
+		next, _ := m.Update(ToolCallMsg{Name: "read_file", Args: p})
+		m = next.(ShellModel)
+	}
+	if len(m.pendingCalls) != 3 {
+		t.Fatalf("pendingCalls len = %d, want 3", len(m.pendingCalls))
+	}
+	for _, out := range []string{"content-a", "content-b", "content-c"} {
+		next, _ := m.Update(ToolResultMsg{Name: "read_file", Output: out})
+		m = next.(ShellModel)
+	}
+	if len(m.pendingCalls) != 0 {
+		t.Fatalf("pendingCalls not drained: %d", len(m.pendingCalls))
+	}
+	joined := plainLines(m)
+	posCallB := strings.Index(joined, "b.go")
+	posResA := strings.Index(joined, "content-a")
+	posResB := strings.Index(joined, "content-b")
+	if posResA == -1 || posResB == -1 || posCallB == -1 {
+		t.Fatalf("missing content in transcript:\n%s", joined)
+	}
+	// Each result must appear after its own call's bullet: a-result, then
+	// b-call, then b-result.
+	if !(posResA < posCallB && posCallB < posResB) {
+		t.Errorf("expected call/result interleaving; got:\n%s", joined)
+	}
+	if got := strings.Count(joined, "read_file("); got != 3 {
+		t.Errorf("expected 3 call bullets, got %d", got)
 	}
 }
 
@@ -268,8 +310,8 @@ func TestAgentDoneClearsRunning(t *testing.T) {
 	if len(m.history) != 2 {
 		t.Errorf("history not updated: %+v", m.history)
 	}
-	if cmd == nil {
-		t.Error("expected re-armed waitForMsg cmd")
+	if cmd != nil {
+		t.Error("channel messages should not return a subscription cmd")
 	}
 }
 
@@ -385,8 +427,98 @@ func TestRegistryReloadMsgRefreshesCompleter(t *testing.T) {
 	next, cmd := m.Update(registryReloadMsg{})
 	m = next.(ShellModel)
 	_ = m
-	// cmd should be a re-armed waitForRegistryReload
-	if cmd == nil {
-		t.Error("expected re-armed registry reload cmd after registryReloadMsg")
+	// Reloads are pumped by StartBridges; no subscription cmd expected.
+	if cmd != nil {
+		t.Error("registryReloadMsg should not return a subscription cmd")
+	}
+}
+
+// TestUserPromptEchoedInTranscript: the submitted prompt must remain visible
+// after the input clears.
+func TestUserPromptEchoedInTranscript(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m.input.SetValue("please audit the spawn path")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(ShellModel)
+	if !strings.Contains(plainLines(m), "please audit the spawn path") {
+		t.Error("user prompt not echoed into transcript")
+	}
+}
+
+// TestPreviewResultKeepsLinesAndNotesElision: non-verbose results show real
+// leading lines plus a pointer to the full output, not a 120-char chop.
+func TestPreviewResultKeepsLinesAndNotesElision(t *testing.T) {
+	var sb strings.Builder
+	for i := 0; i < 30; i++ {
+		fmt.Fprintf(&sb, "result line %02d\n", i)
+	}
+	got := previewResult(sb.String())
+	if !strings.Contains(got, "result line 00") || !strings.Contains(got, "result line 07") {
+		t.Errorf("first lines missing: %q", got)
+	}
+	if strings.Contains(got, "result line 08") {
+		t.Errorf("preview too long: %q", got)
+	}
+	if !strings.Contains(got, "+22 more lines") || !strings.Contains(got, "/verbose") {
+		t.Errorf("elision note missing/wrong: %q", got)
+	}
+	short := "one\ntwo"
+	if previewResult(short) != short {
+		t.Error("short results must pass through unchanged")
+	}
+}
+
+// TestStatusBarShowsAgentCounter: running/queued children must be visible in
+// the shell status bar before the user opens the agents overlay.
+func TestStatusBarShowsAgentCounter(t *testing.T) {
+	tree := agent.NewAgentTree("root", "alpha")
+	root := tree.Node(tree.RootID())
+	block := make(chan struct{})
+	s := agent.NewSpawner(agent.WithTree(tree), agent.WithNode(root),
+		agent.WithChildBuilder(func(ctx context.Context, _ agent.SpawnOpts, _ *agent.AgentNode, _ *agent.AgentTree) (string, error) {
+			select {
+			case <-block:
+			case <-ctx.Done():
+			}
+			return "", nil
+		}))
+	handles := make([]agent.AgentHandle, 0, agent.MaxConcurrentSpawns+2)
+	for i := 0; i < agent.MaxConcurrentSpawns+2; i++ {
+		h, err := s.Spawn(context.Background(), agent.SpawnOpts{Label: "w"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		handles = append(handles, h)
+	}
+	// Wait until the cap's worth of children report running.
+	deadline := time.After(2 * time.Second)
+	for {
+		if r, _ := tree.ActiveCounts(); r >= agent.MaxConcurrentSpawns {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("children never started")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m = m.WithTree(tree)
+	view := ansiRE.ReplaceAllString(m.View(), "")
+	if !strings.Contains(view, fmt.Sprintf("%d running", agent.MaxConcurrentSpawns)) {
+		t.Errorf("status bar missing running counter: %q", view)
+	}
+	if !strings.Contains(view, "2 queued") {
+		t.Errorf("status bar missing queued counter: %q", view)
+	}
+
+	close(block)
+	for _, h := range handles {
+		h.Wait()
+	}
+	view = ansiRE.ReplaceAllString(m.View(), "")
+	if !strings.Contains(view, "Tab → agents") || strings.Contains(view, "running") {
+		t.Errorf("idle status bar should fall back to plain hint: %q", view)
 	}
 }

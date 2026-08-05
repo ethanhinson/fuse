@@ -7,10 +7,11 @@ import (
 
 // ModelConfig is a resolved model entry inside the registry.
 type ModelConfig struct {
-	ID           string
-	MaxTokens    int
-	Persona      string
-	SystemPrefix string // prepended before the persona system prompt; for model-specific directives
+	ID            string
+	MaxTokens     int
+	ContextWindow int // model context size in tokens; 0 = harness default (128k)
+	Persona       string
+	SystemPrefix  string // prepended before the persona system prompt; for model-specific directives
 }
 
 // Registry maps model aliases to their resolved gateway configuration.

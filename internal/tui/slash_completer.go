@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	completerMaxRows  = 8
-	kindTagWidth      = 18
+	completerMaxRows = 8
+	kindTagWidth     = 18
 )
 
 var (

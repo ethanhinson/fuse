@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -166,6 +167,18 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 	go func() {
 		defer cancel()
 
+		// Width cap: wait for a spawn slot while the node stays visibly pending.
+		// Depth limits alone don't bound load when the model fans out widely.
+		if !s.tree.acquireSpawnSlot(childCtx) {
+			node.Finish(StatusCancelled, "")
+			if s.tree != nil {
+				s.tree.Emit(TreeUpdate{NodeID: node.ID})
+			}
+			doneCh <- SpawnDone{Err: childCtx.Err()}
+			return
+		}
+		defer s.tree.releaseSpawnSlot()
+
 		node.mu.Lock()
 		node.Status = StatusRunning
 		node.StartedAt = time.Now()
@@ -178,7 +191,20 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		var runErr error
 
 		if s.buildChild != nil {
-			result, runErr = s.buildChild(childCtx, opts, node, s.tree)
+			// Backstop: a panic on a child goroutine kills the whole process,
+			// TUI included. Convert it into a child error instead.
+			func() {
+				defer func() {
+					if rec := recover(); rec != nil {
+						stack := debug.Stack()
+						if len(stack) > 2048 {
+							stack = stack[:2048]
+						}
+						runErr = fmt.Errorf("child agent panicked: %v\n%s", rec, stack)
+					}
+				}()
+				result, runErr = s.buildChild(childCtx, opts, node, s.tree)
+			}()
 		}
 
 		if runErr != nil {
@@ -347,6 +373,7 @@ func (s *Spawner) spawnRemote(ctx context.Context, opts SpawnOpts, depth int) (A
 
 		var result string
 		var spawnErr error
+		var sawTerminal bool
 
 		for evt := range eventCh {
 			node.AddEvent(evt)
@@ -354,18 +381,36 @@ func (s *Spawner) spawnRemote(ctx context.Context, opts SpawnOpts, depth int) (A
 
 			switch evt.Kind {
 			case KindDone:
+				sawTerminal = true
 				if r, ok := evt.Payload["result"].(string); ok {
 					result = r
 				}
 			case KindError:
-				if e, ok := evt.Payload["error"].(string); ok {
-					if e == ErrRemoteStreamLost.Error() {
-						spawnErr = ErrRemoteStreamLost
-					} else {
-						spawnErr = errors.New(e)
-					}
+				sawTerminal = true
+				// The stream-lost sentinel is matched by the locally synthesized
+				// event's Name — never by error text, which the remote controls.
+				if evt.Name == streamLostEventName {
+					spawnErr = ErrRemoteStreamLost
+				} else if e, ok := evt.Payload["error"].(string); ok {
+					spawnErr = errors.New(e)
+				} else {
+					spawnErr = fmt.Errorf("remote error event %q", evt.Name)
 				}
 			}
+		}
+
+		// The channel can close with NO terminal event — on ctx cancellation the
+		// stream goroutine just returns. That must not be reported as success:
+		// a cancelled job is cancelled, and any other silent close is a lost
+		// stream, not a completed one.
+		if !sawTerminal {
+			if childCtx.Err() != nil {
+				node.Finish(StatusCancelled, "")
+				s.tree.Emit(TreeUpdate{NodeID: node.ID})
+				doneCh <- SpawnDone{Err: context.Canceled}
+				return
+			}
+			spawnErr = ErrRemoteStreamLost
 		}
 
 		if spawnErr != nil {

@@ -31,8 +31,8 @@ var (
 	// Transcript — tool results (  └ …)
 	resultPrefixStyle = lipgloss.NewStyle().Foreground(colMuted)
 	resultArrowStyle  = lipgloss.NewStyle().Foreground(colMuted) // kept for compat
-	errorArrowStyle  = lipgloss.NewStyle().Foreground(colRed)
-	errorTextStyle   = lipgloss.NewStyle().Foreground(colRed)
+	errorArrowStyle   = lipgloss.NewStyle().Foreground(colRed)
+	errorTextStyle    = lipgloss.NewStyle().Foreground(colRed)
 
 	// Transcript — agent error lines (! prefix)
 	agentErrStyle = lipgloss.NewStyle().Foreground(colRed)

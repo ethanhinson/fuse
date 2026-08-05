@@ -97,7 +97,7 @@ func TestToolsRegistryUnregister(t *testing.T) {
 // fakeRegistryTool satisfies tools.Tool for tests.
 type fakeRegistryTool string
 
-func (f fakeRegistryTool) Name() string                              { return string(f) }
-func (f fakeRegistryTool) Description() string                      { return "" }
-func (f fakeRegistryTool) Parameters() map[string]any               { return nil }
+func (f fakeRegistryTool) Name() string                                     { return string(f) }
+func (f fakeRegistryTool) Description() string                              { return "" }
+func (f fakeRegistryTool) Parameters() map[string]any                       { return nil }
 func (f fakeRegistryTool) Execute(_ context.Context, _ string) tools.Result { return tools.Result{} }

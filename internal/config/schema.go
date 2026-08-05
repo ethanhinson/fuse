@@ -10,10 +10,11 @@ type Gateway struct {
 
 // ModelConfig is a single named model entry.
 type ModelConfig struct {
-	ID           string `yaml:"id"`
-	MaxTokens    int    `yaml:"max_tokens"`
-	Persona      string `yaml:"persona"`
-	SystemPrefix string `yaml:"system_prefix"` // prepended before persona prompt (e.g. "/no_think" for Qwen3)
+	ID            string `yaml:"id"`
+	MaxTokens     int    `yaml:"max_tokens"`
+	ContextWindow int    `yaml:"context_window"` // model context size in tokens; 0 = harness default
+	Persona       string `yaml:"persona"`
+	SystemPrefix  string `yaml:"system_prefix"` // prepended before persona prompt (e.g. "/no_think" for Qwen3)
 }
 
 // ModelsConfig holds the default model alias and all named entries.
@@ -54,8 +55,8 @@ type MCPServerConfig struct {
 
 // SecretsConfig describes the secrets store and encryption backend.
 type SecretsConfig struct {
-	Store      string           `yaml:"store"`      // "env" | "sops" | "encrypted-file"
-	SopsFile   string           `yaml:"sops_file"`  // for store: sops
+	Store      string           `yaml:"store"`     // "env" | "sops" | "encrypted-file"
+	SopsFile   string           `yaml:"sops_file"` // for store: sops
 	Encryption EncryptionConfig `yaml:"encryption"`
 }
 
@@ -67,10 +68,10 @@ type EncryptionConfig struct {
 
 // IntentPluginConfig describes an optional intent plugin for remote execution.
 type IntentPluginConfig struct {
-	Kind              string `yaml:"kind"`               // "docket" | "openspec" | ""
+	Kind              string `yaml:"kind"` // "docket" | "openspec" | ""
 	Image             string `yaml:"image"`
 	GitRemoteURL      string `yaml:"git_remote_url"`
-	GitToken          string `yaml:"git_token"`           // ${ENV_VAR}-expanded at wiring time
+	GitToken          string `yaml:"git_token"` // ${ENV_VAR}-expanded at wiring time
 	IntegrationBranch string `yaml:"integration_branch"`
 }
 

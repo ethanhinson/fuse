@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -94,15 +94,23 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			break
 		}
 	}
+	// One shared, mutex-guarded trace writer for the whole session so root and
+	// child agents all land in the same file with per-agent labels.
+	traceW, closeTrace := openTraceWriter(traceFile)
+	defer closeTrace()
 
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
-		return buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceFile)
+		return buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root")
 	}
 
 	glamourStyle := os.Getenv("GLAMOUR_STYLE")
 	if glamourStyle == "" {
 		glamourStyle = "dark"
 	}
+
+	// Spill dir: full copies of truncated tool outputs, recoverable by the
+	// model via grep/read_file (see docs/designs/context-management.md).
+	tools.SetSpillDir(filepath.Join(filepath.Dir(session.DefaultLogDir()), "tool-output"))
 
 	// Session log: sweep stale files and open a fresh log.
 	logDir := session.DefaultLogDir()
@@ -137,10 +145,11 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 
 	// Remote executor and intent plugin from config.
 	if cfg.RemoteExecutor.URL != "" {
+		// HTTPClient nil → bounded dispatch client + header-bounded stream client
+		// (an overall timeout here would kill any SSE stream longer than it).
 		exec := &agent.SSERemoteExecutor{
 			BaseURL:     cfg.RemoteExecutor.URL,
 			TokenSecret: cfg.RemoteExecutor.TokenSecret,
-			HTTPClient:  http.DefaultClient,
 			PublicKey:   cfg.RemoteExecutor.PublicKey,
 		}
 		tree.RegisterRemote("", exec)
@@ -148,10 +157,6 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	if cfg.RemoteExecutor.IntentPlugin.Kind != "" {
 		tree.RegisterIntent("", buildIntentPlugin(cfg.RemoteExecutor.IntentPlugin))
 	}
-
-	// ch is declared here so the ChildBuilder closure can capture it.
-	// It is assigned from m.Channel() after NewShellModel returns.
-	var ch chan tea.Msg
 
 	// SpawnFunc factory — self-referential so child agents get their own spawner.
 	var makeSpawnFunc func(parentNode *agent.AgentNode, parentDepth int) tools.SpawnFunc
@@ -161,18 +166,20 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(parentDepth),
 			agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
-				// Child-specific tool registry (clone or subset).
-				var childToolReg *tools.Registry
-				if len(opts.Tools) > 0 {
-					childToolReg, _ = toolReg.Subset(opts.Tools)
-				} else {
-					childToolReg = toolReg.Clone()
+				// Child-specific tool registry (clone or subset); unknown tool
+				// names fail the spawn so the model can self-correct.
+				childToolReg, terr := childToolRegistry(toolReg, opts.Tools)
+				if terr != nil {
+					return "", terr
 				}
 				// Replace spawn_agent with one wired to the child's spawner.
 				childToolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(childNode, childNode.Depth)))
 
 				r := tui.NewNodeRenderer(childNode, childTree)
-				approve := tui.NewTeaApprovalFunc(ch) // ch assigned before first Run
+				// Child agents inherit the parent's permission config (disabled tools
+				// are respected) but use AlwaysApprove so they don't block on TUI
+				// approval and can run truly in parallel when batched.
+				childApprove := permissions.AlwaysApprove
 
 				modelAlias := opts.ModelID
 				if modelAlias == "" {
@@ -182,9 +189,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				var a *agent.Agent
 				var aerr error
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, approve)
+					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label)
 				} else {
-					a, aerr = buildAgentWithRenderer(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, approve)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -208,10 +215,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 					})
 				}
 
-				if rerr != nil {
-					return "", rerr
-				}
-				return lastAssistantText(msgs), nil
+				return childResult(msgs, rerr)
 			}),
 		)
 
@@ -230,7 +234,13 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			if herr != nil {
 				return "", herr
 			}
+			// Yield this agent's spawn slot while blocked on the child —
+			// parents holding slots while their children queue is a deadlock.
+			tree.YieldSlot(parentNode)
 			done := handle.Wait()
+			if !tree.UnyieldSlot(ctx, parentNode) {
+				return "", ctx.Err()
+			}
 			return done.Result, done.Err
 		}
 	}
@@ -239,15 +249,18 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	toolReg.Register(tools.NewSpawnAgentTool(makeSpawnFunc(rootNode, 0)))
 
 	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build)
-	ch = m.Channel() // assign ch; closure captures the variable, not a snapshot
 	m = m.WithTree(tree)
 
-	// Start the 250ms dirty-node flusher.
+	// Start the 250ms dirty-node flusher; the same ctx stops the bridges.
 	flushCtx, cancelFlusher := context.WithCancel(context.Background())
 	defer cancelFlusher()
 	tree.StartDirtyFlusher(flushCtx)
 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(stdout))
+	// Pump agent events, tree updates, and registry reloads into the program.
+	// Program.Send is safe before Run (it blocks until the loop consumes) and
+	// returns without delivering once the program has quit.
+	tui.StartBridges(flushCtx, p, m.Channel(), tree, slashReg)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(stderr, "tui error: %v\n", err)
 		return 1

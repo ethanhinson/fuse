@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/ethanhinson/fuse/internal/model"
@@ -15,7 +17,98 @@ var ErrMaxTurns = errors.New("agent: max turns reached")
 // ErrLoopDetected is returned when identical tool calls repeat past the limit.
 var ErrLoopDetected = errors.New("agent: tool-call loop detected")
 
+// ErrContextTooLarge is returned only as a last resort: when even pruning
+// old tool results cannot bring the conversation under the context budget.
+var ErrContextTooLarge = errors.New("agent: conversation context too large")
+
 const loopLimit = 3
+
+// Context budgeting (see docs/designs/context-management.md). Token counting
+// is hybrid: the provider-reported usage of the last response is exact; only
+// the delta appended since is estimated at bytes/4, so the estimate resets to
+// ground truth every turn and error never compounds.
+const (
+	// defaultContextWindow is used when the model config doesn't set one.
+	defaultContextWindow = 128_000
+	bytesPerToken        = 4
+	// pruneThresholdPct: prune when the estimated request exceeds this
+	// percentage of the context window.
+	pruneThresholdPct = 85
+	// pruneProtectTokens caps how many estimated tokens of the newest tool
+	// results are protected from pruning (recency protection). The effective
+	// protection also scales down with small context windows.
+	pruneProtectTokens = 40_000
+)
+
+// protectBudget returns the recency-protection budget for a window: a
+// quarter of the window, capped at pruneProtectTokens. recovery mode (after
+// a provider length rejection) protects a quarter of that.
+func protectBudget(window int, recovery bool) int {
+	p := window / 4
+	if p > pruneProtectTokens {
+		p = pruneProtectTokens
+	}
+	if recovery {
+		p /= 4
+	}
+	return p
+}
+
+// prunedStub replaces cleared tool results. The tool call (name + args)
+// stays in history, so the model still sees WHAT it did — just not the body.
+const prunedStub = "[old tool result cleared to free context — re-run the tool if needed]"
+
+// messagesSize estimates the payload of msgs in bytes.
+func messagesSize(msgs []model.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += len(m.Content)
+		for _, tc := range m.ToolCalls {
+			total += len(tc.Arguments)
+		}
+	}
+	return total
+}
+
+// pruneOldToolResults stubs tool results outside the protected recent tail
+// and returns the estimated tokens freed. Only "tool" role messages are
+// touched — user intent and assistant tool_calls stay intact, so provider
+// tool pairing remains valid.
+func pruneOldToolResults(messages []model.Message, protectTokens int) int {
+	freed, seen := 0, 0
+	for i := len(messages) - 1; i >= 0; i-- {
+		m := &messages[i]
+		if m.Role != "tool" || m.Content == prunedStub {
+			continue
+		}
+		tok := len(m.Content) / bytesPerToken
+		if seen < protectTokens {
+			seen += tok
+			continue
+		}
+		freed += tok
+		m.Content = prunedStub
+	}
+	return freed
+}
+
+// isContextLengthErr reports whether a gateway error is a context-length
+// rejection (patterns vary per upstream provider behind LiteLLM).
+func isContextLengthErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	for _, pat := range []string{
+		"context length", "context_length", "context window", "too long",
+		"maximum context", "token limit", "tokens exceed", "input is too long",
+	} {
+		if strings.Contains(s, pat) {
+			return true
+		}
+	}
+	return false
+}
 
 // Run executes the agent loop over history (whose last message is the user
 // turn) and returns the extended history. The system prompt, if set, is
@@ -25,9 +118,36 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	messages := history
 	detector := newLoopDetector(loopLimit)
 
+	window := a.ContextWindow
+	if window <= 0 {
+		window = defaultContextWindow
+	}
+	budget := window * pruneThresholdPct / 100
+
+	// Hybrid token accounting: exact usage from the last response, plus a
+	// bytes/4 estimate of only the messages appended since.
+	lastUsage := 0
+	accounted := 0 // messages[:accounted] are covered by lastUsage
+	retriedContext := false
+
 	for turn := 0; turn < a.maxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return messages, err
+		}
+
+		estimate := lastUsage + messagesSize(messages[accounted:])/bytesPerToken
+		if estimate > budget {
+			freed := pruneOldToolResults(messages, protectBudget(window, false))
+			if freed > 0 {
+				a.renderer.Errorf("context: ~%dk/%dk tokens — cleared ~%dk of old tool results", estimate/1000, window/1000, freed/1000)
+			}
+			estimate -= freed
+			if estimate > budget {
+				err := fmt.Errorf("%w: ~%dk tokens against a %dk window even after pruning — delegate to spawn_agent children or start a fresh session",
+					ErrContextTooLarge, estimate/1000, window/1000)
+				a.renderer.Errorf("%v", err)
+				return messages, err
+			}
 		}
 
 		req := model.CompletionReq{
@@ -38,15 +158,28 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		}
 		resp, err := a.model.Complete(ctx, req)
 		if err != nil {
+			// The estimate said we fit but the provider disagreed: prune hard
+			// (deterministic — recovery must not depend on another LLM call)
+			// and retry exactly once.
+			if isContextLengthErr(err) && !retriedContext {
+				retriedContext = true
+				if freed := pruneOldToolResults(messages, protectBudget(window, true)); freed > 0 {
+					a.renderer.Errorf("context: gateway rejected for length; cleared ~%dk tokens of old tool results, retrying", freed/1000)
+					turn--
+					continue
+				}
+			}
 			a.renderer.Errorf("model error: %v", err)
 			return messages, err
 		}
 		a.renderer.Tokens(resp.InputTokens, resp.OutputTokens)
+		lastUsage = resp.InputTokens + resp.OutputTokens
 
 		if resp.Content != "" {
 			a.renderer.Assistant(resp.Content)
 		}
 		messages = append(messages, resp.AsMessage())
+		accounted = len(messages)
 
 		if len(resp.ToolCalls) == 0 {
 			return messages, nil
@@ -111,6 +244,8 @@ func (a *Agent) executeTools(ctx context.Context, calls []model.ToolCall) []mode
 	msgs := make([]model.Message, 0, len(calls))
 	for _, r := range results {
 		a.renderer.ToolResult(r.call.Name, r.res)
+		// Output is already spill-bounded by the tool registry; history and
+		// display see the same recoverable form.
 		msgs = append(msgs, model.Message{
 			Role:       "tool",
 			ToolCallID: r.call.ID,

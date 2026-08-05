@@ -3,9 +3,9 @@ package session
 
 import (
 	"bufio"
+	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
-	crand "crypto/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,7 +69,7 @@ func (l *Logger) Write(entry LogEntry) error {
 	if err != nil {
 		return err
 	}
-	l.w.Write(b)   //nolint:errcheck
+	l.w.Write(b)        //nolint:errcheck
 	l.w.WriteByte('\n') //nolint:errcheck
 	return l.w.Flush()
 }

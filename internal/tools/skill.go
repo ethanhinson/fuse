@@ -18,8 +18,10 @@ func NewSkillTool(lookup func(string) (skills.Skill, bool)) Tool {
 	return &skillTool{lookup: lookup}
 }
 
-func (t *skillTool) Name() string        { return "skill" }
-func (t *skillTool) Description() string { return "Load an installed skill by name and return its full body." }
+func (t *skillTool) Name() string { return "skill" }
+func (t *skillTool) Description() string {
+	return "Load an installed skill by name and return its full body."
+}
 func (t *skillTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",

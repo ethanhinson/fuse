@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/model"
@@ -113,4 +114,105 @@ type capturingCompleter struct{ onCall func(model.CompletionReq) }
 func (c *capturingCompleter) Complete(ctx context.Context, req model.CompletionReq) (model.CompletionResp, error) {
 	c.onCall(req)
 	return model.CompletionResp{Content: "done"}, nil
+}
+
+// bigOutputExec returns an oversized result for every tool call.
+type bigOutputExec struct{ out string }
+
+func (b *bigOutputExec) Schemas() []model.ToolSchema { return nil }
+func (b *bigOutputExec) Execute(context.Context, string, string) tools.Result {
+	return tools.Result{Output: b.out}
+}
+
+// TestRunPrunesOldToolResultsWhenOverBudget verifies the loop stubs old tool
+// results (never user/assistant messages) instead of failing the turn.
+func TestRunPrunesOldToolResultsWhenOverBudget(t *testing.T) {
+	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.ContextWindow = 4000 // budget 3400 tokens; protection = 1000 tokens
+
+	big := strings.Repeat("x", 8000) // ~2000 tokens each
+	history := []model.Message{
+		{Role: "user", Content: "task"},
+		{Role: "assistant", Content: "reading"},
+		{Role: "tool", ToolCallID: "1", Name: "read_file", Content: big},
+		{Role: "tool", ToolCallID: "2", Name: "read_file", Content: big},
+		{Role: "tool", ToolCallID: "3", Name: "read_file", Content: big},
+	}
+	hist, err := a.Run(context.Background(), history)
+	if err != nil {
+		t.Fatalf("expected prune + proceed, got %v", err)
+	}
+	if comp.i == 0 {
+		t.Fatal("completer should have been called after pruning")
+	}
+	if hist[2].Content != prunedStub || hist[3].Content != prunedStub {
+		t.Error("older tool results should be stubbed")
+	}
+	if hist[4].Content != big {
+		t.Error("newest tool result within protection budget must survive")
+	}
+	if hist[0].Content != "task" || hist[1].Content != "reading" {
+		t.Error("user/assistant messages must never be pruned")
+	}
+}
+
+// TestRunErrsWhenPruningInsufficient: un-prunable bloat (user content) still
+// ends the turn with ErrContextTooLarge as a last resort.
+func TestRunErrsWhenPruningInsufficient(t *testing.T) {
+	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "unreachable"}}}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.ContextWindow = 4000
+	bloated := []model.Message{
+		{Role: "user", Content: strings.Repeat("y", 100_000)}, // ~25k tokens, not prunable
+	}
+	_, err := a.Run(context.Background(), bloated)
+	if !errors.Is(err, ErrContextTooLarge) {
+		t.Fatalf("expected ErrContextTooLarge, got %v", err)
+	}
+	if comp.i != 0 {
+		t.Error("gateway must not be called with an oversized context")
+	}
+}
+
+// lengthRejectingCompleter fails with a context-length error until history
+// shrinks below limit, then succeeds — simulates a provider 400.
+type lengthRejectingCompleter struct {
+	limitBytes int
+	calls      int
+}
+
+func (c *lengthRejectingCompleter) Complete(_ context.Context, req model.CompletionReq) (model.CompletionResp, error) {
+	c.calls++
+	if messagesSize(req.Messages) > c.limitBytes {
+		return model.CompletionResp{}, errors.New("gateway status 400: maximum context length exceeded")
+	}
+	return model.CompletionResp{Content: "recovered"}, nil
+}
+
+// TestRunRecoversFromProviderLengthRejection: when the estimate fits but the
+// provider still rejects, the loop prunes hard and retries exactly once.
+func TestRunRecoversFromProviderLengthRejection(t *testing.T) {
+	// Recovery protection = min(200k/4, 40k)/4 = 10k tokens = 40KB; each tool
+	// result is 15k tokens so only the newest fits inside protection.
+	comp := &lengthRejectingCompleter{limitBytes: 70_000}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.ContextWindow = 200_000 // estimate passes; provider still rejects
+
+	big := strings.Repeat("x", 60_000)
+	history := []model.Message{
+		{Role: "user", Content: "task"},
+		{Role: "tool", ToolCallID: "1", Name: "read_file", Content: big},
+		{Role: "tool", ToolCallID: "2", Name: "read_file", Content: big},
+	}
+	hist, err := a.Run(context.Background(), history)
+	if err != nil {
+		t.Fatalf("expected recovery, got %v", err)
+	}
+	if comp.calls != 2 {
+		t.Errorf("calls = %d, want 2 (reject then retry)", comp.calls)
+	}
+	if hist[1].Content != prunedStub {
+		t.Error("older tool result should be pruned during recovery")
+	}
 }

@@ -5,6 +5,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 
 	"github.com/ethanhinson/fuse/internal/model"
 )
@@ -71,12 +72,28 @@ func (r *Registry) Schemas() []model.ToolSchema {
 }
 
 // Execute runs the named tool, returning an error Result if it is unknown.
-func (r *Registry) Execute(ctx context.Context, name, args string) Result {
+// Oversized outputs are spill-truncated centrally (head+tail inline, full
+// output to a recoverable spill file) so no single result can flood the
+// conversation context. A panicking tool becomes an error Result — tool
+// calls run on agent goroutines, where an unrecovered panic kills the whole
+// process (observed live: an inverted read range took down the TUI).
+func (r *Registry) Execute(ctx context.Context, name, args string) (res Result) {
 	t, ok := r.byName[name]
 	if !ok {
 		return Result{IsError: true, Output: fmt.Sprintf("unknown tool %q", name)}
 	}
-	return t.Execute(ctx, args)
+	defer func() {
+		if rec := recover(); rec != nil {
+			stack := debug.Stack()
+			if len(stack) > 2048 {
+				stack = stack[:2048]
+			}
+			res = Result{IsError: true, Output: fmt.Sprintf("tool %s panicked: %v\n%s", name, rec, stack)}
+		}
+	}()
+	res = t.Execute(ctx, args)
+	res.Output = SpillOutput(name, res.Output)
+	return res
 }
 
 // Subset returns a new registry containing only the named tools. The
@@ -123,5 +140,6 @@ func DefaultTools() []Tool {
 		NewWriteFile(),
 		NewEditFile(),
 		NewListDirectory(),
+		NewGrep(),
 	}
 }

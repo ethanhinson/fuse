@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -28,15 +29,15 @@ var (
 
 // RemoteDispatchRequest is sent to a remote executor at dispatch time.
 type RemoteDispatchRequest struct {
-	Label        string `json:"label"`
-	Task         string `json:"task"`
-	SystemPrompt string `json:"system_prompt,omitempty"`
+	Label        string   `json:"label"`
+	Task         string   `json:"task"`
+	SystemPrompt string   `json:"system_prompt,omitempty"`
 	Tools        []string `json:"tools,omitempty"`
-	ModelID      string `json:"model_id,omitempty"`
-	MaxTurns     int    `json:"max_turns,omitempty"`
-	MaxTokens    int    `json:"max_tokens,omitempty"`
-	ParentNodeID string `json:"parent_node_id,omitempty"`
-	Depth        int    `json:"depth"`
+	ModelID      string   `json:"model_id,omitempty"`
+	MaxTurns     int      `json:"max_turns,omitempty"`
+	MaxTokens    int      `json:"max_tokens,omitempty"`
+	ParentNodeID string   `json:"parent_node_id,omitempty"`
+	Depth        int      `json:"depth"`
 
 	Image string            `json:"image,omitempty"`
 	Env   map[string]string `json:"env,omitempty"`
@@ -61,13 +62,56 @@ type RemoteExecutor interface {
 }
 
 // SSERemoteExecutor dispatches to a remote runner via HTTP + Server-Sent Events.
+//
+// Two different transports are needed: dispatch/cancel are ordinary
+// request/response calls that must be bounded, while the event stream lives
+// for the whole job — an overall Client.Timeout would kill any job longer
+// than the timeout, so the stream client bounds only connection setup and the
+// wait for response headers.
 type SSERemoteExecutor struct {
 	BaseURL       string
-	TokenSecret   string // secret name; resolved via SecretsStore at dispatch time
-	HTTPClient    *http.Client
+	TokenSecret   string       // secret name; resolved via SecretsStore at dispatch time
+	HTTPClient    *http.Client // dispatch/cancel client override (tests); nil = bounded default
+	StreamClient  *http.Client // stream client override (tests); nil = header-bounded default
 	MaxRetries    int
 	PublicKey     string // optional: remote's age public key; enables encrypted bundle mode
 	resolvedToken string // set at spawn time from the SecretsStore
+}
+
+// remoteDispatchClient bounds the dispatch POST and cancel DELETE.
+var remoteDispatchClient = &http.Client{Timeout: 15 * time.Second}
+
+// remoteStreamClient has no overall timeout (streams live minutes) but bounds
+// connect, TLS, and the wait for response headers; TCP keepalives surface
+// silently dead connections.
+var remoteStreamClient = &http.Client{
+	Transport: &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	},
+}
+
+func (e *SSERemoteExecutor) dispatchClient() *http.Client {
+	if e.HTTPClient != nil {
+		return e.HTTPClient
+	}
+	return remoteDispatchClient
+}
+
+func (e *SSERemoteExecutor) streamClient() *http.Client {
+	if e.StreamClient != nil {
+		return e.StreamClient
+	}
+	if e.HTTPClient != nil {
+		// Explicit override (tests) — use it for everything.
+		return e.HTTPClient
+	}
+	return remoteStreamClient
 }
 
 type dispatchResponse struct {
@@ -77,10 +121,7 @@ type dispatchResponse struct {
 
 // Dispatch sends a RemoteDispatchRequest to the remote and returns an event channel.
 func (e *SSERemoteExecutor) Dispatch(ctx context.Context, req RemoteDispatchRequest) (<-chan AgentEvent, error) {
-	client := e.HTTPClient
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
+	client := e.dispatchClient()
 	maxRetries := e.MaxRetries
 	if maxRetries == 0 {
 		maxRetries = 3
@@ -118,6 +159,7 @@ func (e *SSERemoteExecutor) Dispatch(ctx context.Context, req RemoteDispatchRequ
 
 	ch := make(chan AgentEvent, 32)
 	baseURL := strings.TrimRight(e.BaseURL, "/")
+	streamCl := e.streamClient()
 	go func() {
 		defer close(ch)
 		var lastSeq int64
@@ -139,7 +181,7 @@ func (e *SSERemoteExecutor) Dispatch(ctx context.Context, req RemoteDispatchRequ
 				sseReq.Header.Set("Authorization", "Bearer "+e.resolvedToken)
 			}
 
-			sseResp, err := client.Do(sseReq)
+			sseResp, err := streamCl.Do(sseReq)
 			if err != nil {
 				if ctx.Err() != nil {
 					e.sendCancel(client, baseURL, dr.JobID)
@@ -154,7 +196,7 @@ func (e *SSERemoteExecutor) Dispatch(ctx context.Context, req RemoteDispatchRequ
 				continue
 			}
 
-			streamDone := e.readSSEStream(ctx, sseResp.Body, ch, &lastSeq)
+			streamDone, delivered := e.readSSEStream(ctx, sseResp.Body, ch, &lastSeq)
 			sseResp.Body.Close()
 			if streamDone {
 				return
@@ -163,8 +205,14 @@ func (e *SSERemoteExecutor) Dispatch(ctx context.Context, req RemoteDispatchRequ
 				e.sendCancel(client, baseURL, dr.JobID)
 				return
 			}
+			// Progress on this connection means the job is alive — the retry
+			// budget is per-disconnect, not per-job, or long healthy jobs whose
+			// stream drops a few times over their life get falsely killed.
+			if delivered > 0 {
+				attempt = -1 // loop increment brings it back to 0
+			}
 			// Stream dropped; back-off before retry.
-			backoff := time.Duration(200<<uint(attempt)) * time.Millisecond
+			backoff := time.Duration(200<<uint(attempt+1)) * time.Millisecond
 			select {
 			case <-time.After(backoff):
 			case <-ctx.Done():
@@ -175,7 +223,7 @@ func (e *SSERemoteExecutor) Dispatch(ctx context.Context, req RemoteDispatchRequ
 		// Exhausted retries.
 		ch <- AgentEvent{
 			Kind:    KindError,
-			Name:    "stream_lost",
+			Name:    streamLostEventName,
 			Payload: map[string]any{"error": ErrRemoteStreamLost.Error()},
 			TS:      time.Now(),
 		}
@@ -184,10 +232,22 @@ func (e *SSERemoteExecutor) Dispatch(ctx context.Context, req RemoteDispatchRequ
 	return ch, nil
 }
 
-// readSSEStream reads SSE events from body, sends them on ch, and returns true
-// when a terminal event (done/error) is received.
-func (e *SSERemoteExecutor) readSSEStream(ctx context.Context, body io.Reader, ch chan<- AgentEvent, lastSeq *int64) bool {
+// streamLostEventName marks the locally synthesized terminal event emitted
+// when the SSE stream is lost past the retry budget. spawnRemote matches on
+// this name (not on error text, which a remote server could spoof).
+const streamLostEventName = "stream_lost"
+
+// sseMaxEventSize bounds a single SSE line. The bufio.Scanner default (64KB)
+// silently kills streams carrying large tool outputs; a lost oversized event
+// replays on resume and fails the job deterministically.
+const sseMaxEventSize = 4 << 20 // 4 MiB
+
+// readSSEStream reads SSE events from body, sends them on ch, and returns
+// done=true when a terminal event (done/error) is received, plus the number
+// of events delivered from this connection (for retry-budget resets).
+func (e *SSERemoteExecutor) readSSEStream(ctx context.Context, body io.Reader, ch chan<- AgentEvent, lastSeq *int64) (done bool, delivered int) {
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 64<<10), sseMaxEventSize)
 	var evtID, evtData string
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -203,11 +263,12 @@ func (e *SSERemoteExecutor) readSSEStream(ctx context.Context, body io.Reader, c
 				}
 				select {
 				case ch <- evt:
+					delivered++
 				case <-ctx.Done():
-					return false
+					return false, delivered
 				}
 				if evt.Kind == KindDone || evt.Kind == KindError {
-					return true
+					return true, delivered
 				}
 			}
 			evtID, evtData = "", ""
@@ -219,7 +280,9 @@ func (e *SSERemoteExecutor) readSSEStream(ctx context.Context, body io.Reader, c
 			evtData = strings.TrimSpace(after)
 		}
 	}
-	return false
+	// scanner.Err() covers both oversized tokens and transport errors; either
+	// way the stream is not terminal — the caller decides whether to retry.
+	return false, delivered
 }
 
 // sendCancel sends a best-effort DELETE to cancel a remote job.
