@@ -1,6 +1,12 @@
 # Backlog
 
-**15 changes** — 🔵 1 implemented · ✅ 12 done · 🗑️ 2 killed
+**16 changes** — 🟡 1 proposed · 🔵 1 implemented · ✅ 12 done · 🗑️ 2 killed
+
+## 🟡 Proposed (1)
+
+| # | Title | Priority | Type | Readiness |
+|---|-------|----------|------|-----------|
+| [0016](active/0016-one-shot-cli-approvals.md) | Remove the AlwaysApprove one-shot bypass; surface approvals at the CLI | `medium` | `feat` | needs-brainstorm |
 
 ## 🔵 Implemented — awaiting merge (1)
 
@@ -11,6 +17,7 @@
 ```mermaid
 graph TD
   0012 --> 0014
+  0016
   0012:::done
   classDef done fill:#d3f9d8;
 ```
