@@ -2,7 +2,7 @@
 id: 13
 slug: startup-banner
 title: ASCII art startup banner — shell init & fuse help
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-04
@@ -17,7 +17,7 @@ results: docs/results/2026-08-05-startup-banner-results.md
 trivial: false
 auto_groomable: false
 branch: feat/startup-banner
-claimed_at: 2026-08-05T08:05:16Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/11
 blocked_by:
 reconciled: true
