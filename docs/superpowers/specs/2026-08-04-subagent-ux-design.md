@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0012 — First-Class Subagent UX — Spawn, Tree Visualization & Inspect](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0012-subagent-ux.md)**
+> ↩ **[Change 0012 — First-Class Subagent UX — Spawn, Tree Visualization & Inspect](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-05-0012-subagent-ux.md)**
 <!-- docket:backlink:end -->
 
 # Spec: First-Class Subagent UX (change 0012)
