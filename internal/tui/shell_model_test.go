@@ -344,6 +344,36 @@ func TestCompleterEscDeactivates(t *testing.T) {
 	}
 }
 
+// TestCompleterEnterDispatchesSkill verifies that pressing Enter while the
+// completer is active runs the selected skill body, not "unknown command".
+func TestCompleterEnterDispatchesSkill(t *testing.T) {
+	reg := registryWith(skillEntry("/docket-status", "show the board", "board status"))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
+
+	// Activate the completer and select the skill.
+	m.input.SetValue("/")
+	m.completer.activate("/")
+	if len(m.completer.visible) == 0 {
+		t.Fatal("completer has no visible entries")
+	}
+
+	// Press Enter — should dispatch the skill, not print "unknown command".
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(ShellModel)
+
+	if cmd == nil || !m.running {
+		t.Fatal("completer Enter should start a prompt run for a skill")
+	}
+	if len(m.history) != 1 || m.history[0].Content != "show the board" {
+		t.Errorf("expected skill body as prompt, got %+v", m.history)
+	}
+	for _, line := range m.lines {
+		if strings.Contains(ansiRE.ReplaceAllString(line, ""), "unknown command") {
+			t.Errorf("got 'unknown command' instead of dispatching skill: %q", line)
+		}
+	}
+}
+
 // TestRegistryReloadMsgRefreshesCompleter verifies that a registryReloadMsg
 // triggers a completer refresh.
 func TestRegistryReloadMsgRefreshesCompleter(t *testing.T) {

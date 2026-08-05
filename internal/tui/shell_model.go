@@ -384,6 +384,12 @@ func (m ShellModel) handleCompleterKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 
 // dispatchSlashEntry runs the slash logic for a selected completer entry.
 func (m ShellModel) dispatchSlashEntry(entry SlashEntry, expansion string) (tea.Model, tea.Cmd) {
+	// Builtins have a clean "/command" expansion — route through handleSlash
+	// to hit the existing switch. Skills and MCP carry their payload in the
+	// entry itself, so delegate directly to handleSlashEntry.
+	if entry.Kind != KindBuiltin {
+		return m.handleSlashEntry(entry, strings.Fields(entry.Command))
+	}
 	line := strings.TrimSpace(expansion)
 	if line == "" {
 		line = entry.Command

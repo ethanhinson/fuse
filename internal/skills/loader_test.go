@@ -116,6 +116,24 @@ func TestLookupNotFound(t *testing.T) {
 	}
 }
 
+func TestLoadFollowsSymlinkedSkillDirs(t *testing.T) {
+	real := t.TempDir()
+	if err := os.WriteFile(filepath.Join(real, "SKILL.md"), []byte("---\nname: linked-skill\ndescription: via symlink\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	parent := t.TempDir()
+	if err := os.Symlink(real, filepath.Join(parent, "linked-skill")); err != nil {
+		t.Skip("symlinks not supported:", err)
+	}
+	set, err := Load([]string{parent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(set.All()) != 1 || set.All()[0].Name != "linked-skill" {
+		t.Errorf("expected 1 skill via symlink, got %v", set.All())
+	}
+}
+
 func TestLoadFirstDirWinsOnDuplicateName(t *testing.T) {
 	a := t.TempDir()
 	b := t.TempDir()

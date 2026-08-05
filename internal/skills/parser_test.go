@@ -23,29 +23,44 @@ func TestParseSkillFrontmatter(t *testing.T) {
 }
 
 func TestParseSkillContextAndAgent(t *testing.T) {
-	src := []byte("---\nname: docket-status\ncontext: fork\nagent: docket-status\n---\nbody\n")
+	src := []byte("---\nname: docket-adr\ndescription: record a decision\ncontext: fork\nagent: docket-adr\n---\nbody\n")
 	s, err := ParseSkill("/x/SKILL.md", src)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Context != "fork" {
-		t.Errorf("context = %q, want fork", s.Context)
+		t.Errorf("context = %q", s.Context)
 	}
-	if s.Agent != "docket-status" {
-		t.Errorf("agent = %q, want docket-status", s.Agent)
+	if s.Agent != "docket-adr" {
+		t.Errorf("agent = %q", s.Agent)
 	}
 }
 
 func TestParseSkillNoFrontmatterIsError(t *testing.T) {
 	_, err := ParseSkill("/x/SKILL.md", []byte("just a body\n"))
 	if err == nil {
-		t.Fatal("expected error without frontmatter")
+		t.Error("expected error for missing frontmatter")
 	}
 }
 
 func TestParseSkillMissingNameIsError(t *testing.T) {
 	_, err := ParseSkill("/x/SKILL.md", []byte("---\ndescription: x\n---\nbody\n"))
 	if err == nil {
-		t.Fatal("expected error when name missing")
+		t.Error("expected error for missing name")
+	}
+}
+
+// Descriptions containing unquoted ': ' must parse without error.
+func TestParseSkillDescriptionWithColons(t *testing.T) {
+	src := []byte("---\nname: docket-brainstorm\ndescription: Bindable via `skills: brainstorm:` (the 0049 passthrough); invoked by docket-new-change.\n---\nbody\n")
+	s, err := ParseSkill("/x/SKILL.md", src)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s.Name != "docket-brainstorm" {
+		t.Errorf("name = %q", s.Name)
+	}
+	if s.Description == "" {
+		t.Error("description should not be empty")
 	}
 }

@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,11 @@ func Load(dirs []string) (*Set, error) {
 		}
 		for _, e := range entries {
 			if !e.IsDir() {
-				continue
+				// DirEntry.IsDir() returns false for symlinks; follow the link.
+				info, err := os.Stat(filepath.Join(dir, e.Name()))
+				if err != nil || !info.IsDir() {
+					continue
+				}
 			}
 			path := filepath.Join(dir, e.Name(), "SKILL.md")
 			data, err := os.ReadFile(path)
@@ -53,7 +58,8 @@ func Load(dirs []string) (*Set, error) {
 			}
 			sk, err := ParseSkill(path, data)
 			if err != nil {
-				return nil, err
+				log.Printf("[skills] skipping %s: %v", path, err)
+				continue
 			}
 			if seen[sk.Name] {
 				continue
