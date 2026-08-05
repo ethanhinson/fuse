@@ -109,7 +109,7 @@ func TestEnterStartsPrompt(t *testing.T) {
 func TestNewShellModel_ShowsBanner(t *testing.T) {
 	m := NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder)
 	got := plainLines(m)
-	for _, want := range []string{`\____/`, version.Version, "alpha"} {
+	for _, want := range []string{`'########:'##`, version.Version, "alpha"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("scrollback missing %q\nscrollback:\n%s", want, got)
 		}

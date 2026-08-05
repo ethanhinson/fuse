@@ -11,13 +11,17 @@ import (
 )
 
 // tmpl is the canonical banner with a single %s placeholder for the version.
-// Every line is spaces, slashes, and letters only — no tabs, no ESC — so it
-// renders cleanly through the fixed-width TUI's sanitizeDisplay.
-const tmpl = `    ______    __  __   _____   ______
-   / ____/   / / / /  / ___/  / ____/
-  / /_      / / / /   \__ \  / __/
- / __/     / /_/ /   ___/ / / /___
-/_/        \____/   /____/ /_____/
+// The wordmark is figlet's Banner3-D face: hash-pixel letters carved out of a
+// colon-dot background. Every byte is printable ASCII — no tabs, no ESC — so
+// it renders cleanly through the fixed-width TUI's sanitizeDisplay.
+const tmpl = `'########:'##::::'##::'######::'########:
+ ##.....:: ##:::: ##:'##... ##: ##.....::
+ ##::::::: ##:::: ##: ##:::..:: ##:::::::
+ ######::: ##:::: ##:. ######:: ######:::
+ ##...:::: ##:::: ##::..... ##: ##...::::
+ ##::::::: ##:::: ##:'##::: ##: ##:::::::
+ ##:::::::. #######::. ######:: ########:
+..:::::::::.......::::......:::........::
 
   multi-model agent harness  --  v%s
 

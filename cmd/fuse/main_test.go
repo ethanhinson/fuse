@@ -40,7 +40,7 @@ func TestRun_Help(t *testing.T) {
 		t.Fatalf("exit = %d, stderr=%s", code, errb.String())
 	}
 	s := out.String()
-	for _, want := range []string{`\____/`, version.Version, "models", "shell", "mcps", "help"} {
+	for _, want := range []string{`'########:'##`, version.Version, "models", "shell", "mcps", "help"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("help output missing %q\noutput:\n%s", want, s)
 		}
@@ -54,7 +54,7 @@ func TestRun_NoArgs_ShowsBanner(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2", code)
 	}
-	if !strings.Contains(errb.String(), `\____/`) {
+	if !strings.Contains(errb.String(), `'########:'##`) {
 		t.Errorf("no-args stderr missing banner wordmark\nstderr:\n%s", errb.String())
 	}
 }

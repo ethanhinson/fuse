@@ -10,7 +10,7 @@ func TestString_ContainsVersion(t *testing.T) {
 	got := String("9.9.9")
 	for _, want := range []string{
 		"9.9.9",
-		`\____/`,
+		`'########:'##`,
 		`fuse "<task>"`,
 		"fuse shell",
 		"fuse help",
