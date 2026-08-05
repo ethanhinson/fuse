@@ -1,6 +1,6 @@
 # Backlog
 
-**15 changes** — 🟡 1 proposed · 🔵 1 implemented · ✅ 11 done · 🗑️ 2 killed
+**15 changes** — 🟡 1 proposed · ✅ 12 done · 🗑️ 2 killed
 
 ## 🟡 Proposed (1)
 
@@ -8,24 +8,18 @@
 |---|-------|----------|------|-----------|
 | [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | needs-brainstorm |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0015](active/0015-tui-hanging-indent-wrap.md) | Hanging-indent wrapping for the shell transcript | `medium` | `fix` | [#12](https://github.com/ethanhinson/fuse/pull/12) |  |
-
 ```mermaid
 graph TD
   0012 --> 0014
-  0015
   0012:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (13)</summary>
+<details><summary>✅🗑️ Archive — done + killed (14)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0015](archive/2026-08-05-0015-tui-hanging-indent-wrap.md) | Hanging-indent wrapping for the shell transcript | 2026-08-05 |
 | [0013](archive/2026-08-05-0013-startup-banner.md) | ASCII art startup banner — shell init & fuse help | 2026-08-05 |
 | [0012](archive/2026-08-05-0012-subagent-ux.md) | First-Class Subagent UX — Spawn, Tree Visualization & Inspect | 2026-08-05 |
 | [0011](archive/2026-08-05-0011-deep-research.md) | Deep Research Mode — Web Search + Fan-out Synthesis | 2026-08-05 |
