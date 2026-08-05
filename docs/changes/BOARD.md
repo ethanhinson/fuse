@@ -1,12 +1,13 @@
 # Backlog
 
-**16 changes** — 🟡 1 proposed · 🔵 1 implemented · ✅ 12 done · 🗑️ 2 killed
+**17 changes** — 🟡 2 proposed · 🔵 1 implemented · ✅ 12 done · 🗑️ 2 killed
 
-## 🟡 Proposed (1)
+## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0016](active/0016-one-shot-cli-approvals.md) | Remove the AlwaysApprove one-shot bypass; surface approvals at the CLI | `medium` | `feat` | needs-brainstorm |
+| [0017](active/0017-auto-mode.md) | Auto mode — layered safe/unsafe classification for autonomous tool approval | `medium` | `feat` | needs-brainstorm |
 
 ## 🔵 Implemented — awaiting merge (1)
 
@@ -18,6 +19,7 @@
 graph TD
   0012 --> 0014
   0016
+  0017
   0012:::done
   classDef done fill:#d3f9d8;
 ```
