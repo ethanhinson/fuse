@@ -12,7 +12,7 @@ related: [5, 6]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/0015-tui-hanging-indent-wrap.md
-plan:
+plan: docs/superpowers/plans/0015-tui-hanging-indent-wrap.md
 results:
 trivial: false
 auto_groomable:
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0015-tui-hanging-indent-wrap.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0015-tui-hanging-indent-wrap.md) |
+| Plan | [0015-tui-hanging-indent-wrap.md](https://github.com/ethanhinson/fuse/blob/feat/tui-hanging-indent-wrap/docs/superpowers/plans/0015-tui-hanging-indent-wrap.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
