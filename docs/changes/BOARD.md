@@ -1,12 +1,12 @@
 # Backlog
 
-**15 changes** — 🟢 1 in progress · ✅ 12 done · 🗑️ 2 killed
+**15 changes** — 🔵 1 implemented · ✅ 12 done · 🗑️ 2 killed
 
-## 🟢 In progress (1)
+## 🔵 Implemented — awaiting merge (1)
 
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | [spec](../superpowers/specs/2026-08-05-research-mode-design.md) | `feat/research-mode` |
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | [#13](https://github.com/ethanhinson/fuse/pull/13) |  |
 
 ```mermaid
 graph TD
