@@ -1,18 +1,20 @@
 # Backlog
 
-**13 changes** — 🟡 2 proposed · ✅ 9 done · 🗑️ 2 killed
+**14 changes** — 🟡 3 proposed · ✅ 9 done · 🗑️ 2 killed
 
-## 🟡 Proposed (2)
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0012](active/0012-subagent-ux.md) | First-Class Subagent UX — Spawn, Tree Visualization & Inspect | `high` | `feat` | build-ready |
 | [0013](active/0013-startup-banner.md) | ASCII art startup banner — shell init & fuse help | `medium` | `feat` | build-ready |
+| [0014](active/0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | `high` | `feat` | ⏳ waiting on #12 — not yet built |
 
 ```mermaid
 graph TD
   0010 --> 0012
   0013
+  0012 --> 0014
   0010:::done
   classDef done fill:#d3f9d8;
 ```
