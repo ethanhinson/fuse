@@ -871,19 +871,337 @@ The loader constructs the `SecretsStore` from `secrets.store` and calls
 
 ## §15 Testing notes
 
-- **Depth limits** — spawn at `MaxDepth` boundary; `WithSpawnDepth` threads correctly.
-- **Tool scoping** — `Subset` drops unknowns with a node event; `spawn_agent` always present.
-- **Event routing** — buffer-overflow path; 250ms coalescing; no event content lost.
-- **Remote SSE** — fake SSE server: 202 dispatch, streamed events, `Last-Event-ID` reconnect, DELETE on cancel, stream-loss → `ErrRemoteStreamLost`.
-- **Intent plugin** — `Resolve` error → `ErrIntentResolveFailed`; `Collect` error → non-fatal (event + log).
-- **Git helper token safety** — token never in argv; `GIT_ASKPASS` temp script exercised; `ctx` cancellation kills subprocess.
-- **`SopsSecretsStore`** — mock `sops` binary via PATH injection; cache invalidation on file change; `List()` never returns values.
-- **`AgeEncryptionProvider`** — encrypt→decrypt roundtrip; wrong key fails.
-- **Secret resolution in `Spawn`** — missing `TokenSecret` → `ErrSecretNotFound` synchronously; partial resolution fails before Dispatch with no node created.
-- **`ExportForContainer` with publicKey** — `req.Secrets` nil, `req.EncryptedSecrets` non-nil; matching private key decrypts.
-- **`PassthroughEncryptionProvider` + publicKey** — panics (misconfiguration guard).
-- **`agentsExitMsg` transition** — entering/leaving the agents view does not leave a dangling parent pointer.
-- **Inline summary** — block updates in-place at `spawnLineIdx`; `ToolResultMsg` for `spawn_agent` is suppressed.
+Three test layers, each with a dedicated build tag, Makefile target, and test
+location. All three are required for a complete green gate on this change.
+
+### §15.1 Unit tests (`go test ./...`)
+
+No build tag, no external dependencies. Live in the package under test.
+
+- **Depth limits** — spawn at `MaxDepth` boundary via `WithSpawnDepth`; `depth+1 >
+  MaxDepth` fails before node creation; `WithSpawnDepth(MaxDepth)` allows spawn,
+  `WithSpawnDepth(MaxDepth+1)` → `ErrMaxDepthExceeded`.
+- **Tool scoping** — `Subset` drops unknowns with a `KindError` node event;
+  `spawn_agent` force-included even when omitted; empty names list keeps only
+  `spawn_agent`.
+- **Event routing** — buffer-overflow: `Emit` on a full channel (256) drops-oldest,
+  sets dirty, does not block; 250ms ticker fires at least once; total event content
+  equals total emitted (order may coalesce, no loss of distinct events by Kind+Seq).
+- **AgentNode state machine** — `StatusPending → StatusRunning → StatusDone/StatusError`
+  in correct order; `EndedAt` set only after terminal transition; `CostUSD` updated
+  from `KindTokens` event payload.
+- **SpawnGroup** — `Join` returns when all handles done; partial cancel (one of N)
+  returns `SpawnDone.Err = context.Canceled` for cancelled member, nil for others;
+  `Join` after all cancelled returns immediately.
+- **Intent plugin errors** — `Resolve` returning an error → `ErrIntentResolveFailed`,
+  no node created; `Collect` returning an error → `KindError` node event, `SpawnDone.Err`
+  unchanged.
+- **Git helper token safety** — `resolveRef`/`fetchRef` use temp `GIT_ASKPASS` script;
+  assert token does not appear in the `exec.Cmd.Args` slice; assert script removed after
+  call (even on error); assert `ctx.Done()` kills the subprocess.
+- **`SopsSecretsStore`** — inject mock `sops` binary via `PATH` override (returns
+  canned JSON); cache hit avoids second `sops` exec; `fsnotify` mock fires `Reload`;
+  `List()` returns names only, no values; malformed JSON → descriptive error.
+- **`AgeEncryptionProvider`** — encrypt→decrypt roundtrip with in-test key pair;
+  decrypt with wrong key → error (not silent wrong plaintext).
+- **`EncryptedFileSecretsStore`** — round-trip: write encrypted → read back → same
+  plaintext; tampered ciphertext → error.
+- **`EnvSecretsStore`** — known env var → correct value; unknown name → `ErrSecretNotFound`;
+  `List()` returns names from env only (test sets a prefix-filtered env).
+- **Secret resolution in `Spawn`** — missing `TokenSecret` → `ErrSecretNotFound`
+  synchronously, zero nodes created; partial resolution (first secret ok, second fails)
+  → error before Dispatch, no node; `ExportForContainer` error → propagated, no node.
+- **`ExportForContainer` without publicKey** — `ContainerSecrets.Env` populated,
+  `EncryptedBundle` nil.
+- **`ExportForContainer` with publicKey** — `EncryptedBundle` non-nil, `Env` nil;
+  matching age private key decrypts to expected map; mismatched key → decrypt error.
+- **`PassthroughEncryptionProvider` + publicKey** — `ExportForContainer` panics (use
+  `require.Panics`).
+- **`agentsExitMsg` transition** — enter `AgentsModel`, exit via `Esc`; parent
+  `ShellModel` does not hold a reference to the dismissed agents model; re-enter
+  creates a fresh model.
+- **Inline summary** — block updates in-place at `spawnLineIdx` for running → done
+  → error transitions; `ToolResultMsg` for `spawn_agent` is suppressed in the parent
+  transcript render.
+- **`ApprovalCache.Clone`** — mutations to the clone do not propagate to the parent;
+  mutations to the parent after clone do not propagate to the clone.
+- **`PermissionGate.CloneForChild`** — child gate's approval prompts are prefixed with
+  the child label; child approvals do not mutate the parent gate.
+- **JSONL session log** — write N events; `Replay(path)` returns tree with matching
+  nodes, events in seq order, `RemoteExec`/`RemoteJobID` preserved on remote events;
+  retention sweep deletes files older than 7 days and leaves younger files intact.
+
+### §15.2 SSE integration tests — fake server (`-tags integration`)
+
+Build tag `integration`, co-located with the Docker Compose suite in `internal/agent/`.
+Use an in-process `httptest.NewServer` (no external process) rather than a Docker stack.
+
+- **Basic dispatch round-trip** — POST to fake server; 202 `{job_id, stream_url}`;
+  SSE streams `spawned → assistant → tool_call → tool_result → tokens → done`;
+  `AgentHandle.Wait()` returns `SpawnDone{Result: "ok", Err: nil}`.
+- **All six event kinds** — verify each `AgentEvent.Kind` reaches the `AgentTree` with
+  correct `Payload` and monotonically increasing `Seq`.
+- **`Last-Event-ID` reconnect** — fake server closes the connection after 3 events; client
+  reconnects; server replays from `seq+1`; no duplicate events received; final `SpawnDone`
+  correct.
+- **Reconnect exhaustion** — server never reconnects; after `MaxRetries` the channel
+  closes with a `KindError` event containing `ErrRemoteStreamLost`; `SpawnDone.Err`
+  is `ErrRemoteStreamLost`.
+- **Cancel — DELETE sent** — `Handle.Cancel()`; assert `DELETE /v1/agents/{job_id}`
+  received by fake server; `SpawnDone.Err == context.Canceled`.
+- **Error event** — server sends `kind: error` event; `SpawnDone.Err` non-nil; node
+  status transitions to `StatusError`.
+- **Bearer auth** — server returns 401 when `Authorization` header missing or wrong;
+  `Dispatch` returns `ErrRemoteDispatchFailed`; no node created.
+- **HTTP timeout** — fake server stalls on dispatch (never returns 202); `HTTPClient.Timeout`
+  (set to 100ms in test) fires; `Dispatch` returns error; no goroutine leak (`goleak`).
+- **Plain secrets on wire** — `ExportForContainer` without publicKey; `req.Secrets` map
+  arrives at fake server with expected key→value pairs; `req.EncryptedSecrets` nil.
+- **Encrypted secrets on wire** — `ExportForContainer` with a test age publicKey;
+  `req.EncryptedSecrets` non-nil; `req.Secrets` nil; fake server decrypts bundle with
+  matching private key and asserts expected values.
+- **Bundle context** — `RemoteContext.Bundle = []byte("fake-bundle")`;
+  `req.Bundle` is the base64 encoding; decoded bytes match original.
+- **Git clone context** — `RemoteContext.Clone = &GitCloneSpec{URL: "...", Ref: sha, resolvedToken: "tok"}`;
+  `req.Clone.Token == "tok"`, `req.Clone.URL` and `req.Clone.Ref` correct; token name not present.
+- **Write-back fields** — `rc.WriteBackTokenSecret` resolved to literal; `req.WriteBackToken`
+  equals literal; `req.WriteBackBranch` and `req.WriteBackRemote` correct.
+- **Files injection** — `rc.Files = {"/workspace/plan.md": planBytes}`; `req.Files` map present
+  with correct path and content.
+- **NilIntentPlugin** — `rc` empty; `req.Clone`, `req.Bundle`, `req.Files`, `req.Image` all
+  zero; only task fields set.
+- **`DocketIntentPlugin` resolve** — inject a local bare git repo; `resolveRef` returns HEAD SHA;
+  `req.Clone.Ref` equals that SHA; plan file content appears in `req.Files`.
+- **`OpenSpecIntentPlugin` resolve** — write-back branch is `remote/<sanitize(label)>`;
+  brief file at `/workspace/.fuse/brief.md` in `req.Files`.
+- **Depth field** — `WithSpawnDepth(2)` → `req.Depth == 3`; `WithSpawnDepth(MaxDepth-1)` →
+  `req.Depth == MaxDepth`; `WithSpawnDepth(MaxDepth)` → `ErrMaxDepthExceeded` before dispatch.
+- **ParentNodeID field** — `req.ParentNodeID` matches the spawning node's ULID.
+- **Goroutine leak** — `goleak.VerifyNone(t)` after each sub-test that spawns and completes/cancels.
+
+### §15.3 Kubernetes integration tests — OrbStack (`-tags integration_k8s`)
+
+Build tag `integration_k8s`. Location: `test/k8s/`. Makefile target `test-k8s`.
+**Skip condition**: `RequireOrbStack(t)` calls `kubectl --context=orbstack cluster-info` at
+test start; if the command fails (OrbStack not running, k8s not enabled), every test in this
+suite calls `t.Skip("OrbStack k8s unavailable")` — never a hard fail. This allows `make test-k8s`
+to run in CI environments where OrbStack is absent without breaking the target.
+
+#### §15.3.1 Infrastructure
+
+**Stub agent container** — `test/k8s/stub/` is a self-contained Go HTTP server implementing
+the fuse remote dispatch API:
+
+```
+POST  /v1/agents/dispatch          → 202 {job_id, stream_url}
+GET   /v1/agents/{job_id}/stream   → text/event-stream; SSE events
+DELETE /v1/agents/{job_id}         → 204 cancel
+GET   /debug/received/{job_id}     → JSON dump of the RemoteDispatchRequest received
+GET   /debug/events/{job_id}       → JSON array of events the stub sent
+GET   /health                      → 200 "ok"
+```
+
+Stub behaviour is controlled by env vars set per-Deployment:
+
+| Env var | Values | Meaning |
+|---|---|---|
+| `STUB_BEHAVIOR` | `fast` (default) / `slow` / `error` / `disconnect` / `hang` | Response pattern |
+| `STUB_EVENTS_JSON` | JSON array of AgentEvent objects | Exact events to emit |
+| `STUB_DISCONNECT_AFTER` | int | Disconnect after N events, then resume |
+| `STUB_AUTH_TOKEN` | string | Reject requests whose Bearer token doesn't match |
+| `STUB_AGE_PRIVATE_KEY` | age1... | Private key for decrypting `EncryptedSecrets` bundles |
+| `STUB_DELAY_MS` | int | Per-event delay in milliseconds (simulates slow agents) |
+
+The stub is a single statically-linked binary (`CGO_ENABLED=0`) built into a `scratch` or
+`alpine` base image for minimal size.
+
+**k8s manifests** — `test/k8s/fixtures/`:
+
+```
+namespace.yaml      fuse-test namespace
+deployment.yaml     fuse-agent-stub Deployment (1 replica; image: fuse-agent-stub:latest;
+                    imagePullPolicy: Never — OrbStack loads local images directly)
+service.yaml        LoadBalancer Service on port 8080 (OrbStack assigns a real LAN IP)
+age-secret.yaml     k8s Secret holding a test age private key, mounted into the stub pod
+```
+
+**Makefile additions:**
+
+```makefile
+# Build the fuse-agent-stub image into the local Docker daemon (OrbStack's docker context).
+docker-build-stub:
+	docker build --platform linux/arm64 -t fuse-agent-stub:latest test/k8s/stub/
+
+# Run k8s integration tests against OrbStack's local Kubernetes cluster.
+# Requires: OrbStack running, Kubernetes enabled, docker-build-stub completed.
+# OrbStack loads images from the local Docker daemon automatically (no registry push).
+# Override the stub URL: FUSE_K8S_STUB_URL=http://... make test-k8s
+test-k8s: docker-build-stub
+	kubectl --context=orbstack apply -f test/k8s/fixtures/ --namespace=fuse-test
+	kubectl --context=orbstack rollout status deployment/fuse-agent-stub \
+	  --namespace=fuse-test --timeout=120s
+	go test -tags integration_k8s -v -timeout 600s -count=1 ./test/k8s/... ; \
+	  status=$$? ; \
+	  kubectl --context=orbstack delete -f test/k8s/fixtures/ \
+	    --namespace=fuse-test --ignore-not-found ; \
+	  exit $$status
+```
+
+**Test helpers** — `test/k8s/helpers_test.go`:
+
+```go
+// RequireOrbStack skips the test if kubectl --context=orbstack cluster-info fails.
+func RequireOrbStack(t *testing.T)
+
+// StubURL returns the LoadBalancer IP:port for the fuse-agent-stub Service.
+// If FUSE_K8S_STUB_URL is set, it is returned directly (allows manual override).
+func StubURL(t *testing.T) string
+
+// WaitForStub polls /health on the stub until it returns 200 or deadline exceeded.
+func WaitForStub(t *testing.T, url string, timeout time.Duration)
+
+// ReceivedRequest fetches /debug/received/{jobID} from the stub.
+func ReceivedRequest(t *testing.T, stubURL, jobID string) RemoteDispatchRequest
+
+// SentEvents fetches /debug/events/{jobID} from the stub.
+func SentEvents(t *testing.T, stubURL, jobID string) []AgentEvent
+
+// RestartStubPod force-deletes the stub pod, triggering a new one to start.
+// Used for reconnect tests.
+func RestartStubPod(t *testing.T)
+```
+
+#### §15.3.2 Test scenarios
+
+Each scenario is an independent `t.Run` sub-test; all share the same stub deployment
+brought up once in `TestMain`. `TestMain` calls `RequireOrbStack` and then `WaitForStub`
+before any sub-test runs; deferred teardown deletes the namespace.
+
+1. **Basic round-trip** — dispatch a task (`STUB_BEHAVIOR=fast`); wait for `SpawnDone`;
+   assert `SpawnDone.Err == nil`; assert result non-empty; assert node shows `StatusDone`
+   and `✓` glyph in `AgentsModel` render; assert `RemoteExec: true` and `RemoteJobID` set.
+
+2. **All event kinds round-trip** — set `STUB_EVENTS_JSON` to emit one of each Kind in
+   sequence; verify each `AgentEvent` arrives in the `AgentNode.Events` slice with correct
+   `Kind`, `Name`, `Payload`, and monotonically increasing `Seq`.
+
+3. **AgentNode status transitions** — at the moment the `KindSpawned` event arrives, node
+   is `StatusPending`; after `KindAssistant` arrives, `StatusRunning`; after `KindDone`,
+   `StatusDone`; assert `EndedAt` is non-zero.
+
+4. **`☁` prefix in TUI tree** — render `AgentsModel` after a remote node completes; assert
+   the row string for the node begins with `☁`; assert local nodes have no `☁` prefix.
+
+5. **SSE reconnect via pod restart** — set `STUB_DISCONNECT_AFTER=3`; dispatch; when the
+   stub has sent 3 events, call `RestartStubPod`; assert the client reconnects with
+   `Last-Event-ID: 3` (visible in new pod's `/debug/received`); assert no events from seq
+   1–3 are duplicated; assert final `SpawnDone` is correct.
+
+6. **Stream-loss exhaustion** — patch stub Deployment to use `STUB_BEHAVIOR=hang` and
+   `STUB_DISCONNECT_AFTER=0` (immediately closes stream, never recovers); set
+   `SSERemoteExecutor.MaxRetries=2` in the test executor; assert `KindError` event with
+   `ErrRemoteStreamLost` in node events; assert `SpawnDone.Err == ErrRemoteStreamLost`.
+
+7. **Cancel — DELETE reaches pod** — dispatch with `STUB_BEHAVIOR=slow` and
+   `STUB_DELAY_MS=200`; after 2 events arrive, call `Handle.Cancel()`; assert stub
+   received `DELETE /v1/agents/{job_id}` (check `/debug/received`); assert
+   `SpawnDone.Err == context.Canceled`; assert node `StatusCancelled`.
+
+8. **Error event** — `STUB_BEHAVIOR=error`; stub sends `kind: error` after 2 events;
+   assert `SpawnDone.Err` non-nil, node `StatusError`, `✕` glyph in TUI.
+
+9. **Bearer token auth** — set `STUB_AUTH_TOKEN=secret123` via Deployment env; create
+   executor with wrong `TokenSecret` value; assert `Dispatch` returns
+   `ErrRemoteDispatchFailed` immediately; no node created.
+
+10. **Plain secrets injection** — `EnvSecretsStore` with `TEST_MYSECRET=hunter2`;
+    `rc.SecretRefs = ["TEST_MYSECRET"]`; no `PublicKey` on executor; assert `req.Secrets`
+    at stub contains `{"TEST_MYSECRET": "hunter2"}`; `req.EncryptedSecrets` nil.
+
+11. **Encrypted secrets injection (age)** — generate a test age key pair in-test;
+    set `SSERemoteExecutor.PublicKey` to the public key; mount private key as k8s Secret
+    (already done via `age-secret.yaml`) and set `STUB_AGE_PRIVATE_KEY` on the pod;
+    dispatch with `rc.SecretRefs = ["TEST_MYSECRET"]`; assert `req.EncryptedSecrets` non-nil
+    at stub; assert stub successfully decrypts and recovers `hunter2`; assert `req.Secrets`
+    nil on wire.
+
+12. **Bundle delivery** — set `rc.Bundle = []byte("fake-repo-bundle")`; assert
+    `ReceivedRequest(t, stubURL, jobID).Bundle` equals base64-encoded bytes.
+
+13. **Git clone context** — set `rc.Clone = &GitCloneSpec{URL: "https://github.com/...",
+    Ref: "abc123", resolvedToken: "tok"}` (use a public URL so no real auth needed in test);
+    assert `ReceivedRequest` has `Clone.URL`, `Clone.Ref == "abc123"`, `Clone.Token == "tok"`;
+    assert `Clone.TokenSecret` (the name) is NOT present in the request struct.
+
+14. **Injected files** — `rc.Files = {"/workspace/plan.md": []byte("# Plan")}`;
+    assert `ReceivedRequest(t, ...).Files["/workspace/plan.md"]` equals the bytes.
+
+15. **DocketIntentPlugin end-to-end** — spin up a bare git repo in-process
+    (via `git init --bare` in `t.TempDir()`); set plugin's `GitRemoteURL` to the path;
+    commit a file; `Resolve` → assert `req.Clone.Ref` is a valid SHA, not the branch name;
+    `PlanPath` set → assert `req.Files["/workspace/plan.md"]` non-empty; `Collect`
+    → `fetchRef` runs without error.
+
+16. **OpenSpecIntentPlugin end-to-end** — label `"Review Auth Middleware"`;
+    assert `req.WriteBackBranch == "remote/review-auth-middleware"`;
+    assert `req.Files["/workspace/.fuse/brief.md"]` contains the label string.
+
+17. **NilIntentPlugin** — dispatch with `IntentPluginID = "nil"`;
+    `ReceivedRequest` has zero `Clone`, `Bundle`, `Files`, `Image`; only task fields set.
+
+18. **Depth field threaded correctly** — spawn a remote node at `WithSpawnDepth(2)`;
+    assert `ReceivedRequest.Depth == 3`; spawn at `WithSpawnDepth(MaxDepth-1)`;
+    assert `ReceivedRequest.Depth == MaxDepth`; attempt at `WithSpawnDepth(MaxDepth)` →
+    `ErrMaxDepthExceeded`, no HTTP call made (monitor stub `/debug/received` stays empty).
+
+19. **ParentNodeID threaded** — assert `ReceivedRequest.ParentNodeID` equals the spawning
+    node's ULID from the tree.
+
+20. **SpawnGroup fan-out (3 pods)** — the test runs 3 serial dispatches (same single-pod
+    stub handles them serially); assert all 3 are represented in the tree with distinct
+    ULIDs; `SpawnGroup.Join` returns all 3 results; cost totals are the sum of individual
+    costs; all 3 nodes show `✓` in the TUI render.
+
+21. **Concurrent cancel (1 of 3)** — dispatch 3 tasks with `STUB_BEHAVIOR=slow`;
+    cancel the second handle; assert the second node is `StatusCancelled`, the other two
+    eventually reach `StatusDone`; no goroutine leak (`goleak.VerifyNone(t, goleak.IgnoreCurrent())`
+    captured before the fan-out).
+
+22. **HTTP dispatch timeout** — set stub's Deployment to `STUB_BEHAVIOR=hang` (stalls
+    before sending 202); set executor `HTTPClient.Timeout = 2s`; assert `Dispatch` returns
+    an error within ~3s; no node created; no goroutine leak.
+
+23. **`GIT_ASKPASS` token safety** — `resolveRef` called against the bare git repo
+    (scenario 15); capture the `exec.Cmd.Args` via a test wrapper around `exec.Command`;
+    assert the git token does not appear in any argument string; assert the temp script is
+    deleted after the call.
+
+24. **Session log replay** — run scenario 1; after `SpawnDone`, read the JSONL session log;
+    call `session.Replay(path)`; assert replayed `AgentTree` has the same node count, same
+    `RemoteExec`/`RemoteJobID`, same terminal status, and event sequences match.
+
+25. **OrbStack service reachability** — `TestMain` asserts that `StubURL(t)` is reachable
+    before any sub-test runs; if not, all sub-tests skip with a clear message:
+    `"fuse-agent-stub LoadBalancer IP not reachable — is OrbStack's Kubernetes enabled?"`.
+    This is the canonical first-fail diagnostic for a missing OrbStack setup.
+
+#### §15.3.3 Isolation and ordering
+
+- Each scenario uses a fresh `AgentTree` and fresh `SSERemoteExecutor` constructed in-test;
+  the k8s Deployment is **shared** across scenarios (brought up once in `TestMain`).
+- Scenarios that mutate stub behaviour (e.g., changing `STUB_BEHAVIOR`) do so by patching
+  the Deployment's env via `kubectl set env` and waiting for rollout. These are serialized
+  via `t.Parallel()` exclusion (no `t.Parallel()` on mutating scenarios).
+- Read-only scenarios (1–4, 10, 12–14, 17–19, 24–25) may call `t.Parallel()`.
+- After each scenario, the test asserts that no goroutines from the spawned `AgentHandle`
+  remain (via `goleak`).
+
+#### §15.3.4 CI note
+
+`test-k8s` is **not** part of the default CI matrix. It runs on developer machines with
+OrbStack. A CI-compatible version (using `kind` instead of OrbStack) is a follow-on. The
+`RequireOrbStack` skip guard ensures `make test-k8s` is safe to add to a CI job that may
+or may not have OrbStack — it simply skips cleanly.
 
 ## Assumptions
 
