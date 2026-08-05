@@ -12,12 +12,12 @@ related: [12]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-04-startup-banner-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-05-startup-banner-plan.md
 results:
 trivial: false
 auto_groomable: false
 branch: feat/startup-banner
-claimed_at: 2026-08-05T07:40:00Z
+claimed_at: 2026-08-05T07:43:15Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-04-startup-banner-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-04-startup-banner-design.md) |
+| Plan | [2026-08-05-startup-banner-plan.md](https://github.com/ethanhinson/fuse/blob/feat/startup-banner/docs/superpowers/plans/2026-08-05-startup-banner-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
