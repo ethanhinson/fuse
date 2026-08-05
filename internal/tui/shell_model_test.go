@@ -346,6 +346,105 @@ func TestRefreshViewportResizeReflows(t *testing.T) {
 	}
 }
 
+// findResultLines returns the transcriptLines appended by appendResultLines —
+// everything after the last tool-call bullet (text starting with the ● glyph).
+func resultLinesOnly(m ShellModel) []transcriptLine {
+	last := -1
+	for i, l := range m.lines {
+		if strings.HasPrefix(ansiRE.ReplaceAllString(l.text, ""), "● ") {
+			last = i
+		}
+	}
+	return m.lines[last+1:]
+}
+
+// TestAppendResultLinesGutterPrefixes (spec Tests 1, 6): a multi-line file-read
+// result stores gutter transcriptLines whose first/cont match the producer
+// table, with equal printable widths so content columns align; the prefix lives
+// in first/cont, the content only in text.
+func TestAppendResultLinesGutterPrefixes(t *testing.T) {
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m.lines = nil
+	m.appendResultLines("first\nsecond\nthird", false, "read_file")
+	rl := resultLinesOnly(m)
+	if len(rl) != 3 {
+		t.Fatalf("got %d result lines, want 3", len(rl))
+	}
+	// Row 1: first = "  └ N │ ", content = "first".
+	if got := ansiRE.ReplaceAllString(rl[0].first, ""); got != "  └ 1 │ " {
+		t.Errorf("row1 first = %q, want %q", got, "  └ 1 │ ")
+	}
+	if rl[0].text != "first" {
+		t.Errorf("row1 text = %q, want prefix stripped to %q", rl[0].text, "first")
+	}
+	// Row i>1: first = "    N │ ".
+	if got := ansiRE.ReplaceAllString(rl[1].first, ""); got != "    2 │ " {
+		t.Errorf("row2 first = %q, want %q", got, "    2 │ ")
+	}
+	// Continuation prefix is the blank-numbered gutter rule, equal width to first.
+	for i, l := range rl {
+		if printWidth(l.first) != printWidth(l.cont) {
+			t.Errorf("row %d: first width %d != cont width %d (columns misalign)",
+				i, printWidth(l.first), printWidth(l.cont))
+		}
+		if got := ansiRE.ReplaceAllString(l.cont, ""); got != "      │ " {
+			t.Errorf("row %d cont = %q, want %q", i, got, "      │ ")
+		}
+		if l.pre {
+			t.Errorf("row %d: result line must not be pre", i)
+		}
+	}
+}
+
+// TestAppendResultLinesPlainAndError (spec Test 6): plain results use  └ / 4sp,
+// error results use  ✗ / 4sp, with the content in text and no gutter.
+func TestAppendResultLinesPlainAndError(t *testing.T) {
+	// Plain (single line so useGutter is false).
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m.lines = nil
+	m.appendResultLines("only line", false, "bash")
+	rl := resultLinesOnly(m)
+	if len(rl) != 1 {
+		t.Fatalf("plain: got %d lines, want 1", len(rl))
+	}
+	if got := ansiRE.ReplaceAllString(rl[0].first, ""); got != "  └ " {
+		t.Errorf("plain first = %q, want %q", got, "  └ ")
+	}
+	if got := ansiRE.ReplaceAllString(rl[0].cont, ""); got != "    " {
+		t.Errorf("plain cont = %q, want 4 spaces", got)
+	}
+	if rl[0].text != "only line" {
+		t.Errorf("plain text = %q", rl[0].text)
+	}
+
+	// Multi-line plain: row i>1 first is 4 spaces, cont 4 spaces.
+	m2 := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m2.lines = nil
+	m2.appendResultLines("aaa\nbbb", false, "bash")
+	rl2 := resultLinesOnly(m2)
+	if len(rl2) != 2 {
+		t.Fatalf("multiline plain: got %d lines, want 2", len(rl2))
+	}
+	if got := ansiRE.ReplaceAllString(rl2[1].first, ""); got != "    " {
+		t.Errorf("plain row2 first = %q, want 4 spaces", got)
+	}
+
+	// Error result.
+	me := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	me.lines = nil
+	me.appendResultLines("boom", true, "bash")
+	rle := resultLinesOnly(me)
+	if len(rle) != 1 {
+		t.Fatalf("error: got %d lines, want 1", len(rle))
+	}
+	if got := ansiRE.ReplaceAllString(rle[0].first, ""); got != "  ✗ " {
+		t.Errorf("error first = %q, want %q", got, "  ✗ ")
+	}
+	if got := ansiRE.ReplaceAllString(rle[0].cont, ""); got != "    " {
+		t.Errorf("error cont = %q, want 4 spaces", got)
+	}
+}
+
 func TestEnterWhileRunningIsNoop(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
 	m.running = true

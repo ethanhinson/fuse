@@ -965,26 +965,35 @@ func (m *ShellModel) appendResultLines(out string, isError bool, toolName string
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	useGutter := !isError && isFileReadTool(toolName) && len(lines) > 1
 	gutterW := len(fmt.Sprintf("%d", len(lines))) // digits needed for widest line number
+	// Continuation prefix for gutter rows: the gutter rule with a blank number,
+	// styled to match. Its printable width equals the first-row gutter prefix
+	// ("  └ " / "    " + "N │ "), so content columns align across wrapped rows.
+	gutterCont := gutterStyle.Render("    " + strings.Repeat(" ", gutterW) + " │ ")
 	for i, l := range lines {
-		var rendered string
-		if i == 0 {
-			if isError {
-				rendered = "  " + errorArrowStyle.Render("✗") + " " + errorTextStyle.Render(l)
-			} else if useGutter {
-				g := gutterStyle.Render(fmt.Sprintf("%*d │ ", gutterW, i+1))
-				rendered = resultPrefixStyle.Render("  └") + " " + g + l
+		var tl transcriptLine
+		tl.text = l
+		switch {
+		case isError:
+			tl.first = "  " + errorArrowStyle.Render("✗") + " "
+			tl.cont = "    "
+			tl.text = errorTextStyle.Render(l)
+		case useGutter:
+			g := gutterStyle.Render(fmt.Sprintf("%*d │ ", gutterW, i+1))
+			if i == 0 {
+				tl.first = resultPrefixStyle.Render("  └") + " " + g
 			} else {
-				rendered = resultPrefixStyle.Render("  └") + " " + l
+				tl.first = "    " + g
 			}
-		} else {
-			if useGutter {
-				g := gutterStyle.Render(fmt.Sprintf("%*d │ ", gutterW, i+1))
-				rendered = "    " + g + l
+			tl.cont = gutterCont
+		default:
+			if i == 0 {
+				tl.first = resultPrefixStyle.Render("  └") + " "
 			} else {
-				rendered = "    " + l
+				tl.first = "    "
 			}
+			tl.cont = "    "
 		}
-		m.lines = append(m.lines, transcriptLine{text: rendered})
+		m.lines = append(m.lines, tl)
 	}
 	m.refreshViewport(atBottom)
 }
