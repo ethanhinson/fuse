@@ -2,7 +2,7 @@
 id: 13
 slug: startup-banner
 title: ASCII art startup banner — shell init & fuse help
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-04
@@ -13,12 +13,12 @@ discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-04-startup-banner-design.md
 plan: docs/superpowers/plans/2026-08-05-startup-banner-plan.md
-results:
+results: docs/results/2026-08-05-startup-banner-results.md
 trivial: false
 auto_groomable: false
 branch: feat/startup-banner
-claimed_at: 2026-08-05T07:43:15Z
-pr:
+claimed_at: 2026-08-05T08:05:16Z
+pr: https://github.com/ethanhinson/fuse/pull/11
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-04-startup-banner-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-04-startup-banner-design.md) |
 | Plan | [2026-08-05-startup-banner-plan.md](https://github.com/ethanhinson/fuse/blob/feat/startup-banner/docs/superpowers/plans/2026-08-05-startup-banner-plan.md) |
+| Results | [2026-08-05-startup-banner-results.md](https://github.com/ethanhinson/fuse/blob/feat/startup-banner/docs/results/2026-08-05-startup-banner-results.md) |
+| PR | [#11](https://github.com/ethanhinson/fuse/pull/11) |
 <!-- docket:artifacts:end -->
 
 ## Why
