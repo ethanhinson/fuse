@@ -1,12 +1,17 @@
 # Backlog
 
-**31 changes** — 🟡 15 proposed · ✅ 13 done · 🗑️ 3 killed
+**31 changes** — 🟢 1 in progress · 🟡 14 proposed · ✅ 13 done · 🗑️ 3 killed
 
-## 🟡 Proposed (15)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0017](active/0017-auto-mode.md) | Auto mode — layered safe/unsafe classification for autonomous tool approval | `medium` | `feat` | [spec](../superpowers/specs/2026-08-05-auto-mode-design.md) | `feat/auto-mode` |
+
+## 🟡 Proposed (14)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0017](active/0017-auto-mode.md) | Auto mode — layered safe/unsafe classification for autonomous tool approval | `medium` | `feat` | build-ready |
 | [0018](active/0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | `high` | `feat` | needs-brainstorm |
 | [0019](active/0019-mcp-capability-negotiation.md) | MCP capability negotiation — structured init handshake | `high` | `feat` | needs-brainstorm |
 | [0020](active/0020-mcp-progress-streaming.md) | MCP `$/progress` notifications and streaming tool results | `medium` | `feat` | ⏳ waiting on #19 — not yet built |
