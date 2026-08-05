@@ -2,7 +2,7 @@
 id: 16
 slug: one-shot-cli-approvals
 title: Remove the AlwaysApprove one-shot bypass; surface approvals at the CLI
-status: proposed
+status: killed
 priority: medium
 type: feat
 created: 2026-08-05
@@ -65,3 +65,7 @@ a user configures should mean the same thing in every entry point.
   `AlwaysApprove` — same treatment or separate change?
 
 ## Reconcile log
+
+## Why killed
+
+Subsumed by change 0017 (auto mode): AlwaysApprove removal, one-shot CLI approval surface, and non-TTY posture are all in 0017's spec (D8).
