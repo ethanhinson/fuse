@@ -1,0 +1,217 @@
+package permissions
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/model"
+)
+
+// seqCompleter is a test completer that returns a scripted sequence of replies,
+// one per call, so a test can drive the classifier through a specific verdict
+// pattern. Once the sequence is exhausted it repeats the final reply.
+type seqCompleter struct {
+	replies []string
+	calls   int
+}
+
+func (s *seqCompleter) Complete(_ context.Context, _ model.CompletionReq) (model.CompletionResp, error) {
+	i := s.calls
+	s.calls++
+	if i >= len(s.replies) {
+		i = len(s.replies) - 1
+	}
+	return model.CompletionResp{Content: s.replies[i]}, nil
+}
+
+// newTestClassifierFrom builds a Classifier over any completer (the interface),
+// so tests can drive it with a scripted seqCompleter as well as a stubCompleter.
+func newTestClassifierFrom(t *testing.T, c completer) *Classifier {
+	t.Helper()
+	reg := model.NewRegistry("m", map[string]model.ModelConfig{
+		"m": {ID: "cloud/m", MaxTokens: 256},
+	})
+	return newClassifier(c, reg, config.AutoConfig{ClassifierModel: "m"}, nil)
+}
+
+// grayAreaCmd is a mutating command whose path escapes the workspace so the
+// heuristic returns Ask and the pipeline routes to the classifier — the site the
+// escalation valve counts. Each distinct index yields a fresh command so the
+// per-command verdict cache never short-circuits the classifier call.
+func grayAreaCmd(i int) string {
+	return "touch /etc/escapes-workspace-" + string(rune('a'+i))
+}
+
+// TestValve_ThreeConsecutiveBlocks_FlipsInteractiveToPrompt proves that after 3
+// consecutive classifier blocks (deny verdicts) the interactive gate stops
+// auto-classifying and falls back to the human approval func.
+func TestValve_ThreeConsecutiveBlocks_FlipsInteractiveToPrompt(t *testing.T) {
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
+	cls := newTestClassifier(t, stub)
+	approve, called := newApproveRecorder(true)
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true))
+
+	// First 3 gray-area calls each hit the classifier and get a deny (block).
+	for i := 0; i < 3; i++ {
+		res := g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(i)))
+		if !res.IsError {
+			t.Fatalf("block %d: classifier deny should surface as an error, got: %s", i, res.Output)
+		}
+		if *called {
+			t.Fatalf("block %d: classifier deny must not route to the human", i)
+		}
+	}
+	if stub.calls != 3 {
+		t.Fatalf("expected 3 classifier calls before the valve trips, got %d", stub.calls)
+	}
+
+	// The 4th gray-area call must NOT reach the classifier: the valve has tripped
+	// and, being interactive, it routes to the human approval func instead.
+	res := g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(3)))
+	if stub.calls != 3 {
+		t.Fatalf("valve tripped: classifier must not be consulted again, got %d calls", stub.calls)
+	}
+	if !*called {
+		t.Fatal("valve tripped in interactive mode must fall back to the human approval func")
+	}
+	if res.IsError {
+		t.Fatalf("interactive fallback with approve=true should succeed, got: %s", res.Output)
+	}
+}
+
+// TestValve_ThreeConsecutiveBlocks_AbortsNonInteractive proves that in a
+// non-interactive gate the tripped valve aborts with a structured summary error
+// naming the trip and the counts, without consulting the classifier again.
+func TestValve_ThreeConsecutiveBlocks_AbortsNonInteractive(t *testing.T) {
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
+	cls := newTestClassifier(t, stub)
+	approve, called := newApproveRecorder(true)
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls)) // non-interactive (default)
+
+	for i := 0; i < 3; i++ {
+		res := g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(i)))
+		if !res.IsError {
+			t.Fatalf("block %d should error, got: %s", i, res.Output)
+		}
+	}
+
+	res := g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(3)))
+	if stub.calls != 3 {
+		t.Fatalf("valve tripped: classifier must not be consulted again, got %d calls", stub.calls)
+	}
+	if *called {
+		t.Fatal("non-interactive valve trip must not route to the human")
+	}
+	if !res.IsError {
+		t.Fatalf("non-interactive valve trip must abort with an error, got: %s", res.Output)
+	}
+	// The summary error names the valve and reports the counts.
+	if !strings.Contains(strings.ToLower(res.Output), "auto mode paused") &&
+		!strings.Contains(strings.ToLower(res.Output), "escalation valve") {
+		t.Fatalf("valve abort must name the trip; got: %q", res.Output)
+	}
+	if !strings.Contains(res.Output, "3") {
+		t.Fatalf("valve abort must report the block counts; got: %q", res.Output)
+	}
+}
+
+// TestValve_NonBlockVerdictResetsConsecutive proves that an allow/ask verdict
+// between blocks resets the consecutive counter, so it takes a fresh run of 3
+// blocks to trip.
+func TestValve_NonBlockVerdictResetsConsecutive(t *testing.T) {
+	// A programmable completer: deny, deny, allow, then deny thereafter.
+	seq := []string{
+		`{"verdict":"deny","reason":"x"}`,
+		`{"verdict":"deny","reason":"x"}`,
+		`{"verdict":"allow","reason":"ok"}`, // resets consecutive
+		`{"verdict":"deny","reason":"x"}`,
+		`{"verdict":"deny","reason":"x"}`,
+		`{"verdict":"deny","reason":"x"}`, // 3rd consecutive of the fresh run
+	}
+	stub := &seqCompleter{replies: seq}
+	cls := newTestClassifierFrom(t, stub)
+	approve, called := newApproveRecorder(true)
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+
+	// Run the 6 scripted gray-area calls; each must reach the classifier because
+	// the valve has not yet tripped (the allow reset the run).
+	for i := 0; i < 6; i++ {
+		g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(i)))
+	}
+	if stub.calls != 6 {
+		t.Fatalf("all 6 verdicts must reach the classifier (valve not tripped early); got %d calls", stub.calls)
+	}
+	if *called {
+		t.Fatal("no valve trip yet, so the human must not have been consulted")
+	}
+
+	// The 7th call is the one after the 3rd consecutive block of the fresh run:
+	// the valve is now tripped and must not consult the classifier again.
+	g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(6)))
+	if stub.calls != 6 {
+		t.Fatalf("valve should have tripped on the 3rd fresh-run block; classifier calls = %d", stub.calls)
+	}
+}
+
+// TestValve_TwentyTotalBlocks_TripsIndependentOfConsecutive proves the total
+// threshold trips even when the consecutive counter is repeatedly reset.
+func TestValve_TwentyTotalBlocks_TripsIndependentOfConsecutive(t *testing.T) {
+	// Alternate deny, allow so the consecutive counter never reaches 3, but the
+	// total block count climbs to 20 over 40 classified calls.
+	var seq []string
+	for i := 0; i < 40; i++ {
+		if i%2 == 0 {
+			seq = append(seq, `{"verdict":"deny","reason":"x"}`)
+		} else {
+			seq = append(seq, `{"verdict":"allow","reason":"ok"}`)
+		}
+	}
+	stub := &seqCompleter{replies: seq}
+	cls := newTestClassifierFrom(t, stub)
+	approve, _ := newApproveRecorder(true)
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+
+	// After 40 alternating verdicts there are 20 blocks total. The 39th
+	// classified call is the 20th block (indices 0,2,...,38). After that block the
+	// valve is tripped, so the 40th call (index 39) must NOT reach the classifier.
+	for i := 0; i < 40; i++ {
+		g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(i)))
+	}
+	if stub.calls != 39 {
+		t.Fatalf("total-20 valve should trip after the 20th block (39 classified calls); got %d", stub.calls)
+	}
+}
+
+// TestValve_SharedAcrossCloneForChild proves a child gate's classifier blocks
+// count toward the same session valve as the parent.
+func TestValve_SharedAcrossCloneForChild(t *testing.T) {
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
+	cls := newTestClassifier(t, stub)
+	approve, _ := newApproveRecorder(true)
+	parent := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+
+	child := parent.CloneForChild("worker")
+
+	// Parent absorbs 2 consecutive blocks.
+	parent.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(0)))
+	parent.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(1)))
+	// The child's block is the 3rd toward the SAME session valve ⇒ trips it.
+	child.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(2)))
+	if stub.calls != 3 {
+		t.Fatalf("expected 3 classifier calls across parent+child before trip, got %d", stub.calls)
+	}
+
+	// Now the parent's next gray-area call must find the valve tripped (shared
+	// counter) and NOT consult the classifier.
+	parent.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(3)))
+	if stub.calls != 3 {
+		t.Fatalf("valve tripped by child must pause the parent too; classifier calls = %d", stub.calls)
+	}
+}

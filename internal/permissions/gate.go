@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -45,6 +46,72 @@ type PermissionGate struct {
 	// directory used by the auto-mode heuristic for path scoping. The gate
 	// canonicalizes once at construction and passes it to classifyHeuristic.
 	workspaceRoot string
+
+	// interactive marks whether a human is reachable through g.approve. When the
+	// escalation valve trips, an interactive gate falls back to prompting; a
+	// non-interactive gate aborts the run with a structured summary error. It is
+	// false by default (the non-interactive posture) and set via WithInteractive.
+	interactive bool
+
+	// valve is the per-session escalation counter shared across CloneForChild: a
+	// child's classifier blocks count toward the same session valve. It is nil
+	// outside auto mode wiring only if never constructed; New always allocates it.
+	valve *escalationValve
+}
+
+// escalationValve tracks classifier-layer block verdicts across a session and
+// trips (pausing auto mode) at 3 consecutive OR 20 total blocks. It is shared by
+// reference across CloneForChild so parent and child blocks accrue to the same
+// session budget, unlike the snapshot-cloned approval/verdict caches.
+type escalationValve struct {
+	mu          sync.Mutex
+	consecutive int
+	total       int
+}
+
+// valveConsecutiveLimit and valveTotalLimit are the escalation thresholds: 3
+// consecutive OR 20 total classifier blocks pause auto mode (Claude Code's
+// thresholds, per the auto-mode design D8).
+const (
+	valveConsecutiveLimit = 3
+	valveTotalLimit       = 20
+)
+
+// recordBlock counts a classifier-layer block (a deny from the classifier). The
+// trip is observed separately via tripped() at the next classifier call, so the
+// block that reaches a threshold is itself still surfaced as a normal deny.
+func (v *escalationValve) recordBlock() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.consecutive++
+	v.total++
+}
+
+// recordNonBlock records a non-block classifier verdict (allow or ask), resetting
+// the consecutive counter; the cumulative total is never reset within a session.
+func (v *escalationValve) recordNonBlock() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.consecutive = 0
+}
+
+// tripped reports whether the valve has reached either threshold.
+func (v *escalationValve) tripped() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.trippedLocked()
+}
+
+func (v *escalationValve) trippedLocked() bool {
+	return v.consecutive >= valveConsecutiveLimit || v.total >= valveTotalLimit
+}
+
+// counts returns a snapshot of the consecutive and total block counters for the
+// summary error.
+func (v *escalationValve) counts() (consecutive, total int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.consecutive, v.total
 }
 
 // Option configures optional auto-mode dependencies on a PermissionGate. The
@@ -65,6 +132,14 @@ func WithWorkspaceRoot(root string) Option {
 	return func(g *PermissionGate) { g.workspaceRoot = root }
 }
 
+// WithInteractive marks the gate as interactive (a human is reachable through
+// approve). It governs the escalation valve's tripped behaviour: interactive
+// gates fall back to prompting, non-interactive gates abort with a summary error.
+// The default (option omitted) is the non-interactive posture.
+func WithInteractive(interactive bool) Option {
+	return func(g *PermissionGate) { g.interactive = interactive }
+}
+
 // New builds a PermissionGate. approve is called when user input is needed;
 // pass AlwaysApprove for non-interactive (one-shot) sessions. Auto-mode
 // dependencies (a classifier, a workspace root) are supplied additively via
@@ -76,6 +151,7 @@ func New(cfg config.PermissionsConfig, inner *tools.Registry, approve ApprovalFu
 		cache:   newApprovalCache(),
 		approve: approve,
 		inner:   inner,
+		valve:   &escalationValve{},
 	}
 	for _, opt := range opts {
 		opt(g)
@@ -231,20 +307,55 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (Ve
 // classifyOrAsk consults the injected classifier for a final verdict, or fails
 // closed to VerdictAsk when no classifier is wired. A classifier deny carries a
 // layer-named reason.
+//
+// This is the classifier-layer invocation site, so the escalation valve is
+// enforced here (and only here — static rules/safe-list/heuristic denies never
+// count toward it). When the valve has already tripped, the classifier is not
+// consulted at all: an interactive gate returns VerdictAsk (fall back to the
+// human), a non-interactive gate returns VerdictDeny with a summary error naming
+// the trip and the counts. Otherwise the classifier's verdict is recorded — a
+// deny is a block (advancing/tripping the valve), an allow or ask resets the
+// consecutive counter.
 func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string) (Verdict, string) {
 	if g.classifier == nil {
 		return VerdictAsk, ""
 	}
+
+	// Valve already tripped ⇒ pause auto mode without consulting the classifier.
+	if g.valve.tripped() {
+		return g.valveTripped()
+	}
+
 	// User-message history is not plumbed into the gate for Task 7; the
 	// classifier still functions from the pending-call turn alone.
 	switch g.classifier.Classify(ctx, nil, name, command) {
 	case VerdictAllow:
+		g.valve.recordNonBlock()
 		return VerdictAllow, ""
 	case VerdictDeny:
+		// A classifier deny is a "block": advance the valve. This deny is still
+		// enforced as a real verdict; the trip only pauses auto mode from the NEXT
+		// classifier call on (checked via g.valve.tripped() at entry above), so the
+		// block that reaches a threshold is itself surfaced normally.
+		g.valve.recordBlock()
 		return VerdictDeny, "denied by auto-mode classifier: " + command
 	default:
+		g.valve.recordNonBlock()
 		return VerdictAsk, ""
 	}
+}
+
+// valveTripped returns the verdict for a tripped escalation valve: VerdictAsk in
+// an interactive gate (fall back to the human), or VerdictDeny carrying a
+// structured summary error in a non-interactive gate (abort the run).
+func (g *PermissionGate) valveTripped() (Verdict, string) {
+	if g.interactive {
+		return VerdictAsk, ""
+	}
+	consecutive, total := g.valve.counts()
+	return VerdictDeny, fmt.Sprintf(
+		"auto mode paused: escalation valve tripped after %d consecutive / %d total classifier blocks this session (thresholds: %d consecutive, %d total)",
+		consecutive, total, valveConsecutiveLimit, valveTotalLimit)
 }
 
 // bashCommand extracts the shell command string from a bash tool's JSON args,
@@ -272,6 +383,11 @@ func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
 		inner:         g.inner,
 		classifier:    g.classifier.cloneForChild(),
 		workspaceRoot: g.workspaceRoot,
+		interactive:   g.interactive,
+		// The escalation valve is a per-session budget: unlike the snapshot-cloned
+		// approval/verdict caches, it is shared by reference so a child's classifier
+		// blocks count toward the same session valve as the parent.
+		valve: g.valve,
 	}
 }
 
