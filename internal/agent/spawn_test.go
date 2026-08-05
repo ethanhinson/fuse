@@ -8,16 +8,6 @@ import (
 	"time"
 )
 
-// makeInstantSpawner returns a spawner func that immediately closes its Done
-// channel with a fixed result string.
-func makeInstantSpawner(result string) func(ctx context.Context, opts SpawnOpts) (AgentHandle, error) {
-	return func(ctx context.Context, opts SpawnOpts) (AgentHandle, error) {
-		ch := make(chan SpawnDone, 1)
-		ch <- SpawnDone{Result: result}
-		return AgentHandle{NodeID: "test", Done: ch}, nil
-	}
-}
-
 func TestSpawnerDepthLimit(t *testing.T) {
 	t.Run("at_max_depth_returns_error", func(t *testing.T) {
 		s := NewSpawner(WithSpawnDepth(MaxDepth))
@@ -146,62 +136,5 @@ func TestNestedSpawnsDoNotDeadlockOnWidthCap(t *testing.T) {
 	case <-doneCh:
 	case <-time.After(10 * time.Second):
 		t.Fatal("deadlock: nested spawns starved the width cap")
-	}
-}
-
-func TestSpawnGroupJoin(t *testing.T) {
-	group := NewSpawnGroup(makeInstantSpawner("pong"))
-
-	ctx := context.Background()
-	for i := 0; i < 3; i++ {
-		if _, err := group.Spawn(ctx, SpawnOpts{Label: "child"}); err != nil {
-			t.Fatalf("Spawn %d failed: %v", i, err)
-		}
-	}
-
-	results, err := group.Join(ctx)
-	if err != nil {
-		t.Fatalf("Join returned error: %v", err)
-	}
-	if len(results) != 3 {
-		t.Fatalf("expected 3 results, got %d", len(results))
-	}
-	for i, r := range results {
-		if r.Err != nil {
-			t.Errorf("result[%d].Err = %v, want nil", i, r.Err)
-		}
-		if r.Result != "pong" {
-			t.Errorf("result[%d].Result = %q, want %q", i, r.Result, "pong")
-		}
-	}
-}
-
-func TestSpawnGroupJoinCancel(t *testing.T) {
-	// A spawner that blocks until the context is cancelled.
-	blocker := func(ctx context.Context, opts SpawnOpts) (AgentHandle, error) {
-		ch := make(chan SpawnDone, 1)
-		// never sends on ch; Join will observe ctx cancel
-		return AgentHandle{NodeID: "block", Done: ch}, nil
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	group := NewSpawnGroup(blocker)
-
-	for i := 0; i < 3; i++ {
-		if _, err := group.Spawn(ctx, SpawnOpts{Label: "child"}); err != nil {
-			t.Fatalf("Spawn %d failed: %v", i, err)
-		}
-	}
-
-	// Cancel before Join returns.
-	cancel()
-	results, err := group.Join(ctx)
-	if err != nil {
-		t.Fatalf("Join returned error: %v", err)
-	}
-	for i, r := range results {
-		if !errors.Is(r.Err, context.Canceled) {
-			t.Errorf("result[%d].Err = %v, want context.Canceled", i, r.Err)
-		}
 	}
 }

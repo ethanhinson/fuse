@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
-	"sync"
 	"time"
 )
 
@@ -38,55 +37,6 @@ type AgentHandle struct {
 
 // Wait blocks until the child agent completes and returns its result.
 func (h *AgentHandle) Wait() SpawnDone { return <-h.Done }
-
-// SpawnGroup coordinates multiple concurrent child spawns.
-type SpawnGroup struct {
-	mu      sync.Mutex
-	handles []AgentHandle
-	spawner func(ctx context.Context, opts SpawnOpts) (AgentHandle, error)
-}
-
-// NewSpawnGroup creates a SpawnGroup using the provided spawner function.
-func NewSpawnGroup(spawner func(ctx context.Context, opts SpawnOpts) (AgentHandle, error)) *SpawnGroup {
-	return &SpawnGroup{spawner: spawner}
-}
-
-// Spawn adds a child agent to the group.
-func (g *SpawnGroup) Spawn(ctx context.Context, opts SpawnOpts) (AgentHandle, error) {
-	h, err := g.spawner(ctx, opts)
-	if err != nil {
-		return AgentHandle{}, err
-	}
-	g.mu.Lock()
-	g.handles = append(g.handles, h)
-	g.mu.Unlock()
-	return h, nil
-}
-
-// Join waits for all spawned agents to complete and returns their results.
-func (g *SpawnGroup) Join(ctx context.Context) ([]SpawnDone, error) {
-	g.mu.Lock()
-	handles := make([]AgentHandle, len(g.handles))
-	copy(handles, g.handles)
-	g.mu.Unlock()
-
-	results := make([]SpawnDone, len(handles))
-	var wg sync.WaitGroup
-	for i, h := range handles {
-		wg.Add(1)
-		go func(i int, h AgentHandle) {
-			defer wg.Done()
-			select {
-			case done := <-h.Done:
-				results[i] = done
-			case <-ctx.Done():
-				results[i] = SpawnDone{Err: ctx.Err()}
-			}
-		}(i, h)
-	}
-	wg.Wait()
-	return results, nil
-}
 
 // ChildBuilder runs a local child agent. node is the child's already-created
 // AgentNode in the tree. It returns the final result text.
