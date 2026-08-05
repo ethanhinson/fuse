@@ -10,14 +10,14 @@ updated: 2026-08-05
 depends_on: []
 related: [3, 12, 16]
 discovered_from: []
-adrs: []
+adrs: [5, 6]
 spec: docs/superpowers/specs/2026-08-05-auto-mode-design.md
 plan: docs/superpowers/plans/2026-08-05-auto-mode-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/auto-mode
-claimed_at: 2026-08-05T21:30:32Z
+claimed_at: 2026-08-05T23:42:49Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-05-auto-mode-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-05-auto-mode-design.md) |
 | Plan | [2026-08-05-auto-mode-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode/docs/superpowers/plans/2026-08-05-auto-mode-plan.md) |
+| ADRs | [ADR-0005](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
