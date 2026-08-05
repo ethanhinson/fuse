@@ -82,6 +82,12 @@ func mergeFile(c *Config, path string) error {
 	if len(raw.MCPServers) > 0 {
 		c.MCPServers = raw.MCPServers
 	}
+	if raw.RemoteExecutor.URL != "" {
+		c.RemoteExecutor = raw.RemoteExecutor
+	}
+	if raw.Secrets.Store != "" {
+		c.Secrets = raw.Secrets
+	}
 
 	// The `models` map holds a `default` string alongside model entries.
 	for k, v := range raw.Models {

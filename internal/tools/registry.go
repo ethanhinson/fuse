@@ -79,6 +79,29 @@ func (r *Registry) Execute(ctx context.Context, name, args string) Result {
 	return t.Execute(ctx, args)
 }
 
+// Subset returns a new registry containing only the named tools. The
+// "spawn_agent" tool is always force-included even if not in names. Unknown
+// names are dropped and returned in the second return value.
+func (r *Registry) Subset(names []string) (*Registry, []string) {
+	out := NewRegistry()
+	// Force-include spawn_agent.
+	if t, ok := r.byName["spawn_agent"]; ok {
+		out.Register(t)
+	}
+	var unknown []string
+	for _, n := range names {
+		if n == "spawn_agent" {
+			continue // already added
+		}
+		if t, ok := r.byName[n]; ok {
+			out.Register(t)
+		} else {
+			unknown = append(unknown, n)
+		}
+	}
+	return out, unknown
+}
+
 // DefaultTools returns the Phase 1 built-in tool set.
 func DefaultTools() []Tool {
 	return []Tool{

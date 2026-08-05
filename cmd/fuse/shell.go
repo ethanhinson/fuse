@@ -95,6 +95,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		glamourStyle = "dark"
 	}
 
+	// Create the session-scoped agent tree for subagent spawn tracking.
+	tree := agent.NewAgentTree(alias, alias)
+	_ = tree // wired for future build and AgentsModel integration
+
 	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(stdout))
 	if _, err := p.Run(); err != nil {
