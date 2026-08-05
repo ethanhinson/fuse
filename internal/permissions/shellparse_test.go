@@ -150,6 +150,10 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"npx wrapper", "npx cowsay hi"},
 		{"sudo wrapper", "sudo rm -rf /"},
 		{"timeout then unknown", "timeout 5 somebinary"},
+		{"redirect to file with >", "echo x > /etc/passwd"},
+		{"append redirect >>", "grep foo bar >> ~/.zshrc"},
+		{"redirect inside workspace", "ls > out.txt"},
+		{"stderr and file redirect", "ls 2>/dev/null > /etc/x"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {

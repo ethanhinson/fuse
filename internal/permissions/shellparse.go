@@ -65,9 +65,11 @@ var peelWrappers = map[string]bool{
 //
 // It fails closed with ErrUnparseable on: a size-cap violation; a parse error;
 // command substitution ($(…) or backticks) or process substitution anywhere;
-// an argv[0] containing a path separator (the basename-collapse bug); or an
-// arbitrary-arg wrapper as argv[0] (bash/sh without a parseable -c, xargs, env
-// with assignments, npx, timeout-then-unknown, sudo, …).
+// any redirection (>, >>, 2>, <, here-doc, …), whose file target the read-only
+// classifier never sees; an argv[0] containing a path separator (the basename-
+// collapse bug); or an arbitrary-arg wrapper as argv[0] (bash/sh without a
+// parseable -c, xargs, env with assignments, npx, timeout-then-unknown,
+// sudo, …).
 func splitSegments(cmd string) ([]Segment, error) {
 	if len(cmd) > maxCommandBytes {
 		return nil, ErrUnparseable
@@ -99,6 +101,15 @@ func collectStmts(src string, stmts []*syntax.Stmt, out *[]Segment) error {
 func collectStmt(src string, st *syntax.Stmt, out *[]Segment) error {
 	if st == nil || st.Cmd == nil {
 		return nil
+	}
+	// A redirect (>, >>, 2>, <, here-doc, …) points a command's fd at a file
+	// whose target the read-only classifier never sees: collectCall only
+	// inspects CallExpr.Args, so `echo x > /etc/passwd` would classify as the
+	// read-only `echo` and reach VerdictAllow. Fail closed on ANY redirect —
+	// spec-mandated (2026-08-05-auto-mode-design.md lines 66-67 / 174). The
+	// conservative posture costs a human prompt, never a silent bypass.
+	if len(st.Redirs) > 0 {
+		return ErrUnparseable
 	}
 	switch cmd := st.Cmd.(type) {
 	case *syntax.BinaryCmd:
