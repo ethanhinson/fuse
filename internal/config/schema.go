@@ -34,6 +34,28 @@ type PermissionsConfig struct {
 	Disabled     []string `yaml:"disabled"`      // tool names fully disabled (Enabled: false)
 }
 
+// CustomProviderConfig describes a user-supplied JSON search endpoint,
+// shaped by default for a SearXNG `/search?format=json` response.
+type CustomProviderConfig struct {
+	URL          string            `yaml:"url"`
+	Headers      map[string]string `yaml:"headers"`
+	ResultsPath  string            `yaml:"results_path"`
+	TitleField   string            `yaml:"title_field"`
+	URLField     string            `yaml:"url_field"`
+	SnippetField string            `yaml:"snippet_field"`
+}
+
+// ResearchConfig controls the research mode: which search provider to use and
+// the crawl/extraction limits applied when gathering sources.
+type ResearchConfig struct {
+	Provider      string               `yaml:"provider"` // brave | tavily | custom | "" (auto)
+	MaxQueries    int                  `yaml:"max_queries"`
+	MaxResults    int                  `yaml:"max_results"`
+	MaxContentKB  int                  `yaml:"max_content_kb"`
+	RespectRobots bool                 `yaml:"respect_robots"`
+	Custom        CustomProviderConfig `yaml:"custom"`
+}
+
 // MCPAuthConfig holds authentication settings for an HTTP MCP server.
 type MCPAuthConfig struct {
 	Type         string   `yaml:"type"`          // none | bearer | oauth2
@@ -62,6 +84,7 @@ type Config struct {
 	MaxTokens   int
 	Permissions PermissionsConfig
 	MCPServers  []MCPServerConfig
+	Research    ResearchConfig
 }
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
@@ -73,6 +96,19 @@ type rawConfig struct {
 	MaxTokens   int                    `yaml:"max_tokens"`
 	Permissions PermissionsConfig      `yaml:"permissions"`
 	MCPServers  []MCPServerConfig      `yaml:"mcp_servers"`
+	Research    rawResearchConfig      `yaml:"research"`
+}
+
+// rawResearchConfig mirrors ResearchConfig on-disk. RespectRobots is a pointer
+// so YAML can distinguish an omitted key (keep the true default) from an
+// explicit `respect_robots: false`; a plain bool zero-value cannot.
+type rawResearchConfig struct {
+	Provider      string               `yaml:"provider"`
+	MaxQueries    int                  `yaml:"max_queries"`
+	MaxResults    int                  `yaml:"max_results"`
+	MaxContentKB  int                  `yaml:"max_content_kb"`
+	RespectRobots *bool                `yaml:"respect_robots"`
+	Custom        CustomProviderConfig `yaml:"custom"`
 }
 
 // Default returns the zero-config built-in configuration.
@@ -85,6 +121,18 @@ func Default() Config {
 		Permissions: PermissionsConfig{
 			Mode:         "smart",
 			SessionAllow: true,
+		},
+		Research: ResearchConfig{
+			MaxQueries:    5,
+			MaxResults:    5,
+			MaxContentKB:  50,
+			RespectRobots: true,
+			Custom: CustomProviderConfig{
+				ResultsPath:  "results",
+				TitleField:   "title",
+				URLField:     "url",
+				SnippetField: "content",
+			},
 		},
 	}
 }
