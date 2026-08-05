@@ -132,8 +132,11 @@ func Default() Config {
 	return Config{
 		Gateway:   Gateway{URL: "http://localhost:4000/v1", Key: "llm-gateway-local"},
 		Models:    ModelsConfig{Default: "deepseek-flash", Entries: map[string]ModelConfig{}},
-		MaxTurns:  25,
-		MaxTokens: 8192,
+		MaxTurns: 25,
+		// Per-turn output ceiling. 16384 (up from 8192) so a full research
+		// synthesis — report body plus its numbered source list — is not cut
+		// mid-generation; still configurable per-model and via `max_tokens`.
+		MaxTokens: 16384,
 		Permissions: PermissionsConfig{
 			Mode:         "smart",
 			SessionAllow: true,

@@ -60,6 +60,37 @@ func TestEmbeddedResearchCarriesBudgetGuidance(t *testing.T) {
 	}
 }
 
+// TestEmbeddedResearchPinsCitationStyle locks in the citation-style fix: the
+// completion contract must MANDATE [N] numeric markers (not markdown-link
+// citations) plus a numbered ## Sources list, so a model that would otherwise
+// emit [title](url) citations is told the required form explicitly.
+func TestEmbeddedResearchPinsCitationStyle(t *testing.T) {
+	emb, err := Embedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body string
+	for i := range emb {
+		if emb[i].Name == "research" {
+			body = emb[i].Body
+			break
+		}
+	}
+	if body == "" {
+		t.Fatal("embedded research skill not found or empty")
+	}
+	for _, want := range []string{
+		"MANDATORY",       // the elements are non-optional
+		"`[N]`",           // the required inline marker form is named
+		"NOT inline markdown links", // markdown-link citations are excluded
+		"## Sources",      // the numbered source list heading is required
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("embedded research citation contract missing %q", want)
+		}
+	}
+}
+
 func TestLoadWithEmbeddedIncludesResearchOnEmptyDirs(t *testing.T) {
 	set, err := LoadWithEmbedded([]string{"/nonexistent/dir"})
 	if err != nil {

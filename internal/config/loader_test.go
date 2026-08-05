@@ -19,6 +19,16 @@ func TestDefaultHasGatewayAndModels(t *testing.T) {
 	}
 }
 
+func TestDefaultMaxTokensCeilingIsGenerous(t *testing.T) {
+	// The per-turn output ceiling must be large enough for a full research
+	// synthesis (report body + numbered source list). 8192 truncated sonnet-5's
+	// report before its source list; 16384 gives comfortable headroom.
+	c := Default()
+	if c.MaxTokens < 16384 {
+		t.Errorf("default MaxTokens = %d, want >= 16384 (synthesis headroom)", c.MaxTokens)
+	}
+}
+
 func TestDefaultAgentsMaxSpawns(t *testing.T) {
 	c := Default()
 	if c.Agents.MaxSpawns != 16 {

@@ -30,21 +30,24 @@ func NewRegistry(def string, entries map[string]ModelConfig) *Registry {
 
 // DefaultRegistry is the built-in zero-config model registry.
 func DefaultRegistry() *Registry {
+	// MaxTokens is the per-turn OUTPUT ceiling. The capable cloud models carry
+	// 16384 so a full research synthesis (report body + numbered source list)
+	// is not truncated mid-generation; smaller local models keep tighter caps.
 	return NewRegistry("deepseek-flash", map[string]ModelConfig{
-		"deepseek-flash": {ID: "cloud/deepseek-v4-flash", MaxTokens: 8192, Persona: "coding"},
-		"deepseek-pro":   {ID: "cloud/deepseek-v4-pro", MaxTokens: 8192, Persona: "coding"},
-		"kimi":           {ID: "cloud/kimi-k3", MaxTokens: 8192, Persona: "research"},
-		"glm":            {ID: "cloud/glm-5.2", MaxTokens: 8192, Persona: "general"},
+		"deepseek-flash": {ID: "cloud/deepseek-v4-flash", MaxTokens: 16384, Persona: "coding"},
+		"deepseek-pro":   {ID: "cloud/deepseek-v4-pro", MaxTokens: 16384, Persona: "coding"},
+		"kimi":           {ID: "cloud/kimi-k3", MaxTokens: 16384, Persona: "research"},
+		"glm":            {ID: "cloud/glm-5.2", MaxTokens: 16384, Persona: "general"},
 		"qwen-cloud":     {ID: "cloud/qwen3-8b", MaxTokens: 4096, Persona: "general"},
 		"qwen-coder":     {ID: "local/qwen-coder-7b", MaxTokens: 4096, Persona: "coding"},
 		"qwen-local":     {ID: "local/qwen-7b", MaxTokens: 4096, Persona: "general"},
 		"llama":          {ID: "local/llama3.1:8b", MaxTokens: 2048, Persona: "general"},
-		"claude":         {ID: "claude/sonnet", MaxTokens: 8192, Persona: "general"},
+		"claude":         {ID: "claude/sonnet", MaxTokens: 16384, Persona: "general"},
 		// Claude Sonnet 5 via the gateway's OpenRouter route (distinct from the
 		// credit-blocked Anthropic "claude/sonnet" route above).
-		"sonnet-5": {ID: "claude/sonnet-5", MaxTokens: 8192, Persona: "general"},
+		"sonnet-5": {ID: "claude/sonnet-5", MaxTokens: 16384, Persona: "general"},
 		// MiniMax M3, a cheap agentic gateway model.
-		"minimax": {ID: "cloud/minimax-m3", MaxTokens: 8192, Persona: "general"},
+		"minimax": {ID: "cloud/minimax-m3", MaxTokens: 16384, Persona: "general"},
 		// claude-max routes to the CLIAdapter (fuse mcp-server bridge) rather
 		// than the LiteLLM gateway. ID prefix "cli/" is the discriminator.
 		"claude-max": {ID: "cli/claude-max", MaxTokens: 0, Persona: "coding"},

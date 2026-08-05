@@ -81,3 +81,14 @@ Your reply is NOT complete until this final cited report exists. Producing the
 it is the last thing you do, after the subagents return. Do not stop at the
 fan-out, and do not end your turn having only spawned agents or only collected
 findings: always finish by writing the synthesized, cited report yourself.
+
+Two elements are MANDATORY and non-negotiable in that final report:
+
+1. Inline `[N]` numeric citation markers (e.g. `[1]`, `[2]`, `[3]`) attached to
+   the claims they support. Use bracketed numbers - NOT inline markdown links
+   like `[title](url)` - as the in-text citation form. You MAY additionally
+   include links, but the `[N]` markers are required.
+2. A numbered source list at the very END of the report, under a `## Sources`
+   heading, where entry N gives the URL (and title) for citation marker `[N]`.
+   Every `[N]` used in the body must have a matching numbered entry, and this
+   list is the LAST thing in the report - do not omit it or stop before it.
