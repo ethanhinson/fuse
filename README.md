@@ -23,7 +23,11 @@ question into several facets, fans out one subagent per facet to search the web
 and fetch the most promising pages, deduplicates sources, and synthesizes a
 single markdown report with `[N]` citation markers and a numbered source list.
 The flow is driven by the existing subagent runtime and an embedded `research`
-skill; a user skill named `research` shadows the built-in one.
+skill; a user skill named `research` shadows the built-in one. The skill is
+available in both the interactive shell (via `/research`) and one-shot mode: a
+one-shot task whose intent matches the skill's description (e.g. `fuse "do a
+deep research on ..."`) loads and follows the skill automatically, because the
+model is instructed to call the `skill` tool first for any matching request.
 
 Two built-in tools back the flow: `web_search` (query a search provider) and
 `web_fetch` (fetch a URL and extract the main article text, with a robots.txt
@@ -97,8 +101,7 @@ agents:
 The research flow is emergent and prompt-driven: the model diversifies a
 question into facets, fans out one subagent per facet, and each child searches
 and fetches on its own. That is hard to watch in the interactive shell (it
-scrolls past) and unreachable from one-shot `fuse "<task>"` mode (which never
-loads a skill slash command). `research-probe` runs the **real** flow — the
+scrolls past). `research-probe` runs the **real** flow — the
 embedded `research` skill, the real `web_search`/`web_fetch` tools against your
 configured provider, the real `spawn_agent` fan-out, talking to the live
 gateway — headless and fully recorded, then prints an inspectable digest:

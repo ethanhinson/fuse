@@ -132,6 +132,7 @@ func (s *Set) SystemPromptBlock() string {
 		return ""
 	}
 	var b strings.Builder
+	b.WriteString("## Skills\n\n")
 	b.WriteString("Available skills:\n")
 	for _, sk := range s.skills {
 		b.WriteString("- ")
@@ -142,5 +143,14 @@ func (s *Set) SystemPromptBlock() string {
 		}
 		b.WriteString("\n")
 	}
+	// The directive is the load-bearing part: without it the list above is
+	// treated as trivia and a matching skill is never invoked. State the
+	// trigger explicitly so a request matching a skill's description forces a
+	// skill(name) call BEFORE any other work on that task.
+	b.WriteString("\nWhen the user's request matches a skill's description, you MUST call the ")
+	b.WriteString("`skill` tool with that skill's name FIRST, then follow the returned body as your ")
+	b.WriteString("instructions for the whole task. Do NOT attempt a task that matches a skill ")
+	b.WriteString("without loading that skill first — the skill body is the authoritative procedure, ")
+	b.WriteString("not an optional reference.")
 	return strings.TrimRight(b.String(), "\n")
 }

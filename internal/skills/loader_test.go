@@ -46,6 +46,36 @@ func TestLoadDiscoversSkillsAcrossDirs(t *testing.T) {
 	}
 }
 
+// TestSystemPromptBlockIsADirective locks in the fix for skills being merely
+// advertised: the block must not just list skills, it must instruct the model
+// to CALL the skill tool FIRST when a request matches a skill's description.
+// Without this, gateway models treat the list as trivia and never invoke a
+// matching skill (the observed /research-never-fires failure).
+func TestSystemPromptBlockIsADirective(t *testing.T) {
+	a := t.TempDir()
+	writeSkill(t, a, "research", "---\nname: research\ndescription: Web research fan-out.\n---\nbody\n")
+	set, err := Load([]string{a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := set.SystemPromptBlock()
+
+	// Still lists the skill name + description.
+	if !strings.Contains(block, "research") || !strings.Contains(block, "Web research fan-out.") {
+		t.Errorf("block dropped the name/description list:\n%s", block)
+	}
+	// Now carries explicit trigger language.
+	for _, want := range []string{
+		"MUST",  // imperative, not advisory
+		"skill", // names the tool to call
+		"FIRST", // ordering: load before attempting
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("directive block missing %q:\n%s", want, block)
+		}
+	}
+}
+
 func TestLoadEmptyWhenNoDirs(t *testing.T) {
 	set, err := Load(nil)
 	if err != nil {
