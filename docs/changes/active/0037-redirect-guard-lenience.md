@@ -2,7 +2,7 @@
 id: 37
 slug: redirect-guard-lenience
 title: Redirect fail-closed guard — allow /dev/null targets and fd-dups, keep failing closed on real files
-status: proposed
+status: in-progress
 priority: critical
 type: fix
 created: 2026-08-06
@@ -16,8 +16,9 @@ plan:
 results:
 trivial: true
 auto_groomable:
-branch:
+branch: feat/redirect-guard-lenience
 pr:
+claimed_at: 2026-08-06T05:05:35Z
 blocked_by:
 reconciled: false
 ---
