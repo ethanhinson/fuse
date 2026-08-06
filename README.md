@@ -78,7 +78,17 @@ permissions:
     classifier_model: deepseek-flash   # alias that judges gray-area commands; NEVER a chat alias
     deny: []            # extra always-deny per-segment patterns, e.g. "bash:npm publish*"
     ask: []             # extra always-ask per-segment patterns (override an allow)
-```
+
+# Per-project overrides (user-owned ~/.fuse/config.yml ONLY — see below).
+# Absolute project path -> a permissions subtree that applies when the shell
+# runs inside that path. "auto here, not there" without weakening any repo.
+projects:
+  /Users/me/work/trusted-app:
+    permissions:
+      mode: auto        # this project starts in auto; others keep the global default
+      auto:
+        classifier_model: deepseek-flash
+
 
 `mode: auto` runs commands without a human prompt when they are provably safe.
 It is layered: a bash command is split into its simple-command **segments**
@@ -104,6 +114,20 @@ the gate: those keys are ignored there (with a startup warning), so a checked-in
 file cannot flip a clone into `auto` mode or self-approve. Only the *tightening*
 keys `always_prompt` and `disabled` take effect from `.fuse.local.yml`. Set
 anything that grants trust in your own `~/.fuse/config.yml`.
+
+**Per-project trust (`projects:`).** To grant "auto here, not there" you can key
+a `permissions:` subtree by **absolute project path** under a `projects:` map.
+When the shell starts inside a path that equals — or is a descendant of — one of
+those keys, that entry's permission subtree is merged in as **trusted** (the full
+subtree, `mode` and the whole `auto` block included), layered above the global
+`permissions:` and below the tighten-only `.fuse.local.yml`. When several keys
+are ancestors of the current directory, the **longest (most specific) key wins**;
+matching is by whole path segments, so a key `…/b` never matches a directory
+under `…/bc`, and symlinked working directories are resolved to their real path
+before matching. Because this is pure loosening, the map is honored **only** from
+your own `~/.fuse/config.yml` — a `projects:` block planted in a repo's
+`.fuse.local.yml` is ignored and named in the startup warning, exactly like every
+other loosening key, so a checked-in file still cannot flip a clone into `auto`.
 
 **Switching mode in-session.** `permissions.mode` is only the **startup
 default** — the permission mode is a live session surface you can flip without
