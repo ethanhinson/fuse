@@ -2,7 +2,7 @@
 id: 36
 slug: agent-scheduler
 title: Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-06
@@ -13,13 +13,13 @@ discovered_from: [34]
 adrs: [7, 8, 9]
 spec: docs/superpowers/specs/0036-agent-scheduler.md
 plan: docs/superpowers/plans/0036-agent-scheduler.md
-results:
+results: docs/results/2026-08-06-agent-scheduler-results.md
 trivial: false
 auto_groomable:
 branch: feat/agent-scheduler
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/21
 blocked_by:
-claimed_at: 2026-08-06T23:55:00Z
+claimed_at: 2026-08-07T00:10:00Z
 reconciled: true
 ---
 
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [0036-agent-scheduler.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0036-agent-scheduler.md) |
 | Plan | [0036-agent-scheduler.md](https://github.com/ethanhinson/fuse/blob/feat/agent-scheduler/docs/superpowers/plans/0036-agent-scheduler.md) |
+| Results | [2026-08-06-agent-scheduler-results.md](https://github.com/ethanhinson/fuse/blob/feat/agent-scheduler/docs/results/2026-08-06-agent-scheduler-results.md) |
+| PR | [#21](https://github.com/ethanhinson/fuse/pull/21) |
 | ADRs | [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0007-scheduler-single-admission-authority.md), [ADR-0008](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0008-rate-gate-per-logical-request-tpm-steady-state.md), [ADR-0009](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0009-queue-bound-visibility-global-pool-only.md) |
 <!-- docket:artifacts:end -->
 
