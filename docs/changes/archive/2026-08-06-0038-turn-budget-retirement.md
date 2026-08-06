@@ -28,8 +28,8 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Plan | [2026-08-06-turn-budget-retirement-plan.md](https://github.com/ethanhinson/fuse/blob/feat/live-mode-switch/docs/superpowers/plans/2026-08-06-turn-budget-retirement-plan.md) |
-| Results | [2026-08-06-turn-budget-retirement-results.md](https://github.com/ethanhinson/fuse/blob/feat/live-mode-switch/docs/results/2026-08-06-turn-budget-retirement-results.md) |
+| Plan | [2026-08-06-turn-budget-retirement-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-06-turn-budget-retirement-plan.md) |
+| Results | [2026-08-06-turn-budget-retirement-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-06-turn-budget-retirement-results.md) |
 | PR | [#16](https://github.com/ethanhinson/fuse/pull/16) |
 <!-- docket:artifacts:end -->
 

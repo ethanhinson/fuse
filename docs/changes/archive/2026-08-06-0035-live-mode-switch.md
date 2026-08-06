@@ -28,8 +28,8 @@ claimed_at:
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Plan | [2026-08-06-live-mode-switch-plan.md](https://github.com/ethanhinson/fuse/blob/feat/live-mode-switch/docs/superpowers/plans/2026-08-06-live-mode-switch-plan.md) |
-| Results | [2026-08-06-live-mode-switch-results.md](https://github.com/ethanhinson/fuse/blob/feat/live-mode-switch/docs/results/2026-08-06-live-mode-switch-results.md) |
+| Plan | [2026-08-06-live-mode-switch-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-06-live-mode-switch-plan.md) |
+| Results | [2026-08-06-live-mode-switch-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-06-live-mode-switch-results.md) |
 | PR | [#16](https://github.com/ethanhinson/fuse/pull/16) |
 | ADRs | [ADR-0005](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
 <!-- docket:artifacts:end -->
