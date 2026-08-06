@@ -148,9 +148,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 				if terr != nil {
 					return "", terr
 				}
-				if childNode.Depth >= agent.MaxDepth {
-					// Depth strip (static): a child at MaxDepth can never spawn —
-					// drop any copy inherited from the parent's registry.
+				if childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(opts.Tools) {
+					// Depth strip (static): a child at MaxDepth can never spawn.
+					// Folded-in fix (change 0034): a parent that omits spawn_agent
+					// from its requested tools subset withholds it from the child.
+					// Either way, drop any copy inherited from the parent's registry.
 					childToolReg.Unregister("spawn_agent")
 				} else {
 					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))

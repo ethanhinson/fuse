@@ -25,6 +25,21 @@ type workflowActivation struct {
 	// An atomic reserve-then-check closes that window so a within-turn batch can
 	// never overshoot pool.Total. Shared across every spawner in the run (the
 	// activation is created once at root activation).
+	//
+	// Two counters track the same permanent `total` quota, and they use
+	// deliberately different comparisons against pool.Total:
+	//   - `reserved` (backstop, here) is the authoritative gate. It reserves a
+	//     slot BEFORE spawnLocal, so it counts the in-flight reservation and
+	//     rejects on `reserved > Total` (strictly greater — the Nth spawn is
+	//     admitted, the N+1th is not).
+	//   - tree.SubtreeSpawnCount(rootID) (the strip predicate and budgetFor,
+	//     below) counts COMMITTED nodes that addNode has already recorded, so it
+	//     strips on `>= Total`.
+	// The two count the same quota from opposite sides of the same spawnLocal
+	// call and so track closely; the operator difference (`>` vs `>=`) reflects
+	// only in-flight-vs-committed, not divergent policy. `reserved` is
+	// "permanent": it is decremented only on its own over-quota rejection, so a
+	// spawn cancelled downstream still consumes a total slot (acceptable for v1).
 	reserved atomic.Int64
 }
 
