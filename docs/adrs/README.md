@@ -12,6 +12,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0006](0006-fuse-local-yml-tighten-only-trust-boundary.md) — .fuse.local.yml cannot loosen permission policy (repo-plantable config trust boundary) (Accepted) ← change #17 · relates to ADR-0005
 - [ADR-0007](0007-scheduler-single-admission-authority.md) — One Scheduler is the single admission, queueing, and throughput authority for subagents (Accepted) ← change #36
 - [ADR-0008](0008-rate-gate-per-logical-request-tpm-steady-state.md) — Rate gate charges per logical request; tpm is a steady-state guarantee, not an instantaneous one (Accepted) ← change #36 · relates to ADR-0007
+- [ADR-0009](0009-queue-bound-visibility-global-pool-only.md) — Queue-bound visibility governs the global pool only; workflow pools retain 0034's strip-at-Concurrent (Accepted) ← change #36 · relates to ADR-0007, ADR-0008
 
 ## Superseded / Reversed
 
