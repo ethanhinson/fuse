@@ -140,6 +140,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	// queue_bound (change 0036): 0/unset ⇒ the scheduler keeps its 2.0 default.
 	sched.SetQueueBound(cfg.Agents.QueueBound)
+	// Rate gate (change 0036): one shared token bucket for the whole session, or
+	// nil when no rpm/tpm axis is configured (fast path). Every agent adapter below
+	// shares it so the session honors one budget.
+	rateGate := sessionRateGate(cfg)
 	rootNode := tree.Node(tree.RootID())
 
 	var makeSpawnFunc func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc
@@ -176,9 +180,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 				// One-shot passes no session-mode source: gates default to
 				// cfg.Permissions.Mode exactly as before this seam.
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget)
+					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate)
 				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -213,7 +217,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget))
 
-	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil, oneShotBudget)
+	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil, oneShotBudget, rateGate)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1

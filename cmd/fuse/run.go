@@ -14,9 +14,40 @@ import (
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/ratelimit"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
+
+// sessionRateGate builds the one shared rate gate for a session from
+// cfg.Throughput (change 0036). It returns an untyped-nil model.RateGate when no
+// rpm/tpm axis is configured (global or per-provider) — the unlimited fast path,
+// so the adapter's gate stays nil and Complete adds zero latency. One bucket is
+// shared by every agent in the session so N agents in tight turn loops cannot
+// collectively outrun the configured budget; queued turns consume nothing because
+// the gate sits at dispatch. Providers are keyed by name and matched against the
+// request's model id by leading substring (e.g. "deepseek" ⇒ "deepseek-flash").
+func sessionRateGate(cfg config.Config) model.RateGate {
+	rc := ratelimit.Config{
+		Global: ratelimit.Limits{
+			RequestsPerMinute: cfg.Throughput.RequestsPerMinute,
+			TokensPerMinute:   cfg.Throughput.TokensPerMinute,
+		},
+	}
+	if len(cfg.Throughput.Providers) > 0 {
+		rc.Providers = make(map[string]ratelimit.Limits, len(cfg.Throughput.Providers))
+		for name, p := range cfg.Throughput.Providers {
+			rc.Providers[name] = ratelimit.Limits{
+				RequestsPerMinute: p.RequestsPerMinute,
+				TokensPerMinute:   p.TokensPerMinute,
+			}
+		}
+	}
+	if !rc.Any() {
+		return nil // untyped nil: the adapter's gate stays nil (fast path).
+	}
+	return ratelimit.New(rc, nil)
+}
 
 // spawnAgentBlock is the system-prompt block that tells models to use spawn_agent.
 // Shared between one-shot and shell mode so behaviour is identical across both.
@@ -162,16 +193,30 @@ func buildSessionRegistryNoMCP(cfg config.Config, skillLookup func(string) (skil
 	return defaultToolRegistry(cfg.Research, skillLookup), nil
 }
 
+// gatewayAdapter builds the LiteLLM gateway adapter for a session, decorating it
+// with the session rate gate (change 0036) when one is configured. gate is the
+// single shared *ratelimit.Bucket for the whole session — every agent (and the
+// auto-mode classifier) shares one budget, so N agents in tight loops cannot
+// collectively outrun the configured rpm/tpm. A nil gate is the unlimited fast
+// path: WithRateGate(nil) leaves the adapter's gate nil, adding zero latency.
+func gatewayAdapter(cfg config.Config, gate model.RateGate) *model.Adapter {
+	a := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
+	if gate != nil {
+		a = a.WithRateGate(gate)
+	}
+	return a
+}
+
 // buildAgentWithRendererAndTrace is like buildAgentWithRenderer but also
 // writes raw API request/response JSON to traceW (when non-nil), attributing
 // blocks to traceLabel. The caller owns traceW's lifecycle; share one
 // syncWriter across all agents of a session so concurrent blocks stay whole.
-func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool) (*agent.Agent, error) {
+func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
 	_ = verbose
-	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, traceLabel, toolReg, approve, sm, interactive)
+	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, traceLabel, toolReg, approve, sm, interactive, gate)
 	return a, err
 }
 
@@ -270,7 +315,7 @@ func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.A
 
 // buildChildAgent builds an agent with an explicitly provided system prompt,
 // bypassing persona composition. Used when spawn_agent sets system_prompt.
-func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool) (*agent.Agent, error) {
+func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
@@ -284,19 +329,19 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 		if err != nil {
 			return nil, fmt.Errorf("cli adapter: resolve binary: %w", err)
 		}
-		gate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
-		return agent.New(newCLIAdapter(fuseExe, approve), gate, r, mc.ID, systemPrompt, maxTurns, 0), nil
+		permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
+		return agent.New(newCLIAdapter(fuseExe, approve), permGate, r, mc.ID, systemPrompt, maxTurns, 0), nil
 	}
-	adapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
+	adapter := gatewayAdapter(cfg, gate)
 	if traceW != nil {
 		adapter = adapter.WithTraceLabel(traceW, traceLabel)
 	}
-	gate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
+	permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 	maxTokens := mc.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = cfg.MaxTokens
 	}
-	a := agent.New(adapter, gate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
+	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	return a, nil
@@ -389,7 +434,7 @@ func shouldWireChildSpawn(requested []string) bool {
 
 // buildAgentCore resolves alias and constructs an Agent bound to renderer r,
 // returning the resolved gateway model id.
-func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode, interactive bool) (*agent.Agent, string, error) {
+func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode, interactive bool, gate model.RateGate) (*agent.Agent, string, error) {
 	mc, err := reg.Resolve(alias)
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
@@ -404,24 +449,24 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 			return nil, "", fmt.Errorf("cli adapter: resolve binary: %w", err)
 		}
 		cliAdapter := newCLIAdapter(fuseExe, approve)
-		gate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
+		permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
 		// maxTokens is not forwarded to the CLI; Claude controls its own limits.
-		a := agent.New(cliAdapter, gate, r, mc.ID, systemPrompt, maxTurns, 0)
+		a := agent.New(cliAdapter, permGate, r, mc.ID, systemPrompt, maxTurns, 0)
 		return a, mc.ID, nil
 	}
 
-	adapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
+	adapter := gatewayAdapter(cfg, gate)
 	if traceW != nil {
 		adapter = adapter.WithTraceLabel(traceW, traceLabel)
 	}
-	gate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
+	permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 	maxTokens := mc.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = cfg.MaxTokens
 	}
 	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
-	a := agent.New(adapter, gate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
+	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	return a, mc.ID, nil

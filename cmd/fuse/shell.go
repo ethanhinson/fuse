@@ -132,11 +132,14 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	// queue_bound (change 0036): 0/unset ⇒ the scheduler keeps its 2.0 default.
 	sched.SetQueueBound(cfg.Agents.QueueBound)
+	// Rate gate (change 0036): one shared token bucket for the session, or nil when
+	// no rpm/tpm axis is configured (fast path).
+	rateGate := sessionRateGate(cfg)
 	rootNode := tree.Node(tree.RootID())
 
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
-		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true)
+		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true, rateGate)
 		if err != nil {
 			return nil, err
 		}
@@ -202,9 +205,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				// Children spawned inside the interactive shell inherit its
 				// interactive posture — a human is reachable via the shell.
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true)
+					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate)
 				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate)
 				}
 				if aerr != nil {
 					return "", aerr

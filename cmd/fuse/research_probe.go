@@ -105,6 +105,9 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	// queue_bound (change 0036): 0/unset ⇒ the scheduler keeps its 2.0 default.
 	sched.SetQueueBound(cfg.Agents.QueueBound)
+	// Rate gate (change 0036): one shared token bucket for the session, or nil when
+	// no rpm/tpm axis is configured (fast path).
+	rateGate := sessionRateGate(cfg)
 	rootNode := tree.Node(tree.RootID())
 
 	// research-probe IS a research root: activate the research workflow on the
@@ -187,9 +190,9 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				var aerr error
 				// research-probe is headless (no TTY, AlwaysApprove) ⇒ backstopped.
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false)
+					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false, rateGate)
 				} else {
-					a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false)
+					a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -231,7 +234,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 		tui.NewNodeRenderer(rootNode, tree),
 		logSink.Recorder("root"),
 	)
-	rootAgent, _, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", toolReg, permissions.AlwaysApprove, nil, false)
+	rootAgent, _, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", toolReg, permissions.AlwaysApprove, nil, false, rateGate)
 	if err != nil {
 		fmt.Fprintf(stderr, "build root agent: %v\n", err)
 		return 1

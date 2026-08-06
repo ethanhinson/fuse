@@ -43,6 +43,30 @@ var defaultGatewayClient = &http.Client{
 	},
 }
 
+// RateGate smooths turn-level throughput across the harness (change 0036,
+// Acceptance 4). It is consulted by Adapter.Complete exactly once per call —
+// before dispatch, not per retry attempt — so N agents in tight turn loops
+// cannot outrun a configured requests-per-minute / tokens-per-minute budget.
+//
+// The gate is defined here, in internal/model, because internal/agent imports
+// internal/model (never the reverse): the choke point lives here, so the seam
+// must too, with the concrete token bucket injected from cmd/fuse.
+//
+//   - Wait blocks until the request (and its token estimate) fits the bucket, or
+//     ctx is cancelled — Ctrl-C still stops a gated call. provider identifies the
+//     rate axis (see the bucket's provider-key mapping); estTokens is what the
+//     caller can cheaply predict up front (the adapter passes 0 — see Complete).
+//   - Report reconciles the estimate against the actual usage the gateway
+//     reported, after a successful response. inTokens/outTokens come from
+//     CompletionResp.InputTokens/OutputTokens.
+//
+// A nil gate on the Adapter is the unlimited fast path: Complete makes no gate
+// calls and adds zero latency (Acceptance 4's "unset config ⇒ no gate").
+type RateGate interface {
+	Wait(ctx context.Context, provider string, estTokens int) error
+	Report(provider string, inTokens, outTokens int)
+}
+
 // Adapter is an OpenAI-compatible client for the LiteLLM gateway.
 type Adapter struct {
 	baseURL string
@@ -56,8 +80,24 @@ type Adapter struct {
 	// RetryBackoff is the base sleep between attempts (grows linearly).
 	RetryBackoff time.Duration
 
+	// gate, when non-nil, smooths dispatch to the configured rpm/tpm budget.
+	// nil ⇒ the unlimited fast path (no gate calls, zero added latency). Set via
+	// WithRateGate. Consulted once per Complete, before the retry loop.
+	gate RateGate
+
 	trace      io.Writer // when non-nil, raw JSON req/resp are written here
 	traceLabel string    // identifies the agent in shared trace files
+}
+
+// WithRateGate returns a copy of the adapter that consults g before each
+// dispatch and reports usage after each success. Following the package's copy-on-
+// configure idiom (WithTrace/WithTraceLabel), it does not mutate the receiver, so
+// a single base adapter can be shared and re-decorated per agent. A nil g leaves
+// the gate off (the fast path).
+func (a *Adapter) WithRateGate(g RateGate) *Adapter {
+	cp := *a
+	cp.gate = g
+	return &cp
 }
 
 // NewAdapter builds an Adapter. baseURL is the gateway root, e.g.
@@ -154,8 +194,8 @@ type wireResp struct {
 type wireStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Role      string             `json:"role"`
-			Content   string             `json:"content"`
+			Role      string              `json:"role"`
+			Content   string              `json:"content"`
 			ToolCalls []wireDeltaToolCall `json:"tool_calls"`
 		} `json:"delta"`
 	} `json:"choices"`
@@ -245,6 +285,21 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	}
 	a.tracef("REQ", prettyJSON(body))
 
+	// Rate gate: consulted ONCE per Complete, before the retry loop. It gates a
+	// logical request, not a transport attempt — charging each retry would double-
+	// count the request bucket for one turn and let a flaky gateway silently eat an
+	// agent's rpm allowance. It also sits at dispatch, so a turn that never gets
+	// here (queued upstream by the scheduler) consumes nothing — spec Acceptance 4.
+	// nil gate ⇒ fast path: no call, no wait, no allocation. estTokens is 0: the
+	// adapter has the marshalled payload but no cheap, accurate token count (the
+	// gateway tokenizer is authoritative), so it under-charges the estimate and lets
+	// Report reconcile against the real prompt+completion usage after success.
+	if a.gate != nil {
+		if err := a.gate.Wait(ctx, req.Model, 0); err != nil {
+			return CompletionResp{}, err
+		}
+	}
+
 	maxAttempts := a.MaxAttempts
 	if maxAttempts < 1 {
 		maxAttempts = 1
@@ -257,6 +312,11 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		attempts = attempt
 		resp, err, retryable := a.completeOnce(ctx, body)
 		if err == nil {
+			// Reconcile the (zero) estimate with the gateway's reported usage so the
+			// tpm axis reflects real spend. Reported once, on the successful attempt.
+			if a.gate != nil {
+				a.gate.Report(req.Model, resp.InputTokens, resp.OutputTokens)
+			}
 			return resp, nil
 		}
 		lastErr = err
