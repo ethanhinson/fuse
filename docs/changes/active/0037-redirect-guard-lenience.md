@@ -12,13 +12,13 @@ related: [17, 35]
 discovered_from: [17]
 adrs: [5]
 spec:
-plan:
+plan: docs/superpowers/plans/0037-redirect-guard-lenience.md
 results:
 trivial: true
 auto_groomable:
 branch: feat/redirect-guard-lenience
 pr:
-claimed_at: 2026-08-06T05:07:04Z
+claimed_at: 2026-08-06T05:08:52Z
 blocked_by:
 reconciled: true
 ---
@@ -26,6 +26,10 @@ reconciled: true
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Plan | [0037-redirect-guard-lenience.md](https://github.com/ethanhinson/fuse/blob/feat/redirect-guard-lenience/docs/superpowers/plans/0037-redirect-guard-lenience.md) |
+| ADRs | [ADR-0005](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0005-per-segment-allow-rule-evaluation.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
