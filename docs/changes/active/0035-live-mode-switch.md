@@ -2,7 +2,7 @@
 id: 35
 slug: live-mode-switch
 title: Mode switch must bite mid-turn — gates read the SessionMode holder live, not a construction snapshot
-status: in-progress
+status: implemented
 priority: critical
 type: fix
 created: 2026-08-06
@@ -13,14 +13,14 @@ discovered_from: [17]
 adrs: [5, 6]
 spec:
 plan: docs/superpowers/plans/2026-08-06-live-mode-switch-plan.md
-results:
+results: docs/results/2026-08-06-live-mode-switch-results.md
 trivial: true
 auto_groomable:
 branch: feat/live-mode-switch
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/16
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-06T04:24:44Z
+claimed_at: 2026-08-06T04:39:21Z
 ---
 
 ## Artifacts
@@ -29,6 +29,8 @@ claimed_at: 2026-08-06T04:24:44Z
 | Artifact | Link |
 |---|---|
 | Plan | [2026-08-06-live-mode-switch-plan.md](https://github.com/ethanhinson/fuse/blob/feat/live-mode-switch/docs/superpowers/plans/2026-08-06-live-mode-switch-plan.md) |
+| Results | [2026-08-06-live-mode-switch-results.md](https://github.com/ethanhinson/fuse/blob/feat/live-mode-switch/docs/results/2026-08-06-live-mode-switch-results.md) |
+| PR | [#16](https://github.com/ethanhinson/fuse/pull/16) |
 | ADRs | [ADR-0005](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
 <!-- docket:artifacts:end -->
 
