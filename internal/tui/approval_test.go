@@ -344,6 +344,76 @@ func TestTurnEndDrainsApprovals(t *testing.T) {
 	}
 }
 
+// TestLoopApprovalPopupWording: a doom-loop force-through (sentinel ToolName)
+// renders as a loop check — not an empty "Tool:" line — and does not offer the
+// meaningless "allow for session" option (change 0038 review NIT).
+func TestLoopApprovalPopupWording(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	m.running = true
+
+	respCh := make(chan approvalResponse, 1)
+	next, _ := m.Update(PermissionRequestMsg{
+		Request: permissions.ApprovalRequest{
+			ToolName: permissions.LoopApprovalToolName,
+			Preview:  "possible loop: bash{ls} repeated 3 times — continue?",
+		},
+		RespCh: respCh,
+	})
+	m = next.(ShellModel)
+
+	view := ansiRE.ReplaceAllString(m.View(), "")
+	if !strings.Contains(view, "Possible loop") {
+		t.Errorf("loop popup should read as a loop check; got: %q", view)
+	}
+	if strings.Contains(view, "allow for session") {
+		t.Error("loop popup must not offer the discarded session option")
+	}
+	if strings.Contains(view, "Tool:  \n") {
+		t.Error("loop popup must not render an empty Tool: field")
+	}
+}
+
+// TestLoopApprovalKeySInert: pressing 's' on a loop check does nothing (the
+// session bool is discarded and the option is not offered) — the request stays
+// queued until the user chooses continue-once or abort (change 0038 review NIT).
+func TestLoopApprovalKeySInert(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	m.running = true
+
+	respCh := make(chan approvalResponse, 1)
+	next, _ := m.Update(PermissionRequestMsg{
+		Request: permissions.ApprovalRequest{
+			ToolName: permissions.LoopApprovalToolName,
+			Preview:  "possible loop: bash{ls} repeated 3 times — continue?",
+		},
+		RespCh: respCh,
+	})
+	m = next.(ShellModel)
+
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = next.(ShellModel)
+	select {
+	case resp := <-respCh:
+		t.Fatalf("'s' must be inert on a loop check, but a response was sent: %+v", resp)
+	default:
+	}
+	if len(m.approvals) != 1 {
+		t.Errorf("loop request should stay queued after inert 's', len = %d", len(m.approvals))
+	}
+
+	// 'y' still continues once (no session allow).
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = next.(ShellModel)
+	select {
+	case resp := <-respCh:
+		if !resp.Approved || resp.AllowForSession {
+			t.Errorf("'y' should continue-once (no session), got %+v", resp)
+		}
+	default:
+		t.Fatal("'y' should answer the loop check")
+	}
+}
+
 // TestApprovalViewStatus verifies that the status bar shows the approval prompt.
 func TestApprovalViewStatus(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))

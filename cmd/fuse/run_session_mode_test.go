@@ -120,6 +120,38 @@ func TestSessionModeFlipToAuto_NextGateAutoApprovesReadOnlyBash(t *testing.T) {
 	}
 }
 
+// TestBuildGate_MidTurnFlipBitesSameGate is the wiring-seam regression guard for
+// the mid-turn fix: a gate built via buildGate with a session source has its
+// holder flipped smart→auto WITHOUT a rebuild, and the SAME gate must now
+// auto-approve a read-only bash call and report Mode()==auto. This is the exact
+// scenario a human hits reaching for Shift+Tab mid-run: the running turn's gate
+// (and its children) must observe the switch live.
+func TestBuildGate_MidTurnFlipBitesSameGate(t *testing.T) {
+	sm := permissions.NewSessionMode(permissions.ModeSmart)
+	cfg := gatewayConfig("smart")
+	reg := testRegistry()
+	toolReg := safeToolRegistry(t)
+	var prompted bool
+
+	g := buildGate(cfg, toolReg, approveAllFunc(&prompted), reg, nil, sm)
+	if got := g.Mode(); got != permissions.ModeSmart {
+		t.Fatalf("gate built at smart: Mode() = %v, want ModeSmart", got)
+	}
+
+	// Flip the holder mid-turn — NO rebuild. The same gate must now be auto.
+	sm.Set(permissions.ModeAuto)
+	if got := g.Mode(); got != permissions.ModeAuto {
+		t.Fatalf("after mid-turn holder flip, SAME gate Mode() = %v, want ModeAuto", got)
+	}
+	res := g.Execute(context.Background(), "bash", bashArgsJSON("git status"))
+	if res.IsError {
+		t.Fatalf("after mid-turn flip to auto, read-only bash should auto-approve, got: %s", res.Output)
+	}
+	if prompted {
+		t.Fatal("after mid-turn flip to auto, read-only bash must NOT prompt (mid-turn regression)")
+	}
+}
+
 // TestBuildGateNilSessionModeDefaultsToConfig proves the one-shot / mcp posture:
 // a nil session source falls back to cfg.Permissions.Mode exactly as before.
 func TestBuildGateNilSessionModeDefaultsToConfig(t *testing.T) {

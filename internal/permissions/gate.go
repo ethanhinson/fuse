@@ -12,6 +12,12 @@ import (
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
+// LoopApprovalToolName is the sentinel ToolName carried by a doom-loop
+// force-through ApprovalRequest (as opposed to a real tool call). The TUI keys
+// on it to render the prompt as a loop check and to drop the "allow for
+// session" option, whose bool is meaningless for a loop trip. See change 0038.
+const LoopApprovalToolName = "possible loop"
+
 // ApprovalRequest describes a tool call awaiting user approval.
 type ApprovalRequest struct {
 	ToolName string
@@ -37,12 +43,24 @@ type PermissionGate struct {
 	// goes through currentMode() and every write through SetMode under this one
 	// mutex — guarding only one side would still be a race
 	// (mutex-test-double-concurrent-provider).
-	modeMu  sync.Mutex
-	mode    PermissionMode
-	cfg     config.PermissionsConfig
-	cache   *ApprovalCache
-	approve ApprovalFunc
-	inner   *tools.Registry
+	modeMu sync.Mutex
+	mode   PermissionMode
+	// sessionMode, when non-nil, is the live source of truth for the gate's mode:
+	// currentMode() returns sessionMode.Get() instead of the mode snapshot, so a
+	// mid-turn switch bites the already-built gate (and its running children).
+	// Holderless gates (one-shot, mcp-server, tests) leave this nil and resolve off
+	// the mode snapshot exactly as before. It is shared by reference into children
+	// via CloneForChild so a child follows the session mode live too.
+	sessionMode *SessionMode
+	// lastObservedMode is the mode currentMode() last returned, tracked under modeMu
+	// so the live read path can detect an auto→non-auto transition (driven by the
+	// holder, which SetMode never sees) and reset the escalation valve — preserving
+	// SetMode's valve semantics across the live read seam.
+	lastObservedMode PermissionMode
+	cfg              config.PermissionsConfig
+	cache            *ApprovalCache
+	approve          ApprovalFunc
+	inner            *tools.Registry
 
 	// classifier is the auto-mode probabilistic layer. It is nil outside auto
 	// mode and nil in auto mode when no classifier was injected — a nil
@@ -167,6 +185,17 @@ func WithMode(mode PermissionMode) Option {
 	return func(g *PermissionGate) { g.mode = mode }
 }
 
+// WithSessionMode wires the gate to the session's live PermissionMode holder. When
+// set, currentMode() returns holder.Get() live rather than the construction-time
+// snapshot, so a mid-turn Shift+Tab / /mode switch bites the already-built gate
+// and every running child (CloneForChild propagates the holder). The mode snapshot
+// remains the fallback for holderless gates (one-shot, mcp-server, tests), and
+// SetMode still drives holderless gates. Passing nil is a no-op, leaving the
+// snapshot posture intact.
+func WithSessionMode(sm *SessionMode) Option {
+	return func(g *PermissionGate) { g.sessionMode = sm }
+}
+
 // New builds a PermissionGate. approve is called when user input is needed;
 // pass AlwaysApprove for non-interactive (one-shot) sessions. Auto-mode
 // dependencies (a classifier, a workspace root) are supplied additively via
@@ -183,16 +212,43 @@ func New(cfg config.PermissionsConfig, inner *tools.Registry, approve ApprovalFu
 	for _, opt := range opts {
 		opt(g)
 	}
+	// Seed the transition tracker to the gate's effective initial mode so the first
+	// currentMode() read is never mistaken for a mode transition. Read the holder
+	// directly here (not via currentMode) to avoid a spurious self-observed reset.
+	if g.sessionMode != nil {
+		g.lastObservedMode = g.sessionMode.Get()
+	} else {
+		g.lastObservedMode = g.mode
+	}
 	return g
 }
 
-// currentMode returns the gate's active mode under modeMu. Every mode read in
-// resolve/resolveAuto/CloneForChild goes through here so a concurrent SetMode
-// on the live root gate never races the read.
+// currentMode returns the gate's active mode. When a SessionMode holder is wired
+// (the interactive shell), the holder is the live source of truth so a mid-turn
+// switch bites this already-built gate; otherwise the mode snapshot is used. Every
+// mode read in resolve/resolveAuto/CloneForChild goes through here so a concurrent
+// SetMode or holder flip never races the read.
+//
+// Because the holder can change without SetMode being called, currentMode() is
+// also the observation point for the escalation-valve reset: it compares the
+// effective mode to lastObservedMode (both under modeMu) and, on an auto→non-auto
+// transition, resets the valve — mirroring SetMode's leaving-auto semantics.
+// valve.reset() takes its own valve.mu; modeMu and valve.mu are never acquired in
+// the opposite order anywhere, so there is no lock-order inversion.
 func (g *PermissionGate) currentMode() PermissionMode {
 	g.modeMu.Lock()
-	defer g.modeMu.Unlock()
-	return g.mode
+	mode := g.mode
+	if g.sessionMode != nil {
+		mode = g.sessionMode.Get()
+	}
+	leavingAuto := g.lastObservedMode == ModeAuto && mode != ModeAuto
+	g.lastObservedMode = mode
+	g.modeMu.Unlock()
+
+	if leavingAuto && g.valve != nil {
+		g.valve.reset()
+	}
+	return mode
 }
 
 // Mode returns the gate's active mode through the guarded accessor. It is the
@@ -207,8 +263,10 @@ func (g *PermissionGate) HasClassifier() bool { return g.classifier != nil }
 
 // SetMode switches the live gate's mode under modeMu, so an in-flight resolve
 // never races the write and the very next resolve observes the new mode. It is
-// the root-gate half of the session-mode surface (the SessionMode holder is the
-// per-turn-construction half).
+// the root-gate half of the session-mode surface for HOLDERLESS gates (the
+// SessionMode holder is the per-turn-construction half); holder-backed gates take
+// their mode from the holder and SetMode's snapshot write is inert on their read
+// path, but SetMode still keeps the transition tracker honest below.
 //
 // D10 semantics:
 //   - The root gate switches immediately (no new gate needed).
@@ -218,10 +276,17 @@ func (g *PermissionGate) HasClassifier() bool { return g.classifier != nil }
 //     auto leaves the counters as-is.
 //   - Already-spawned children are unaffected: CloneForChild snapshots the
 //     parent's mode into the child's own field at spawn time.
+//
+// The leaving-auto transition is computed against lastObservedMode — the SAME
+// ledger currentMode() maintains — and lastObservedMode is advanced here, so a
+// currentMode() call immediately after SetMode does NOT re-detect (and
+// re-reset on) the same transition. This keeps the reset firing exactly once
+// per leaving-auto edge whether that edge is driven by SetMode or by the holder.
 func (g *PermissionGate) SetMode(mode PermissionMode) {
 	g.modeMu.Lock()
-	leavingAuto := g.mode == ModeAuto && mode != ModeAuto
+	leavingAuto := g.lastObservedMode == ModeAuto && mode != ModeAuto
 	g.mode = mode
+	g.lastObservedMode = mode
 	g.modeMu.Unlock()
 
 	if leavingAuto && g.valve != nil {
@@ -448,23 +513,37 @@ func bashCommand(args string) string {
 // gate's approval cache. The child's approval prompts will be prefixed [label].
 // Child approvals do not propagate back to the parent gate.
 func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
-	return &PermissionGate{
-		// Snapshot the parent's mode once via the guarded accessor: the child
-		// copies the current value into its own field, so a later parent SetMode
-		// does not disturb an already-spawned (running) child.
-		mode:          g.currentMode(),
-		cfg:           g.cfg,
-		cache:         g.cache.Clone(),
-		approve:       prefixedApprove(label, g.approve),
-		inner:         g.inner,
-		classifier:    g.classifier.cloneForChild(),
-		workspaceRoot: g.workspaceRoot,
-		interactive:   g.interactive,
+	// Snapshot the parent's effective mode once via the guarded accessor. For a
+	// holderless gate this is the child's fixed mode (a later parent SetMode does
+	// not disturb an already-spawned child). For a holder-backed gate the holder is
+	// propagated by reference below, so the child follows the session mode live —
+	// this snapshot only seeds the child's field/tracker consistently.
+	mode := g.currentMode()
+	child := &PermissionGate{
+		mode: mode,
+		// Propagate the session holder by reference: a child of a holder-backed gate
+		// reads the same live session mode, so a mid-turn switch reaches running
+		// children too (supersedes D10's "children keep their spawn mode").
+		sessionMode: g.sessionMode,
+		// lastObservedMode is per-gate (seeded to the child's effective mode), unlike
+		// the by-reference valve: parent and child each maintain their own transition
+		// ledger. Both may independently observe the same holder auto→non-auto edge
+		// and each call valve.reset(), but reset is idempotent (0,0 → 0,0) and both
+		// reach the same conclusion, so the shared budget stays correct.
+		lastObservedMode: mode,
+		cfg:              g.cfg,
+		cache:            g.cache.Clone(),
+		approve:          prefixedApprove(label, g.approve),
+		inner:            g.inner,
+		classifier:       g.classifier.cloneForChild(),
+		workspaceRoot:    g.workspaceRoot,
+		interactive:      g.interactive,
 		// The escalation valve is a per-session budget: unlike the snapshot-cloned
 		// approval/verdict caches, it is shared by reference so a child's classifier
 		// blocks count toward the same session valve as the parent.
 		valve: g.valve,
 	}
+	return child
 }
 
 // PrefixApproval wraps an ApprovalFunc so a child/subagent's prompts are

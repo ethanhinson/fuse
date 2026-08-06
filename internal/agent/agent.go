@@ -41,14 +41,24 @@ type Agent struct {
 	// default (128k). The loop prunes old tool results when the estimated
 	// request approaches this budget.
 	ContextWindow int
+
+	// LoopApproval, when set, makes the doom-loop detector interactive: on a
+	// trip (loopLimit consecutive byte-identical tool-call sets) the loop calls
+	// it with a "possible loop" preview instead of aborting. Returning
+	// (true, nil) forces the repeated call through and resets the detector so
+	// the run continues; (false, nil) aborts with ErrLoopDetected. A nil hook
+	// is the non-interactive posture: a trip aborts immediately. The agent
+	// package stays transport-agnostic — cmd/fuse adapts its ApprovalFunc and
+	// interactivity into this callback. See change 0038.
+	LoopApproval func(ctx context.Context, preview string) (approved bool, err error)
 }
 
 // New builds an Agent. modelID is the gateway model id; systemPrompt, when
-// non-empty, is injected as the first message of each run.
+// non-empty, is injected as the first message of each run. maxTurns <= 0 means
+// unlimited turns (the loop never returns ErrMaxTurns); a positive maxTurns
+// caps the run. The old `<=0 ⇒ 25` coercion is retired — the context-aware
+// backstop now lives at the call site in cmd/fuse. See change 0038.
 func New(m Completer, t ToolExecutor, r Renderer, modelID, systemPrompt string, maxTurns, maxTokens int) *Agent {
-	if maxTurns <= 0 {
-		maxTurns = 25
-	}
 	return &Agent{
 		model:        m,
 		tools:        t,

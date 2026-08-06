@@ -134,10 +134,11 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				}
 				var a *agent.Agent
 				var aerr error
+				// research-probe is headless (no TTY, AlwaysApprove) ⇒ backstopped.
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil)
+					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false)
 				} else {
-					a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil)
+					a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -168,7 +169,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 		tui.NewNodeRenderer(rootNode, tree),
 		logSink.Recorder("root"),
 	)
-	rootAgent, _, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", toolReg, permissions.AlwaysApprove, nil)
+	rootAgent, _, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", toolReg, permissions.AlwaysApprove, nil, false)
 	if err != nil {
 		fmt.Fprintf(stderr, "build root agent: %v\n", err)
 		return 1

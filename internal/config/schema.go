@@ -91,10 +91,15 @@ type MCPServerConfig struct {
 
 // Config is the fully resolved fuse configuration.
 type Config struct {
-	Gateway     Gateway
-	Models      ModelsConfig
-	SkillPaths  []string
-	MaxTurns    int
+	Gateway    Gateway
+	Models     ModelsConfig
+	SkillPaths []string
+	// MaxTurns is a pointer so an omitted `max_turns` (nil) is distinguishable
+	// from an explicit `max_turns: 0`. nil = unset ⇒ the call site applies the
+	// context-aware backstop (unlimited in the interactive shell, 100 headless);
+	// a non-nil 0 = explicitly unlimited everywhere; a non-nil N>0 caps every
+	// context. Same omitted-key discipline as Permissions.SessionAllow. (0038)
+	MaxTurns    *int
 	MaxTokens   int
 	Permissions PermissionsConfig
 	MCPServers  []MCPServerConfig
@@ -116,7 +121,7 @@ type rawConfig struct {
 	Gateway     Gateway                  `yaml:"gateway"`
 	Models      map[string]interface{}   `yaml:"models"`
 	SkillPaths  []string                 `yaml:"skill_paths"`
-	MaxTurns    int                      `yaml:"max_turns"`
+	MaxTurns    *int                     `yaml:"max_turns"`
 	MaxTokens   int                      `yaml:"max_tokens"`
 	Permissions rawPermissionsConfig     `yaml:"permissions"`
 	MCPServers  []MCPServerConfig        `yaml:"mcp_servers"`
@@ -168,9 +173,12 @@ type rawResearchConfig struct {
 // Default returns the zero-config built-in configuration.
 func Default() Config {
 	return Config{
-		Gateway:  Gateway{URL: "http://localhost:4000/v1", Key: "llm-gateway-local"},
-		Models:   ModelsConfig{Default: "deepseek-flash", Entries: map[string]ModelConfig{}},
-		MaxTurns: 25,
+		Gateway: Gateway{URL: "http://localhost:4000/v1", Key: "llm-gateway-local"},
+		Models:  ModelsConfig{Default: "deepseek-flash", Entries: map[string]ModelConfig{}},
+		// MaxTurns intentionally left nil (unset): the context-aware backstop is
+		// applied at the call site in cmd/fuse (unlimited shell / 100 headless),
+		// not baked into the config default. See change 0038.
+		//
 		// Per-turn output ceiling. 16384 (up from 8192) so a full research
 		// synthesis — report body plus its numbered source list — is not cut
 		// mid-generation; still configurable per-model and via `max_tokens`.

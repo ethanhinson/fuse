@@ -105,7 +105,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// configured ask/prompt verdict is honored. Interactive TTY ⇒ y/N/a prompt;
 	// piped stdin / CI ⇒ deny-by-default; --approve-all ⇒ explicit auto-approve.
 	// Child/subagent approvals route to this same channel via PrefixApproval.
-	rootApprove := oneShotApprovalFunc(*approveAll, stdinIsTerminal(), os.Stdin, stderr)
+	// One-shot interactivity: a human is reachable only on a real TTY. This
+	// drives the approval channel (y/N/a prompt) — --approve-all layers on top.
+	oneShotInteractive := stdinIsTerminal()
+	rootApprove := oneShotApprovalFunc(*approveAll, oneShotInteractive, os.Stdin, stderr)
+
+	// The turn/loop BUDGET posture is distinct from the approval channel:
+	// --approve-all is a scripted "don't ask me" posture, so even on a TTY it
+	// resolves headless — an unset max_turns backstops at 100, and the doom-loop
+	// hook stays nil so a trip aborts instead of auto-continuing forever.
+	// Explicit max_turns config still wins. (0038, review CONCERN)
+	oneShotBudget := oneShotBudgetInteractive(oneShotInteractive, *approveAll)
 
 	// Spill dir for truncated tool outputs (recoverable via grep/read_file).
 	tools.SetSpillDir(filepath.Join(filepath.Dir(session.DefaultLogDir()), "tool-output"))
@@ -153,9 +163,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 				// One-shot passes no session-mode source: gates default to
 				// cfg.Permissions.Mode exactly as before this seam.
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil)
+					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget)
 				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -188,7 +198,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
 
-	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil)
+	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil, oneShotBudget)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1

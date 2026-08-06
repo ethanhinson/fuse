@@ -104,7 +104,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	sessionMode := permissions.NewSessionMode(permissions.ParseMode(cfg.Permissions.Mode))
 
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
-		return buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode)
+		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
+		return buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true)
 	}
 
 	glamourStyle := os.Getenv("GLAMOUR_STYLE")
@@ -176,10 +177,12 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 
 				var a *agent.Agent
 				var aerr error
+				// Children spawned inside the interactive shell inherit its
+				// interactive posture — a human is reachable via the shell.
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode)
+					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true)
 				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true)
 				}
 				if aerr != nil {
 					return "", aerr

@@ -81,6 +81,65 @@ func TestRunLoopDetectionAborts(t *testing.T) {
 	}
 }
 
+// TestRunLoopDetectionForcesApprovalWhenInteractive verifies that with a loop
+// approval hook set (interactive posture), a tripped detector routes the
+// repeated call through approval with a "possible loop" preview instead of
+// aborting; on approval the run continues, on rejection it aborts. (0038)
+func TestRunLoopDetectionForcesApprovalWhenInteractive(t *testing.T) {
+	same := model.CompletionResp{ToolCalls: []model.ToolCall{{ID: "x", Name: "bash", Arguments: `{"command":"ls"}`}}}
+
+	t.Run("approve continues past the trip", func(t *testing.T) {
+		// 3 identical calls trip the detector; on approval the run continues,
+		// then a natural stop ends it. Assert approval was consulted and the
+		// preview names the repeated call.
+		comp := &scriptedCompleter{responses: []model.CompletionResp{same, same, same, {Content: "done"}}}
+		var previews []string
+		a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 50, 100)
+		a.LoopApproval = func(ctx context.Context, preview string) (bool, error) {
+			previews = append(previews, preview)
+			return true, nil
+		}
+		_, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}})
+		if err != nil {
+			t.Fatalf("approved possible-loop should continue, got %v", err)
+		}
+		if len(previews) == 0 {
+			t.Fatal("loop approval hook was never consulted on the trip")
+		}
+		if !strings.Contains(previews[0], "bash") {
+			t.Errorf("preview %q should name the repeated tool call", previews[0])
+		}
+	})
+
+	t.Run("reject aborts with ErrLoopDetected", func(t *testing.T) {
+		comp := &scriptedCompleter{responses: []model.CompletionResp{same, same, same, same}}
+		a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 50, 100)
+		a.LoopApproval = func(ctx context.Context, preview string) (bool, error) {
+			return false, nil
+		}
+		_, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}})
+		if !errors.Is(err, ErrLoopDetected) {
+			t.Fatalf("rejected possible-loop should abort with ErrLoopDetected, got %v", err)
+		}
+	})
+}
+
+// TestRunLoopDetectionAbortsWhenNonInteractive verifies the non-interactive
+// posture (no approval hook): a tripped detector aborts with an ErrLoopDetected
+// whose message names the repeated call. (0038)
+func TestRunLoopDetectionAbortsWhenNonInteractive(t *testing.T) {
+	same := model.CompletionResp{ToolCalls: []model.ToolCall{{ID: "x", Name: "web_search", Arguments: `{"q":"x"}`}}}
+	comp := &scriptedCompleter{responses: []model.CompletionResp{same, same, same, same}}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 50, 100) // no LoopApproval
+	_, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}})
+	if !errors.Is(err, ErrLoopDetected) {
+		t.Fatalf("expected ErrLoopDetected, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "web_search") {
+		t.Errorf("abort error %q should name the repeated tool call", err.Error())
+	}
+}
+
 func TestRunMaxTurns(t *testing.T) {
 	tool := model.CompletionResp{ToolCalls: []model.ToolCall{{ID: "x", Name: "bash", Arguments: `{"command":"ls"}`}}}
 	// distinct args each turn so the loop detector never trips
@@ -94,6 +153,49 @@ func TestRunMaxTurns(t *testing.T) {
 	_, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}})
 	if !errors.Is(err, ErrMaxTurns) {
 		t.Fatalf("expected ErrMaxTurns, got %v", err)
+	}
+}
+
+// TestRunUnlimitedTurnsWhenZero verifies maxTurns==0 is the unlimited
+// sentinel: the loop runs well past the retired 25-turn default without ever
+// returning ErrMaxTurns, stopping only when the model stops calling tools. (0038)
+func TestRunUnlimitedTurnsWhenZero(t *testing.T) {
+	var resps []model.CompletionResp
+	// 30 distinct tool-call turns (distinct args so the loop detector never
+	// trips), then a natural stop — well past the old 25 cap.
+	for i := 0; i < 30; i++ {
+		resps = append(resps, model.CompletionResp{ToolCalls: []model.ToolCall{
+			{ID: "x", Name: "bash", Arguments: `{"command":"cmd` + strings.Repeat("z", i) + `"}`},
+		}})
+	}
+	resps = append(resps, model.CompletionResp{Content: "finally done"})
+	comp := &scriptedCompleter{responses: resps}
+	exec := &fakeExec{}
+	a := New(comp, exec, nopRenderer{}, "m", "", 0, 100) // 0 = unlimited
+	_, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}})
+	if err != nil {
+		t.Fatalf("maxTurns==0 must be unlimited, got %v", err)
+	}
+	if len(exec.calls) != 30 {
+		t.Errorf("executed %d tool calls, want 30 (ran past the retired 25 cap)", len(exec.calls))
+	}
+}
+
+// TestRunNoLongerCoercesZeroTo25 guards the retirement of the agent.New
+// `<=0 ⇒ 25` coercion: a zero maxTurns must not silently become a 25-turn
+// cap. (0038)
+func TestRunNoLongerCoercesZeroTo25(t *testing.T) {
+	var resps []model.CompletionResp
+	for i := 0; i < 26; i++ {
+		resps = append(resps, model.CompletionResp{ToolCalls: []model.ToolCall{
+			{ID: "x", Name: "bash", Arguments: `{"command":"c` + strings.Repeat("q", i) + `"}`},
+		}})
+	}
+	resps = append(resps, model.CompletionResp{Content: "done"})
+	comp := &scriptedCompleter{responses: resps}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 0, 100)
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatalf("zero maxTurns should not cap at 25, got %v", err)
 	}
 }
 
