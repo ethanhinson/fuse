@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0034 — Workflows — skill-bound subagent pools with typed workers and spawn quotas](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0034-workflows.md)**
+> ↩ **[Change 0034 — Workflows — skill-bound subagent pools with typed workers and spawn quotas](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-06-0034-workflows.md)**
 <!-- docket:backlink:end -->
 
 # 0034 — Workflows: skill-bound subagent pools with typed workers and spawn quotas
