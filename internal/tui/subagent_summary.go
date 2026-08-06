@@ -13,6 +13,7 @@ type inlineAgentState struct {
 	nodeID  string
 	lineIdx int // index into ShellModel.lines where the block starts
 	label   string
+	seq     int // creation order; settles rejected spawns oldest-first
 	status  agent.NodeStatus
 	result  string
 }

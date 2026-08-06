@@ -202,6 +202,7 @@ type ShellModel struct {
 	overlayGen    int // increments per overlay entry; stale overlay ticks are dropped
 	inlineByLabel map[string]*inlineAgentState
 	inlineByNode  map[string]*inlineAgentState
+	inlineSeq     int // monotonic creation counter for inline blocks
 }
 
 // NewShellModel builds a ShellModel. alias is the starting model alias;
@@ -410,7 +411,8 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.lines) > 0 {
 					m.lines = append(m.lines, transcriptLine{})
 				}
-				block := &inlineAgentState{label: input.Label, lineIdx: len(m.lines)}
+				block := &inlineAgentState{label: input.Label, lineIdx: len(m.lines), seq: m.inlineSeq}
+				m.inlineSeq++
 				if m.inlineByLabel == nil {
 					m.inlineByLabel = make(map[string]*inlineAgentState)
 				}
@@ -443,9 +445,15 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ToolResultMsg:
 		// Labelled spawn_agent calls render via the inline block, not the
 		// queue — skip their results unless a queued spawn_agent entry exists
-		// (the unlabelled fallback path does queue).
+		// (the unlabelled fallback path does queue). One exception: a spawn
+		// rejected by the budget/depth backstop never creates a tree node, so
+		// no node event will ever settle its block — the error result is the
+		// only signal, and it must flip the block out of "Running".
 		if msg.Name == "spawn_agent" && m.tree != nil &&
 			(len(m.pendingCalls) == 0 || m.pendingCalls[0].name != "spawn_agent") {
+			if msg.IsError && m.settleRejectedSpawn(msg.Output) {
+				m.refreshViewport(m.vp.AtBottom())
+			}
 			return m, nil
 		}
 		// Render this result's own call bullet, popped FIFO — results arrive
@@ -475,6 +483,10 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case AgentDoneMsg:
 		m.settlePendingCalls()
+		// No block may outlive its turn as "Running": any still-unadopted
+		// inline block has no node to settle it and never will.
+		for m.settleRejectedSpawn("spawn did not complete") {
+		}
 		m.history = msg.History
 		m.running = false
 		m.drainApprovals()
@@ -944,6 +956,35 @@ func (m ShellModel) enterAgentsView() (tea.Model, tea.Cmd) {
 	// updates arrive via the StartBridges pump; nothing to subscribe here.
 	m.overlayGen++
 	return m, agentOverlayTick(m.overlayGen)
+}
+
+// settleRejectedSpawn settles the oldest inline block that no tree node ever
+// adopted, rendering it as an error in place. A spawn rejected by the
+// budget/depth backstop fails before node creation, so the node lifecycle that
+// normally settles blocks never runs for it. Results arrive in call order, so
+// oldest-first matches error to block. Returns false when every block is
+// node-owned (those settle via node events).
+func (m *ShellModel) settleRejectedSpawn(errMsg string) bool {
+	var victim *inlineAgentState
+	for _, b := range m.inlineByLabel {
+		if b.nodeID != "" {
+			continue
+		}
+		if victim == nil || b.seq < victim.seq {
+			victim = b
+		}
+	}
+	if victim == nil || victim.lineIdx+1 >= len(m.lines) {
+		return false
+	}
+	msg := sanitizeDisplay(truncate(firstLine(errMsg), 100))
+	parts := strings.SplitN(renderInlineError("0s", 0, 0, msg), "\n", 2)
+	m.lines[victim.lineIdx] = transcriptLine{text: parts[0]}
+	if len(parts) > 1 {
+		m.lines[victim.lineIdx+1] = transcriptLine{text: parts[1]}
+	}
+	delete(m.inlineByLabel, victim.label)
+	return true
 }
 
 // updateInlineAgent refreshes the two-line inline block for a depth-1 child node.
