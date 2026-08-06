@@ -15,4 +15,5 @@ type WorkflowPool struct {
 	Concurrent int // reversible: max running+pending children in the subtree
 	Total      int // permanent: lifetime spawn quota for the subtree
 	MaxDepth   int // static: spawn depth below the workflow root
+	Tokens     int // permanent: lifetime token quota for the subtree (0 = unset)
 }

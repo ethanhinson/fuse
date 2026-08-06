@@ -49,6 +49,7 @@ func (a workflowActivation) pool() agent.WorkflowPool {
 		Concurrent: a.cfg.Pool.Concurrent,
 		Total:      a.cfg.Pool.Total,
 		MaxDepth:   a.cfg.Pool.MaxDepth,
+		Tokens:     a.cfg.Pool.Tokens,
 	}
 }
 

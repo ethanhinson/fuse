@@ -103,6 +103,8 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// set the lifetime budget on it and route slot yield/unyield through it.
 	sched := tree.Scheduler()
 	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
+	// queue_bound (change 0036): 0/unset ⇒ the scheduler keeps its 2.0 default.
+	sched.SetQueueBound(cfg.Agents.QueueBound)
 	rootNode := tree.Node(tree.RootID())
 
 	// research-probe IS a research root: activate the research workflow on the

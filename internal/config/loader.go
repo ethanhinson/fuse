@@ -133,6 +133,9 @@ func mergeWorkflows(c *Config, raw map[string]WorkflowConfig, trusted bool) (loo
 			if rw.Pool.MaxDepth != 0 {
 				cur.Pool.MaxDepth = rw.Pool.MaxDepth
 			}
+			if rw.Pool.Tokens != 0 {
+				cur.Pool.Tokens = rw.Pool.Tokens
+			}
 			if len(rw.Workers) > 0 {
 				cur.Workers = rw.Workers
 			}
@@ -162,6 +165,10 @@ func mergeWorkflows(c *Config, raw map[string]WorkflowConfig, trusted bool) (loo
 		tightenOnly("concurrent", &cur.Pool.Concurrent, &rw.Pool.Concurrent)
 		tightenOnly("total", &cur.Pool.Total, &rw.Pool.Total)
 		tightenOnly("max_depth", &cur.Pool.MaxDepth, &rw.Pool.MaxDepth)
+		// pool.tokens (change 0036) is a permanent subtree quota; 0 = unset. It
+		// follows the same tighten-only rule as the other pool numbers: a local
+		// file may only LOWER an already-set positive quota.
+		tightenOnly("tokens", &cur.Pool.Tokens, &rw.Pool.Tokens)
 		// skill / workers changes from an untrusted file are loosening surface.
 		if rw.Skill != "" && rw.Skill != cur.Skill || len(rw.Workers) > 0 {
 			if !flagged {
@@ -169,6 +176,51 @@ func mergeWorkflows(c *Config, raw map[string]WorkflowConfig, trusted bool) (loo
 			}
 		}
 		c.Workflows[name] = cur
+	}
+	return loosened
+}
+
+// mergeThroughput merges a source's throughput: block onto c (change 0036).
+// Every axis is 0 = unlimited/unset. From a trusted source a present positive
+// value overrides the current one and the per-provider overrides map replaces
+// wholesale. From an UNTRUSTED source (.fuse.local.yml) each global rate/quota
+// axis may only TIGHTEN — lower an already-set positive limit — mirroring the
+// workflow-pool rule: a tightening is honored only when the current value is
+// already set (>0) and the new value is a positive number strictly lower than
+// it. Everything else from an untrusted source (setting a previously-unset
+// 0=unlimited axis, raising a set one, or any providers: override) is a
+// loosening and is dropped, its key name returned for the aggregated warning.
+//
+// Rationale for the "set-from-unset is a loosening" call on 0=unlimited axes:
+// the scheduler cannot distinguish an untrusted file that legitimately wants to
+// introduce a limit from one that wants to install a permissive one, so the
+// conservative rule matches the pool merge exactly — a repo-plantable file may
+// only strengthen a limit its trusted owner already chose, never author one.
+func mergeThroughput(c *Config, raw rawThroughputConfig, trusted bool) (loosened []string) {
+	tighten := func(key string, cur *int, newV int) {
+		if newV == 0 {
+			return // omitted axis
+		}
+		if trusted {
+			*cur = newV
+			return
+		}
+		if *cur > 0 && newV > 0 && newV < *cur {
+			*cur = newV // strictly-lower positive = tighten, honored
+			return
+		}
+		loosened = append(loosened, key)
+	}
+	tighten("throughput.requests_per_minute", &c.Throughput.RequestsPerMinute, raw.RequestsPerMinute)
+	tighten("throughput.tokens_per_minute", &c.Throughput.TokensPerMinute, raw.TokensPerMinute)
+	tighten("throughput.session_tokens", &c.Throughput.SessionTokens, raw.SessionTokens)
+
+	if len(raw.Providers) > 0 {
+		if trusted {
+			c.Throughput.Providers = raw.Providers
+		} else {
+			loosened = append(loosened, "throughput.providers")
+		}
 	}
 	return loosened
 }
@@ -315,6 +367,14 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 		c.Research.Custom.SnippetField = raw.Research.Custom.SnippetField
 	}
 
+	// ignoredThroughput collects the change-0036 numeric knobs (queue_bound and
+	// the throughput axes) whose present value from an UNTRUSTED source would
+	// LOOSEN an already-set limit and is therefore dropped. It feeds a single
+	// aggregated startup warning, separate from the permission-key warning above
+	// (different fix instruction, but the same "set it in ~/.fuse/config.yml"
+	// remedy).
+	var ignoredThroughput []string
+
 	// Agents budget: a nonzero override replaces the default; an omitted key
 	// (zero) keeps the built-in 64. A negative override is nonsensical for a
 	// budget and would silently DISABLE the strip predicate's budget brake
@@ -340,6 +400,22 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 		c.Agents.MaxConcurrent = 16
 	}
 
+	// queue_bound (change 0036): the per-pool pending-queue multiplier. 0 = unset
+	// (the scheduler applies its 2.0 default where consumed). From a trusted
+	// source a present positive value overrides; from an untrusted source it may
+	// only TIGHTEN — lower an already-set positive bound — mirroring the
+	// workflow-pool tighten-only rule (ADR-0006). A negative value is nonsensical
+	// for a queue multiplier (it would zero the pool queue), so it is dropped.
+	if raw.Agents.QueueBound > 0 {
+		if trusted {
+			c.Agents.QueueBound = raw.Agents.QueueBound
+		} else if c.Agents.QueueBound > 0 && raw.Agents.QueueBound < c.Agents.QueueBound {
+			c.Agents.QueueBound = raw.Agents.QueueBound // strictly-lower positive = tighten
+		} else {
+			ignoredThroughput = append(ignoredThroughput, "agents.queue_bound")
+		}
+	}
+
 	// Workflows: a config-level entry overrides any prior one for the same name.
 	// From an untrusted source (.fuse.local.yml) pool numbers may only TIGHTEN
 	// (lower an existing cap); a loosening value is ignored and the workflow is
@@ -347,6 +423,18 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	if loosened := mergeWorkflows(c, raw.Workflows, trusted); !trusted && len(loosened) > 0 {
 		fmt.Fprintf(warnw, "warning: %s ignores workflow pool-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
 			path, strings.Join(loosened, ", "))
+	}
+
+	// throughput: (change 0036). Every axis is 0 = unlimited/unset. From a
+	// trusted source a present positive value overrides; from an untrusted source
+	// each may only TIGHTEN — lower an already-set positive limit — matching the
+	// pool-number tighten-only rule. Per-provider overrides are a trusted-only
+	// surface (they widen the effective limit for that provider, so an untrusted
+	// file setting them is a loosening).
+	ignoredThroughput = append(ignoredThroughput, mergeThroughput(c, raw.Throughput, trusted)...)
+	if !trusted && len(ignoredThroughput) > 0 {
+		fmt.Fprintf(warnw, "warning: %s ignores throughput-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
+			path, strings.Join(ignoredThroughput, ", "))
 	}
 
 	// The `models` map holds a `default` string alongside model entries.

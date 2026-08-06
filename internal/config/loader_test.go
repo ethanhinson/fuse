@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -968,6 +969,251 @@ workflows:
 	}
 	if wf.Pool.Total != 8 {
 		t.Errorf("total = %d, want 8 (local loosening ignored)", wf.Pool.Total)
+	}
+	if w := warnings(); !strings.Contains(w, "research") {
+		t.Errorf("expected a warning naming the loosened workflow; got %q", w)
+	}
+}
+
+// --- change 0036: queue_bound + throughput: + pool.tokens config surface ---
+
+// TestLoadFullThroughputSketchRoundTrips parses the spec's full config sketch
+// and asserts every new knob resolves: queue_bound, throughput.{rpm,tpm,session}
+// with a per-provider override, and workflows.<name>.pool.tokens.
+func TestLoadFullThroughputSketchRoundTrips(t *testing.T) {
+	c := writeHomeConfig(t, `
+agents:
+  max_concurrent: 16
+  max_spawns: 64
+  queue_bound: 2.0
+throughput:
+  requests_per_minute: 120
+  tokens_per_minute: 90000
+  session_tokens: 1000000
+  providers:
+    deepseek:
+      requests_per_minute: 60
+      tokens_per_minute: 40000
+workflows:
+  research:
+    skill: research
+    pool: {concurrent: 5, total: 8, max_depth: 1, tokens: 500000}
+`)
+
+	if c.Agents.QueueBound != 2.0 {
+		t.Errorf("Agents.QueueBound = %v, want 2.0", c.Agents.QueueBound)
+	}
+	if c.Throughput.RequestsPerMinute != 120 {
+		t.Errorf("Throughput.RequestsPerMinute = %d, want 120", c.Throughput.RequestsPerMinute)
+	}
+	if c.Throughput.TokensPerMinute != 90000 {
+		t.Errorf("Throughput.TokensPerMinute = %d, want 90000", c.Throughput.TokensPerMinute)
+	}
+	if c.Throughput.SessionTokens != 1000000 {
+		t.Errorf("Throughput.SessionTokens = %d, want 1000000", c.Throughput.SessionTokens)
+	}
+	dp, ok := c.Throughput.Providers["deepseek"]
+	if !ok {
+		t.Fatalf("Throughput.Providers missing deepseek; got %v", c.Throughput.Providers)
+	}
+	if dp.RequestsPerMinute != 60 {
+		t.Errorf("deepseek RequestsPerMinute = %d, want 60", dp.RequestsPerMinute)
+	}
+	if dp.TokensPerMinute != 40000 {
+		t.Errorf("deepseek TokensPerMinute = %d, want 40000", dp.TokensPerMinute)
+	}
+	if c.Workflows["research"].Pool.Tokens != 500000 {
+		t.Errorf("research pool.tokens = %d, want 500000", c.Workflows["research"].Pool.Tokens)
+	}
+}
+
+// TestAbsentThroughputAndQueueBoundAreZero asserts a config that mentions none
+// of the new knobs leaves them at their zero values (Acceptance 5 tail: absent
+// config ⇒ byte-identical behavior). QueueBound 0 = unset (default 2.0 applied
+// where consumed), rpm/tpm/session/tokens 0 = unlimited/unset.
+func TestAbsentThroughputAndQueueBoundAreZero(t *testing.T) {
+	c := writeHomeConfig(t, "max_turns: 30\n")
+
+	if c.Agents.QueueBound != 0 {
+		t.Errorf("Agents.QueueBound = %v, want 0 (unset)", c.Agents.QueueBound)
+	}
+	if c.Throughput.RequestsPerMinute != 0 || c.Throughput.TokensPerMinute != 0 || c.Throughput.SessionTokens != 0 {
+		t.Errorf("Throughput = %+v, want all-zero (unset)", c.Throughput)
+	}
+	if len(c.Throughput.Providers) != 0 {
+		t.Errorf("Throughput.Providers = %v, want empty (unset)", c.Throughput.Providers)
+	}
+	// The built-in research workflow ships without a tokens quota.
+	if c.Workflows["research"].Pool.Tokens != 0 {
+		t.Errorf("default research pool.tokens = %d, want 0 (unset)", c.Workflows["research"].Pool.Tokens)
+	}
+}
+
+// TestLoadQueueBoundOverride asserts a trusted home file sets queue_bound.
+func TestLoadQueueBoundOverride(t *testing.T) {
+	c := writeHomeConfig(t, "agents:\n  queue_bound: 3.5\n")
+	if c.Agents.QueueBound != 3.5 {
+		t.Errorf("Agents.QueueBound = %v, want 3.5", c.Agents.QueueBound)
+	}
+}
+
+// TestLocalQueueBoundTightenOnly asserts .fuse.local.yml may LOWER queue_bound
+// (tighten) but not raise it, mirroring the pool-number rule: a tightening is
+// honored only when the current value is already set (>0) and the new value is a
+// positive number strictly lower than it.
+func TestLocalQueueBoundTightenOnly(t *testing.T) {
+	cases := []struct {
+		name     string
+		home     float64
+		local    float64
+		want     float64
+		wantWarn bool
+	}{
+		{"lower is honored", 4.0, 2.0, 2.0, false},
+		{"raise is ignored", 2.0, 8.0, 2.0, true},
+		{"set-from-unset is ignored", 0, 3.0, 0, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cwd := chdirTemp(t)
+			home := filepath.Join(cwd, "home")
+			if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", home)
+			os.Unsetenv("LLM_GATEWAY_URL")
+			os.Unsetenv("LLM_GATEWAY_KEY")
+
+			trusted := ""
+			if tc.home != 0 {
+				trusted = fmt.Sprintf("agents:\n  queue_bound: %v\n", tc.home)
+			}
+			if trusted != "" {
+				if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(trusted), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			local := fmt.Sprintf("agents:\n  queue_bound: %v\n", tc.local)
+			if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			warnings := captureWarnings(t)
+			c, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Agents.QueueBound != tc.want {
+				t.Errorf("QueueBound = %v, want %v", c.Agents.QueueBound, tc.want)
+			}
+			w := warnings()
+			if tc.wantWarn && !strings.Contains(w, "queue_bound") {
+				t.Errorf("expected a warning naming queue_bound; got %q", w)
+			}
+			if !tc.wantWarn && w != "" {
+				t.Errorf("tightening/no-op must not warn; got %q", w)
+			}
+		})
+	}
+}
+
+// TestLocalThroughputTightenOnly asserts the 0=unlimited numerics on the global
+// throughput block follow the same rule: a local file may only LOWER an
+// already-set positive limit; raising it, or setting a previously-unset
+// (0=unlimited) limit, is ignored — because for these axes 0 means "no limit",
+// so introducing a limit or lowering one is stricter but the conservative rule
+// (matching the pool-number merge) honors ONLY a strictly-lower positive value.
+func TestLocalThroughputTightenOnly(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	trusted := `
+throughput:
+  requests_per_minute: 100
+  tokens_per_minute: 50000
+  session_tokens: 200000
+`
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(trusted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Local: lower rpm (honored), raise tpm (ignored), keep session unset here.
+	local := `
+throughput:
+  requests_per_minute: 60
+  tokens_per_minute: 90000
+`
+	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Throughput.RequestsPerMinute != 60 {
+		t.Errorf("rpm = %d, want 60 (local lower honored)", c.Throughput.RequestsPerMinute)
+	}
+	if c.Throughput.TokensPerMinute != 50000 {
+		t.Errorf("tpm = %d, want 50000 (local raise ignored)", c.Throughput.TokensPerMinute)
+	}
+	if c.Throughput.SessionTokens != 200000 {
+		t.Errorf("session_tokens = %d, want 200000 (untouched)", c.Throughput.SessionTokens)
+	}
+	if w := warnings(); !strings.Contains(w, "throughput") {
+		t.Errorf("expected a warning naming throughput; got %q", w)
+	}
+}
+
+// TestLocalPoolTokensTightenOnly asserts workflows.<name>.pool.tokens follows
+// the same tighten-only merge as the other pool numbers: local may lower an
+// already-set quota but not raise it or set a previously-unset one.
+func TestLocalPoolTokensTightenOnly(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	trusted := `
+workflows:
+  research:
+    skill: research
+    pool: {concurrent: 5, total: 8, max_depth: 1, tokens: 500000}
+`
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(trusted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Local: lower tokens (honored), raise total (ignored).
+	local := `
+workflows:
+  research:
+    pool: {tokens: 100000, total: 64}
+`
+	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf := c.Workflows["research"]
+	if wf.Pool.Tokens != 100000 {
+		t.Errorf("pool.tokens = %d, want 100000 (local lower honored)", wf.Pool.Tokens)
+	}
+	if wf.Pool.Total != 8 {
+		t.Errorf("pool.total = %d, want 8 (local raise ignored)", wf.Pool.Total)
 	}
 	if w := warnings(); !strings.Contains(w, "research") {
 		t.Errorf("expected a warning naming the loosened workflow; got %q", w)

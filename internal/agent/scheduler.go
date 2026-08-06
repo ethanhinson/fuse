@@ -111,6 +111,21 @@ func (s *Scheduler) SetMaxSpawns(n int) {
 	s.mu.Unlock()
 }
 
+// SetQueueBound overrides the per-pool pending-queue multiplier (change 0036):
+// a pool's FIFO holds at most ceil(mult × pool slots) waiters. A value <= 0 is a
+// no-op that leaves the built-in default (defaultQueueBound) in place — this
+// matches the config layer's zero-value = unset idiom, where an absent
+// agents.queue_bound means "apply the default". Set once at construction time,
+// before any spawn.
+func (s *Scheduler) SetQueueBound(mult float64) {
+	if mult <= 0 {
+		return
+	}
+	s.mu.Lock()
+	s.queueBound = mult
+	s.mu.Unlock()
+}
+
 // SpawnBudget reports how much of the tree-global spawn budget is used and its
 // ceiling. `used` is the number of child agents created so far (every node
 // except the root — the tree is append-only, so this only grows); `max` is the
