@@ -1,8 +1,14 @@
 # Backlog
 
-**32 changes** — 🟡 15 proposed · 🔵 1 implemented · ✅ 13 done · 🗑️ 3 killed
+**32 changes** — 🟢 1 in progress · 🟡 14 proposed · ✅ 13 done · 🗑️ 4 killed
 
-## 🟡 Proposed (15)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0017](active/0017-auto-mode.md) | Auto mode — layered safe/unsafe classification for autonomous tool approval | `medium` | `feat` | [spec](../superpowers/specs/2026-08-05-auto-mode-design.md) | `feat/auto-mode` |
+
+## 🟡 Proposed (14)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -20,13 +26,6 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | needs-brainstorm |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
 | [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | build-ready |
-| [0032](active/0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | `high` | `feat` | ⏳ waiting on #17 — needs your merge |
-
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0017](active/0017-auto-mode.md) | Auto mode — layered safe/unsafe classification for autonomous tool approval | `medium` | `feat` | [#15](https://github.com/ethanhinson/fuse/pull/15) |  |
 
 ```mermaid
 graph TD
@@ -49,17 +48,17 @@ graph TD
   0012 --> 0029
   0027 --> 0030
   0003 --> 0031
-  0017 --> 0032
   0003:::done
   0007:::done
   0012:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (16)</summary>
+<details><summary>✅🗑️ Archive — done + killed (17)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
 | [0016](archive/2026-08-05-0016-one-shot-cli-approvals.md) | Remove the AlwaysApprove one-shot bypass; surface approvals at the CLI | 2026-08-05 |
 | [0015](archive/2026-08-05-0015-tui-hanging-indent-wrap.md) | Hanging-indent wrapping for the shell transcript | 2026-08-05 |
 | [0014](archive/2026-08-05-0014-research-mode.md) | Research Mode — Web Search, Fetch & Cited Synthesis on the Subagent Runtime | 2026-08-05 |
