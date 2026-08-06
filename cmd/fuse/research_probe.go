@@ -105,6 +105,8 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	// queue_bound (change 0036): 0/unset ⇒ the scheduler keeps its 2.0 default.
 	sched.SetQueueBound(cfg.Agents.QueueBound)
+	// session token ceiling (change 0036): 0/unset ⇒ no ceiling enforced.
+	sched.SetSessionTokens(cfg.Throughput.SessionTokens)
 	// Rate gate (change 0036): one shared token bucket for the session, or nil when
 	// no rpm/tpm axis is configured (fast path).
 	rateGate := sessionRateGate(cfg)
@@ -159,7 +161,8 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 					// that omits spawn_agent withholds it from the child.
 					childToolReg.Unregister("spawn_agent")
 				} else {
-					spawnTool := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), budgetFor(tree, act, rootID))
+					spawnTool := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), budgetFor(tree, act, rootID)).
+						WithQuotaWarning(quotaWarningFor(tree, childNode.ID))
 					if act != nil {
 						spawnTool = spawnTool.WithWorkers(act.workerNames())
 					}
@@ -221,7 +224,8 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 			return done.Result, done.Err
 		}
 	}
-	rootSpawn := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), budgetFor(tree, act, rootID))
+	rootSpawn := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), budgetFor(tree, act, rootID)).
+		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID))
 	if act != nil {
 		// The root offers the workflow's typed workers so the model selects a
 		// facet-researcher per facet instead of hand-assembling a toolset.

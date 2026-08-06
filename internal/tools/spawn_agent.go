@@ -33,11 +33,25 @@ type SpawnFunc func(ctx context.Context, req SpawnRequest) (result string, err e
 // spawns — the count is machine-authored, injected fresh into every result.
 type BudgetFunc func() (used, max int)
 
+// QuotaFunc reports the machine-authored token-quota warning line to append to a
+// successful spawn result, or "" when no hard token quota is exhausted in the
+// tool's scope (change 0036). The runtime supplies it computed fresh at result
+// time and pre-formatted (leading blank line, no trailing newline), mirroring
+// budgetLine. Scope lives in the wiring: a workflow child's QuotaFunc reports its
+// subtree quota, a session-scoped one reports the global ceiling, so the warning
+// appears only where the exhausted quota governs. Nil = no warning ever.
+type QuotaFunc func() string
+
 // SpawnAgentTool is the spawn_agent built-in tool, allowing LLMs to spawn
 // child agents as part of a task.
 type SpawnAgentTool struct {
 	spawn  SpawnFunc
 	budget BudgetFunc // optional; when set and max>0, a budget line is injected
+	// quota, when set, supplies the token-quota warning line (change 0036): a
+	// machine-authored line appended to a successful result once a hard token
+	// quota is exhausted in this tool's scope, so the agent concludes with what it
+	// has. Returns "" until exhausted; nil means no warning is ever emitted.
+	quota QuotaFunc
 	// workers, when non-empty, enumerates the workflow's worker names in the
 	// `worker` param schema so the model picks a typed worker instead of
 	// hand-assembling a toolset (change 0034). Empty outside a workflow subtree.
@@ -65,6 +79,18 @@ func NewSpawnAgentToolWithBudget(spawn SpawnFunc, budget BudgetFunc) *SpawnAgent
 func (t *SpawnAgentTool) WithWorkers(names []string) *SpawnAgentTool {
 	cp := *t
 	cp.workers = append([]string(nil), names...)
+	return &cp
+}
+
+// WithQuotaWarning returns a copy of the tool that appends the token-quota
+// warning line (change 0036) supplied by quota to each successful spawn result.
+// The line is computed fresh at result time and empty until a hard token quota
+// is exhausted in this tool's scope, so it is absent before exhaustion and never
+// rides on an error result. A nil quota is a no-op (no warning ever). It rides
+// alongside any budget line already configured — the injection seam is singular.
+func (t *SpawnAgentTool) WithQuotaWarning(quota QuotaFunc) *SpawnAgentTool {
+	cp := *t
+	cp.quota = quota
 	return &cp
 }
 
@@ -155,7 +181,20 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, args string) Result {
 		// spawn, already tells the model to stop) — never a budget line.
 		return Result{IsError: true, Output: fmt.Sprintf("spawn_agent: %v", err)}
 	}
-	return Result{Output: result + t.budgetLine()}
+	return Result{Output: result + t.budgetLine() + t.quotaWarning()}
+}
+
+// quotaWarning returns the token-quota warning suffix to append to a successful
+// spawn result, or "" when no QuotaFunc is configured or the quota is not yet
+// exhausted in scope. The QuotaFunc supplies the fully-formatted line (leading
+// blank line, no trailing newline), read fresh at result time so the warning is
+// accurate at the model's next decision. This is the singular injection seam for
+// the token-quota warning line (change 0036), mirroring budgetLine.
+func (t *SpawnAgentTool) quotaWarning() string {
+	if t.quota == nil {
+		return ""
+	}
+	return t.quota()
 }
 
 // budgetLine returns the machine-generated budget suffix to append to a

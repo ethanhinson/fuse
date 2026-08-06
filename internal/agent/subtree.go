@@ -91,6 +91,40 @@ func (t *AgentTree) SubtreeSpawnCount(rootID string) int {
 	return count
 }
 
+// SubtreeTokens reports the total tokens (in+out) charged to nodes within the
+// subtree rooted at rootID, EXCLUDING the root itself — the direct analogue of
+// SubtreeSpawnCount for the workflow token quota (pool.tokens, change 0036).
+// The per-node counters are append-only (UpdateTokens only increments), so the
+// sum only grows: this is the permanent-quota input for a workflow's token pool.
+// Deeply-nested descendants are included via the same subtree walk.
+func (t *AgentTree) SubtreeTokens(rootID string) int {
+	views := t.SnapshotAll()
+	parent, _ := parentIndex(views)
+	total := 0
+	for _, v := range views {
+		if v.ID == rootID {
+			continue
+		}
+		if inSubtree(parent, rootID, v.ID) {
+			total += v.TokensIn + v.TokensOut
+		}
+	}
+	return total
+}
+
+// SessionTokens reports the total tokens (in+out) charged across the WHOLE tree,
+// root INCLUDED — the session's lifetime spend (change 0036). The optional
+// throughput.session_tokens ceiling is measured against this. Unlike the subtree
+// sums (which exclude their holder root), the session total counts every node
+// because there is no holder to exclude — the session ceiling caps all spend.
+func (t *AgentTree) SessionTokens() int {
+	total := 0
+	for _, v := range t.SnapshotAll() {
+		total += v.TokensIn + v.TokensOut
+	}
+	return total
+}
+
 // WorkflowRootOf returns the id of the nearest ancestor-or-self of id whose
 // WorkflowRoot marker is set, or "" when id is not inside any workflow subtree.
 // When workflows nest, the INNERMOST (nearest) root wins — the tighter policy.

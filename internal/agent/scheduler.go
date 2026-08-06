@@ -70,6 +70,13 @@ type Scheduler struct {
 	// budget enforced). The "used" side of the budget is derived from the tree's
 	// (append-only) node count, so only the ceiling lives here.
 	maxSpawns int
+	// sessionTokens is the global lifetime token ceiling for the whole session
+	// (throughput.session_tokens, change 0036). 0 = unset (no ceiling enforced).
+	// Measured against the whole-tree token sum (tree.SessionTokens, root
+	// included). A permanent term: the per-node counters are append-only, so once
+	// the session total reaches this ceiling spawn_agent stays stripped globally.
+	// Guarded by mu.
+	sessionTokens int
 	// pools holds per-workflow pool policy keyed by the workflow root's node ID,
 	// registered when a workflow activates. The fair queue (Task 2) reads a pool's
 	// Concurrent figure to size its queue bound; the unified visibility predicate
@@ -126,6 +133,17 @@ func (s *Scheduler) SetQueueBound(mult float64) {
 	s.mu.Unlock()
 }
 
+// SetSessionTokens sets the global session token ceiling — the total input+
+// output tokens the whole session may spend before spawn_agent is stripped
+// globally (throughput.session_tokens, change 0036). 0 leaves it unset (no
+// ceiling). Set once at construction time, before any spawn; matches the config
+// layer's zero-value = unset idiom, so an absent session_tokens is a no-op.
+func (s *Scheduler) SetSessionTokens(n int) {
+	s.mu.Lock()
+	s.sessionTokens = n
+	s.mu.Unlock()
+}
+
 // SpawnBudget reports how much of the tree-global spawn budget is used and its
 // ceiling. `used` is the number of child agents created so far (every node
 // except the root — the tree is append-only, so this only grows); `max` is the
@@ -159,6 +177,65 @@ func (s *Scheduler) Pool(rootID string) (WorkflowPool, bool) {
 	p, ok := s.pools[rootID]
 	s.mu.Unlock()
 	return p, ok
+}
+
+// sessionTokenCeiling returns the configured global session token ceiling (0 =
+// unset). Locks internally; safe under concurrent dispatch.
+func (s *Scheduler) sessionTokenCeiling() int {
+	s.mu.Lock()
+	n := s.sessionTokens
+	s.mu.Unlock()
+	return n
+}
+
+// tokenQuotaDenied reports the token-quota refusal for a spawn originating at
+// nodeID, or nil when no token quota is exhausted. It is the call-time backstop
+// mirror of the token terms in Visible (change 0036): the session ceiling (a
+// global whole-tree term) and the spawning node's workflow pool.tokens quota (a
+// subtree term). The tighter session term is checked first. A non-nil result
+// carries the ErrTokenQuotaExhausted identity, mirroring the budget backstop's
+// discipline. Race-safe: it only calls tree/scheduler methods that lock.
+func (s *Scheduler) tokenQuotaDenied(nodeID string) error {
+	if s == nil {
+		return nil
+	}
+	if ceil := s.sessionTokenCeiling(); ceil > 0 {
+		if spent := s.tree.SessionTokens(); spent >= ceil {
+			return fmt.Errorf("%w: session %d/%d tokens used — proceed with the results you already have and do not spawn again", ErrTokenQuotaExhausted, spent, ceil)
+		}
+	}
+	if poolID := s.tree.WorkflowRootOf(nodeID); poolID != "" {
+		if pool, ok := s.Pool(poolID); ok && pool.Tokens > 0 {
+			if spent := s.tree.SubtreeTokens(poolID); spent >= pool.Tokens {
+				return fmt.Errorf("%w: workflow %d/%d tokens used — proceed with the results you already have and do not spawn again", ErrTokenQuotaExhausted, spent, pool.Tokens)
+			}
+		}
+	}
+	return nil
+}
+
+// TokenQuotaWarning returns the machine-authored warning line to append to a
+// spawn result originating at nodeID once a hard token quota is exhausted in its
+// scope, or "" while every quota still has headroom (change 0036). It is the
+// scope-aware source for the spawn tool's QuotaFunc: the session ceiling (a
+// global term, so every node sees it once the whole-tree spend hits the ceiling)
+// and the node's workflow pool.tokens quota (a subtree term, so only nodes
+// inside the exhausted subtree see it). The returned string is pre-formatted
+// (leading blank line, no trailing newline) to append directly, mirroring the
+// budget line. Absent before exhaustion, absent outside the exhausted scope.
+func (s *Scheduler) TokenQuotaWarning(nodeID string) string {
+	if s == nil {
+		return ""
+	}
+	if ceil := s.sessionTokenCeiling(); ceil > 0 && s.tree.SessionTokens() >= ceil {
+		return "\n\ntoken quota exhausted: the session token ceiling is reached — conclude with the results you already have and do not spawn again"
+	}
+	if poolID := s.tree.WorkflowRootOf(nodeID); poolID != "" {
+		if pool, ok := s.Pool(poolID); ok && pool.Tokens > 0 && s.tree.SubtreeTokens(poolID) >= pool.Tokens {
+			return "\n\ntoken quota exhausted: this workflow's token quota is reached — conclude with the results you already have and do not spawn again"
+		}
+	}
+	return ""
 }
 
 // Verdict is the outcome of an admission decision.
@@ -291,6 +368,13 @@ func (s *Scheduler) Visible(nodeID string) bool {
 		return false
 	}
 
+	// Global scope: session token ceiling (permanent, change 0036). When set, a
+	// session whose whole-tree token sum has reached the ceiling strips
+	// spawn_agent everywhere — the tightest global term alongside the budget.
+	if ceil := s.sessionTokenCeiling(); ceil > 0 && s.tree.SessionTokens() >= ceil {
+		return false
+	}
+
 	// Pool scope (change 0034): total/concurrent/max_depth, scoped to the subtree
 	// rooted at poolID. Absent a registered pool (freeform spawn) none engage.
 	if poolID != "" {
@@ -306,6 +390,13 @@ func (s *Scheduler) Visible(nodeID string) bool {
 			}
 			// Total (permanent): the subtree's lifetime spawn quota.
 			if pool.Total > 0 && s.tree.SubtreeSpawnCount(poolID) >= pool.Total {
+				return false
+			}
+			// Tokens (permanent, change 0036): the subtree's lifetime token quota.
+			// Same shape as Total — the subtree token sum is append-only, so once
+			// it reaches the quota spawn_agent stays stripped in THIS subtree only;
+			// a sibling workflow subtree with its own headroom is unaffected.
+			if pool.Tokens > 0 && s.tree.SubtreeTokens(poolID) >= pool.Tokens {
 				return false
 			}
 			// Concurrent (reversible): subtree running+pending at the pool cap.

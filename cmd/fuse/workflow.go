@@ -148,3 +148,15 @@ func budgetFor(tree *agent.AgentTree, act *workflowActivation, rootID string) to
 	}
 	return tools.TighterBudget(global, wfTotal)
 }
+
+// quotaWarningFor returns the token-quota warning QuotaFunc to attach to a
+// child's spawn tool (change 0036). It is scope-aware via the scheduler: the
+// warning line is empty until a hard token quota is exhausted for nodeID's scope
+// — the global session ceiling (throughput.session_tokens) or the node's
+// workflow pool.tokens quota — after which it is appended to subsequent spawn
+// results so the agent concludes with what it has. Read fresh at result time.
+func quotaWarningFor(tree *agent.AgentTree, nodeID string) tools.QuotaFunc {
+	return func() string {
+		return tree.Scheduler().TokenQuotaWarning(nodeID)
+	}
+}

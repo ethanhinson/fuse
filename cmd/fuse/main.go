@@ -140,6 +140,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	// queue_bound (change 0036): 0/unset ⇒ the scheduler keeps its 2.0 default.
 	sched.SetQueueBound(cfg.Agents.QueueBound)
+	// session token ceiling (change 0036): 0/unset ⇒ no ceiling enforced.
+	sched.SetSessionTokens(cfg.Throughput.SessionTokens)
 	// Rate gate (change 0036): one shared token bucket for the whole session, or
 	// nil when no rpm/tpm axis is configured (fast path). Every agent adapter below
 	// shares it so the session honors one budget.
@@ -164,7 +166,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 					// Either way, drop any copy inherited from the parent's registry.
 					childToolReg.Unregister("spawn_agent")
 				} else {
-					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget))
+					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget).
+						WithQuotaWarning(quotaWarningFor(tree, childNode.ID)))
 				}
 
 				r := tui.NewRenderer(stdout, *verbose)
@@ -215,7 +218,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return done.Result, done.Err
 		}
 	}
-	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget))
+	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
+		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
 
 	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil, oneShotBudget, rateGate)
 	if err != nil {

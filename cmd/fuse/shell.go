@@ -132,6 +132,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	// queue_bound (change 0036): 0/unset ⇒ the scheduler keeps its 2.0 default.
 	sched.SetQueueBound(cfg.Agents.QueueBound)
+	// session token ceiling (change 0036): 0/unset ⇒ no ceiling enforced.
+	sched.SetSessionTokens(cfg.Throughput.SessionTokens)
 	// Rate gate (change 0036): one shared token bucket for the session, or nil when
 	// no rpm/tpm axis is configured (fast path).
 	rateGate := sessionRateGate(cfg)
@@ -185,7 +187,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 					childToolReg.Unregister("spawn_agent")
 				} else {
 					// Replace spawn_agent with one wired to the child's spawner.
-					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget))
+					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget).
+						WithQuotaWarning(quotaWarningFor(tree, childNode.ID)))
 				}
 
 				r := tui.NewNodeRenderer(childNode, childTree)
@@ -266,7 +269,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 
 	// Register spawn_agent in the tool registry before any agent runs.
-	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget))
+	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
+		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
 
 	// Start the 250ms dirty-node flusher; the same ctx stops the bridges.
 	flushCtx, cancelFlusher := context.WithCancel(context.Background())
