@@ -2,7 +2,7 @@
 id: 38
 slug: turn-budget-retirement
 title: Retire the interactive turn cap — unlimited shell turns, headless backstop, doom-loop detection
-status: proposed
+status: in-progress
 priority: critical
 type: fix
 created: 2026-08-06
@@ -17,6 +17,7 @@ results:
 trivial: true
 auto_groomable:
 branch: feat/live-mode-switch
+claimed_at: 2026-08-06T05:49:12Z
 pr:
 blocked_by:
 reconciled: false
