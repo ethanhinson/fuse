@@ -105,6 +105,26 @@ file cannot flip a clone into `auto` mode or self-approve. Only the *tightening*
 keys `always_prompt` and `disabled` take effect from `.fuse.local.yml`. Set
 anything that grants trust in your own `~/.fuse/config.yml`.
 
+**Switching mode in-session.** `permissions.mode` is only the **startup
+default** — the permission mode is a live session surface you can flip without
+restarting, and the interactive shell shows the active mode in its status line
+(e.g. `mode: auto`):
+
+- **Shift+Tab** toggles between the two everyday postures, `smart` ⇄ `auto`.
+  From `prompt-all` or `off`, the first Shift+Tab lands on `smart`, and
+  Shift+Tab thereafter toggles `smart` ⇄ `auto`.
+- **`/mode`** (bare) prints the active mode and lists all four options;
+  **`/mode <name>`** sets any of `smart`, `auto`, `prompt-all`, `off` directly.
+  An unknown name is rejected with a usage line and leaves the mode unchanged.
+
+A switch takes effect on the **next turn** — the gate is rebuilt per turn at the
+current session mode, so a flip into `auto` immediately governs the following
+tool calls (no restart, no stale gate). If you switch into `auto` but the
+gateway has no classifier configured, the status line marks the mode
+**degraded** (`mode: auto` with a degraded marker) — the deterministic rules and
+read-only safe list still apply, but gray-area commands fail closed to a prompt
+rather than reaching a classifier.
+
 ### The `[research]` config block
 
 ```yaml
