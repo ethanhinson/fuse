@@ -18,9 +18,9 @@ trivial: false
 auto_groomable:
 branch: feat/spawn-tool-stripping
 pr:
-claimed_at: 2026-08-06T18:14:02Z
+claimed_at: 2026-08-06T18:16:55Z
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -65,3 +65,28 @@ Design detail and acceptance criteria in the linked spec.
 - Making `MaxDepth` configurable.
 
 ## Reconcile log
+
+### 2026-08-06
+
+Re-read the change body + spec against current `internal/agent`, `internal/tools`,
+`internal/config`, and `cmd/fuse` code, the cited related changes (24 structured-delegation,
+26 agent-workflow-composition — both still `proposed`/unbuilt, no overlap), and recent ADRs.
+Verdict: the design is **accurate and build-ready as written**; no scope change. Verified
+anchors against HEAD:
+
+- `internal/agent/spawn.go`: `ErrMaxDepthExceeded` defined at :12 (checked at :87);
+  `ErrSpawnBudgetExhausted` defined at :18 (checked at :94). The spec's `spawn.go:94`
+  reference is the *check* site and is accurate.
+- `internal/agent/loop.go:159` rebuilds tool schemas via `a.tools.Schemas()` per inference
+  request (spec cites :156 — off by a few lines, non-blocking).
+- `internal/agent/tree.go`: `SpawnBudget()` at :223, `ActiveCounts()` at :339 (spec cites
+  :322 — off, non-blocking), `MaxDepth = 5` (:13), `MaxConcurrentSpawns = 8` (:19).
+- `internal/tools/registry.go`: `Subset()` at :102, `Schemas()` at :61.
+- `internal/tools/spawn_agent.go`: budget line appended at :115 via `budgetLine()`.
+- `internal/config/schema.go`: `AgentsConfig` at :115-117, `MaxSpawns` default 16; no
+  `agents.max_concurrent` yet (this change adds it).
+- `cmd/fuse/shell.go`: registers `spawn_agent` for children at :164 (root at :237), with
+  `childNode.Depth` available at construction — the hook for static depth stripping.
+
+Minor line-number drift in the spec is left as-is (informational; anchors resolve by
+symbol). No follow-up work surfaced (auto-capture disabled anyway). Proceeding to plan.
