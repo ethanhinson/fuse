@@ -547,11 +547,15 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m.enterAgentsView()
 		}
 	case tea.KeyShiftTab:
-		// Cycle the session permission mode smart<->auto. Reached only after the
-		// pending-approval and active-completer guards above, so it never fires
-		// while an approval is queued. The shell holds no long-lived root gate:
-		// mutating the shared SessionMode holder IS the switch — the next
-		// per-turn gate is built reading it.
+		// Cycle the session permission mode smart<->auto. The pending-approval
+		// guard above already owns the keyboard first; the completer guard above
+		// only consumes the keys handleCompleterKey handles (Up/Down/Esc/Enter),
+		// so re-check completer state here to avoid flipping mode mid-completion.
+		// The shell holds no long-lived root gate: mutating the shared SessionMode
+		// holder IS the switch — the next per-turn gate is built reading it.
+		if m.completer != nil && m.completer.active {
+			return m, nil
+		}
 		if m.sessionMode == nil {
 			return m, nil
 		}

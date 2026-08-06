@@ -75,3 +75,26 @@ func TestShiftTab_IgnoredWhilePendingApproval(t *testing.T) {
 		t.Fatalf("Shift+Tab mutated mode while approval pending: mode = %v; want smart (unchanged)", got)
 	}
 }
+
+// TestShiftTab_IgnoredWhileCompleterActive asserts the completer owns the
+// keyboard while open: Shift+Tab must not flip the session mode with a slash
+// completer overlay active (it falls through the completer navigation guard,
+// which only consumes Up/Down/Esc/Enter, so the KeyShiftTab case must re-check
+// completer state itself).
+func TestShiftTab_IgnoredWhileCompleterActive(t *testing.T) {
+	sm := permissions.NewSessionMode(permissions.ModeSmart)
+	reg := registryWith(skillEntry("/code-review", "review body", "review code"))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder, sm, true))
+
+	// Open the completer, as typing '/' does.
+	m.input.SetValue("/")
+	m.completer.activate("/")
+	if !m.completer.active {
+		t.Fatal("precondition: completer should be active")
+	}
+
+	m = shiftTab(m)
+	if got := sm.Get(); got != permissions.ModeSmart {
+		t.Fatalf("Shift+Tab mutated mode while completer active: mode = %v; want smart (unchanged)", got)
+	}
+}
