@@ -12,7 +12,7 @@ related: [17, 35]
 discovered_from: [17]
 adrs: []
 spec:
-plan:
+plan: docs/superpowers/plans/2026-08-06-turn-budget-retirement-plan.md
 results:
 trivial: true
 auto_groomable:
@@ -26,6 +26,9 @@ reconciled: true
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Plan | [2026-08-06-turn-budget-retirement-plan.md](https://github.com/ethanhinson/fuse/blob/feat/live-mode-switch/docs/superpowers/plans/2026-08-06-turn-budget-retirement-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
