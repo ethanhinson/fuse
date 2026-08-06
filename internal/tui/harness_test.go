@@ -112,7 +112,7 @@ func newHarness(t *testing.T, opts harnessOpts) *harness {
 		return agent.New(cmp, noopToolExec{}, r, "test/model", "", 25, 0), nil
 	}
 
-	m := NewShellModel(opts.Alias, false, "", testRegistry(), opts.SlashReg, build)
+	m := NewShellModel(opts.Alias, false, "", testRegistry(), opts.SlashReg, build, permissions.NewSessionMode(permissions.ModeSmart), true)
 
 	bridgeCtx, cancel := context.WithCancel(context.Background())
 
