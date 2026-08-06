@@ -168,10 +168,11 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				if terr != nil {
 					return "", terr
 				}
-				if childNode.Depth >= agent.MaxDepth {
-					// Depth strip (static): a child at MaxDepth can never spawn —
-					// never give it the tool, and drop any copy inherited from the
-					// parent's registry via Clone()/Subset().
+				if childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(opts.Tools) {
+					// Depth strip (static): a child at MaxDepth can never spawn.
+					// Folded-in fix (change 0034): a parent that omits spawn_agent
+					// from its requested tools subset withholds it from the child.
+					// Either way, drop any copy inherited via Clone()/Subset().
 					childToolReg.Unregister("spawn_agent")
 				} else {
 					// Replace spawn_agent with one wired to the child's spawner.

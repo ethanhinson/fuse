@@ -368,6 +368,25 @@ func childToolRegistry(parent *tools.Registry, names []string) (*tools.Registry,
 	return sub, nil
 }
 
+// shouldWireChildSpawn reports whether a child built from the parent's requested
+// tools subset should receive a (child-wired) spawn_agent tool. An empty request
+// means "inherit all" (the child gets everything the parent had, including
+// spawn_agent); a non-empty request grants spawn_agent only when it is named.
+// This is the change 0034 folded-in fix: a parent can now withhold spawn_agent
+// from a child by passing a subset that omits it, and worker allowlists compile
+// down to exactly this decision.
+func shouldWireChildSpawn(requested []string) bool {
+	if len(requested) == 0 {
+		return true
+	}
+	for _, n := range requested {
+		if n == "spawn_agent" {
+			return true
+		}
+	}
+	return false
+}
+
 // buildAgentCore resolves alias and constructs an Agent bound to renderer r,
 // returning the resolved gateway model id.
 func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode, interactive bool) (*agent.Agent, string, error) {

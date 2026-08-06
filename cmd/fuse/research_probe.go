@@ -117,8 +117,10 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				if terr != nil {
 					return "", terr
 				}
-				if childNode.Depth >= agent.MaxDepth {
+				if childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(opts.Tools) {
 					// Depth strip (static): a child at MaxDepth can never spawn.
+					// Folded-in fix (change 0034): a parent that omits spawn_agent
+					// from its requested tools subset withholds it from the child.
 					childToolReg.Unregister("spawn_agent")
 				} else {
 					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
