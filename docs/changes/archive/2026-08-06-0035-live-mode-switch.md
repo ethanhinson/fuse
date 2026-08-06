@@ -2,7 +2,7 @@
 id: 35
 slug: live-mode-switch
 title: Mode switch must bite mid-turn — gates read the SessionMode holder live, not a construction snapshot
-status: implemented
+status: done
 priority: critical
 type: fix
 created: 2026-08-06
@@ -20,7 +20,7 @@ branch: feat/live-mode-switch
 pr: https://github.com/ethanhinson/fuse/pull/16
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-06T04:39:21Z
+claimed_at: 
 ---
 
 ## Artifacts
