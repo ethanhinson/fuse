@@ -89,14 +89,15 @@ func TestSchedulerAdmitDeniedDepthExceeded(t *testing.T) {
 	}
 }
 
-// The scheduler owns the semaphore now; its capacity is the concurrency figure
-// passed at construction, falling back to MaxConcurrentSpawns for <= 0.
+// The scheduler owns the global slot cap now (the fair queue replaced the raw
+// channel in Task 2); its capacity is the concurrency figure passed at
+// construction, falling back to MaxConcurrentSpawns for <= 0.
 func TestSchedulerSemaphoreCapacity(t *testing.T) {
-	if got := cap(NewAgentTreeWithConcurrency("r", "m", 3).Scheduler().sem); got != 3 {
-		t.Fatalf("scheduler sem cap = %d, want 3", got)
+	if got := NewAgentTreeWithConcurrency("r", "m", 3).Scheduler().slotCap; got != 3 {
+		t.Fatalf("scheduler slot cap = %d, want 3", got)
 	}
-	if got := cap(NewAgentTreeWithConcurrency("r", "m", 0).Scheduler().sem); got != MaxConcurrentSpawns {
-		t.Fatalf("scheduler sem cap = %d, want %d (zero fallback)", got, MaxConcurrentSpawns)
+	if got := NewAgentTreeWithConcurrency("r", "m", 0).Scheduler().slotCap; got != MaxConcurrentSpawns {
+		t.Fatalf("scheduler slot cap = %d, want %d (zero fallback)", got, MaxConcurrentSpawns)
 	}
 }
 
@@ -108,7 +109,7 @@ func TestSchedulerYieldRefcountSemantics(t *testing.T) {
 	sc := tr.Scheduler()
 
 	// A depth-1 node holds the single slot.
-	if !sc.acquireSlot(context.Background()) {
+	if !sc.acquireSlot(context.Background(), "") {
 		t.Fatal("first acquire should succeed on an empty cap-1 pool")
 	}
 	node := &AgentNode{ID: newNodeID(), Depth: 1}
@@ -117,7 +118,7 @@ func TestSchedulerYieldRefcountSemantics(t *testing.T) {
 	sc.YieldSlot(node)
 	sc.YieldSlot(node)
 	// The slot is free now, so a fresh acquire must succeed without blocking.
-	if !sc.acquireSlot(context.Background()) {
+	if !sc.acquireSlot(context.Background(), "") {
 		t.Fatal("after yield the slot should be free")
 	}
 	sc.releaseSlot() // give it back so unyield can re-take it

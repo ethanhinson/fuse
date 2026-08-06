@@ -112,6 +112,17 @@ func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (AgentHandle, error
 		if used, max := s.tree.SpawnBudget(); max > 0 && used >= max {
 			return AgentHandle{}, fmt.Errorf("%w: %d/%d spawns used — proceed with the results you already have and do not spawn again", ErrSpawnBudgetExhausted, used, max)
 		}
+		// Queue-bound backstop (change 0036): a spawn that commits within a turn
+		// while its pool queue has since filled to the bound is refused rather than
+		// growing the queue past ceil(queue_bound × pool slots). The per-turn strip
+		// (Task 3) makes this rare; this is the race safety net.
+		poolID := ""
+		if s.node != nil {
+			poolID = s.tree.WorkflowRootOf(s.node.ID)
+		}
+		if v, _ := s.tree.Scheduler().Admit(AdmitRequest{Depth: s.depth, PoolID: poolID}); v == OverBound {
+			return AgentHandle{}, fmt.Errorf("%w: pool queue at bound — proceed with the results you already have", ErrQueueBoundExceeded)
+		}
 	}
 	// Workflow pool backstop (change 0034): the per-call safety net behind the
 	// per-turn strip, so a within-turn batch cannot overshoot the pool.
@@ -146,18 +157,22 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 	node.SetCancel(cancel) // allows tree.CancelNode to stop this node
 
 	// Slot admission goes through the scheduler (change 0036); a nil tree (a
-	// Spawner used without one) has no scheduler and thus no cap.
+	// Spawner used without one) has no scheduler and thus no cap. The child queues
+	// into its pool — its workflow root, or "" for the implicit session pool.
 	var sched *Scheduler
+	poolID := ""
 	if s.tree != nil {
 		sched = s.tree.Scheduler()
+		poolID = s.tree.WorkflowRootOf(node.ID)
 	}
 
 	go func() {
 		defer cancel()
 
 		// Width cap: wait for a spawn slot while the node stays visibly pending.
-		// Depth limits alone don't bound load when the model fans out widely.
-		if !sched.acquireSlot(childCtx) {
+		// Depth limits alone don't bound load when the model fans out widely. The
+		// spawn queues into its pool FIFO; slots are granted round-robin.
+		if !sched.acquireSlot(childCtx, poolID) {
 			node.Finish(StatusCancelled, "")
 			if s.tree != nil {
 				s.tree.Emit(TreeUpdate{NodeID: node.ID})
