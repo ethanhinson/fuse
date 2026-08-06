@@ -1,6 +1,6 @@
 # Backlog
 
-**34 changes** — 🟡 16 proposed · 🔵 1 implemented · ✅ 13 done · 🗑️ 4 killed
+**34 changes** — 🟡 16 proposed · ✅ 14 done · 🗑️ 4 killed
 
 ## 🟡 Proposed (16)
 
@@ -23,15 +23,8 @@
 | [0033](active/0033-spawn-tool-stripping.md) | Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion | `high` | `feat` | build-ready |
 | [0034](active/0034-workflows.md) | Workflows — skill-bound subagent pools with typed workers and spawn quotas | `high` | `feat` | ⏳ waiting on #33 — not yet built |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0017](active/0017-auto-mode.md) | Auto mode — layered safe/unsafe classification for autonomous tool approval | `medium` | `feat` | [#15](https://github.com/ethanhinson/fuse/pull/15) |  |
-
 ```mermaid
 graph TD
-  0017
   0007 --> 0018
   0003 --> 0019
   0007 --> 0019
@@ -58,10 +51,11 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (17)</summary>
+<details><summary>✅🗑️ Archive — done + killed (18)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0017](archive/2026-08-06-0017-auto-mode.md) | Auto mode — layered safe/unsafe classification for autonomous tool approval | 2026-08-06 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
 | [0016](archive/2026-08-05-0016-one-shot-cli-approvals.md) | Remove the AlwaysApprove one-shot bypass; surface approvals at the CLI | 2026-08-05 |
 | [0015](archive/2026-08-05-0015-tui-hanging-indent-wrap.md) | Hanging-indent wrapping for the shell transcript | 2026-08-05 |
