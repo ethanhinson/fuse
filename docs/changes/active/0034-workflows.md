@@ -8,7 +8,7 @@ type: feat
 created: 2026-08-06
 updated: 2026-08-06
 depends_on: [33]
-related: [24, 26, 33, 35]
+related: [24, 26, 33, 36]
 discovered_from: [33]
 adrs: [2, 7]
 spec: docs/superpowers/specs/0034-workflows.md

@@ -77,7 +77,7 @@ workflows:
 
 Pool accounting is implemented as the first version of the **Scheduler** component —
 the single admission/queueing/throughput authority pinned by ADR-0007 and completed by
-change 0035. Do not build pool counters as free-standing state on the tree; they are
+change 0036. Do not build pool counters as free-standing state on the tree; they are
 the scheduler's seed.
 
 The pool reuses change 0033's schema-stripping machinery, applied per workflow subtree:
@@ -89,7 +89,7 @@ The pool reuses change 0033's schema-stripping machinery, applied per workflow s
   allotment, and the global cap (0033: 16) remains the outer bound. Pool slots are a
   **cap, not a guarantee** (v1): the workflow never exceeds them but is not promised
   them; cross-pool fairness and any guaranteed carve-outs arrive with the scheduler
-  (change 0035).
+  (change 0036).
 - **`total`** (permanent): a per-subtree lifetime counter; at exhaustion the tool is
   stripped for the remainder of the workflow run. The global budget (0033: 64) still
   counts every spawn.

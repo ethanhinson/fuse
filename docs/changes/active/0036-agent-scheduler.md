@@ -1,5 +1,5 @@
 ---
-id: 35
+id: 36
 slug: agent-scheduler
 title: Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits
 status: proposed
@@ -11,7 +11,7 @@ depends_on: [34]
 related: [33, 34]
 discovered_from: [34]
 adrs: [7]
-spec: docs/superpowers/specs/0035-agent-scheduler.md
+spec: docs/superpowers/specs/0036-agent-scheduler.md
 plan:
 results:
 trivial: false
@@ -27,7 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [0035-agent-scheduler.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0035-agent-scheduler.md) |
+| Spec | [0036-agent-scheduler.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0036-agent-scheduler.md) |
 | ADRs | [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0007-scheduler-single-admission-authority.md) |
 <!-- docket:artifacts:end -->
 
