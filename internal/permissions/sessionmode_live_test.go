@@ -169,6 +169,40 @@ func TestGate_WithSessionMode_ConcurrentFlipAndResolve(t *testing.T) {
 	wg.Wait()
 }
 
+// TestGate_SetMode_ThenResolve_NoDoubleReset proves SetMode advances the same
+// transition ledger currentMode() reads, so a resolve immediately after a
+// leaving-auto SetMode does NOT re-detect the transition and re-reset the valve.
+// The guard is behavioral: a fresh block accrued AFTER the SetMode+resolve
+// sequence must survive (a spurious second reset would zero it).
+func TestGate_SetMode_ThenResolve_NoDoubleReset(t *testing.T) {
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
+	cls := newTestClassifier(t, stub)
+	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
+		return true, false, nil
+	}
+	// Holderless gate started in auto (SetMode is the mode surface here).
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash", "read_file"), approve,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true),
+		WithMode(ModeAuto))
+
+	// Accrue a block, then leave auto: the valve resets to 0,0.
+	g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(0)))
+	g.SetMode(ModeSmart)
+	if c, tot := g.valve.counts(); c != 0 || tot != 0 {
+		t.Fatalf("leaving auto should reset the valve, got %d,%d", c, tot)
+	}
+
+	// A resolve right after the leaving-auto SetMode must NOT re-observe the
+	// transition. Re-enter auto and accrue a fresh block; it must survive (a
+	// spurious re-reset triggered by a stale ledger would have zeroed it).
+	g.currentMode() // the resolve that previously double-reset
+	g.SetMode(ModeAuto)
+	g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(1)))
+	if c, _ := g.valve.counts(); c == 0 {
+		t.Fatal("a block accrued after re-entering auto must survive — no spurious double-reset")
+	}
+}
+
 // TestGate_CloneForChild_PropagatesHolder proves a child cloned from a
 // holder-backed parent follows the SESSION mode live — flipping the holder after
 // the clone changes the child's Mode() (supersedes D10's "children keep their

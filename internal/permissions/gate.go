@@ -257,8 +257,10 @@ func (g *PermissionGate) HasClassifier() bool { return g.classifier != nil }
 
 // SetMode switches the live gate's mode under modeMu, so an in-flight resolve
 // never races the write and the very next resolve observes the new mode. It is
-// the root-gate half of the session-mode surface (the SessionMode holder is the
-// per-turn-construction half).
+// the root-gate half of the session-mode surface for HOLDERLESS gates (the
+// SessionMode holder is the per-turn-construction half); holder-backed gates take
+// their mode from the holder and SetMode's snapshot write is inert on their read
+// path, but SetMode still keeps the transition tracker honest below.
 //
 // D10 semantics:
 //   - The root gate switches immediately (no new gate needed).
@@ -268,10 +270,17 @@ func (g *PermissionGate) HasClassifier() bool { return g.classifier != nil }
 //     auto leaves the counters as-is.
 //   - Already-spawned children are unaffected: CloneForChild snapshots the
 //     parent's mode into the child's own field at spawn time.
+//
+// The leaving-auto transition is computed against lastObservedMode — the SAME
+// ledger currentMode() maintains — and lastObservedMode is advanced here, so a
+// currentMode() call immediately after SetMode does NOT re-detect (and
+// re-reset on) the same transition. This keeps the reset firing exactly once
+// per leaving-auto edge whether that edge is driven by SetMode or by the holder.
 func (g *PermissionGate) SetMode(mode PermissionMode) {
 	g.modeMu.Lock()
-	leavingAuto := g.mode == ModeAuto && mode != ModeAuto
+	leavingAuto := g.lastObservedMode == ModeAuto && mode != ModeAuto
 	g.mode = mode
+	g.lastObservedMode = mode
 	g.modeMu.Unlock()
 
 	if leavingAuto && g.valve != nil {
@@ -509,7 +518,12 @@ func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
 		// Propagate the session holder by reference: a child of a holder-backed gate
 		// reads the same live session mode, so a mid-turn switch reaches running
 		// children too (supersedes D10's "children keep their spawn mode").
-		sessionMode:      g.sessionMode,
+		sessionMode: g.sessionMode,
+		// lastObservedMode is per-gate (seeded to the child's effective mode), unlike
+		// the by-reference valve: parent and child each maintain their own transition
+		// ledger. Both may independently observe the same holder auto→non-auto edge
+		// and each call valve.reset(), but reset is idempotent (0,0 → 0,0) and both
+		// reach the same conclusion, so the shared budget stays correct.
 		lastObservedMode: mode,
 		cfg:              g.cfg,
 		cache:            g.cache.Clone(),
