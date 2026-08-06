@@ -111,9 +111,12 @@ type Config struct {
 // budget: the total number of child agents a single root turn may create, ever,
 // counted against the append-only AgentTree. It backstops runaway fan-out; the
 // budget line injected into each spawn_agent result is what steers the model to
-// stop before it is reached.
+// stop before it is reached. MaxConcurrent is the semaphore bound on children
+// running at once — it caps live concurrency (and doubles as the default strip
+// cap) independently of the total MaxSpawns budget.
 type AgentsConfig struct {
-	MaxSpawns int `yaml:"max_spawns"`
+	MaxSpawns     int `yaml:"max_spawns"`
+	MaxConcurrent int `yaml:"max_concurrent"`
 }
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
@@ -155,7 +158,8 @@ type rawPermissionsConfig struct {
 
 // rawAgentsConfig mirrors AgentsConfig on-disk.
 type rawAgentsConfig struct {
-	MaxSpawns int `yaml:"max_spawns"`
+	MaxSpawns     int `yaml:"max_spawns"`
+	MaxConcurrent int `yaml:"max_concurrent"`
 }
 
 // rawResearchConfig mirrors ResearchConfig on-disk. RespectRobots is a pointer
@@ -200,7 +204,8 @@ func Default() Config {
 			},
 		},
 		Agents: AgentsConfig{
-			MaxSpawns: 16,
+			MaxSpawns:     64,
+			MaxConcurrent: 16,
 		},
 	}
 }

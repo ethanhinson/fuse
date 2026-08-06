@@ -239,9 +239,14 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	}
 
 	// Agents budget: a nonzero override replaces the default; an omitted key
-	// (zero) keeps the built-in 16.
+	// (zero) keeps the built-in 64.
 	if raw.Agents.MaxSpawns != 0 {
 		c.Agents.MaxSpawns = raw.Agents.MaxSpawns
+	}
+	// Agents concurrency: a nonzero override replaces the default; an omitted
+	// key (zero) keeps the built-in 16.
+	if raw.Agents.MaxConcurrent != 0 {
+		c.Agents.MaxConcurrent = raw.Agents.MaxConcurrent
 	}
 
 	// The `models` map holds a `default` string alongside model entries.
