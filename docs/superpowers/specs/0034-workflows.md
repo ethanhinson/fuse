@@ -75,13 +75,21 @@ workflows:
 
 ### Scoped pool enforcement
 
+Pool accounting is implemented as the first version of the **Scheduler** component —
+the single admission/queueing/throughput authority pinned by ADR-0007 and completed by
+change 0035. Do not build pool counters as free-standing state on the tree; they are
+the scheduler's seed.
+
 The pool reuses change 0033's schema-stripping machinery, applied per workflow subtree:
 
 - **`concurrent`** (reversible): while the subtree's active children ≥ the pool's slots,
   `spawn_agent` is omitted from the schemas of agents *in that subtree*; it returns as
   children exit. Workflow slots are a *reservation within* the global cap, not an
   addition to it: a workflow's fan-out cannot starve the rest of the session past its
-  allotment, and the global cap (0033: 16) remains the outer bound.
+  allotment, and the global cap (0033: 16) remains the outer bound. Pool slots are a
+  **cap, not a guarantee** (v1): the workflow never exceeds them but is not promised
+  them; cross-pool fairness and any guaranteed carve-outs arrive with the scheduler
+  (change 0035).
 - **`total`** (permanent): a per-subtree lifetime counter; at exhaustion the tool is
   stripped for the remainder of the workflow run. The global budget (0033: 64) still
   counts every spawn.

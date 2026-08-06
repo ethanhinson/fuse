@@ -8,9 +8,9 @@ type: feat
 created: 2026-08-06
 updated: 2026-08-06
 depends_on: [33]
-related: [24, 26, 33]
+related: [24, 26, 33, 35]
 discovered_from: [33]
-adrs: [2]
+adrs: [2, 7]
 spec: docs/superpowers/specs/0034-workflows.md
 plan:
 results:
@@ -28,7 +28,7 @@ reconciled: false
 | Artifact | Link |
 |---|---|
 | Spec | [0034-workflows.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0034-workflows.md) |
-| ADRs | [ADR-0002](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0002-research-mode-skill-driven-on-subagent-runtime.md) |
+| ADRs | [ADR-0002](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0002-research-mode-skill-driven-on-subagent-runtime.md), [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs) |
 <!-- docket:artifacts:end -->
 
 ## Why
