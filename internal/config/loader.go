@@ -328,10 +328,10 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	}
 	// Agents concurrency: a nonzero override replaces the default; an omitted
 	// key (zero) keeps the built-in 16. A negative override is clamped to the
-	// default for the same reason as MaxSpawns: NewStripSpawnPredicate guards
-	// its cap brake on maxConcurrent > 0, so a raw negative would silently
-	// disable the active-child strip even though NewAgentTreeWithConcurrency
-	// clamps its own copy. Clamping once here keeps the tree's semaphore and
+	// default for the same reason as MaxSpawns: the scheduler guards its slot
+	// brake on a positive cap, so a raw negative would silently disable the
+	// active-child queueing even though NewAgentTreeWithConcurrency clamps its
+	// own copy. Clamping once here keeps the tree's semaphore and
 	// the predicate's cap consistent.
 	if raw.Agents.MaxConcurrent != 0 {
 		c.Agents.MaxConcurrent = raw.Agents.MaxConcurrent

@@ -124,8 +124,8 @@ type WorkflowConfig struct {
 }
 
 // PoolConfig is a workflow subtree's spawn policy. Each dimension is 0 = unset
-// (that brake off), matching how AgentTree.SpawnBudget treats max==0 and
-// NewStripSpawnPredicate treats maxConcurrent<=0.
+// (that brake off), matching how AgentTree.SpawnBudget treats max==0 and the
+// scheduler's visibility predicate treats a non-positive slot cap.
 //
 //   - Concurrent (reversible): max children running+pending in the subtree.
 //   - Total (permanent): lifetime spawn quota for the subtree.

@@ -192,9 +192,11 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				if aerr != nil {
 					return "", aerr
 				}
-				// Inside the workflow subtree, compose the global strip predicate
-				// with the workflow pool's (tighter wins); outside, global only.
-				a.SetStripSpawn(stripPredicateFor(tree, cfg.Agents.MaxConcurrent, act, rootID, childNode.Depth))
+				// Unified visibility predicate (change 0036): the scheduler folds
+				// the global brakes, the workflow pool (when the node is inside a
+				// registered subtree), and the queue bound into one rule — tighter
+				// scope wins.
+				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 				return childResult(msgs, rerr)
 			}),
@@ -233,9 +235,10 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 		return 1
 	}
 	// The root is the workflow root: its own spawn schema is governed by the
-	// workflow pool (concurrent/total) composed with the global brakes. Its depth
+	// workflow pool (concurrent/total) composed with the global brakes, all folded
+	// into the scheduler's unified visibility predicate (change 0036). Its depth
 	// (0 == rootDepth) keeps it below the pool's max_depth limit.
-	rootAgent.SetStripSpawn(stripPredicateFor(tree, cfg.Agents.MaxConcurrent, act, rootID, rootNode.Depth))
+	rootAgent.SetStripSpawn(sched.StripPredicate(rootNode.ID))
 
 	// The task the root receives is the /research skill body with the question
 	// woven in as ARGUMENTS — exactly what the KindSkill slash path injects.

@@ -238,6 +238,85 @@ func (s *Scheduler) Admit(req AdmitRequest) (Verdict, error) {
 	return Granted, nil
 }
 
+// Visible reports whether spawn_agent should be present in nodeID's tool schemas
+// this turn: it is present iff an admission request from nodeID's scope would
+// currently be granted or queued within bound (spec Acceptance 3, change 0036).
+// This is the single rule every 0033/0034 strip variant collapses into:
+//
+//   - Global lifetime budget (permanent) and global slot cap (reversible, counts
+//     running+PENDING) come from Admit: Denied ⇒ invisible; OverBound ⇒ invisible
+//     (the pool's FIFO is at ceil(queue_bound × slots) — the NEW queue-bound
+//     term); Granted or Queued ⇒ visible. Note the intended Task 3 shift: reaching
+//     the global active-cap no longer strips — it queues (Queued is visible) — and
+//     the strip moves to the queue bound, returning as the queue drains.
+//   - Pool total (permanent), pool concurrent (reversible, subtree
+//     running+PENDING) and pool max_depth (static) come from the workflow pool
+//     registered for nodeID's nearest workflow root (WorkflowRootOf). These are
+//     scoped to that subtree only — a sibling subtree with its own headroom stays
+//     visible — and are unchanged from change 0034.
+//
+// The tighter of global and pool scope governs: any engaged term makes the node
+// invisible. The read locks internally and MUST be recomputed every turn (never
+// cached). A nil scheduler, or a nil/absent node, is always visible. The
+// call-time backstops in Spawn remain the race safety net regardless.
+func (s *Scheduler) Visible(nodeID string) bool {
+	if s == nil {
+		return true
+	}
+	node := s.tree.Node(nodeID)
+	if node == nil {
+		return true
+	}
+	poolID := s.tree.WorkflowRootOf(nodeID)
+
+	// Global scope: budget, slot cap, and the pool's queue bound, via Admit.
+	// Granted or Queued are the only visible verdicts (OverBound and Denied strip).
+	v, _ := s.Admit(AdmitRequest{Depth: node.Depth, PoolID: poolID})
+	if v != Granted && v != Queued {
+		return false
+	}
+
+	// Pool scope (change 0034): total/concurrent/max_depth, scoped to the subtree
+	// rooted at poolID. Absent a registered pool (freeform spawn) none engage.
+	if poolID != "" {
+		if pool, ok := s.Pool(poolID); ok {
+			root := s.tree.Node(poolID)
+			rootDepth := 0
+			if root != nil {
+				rootDepth = root.Depth
+			}
+			// Static depth limit: at or beyond rootDepth+MaxDepth, never spawn.
+			if pool.MaxDepth > 0 && node.Depth >= rootDepth+pool.MaxDepth {
+				return false
+			}
+			// Total (permanent): the subtree's lifetime spawn quota.
+			if pool.Total > 0 && s.tree.SubtreeSpawnCount(poolID) >= pool.Total {
+				return false
+			}
+			// Concurrent (reversible): subtree running+pending at the pool cap.
+			if pool.Concurrent > 0 {
+				running, pending := s.tree.SubtreeActiveCounts(poolID)
+				if running+pending >= pool.Concurrent {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// StripPredicate returns the per-turn spawn-strip predicate for nodeID: it strips
+// (returns true) exactly when nodeID is not Visible. It is the unified replacement
+// for the composed NewStripSpawnPredicate/NewWorkflowStripPredicate — one
+// scheduler-backed rule for every scope. The predicate recomputes on each call
+// (it MUST NOT be cached across turns) and is race-safe. A nil scheduler yields a
+// predicate that never strips.
+func (s *Scheduler) StripPredicate(nodeID string) func() bool {
+	return func() bool {
+		return !s.Visible(nodeID)
+	}
+}
+
 // poolQueueBound reports the maximum number of waiters poolID's FIFO may hold:
 // ceil(queueBound × pool slots). The pool's slot figure is its registered
 // Concurrent cap when positive, else the global slot cap (which the implicit

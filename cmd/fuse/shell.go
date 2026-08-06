@@ -140,8 +140,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		}
 		// Per-turn spawn-strip brake on the root turn: same predicate the children
 		// carry, so the active-cap (reversible) and budget (permanent) brakes apply
-		// to root-initiated spawns too. See change 0033.
-		ag.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
+		// to root-initiated spawns too. See change 0033; unified through the
+		// scheduler's visibility predicate in change 0036.
+		ag.SetStripSpawn(sched.StripPredicate(rootNode.ID))
 		return ag, nil
 	}
 
@@ -207,9 +208,11 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 					return "", aerr
 				}
 				// Per-turn spawn-strip brake: omit spawn_agent from this child's
-				// tool schemas when the active-child cap is reached (reversible)
-				// or the lifetime budget is exhausted (permanent). See change 0033.
-				a.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
+				// tool schemas when admission from its scope would not currently be
+				// granted or queued within bound — the active-child cap queues
+				// (reversible), the lifetime budget strips (permanent), the queue
+				// bound strips (reversible). See change 0033, unified in change 0036.
+				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 
 				history := []model.Message{{Role: "user", Content: opts.Task}}
 				msgs, rerr := a.Run(ctx, history)

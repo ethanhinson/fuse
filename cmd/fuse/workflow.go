@@ -101,19 +101,6 @@ func resolveWorkerTools(wf config.WorkflowConfig, worker string, requested []str
 	return out, nil
 }
 
-// stripPredicateFor returns the strip predicate to install on a child at the
-// given absolute depth. Outside a workflow (act == nil) it is the global-only
-// predicate; inside, it composes the global predicate with the workflow's
-// subtree-scoped one so the tighter brake governs.
-func stripPredicateFor(tree *agent.AgentTree, maxConcurrent int, act *workflowActivation, rootID string, nodeDepth int) func() bool {
-	global := agent.NewStripSpawnPredicate(tree, maxConcurrent)
-	if act == nil || rootID == "" {
-		return global
-	}
-	wf := agent.NewWorkflowStripPredicate(tree, rootID, act.pool(), nodeDepth, act.rootDepth)
-	return agent.NewOrPredicate(global, wf)
-}
-
 // backstopFor returns the per-call workflow spawn backstop for a spawner rooted
 // under the workflow, or nil outside a workflow. It refuses a spawn that would
 // exceed the pool's total quota or push a child past the pool's max_depth — the

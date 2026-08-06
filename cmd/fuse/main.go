@@ -181,7 +181,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 				if aerr != nil {
 					return "", aerr
 				}
-				a.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
+				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 				return childResult(msgs, rerr)
 			}),
@@ -216,7 +216,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
-	a.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
+	a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
 	_ = modelID
 
 	_, err = a.Run(context.Background(), []model.Message{{Role: "user", Content: task}})

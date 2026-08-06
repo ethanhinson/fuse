@@ -146,10 +146,9 @@ func TestLoadAgentsMaxConcurrentNegativeClampsToDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A negative override passes the != 0 merge gate but is nonsensical: it
-	// would silently disable NewStripSpawnPredicate's active-child brake
-	// (guarded on maxConcurrent > 0) even though the tree clamps its own copy.
-	// The loader must clamp it back to the default so the tree and predicate
-	// stay consistent.
+	// would silently disable the scheduler's active-child slot brake (guarded on
+	// a positive cap) even though the tree clamps its own copy. The loader must
+	// clamp it back to the default so the tree and predicate stay consistent.
 	cfg := "agents:\n  max_concurrent: -3\n"
 	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
