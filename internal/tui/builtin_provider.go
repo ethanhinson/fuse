@@ -13,6 +13,7 @@ func NewBuiltinProvider() *BuiltinProvider {
 			{Command: "/quit", Description: "Exit the shell", Kind: KindBuiltin, expand: func() string { return "/quit" }},
 			{Command: "/verbose", Description: "Toggle verbose tool output", Kind: KindBuiltin, expand: func() string { return "/verbose" }},
 			{Command: "/model", Syntax: "NAME", Description: "Switch model (e.g. sonnet, opus)", Kind: KindBuiltin, expand: func() string { return "/model " }},
+			{Command: "/mode", Syntax: "NAME", Description: "Show or set the permission mode (smart/auto/prompt-all/off)", Kind: KindBuiltin, expand: func() string { return "/mode " }},
 			{Command: "/agents", Description: "Open the live agent tree (also: Tab)", Kind: KindBuiltin, expand: func() string { return "/agents" }},
 			{Command: "/approvals", Description: "Show this session's permission decisions", Kind: KindBuiltin, expand: func() string { return "/approvals" }},
 		},

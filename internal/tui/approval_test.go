@@ -14,7 +14,7 @@ import (
 // renders as a live overlay (not in the transcript); answering dismisses it
 // and leaves a compact timestamped decision record in the transcript.
 func TestPermissionRequestShowsOverlayThenCompactsOnAnswer(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)
@@ -61,7 +61,7 @@ func TestPermissionRequestShowsOverlayThenCompactsOnAnswer(t *testing.T) {
 
 // TestApprovalsCommandListsDecisions: /approvals recalls the session log.
 func TestApprovalsCommandListsDecisions(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true
 	respCh := make(chan approvalResponse, 1)
 	next, _ := m.Update(PermissionRequestMsg{
@@ -86,7 +86,7 @@ func TestApprovalsCommandListsDecisions(t *testing.T) {
 
 // TestApprovalKeyY verifies that pressing 'y' sends an approved response.
 func TestApprovalKeyY(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)
@@ -117,7 +117,7 @@ func TestApprovalKeyY(t *testing.T) {
 
 // TestApprovalKeyS verifies that pressing 's' sends session approval.
 func TestApprovalKeyS(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)
@@ -140,7 +140,7 @@ func TestApprovalKeyS(t *testing.T) {
 
 // TestApprovalKeyN verifies that pressing 'n' sends a denial.
 func TestApprovalKeyN(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)
@@ -165,7 +165,7 @@ func TestApprovalKeyN(t *testing.T) {
 // any keypress are BOTH answered, in order — the historical bug overwrote the
 // first request's RespCh, deadlocking its gate goroutine forever.
 func TestConcurrentApprovalsQueueFIFO(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true
 
 	ch1 := make(chan approvalResponse, 1)
@@ -222,7 +222,7 @@ func TestConcurrentApprovalsQueueFIFO(t *testing.T) {
 // when the user exits the agents overlay — the historical bug nil'd the overlay
 // model along with the request, deadlocking the gate.
 func TestApprovalSurvivesOverlayExit(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = m.WithTree(agent.NewAgentTree("root", "alpha"))
 	m.running = true
 
@@ -262,7 +262,7 @@ func TestApprovalSurvivesOverlayExit(t *testing.T) {
 // the overlay branch drained assistant text without appending it, so prose
 // arriving mid-overlay was lost from the transcript.
 func TestAgentEventsFlowDuringOverlay(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = m.WithTree(agent.NewAgentTree("root", "alpha"))
 	m.running = true
 
@@ -294,7 +294,7 @@ func TestAgentEventsFlowDuringOverlay(t *testing.T) {
 
 // TestEscDeniesApproval verifies the Esc key denies (bubbletea names it "esc").
 func TestEscDeniesApproval(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)
@@ -319,7 +319,7 @@ func TestEscDeniesApproval(t *testing.T) {
 // TestTurnEndDrainsApprovals verifies queued approvals are denied when the
 // turn ends, so no gate goroutine is left blocked forever.
 func TestTurnEndDrainsApprovals(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)
@@ -346,7 +346,7 @@ func TestTurnEndDrainsApprovals(t *testing.T) {
 
 // TestApprovalViewStatus verifies that the status bar shows the approval prompt.
 func TestApprovalViewStatus(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true
 
 	respCh := make(chan approvalResponse, 1)

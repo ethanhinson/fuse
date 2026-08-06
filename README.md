@@ -65,6 +65,90 @@ research:
     url: "https://searx.example.com/search?q={query}&format=json"
 ```
 
+### The `[permissions]` config block
+
+```yaml
+permissions:
+  mode: smart           # off | prompt-all | smart | auto (default: smart)
+  session_allow: true   # whether the [s]ession "allow for this session" option appears
+  auto_approve: []      # per-segment allow patterns (see note below): "bash:git *", ...
+  always_prompt: []     # patterns demoted to always-prompt, e.g. "bash:git push*"
+  disabled: []          # tool names fully disabled (never runnable), e.g. "web_fetch"
+  auto:                 # auto-mode surface (only consulted when mode: auto)
+    classifier_model: deepseek-flash   # alias that judges gray-area commands; NEVER a chat alias
+    deny: []            # extra always-deny per-segment patterns, e.g. "bash:npm publish*"
+    ask: []             # extra always-ask per-segment patterns (override an allow)
+
+# Per-project overrides (user-owned ~/.fuse/config.yml ONLY — see below).
+# Absolute project path -> a permissions subtree that applies when the shell
+# runs inside that path. "auto here, not there" without weakening any repo.
+projects:
+  /Users/me/work/trusted-app:
+    permissions:
+      mode: auto        # this project starts in auto; others keep the global default
+      auto:
+        classifier_model: deepseek-flash
+
+
+`mode: auto` runs commands without a human prompt when they are provably safe.
+It is layered: a bash command is split into its simple-command **segments**
+(across `&&`, `||`, `;`, `|`, newlines, and the body of `bash -c`/`sh -c`), and
+**each segment is evaluated independently** — static deny/ask rules first, then
+the read-only safe list, then path/egress heuristics, and only genuinely
+ambiguous segments reach the `classifier_model`. Deny beats ask beats allow; a
+command that cannot be parsed fails closed.
+
+**`auto_approve` (and `auto.deny`/`auto.ask`) are per-segment, not first-token
+prefixes.** A pattern only approves the segment it matches, so `git status &&
+rm -rf ~` is **not** auto-approved by `bash:git *`: the `git status` segment
+matches and the `rm -rf ~` segment does not, and one un-approved segment denies
+the whole command. There is no way to whitelist a leading `git` into approving a
+trailing `rm`. Wrapping (`sh -c "rm x"`), command substitution (`$(...)` /
+backticks), env-assignment prefixes (`FOO=bar cmd`), and path-qualified argv0
+(`/usr/bin/rm`) all fail closed rather than slip past a prefix match.
+
+**Trust boundary.** The permission-*loosening* keys — `mode`, `session_allow`,
+`auto_approve`, and the entire `auto` block — are honored **only** from the
+trusted `~/.fuse/config.yml`. A repo-plantable `.fuse.local.yml` cannot weaken
+the gate: those keys are ignored there (with a startup warning), so a checked-in
+file cannot flip a clone into `auto` mode or self-approve. Only the *tightening*
+keys `always_prompt` and `disabled` take effect from `.fuse.local.yml`. Set
+anything that grants trust in your own `~/.fuse/config.yml`.
+
+**Per-project trust (`projects:`).** To grant "auto here, not there" you can key
+a `permissions:` subtree by **absolute project path** under a `projects:` map.
+When the shell starts inside a path that equals — or is a descendant of — one of
+those keys, that entry's permission subtree is merged in as **trusted** (the full
+subtree, `mode` and the whole `auto` block included), layered above the global
+`permissions:` and below the tighten-only `.fuse.local.yml`. When several keys
+are ancestors of the current directory, the **longest (most specific) key wins**;
+matching is by whole path segments, so a key `…/b` never matches a directory
+under `…/bc`, and symlinked working directories are resolved to their real path
+before matching. Because this is pure loosening, the map is honored **only** from
+your own `~/.fuse/config.yml` — a `projects:` block planted in a repo's
+`.fuse.local.yml` is ignored and named in the startup warning, exactly like every
+other loosening key, so a checked-in file still cannot flip a clone into `auto`.
+
+**Switching mode in-session.** `permissions.mode` is only the **startup
+default** — the permission mode is a live session surface you can flip without
+restarting, and the interactive shell shows the active mode in its status line
+(e.g. `mode: auto`):
+
+- **Shift+Tab** toggles between the two everyday postures, `smart` ⇄ `auto`.
+  From `prompt-all` or `off`, the first Shift+Tab lands on `smart`, and
+  Shift+Tab thereafter toggles `smart` ⇄ `auto`.
+- **`/mode`** (bare) prints the active mode and lists all four options;
+  **`/mode <name>`** sets any of `smart`, `auto`, `prompt-all`, `off` directly.
+  An unknown name is rejected with a usage line and leaves the mode unchanged.
+
+A switch takes effect on the **next turn** — the gate is rebuilt per turn at the
+current session mode, so a flip into `auto` immediately governs the following
+tool calls (no restart, no stale gate). If you switch into `auto` but the
+gateway has no classifier configured, the status line marks the mode
+**degraded** (`mode: auto` with a degraded marker) — the deterministic rules and
+read-only safe list still apply, but gray-area commands fail closed to a prompt
+rather than reaching a classifier.
+
 ### The `[research]` config block
 
 ```yaml

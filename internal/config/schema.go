@@ -27,11 +27,25 @@ type ModelsConfig struct {
 
 // PermissionsConfig controls the HITL gate behaviour.
 type PermissionsConfig struct {
-	Mode         string   `yaml:"mode"`          // off | prompt-all | smart (default: smart)
-	SessionAllow bool     `yaml:"session_allow"` // whether [s]ession option appears
-	AutoApprove  []string `yaml:"auto_approve"`  // patterns promoted beyond the safe list
-	AlwaysPrompt []string `yaml:"always_prompt"` // patterns demoted to always-prompt
-	Disabled     []string `yaml:"disabled"`      // tool names fully disabled (Enabled: false)
+	Mode         string     `yaml:"mode"`          // off | prompt-all | smart | auto (default: smart)
+	SessionAllow bool       `yaml:"session_allow"` // whether [s]ession option appears
+	AutoApprove  []string   `yaml:"auto_approve"`  // patterns promoted beyond the safe list
+	AlwaysPrompt []string   `yaml:"always_prompt"` // patterns demoted to always-prompt
+	Disabled     []string   `yaml:"disabled"`      // tool names fully disabled (Enabled: false)
+	Auto         AutoConfig `yaml:"auto"`          // auto-mode classifier + static rule surface
+}
+
+// AutoConfig configures auto mode: the classifier model alias and the static
+// deny/ask pattern lists layered around it. In auto mode a bash command is
+// split into per-segment simple commands and each is run through a layered
+// pipeline — static rules (Deny/Ask plus the built-in dangerous set) win first,
+// then the read-only safe list auto-approves, then path/egress heuristics, and
+// only genuinely gray-area segments reach the classifier model. Deny always
+// beats Ask always beats allow, and an unparseable command fails closed.
+type AutoConfig struct {
+	ClassifierModel string   `yaml:"classifier_model"`
+	Deny            []string `yaml:"deny"`
+	Ask             []string `yaml:"ask"`
 }
 
 // CustomProviderConfig describes a user-supplied JSON search endpoint,
@@ -99,15 +113,39 @@ type AgentsConfig struct {
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
 type rawConfig struct {
-	Gateway     Gateway                `yaml:"gateway"`
-	Models      map[string]interface{} `yaml:"models"`
-	SkillPaths  []string               `yaml:"skill_paths"`
-	MaxTurns    int                    `yaml:"max_turns"`
-	MaxTokens   int                    `yaml:"max_tokens"`
-	Permissions PermissionsConfig      `yaml:"permissions"`
-	MCPServers  []MCPServerConfig      `yaml:"mcp_servers"`
-	Research    rawResearchConfig      `yaml:"research"`
-	Agents      rawAgentsConfig        `yaml:"agents"`
+	Gateway     Gateway                  `yaml:"gateway"`
+	Models      map[string]interface{}   `yaml:"models"`
+	SkillPaths  []string                 `yaml:"skill_paths"`
+	MaxTurns    int                      `yaml:"max_turns"`
+	MaxTokens   int                      `yaml:"max_tokens"`
+	Permissions rawPermissionsConfig     `yaml:"permissions"`
+	MCPServers  []MCPServerConfig        `yaml:"mcp_servers"`
+	Research    rawResearchConfig        `yaml:"research"`
+	Agents      rawAgentsConfig          `yaml:"agents"`
+	Projects    map[string]ProjectConfig `yaml:"projects"`
+}
+
+// ProjectConfig is a single per-project override entry keyed by absolute
+// project path in the `projects:` map. It reuses rawPermissionsConfig (not the
+// resolved PermissionsConfig) so the same session_allow *bool omitted-key
+// discipline and the same trusted-merge path apply to a project entry. A
+// matching entry resolves INTO c.Permissions at load time; there is no resolved
+// Config.Projects surface.
+type ProjectConfig struct {
+	Permissions rawPermissionsConfig `yaml:"permissions"`
+}
+
+// rawPermissionsConfig mirrors PermissionsConfig on-disk. SessionAllow is a
+// pointer so the loader can distinguish an omitted key from an explicit
+// `session_allow: false`; a plain bool zero-value cannot, and the distinction
+// matters for the trust-boundary check on the repo-plantable .fuse.local.yml.
+type rawPermissionsConfig struct {
+	Mode         string     `yaml:"mode"`
+	SessionAllow *bool      `yaml:"session_allow"`
+	AutoApprove  []string   `yaml:"auto_approve"`
+	AlwaysPrompt []string   `yaml:"always_prompt"`
+	Disabled     []string   `yaml:"disabled"`
+	Auto         AutoConfig `yaml:"auto"`
 }
 
 // rawAgentsConfig mirrors AgentsConfig on-disk.
@@ -130,8 +168,8 @@ type rawResearchConfig struct {
 // Default returns the zero-config built-in configuration.
 func Default() Config {
 	return Config{
-		Gateway:   Gateway{URL: "http://localhost:4000/v1", Key: "llm-gateway-local"},
-		Models:    ModelsConfig{Default: "deepseek-flash", Entries: map[string]ModelConfig{}},
+		Gateway:  Gateway{URL: "http://localhost:4000/v1", Key: "llm-gateway-local"},
+		Models:   ModelsConfig{Default: "deepseek-flash", Entries: map[string]ModelConfig{}},
 		MaxTurns: 25,
 		// Per-turn output ceiling. 16384 (up from 8192) so a full research
 		// synthesis — report body plus its numbered source list — is not cut

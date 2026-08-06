@@ -2,11 +2,17 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// warnw is where startup trust-boundary warnings are written. It defaults to
+// stderr and is swappable in tests.
+var warnw io.Writer = os.Stderr
 
 // Load resolves configuration by starting from Default(), merging
 // ~/.fuse/config.yml if present, then .fuse.local.yml in the CWD if present,
@@ -14,13 +20,23 @@ import (
 func Load() (Config, error) {
 	c := Default()
 
+	var projects map[string]ProjectConfig
 	home, err := os.UserHomeDir()
 	if err == nil {
-		if err := mergeFile(&c, filepath.Join(home, ".fuse", "config.yml")); err != nil {
+		// The trusted home file is the only source whose projects: map is
+		// captured (via the sink) and later applied.
+		if err := mergeFile(&c, filepath.Join(home, ".fuse", "config.yml"), true, &projects); err != nil {
 			return c, err
 		}
 	}
-	if err := mergeFile(&c, ".fuse.local.yml"); err != nil {
+	// Per-project overrides sit above the global permissions and below the
+	// tighten-only .fuse.local.yml: a matching, user-owned (trusted) entry
+	// resolves into c.Permissions for the current cwd.
+	applyProjectOverride(&c, projects)
+	// .fuse.local.yml is repo-plantable (untrusted): permission-loosening keys
+	// (including any projects: block) are ignored so a checked-in file cannot
+	// weaken the gate. It passes nil for the projects sink.
+	if err := mergeFile(&c, ".fuse.local.yml", false, nil); err != nil {
 		return c, err
 	}
 
@@ -33,9 +49,106 @@ func Load() (Config, error) {
 	return c, nil
 }
 
+// mergePermissions merges a raw permissions subtree onto c following the
+// trust-boundary rules: loosening keys (mode/session_allow/auto_approve/auto.*)
+// are honored only when trusted, otherwise each present one is collected into
+// the returned ignored slice; tightening keys (always_prompt/disabled) are
+// honored from either source. It emits no warning itself — the caller renders
+// the single aggregated warning line from the returned slice.
+func mergePermissions(c *Config, raw rawPermissionsConfig, trusted bool) (ignored []string) {
+	if raw.Mode != "" {
+		if trusted {
+			c.Permissions.Mode = raw.Mode
+		} else {
+			ignored = append(ignored, "permissions.mode")
+		}
+	}
+	// session_allow (a *bool) is only a loosening override when explicitly set.
+	if raw.SessionAllow != nil {
+		if trusted {
+			c.Permissions.SessionAllow = *raw.SessionAllow
+		} else {
+			ignored = append(ignored, "permissions.session_allow")
+		}
+	}
+	if len(raw.AutoApprove) > 0 {
+		if trusted {
+			c.Permissions.AutoApprove = raw.AutoApprove
+		} else {
+			ignored = append(ignored, "permissions.auto_approve")
+		}
+	}
+	// Tightening keys stay honored from either source.
+	if len(raw.AlwaysPrompt) > 0 {
+		c.Permissions.AlwaysPrompt = raw.AlwaysPrompt
+	}
+	if len(raw.Disabled) > 0 {
+		c.Permissions.Disabled = raw.Disabled
+	}
+	// The whole permissions.auto.* block is loosening surface.
+	if raw.Auto.ClassifierModel != "" || len(raw.Auto.Deny) > 0 || len(raw.Auto.Ask) > 0 {
+		if trusted {
+			c.Permissions.Auto = raw.Auto
+		} else {
+			ignored = append(ignored, "permissions.auto")
+		}
+	}
+	return ignored
+}
+
+// applyProjectOverride merges the per-project permissions entry whose key best
+// matches the current cwd. The winning key is the LONGEST project key that
+// equals cwd or is a path-segment ancestor of it. Keys and cwd are canonicalized
+// via filepath.EvalSymlinks; if cwd cannot be resolved the whole step is a
+// no-op, and any key that fails to resolve is skipped. The matched entry merges
+// as trusted (full subtree incl. mode and auto.*). No match ⇒ no-op.
+func applyProjectOverride(c *Config, projects map[string]ProjectConfig) {
+	if len(projects) == 0 {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	cwd, err = filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return
+	}
+	cwd = filepath.Clean(cwd)
+
+	var bestLen int // length of the winning key; longest match wins
+	var best ProjectConfig
+	found := false
+	for key, entry := range projects {
+		canon, err := filepath.EvalSymlinks(key)
+		if err != nil {
+			continue // a key that does not resolve is skipped, not fatal
+		}
+		canon = filepath.Clean(canon)
+		// Path-segment ancestor test: never a raw HasPrefix (that would wrongly
+		// match /a/bc under a key /a/b).
+		if cwd != canon && !strings.HasPrefix(cwd, canon+string(os.PathSeparator)) {
+			continue
+		}
+		if !found || len(canon) > bestLen {
+			bestLen = len(canon)
+			best = entry
+			found = true
+		}
+	}
+	if !found {
+		return
+	}
+	mergePermissions(c, best.Permissions, true)
+}
+
 // mergeFile applies a YAML file onto c if the file exists. A missing file is
-// not an error; a malformed file is.
-func mergeFile(c *Config, path string) error {
+// not an error; a malformed file is. When trusted is false the source is
+// repo-plantable (e.g. .fuse.local.yml): permission-LOOSENING keys are ignored
+// with an aggregated startup warning, while tightening keys stay honored. The
+// projects sink, when non-nil, captures the parsed projects: map (only the
+// trusted home call passes a sink; the untrusted local call passes nil).
+func mergeFile(c *Config, path string, trusted bool, projects *map[string]ProjectConfig) error {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -64,20 +177,23 @@ func mergeFile(c *Config, path string) error {
 	if len(raw.SkillPaths) > 0 {
 		c.SkillPaths = raw.SkillPaths
 	}
-	if raw.Permissions.Mode != "" {
-		c.Permissions.Mode = raw.Permissions.Mode
+	// Permission-loosening keys are honored only from a trusted source. From an
+	// untrusted (repo-plantable) source they are inert and each present one is
+	// collected for a single aggregated startup warning.
+	ignored := mergePermissions(c, raw.Permissions, trusted)
+	// Capture the trusted home file's projects: map for applyProjectOverride.
+	if projects != nil {
+		*projects = raw.Projects
 	}
-	if !raw.Permissions.SessionAllow {
-		c.Permissions.SessionAllow = false
+	// A projects: block in an untrusted file is a loosening surface (a repo file
+	// could grant itself mode: auto): ignore it and name it in the aggregated
+	// warning. Only the trusted home path ever applies raw.Projects.
+	if !trusted && len(raw.Projects) > 0 {
+		ignored = append(ignored, "projects")
 	}
-	if len(raw.Permissions.AutoApprove) > 0 {
-		c.Permissions.AutoApprove = raw.Permissions.AutoApprove
-	}
-	if len(raw.Permissions.AlwaysPrompt) > 0 {
-		c.Permissions.AlwaysPrompt = raw.Permissions.AlwaysPrompt
-	}
-	if len(raw.Permissions.Disabled) > 0 {
-		c.Permissions.Disabled = raw.Permissions.Disabled
+	if !trusted && len(ignored) > 0 {
+		fmt.Fprintf(warnw, "warning: %s ignores permission-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
+			path, strings.Join(ignored, ", "))
 	}
 	if len(raw.MCPServers) > 0 {
 		c.MCPServers = raw.MCPServers

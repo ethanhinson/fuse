@@ -185,6 +185,16 @@ type ShellModel struct {
 	completer *slashCompleter
 	build     AgentBuilder
 
+	// sessionMode is the read handle on the session's active permission mode —
+	// the single source shared with per-turn gate construction (Shift+Tab and
+	// /mode mutate it in later tasks). The View indicator reads Get() each render.
+	sessionMode *permissions.SessionMode
+	// classifierAvailable is the degraded fact the shell learns ONCE at startup:
+	// was an auto-mode classifier constructible? It is a plain flag threaded in,
+	// never re-derived in the view. When auto is active but this is false, the
+	// indicator marks the deterministic-only (fail-closed) posture.
+	classifierAvailable bool
+
 	// Subagent tree and inline summary tracking.
 	tree          *agent.AgentTree
 	agentsActive  bool
@@ -200,7 +210,12 @@ type ShellModel struct {
 // fixed glamour style name ("dark", "light", etc.) detected before the TUI
 // starts so glamour never queries the terminal from inside the bubbletea event
 // loop. slashReg may be nil (all slash commands then return unknown).
-func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.Registry, slashReg *SlashRegistry, build AgentBuilder) ShellModel {
+//
+// sessionMode is the session's active-permission-mode holder the status-line
+// indicator reads live; classifierAvailable is the startup degraded fact (was
+// an auto-mode classifier constructible?) used to mark the fail-closed posture
+// when auto is active with no classifier.
+func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.Registry, slashReg *SlashRegistry, build AgentBuilder, sessionMode *permissions.SessionMode, classifierAvailable bool) ShellModel {
 	in := textinput.New()
 	in.Placeholder = "type a task, /model NAME, /verbose, /exit"
 	in.Prompt = ""
@@ -218,17 +233,19 @@ func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.R
 	}
 
 	m := ShellModel{
-		vp:           vp,
-		input:        in,
-		spinner:      sp,
-		alias:        alias,
-		verbose:      verbose,
-		glamourStyle: glamourStyle,
-		ch:           make(chan tea.Msg, 64),
-		reg:          reg,
-		slashReg:     slashReg,
-		completer:    completer,
-		build:        build,
+		vp:                  vp,
+		input:               in,
+		spinner:             sp,
+		alias:               alias,
+		verbose:             verbose,
+		glamourStyle:        glamourStyle,
+		ch:                  make(chan tea.Msg, 64),
+		reg:                 reg,
+		slashReg:            slashReg,
+		completer:           completer,
+		build:               build,
+		sessionMode:         sessionMode,
+		classifierAvailable: classifierAvailable,
 	}
 	m.appendLine(banner.String(version.Version))
 	m.appendLine(fmt.Sprintf("model: %s — /model NAME to switch, /verbose to toggle, /exit to quit", alias))
@@ -529,6 +546,33 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.completer == nil || !m.completer.active {
 			return m.enterAgentsView()
 		}
+	case tea.KeyShiftTab:
+		// Cycle the session permission mode smart<->auto. The pending-approval
+		// guard above already owns the keyboard first; the completer guard above
+		// only consumes the keys handleCompleterKey handles (Up/Down/Esc/Enter),
+		// so re-check completer state here to avoid flipping mode mid-completion.
+		// The shell holds no long-lived root gate: mutating the shared SessionMode
+		// holder IS the switch — the next per-turn gate is built reading it.
+		if m.completer != nil && m.completer.active {
+			return m, nil
+		}
+		if m.sessionMode == nil {
+			return m, nil
+		}
+		next := permissions.ModeSmart
+		switch m.sessionMode.Get() {
+		case permissions.ModeSmart:
+			next = permissions.ModeAuto
+		case permissions.ModeAuto:
+			next = permissions.ModeSmart
+		default:
+			// prompt-all / off land predictably on smart; the next Shift+Tab
+			// then toggles smart<->auto.
+			next = permissions.ModeSmart
+		}
+		m.sessionMode.Set(next)
+		m.appendLine("mode: " + next.String())
+		return m, nil
 	case tea.KeyCtrlL:
 		m.lines = nil
 		m.pendingCalls = nil
@@ -693,6 +737,31 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		}
 		m.alias = name
 		m.appendLine(fmt.Sprintf("switched to %s", name))
+		return m, nil
+	case "/mode":
+		if len(fields) == 1 {
+			// Bare /mode: name the current mode and list all options with a hint.
+			cur := "(unknown)"
+			if m.sessionMode != nil {
+				cur = m.sessionMode.Get().String()
+			}
+			m.appendLine(fmt.Sprintf("mode: %s", cur))
+			m.appendLine("options: smart, auto, prompt-all, off")
+			m.appendLine("usage: /mode NAME")
+			return m, nil
+		}
+		name := fields[1]
+		// ParseMode defaults unknown tokens to smart, so validate by round-trip
+		// rather than trusting it blindly.
+		parsed := permissions.ParseMode(name)
+		if parsed.String() != name {
+			m.appendLine(fmt.Sprintf("unknown mode %q; usage: /mode NAME (smart/auto/prompt-all/off)", name))
+			return m, nil
+		}
+		if m.sessionMode != nil {
+			m.sessionMode.Set(parsed)
+		}
+		m.appendLine("mode: " + name)
 		return m, nil
 	}
 
@@ -1242,7 +1311,7 @@ func (m ShellModel) View() string {
 			ruleStyle.Render("("+meta+")")
 		status += m.agentsHint()
 	default:
-		status = statusModelStyle.Render(m.alias)
+		status = statusModelStyle.Render(m.alias) + " " + statusModelStyle.Render(m.statusLine())
 		status += m.agentsHint()
 	}
 
@@ -1262,4 +1331,30 @@ func (m ShellModel) View() string {
 	b.WriteByte('\n')
 	b.WriteString(status)
 	return b.String()
+}
+
+// statusLine produces the session-mode indicator fragment for the default
+// status branch — the mode token plus, for auto-without-classifier, a static
+// degraded marker. It reads the live session mode and the startup degraded flag
+// so the indicator tracks a mid-session mode switch. Extracted so tests assert
+// on this fragment rather than a full-screen View() snapshot.
+func (m ShellModel) statusLine() string {
+	mode := permissions.ModeSmart
+	if m.sessionMode != nil {
+		mode = m.sessionMode.Get()
+	}
+	return modeStatus(mode, m.classifierAvailable)
+}
+
+// modeStatus renders just the mode token (always the fixed
+// PermissionMode.String() token, never a hand-written label) and, when mode is
+// auto and no classifier is available, a static plain-ASCII degraded marker
+// signalling the deterministic-only fail-closed posture. Pure and side-effect
+// free so it is unit-testable in isolation.
+func modeStatus(mode permissions.PermissionMode, classifierAvailable bool) string {
+	s := "mode: " + mode.String()
+	if mode == permissions.ModeAuto && !classifierAvailable {
+		s += " (degraded - no classifier)"
+	}
+	return s
 }

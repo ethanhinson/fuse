@@ -96,8 +96,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	traceW, closeTrace := openTraceWriter(traceFile)
 	defer closeTrace()
 
+	// Session-mode source: the single holder both the TUI (indicator, Shift+Tab,
+	// /mode in later tasks) and per-turn gate construction read, seeded from the
+	// startup default. Threading it into the gate builders means each freshly
+	// built gate is constructed at the current SESSION mode, so a mid-session
+	// switch is picked up by the next built gate.
+	sessionMode := permissions.NewSessionMode(permissions.ParseMode(cfg.Permissions.Mode))
+
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
-		return buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root")
+		return buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode)
 	}
 
 	glamourStyle := os.Getenv("GLAMOUR_STYLE")
@@ -126,6 +133,18 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
 
+	// Build the ShellModel up front so its approval channel exists before the
+	// spawn factory closes over it: child/subagent approvals must route to the
+	// same parent TUI channel the root turn uses, rather than bypassing the gate
+	// with a blanket auto-approve.
+	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build, sessionMode, classifierConstructible(cfg))
+	m = m.WithTree(tree)
+	// The parent-channel approval func for children: same TUI channel as the
+	// root turn, wrapped per-child by PrefixApproval below so the human sees
+	// which subagent is asking. Enforces the configured mode instead of the old
+	// blanket-auto-approve bypass.
+	childBaseApprove := tui.NewTeaApprovalFunc(m.Channel())
+
 	// SpawnFunc factory — self-referential so child agents get their own spawner.
 	var makeSpawnFunc func(parentNode *agent.AgentNode, parentDepth int) tools.SpawnFunc
 	makeSpawnFunc = func(parentNode *agent.AgentNode, parentDepth int) tools.SpawnFunc {
@@ -144,10 +163,11 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
 
 				r := tui.NewNodeRenderer(childNode, childTree)
-				// Child agents inherit the parent's permission config (disabled tools
-				// are respected) but use AlwaysApprove so they don't block on TUI
-				// approval and can run truly in parallel when batched.
-				childApprove := permissions.AlwaysApprove
+				// Child agents inherit the parent's permission config and route their
+				// approvals to the same parent TUI channel, prefixed so the human sees
+				// which subagent is asking. The configured mode is enforced for
+				// children exactly as for the root (no blanket-auto-approve bypass).
+				childApprove := permissions.PrefixApproval(opts.Label, childBaseApprove)
 
 				modelAlias := opts.ModelID
 				if modelAlias == "" {
@@ -157,9 +177,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				var a *agent.Agent
 				var aerr error
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label)
+					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode)
 				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -212,9 +232,6 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 
 	// Register spawn_agent in the tool registry before any agent runs.
 	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
-
-	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build)
-	m = m.WithTree(tree)
 
 	// Start the 250ms dirty-node flusher; the same ctx stops the bridges.
 	flushCtx, cancelFlusher := context.WithCancel(context.Background())

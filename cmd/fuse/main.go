@@ -73,6 +73,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	modelAlias := fs.String("model", "", "model alias to run (default: config default)")
 	verbose := fs.Bool("verbose", false, "render full tool args and output")
 	traceFile := fs.String("trace", "", "write raw gateway JSON to this file (- = stderr)")
+	approveAll := fs.Bool("approve-all", false, "auto-approve every tool call (scripted use; equivalent to mode: off for this run — a deliberate footgun)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -99,6 +100,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		defer closeTrace()
 		traceW = w
 	}
+
+	// Approval fallback: replaces the removed blanket-auto-approve bypass so a
+	// configured ask/prompt verdict is honored. Interactive TTY ⇒ y/N/a prompt;
+	// piped stdin / CI ⇒ deny-by-default; --approve-all ⇒ explicit auto-approve.
+	// Child/subagent approvals route to this same channel via PrefixApproval.
+	rootApprove := oneShotApprovalFunc(*approveAll, stdinIsTerminal(), os.Stdin, stderr)
 
 	// Spill dir for truncated tool outputs (recoverable via grep/read_file).
 	tools.SetSpillDir(filepath.Join(filepath.Dir(session.DefaultLogDir()), "tool-output"))
@@ -140,10 +147,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 				}
 				var a *agent.Agent
 				var aerr error
+				// Subagent approvals route to the parent channel, prefixed so the
+				// human sees which child is asking (same posture as CloneForChild).
+				childApprove := permissions.PrefixApproval(opts.Label, rootApprove)
+				// One-shot passes no session-mode source: gates default to
+				// cfg.Permissions.Mode exactly as before this seam.
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, opts.Label)
+					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil)
 				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, permissions.AlwaysApprove, traceW, opts.Label)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -176,7 +188,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
 
-	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, permissions.AlwaysApprove)
+	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1

@@ -88,7 +88,7 @@ func typeLine(m ShellModel, s string) ShellModel {
 }
 
 func TestWindowSizeSetsViewport(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	if !m.ready {
 		t.Fatal("model not ready after WindowSizeMsg")
 	}
@@ -101,7 +101,7 @@ func TestWindowSizeSetsViewport(t *testing.T) {
 }
 
 func TestEnterStartsPrompt(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = typeLine(m, "do a thing")
 	m, cmd := enter(m)
 	if !m.running {
@@ -119,7 +119,7 @@ func TestEnterStartsPrompt(t *testing.T) {
 }
 
 func TestNewShellModel_ShowsBanner(t *testing.T) {
-	m := NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder)
+	m := NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true)
 	got := plainLines(m)
 	for _, want := range []string{`'########:'##`, version.Version, "alpha"} {
 		if !strings.Contains(got, want) {
@@ -138,7 +138,7 @@ func TestNewShellModel_ShowsBanner(t *testing.T) {
 // into one zero-prefix transcriptLine per row (pre:false, no first/cont prefix)
 // and that the flattened render is behavior-preserving at a wide viewport.
 func TestAppendLineStoresTranscriptLines(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.lines = nil // drop banner lines so we inspect only what we append
 	m.appendLine("a\nb")
 	if len(m.lines) != 2 {
@@ -291,7 +291,7 @@ func vpRows(m ShellModel) []string {
 // TestRefreshViewportNoRowExceedsWidth (spec Test 3): no emitted visual row
 // exceeds the viewport width, including wrapped gutter continuations.
 func TestRefreshViewportNoRowExceedsWidth(t *testing.T) {
-	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 30, Height: 20})
 	m = next.(ShellModel)
 	// A file-read result whose lines are wider than the viewport.
@@ -311,7 +311,7 @@ func TestRefreshViewportNoRowExceedsWidth(t *testing.T) {
 // transcriptLines through hangWrap, so a prefixed line's continuation rows
 // carry the cont prefix and stay inside the gutter — never escaping to column 0.
 func TestRefreshViewportUsesHangWrap(t *testing.T) {
-	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 24, Height: 20})
 	m = next.(ShellModel)
 	m.lines = append(m.lines, transcriptLine{
@@ -340,7 +340,7 @@ func TestRefreshViewportUsesHangWrap(t *testing.T) {
 // time from the stored structure — resizing narrower re-wraps with no
 // double-wrap artifacts, and every row still fits the new width.
 func TestRefreshViewportResizeReflows(t *testing.T) {
-	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
 	m = next.(ShellModel)
 	next, _ = m.Update(ToolCallMsg{Name: "read_file", Args: "x"})
@@ -389,7 +389,7 @@ func resultLinesOnly(m ShellModel) []transcriptLine {
 // table, with equal printable widths so content columns align; the prefix lives
 // in first/cont, the content only in text.
 func TestAppendResultLinesGutterPrefixes(t *testing.T) {
-	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.lines = nil
 	m.appendResultLines("first\nsecond\nthird", false, "read_file")
 	rl := resultLinesOnly(m)
@@ -426,7 +426,7 @@ func TestAppendResultLinesGutterPrefixes(t *testing.T) {
 // error results use  ✗ / 4sp, with the content in text and no gutter.
 func TestAppendResultLinesPlainAndError(t *testing.T) {
 	// Plain (single line so useGutter is false).
-	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.lines = nil
 	m.appendResultLines("only line", false, "bash")
 	rl := resultLinesOnly(m)
@@ -444,7 +444,7 @@ func TestAppendResultLinesPlainAndError(t *testing.T) {
 	}
 
 	// Multi-line plain: row i>1 first is 4 spaces, cont 4 spaces.
-	m2 := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m2 := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m2.lines = nil
 	m2.appendResultLines("aaa\nbbb", false, "bash")
 	rl2 := resultLinesOnly(m2)
@@ -456,7 +456,7 @@ func TestAppendResultLinesPlainAndError(t *testing.T) {
 	}
 
 	// Error result.
-	me := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	me := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	me.lines = nil
 	me.appendResultLines("boom", true, "bash")
 	rle := resultLinesOnly(me)
@@ -475,7 +475,7 @@ func TestAppendResultLinesPlainAndError(t *testing.T) {
 // stored pre:true (skips wordwrap), and after the viewport shrinks the
 // hard-wrap safety net keeps every emitted row inside the new width.
 func TestAssistantMsgIsPreWrapped(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	before := len(m.lines)
 	long := "This is a fairly long assistant response with enough words that glamour " +
 		"will wrap it at the render width and it should not be re-folded to column zero."
@@ -509,7 +509,7 @@ func TestAssistantMsgIsPreWrapped(t *testing.T) {
 }
 
 func TestEnterWhileRunningIsNoop(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true
 	m = typeLine(m, "ignored")
 	m, cmd := enter(m)
@@ -522,7 +522,7 @@ func TestEnterWhileRunningIsNoop(t *testing.T) {
 }
 
 func TestEnterEmptyIsNoop(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = typeLine(m, "   ")
 	m, cmd := enter(m)
 	if cmd != nil || m.running {
@@ -532,7 +532,7 @@ func TestEnterEmptyIsNoop(t *testing.T) {
 
 func TestSlashExitQuits(t *testing.T) {
 	for _, cmdStr := range []string{"/exit", "/quit"} {
-		m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+		m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 		m = typeLine(m, cmdStr)
 		_, cmd := enter(m)
 		if cmd == nil {
@@ -545,7 +545,7 @@ func TestSlashExitQuits(t *testing.T) {
 }
 
 func TestSlashVerboseToggles(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = typeLine(m, "/verbose")
 	m, _ = enter(m)
 	if !m.verbose {
@@ -557,7 +557,7 @@ func TestSlashVerboseToggles(t *testing.T) {
 }
 
 func TestSlashModelSwitch(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = typeLine(m, "/model beta")
 	m, _ = enter(m)
 	if m.alias != "beta" {
@@ -566,7 +566,7 @@ func TestSlashModelSwitch(t *testing.T) {
 }
 
 func TestSlashModelUnknown(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = typeLine(m, "/model nope")
 	m, _ = enter(m)
 	if m.alias != "alpha" {
@@ -579,7 +579,7 @@ func TestSlashModelUnknown(t *testing.T) {
 
 func TestSlashSkillInjectsBody(t *testing.T) {
 	reg := registryWith(skillEntry("/route", "route body prompt", "route skill"))
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = typeLine(m, "/route")
 	m, cmd := enter(m)
 	if !m.running || cmd == nil {
@@ -592,7 +592,7 @@ func TestSlashSkillInjectsBody(t *testing.T) {
 
 func TestSlashSkillForwardsArgs(t *testing.T) {
 	reg := registryWith(skillEntry("/docket-new-change", "skill body", "design skill"))
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = typeLine(m, "/docket-new-change design the auth layer")
 	m, cmd := enter(m)
 	if !m.running || cmd == nil {
@@ -608,7 +608,7 @@ func TestSlashSkillForwardsArgs(t *testing.T) {
 }
 
 func TestSlashUnknown(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = typeLine(m, "/bogus")
 	m, cmd := enter(m)
 	if cmd != nil || m.running {
@@ -620,7 +620,7 @@ func TestSlashUnknown(t *testing.T) {
 }
 
 func TestAssistantMsgAppends(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	next, cmd := m.Update(AssistantMsg{Text: "hello world"})
 	m = next.(ShellModel)
 	if !strings.Contains(plainLines(m), "hello world") {
@@ -636,7 +636,7 @@ func TestToolCallTruncation(t *testing.T) {
 	long := strings.Repeat("x", previewLimit+50)
 
 	// Tool call text queues until its result settles it.
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	next, _ := m.Update(ToolCallMsg{Name: "bash", Args: long})
 	m = next.(ShellModel)
 	if len(m.pendingCalls) != 1 {
@@ -646,7 +646,7 @@ func TestToolCallTruncation(t *testing.T) {
 		t.Errorf("expected truncated pending call, got: %q", m.pendingCalls[0].text)
 	}
 
-	mv := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	mv := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	nv, _ := mv.Update(ToolCallMsg{Name: "bash", Args: long})
 	mv = nv.(ShellModel)
 	if strings.Contains(mv.pendingCalls[0].text, "…") {
@@ -657,7 +657,7 @@ func TestToolCallTruncation(t *testing.T) {
 // TestBatchedCallsPairWithResults verifies a batch of announced calls renders
 // as call+result pairs, not one bullet followed by unbroken result soup.
 func TestBatchedCallsPairWithResults(t *testing.T) {
-	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	for _, p := range []string{"a.go", "b.go", "c.go"} {
 		next, _ := m.Update(ToolCallMsg{Name: "read_file", Args: p})
 		m = next.(ShellModel)
@@ -690,7 +690,7 @@ func TestBatchedCallsPairWithResults(t *testing.T) {
 }
 
 func TestToolResultErrorPrefix(t *testing.T) {
-	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	// Send a ToolCallMsg first so pendingCall is set before the result arrives.
 	next, _ := m.Update(ToolCallMsg{Name: "bash", Args: "x"})
 	m = next.(ShellModel)
@@ -702,7 +702,7 @@ func TestToolResultErrorPrefix(t *testing.T) {
 }
 
 func TestAgentDoneClearsRunning(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true
 	hist := []model.Message{{Role: "user", Content: "x"}, {Role: "assistant", Content: "y"}}
 	next, cmd := m.Update(AgentDoneMsg{History: hist})
@@ -719,7 +719,7 @@ func TestAgentDoneClearsRunning(t *testing.T) {
 }
 
 func TestCtrlLClears(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.appendLine("some content")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
 	m = next.(ShellModel)
@@ -729,7 +729,7 @@ func TestCtrlLClears(t *testing.T) {
 }
 
 func TestCtrlCQuits(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
 	if cmd == nil {
 		t.Fatal("expected quit cmd")
@@ -740,7 +740,7 @@ func TestCtrlCQuits(t *testing.T) {
 }
 
 func TestViewContainsStatusAndPrompt(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	v := m.View()
 	if !strings.Contains(v, "alpha") {
 		t.Error("view should contain the model alias")
@@ -758,7 +758,7 @@ func TestViewContainsStatusAndPrompt(t *testing.T) {
 // the input starts with '/'.
 func TestCompleterActivatesOnSlash(t *testing.T) {
 	reg := registryWith(skillEntry("/code-review", "review body", "review code"))
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 
 	// Type '/' — the completer should activate.
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
@@ -775,7 +775,7 @@ func TestCompleterActivatesOnSlash(t *testing.T) {
 // TestCompleterEscDeactivates verifies Esc dismisses the completer.
 func TestCompleterEscDeactivates(t *testing.T) {
 	reg := registryWith(skillEntry("/code-review", "review body", "review code"))
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.input.SetValue("/")
 	m.completer.activate("/")
 
@@ -793,7 +793,7 @@ func TestCompleterEscDeactivates(t *testing.T) {
 // completer is active runs the selected skill body, not "unknown command".
 func TestCompleterEnterDispatchesSkill(t *testing.T) {
 	reg := registryWith(skillEntry("/docket-status", "show the board", "board status"))
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 
 	// Activate the completer and select the skill.
 	m.input.SetValue("/")
@@ -823,7 +823,7 @@ func TestCompleterEnterDispatchesSkill(t *testing.T) {
 // triggers a completer refresh.
 func TestRegistryReloadMsgRefreshesCompleter(t *testing.T) {
 	reg := registryWith(skillEntry("/echo", "echo body", "echo skill"))
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.input.SetValue("/ec")
 	m.completer.activate("/ec")
 
@@ -839,7 +839,7 @@ func TestRegistryReloadMsgRefreshesCompleter(t *testing.T) {
 // TestUserPromptEchoedInTranscript: the submitted prompt must remain visible
 // after the input clears.
 func TestUserPromptEchoedInTranscript(t *testing.T) {
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.input.SetValue("please audit the spawn path")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(ShellModel)
@@ -906,7 +906,7 @@ func TestStatusBarShowsAgentCounter(t *testing.T) {
 		}
 	}
 
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = m.WithTree(tree)
 	view := ansiRE.ReplaceAllString(m.View(), "")
 	if !strings.Contains(view, fmt.Sprintf("%d running", agent.MaxConcurrentSpawns)) {

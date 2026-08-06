@@ -25,7 +25,7 @@ func TestBuildAgentWithRenderer(t *testing.T) {
 	toolReg := defaultToolRegistry(cfg.Research, nil)
 	r := tui.NewRenderer(discard{}, false)
 
-	a, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, r, false, "block", toolReg, permissions.AlwaysApprove, nil, "")
+	a, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, r, false, "block", toolReg, permissions.AlwaysApprove, nil, "", nil)
 	if err != nil {
 		t.Fatalf("buildAgentWithRenderer: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestBuildAgentWithRendererUnknownAlias(t *testing.T) {
 	reg := model.DefaultRegistry()
 	toolReg := defaultToolRegistry(cfg.Research, nil)
 	r := tui.NewRenderer(discard{}, false)
-	if _, err := buildAgentWithRendererAndTrace(cfg, reg, "no-such-model", r, false, "", toolReg, permissions.AlwaysApprove, nil, ""); err == nil {
+	if _, err := buildAgentWithRendererAndTrace(cfg, reg, "no-such-model", r, false, "", toolReg, permissions.AlwaysApprove, nil, "", nil); err == nil {
 		t.Fatal("expected error for unknown alias")
 	}
 }
@@ -51,9 +51,9 @@ func TestShellModelBuilderWiring(t *testing.T) {
 	reg := model.DefaultRegistry()
 	toolReg := defaultToolRegistry(cfg.Research, nil)
 	var build tui.AgentBuilder = func(alias string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
-		return buildAgentWithRendererAndTrace(cfg, reg, alias, r, false, "", toolReg, approve, nil, "")
+		return buildAgentWithRendererAndTrace(cfg, reg, alias, r, false, "", toolReg, approve, nil, "", nil)
 	}
-	m := tui.NewShellModel(reg.Default, false, "dark", reg, nil, build)
+	m := tui.NewShellModel(reg.Default, false, "dark", reg, nil, build, permissions.NewSessionMode(permissions.ModeSmart), true)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	view := next.(tui.ShellModel).View()
 	if !strings.Contains(view, reg.Default) {

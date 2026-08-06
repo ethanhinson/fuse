@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/permissions"
 )
 
 // TestEventDrilldownShowsFullContent: enter on a selected event opens its
@@ -117,7 +118,7 @@ func TestTreeSummaryAppendedToTranscript(t *testing.T) {
 		h.Wait()
 	}
 
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = m.WithTree(tree)
 	m.running = true // as if a turn were in flight; runStart zero => all nodes included
 	next, _ := m.Update(AgentDoneMsg{})
@@ -140,7 +141,7 @@ func TestTreeSummaryAppendedToTranscript(t *testing.T) {
 func TestRootClockFreezesWhenTurnEnds(t *testing.T) {
 	tree := agent.NewAgentTree("root", "alpha")
 
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = m.WithTree(tree)
 	m = typeLine(m, "do the thing")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -170,7 +171,7 @@ func TestRootClockFreezesWhenTurnEnds(t *testing.T) {
 // TestRootClockMarksErrorTurns: a failed turn ends the root as error.
 func TestRootClockMarksErrorTurns(t *testing.T) {
 	tree := agent.NewAgentTree("root", "alpha")
-	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder))
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = m.WithTree(tree)
 	m = typeLine(m, "task")
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
