@@ -177,6 +177,30 @@ is never written back.
 - **Trust boundary unaffected** (ADR-0006): the switcher is a human at the
   keyboard, not a repo file; `.fuse.local.yml` still cannot loosen policy.
 
+### D11 — Per-project permission overrides in the user-level config (added 2026-08-05)
+
+"Auto is acceptable in this project but not that one" must be expressible
+without weakening ADR-0006. The trust boundary holds because the *user*
+grants per-project trust from a file the repo cannot touch — Claude Code's
+model (trust config only from user/managed settings, keyed by project).
+
+- `~/.fuse/config.yml` gains a `projects:` map: absolute project path →
+  per-project overrides. Because the file is user-owned (trusted), a project
+  entry may set the **full** permissions subtree, including `mode: auto` and
+  `auto.*`.
+- **Matching**: the process cwd, canonicalized with `filepath.EvalSymlinks`,
+  is matched against canonicalized project keys; the **longest key that is
+  the cwd or an ancestor of it** wins (path-segment-aware — `/a/b` does not
+  match `/a/bc`). No match ⇒ no override.
+- **Precedence** (low → high): built-ins → user global `permissions:` →
+  user per-project `projects.<path>.permissions:` → `.fuse.local.yml`
+  (tighten-only, unchanged) → env overrides → the session switcher (D10),
+  which always wins and is never written back.
+- Applies uniformly to shell, one-shot, and any other entry point — it rides
+  `config.Load()`, upstream of everything.
+- `.fuse.local.yml` remains tighten-only; `projects:` inside `.fuse.local.yml`
+  is a loosening surface and is ignored with the same aggregated warning.
+
 ## Config surface (sketch)
 
 ```yaml
@@ -217,6 +241,9 @@ permissions:
 - 2026-08-05 (post-first-use): added D10 — in-session mode switcher with TUI
   indicator, Shift+Tab cycle, and `/mode` command; change 0032 killed as
   subsumed into this change. Config file demoted to startup-default-only.
+- 2026-08-05 (same session): added D11 — per-project permission overrides via
+  a `projects:` map in the user-level config (longest-ancestor cwd match,
+  user-owned so ADR-0006 holds); ships on the same PR.
 
 ## Resolved open questions (from the stub)
 

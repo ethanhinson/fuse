@@ -2,7 +2,7 @@
 id: 17
 slug: auto-mode
 title: Auto mode — layered safe/unsafe classification for autonomous tool approval
-status: implemented
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-05
@@ -17,7 +17,7 @@ results: docs/results/2026-08-05-auto-mode-results.md
 trivial: false
 auto_groomable:
 branch: feat/auto-mode
-claimed_at: 2026-08-06T03:10:09Z
+claimed_at: 2026-08-06T03:19:52Z
 pr: https://github.com/ethanhinson/fuse/pull/15
 blocked_by:
 reconciled: true
@@ -100,6 +100,10 @@ string only — its docs admit `Bash(git *)` auto-approves
   startup default; the session override wins, is never written back, and
   auto works with zero config (deterministic layers + fail-closed asks when
   no classifier is configured). Spec D10.
+- **Per-project defaults (spec D11)**: a `projects:` map in the user-level
+  `~/.fuse/config.yml` overrides the permissions subtree per project path
+  (longest-ancestor cwd match) — so auto can be the default in trusted
+  projects and not others, granted from a file the repo cannot touch.
 - **Trust boundary**: permission-loosening keys (`mode`, `auto_approve`,
   `session_allow`, `auto.*`) are ignored from the repo-plantable
   `.fuse.local.yml` with a warning; tightening keys stay honored.
