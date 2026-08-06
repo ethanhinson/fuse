@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
@@ -17,6 +18,14 @@ type workflowActivation struct {
 	// rootDepth is the absolute tree depth of the workflow root node; the pool's
 	// max_depth is measured relative to it.
 	rootDepth int
+	// reserved is the atomic count of spawns admitted by the backstop. It is the
+	// race-free counter behind the total quota: because 2+ spawn_agent calls in a
+	// single turn run CONCURRENTLY (agent loop), a snapshot of the tree is racy —
+	// each concurrent call could read a stale sub-quota count and all be admitted.
+	// An atomic reserve-then-check closes that window so a within-turn batch can
+	// never overshoot pool.Total. Shared across every spawner in the run (the
+	// activation is created once at root activation).
+	reserved atomic.Int64
 }
 
 // pool converts the config pool into the agent-package mirror.
@@ -88,6 +97,39 @@ func stripPredicateFor(tree *agent.AgentTree, maxConcurrent int, act *workflowAc
 	}
 	wf := agent.NewWorkflowStripPredicate(tree, rootID, act.pool(), nodeDepth, act.rootDepth)
 	return agent.NewOrPredicate(global, wf)
+}
+
+// backstopFor returns the per-call workflow spawn backstop for a spawner rooted
+// under the workflow, or nil outside a workflow. It refuses a spawn that would
+// exceed the pool's total quota or push a child past the pool's max_depth — the
+// race/batch safety net behind the per-turn schema strip, mirroring the global
+// budget/depth backstops (change 0034 Acceptance 1: the limits hold regardless
+// of what the model attempts within a single turn).
+func backstopFor(tree *agent.AgentTree, act *workflowActivation, rootID string) func(newDepth int) error {
+	if act == nil || rootID == "" {
+		return nil
+	}
+	pool := act.pool()
+	if pool.Total <= 0 && pool.MaxDepth <= 0 {
+		return nil
+	}
+	return func(newDepth int) error {
+		if pool.MaxDepth > 0 && newDepth > act.rootDepth+pool.MaxDepth {
+			return fmt.Errorf("%w: depth %d exceeds workflow %q max_depth %d",
+				agent.ErrWorkflowQuotaExhausted, newDepth, act.name, pool.MaxDepth)
+		}
+		if pool.Total > 0 {
+			// Atomically reserve a slot; if this reservation would exceed the
+			// quota, release it and refuse. Reserve-then-check (not a tree
+			// snapshot) is what makes the cap hold under a concurrent batch.
+			if n := act.reserved.Add(1); n > int64(pool.Total) {
+				act.reserved.Add(-1)
+				return fmt.Errorf("%w: %d/%d workflow %q spawns used — proceed with the results you already have",
+					agent.ErrWorkflowQuotaExhausted, pool.Total, pool.Total, act.name)
+			}
+		}
+		return nil
+	}
 }
 
 // budgetFor returns the BudgetFunc to attach to a child's spawn tool. Inside a

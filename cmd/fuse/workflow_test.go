@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
+	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 )
 
@@ -65,6 +67,34 @@ func TestResolveWorkerTools_CannotWidenBeyondAllowlist(t *testing.T) {
 func TestResolveWorkerTools_UnknownWorkerErrors(t *testing.T) {
 	if _, err := resolveWorkerTools(researchWF(), "nonesuch", nil); err == nil {
 		t.Fatal("expected error for unknown worker")
+	}
+}
+
+func TestBackstopFor_DepthLimit(t *testing.T) {
+	tree := agent.NewAgentTree("root", "m")
+	rootID := tree.RootID()
+	act := &workflowActivation{name: "research", cfg: researchWF(), rootDepth: 0}
+
+	bs := backstopFor(tree, act, rootID)
+	if bs == nil {
+		t.Fatal("backstop should be non-nil for a pool with total/max_depth set")
+	}
+	// max_depth=1, rootDepth=0 => a spawn producing depth 2 is refused.
+	if err := bs(2); !errors.Is(err, agent.ErrWorkflowQuotaExhausted) {
+		t.Errorf("depth 2 should be refused (max_depth 1), got %v", err)
+	}
+	// depth 1 is at the limit, allowed (the subtree is empty, so total is fine).
+	if err := bs(1); err != nil {
+		t.Errorf("depth 1 with empty subtree should be allowed, got %v", err)
+	}
+	// (Total-quota refusal within a turn is covered by the agent package's
+	// TestSpawnWorkflowBackstopFires, which drives the real Spawn path.)
+}
+
+func TestBackstopFor_NilOutsideWorkflow(t *testing.T) {
+	tree := agent.NewAgentTree("root", "m")
+	if backstopFor(tree, nil, tree.RootID()) != nil {
+		t.Error("no activation => nil backstop")
 	}
 }
 

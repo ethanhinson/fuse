@@ -123,6 +123,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 			agent.WithTree(tree),
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(depth),
+			agent.WithSpawnBackstop(backstopFor(tree, act, rootID)),
 			agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
 				// Resolve the effective tool list: inside a workflow a selected
 				// worker's allowlist is authoritative (opts.Tools may only narrow
