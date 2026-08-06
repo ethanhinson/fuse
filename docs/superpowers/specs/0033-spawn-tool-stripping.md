@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0033 — Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0033-spawn-tool-stripping.md)**
+> ↩ **[Change 0033 — Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-06-0033-spawn-tool-stripping.md)**
 <!-- docket:backlink:end -->
 
 # 0033 — Spawn tool stripping: reversible at the concurrency cap, permanent at budget exhaustion

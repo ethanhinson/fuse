@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0033-spawn-tool-stripping.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0033-spawn-tool-stripping.md) |
-| Plan | [0033-spawn-tool-stripping-plan.md](https://github.com/ethanhinson/fuse/blob/feat/spawn-tool-stripping/docs/superpowers/plans/0033-spawn-tool-stripping-plan.md) |
-| Results | [2026-08-06-spawn-tool-stripping-results.md](https://github.com/ethanhinson/fuse/blob/feat/spawn-tool-stripping/docs/results/2026-08-06-spawn-tool-stripping-results.md) |
+| Plan | [0033-spawn-tool-stripping-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/0033-spawn-tool-stripping-plan.md) |
+| Results | [2026-08-06-spawn-tool-stripping-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-06-spawn-tool-stripping-results.md) |
 | PR | [#19](https://github.com/ethanhinson/fuse/pull/19) |
 <!-- docket:artifacts:end -->
 
