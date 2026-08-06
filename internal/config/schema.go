@@ -105,6 +105,43 @@ type Config struct {
 	MCPServers  []MCPServerConfig
 	Research    ResearchConfig
 	Agents      AgentsConfig
+	// Workflows binds an invocable skill to a spawn policy and worker pool,
+	// keyed by workflow name. Nil/empty ⇒ no workflow behavior (byte-identical
+	// to pre-0034). A skill may embed a default block in its frontmatter; a
+	// config-level entry for the same name overrides it, and .fuse.local.yml may
+	// only TIGHTEN pool numbers, never loosen them (ADR-0006 trust boundary).
+	Workflows map[string]WorkflowConfig
+}
+
+// WorkflowConfig is one named workflow: the invocable it binds, its subtree
+// spawn pool, and its typed worker definitions. Skill names an invocable
+// resolved by name (v1: embedded/user markdown skills); the field is
+// deliberately form-agnostic so other invocable forms can bind later.
+type WorkflowConfig struct {
+	Skill   string                  `yaml:"skill"`
+	Pool    PoolConfig              `yaml:"pool"`
+	Workers map[string]WorkerConfig `yaml:"workers"`
+}
+
+// PoolConfig is a workflow subtree's spawn policy. Each dimension is 0 = unset
+// (that brake off), matching how AgentTree.SpawnBudget treats max==0 and
+// NewStripSpawnPredicate treats maxConcurrent<=0.
+//
+//   - Concurrent (reversible): max children running+pending in the subtree.
+//   - Total (permanent): lifetime spawn quota for the subtree.
+//   - MaxDepth (static): spawn depth below the workflow root.
+type PoolConfig struct {
+	Concurrent int `yaml:"concurrent"`
+	Total      int `yaml:"total"`
+	MaxDepth   int `yaml:"max_depth"`
+}
+
+// WorkerConfig is a typed worker: a tool allowlist (a worker whose allowlist
+// omits spawn_agent structurally cannot nest) and an optional model pin
+// (empty ⇒ inherit the parent's model).
+type WorkerConfig struct {
+	Tools []string `yaml:"tools"`
+	Model string   `yaml:"model"`
 }
 
 // AgentsConfig controls the subagent runtime. MaxSpawns is a tree-global
@@ -131,6 +168,9 @@ type rawConfig struct {
 	Research    rawResearchConfig        `yaml:"research"`
 	Agents      rawAgentsConfig          `yaml:"agents"`
 	Projects    map[string]ProjectConfig `yaml:"projects"`
+	// Workflows reuses the resolved WorkflowConfig shape on-disk (plain
+	// maps/lists/ints, no free-text scalars — so yaml.Unmarshal is safe).
+	Workflows map[string]WorkflowConfig `yaml:"workflows"`
 }
 
 // ProjectConfig is a single per-project override entry keyed by absolute

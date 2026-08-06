@@ -833,3 +833,116 @@ func TestLoadEnvOverridesGateway(t *testing.T) {
 		t.Errorf("env override failed: %+v", c.Gateway)
 	}
 }
+
+// --- change 0034: workflows: config surface ---
+
+func TestDefaultHasNoWorkflows(t *testing.T) {
+	c := Default()
+	if len(c.Workflows) != 0 {
+		t.Errorf("Default().Workflows = %v, want empty (no workflow behavior by default)", c.Workflows)
+	}
+}
+
+func TestLoadWorkflowsParsesAndLayers(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `
+workflows:
+  research:
+    skill: research
+    pool:
+      concurrent: 5
+      total: 8
+      max_depth: 1
+    workers:
+      facet-researcher:
+        tools: [web_search, web_fetch, read_file]
+`
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf, ok := c.Workflows["research"]
+	if !ok {
+		t.Fatalf("Workflows[research] missing; got %v", c.Workflows)
+	}
+	if wf.Skill != "research" {
+		t.Errorf("skill = %q, want research", wf.Skill)
+	}
+	if wf.Pool.Concurrent != 5 || wf.Pool.Total != 8 || wf.Pool.MaxDepth != 1 {
+		t.Errorf("pool = %+v, want {5 8 1}", wf.Pool)
+	}
+	w, ok := wf.Workers["facet-researcher"]
+	if !ok {
+		t.Fatalf("worker facet-researcher missing; got %v", wf.Workers)
+	}
+	if got := strings.Join(w.Tools, ","); got != "web_search,web_fetch,read_file" {
+		t.Errorf("worker tools = %q", got)
+	}
+	for _, tl := range w.Tools {
+		if tl == "spawn_agent" {
+			t.Error("facet-researcher must not carry spawn_agent")
+		}
+	}
+}
+
+// TestLocalWorkflowsTightenOnly asserts the ADR-0006 trust boundary for the
+// repo-plantable .fuse.local.yml: it may LOWER a workflow pool number (tighten)
+// but a value that would LOOSEN it (raise the cap) is ignored, keeping the
+// trusted home-file value, and a warning names the workflow.
+func TestLocalWorkflowsTightenOnly(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	// Trusted home file establishes the baseline pool.
+	trusted := `
+workflows:
+  research:
+    skill: research
+    pool: {concurrent: 5, total: 8, max_depth: 1}
+`
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(trusted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Untrusted local file tries to LOOSEN total (8 -> 64) and TIGHTEN concurrent (5 -> 2).
+	local := `
+workflows:
+  research:
+    pool: {concurrent: 2, total: 64}
+`
+	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf := c.Workflows["research"]
+	if wf.Pool.Concurrent != 2 {
+		t.Errorf("concurrent = %d, want 2 (local tighten honored)", wf.Pool.Concurrent)
+	}
+	if wf.Pool.Total != 8 {
+		t.Errorf("total = %d, want 8 (local loosening ignored)", wf.Pool.Total)
+	}
+	if w := warnings(); !strings.Contains(w, "research") {
+		t.Errorf("expected a warning naming the loosened workflow; got %q", w)
+	}
+}
