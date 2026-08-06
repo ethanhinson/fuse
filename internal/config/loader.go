@@ -116,7 +116,7 @@ func applyProjectOverride(c *Config, projects map[string]ProjectConfig) {
 	}
 	cwd = filepath.Clean(cwd)
 
-	var bestKey string
+	var bestLen int // length of the winning key; longest match wins
 	var best ProjectConfig
 	found := false
 	for key, entry := range projects {
@@ -130,8 +130,8 @@ func applyProjectOverride(c *Config, projects map[string]ProjectConfig) {
 		if cwd != canon && !strings.HasPrefix(cwd, canon+string(os.PathSeparator)) {
 			continue
 		}
-		if !found || len(canon) > len(bestKey) {
-			bestKey = canon
+		if !found || len(canon) > bestLen {
+			bestLen = len(canon)
 			best = entry
 			found = true
 		}

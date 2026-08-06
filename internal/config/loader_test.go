@@ -536,7 +536,9 @@ func TestProjectOverrideSymlinkedCwd(t *testing.T) {
 }
 
 // TestProjectOverrideNoMatch — cwd under no project key ⇒ global unchanged, no
-// warning.
+// warning. The key is a REAL, resolvable sibling dir (not cwd, not an ancestor
+// of it), so this exercises the resolved-but-non-ancestor branch rather than the
+// unresolvable-key skip.
 func TestProjectOverrideNoMatch(t *testing.T) {
 	cwd := canon(t, chdirTemp(t))
 	home := filepath.Join(cwd, "home")
@@ -544,7 +546,9 @@ func TestProjectOverrideNoMatch(t *testing.T) {
 	os.Unsetenv("LLM_GATEWAY_URL")
 	os.Unsetenv("LLM_GATEWAY_KEY")
 
-	cfg := "permissions:\n  mode: prompt-all\nprojects:\n  /nonexistent/other/project:\n    permissions:\n      mode: auto\n"
+	// A real sibling dir that resolves but is not an ancestor of cwd.
+	sibling := canon(t, t.TempDir())
+	cfg := "permissions:\n  mode: prompt-all\nprojects:\n  " + sibling + ":\n    permissions:\n      mode: auto\n"
 	writeHomeConfigAt(t, home, cfg)
 
 	warnings := captureWarnings(t)
