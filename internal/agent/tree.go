@@ -98,11 +98,16 @@ type AgentNode struct {
 	EndedAt   time.Time
 	TokensIn  int
 	TokensOut int
-	Events    []AgentEvent
-	children  []string
-	cancel    func() // set by Spawner; called by CancelNode
-	yields    int    // concurrent spawn_agent waits currently yielding this node's slot
-	mu        sync.Mutex
+	// WorkflowRoot names the workflow this node is the ROOT of, when non-empty.
+	// Set when a workflow-bound skill activates on this node; its whole subtree
+	// is then governed by that workflow's pool. Empty on every other node. It is
+	// set once at node creation and never mutated, so it needs no lock. (0034)
+	WorkflowRoot string
+	Events       []AgentEvent
+	children     []string
+	cancel       func() // set by Spawner; called by CancelNode
+	yields       int    // concurrent spawn_agent waits currently yielding this node's slot
+	mu           sync.Mutex
 }
 
 // AddEvent appends an event to the node, thread-safe.
@@ -166,10 +171,11 @@ type NodeView struct {
 	Model     string
 	Status    NodeStatus
 	Depth     int
-	StartedAt time.Time
-	EndedAt   time.Time
-	TokensIn  int
-	TokensOut int
+	StartedAt    time.Time
+	EndedAt      time.Time
+	TokensIn     int
+	TokensOut    int
+	WorkflowRoot string // the workflow this node roots, if any (0034)
 }
 
 // Snapshot returns a consistent view of the node's mutable state.
@@ -177,16 +183,17 @@ func (n *AgentNode) Snapshot() NodeView {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return NodeView{
-		ID:        n.ID,
-		ParentID:  n.ParentID,
-		Label:     n.Label,
-		Model:     n.Model,
-		Status:    n.Status,
-		Depth:     n.Depth,
-		StartedAt: n.StartedAt,
-		EndedAt:   n.EndedAt,
-		TokensIn:  n.TokensIn,
-		TokensOut: n.TokensOut,
+		ID:           n.ID,
+		ParentID:     n.ParentID,
+		Label:        n.Label,
+		Model:        n.Model,
+		Status:       n.Status,
+		Depth:        n.Depth,
+		StartedAt:    n.StartedAt,
+		EndedAt:      n.EndedAt,
+		TokensIn:     n.TokensIn,
+		TokensOut:    n.TokensOut,
+		WorkflowRoot: n.WorkflowRoot,
 	}
 }
 
