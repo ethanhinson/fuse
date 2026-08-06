@@ -2,11 +2,11 @@
 id: 17
 slug: auto-mode
 title: Auto mode — layered safe/unsafe classification for autonomous tool approval
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-08-06
 depends_on: []
 related: [3, 10, 12, 16]
 discovered_from: []
@@ -17,7 +17,7 @@ results: docs/results/2026-08-05-auto-mode-results.md
 trivial: false
 auto_groomable:
 branch: feat/auto-mode
-claimed_at: 2026-08-06T01:56:48Z
+claimed_at: 2026-08-06T03:10:09Z
 pr: https://github.com/ethanhinson/fuse/pull/15
 blocked_by:
 reconciled: true
