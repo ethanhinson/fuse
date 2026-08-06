@@ -2,7 +2,7 @@
 id: 36
 slug: agent-scheduler
 title: Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits
-status: proposed
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-06
@@ -16,9 +16,10 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/agent-scheduler
 pr:
 blocked_by:
+claimed_at: 2026-08-06T21:30:22Z
 reconciled: false
 ---
 
