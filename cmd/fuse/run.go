@@ -191,15 +191,21 @@ func sessionGateMode(cfg config.Config, sm *permissions.SessionMode) permissions
 	return permissions.ParseMode(cfg.Permissions.Mode)
 }
 
-// buildGate constructs a per-turn/child PermissionGate wired for the session:
-// its mode is taken from the session source (or cfg when sm is nil), and the
-// auto-mode classifier/workspace/interactive options are wired whenever a
-// classifier is constructible. Centralizing construction here keeps the mode
-// override and auto-mode wiring consistent across every gate builder and gives
-// tests a single seam to inspect the constructed gate.
+// buildGate constructs a per-turn/child PermissionGate wired for the session. When
+// a session source is threaded in (the interactive shell), the gate is wired to
+// the live SessionMode holder so a mid-turn Shift+Tab / /mode switch bites the
+// already-built gate and its running children — WithMode still seeds the initial
+// snapshot for parity. When sm is nil (one-shot / mcp-server) no holder is wired
+// and the gate resolves off the cfg-derived snapshot exactly as before.
+// Centralizing construction here keeps the mode override and auto-mode wiring
+// consistent across every gate builder and gives tests a single seam to inspect
+// the constructed gate.
 func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.ApprovalFunc, reg *model.Registry, traceW io.Writer, sm *permissions.SessionMode) *permissions.PermissionGate {
 	opts := autoModeOptions(cfg, reg, traceW)
 	opts = append(opts, permissions.WithMode(sessionGateMode(cfg, sm)))
+	if sm != nil {
+		opts = append(opts, permissions.WithSessionMode(sm))
+	}
 	return permissions.New(cfg.Permissions, toolReg, approve, opts...)
 }
 
