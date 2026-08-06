@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/agent-scheduler
 pr:
 blocked_by:
-claimed_at: 2026-08-06T21:30:22Z
-reconciled: false
+claimed_at: 2026-08-06T21:38:00Z
+reconciled: true
 ---
 
 ## Artifacts
@@ -73,3 +73,16 @@ Design detail and acceptance criteria in the linked spec.
 - `queue_bound` multiplier vs absolute; whether the rate gate should default on.
 
 ## Reconcile log
+
+- **2026-08-06** — Reconciled against `origin/main` (c595d5e, post-0034 merge). All
+  premises hold: `Adapter.Complete` remains the single dispatch choke point
+  (`internal/model/adapter.go:212`); per-node `TokensIn`/`TokensOut` counters and
+  `UpdateTokens` exist; the channel semaphore + `YieldSlot`/`UnyieldSlot` mechanics are
+  in `internal/agent/tree.go`. 0034 landed its seeds as tree-level pieces — subtree
+  accounting (`SubtreeActiveCounts`/`SubtreeSpawnCount`/`WorkflowRootOf` in
+  `subtree.go`), `NewWorkflowStripPredicate` composed with the global predicate via
+  `NewOrPredicate` (`strip.go`), and an atomic per-call total-quota reservation
+  backstop — not as a proto-Scheduler type; no `Scheduler` component exists yet, so
+  this change creates it and folds those pieces in, exactly the scope as written.
+  ADR-0007 (scheduler as single admission authority) is already recorded. No scope
+  changes; spec stands as written.
