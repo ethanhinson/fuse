@@ -137,7 +137,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// spawn factory closes over it: child/subagent approvals must route to the
 	// same parent TUI channel the root turn uses, rather than bypassing the gate
 	// with a blanket auto-approve.
-	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build)
+	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build, sessionMode, classifierConstructible(cfg))
 	m = m.WithTree(tree)
 	// The parent-channel approval func for children: same TUI channel as the
 	// root turn, wrapped per-child by PrefixApproval below so the human sees

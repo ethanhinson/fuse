@@ -53,7 +53,7 @@ func TestShellModelBuilderWiring(t *testing.T) {
 	var build tui.AgentBuilder = func(alias string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		return buildAgentWithRendererAndTrace(cfg, reg, alias, r, false, "", toolReg, approve, nil, "", nil)
 	}
-	m := tui.NewShellModel(reg.Default, false, "dark", reg, nil, build)
+	m := tui.NewShellModel(reg.Default, false, "dark", reg, nil, build, permissions.NewSessionMode(permissions.ModeSmart), true)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	view := next.(tui.ShellModel).View()
 	if !strings.Contains(view, reg.Default) {

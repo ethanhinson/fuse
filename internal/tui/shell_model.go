@@ -185,6 +185,16 @@ type ShellModel struct {
 	completer *slashCompleter
 	build     AgentBuilder
 
+	// sessionMode is the read handle on the session's active permission mode —
+	// the single source shared with per-turn gate construction (Shift+Tab and
+	// /mode mutate it in later tasks). The View indicator reads Get() each render.
+	sessionMode *permissions.SessionMode
+	// classifierAvailable is the degraded fact the shell learns ONCE at startup:
+	// was an auto-mode classifier constructible? It is a plain flag threaded in,
+	// never re-derived in the view. When auto is active but this is false, the
+	// indicator marks the deterministic-only (fail-closed) posture.
+	classifierAvailable bool
+
 	// Subagent tree and inline summary tracking.
 	tree          *agent.AgentTree
 	agentsActive  bool
@@ -200,7 +210,12 @@ type ShellModel struct {
 // fixed glamour style name ("dark", "light", etc.) detected before the TUI
 // starts so glamour never queries the terminal from inside the bubbletea event
 // loop. slashReg may be nil (all slash commands then return unknown).
-func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.Registry, slashReg *SlashRegistry, build AgentBuilder) ShellModel {
+//
+// sessionMode is the session's active-permission-mode holder the status-line
+// indicator reads live; classifierAvailable is the startup degraded fact (was
+// an auto-mode classifier constructible?) used to mark the fail-closed posture
+// when auto is active with no classifier.
+func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.Registry, slashReg *SlashRegistry, build AgentBuilder, sessionMode *permissions.SessionMode, classifierAvailable bool) ShellModel {
 	in := textinput.New()
 	in.Placeholder = "type a task, /model NAME, /verbose, /exit"
 	in.Prompt = ""
@@ -218,17 +233,19 @@ func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.R
 	}
 
 	m := ShellModel{
-		vp:           vp,
-		input:        in,
-		spinner:      sp,
-		alias:        alias,
-		verbose:      verbose,
-		glamourStyle: glamourStyle,
-		ch:           make(chan tea.Msg, 64),
-		reg:          reg,
-		slashReg:     slashReg,
-		completer:    completer,
-		build:        build,
+		vp:                  vp,
+		input:               in,
+		spinner:             sp,
+		alias:               alias,
+		verbose:             verbose,
+		glamourStyle:        glamourStyle,
+		ch:                  make(chan tea.Msg, 64),
+		reg:                 reg,
+		slashReg:            slashReg,
+		completer:           completer,
+		build:               build,
+		sessionMode:         sessionMode,
+		classifierAvailable: classifierAvailable,
 	}
 	m.appendLine(banner.String(version.Version))
 	m.appendLine(fmt.Sprintf("model: %s — /model NAME to switch, /verbose to toggle, /exit to quit", alias))
@@ -1242,7 +1259,7 @@ func (m ShellModel) View() string {
 			ruleStyle.Render("("+meta+")")
 		status += m.agentsHint()
 	default:
-		status = statusModelStyle.Render(m.alias)
+		status = statusModelStyle.Render(m.alias) + " " + statusModelStyle.Render(m.statusLine())
 		status += m.agentsHint()
 	}
 
@@ -1262,4 +1279,30 @@ func (m ShellModel) View() string {
 	b.WriteByte('\n')
 	b.WriteString(status)
 	return b.String()
+}
+
+// statusLine produces the session-mode indicator fragment for the default
+// status branch — the mode token plus, for auto-without-classifier, a static
+// degraded marker. It reads the live session mode and the startup degraded flag
+// so the indicator tracks a mid-session mode switch. Extracted so tests assert
+// on this fragment rather than a full-screen View() snapshot.
+func (m ShellModel) statusLine() string {
+	mode := permissions.ModeSmart
+	if m.sessionMode != nil {
+		mode = m.sessionMode.Get()
+	}
+	return modeStatus(mode, m.classifierAvailable)
+}
+
+// modeStatus renders just the mode token (always the fixed
+// PermissionMode.String() token, never a hand-written label) and, when mode is
+// auto and no classifier is available, a static plain-ASCII degraded marker
+// signalling the deterministic-only fail-closed posture. Pure and side-effect
+// free so it is unit-testable in isolation.
+func modeStatus(mode permissions.PermissionMode, classifierAvailable bool) string {
+	s := "mode: " + mode.String()
+	if mode == permissions.ModeAuto && !classifierAvailable {
+		s += " (degraded - no classifier)"
+	}
+	return s
 }
