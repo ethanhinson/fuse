@@ -102,6 +102,17 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
 
+	// research-probe IS a research root: activate the research workflow on the
+	// root node so its whole subtree is governed by the workflow pool and its
+	// typed workers (change 0034). Absent a research workflow (config disabled
+	// it) act stays nil and behavior is the pre-0034 freeform fan-out.
+	var act *workflowActivation
+	if wf, ok := cfg.Workflows["research"]; ok {
+		rootNode.WorkflowRoot = "research"
+		act = &workflowActivation{name: "research", cfg: wf, rootDepth: rootNode.Depth}
+	}
+	rootID := tree.RootID()
+
 	// Self-referential spawn factory, mirroring shell.go. The only difference
 	// from production: each child renders through a MultiRenderer that feeds
 	// both the tree (for the hierarchy snapshot) and the shared recorder Log
@@ -112,16 +123,34 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 			agent.WithTree(tree),
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(depth),
+			agent.WithSpawnBackstop(backstopFor(tree, act, rootID)),
 			agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
-				childToolReg, terr := childToolRegistry(toolReg, opts.Tools)
+				// Resolve the effective tool list: inside a workflow a selected
+				// worker's allowlist is authoritative (opts.Tools may only narrow
+				// it); outside, opts.Tools is the freeform subset. (change 0034)
+				effectiveTools := opts.Tools
+				if act != nil {
+					rt, rerr := resolveWorkerTools(act.cfg, opts.Worker, opts.Tools)
+					if rerr != nil {
+						return "", rerr
+					}
+					effectiveTools = rt
+				}
+				childToolReg, terr := childToolRegistry(toolReg, effectiveTools)
 				if terr != nil {
 					return "", terr
 				}
-				if childNode.Depth >= agent.MaxDepth {
+				if childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(effectiveTools) {
 					// Depth strip (static): a child at MaxDepth can never spawn.
+					// Folded-in fix (change 0034): a parent (or worker allowlist)
+					// that omits spawn_agent withholds it from the child.
 					childToolReg.Unregister("spawn_agent")
 				} else {
-					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
+					spawnTool := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), budgetFor(tree, act, rootID))
+					if act != nil {
+						spawnTool = spawnTool.WithWorkers(act.workerNames())
+					}
+					childToolReg.Register(spawnTool)
 				}
 
 				label := childNode.Label
@@ -134,6 +163,13 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				)
 
 				modelID := opts.ModelID
+				// A worker's optional model pin applies when the caller did not
+				// pick a model explicitly (change 0034).
+				if modelID == "" && act != nil && opts.Worker != "" {
+					if w, ok := act.cfg.Workers[opts.Worker]; ok && w.Model != "" {
+						modelID = w.Model
+					}
+				}
 				if modelID == "" {
 					modelID = alias
 				}
@@ -148,14 +184,16 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				if aerr != nil {
 					return "", aerr
 				}
-				a.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
+				// Inside the workflow subtree, compose the global strip predicate
+				// with the workflow pool's (tighter wins); outside, global only.
+				a.SetStripSpawn(stripPredicateFor(tree, cfg.Agents.MaxConcurrent, act, rootID, childNode.Depth))
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 				return childResult(msgs, rerr)
 			}),
 		)
-		return func(ctx context.Context, label, task, systemPrompt, modelID string, toolsList []string) (string, error) {
+		return func(ctx context.Context, req tools.SpawnRequest) (string, error) {
 			handle, herr := spawner.Spawn(ctx, agent.SpawnOpts{
-				Label: label, Task: task, SystemPrompt: systemPrompt, ModelID: modelID, Tools: toolsList,
+				Label: req.Label, Task: req.Task, SystemPrompt: req.SystemPrompt, ModelID: req.Model, Tools: req.Tools, Worker: req.Worker,
 			})
 			if herr != nil {
 				return "", herr
@@ -168,7 +206,13 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 			return done.Result, done.Err
 		}
 	}
-	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
+	rootSpawn := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), budgetFor(tree, act, rootID))
+	if act != nil {
+		// The root offers the workflow's typed workers so the model selects a
+		// facet-researcher per facet instead of hand-assembling a toolset.
+		rootSpawn = rootSpawn.WithWorkers(act.workerNames())
+	}
+	toolReg.Register(rootSpawn)
 
 	// Root renderer: tree node + recorder, same MultiRenderer shape as children.
 	rootR := tui.NewMultiRenderer(
@@ -180,7 +224,10 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 		fmt.Fprintf(stderr, "build root agent: %v\n", err)
 		return 1
 	}
-	rootAgent.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
+	// The root is the workflow root: its own spawn schema is governed by the
+	// workflow pool (concurrent/total) composed with the global brakes. Its depth
+	// (0 == rootDepth) keeps it below the pool's max_depth limit.
+	rootAgent.SetStripSpawn(stripPredicateFor(tree, cfg.Agents.MaxConcurrent, act, rootID, rootNode.Depth))
 
 	// The task the root receives is the /research skill body with the question
 	// woven in as ARGUMENTS — exactly what the KindSkill slash path injects.

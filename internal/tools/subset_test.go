@@ -15,7 +15,12 @@ func (spawnFakeTool) Execute(context.Context, string) Result {
 	return Result{Output: "spawned"}
 }
 
-func TestRegistrySubset_SpawnAgentForced(t *testing.T) {
+// TestRegistrySubset_SpawnAgentNotForced pins the change 0034 folded-in fix:
+// a subset that omits spawn_agent yields a registry WITHOUT it. Before 0034,
+// Subset force-included spawn_agent unconditionally, which made a parent
+// structurally unable to withhold the spawn tool from a child — the exact
+// enforcement gap workflow worker allowlists (and freeform tools subsets) close.
+func TestRegistrySubset_SpawnAgentNotForced(t *testing.T) {
 	r := NewRegistry()
 	r.Register(fakeTool{name: "bash"})
 	r.Register(spawnFakeTool{})
@@ -33,8 +38,27 @@ func TestRegistrySubset_SpawnAgentForced(t *testing.T) {
 	if !names["bash"] {
 		t.Error("subset should contain 'bash'")
 	}
+	if names["spawn_agent"] {
+		t.Error("spawn_agent must NOT be force-included when a subset omits it (change 0034)")
+	}
+}
+
+// A subset that explicitly names spawn_agent still gets it.
+func TestRegistrySubset_SpawnAgentWhenNamed(t *testing.T) {
+	r := NewRegistry()
+	r.Register(fakeTool{name: "bash"})
+	r.Register(spawnFakeTool{})
+
+	sub, unknown := r.Subset([]string{"bash", "spawn_agent"})
+	if len(unknown) != 0 {
+		t.Errorf("unexpected unknown tools: %v", unknown)
+	}
+	names := make(map[string]bool)
+	for _, s := range sub.Schemas() {
+		names[s.Name] = true
+	}
 	if !names["spawn_agent"] {
-		t.Error("spawn_agent should be force-included even though it was not in names list")
+		t.Error("spawn_agent should be present when explicitly named in the subset")
 	}
 }
 
@@ -58,7 +82,10 @@ func TestRegistrySubset_UnknownDropped(t *testing.T) {
 }
 
 func TestRegistrySubset_EmptyNames(t *testing.T) {
-	t.Run("spawn_agent_present", func(t *testing.T) {
+	t.Run("empty_names_yields_empty_subset", func(t *testing.T) {
+		// With force-include removed (change 0034), Subset(nil) selects nothing.
+		// Empty-names inheritance for children is handled by childToolRegistry's
+		// Clone() path, not by Subset.
 		r := NewRegistry()
 		r.Register(spawnFakeTool{})
 
@@ -66,9 +93,8 @@ func TestRegistrySubset_EmptyNames(t *testing.T) {
 		if len(unknown) != 0 {
 			t.Errorf("unexpected unknowns: %v", unknown)
 		}
-		schemas := sub.Schemas()
-		if len(schemas) != 1 || schemas[0].Name != "spawn_agent" {
-			t.Errorf("expected only spawn_agent in subset, got %v", schemas)
+		if len(sub.Schemas()) != 0 {
+			t.Errorf("expected empty subset for nil names, got %v", sub.Schemas())
 		}
 	})
 

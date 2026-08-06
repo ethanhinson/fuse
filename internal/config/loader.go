@@ -96,6 +96,83 @@ func mergePermissions(c *Config, raw rawPermissionsConfig, trusted bool) (ignore
 	return ignored
 }
 
+// mergeWorkflows merges a source's workflows: map into c. A config-level entry
+// overrides any prior one for the same name (trusted sources set every present
+// field). From an UNTRUSTED source (.fuse.local.yml) pool numbers may only
+// TIGHTEN — lower an existing, already-set cap — because a workflow pool is a
+// safety brake and a repo-plantable file must not be able to widen it. A present
+// pool number that would loosen an existing cap is dropped and its workflow name
+// is returned for the caller's aggregated warning. Non-pool fields (skill,
+// workers) from an untrusted source are also inert (they could re-grant tools);
+// the workflow definition itself is human-owned config.
+//
+// "Tighten" is defined per dimension against the current value: a value is a
+// tightening only when the current value is already set (>0) and the new value
+// is a positive number strictly lower than it. Everything else from an untrusted
+// source — introducing a new workflow, setting a previously-unset dimension, or
+// raising a cap — is a loosening and ignored.
+func mergeWorkflows(c *Config, raw map[string]WorkflowConfig, trusted bool) (loosened []string) {
+	if len(raw) == 0 {
+		return nil
+	}
+	if c.Workflows == nil {
+		c.Workflows = map[string]WorkflowConfig{}
+	}
+	for name, rw := range raw {
+		if trusted {
+			cur := c.Workflows[name]
+			if rw.Skill != "" {
+				cur.Skill = rw.Skill
+			}
+			if rw.Pool.Concurrent != 0 {
+				cur.Pool.Concurrent = rw.Pool.Concurrent
+			}
+			if rw.Pool.Total != 0 {
+				cur.Pool.Total = rw.Pool.Total
+			}
+			if rw.Pool.MaxDepth != 0 {
+				cur.Pool.MaxDepth = rw.Pool.MaxDepth
+			}
+			if len(rw.Workers) > 0 {
+				cur.Workers = rw.Workers
+			}
+			c.Workflows[name] = cur
+			continue
+		}
+		// Untrusted: only tightening pool numbers on an EXISTING workflow apply.
+		cur, exists := c.Workflows[name]
+		if !exists {
+			loosened = append(loosened, name)
+			continue
+		}
+		flagged := false
+		tightenOnly := func(field string, curV, newV *int) {
+			if *newV == 0 {
+				return // omitted dimension
+			}
+			if *curV > 0 && *newV > 0 && *newV < *curV {
+				*curV = *newV // strictly-lower positive = tighten, honored
+				return
+			}
+			if !flagged {
+				loosened = append(loosened, name)
+				flagged = true
+			}
+		}
+		tightenOnly("concurrent", &cur.Pool.Concurrent, &rw.Pool.Concurrent)
+		tightenOnly("total", &cur.Pool.Total, &rw.Pool.Total)
+		tightenOnly("max_depth", &cur.Pool.MaxDepth, &rw.Pool.MaxDepth)
+		// skill / workers changes from an untrusted file are loosening surface.
+		if rw.Skill != "" && rw.Skill != cur.Skill || len(rw.Workers) > 0 {
+			if !flagged {
+				loosened = append(loosened, name)
+			}
+		}
+		c.Workflows[name] = cur
+	}
+	return loosened
+}
+
 // applyProjectOverride merges the per-project permissions entry whose key best
 // matches the current cwd. The winning key is the LONGEST project key that
 // equals cwd or is a path-segment ancestor of it. Keys and cwd are canonicalized
@@ -261,6 +338,15 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	}
 	if c.Agents.MaxConcurrent < 0 {
 		c.Agents.MaxConcurrent = 16
+	}
+
+	// Workflows: a config-level entry overrides any prior one for the same name.
+	// From an untrusted source (.fuse.local.yml) pool numbers may only TIGHTEN
+	// (lower an existing cap); a loosening value is ignored and the workflow is
+	// named in the aggregated warning (ADR-0006 trust boundary).
+	if loosened := mergeWorkflows(c, raw.Workflows, trusted); !trusted && len(loosened) > 0 {
+		fmt.Fprintf(warnw, "warning: %s ignores workflow pool-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
+			path, strings.Join(loosened, ", "))
 	}
 
 	// The `models` map holds a `default` string alongside model entries.

@@ -105,6 +105,43 @@ type Config struct {
 	MCPServers  []MCPServerConfig
 	Research    ResearchConfig
 	Agents      AgentsConfig
+	// Workflows binds an invocable skill to a spawn policy and worker pool,
+	// keyed by workflow name. Nil/empty ⇒ no workflow behavior (byte-identical
+	// to pre-0034). A skill may embed a default block in its frontmatter; a
+	// config-level entry for the same name overrides it, and .fuse.local.yml may
+	// only TIGHTEN pool numbers, never loosen them (ADR-0006 trust boundary).
+	Workflows map[string]WorkflowConfig
+}
+
+// WorkflowConfig is one named workflow: the invocable it binds, its subtree
+// spawn pool, and its typed worker definitions. Skill names an invocable
+// resolved by name (v1: embedded/user markdown skills); the field is
+// deliberately form-agnostic so other invocable forms can bind later.
+type WorkflowConfig struct {
+	Skill   string                  `yaml:"skill"`
+	Pool    PoolConfig              `yaml:"pool"`
+	Workers map[string]WorkerConfig `yaml:"workers"`
+}
+
+// PoolConfig is a workflow subtree's spawn policy. Each dimension is 0 = unset
+// (that brake off), matching how AgentTree.SpawnBudget treats max==0 and
+// NewStripSpawnPredicate treats maxConcurrent<=0.
+//
+//   - Concurrent (reversible): max children running+pending in the subtree.
+//   - Total (permanent): lifetime spawn quota for the subtree.
+//   - MaxDepth (static): spawn depth below the workflow root.
+type PoolConfig struct {
+	Concurrent int `yaml:"concurrent"`
+	Total      int `yaml:"total"`
+	MaxDepth   int `yaml:"max_depth"`
+}
+
+// WorkerConfig is a typed worker: a tool allowlist (a worker whose allowlist
+// omits spawn_agent structurally cannot nest) and an optional model pin
+// (empty ⇒ inherit the parent's model).
+type WorkerConfig struct {
+	Tools []string `yaml:"tools"`
+	Model string   `yaml:"model"`
 }
 
 // AgentsConfig controls the subagent runtime. MaxSpawns is a tree-global
@@ -131,6 +168,9 @@ type rawConfig struct {
 	Research    rawResearchConfig        `yaml:"research"`
 	Agents      rawAgentsConfig          `yaml:"agents"`
 	Projects    map[string]ProjectConfig `yaml:"projects"`
+	// Workflows reuses the resolved WorkflowConfig shape on-disk (plain
+	// maps/lists/ints, no free-text scalars — so yaml.Unmarshal is safe).
+	Workflows map[string]WorkflowConfig `yaml:"workflows"`
 }
 
 // ProjectConfig is a single per-project override entry keyed by absolute
@@ -206,6 +246,22 @@ func Default() Config {
 		Agents: AgentsConfig{
 			MaxSpawns:     64,
 			MaxConcurrent: 16,
+		},
+		// The research workflow ships as a built-in default (change 0034): it
+		// binds the research skill to a facet-researcher worker (no spawn_agent,
+		// so it cannot nest) and a {concurrent:5, total:8, max_depth:1} pool — a
+		// reservation within the global brakes. A config-level workflows.research
+		// entry overrides these via the normal per-field merge.
+		Workflows: map[string]WorkflowConfig{
+			"research": {
+				Skill: "research",
+				Pool:  PoolConfig{Concurrent: 5, Total: 8, MaxDepth: 1},
+				Workers: map[string]WorkerConfig{
+					"facet-researcher": {
+						Tools: []string{"web_search", "web_fetch", "read_file"},
+					},
+				},
+			},
 		},
 	}
 }

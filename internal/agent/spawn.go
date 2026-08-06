@@ -17,6 +17,14 @@ var ErrMaxDepthExceeded = errors.New("agent: max spawn depth exceeded")
 // the ceiling anyway this refuses rather than letting fan-out run away.
 var ErrSpawnBudgetExhausted = errors.New("agent: spawn budget exhausted")
 
+// ErrWorkflowQuotaExhausted is returned by a workflow spawn backstop when a
+// spawn would exceed the workflow pool's total quota or depth limit (change
+// 0034). It is the per-call race/batch safety net behind the per-turn schema
+// strip: a model that emits a batch of spawns in one turn (all seeing the tool
+// present at turn start) is still checked call-by-call, so the pool cannot be
+// overshot within a turn.
+var ErrWorkflowQuotaExhausted = errors.New("agent: workflow spawn quota exhausted")
+
 // SpawnOpts configures a child agent spawn.
 type SpawnOpts struct {
 	Label        string
@@ -26,6 +34,9 @@ type SpawnOpts struct {
 	ModelID      string
 	MaxTurns     int
 	MaxTokens    int
+	// Worker names a workflow worker type (change 0034); empty for freeform
+	// spawns. The child builder resolves it to the worker's tool allowlist.
+	Worker string
 }
 
 // SpawnDone carries the result of a completed child agent.
@@ -63,12 +74,20 @@ func WithSpawnDepth(depth int) Option { return func(s *Spawner) { s.depth = dept
 // WithChildBuilder injects the local child-agent runner into a Spawner.
 func WithChildBuilder(fn ChildBuilder) Option { return func(s *Spawner) { s.buildChild = fn } }
 
+// WithSpawnBackstop installs an optional per-call workflow backstop, invoked
+// after the global depth/budget checks with the child's would-be depth. A
+// non-nil error refuses the spawn (change 0034). Nil (default) is a no-op.
+func WithSpawnBackstop(fn func(newDepth int) error) Option {
+	return func(s *Spawner) { s.backstop = fn }
+}
+
 // Spawner provides the Spawn method for creating child agents.
 type Spawner struct {
 	tree       *AgentTree
 	node       *AgentNode
 	depth      int
 	buildChild ChildBuilder
+	backstop   func(newDepth int) error
 }
 
 // NewSpawner creates a Spawner with the provided options.
@@ -92,6 +111,13 @@ func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (AgentHandle, error
 	if s.tree != nil {
 		if used, max := s.tree.SpawnBudget(); max > 0 && used >= max {
 			return AgentHandle{}, fmt.Errorf("%w: %d/%d spawns used — proceed with the results you already have and do not spawn again", ErrSpawnBudgetExhausted, used, max)
+		}
+	}
+	// Workflow pool backstop (change 0034): the per-call safety net behind the
+	// per-turn strip, so a within-turn batch cannot overshoot the pool.
+	if s.backstop != nil {
+		if err := s.backstop(newDepth); err != nil {
+			return AgentHandle{}, err
 		}
 	}
 	return s.spawnLocal(ctx, opts, newDepth)

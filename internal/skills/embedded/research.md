@@ -25,12 +25,15 @@ when it is genuinely irrelevant to ARGUMENTS.
 
 ## Step 2 - Fan out one subagent per facet
 
-Spawn ONE subagent per facet in a SINGLE parallel batch via spawn_agent. Issue
-all the spawn_agent calls together so the children run concurrently - do not
-spawn them one at a time.
+Spawn ONE `facet-researcher` worker per facet in a SINGLE parallel batch via
+spawn_agent, passing `worker: "facet-researcher"`. Issue all the spawn_agent
+calls together so the children run concurrently - do not spawn them one at a
+time.
 
-Give each child the tools it needs, including web_search and web_fetch. Instruct
-each child to:
+The `facet-researcher` worker already carries exactly the tools a facet needs
+(web_search, web_fetch, read_file) and, by design, cannot itself spawn further
+subagents - so nesting and per-child tool assembly are handled for you by the
+workflow, not by instructions a child might ignore. Instruct each child to:
 
 - web_search its facet question.
 - Pick the most promising results (favor primary, authoritative, and recent
@@ -39,9 +42,9 @@ each child to:
 - Return per-facet findings as concise prose, and include the source URL for
   every claim.
 
-Keep nested spawn depth at 1: children DO NOT spawn further subagents. A child
-that receives a facet does its own searching and fetching directly and returns
-prose - it MUST NOT call spawn_agent. Spawning is the root's job only.
+If spawn_agent is not among your tools this turn, do the facet work directly
+yourself - search, fetch, and synthesize - rather than waiting on a spawn that
+the workflow pool has (correctly) withheld.
 
 ### Spawn budget - read it, never count it yourself
 

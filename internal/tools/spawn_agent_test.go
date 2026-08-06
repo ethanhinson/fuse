@@ -8,7 +8,7 @@ import (
 
 // okSpawn is a SpawnFunc that returns a fixed child result with no error.
 func okSpawn(result string) SpawnFunc {
-	return func(_ context.Context, _, _, _, _ string, _ []string) (string, error) {
+	return func(_ context.Context, _ SpawnRequest) (string, error) {
 		return result, nil
 	}
 }
@@ -61,7 +61,7 @@ func TestSpawnAgentTool_BudgetLineClampsRemainingAtZero(t *testing.T) {
 func TestSpawnAgentTool_NoBudgetLineOnSpawnError(t *testing.T) {
 	// A failed spawn returns the error verbatim, with no budget line appended —
 	// the model needs the clean error to react to.
-	failing := func(_ context.Context, _, _, _, _ string, _ []string) (string, error) {
+	failing := func(_ context.Context, _ SpawnRequest) (string, error) {
 		return "", context.Canceled
 	}
 	budget := func() (used, max int) { return 3, 16 }
@@ -82,5 +82,87 @@ func TestSpawnAgentTool_ZeroMaxBudgetOmitsLine(t *testing.T) {
 	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
 	if strings.Contains(res.Output, "agent budget") {
 		t.Errorf("unset budget (max 0) => no line, got:\n%s", res.Output)
+	}
+}
+
+// --- change 0034: worker param schema ---
+
+func TestSpawnAgentTool_NoWorkerParamByDefault(t *testing.T) {
+	tool := NewSpawnAgentTool(okSpawn("x"))
+	props := tool.Parameters()["properties"].(map[string]any)
+	if _, ok := props["worker"]; ok {
+		t.Error("worker param must be absent outside a workflow (no workers configured)")
+	}
+}
+
+func TestSpawnAgentTool_WithWorkersAddsEnum(t *testing.T) {
+	tool := NewSpawnAgentTool(okSpawn("x")).WithWorkers([]string{"facet-researcher", "summarizer"})
+	props := tool.Parameters()["properties"].(map[string]any)
+	w, ok := props["worker"].(map[string]any)
+	if !ok {
+		t.Fatal("worker param should be present when workers are configured")
+	}
+	enum, ok := w["enum"].([]any)
+	if !ok || len(enum) != 2 {
+		t.Fatalf("worker enum = %v, want 2 entries", w["enum"])
+	}
+	if enum[0] != "facet-researcher" || enum[1] != "summarizer" {
+		t.Errorf("worker enum = %v, want [facet-researcher summarizer]", enum)
+	}
+}
+
+func TestSpawnAgentTool_WorkerThreadedToSpawnFunc(t *testing.T) {
+	var got SpawnRequest
+	spawn := func(_ context.Context, req SpawnRequest) (string, error) {
+		got = req
+		return "ok", nil
+	}
+	tool := NewSpawnAgentTool(spawn).WithWorkers([]string{"facet-researcher"})
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do","worker":"facet-researcher"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if got.Worker != "facet-researcher" {
+		t.Errorf("SpawnRequest.Worker = %q, want facet-researcher", got.Worker)
+	}
+}
+
+// --- change 0034: tighter-of-two budget for workflow children ---
+
+func TestTighterBudget_ReportsFewerRemaining(t *testing.T) {
+	global := func() (used, max int) { return 10, 64 } // 54 remaining
+	workflow := func() (used, max int) { return 6, 8 } // 2 remaining (tighter)
+
+	used, max := TighterBudget(global, workflow)()
+	if used != 6 || max != 8 {
+		t.Errorf("TighterBudget = (%d,%d), want (6,8) — the workflow-total is tighter", used, max)
+	}
+}
+
+func TestTighterBudget_GlobalTighter(t *testing.T) {
+	global := func() (used, max int) { return 60, 64 }  // 4 remaining (tighter)
+	workflow := func() (used, max int) { return 1, 8 }  // 7 remaining
+	used, max := TighterBudget(global, workflow)()
+	if used != 60 || max != 64 {
+		t.Errorf("TighterBudget = (%d,%d), want (60,64) — global is tighter", used, max)
+	}
+}
+
+func TestTighterBudget_SkipsUnsetOperand(t *testing.T) {
+	global := func() (used, max int) { return 10, 64 }
+	unset := func() (used, max int) { return 0, 0 } // unset => ignored
+	used, max := TighterBudget(global, unset)()
+	if used != 10 || max != 64 {
+		t.Errorf("TighterBudget = (%d,%d), want (10,64) — unset operand ignored", used, max)
+	}
+}
+
+func TestTighterBudget_ShowsTighterInLine(t *testing.T) {
+	global := func() (used, max int) { return 10, 64 }
+	workflow := func() (used, max int) { return 6, 8 }
+	tool := NewSpawnAgentToolWithBudget(okSpawn("x"), TighterBudget(global, workflow))
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
+	if !strings.Contains(res.Output, "6/8 used (2 remaining)") {
+		t.Errorf("budget line should report the tighter 6/8, got:\n%s", res.Output)
 	}
 }

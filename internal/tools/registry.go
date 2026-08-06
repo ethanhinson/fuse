@@ -96,20 +96,19 @@ func (r *Registry) Execute(ctx context.Context, name, args string) (res Result) 
 	return res
 }
 
-// Subset returns a new registry containing only the named tools. The
-// "spawn_agent" tool is always force-included even if not in names. Unknown
-// names are dropped and returned in the second return value.
+// Subset returns a new registry containing only the named tools. Unknown names
+// are dropped and returned in the second return value.
+//
+// spawn_agent is NOT force-included (change 0034): a parent that omits it from
+// the requested subset produces a child that structurally cannot spawn. The
+// decision to (re-)wire a child's spawn tool lives in the child builder, which
+// binds the tool to the child's own node before registering it — so a subset
+// that names spawn_agent selects the parent's tool here and the builder replaces
+// it with the child-wired one.
 func (r *Registry) Subset(names []string) (*Registry, []string) {
 	out := NewRegistry()
-	// Force-include spawn_agent.
-	if t, ok := r.byName["spawn_agent"]; ok {
-		out.Register(t)
-	}
 	var unknown []string
 	for _, n := range names {
-		if n == "spawn_agent" {
-			continue // already added
-		}
 		if t, ok := r.byName[n]; ok {
 			out.Register(t)
 		} else {

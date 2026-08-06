@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -128,5 +129,64 @@ func TestChildToolRegistryRejectsUnknownNames(t *testing.T) {
 	}
 	if sub == nil {
 		t.Fatal("nil registry for valid subset")
+	}
+}
+
+func TestShouldWireChildSpawn(t *testing.T) {
+	cases := []struct {
+		name      string
+		requested []string
+		want      bool
+	}{
+		{"empty inherits all", nil, true},
+		{"empty slice inherits all", []string{}, true},
+		{"subset without spawn_agent", []string{"read_file", "web_search"}, false},
+		{"subset with spawn_agent", []string{"read_file", "spawn_agent"}, true},
+		{"only spawn_agent", []string{"spawn_agent"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldWireChildSpawn(tc.requested); got != tc.want {
+				t.Errorf("shouldWireChildSpawn(%v) = %v, want %v", tc.requested, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestChildToolRegistryOmitsSpawnWhenSubsetOmitsIt pins the 0034 folded-in fix at
+// the registry seam: a subset that names only read_file yields a child registry
+// with NO spawn_agent (before 0034, Subset force-included it).
+func TestChildToolRegistryOmitsSpawnWhenSubsetOmitsIt(t *testing.T) {
+	reg := tools.NewRegistry()
+	for _, tl := range tools.DefaultTools() {
+		reg.Register(tl)
+	}
+	reg.Register(tools.NewSpawnAgentTool(func(ctx context.Context, req tools.SpawnRequest) (string, error) {
+		return "", nil
+	}))
+
+	sub, err := childToolRegistry(reg, []string{"read_file"})
+	if err != nil {
+		t.Fatalf("subset failed: %v", err)
+	}
+	for _, s := range sub.Schemas() {
+		if s.Name == "spawn_agent" {
+			t.Fatal("child subset omitting spawn_agent must not contain it")
+		}
+	}
+
+	// Empty names inherits all, including spawn_agent.
+	inh, err := childToolRegistry(reg, nil)
+	if err != nil {
+		t.Fatalf("clone failed: %v", err)
+	}
+	found := false
+	for _, s := range inh.Schemas() {
+		if s.Name == "spawn_agent" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("empty-names child should inherit spawn_agent")
 	}
 }
