@@ -103,11 +103,6 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// switch is picked up by the next built gate.
 	sessionMode := permissions.NewSessionMode(permissions.ParseMode(cfg.Permissions.Mode))
 
-	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
-		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
-		return buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true)
-	}
-
 	glamourStyle := os.Getenv("GLAMOUR_STYLE")
 	if glamourStyle == "" {
 		glamourStyle = "dark"
@@ -130,9 +125,22 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 
 	// Agent tree for subagent tracking. The tree-global spawn budget backstops
 	// runaway fan-out; its count feeds the budget line injected into results.
-	tree := agent.NewAgentTree(alias, alias)
+	tree := agent.NewAgentTreeWithConcurrency(alias, alias, cfg.Agents.MaxConcurrent)
 	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
+
+	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
+		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
+		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true)
+		if err != nil {
+			return nil, err
+		}
+		// Per-turn spawn-strip brake on the root turn: same predicate the children
+		// carry, so the active-cap (reversible) and budget (permanent) brakes apply
+		// to root-initiated spawns too. See change 0033.
+		ag.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
+		return ag, nil
+	}
 
 	// Build the ShellModel up front so its approval channel exists before the
 	// spawn factory closes over it: child/subagent approvals must route to the
@@ -160,8 +168,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				if terr != nil {
 					return "", terr
 				}
-				// Replace spawn_agent with one wired to the child's spawner.
-				childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
+				if childNode.Depth >= agent.MaxDepth {
+					// Depth strip (static): a child at MaxDepth can never spawn —
+					// never give it the tool, and drop any copy inherited from the
+					// parent's registry via Clone()/Subset().
+					childToolReg.Unregister("spawn_agent")
+				} else {
+					// Replace spawn_agent with one wired to the child's spawner.
+					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
+				}
 
 				r := tui.NewNodeRenderer(childNode, childTree)
 				// Child agents inherit the parent's permission config and route their
@@ -187,6 +202,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				if aerr != nil {
 					return "", aerr
 				}
+				// Per-turn spawn-strip brake: omit spawn_agent from this child's
+				// tool schemas when the active-child cap is reached (reversible)
+				// or the lifetime budget is exhausted (permanent). See change 0033.
+				a.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
 
 				history := []model.Message{{Role: "user", Content: opts.Task}}
 				msgs, rerr := a.Run(ctx, history)
