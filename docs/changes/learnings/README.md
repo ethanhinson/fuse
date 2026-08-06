@@ -9,6 +9,7 @@ One curated finding per file; this index is the hint surface. Load it, then read
 ## go
 
 - [dirent-isdir-skips-symlinks](dirent-isdir-skips-symlinks.md) — DirEntry.IsDir() skips symlinked directories — fall back to os.Stat when it returns false · also: filesystem, testing ⟨needs promotion⟩
+- [patch-every-cloned-child-builder](patch-every-cloned-child-builder.md) — cmd/fuse wires child-agent tool registries in three cloned builders (main.go one-shot run(), shell.go, research_probe.go) — a fix to child tool wiring must land in all three; enumerate sites by grep at fix time, never from a prior scoping list · also: refactoring, subagents, agents ⟨needs promotion⟩
 
 ## http
 
