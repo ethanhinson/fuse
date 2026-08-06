@@ -2,7 +2,7 @@
 id: 34
 slug: workflows
 title: Workflows — skill-bound subagent pools with typed workers and spawn quotas
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-06
@@ -13,12 +13,12 @@ discovered_from: [33]
 adrs: [2, 7]
 spec: docs/superpowers/specs/0034-workflows.md
 plan: docs/superpowers/plans/0034-workflows.md
-results:
+results: docs/results/2026-08-06-workflows-results.md
 trivial: false
 auto_groomable:
 branch: feat/workflows
-claimed_at: 2026-08-06T19:53:46Z
-pr:
+claimed_at: 2026-08-06T20:24:58Z
+pr: https://github.com/ethanhinson/fuse/pull/20
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [0034-workflows.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0034-workflows.md) |
 | Plan | [0034-workflows.md](https://github.com/ethanhinson/fuse/blob/feat/workflows/docs/superpowers/plans/0034-workflows.md) |
+| Results | [2026-08-06-workflows-results.md](https://github.com/ethanhinson/fuse/blob/feat/workflows/docs/results/2026-08-06-workflows-results.md) |
+| PR | [#20](https://github.com/ethanhinson/fuse/pull/20) |
 | ADRs | [ADR-0002](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0002-research-mode-skill-driven-on-subagent-runtime.md), [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0007-scheduler-single-admission-authority.md) |
 <!-- docket:artifacts:end -->
 
