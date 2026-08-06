@@ -165,12 +165,12 @@ func (n *AgentNode) Finish(status NodeStatus, errMsg string) {
 // Events are deliberately NOT included — they can be large and most consumers
 // only need counters; call CopyEvents when the log itself is needed.
 type NodeView struct {
-	ID        string
-	ParentID  string
-	Label     string
-	Model     string
-	Status    NodeStatus
-	Depth     int
+	ID           string
+	ParentID     string
+	Label        string
+	Model        string
+	Status       NodeStatus
+	Depth        int
 	StartedAt    time.Time
 	EndedAt      time.Time
 	TokensIn     int

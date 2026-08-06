@@ -74,10 +74,10 @@ func TestSubtreeTokens(t *testing.T) {
 	tree, wfroot, a, b, c, sibling := buildSubtreeTree(t)
 
 	// Charge tokens across the tree. UpdateTokens increments TokensIn/TokensOut.
-	tree.Node(wfroot).UpdateTokens(100, 10) // the workflow root itself — excluded
-	tree.Node(a).UpdateTokens(200, 20)      // in subtree
-	tree.Node(b).UpdateTokens(300, 30)      // in subtree
-	tree.Node(c).UpdateTokens(400, 40)      // in subtree (deep, grandchild)
+	tree.Node(wfroot).UpdateTokens(100, 10)  // the workflow root itself — excluded
+	tree.Node(a).UpdateTokens(200, 20)       // in subtree
+	tree.Node(b).UpdateTokens(300, 30)       // in subtree
+	tree.Node(c).UpdateTokens(400, 40)       // in subtree (deep, grandchild)
 	tree.Node(sibling).UpdateTokens(999, 99) // outside the subtree — excluded
 
 	// SubtreeTokens excludes the root marker node itself (like SubtreeSpawnCount)

@@ -219,8 +219,8 @@ func TestTighterBudget_ReportsFewerRemaining(t *testing.T) {
 }
 
 func TestTighterBudget_GlobalTighter(t *testing.T) {
-	global := func() (used, max int) { return 60, 64 }  // 4 remaining (tighter)
-	workflow := func() (used, max int) { return 1, 8 }  // 7 remaining
+	global := func() (used, max int) { return 60, 64 } // 4 remaining (tighter)
+	workflow := func() (used, max int) { return 1, 8 } // 7 remaining
 	used, max := TighterBudget(global, workflow)()
 	if used != 60 || max != 64 {
 		t.Errorf("TighterBudget = (%d,%d), want (60,64) — global is tighter", used, max)
