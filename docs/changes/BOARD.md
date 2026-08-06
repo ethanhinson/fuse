@@ -1,8 +1,8 @@
 # Backlog
 
-**36 changes** — 🟡 17 proposed · 🔵 1 implemented · ✅ 14 done · 🗑️ 4 killed
+**37 changes** — 🟡 18 proposed · 🔵 1 implemented · ✅ 14 done · 🗑️ 4 killed
 
-## 🟡 Proposed (17)
+## 🟡 Proposed (18)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -23,6 +23,7 @@
 | [0033](active/0033-spawn-tool-stripping.md) | Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion | `high` | `feat` | build-ready |
 | [0034](active/0034-workflows.md) | Workflows — skill-bound subagent pools with typed workers and spawn quotas | `high` | `feat` | ⏳ waiting on #33 — not yet built |
 | [0036](active/0036-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | `high` | `feat` | ⏳ waiting on #34 — not yet built |
+| [0037](active/0037-redirect-guard-lenience.md) | Redirect fail-closed guard — allow /dev/null targets and fd-dups, keep failing closed on real files | `critical` | `fix` | build-ready |
 
 ## 🔵 Implemented — awaiting merge (1)
 
@@ -54,6 +55,7 @@ graph TD
   0033 --> 0034
   0035
   0034 --> 0036
+  0037
   0003:::done
   0007:::done
   0012:::done
