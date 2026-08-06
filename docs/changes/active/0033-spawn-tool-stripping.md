@@ -2,7 +2,7 @@
 id: 33
 slug: spawn-tool-stripping
 title: Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-06
@@ -13,12 +13,12 @@ discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/0033-spawn-tool-stripping.md
 plan: docs/superpowers/plans/0033-spawn-tool-stripping-plan.md
-results:
+results: docs/results/2026-08-06-spawn-tool-stripping-results.md
 trivial: false
 auto_groomable:
 branch: feat/spawn-tool-stripping
-pr:
-claimed_at: 2026-08-06T18:24:44Z
+pr: https://github.com/ethanhinson/fuse/pull/19
+claimed_at: 2026-08-06T18:41:16Z
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [0033-spawn-tool-stripping.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0033-spawn-tool-stripping.md) |
 | Plan | [0033-spawn-tool-stripping-plan.md](https://github.com/ethanhinson/fuse/blob/feat/spawn-tool-stripping/docs/superpowers/plans/0033-spawn-tool-stripping-plan.md) |
+| Results | [2026-08-06-spawn-tool-stripping-results.md](https://github.com/ethanhinson/fuse/blob/feat/spawn-tool-stripping/docs/results/2026-08-06-spawn-tool-stripping-results.md) |
+| PR | [#19](https://github.com/ethanhinson/fuse/pull/19) |
 <!-- docket:artifacts:end -->
 
 ## Why
