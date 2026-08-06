@@ -157,6 +157,16 @@ func WithInteractive(interactive bool) Option {
 	return func(g *PermissionGate) { g.interactive = interactive }
 }
 
+// WithMode overrides the gate's starting mode after it is seeded from cfg.Mode.
+// It is the per-turn-construction seam for the session-mode surface: a fresh
+// gate is built at the session's current mode (SessionMode.Get()) rather than
+// the raw cfg.Permissions.Mode, so a mid-session switch is picked up by the next
+// built gate. Omitting the option leaves the cfg-derived mode untouched, so
+// existing three-argument callers (one-shot, mcp-server) behave unchanged.
+func WithMode(mode PermissionMode) Option {
+	return func(g *PermissionGate) { g.mode = mode }
+}
+
 // New builds a PermissionGate. approve is called when user input is needed;
 // pass AlwaysApprove for non-interactive (one-shot) sessions. Auto-mode
 // dependencies (a classifier, a workspace root) are supplied additively via
@@ -184,6 +194,16 @@ func (g *PermissionGate) currentMode() PermissionMode {
 	defer g.modeMu.Unlock()
 	return g.mode
 }
+
+// Mode returns the gate's active mode through the guarded accessor. It is the
+// exported read seam construction sites use to verify a freshly built gate was
+// constructed at the intended (session) mode.
+func (g *PermissionGate) Mode() PermissionMode { return g.currentMode() }
+
+// HasClassifier reports whether the gate was wired with an auto-mode classifier.
+// It is the exported seam construction sites use to verify the classifier is
+// present (constructible-and-wired) versus the nil fail-closed-ask posture.
+func (g *PermissionGate) HasClassifier() bool { return g.classifier != nil }
 
 // SetMode switches the live gate's mode under modeMu, so an in-flight resolve
 // never races the write and the very next resolve observes the new mode. It is

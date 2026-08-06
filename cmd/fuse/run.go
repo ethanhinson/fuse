@@ -107,12 +107,12 @@ func buildSessionRegistryNoMCP(cfg config.Config, skillLookup func(string) (skil
 // writes raw API request/response JSON to traceW (when non-nil), attributing
 // blocks to traceLabel. The caller owns traceW's lifecycle; share one
 // syncWriter across all agents of a session so concurrent blocks stay whole.
-func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string) (*agent.Agent, error) {
+func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
 	_ = verbose
-	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, traceLabel, toolReg, approve)
+	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, traceLabel, toolReg, approve, sm)
 	return a, err
 }
 
@@ -131,11 +131,27 @@ func workspaceRoot() string {
 	return cwd
 }
 
+// classifierConstructible reports whether an auto-mode classifier can be built
+// from cfg — i.e. whether the gateway it must route its verdict calls through is
+// configured at all. A classifier with no gateway URL would be an erroring stub,
+// so when the gateway is entirely unconfigured we keep the classifier nil (the
+// gate's fail-closed gray-area ask path) rather than construct a broken one.
+//
+// D10 item 5: constructibility is NOT gated on the configured mode. As long as
+// the gateway is reachable, the classifier is wired regardless of whether the
+// startup mode is auto, so a mid-session switch into auto is fully powered.
+func classifierConstructible(cfg config.Config) bool {
+	return cfg.Gateway.URL != ""
+}
+
 // autoModeOptions returns the permission-gate options that wire the auto-mode
-// classifier, workspace root, and interactive posture — but ONLY when the
-// configured mode is auto. In every other mode it returns nil, so
-// permissions.New stays byte-for-byte behaviour-equivalent to the pre-wiring
-// three-argument form.
+// classifier, workspace root, and interactive posture whenever a classifier is
+// CONSTRUCTIBLE (the gateway is configured) — regardless of the configured mode
+// (D10 item 5), so a mid-session switch into auto gets the full pipeline. When
+// no classifier is constructible (gateway entirely unconfigured) it returns nil,
+// so permissions.New stays byte-for-byte behaviour-equivalent to the pre-wiring
+// three-argument form and auto stays allowed but fail-closed (nil classifier ⇒
+// gray area asks).
 //
 // The classifier gets a DEDICATED gateway adapter built from cfg.Gateway and
 // labeled with permissions.ClassifierTraceLabel, so its verdict calls are
@@ -144,7 +160,7 @@ func workspaceRoot() string {
 // the cli/ paths, where the actor routes through the CLIAdapter but the
 // classifier still needs a real gateway adapter for its own verdict calls.
 func autoModeOptions(cfg config.Config, reg *model.Registry, traceW io.Writer) []permissions.Option {
-	if permissions.ParseMode(cfg.Permissions.Mode) != permissions.ModeAuto {
+	if !classifierConstructible(cfg) {
 		return nil
 	}
 	clsAdapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
@@ -162,9 +178,34 @@ func autoModeOptions(cfg config.Config, reg *model.Registry, traceW io.Writer) [
 	}
 }
 
+// sessionGateMode returns the mode a freshly built gate should start at: the
+// current session mode when a session source is threaded in (the interactive
+// shell), or the raw cfg.Permissions.Mode when it is nil (one-shot / mcp-server,
+// behaviour-identical to before this seam). It is the per-turn-construction half
+// of the session-mode surface — read once at construction so the next built gate
+// picks up a mid-session switch.
+func sessionGateMode(cfg config.Config, sm *permissions.SessionMode) permissions.PermissionMode {
+	if sm != nil {
+		return sm.Get()
+	}
+	return permissions.ParseMode(cfg.Permissions.Mode)
+}
+
+// buildGate constructs a per-turn/child PermissionGate wired for the session:
+// its mode is taken from the session source (or cfg when sm is nil), and the
+// auto-mode classifier/workspace/interactive options are wired whenever a
+// classifier is constructible. Centralizing construction here keeps the mode
+// override and auto-mode wiring consistent across every gate builder and gives
+// tests a single seam to inspect the constructed gate.
+func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.ApprovalFunc, reg *model.Registry, traceW io.Writer, sm *permissions.SessionMode) *permissions.PermissionGate {
+	opts := autoModeOptions(cfg, reg, traceW)
+	opts = append(opts, permissions.WithMode(sessionGateMode(cfg, sm)))
+	return permissions.New(cfg.Permissions, toolReg, approve, opts...)
+}
+
 // buildChildAgent builds an agent with an explicitly provided system prompt,
 // bypassing persona composition. Used when spawn_agent sets system_prompt.
-func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string) (*agent.Agent, error) {
+func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
@@ -177,14 +218,14 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 		if err != nil {
 			return nil, fmt.Errorf("cli adapter: resolve binary: %w", err)
 		}
-		gate := permissions.New(cfg.Permissions, toolReg, approve, autoModeOptions(cfg, reg, traceW)...)
+		gate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 		return agent.New(newCLIAdapter(fuseExe, approve), gate, r, mc.ID, systemPrompt, cfg.MaxTurns, 0), nil
 	}
 	adapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
 	if traceW != nil {
 		adapter = adapter.WithTraceLabel(traceW, traceLabel)
 	}
-	gate := permissions.New(cfg.Permissions, toolReg, approve, autoModeOptions(cfg, reg, traceW)...)
+	gate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 	maxTokens := mc.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = cfg.MaxTokens
@@ -262,7 +303,7 @@ func childToolRegistry(parent *tools.Registry, names []string) (*tools.Registry,
 
 // buildAgentCore resolves alias and constructs an Agent bound to renderer r,
 // returning the resolved gateway model id.
-func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc) (*agent.Agent, string, error) {
+func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode) (*agent.Agent, string, error) {
 	mc, err := reg.Resolve(alias)
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
@@ -276,7 +317,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 			return nil, "", fmt.Errorf("cli adapter: resolve binary: %w", err)
 		}
 		cliAdapter := newCLIAdapter(fuseExe, approve)
-		gate := permissions.New(cfg.Permissions, toolReg, approve, autoModeOptions(cfg, reg, traceW)...)
+		gate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
 		// maxTokens is not forwarded to the CLI; Claude controls its own limits.
 		a := agent.New(cliAdapter, gate, r, mc.ID, systemPrompt, cfg.MaxTurns, 0)
@@ -287,7 +328,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	if traceW != nil {
 		adapter = adapter.WithTraceLabel(traceW, traceLabel)
 	}
-	gate := permissions.New(cfg.Permissions, toolReg, approve, autoModeOptions(cfg, reg, traceW)...)
+	gate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 	maxTokens := mc.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = cfg.MaxTokens

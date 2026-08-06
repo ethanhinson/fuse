@@ -135,9 +135,9 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				var a *agent.Agent
 				var aerr error
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label)
+					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil)
 				} else {
-					a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove)
+					a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -168,7 +168,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 		tui.NewNodeRenderer(rootNode, tree),
 		logSink.Recorder("root"),
 	)
-	rootAgent, _, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", toolReg, permissions.AlwaysApprove)
+	rootAgent, _, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", toolReg, permissions.AlwaysApprove, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "build root agent: %v\n", err)
 		return 1

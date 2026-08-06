@@ -150,10 +150,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 				// Subagent approvals route to the parent channel, prefixed so the
 				// human sees which child is asking (same posture as CloneForChild).
 				childApprove := permissions.PrefixApproval(opts.Label, rootApprove)
+				// One-shot passes no session-mode source: gates default to
+				// cfg.Permissions.Mode exactly as before this seam.
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label)
+					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil)
 				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -186,7 +188,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
 
-	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove)
+	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1

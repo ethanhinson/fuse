@@ -96,8 +96,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	traceW, closeTrace := openTraceWriter(traceFile)
 	defer closeTrace()
 
+	// Session-mode source: the single holder both the TUI (indicator, Shift+Tab,
+	// /mode in later tasks) and per-turn gate construction read, seeded from the
+	// startup default. Threading it into the gate builders means each freshly
+	// built gate is constructed at the current SESSION mode, so a mid-session
+	// switch is picked up by the next built gate.
+	sessionMode := permissions.NewSessionMode(permissions.ParseMode(cfg.Permissions.Mode))
+
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
-		return buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root")
+		return buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode)
 	}
 
 	glamourStyle := os.Getenv("GLAMOUR_STYLE")
@@ -170,9 +177,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				var a *agent.Agent
 				var aerr error
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label)
+					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode)
 				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode)
 				}
 				if aerr != nil {
 					return "", aerr
