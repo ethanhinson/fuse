@@ -12,13 +12,13 @@ related: [24, 26]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/0033-spawn-tool-stripping.md
-plan:
+plan: docs/superpowers/plans/0033-spawn-tool-stripping-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/spawn-tool-stripping
 pr:
-claimed_at: 2026-08-06T18:16:55Z
+claimed_at: 2026-08-06T18:24:44Z
 blocked_by:
 reconciled: true
 ---
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0033-spawn-tool-stripping.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0033-spawn-tool-stripping.md) |
+| Plan | [0033-spawn-tool-stripping-plan.md](https://github.com/ethanhinson/fuse/blob/feat/spawn-tool-stripping/docs/superpowers/plans/0033-spawn-tool-stripping-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
