@@ -2,7 +2,7 @@
 id: 34
 slug: workflows
 title: Workflows — skill-bound subagent pools with typed workers and spawn quotas
-status: proposed
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-06
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/workflows
+claimed_at: 2026-08-06T19:48:31Z
 pr:
 blocked_by:
 reconciled: false
