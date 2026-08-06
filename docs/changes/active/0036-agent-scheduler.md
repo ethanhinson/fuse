@@ -10,7 +10,7 @@ updated: 2026-08-06
 depends_on: [34]
 related: [33, 34]
 discovered_from: [34]
-adrs: [7]
+adrs: [7, 8, 9]
 spec: docs/superpowers/specs/0036-agent-scheduler.md
 plan: docs/superpowers/plans/0036-agent-scheduler.md
 results:
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/agent-scheduler
 pr:
 blocked_by:
-claimed_at: 2026-08-06T21:45:00Z
+claimed_at: 2026-08-06T23:55:00Z
 reconciled: true
 ---
 
@@ -30,7 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [0036-agent-scheduler.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0036-agent-scheduler.md) |
 | Plan | [0036-agent-scheduler.md](https://github.com/ethanhinson/fuse/blob/feat/agent-scheduler/docs/superpowers/plans/0036-agent-scheduler.md) |
-| ADRs | [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0007-scheduler-single-admission-authority.md) |
+| ADRs | [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0007-scheduler-single-admission-authority.md), [ADR-0008](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0008-rate-gate-per-logical-request-tpm-steady-state.md), [ADR-0009](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0009-queue-bound-visibility-global-pool-only.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
