@@ -12,7 +12,7 @@ related: [17]
 discovered_from: [17]
 adrs: [5, 6]
 spec:
-plan:
+plan: docs/superpowers/plans/2026-08-06-live-mode-switch-plan.md
 results:
 trivial: true
 auto_groomable:
@@ -26,6 +26,10 @@ claimed_at: 2026-08-06T04:24:44Z
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Plan | [2026-08-06-live-mode-switch-plan.md](https://github.com/ethanhinson/fuse/blob/feat/live-mode-switch/docs/superpowers/plans/2026-08-06-live-mode-switch-plan.md) |
+| ADRs | [ADR-0005](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
