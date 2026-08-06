@@ -65,11 +65,13 @@ var peelWrappers = map[string]bool{
 //
 // It fails closed with ErrUnparseable on: a size-cap violation; a parse error;
 // command substitution ($(…) or backticks) or process substitution anywhere;
-// any redirection (>, >>, 2>, <, here-doc, …), whose file target the read-only
-// classifier never sees; an argv[0] containing a path separator (the basename-
-// collapse bug); or an arbitrary-arg wrapper as argv[0] (bash/sh without a
-// parseable -c, xargs, env with assignments, npx, timeout-then-unknown,
-// sudo, …).
+// any redirection whose file target the read-only classifier never sees —
+// EXCEPT the two benign shapes a redirect to literal /dev/null and a pure
+// fd-duplication (2>&1, >&2), which carry no writable target (see
+// redirIsBenign, change 0037); an argv[0] containing a path separator (the
+// basename-collapse bug); or an arbitrary-arg wrapper as argv[0] (bash/sh
+// without a parseable -c, xargs, env with assignments, npx,
+// timeout-then-unknown, sudo, …).
 func splitSegments(cmd string) ([]Segment, error) {
 	if len(cmd) > maxCommandBytes {
 		return nil, ErrUnparseable
@@ -105,11 +107,18 @@ func collectStmt(src string, st *syntax.Stmt, out *[]Segment) error {
 	// A redirect (>, >>, 2>, <, here-doc, …) points a command's fd at a file
 	// whose target the read-only classifier never sees: collectCall only
 	// inspects CallExpr.Args, so `echo x > /etc/passwd` would classify as the
-	// read-only `echo` and reach VerdictAllow. Fail closed on ANY redirect —
-	// spec-mandated (2026-08-05-auto-mode-design.md lines 66-67 / 174). The
-	// conservative posture costs a human prompt, never a silent bypass.
-	if len(st.Redirs) > 0 {
-		return ErrUnparseable
+	// read-only `echo` and reach VerdictAllow. We therefore fail closed on any
+	// redirect EXCEPT the two benign shapes (change 0037): a redirect to the
+	// literal /dev/null sink and a pure fd-duplication (2>&1, >&2). Those two
+	// carry no writable file target the classifier could miss, so silencing
+	// stderr on a read-only pipeline (`wc -l x.go 2>/dev/null | tail`) no longer
+	// stalls. Any redirect naming a real path, a variable, or a substitution —
+	// or a here-doc / <> — still fails closed. The conservative posture costs a
+	// human prompt, never a silent bypass.
+	for _, r := range st.Redirs {
+		if !redirIsBenign(r) {
+			return ErrUnparseable
+		}
 	}
 	switch cmd := st.Cmd.(type) {
 	case *syntax.BinaryCmd:
@@ -125,6 +134,62 @@ func collectStmt(src string, st *syntax.Stmt, out *[]Segment) error {
 		// are not simple commands we can decompose safely: fail closed.
 		return ErrUnparseable
 	}
+}
+
+// redirIsBenign reports whether a single redirect is safe to allow past the
+// fail-closed guard (change 0037). Exactly two shapes qualify:
+//
+//  1. A redirect to the literal /dev/null sink — op >, >>, <, &>, or &>> with a
+//     word that resolves to the exact literal "/dev/null". A here-doc body
+//     (r.Hdoc != nil) never qualifies, and the literal check (via literalWord)
+//     rejects any target carrying a variable, glob, or substitution — so
+//     "/dev/null.txt", "/dev/nul", "$F", and "$(…)" all fail closed.
+//  2. A pure fd-duplication — op <& or >& (DplIn/DplOut) whose word is a bare
+//     numeric file descriptor (the "1" in 2>&1, the "2" in >&2). No file path
+//     is named, so there is nothing the classifier could miss.
+//
+// Everything else — a real file target, <> (RdrInOut), a here-doc, a dup to a
+// path — returns false, and the statement fails closed.
+func redirIsBenign(r *syntax.Redirect) bool {
+	if r == nil {
+		return false
+	}
+	// A here-document is never benign regardless of op.
+	if r.Hdoc != nil {
+		return false
+	}
+	switch r.Op {
+	case syntax.RdrOut, syntax.AppOut, syntax.RdrIn, syntax.RdrAll, syntax.AppAll:
+		// File-target ops: benign only when the literal target is /dev/null.
+		if r.Word == nil {
+			return false
+		}
+		target, ok := literalWord(r.Word)
+		return ok && target == "/dev/null"
+	case syntax.DplIn, syntax.DplOut:
+		// fd-duplication: benign only when the target is a bare fd number.
+		if r.Word == nil {
+			return false
+		}
+		target, ok := literalWord(r.Word)
+		return ok && isAllDigits(target)
+	default:
+		// RdrInOut (<>), here-doc ops, and anything else: fail closed.
+		return false
+	}
+}
+
+// isAllDigits reports whether s is non-empty and every rune is an ASCII digit.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // collectCall turns a simple command into one Segment, or recurses into a

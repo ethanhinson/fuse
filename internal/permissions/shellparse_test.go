@@ -129,6 +129,81 @@ func TestSplitSegments_Raw(t *testing.T) {
 	}
 }
 
+// TestSplitSegments_BenignRedirects asserts the lenient redirect exception:
+// a redirect whose only effect is silencing/redirecting to /dev/null, or a
+// pure fd-duplication (2>&1, >&2), must NOT force the whole statement closed.
+// The command still parses into its real segments (which higher layers then
+// classify), rather than stalling on ErrUnparseable.
+func TestSplitSegments_BenignRedirects(t *testing.T) {
+	cases := []struct {
+		desc string
+		cmd  string
+		want []seg
+	}{
+		{
+			desc: "2>/dev/null in a read-only pipeline",
+			cmd:  "wc -l a.go 2>/dev/null | tail -5",
+			want: []seg{
+				{name: "wc", args: []string{"-l", "a.go"}},
+				{name: "tail", args: []string{"-5"}},
+			},
+		},
+		{
+			desc: "stdout to /dev/null",
+			cmd:  "ls > /dev/null",
+			want: []seg{{name: "ls", args: nil}},
+		},
+		{
+			desc: "append to /dev/null",
+			cmd:  "ls >> /dev/null",
+			want: []seg{{name: "ls", args: nil}},
+		},
+		{
+			desc: "input from /dev/null",
+			cmd:  "cat < /dev/null",
+			want: []seg{{name: "cat", args: nil}},
+		},
+		{
+			desc: "2>&1 fd-dup in a pipeline",
+			cmd:  "make 2>&1 | tail",
+			want: []seg{
+				{name: "make", args: nil},
+				{name: "tail", args: nil},
+			},
+		},
+		{
+			desc: ">&2 fd-dup",
+			cmd:  "echo hi >&2",
+			want: []seg{{name: "echo", args: []string{"hi"}}},
+		},
+		{
+			desc: "&> /dev/null (stdout+stderr to /dev/null)",
+			cmd:  "ls &> /dev/null",
+			want: []seg{{name: "ls", args: nil}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			got, err := splitSegments(tc.cmd)
+			if err != nil {
+				t.Fatalf("splitSegments(%q) unexpected error: %v", tc.cmd, err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("splitSegments(%q) got %d segments, want %d: %+v", tc.cmd, len(got), len(tc.want), got)
+			}
+			for i, w := range tc.want {
+				if got[i].Name != w.name {
+					t.Errorf("segment %d Name = %q, want %q", i, got[i].Name, w.name)
+				}
+				if !equalArgs(got[i].Args, w.args) {
+					t.Errorf("segment %d Args = %#v, want %#v", i, got[i].Args, w.args)
+				}
+			}
+		})
+	}
+}
+
 func TestSplitSegments_FailClosed(t *testing.T) {
 	cases := []struct {
 		desc string
@@ -154,6 +229,14 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"append redirect >>", "grep foo bar >> ~/.zshrc"},
 		{"redirect inside workspace", "ls > out.txt"},
 		{"stderr and file redirect", "ls 2>/dev/null > /etc/x"},
+		{"dev-null lookalike file", "ls > /dev/null.txt"},
+		{"dev-null typo", "ls 2>/dev/nul"},
+		{"redirect to variable target", "cat a > $F"},
+		{"here-doc", "cat <<EOF\nhi\nEOF"},
+		{"input redirect from real file", "cat < config.yaml"},
+		{"dup-op to a real file, not an fd", "ls >&file"},
+		{"fd-close is not a bare fd number", "ls 2>&-"},
+		{"read-write redirect <>", "cat <> scratch"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
