@@ -133,4 +133,35 @@ func (t *SpawnAgentTool) budgetLine() string {
 	return fmt.Sprintf("\n\nagent budget: %d/%d used (%d remaining)", used, max, remaining)
 }
 
+// TighterBudget composes two BudgetFuncs into one that, at call time, reports
+// whichever has FEWER remaining (max-used) — the binding constraint (change
+// 0034 Acceptance 5). A workflow child reads the tighter of its workflow-total
+// and the tree-global budget, so the injected budget line always shows the wall
+// it will actually hit first. An operand whose max <= 0 is unset and ignored; if
+// both are unset the result is unset (0,0) and budgetLine emits nothing.
+func TighterBudget(a, b BudgetFunc) BudgetFunc {
+	return func() (used, max int) {
+		type cand struct{ used, max int }
+		best := cand{}
+		bestSet := false
+		consider := func(f BudgetFunc) {
+			if f == nil {
+				return
+			}
+			u, m := f()
+			if m <= 0 {
+				return // unset
+			}
+			rem := m - u
+			if !bestSet || rem < best.max-best.used {
+				best = cand{u, m}
+				bestSet = true
+			}
+		}
+		consider(a)
+		consider(b)
+		return best.used, best.max
+	}
+}
+
 var _ Tool = (*SpawnAgentTool)(nil)

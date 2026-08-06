@@ -84,3 +84,43 @@ func TestSpawnAgentTool_ZeroMaxBudgetOmitsLine(t *testing.T) {
 		t.Errorf("unset budget (max 0) => no line, got:\n%s", res.Output)
 	}
 }
+
+// --- change 0034: tighter-of-two budget for workflow children ---
+
+func TestTighterBudget_ReportsFewerRemaining(t *testing.T) {
+	global := func() (used, max int) { return 10, 64 } // 54 remaining
+	workflow := func() (used, max int) { return 6, 8 } // 2 remaining (tighter)
+
+	used, max := TighterBudget(global, workflow)()
+	if used != 6 || max != 8 {
+		t.Errorf("TighterBudget = (%d,%d), want (6,8) — the workflow-total is tighter", used, max)
+	}
+}
+
+func TestTighterBudget_GlobalTighter(t *testing.T) {
+	global := func() (used, max int) { return 60, 64 }  // 4 remaining (tighter)
+	workflow := func() (used, max int) { return 1, 8 }  // 7 remaining
+	used, max := TighterBudget(global, workflow)()
+	if used != 60 || max != 64 {
+		t.Errorf("TighterBudget = (%d,%d), want (60,64) — global is tighter", used, max)
+	}
+}
+
+func TestTighterBudget_SkipsUnsetOperand(t *testing.T) {
+	global := func() (used, max int) { return 10, 64 }
+	unset := func() (used, max int) { return 0, 0 } // unset => ignored
+	used, max := TighterBudget(global, unset)()
+	if used != 10 || max != 64 {
+		t.Errorf("TighterBudget = (%d,%d), want (10,64) — unset operand ignored", used, max)
+	}
+}
+
+func TestTighterBudget_ShowsTighterInLine(t *testing.T) {
+	global := func() (used, max int) { return 10, 64 }
+	workflow := func() (used, max int) { return 6, 8 }
+	tool := NewSpawnAgentToolWithBudget(okSpawn("x"), TighterBudget(global, workflow))
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
+	if !strings.Contains(res.Output, "6/8 used (2 remaining)") {
+		t.Errorf("budget line should report the tighter 6/8, got:\n%s", res.Output)
+	}
+}
