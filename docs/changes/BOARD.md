@@ -1,8 +1,8 @@
 # Backlog
 
-**34 changes** — 🟡 16 proposed · ✅ 14 done · 🗑️ 4 killed
+**35 changes** — 🟡 17 proposed · ✅ 14 done · 🗑️ 4 killed
 
-## 🟡 Proposed (16)
+## 🟡 Proposed (17)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -22,6 +22,7 @@
 | [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | build-ready |
 | [0033](active/0033-spawn-tool-stripping.md) | Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion | `high` | `feat` | build-ready |
 | [0034](active/0034-workflows.md) | Workflows — skill-bound subagent pools with typed workers and spawn quotas | `high` | `feat` | ⏳ waiting on #33 — not yet built |
+| [0035](active/0035-live-mode-switch.md) | Mode switch must bite mid-turn — gates read the SessionMode holder live, not a construction snapshot | `critical` | `fix` | build-ready |
 
 ```mermaid
 graph TD
@@ -45,6 +46,7 @@ graph TD
   0003 --> 0031
   0033
   0033 --> 0034
+  0035
   0003:::done
   0007:::done
   0012:::done
