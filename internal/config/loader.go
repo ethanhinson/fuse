@@ -168,7 +168,9 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	if raw.Gateway.Key != "" {
 		c.Gateway.Key = raw.Gateway.Key
 	}
-	if raw.MaxTurns != 0 {
+	// A present max_turns (including an explicit 0) overrides; an omitted key
+	// (nil) leaves the unset default for the call site to resolve. (0038)
+	if raw.MaxTurns != nil {
 		c.MaxTurns = raw.MaxTurns
 	}
 	if raw.MaxTokens != 0 {

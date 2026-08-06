@@ -39,6 +39,15 @@ func (d *loopDetector) seen(fps []string) bool {
 	return d.count >= d.limit
 }
 
+// reset clears the consecutive-repeat state so the detector needs another full
+// `limit` run of identical calls before tripping again. Used after a human
+// approves a "possible loop" force-through so the run continues without
+// re-prompting every turn. See change 0038.
+func (d *loopDetector) reset() {
+	d.last = ""
+	d.count = 0
+}
+
 func canonical(fps []string) string {
 	cp := append([]string(nil), fps...)
 	sort.Strings(cp)

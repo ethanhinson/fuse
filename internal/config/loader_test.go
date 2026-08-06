@@ -16,8 +16,56 @@ func TestDefaultHasGatewayAndModels(t *testing.T) {
 	if c.Gateway.Key != "llm-gateway-local" {
 		t.Errorf("gateway key = %q", c.Gateway.Key)
 	}
-	if c.MaxTurns == 0 {
-		t.Error("MaxTurns must have a nonzero default")
+	// MaxTurns default is now UNSET (nil): the context-aware backstop
+	// (unlimited in the interactive shell, 100 headless) is applied at the
+	// call site in cmd/fuse, not baked into a config default. See change 0038.
+	if c.MaxTurns != nil {
+		t.Errorf("MaxTurns default = %v, want nil (unset — resolved contextually)", *c.MaxTurns)
+	}
+}
+
+func TestMaxTurnsPresenceDetection(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantNil bool
+		wantVal int
+	}{
+		{"omitted stays unset", "gateway:\n  url: http://x\n", true, 0},
+		{"explicit zero is unlimited", "max_turns: 0\n", false, 0},
+		{"explicit positive caps", "max_turns: 7\n", false, 7},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			home := filepath.Join(dir, "home")
+			if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(tt.yaml), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", home)
+			os.Unsetenv("LLM_GATEWAY_URL")
+			os.Unsetenv("LLM_GATEWAY_KEY")
+
+			c, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantNil {
+				if c.MaxTurns != nil {
+					t.Fatalf("MaxTurns = %v, want nil (unset)", *c.MaxTurns)
+				}
+				return
+			}
+			if c.MaxTurns == nil {
+				t.Fatalf("MaxTurns = nil, want explicit %d", tt.wantVal)
+			}
+			if *c.MaxTurns != tt.wantVal {
+				t.Errorf("MaxTurns = %d, want %d", *c.MaxTurns, tt.wantVal)
+			}
+		})
 	}
 }
 

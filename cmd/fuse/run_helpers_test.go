@@ -10,6 +10,30 @@ import (
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
+func TestResolveMaxTurns(t *testing.T) {
+	ptr := func(n int) *int { return &n }
+	tests := []struct {
+		name        string
+		cfg         *int
+		interactive bool
+		want        int
+	}{
+		{"unset interactive is unlimited", nil, true, 0},
+		{"unset headless backstops at 100", nil, false, 100},
+		{"explicit zero is unlimited (interactive)", ptr(0), true, 0},
+		{"explicit zero is unlimited (headless)", ptr(0), false, 0},
+		{"explicit positive caps (interactive)", ptr(9), true, 9},
+		{"explicit positive caps (headless)", ptr(9), false, 9},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveMaxTurns(tt.cfg, tt.interactive); got != tt.want {
+				t.Errorf("resolveMaxTurns(%v, %v) = %d, want %d", tt.cfg, tt.interactive, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestChildResultReturnsPartialOnMaxTurns(t *testing.T) {
 	msgs := []model.Message{
 		{Role: "user", Content: "task"},

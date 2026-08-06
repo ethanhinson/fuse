@@ -130,7 +130,10 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	accounted := 0 // messages[:accounted] are covered by lastUsage
 	retriedContext := false
 
-	for turn := 0; turn < a.maxTurns; turn++ {
+	// a.maxTurns <= 0 means unlimited: the loop runs until the model stops
+	// calling tools, context is exhausted, or the doom-loop detector trips.
+	// A positive maxTurns caps the run and returns ErrMaxTurns. See change 0038.
+	for turn := 0; a.maxTurns <= 0 || turn < a.maxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return messages, err
 		}
@@ -190,14 +193,47 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			fps = append(fps, fingerprint(c.Name, c.Arguments))
 		}
 		if detector.seen(fps) {
-			a.renderer.Errorf("aborting: identical tool calls repeated %d times", loopLimit)
-			return messages, ErrLoopDetected
+			repeated := repeatedCallNames(resp.ToolCalls)
+			// Interactive posture: force the repeated call(s) through a human
+			// with a "possible loop" preview rather than aborting. On approval
+			// the run continues and the detector resets (another full window
+			// before it re-prompts); on rejection it aborts. A nil hook is the
+			// non-interactive posture — abort immediately. See change 0038.
+			if a.LoopApproval != nil {
+				preview := fmt.Sprintf("possible loop: %s repeated %d times — continue?", repeated, loopLimit)
+				approved, err := a.LoopApproval(ctx, preview)
+				if err != nil {
+					return messages, err
+				}
+				if !approved {
+					a.renderer.Errorf("aborting: %s repeated %d times (not approved)", repeated, loopLimit)
+					return messages, fmt.Errorf("%w: %s repeated %d times", ErrLoopDetected, repeated, loopLimit)
+				}
+				detector.reset()
+			} else {
+				a.renderer.Errorf("aborting: %s repeated %d times", repeated, loopLimit)
+				return messages, fmt.Errorf("%w: %s repeated %d times", ErrLoopDetected, repeated, loopLimit)
+			}
 		}
 
 		toolMsgs := a.executeTools(ctx, resp.ToolCalls)
 		messages = append(messages, toolMsgs...)
 	}
 	return messages, ErrMaxTurns
+}
+
+// repeatedCallNames renders the tool-call set for a doom-loop preview/abort
+// message: the distinct call names in order, e.g. "bash" or "bash, read_file".
+func repeatedCallNames(calls []model.ToolCall) string {
+	seen := make(map[string]bool, len(calls))
+	names := make([]string, 0, len(calls))
+	for _, c := range calls {
+		if !seen[c.Name] {
+			seen[c.Name] = true
+			names = append(names, c.Name)
+		}
+	}
+	return strings.Join(names, ", ")
 }
 
 // toolResult pairs a call with its outcome, preserving order for the history.

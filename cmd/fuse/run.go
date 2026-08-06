@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +50,45 @@ CORRECT (parallel — all in one response):
 - Emit ALL spawns as parallel tool calls in one response, then summarise once all results arrive.
 - Never read 3+ files one at a time when you can spawn agents.
 - The child agent receives its own full tool set and runs to completion; its final assistant message is the result.`
+
+// headlessTurnBackstop is the generous default cap applied to headless entry
+// points (one-shot, non-TTY, mcp-server, research-probe) when max_turns is
+// unset — nothing can interrupt a runaway there, so a backstop stays. The
+// interactive shell has no such cap (unlimited by default). See change 0038.
+const headlessTurnBackstop = 100
+
+// resolveMaxTurns turns the presence-aware config value into the concrete cap
+// the agent loop honors. This decision is context-aware and belongs at the
+// call site (interactivity is known here, not in the context-free config
+// resolve nor the uniform agent.New):
+//
+//   - unset (nil) + interactive ⇒ 0 (unlimited).
+//   - unset (nil) + headless    ⇒ headlessTurnBackstop.
+//   - explicit (non-nil)        ⇒ the value verbatim (0 = unlimited, N>0 = cap).
+func resolveMaxTurns(cfgMaxTurns *int, interactive bool) int {
+	if cfgMaxTurns != nil {
+		return *cfgMaxTurns
+	}
+	if interactive {
+		return 0
+	}
+	return headlessTurnBackstop
+}
+
+// loopApprovalFor adapts an ApprovalFunc into the agent's doom-loop
+// force-through callback, but only in the interactive posture — a non-TTY run
+// has no human to answer, so a nil hook keeps the loop's abort-on-trip
+// behavior. The synthetic ApprovalRequest carries the "possible loop" preview
+// through the same channel a tool-call prompt uses. See change 0038.
+func loopApprovalFor(approve permissions.ApprovalFunc, interactive bool) func(context.Context, string) (bool, error) {
+	if !interactive || approve == nil {
+		return nil
+	}
+	return func(ctx context.Context, preview string) (bool, error) {
+		approved, _, err := approve(ctx, permissions.ApprovalRequest{Preview: preview})
+		return approved, err
+	}
+}
 
 // registryFromConfig builds a model.Registry, starting from the built-in
 // default and overlaying any config-defined entries.
@@ -107,12 +147,12 @@ func buildSessionRegistryNoMCP(cfg config.Config, skillLookup func(string) (skil
 // writes raw API request/response JSON to traceW (when non-nil), attributing
 // blocks to traceLabel. The caller owns traceW's lifecycle; share one
 // syncWriter across all agents of a session so concurrent blocks stay whole.
-func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode) (*agent.Agent, error) {
+func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
 	_ = verbose
-	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, traceLabel, toolReg, approve, sm)
+	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, traceLabel, toolReg, approve, sm, interactive)
 	return a, err
 }
 
@@ -211,7 +251,7 @@ func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.A
 
 // buildChildAgent builds an agent with an explicitly provided system prompt,
 // bypassing persona composition. Used when spawn_agent sets system_prompt.
-func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode) (*agent.Agent, error) {
+func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
@@ -219,13 +259,14 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	if err != nil {
 		return nil, fmt.Errorf("model %q: %w", alias, err)
 	}
+	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
 	if strings.HasPrefix(mc.ID, "cli/") {
 		fuseExe, err := os.Executable()
 		if err != nil {
 			return nil, fmt.Errorf("cli adapter: resolve binary: %w", err)
 		}
 		gate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
-		return agent.New(newCLIAdapter(fuseExe, approve), gate, r, mc.ID, systemPrompt, cfg.MaxTurns, 0), nil
+		return agent.New(newCLIAdapter(fuseExe, approve), gate, r, mc.ID, systemPrompt, maxTurns, 0), nil
 	}
 	adapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
 	if traceW != nil {
@@ -236,8 +277,9 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	if maxTokens == 0 {
 		maxTokens = cfg.MaxTokens
 	}
-	a := agent.New(adapter, gate, r, mc.ID, systemPrompt, cfg.MaxTurns, maxTokens)
+	a := agent.New(adapter, gate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.ContextWindow = mc.ContextWindow
+	a.LoopApproval = loopApprovalFor(approve, interactive)
 	return a, nil
 }
 
@@ -309,11 +351,12 @@ func childToolRegistry(parent *tools.Registry, names []string) (*tools.Registry,
 
 // buildAgentCore resolves alias and constructs an Agent bound to renderer r,
 // returning the resolved gateway model id.
-func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode) (*agent.Agent, string, error) {
+func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode, interactive bool) (*agent.Agent, string, error) {
 	mc, err := reg.Resolve(alias)
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
 	}
+	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
 
 	// Models with ID prefix "cli/" bypass the LiteLLM gateway and route through
 	// the CLIAdapter, which spawns claude --print with fuse mcp-server attached.
@@ -326,7 +369,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		gate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
 		// maxTokens is not forwarded to the CLI; Claude controls its own limits.
-		a := agent.New(cliAdapter, gate, r, mc.ID, systemPrompt, cfg.MaxTurns, 0)
+		a := agent.New(cliAdapter, gate, r, mc.ID, systemPrompt, maxTurns, 0)
 		return a, mc.ID, nil
 	}
 
@@ -340,7 +383,8 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		maxTokens = cfg.MaxTokens
 	}
 	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
-	a := agent.New(adapter, gate, r, mc.ID, systemPrompt, cfg.MaxTurns, maxTokens)
+	a := agent.New(adapter, gate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.ContextWindow = mc.ContextWindow
+	a.LoopApproval = loopApprovalFor(approve, interactive)
 	return a, mc.ID, nil
 }
