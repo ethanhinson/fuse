@@ -63,12 +63,16 @@ type ToolPolicy struct {
 	DenyReason string
 }
 
-// safeList is the baseline set of built-in read-only tools that always
-// auto-approve in smart mode.
+// safeList is the baseline set of built-in tools that always auto-approve in
+// smart and auto mode: the read-only tools, plus spawn_agent — harness-internal
+// orchestration whose spawned child inherits a cloned gate (same mode, rules,
+// classifier), so every action the child takes is independently gated and the
+// spawn call itself is inert.
 var safeList = map[string]bool{
 	"read_file":      true,
 	"list_directory": true,
 	"grep":           true,
+	"spawn_agent":    true,
 }
 
 // onSafeList returns true for the hard-coded safe set and all codeindex_* tools.
