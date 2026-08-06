@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/workflows
-claimed_at: 2026-08-06T19:48:31Z
+claimed_at: 2026-08-06T19:49:39Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -78,3 +78,24 @@ Design detail and acceptance criteria in the linked spec.
 - TUI annotation of workflow roots and pool state.
 
 ## Reconcile log
+
+### 2026-08-06
+
+Reconciled against current reality at claim time. Dependency #33 (spawn-tool-stripping)
+is merged and archived `done` on `main` (merge #19); its stripping machinery
+(`agent.NewStripSpawnPredicate`, `Agent.SetStripSpawn`, reversible concurrent cap +
+permanent budget + static depth strip) is present exactly as the spec assumes — this
+change layers workflow-scoped pools on top of it, not beside it.
+
+Confirmed the folded-in fix is still needed and unimplemented: both child builders
+(`cmd/fuse/shell.go` ~L177, `cmd/fuse/research_probe.go` ~L124) still unconditionally
+re-register `spawn_agent` into every non-MaxDepth child registry regardless of
+`opts.Tools`, so a parent cannot withhold the tool — the exact defect the spec's
+"honor the tools subset" primitive fixes. `internal/config/schema.go` has no
+`workflows:`/`workers:` surface yet, and the research skill still carries the
+unenforceable prose rules. No scope has been absorbed by related changes: #24, #26 are
+ungroomed `proposed`; #36 (scheduler) remains `proposed` and depends on this change, so
+building the pool as "the scheduler's seed" (spec §Scoped pool enforcement) stays the
+right altitude. No obsolescence, no fundamental invalidation, no scope drift. Spec and
+body stand as written; no edits beyond this log entry. Auto-capture disabled — nothing
+minted.
