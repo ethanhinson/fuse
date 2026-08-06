@@ -1,8 +1,8 @@
 # Backlog
 
-**33 changes** — 🟡 15 proposed · 🔵 1 implemented · ✅ 13 done · 🗑️ 4 killed
+**34 changes** — 🟡 16 proposed · 🔵 1 implemented · ✅ 13 done · 🗑️ 4 killed
 
-## 🟡 Proposed (15)
+## 🟡 Proposed (16)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -21,6 +21,7 @@
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
 | [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | build-ready |
 | [0033](active/0033-spawn-tool-stripping.md) | Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion | `high` | `feat` | build-ready |
+| [0034](active/0034-workflows.md) | Workflows — skill-bound subagent pools with typed workers and spawn quotas | `high` | `feat` | ⏳ waiting on #33 — not yet built |
 
 ## 🔵 Implemented — awaiting merge (1)
 
@@ -50,6 +51,7 @@ graph TD
   0027 --> 0030
   0003 --> 0031
   0033
+  0033 --> 0034
   0003:::done
   0007:::done
   0012:::done
