@@ -12,14 +12,14 @@ related: [33, 34]
 discovered_from: [34]
 adrs: [7]
 spec: docs/superpowers/specs/0036-agent-scheduler.md
-plan:
+plan: docs/superpowers/plans/0036-agent-scheduler.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/agent-scheduler
 pr:
 blocked_by:
-claimed_at: 2026-08-06T21:38:00Z
+claimed_at: 2026-08-06T21:45:00Z
 reconciled: true
 ---
 
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0036-agent-scheduler.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0036-agent-scheduler.md) |
+| Plan | [0036-agent-scheduler.md](https://github.com/ethanhinson/fuse/blob/feat/agent-scheduler/docs/superpowers/plans/0036-agent-scheduler.md) |
 | ADRs | [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0007-scheduler-single-admission-authority.md) |
 <!-- docket:artifacts:end -->
 
