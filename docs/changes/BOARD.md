@@ -1,6 +1,6 @@
 # Backlog
 
-**39 changes** — 🟡 16 proposed · 🔵 1 implemented · ✅ 18 done · 🗑️ 4 killed
+**39 changes** — 🟡 16 proposed · ✅ 19 done · 🗑️ 4 killed
 
 ## 🟡 Proposed (16)
 
@@ -20,14 +20,8 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | needs-brainstorm |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
 | [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | build-ready |
-| [0034](active/0034-workflows.md) | Workflows — skill-bound subagent pools with typed workers and spawn quotas | `high` | `feat` | ⏳ waiting on #33 — needs your merge |
+| [0034](active/0034-workflows.md) | Workflows — skill-bound subagent pools with typed workers and spawn quotas | `high` | `feat` | build-ready |
 | [0036](active/0036-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | `high` | `feat` | ⏳ waiting on #34 — not yet built |
-
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0033](active/0033-spawn-tool-stripping.md) | Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion | `high` | `feat` | [#19](https://github.com/ethanhinson/fuse/pull/19) |  |
 
 ```mermaid
 graph TD
@@ -49,16 +43,16 @@ graph TD
   0012 --> 0029
   0027 --> 0030
   0003 --> 0031
-  0033
   0033 --> 0034
   0034 --> 0036
   0003:::done
   0007:::done
   0012:::done
+  0033:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (22)</summary>
+<details><summary>✅🗑️ Archive — done + killed (23)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
@@ -66,6 +60,7 @@ graph TD
 | [0038](archive/2026-08-06-0038-turn-budget-retirement.md) | Retire the interactive turn cap — unlimited shell turns, headless backstop, doom-loop detection | 2026-08-06 |
 | [0037](archive/2026-08-06-0037-redirect-guard-lenience.md) | Redirect fail-closed guard — allow /dev/null targets and fd-dups, keep failing closed on real files | 2026-08-06 |
 | [0035](archive/2026-08-06-0035-live-mode-switch.md) | Mode switch must bite mid-turn — gates read the SessionMode holder live, not a construction snapshot | 2026-08-06 |
+| [0033](archive/2026-08-06-0033-spawn-tool-stripping.md) | Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion | 2026-08-06 |
 | [0017](archive/2026-08-06-0017-auto-mode.md) | Auto mode — layered safe/unsafe classification for autonomous tool approval | 2026-08-06 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
 | [0016](archive/2026-08-05-0016-one-shot-cli-approvals.md) | Remove the AlwaysApprove one-shot bypass; surface approvals at the CLI | 2026-08-05 |
@@ -80,12 +75,11 @@ graph TD
 | [0007](archive/2026-08-04-0007-mcp-http-oauth.md) | Remote MCP Servers via HTTP/SSE Transport + OAuth 2.0 | 2026-08-04 |
 | [0006](archive/2026-08-04-0006-tui-markdown-rendering.md) | Terminal Markdown Rendering | 2026-08-04 |
 | [0005](archive/2026-08-04-0005-tui-gutter-indent-fix.md) | Fix file-read gutter indentation in TUI | 2026-08-04 |
-| [0004](archive/2026-08-04-0004-skill-runtime.md) | Skill Runtime | 2026-08-04 |
 
 **Older done (collapsed)**
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 3 done |
+| [2026-08](archive/) | 4 done |
 
 </details>
