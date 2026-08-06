@@ -546,6 +546,29 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.completer == nil || !m.completer.active {
 			return m.enterAgentsView()
 		}
+	case tea.KeyShiftTab:
+		// Cycle the session permission mode smart<->auto. Reached only after the
+		// pending-approval and active-completer guards above, so it never fires
+		// while an approval is queued. The shell holds no long-lived root gate:
+		// mutating the shared SessionMode holder IS the switch — the next
+		// per-turn gate is built reading it.
+		if m.sessionMode == nil {
+			return m, nil
+		}
+		next := permissions.ModeSmart
+		switch m.sessionMode.Get() {
+		case permissions.ModeSmart:
+			next = permissions.ModeAuto
+		case permissions.ModeAuto:
+			next = permissions.ModeSmart
+		default:
+			// prompt-all / off land predictably on smart; the next Shift+Tab
+			// then toggles smart<->auto.
+			next = permissions.ModeSmart
+		}
+		m.sessionMode.Set(next)
+		m.appendLine("mode: " + next.String())
+		return m, nil
 	case tea.KeyCtrlL:
 		m.lines = nil
 		m.pendingCalls = nil
