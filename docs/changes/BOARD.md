@@ -1,8 +1,8 @@
 # Backlog
 
-**32 changes** — 🟡 14 proposed · 🔵 1 implemented · ✅ 13 done · 🗑️ 4 killed
+**33 changes** — 🟡 15 proposed · 🔵 1 implemented · ✅ 13 done · 🗑️ 4 killed
 
-## 🟡 Proposed (14)
+## 🟡 Proposed (15)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -20,6 +20,7 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | needs-brainstorm |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
 | [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | build-ready |
+| [0033](active/0033-spawn-tool-stripping.md) | Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion | `high` | `feat` | build-ready |
 
 ## 🔵 Implemented — awaiting merge (1)
 
@@ -48,6 +49,7 @@ graph TD
   0012 --> 0029
   0027 --> 0030
   0003 --> 0031
+  0033
   0003:::done
   0007:::done
   0012:::done
