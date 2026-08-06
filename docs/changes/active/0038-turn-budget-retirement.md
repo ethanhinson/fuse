@@ -2,7 +2,7 @@
 id: 38
 slug: turn-budget-retirement
 title: Retire the interactive turn cap — unlimited shell turns, headless backstop, doom-loop detection
-status: in-progress
+status: implemented
 priority: critical
 type: fix
 created: 2026-08-06
@@ -13,12 +13,12 @@ discovered_from: [17]
 adrs: []
 spec:
 plan: docs/superpowers/plans/2026-08-06-turn-budget-retirement-plan.md
-results:
+results: docs/results/2026-08-06-turn-budget-retirement-results.md
 trivial: true
 auto_groomable:
 branch: feat/live-mode-switch
-claimed_at: 2026-08-06T05:51:24Z
-pr:
+claimed_at: 2026-08-06T06:16:07Z
+pr: https://github.com/ethanhinson/fuse/pull/16
 blocked_by:
 reconciled: true
 ---
@@ -29,6 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Plan | [2026-08-06-turn-budget-retirement-plan.md](https://github.com/ethanhinson/fuse/blob/feat/live-mode-switch/docs/superpowers/plans/2026-08-06-turn-budget-retirement-plan.md) |
+| Results | [2026-08-06-turn-budget-retirement-results.md](https://github.com/ethanhinson/fuse/blob/feat/live-mode-switch/docs/results/2026-08-06-turn-budget-retirement-results.md) |
+| PR | [#16](https://github.com/ethanhinson/fuse/pull/16) |
 <!-- docket:artifacts:end -->
 
 ## Why
