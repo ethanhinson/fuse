@@ -12,12 +12,12 @@ related: [12, 35]
 discovered_from: []
 adrs: []
 spec:
-plan:
+plan: docs/superpowers/plans/0039-agents-tab-idle-timer-and-model-plan.md
 results:
 trivial: true
 auto_groomable:
 branch: feat/agents-tab-idle-timer-and-model
-claimed_at: 2026-08-06T07:02:01Z
+claimed_at: 2026-08-06T07:03:34Z
 pr:
 blocked_by:
 reconciled: true
@@ -26,6 +26,9 @@ reconciled: true
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Plan | [0039-agents-tab-idle-timer-and-model-plan.md](https://github.com/ethanhinson/fuse/blob/feat/agents-tab-idle-timer-and-model/docs/superpowers/plans/0039-agents-tab-idle-timer-and-model-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
