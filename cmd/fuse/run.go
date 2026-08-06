@@ -75,6 +75,19 @@ func resolveMaxTurns(cfgMaxTurns *int, interactive bool) int {
 	return headlessTurnBackstop
 }
 
+// oneShotBudgetInteractive resolves the turn/loop budget posture for the
+// one-shot entry point, which is NOT the same as the approval-channel posture.
+// A human is reachable on a TTY (driving the y/N/a approval prompt), but
+// --approve-all is an explicit "don't ask me" scripted posture: with it set,
+// the budget must be headless even on a TTY, so an unset max_turns backstops at
+// 100 (resolveMaxTurns) and the doom-loop hook stays nil (loopApprovalFor) —
+// otherwise a doom loop under --approve-all auto-continues every 3 turns forever
+// with no backstop. Explicit max_turns config still wins via resolveMaxTurns.
+// See change 0038 (review CONCERN).
+func oneShotBudgetInteractive(tty, approveAll bool) bool {
+	return tty && !approveAll
+}
+
 // loopApprovalFor adapts an ApprovalFunc into the agent's doom-loop
 // force-through callback, but only in the interactive posture — a non-TTY run
 // has no human to answer, so a nil hook keeps the loop's abort-on-trip
@@ -85,7 +98,13 @@ func loopApprovalFor(approve permissions.ApprovalFunc, interactive bool) func(co
 		return nil
 	}
 	return func(ctx context.Context, preview string) (bool, error) {
-		approved, _, err := approve(ctx, permissions.ApprovalRequest{Preview: preview})
+		// ToolName tags this as a loop check (not a real tool call) so the TUI
+		// labels the prompt and drops the meaningless session option; the
+		// session bool is discarded — "always for this loop" makes no sense.
+		approved, _, err := approve(ctx, permissions.ApprovalRequest{
+			ToolName: permissions.LoopApprovalToolName,
+			Preview:  preview,
+		})
 		return approved, err
 	}
 }

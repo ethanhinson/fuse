@@ -34,6 +34,56 @@ func TestResolveMaxTurns(t *testing.T) {
 	}
 }
 
+// TestOneShotBudgetPostureUnderApproveAll is the regression for the review
+// CONCERN: `fuse "task" --approve-all` on a TTY must NOT resolve to the
+// interactive (unlimited-turns, auto-continue-loop) posture. --approve-all is a
+// scripted "don't ask me" posture, so the turn/loop budget must be headless: an
+// unset max_turns backstops at 100, and the loop hook is nil so a doom-loop trip
+// aborts with the structured error instead of being auto-approved forever.
+// Explicit max_turns config still wins.
+func TestOneShotBudgetPostureUnderApproveAll(t *testing.T) {
+	ptr := func(n int) *int { return &n }
+	tests := []struct {
+		name        string
+		tty         bool
+		approveAll  bool
+		wantPosture bool // the resolved turn/loop interactive posture
+	}{
+		{"TTY, no approve-all ⇒ interactive", true, false, true},
+		{"TTY, --approve-all ⇒ headless (the CONCERN)", true, true, false},
+		{"piped, no approve-all ⇒ headless", false, false, false},
+		{"piped, --approve-all ⇒ headless", false, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := oneShotBudgetInteractive(tt.tty, tt.approveAll)
+			if got != tt.wantPosture {
+				t.Fatalf("oneShotBudgetInteractive(tty=%v, approveAll=%v) = %v, want %v",
+					tt.tty, tt.approveAll, got, tt.wantPosture)
+			}
+			// The doom-loop hook must be nil in the headless posture: a trip
+			// aborts rather than routing to auto-approve.
+			hook := loopApprovalFor(autoApprove, got)
+			if tt.wantPosture && hook == nil {
+				t.Error("interactive posture must wire a loop force-through hook")
+			}
+			if !tt.wantPosture && hook != nil {
+				t.Error("headless posture must leave the loop hook nil (abort on trip)")
+			}
+			// An unset max_turns must backstop at 100 in the headless posture,
+			// stay unlimited (0) interactive; an explicit cap always wins.
+			if got := resolveMaxTurns(nil, got); tt.wantPosture && got != 0 {
+				t.Errorf("interactive unset max_turns = %d, want 0 (unlimited)", got)
+			} else if !tt.wantPosture && got != headlessTurnBackstop {
+				t.Errorf("headless unset max_turns = %d, want %d (backstop)", got, headlessTurnBackstop)
+			}
+			if got := resolveMaxTurns(ptr(9), got); got != 9 {
+				t.Errorf("explicit max_turns must win regardless of posture, got %d", got)
+			}
+		})
+	}
+}
+
 func TestChildResultReturnsPartialOnMaxTurns(t *testing.T) {
 	msgs := []model.Message{
 		{Role: "user", Content: "task"},

@@ -12,6 +12,12 @@ import (
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
+// LoopApprovalToolName is the sentinel ToolName carried by a doom-loop
+// force-through ApprovalRequest (as opposed to a real tool call). The TUI keys
+// on it to render the prompt as a loop check and to drop the "allow for
+// session" option, whose bool is meaningless for a loop trip. See change 0038.
+const LoopApprovalToolName = "possible loop"
+
 // ApprovalRequest describes a tool call awaiting user approval.
 type ApprovalRequest struct {
 	ToolName string

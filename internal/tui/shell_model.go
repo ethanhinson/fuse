@@ -690,6 +690,11 @@ func (m ShellModel) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y":
 		m.answerApproval(approvalResponse{Approved: true, AllowForSession: false})
 	case "s":
+		// "allow for session" is meaningless for a loop check (the session bool
+		// is discarded), and the popup does not offer it there — ignore the key.
+		if len(m.approvals) > 0 && isLoopApproval(m.approvals[0].req) {
+			return m, nil
+		}
 		m.answerApproval(approvalResponse{Approved: true, AllowForSession: true})
 	case "n", "esc":
 		m.answerApproval(approvalResponse{Approved: false})
@@ -1118,6 +1123,13 @@ func approvalStatusText(n int) string {
 	return "Awaiting permission…"
 }
 
+// isLoopApproval reports whether an approval request is a doom-loop
+// force-through (tagged with the permissions sentinel ToolName) rather than a
+// real tool call — the popup and the key handler render/handle it differently.
+func isLoopApproval(req PermissionRequestMsg) bool {
+	return req.Request.ToolName == permissions.LoopApprovalToolName
+}
+
 // overlayApprovalOnView paints the approval popup over the bottom rows of a
 // full-screen view (the agents overlay). The queue is owned by ShellModel, so
 // the popup follows the user across view switches instead of being dropped.
@@ -1125,14 +1137,25 @@ func overlayApprovalOnView(base string, req PermissionRequestMsg, queued, width 
 	if width < 8 {
 		return base
 	}
+	loop := isLoopApproval(req)
+	// A loop check is not a real tool call: its ToolName is the sentinel and its
+	// preview already reads "possible loop: … — continue?", so show it as a loop
+	// check and drop the "allow for session" option (its bool is discarded).
+	header, field, keys := "⚠  Permission required", "  Tool:  ", "  [y] allow once   [s] allow for session   [n] deny"
+	if loop {
+		header, field, keys = "⚠  Possible loop", "  Loop:  ", "  [y] continue once   [n] abort"
+	}
 	label := req.Request.ToolName
+	if loop {
+		label = "detected"
+	}
 	if queued > 1 {
 		label = fmt.Sprintf("%s   (1 of %d pending)", label, queued)
 	}
-	inner := approvalHeaderStyle.Render("⚠  Permission required") + "\n\n" +
-		"  Tool:  " + label + "\n" +
+	inner := approvalHeaderStyle.Render(header) + "\n\n" +
+		field + label + "\n" +
 		"  Cmd:   " + req.Request.Preview + "\n\n" +
-		approvalKeysStyle.Render("  [y] allow once   [s] allow for session   [n] deny")
+		approvalKeysStyle.Render(keys)
 	block := approvalBorderStyle.Width(width - 4).Render(inner)
 	overlay := strings.Split(block, "\n")
 
