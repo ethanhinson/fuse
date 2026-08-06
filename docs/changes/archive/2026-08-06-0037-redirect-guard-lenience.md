@@ -28,8 +28,8 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Plan | [0037-redirect-guard-lenience.md](https://github.com/ethanhinson/fuse/blob/feat/redirect-guard-lenience/docs/superpowers/plans/0037-redirect-guard-lenience.md) |
-| Results | [2026-08-06-redirect-guard-lenience-results.md](https://github.com/ethanhinson/fuse/blob/feat/redirect-guard-lenience/docs/results/2026-08-06-redirect-guard-lenience-results.md) |
+| Plan | [0037-redirect-guard-lenience.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/0037-redirect-guard-lenience.md) |
+| Results | [2026-08-06-redirect-guard-lenience-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-06-redirect-guard-lenience-results.md) |
 | PR | [#17](https://github.com/ethanhinson/fuse/pull/17) |
 | ADRs | [ADR-0005](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0005-per-segment-allow-rule-evaluation.md) |
 <!-- docket:artifacts:end -->
