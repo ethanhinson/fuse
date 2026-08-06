@@ -17,10 +17,10 @@ results:
 trivial: true
 auto_groomable:
 branch: feat/agents-tab-idle-timer-and-model
-claimed_at: 2026-08-06T07:00:33Z
+claimed_at: 2026-08-06T07:02:01Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -69,3 +69,26 @@ status display misleading before and across turns:
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-06 — reconcile (docket-implement-next)
+
+Verified the change body against current `origin/main` code; all cited locations
+are accurate and the design is still valid. No scope change.
+
+- Bug 1 (timer): `NewAgentTree()` stamps `StartedAt: time.Now()` at
+  `internal/agent/tree.go:240`; `BeginTurn()` resets it at
+  `internal/agent/tree.go:296`; the render side already treats a zero
+  `StartedAt` as idle — `nodeElapsed()` returns the idle marker for
+  `n.StartedAt.IsZero()` (`internal/tui/agents_model.go:756`). So the fix is to
+  stop stamping `StartedAt` at construction; no render change is needed for the
+  root's pre-first-turn idle state.
+- Bug 2 (model label): `NewAgentTree(alias, alias)` snapshots the startup alias
+  (`cmd/fuse/shell.go:133`); the `/model` handler updates only `m.alias`
+  (`internal/tui/shell_model.go:743`) and never the tree root's `Label`/`Model`.
+  `m.alias` is the live session alias (used live in the prompt/status line at
+  shell_model.go:1317/1337). Implementation choice between "`/model` updates the
+  root node" and "the tab reads the live alias" is left to the plan, per the
+  0035 live-read pattern — both remain open and neither invalidates the change.
+
+Related changes 12 (agents tab origin) and 35 (live-read pattern) reviewed — no
+overlap that pre-empts this work.
