@@ -2,7 +2,7 @@
 id: 32
 slug: shell-mode-switcher
 title: Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator
-status: proposed
+status: killed
 priority: high
 type: feat
 created: 2026-08-05
@@ -71,3 +71,7 @@ mid-session without editing YAML and restarting.
   fail-closed asks (current behavior when classifier_model is unset)?
 
 ## Reconcile log
+
+## Why killed
+
+Subsumed by change 0017 (auto mode): the in-session mode switcher (TUI indicator, Shift+Tab cycle, /mode command) is now spec D10 of 0017 and ships on its PR.
