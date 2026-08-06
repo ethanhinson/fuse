@@ -18,9 +18,9 @@ trivial: true
 auto_groomable:
 branch: feat/redirect-guard-lenience
 pr:
-claimed_at: 2026-08-06T05:05:35Z
+claimed_at: 2026-08-06T05:07:04Z
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -65,3 +65,31 @@ says it was too strict.
   output files in-workspace — all still fail closed; separate discussion).
 
 ## Reconcile log
+
+### 2026-08-06
+
+Reconciled against current `origin/main`. Ground truth confirmed:
+
+- `internal/permissions/shellparse.go` `collectStmt` still carries the blanket
+  guard `if len(st.Redirs) > 0 { return ErrUnparseable }` (lines 111-113) — the
+  exact target of this change. No prior work has softened it.
+- Vendored `mvdan.cc/sh/v3 v3.13.1` `syntax.Redirect{OpPos, Op, N, Word, Hdoc}`;
+  `Op` is a `RedirOperator` with constants: `RdrOut` (`>`), `AppOut` (`>>`),
+  `RdrIn` (`<`), `RdrInOut` (`<>`), `DplIn` (`<&`), `DplOut` (`>&`),
+  `Hdoc`/`DashHdoc`/`WordHdoc`, `RdrAll` (`&>`), `AppAll` (`&>>`). `2>` parses as
+  `Op=RdrOut, N="2"`; `2>&1` as `Op=DplOut, N="2", Word="1"`; `>&2` as
+  `Op=DplOut, Word="2"`. Benign set = literal `/dev/null` target under
+  `RdrOut`/`AppOut`/`RdrIn`/`RdrAll` (any `N`), plus pure fd-dup
+  `DplIn`/`DplOut` whose `Word` is numeric with no path. Here-docs and every
+  other op stay fail-closed.
+- Existing `TestSplitSegments_FailClosed` rows already assert the regression
+  contract this change must preserve: `echo x > /etc/passwd`,
+  `grep foo bar >> ~/.zshrc`, `ls > out.txt`, and `ls 2>/dev/null > /etc/x` all
+  stay `ErrUnparseable` under the new per-redirect check (the last mixes a
+  benign `2>/dev/null` with a real-file `> /etc/x`, which still fails closed).
+- Scope is `shellparse.go` + `shellparse_test.go` only. In-flight PR #16
+  (change 35, live-mode-switch) touches `gate.go`/`run.go` — no overlap, no
+  conflict. Feature branch cuts from `origin/main`.
+
+Design in `## What changes` holds as written; no scope change. Proceeding to
+plan + TDD build.
