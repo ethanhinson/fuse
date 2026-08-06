@@ -48,15 +48,23 @@ func TestEmbeddedResearchCarriesBudgetGuidance(t *testing.T) {
 		t.Fatal("embedded research skill not found or empty")
 	}
 	for _, want := range []string{
-		"agent budget:",       // references the injected budget line
-		"never count it",      // tells the model not to tally its own spawns
-		"MUST NOT call spawn", // children never spawn
-		"Completion contract", // the final-synthesis requirement
+		"agent budget:",             // references the injected budget line
+		"never count it",            // tells the model not to tally its own spawns
+		"facet-researcher",          // change 0034: worker-typed spawns replace prose
+		`worker: "facet-researcher"`, // the model passes the worker param
+		"do the facet work directly", // the 0033-era fallback line when stripped
+		"Completion contract",       // the final-synthesis requirement
 		"numbered source list",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("embedded research body missing %q", want)
 		}
+	}
+	// The unenforceable prose rules the workflow replaces must be GONE — their
+	// enforcement now lives in the worker allowlist + pool, not in text a child
+	// never sees (change 0034).
+	if strings.Contains(body, "MUST NOT call spawn") {
+		t.Error("research body should no longer carry the unenforceable 'MUST NOT call spawn' prose (0034)")
 	}
 }
 

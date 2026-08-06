@@ -78,16 +78,16 @@ func TestWorkflowStripZeroDimensionsNeverStrip(t *testing.T) {
 func TestOrPredicatesTighterWins(t *testing.T) {
 	strips := func() bool { return true }
 	nostrip := func() bool { return false }
-	if !orPredicates(nostrip, strips)() {
+	if !NewOrPredicate(nostrip, strips)() {
 		t.Fatal("or: any true => strip")
 	}
-	if orPredicates(nostrip, nostrip)() {
+	if NewOrPredicate(nostrip, nostrip)() {
 		t.Fatal("or: all false => no strip")
 	}
-	if orPredicates(nil, strips)() != true {
+	if NewOrPredicate(nil, strips)() != true {
 		t.Fatal("or: nil operand ignored, true still strips")
 	}
-	if orPredicates(nil, nil)() {
+	if NewOrPredicate(nil, nil)() {
 		t.Fatal("or: all nil => no strip")
 	}
 }

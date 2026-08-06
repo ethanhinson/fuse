@@ -247,5 +247,21 @@ func Default() Config {
 			MaxSpawns:     64,
 			MaxConcurrent: 16,
 		},
+		// The research workflow ships as a built-in default (change 0034): it
+		// binds the research skill to a facet-researcher worker (no spawn_agent,
+		// so it cannot nest) and a {concurrent:5, total:8, max_depth:1} pool — a
+		// reservation within the global brakes. A config-level workflows.research
+		// entry overrides these via the normal per-field merge.
+		Workflows: map[string]WorkflowConfig{
+			"research": {
+				Skill: "research",
+				Pool:  PoolConfig{Concurrent: 5, Total: 8, MaxDepth: 1},
+				Workers: map[string]WorkerConfig{
+					"facet-researcher": {
+						Tools: []string{"web_search", "web_fetch", "read_file"},
+					},
+				},
+			},
+		},
 	}
 }

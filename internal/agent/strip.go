@@ -91,10 +91,11 @@ func NewWorkflowStripPredicate(tree *AgentTree, rootID string, pool WorkflowPool
 	}
 }
 
-// orPredicates composes strip predicates: the result strips when ANY operand
+// NewOrPredicate composes strip predicates: the result strips when ANY operand
 // strips (the tighter brake wins). Nil operands are ignored. A nil/empty set
-// never strips.
-func orPredicates(preds ...func() bool) func() bool {
+// never strips. Used to compose the global and workflow strip predicates so a
+// child inside a workflow subtree is governed by whichever is tighter.
+func NewOrPredicate(preds ...func() bool) func() bool {
 	return func() bool {
 		for _, p := range preds {
 			if p != nil && p() {

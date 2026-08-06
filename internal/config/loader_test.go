@@ -836,10 +836,38 @@ func TestLoadEnvOverridesGateway(t *testing.T) {
 
 // --- change 0034: workflows: config surface ---
 
-func TestDefaultHasNoWorkflows(t *testing.T) {
+// The research workflow ships as a built-in default (change 0034): it binds the
+// research skill to a facet-researcher worker and the {5,8,1} pool, so /research
+// is policy-governed out of the box. Config may override it via the normal merge.
+func TestDefaultShipsResearchWorkflow(t *testing.T) {
 	c := Default()
-	if len(c.Workflows) != 0 {
-		t.Errorf("Default().Workflows = %v, want empty (no workflow behavior by default)", c.Workflows)
+	wf, ok := c.Workflows["research"]
+	if !ok {
+		t.Fatalf("Default().Workflows missing 'research'; got %v", c.Workflows)
+	}
+	if wf.Skill != "research" {
+		t.Errorf("skill = %q, want research", wf.Skill)
+	}
+	if wf.Pool.Concurrent != 5 || wf.Pool.Total != 8 || wf.Pool.MaxDepth != 1 {
+		t.Errorf("pool = %+v, want {5 8 1}", wf.Pool)
+	}
+	w, ok := wf.Workers["facet-researcher"]
+	if !ok {
+		t.Fatalf("facet-researcher worker missing; got %v", wf.Workers)
+	}
+	for _, tl := range w.Tools {
+		if tl == "spawn_agent" {
+			t.Error("facet-researcher must not carry spawn_agent (cannot nest)")
+		}
+	}
+	want := map[string]bool{"web_search": true, "web_fetch": true, "read_file": true}
+	if len(w.Tools) != len(want) {
+		t.Errorf("facet-researcher tools = %v, want %v", w.Tools, want)
+	}
+	for _, tl := range w.Tools {
+		if !want[tl] {
+			t.Errorf("unexpected tool %q in facet-researcher", tl)
+		}
 	}
 }
 
