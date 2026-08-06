@@ -2,7 +2,7 @@
 id: 33
 slug: spawn-tool-stripping
 title: Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion
-status: proposed
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-06
@@ -16,8 +16,9 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/spawn-tool-stripping
 pr:
+claimed_at: 2026-08-06T18:14:02Z
 blocked_by:
 reconciled: false
 ---
