@@ -10,6 +10,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0004](0004-byo-search-key-brave-primary-provider-resolution.md) — BYO search key with Brave-primary provider resolution and a config-driven custom HTTP provider (Accepted) ← change #14
 - [ADR-0005](0005-per-segment-allow-rule-evaluation.md) — Per-segment allow-rule evaluation — a deliberate deviation from the Grok Build reference (Accepted) ← change #17
 - [ADR-0006](0006-fuse-local-yml-tighten-only-trust-boundary.md) — .fuse.local.yml cannot loosen permission policy (repo-plantable config trust boundary) (Accepted) ← change #17 · relates to ADR-0005
+- [ADR-0007](0007-scheduler-single-admission-authority.md) — One Scheduler is the single admission, queueing, and throughput authority for subagents (Accepted) ← change #35
 
 ## Superseded / Reversed
 
