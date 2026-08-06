@@ -1,8 +1,14 @@
 # Backlog
 
-**38 changes** — 🟡 18 proposed · 🔵 2 implemented · ✅ 14 done · 🗑️ 4 killed
+**38 changes** — 🟢 1 in progress · 🟡 17 proposed · 🔵 2 implemented · ✅ 14 done · 🗑️ 4 killed
 
-## 🟡 Proposed (18)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0038](active/0038-turn-budget-retirement.md) | Retire the interactive turn cap — unlimited shell turns, headless backstop, doom-loop detection | `critical` | `fix` | [spec](../) | `feat/live-mode-switch` |
+
+## 🟡 Proposed (17)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -23,7 +29,6 @@
 | [0033](active/0033-spawn-tool-stripping.md) | Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion | `high` | `feat` | build-ready |
 | [0034](active/0034-workflows.md) | Workflows — skill-bound subagent pools with typed workers and spawn quotas | `high` | `feat` | ⏳ waiting on #33 — not yet built |
 | [0036](active/0036-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | `high` | `feat` | ⏳ waiting on #34 — not yet built |
-| [0038](active/0038-turn-budget-retirement.md) | Retire the interactive turn cap — unlimited shell turns, headless backstop, doom-loop detection | `critical` | `fix` | build-ready |
 
 ## 🔵 Implemented — awaiting merge (2)
 
