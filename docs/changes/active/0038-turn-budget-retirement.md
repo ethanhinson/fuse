@@ -17,10 +17,10 @@ results:
 trivial: true
 auto_groomable:
 branch: feat/live-mode-switch
-claimed_at: 2026-08-06T05:49:12Z
+claimed_at: 2026-08-06T05:51:24Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -68,3 +68,47 @@ loop — is better caught by shape than by count.
   permissions-only for now).
 
 ## Reconcile log
+
+### 2026-08-06 — reconcile (implementer, riding feat/live-mode-switch)
+
+Verified the settled design against the feature branch tip
+(`feat/live-mode-switch`, atop `origin/main`). Ground truth confirmed:
+
+- `internal/agent/agent.go:49-50` — `if maxTurns <= 0 { maxTurns = 25 }`
+  coercion (retire).
+- `internal/agent/loop.go:15` (`ErrMaxTurns`), `:133` (`for turn := 0; turn
+  < a.maxTurns; turn++`), `:200` (`return messages, ErrMaxTurns`).
+- `internal/config/schema.go:97` (resolved `Config.MaxTurns int`), `:119`
+  (raw `MaxTurns int yaml:"max_turns"`), `:173` (`MaxTurns: 25` default).
+- `*int` presence-detection precedent = `rawPermissionsConfig.SessionAllow
+  *bool` (`schema.go:144`, resolved `:180`).
+
+0035 (this same branch) touched only `run.go` + `permissions/gate.go`; no
+overlap with the turn-cap files, so no scope to drop.
+
+**Refinement folded in (design sharpened, not changed).** All FOUR
+`agent.New(...)` call sites in `cmd/fuse/run.go` (:228, :239, :329, :343)
+pass the *resolved* `cfg.MaxTurns` uniformly — the resolve layer flattens
+away both (a) the unset-vs-explicit-`0` presence bit and (b) the
+interactive-vs-headless context. Therefore:
+
+- `rawConfig.MaxTurns` must become `*int` (the `SessionAllow *bool` pattern)
+  so `schema.go` stops hardcoding the `25` default and instead preserves
+  presence into the resolved `Config`.
+- The unset backstop decision (shell ⇒ unlimited; one-shot / non-TTY /
+  mcp-server / research-probe ⇒ 100) belongs where interactivity is known —
+  `cmd/fuse/run.go` (shell.go interactive path vs one-shot, `main.go` +
+  `stdinIsTerminal()` in `approval.go`), NOT in context-free `schema.go`
+  resolve, and NOT in the uniform `agent.New`.
+- The `agent.New` `<=0 ⇒ 25` coercion is deleted; `maxTurns == 0` becomes the
+  explicit-unlimited sentinel the loop honors (`loop.go:133` gains an
+  unlimited branch). Explicit `N>0` caps everywhere.
+
+**Doom-loop detection** (both contexts) is orthogonal to the cap and lands in
+the agent loop: 3 consecutive byte-identical tool calls (name+args) ⇒
+interactive force-through approval with a "possible loop" preview regardless
+of mode; non-interactive structured abort naming the repeated call; counter
+resets on any differing call.
+
+No spec (trivial). Design settled with the human 2026-08-06; not
+fundamentally invalidated. Proceeding to plan on the existing branch.
