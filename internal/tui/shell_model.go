@@ -741,6 +741,11 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.alias = name
+		// Keep the agents-tab tree root in sync so it renders the current model,
+		// not the one snapshotted at construction.
+		if m.tree != nil {
+			m.tree.SetRootModel(name)
+		}
 		m.appendLine(fmt.Sprintf("switched to %s", name))
 		return m, nil
 	case "/mode":

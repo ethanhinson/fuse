@@ -51,6 +51,54 @@ func TestNewAgentTree(t *testing.T) {
 	}
 }
 
+func TestNewAgentTreeRootStartsIdle(t *testing.T) {
+	// The root node must not carry a running clock before the first turn: the
+	// agents tab renders idle (no elapsed time) for a zero StartedAt. BeginTurn
+	// starts the clock at prompt submit.
+	tree := NewAgentTree("root", "m")
+	root := tree.Node(tree.RootID())
+	if !root.StartedAt.IsZero() {
+		t.Errorf("fresh root StartedAt = %v, want zero (idle before first prompt)", root.StartedAt)
+	}
+
+	tree.BeginTurn()
+	root = tree.Node(tree.RootID())
+	if root.StartedAt.IsZero() {
+		t.Error("after BeginTurn root StartedAt is still zero, want the turn clock started")
+	}
+}
+
+func TestSetRootModelUpdatesLabelAndModel(t *testing.T) {
+	// /model switches the session model; the tree root's rendered label/model must
+	// follow so the agents tab shows the current selection, not the startup default.
+	tree := NewAgentTree("alpha", "alpha")
+
+	// Drain the construction update, then assert SetRootModel emits one.
+	select {
+	case <-tree.Updates():
+	default:
+	}
+
+	tree.SetRootModel("beta")
+
+	root := tree.Node(tree.RootID())
+	if root.Model != "beta" {
+		t.Errorf("root Model = %q, want %q", root.Model, "beta")
+	}
+	if root.Label != "beta" {
+		t.Errorf("root Label = %q, want %q", root.Label, "beta")
+	}
+
+	select {
+	case up := <-tree.Updates():
+		if up.NodeID != tree.RootID() {
+			t.Errorf("emitted update NodeID = %q, want root %q", up.NodeID, tree.RootID())
+		}
+	default:
+		t.Error("SetRootModel did not emit a tree update for the root")
+	}
+}
+
 func TestAgentNodeAddEvent(t *testing.T) {
 	t.Parallel()
 	node := &AgentNode{ID: "n1"}
