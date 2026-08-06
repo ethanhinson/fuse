@@ -2,7 +2,7 @@
 id: 39
 slug: agents-tab-idle-timer-and-model
 title: Agents tab — timer runs before the first prompt; shows the default model, not the selected one
-status: proposed
+status: in-progress
 priority: high
 type: fix
 created: 2026-08-06
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: true
 auto_groomable:
-branch:
+branch: feat/agents-tab-idle-timer-and-model
+claimed_at: 2026-08-06T07:00:33Z
 pr:
 blocked_by:
 reconciled: false
