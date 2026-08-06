@@ -1,6 +1,6 @@
 # Backlog
 
-**35 changes** — 🟢 1 in progress · 🟡 16 proposed · ✅ 14 done · 🗑️ 4 killed
+**36 changes** — 🟢 1 in progress · 🟡 17 proposed · ✅ 14 done · 🗑️ 4 killed
 
 ## 🟢 In progress (1)
 
@@ -8,7 +8,7 @@
 |---|-------|----------|------|------|--------|
 | [0035](active/0035-live-mode-switch.md) | Mode switch must bite mid-turn — gates read the SessionMode holder live, not a construction snapshot | `critical` | `fix` | [spec](../) | `feat/live-mode-switch` |
 
-## 🟡 Proposed (16)
+## 🟡 Proposed (17)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -28,6 +28,7 @@
 | [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | build-ready |
 | [0033](active/0033-spawn-tool-stripping.md) | Strip spawn_agent from tool schemas at the concurrency cap and on budget exhaustion | `high` | `feat` | build-ready |
 | [0034](active/0034-workflows.md) | Workflows — skill-bound subagent pools with typed workers and spawn quotas | `high` | `feat` | ⏳ waiting on #33 — not yet built |
+| [0035](active/0035-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | `high` | `feat` | build-ready |
 
 ```mermaid
 graph TD
@@ -51,6 +52,7 @@ graph TD
   0003 --> 0031
   0033
   0033 --> 0034
+  0034 --> 0035
   0035
   0003:::done
   0007:::done
