@@ -11,7 +11,11 @@ package agent
 //   - Active-child cap (reversible): the tree's active child count
 //     (running + pending) is at or above maxConcurrent. As children finish and
 //     the count drops below the cap, this term becomes false again and the tool
-//     reappears on the next turn.
+//     reappears on the next turn. Note the asymmetry with the runtime semaphore:
+//     the semaphore bounds only RUNNING children, whereas this strip term counts
+//     running + PENDING. That is deliberate — stripping on the queued total keeps
+//     the model from stacking more spawns behind a saturated semaphore (covered
+//     by TestStripPredicatePendingCountsTowardCap).
 //
 // The predicate reads only AgentTree methods that lock internally, so it is
 // race-safe, and it recomputes on every call — it MUST NOT be cached across

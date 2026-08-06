@@ -171,13 +171,23 @@ research:
 
 ```yaml
 agents:
-  max_spawns: 16        # tree-global spawn budget: the total number of child
+  max_spawns: 64        # tree-global spawn budget: the total number of child
                         # agents one root turn may create, ever. The runtime
-                        # appends a line like `agent budget: 7/16 used (9
+                        # appends a line like `agent budget: 7/64 used (57
                         # remaining)` to every spawn_agent result so the model
                         # can stop before it fans out too wide, and refuses the
                         # spawn outright once the ceiling is reached. Bounds
-                        # runaway fan-out in the research flow.
+                        # runaway fan-out in the research flow. Once the budget is
+                        # exhausted the spawn_agent tool is stripped from the
+                        # model's schema for the rest of the session (a permanent
+                        # brake, since the tree is append-only).
+  max_concurrent: 16    # live-concurrency cap: the number of child agents that
+                        # may RUN at once, bounded by a semaphore, independently
+                        # of the total max_spawns budget. When the active child
+                        # count (running + pending) reaches this cap the
+                        # spawn_agent tool is stripped for that turn and reappears
+                        # once children finish (a reversible brake). A negative
+                        # value is clamped back to the default.
 ```
 
 ### Observing the research flow — `research-probe`
