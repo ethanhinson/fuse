@@ -134,7 +134,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// Build a tool registry with spawn_agent AND the skill tool wired up.
 	toolReg := defaultToolRegistry(cfg.Research, skillSet.Lookup)
 	tree := agent.NewAgentTreeWithConcurrency(*modelAlias, *modelAlias, cfg.Agents.MaxConcurrent)
-	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
+	// The Scheduler is the single admission/slot/budget authority (change 0036):
+	// set the lifetime budget on it and route slot yield/unyield through it.
+	sched := tree.Scheduler()
+	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
 
 	var makeSpawnFunc func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc
@@ -155,7 +158,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 					// Either way, drop any copy inherited from the parent's registry.
 					childToolReg.Unregister("spawn_agent")
 				} else {
-					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
+					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget))
 				}
 
 				r := tui.NewRenderer(stdout, *verbose)
@@ -198,15 +201,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 			// Yield this agent's spawn slot while blocked on the child —
 			// parents holding slots while their children queue is a deadlock.
-			tree.YieldSlot(parentNode)
+			sched.YieldSlot(parentNode)
 			done := handle.Wait()
-			if !tree.UnyieldSlot(ctx, parentNode) {
+			if !sched.UnyieldSlot(ctx, parentNode) {
 				return "", ctx.Err()
 			}
 			return done.Result, done.Err
 		}
 	}
-	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
+	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget))
 
 	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil, oneShotBudget)
 	if err != nil {

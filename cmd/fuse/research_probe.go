@@ -99,7 +99,10 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// Agent tree, so the spawn hierarchy is captured for the summary. The
 	// tree-global spawn budget is what the injected budget line reports.
 	tree := agent.NewAgentTreeWithConcurrency(alias, alias, cfg.Agents.MaxConcurrent)
-	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
+	// The Scheduler is the single admission/slot/budget authority (change 0036):
+	// set the lifetime budget on it and route slot yield/unyield through it.
+	sched := tree.Scheduler()
+	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
 
 	// research-probe IS a research root: activate the research workflow on the
@@ -110,6 +113,11 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	if wf, ok := cfg.Workflows["research"]; ok {
 		rootNode.WorkflowRoot = "research"
 		act = &workflowActivation{name: "research", cfg: wf, rootDepth: rootNode.Depth}
+		// Register the pool policy with the scheduler at activation (change 0036).
+		// Task 1 stores it; the fair queue and unified visibility predicate consume
+		// it. The 0034 strip/backstop paths still enforce the pool for now, so this
+		// is behavior-preserving.
+		sched.RegisterPool(rootNode.ID, act.pool())
 	}
 	rootID := tree.RootID()
 
@@ -198,9 +206,9 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 			if herr != nil {
 				return "", herr
 			}
-			tree.YieldSlot(parentNode)
+			sched.YieldSlot(parentNode)
 			done := handle.Wait()
-			if !tree.UnyieldSlot(ctx, parentNode) {
+			if !sched.UnyieldSlot(ctx, parentNode) {
 				return "", ctx.Err()
 			}
 			return done.Result, done.Err

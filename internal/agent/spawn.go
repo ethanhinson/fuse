@@ -145,12 +145,19 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 	childCtx, cancel := context.WithCancel(ctx)
 	node.SetCancel(cancel) // allows tree.CancelNode to stop this node
 
+	// Slot admission goes through the scheduler (change 0036); a nil tree (a
+	// Spawner used without one) has no scheduler and thus no cap.
+	var sched *Scheduler
+	if s.tree != nil {
+		sched = s.tree.Scheduler()
+	}
+
 	go func() {
 		defer cancel()
 
 		// Width cap: wait for a spawn slot while the node stays visibly pending.
 		// Depth limits alone don't bound load when the model fans out widely.
-		if !s.tree.acquireSpawnSlot(childCtx) {
+		if !sched.acquireSlot(childCtx) {
 			node.Finish(StatusCancelled, "")
 			if s.tree != nil {
 				s.tree.Emit(TreeUpdate{NodeID: node.ID})
@@ -158,7 +165,7 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 			doneCh <- SpawnDone{Err: childCtx.Err()}
 			return
 		}
-		defer s.tree.releaseSpawnSlot()
+		defer sched.releaseSlot()
 
 		node.mu.Lock()
 		node.Status = StatusRunning

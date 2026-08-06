@@ -126,7 +126,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// Agent tree for subagent tracking. The tree-global spawn budget backstops
 	// runaway fan-out; its count feeds the budget line injected into results.
 	tree := agent.NewAgentTreeWithConcurrency(alias, alias, cfg.Agents.MaxConcurrent)
-	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
+	// The Scheduler is the single admission/slot/budget authority (change 0036):
+	// set the lifetime budget on it and route slot yield/unyield through it.
+	sched := tree.Scheduler()
+	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
 
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
@@ -176,7 +179,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 					childToolReg.Unregister("spawn_agent")
 				} else {
 					// Replace spawn_agent with one wired to the child's spawner.
-					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
+					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget))
 				}
 
 				r := tui.NewNodeRenderer(childNode, childTree)
@@ -245,9 +248,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			}
 			// Yield this agent's spawn slot while blocked on the child —
 			// parents holding slots while their children queue is a deadlock.
-			tree.YieldSlot(parentNode)
+			sched.YieldSlot(parentNode)
 			done := handle.Wait()
-			if !tree.UnyieldSlot(ctx, parentNode) {
+			if !sched.UnyieldSlot(ctx, parentNode) {
 				return "", ctx.Err()
 			}
 			return done.Result, done.Err
@@ -255,7 +258,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 
 	// Register spawn_agent in the tool registry before any agent runs.
-	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
+	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget))
 
 	// Start the 250ms dirty-node flusher; the same ctx stops the bridges.
 	flushCtx, cancelFlusher := context.WithCancel(context.Background())

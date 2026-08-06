@@ -151,7 +151,7 @@ func backstopFor(tree *agent.AgentTree, act *workflowActivation, rootID string) 
 // workflow with a total quota it reports the tighter of the workflow-total and
 // the global budget; otherwise the plain global budget.
 func budgetFor(tree *agent.AgentTree, act *workflowActivation, rootID string) tools.BudgetFunc {
-	global := tools.BudgetFunc(tree.SpawnBudget)
+	global := tools.BudgetFunc(tree.Scheduler().SpawnBudget)
 	if act == nil || rootID == "" || act.cfg.Pool.Total <= 0 {
 		return global
 	}
