@@ -565,6 +565,38 @@ func TestSlashModelSwitch(t *testing.T) {
 	}
 }
 
+func TestSlashModelSwitchUpdatesTreeRoot(t *testing.T) {
+	// /model on a known model must update the agents-tab tree root's model/label,
+	// not just m.alias — otherwise the tab keeps rendering the startup model.
+	tree := agent.NewAgentTree("alpha", "alpha")
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	m = m.WithTree(tree)
+	m = typeLine(m, "/model beta")
+	m, _ = enter(m)
+
+	root := tree.Node(tree.RootID())
+	if root.Model != "beta" {
+		t.Errorf("tree root Model = %q, want beta", root.Model)
+	}
+	if root.Label != "beta" {
+		t.Errorf("tree root Label = %q, want beta", root.Label)
+	}
+}
+
+func TestSlashModelUnknownLeavesTreeRoot(t *testing.T) {
+	// An unknown model is rejected — the tree root must stay untouched.
+	tree := agent.NewAgentTree("alpha", "alpha")
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	m = m.WithTree(tree)
+	m = typeLine(m, "/model nope")
+	m, _ = enter(m)
+
+	root := tree.Node(tree.RootID())
+	if root.Model != "alpha" || root.Label != "alpha" {
+		t.Errorf("tree root = %q/%q after rejected switch, want alpha/alpha", root.Label, root.Model)
+	}
+}
+
 func TestSlashModelUnknown(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m = typeLine(m, "/model nope")

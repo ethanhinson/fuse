@@ -232,12 +232,14 @@ func (t *AgentTree) SpawnBudget() (used, max int) {
 
 // NewAgentTree creates a new tree with the given root node label and model.
 func NewAgentTree(rootLabel, rootModel string) *AgentTree {
+	// StartedAt stays zero until the first BeginTurn(): the agents tab renders an
+	// idle root (no elapsed time) before the first prompt, rather than a timer
+	// counting time-since-launch.
 	root := &AgentNode{
-		ID:        newNodeID(),
-		Label:     rootLabel,
-		Model:     rootModel,
-		Status:    StatusRunning,
-		StartedAt: time.Now(),
+		ID:     newNodeID(),
+		Label:  rootLabel,
+		Model:  rootModel,
+		Status: StatusRunning,
 	}
 	return &AgentTree{
 		nodes:    map[string]*AgentNode{root.ID: root},
@@ -295,6 +297,21 @@ func (t *AgentTree) BeginTurn() {
 	root.Status = StatusRunning
 	root.StartedAt = time.Now()
 	root.EndedAt = time.Time{}
+	root.mu.Unlock()
+	t.Emit(TreeUpdate{NodeID: t.rootID})
+}
+
+// SetRootModel updates the root node's rendered model and label to the given
+// model. Called when the session model switches (/model) so the agents tab shows
+// the current selection rather than the model snapshotted at construction.
+func (t *AgentTree) SetRootModel(model string) {
+	root := t.Node(t.rootID)
+	if root == nil {
+		return
+	}
+	root.mu.Lock()
+	root.Model = model
+	root.Label = model
 	root.mu.Unlock()
 	t.Emit(TreeUpdate{NodeID: t.rootID})
 }
