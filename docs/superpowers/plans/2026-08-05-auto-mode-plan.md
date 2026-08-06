@@ -323,8 +323,233 @@ warning emitted.
 
 ---
 
+## D10 — In-session mode switching (subsumes 0032; added 2026-08-05 post-first-use)
+
+First real use showed config-file activation is the wrong primary surface: the
+permission mode must be a **session** surface (Claude-Code-style), with the
+config file only the startup default. Change 0032 is killed as subsumed. These
+tasks are appended after the D1–D9 build (Tasks 1–11, already merged-ready on
+this branch through commit `5046a8d`, review C1 closed) and follow the same
+TDD-per-task, one-commit-each contract. Spec section D10 is authoritative.
+
+**D10 context anchors (verified against this branch at append time):**
+
+- `PermissionGate` (`internal/permissions/gate.go`) reads `g.mode` unguarded in
+  `resolve`/`resolveAuto`/`CloneForChild`; there is no `SetMode` and no mutex on
+  `mode`. `PermissionMode` (`policy.go`) has no `String()`.
+- The shell builds a **fresh gate per turn/per child** inside
+  `buildAgentCore` → `permissions.New(cfg.Permissions, …, autoModeOptions(…)…)`
+  (`cmd/fuse/run.go`), reading `cfg.Permissions.Mode` each time. There is **no**
+  long-lived root gate the TUI holds. `autoModeOptions` returns `nil` unless the
+  *configured* mode is auto — so a mid-session switch into auto would today get
+  no classifier (D10 item 5 fixes this).
+- `ShellModel` (`internal/tui/shell_model.go`) holds no gate/mode reference; its
+  `View()` status line shows `m.alias`; `handleKey` switches on `tea.KeyTab`;
+  `handleSlash` has the builtin `/exit /verbose /model /agents /approvals`
+  switch; `BuiltinProvider` (`builtin_provider.go`) lists them for the
+  completer. bubbletea v1.3.10 maps CSI `Z` (`\x1b[Z`) → `tea.KeyShiftTab`
+  (`msg.String() == "shift+tab"`) — **verified in the vendored `key.go`**.
+
+**Learnings folded in (D10-relevant):**
+
+- **mutex-test-double-concurrent-provider** — `SetMode`/mode reads cross the
+  TUI goroutine and per-turn gate construction: guard **both** the getter and
+  the setter of the shared session-mode source with one mutex; a lock on one
+  side only is still a race. Tests must exercise concurrent get/set.
+- **completer-entry-bypass-dispatch** — `/mode` is a `KindBuiltin` entry:
+  dispatch it through the entry object / `handleSlash` builtin switch, never by
+  re-parsing the completer expansion as free text.
+- **sanitize-untrusted-bytes-fixed-width-tui** — the new mode indicator is a
+  fixed-width status-line cell; keep its text a fixed, known-safe token set
+  (`smart`/`auto`/`prompt-all`/`off` + a static degraded marker), never
+  interpolating model/tool bytes.
+
+---
+
+## Task 12 — Session mode source + thread-safe `SetMode` on the gate
+
+**Files:** `internal/permissions/policy.go`, `internal/permissions/gate.go`
+(+ new session-mode holder; a small `internal/permissions/sessionmode.go` or an
+addition to an existing file), tests alongside.
+
+- Add `func (m PermissionMode) String() string` returning the canonical token
+  (`smart`/`auto`/`prompt-all`/`off`) — the single source of the indicator/
+  `/mode` names, so no string literals are duplicated across packages.
+- Add a **thread-safe session-mode holder** owned by the session (not per-gate):
+  a small `*SessionMode` value with `Get() PermissionMode` and
+  `Set(PermissionMode)` under one `sync.Mutex` (or `atomic`). This is the single
+  source both the TUI (indicator, Shift+Tab, `/mode`) and per-turn gate
+  construction read, so a switch is picked up by the *next* built gate.
+- Add thread-safe `func (g *PermissionGate) SetMode(PermissionMode)` and make
+  every `g.mode` read go through a guarded accessor (`g.currentMode()`), so a
+  live root gate switches immediately and concurrently-running `resolve` calls
+  never race the write. **Semantics per D10:** the root gate switches
+  immediately; `CloneForChild` snapshots the parent's mode **at spawn** (already
+  captured — the child reads its own copied `mode`, so running children keep
+  their mode); **session-cache grants survive a switch** (do not touch
+  `g.cache` in `SetMode`); the **escalation valve resets when leaving auto**
+  (`SetMode` to a non-auto mode zeroes the valve counters via a valve reset
+  method under the valve mutex; entering auto leaves counters as-is).
+
+**Tests (write first):** `ModeAuto.String() == "auto"` (+ the other three);
+`SetMode` changes the mode a subsequent `resolve` observes; a `CloneForChild`
+taken **before** a parent `SetMode` still resolves under the old mode (running
+child keeps its mode); leaving auto resets the valve (`counts()` → 0,0) while a
+session-cache grant made before the switch still auto-approves after; a
+concurrent `SetMode`/`resolve` goroutine pair runs clean under `-race`.
+
+**Done when:** `go test -race ./internal/permissions/...` green; `String()`,
+`SetMode`, and the session-mode holder exist with the D10 semantics.
+
+---
+
+## Task 13 — Per-turn gate construction reads the session mode; classifier built regardless of configured mode
+
+**Files:** `cmd/fuse/run.go` (`autoModeOptions`, `buildAgentCore` /
+`buildChildAgent` gate construction), `cmd/fuse/shell.go` (thread the session
+mode source in), tests where a seam exists.
+
+- Introduce the `*permissions.SessionMode` at shell startup (seeded from
+  `cfg.Permissions.Mode`) and thread it into the per-turn/child gate builders so
+  each freshly built gate is constructed at the **session** mode, not the raw
+  `cfg.Permissions.Mode`. The gate's own `SetMode` still exists for the live
+  root gate; new gates simply start at the current session mode. Keep one-shot
+  (`cmd/fuse/main.go`) and `mcp_server.go` paths behaviour-identical — they pass
+  no session mode source and default to `cfg.Permissions.Mode` exactly as today.
+- **Classifier at startup regardless of configured mode (D10 item 5):** change
+  `autoModeOptions` so the classifier + workspace root + interactive options are
+  wired whenever a classifier is *constructible* (a `classifier_model` alias
+  resolves, or the gateway default is available) — **not** gated on
+  `mode == auto`. Switching into auto mid-session then gets the full pipeline.
+  **Auto with no constructible classifier stays allowed and fail-closed** (nil
+  classifier ⇒ gray area asks — the existing `classifyOrAsk` nil path); this is
+  the degraded posture the indicator will mark. Do not construct a classifier
+  when the gateway is entirely unconfigured — keep it nil, not an erroring stub.
+
+**Tests (write first):** a gate built from a session source at `smart` resolves
+under smart, and after the source flips to `auto` a newly built gate resolves
+under auto (through whatever seam `buildAgentCore` exposes; add a minimal
+constructor seam if none exists — no behavior change to existing callers);
+`autoModeOptions` returns a classifier option when a classifier is constructible
+even though the configured mode is `smart`; returns none when no classifier is
+constructible.
+
+**Done when:** switching the session mode into auto mid-session yields a gate
+with a wired classifier; `smart`-configured startup still constructs the
+classifier so a later switch is fully powered; `go vet ./...` clean; existing
+one-shot/mcp behavior unchanged.
+
+---
+
+## Task 14 — Shell TUI mode indicator in the status/input line
+
+**Files:** `internal/tui/shell_model.go` (`ShellModel` struct, `NewShellModel`,
+`View`), `cmd/fuse/shell.go` (pass the session mode source in), test.
+
+- Give `ShellModel` a read handle on the session mode (the `*permissions.SessionMode`
+  from Task 13, or a small getter func to avoid a TUI→permissions import cycle —
+  prefer a `func() permissions.PermissionMode` closure or a tiny local interface
+  if the import direction is a problem). `NewShellModel` gains the parameter;
+  update the one production call site and `shell_test.go`.
+- In `View()`, render the active mode in the default (non-running, non-approval)
+  status line alongside `m.alias` — e.g. `mode: auto` — using **only** the fixed
+  `PermissionMode.String()` token. When the mode is `auto` **and no classifier
+  is configured/constructible**, append a static degraded marker
+  (e.g. `mode: auto (degraded — no classifier)` or a `⚠` glyph) so the human
+  sees the deterministic-only posture. The degraded fact is a bool the shell
+  learns at startup (was a classifier constructible?) — thread it as a plain
+  flag, do not re-derive it in the view.
+
+**Tests (write first):** `View()` (or a small extracted `statusLine` helper)
+contains the mode token for each of the four modes; the degraded marker appears
+for auto-without-classifier and is absent for auto-with-classifier and for the
+other three modes. Keep assertions on the extracted helper to avoid full-screen
+snapshot brittleness.
+
+**Done when:** the indicator shows the live mode and the degraded marker per
+D10; TUI tests green.
+
+---
+
+## Task 15 — Shift+Tab cycles smart ↔ auto
+
+**Files:** `internal/tui/shell_model.go` (`handleKey`), test.
+
+- In `handleKey`, add a `tea.KeyShiftTab` case (verified name `"shift+tab"`,
+  CSI `Z`) that toggles the session mode between `smart` and `auto` **only** —
+  the two everyday postures — via the session mode source's `Set`, and (when a
+  live root gate is held) the gate's `SetMode`. From `prompt-all` or `off`,
+  define Shift+Tab as switching to `smart` first (a documented, predictable
+  landing), then Shift+Tab thereafter toggles smart↔auto. Append a transcript
+  line noting the new mode. Ensure it does not collide with the existing
+  `tea.KeyTab` (agents view) or the completer navigation — Shift+Tab is a
+  distinct `tea.KeyType`, so guard it before/independently of the `KeyTab` case
+  and only when the completer is inactive and no approval is pending.
+
+**Tests (write first):** feeding `tea.KeyMsg{Type: tea.KeyShiftTab}` toggles the
+session mode smart→auto→smart; from `off`/`prompt-all` the first Shift+Tab lands
+on `smart`; Shift+Tab is ignored (or deferred) while an approval is pending or
+the completer is active, matching the existing key-guard ordering.
+
+**Done when:** Shift+Tab cycles the two everyday modes and the indicator (Task
+14) reflects it; tests green.
+
+---
+
+## Task 16 — `/mode` slash command (bare prints active + options; `/mode <name>` sets any of the four)
+
+**Files:** `internal/tui/shell_model.go` (`handleSlash` builtin switch),
+`internal/tui/builtin_provider.go` (register `/mode` for the completer), test.
+
+- Add a `/mode` builtin to `BuiltinProvider` (`Syntax: "NAME"`, a clear
+  description) so it appears in the completer, dispatched through the existing
+  `KindBuiltin` → `handleSlash` path (per **completer-entry-bypass-dispatch**,
+  do not re-parse expansion as free text).
+- In `handleSlash`, add a `case "/mode"`: **bare `/mode`** prints the active mode
+  and the four options (`smart`, `auto`, `prompt-all`, `off`) plus a one-line
+  hint; **`/mode <name>`** validates `<name>` against the four (reuse
+  `ParseMode`, but reject unknown tokens explicitly rather than silently
+  defaulting to smart — parse then compare `String()` round-trips, or add a
+  `ParseModeStrict`/validity check) and sets the session mode (+ live gate
+  `SetMode` when held), echoing the switch. Unknown name ⇒ a usage line, no
+  change.
+
+**Tests (write first):** bare `/mode` appends a line naming the current mode and
+lists all four options; `/mode auto`, `/mode prompt-all`, `/mode off`,
+`/mode smart` each set the session mode and echo it; `/mode bogus` leaves the
+mode unchanged and prints a usage/error line; `/mode` is present in
+`BuiltinProvider.Commands()`.
+
+**Done when:** all four modes reachable via `/mode`, bare `/mode` is
+discoverable, invalid input is safe; tests green.
+
+---
+
+## Task 17 — Docs: README permission-modes section leads with the session surface
+
+**Files:** `README.md` (permission-modes section), plus the config example if it
+lives there.
+
+- Rewrite the permission-modes section to **lead with the session surface**: the
+  mode indicator, Shift+Tab (smart↔auto), and `/mode <name>` for all four modes;
+  state that the config `permissions.mode` is only the **startup default** and
+  the session override always wins and is never written back. Then document the
+  four modes and note auto works with **zero config** (deterministic layers +
+  fail-closed asks when no classifier is configured), with the degraded
+  indicator. Keep the D9 trust-boundary note (`.fuse.local.yml` cannot loosen
+  policy — the switcher is a human at the keyboard, ADR-0006).
+- Run the full suite (`go test ./...`, and `-race` on `internal/permissions/...`
+  and `internal/tui/...`) and `go vet ./...` as the D10 acceptance gate.
+
+**Done when:** README leads with the session surface; `go test ./...` green,
+`go vet` clean.
+
+---
+
 ## Out of scope (do not build here)
 
 OS-level sandboxing (Seatbelt/Landlock/bubblewrap); the MCP server HITL relay
 and `fuse mcp-server`'s no-socket `AlwaysApprove` fallback (follow-up); a
-two-stage classifier; Ed25519 signed policy envelopes; a hook system.
+two-stage classifier; Ed25519 signed policy envelopes; a hook system. **D10
+adds no persistence** — the session mode is never written back to any config
+file (spec D10); do not add config-write logic.
