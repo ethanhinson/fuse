@@ -285,3 +285,65 @@ func TestConcurrentWaitersRaceClean(t *testing.T) {
 	}
 	close(pumpDone)
 }
+
+// TestUtilizationReportsFillPerProvider: Utilization exposes each touched
+// provider key's cap and live remaining, refilled to the current clock, with the
+// per-provider override reflected and untouched providers absent.
+func TestUtilizationReportsFillPerProvider(t *testing.T) {
+	b, clk := newTestBucket(Config{
+		Global:    Limits{RequestsPerMinute: 60, TokensPerMinute: 600},
+		Providers: map[string]Limits{"deepseek": {RequestsPerMinute: 6}},
+	})
+	ctx := context.Background()
+
+	// No axis touched yet ⇒ nothing to report.
+	if u := b.Utilization(); len(u) != 0 {
+		t.Fatalf("fresh bucket utilization = %+v, want empty", u)
+	}
+
+	// One global request spends 1 rpm + 300 tpm on the global ("") key.
+	if err := b.Wait(ctx, "m", 300); err != nil {
+		t.Fatal(err)
+	}
+	// One deepseek request spends 1 rpm on the deepseek key (tpm falls back to
+	// the global 600 cap, and 300 was already... no — the deepseek key is its own
+	// axis pair, so its tpm starts full at 600 and is charged 100 here).
+	if err := b.Wait(ctx, "deepseek-flash", 100); err != nil {
+		t.Fatal(err)
+	}
+
+	byKey := map[string]ProviderUtilization{}
+	for _, u := range b.Utilization() {
+		byKey[u.Provider] = u
+	}
+	if len(byKey) != 2 {
+		t.Fatalf("utilization keys = %+v, want global + deepseek", byKey)
+	}
+
+	g := byKey[""]
+	if g.RPMCap != 60 || g.RPMRemaining != 59 {
+		t.Errorf("global rpm = %d/%d remaining, want cap 60 remaining 59", g.RPMRemaining, g.RPMCap)
+	}
+	if g.TPMCap != 600 || g.TPMRemaining != 300 {
+		t.Errorf("global tpm = %d/%d remaining, want cap 600 remaining 300", g.TPMRemaining, g.TPMCap)
+	}
+
+	d := byKey["deepseek"]
+	if d.RPMCap != 6 || d.RPMRemaining != 5 {
+		t.Errorf("deepseek rpm = %d/%d remaining, want cap 6 remaining 5", d.RPMRemaining, d.RPMCap)
+	}
+	if d.TPMCap != 600 || d.TPMRemaining != 500 {
+		t.Errorf("deepseek tpm = %d/%d remaining, want cap 600 remaining 500", d.TPMRemaining, d.TPMCap)
+	}
+
+	// Refill: advancing a full minute tops both axes back to their caps.
+	clk.Advance(time.Minute)
+	byKey = map[string]ProviderUtilization{}
+	for _, u := range b.Utilization() {
+		byKey[u.Provider] = u
+	}
+	if g := byKey[""]; g.RPMRemaining != 60 || g.TPMRemaining != 600 {
+		t.Errorf("after a minute global = rpm %d tpm %d, want 60/600 (full)", g.RPMRemaining, g.TPMRemaining)
+	}
+}
+

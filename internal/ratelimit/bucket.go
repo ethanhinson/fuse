@@ -293,6 +293,60 @@ func (b *Bucket) Wait(ctx context.Context, provider string, estTokens int) error
 	}
 }
 
+// ProviderUtilization is a race-safe, point-in-time view of one provider key's
+// live rate-gate fill for the observability surface (change 0036, Task 7). It is
+// reported per resolved provider key ("" for the pure-global axes). A cap of 0
+// means that axis is unlimited (unset); the display omits an unlimited axis.
+// Remaining is the current token fill rounded down to a whole unit.
+type ProviderUtilization struct {
+	// Provider is the resolved provider key these axes belong to ("" = global).
+	Provider string
+	// RPMCap / RPMRemaining describe the requests-per-minute axis (cap 0 =
+	// unlimited). Remaining is the whole requests currently available.
+	RPMCap       int
+	RPMRemaining int
+	// TPMCap / TPMRemaining describe the tokens-per-minute axis (cap 0 =
+	// unlimited). Remaining is the whole tokens currently available.
+	TPMCap       int
+	TPMRemaining int
+}
+
+// Utilization returns a race-safe snapshot of every provider key's live axis
+// fill for the observability surface (change 0036, Task 7). Only provider keys
+// that have been touched (an axis lazily created on first Wait/Report) appear —
+// an untouched provider has no live fill to report. Each returned axis is
+// refilled to the current clock first, so Remaining reflects "right now". A nil
+// Bucket returns nil. The result is a pure copy; the caller needs no further
+// locking.
+func (b *Bucket) Utilization() []ProviderUtilization {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := b.clock()
+	out := make([]ProviderUtilization, 0, len(b.axes))
+	for key, pa := range b.axes {
+		pa.rpm.refill(now)
+		pa.tpm.refill(now)
+		u := ProviderUtilization{Provider: key}
+		if pa.rpm.limited {
+			u.RPMCap = int(pa.rpm.capacity)
+			if r := int(math.Floor(pa.rpm.tokens)); r > 0 {
+				u.RPMRemaining = r
+			}
+		}
+		if pa.tpm.limited {
+			u.TPMCap = int(pa.tpm.capacity)
+			if r := int(math.Floor(pa.tpm.tokens)); r > 0 {
+				u.TPMRemaining = r
+			}
+		}
+		out = append(out, u)
+	}
+	return out
+}
+
 // Report reconciles the pre-dispatch estimate with the gateway's actual usage.
 // The adapter charges estTokens=0 in Wait, so Report applies the full
 // inTokens+outTokens against the tpm axis after a successful response. The charge

@@ -19,15 +19,17 @@ import (
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
-// sessionRateGate builds the one shared rate gate for a session from
-// cfg.Throughput (change 0036). It returns an untyped-nil model.RateGate when no
-// rpm/tpm axis is configured (global or per-provider) — the unlimited fast path,
-// so the adapter's gate stays nil and Complete adds zero latency. One bucket is
-// shared by every agent in the session so N agents in tight turn loops cannot
-// collectively outrun the configured budget; queued turns consume nothing because
-// the gate sits at dispatch. Providers are keyed by name and matched against the
-// request's model id by leading substring (e.g. "deepseek" ⇒ "deepseek-flash").
-func sessionRateGate(cfg config.Config) model.RateGate {
+// sessionRateBucket builds the one shared rate-gate bucket for a session from
+// cfg.Throughput (change 0036), or nil when no rpm/tpm axis is configured (global
+// or per-provider) — the unlimited fast path. Returning the concrete
+// *ratelimit.Bucket lets the interactive shell hand the same bucket to the
+// observability surface (the agents overlay shows its live utilization) while the
+// agents consult it via the model.RateGate interface. One bucket is shared by
+// every agent in the session so N agents in tight turn loops cannot collectively
+// outrun the configured budget; queued turns consume nothing because the gate
+// sits at dispatch. Providers are keyed by name and matched against the request's
+// model id by leading substring (e.g. "deepseek" ⇒ "deepseek-flash").
+func sessionRateBucket(cfg config.Config) *ratelimit.Bucket {
 	rc := ratelimit.Config{
 		Global: ratelimit.Limits{
 			RequestsPerMinute: cfg.Throughput.RequestsPerMinute,
@@ -44,9 +46,22 @@ func sessionRateGate(cfg config.Config) model.RateGate {
 		}
 	}
 	if !rc.Any() {
-		return nil // untyped nil: the adapter's gate stays nil (fast path).
+		return nil
 	}
 	return ratelimit.New(rc, nil)
+}
+
+// sessionRateGate returns the shared rate gate as a model.RateGate for the agent
+// builders. It returns an UNTYPED-nil interface when no axis is configured so the
+// adapter's gate stays nil (the fast path with zero latency) — a typed nil
+// *ratelimit.Bucket wrapped in the interface would defeat the `gate != nil`
+// check, so the bucket is unwrapped to an untyped nil here.
+func sessionRateGate(cfg config.Config) model.RateGate {
+	b := sessionRateBucket(cfg)
+	if b == nil {
+		return nil // untyped nil: the adapter's gate stays nil (fast path).
+	}
+	return b
 }
 
 // spawnAgentBlock is the system-prompt block that tells models to use spawn_agent.

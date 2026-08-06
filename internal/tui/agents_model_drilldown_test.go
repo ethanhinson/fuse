@@ -22,7 +22,7 @@ func TestEventDrilldownShowsFullContent(t *testing.T) {
 	root.AddEvent(agent.AgentEvent{Kind: agent.KindToolCall, Name: "read_file", Payload: map[string]any{"args": `{"path":"x"}`}})
 	root.AddEvent(agent.AgentEvent{Kind: agent.KindToolResult, Name: "read_file", Payload: map[string]any{"output": long}})
 
-	m := NewAgentsModel(tree)
+	m := NewAgentsModel(tree, nil)
 	m.width, m.height = 120, 30
 
 	// Enter detail on root, selection lands on newest event (the result).
@@ -79,7 +79,7 @@ func TestTreePaneScrollsToKeepSelectionVisible(t *testing.T) {
 		h.Wait()
 	}
 
-	m := NewAgentsModel(tree)
+	m := NewAgentsModel(tree, nil)
 	m.width, m.height = 100, 12 // pane shows ~11 rows; 31 nodes total
 	m.refreshSnapshot()
 

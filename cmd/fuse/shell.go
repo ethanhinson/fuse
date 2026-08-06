@@ -135,8 +135,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// session token ceiling (change 0036): 0/unset ⇒ no ceiling enforced.
 	sched.SetSessionTokens(cfg.Throughput.SessionTokens)
 	// Rate gate (change 0036): one shared token bucket for the session, or nil when
-	// no rpm/tpm axis is configured (fast path).
-	rateGate := sessionRateGate(cfg)
+	// no rpm/tpm axis is configured (fast path). The concrete bucket also feeds the
+	// agents-overlay observability surface below; agents consult it via the
+	// model.RateGate interface. rateGate is the untyped-nil-safe interface handle
+	// (a nil bucket ⇒ nil interface ⇒ the adapter's fast path).
+	rateBucket := sessionRateBucket(cfg)
+	var rateGate model.RateGate
+	if rateBucket != nil {
+		rateGate = rateBucket
+	}
 	rootNode := tree.Node(tree.RootID())
 
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
@@ -159,6 +166,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// with a blanket auto-approve.
 	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build, sessionMode, classifierConstructible(cfg))
 	m = m.WithTree(tree)
+	// Hand the same shared bucket to the observability surface so the agents
+	// overlay shows live rate-gate utilization (change 0036); nil is the no-gate
+	// fast path and renders no rate-gate segment.
+	m = m.WithRateGate(rateBucket)
 	// The parent-channel approval func for children: same TUI channel as the
 	// root turn, wrapped per-child by PrefixApproval below so the human sees
 	// which subagent is asking. Enforces the configured mode instead of the old

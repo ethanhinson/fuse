@@ -20,6 +20,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/banner"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/ratelimit"
 	"github.com/ethanhinson/fuse/internal/version"
 )
 
@@ -203,6 +204,11 @@ type ShellModel struct {
 	inlineByLabel map[string]*inlineAgentState
 	inlineByNode  map[string]*inlineAgentState
 	inlineSeq     int // monotonic creation counter for inline blocks
+
+	// rateGate is the session's shared rate-gate bucket, or nil when no rpm/tpm
+	// axis is configured (change 0036). Read-only here: the observability surface
+	// consults its live utilization for the status bar / agents overlay.
+	rateGate *ratelimit.Bucket
 }
 
 // NewShellModel builds a ShellModel. alias is the starting model alias;
@@ -263,6 +269,15 @@ func (m ShellModel) WithTree(t *agent.AgentTree) ShellModel {
 	m.tree = t
 	m.inlineByLabel = make(map[string]*inlineAgentState)
 	m.inlineByNode = make(map[string]*inlineAgentState)
+	return m
+}
+
+// WithRateGate attaches the session's shared rate-gate bucket so the
+// observability surface (status bar / agents overlay) can show its live
+// utilization (change 0036). A nil bucket is the unlimited fast path — the
+// rate-gate segment simply renders nothing.
+func (m ShellModel) WithRateGate(b *ratelimit.Bucket) ShellModel {
+	m.rateGate = b
 	return m
 }
 
@@ -948,7 +963,7 @@ func (m ShellModel) enterAgentsView() (tea.Model, tea.Cmd) {
 		m.appendLine("no agent tree active")
 		return m, nil
 	}
-	m.agentsModel = NewAgentsModel(m.tree)
+	m.agentsModel = NewAgentsModel(m.tree, m.rateGate)
 	m.agentsModel.width = m.vp.Width
 	m.agentsModel.height = m.vp.Height + chromeHeight
 	m.agentsActive = true
@@ -1145,16 +1160,23 @@ func (m ShellModel) agentsHint() string {
 		return ""
 	}
 	running, pending := m.tree.ActiveCounts()
+	// Compact per-pool scheduler segment (change 0036): slots/queue/token spend for
+	// the busiest engaged pool, appended before the Tab affordance so users see the
+	// scheduler brakes without opening the overlay. Empty when nothing is engaged.
+	sched := ""
+	if seg := schedulerStatusSegment(m.tree.Scheduler().Snapshot()); seg != "" {
+		sched = ruleStyle.Render(" · ") + statusRunStyle.Render(seg)
+	}
 	switch {
 	case running > 0 && pending > 0:
 		return "  " + statusRunStyle.Render(fmt.Sprintf("⚒ %d running · %d queued", running, pending)) +
-			ruleStyle.Render(" · Tab → inspect")
+			sched + ruleStyle.Render(" · Tab → inspect")
 	case running > 0:
 		return "  " + statusRunStyle.Render(fmt.Sprintf("⚒ %d agent(s) running", running)) +
-			ruleStyle.Render(" · Tab → inspect")
+			sched + ruleStyle.Render(" · Tab → inspect")
 	case pending > 0:
 		return "  " + statusRunStyle.Render(fmt.Sprintf("⚒ %d agent(s) queued", pending)) +
-			ruleStyle.Render(" · Tab → inspect")
+			sched + ruleStyle.Render(" · Tab → inspect")
 	default:
 		return "  " + ruleStyle.Render("Tab → agents")
 	}

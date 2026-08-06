@@ -238,6 +238,152 @@ func (s *Scheduler) TokenQuotaWarning(nodeID string) string {
 	return ""
 }
 
+// PoolSnapshot is a race-safe, point-in-time view of one pool's live counters
+// for observability (change 0036, Task 7). A pool is either a registered
+// workflow subtree (PoolID = the workflow root's node ID, Workflow = its name)
+// or the implicit session pool shared by all freeform spawns (PoolID "",
+// Workflow ""). SlotTotal and TokenQuota are 0 when that axis is unset for the
+// pool; the display layer omits an unset axis rather than rendering "0/0".
+type PoolSnapshot struct {
+	// PoolID is the workflow root's node ID, or "" for the implicit session pool.
+	PoolID string
+	// Workflow is the workflow name this pool roots (from the root node's
+	// WorkflowRoot label), or "" for the implicit session pool.
+	Workflow string
+	// SlotsInUse is the pool's live running+pending child count: the subtree
+	// running+pending for a workflow pool, or the whole-tree running+pending for
+	// the implicit session pool.
+	SlotsInUse int
+	// SlotTotal is the pool's concurrent slot cap (WorkflowPool.Concurrent) for a
+	// workflow pool, or the global slot cap for the implicit session pool. 0 means
+	// no per-pool concurrent cap is configured (the workflow pool leans on the
+	// global cap); the display omits the slot axis when 0.
+	SlotTotal int
+	// Queued is the number of spawn waiters parked in this pool's FIFO right now.
+	Queued int
+	// TokenSpend is the pool's live token sum: the subtree token sum for a
+	// workflow pool, or the whole-session token sum for the implicit session pool.
+	TokenSpend int
+	// TokenQuota is the pool's hard token ceiling (WorkflowPool.Tokens) for a
+	// workflow pool, or the session token ceiling for the implicit session pool.
+	// 0 means unset (no quota); the display omits the token axis when 0.
+	TokenQuota int
+}
+
+// SchedulerSnapshot is a race-safe, point-in-time view of the scheduler's global
+// and per-pool counters, taken for the observability surface (change 0036, Task
+// 7). It is a pure copy — no scheduler state is referenced after Snapshot returns
+// — so the display layer may read it without further locking. Every registered
+// workflow pool that is currently reachable in the tree appears in Pools; the
+// implicit session pool appears there too when it has any live slots, queued
+// waiters, or token spend (so an idle freeform session renders nothing).
+type SchedulerSnapshot struct {
+	// SlotsInUse is the whole-tree running+pending child count; SlotTotal is the
+	// global slot cap.
+	SlotsInUse int
+	SlotTotal  int
+	// ImplicitQueued is the number of waiters parked in the implicit session
+	// pool's FIFO (the "" pool). It is the queued figure the implicit PoolSnapshot
+	// also carries; kept at the top level so the status bar can read the global
+	// picture without scanning Pools.
+	ImplicitQueued int
+	// BudgetUsed / BudgetMax are the tree-global lifetime spawn budget (0 max =
+	// unset).
+	BudgetUsed int
+	BudgetMax  int
+	// SessionTokens is the whole-tree token sum; SessionCeiling is the configured
+	// global session token ceiling (0 = unset).
+	SessionTokens  int
+	SessionCeiling int
+	// Pools holds one entry per reachable workflow pool, plus the implicit session
+	// pool when it is non-idle. Order is stable within a call but not sorted; the
+	// display layer sorts if it needs deterministic ordering.
+	Pools []PoolSnapshot
+}
+
+// Snapshot returns a race-safe, point-in-time copy of the scheduler's global and
+// per-pool observability counters (change 0036, Task 7). It reads only through
+// tree and scheduler accessors that lock internally, so it is safe to call
+// concurrently with dispatch. A nil scheduler returns the zero snapshot.
+//
+// Global figures come straight from the existing accessors (ActiveCounts for
+// slots, SpawnBudget for the budget, SessionTokens for token spend). Each
+// registered workflow pool contributes a PoolSnapshot scoped to its subtree
+// (SubtreeActiveCounts / SubtreeTokens), with its Workflow name derived from the
+// root node's WorkflowRoot label rather than duplicating the name into
+// registration. The implicit session pool is included only when it carries live
+// work (slots, queue, or spend) so an idle freeform session renders nothing.
+func (s *Scheduler) Snapshot() SchedulerSnapshot {
+	if s == nil {
+		return SchedulerSnapshot{}
+	}
+	running, pending := s.tree.ActiveCounts()
+	used, max := s.SpawnBudget()
+
+	s.mu.Lock()
+	slotCap := s.slotCap
+	sessionCeiling := s.sessionTokens
+	implicitQueued := len(s.poolQueues[""])
+	// Copy pool policy + queue depths under the lock, then release before touching
+	// the tree (whose accessors take their own locks) to keep lock ordering clean.
+	poolIDs := make([]string, 0, len(s.pools))
+	poolPolicy := make(map[string]WorkflowPool, len(s.pools))
+	poolQueued := make(map[string]int, len(s.pools))
+	for id, p := range s.pools {
+		poolIDs = append(poolIDs, id)
+		poolPolicy[id] = p
+		poolQueued[id] = len(s.poolQueues[id])
+	}
+	s.mu.Unlock()
+
+	sessionTokens := s.tree.SessionTokens()
+
+	snap := SchedulerSnapshot{
+		SlotsInUse:     running + pending,
+		SlotTotal:      slotCap,
+		ImplicitQueued: implicitQueued,
+		BudgetUsed:     used,
+		BudgetMax:      max,
+		SessionTokens:  sessionTokens,
+		SessionCeiling: sessionCeiling,
+	}
+
+	for _, id := range poolIDs {
+		pool := poolPolicy[id]
+		wf := ""
+		if node := s.tree.Node(id); node != nil {
+			wf = node.Snapshot().WorkflowRoot
+		}
+		sr, sp := s.tree.SubtreeActiveCounts(id)
+		snap.Pools = append(snap.Pools, PoolSnapshot{
+			PoolID:     id,
+			Workflow:   wf,
+			SlotsInUse: sr + sp,
+			SlotTotal:  pool.Concurrent,
+			Queued:     poolQueued[id],
+			TokenSpend: s.tree.SubtreeTokens(id),
+			TokenQuota: pool.Tokens,
+		})
+	}
+
+	// The implicit session pool: include it only when it has live work so an idle
+	// freeform session adds no noise. Its slots/tokens are the whole-session
+	// figures; its quota is the session ceiling.
+	if running+pending > 0 || implicitQueued > 0 || sessionTokens > 0 {
+		snap.Pools = append(snap.Pools, PoolSnapshot{
+			PoolID:     "",
+			Workflow:   "",
+			SlotsInUse: running + pending,
+			SlotTotal:  slotCap,
+			Queued:     implicitQueued,
+			TokenSpend: sessionTokens,
+			TokenQuota: sessionCeiling,
+		})
+	}
+
+	return snap
+}
+
 // Verdict is the outcome of an admission decision.
 type Verdict int
 
