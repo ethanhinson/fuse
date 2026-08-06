@@ -734,6 +734,31 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.alias = name
 		m.appendLine(fmt.Sprintf("switched to %s", name))
 		return m, nil
+	case "/mode":
+		if len(fields) == 1 {
+			// Bare /mode: name the current mode and list all options with a hint.
+			cur := "(unknown)"
+			if m.sessionMode != nil {
+				cur = m.sessionMode.Get().String()
+			}
+			m.appendLine(fmt.Sprintf("mode: %s", cur))
+			m.appendLine("options: smart, auto, prompt-all, off")
+			m.appendLine("usage: /mode NAME")
+			return m, nil
+		}
+		name := fields[1]
+		// ParseMode defaults unknown tokens to smart, so validate by round-trip
+		// rather than trusting it blindly.
+		parsed := permissions.ParseMode(name)
+		if parsed.String() != name {
+			m.appendLine(fmt.Sprintf("unknown mode %q; usage: /mode NAME (smart/auto/prompt-all/off)", name))
+			return m, nil
+		}
+		if m.sessionMode != nil {
+			m.sessionMode.Set(parsed)
+		}
+		m.appendLine("mode: " + name)
+		return m, nil
 	}
 
 	// Look up in the slash registry.
