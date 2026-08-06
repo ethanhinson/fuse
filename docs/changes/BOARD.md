@@ -1,8 +1,8 @@
 # Backlog
 
-**31 changes** — 🟡 14 proposed · 🔵 1 implemented · ✅ 13 done · 🗑️ 3 killed
+**32 changes** — 🟡 15 proposed · 🔵 1 implemented · ✅ 13 done · 🗑️ 3 killed
 
-## 🟡 Proposed (14)
+## 🟡 Proposed (15)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -20,6 +20,7 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | needs-brainstorm |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
 | [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | build-ready |
+| [0032](active/0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | `high` | `feat` | ⏳ waiting on #17 — needs your merge |
 
 ## 🔵 Implemented — awaiting merge (1)
 
@@ -48,6 +49,7 @@ graph TD
   0012 --> 0029
   0027 --> 0030
   0003 --> 0031
+  0017 --> 0032
   0003:::done
   0007:::done
   0012:::done
