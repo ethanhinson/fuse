@@ -1,8 +1,14 @@
 # Backlog
 
-**39 changes** — 🟡 15 proposed · ✅ 20 done · 🗑️ 4 killed
+**39 changes** — 🟢 1 in progress · 🟡 14 proposed · ✅ 20 done · 🗑️ 4 killed
 
-## 🟡 Proposed (15)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0036](active/0036-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | `high` | `feat` | [spec](../superpowers/specs/0036-agent-scheduler.md) | `feat/agent-scheduler` |
+
+## 🟡 Proposed (14)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -20,7 +26,6 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | needs-brainstorm |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
 | [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | build-ready |
-| [0036](active/0036-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | `high` | `feat` | build-ready |
 
 ```mermaid
 graph TD
