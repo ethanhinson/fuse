@@ -42,3 +42,25 @@ fixes are defensive validation, not architecture.
 
 None. Auto-capture is disabled for this repo; no distinct follow-up work surfaced during
 build or review.
+
+## Post-merge verification (2026-08-06, interactive)
+
+Verified live in the real TUI — `fuse shell` against a scripted local OpenAI-compatible
+gateway (`LLM_GATEWAY_URL` + buffered-JSON responses) that logged the `tools[]` of every
+request, with small caps via `.fuse.local.yml`:
+
+- **Reversible cap strip** — at `max_concurrent: 1`, the running child's own request lacked
+  `spawn_agent`; the root's next turn (child finished) offered it again.
+- **Permanent budget strip** — at `max_spawns: 2`, every request after exhaustion lacked
+  `spawn_agent`; a gateway-forced call anyway died on the `ErrSpawnBudgetExhausted` backstop
+  and no child request ever reached the gateway.
+- **MaxDepth static strip** — in a live 5-deep chain, depths 1–4 were offered `spawn_agent`;
+  depth-5 leaves never were.
+- Repeated identical spawns tripped the change-0038 doom-loop approval as designed.
+
+**Late finding, fixed post-review (`e47bd27`, in the merged PR):** a backstop-rejected spawn
+left its transcript inline block frozen at `● Running · 0s` — rejection happens before node
+creation, so the node lifecycle never settles the block and the error result was skipped.
+The error result now settles the oldest never-adopted block, with an `AgentDoneMsg` sweep as
+backstop. A second suspected issue (approval popup invisible from the agents tab) was
+retracted: full-pane captures show the popup composes over the agents view correctly.
