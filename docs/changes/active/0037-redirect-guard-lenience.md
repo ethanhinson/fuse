@@ -2,7 +2,7 @@
 id: 37
 slug: redirect-guard-lenience
 title: Redirect fail-closed guard — allow /dev/null targets and fd-dups, keep failing closed on real files
-status: in-progress
+status: implemented
 priority: critical
 type: fix
 created: 2026-08-06
@@ -13,12 +13,12 @@ discovered_from: [17]
 adrs: [5]
 spec:
 plan: docs/superpowers/plans/0037-redirect-guard-lenience.md
-results:
+results: docs/results/2026-08-06-redirect-guard-lenience-results.md
 trivial: true
 auto_groomable:
 branch: feat/redirect-guard-lenience
-pr:
-claimed_at: 2026-08-06T05:08:52Z
+pr: https://github.com/ethanhinson/fuse/pull/17
+claimed_at: 2026-08-06T05:13:39Z
 blocked_by:
 reconciled: true
 ---
@@ -29,6 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Plan | [0037-redirect-guard-lenience.md](https://github.com/ethanhinson/fuse/blob/feat/redirect-guard-lenience/docs/superpowers/plans/0037-redirect-guard-lenience.md) |
+| Results | [2026-08-06-redirect-guard-lenience-results.md](https://github.com/ethanhinson/fuse/blob/feat/redirect-guard-lenience/docs/results/2026-08-06-redirect-guard-lenience-results.md) |
+| PR | [#17](https://github.com/ethanhinson/fuse/pull/17) |
 | ADRs | [ADR-0005](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0005-per-segment-allow-rule-evaluation.md) |
 <!-- docket:artifacts:end -->
 
