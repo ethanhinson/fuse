@@ -234,6 +234,9 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"redirect to variable target", "cat a > $F"},
 		{"here-doc", "cat <<EOF\nhi\nEOF"},
 		{"input redirect from real file", "cat < config.yaml"},
+		{"dup-op to a real file, not an fd", "ls >&file"},
+		{"fd-close is not a bare fd number", "ls 2>&-"},
+		{"read-write redirect <>", "cat <> scratch"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
