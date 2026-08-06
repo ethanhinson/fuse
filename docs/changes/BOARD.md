@@ -1,6 +1,6 @@
 # Backlog
 
-**38 changes** — 🟡 17 proposed · 🔵 3 implemented · ✅ 14 done · 🗑️ 4 killed
+**38 changes** — 🟡 17 proposed · ✅ 17 done · 🗑️ 4 killed
 
 ## 🟡 Proposed (17)
 
@@ -24,14 +24,6 @@
 | [0034](active/0034-workflows.md) | Workflows — skill-bound subagent pools with typed workers and spawn quotas | `high` | `feat` | ⏳ waiting on #33 — not yet built |
 | [0036](active/0036-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | `high` | `feat` | ⏳ waiting on #34 — not yet built |
 
-## 🔵 Implemented — awaiting merge (3)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0035](active/0035-live-mode-switch.md) | Mode switch must bite mid-turn — gates read the SessionMode holder live, not a construction snapshot | `critical` | `fix` | [#16](https://github.com/ethanhinson/fuse/pull/16) |  |
-| [0037](active/0037-redirect-guard-lenience.md) | Redirect fail-closed guard — allow /dev/null targets and fd-dups, keep failing closed on real files | `critical` | `fix` | [#17](https://github.com/ethanhinson/fuse/pull/17) |  |
-| [0038](active/0038-turn-budget-retirement.md) | Retire the interactive turn cap — unlimited shell turns, headless backstop, doom-loop detection | `critical` | `fix` | [#16](https://github.com/ethanhinson/fuse/pull/16) |  |
-
 ```mermaid
 graph TD
   0007 --> 0018
@@ -54,20 +46,20 @@ graph TD
   0003 --> 0031
   0033
   0033 --> 0034
-  0035
   0034 --> 0036
-  0037
-  0038
   0003:::done
   0007:::done
   0012:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (18)</summary>
+<details><summary>✅🗑️ Archive — done + killed (21)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0038](archive/2026-08-06-0038-turn-budget-retirement.md) | Retire the interactive turn cap — unlimited shell turns, headless backstop, doom-loop detection | 2026-08-06 |
+| [0037](archive/2026-08-06-0037-redirect-guard-lenience.md) | Redirect fail-closed guard — allow /dev/null targets and fd-dups, keep failing closed on real files | 2026-08-06 |
+| [0035](archive/2026-08-06-0035-live-mode-switch.md) | Mode switch must bite mid-turn — gates read the SessionMode holder live, not a construction snapshot | 2026-08-06 |
 | [0017](archive/2026-08-06-0017-auto-mode.md) | Auto mode — layered safe/unsafe classification for autonomous tool approval | 2026-08-06 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
 | [0016](archive/2026-08-05-0016-one-shot-cli-approvals.md) | Remove the AlwaysApprove one-shot bypass; surface approvals at the CLI | 2026-08-05 |
@@ -84,7 +76,11 @@ graph TD
 | [0005](archive/2026-08-04-0005-tui-gutter-indent-fix.md) | Fix file-read gutter indentation in TUI | 2026-08-04 |
 | [0004](archive/2026-08-04-0004-skill-runtime.md) | Skill Runtime | 2026-08-04 |
 | [0003](archive/2026-08-04-0003-hitl-permissions-mcp.md) | HITL Permission Layer + MCP Client Integration | 2026-08-04 |
-| [0002](archive/2026-08-04-0002-tui-mvp-makefile.md) | Bubbletea TUI MVP + Makefile | 2026-08-04 |
-| [0001](archive/2026-08-04-0001-fuse.md) | Fuse — Multi-Model Agent Harness | 2026-08-04 |
+
+**Older done (collapsed)**
+
+| Month | Done |
+|-------|------|
+| [2026-08](archive/) | 2 done |
 
 </details>
