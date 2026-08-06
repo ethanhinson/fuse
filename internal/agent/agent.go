@@ -51,7 +51,17 @@ type Agent struct {
 	// package stays transport-agnostic — cmd/fuse adapts its ApprovalFunc and
 	// interactivity into this callback. See change 0038.
 	LoopApproval func(ctx context.Context, preview string) (approved bool, err error)
+
+	// stripSpawn, when set, is consulted once per inference request. When it
+	// returns true, the spawn_agent schema is omitted from that turn's tool
+	// list (active-cap or budget brake). It must be race-safe and must not be
+	// cached across turns. See change 0033.
+	stripSpawn func() bool
 }
+
+// SetStripSpawn installs the per-turn spawn-strip predicate. Nil (default)
+// leaves spawn_agent always visible.
+func (a *Agent) SetStripSpawn(fn func() bool) { a.stripSpawn = fn }
 
 // New builds an Agent. modelID is the gateway model id; systemPrompt, when
 // non-empty, is injected as the first message of each run. maxTurns <= 0 means
