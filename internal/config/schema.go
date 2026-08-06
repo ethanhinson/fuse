@@ -113,15 +113,26 @@ type AgentsConfig struct {
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
 type rawConfig struct {
-	Gateway     Gateway                `yaml:"gateway"`
-	Models      map[string]interface{} `yaml:"models"`
-	SkillPaths  []string               `yaml:"skill_paths"`
-	MaxTurns    int                    `yaml:"max_turns"`
-	MaxTokens   int                    `yaml:"max_tokens"`
-	Permissions rawPermissionsConfig   `yaml:"permissions"`
-	MCPServers  []MCPServerConfig      `yaml:"mcp_servers"`
-	Research    rawResearchConfig      `yaml:"research"`
-	Agents      rawAgentsConfig        `yaml:"agents"`
+	Gateway     Gateway                  `yaml:"gateway"`
+	Models      map[string]interface{}   `yaml:"models"`
+	SkillPaths  []string                 `yaml:"skill_paths"`
+	MaxTurns    int                      `yaml:"max_turns"`
+	MaxTokens   int                      `yaml:"max_tokens"`
+	Permissions rawPermissionsConfig     `yaml:"permissions"`
+	MCPServers  []MCPServerConfig        `yaml:"mcp_servers"`
+	Research    rawResearchConfig        `yaml:"research"`
+	Agents      rawAgentsConfig          `yaml:"agents"`
+	Projects    map[string]ProjectConfig `yaml:"projects"`
+}
+
+// ProjectConfig is a single per-project override entry keyed by absolute
+// project path in the `projects:` map. It reuses rawPermissionsConfig (not the
+// resolved PermissionsConfig) so the same session_allow *bool omitted-key
+// discipline and the same trusted-merge path apply to a project entry. A
+// matching entry resolves INTO c.Permissions at load time; there is no resolved
+// Config.Projects surface.
+type ProjectConfig struct {
+	Permissions rawPermissionsConfig `yaml:"permissions"`
 }
 
 // rawPermissionsConfig mirrors PermissionsConfig on-disk. SessionAllow is a
