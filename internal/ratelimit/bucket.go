@@ -142,8 +142,15 @@ func New(cfg Config, clock func() time.Time) *Bucket {
 	for k := range cfg.Providers {
 		keys = append(keys, k)
 	}
-	// Longest key first ⇒ most-specific prefix wins in providerKey.
-	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
+	// Longest key first ⇒ most-specific prefix wins in providerKey; equal-length
+	// keys break lexically so resolution is deterministic (never map-order
+	// dependent) when two configured keys are the same length.
+	sort.Slice(keys, func(i, j int) bool {
+		if len(keys[i]) != len(keys[j]) {
+			return len(keys[i]) > len(keys[j])
+		}
+		return keys[i] < keys[j]
+	})
 	return &Bucket{
 		clock:        clock,
 		cfg:          cfg,
@@ -162,14 +169,37 @@ func (b *Bucket) SetPollInterval(d time.Duration) {
 	b.mu.Unlock()
 }
 
+// keyBoundaries are the characters that may follow a matched provider key: a key
+// matches a model ID only at a segment boundary, so "deepseek" matches
+// "deepseek-flash" and "deepseek/x" but NOT "deepseek2-chat". Model IDs reaching
+// the gate segment on exactly these separators ("cloud/kimi-k3", "deepseek-flash").
+const keyBoundaries = "/-_.:"
+
+// matchesKey reports whether key resolves provider: an exact match, or a prefix
+// followed by a segment separator (keyBoundaries). Requiring the boundary stops
+// a key from bleeding into an unrelated model that merely shares its leading
+// characters (e.g. "deepseek" must not swallow "deepseek2-chat").
+func matchesKey(provider, key string) bool {
+	if !strings.HasPrefix(provider, key) {
+		return false
+	}
+	if len(provider) == len(key) {
+		return true // exact match
+	}
+	return strings.IndexByte(keyBoundaries, provider[len(key)]) >= 0
+}
+
 // providerKey resolves a request's provider string to the configured override
-// key whose name prefixes it (longest match), or "" for the pure-global axes.
-// The model IDs reaching the gate look like "cloud/kimi-k3" or "deepseek-flash";
-// a provider override keyed "cloud" or "deepseek" matches by leading substring,
-// which is how the spec's `providers: { deepseek: {...} }` maps onto them.
+// key whose name prefixes it at a segment boundary (longest match, ties broken
+// lexically by the providerKeys ordering), or "" for the pure-global axes. The
+// model IDs reaching the gate look like "cloud/kimi-k3" or "deepseek-flash"; a
+// provider override keyed "cloud" or "deepseek" matches by leading segment,
+// which is how the spec's `providers: { deepseek: {...} }` maps onto them. The
+// boundary requirement means "deepseek" resolves "deepseek-flash" and
+// "deepseek/x" but not "deepseek2-chat".
 func (b *Bucket) providerKey(provider string) string {
 	for _, k := range b.providerKeys {
-		if strings.HasPrefix(provider, k) {
+		if matchesKey(provider, k) {
 			return k
 		}
 	}
@@ -348,25 +378,38 @@ func (b *Bucket) Utilization() []ProviderUtilization {
 }
 
 // Report reconciles the pre-dispatch estimate with the gateway's actual usage.
-// The adapter charges estTokens=0 in Wait, so Report applies the full
-// inTokens+outTokens against the tpm axis after a successful response. The charge
-// can drive tokens negative (a big turn overspends the current fill); the deficit
-// is simply repaid by future refills before the next Wait admits — actuals are
-// never refunded, so the axis can never be gamed by under-estimating. Report is
-// the model.RateGate Report method.
-func (b *Bucket) Report(provider string, inTokens, outTokens int) {
-	total := inTokens + outTokens
-	if total <= 0 {
-		return
+// estTokens is the same estimate the matching Wait already charged against the
+// tpm axis; Report charges only the DELTA so that estimate is never double-
+// counted. The rule is one-directional (chosen for simplicity and to keep the
+// axis ungameable):
+//
+//	delta = (inTokens + outTokens) - estTokens
+//	  delta > 0 ⇒ the turn spent MORE than reserved: charge the shortfall now.
+//	  delta ≤ 0 ⇒ the turn spent AT MOST what was reserved: charge nothing and
+//	             refund nothing — the over-estimate is NOT returned to the bucket.
+//
+// Not refunding an over-estimate is deliberate: a refund would let a caller game
+// the axis by over-reserving then reporting a tiny actual to inflate the fill.
+// The floor at 0 means total charged over Wait+Report is max(estTokens, actuals)
+// — always ≥ actuals, never below the reservation. A caller that passed
+// estTokens=0 to Wait (no reservation) is charged the full actuals here, exactly
+// the pre-estimate behavior. Report is the model.RateGate Report method.
+func (b *Bucket) Report(provider string, estTokens, inTokens, outTokens int) {
+	if estTokens < 0 {
+		estTokens = 0
+	}
+	delta := inTokens + outTokens - estTokens
+	if delta <= 0 {
+		return // actuals within the already-charged estimate; no further charge, no refund
 	}
 	b.mu.Lock()
 	pa := b.axesFor(provider)
 	if pa.tpm.limited {
 		pa.tpm.refill(b.clock())
-		pa.tpm.tokens -= float64(total)
+		pa.tpm.tokens -= float64(delta)
 	}
-	// A refund never happens (actuals ≥ 0), so we only ever tighten the tpm axis;
-	// still broadcast so a waiter re-evaluates promptly if this was a no-op axis.
+	// Only ever a tighten (delta > 0 here); still broadcast so a waiter re-evaluates
+	// promptly if this resolved to a no-op axis.
 	b.broadcast()
 	b.mu.Unlock()
 }

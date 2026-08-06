@@ -198,8 +198,12 @@ func mergeWorkflows(c *Config, raw map[string]WorkflowConfig, trusted bool) (loo
 // only strengthen a limit its trusted owner already chose, never author one.
 func mergeThroughput(c *Config, raw rawThroughputConfig, trusted bool) (loosened []string) {
 	tighten := func(key string, cur *int, newV int) {
-		if newV == 0 {
-			return // omitted axis
+		if newV <= 0 {
+			// Omitted axis (0), or a nonsensical negative that would DISABLE an
+			// already-set positive limit (0 = unlimited). Dropped from every source,
+			// trusted included, mirroring the MaxSpawns/MaxConcurrent negative clamp
+			// above — a negative throughput axis is never a valid tightening.
+			return
 		}
 		if trusted {
 			*cur = newV

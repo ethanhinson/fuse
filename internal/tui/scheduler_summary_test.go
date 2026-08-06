@@ -75,6 +75,51 @@ func TestSchedulerSummaryLinesOrderingAndRateGate(t *testing.T) {
 	}
 }
 
+// TestSchedulerStatusSegmentPicksBusiest asserts the status-bar segment surfaces
+// the BUSIEST engaged pool (max SlotsInUse, tie → more Queued, then name), not
+// merely the alphabetically-first (N-3). The busiest pool here sorts LAST by
+// name, so a name-first pick would return the wrong pool.
+func TestSchedulerStatusSegmentPicksBusiest(t *testing.T) {
+	// "alpha" is alphabetically first but idle-ish (1 slot); "zeta" is busiest.
+	snap := agent.SchedulerSnapshot{
+		Pools: []agent.PoolSnapshot{
+			{Workflow: "alpha", SlotsInUse: 1, SlotTotal: 5},
+			{Workflow: "zeta", SlotsInUse: 4, SlotTotal: 5},
+		},
+	}
+	if got := schedulerStatusSegment(snap); !strings.HasPrefix(got, "zeta ") {
+		t.Errorf("segment = %q, want the busiest pool (zeta), not the alphabetically-first", got)
+	}
+
+	// SlotsInUse tie ⇒ more Queued wins.
+	tie := agent.SchedulerSnapshot{
+		Pools: []agent.PoolSnapshot{
+			{Workflow: "alpha", SlotsInUse: 3, SlotTotal: 5, Queued: 1},
+			{Workflow: "beta", SlotsInUse: 3, SlotTotal: 5, Queued: 5},
+		},
+	}
+	if got := schedulerStatusSegment(tie); !strings.HasPrefix(got, "beta ") {
+		t.Errorf("segment = %q, want the more-queued pool (beta) on a slots tie", got)
+	}
+
+	// A pool with no renderable axis is not "engaged" and must be skipped even if
+	// it sorts first; the engaged session pool is surfaced instead.
+	skip := agent.SchedulerSnapshot{
+		Pools: []agent.PoolSnapshot{
+			{Workflow: "aaa", SlotsInUse: 9}, // SlotTotal 0 ⇒ no renderable axis
+			{Workflow: "", SlotsInUse: 2, SlotTotal: 4},
+		},
+	}
+	if got := schedulerStatusSegment(skip); got != "session 2/4 slots" {
+		t.Errorf("segment = %q, want the engaged session pool (unrenderable pool skipped)", got)
+	}
+
+	// No engaged pool ⇒ empty segment.
+	if got := schedulerStatusSegment(agent.SchedulerSnapshot{}); got != "" {
+		t.Errorf("segment = %q, want empty when no pool is engaged", got)
+	}
+}
+
 // TestStatusBarShowsSchedulerSegment: with a session token ceiling set and a
 // child running, the status bar surfaces the scheduler segment (session slots +
 // token spend) alongside the running counter.

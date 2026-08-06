@@ -58,6 +58,66 @@ func TestEventDrilldownShowsFullContent(t *testing.T) {
 	}
 }
 
+// TestOverlayHeightClampsTallHeader is the N-4 guard: a scheduler header taller
+// than the overlay must not push total output past the overlay height. The View
+// clamps the header to at most height-1 lines so the panels always get a row and
+// the whole overlay fits its allotted height.
+func TestOverlayHeightClampsTallHeader(t *testing.T) {
+	tree := agent.NewAgentTreeWithConcurrency("root", "m", 16)
+	sc := tree.Scheduler()
+	root := tree.Node(tree.RootID())
+
+	// Spawn several children that stay running (blocked builder), then decorate each
+	// as a workflow root with a registered, token-quota'd pool so every one renders
+	// a header line — more header lines than a deliberately short overlay height.
+	block := make(chan struct{})
+	defer close(block)
+	s := agent.NewSpawner(agent.WithTree(tree), agent.WithNode(root),
+		agent.WithChildBuilder(func(ctx context.Context, _ agent.SpawnOpts, _ *agent.AgentNode, _ *agent.AgentTree) (string, error) {
+			select {
+			case <-block:
+			case <-ctx.Done():
+			}
+			return "", nil
+		}))
+	const pools = 8
+	for i := 0; i < pools; i++ {
+		h, err := s.Spawn(context.Background(), agent.SpawnOpts{Label: fmt.Sprintf("wf%02d", i)})
+		if err != nil {
+			t.Fatalf("spawn %d: %v", i, err)
+		}
+		node := tree.Node(h.NodeID)
+		node.WorkflowRoot = fmt.Sprintf("wf%02d", i)
+		sc.RegisterPool(h.NodeID, agent.WorkflowPool{Concurrent: 4, Tokens: 1000})
+	}
+	// Wait until the children are running so the header (and its pool lines) is
+	// populated before we render.
+	deadline := time.After(2 * time.Second)
+	for {
+		if r, _ := tree.ActiveCounts(); r >= pools {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("children did not start running")
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+
+	m := NewAgentsModel(tree, nil)
+	const height = 6
+	m.width, m.height = 120, height
+
+	// Precondition: the header alone is taller than the overlay height.
+	if n := len(m.schedulerHeaderLines(m.width)); n <= height {
+		t.Fatalf("test precondition: header is %d lines, need > overlay height %d", n, height)
+	}
+	view := m.View()
+	if got := strings.Count(view, "\n") + 1; got > height {
+		t.Errorf("overlay rendered %d lines, want <= overlay height %d", got, height)
+	}
+}
+
 // TestTreePaneScrollsToKeepSelectionVisible: with more nodes than pane rows,
 // moving the selection past the fold must window the tree, not clip it.
 func TestTreePaneScrollsToKeepSelectionVisible(t *testing.T) {

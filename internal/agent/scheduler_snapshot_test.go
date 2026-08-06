@@ -28,16 +28,24 @@ func TestSnapshotGlobalCounters(t *testing.T) {
 	sc.SetMaxSpawns(10)
 	sc.SetSessionTokens(1000)
 
-	// Two running children + one pending child: slots-in-use = 3, budget used = 3.
+	// Three child nodes (budget used = 3) with token spend, plus three slots
+	// actually granted through the scheduler. The global SlotsInUse is the
+	// scheduler's own granted-slot count (N-2), not the tree's running+pending —
+	// so slots-in-use is driven by acquireSlot, not node Status.
 	tr.addNode(&AgentNode{ID: newNodeID(), ParentID: tr.RootID(), Depth: 1, Status: StatusRunning})
 	tr.addNode(&AgentNode{ID: newNodeID(), ParentID: tr.RootID(), Depth: 1, Status: StatusRunning})
 	c3 := newNodeID()
 	tr.addNode(&AgentNode{ID: c3, ParentID: tr.RootID(), Depth: 1, Status: StatusPending})
 	tr.Node(c3).UpdateTokens(200, 100) // session spend 300
+	for i := 0; i < 3; i++ {
+		if err := sc.acquireSlot(context.Background(), ""); err != nil {
+			t.Fatalf("acquire slot %d: %v", i, err)
+		}
+	}
 
 	snap := sc.Snapshot()
 	if snap.SlotsInUse != 3 {
-		t.Errorf("SlotsInUse = %d, want 3", snap.SlotsInUse)
+		t.Errorf("SlotsInUse = %d, want 3 (scheduler-granted slots, not tree pending)", snap.SlotsInUse)
 	}
 	if snap.SlotTotal != 4 {
 		t.Errorf("SlotTotal = %d, want 4", snap.SlotTotal)
@@ -91,7 +99,7 @@ func TestSnapshotQueuedDepth(t *testing.T) {
 	sc := tr.Scheduler()
 
 	// Occupy the one slot so any further acquire must park in its pool's FIFO.
-	if !sc.acquireSlot(context.Background(), "research") {
+	if err := sc.acquireSlot(context.Background(), "research"); err != nil {
 		t.Fatal("initial acquire should grant on an empty cap-1 pool")
 	}
 	done := make(chan struct{})

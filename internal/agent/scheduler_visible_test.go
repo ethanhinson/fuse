@@ -83,10 +83,10 @@ func TestVisibleQueueBoundFlip(t *testing.T) {
 	p := sc.StripPredicate(tr.RootID())
 
 	// Saturate the two slots so subsequent acquires queue.
-	if !sc.acquireSlot(context.Background(), "") {
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
 		t.Fatal("acquire 1")
 	}
-	if !sc.acquireSlot(context.Background(), "") {
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
 		t.Fatal("acquire 2")
 	}
 	if p() {
@@ -98,7 +98,7 @@ func TestVisibleQueueBoundFlip(t *testing.T) {
 	done := make(chan struct{})
 	for i := 0; i < 4; i++ {
 		go func() {
-			if sc.acquireSlot(context.Background(), "") {
+			if sc.acquireSlot(context.Background(), "") == nil {
 				sc.releaseSlot()
 			}
 			done <- struct{}{}

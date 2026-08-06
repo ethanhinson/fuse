@@ -38,6 +38,19 @@ func newTestBucket(cfg Config) (*Bucket, *fakeClock) {
 	return b, clk
 }
 
+// remainingTPM returns the whole tpm tokens currently available for provider,
+// refilled to the current clock (a thin wrapper over Utilization for the Report
+// reconciliation assertions).
+func (b *Bucket) remainingTPM(provider string) int {
+	key := b.providerKey(provider)
+	for _, u := range b.Utilization() {
+		if u.Provider == key {
+			return u.TPMRemaining
+		}
+	}
+	return 0
+}
+
 func TestAnyReportsConfiguredAxes(t *testing.T) {
 	if (Config{}).Any() {
 		t.Error("empty config reports Any")
@@ -186,6 +199,59 @@ func TestLongestProviderPrefixWins(t *testing.T) {
 	<-blocked
 }
 
+// TestProviderKeyBoundaryMatch asserts a provider key resolves a model ID only
+// at a segment boundary (N-1): an exact match, or a prefix followed by one of
+// "/-_.:". A key must NOT bleed into an unrelated model that merely shares its
+// leading characters — "deepseek" resolves "deepseek-flash" and "deepseek/x"
+// but not "deepseek2-chat".
+func TestProviderKeyBoundaryMatch(t *testing.T) {
+	b, _ := newTestBucket(Config{
+		Providers: map[string]Limits{"deepseek": {RequestsPerMinute: 6}},
+	})
+	cases := []struct {
+		provider string
+		want     string
+	}{
+		{"deepseek", "deepseek"},       // exact
+		{"deepseek-flash", "deepseek"}, // '-' boundary
+		{"deepseek/x", "deepseek"},     // '/' boundary
+		{"deepseek_v2", "deepseek"},    // '_' boundary
+		{"deepseek.chat", "deepseek"},  // '.' boundary
+		{"deepseek:1", "deepseek"},     // ':' boundary
+		{"deepseek2-chat", ""},         // no boundary ⇒ falls through to global
+		{"deepseekx", ""},              // no boundary
+		{"unrelated", ""},              // no match at all
+	}
+	for _, tc := range cases {
+		if got := b.providerKey(tc.provider); got != tc.want {
+			t.Errorf("providerKey(%q) = %q, want %q", tc.provider, got, tc.want)
+		}
+	}
+}
+
+// TestProviderKeyEqualLengthTieIsLexical asserts equal-length override keys land
+// in a deterministic (lexical-ascending) order in providerKeys rather than a
+// map-iteration order, so resolution never depends on build-to-build hash seed.
+func TestProviderKeyEqualLengthTieIsLexical(t *testing.T) {
+	b, _ := newTestBucket(Config{
+		Providers: map[string]Limits{
+			"bbb": {RequestsPerMinute: 1},
+			"aaa": {RequestsPerMinute: 1},
+			"ccc": {RequestsPerMinute: 1},
+		},
+	})
+	want := []string{"aaa", "bbb", "ccc"} // all equal length ⇒ lexical ascending
+	if len(b.providerKeys) != len(want) {
+		t.Fatalf("providerKeys = %v, want %v", b.providerKeys, want)
+	}
+	for i, k := range want {
+		if b.providerKeys[i] != k {
+			t.Errorf("providerKeys = %v, want deterministic lexical order %v", b.providerKeys, want)
+			break
+		}
+	}
+}
+
 // TestContextCancellationUnblocksWaiter: a blocked waiter returns ctx.Err() when
 // its context is cancelled, so a gated call still stops on Ctrl-C.
 func TestContextCancellationUnblocksWaiter(t *testing.T) {
@@ -218,11 +284,12 @@ func TestReportChargesActualsAgainstTPM(t *testing.T) {
 	b, clk := newTestBucket(Config{Global: Limits{TokensPerMinute: 600}}) // 10 tok/s
 	ctx := context.Background()
 
-	// Wait charges 0 (adapter's estimate); Report charges the real 600.
+	// Wait charges 0 (no reservation); Report charges the full real 600 (delta from
+	// an est of 0 is the whole actuals — the pre-estimate behavior for est=0).
 	if err := b.Wait(ctx, "m", 0); err != nil {
 		t.Fatal(err)
 	}
-	b.Report("m", 400, 200) // 600 tokens, empties the bucket
+	b.Report("m", 0, 400, 200) // 600 tokens, empties the bucket
 
 	// Next request needs 100 tokens ⇒ must block until 10s accrue.
 	done := make(chan error, 1)
@@ -242,6 +309,42 @@ func TestReportChargesActualsAgainstTPM(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("did not unblock after refill repaid Report deficit")
 	}
+}
+
+// TestReportReconcilesEstimateNoDoubleCharge asserts Report charges only the
+// delta over the estimate Wait already took, in BOTH directions (SF-2):
+//   - under-estimate (actuals > est): the shortfall is charged so the total
+//     charged over Wait+Report equals the actuals, not est+actuals.
+//   - over-estimate (actuals < est): nothing more is charged AND nothing is
+//     refunded — the reserved estimate stands (the axis stays at max(est,actuals)).
+func TestReportReconcilesEstimateNoDoubleCharge(t *testing.T) {
+	t.Run("under-estimate charges the shortfall only", func(t *testing.T) {
+		b, _ := newTestBucket(Config{Global: Limits{TokensPerMinute: 1000}})
+		ctx := context.Background()
+		// Wait reserves 100 (est). Actuals 600 ⇒ Report charges 500 (delta), NOT 600.
+		// Total charged = 600; remaining should be 1000 - 600 = 400.
+		if err := b.Wait(ctx, "m", 100); err != nil {
+			t.Fatal(err)
+		}
+		b.Report("m", 100, 400, 200) // est 100, actuals 600 ⇒ delta 500
+		if got := b.remainingTPM("m"); got != 400 {
+			t.Errorf("remaining tpm = %d, want 400 (charged actuals 600 once, not est+actuals)", got)
+		}
+	})
+	t.Run("over-estimate charges and refunds nothing", func(t *testing.T) {
+		b, _ := newTestBucket(Config{Global: Limits{TokensPerMinute: 1000}})
+		ctx := context.Background()
+		// Wait reserves 300 (est). Actuals 100 < est ⇒ Report is a no-op: no further
+		// charge and NO refund. Remaining stays at 1000 - 300 = 700 (the reservation
+		// stands; the over-estimate is not returned to the bucket).
+		if err := b.Wait(ctx, "m", 300); err != nil {
+			t.Fatal(err)
+		}
+		b.Report("m", 300, 60, 40) // est 300, actuals 100 ⇒ delta -200 ⇒ no-op
+		if got := b.remainingTPM("m"); got != 700 {
+			t.Errorf("remaining tpm = %d, want 700 (over-estimate not refunded)", got)
+		}
+	})
 }
 
 // TestConcurrentWaitersRaceClean drives many concurrent waiters against a small
@@ -346,4 +449,3 @@ func TestUtilizationReportsFillPerProvider(t *testing.T) {
 		t.Errorf("after a minute global = rpm %d tpm %d, want 60/600 (full)", g.RPMRemaining, g.TPMRemaining)
 	}
 }
-

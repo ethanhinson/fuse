@@ -109,7 +109,7 @@ func TestSchedulerYieldRefcountSemantics(t *testing.T) {
 	sc := tr.Scheduler()
 
 	// A depth-1 node holds the single slot.
-	if !sc.acquireSlot(context.Background(), "") {
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
 		t.Fatal("first acquire should succeed on an empty cap-1 pool")
 	}
 	node := &AgentNode{ID: newNodeID(), Depth: 1}
@@ -118,7 +118,7 @@ func TestSchedulerYieldRefcountSemantics(t *testing.T) {
 	sc.YieldSlot(node)
 	sc.YieldSlot(node)
 	// The slot is free now, so a fresh acquire must succeed without blocking.
-	if !sc.acquireSlot(context.Background(), "") {
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
 		t.Fatal("after yield the slot should be free")
 	}
 	sc.releaseSlot() // give it back so unyield can re-take it

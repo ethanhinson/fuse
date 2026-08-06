@@ -45,9 +45,13 @@ func TestFairQueueRoundRobinAcrossPools(t *testing.T) {
 	const cap = 1
 	tr := NewAgentTreeWithConcurrency("root", "m", cap)
 	sc := tr.Scheduler()
+	// This test exercises dispatch fairness, not the queue bound: raise the bound
+	// so all 15+3 waiters park (default ceil(2*1)=2 would refuse the overflow now
+	// that acquire enforces the bound, SF-1). ceil(20*1)=20 comfortably admits 18.
+	sc.SetQueueBound(20)
 
 	// Occupy the single slot so every subsequent acquire must queue.
-	if !sc.acquireSlot(context.Background(), "A") {
+	if err := sc.acquireSlot(context.Background(), "A"); err != nil {
 		t.Fatal("initial acquire should grant on an empty cap-1 pool")
 	}
 
@@ -57,7 +61,7 @@ func TestFairQueueRoundRobinAcrossPools(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if !sc.acquireSlot(context.Background(), pool) {
+			if err := sc.acquireSlot(context.Background(), pool); err != nil {
 				t.Errorf("pool %s waiter cancelled unexpectedly", pool)
 				return
 			}
@@ -121,7 +125,10 @@ func TestFairQueueFIFOWithinPool(t *testing.T) {
 	const cap = 1
 	tr := NewAgentTreeWithConcurrency("root", "m", cap)
 	sc := tr.Scheduler()
-	if !sc.acquireSlot(context.Background(), "A") {
+	// FIFO-ordering test, not a bound test: raise the bound so all four waiters
+	// park (default ceil(2*1)=2 would refuse a2/a3 under the SF-1 acquire bound).
+	sc.SetQueueBound(20)
+	if err := sc.acquireSlot(context.Background(), "A"); err != nil {
 		t.Fatal("initial acquire should grant")
 	}
 
@@ -135,7 +142,7 @@ func TestFairQueueFIFOWithinPool(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if !sc.acquireSlot(context.Background(), "A") {
+			if err := sc.acquireSlot(context.Background(), "A"); err != nil {
 				t.Errorf("%s cancelled", lbl)
 				return
 			}
@@ -178,10 +185,10 @@ func TestQueueBoundOverBoundVerdict(t *testing.T) {
 	sc := tr.Scheduler()
 
 	// Saturate the two slots so new requests would queue.
-	if !sc.acquireSlot(context.Background(), "") {
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
 		t.Fatal("acquire 1")
 	}
-	if !sc.acquireSlot(context.Background(), "") {
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
 		t.Fatal("acquire 2")
 	}
 
@@ -191,7 +198,7 @@ func TestQueueBoundOverBoundVerdict(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if !sc.acquireSlot(context.Background(), "") {
+			if err := sc.acquireSlot(context.Background(), ""); err != nil {
 				return
 			}
 			sc.releaseSlot()
@@ -235,7 +242,7 @@ func TestQueueBoundUsesPoolConcurrent(t *testing.T) {
 	sc.RegisterPool(root.ID, WorkflowPool{Concurrent: 1})
 
 	// Saturate the single global slot so subsequent acquires queue.
-	if !sc.acquireSlot(context.Background(), "") {
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
 		t.Fatal("hold the global slot")
 	}
 
@@ -245,7 +252,7 @@ func TestQueueBoundUsesPoolConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if !sc.acquireSlot(context.Background(), root.ID) {
+			if err := sc.acquireSlot(context.Background(), root.ID); err != nil {
 				return
 			}
 			sc.releaseSlot()
@@ -284,7 +291,7 @@ func TestSpawnRefusedOverBound(t *testing.T) {
 
 	// Hold the single slot and park waiters up to the bound (ceil(2*1)=2) so the
 	// implicit pool is at its ceiling.
-	if !sc.acquireSlot(context.Background(), "") {
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
 		t.Fatal("hold slot")
 	}
 	var wg sync.WaitGroup
@@ -292,7 +299,7 @@ func TestSpawnRefusedOverBound(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if !sc.acquireSlot(context.Background(), "") {
+			if err := sc.acquireSlot(context.Background(), ""); err != nil {
 				return
 			}
 			sc.releaseSlot()
@@ -319,6 +326,97 @@ func TestSpawnRefusedOverBound(t *testing.T) {
 	}
 }
 
+// TestConcurrentSpawnsCannotOvershootBound is the SF-1 TOCTOU regression: with a
+// pool bound B, launching many spawns CONCURRENTLY into a fully-saturated pool
+// must never park more than B waiters, and every overflow spawn must be refused
+// with ErrQueueBoundExceeded — not admitted past the bound. The Spawn-time Admit
+// check is only a lock-free fast path; the authoritative enforcement is the
+// atomic under-lock bound check in acquire's enqueue, so N concurrent callers
+// that all read "under bound" at Admit cannot collectively overshoot.
+//
+// Determinism: every slot is held for the whole test (never released), so no
+// parked waiter is ever granted and the parked set cannot drain mid-flight — the
+// admitted count is a stable function of the bound, not of goroutine timing. No
+// sleeps: a WaitGroup fences all spawns before the assertions.
+func TestConcurrentSpawnsCannotOvershootBound(t *testing.T) {
+	const cap = 2 // global slots
+	tr := NewAgentTreeWithConcurrency("root", "m", cap)
+	sc := tr.Scheduler()
+	rootNode := tr.Node(tr.RootID())
+
+	// Bound for the implicit ("") pool = ceil(2.0 * cap) = 4.
+	bound := sc.poolQueueBound("")
+	if bound != 4 {
+		t.Fatalf("bound = %d, want 4 (ceil(2*%d))", bound, cap)
+	}
+
+	// Saturate every global slot and hold them for the whole test so nothing the
+	// spawns queue behind can ever be granted (deterministic parked set).
+	for i := 0; i < cap; i++ {
+		if err := sc.acquireSlot(context.Background(), ""); err != nil {
+			t.Fatalf("saturate slot %d: %v", i, err)
+		}
+	}
+	// A cancellable spawn context so the deferred cleanup unblocks every parked
+	// waiter (and any child that later gets a released slot) — no leaked goroutines.
+	spawnCtx, cancelSpawns := context.WithCancel(context.Background())
+	defer func() {
+		cancelSpawns()
+		for i := 0; i < cap; i++ {
+			sc.releaseSlot()
+		}
+	}()
+
+	// Launch many more spawns than the bound, all at once, into the saturated
+	// implicit pool. Each spawn either parks (its goroutine blocks awaiting a slot
+	// that never frees) or is refused synchronously with ErrQueueBoundExceeded.
+	const n = 24 // >> bound
+	s := NewSpawner(WithTree(tr), WithNode(rootNode), WithSpawnDepth(0),
+		WithChildBuilder(func(ctx context.Context, _ SpawnOpts, _ *AgentNode, _ *AgentTree) (string, error) {
+			<-ctx.Done() // a granted child (none here) would just block until cancel
+			return "", ctx.Err()
+		}))
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var refused, admitted int
+	var otherErr error
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := s.Spawn(spawnCtx, SpawnOpts{Label: "c"})
+			mu.Lock()
+			switch {
+			case err == nil:
+				admitted++ // parked (or granted, but no slot can free) — occupies queue depth
+			case errors.Is(err, ErrQueueBoundExceeded):
+				refused++
+			default:
+				if otherErr == nil {
+					otherErr = err
+				}
+			}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if otherErr != nil {
+		t.Fatalf("unexpected spawn error: %v", otherErr)
+	}
+	// The parked queue depth must be exactly the bound and never more.
+	if got := sc.queuedDepth(""); got != bound {
+		t.Fatalf("queued depth = %d, want exactly the bound %d (never overshoot)", got, bound)
+	}
+	if admitted != bound {
+		t.Fatalf("admitted (parked) = %d, want exactly the bound %d", admitted, bound)
+	}
+	if refused != n-bound {
+		t.Fatalf("refused = %d, want %d (every overflow gets ErrQueueBoundExceeded)", refused, n-bound)
+	}
+}
+
 // TestReacquireLaneSkipsPoolQueue is the unyield deadlock regression at the
 // scheduler seam: a resumed parent's reacquisition must jump ahead of a full
 // pool FIFO. If unyield queued behind the pool's pending spawns, a parent holding
@@ -330,7 +428,7 @@ func TestReacquireLaneSkipsPoolQueue(t *testing.T) {
 	sc := tr.Scheduler()
 
 	// The parent holds the slot, then yields it (simulating a wait on a child).
-	if !sc.acquireSlot(context.Background(), "") {
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
 		t.Fatal("parent acquire")
 	}
 	parent := &AgentNode{ID: newNodeID(), Depth: 1}
@@ -338,7 +436,7 @@ func TestReacquireLaneSkipsPoolQueue(t *testing.T) {
 	sc.YieldSlot(parent) // frees the slot
 
 	// Now park normal spawn waiters behind the (now free) slot by first taking it.
-	if !sc.acquireSlot(context.Background(), "A") {
+	if err := sc.acquireSlot(context.Background(), "A"); err != nil {
 		t.Fatal("filler acquire")
 	}
 	granted := make(chan string, 4)
@@ -347,7 +445,7 @@ func TestReacquireLaneSkipsPoolQueue(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if !sc.acquireSlot(context.Background(), "A") {
+			if err := sc.acquireSlot(context.Background(), "A"); err != nil {
 				return
 			}
 			granted <- "spawn"
@@ -402,12 +500,12 @@ func TestReacquireLaneSkipsPoolQueue(t *testing.T) {
 func TestFairQueueWaiterCancelLeavesQueue(t *testing.T) {
 	tr := NewAgentTreeWithConcurrency("root", "m", 1)
 	sc := tr.Scheduler()
-	if !sc.acquireSlot(context.Background(), "A") {
+	if err := sc.acquireSlot(context.Background(), "A"); err != nil {
 		t.Fatal("hold slot")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancelled := make(chan bool, 1)
+	cancelled := make(chan error, 1)
 	go func() { cancelled <- sc.acquireSlot(ctx, "A") }()
 	if err := waitForQueueDepth(sc, "A", 1, time.Second); err != nil {
 		t.Fatalf("waiter did not park: %v", err)
@@ -415,9 +513,9 @@ func TestFairQueueWaiterCancelLeavesQueue(t *testing.T) {
 
 	cancel()
 	select {
-	case ok := <-cancelled:
-		if ok {
-			t.Fatal("cancelled acquire returned true (took a slot)")
+	case err := <-cancelled:
+		if err == nil {
+			t.Fatal("cancelled acquire returned nil (took a slot)")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancel did not unblock the waiter")
@@ -429,7 +527,7 @@ func TestFairQueueWaiterCancelLeavesQueue(t *testing.T) {
 	// The single slot is still held by the very first acquire; release it and a
 	// new waiter must be granted (no phantom slot consumed by the cancelled one).
 	sc.releaseSlot()
-	if !sc.acquireSlot(context.Background(), "A") {
+	if err := sc.acquireSlot(context.Background(), "A"); err != nil {
 		t.Fatal("post-cancel acquire should get the freed slot")
 	}
 }

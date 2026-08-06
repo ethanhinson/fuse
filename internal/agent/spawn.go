@@ -161,6 +161,32 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 	if s.node != nil {
 		parentID = s.node.ID
 	}
+
+	// Slot admission goes through the scheduler (change 0036); a nil tree (a
+	// Spawner used without one) has no scheduler and thus no cap. The child queues
+	// into its parent's pool — the parent's workflow root, or "" for the implicit
+	// session pool (a freshly-spawned child never carries its own workflow-root
+	// label, so it inherits the parent's, matching the Spawn-time Admit check).
+	var sched *Scheduler
+	poolID := ""
+	if s.tree != nil {
+		sched = s.tree.Scheduler()
+		if s.node != nil {
+			poolID = s.tree.WorkflowRootOf(s.node.ID)
+		}
+	}
+
+	// Enqueue for a slot SYNCHRONOUSLY, before the node is added to the tree, so a
+	// queue-bound refusal surfaces from Spawn identically to the Admit backstop
+	// (SF-1): the atomic under-lock bound check closes the TOCTOU window that lets
+	// concurrent same-turn spawns overshoot the pool bound. A refused spawn adds no
+	// pending node. granted==true means a free slot was taken here (fast path);
+	// otherwise the returned waiter is parked and the goroutine awaits its grant.
+	waiter, granted, err := sched.enqueueSlot(poolID, false)
+	if err != nil {
+		return AgentHandle{}, err
+	}
+
 	node := &AgentNode{
 		ID:       newNodeID(),
 		ParentID: parentID,
@@ -178,29 +204,22 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 	childCtx, cancel := context.WithCancel(ctx)
 	node.SetCancel(cancel) // allows tree.CancelNode to stop this node
 
-	// Slot admission goes through the scheduler (change 0036); a nil tree (a
-	// Spawner used without one) has no scheduler and thus no cap. The child queues
-	// into its pool — its workflow root, or "" for the implicit session pool.
-	var sched *Scheduler
-	poolID := ""
-	if s.tree != nil {
-		sched = s.tree.Scheduler()
-		poolID = s.tree.WorkflowRootOf(node.ID)
-	}
-
 	go func() {
 		defer cancel()
 
-		// Width cap: wait for a spawn slot while the node stays visibly pending.
-		// Depth limits alone don't bound load when the model fans out widely. The
-		// spawn queues into its pool FIFO; slots are granted round-robin.
-		if !sched.acquireSlot(childCtx, poolID) {
-			node.Finish(StatusCancelled, "")
-			if s.tree != nil {
-				s.tree.Emit(TreeUpdate{NodeID: node.ID})
+		// Width cap: wait for the granted slot (or park-and-wait) while the node
+		// stays visibly pending. Depth limits alone don't bound load when the model
+		// fans out widely. The slot was reserved synchronously above; here we only
+		// await the parked waiter's grant when one was queued.
+		if !granted {
+			if err := sched.awaitSlot(childCtx, waiter); err != nil {
+				node.Finish(StatusCancelled, "")
+				if s.tree != nil {
+					s.tree.Emit(TreeUpdate{NodeID: node.ID})
+				}
+				doneCh <- SpawnDone{Err: childCtx.Err()}
+				return
 			}
-			doneCh <- SpawnDone{Err: childCtx.Err()}
-			return
 		}
 		defer sched.releaseSlot()
 

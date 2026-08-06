@@ -24,6 +24,7 @@ type fakeGate struct {
 	waitErr     error // if set, Wait returns it (and dispatch must not happen)
 
 	reportCalls   int
+	reportEst     int
 	reportIn      int
 	reportOut     int
 	lastReportPvr string
@@ -39,10 +40,11 @@ func (g *fakeGate) Wait(ctx context.Context, provider string, estTokens int) err
 	return g.waitErr
 }
 
-func (g *fakeGate) Report(provider string, inTokens, outTokens int) {
+func (g *fakeGate) Report(provider string, estTokens, inTokens, outTokens int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.reportCalls++
+	g.reportEst = estTokens
 	g.reportIn = inTokens
 	g.reportOut = outTokens
 	g.lastReportPvr = provider
@@ -84,13 +86,18 @@ func TestRateGateConsultedBeforeDispatchAndReportedAfter(t *testing.T) {
 	if waits != 1 {
 		t.Errorf("Wait calls = %d, want 1", waits)
 	}
-	// The adapter cannot cheaply/accurately estimate tokens before dispatch, so it
-	// passes estTokens=0 and lets Report reconcile against the gateway's actuals.
+	// The adapter charges a conservative len(body)/4 at Wait so concurrent first
+	// dispatches reserve ahead (SF-2). It must be a positive reservation, and the
+	// SAME value must reach Report so the estimate is reconciled, not double-charged.
 	g.mu.Lock()
 	estTokens := g.waitTokens
+	reportEst := g.reportEst
 	g.mu.Unlock()
-	if estTokens != 0 {
-		t.Errorf("Wait estTokens = %d, want 0 (adapter under-charges, Report reconciles)", estTokens)
+	if estTokens <= 0 {
+		t.Errorf("Wait estTokens = %d, want a positive len(body)/4 reservation", estTokens)
+	}
+	if reportEst != estTokens {
+		t.Errorf("Report estTokens = %d, want %d (same estimate reconciled at Report)", reportEst, estTokens)
 	}
 	if reports != 1 {
 		t.Errorf("Report calls = %d, want 1", reports)

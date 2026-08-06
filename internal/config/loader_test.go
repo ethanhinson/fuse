@@ -1171,6 +1171,32 @@ throughput:
 	}
 }
 
+// TestTrustedThroughputNegativeIsDropped asserts a trusted home file's negative
+// throughput axis is dropped rather than propagated (a negative would DISABLE
+// the axis — 0 = unlimited — which is never a valid tightening). Mirrors the
+// MaxSpawns/MaxConcurrent negative clamp a few lines up in mergeFile. Each case
+// loads a home file whose axis is negative and asserts the result is 0 (unset),
+// never a negative that would silently overwrite/disable a set positive.
+func TestTrustedThroughputNegativeIsDropped(t *testing.T) {
+	cases := []struct {
+		name string
+		axis string
+		read func(Config) int
+	}{
+		{"rpm", "requests_per_minute", func(c Config) int { return c.Throughput.RequestsPerMinute }},
+		{"tpm", "tokens_per_minute", func(c Config) int { return c.Throughput.TokensPerMinute }},
+		{"session", "session_tokens", func(c Config) int { return c.Throughput.SessionTokens }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := writeHomeConfig(t, fmt.Sprintf("throughput:\n  %s: -5\n", tc.axis))
+			if got := tc.read(c); got != 0 {
+				t.Errorf("%s = %d, want 0 (trusted negative dropped, axis stays unset)", tc.axis, got)
+			}
+		})
+	}
+}
+
 // TestLocalPoolTokensTightenOnly asserts workflows.<name>.pool.tokens follows
 // the same tighten-only merge as the other pool numbers: local may lower an
 // already-set quota but not raise it or set a previously-unset one.

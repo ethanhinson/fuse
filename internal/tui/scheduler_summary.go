@@ -106,14 +106,41 @@ func schedulerSummaryLines(snap agent.SchedulerSnapshot, util []ratelimit.Provid
 }
 
 // schedulerStatusSegment renders the compact single-segment scheduler summary for
-// the status bar: the busiest engaged pool's line (or the first pool with a token
-// quota, preferring a workflow pool over the implicit session pool). Empty when
-// no pool has a slot/queue/token axis to report. Kept to one pool so the status
-// line stays narrow; the full per-pool block lives in the agents overlay.
+// the status bar: the busiest engaged pool's line. "Busiest" is the pool with the
+// most SlotsInUse, ties broken by more Queued, then by name (the implicit session
+// pool sorts last, matching the overlay). Only pools with a renderable axis
+// (slots/queue/token) are considered; empty when none is engaged. Kept to one
+// pool so the status line stays narrow — the full per-pool block lives in the
+// agents overlay.
 func schedulerStatusSegment(snap agent.SchedulerSnapshot) string {
-	lines := schedulerSummaryLines(snap, nil)
-	if len(lines) == 0 {
+	best := -1
+	for i, p := range snap.Pools {
+		if poolSummaryLine(p) == "" {
+			continue // not engaged: nothing to render
+		}
+		if best < 0 || busierPool(p, snap.Pools[best]) {
+			best = i
+		}
+	}
+	if best < 0 {
 		return ""
 	}
-	return lines[0]
+	return poolSummaryLine(snap.Pools[best])
+}
+
+// busierPool reports whether a is the busier pool to surface than b: more
+// SlotsInUse wins; on a tie, more Queued; on a further tie, the earlier name
+// (with the implicit session pool "" sorting last, mirroring the overlay order).
+func busierPool(a, b agent.PoolSnapshot) bool {
+	if a.SlotsInUse != b.SlotsInUse {
+		return a.SlotsInUse > b.SlotsInUse
+	}
+	if a.Queued != b.Queued {
+		return a.Queued > b.Queued
+	}
+	// Name tiebreak: implicit session pool ("") sorts last; otherwise lexical.
+	if (a.Workflow == "") != (b.Workflow == "") {
+		return b.Workflow == "" // a non-implicit beats the implicit pool
+	}
+	return a.Workflow < b.Workflow
 }

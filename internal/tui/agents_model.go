@@ -100,7 +100,15 @@ func (m *AgentsModel) View() string {
 	// tree column. It costs rows, so the panels build to m.height minus its height —
 	// temporarily shrinking m.height keeps each panel's own help bar visible rather
 	// than dropping it off the bottom.
+	//
+	// Clamp the header to at most m.height-1 lines so the panels always get at least
+	// one row (h >= 1) and the total output (len(header) + h) never exceeds the
+	// overlay height (N-4): an unbounded header on a very short overlay would
+	// otherwise force h=1 while the header alone already overflows the height.
 	header := m.schedulerHeaderLines(m.width)
+	if len(header) > m.height-1 {
+		header = header[:m.height-1]
+	}
 	h := m.height - len(header)
 	if h < 1 {
 		h = 1

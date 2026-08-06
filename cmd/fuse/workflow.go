@@ -44,7 +44,7 @@ type workflowActivation struct {
 }
 
 // pool converts the config pool into the agent-package mirror.
-func (a workflowActivation) pool() agent.WorkflowPool {
+func (a *workflowActivation) pool() agent.WorkflowPool {
 	return agent.WorkflowPool{
 		Concurrent: a.cfg.Pool.Concurrent,
 		Total:      a.cfg.Pool.Total,
@@ -55,7 +55,7 @@ func (a workflowActivation) pool() agent.WorkflowPool {
 
 // workerNames returns the workflow's worker names (for the spawn tool's enum),
 // or nil when the workflow defines no workers (freeform spawns).
-func (a workflowActivation) workerNames() []string {
+func (a *workflowActivation) workerNames() []string {
 	if len(a.cfg.Workers) == 0 {
 		return nil
 	}

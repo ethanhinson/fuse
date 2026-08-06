@@ -10,15 +10,16 @@ import (
 
 // ErrQueueBoundExceeded is returned by a spawn whose pool's pending queue is
 // already at its bound (ceil(queue_bound × pool slots), change 0036). The
-// per-turn visibility predicate (Task 3) strips spawn_agent before the model gets
-// this far; the error is the race backstop for a spawn that commits within a turn
-// while the queue was under bound but has since filled — it refuses the spawn
-// rather than growing the queue past the bound.
+// per-turn visibility predicate (Visible) strips spawn_agent before the model
+// gets this far; the error is the race backstop for a spawn that commits within a
+// turn while the queue was under bound but has since filled — it refuses the
+// spawn rather than growing the queue past the bound. Enforced atomically at
+// enqueue so concurrent same-turn spawns cannot collectively overshoot the bound.
 var ErrQueueBoundExceeded = errors.New("agent: spawn queue bound exceeded")
 
 // defaultQueueBound is the multiplier applied to a pool's slot count to get its
-// pending-queue ceiling (spec: pending ≤ 2× slots). Task 4 wires this to
-// agents.queue_bound; until then it is a Scheduler field defaulting to this.
+// pending-queue ceiling (spec: pending ≤ 2× slots). It is the fallback used when
+// agents.queue_bound is unset; SetQueueBound overrides the Scheduler's copy.
 const defaultQueueBound = 2.0
 
 // Scheduler is the single admission, slot, and per-pool policy authority for a
@@ -30,12 +31,13 @@ const defaultQueueBound = 2.0
 // one Scheduler and exposes it via Scheduler(); the tree's own SetMaxSpawns /
 // SpawnBudget / YieldSlot / UnyieldSlot methods survive as thin delegating shims.
 //
-// Task 2 replaces the arrival-order semaphore wakeup with an explicit fair grant
-// dispatcher: spawn waiters land in their pool's FIFO, a freed slot is granted
-// round-robin across non-empty pools (FIFO within a pool), per-pool pending is
-// bounded, and unyield reacquisition jumps a priority lane. Admit is a pure read
-// describing the brakes 0033/0034/this queue enforce so the visibility predicate
-// (Task 3) can be rebuilt on it without changing today's stripping semantics.
+// Slot grants go through an explicit fair dispatcher rather than an arrival-order
+// semaphore wakeup: spawn waiters land in their pool's FIFO, a freed slot is
+// granted round-robin across non-empty pools (FIFO within a pool), per-pool
+// pending is bounded (ceil(queue_bound × slots), enforced at enqueue), and unyield
+// reacquisition jumps a priority lane. Admit is a pure read describing the brakes
+// 0033/0034 and this queue enforce; the visibility predicate (Visible) is built
+// on it, and Spawn's call-time backstops are the race safety net.
 type Scheduler struct {
 	tree *AgentTree
 
@@ -62,8 +64,8 @@ type Scheduler struct {
 	poolOrder  []string
 	rrCursor   int
 	// queueBound is the multiplier on a pool's slot count that caps its pending
-	// queue (ceil(queueBound × slots)). Defaults to defaultQueueBound; Task 4
-	// wires it to agents.queue_bound. Guarded by mu.
+	// queue (ceil(queueBound × slots)). Defaults to defaultQueueBound; set from
+	// agents.queue_bound via SetQueueBound. Guarded by mu.
 	queueBound float64
 	// maxSpawns is the tree-global spawn budget ceiling — the total number of
 	// child agents any spawn may create over the whole tree's life. 0 = unset (no
@@ -78,9 +80,9 @@ type Scheduler struct {
 	// Guarded by mu.
 	sessionTokens int
 	// pools holds per-workflow pool policy keyed by the workflow root's node ID,
-	// registered when a workflow activates. The fair queue (Task 2) reads a pool's
-	// Concurrent figure to size its queue bound; the unified visibility predicate
-	// (Task 3) consumes it too. Guarded by mu.
+	// registered when a workflow activates. The fair queue reads a pool's Concurrent
+	// figure to size its queue bound; the visibility predicate (Visible) consumes it
+	// too. Guarded by mu.
 	pools map[string]WorkflowPool
 }
 
@@ -192,9 +194,9 @@ func (s *Scheduler) sessionTokenCeiling() int {
 // nodeID, or nil when no token quota is exhausted. It is the call-time backstop
 // mirror of the token terms in Visible (change 0036): the session ceiling (a
 // global whole-tree term) and the spawning node's workflow pool.tokens quota (a
-// subtree term). The tighter session term is checked first. A non-nil result
-// carries the ErrTokenQuotaExhausted identity, mirroring the budget backstop's
-// discipline. Race-safe: it only calls tree/scheduler methods that lock.
+// subtree term). The session term is checked first. A non-nil result carries the
+// ErrTokenQuotaExhausted identity, mirroring the budget backstop's discipline.
+// Race-safe: it only calls tree/scheduler methods that lock.
 func (s *Scheduler) tokenQuotaDenied(nodeID string) error {
 	if s == nil {
 		return nil
@@ -278,8 +280,10 @@ type PoolSnapshot struct {
 // implicit session pool appears there too when it has any live slots, queued
 // waiters, or token spend (so an idle freeform session renders nothing).
 type SchedulerSnapshot struct {
-	// SlotsInUse is the whole-tree running+pending child count; SlotTotal is the
-	// global slot cap.
+	// SlotsInUse is the scheduler's own count of slots granted against the cap
+	// (running children plus reacquired parents) — NOT the tree's running+pending,
+	// which counts yielded parents and can exceed the cap. SlotTotal is the global
+	// slot cap.
 	SlotsInUse int
 	SlotTotal  int
 	// ImplicitQueued is the number of waiters parked in the implicit session
@@ -306,8 +310,11 @@ type SchedulerSnapshot struct {
 // tree and scheduler accessors that lock internally, so it is safe to call
 // concurrently with dispatch. A nil scheduler returns the zero snapshot.
 //
-// Global figures come straight from the existing accessors (ActiveCounts for
-// slots, SpawnBudget for the budget, SessionTokens for token spend). Each
+// Global figures come from the scheduler's own counters where they are the
+// authority (slotsInUse for the global slot figure — the tree's running+pending
+// counts yielded parents and can render an impossible ratio, N-2) and from the
+// existing accessors otherwise (SpawnBudget for the budget, SessionTokens for
+// token spend). Each
 // registered workflow pool contributes a PoolSnapshot scoped to its subtree
 // (SubtreeActiveCounts / SubtreeTokens), with its Workflow name derived from the
 // root node's WorkflowRoot label rather than duplicating the name into
@@ -322,6 +329,12 @@ func (s *Scheduler) Snapshot() SchedulerSnapshot {
 
 	s.mu.Lock()
 	slotCap := s.slotCap
+	// The global slot figure is the scheduler's own granted-slot count, not the
+	// tree's running+pending: the tree count includes yielded parents (a parent
+	// that released its slot to wait on a child still shows as pending), which can
+	// render an impossible ratio like 18/16 (N-2). slotsInUse is the authoritative
+	// count of slots actually held against the cap.
+	slotsInUse := s.slotsInUse
 	sessionCeiling := s.sessionTokens
 	implicitQueued := len(s.poolQueues[""])
 	// Copy pool policy + queue depths under the lock, then release before touching
@@ -339,7 +352,7 @@ func (s *Scheduler) Snapshot() SchedulerSnapshot {
 	sessionTokens := s.tree.SessionTokens()
 
 	snap := SchedulerSnapshot{
-		SlotsInUse:     running + pending,
+		SlotsInUse:     slotsInUse,
 		SlotTotal:      slotCap,
 		ImplicitQueued: implicitQueued,
 		BudgetUsed:     used,
@@ -395,7 +408,7 @@ const (
 	Queued
 	// OverBound: the spawn's pool already has ceil(queue_bound × pool slots)
 	// waiters pending, so admitting it would grow the queue past its bound. This
-	// is the seam the visibility predicate (Task 3) strips on — the model stops
+	// is the seam the visibility predicate (Visible) strips on — the model stops
 	// committing spawns it cannot have — and the call-time backstop in Spawn
 	// refuses a racing spawn with ErrQueueBoundExceeded.
 	OverBound
@@ -447,9 +460,9 @@ type AdmitRequest struct {
 //   - Granted: otherwise.
 //
 // The read is race-safe (it only calls tree methods and scheduler methods that
-// lock internally) and must be recomputed per call. It is the seam Task 3 (the
-// unified visibility predicate) builds on; the call-time refusal in Spawn stays
-// as the race backstop regardless.
+// lock internally) and must be recomputed per call. It is the seam the visibility
+// predicate (Visible) builds on; the call-time refusal in Spawn stays as the race
+// backstop regardless.
 func (s *Scheduler) Admit(req AdmitRequest) (Verdict, error) {
 	newDepth := req.Depth + 1
 	if newDepth > MaxDepth {
@@ -483,10 +496,10 @@ func (s *Scheduler) Admit(req AdmitRequest) (Verdict, error) {
 //
 //   - Global lifetime budget (permanent) and global slot cap (reversible, counts
 //     running+PENDING) come from Admit: Denied ⇒ invisible; OverBound ⇒ invisible
-//     (the pool's FIFO is at ceil(queue_bound × slots) — the NEW queue-bound
-//     term); Granted or Queued ⇒ visible. Note the intended Task 3 shift: reaching
-//     the global active-cap no longer strips — it queues (Queued is visible) — and
-//     the strip moves to the queue bound, returning as the queue drains.
+//     (the pool's FIFO is at ceil(queue_bound × slots) — the queue-bound term);
+//     Granted or Queued ⇒ visible. Reaching the global active-cap does not strip —
+//     it queues (Queued is visible); the strip is the queue bound, returning as the
+//     queue drains.
 //   - Pool total (permanent), pool concurrent (reversible, subtree
 //     running+PENDING) and pool max_depth (static) come from the workflow pool
 //     registered for nodeID's nearest workflow root (WorkflowRootOf). These are
@@ -558,11 +571,11 @@ func (s *Scheduler) Visible(nodeID string) bool {
 }
 
 // StripPredicate returns the per-turn spawn-strip predicate for nodeID: it strips
-// (returns true) exactly when nodeID is not Visible. It is the unified replacement
-// for the composed NewStripSpawnPredicate/NewWorkflowStripPredicate — one
-// scheduler-backed rule for every scope. The predicate recomputes on each call
-// (it MUST NOT be cached across turns) and is race-safe. A nil scheduler yields a
-// predicate that never strips.
+// (returns true) exactly when nodeID is not Visible. It is the single
+// scheduler-backed strip rule for every scope (global budget/slot/queue-bound and
+// per-workflow-pool terms alike). The predicate recomputes on each call (it MUST
+// NOT be cached across turns) and is race-safe. A nil scheduler yields a predicate
+// that never strips.
 func (s *Scheduler) StripPredicate(nodeID string) func() bool {
 	return func() bool {
 		return !s.Visible(nodeID)
@@ -572,9 +585,17 @@ func (s *Scheduler) StripPredicate(nodeID string) func() bool {
 // poolQueueBound reports the maximum number of waiters poolID's FIFO may hold:
 // ceil(queueBound × pool slots). The pool's slot figure is its registered
 // Concurrent cap when positive, else the global slot cap (which the implicit
-// session pool always uses). A non-positive result means "no bound".
+// session pool always uses). A non-positive result means "no bound". Locks
+// internally; safe under concurrent dispatch.
 func (s *Scheduler) poolQueueBound(poolID string) int {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.poolQueueBoundLocked(poolID)
+}
+
+// poolQueueBoundLocked is poolQueueBound's body for callers already holding s.mu
+// (the acquire enqueue path). Caller holds mu.
+func (s *Scheduler) poolQueueBoundLocked(poolID string) int {
 	mult := s.queueBound
 	slots := s.slotCap
 	if poolID != "" {
@@ -582,7 +603,6 @@ func (s *Scheduler) poolQueueBound(poolID string) int {
 			slots = p.Concurrent
 		}
 	}
-	s.mu.Unlock()
 	if mult <= 0 || slots <= 0 {
 		return 0
 	}
@@ -609,48 +629,65 @@ func (s *Scheduler) priorityDepth() int {
 }
 
 // acquireSlot blocks until a global slot is granted to a spawn in poolID or ctx
-// ends. Waiters that cannot be granted immediately park in the pool's FIFO and
-// are dispatched round-robin across pools as slots free (fair queue, change
-// 0036). Returns false when the context was cancelled first; a cancelled waiter
-// leaves the queue without leaking its entry or a slot. Nil-safe: without a
-// scheduler (or a zero cap) there is no cap.
-func (s *Scheduler) acquireSlot(ctx context.Context, poolID string) bool {
-	return s.acquire(ctx, poolID, false)
+// ends. It is enqueue (synchronous, bound-checked) followed by await (blocking),
+// split so the caller can surface the queue-bound refusal synchronously (SF-1).
+// Returns nil when a slot is granted, the context error when ctx ends first, or
+// ErrQueueBoundExceeded when the pool's FIFO is already at its bound. Nil-safe.
+func (s *Scheduler) acquireSlot(ctx context.Context, poolID string) error {
+	w, granted, err := s.enqueueSlot(poolID, false)
+	if err != nil || granted {
+		return err
+	}
+	return s.awaitSlot(ctx, w)
 }
 
-// reacquireSlot re-takes a slot for a resumed parent (unyield) via the priority
-// lane, jumping ahead of every pool FIFO so a parent never blocks behind its own
-// descendants' pending spawns (the depth-2 deadlock, learning #12). Returns false
-// on ctx cancellation.
-func (s *Scheduler) reacquireSlot(ctx context.Context) bool {
-	return s.acquire(ctx, "", true)
-}
-
-// acquire is the shared slot-acquisition path for both the pool FIFOs (priority
-// == false) and the reacquisition lane (priority == true). Nil-safe.
-func (s *Scheduler) acquire(ctx context.Context, poolID string, priority bool) bool {
+// enqueueSlot performs the synchronous, atomic admission half of acquire under
+// s.mu: it either grants a free slot immediately (granted==true, no waiter), or
+// parks a new waiter in the pool FIFO (priority==false) / priority lane
+// (priority==true) and returns it, or — for a non-priority waiter whose pool is
+// already at its queue bound — refuses with ErrQueueBoundExceeded (SF-1).
+//
+// The bound check lives here, under the same lock that appends the waiter, so it
+// is atomic with the enqueue: concurrent same-turn spawns that all read "under
+// bound" at the lock-free Spawn-time Admit fast path cannot collectively overshoot
+// ceil(queue_bound × pool slots) — the ones past the line are refused here, with
+// the same ErrQueueBoundExceeded identity as the racing-deny backstop. The
+// priority (reacquisition) lane is exempt: a resumed parent must always get back
+// in or the depth-2 deadlock returns. A nil scheduler / zero cap grants
+// immediately (no cap). Locks internally.
+func (s *Scheduler) enqueueSlot(poolID string, priority bool) (w *slotWaiter, granted bool, err error) {
 	if s == nil || s.slotCap <= 0 {
-		return true
+		return nil, true, nil
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	// Fast path: a free slot means no waiters are queued (dispatch always drains),
 	// so granting here preserves FIFO order across the whole scheduler.
 	if s.slotsInUse < s.slotCap && len(s.priority) == 0 && s.totalQueued() == 0 {
 		s.slotsInUse++
-		s.mu.Unlock()
-		return true
+		return nil, true, nil
 	}
-	w := &slotWaiter{pool: poolID, ready: make(chan struct{}, 1)}
+	if !priority {
+		if bound := s.poolQueueBoundLocked(poolID); bound > 0 && len(s.poolQueues[poolID]) >= bound {
+			return nil, false, fmt.Errorf("%w: pool queue at bound — proceed with the results you already have", ErrQueueBoundExceeded)
+		}
+	}
+	w = &slotWaiter{pool: poolID, ready: make(chan struct{}, 1)}
 	if priority {
 		s.priority = append(s.priority, w)
 	} else {
 		s.enqueuePool(poolID, w)
 	}
-	s.mu.Unlock()
+	return w, false, nil
+}
 
+// awaitSlot blocks on a parked waiter until it is granted a slot or ctx ends. On
+// cancellation it leaves the queue without leaking its entry or a slot. Returns
+// nil on grant, ctx.Err() on cancellation.
+func (s *Scheduler) awaitSlot(ctx context.Context, w *slotWaiter) error {
 	select {
 	case <-w.ready:
-		return true
+		return nil
 	case <-ctx.Done():
 		s.mu.Lock()
 		if w.done {
@@ -658,13 +695,26 @@ func (s *Scheduler) acquire(ctx context.Context, poolID string, priority bool) b
 			// the slot straight back to the next waiter rather than leaking it.
 			s.mu.Unlock()
 			s.releaseSlot()
-			return false
+			return ctx.Err()
 		}
 		w.done = true
 		s.removeWaiter(w)
 		s.mu.Unlock()
-		return false
+		return ctx.Err()
 	}
+}
+
+// reacquireSlot re-takes a slot for a resumed parent (unyield) via the priority
+// lane, jumping ahead of every pool FIFO so a parent never blocks behind its own
+// descendants' pending spawns (the depth-2 deadlock, learning #12). Returns false
+// on ctx cancellation. The priority lane is never queue-bounded, so it never
+// refuses.
+func (s *Scheduler) reacquireSlot(ctx context.Context) bool {
+	w, granted, _ := s.enqueueSlot("", true)
+	if granted {
+		return true
+	}
+	return s.awaitSlot(ctx, w) == nil
 }
 
 // releaseSlot frees a slot taken by acquireSlot/reacquireSlot and dispatches it to
