@@ -54,6 +54,16 @@ exercise real-model / real-TTY behavior the suite stubs out:
 - [ ] While a slash-completer overlay is open (type `/` then a letter), press Shift+Tab — the mode
       must NOT flip (review S1 fix); the completer owns the keyboard.
 
+**D11 — per-project permission overrides (config-driven; worth one live check):**
+
+- [ ] In `~/.fuse/config.yml` add a `projects:` block keyed on an absolute project path
+      (e.g. `/Users/you/dev/trusted-repo`) with `permissions.mode: auto`. Run `fuse` from
+      *inside* that dir (or a subdir) and confirm the effective mode is `auto`; run it from an
+      unrelated dir and confirm it stays at the global default — the longest matching path-segment
+      ancestor wins, a raw prefix sibling (`/a/bc` under `/a/b`) never matches.
+- [ ] Confirm a `projects:` block planted in a repo-plantable `.fuse.local.yml` is IGNORED with a
+      warning (only the trusted home config sinks projects) — a cloned repo cannot self-elevate.
+
 ## Findings
 
 - **C1 (CRITICAL, review round 1 — fixed):** `collectStmt`/`collectCall` in
@@ -89,6 +99,21 @@ exercise real-model / real-TTY behavior the suite stubs out:
 - **Review S1 (should-fix — fixed):** Shift+Tab fell through the completer-navigation guard (which
   only consumes Up/Down/Esc/Enter) and flipped the mode with the completer overlay open. Fixed with
   an explicit completer-active re-check in the `KeyShiftTab` case + corrected comment.
+- **D11 — per-project permission overrides in user config.** A `projects:` map in the trusted home
+  config keys absolute project paths to their own `permissions` subtree; on load, the entry whose
+  key is the longest path-segment ancestor of (or equal to) the current working directory is merged
+  as trusted (full subtree incl. `mode` and `auto.*`). Trust boundary: **only the trusted home
+  merge sinks `projects:`** — a `projects:` block in the repo-plantable `.fuse.local.yml` is parsed,
+  ignored, and warned, so a cloned repo can never self-elevate via a project entry. Matching is by
+  path segment, not raw prefix (`/a/bc` never matches a `/a/b` key), with `filepath.Clean` +
+  `EvalSymlinks` on both sides and unresolvable keys skipped; longest-key-wins on overlap. The merge
+  reuses the existing `mergePermissions` (byte-identical refactor — home → project → local-tighten →
+  env precedence preserved). Focused D11 review: **no blockers** — trust boundary, path matching,
+  refactor fidelity, and precedence all PASS, tests green.
+- **D11 review nits (both fixed in-file, non-blocking):** (a) `TestProjectOverrideNoMatch` now uses
+  a real resolvable sibling temp dir key so it exercises the resolved-but-non-ancestor branch rather
+  than reaching the no-op via the unresolvable-key skip; (b) `applyProjectOverride`'s `bestKey`
+  (only ever read for its length) renamed to a `bestLen int`.
 
 ## Follow-ups
 
