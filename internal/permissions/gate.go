@@ -32,6 +32,12 @@ func AlwaysApprove(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
 // Execute call. It satisfies agent.ToolExecutor so it can be passed directly
 // to agent.New in place of the raw registry.
 type PermissionGate struct {
+	// modeMu guards mode. The root gate's mode is switched live by SetMode from
+	// the TUI goroutine while resolve calls read it concurrently, so every read
+	// goes through currentMode() and every write through SetMode under this one
+	// mutex — guarding only one side would still be a race
+	// (mutex-test-double-concurrent-provider).
+	modeMu  sync.Mutex
 	mode    PermissionMode
 	cfg     config.PermissionsConfig
 	cache   *ApprovalCache
@@ -114,6 +120,17 @@ func (v *escalationValve) counts() (consecutive, total int) {
 	return v.consecutive, v.total
 }
 
+// reset zeroes both counters under the valve mutex. It is called by the gate's
+// SetMode only on the leaving-auto transition: a fresh entry into auto later
+// starts the escalation budget clean, while entering/staying in auto leaves the
+// counters as-is.
+func (v *escalationValve) reset() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.consecutive = 0
+	v.total = 0
+}
+
 // Option configures optional auto-mode dependencies on a PermissionGate. The
 // three-argument New(...) form stays behaviour-identical for smart/off/
 // prompt-all; auto-mode wiring is purely additive via options.
@@ -159,6 +176,39 @@ func New(cfg config.PermissionsConfig, inner *tools.Registry, approve ApprovalFu
 	return g
 }
 
+// currentMode returns the gate's active mode under modeMu. Every mode read in
+// resolve/resolveAuto/CloneForChild goes through here so a concurrent SetMode
+// on the live root gate never races the read.
+func (g *PermissionGate) currentMode() PermissionMode {
+	g.modeMu.Lock()
+	defer g.modeMu.Unlock()
+	return g.mode
+}
+
+// SetMode switches the live gate's mode under modeMu, so an in-flight resolve
+// never races the write and the very next resolve observes the new mode. It is
+// the root-gate half of the session-mode surface (the SessionMode holder is the
+// per-turn-construction half).
+//
+// D10 semantics:
+//   - The root gate switches immediately (no new gate needed).
+//   - Session-cache grants survive the switch: SetMode does not touch g.cache.
+//   - The escalation valve resets ONLY when leaving auto (auto → non-auto), so a
+//     later fresh entry into auto starts the budget clean; entering/staying in
+//     auto leaves the counters as-is.
+//   - Already-spawned children are unaffected: CloneForChild snapshots the
+//     parent's mode into the child's own field at spawn time.
+func (g *PermissionGate) SetMode(mode PermissionMode) {
+	g.modeMu.Lock()
+	leavingAuto := g.mode == ModeAuto && mode != ModeAuto
+	g.mode = mode
+	g.modeMu.Unlock()
+
+	if leavingAuto && g.valve != nil {
+		g.valve.reset()
+	}
+}
+
 // Schemas delegates to the inner registry so agent.New receives the full
 // schema list.
 func (g *PermissionGate) Schemas() []model.ToolSchema { return g.inner.Schemas() }
@@ -194,7 +244,10 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 
 	policy := ToolPolicy{Enabled: true}
 
-	if g.mode == ModeOff {
+	// Read the live mode once so a concurrent SetMode cannot flip it mid-resolve.
+	mode := g.currentMode()
+
+	if mode == ModeOff {
 		policy.AutoApprove = true
 		return policy, nil
 	}
@@ -205,7 +258,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		return policy, nil
 	}
 
-	if g.mode == ModeAuto {
+	if mode == ModeAuto {
 		verdict, reason := g.resolveAuto(ctx, name, args)
 		switch verdict {
 		case VerdictAllow:
@@ -220,7 +273,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		}
 	}
 
-	if g.mode == ModeSmart {
+	if mode == ModeSmart {
 		// always_prompt demotes even safe-list entries — check first.
 		if !matchesAny(g.cfg.AlwaysPrompt, name, args) {
 			// auto_approve config patterns promote beyond the safe list.
@@ -376,7 +429,10 @@ func bashCommand(args string) string {
 // Child approvals do not propagate back to the parent gate.
 func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
 	return &PermissionGate{
-		mode:          g.mode,
+		// Snapshot the parent's mode once via the guarded accessor: the child
+		// copies the current value into its own field, so a later parent SetMode
+		// does not disturb an already-spawned (running) child.
+		mode:          g.currentMode(),
 		cfg:           g.cfg,
 		cache:         g.cache.Clone(),
 		approve:       prefixedApprove(label, g.approve),

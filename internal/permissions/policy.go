@@ -19,6 +19,24 @@ const (
 	ModeAuto
 )
 
+// String returns the canonical token for the mode: "smart", "auto",
+// "prompt-all", or "off". This is the single source of the mode name tokens
+// shared by the config parser, the TUI indicator, and the /mode command — no
+// mode-name string literal is duplicated across packages. It round-trips with
+// ParseMode for the four known modes.
+func (m PermissionMode) String() string {
+	switch m {
+	case ModeOff:
+		return "off"
+	case ModePromptAll:
+		return "prompt-all"
+	case ModeAuto:
+		return "auto"
+	default:
+		return "smart"
+	}
+}
+
 // ParseMode converts a yaml string to PermissionMode.
 func ParseMode(s string) PermissionMode {
 	switch s {
