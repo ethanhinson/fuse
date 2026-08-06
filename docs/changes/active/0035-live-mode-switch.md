@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/live-mode-switch
 pr:
 blocked_by:
-reconciled: false
-claimed_at: 2026-08-06T04:23:28Z
+reconciled: true
+claimed_at: 2026-08-06T04:24:44Z
 ---
 
 ## Artifacts
@@ -64,3 +64,23 @@ mid-run has no effect on the running turn or its children.
 - Any TUI change — Shift+Tab and `/mode` already write the holder.
 
 ## Reconcile log
+
+### 2026-08-06
+
+Verified against `main` (integration branch) at claim time. Ground truth
+holds exactly as the body describes:
+
+- `WithSessionMode(*SessionMode)` does **not** exist yet — the gate exposes
+  only `WithMode(PermissionMode)` (`internal/permissions/gate.go`), and the
+  shell path snapshots via `buildGate` → `WithMode(sessionGateMode(cfg, sm))`
+  (`cmd/fuse/run.go:200-204`, `sessionGateMode` at 187-192).
+- `currentMode()` reads `g.mode` under `modeMu` (gate.go:192-196); the
+  snapshot field is the only mode source today.
+- `CloneForChild` snapshots `g.currentMode()` into the child's own `mode`
+  field (gate.go:450-455).
+- The `SessionMode` holder (`internal/permissions/sessionmode.go`) and the
+  valve reset on the auto→non-auto transition in `SetMode`
+  (gate.go:221-230, `escalationValve.reset` at 127-132) are present.
+
+No scope drift; no work already done elsewhere. Design settled with the human
+2026-08-06 stands. `trivial: true` — no spec. Proceeding to plan.
