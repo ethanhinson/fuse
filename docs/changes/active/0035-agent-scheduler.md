@@ -28,7 +28,7 @@ reconciled: false
 | Artifact | Link |
 |---|---|
 | Spec | [0035-agent-scheduler.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0035-agent-scheduler.md) |
-| ADRs | [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs) |
+| ADRs | [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0007-scheduler-single-admission-authority.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

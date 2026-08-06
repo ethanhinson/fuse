@@ -28,7 +28,7 @@ reconciled: false
 | Artifact | Link |
 |---|---|
 | Spec | [0034-workflows.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0034-workflows.md) |
-| ADRs | [ADR-0002](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0002-research-mode-skill-driven-on-subagent-runtime.md), [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs) |
+| ADRs | [ADR-0002](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0002-research-mode-skill-driven-on-subagent-runtime.md), [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0007-scheduler-single-admission-authority.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
