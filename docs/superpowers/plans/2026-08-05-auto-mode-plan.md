@@ -546,10 +546,143 @@ lives there.
 
 ---
 
+## Task 18 — D11: per-project permission overrides in the user-level config
+
+**Spec:** D11 (`docs/superpowers/specs/2026-08-05-auto-mode-design.md`), added
+2026-08-05. "Auto is acceptable in this project but not that one" expressed from
+the **user-owned** `~/.fuse/config.yml` (trusted), so ADR-0006's trust boundary
+holds — the repo never grants its own trust.
+
+**Files:** `internal/config/schema.go`, `internal/config/loader.go`,
+`internal/config/loader_test.go` (new corpus), `README.md`.
+
+### Design
+
+**Schema (`schema.go`):**
+
+- Add `Projects map[string]ProjectConfig` to `rawConfig` under
+  `yaml:"projects"` — the on-disk shape (absolute project path → overrides).
+- New `type ProjectConfig struct { Permissions rawPermissionsConfig
+  \`yaml:"permissions"\` }`. Reuse `rawPermissionsConfig` (not the resolved
+  `PermissionsConfig`) so the same pointer/omitted-key discipline
+  (`session_allow *bool`) and the same trusted merge path apply verbatim to a
+  project entry. No field is added to the resolved `Config`/`PermissionsConfig`
+  — a project override resolves *into* `c.Permissions` at load time; there is no
+  separate resolved surface.
+
+**Loader (`loader.go`):**
+
+- Extract the existing inline per-key permission-merge block from `mergeFile`
+  into a helper, e.g. `mergePermissions(c *Config, raw rawPermissionsConfig,
+  trusted bool) (ignored []string)` — byte-for-byte the same loosening/tightening
+  rules already in `mergeFile` (mode/session_allow/auto_approve/auto.* loosening;
+  always_prompt/disabled tightening; aggregated `ignored` list). `mergeFile` calls
+  it and keeps emitting the one aggregated warning. This is a pure refactor with
+  no behavior change — existing loosen/tighten tests must stay green untouched.
+- In `Load()`, insert a **new step between the trusted home merge and the
+  untrusted `.fuse.local.yml` merge**: `applyProjectOverride(&c, home)`.
+  - Read the raw home config once more is wasteful; instead have `mergeFile`
+    capture the parsed `raw.Projects` for the trusted home file. Simplest clean
+    shape: add a trusted-only out-param path — e.g. `Load()` parses the home
+    file's `projects:` via a small dedicated read, OR `mergeFile` gains an
+    optional `*map[string]ProjectConfig` sink populated only when `trusted`.
+    Prefer the sink: `mergeFile(&c, homePath, true, &projects)`; the local call
+    passes `nil` (a `projects:` block in `.fuse.local.yml` is handled below).
+  - `applyProjectOverride`: get cwd (`os.Getwd`), canonicalize via
+    `filepath.EvalSymlinks` (on error — cwd unresolvable — no-op, no override).
+    Canonicalize each project key the same way (a key that fails to resolve is
+    skipped, not fatal). Select the **longest key that equals cwd or is a
+    path-segment ancestor of cwd**; ties impossible (keys are distinct paths).
+    Merge that entry's permissions as **TRUSTED** via `mergePermissions(&c,
+    entry.Permissions, true)` (full subtree incl. mode and auto.*). No match ⇒
+    no-op.
+  - **Path-segment ancestor test** (the `/a/b` vs `/a/bc` guard): an ancestor
+    match is `cwd == key || strings.HasPrefix(cwd, key+string(os.PathSeparator))`.
+    Never a raw `strings.HasPrefix(cwd, key)` — that matches `/a/bc` under `/a/b`.
+    Compare the cleaned (`filepath.Clean`) canonical forms so a trailing slash in
+    a key does not skew length ranking; rank by segment/length of the cleaned key.
+
+**`.fuse.local.yml` `projects:` is loosening surface (untrusted):**
+
+- A `projects:` key appearing in `.fuse.local.yml` must be **ignored with the
+  same aggregated `warnw` warning** — a repo-planted per-project block could
+  grant `mode: auto` to itself, exactly ADR-0006's threat. In the untrusted
+  `mergeFile` path, if `raw.Projects` is non-empty, append `"projects"` to the
+  `ignored` slice (so it rides the one aggregated warning line) and do **not**
+  apply it. (The trusted home path is the only one that ever consults
+  `raw.Projects`.)
+
+**Precedence (must end unchanged):** built-ins → user global `permissions:` →
+**user per-project `projects.<path>.permissions:` (new, trusted)** →
+`.fuse.local.yml` tighten-only → env overrides → session switcher (D10). The
+insertion point (after home, before local) is exactly what yields this order:
+the project override sits above global and below the tighten-only local file,
+and env + the session switcher still run after `Load()` returns, so they always
+win — assert this explicitly in a test (env/session unaffected is covered by the
+existing env test staying green; add a row proving a project `mode: auto` is
+still overridable by a later tighten and by the existing env path).
+
+### Tests (write first — TDD corpus rows)
+
+New `loader_test.go` cases; each writes a `~/.fuse/config.yml` with a `projects:`
+map and `t.Chdir`s (or the existing `chdirTemp`) into the relevant dir:
+
+1. **Exact match** — key == canonical cwd ⇒ that entry's `mode` (e.g. `auto`)
+   resolves; a global `permissions.mode` is overridden by it.
+2. **Ancestor match** — key is a parent dir of cwd ⇒ applied.
+3. **Longest-wins** — two keys both ancestors (`/p` and `/p/sub`), cwd under
+   `/p/sub` ⇒ the `/p/sub` entry wins.
+4. **`/a/b` vs `/a/bc` non-match** — a key `…/b` must NOT match a cwd under
+   `…/bc` (the raw-prefix bug); assert the global default survives.
+5. **Symlinked cwd** — cwd reached through a symlink whose `EvalSymlinks` target
+   equals a project key ⇒ match (build a temp symlink, `os.Symlink`, chdir
+   through it). Skip on platforms without symlink support if needed.
+6. **No-match no-op** — cwd under no project key ⇒ global/default permissions
+   unchanged, no warning.
+7. **Local-file `projects:` ignored + warned** — a `projects:` block in
+   `.fuse.local.yml` is ignored and the aggregated warning names `projects`
+   (assert the one-line aggregation invariant like `TestLocalFileCannotLoosenPolicy`).
+
+Full-subtree assertion: at least one row sets `auto.classifier_model` and
+`auto.deny`/`auto.ask` in the project entry and asserts they resolve (trusted
+merges the whole `auto.*` subtree, not just `mode`).
+
+### Done when
+
+- The seven corpus rows pass; the full-subtree row passes.
+- All pre-existing loader tests stay green (pure-refactor invariant).
+- `go build ./... && go vet ./... && go test -race ./...` clean.
+
+---
+
+## Task 19 — D11 docs: README `projects:` example + trusted-projects rationale
+
+**Files:** `README.md` (config / permission-modes section).
+
+- Add a `projects:` example to the user-level config docs: an absolute project
+  path → a `permissions:` subtree setting `mode: auto` (and optionally
+  `auto.classifier_model`), showing per-project trust.
+- State the **trusted-projects rationale**: the map lives only in the user-owned
+  `~/.fuse/config.yml` (never a repo file), keyed by absolute project path with
+  longest-ancestor cwd match, so "auto here, not there" is grantable without
+  weakening ADR-0006 — a `projects:` block in `.fuse.local.yml` is ignored and
+  warned, like every other loosening key.
+- Keep it consistent with the D10 session-surface framing already in the section
+  (session switcher always wins; config is startup default only).
+
+### Done when
+
+- README shows the `projects:` example and the trusted-projects rationale;
+  `go test ./...` green, `go vet` clean (re-run the D11 acceptance gate).
+
+---
+
 ## Out of scope (do not build here)
 
 OS-level sandboxing (Seatbelt/Landlock/bubblewrap); the MCP server HITL relay
 and `fuse mcp-server`'s no-socket `AlwaysApprove` fallback (follow-up); a
 two-stage classifier; Ed25519 signed policy envelopes; a hook system. **D10
 adds no persistence** — the session mode is never written back to any config
-file (spec D10); do not add config-write logic.
+file (spec D10); do not add config-write logic. **D11 adds no new resolved
+config surface** — a project override resolves *into* `c.Permissions` at load
+time; there is no `Config.Projects` field and nothing is written back.
