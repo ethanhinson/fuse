@@ -26,6 +26,9 @@ type SpawnOpts struct {
 	ModelID      string
 	MaxTurns     int
 	MaxTokens    int
+	// Worker names a workflow worker type (change 0034); empty for freeform
+	// spawns. The child builder resolves it to the worker's tool allowlist.
+	Worker string
 }
 
 // SpawnDone carries the result of a completed child agent.

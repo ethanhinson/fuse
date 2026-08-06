@@ -230,13 +230,14 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			}),
 		)
 
-		return func(ctx context.Context, label, task, systemPrompt, modelID string, toolsList []string) (string, error) {
+		return func(ctx context.Context, req tools.SpawnRequest) (string, error) {
 			opts := agent.SpawnOpts{
-				Label:        label,
-				Task:         task,
-				SystemPrompt: systemPrompt,
-				ModelID:      modelID,
-				Tools:        toolsList,
+				Label:        req.Label,
+				Task:         req.Task,
+				SystemPrompt: req.SystemPrompt,
+				ModelID:      req.Model,
+				Tools:        req.Tools,
+				Worker:       req.Worker,
 			}
 			handle, herr := spawner.Spawn(ctx, opts)
 			if herr != nil {

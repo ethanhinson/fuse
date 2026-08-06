@@ -6,15 +6,26 @@ import (
 	"fmt"
 )
 
+// SpawnRequest carries the model-supplied spawn arguments across the tools→agent
+// seam. A struct (rather than a positional list) keeps the seam stable as new
+// spawn options are added — change 0034 added Worker without touching every
+// call site's argument order.
+type SpawnRequest struct {
+	Label        string
+	Task         string
+	SystemPrompt string
+	Model        string
+	Tools        []string
+	// Worker names a workflow worker type (change 0034). Empty for freeform
+	// spawns and outside a workflow. When set, the child's registry is built
+	// from that worker's allowlist (the Tools subset may only narrow it).
+	Worker string
+}
+
 // SpawnFunc is injected into SpawnAgentTool to break the import cycle between
-// the tools registry and the agent package. It accepts primitive arguments and
-// returns the child agent's final result text.
-// The wiring code in cmd/fuse adapts agent.Spawner.Spawn to this signature.
-type SpawnFunc func(
-	ctx context.Context,
-	label, task, systemPrompt, model string,
-	tools []string,
-) (result string, err error)
+// the tools registry and the agent package. It returns the child agent's final
+// result text. The wiring code in cmd/fuse adapts agent.Spawner.Spawn to it.
+type SpawnFunc func(ctx context.Context, req SpawnRequest) (result string, err error)
 
 // BudgetFunc reports the tree-global spawn budget at call time: how many child
 // agents have been created so far and the ceiling. A max of 0 means no budget
@@ -27,6 +38,10 @@ type BudgetFunc func() (used, max int)
 type SpawnAgentTool struct {
 	spawn  SpawnFunc
 	budget BudgetFunc // optional; when set and max>0, a budget line is injected
+	// workers, when non-empty, enumerates the workflow's worker names in the
+	// `worker` param schema so the model picks a typed worker instead of
+	// hand-assembling a toolset (change 0034). Empty outside a workflow subtree.
+	workers []string
 }
 
 // NewSpawnAgentTool creates a spawn_agent tool with the given spawn function
@@ -44,6 +59,15 @@ func NewSpawnAgentToolWithBudget(spawn SpawnFunc, budget BudgetFunc) *SpawnAgent
 	return &SpawnAgentTool{spawn: spawn, budget: budget}
 }
 
+// WithWorkers returns a copy of the tool that advertises the given worker names
+// in its `worker` param enum (change 0034). Used inside a workflow subtree so
+// the model selects a typed worker. An empty/nil list leaves the param absent.
+func (t *SpawnAgentTool) WithWorkers(names []string) *SpawnAgentTool {
+	cp := *t
+	cp.workers = append([]string(nil), names...)
+	return &cp
+}
+
 // Name returns the tool name.
 func (t *SpawnAgentTool) Name() string { return "spawn_agent" }
 
@@ -55,32 +79,47 @@ func (t *SpawnAgentTool) Description() string {
 
 // Parameters returns the JSON schema for the tool input.
 func (t *SpawnAgentTool) Parameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"label": map[string]any{
-				"type":        "string",
-				"description": "Short human label shown in the agent tree (required).",
-			},
-			"task": map[string]any{
-				"type":        "string",
-				"description": "The child agent's task prompt (required).",
-			},
-			"system_prompt": map[string]any{
-				"type":        "string",
-				"description": "Optional system prompt override; fully replaces the inherited one.",
-			},
-			"tools": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "string"},
-				"description": "Optional subset of parent tools to give the child.",
-			},
-			"model": map[string]any{
-				"type":        "string",
-				"description": "Optional model ID (defaults to the parent's model).",
-			},
+	props := map[string]any{
+		"label": map[string]any{
+			"type":        "string",
+			"description": "Short human label shown in the agent tree (required).",
 		},
-		"required": []string{"label", "task"},
+		"task": map[string]any{
+			"type":        "string",
+			"description": "The child agent's task prompt (required).",
+		},
+		"system_prompt": map[string]any{
+			"type":        "string",
+			"description": "Optional system prompt override; fully replaces the inherited one.",
+		},
+		"tools": map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
+			"description": "Optional subset of parent tools to give the child.",
+		},
+		"model": map[string]any{
+			"type":        "string",
+			"description": "Optional model ID (defaults to the parent's model).",
+		},
+	}
+	// Inside a workflow subtree, offer a typed `worker` param enumerating the
+	// workflow's worker names; the child's registry is then the worker's
+	// allowlist exactly (tools may only narrow it). Change 0034.
+	if len(t.workers) > 0 {
+		enum := make([]any, len(t.workers))
+		for i, w := range t.workers {
+			enum[i] = w
+		}
+		props["worker"] = map[string]any{
+			"type":        "string",
+			"enum":        enum,
+			"description": "Workflow worker type for the child. Its allowlist defines the child's tools; a worker without spawn_agent cannot itself spawn.",
+		}
+	}
+	return map[string]any{
+		"type":       "object",
+		"properties": props,
+		"required":   []string{"label", "task"},
 	}
 }
 
@@ -90,6 +129,7 @@ type spawnAgentInput struct {
 	SystemPrompt string   `json:"system_prompt"`
 	Tools        []string `json:"tools"`
 	Model        string   `json:"model"`
+	Worker       string   `json:"worker"`
 }
 
 // Execute parses the input, spawns a child agent, and blocks until it completes.
@@ -102,11 +142,14 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, args string) Result {
 		return Result{IsError: true, Output: "spawn_agent: label and task are required"}
 	}
 
-	result, err := t.spawn(
-		ctx,
-		input.Label, input.Task, input.SystemPrompt, input.Model,
-		input.Tools,
-	)
+	result, err := t.spawn(ctx, SpawnRequest{
+		Label:        input.Label,
+		Task:         input.Task,
+		SystemPrompt: input.SystemPrompt,
+		Model:        input.Model,
+		Tools:        input.Tools,
+		Worker:       input.Worker,
+	})
 	if err != nil {
 		// Error results carry the error verbatim (which, for a budget-exhausted
 		// spawn, already tells the model to stop) — never a budget line.

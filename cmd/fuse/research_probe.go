@@ -155,9 +155,9 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				return childResult(msgs, rerr)
 			}),
 		)
-		return func(ctx context.Context, label, task, systemPrompt, modelID string, toolsList []string) (string, error) {
+		return func(ctx context.Context, req tools.SpawnRequest) (string, error) {
 			handle, herr := spawner.Spawn(ctx, agent.SpawnOpts{
-				Label: label, Task: task, SystemPrompt: systemPrompt, ModelID: modelID, Tools: toolsList,
+				Label: req.Label, Task: req.Task, SystemPrompt: req.SystemPrompt, ModelID: req.Model, Tools: req.Tools, Worker: req.Worker,
 			})
 			if herr != nil {
 				return "", herr

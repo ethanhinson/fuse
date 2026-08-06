@@ -8,7 +8,7 @@ import (
 
 // okSpawn is a SpawnFunc that returns a fixed child result with no error.
 func okSpawn(result string) SpawnFunc {
-	return func(_ context.Context, _, _, _, _ string, _ []string) (string, error) {
+	return func(_ context.Context, _ SpawnRequest) (string, error) {
 		return result, nil
 	}
 }
@@ -61,7 +61,7 @@ func TestSpawnAgentTool_BudgetLineClampsRemainingAtZero(t *testing.T) {
 func TestSpawnAgentTool_NoBudgetLineOnSpawnError(t *testing.T) {
 	// A failed spawn returns the error verbatim, with no budget line appended —
 	// the model needs the clean error to react to.
-	failing := func(_ context.Context, _, _, _, _ string, _ []string) (string, error) {
+	failing := func(_ context.Context, _ SpawnRequest) (string, error) {
 		return "", context.Canceled
 	}
 	budget := func() (used, max int) { return 3, 16 }
@@ -82,6 +82,48 @@ func TestSpawnAgentTool_ZeroMaxBudgetOmitsLine(t *testing.T) {
 	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
 	if strings.Contains(res.Output, "agent budget") {
 		t.Errorf("unset budget (max 0) => no line, got:\n%s", res.Output)
+	}
+}
+
+// --- change 0034: worker param schema ---
+
+func TestSpawnAgentTool_NoWorkerParamByDefault(t *testing.T) {
+	tool := NewSpawnAgentTool(okSpawn("x"))
+	props := tool.Parameters()["properties"].(map[string]any)
+	if _, ok := props["worker"]; ok {
+		t.Error("worker param must be absent outside a workflow (no workers configured)")
+	}
+}
+
+func TestSpawnAgentTool_WithWorkersAddsEnum(t *testing.T) {
+	tool := NewSpawnAgentTool(okSpawn("x")).WithWorkers([]string{"facet-researcher", "summarizer"})
+	props := tool.Parameters()["properties"].(map[string]any)
+	w, ok := props["worker"].(map[string]any)
+	if !ok {
+		t.Fatal("worker param should be present when workers are configured")
+	}
+	enum, ok := w["enum"].([]any)
+	if !ok || len(enum) != 2 {
+		t.Fatalf("worker enum = %v, want 2 entries", w["enum"])
+	}
+	if enum[0] != "facet-researcher" || enum[1] != "summarizer" {
+		t.Errorf("worker enum = %v, want [facet-researcher summarizer]", enum)
+	}
+}
+
+func TestSpawnAgentTool_WorkerThreadedToSpawnFunc(t *testing.T) {
+	var got SpawnRequest
+	spawn := func(_ context.Context, req SpawnRequest) (string, error) {
+		got = req
+		return "ok", nil
+	}
+	tool := NewSpawnAgentTool(spawn).WithWorkers([]string{"facet-researcher"})
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do","worker":"facet-researcher"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if got.Worker != "facet-researcher" {
+		t.Errorf("SpawnRequest.Worker = %q, want facet-researcher", got.Worker)
 	}
 }
 
