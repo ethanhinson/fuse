@@ -150,6 +150,33 @@ Implemented as a clean field-level merge policy in the loader — no legacy flag
 dead path (per the human's direction). Grok's signed-policy envelope was considered
 and rejected as enterprise machinery a local single-user tool doesn't need yet.
 
+### D10 — In-session mode switching (subsumes 0032; revised 2026-08-05)
+
+First real use showed config-file activation is the wrong primary surface: the
+human should select the mode **in the session**, Claude-Code-style. The config
+file remains only the *startup default*; the session override always wins and
+is never written back.
+
+- **Mode indicator**: the shell TUI status/input line always shows the active
+  permission mode (`smart` / `auto` / `prompt-all` / `off`), with a marker
+  when auto is running without a configured classifier (deterministic layers
+  only, gray area fails closed to ask).
+- **Shift+Tab** (backtab, CSI `Z`) cycles `smart` ↔ `auto` — the two everyday
+  postures ("standard" and "auto"). All four modes are reachable via the
+  discoverable, terminal-portable **`/mode <name>`** slash command (bare
+  `/mode` prints the active mode and options).
+- **Live switch semantics**: `PermissionGate` gains a thread-safe `SetMode`;
+  the root gate switches immediately. Child gates read the parent's mode at
+  spawn time (already-running children finish under the mode they started
+  with). Session-cache grants survive a switch (they were human decisions);
+  the escalation valve resets when leaving auto.
+- **Auto with no classifier**: switching into auto without
+  `classifier_model` config is allowed and safe — the deterministic layers
+  run and the gray area fails closed to prompts; the indicator shows the
+  degraded state. No config file is ever required to use auto mode.
+- **Trust boundary unaffected** (ADR-0006): the switcher is a human at the
+  keyboard, not a repo file; `.fuse.local.yml` still cannot loosen policy.
+
 ## Config surface (sketch)
 
 ```yaml
@@ -184,6 +211,12 @@ permissions:
 - The MCP server HITL relay internals; `fuse mcp-server`'s no-socket
   `AlwaysApprove` fallback (follow-up candidate).
 - Two-stage classifier; signed policy envelopes; hook system.
+
+## Revision log
+
+- 2026-08-05 (post-first-use): added D10 — in-session mode switcher with TUI
+  indicator, Shift+Tab cycle, and `/mode` command; change 0032 killed as
+  subsumed into this change. Config file demoted to startup-default-only.
 
 ## Resolved open questions (from the stub)
 

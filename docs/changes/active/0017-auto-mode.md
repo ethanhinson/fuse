@@ -2,13 +2,13 @@
 id: 17
 slug: auto-mode
 title: Auto mode — layered safe/unsafe classification for autonomous tool approval
-status: implemented
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-05
 updated: 2026-08-05
 depends_on: []
-related: [3, 12, 16]
+related: [3, 10, 12, 16]
 discovered_from: []
 adrs: [5, 6]
 spec: docs/superpowers/specs/2026-08-05-auto-mode-design.md
@@ -17,7 +17,7 @@ results: docs/results/2026-08-05-auto-mode-results.md
 trivial: false
 auto_groomable:
 branch: feat/auto-mode
-claimed_at: 2026-08-05T23:45:24Z
+claimed_at: 2026-08-06T01:56:48Z
 pr: https://github.com/ethanhinson/fuse/pull/15
 blocked_by:
 reconciled: true
@@ -93,6 +93,13 @@ string only — its docs admit `Bash(git *)` auto-approves
   approval prompt, non-TTY runs deny-by-default with an explicit
   `--approve-all` opt-in — the configured permission policy means the same
   thing in every entry point.
+- **Subsumes change 0032** (killed as absorbed; revised 2026-08-05 after
+  first use): the permission mode is a **session-first** surface — a mode
+  indicator in the shell TUI, Shift+Tab cycling smart ("standard") ↔ auto,
+  and a `/mode` slash command for all modes. The config file is only the
+  startup default; the session override wins, is never written back, and
+  auto works with zero config (deterministic layers + fail-closed asks when
+  no classifier is configured). Spec D10.
 - **Trust boundary**: permission-loosening keys (`mode`, `auto_approve`,
   `session_allow`, `auto.*`) are ignored from the repo-plantable
   `.fuse.local.yml` with a warning; tightening keys stay honored.
