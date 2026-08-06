@@ -1,12 +1,6 @@
 # Backlog
 
-**38 changes** — 🟢 1 in progress · 🟡 17 proposed · 🔵 2 implemented · ✅ 14 done · 🗑️ 4 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0038](active/0038-turn-budget-retirement.md) | Retire the interactive turn cap — unlimited shell turns, headless backstop, doom-loop detection | `critical` | `fix` | [spec](../) | `feat/live-mode-switch` |
+**38 changes** — 🟡 17 proposed · 🔵 3 implemented · ✅ 14 done · 🗑️ 4 killed
 
 ## 🟡 Proposed (17)
 
@@ -30,12 +24,13 @@
 | [0034](active/0034-workflows.md) | Workflows — skill-bound subagent pools with typed workers and spawn quotas | `high` | `feat` | ⏳ waiting on #33 — not yet built |
 | [0036](active/0036-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | `high` | `feat` | ⏳ waiting on #34 — not yet built |
 
-## 🔵 Implemented — awaiting merge (2)
+## 🔵 Implemented — awaiting merge (3)
 
 | # | Title | Priority | Type | PR | Readiness |
 |---|-------|----------|------|----|-----------|
 | [0035](active/0035-live-mode-switch.md) | Mode switch must bite mid-turn — gates read the SessionMode holder live, not a construction snapshot | `critical` | `fix` | [#16](https://github.com/ethanhinson/fuse/pull/16) |  |
 | [0037](active/0037-redirect-guard-lenience.md) | Redirect fail-closed guard — allow /dev/null targets and fd-dups, keep failing closed on real files | `critical` | `fix` | [#17](https://github.com/ethanhinson/fuse/pull/17) |  |
+| [0038](active/0038-turn-budget-retirement.md) | Retire the interactive turn cap — unlimited shell turns, headless backstop, doom-loop detection | `critical` | `fix` | [#16](https://github.com/ethanhinson/fuse/pull/16) |  |
 
 ```mermaid
 graph TD
