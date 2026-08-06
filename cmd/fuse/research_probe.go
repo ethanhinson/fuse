@@ -98,7 +98,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 
 	// Agent tree, so the spawn hierarchy is captured for the summary. The
 	// tree-global spawn budget is what the injected budget line reports.
-	tree := agent.NewAgentTree(alias, alias)
+	tree := agent.NewAgentTreeWithConcurrency(alias, alias, cfg.Agents.MaxConcurrent)
 	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
 
@@ -117,7 +117,12 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				if terr != nil {
 					return "", terr
 				}
-				childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
+				if childNode.Depth >= agent.MaxDepth {
+					// Depth strip (static): a child at MaxDepth can never spawn.
+					childToolReg.Unregister("spawn_agent")
+				} else {
+					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
+				}
 
 				label := childNode.Label
 				if label == "" {
@@ -143,6 +148,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				if aerr != nil {
 					return "", aerr
 				}
+				a.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 				return childResult(msgs, rerr)
 			}),
@@ -174,6 +180,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 		fmt.Fprintf(stderr, "build root agent: %v\n", err)
 		return 1
 	}
+	rootAgent.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
 
 	// The task the root receives is the /research skill body with the question
 	// woven in as ARGUMENTS — exactly what the KindSkill slash path injects.

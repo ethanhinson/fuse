@@ -153,10 +153,14 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			}
 		}
 
+		schemas := a.tools.Schemas()
+		if a.stripSpawn != nil && a.stripSpawn() {
+			schemas = withoutSpawnAgent(schemas)
+		}
 		req := model.CompletionReq{
 			Model:     a.modelID,
 			Messages:  a.withSystem(messages),
-			Tools:     a.tools.Schemas(),
+			Tools:     schemas,
 			MaxTokens: a.maxTokens,
 		}
 		resp, err := a.model.Complete(ctx, req)
@@ -301,5 +305,30 @@ func (a *Agent) withSystem(messages []model.Message) []model.Message {
 	out := make([]model.Message, 0, len(messages)+1)
 	out = append(out, model.Message{Role: "system", Content: a.systemPrompt})
 	out = append(out, messages...)
+	return out
+}
+
+// withoutSpawnAgent returns schemas with any "spawn_agent" entry removed,
+// preserving order. It allocates a fresh slice so it never mutates the
+// registry's backing array. Returns the input unchanged when spawn_agent is
+// absent (the common stripped-child case).
+func withoutSpawnAgent(schemas []model.ToolSchema) []model.ToolSchema {
+	present := false
+	for _, s := range schemas {
+		if s.Name == "spawn_agent" {
+			present = true
+			break
+		}
+	}
+	if !present {
+		return schemas
+	}
+	out := make([]model.ToolSchema, 0, len(schemas)-1)
+	for _, s := range schemas {
+		if s.Name == "spawn_agent" {
+			continue
+		}
+		out = append(out, s)
+	}
 	return out
 }

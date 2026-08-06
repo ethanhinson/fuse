@@ -133,7 +133,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	// Build a tool registry with spawn_agent AND the skill tool wired up.
 	toolReg := defaultToolRegistry(cfg.Research, skillSet.Lookup)
-	tree := agent.NewAgentTree(*modelAlias, *modelAlias)
+	tree := agent.NewAgentTreeWithConcurrency(*modelAlias, *modelAlias, cfg.Agents.MaxConcurrent)
 	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	rootNode := tree.Node(tree.RootID())
 
@@ -148,7 +148,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 				if terr != nil {
 					return "", terr
 				}
-				childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
+				if childNode.Depth >= agent.MaxDepth {
+					// Depth strip (static): a child at MaxDepth can never spawn —
+					// drop any copy inherited from the parent's registry.
+					childToolReg.Unregister("spawn_agent")
+				} else {
+					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
+				}
 
 				r := tui.NewRenderer(stdout, *verbose)
 				modelID := opts.ModelID
@@ -170,6 +176,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 				if aerr != nil {
 					return "", aerr
 				}
+				a.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 				return childResult(msgs, rerr)
 			}),
@@ -203,6 +210,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
+	a.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
 	_ = modelID
 
 	_, err = a.Run(context.Background(), []model.Message{{Role: "user", Content: task}})

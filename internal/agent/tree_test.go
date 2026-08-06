@@ -34,6 +34,33 @@ func TestSpawnBudgetZeroMaxMeansUnset(t *testing.T) {
 	}
 }
 
+func TestMaxConcurrentSpawnsDefaultIs16(t *testing.T) {
+	if MaxConcurrentSpawns != 16 {
+		t.Fatalf("MaxConcurrentSpawns = %d, want 16", MaxConcurrentSpawns)
+	}
+}
+
+func TestNewAgentTreeWithConcurrencySizesSemaphore(t *testing.T) {
+	tr := NewAgentTreeWithConcurrency("root", "m", 3)
+	if cap(tr.spawnSem) != 3 {
+		t.Fatalf("spawnSem cap = %d, want 3", cap(tr.spawnSem))
+	}
+}
+
+func TestNewAgentTreeWithConcurrencyFallsBackOnZero(t *testing.T) {
+	tr := NewAgentTreeWithConcurrency("root", "m", 0)
+	if cap(tr.spawnSem) != MaxConcurrentSpawns {
+		t.Fatalf("spawnSem cap = %d, want %d", cap(tr.spawnSem), MaxConcurrentSpawns)
+	}
+}
+
+func TestNewAgentTreeUsesDefaultConcurrency(t *testing.T) {
+	tr := NewAgentTree("root", "m")
+	if cap(tr.spawnSem) != MaxConcurrentSpawns {
+		t.Fatalf("spawnSem cap = %d, want %d", cap(tr.spawnSem), MaxConcurrentSpawns)
+	}
+}
+
 func TestNewAgentTree(t *testing.T) {
 	tree := NewAgentTree("root", "claude-3-5-sonnet")
 	if tree.RootID() == "" {

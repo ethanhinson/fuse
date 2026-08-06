@@ -310,3 +310,81 @@ func TestRunRecoversFromProviderLengthRejection(t *testing.T) {
 		t.Error("older tool result should be pruned during recovery")
 	}
 }
+
+// schemaExec returns a fixed schema list including spawn_agent.
+type schemaExec struct{ fakeExec }
+
+func (s *schemaExec) Schemas() []model.ToolSchema {
+	return []model.ToolSchema{
+		{Name: "bash"},
+		{Name: "spawn_agent"},
+		{Name: "read_file"},
+	}
+}
+
+// capturingToolsCompleter records the tool schemas of the first request, then
+// stops.
+type capturingToolsCompleter struct {
+	gotTools []model.ToolSchema
+}
+
+func (c *capturingToolsCompleter) Complete(ctx context.Context, req model.CompletionReq) (model.CompletionResp, error) {
+	c.gotTools = req.Tools
+	return model.CompletionResp{Content: "done"}, nil
+}
+
+func toolNames(ts []model.ToolSchema) []string {
+	out := make([]string, 0, len(ts))
+	for _, t := range ts {
+		out = append(out, t.Name)
+	}
+	return out
+}
+
+func containsName(ts []model.ToolSchema, name string) bool {
+	for _, t := range ts {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRunKeepsSpawnAgentWhenNoStripPredicate(t *testing.T) {
+	comp := &capturingToolsCompleter{}
+	a := New(comp, &schemaExec{}, nopRenderer{}, "m", "", 10, 100)
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !containsName(comp.gotTools, "spawn_agent") {
+		t.Fatalf("spawn_agent should be present; got %v", toolNames(comp.gotTools))
+	}
+}
+
+func TestRunStripsSpawnAgentWhenPredicateTrue(t *testing.T) {
+	comp := &capturingToolsCompleter{}
+	a := New(comp, &schemaExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.SetStripSpawn(func() bool { return true })
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if containsName(comp.gotTools, "spawn_agent") {
+		t.Fatalf("spawn_agent should be stripped; got %v", toolNames(comp.gotTools))
+	}
+	// The other tools must survive the filter.
+	if !containsName(comp.gotTools, "bash") || !containsName(comp.gotTools, "read_file") {
+		t.Fatalf("non-spawn tools must remain; got %v", toolNames(comp.gotTools))
+	}
+}
+
+func TestRunKeepsSpawnAgentWhenPredicateFalse(t *testing.T) {
+	comp := &capturingToolsCompleter{}
+	a := New(comp, &schemaExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.SetStripSpawn(func() bool { return false })
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !containsName(comp.gotTools, "spawn_agent") {
+		t.Fatalf("predicate false: spawn_agent should remain; got %v", toolNames(comp.gotTools))
+	}
+}

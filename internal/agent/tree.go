@@ -12,11 +12,12 @@ import (
 // MaxDepth is the maximum allowed spawn depth.
 const MaxDepth = 5
 
-// MaxConcurrentSpawns bounds concurrently RUNNING local child agents across
-// the whole tree. Depth alone doesn't bound load: a model told to "spawn
-// aggressively" can emit dozens of spawns per level. Queued children stay
-// visible as pending nodes until a slot frees.
-const MaxConcurrentSpawns = 8
+// MaxConcurrentSpawns is the DEFAULT width cap on concurrently RUNNING local
+// child agents across the whole tree, used when config does not set
+// agents.max_concurrent. Depth alone doesn't bound load: a model told to
+// "spawn aggressively" can emit dozens of spawns per level. Queued children
+// stay visible as pending nodes until a slot frees.
+const MaxConcurrentSpawns = 16
 
 // NodeStatus represents the lifecycle state of an agent node.
 type NodeStatus int
@@ -230,8 +231,20 @@ func (t *AgentTree) SpawnBudget() (used, max int) {
 	return used, t.maxSpawns
 }
 
-// NewAgentTree creates a new tree with the given root node label and model.
+// NewAgentTree creates a new tree with the given root node label and model,
+// using the default concurrency cap (MaxConcurrentSpawns).
 func NewAgentTree(rootLabel, rootModel string) *AgentTree {
+	return NewAgentTreeWithConcurrency(rootLabel, rootModel, MaxConcurrentSpawns)
+}
+
+// NewAgentTreeWithConcurrency creates a tree whose spawn semaphore is sized to
+// maxConcurrent (the number of children that may run at once). A value <= 0
+// falls back to MaxConcurrentSpawns. Yield/unyield mechanics are unaffected —
+// only the semaphore's capacity changes.
+func NewAgentTreeWithConcurrency(rootLabel, rootModel string, maxConcurrent int) *AgentTree {
+	if maxConcurrent <= 0 {
+		maxConcurrent = MaxConcurrentSpawns
+	}
 	// StartedAt stays zero until the first BeginTurn(): the agents tab renders an
 	// idle root (no elapsed time) before the first prompt, rather than a timer
 	// counting time-since-launch.
@@ -246,7 +259,7 @@ func NewAgentTree(rootLabel, rootModel string) *AgentTree {
 		rootID:   root.ID,
 		out:      make(chan TreeUpdate, 256),
 		dirty:    map[string]bool{},
-		spawnSem: make(chan struct{}, MaxConcurrentSpawns),
+		spawnSem: make(chan struct{}, maxConcurrent),
 	}
 }
 

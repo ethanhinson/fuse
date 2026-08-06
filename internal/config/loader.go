@@ -239,9 +239,28 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	}
 
 	// Agents budget: a nonzero override replaces the default; an omitted key
-	// (zero) keeps the built-in 16.
+	// (zero) keeps the built-in 64. A negative override is nonsensical for a
+	// budget and would silently DISABLE the strip predicate's budget brake
+	// (which guards on max > 0), so it is clamped back to the default rather
+	// than propagated raw.
 	if raw.Agents.MaxSpawns != 0 {
 		c.Agents.MaxSpawns = raw.Agents.MaxSpawns
+	}
+	if c.Agents.MaxSpawns < 0 {
+		c.Agents.MaxSpawns = 64
+	}
+	// Agents concurrency: a nonzero override replaces the default; an omitted
+	// key (zero) keeps the built-in 16. A negative override is clamped to the
+	// default for the same reason as MaxSpawns: NewStripSpawnPredicate guards
+	// its cap brake on maxConcurrent > 0, so a raw negative would silently
+	// disable the active-child strip even though NewAgentTreeWithConcurrency
+	// clamps its own copy. Clamping once here keeps the tree's semaphore and
+	// the predicate's cap consistent.
+	if raw.Agents.MaxConcurrent != 0 {
+		c.Agents.MaxConcurrent = raw.Agents.MaxConcurrent
+	}
+	if c.Agents.MaxConcurrent < 0 {
+		c.Agents.MaxConcurrent = 16
 	}
 
 	// The `models` map holds a `default` string alongside model entries.

@@ -81,8 +81,114 @@ func TestDefaultMaxTokensCeilingIsGenerous(t *testing.T) {
 
 func TestDefaultAgentsMaxSpawns(t *testing.T) {
 	c := Default()
-	if c.Agents.MaxSpawns != 16 {
-		t.Errorf("default Agents.MaxSpawns = %d, want 16", c.Agents.MaxSpawns)
+	if c.Agents.MaxSpawns != 64 {
+		t.Errorf("default Agents.MaxSpawns = %d, want 64", c.Agents.MaxSpawns)
+	}
+}
+
+func TestDefaultAgentsMaxConcurrent(t *testing.T) {
+	c := Default()
+	if c.Agents.MaxConcurrent != 16 {
+		t.Errorf("default Agents.MaxConcurrent = %d, want 16", c.Agents.MaxConcurrent)
+	}
+}
+
+func TestLoadAgentsMaxConcurrentOverride(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "agents:\n  max_concurrent: 4\n"
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Agents.MaxConcurrent != 4 {
+		t.Errorf("Agents.MaxConcurrent = %d, want 4 (override)", c.Agents.MaxConcurrent)
+	}
+}
+
+func TestLoadAgentsMaxConcurrentUnsetKeepsDefault(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A config file that does NOT mention max_concurrent must keep the default.
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte("max_turns: 30\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Agents.MaxConcurrent != 16 {
+		t.Errorf("Agents.MaxConcurrent = %d, want 16 (unset keeps default)", c.Agents.MaxConcurrent)
+	}
+}
+
+func TestLoadAgentsMaxConcurrentNegativeClampsToDefault(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A negative override passes the != 0 merge gate but is nonsensical: it
+	// would silently disable NewStripSpawnPredicate's active-child brake
+	// (guarded on maxConcurrent > 0) even though the tree clamps its own copy.
+	// The loader must clamp it back to the default so the tree and predicate
+	// stay consistent.
+	cfg := "agents:\n  max_concurrent: -3\n"
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Agents.MaxConcurrent != 16 {
+		t.Errorf("Agents.MaxConcurrent = %d, want 16 (negative clamped to default)", c.Agents.MaxConcurrent)
+	}
+}
+
+func TestLoadAgentsMaxSpawnsNegativeClampsToDefault(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A negative budget would disable the permanent budget brake (guarded on
+	// max > 0); clamp it back to the default.
+	cfg := "agents:\n  max_spawns: -5\n"
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Agents.MaxSpawns != 64 {
+		t.Errorf("Agents.MaxSpawns = %d, want 64 (negative clamped to default)", c.Agents.MaxSpawns)
 	}
 }
 
@@ -127,8 +233,8 @@ func TestLoadAgentsMaxSpawnsUnsetKeepsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Agents.MaxSpawns != 16 {
-		t.Errorf("Agents.MaxSpawns = %d, want 16 (unset keeps default)", c.Agents.MaxSpawns)
+	if c.Agents.MaxSpawns != 64 {
+		t.Errorf("Agents.MaxSpawns = %d, want 64 (unset keeps default)", c.Agents.MaxSpawns)
 	}
 }
 
