@@ -4,9 +4,9 @@ slug: verify-tool-loop-at-gateway-seam
 title: Verify agent-loop changes at the model-facing gateway seam — a scripted local gateway drives the real binary where faked-seam harnesses cannot reach
 hook: "when a change alters what the model sees or does per turn (tool schemas, budgets, strips, caps), verify with the real binary against a scripted LLM_GATEWAY_URL double that logs each request's tools[] — the TUI harness fakes the Completer seam and never exercises the cmd/fuse wiring"
 promotion_state: candidate
-changes: [33]
+changes: [33, 36]
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-07
 topics: [verification, agents, tui, testing]
 ---
 
@@ -37,3 +37,15 @@ before the event ever fires.
   retracted: "approval popup invisible from the agents tab" was an artifact of capturing only
   the top 16 rows of a 40-row pane; full-pane capture showed the popup composing correctly at
   rows 31–37. One live rig, one real bug found, one fabricated bug avoided.
+- 2026-08-07 (#36, PR #21) — The scheduler's observability counters: the full `-race` suite
+  was green — including `scheduler_snapshot_test.go`, which explicitly pinned the *global*
+  `SlotsInUse` to the scheduler's granted-slot count — yet the live TUI status bar rendered
+  `session 2/1 slots · 1 queued`. The **implicit-pool** snapshot line (a second, parallel
+  site the review's N-2 fix had corrected only for the global figure) still summed tree
+  `running+pending`, double-counting a queued child as both a slot user and a waiter. Only
+  reachable by reading the rendered status segment against a scripted `LLM_GATEWAY_URL`
+  double driving a real `max_concurrent: 1, queue_bound: 1` spawn wave — no unit assertion
+  looked at the composed status string. Fixed in `bb14d03` with a regression test. Lesson
+  compounds with [[patch-every-cloned-child-builder]]: when a fix corrects one of two
+  parallel counter/render sites, grep for the sibling — a green suite that pins only the
+  site you fixed proves nothing about the one you didn't.
