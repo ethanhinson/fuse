@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -40,6 +41,14 @@ func (t *MCPTool) Execute(ctx context.Context, args string) tools.Result {
 		"arguments": params,
 	})
 	if err != nil {
+		// Surface a downstream server's JSON-RPC error code alongside the message
+		// so the model can distinguish MCP-specific conditions (e.g. -32900 tool
+		// not found) from a generic failure. The code is carried by *RPCError,
+		// preserved through the client call path.
+		var rpcErr *RPCError
+		if errors.As(err, &rpcErr) {
+			return tools.Result{IsError: true, Output: fmt.Sprintf("mcp %s/%s: [code %d] %s", t.serverName, t.toolName, rpcErr.Code, rpcErr.Message)}
+		}
 		return tools.Result{IsError: true, Output: fmt.Sprintf("mcp %s/%s: %v", t.serverName, t.toolName, err)}
 	}
 

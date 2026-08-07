@@ -215,7 +215,7 @@ func (c *StdioClient) call(ctx context.Context, method string, params any) (json
 			return nil, fmt.Errorf("mcp server %q closed", c.name)
 		}
 		if resp.Error != nil {
-			return nil, fmt.Errorf("mcp %q: %s", c.name, resp.Error.Message)
+			return nil, fmt.Errorf("mcp %q: %w", c.name, &RPCError{Code: resp.Error.Code, Message: resp.Error.Message})
 		}
 		return resp.Result, nil
 	}

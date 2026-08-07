@@ -57,6 +57,12 @@ func (r *Registry) Unregister(name string) {
 	}
 }
 
+// Has reports whether a tool is registered under name.
+func (r *Registry) Has(name string) bool {
+	_, ok := r.byName[name]
+	return ok
+}
+
 // Schemas returns the model-facing schema for every registered tool.
 func (r *Registry) Schemas() []model.ToolSchema {
 	out := make([]model.ToolSchema, 0, len(r.order))
