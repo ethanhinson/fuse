@@ -2,7 +2,7 @@
 id: 19
 slug: mcp-capability-negotiation
 title: MCP capability negotiation — structured init handshake
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-06
@@ -17,9 +17,9 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/mcp-capability-negotiation
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/23
 blocked_by:
-claimed_at: 2026-08-07T04:14:00Z
+claimed_at: 2026-08-07T04:16:00Z
 reconciled: true
 ---
 
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-06-mcp-capability-negotiation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-06-mcp-capability-negotiation-design.md) |
 | Plan | [2026-08-07-mcp-capability-negotiation-plan.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-capability-negotiation/docs/superpowers/plans/2026-08-07-mcp-capability-negotiation-plan.md) |
+| PR | [#23](https://github.com/ethanhinson/fuse/pull/23) |
 | ADRs | [ADR-0010](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0010-mcp-client-requires-init-handshake-fails-open-capabilities.md) |
 <!-- docket:artifacts:end -->
 
