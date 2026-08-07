@@ -1,6 +1,6 @@
 # Backlog
 
-**39 changes** — 🟡 13 proposed · 🔵 1 implemented · ✅ 21 done · 🗑️ 4 killed
+**39 changes** — 🟡 13 proposed · ✅ 22 done · 🗑️ 4 killed
 
 ## 🟡 Proposed (13)
 
@@ -19,12 +19,6 @@
 | [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | ⏳ waiting on #27 — not yet built |
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | needs-brainstorm |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
-
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0031](active/0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | `low` | `chore` | [#22](https://github.com/ethanhinson/fuse/pull/22) |  |
 
 ```mermaid
 graph TD
@@ -45,18 +39,18 @@ graph TD
   0027 --> 0028
   0012 --> 0029
   0027 --> 0030
-  0003 --> 0031
   0003:::done
   0007:::done
   0012:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (25)</summary>
+<details><summary>✅🗑️ Archive — done + killed (26)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
 | [0036](archive/2026-08-07-0036-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | 2026-08-07 |
+| [0031](archive/2026-08-07-0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | 2026-08-07 |
 | [0039](archive/2026-08-06-0039-agents-tab-idle-timer-and-model.md) | Agents tab — timer runs before the first prompt; shows the default model, not the selected one | 2026-08-06 |
 | [0038](archive/2026-08-06-0038-turn-budget-retirement.md) | Retire the interactive turn cap — unlimited shell turns, headless backstop, doom-loop detection | 2026-08-06 |
 | [0037](archive/2026-08-06-0037-redirect-guard-lenience.md) | Redirect fail-closed guard — allow /dev/null targets and fd-dups, keep failing closed on real files | 2026-08-06 |
@@ -74,12 +68,11 @@ graph TD
 | [0010](archive/2026-08-04-0010-shell-slash-command-ui.md) | Shell Slash-Command Autocomplete + MCP & Skill Invocation | 2026-08-04 |
 | [0009](archive/2026-08-04-0009-mcp-management-cli.md) | `fuse mcps` MCP Server Management CLI + `/mcps` Shell Built-in | 2026-08-04 |
 | [0008](archive/2026-08-04-0008-mcp-integration-test-harness.md) | MCP Integration Test Harness (Docker Compose + Playwright) | 2026-08-04 |
-| [0007](archive/2026-08-04-0007-mcp-http-oauth.md) | Remote MCP Servers via HTTP/SSE Transport + OAuth 2.0 | 2026-08-04 |
 
 **Older done (collapsed)**
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 6 done |
+| [2026-08](archive/) | 7 done |
 
 </details>
