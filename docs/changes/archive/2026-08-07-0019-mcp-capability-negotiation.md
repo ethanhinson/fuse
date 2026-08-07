@@ -2,7 +2,7 @@
 id: 19
 slug: mcp-capability-negotiation
 title: MCP capability negotiation — structured init handshake
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-06
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/mcp-capability-negotiation
 pr: https://github.com/ethanhinson/fuse/pull/23
 blocked_by:
-claimed_at: 2026-08-07T04:16:00Z
+claimed_at: 
 reconciled: true
 ---
 
