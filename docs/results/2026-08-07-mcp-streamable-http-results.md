@@ -74,6 +74,40 @@ Launch `fuse`, confirm the `deepwiki` tools are available, and ask a question th
 - SSE pump uses a `bufio.Reader` line loop (not `bufio.Scanner`) so a large single `data:`
   frame is not silently truncated — a hardening over the older HTTP/SSE pump.
 
+## MCP result rendering — investigation + upgrade (added on request)
+
+**Investigation.** The display pipeline is text-based and already robust for text:
+`Renderer.ToolResult` → `sanitizeDisplay` (strips ESC/C0/C1/NUL, expands tabs, replaces
+invalid UTF-8) → rune-safe `truncate` / `previewResult` (whole-line preview with a
+`/verbose` affordance). The weakness was **upstream** in `MCPTool.Execute`: it parsed only
+`type:"text"` content blocks and **silently dropped** `image`, `audio`, `resource`,
+`resource_link`, and ignored `structuredContent`. A tool returning only an image rendered
+**blank** — in the transcript and to the model (`tools.Result.Output` feeds both).
+
+**Upgrade** (`internal/mcp/tool.go`, `renderMCPResult`). Every MCP v2025-03-26 content block
+now renders faithfully, nothing dropped:
+
+| Block | Rendered as |
+|---|---|
+| `text` | verbatim (multiple blocks joined by newline) |
+| `image` / `audio` | `[image: image/png, 2.0 KB]` descriptor (base64 size, no allocation) |
+| `resource` (embedded) | its `text`, or `[resource: <uri> (<mime>, <size>)]` for a blob |
+| `resource_link` | `[resource: <name> — <uri> (<mime>)] <description>` |
+| `structuredContent` | pretty-printed JSON when there are no content blocks |
+| unknown type | `[unsupported content: "<type>"]` (labeled, not dropped) |
+| empty / unrecognized | `[no content]`, or the raw JSON — **never blank** |
+
+Table-driven tests (`tool_content_test.go`) cover every type plus the image-only no-blank
+repair; the live DeepWiki test logs the rendered output. Example (real DeepWiki
+`read_wiki_structure`):
+
+```
+Available pages for modelcontextprotocol/servers:
+- 1 Introduction to Model Context Protocol Servers
+  - 1.1 MCP Protocol and Architecture
+  ...
+```
+
 ## Follow-ups (not in scope here)
 
 - Server-initiated `GET` notification stream → changes **0020** (`$/progress`) / **0021**
