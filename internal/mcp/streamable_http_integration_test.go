@@ -74,6 +74,13 @@ func TestIntegration_StreamableHTTP_DeepWiki(t *testing.T) {
 	if !strings.Contains(string(raw), "content") {
 		t.Fatalf("tools/call result missing content block: %s", truncate(raw, 300))
 	}
+
+	// Render through the real presentation path and show how it looks.
+	rendered := renderMCPResult(raw)
+	if strings.TrimSpace(rendered.Output) == "" {
+		t.Fatal("rendered MCP result is blank")
+	}
+	t.Logf("rendered result (first 300 chars):\n%s", truncate(json.RawMessage(rendered.Output), 300))
 }
 
 func containsStr(xs []string, want string) bool {
