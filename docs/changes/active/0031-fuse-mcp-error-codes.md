@@ -12,7 +12,7 @@ related: [19]
 discovered_from: [18]
 adrs: []
 spec:
-plan:
+plan: docs/superpowers/plans/2026-08-07-mcp-error-codes.md
 results:
 trivial: true
 auto_groomable:
@@ -28,6 +28,7 @@ claimed_at: 2026-08-07T01:44:30Z
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Plan | [2026-08-07-mcp-error-codes.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-error-codes/docs/superpowers/plans/2026-08-07-mcp-error-codes.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
