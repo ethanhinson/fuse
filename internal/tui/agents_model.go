@@ -11,6 +11,7 @@ import (
 	"github.com/muesli/reflow/wrap"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/ratelimit"
 )
 
 // agentsExitMsg is returned to the parent ShellModel when AgentsModel exits.
@@ -43,11 +44,16 @@ type AgentsModel struct {
 	eventScroll  int  // scroll offset within the expanded event
 	width        int
 	height       int
+	// rateGate is the session's shared rate-gate bucket, or nil (change 0036). Its
+	// live utilization joins the scheduler summary block at the top of the tree
+	// pane so the overlay shows the throughput brake alongside the pool counters.
+	rateGate *ratelimit.Bucket
 }
 
-// NewAgentsModel creates an AgentsModel backed by the given tree.
-func NewAgentsModel(t *agent.AgentTree) *AgentsModel {
-	m := &AgentsModel{tree: t, followTail: true}
+// NewAgentsModel creates an AgentsModel backed by the given tree, with an
+// optional rate-gate bucket for the scheduler summary block (nil = no gate).
+func NewAgentsModel(t *agent.AgentTree, gate *ratelimit.Bucket) *AgentsModel {
+	m := &AgentsModel{tree: t, rateGate: gate, followTail: true}
 	m.refreshSnapshot()
 	return m
 }
@@ -89,10 +95,29 @@ func (m *AgentsModel) View() string {
 	treeW := m.width * 40 / 100
 	detailW := m.width - treeW - 1 // 1 for the divider column
 
+	// Scheduler summary header (change 0036) spans the full overlay width above the
+	// two-panel split so the spec-shape per-pool lines are not clipped by the narrow
+	// tree column. It costs rows, so the panels build to m.height minus its height —
+	// temporarily shrinking m.height keeps each panel's own help bar visible rather
+	// than dropping it off the bottom.
+	//
+	// Clamp the header to at most m.height-1 lines so the panels always get at least
+	// one row (h >= 1) and the total output (len(header) + h) never exceeds the
+	// overlay height (N-4): an unbounded header on a very short overlay would
+	// otherwise force h=1 while the header alone already overflows the height.
+	header := m.schedulerHeaderLines(m.width)
+	if len(header) > m.height-1 {
+		header = header[:m.height-1]
+	}
+	h := m.height - len(header)
+	if h < 1 {
+		h = 1
+	}
+	fullHeight := m.height
+	m.height = h
 	treeLines := m.buildTreeLines(treeW)
 	detailLines := m.buildDetailLines(detailW)
-
-	h := m.height
+	m.height = fullHeight
 	for len(treeLines) < h {
 		treeLines = append(treeLines, strings.Repeat(" ", treeW))
 	}
@@ -101,15 +126,16 @@ func (m *AgentsModel) View() string {
 	}
 
 	divChar := lipgloss.NewStyle().Foreground(colMuted).Render("│")
-	lines := make([]string, h)
+	lines := make([]string, 0, len(header)+h)
+	lines = append(lines, header...)
 	for i := 0; i < h; i++ {
-		lines[i] = fitLine(treeLines[i], treeW) + divChar + fitLine(detailLines[i], detailW)
+		lines = append(lines, fitLine(treeLines[i], treeW)+divChar+fitLine(detailLines[i], detailW))
 	}
 
 	var b strings.Builder
 	for i, line := range lines {
 		b.WriteString(line)
-		if i < h-1 {
+		if i < len(lines)-1 {
 			b.WriteByte('\n')
 		}
 	}
@@ -287,6 +313,26 @@ func (m *AgentsModel) buildTreeLines(w int) []string {
 		out = append(out, "")
 	}
 	return append(out[:m.height-1], help)
+}
+
+// schedulerHeaderLines renders the scheduler observability block spanning the
+// full overlay width w: one line per engaged pool and per rate-gate provider
+// (change 0036), each fit to w and styled like the help bar. Empty when nothing
+// is engaged, so an idle overlay shows no header. Rendered above the two-panel
+// split so the spec-shape lines are not clipped by the narrow tree column.
+func (m *AgentsModel) schedulerHeaderLines(w int) []string {
+	if m.tree == nil {
+		return nil
+	}
+	lines := schedulerSummaryLines(m.tree.Scheduler().Snapshot(), m.rateGate.Utilization())
+	if len(lines) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, fitLine(treeHelpStyle.Render(l), w))
+	}
+	return out
 }
 
 func (m *AgentsModel) renderTreeRows(w int) []string {

@@ -41,23 +41,25 @@ func TestMaxConcurrentSpawnsDefaultIs16(t *testing.T) {
 }
 
 func TestNewAgentTreeWithConcurrencySizesSemaphore(t *testing.T) {
+	// The concurrency figure sizes the scheduler's slot pool (change 0036 moved
+	// the semaphore off the tree onto the scheduler it owns).
 	tr := NewAgentTreeWithConcurrency("root", "m", 3)
-	if cap(tr.spawnSem) != 3 {
-		t.Fatalf("spawnSem cap = %d, want 3", cap(tr.spawnSem))
+	if tr.sched.slotCap != 3 {
+		t.Fatalf("scheduler sem cap = %d, want 3", tr.sched.slotCap)
 	}
 }
 
 func TestNewAgentTreeWithConcurrencyFallsBackOnZero(t *testing.T) {
 	tr := NewAgentTreeWithConcurrency("root", "m", 0)
-	if cap(tr.spawnSem) != MaxConcurrentSpawns {
-		t.Fatalf("spawnSem cap = %d, want %d", cap(tr.spawnSem), MaxConcurrentSpawns)
+	if tr.sched.slotCap != MaxConcurrentSpawns {
+		t.Fatalf("scheduler sem cap = %d, want %d", tr.sched.slotCap, MaxConcurrentSpawns)
 	}
 }
 
 func TestNewAgentTreeUsesDefaultConcurrency(t *testing.T) {
 	tr := NewAgentTree("root", "m")
-	if cap(tr.spawnSem) != MaxConcurrentSpawns {
-		t.Fatalf("spawnSem cap = %d, want %d", cap(tr.spawnSem), MaxConcurrentSpawns)
+	if tr.sched.slotCap != MaxConcurrentSpawns {
+		t.Fatalf("scheduler sem cap = %d, want %d", tr.sched.slotCap, MaxConcurrentSpawns)
 	}
 }
 

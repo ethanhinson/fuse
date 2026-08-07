@@ -77,6 +77,59 @@ func TestSpawnBudgetBackstop(t *testing.T) {
 	})
 }
 
+// TestSpawnTokenQuotaBackstop is the call-time race safety net behind the
+// per-turn strip (change 0036): a spawn committed within a turn after a hard
+// token quota is exhausted is refused with the ErrTokenQuotaExhausted identity.
+func TestSpawnTokenQuotaBackstop(t *testing.T) {
+	t.Run("workflow_pool_tokens_refuses_at_quota", func(t *testing.T) {
+		tree := NewAgentTree("root", "m")
+		rootID := tree.RootID()
+		wf := &AgentNode{ID: newNodeID(), ParentID: rootID, Label: "wf", Depth: 1, Status: StatusRunning, WorkflowRoot: "research"}
+		tree.addNode(wf)
+		// SubtreeTokens (like SubtreeSpawnCount) excludes the pool-root holder, so
+		// the quota measures the subtree's CHILDREN's spend. Charge a child.
+		child := &AgentNode{ID: newNodeID(), ParentID: wf.ID, Label: "worker", Depth: 2, Status: StatusRunning}
+		tree.addNode(child)
+		tree.Scheduler().RegisterPool(wf.ID, WorkflowPool{Tokens: 500})
+		child.UpdateTokens(400, 200) // subtree spend 600 >= 500
+
+		s := NewSpawner(WithTree(tree), WithNode(child), WithSpawnDepth(child.Depth))
+		_, err := s.Spawn(context.Background(), SpawnOpts{Label: "over"})
+		if !errors.Is(err, ErrTokenQuotaExhausted) {
+			t.Fatalf("expected ErrTokenQuotaExhausted at workflow token quota, got %v", err)
+		}
+	})
+
+	t.Run("session_ceiling_refuses_at_quota", func(t *testing.T) {
+		tree := NewAgentTree("root", "m")
+		tree.Scheduler().SetSessionTokens(500)
+		tree.Node(tree.RootID()).UpdateTokens(400, 200) // 600 whole-tree >= 500
+
+		s := NewSpawner(WithTree(tree), WithNode(tree.Node(tree.RootID())), WithSpawnDepth(0))
+		_, err := s.Spawn(context.Background(), SpawnOpts{Label: "over"})
+		if !errors.Is(err, ErrTokenQuotaExhausted) {
+			t.Fatalf("expected ErrTokenQuotaExhausted at session ceiling, got %v", err)
+		}
+	})
+
+	t.Run("below_quota_allows", func(t *testing.T) {
+		tree := NewAgentTree("root", "m")
+		rootID := tree.RootID()
+		wf := &AgentNode{ID: newNodeID(), ParentID: rootID, Label: "wf", Depth: 1, Status: StatusRunning, WorkflowRoot: "research"}
+		tree.addNode(wf)
+		tree.Scheduler().RegisterPool(wf.ID, WorkflowPool{Tokens: 500})
+		tree.Scheduler().SetSessionTokens(10_000)
+		wf.UpdateTokens(100, 100) // 200 < 500
+
+		s := NewSpawner(WithTree(tree), WithNode(wf), WithSpawnDepth(wf.Depth))
+		h, err := s.Spawn(context.Background(), SpawnOpts{Label: "ok"})
+		if err != nil {
+			t.Fatalf("spawn below token quota should succeed, got %v", err)
+		}
+		<-h.Done
+	})
+}
+
 // TestSpawnWidthCap verifies the tree-global semaphore bounds concurrently
 // RUNNING children; excess spawns queue as pending rather than all executing.
 func TestSpawnWidthCap(t *testing.T) {

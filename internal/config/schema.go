@@ -105,6 +105,13 @@ type Config struct {
 	MCPServers  []MCPServerConfig
 	Research    ResearchConfig
 	Agents      AgentsConfig
+	// Throughput is the turn-level rate/quota surface (change 0036): global
+	// requests-per-minute / tokens-per-minute smoothing plus an optional session
+	// token ceiling, with optional per-provider rate overrides. Every numeric is
+	// 0 = unlimited/unset, so an absent `throughput:` block is byte-identical to
+	// pre-0036 behavior (no gate, no quota). Parsed and carried here; the rate
+	// gate (Task 5) and session-quota enforcement (Task 6) consume it.
+	Throughput ThroughputConfig
 	// Workflows binds an invocable skill to a spawn policy and worker pool,
 	// keyed by workflow name. Nil/empty ⇒ no workflow behavior (byte-identical
 	// to pre-0034). A skill may embed a default block in its frontmatter; a
@@ -124,16 +131,42 @@ type WorkflowConfig struct {
 }
 
 // PoolConfig is a workflow subtree's spawn policy. Each dimension is 0 = unset
-// (that brake off), matching how AgentTree.SpawnBudget treats max==0 and
-// NewStripSpawnPredicate treats maxConcurrent<=0.
+// (that brake off), matching how AgentTree.SpawnBudget treats max==0 and the
+// scheduler's visibility predicate treats a non-positive slot cap.
 //
 //   - Concurrent (reversible): max children running+pending in the subtree.
 //   - Total (permanent): lifetime spawn quota for the subtree.
 //   - MaxDepth (static): spawn depth below the workflow root.
+//   - Tokens (permanent, change 0036): lifetime token quota for the subtree
+//     (0 = unset/unlimited). Exhaustion strips spawn_agent in that subtree only;
+//     accounting and enforcement land in Task 6, this field parses and carries.
 type PoolConfig struct {
 	Concurrent int `yaml:"concurrent"`
 	Total      int `yaml:"total"`
 	MaxDepth   int `yaml:"max_depth"`
+	Tokens     int `yaml:"tokens"`
+}
+
+// ThroughputConfig is the turn-level rate and quota surface (change 0036). Each
+// numeric is 0 = unlimited/unset so an omitted `throughput:` block reproduces
+// pre-0036 behavior exactly. RequestsPerMinute/TokensPerMinute smooth dispatch
+// through the gateway (the rate gate at Adapter.Complete — Task 5);
+// SessionTokens is a global lifetime token ceiling (Task 6). Providers holds
+// optional per-provider rate overrides keyed by provider name (fuse fronts
+// several providers through one gateway, and their limits differ).
+type ThroughputConfig struct {
+	RequestsPerMinute int                           `yaml:"requests_per_minute"`
+	TokensPerMinute   int                           `yaml:"tokens_per_minute"`
+	SessionTokens     int                           `yaml:"session_tokens"`
+	Providers         map[string]ProviderThroughput `yaml:"providers"`
+}
+
+// ProviderThroughput is a per-provider rate override under
+// throughput.providers.<name>. Only the rate axes are per-provider; the session
+// token ceiling is global. 0 = unset (fall back to the global limit).
+type ProviderThroughput struct {
+	RequestsPerMinute int `yaml:"requests_per_minute"`
+	TokensPerMinute   int `yaml:"tokens_per_minute"`
 }
 
 // WorkerConfig is a typed worker: a tool allowlist (a worker whose allowlist
@@ -151,23 +184,34 @@ type WorkerConfig struct {
 // stop before it is reached. MaxConcurrent is the semaphore bound on children
 // running at once — it caps live concurrency (and doubles as the default strip
 // cap) independently of the total MaxSpawns budget.
+// QueueBound is the per-pool pending-queue multiplier (change 0036): a pool's
+// FIFO holds at most ceil(QueueBound × pool slots) waiters. 0 = unset ⇒ the
+// scheduler's built-in default (2.0) is applied where consumed, keeping the
+// zero-value = unset idiom the rest of this package uses for defaulted numerics
+// (the default is not baked into the parsed struct so the tighten-only local
+// merge can distinguish "unset" from an explicit value).
 type AgentsConfig struct {
-	MaxSpawns     int `yaml:"max_spawns"`
-	MaxConcurrent int `yaml:"max_concurrent"`
+	MaxSpawns     int     `yaml:"max_spawns"`
+	MaxConcurrent int     `yaml:"max_concurrent"`
+	QueueBound    float64 `yaml:"queue_bound"`
 }
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
 type rawConfig struct {
-	Gateway     Gateway                  `yaml:"gateway"`
-	Models      map[string]interface{}   `yaml:"models"`
-	SkillPaths  []string                 `yaml:"skill_paths"`
-	MaxTurns    *int                     `yaml:"max_turns"`
-	MaxTokens   int                      `yaml:"max_tokens"`
-	Permissions rawPermissionsConfig     `yaml:"permissions"`
-	MCPServers  []MCPServerConfig        `yaml:"mcp_servers"`
-	Research    rawResearchConfig        `yaml:"research"`
-	Agents      rawAgentsConfig          `yaml:"agents"`
-	Projects    map[string]ProjectConfig `yaml:"projects"`
+	Gateway     Gateway                `yaml:"gateway"`
+	Models      map[string]interface{} `yaml:"models"`
+	SkillPaths  []string               `yaml:"skill_paths"`
+	MaxTurns    *int                   `yaml:"max_turns"`
+	MaxTokens   int                    `yaml:"max_tokens"`
+	Permissions rawPermissionsConfig   `yaml:"permissions"`
+	MCPServers  []MCPServerConfig      `yaml:"mcp_servers"`
+	Research    rawResearchConfig      `yaml:"research"`
+	Agents      rawAgentsConfig        `yaml:"agents"`
+	// Throughput reuses the resolved ThroughputConfig shape on-disk (plain
+	// ints/maps, no free-text scalars — yaml.Unmarshal is safe); the tighten-only
+	// merge happens in mergeFile, not here.
+	Throughput rawThroughputConfig      `yaml:"throughput"`
+	Projects   map[string]ProjectConfig `yaml:"projects"`
 	// Workflows reuses the resolved WorkflowConfig shape on-disk (plain
 	// maps/lists/ints, no free-text scalars — so yaml.Unmarshal is safe).
 	Workflows map[string]WorkflowConfig `yaml:"workflows"`
@@ -198,8 +242,20 @@ type rawPermissionsConfig struct {
 
 // rawAgentsConfig mirrors AgentsConfig on-disk.
 type rawAgentsConfig struct {
-	MaxSpawns     int `yaml:"max_spawns"`
-	MaxConcurrent int `yaml:"max_concurrent"`
+	MaxSpawns     int     `yaml:"max_spawns"`
+	MaxConcurrent int     `yaml:"max_concurrent"`
+	QueueBound    float64 `yaml:"queue_bound"`
+}
+
+// rawThroughputConfig mirrors ThroughputConfig on-disk. Every numeric is
+// 0 = unset, so a plain-int mirror suffices (no pointer-vs-zero ambiguity as
+// with pointers elsewhere): a present value is nonzero. The tighten-only local
+// merge (change 0036, ADR-0006) reads these in mergeFile.
+type rawThroughputConfig struct {
+	RequestsPerMinute int                           `yaml:"requests_per_minute"`
+	TokensPerMinute   int                           `yaml:"tokens_per_minute"`
+	SessionTokens     int                           `yaml:"session_tokens"`
+	Providers         map[string]ProviderThroughput `yaml:"providers"`
 }
 
 // rawResearchConfig mirrors ResearchConfig on-disk. RespectRobots is a pointer

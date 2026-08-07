@@ -85,6 +85,85 @@ func TestSpawnAgentTool_ZeroMaxBudgetOmitsLine(t *testing.T) {
 	}
 }
 
+// --- change 0036: token-quota warning line ---
+
+// The token-quota warning line mirrors the budget line: a QuotaFunc supplies the
+// machine-authored line (or "") at result time, appended to a SUCCESSFUL spawn
+// result so the agent concludes with what it has once a hard token quota is hit.
+// Absent before exhaustion, absent outside scope, never on an error result.
+
+func TestSpawnAgentTool_NoQuotaWarningBeforeExhaustion(t *testing.T) {
+	// QuotaFunc returns "" (quota not exhausted) => no warning line.
+	quota := func() string { return "" }
+	tool := NewSpawnAgentToolWithBudget(okSpawn("child ok"), nil).WithQuotaWarning(quota)
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if strings.Contains(res.Output, "token quota") {
+		t.Errorf("no warning before exhaustion, got:\n%s", res.Output)
+	}
+	if !strings.Contains(res.Output, "child ok") {
+		t.Errorf("child result missing: %q", res.Output)
+	}
+}
+
+func TestSpawnAgentTool_InjectsQuotaWarningWhenExhausted(t *testing.T) {
+	const line = "\n\ntoken quota exhausted: conclude with the results you already have and do not spawn again"
+	quota := func() string { return line }
+	tool := NewSpawnAgentToolWithBudget(okSpawn("done"), nil).WithQuotaWarning(quota)
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if !strings.Contains(res.Output, "token quota exhausted") {
+		t.Errorf("warning line not injected, got:\n%s", res.Output)
+	}
+	// The child result stays ahead of the warning line.
+	if idx := strings.Index(res.Output, "done"); idx < 0 || idx > strings.Index(res.Output, "token quota") {
+		t.Errorf("warning must follow the child result, got:\n%s", res.Output)
+	}
+}
+
+func TestSpawnAgentTool_QuotaWarningRidesAlongsideBudgetLine(t *testing.T) {
+	// Both a budget line and a quota warning may be appended in one result; the
+	// seam is singular but each optional term contributes its own line.
+	budget := func() (used, max int) { return 3, 16 }
+	quota := func() string { return "\n\ntoken quota exhausted: conclude now" }
+	tool := NewSpawnAgentToolWithBudget(okSpawn("done"), budget).WithQuotaWarning(quota)
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
+	if !strings.Contains(res.Output, "agent budget: 3/16") {
+		t.Errorf("budget line missing, got:\n%s", res.Output)
+	}
+	if !strings.Contains(res.Output, "token quota exhausted") {
+		t.Errorf("quota warning missing, got:\n%s", res.Output)
+	}
+}
+
+func TestSpawnAgentTool_NoQuotaWarningOnSpawnError(t *testing.T) {
+	failing := func(_ context.Context, _ SpawnRequest) (string, error) {
+		return "", context.Canceled
+	}
+	quota := func() string { return "\n\ntoken quota exhausted: conclude now" }
+	tool := NewSpawnAgentToolWithBudget(failing, nil).WithQuotaWarning(quota)
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
+	if !res.IsError {
+		t.Fatal("expected an error result")
+	}
+	if strings.Contains(res.Output, "token quota") {
+		t.Errorf("warning must not ride on an error result, got:\n%s", res.Output)
+	}
+}
+
+func TestSpawnAgentTool_NilQuotaFuncOmitsWarning(t *testing.T) {
+	// No QuotaFunc configured => never a warning line (byte-identical to 0034).
+	tool := NewSpawnAgentToolWithBudget(okSpawn("x"), nil)
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
+	if strings.Contains(res.Output, "token quota") {
+		t.Errorf("nil quota func => no warning, got:\n%s", res.Output)
+	}
+}
+
 // --- change 0034: worker param schema ---
 
 func TestSpawnAgentTool_NoWorkerParamByDefault(t *testing.T) {
@@ -140,8 +219,8 @@ func TestTighterBudget_ReportsFewerRemaining(t *testing.T) {
 }
 
 func TestTighterBudget_GlobalTighter(t *testing.T) {
-	global := func() (used, max int) { return 60, 64 }  // 4 remaining (tighter)
-	workflow := func() (used, max int) { return 1, 8 }  // 7 remaining
+	global := func() (used, max int) { return 60, 64 } // 4 remaining (tighter)
+	workflow := func() (used, max int) { return 1, 8 } // 7 remaining
 	used, max := TighterBudget(global, workflow)()
 	if used != 60 || max != 64 {
 		t.Errorf("TighterBudget = (%d,%d), want (60,64) — global is tighter", used, max)

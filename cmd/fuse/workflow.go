@@ -44,17 +44,18 @@ type workflowActivation struct {
 }
 
 // pool converts the config pool into the agent-package mirror.
-func (a workflowActivation) pool() agent.WorkflowPool {
+func (a *workflowActivation) pool() agent.WorkflowPool {
 	return agent.WorkflowPool{
 		Concurrent: a.cfg.Pool.Concurrent,
 		Total:      a.cfg.Pool.Total,
 		MaxDepth:   a.cfg.Pool.MaxDepth,
+		Tokens:     a.cfg.Pool.Tokens,
 	}
 }
 
 // workerNames returns the workflow's worker names (for the spawn tool's enum),
 // or nil when the workflow defines no workers (freeform spawns).
-func (a workflowActivation) workerNames() []string {
+func (a *workflowActivation) workerNames() []string {
 	if len(a.cfg.Workers) == 0 {
 		return nil
 	}
@@ -101,19 +102,6 @@ func resolveWorkerTools(wf config.WorkflowConfig, worker string, requested []str
 	return out, nil
 }
 
-// stripPredicateFor returns the strip predicate to install on a child at the
-// given absolute depth. Outside a workflow (act == nil) it is the global-only
-// predicate; inside, it composes the global predicate with the workflow's
-// subtree-scoped one so the tighter brake governs.
-func stripPredicateFor(tree *agent.AgentTree, maxConcurrent int, act *workflowActivation, rootID string, nodeDepth int) func() bool {
-	global := agent.NewStripSpawnPredicate(tree, maxConcurrent)
-	if act == nil || rootID == "" {
-		return global
-	}
-	wf := agent.NewWorkflowStripPredicate(tree, rootID, act.pool(), nodeDepth, act.rootDepth)
-	return agent.NewOrPredicate(global, wf)
-}
-
 // backstopFor returns the per-call workflow spawn backstop for a spawner rooted
 // under the workflow, or nil outside a workflow. It refuses a spawn that would
 // exceed the pool's total quota or push a child past the pool's max_depth — the
@@ -151,7 +139,7 @@ func backstopFor(tree *agent.AgentTree, act *workflowActivation, rootID string) 
 // workflow with a total quota it reports the tighter of the workflow-total and
 // the global budget; otherwise the plain global budget.
 func budgetFor(tree *agent.AgentTree, act *workflowActivation, rootID string) tools.BudgetFunc {
-	global := tools.BudgetFunc(tree.SpawnBudget)
+	global := tools.BudgetFunc(tree.Scheduler().SpawnBudget)
 	if act == nil || rootID == "" || act.cfg.Pool.Total <= 0 {
 		return global
 	}
@@ -159,4 +147,16 @@ func budgetFor(tree *agent.AgentTree, act *workflowActivation, rootID string) to
 		return tree.SubtreeSpawnCount(rootID), act.cfg.Pool.Total
 	}
 	return tools.TighterBudget(global, wfTotal)
+}
+
+// quotaWarningFor returns the token-quota warning QuotaFunc to attach to a
+// child's spawn tool (change 0036). It is scope-aware via the scheduler: the
+// warning line is empty until a hard token quota is exhausted for nodeID's scope
+// — the global session ceiling (throughput.session_tokens) or the node's
+// workflow pool.tokens quota — after which it is appended to subsequent spawn
+// results so the agent concludes with what it has. Read fresh at result time.
+func quotaWarningFor(tree *agent.AgentTree, nodeID string) tools.QuotaFunc {
+	return func() string {
+		return tree.Scheduler().TokenQuotaWarning(nodeID)
+	}
 }

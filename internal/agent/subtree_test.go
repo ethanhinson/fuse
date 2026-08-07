@@ -70,6 +70,42 @@ func TestSubtreeSpawnCount(t *testing.T) {
 	}
 }
 
+func TestSubtreeTokens(t *testing.T) {
+	tree, wfroot, a, b, c, sibling := buildSubtreeTree(t)
+
+	// Charge tokens across the tree. UpdateTokens increments TokensIn/TokensOut.
+	tree.Node(wfroot).UpdateTokens(100, 10)  // the workflow root itself — excluded
+	tree.Node(a).UpdateTokens(200, 20)       // in subtree
+	tree.Node(b).UpdateTokens(300, 30)       // in subtree
+	tree.Node(c).UpdateTokens(400, 40)       // in subtree (deep, grandchild)
+	tree.Node(sibling).UpdateTokens(999, 99) // outside the subtree — excluded
+
+	// SubtreeTokens excludes the root marker node itself (like SubtreeSpawnCount)
+	// and sums TokensIn+TokensOut over every descendant, including deep ones.
+	want := (200 + 20) + (300 + 30) + (400 + 40)
+	if got := tree.SubtreeTokens(wfroot); got != want {
+		t.Errorf("SubtreeTokens(wfroot) = %d, want %d", got, want)
+	}
+}
+
+func TestSessionTokensWholeTree(t *testing.T) {
+	tree, wfroot, a, b, c, sibling := buildSubtreeTree(t)
+	rootID := tree.RootID()
+
+	tree.Node(rootID).UpdateTokens(50, 5) // the tree root — INCLUDED in session total
+	tree.Node(wfroot).UpdateTokens(100, 10)
+	tree.Node(a).UpdateTokens(200, 20)
+	tree.Node(b).UpdateTokens(300, 30)
+	tree.Node(c).UpdateTokens(400, 40)
+	tree.Node(sibling).UpdateTokens(999, 99)
+
+	// SessionTokens sums every node's in+out across the whole tree, root included.
+	want := (50 + 5) + (100 + 10) + (200 + 20) + (300 + 30) + (400 + 40) + (999 + 99)
+	if got := tree.SessionTokens(); got != want {
+		t.Errorf("SessionTokens = %d, want %d", got, want)
+	}
+}
+
 func TestWorkflowRootOf(t *testing.T) {
 	tree, wfroot, a, _, c, sibling := buildSubtreeTree(t)
 

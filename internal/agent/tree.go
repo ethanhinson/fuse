@@ -165,12 +165,12 @@ func (n *AgentNode) Finish(status NodeStatus, errMsg string) {
 // Events are deliberately NOT included — they can be large and most consumers
 // only need counters; call CopyEvents when the log itself is needed.
 type NodeView struct {
-	ID        string
-	ParentID  string
-	Label     string
-	Model     string
-	Status    NodeStatus
-	Depth     int
+	ID           string
+	ParentID     string
+	Label        string
+	Model        string
+	Status       NodeStatus
+	Depth        int
 	StartedAt    time.Time
 	EndedAt      time.Time
 	TokensIn     int
@@ -202,41 +202,46 @@ type TreeUpdate struct {
 	NodeID string
 }
 
-// AgentTree is the shared state for the spawn tree.
+// AgentTree is the shared state for the spawn tree. It owns node data and the
+// derived counts; the global slot semaphore and the lifetime budget ceiling live
+// on the Scheduler it constructs (change 0036) — the tree reaches them only via
+// its own delegating shims below.
 type AgentTree struct {
-	mu        sync.RWMutex
-	nodes     map[string]*AgentNode
-	rootID    string
-	out       chan TreeUpdate // buffered 256
-	dirty     map[string]bool
-	spawnSem  chan struct{} // width cap for concurrently running local children
-	maxSpawns int           // tree-global spawn budget (total children ever); 0 = unset
+	mu     sync.RWMutex
+	nodes  map[string]*AgentNode
+	rootID string
+	out    chan TreeUpdate // buffered 256
+	dirty  map[string]bool
+	sched  *Scheduler // the single admission/slot/budget authority (0036)
+}
 
+// Scheduler returns the tree's admission, slot, and budget authority. Every path
+// that admits a spawn, takes or frees a slot, or reads the budget goes through
+// it (change 0036, ADR-0007).
+func (t *AgentTree) Scheduler() *Scheduler { return t.sched }
+
+// childCount returns the number of non-root nodes (the append-only spawn count).
+// It backs the scheduler's SpawnBudget `used` figure; never negative.
+func (t *AgentTree) childCount() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	n := len(t.nodes) - 1 // exclude the root node
+	if n < 0 {
+		n = 0
+	}
+	return n
 }
 
 // SetMaxSpawns sets the tree-global spawn budget — the total number of child
 // agents any spawn may create over the whole tree's life. 0 leaves it unset
 // (no budget enforced). Set once at construction time, before any spawn.
-func (t *AgentTree) SetMaxSpawns(n int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.maxSpawns = n
-}
+// Delegating shim over the scheduler, which owns the ceiling (change 0036).
+func (t *AgentTree) SetMaxSpawns(n int) { t.sched.SetMaxSpawns(n) }
 
 // SpawnBudget reports how much of the tree-global spawn budget is used and its
-// ceiling. `used` is the number of child agents created so far (every node
-// except the root — the tree is append-only, so this only grows); `max` is the
-// configured ceiling, 0 when unset. This is the count the runtime injects into
-// each spawn_agent result so the model never has to tally its own spawns.
-func (t *AgentTree) SpawnBudget() (used, max int) {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	used = len(t.nodes) - 1 // exclude the root node
-	if used < 0 {
-		used = 0
-	}
-	return used, t.maxSpawns
-}
+// ceiling. Delegating shim over the scheduler, which owns the ceiling; the used
+// side is derived from this tree's node count (change 0036).
+func (t *AgentTree) SpawnBudget() (used, max int) { return t.sched.SpawnBudget() }
 
 // NewAgentTree creates a new tree with the given root node label and model,
 // using the default concurrency cap (MaxConcurrentSpawns).
@@ -261,13 +266,14 @@ func NewAgentTreeWithConcurrency(rootLabel, rootModel string, maxConcurrent int)
 		Model:  rootModel,
 		Status: StatusRunning,
 	}
-	return &AgentTree{
-		nodes:    map[string]*AgentNode{root.ID: root},
-		rootID:   root.ID,
-		out:      make(chan TreeUpdate, 256),
-		dirty:    map[string]bool{},
-		spawnSem: make(chan struct{}, maxConcurrent),
+	t := &AgentTree{
+		nodes:  map[string]*AgentNode{root.ID: root},
+		rootID: root.ID,
+		out:    make(chan TreeUpdate, 256),
+		dirty:  map[string]bool{},
 	}
+	t.sched = newScheduler(t, maxConcurrent)
+	return t
 }
 
 // RootID returns the root node's ID.
@@ -400,64 +406,29 @@ func (t *AgentTree) Emit(update TreeUpdate) {
 // Updates returns the channel for receiving tree updates.
 func (t *AgentTree) Updates() <-chan TreeUpdate { return t.out }
 
-// acquireSpawnSlot blocks until a spawn slot is free or ctx ends. Returns
-// false when the context was cancelled first. Nil-safe: without a tree (or a
-// sem) there is no cap.
-func (t *AgentTree) acquireSpawnSlot(ctx context.Context) bool {
-	if t == nil || t.spawnSem == nil {
-		return true
-	}
-	select {
-	case t.spawnSem <- struct{}{}:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}
-
-// releaseSpawnSlot frees a slot taken by acquireSpawnSlot.
-func (t *AgentTree) releaseSpawnSlot() {
-	if t == nil || t.spawnSem == nil {
-		return
-	}
-	<-t.spawnSem
-}
-
 // YieldSlot releases node's spawn slot while it blocks waiting on a child.
 // Without this, width capping deadlocks: parents hold every slot while their
 // children queue for one (observed live — 8 blocked parents, all children
 // pending, zero progress). A slot must mean "actively working", not "alive".
 // Safe under parallel spawn batches: only the first concurrent wait releases.
 // No-op for the root (depth 0 — it never holds a slot) and nil trees.
+// Delegating shim over the scheduler, which owns the semaphore (change 0036).
 func (t *AgentTree) YieldSlot(node *AgentNode) {
-	if t == nil || t.spawnSem == nil || node == nil || node.Depth == 0 {
+	if t == nil {
 		return
 	}
-	node.mu.Lock()
-	node.yields++
-	first := node.yields == 1
-	node.mu.Unlock()
-	if first {
-		t.releaseSpawnSlot()
-	}
+	t.sched.YieldSlot(node)
 }
 
 // UnyieldSlot re-acquires node's slot after a child wait completes; only the
 // last of the node's concurrent waits re-acquires (blocking until a slot is
 // free, which is the fair queueing point for resumed parents). Returns false
-// if ctx ended first.
+// if ctx ended first. Delegating shim over the scheduler (change 0036).
 func (t *AgentTree) UnyieldSlot(ctx context.Context, node *AgentNode) bool {
-	if t == nil || t.spawnSem == nil || node == nil || node.Depth == 0 {
+	if t == nil {
 		return true
 	}
-	node.mu.Lock()
-	node.yields--
-	last := node.yields == 0
-	node.mu.Unlock()
-	if last {
-		return t.acquireSpawnSlot(ctx)
-	}
-	return true
+	return t.sched.UnyieldSlot(ctx, node)
 }
 
 // RegisterRemote adds a named RemoteExecutor (id="" for the default).

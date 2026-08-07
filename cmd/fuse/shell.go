@@ -126,19 +126,37 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// Agent tree for subagent tracking. The tree-global spawn budget backstops
 	// runaway fan-out; its count feeds the budget line injected into results.
 	tree := agent.NewAgentTreeWithConcurrency(alias, alias, cfg.Agents.MaxConcurrent)
-	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
+	// The Scheduler is the single admission/slot/budget authority (change 0036):
+	// set the lifetime budget on it and route slot yield/unyield through it.
+	sched := tree.Scheduler()
+	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
+	// queue_bound (change 0036): 0/unset ⇒ the scheduler keeps its 2.0 default.
+	sched.SetQueueBound(cfg.Agents.QueueBound)
+	// session token ceiling (change 0036): 0/unset ⇒ no ceiling enforced.
+	sched.SetSessionTokens(cfg.Throughput.SessionTokens)
+	// Rate gate (change 0036): one shared token bucket for the session, or nil when
+	// no rpm/tpm axis is configured (fast path). The concrete bucket also feeds the
+	// agents-overlay observability surface below; agents consult it via the
+	// model.RateGate interface. rateGate is the untyped-nil-safe interface handle
+	// (a nil bucket ⇒ nil interface ⇒ the adapter's fast path).
+	rateBucket := sessionRateBucket(cfg)
+	var rateGate model.RateGate
+	if rateBucket != nil {
+		rateGate = rateBucket
+	}
 	rootNode := tree.Node(tree.RootID())
 
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
-		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true)
+		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true, rateGate)
 		if err != nil {
 			return nil, err
 		}
 		// Per-turn spawn-strip brake on the root turn: same predicate the children
 		// carry, so the active-cap (reversible) and budget (permanent) brakes apply
-		// to root-initiated spawns too. See change 0033.
-		ag.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
+		// to root-initiated spawns too. See change 0033; unified through the
+		// scheduler's visibility predicate in change 0036.
+		ag.SetStripSpawn(sched.StripPredicate(rootNode.ID))
 		return ag, nil
 	}
 
@@ -148,6 +166,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// with a blanket auto-approve.
 	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build, sessionMode, classifierConstructible(cfg))
 	m = m.WithTree(tree)
+	// Hand the same shared bucket to the observability surface so the agents
+	// overlay shows live rate-gate utilization (change 0036); nil is the no-gate
+	// fast path and renders no rate-gate segment.
+	m = m.WithRateGate(rateBucket)
 	// The parent-channel approval func for children: same TUI channel as the
 	// root turn, wrapped per-child by PrefixApproval below so the human sees
 	// which subagent is asking. Enforces the configured mode instead of the old
@@ -176,7 +198,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 					childToolReg.Unregister("spawn_agent")
 				} else {
 					// Replace spawn_agent with one wired to the child's spawner.
-					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
+					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget).
+						WithQuotaWarning(quotaWarningFor(tree, childNode.ID)))
 				}
 
 				r := tui.NewNodeRenderer(childNode, childTree)
@@ -196,17 +219,19 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				// Children spawned inside the interactive shell inherit its
 				// interactive posture — a human is reachable via the shell.
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true)
+					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate)
 				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate)
 				}
 				if aerr != nil {
 					return "", aerr
 				}
 				// Per-turn spawn-strip brake: omit spawn_agent from this child's
-				// tool schemas when the active-child cap is reached (reversible)
-				// or the lifetime budget is exhausted (permanent). See change 0033.
-				a.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
+				// tool schemas when admission from its scope would not currently be
+				// granted or queued within bound — the active-child cap queues
+				// (reversible), the lifetime budget strips (permanent), the queue
+				// bound strips (reversible). See change 0033, unified in change 0036.
+				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 
 				history := []model.Message{{Role: "user", Content: opts.Task}}
 				msgs, rerr := a.Run(ctx, history)
@@ -245,9 +270,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			}
 			// Yield this agent's spawn slot while blocked on the child —
 			// parents holding slots while their children queue is a deadlock.
-			tree.YieldSlot(parentNode)
+			sched.YieldSlot(parentNode)
 			done := handle.Wait()
-			if !tree.UnyieldSlot(ctx, parentNode) {
+			if !sched.UnyieldSlot(ctx, parentNode) {
 				return "", ctx.Err()
 			}
 			return done.Result, done.Err
@@ -255,7 +280,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 
 	// Register spawn_agent in the tool registry before any agent runs.
-	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
+	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
+		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
 
 	// Start the 250ms dirty-node flusher; the same ctx stops the bridges.
 	flushCtx, cancelFlusher := context.WithCancel(context.Background())

@@ -134,7 +134,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// Build a tool registry with spawn_agent AND the skill tool wired up.
 	toolReg := defaultToolRegistry(cfg.Research, skillSet.Lookup)
 	tree := agent.NewAgentTreeWithConcurrency(*modelAlias, *modelAlias, cfg.Agents.MaxConcurrent)
-	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
+	// The Scheduler is the single admission/slot/budget authority (change 0036):
+	// set the lifetime budget on it and route slot yield/unyield through it.
+	sched := tree.Scheduler()
+	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
+	// queue_bound (change 0036): 0/unset ⇒ the scheduler keeps its 2.0 default.
+	sched.SetQueueBound(cfg.Agents.QueueBound)
+	// session token ceiling (change 0036): 0/unset ⇒ no ceiling enforced.
+	sched.SetSessionTokens(cfg.Throughput.SessionTokens)
+	// Rate gate (change 0036): one shared token bucket for the whole session, or
+	// nil when no rpm/tpm axis is configured (fast path). Every agent adapter below
+	// shares it so the session honors one budget.
+	rateGate := sessionRateGate(cfg)
 	rootNode := tree.Node(tree.RootID())
 
 	var makeSpawnFunc func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc
@@ -155,7 +166,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 					// Either way, drop any copy inherited from the parent's registry.
 					childToolReg.Unregister("spawn_agent")
 				} else {
-					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), tree.SpawnBudget))
+					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget).
+						WithQuotaWarning(quotaWarningFor(tree, childNode.ID)))
 				}
 
 				r := tui.NewRenderer(stdout, *verbose)
@@ -171,14 +183,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 				// One-shot passes no session-mode source: gates default to
 				// cfg.Permissions.Mode exactly as before this seam.
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget)
+					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate)
 				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget)
+					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate)
 				}
 				if aerr != nil {
 					return "", aerr
 				}
-				a.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
+				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 				return childResult(msgs, rerr)
 			}),
@@ -198,22 +210,23 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 			// Yield this agent's spawn slot while blocked on the child —
 			// parents holding slots while their children queue is a deadlock.
-			tree.YieldSlot(parentNode)
+			sched.YieldSlot(parentNode)
 			done := handle.Wait()
-			if !tree.UnyieldSlot(ctx, parentNode) {
+			if !sched.UnyieldSlot(ctx, parentNode) {
 				return "", ctx.Err()
 			}
 			return done.Result, done.Err
 		}
 	}
-	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), tree.SpawnBudget))
+	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
+		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
 
-	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil, oneShotBudget)
+	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil, oneShotBudget, rateGate)
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
-	a.SetStripSpawn(agent.NewStripSpawnPredicate(tree, cfg.Agents.MaxConcurrent))
+	a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
 	_ = modelID
 
 	_, err = a.Run(context.Background(), []model.Message{{Role: "user", Content: task}})

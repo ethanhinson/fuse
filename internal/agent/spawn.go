@@ -25,6 +25,17 @@ var ErrSpawnBudgetExhausted = errors.New("agent: spawn budget exhausted")
 // overshot within a turn.
 var ErrWorkflowQuotaExhausted = errors.New("agent: workflow spawn quota exhausted")
 
+// ErrTokenQuotaExhausted is returned by the spawn backstop when a spawn would
+// proceed past a hard TOKEN quota — either the workflow pool's lifetime token
+// quota (pool.tokens) for the spawning node's subtree, or the global session
+// token ceiling (throughput.session_tokens) — both change 0036. It mirrors
+// ErrSpawnBudgetExhausted's identity discipline: the per-turn schema strip
+// (Visible) hides spawn_agent once the quota is hit, and this is the call-time
+// race backstop for a spawn committed within a turn before the strip took hold.
+// The quotas are permanent (the per-node token counters are append-only), so
+// once exhausted the tool stays gone in scope — there is no mid-turn abort.
+var ErrTokenQuotaExhausted = errors.New("agent: token quota exhausted")
+
 // SpawnOpts configures a child agent spawn.
 type SpawnOpts struct {
 	Label        string
@@ -112,6 +123,28 @@ func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (AgentHandle, error
 		if used, max := s.tree.SpawnBudget(); max > 0 && used >= max {
 			return AgentHandle{}, fmt.Errorf("%w: %d/%d spawns used — proceed with the results you already have and do not spawn again", ErrSpawnBudgetExhausted, used, max)
 		}
+		// Queue-bound backstop (change 0036): a spawn that commits within a turn
+		// while its pool queue has since filled to the bound is refused rather than
+		// growing the queue past ceil(queue_bound × pool slots). The per-turn strip
+		// (Task 3) makes this rare; this is the race safety net.
+		poolID := ""
+		if s.node != nil {
+			poolID = s.tree.WorkflowRootOf(s.node.ID)
+		}
+		if v, _ := s.tree.Scheduler().Admit(AdmitRequest{Depth: s.depth, PoolID: poolID}); v == OverBound {
+			return AgentHandle{}, fmt.Errorf("%w: pool queue at bound — proceed with the results you already have", ErrQueueBoundExceeded)
+		}
+		// Token-quota backstop (change 0036): the call-time race safety net behind
+		// the per-turn strip for the session ceiling and the workflow pool.tokens
+		// quota. A spawn committed within a turn before the strip took hold is
+		// refused rather than allowed to spend past a hard token ceiling.
+		nodeID := ""
+		if s.node != nil {
+			nodeID = s.node.ID
+		}
+		if err := s.tree.Scheduler().tokenQuotaDenied(nodeID); err != nil {
+			return AgentHandle{}, err
+		}
 	}
 	// Workflow pool backstop (change 0034): the per-call safety net behind the
 	// per-turn strip, so a within-turn batch cannot overshoot the pool.
@@ -128,6 +161,32 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 	if s.node != nil {
 		parentID = s.node.ID
 	}
+
+	// Slot admission goes through the scheduler (change 0036); a nil tree (a
+	// Spawner used without one) has no scheduler and thus no cap. The child queues
+	// into its parent's pool — the parent's workflow root, or "" for the implicit
+	// session pool (a freshly-spawned child never carries its own workflow-root
+	// label, so it inherits the parent's, matching the Spawn-time Admit check).
+	var sched *Scheduler
+	poolID := ""
+	if s.tree != nil {
+		sched = s.tree.Scheduler()
+		if s.node != nil {
+			poolID = s.tree.WorkflowRootOf(s.node.ID)
+		}
+	}
+
+	// Enqueue for a slot SYNCHRONOUSLY, before the node is added to the tree, so a
+	// queue-bound refusal surfaces from Spawn identically to the Admit backstop
+	// (SF-1): the atomic under-lock bound check closes the TOCTOU window that lets
+	// concurrent same-turn spawns overshoot the pool bound. A refused spawn adds no
+	// pending node. granted==true means a free slot was taken here (fast path);
+	// otherwise the returned waiter is parked and the goroutine awaits its grant.
+	waiter, granted, err := sched.enqueueSlot(poolID, false)
+	if err != nil {
+		return AgentHandle{}, err
+	}
+
 	node := &AgentNode{
 		ID:       newNodeID(),
 		ParentID: parentID,
@@ -148,17 +207,21 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 	go func() {
 		defer cancel()
 
-		// Width cap: wait for a spawn slot while the node stays visibly pending.
-		// Depth limits alone don't bound load when the model fans out widely.
-		if !s.tree.acquireSpawnSlot(childCtx) {
-			node.Finish(StatusCancelled, "")
-			if s.tree != nil {
-				s.tree.Emit(TreeUpdate{NodeID: node.ID})
+		// Width cap: wait for the granted slot (or park-and-wait) while the node
+		// stays visibly pending. Depth limits alone don't bound load when the model
+		// fans out widely. The slot was reserved synchronously above; here we only
+		// await the parked waiter's grant when one was queued.
+		if !granted {
+			if err := sched.awaitSlot(childCtx, waiter); err != nil {
+				node.Finish(StatusCancelled, "")
+				if s.tree != nil {
+					s.tree.Emit(TreeUpdate{NodeID: node.ID})
+				}
+				doneCh <- SpawnDone{Err: childCtx.Err()}
+				return
 			}
-			doneCh <- SpawnDone{Err: childCtx.Err()}
-			return
 		}
-		defer s.tree.releaseSpawnSlot()
+		defer sched.releaseSlot()
 
 		node.mu.Lock()
 		node.Status = StatusRunning

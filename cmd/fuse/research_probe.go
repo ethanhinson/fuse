@@ -99,7 +99,17 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// Agent tree, so the spawn hierarchy is captured for the summary. The
 	// tree-global spawn budget is what the injected budget line reports.
 	tree := agent.NewAgentTreeWithConcurrency(alias, alias, cfg.Agents.MaxConcurrent)
-	tree.SetMaxSpawns(cfg.Agents.MaxSpawns)
+	// The Scheduler is the single admission/slot/budget authority (change 0036):
+	// set the lifetime budget on it and route slot yield/unyield through it.
+	sched := tree.Scheduler()
+	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
+	// queue_bound (change 0036): 0/unset ⇒ the scheduler keeps its 2.0 default.
+	sched.SetQueueBound(cfg.Agents.QueueBound)
+	// session token ceiling (change 0036): 0/unset ⇒ no ceiling enforced.
+	sched.SetSessionTokens(cfg.Throughput.SessionTokens)
+	// Rate gate (change 0036): one shared token bucket for the session, or nil when
+	// no rpm/tpm axis is configured (fast path).
+	rateGate := sessionRateGate(cfg)
 	rootNode := tree.Node(tree.RootID())
 
 	// research-probe IS a research root: activate the research workflow on the
@@ -110,6 +120,11 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	if wf, ok := cfg.Workflows["research"]; ok {
 		rootNode.WorkflowRoot = "research"
 		act = &workflowActivation{name: "research", cfg: wf, rootDepth: rootNode.Depth}
+		// Register the pool policy with the scheduler at activation (change 0036).
+		// Task 1 stores it; the fair queue and unified visibility predicate consume
+		// it. The 0034 strip/backstop paths still enforce the pool for now, so this
+		// is behavior-preserving.
+		sched.RegisterPool(rootNode.ID, act.pool())
 	}
 	rootID := tree.RootID()
 
@@ -146,7 +161,8 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 					// that omits spawn_agent withholds it from the child.
 					childToolReg.Unregister("spawn_agent")
 				} else {
-					spawnTool := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), budgetFor(tree, act, rootID))
+					spawnTool := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), budgetFor(tree, act, rootID)).
+						WithQuotaWarning(quotaWarningFor(tree, childNode.ID))
 					if act != nil {
 						spawnTool = spawnTool.WithWorkers(act.workerNames())
 					}
@@ -177,16 +193,18 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				var aerr error
 				// research-probe is headless (no TTY, AlwaysApprove) ⇒ backstopped.
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false)
+					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false, rateGate)
 				} else {
-					a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false)
+					a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate)
 				}
 				if aerr != nil {
 					return "", aerr
 				}
-				// Inside the workflow subtree, compose the global strip predicate
-				// with the workflow pool's (tighter wins); outside, global only.
-				a.SetStripSpawn(stripPredicateFor(tree, cfg.Agents.MaxConcurrent, act, rootID, childNode.Depth))
+				// Unified visibility predicate (change 0036): the scheduler folds
+				// the global brakes, the workflow pool (when the node is inside a
+				// registered subtree), and the queue bound into one rule — tighter
+				// scope wins.
+				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 				return childResult(msgs, rerr)
 			}),
@@ -198,15 +216,16 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 			if herr != nil {
 				return "", herr
 			}
-			tree.YieldSlot(parentNode)
+			sched.YieldSlot(parentNode)
 			done := handle.Wait()
-			if !tree.UnyieldSlot(ctx, parentNode) {
+			if !sched.UnyieldSlot(ctx, parentNode) {
 				return "", ctx.Err()
 			}
 			return done.Result, done.Err
 		}
 	}
-	rootSpawn := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), budgetFor(tree, act, rootID))
+	rootSpawn := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), budgetFor(tree, act, rootID)).
+		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID))
 	if act != nil {
 		// The root offers the workflow's typed workers so the model selects a
 		// facet-researcher per facet instead of hand-assembling a toolset.
@@ -219,15 +238,16 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 		tui.NewNodeRenderer(rootNode, tree),
 		logSink.Recorder("root"),
 	)
-	rootAgent, _, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", toolReg, permissions.AlwaysApprove, nil, false)
+	rootAgent, _, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", toolReg, permissions.AlwaysApprove, nil, false, rateGate)
 	if err != nil {
 		fmt.Fprintf(stderr, "build root agent: %v\n", err)
 		return 1
 	}
 	// The root is the workflow root: its own spawn schema is governed by the
-	// workflow pool (concurrent/total) composed with the global brakes. Its depth
+	// workflow pool (concurrent/total) composed with the global brakes, all folded
+	// into the scheduler's unified visibility predicate (change 0036). Its depth
 	// (0 == rootDepth) keeps it below the pool's max_depth limit.
-	rootAgent.SetStripSpawn(stripPredicateFor(tree, cfg.Agents.MaxConcurrent, act, rootID, rootNode.Depth))
+	rootAgent.SetStripSpawn(sched.StripPredicate(rootNode.ID))
 
 	// The task the root receives is the /research skill body with the question
 	// woven in as ARGUMENTS — exactly what the KindSkill slash path injects.
