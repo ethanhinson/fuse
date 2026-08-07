@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/mcp-streamable-http
 pr:
 blocked_by:
-reconciled: false
-claimed_at: 2026-08-07T05:37:18Z
+reconciled: true
+claimed_at: 2026-08-07T05:40:00Z
 ---
 
 ## Artifacts
@@ -37,18 +37,32 @@ The existing MCP client supports stdio and HTTP/SSE transports (change 0007). Th
 
 ## What changes
 
-- A new `StreamableHTTPClient` (`internal/mcp/streamable_http_client.go`) satisfying the existing `mcpConn` interface, selected by a new **`transport: "streamable-http"`** config value — no new boolean flag; the existing `url` + `auth` fields carry over unchanged.
-- **Session lifecycle** (full scope): the client owns its own `initialize` exchange, captures the `Mcp-Session-Id` response header, echoes it (and `MCP-Protocol-Version`) on every subsequent request, `DELETE`s the session on `stop()`, and re-initializes on a `404` (expired session). A stateless server (no session id) degrades cleanly.
+- A new `StreamableHTTPClient` (`internal/mcp/streamable_http_client.go`) satisfying the three-method `mcpConn` interface (`call` + `notify` + `stop`), selected by a new **`transport: "streamable-http"`** config value — no new boolean flag; the existing `url` + `auth` fields carry over unchanged.
+- **Session lifecycle**: the client captures the `Mcp-Session-Id` response header (first seen on the manager-driven `initialize`), echoes it (and `MCP-Protocol-Version: 2025-03-26`) on every subsequent request, `DELETE`s the session on `stop()`, and refreshes it on a `404` (expired session) via an inline re-`initialize`. A stateless server (no session id) degrades cleanly.
 - **Dual-mode responses**, request-scoped (no persistent background pump): each `call()` branches on the response `Content-Type` — `application/json` is one synchronous response; `text/event-stream` runs a short-lived SSE pump that resolves the matching id.
 - **Resumability**: a response stream that disconnects mid-response reconnects via `Last-Event-Id` (bounded retries).
 - **OAuth2 reuse**: `GetAccessToken` unchanged; manual `401`-refresh and `404`-reinit retries rewind the request body from `GetBody()` (regression-guarded).
-- **Manager wiring**: a `"streamable-http"` case in `startAndDiscover` (`internal/mcp/manager.go`).
+- **Manager wiring**: a `"streamable-http"` case in **`dial()`** (`internal/mcp/manager.go`) — the transport-agnostic `handshakeAndDiscover` (from change 0019) drives `initialize`/`initialized`/`tools/list` through the interface unchanged.
 - **Backward compatibility**: stdio and HTTP/SSE transports untouched; transport is config-selected, never auto-detected.
 
-Full design — client struct, per-call flow, the notification seam, and test matrix — in the linked spec.
+Full design — client struct, per-call flow, the notification seam, and test matrix — in the linked spec (reconciled against change 0019).
 
 ## Out of scope
 
 - The standalone server-initiated `GET` SSE stream (server→client notifications). That is the notification-routing seam owned by changes 0020/0021 (dependent on 0019); this client leaves a named `handleServerFrame` seam but routes only per-call response frames.
 - Deprecation or removal of the HTTP/SSE transport — both remain supported.
 - WebSocket transport (change 0022); gRPC (not on the MCP standards track).
+
+## Reconcile log
+
+### 2026-08-07 — reconciled against origin/main (change 0019 merged)
+
+Change 0019 (MCP capability negotiation, now done) landed the client-side init handshake and refactored the transport layer. The spec was materially revised:
+
+- **`mcpConn` grew a third method, `notify`** — the new client implements `call` + `notify` + `stop`.
+- **The transport switch moved from `startAndDiscover` to a new `dial()`**; a new `handshakeAndDiscover` drives `initialize` → `notifications/initialized` → `tools/list` transport-agnostically. The streamable client therefore **no longer owns an `initialize` exchange** — it captures `Mcp-Session-Id` from response headers inside `call()`/`notify()` while the manager drives the handshake.
+- **`clientProtocolVersion = "2025-03-26"`** already exists (`capabilities.go`) — reused as the `MCP-Protocol-Version` header; no new constant.
+- Reusable JSON-RPC types (`jsonrpcRequest`, `jsonrpcNotification`, `jsonrpcResponse`, `RPCError`) are adopted rather than reinvented.
+- Local working tree was stale (behind `origin/main`); the feature branch cuts from `origin/main`, which carries 0019's code.
+
+Net effect: simpler client (no owned handshake, no persistent pump), one `dial()` case, session capture folded into the per-request path.
