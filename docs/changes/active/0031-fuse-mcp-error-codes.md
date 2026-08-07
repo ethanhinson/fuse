@@ -67,4 +67,12 @@ Ran the built binary against real MCP servers and fixed one gap found:
 - **Server side** — drove the real `fuse mcp-server` over stdio: `tools/call` for an unknown tool returns `-32900 "tool not found"`; a real tool call and `tools/list` succeed. Confirmed the new emission works in the shipped binary.
 - **Client side** — stood up a mock MCP server (returning `-32901` on one tool) and drove fuse's real `Manager` → registered `MCPTool` → `client.call` path through the agent's gate. Discovery + success path work; the error path now surfaces the code.
 - **Gap found + fixed:** `MCPTool.Execute` (`internal/mcp/tool.go`) rendered a server error with `%v`, so the preserved code never reached the model — only the message did, defeating the "surface MCP-specific codes" goal. Fixed to unwrap `*RPCError` and render `[code N] <message>`. Added a unit test and a hermetic end-to-end integration test (the test binary re-execs itself as a real MCP server; no external deps). Full suite green. Pushed to PR #22.
-- The `fuse shell` TUI could not be driven headlessly (bubbletea alt-screen ignores piped keystrokes; the `verify-tool-loop-at-gateway-seam` learning flags this) — verified the identical client wiring via the real `Manager` + a real server subprocess instead.
+- The `fuse shell` TUI could not be driven headlessly via a PTY (bubbletea alt-screen ignores piped keystrokes; the `verify-tool-loop-at-gateway-seam` learning flags this).
+
+### 2026-08-07 — fold-in fix + full re-test (CLI + TUI)
+
+- **Folded in the `-32602` fix:** `handleCall` returned `-32600` ("Invalid Request") for an invalid-params condition, which JSON-RPC 2.0 codes as `-32602`. Fixed, and introduced named standard-code constants (`ErrInvalidRequest/MethodNotFound/InvalidParams/Internal`) so the server call sites stop using magic numbers. No longer an out-of-scope item.
+- **CLI re-test — server:** real `fuse mcp-server` over stdio now returns `-32900` (unknown tool), `-32602` (invalid params — array body), `-32601` (unknown method), and success for `tools/list` + real `tools/call`.
+- **CLI re-test — client:** real `fuse mcps tools` and `fuse mcps list --live` (status ok, 2 tools) against a mock server.
+- **TUI re-test:** replaced the failed PTY approach with a proper teatest end-to-end test (`internal/tui/mcp_tui_e2e_test.go`) — a real `ShellModel` in a live bubbletea program runs an agent turn calling two MCP tools backed by a real MCP server subprocess; asserts the success result and the surfaced `-32901` code both reach the agent inside the TUI.
+- Full suite + `vet` green. Pushed to PR #22.
