@@ -36,6 +36,21 @@ func TestRegistryUnknownToolIsError(t *testing.T) {
 	}
 }
 
+func TestRegistryHas(t *testing.T) {
+	r := NewRegistry()
+	r.Register(fakeTool{name: "alpha"})
+	if !r.Has("alpha") {
+		t.Error("Has(alpha) = false, want true for a registered tool")
+	}
+	if r.Has("missing") {
+		t.Error("Has(missing) = true, want false for an unknown tool")
+	}
+	r.Unregister("alpha")
+	if r.Has("alpha") {
+		t.Error("Has(alpha) = true after Unregister, want false")
+	}
+}
+
 type panickyTool struct{}
 
 func (panickyTool) Name() string               { return "boom" }

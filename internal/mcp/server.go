@@ -109,6 +109,12 @@ func (s *Server) handleCall(ctx context.Context, req serverReq) serverResp {
 	if err := json.Unmarshal(req.Params, &p); err != nil {
 		return s.errResp(req.ID, -32600, "invalid params: "+err.Error())
 	}
+	// An unknown tool name is an MCP-specific protocol error (-32900), distinct
+	// from a registered-but-disabled tool, which still flows through the gate and
+	// returns an isError tool result.
+	if !s.reg.Has(p.Name) {
+		return s.errResp(req.ID, ErrToolNotFound, "tool not found: "+p.Name)
+	}
 	args := string(p.Arguments)
 	if args == "" || args == "null" {
 		args = "{}"
