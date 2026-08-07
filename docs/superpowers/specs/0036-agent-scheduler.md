@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0036 — Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0036-agent-scheduler.md)**
+> ↩ **[Change 0036 — Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-07-0036-agent-scheduler.md)**
 <!-- docket:backlink:end -->
 
 # 0036 — Agent scheduler: global queue, fairness, and turn-level throughput
