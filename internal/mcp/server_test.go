@@ -82,6 +82,28 @@ func TestHandleCallDisabledToolIsNotToolNotFound(t *testing.T) {
 	}
 }
 
+func TestHandleCallInvalidParamsIs32602(t *testing.T) {
+	s := newTestServer(tools.NewRegistry())
+	// Params is not a valid callParams object (a JSON array, not an object).
+	req := serverReq{JSONRPC: "2.0", ID: json.RawMessage(`"1"`), Method: "tools/call", Params: json.RawMessage(`[1,2,3]`)}
+	resp := s.dispatch(context.Background(), req)
+	if resp.Error == nil {
+		t.Fatalf("expected an error frame, got result: %s", resp.Result)
+	}
+	if resp.Error.Code != ErrInvalidParams {
+		t.Errorf("error code = %d, want %d (ErrInvalidParams, -32602)", resp.Error.Code, ErrInvalidParams)
+	}
+}
+
+func TestDispatchUnknownMethodIs32601(t *testing.T) {
+	s := newTestServer(tools.NewRegistry())
+	req := serverReq{JSONRPC: "2.0", ID: json.RawMessage(`"1"`), Method: "no/such/method"}
+	resp := s.dispatch(context.Background(), req)
+	if resp.Error == nil || resp.Error.Code != ErrMethodNotFound {
+		t.Fatalf("expected -32601 method not found, got %+v", resp.Error)
+	}
+}
+
 // echoTool is a minimal registered tool for server tests.
 type echoTool struct{}
 

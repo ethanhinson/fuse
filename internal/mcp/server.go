@@ -82,7 +82,7 @@ func (s *Server) dispatch(ctx context.Context, req serverReq) serverResp {
 	case "tools/call":
 		return s.handleCall(ctx, req)
 	default:
-		return s.errResp(req.ID, -32601, "method not found: "+req.Method)
+		return s.errResp(req.ID, ErrMethodNotFound, "method not found: "+req.Method)
 	}
 }
 
@@ -107,7 +107,9 @@ type callParams struct {
 func (s *Server) handleCall(ctx context.Context, req serverReq) serverResp {
 	var p callParams
 	if err := json.Unmarshal(req.Params, &p); err != nil {
-		return s.errResp(req.ID, -32600, "invalid params: "+err.Error())
+		// Invalid params is -32602 in JSON-RPC 2.0 (not -32600, which is
+		// "Invalid Request" — a malformed Request object, a different condition).
+		return s.errResp(req.ID, ErrInvalidParams, "invalid params: "+err.Error())
 	}
 	// An unknown tool name is an MCP-specific protocol error (-32900), distinct
 	// from a registered-but-disabled tool, which still flows through the gate and

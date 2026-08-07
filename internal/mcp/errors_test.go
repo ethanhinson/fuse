@@ -13,6 +13,10 @@ func TestMCPErrorCodeValues(t *testing.T) {
 		{"PromptNotFound", ErrPromptNotFound, -32902},
 		{"ListResultEmpty", ErrListResultEmpty, -32903},
 		{"ConnectionClosed", ErrConnectionClosed, -32904},
+		{"InvalidRequest", ErrInvalidRequest, -32600},
+		{"MethodNotFound", ErrMethodNotFound, -32601},
+		{"InvalidParams", ErrInvalidParams, -32602},
+		{"Internal", ErrInternal, -32603},
 	}
 	for _, c := range cases {
 		if c.got != c.want {

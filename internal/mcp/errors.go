@@ -1,5 +1,18 @@
 package mcp
 
+// Standard JSON-RPC 2.0 error codes (the pre-defined server-error set). Named
+// here so server call sites read intently instead of using magic numbers.
+const (
+	// ErrInvalidRequest — the JSON sent is not a valid Request object.
+	ErrInvalidRequest = -32600
+	// ErrMethodNotFound — the method does not exist / is not available.
+	ErrMethodNotFound = -32601
+	// ErrInvalidParams — invalid method parameter(s).
+	ErrInvalidParams = -32602
+	// ErrInternal — internal JSON-RPC error.
+	ErrInternal = -32603
+)
+
 // MCP-specific JSON-RPC error codes.
 //
 // MCP v2025-03-26 (Error Codes section) reserves the JSON-RPC range -32900 to
