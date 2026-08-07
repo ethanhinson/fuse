@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0019 — MCP capability negotiation — structured init handshake](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0019-mcp-capability-negotiation.md)**
+> ↩ **[Change 0019 — MCP capability negotiation — structured init handshake](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-07-0019-mcp-capability-negotiation.md)**
 <!-- docket:backlink:end -->
 
 # MCP capability negotiation — structured init handshake
