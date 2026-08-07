@@ -153,14 +153,21 @@ func TestSnapshotImplicitPoolOnlyWhenActive(t *testing.T) {
 		t.Errorf("idle session should have no pools, got %+v", snap.Pools)
 	}
 
-	// One running freeform child ⇒ the implicit ("") pool appears.
+	// One running freeform child ⇒ the implicit ("") pool appears. Its
+	// SlotsInUse is the scheduler's granted-slot count: a second, merely
+	// PENDING (queued) child must not inflate it — a queued child holds no
+	// slot, and counting it would double-report it as slot user and waiter.
 	tr.addNode(&AgentNode{ID: newNodeID(), ParentID: tr.RootID(), Depth: 1, Status: StatusRunning})
+	tr.addNode(&AgentNode{ID: newNodeID(), ParentID: tr.RootID(), Depth: 1, Status: StatusPending})
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
+		t.Fatalf("acquire slot: %v", err)
+	}
 	snap := sc.Snapshot()
 	p, ok := findPool(snap, "")
 	if !ok {
 		t.Fatalf("implicit pool missing once a freeform child runs: %+v", snap.Pools)
 	}
 	if p.SlotsInUse != 1 || p.SlotTotal != 4 {
-		t.Errorf("implicit pool slots = %d/%d, want 1/4", p.SlotsInUse, p.SlotTotal)
+		t.Errorf("implicit pool slots = %d/%d, want 1/4 (granted slots only, pending excluded)", p.SlotsInUse, p.SlotTotal)
 	}
 }

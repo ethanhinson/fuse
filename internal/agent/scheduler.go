@@ -381,12 +381,15 @@ func (s *Scheduler) Snapshot() SchedulerSnapshot {
 
 	// The implicit session pool: include it only when it has live work so an idle
 	// freeform session adds no noise. Its slots/tokens are the whole-session
-	// figures; its quota is the session ceiling.
+	// figures; its quota is the session ceiling. SlotsInUse is the scheduler's
+	// own granted-slot count, NOT tree running+pending — a queued child has a
+	// pending tree node but holds no slot, and counting it here double-reports
+	// it as both a slot user and a queued waiter (rendering e.g. "2/1 slots").
 	if running+pending > 0 || implicitQueued > 0 || sessionTokens > 0 {
 		snap.Pools = append(snap.Pools, PoolSnapshot{
 			PoolID:     "",
 			Workflow:   "",
-			SlotsInUse: running + pending,
+			SlotsInUse: slotsInUse,
 			SlotTotal:  slotCap,
 			Queued:     implicitQueued,
 			TokenSpend: sessionTokens,
