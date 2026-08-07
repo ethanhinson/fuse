@@ -1,12 +1,17 @@
 # Backlog
 
-**39 changes** — 🟡 12 proposed · ✅ 23 done · 🗑️ 4 killed
+**39 changes** — 🟢 1 in progress · 🟡 11 proposed · ✅ 23 done · 🗑️ 4 killed
 
-## 🟡 Proposed (12)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0018](active/0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | `high` | `feat` | [spec](../superpowers/specs/2026-08-07-mcp-streamable-http-design.md) | `feat/mcp-streamable-http` |
+
+## 🟡 Proposed (11)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0018](active/0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | `high` | `feat` | build-ready |
 | [0020](active/0020-mcp-progress-streaming.md) | MCP `$/progress` notifications and streaming tool results | `medium` | `feat` | needs-brainstorm |
 | [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | needs-brainstorm |
 | [0022](active/0022-mcp-websocket-transport.md) | WebSocket transport for MCP | `low` | `feat` | needs-brainstorm |
