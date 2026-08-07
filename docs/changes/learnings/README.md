@@ -19,6 +19,10 @@ One curated finding per file; this index is the hint surface. Load it, then read
 
 - [bound-every-model-call](bound-every-model-call.md) — Every model call needs a per-attempt timeout, a response-header timeout, bounded retries, and a labeled trace entry — http.DefaultClient hangs are silent multi-minute stalls, and untraced child agents make them invisible · also: http, timeouts, retries, observability, tracing ⟨needs promotion⟩
 
+## mcp
+
+- [mcp-read-pumps-drop-inbound-notifications](mcp-read-pumps-drop-inbound-notifications.md) — fuse's MCP client read pumps (StdioClient.readPump, httpClient.readSSEPump) match responses by id and silently drop any id-less frame — so inbound server notifications (`$/progress`, `notifications/resources/updated`) are discarded today; adding a notification *sender* does not make fuse *receive* them — a notification route must be added to the pump itself, not just a handler elsewhere · also: notifications, json-rpc, go, streaming, subscriptions ⟨needs promotion⟩
+
 ## testing
 
 - [mutex-test-double-concurrent-provider](mutex-test-double-concurrent-provider.md) — Mutex-protect both getter and setter on test doubles shared with goroutines — a lock on one side only is still a race · also: concurrency, race, goroutines
