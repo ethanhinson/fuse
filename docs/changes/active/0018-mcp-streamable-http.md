@@ -10,7 +10,7 @@ updated: 2026-08-07
 depends_on: [7]
 related: [7, 19, 20, 21]
 discovered_from: []
-adrs: []
+adrs: [11]
 spec: docs/superpowers/specs/2026-08-07-mcp-streamable-http-design.md
 plan: docs/superpowers/plans/2026-08-07-mcp-streamable-http-plan.md
 results:
@@ -20,7 +20,7 @@ branch: feat/mcp-streamable-http
 pr:
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-07T05:42:00Z
+claimed_at: 2026-08-07T06:05:00Z
 ---
 
 ## Artifacts
@@ -30,6 +30,7 @@ claimed_at: 2026-08-07T05:42:00Z
 |---|---|
 | Spec | [2026-08-07-mcp-streamable-http-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-07-mcp-streamable-http-design.md) |
 | Plan | [2026-08-07-mcp-streamable-http-plan.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-streamable-http/docs/superpowers/plans/2026-08-07-mcp-streamable-http-plan.md) |
+| ADRs | [ADR-0011](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0011-streamable-http-mcp-transport-request-scoped.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
