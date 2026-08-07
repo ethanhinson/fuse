@@ -1,12 +1,6 @@
 # Backlog
 
-**39 changes** — 🟢 1 in progress · 🟡 11 proposed · ✅ 23 done · 🗑️ 4 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0018](active/0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | `high` | `feat` | [spec](../superpowers/specs/2026-08-07-mcp-streamable-http-design.md) | `feat/mcp-streamable-http` |
+**39 changes** — 🟡 11 proposed · 🔵 1 implemented · ✅ 23 done · 🗑️ 4 killed
 
 ## 🟡 Proposed (11)
 
@@ -23,6 +17,12 @@
 | [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | ⏳ waiting on #27 — not yet built |
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | needs-brainstorm |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0018](active/0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | `high` | `feat` | [#24](https://github.com/ethanhinson/fuse/pull/24) |  |
 
 ```mermaid
 graph TD
