@@ -2,7 +2,7 @@
 id: 31
 slug: mcp-error-codes
 title: Adopt MCP-specific JSON-RPC error code range
-status: implemented
+status: done
 priority: low
 type: chore
 created: 2026-08-06
@@ -20,7 +20,7 @@ branch: feat/mcp-error-codes
 pr: https://github.com/ethanhinson/fuse/pull/22
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-07T01:52:09Z
+claimed_at: 
 ---
 
 ## Artifacts
