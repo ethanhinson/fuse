@@ -12,14 +12,14 @@ related: [18, 20, 21]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-06-mcp-capability-negotiation-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-07-mcp-capability-negotiation-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/mcp-capability-negotiation
 pr:
 blocked_by:
-claimed_at: 2026-08-07T04:08:00Z
+claimed_at: 2026-08-07T04:10:00Z
 reconciled: true
 ---
 
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-06-mcp-capability-negotiation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-06-mcp-capability-negotiation-design.md) |
+| Plan | [2026-08-07-mcp-capability-negotiation-plan.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-capability-negotiation/docs/superpowers/plans/2026-08-07-mcp-capability-negotiation-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
