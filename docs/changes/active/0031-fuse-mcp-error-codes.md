@@ -59,3 +59,12 @@ Verified against current code (`internal/mcp/`). Findings folded into **What cha
 - Resource-not-found (`-32901`) has no call site yet — fuse's MCP server exposes only `tools/*`, no `resources/*` methods (`server.go` dispatch). Constants are still defined for completeness, but only `-32900` gets a live server call site this change. Noted in scope.
 
 Scope unchanged and still trivial. Two adjacent observations reported (not filed — auto-capture is disabled this repo): (1) `server.go:110` uses `-32600` ("Invalid Request") for an invalid-params condition where standard JSON-RPC prescribes `-32602`; (2) `initialize` advertises `protocolVersion "2024-11-05"` while the error range is a v2025-03-26 feature — protocol-version negotiation is change #19's job and does not gate adopting the codes.
+
+### 2026-08-07 — manual verification against a real MCP server (post-implementation)
+
+Ran the built binary against real MCP servers and fixed one gap found:
+
+- **Server side** — drove the real `fuse mcp-server` over stdio: `tools/call` for an unknown tool returns `-32900 "tool not found"`; a real tool call and `tools/list` succeed. Confirmed the new emission works in the shipped binary.
+- **Client side** — stood up a mock MCP server (returning `-32901` on one tool) and drove fuse's real `Manager` → registered `MCPTool` → `client.call` path through the agent's gate. Discovery + success path work; the error path now surfaces the code.
+- **Gap found + fixed:** `MCPTool.Execute` (`internal/mcp/tool.go`) rendered a server error with `%v`, so the preserved code never reached the model — only the message did, defeating the "surface MCP-specific codes" goal. Fixed to unwrap `*RPCError` and render `[code N] <message>`. Added a unit test and a hermetic end-to-end integration test (the test binary re-execs itself as a real MCP server; no external deps). Full suite green. Pushed to PR #22.
+- The `fuse shell` TUI could not be driven headlessly (bubbletea alt-screen ignores piped keystrokes; the `verify-tool-loop-at-gateway-seam` learning flags this) — verified the identical client wiring via the real `Manager` + a real server subprocess instead.
