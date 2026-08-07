@@ -8,10 +8,10 @@ type: feat
 created: 2026-08-06
 updated: 2026-08-06
 depends_on: [3, 7]
-related: [18, 20]
+related: [18, 20, 21]
 discovered_from: []
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-06-mcp-capability-negotiation-design.md
 plan:
 results:
 trivial: false
@@ -27,25 +27,28 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-06-mcp-capability-negotiation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-06-mcp-capability-negotiation-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
 
-The MCP specification v2025-03-26 mandates **capability negotiation** during the initialization handshake. Clients and servers advertise fine-grained capability flags (`streaming`, `annotations`, `logging`, `batch`, `authz`, `resources`, `prompts`) in the `initialize` request/response. The current fuse MCP implementation does not advertise or inspect capabilities — the init exchange is minimal (protocol version only). This means fuse cannot (a) discover whether a server supports streaming before attempting a streaming call, (b) negotiate optional features like batch requests or resource subscriptions, or (c) advertise its own capabilities so the server can tailor its behavior. Capability negotiation is also a prerequisite for several follow-on features (Streamable HTTP, resource subscriptions, `$/progress` notifications).
+MCP requires an `initialize` request/response as the mandatory first exchange of every connection, followed by an `initialized` notification from the client; the v2025-03-26 spec adds **capability negotiation** to that handshake so each side advertises fine-grained flags (`resources.subscribe`, `streaming`, `logging`, `prompts`, …) and neither attempts a feature the other has not declared.
+
+fuse's MCP client does **neither** today — `startAndDiscover` opens the transport and jumps straight to `tools/list`, never sending `initialize` or `initialized`. That is a latent compliance gap (strict servers may reject `tools/list` before a handshake) and leaves fuse blind to what a server supports. Capability negotiation is a hard prerequisite for #20 (progress streaming) and #21 (resource subscriptions), which must gate on a negotiated capability before use.
 
 ## What changes
 
-- **Structured `ClientCapabilities` and `ServerCapabilities` types** in `internal/mcp/` matching the 2025-03-26 spec shape — maps of capability name to optional detail objects (e.g. `{"streaming": {}, "batch": {"maxSize": 10}}`).
-- **Init handshake upgrade**: the `initialize` request sends fuse's capability set; the `initialize` response is parsed for the server's capabilities, stored on the `managedServer` struct.
-- **Capability-gated dispatch**: each feature (streaming, batch, subscribe) checks the negotiated capability before use, returning a clear error (e.g. "server X does not advertise 'streaming' capability") rather than attempting the call and failing opaquely.
-- **Capability surface in `fuse mcps list --live`**: show per-server negotiated capabilities in the status output.
-- **MCP server side** (`mcp_server.go`): the fuse MCP server advertises its own capabilities in its init response (tools only, same as today — but explicitly declared rather than absent).
+- **Client handshake**: `startAndDiscover` sends `initialize` (advertising `protocolVersion: 2025-03-26`, empty client capabilities, fuse `clientInfo`) before `tools/list`, then fires an id-less `notifications/initialized`. A failed `initialize` **hard-fails** the connect (server skipped with `connErr`), matching `tools/list`.
+- **`notify` on the `mcpConn` interface**: an id-less, no-wait send path for notifications, implemented by both the stdio and http transports.
+- **`ServerCapabilities` + `Supports(key)` accessor**: the server's capabilities are stored verbatim as a permissive raw map; `Supports("logging")` (top-level key present) and `Supports("resources.subscribe")` (nested boolean `true`) fail open to `false` on anything missing or malformed. No typed per-feature fields and no gating call sites are added now — #20/#21 call `Supports(...)` when they land.
+- **Storage on `managedServer`**: negotiated `caps` and echoed `protoVer`, surfaced through `ServerStatus` and shown per-server in `fuse mcps list --live`.
+- **fuse server side** (`server.go`): bump the advertised `protocolVersion` `2024-11-05`→`2025-03-26`, echoing a recognized client-requested version; keep capabilities `{"tools": {}}`, now explicitly version-correct.
 
 ## Out of scope
 
-- Implementing the features the capabilities gate (streaming, batch, subscriptions) — those are separate changes that depend on this one as a prerequisite.
+- Implementing any gated feature (streaming, batch, resource subscriptions, `$/progress`) — those are #18/#20/#21 and call `Supports(...)` themselves.
+- Advertising optional **client** capabilities (`roots`, `sampling`) — the client sends `{}` until a feature needs one.
 - Persisting capabilities across sessions — re-negotiated on every reconnect.
+- Rejecting connections over version or capability mismatch — fails-open throughout.
 
-## Research notes (input for the brainstorm)
-
-The capability map is a `ServerCapabilities` struct with optional fields: `streaming`, `batch` (with optional `maxSize`), `annotations`, `logging`, `authz` (with supported schemes), `resources` (with optional `subscribe` and `listChanged` booleans), `prompts` (with optional `listChanged`). Each is a JSON object or `true`. The client sends `ClientCapabilities` mirroring the same shape for what it supports. Neither side must reject a connection over unsupported capabilities — they simply don't use features the other side doesn't advertise. This is a "fails open" design: missing capability keys are treated as "not supported." The challenge is backward compatibility with pre-2025-03-26 servers, which return a minimal init response without capability fields — fuse must tolerate that and assume no optional capabilities.
+Full design, type sketch, and testing strategy in the linked spec.
