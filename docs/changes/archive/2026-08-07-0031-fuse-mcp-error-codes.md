@@ -28,7 +28,7 @@ claimed_at:
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Plan | [2026-08-07-mcp-error-codes.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-error-codes/docs/superpowers/plans/2026-08-07-mcp-error-codes.md) |
+| Plan | [2026-08-07-mcp-error-codes.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-07-mcp-error-codes.md) |
 | PR | [#22](https://github.com/ethanhinson/fuse/pull/22) |
 <!-- docket:artifacts:end -->
 
