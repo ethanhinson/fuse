@@ -2,11 +2,11 @@
 id: 36
 slug: agent-scheduler
 title: Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-07
 depends_on: [34]
 related: [33, 34]
 discovered_from: [34]
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/agent-scheduler
 pr: https://github.com/ethanhinson/fuse/pull/21
 blocked_by:
-claimed_at: 2026-08-07T00:10:00Z
+claimed_at: 
 reconciled: true
 ---
 
