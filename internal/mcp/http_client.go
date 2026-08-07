@@ -211,6 +211,41 @@ func (c *httpClient) call(ctx context.Context, method string, params any) (json.
 	}
 }
 
+// notify sends a JSON-RPC notification over HTTP (no id, no response awaited).
+func (c *httpClient) notify(ctx context.Context, method string, params any) error {
+	c.mu.Lock()
+	select {
+	case <-c.done:
+		c.mu.Unlock()
+		return fmt.Errorf("mcp http server %q is closed", c.name)
+	default:
+	}
+	c.mu.Unlock()
+
+	body, err := json.Marshal(jsonrpcNotification{JSONRPC: "2.0", Method: method, Params: params})
+	if err != nil {
+		return fmt.Errorf("mcp http %q marshal notify: %w", c.name, err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.messagesURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("mcp http %q build notify: %w", c.name, err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if c.bearerToken != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.bearerToken)
+	}
+	httpResp, err := c.http.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("mcp http %q notify post: %w", c.name, err)
+	}
+	io.Copy(io.Discard, httpResp.Body) //nolint:errcheck
+	httpResp.Body.Close()
+	if httpResp.StatusCode != http.StatusOK && httpResp.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("mcp http %q: notify POST returned HTTP %d", c.name, httpResp.StatusCode)
+	}
+	return nil
+}
+
 // readSSEPump reads the SSE stream and fans JSON-RPC responses to pending callers.
 func (c *httpClient) readSSEPump() {
 	defer c.closeAll()

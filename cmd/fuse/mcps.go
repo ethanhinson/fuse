@@ -70,8 +70,14 @@ func mcpList(args []string, cfg config.Config, stdout, stderr io.Writer) int {
 	}
 	defer mgr.Close()
 
-	statuses := mgr.Status()
-	fmt.Fprintf(stdout, "%-20s %-10s %-8s %-10s %-6s\n", "NAME", "TRANSPORT", "AUTH", "STATUS", "TOOLS")
+	renderLiveStatus(stdout, mgr.Status())
+	return 0
+}
+
+// renderLiveStatus prints the --live status table, including the negotiated
+// protocol version and capabilities per server.
+func renderLiveStatus(stdout io.Writer, statuses []mcp.ServerStatus) {
+	fmt.Fprintf(stdout, "%-20s %-10s %-8s %-10s %-6s %-12s %s\n", "NAME", "TRANSPORT", "AUTH", "STATUS", "TOOLS", "PROTO", "CAPS")
 	for _, s := range statuses {
 		status := "ok"
 		if !s.Connected {
@@ -85,13 +91,20 @@ func mcpList(args []string, cfg config.Config, stdout, stderr io.Writer) int {
 		if auth == "" {
 			auth = "none"
 		}
-		toolCount := "-"
+		toolCount, proto, caps := "-", "-", "-"
 		if s.Connected {
 			toolCount = fmt.Sprintf("%d", len(s.Tools))
+			proto = s.ProtocolVersion
+			if proto == "" {
+				proto = "?"
+			}
+			caps = "none"
+			if len(s.Capabilities) > 0 {
+				caps = strings.Join(s.Capabilities, ",")
+			}
 		}
-		fmt.Fprintf(stdout, "%-20s %-10s %-8s %-10s %-6s\n", s.Name, t, auth, status, toolCount)
+		fmt.Fprintf(stdout, "%-20s %-10s %-8s %-10s %-6s %-12s %s\n", s.Name, t, auth, status, toolCount, proto, caps)
 	}
-	return 0
 }
 
 func mcpAdd(args []string, cfg config.Config, stdout, stderr io.Writer) int {

@@ -35,6 +35,15 @@ type jsonrpcRequest struct {
 	Params  any    `json:"params,omitempty"`
 }
 
+// jsonrpcNotification is a JSON-RPC 2.0 notification frame — deliberately has
+// no ID field (a notification MUST omit id; jsonrpcRequest.ID is not omitempty
+// and so cannot express one).
+type jsonrpcNotification struct {
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
+}
+
 // jsonrpcResponse is a JSON-RPC 2.0 response frame.
 type jsonrpcResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -219,6 +228,21 @@ func (c *StdioClient) call(ctx context.Context, method string, params any) (json
 		}
 		return resp.Result, nil
 	}
+}
+
+// notify sends a JSON-RPC notification (no id, no response awaited).
+func (c *StdioClient) notify(_ context.Context, method string, params any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	select {
+	case <-c.done:
+		return fmt.Errorf("mcp server %q is closed", c.name)
+	default:
+	}
+	if err := c.enc.Encode(jsonrpcNotification{JSONRPC: "2.0", Method: method, Params: params}); err != nil {
+		return fmt.Errorf("mcp %q notify: %w", c.name, err)
+	}
+	return nil
 }
 
 // stop terminates the server process.

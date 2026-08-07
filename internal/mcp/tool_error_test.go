@@ -18,7 +18,8 @@ type fakeConn struct {
 func (f *fakeConn) call(context.Context, string, any) (json.RawMessage, error) {
 	return f.raw, f.err
 }
-func (f *fakeConn) stop() {}
+func (f *fakeConn) notify(context.Context, string, any) error { return nil }
+func (f *fakeConn) stop()                                     {}
 
 // TestMCPToolSurfacesErrorCode: when the server returns a JSON-RPC error, the
 // wrapped *RPCError's code must appear in the tool result the model sees, not
