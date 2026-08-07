@@ -2,7 +2,7 @@
 id: 18
 slug: mcp-streamable-http
 title: Streamable HTTP transport for MCP (v2025-03-26)
-status: proposed
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-06
@@ -16,10 +16,11 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/mcp-streamable-http
 pr:
 blocked_by:
 reconciled: false
+claimed_at: 2026-08-07T05:37:18Z
 ---
 
 ## Artifacts
