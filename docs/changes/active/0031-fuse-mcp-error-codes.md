@@ -2,11 +2,11 @@
 id: 31
 slug: mcp-error-codes
 title: Adopt MCP-specific JSON-RPC error code range
-status: proposed
+status: in-progress
 priority: low
 type: chore
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-07
 depends_on: [3]
 related: [19]
 discovered_from: [18]
@@ -16,10 +16,11 @@ plan:
 results:
 trivial: true
 auto_groomable:
-branch:
+branch: feat/mcp-error-codes
 pr:
 blocked_by:
 reconciled: false
+claimed_at: 2026-08-07T01:43:07Z
 ---
 
 ## Artifacts
