@@ -30,7 +30,7 @@ One curated finding per file; this index is the hint surface. Load it, then read
 
 ## verification
 
-- [verify-tool-loop-at-gateway-seam](verify-tool-loop-at-gateway-seam.md) — when a change alters what the model sees or does per turn (tool schemas, budgets, strips, caps), verify with the real binary against a scripted LLM_GATEWAY_URL double that logs each request's tools[] — the TUI harness fakes the Completer seam and never exercises the cmd/fuse wiring · also: agents, tui, testing ⟨needs promotion⟩
+- [verify-tool-loop-at-gateway-seam](verify-tool-loop-at-gateway-seam.md) — when a change alters what the model sees or does per turn (tool schemas, budgets, strips, caps), verify with the real binary against a scripted LLM_GATEWAY_URL double that logs each request's tools[] — the TUI harness fakes the Completer seam and never exercises the cmd/fuse wiring · also: agents, tui, testing, mcp ⟨needs promotion⟩
 
 ## workflow
 

@@ -4,10 +4,10 @@ slug: verify-tool-loop-at-gateway-seam
 title: Verify agent-loop changes at the model-facing gateway seam — a scripted local gateway drives the real binary where faked-seam harnesses cannot reach
 hook: "when a change alters what the model sees or does per turn (tool schemas, budgets, strips, caps), verify with the real binary against a scripted LLM_GATEWAY_URL double that logs each request's tools[] — the TUI harness fakes the Completer seam and never exercises the cmd/fuse wiring"
 promotion_state: candidate
-changes: [33, 36]
+changes: [33, 36, 31]
 created: 2026-08-06
 updated: 2026-08-07
-topics: [verification, agents, tui, testing]
+topics: [verification, agents, tui, testing, mcp]
 ---
 
 ## Apply
@@ -49,3 +49,21 @@ before the event ever fires.
   compounds with [[patch-every-cloned-child-builder]]: when a fix corrects one of two
   parallel counter/render sites, grep for the sibling — a green suite that pins only the
   site you fixed proves nothing about the one you didn't.
+- 2026-08-07 (#31, PR #22) — MCP error-code adoption. Two verification lessons. **(1) The
+  faked-Completer seam does NOT block the tool-executor seam.** teatest fakes the *model*
+  (scriptedCompleter), but you can still drive the REAL `MCPTool.Execute → client.call →
+  server` round trip inside the live `ShellModel` by injecting a real `tools.Registry` (MCP
+  tools registered by a real `mcp.Manager`) as the agent's ToolExecutor and scripting the
+  completer to emit the tool_calls — then assert on the tool-result messages fed into the
+  completer's *second* request. So the MCP client path is teatest-reachable even though
+  spawn wiring is not. **(2) Do NOT try to drive the shipped TUI via a PTY.** Piping
+  keystrokes to `fuse shell`'s bubbletea alt-screen under a pty produced zero gateway calls
+  — the alt-screen never processed the input — so the turn never ran. teatest (in-process,
+  `tm.Send(tea.KeyMsg{...})`) is the working path; the PTY is a dead end. **(3)** A hermetic
+  real MCP server needs no external script: re-exec the test binary with `-test.run=<helper>`
+  + an env flag and run a ~30-line JSON-RPC stdio loop, `os.Exit(0)` before the test
+  framework prints its summary so stdout stays a clean JSON-RPC stream. Also surfaced a real
+  bug the round trip caught: the client preserved the JSON-RPC code in a typed error but
+  `MCPTool.Execute` rendered it with `%v`, dropping the code before the model saw it — a
+  preserved value nobody surfaces is invisible; assert on what the *consumer* emits, not what
+  the producer retains.
