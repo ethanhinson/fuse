@@ -2,7 +2,7 @@
 id: 18
 slug: mcp-streamable-http
 title: Streamable HTTP transport for MCP (v2025-03-26)
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-06
@@ -13,14 +13,14 @@ discovered_from: []
 adrs: [11]
 spec: docs/superpowers/specs/2026-08-07-mcp-streamable-http-design.md
 plan: docs/superpowers/plans/2026-08-07-mcp-streamable-http-plan.md
-results:
+results: docs/results/2026-08-07-mcp-streamable-http-results.md
 trivial: false
 auto_groomable:
 branch: feat/mcp-streamable-http
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/24
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-07T06:05:00Z
+claimed_at: 2026-08-07T06:08:00Z
 ---
 
 ## Artifacts
@@ -30,6 +30,8 @@ claimed_at: 2026-08-07T06:05:00Z
 |---|---|
 | Spec | [2026-08-07-mcp-streamable-http-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-07-mcp-streamable-http-design.md) |
 | Plan | [2026-08-07-mcp-streamable-http-plan.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-streamable-http/docs/superpowers/plans/2026-08-07-mcp-streamable-http-plan.md) |
+| Results | [2026-08-07-mcp-streamable-http-results.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-streamable-http/docs/results/2026-08-07-mcp-streamable-http-results.md) |
+| PR | [#24](https://github.com/ethanhinson/fuse/pull/24) |
 | ADRs | [ADR-0011](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0011-streamable-http-mcp-transport-request-scoped.md) |
 <!-- docket:artifacts:end -->
 
