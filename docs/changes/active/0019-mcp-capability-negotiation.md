@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/mcp-capability-negotiation
 pr:
 blocked_by:
-claimed_at: 2026-08-07T04:06:56Z
-reconciled: false
+claimed_at: 2026-08-07T04:08:00Z
+reconciled: true
 ---
 
 ## Artifacts
@@ -53,3 +53,7 @@ fuse's MCP client does **neither** today — `startAndDiscover` opens the transp
 - Rejecting connections over version or capability mismatch — fails-open throughout.
 
 Full design, type sketch, and testing strategy in the linked spec.
+
+## Reconcile log
+
+- **2026-08-07** — Verified spec against current `internal/mcp/` at claim time; no drift (spec was authored 2026-08-06 against this same tree). Confirmed: `startAndDiscover` (`manager.go`) still jumps straight to `tools/list` with no `initialize`; its sole caller is `Manager.Add`, so widening its return to carry `caps`/`protoVer` is contained. `mcpConn` (`conn.go`) has only `call`/`stop` — `notify` is a genuine addition; since `jsonrpcRequest.ID` is not `omitempty`, the stdio/http `notify` paths need a distinct id-less notification frame. Server `initialize` (`server.go:74`) hardcodes `2024-11-05` and ignores `req.Params` (available as `json.RawMessage`) — the version echo parses it. `--live` render site is `cmd/fuse/mcps.go` (`mgr.Status()` table, NAME/TRANSPORT/AUTH/STATUS/TOOLS) — protocol-version + capabilities surface added there. No scope change; proceeding to plan.
