@@ -1,13 +1,18 @@
 # Backlog
 
-**39 changes** — 🟡 13 proposed · ✅ 22 done · 🗑️ 4 killed
+**39 changes** — 🟢 1 in progress · 🟡 12 proposed · ✅ 22 done · 🗑️ 4 killed
 
-## 🟡 Proposed (13)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0019](active/0019-mcp-capability-negotiation.md) | MCP capability negotiation — structured init handshake | `high` | `feat` | [spec](../superpowers/specs/2026-08-06-mcp-capability-negotiation-design.md) | `feat/mcp-capability-negotiation` |
+
+## 🟡 Proposed (12)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0018](active/0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | `high` | `feat` | needs-brainstorm |
-| [0019](active/0019-mcp-capability-negotiation.md) | MCP capability negotiation — structured init handshake | `high` | `feat` | build-ready |
 | [0020](active/0020-mcp-progress-streaming.md) | MCP `$/progress` notifications and streaming tool results | `medium` | `feat` | ⏳ waiting on #19 — not yet built |
 | [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | ⏳ waiting on #19 — not yet built |
 | [0022](active/0022-mcp-websocket-transport.md) | WebSocket transport for MCP | `low` | `feat` | needs-brainstorm |
