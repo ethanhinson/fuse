@@ -12,7 +12,7 @@ related: [7, 19, 20, 21]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-07-mcp-streamable-http-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-07-mcp-streamable-http-plan.md
 results:
 trivial: false
 auto_groomable:
@@ -20,7 +20,7 @@ branch: feat/mcp-streamable-http
 pr:
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-07T05:40:00Z
+claimed_at: 2026-08-07T05:42:00Z
 ---
 
 ## Artifacts
@@ -29,6 +29,7 @@ claimed_at: 2026-08-07T05:40:00Z
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-07-mcp-streamable-http-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-07-mcp-streamable-http-design.md) |
+| Plan | [2026-08-07-mcp-streamable-http-plan.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-streamable-http/docs/superpowers/plans/2026-08-07-mcp-streamable-http-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
