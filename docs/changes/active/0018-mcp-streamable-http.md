@@ -48,6 +48,7 @@ The existing MCP client supports stdio and HTTP/SSE transports (change 0007). Th
 - **OAuth2 reuse**: `GetAccessToken` unchanged; manual `401`-refresh and `404`-reinit retries rewind the request body from `GetBody()` (regression-guarded).
 - **Manager wiring**: a `"streamable-http"` case in **`dial()`** (`internal/mcp/manager.go`) — the transport-agnostic `handshakeAndDiscover` (from change 0019) drives `initialize`/`initialized`/`tools/list` through the interface unchanged.
 - **Backward compatibility**: stdio and HTTP/SSE transports untouched; transport is config-selected, never auto-detected.
+- **MCP result rendering** (added on request, PR #24): `MCPTool.Execute` previously showed only `text` content blocks and silently dropped `image`/`audio`/`resource`/`resource_link` + `structuredContent` — a non-text result rendered blank in the TUI and to the model. `renderMCPResult` now renders every content-block type faithfully (text verbatim; non-text as descriptors), surfaces `structuredContent`, labels unknown types, and never renders blank.
 
 Full design — client struct, per-call flow, the notification seam, and test matrix — in the linked spec (reconciled against change 0019).
 
