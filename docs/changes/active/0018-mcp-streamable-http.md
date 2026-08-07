@@ -6,12 +6,12 @@ status: proposed
 priority: high
 type: feat
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-07
 depends_on: [7]
-related: [7]
+related: [7, 19, 20, 21]
 discovered_from: []
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-07-mcp-streamable-http-design.md
 plan:
 results:
 trivial: false
@@ -27,6 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-07-mcp-streamable-http-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-07-mcp-streamable-http-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
@@ -35,19 +36,18 @@ The existing MCP client supports stdio and HTTP/SSE transports (change 0007). Th
 
 ## What changes
 
-- A new `StreamableHTTPClient` in `internal/mcp/` implementing the `mcpConn` interface.
-- **Connection flow**: single POST to a configured endpoint URL with `Content-Type: application/json` and `Accept: text/event-stream` (for streaming responses) or `Accept: application/json` (for immediate responses). The server responds either immediately (standard JSON-RPC response) or streams back newline-delimited JSON-RPC messages using `Transfer-Encoding: chunked`.
-- **Streaming response pump**: if the server responds with `Content-Type: text/event-stream`, a read pump (similar to the existing `readSSEPump`) parses SSE events and fans them to pending callers. If the response is immediate `application/json`, it's treated as a single synchronous response.
-- **Integration into `internal/mcp/manager.go`**: route `transport: "streamable-http"` or `transport: "http"` with `streamable: true` to `newStreamableHTTPClient`. Reuse the existing `GetAccessToken` OAuth2 flow unchanged.
-- **Config surface**: `MCPServerConfig` gains an optional `streamable: true` flag (default `false` for backward compat) alongside existing `url` and `auth` fields.
-- **Backward compatibility**: existing HTTP/SSE servers and stdio servers continue to work unchanged. The transport is selected by the config, not auto-detected.
+- A new `StreamableHTTPClient` (`internal/mcp/streamable_http_client.go`) satisfying the existing `mcpConn` interface, selected by a new **`transport: "streamable-http"`** config value — no new boolean flag; the existing `url` + `auth` fields carry over unchanged.
+- **Session lifecycle** (full scope): the client owns its own `initialize` exchange, captures the `Mcp-Session-Id` response header, echoes it (and `MCP-Protocol-Version`) on every subsequent request, `DELETE`s the session on `stop()`, and re-initializes on a `404` (expired session). A stateless server (no session id) degrades cleanly.
+- **Dual-mode responses**, request-scoped (no persistent background pump): each `call()` branches on the response `Content-Type` — `application/json` is one synchronous response; `text/event-stream` runs a short-lived SSE pump that resolves the matching id.
+- **Resumability**: a response stream that disconnects mid-response reconnects via `Last-Event-Id` (bounded retries).
+- **OAuth2 reuse**: `GetAccessToken` unchanged; manual `401`-refresh and `404`-reinit retries rewind the request body from `GetBody()` (regression-guarded).
+- **Manager wiring**: a `"streamable-http"` case in `startAndDiscover` (`internal/mcp/manager.go`).
+- **Backward compatibility**: stdio and HTTP/SSE transports untouched; transport is config-selected, never auto-detected.
+
+Full design — client struct, per-call flow, the notification seam, and test matrix — in the linked spec.
 
 ## Out of scope
 
+- The standalone server-initiated `GET` SSE stream (server→client notifications). That is the notification-routing seam owned by changes 0020/0021 (dependent on 0019); this client leaves a named `handleServerFrame` seam but routes only per-call response frames.
 - Deprecation or removal of the HTTP/SSE transport — both remain supported.
-- WebSocket transport (separate change).
-- gRPC transport (not on the MCP standards track).
-
-## Research notes (input for the brainstorm)
-
-Streamable HTTP differs from HTTP/SSE in three key ways: (1) single endpoint instead of GET/sse + POST/messages split; (2) the server may respond immediately (synchronous) or via chunked-encoding SSE (asynchronous); (3) no SSE `endpoint` event negotiation — the URL is just the server's base URL. The OAuth2 flow is identical (Bearer token), so the existing `GetAccessToken`, PKCE, token refresh, and credential caching all port directly. The Go stdlib `net/http` handles chunked transfer-encoding transparently on the response body read side; the challenge is detecting which response mode the server chose and routing accordingly. Some servers may advertise capability in the init response — see capability negotiation (change 0019).
+- WebSocket transport (change 0022); gRPC (not on the MCP standards track).
