@@ -219,6 +219,15 @@ func dial(srv config.MCPServerConfig) (mcpConn, error) {
 			return nil, fmt.Errorf("mcp server %q: auth: %w", srv.Name, authErr)
 		}
 		return newHTTPClient(srv.Name, srv.URL, token)
+	case "streamable-http":
+		if srv.URL == "" {
+			return nil, fmt.Errorf("mcp server %q: transport %q requires a url", srv.Name, srv.Transport)
+		}
+		token, authErr := GetAccessToken(srv.Name, srv.URL, srv.Auth)
+		if authErr != nil {
+			return nil, fmt.Errorf("mcp server %q: auth: %w", srv.Name, authErr)
+		}
+		return newStreamableHTTPClient(srv.Name, srv.URL, token, srv.Auth)
 	default:
 		// "stdio" or "" — existing behavior.
 		env := buildEnv(srv.Env)
