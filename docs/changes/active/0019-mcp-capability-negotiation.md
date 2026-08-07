@@ -2,11 +2,11 @@
 id: 19
 slug: mcp-capability-negotiation
 title: MCP capability negotiation — structured init handshake
-status: proposed
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-07
 depends_on: [3, 7]
 related: [18, 20, 21]
 discovered_from: []
@@ -16,9 +16,10 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/mcp-capability-negotiation
 pr:
 blocked_by:
+claimed_at: 2026-08-07T04:06:56Z
 reconciled: false
 ---
 
