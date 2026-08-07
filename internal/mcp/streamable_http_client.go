@@ -296,45 +296,66 @@ func (c *StreamableHTTPClient) reinitialize(ctx context.Context) error {
 // silently. The last seen SSE id: is returned for resumability. A stream that
 // ends before the matching frame yields errStreamClosed.
 func (c *StreamableHTTPClient) drainStream(body io.Reader, id string) (json.RawMessage, string, error) {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	// A bufio.Reader (not bufio.Scanner) avoids a fixed per-line ceiling: a
+	// single SSE data: line can carry a large tool result (file contents, a wiki
+	// page) that would overflow Scanner's token cap and fail silently.
+	br := bufio.NewReader(body)
 	var dataLines []string
 	var lastEventID string
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	for {
+		line, err := br.ReadString('\n')
+		trimmed := strings.TrimRight(line, "\r\n")
 		switch {
-		case strings.HasPrefix(line, "id:"):
-			lastEventID = strings.TrimSpace(strings.TrimPrefix(line, "id:"))
-		case strings.HasPrefix(line, "data:"):
-			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-		case line == "":
-			if len(dataLines) == 0 {
-				continue
+		case strings.HasPrefix(trimmed, "id:"):
+			lastEventID = strings.TrimSpace(strings.TrimPrefix(trimmed, "id:"))
+		case strings.HasPrefix(trimmed, "data:"):
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(trimmed, "data:")))
+		case trimmed == "" && line != "": // an event-terminating blank line (not EOF)
+			if len(dataLines) > 0 {
+				raw := strings.Join(dataLines, "\n")
+				dataLines = dataLines[:0]
+				if result, rpcErr, matched := c.dispatchFrame(raw, id); matched {
+					return result, lastEventID, rpcErr
+				}
 			}
-			raw := strings.Join(dataLines, "\n")
-			dataLines = dataLines[:0]
+		}
 
-			var resp jsonrpcResponse
-			if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-				continue // not a JSON-RPC frame — skip
+		if err != nil {
+			if err == io.EOF {
+				// Flush a final frame the server closed without a trailing blank
+				// line (SSE dispatches on a blank line, but be lenient).
+				if len(dataLines) > 0 {
+					if result, rpcErr, matched := c.dispatchFrame(strings.Join(dataLines, "\n"), id); matched {
+						return result, lastEventID, rpcErr
+					}
+				}
+				return nil, lastEventID, errStreamClosed
 			}
-			if resp.ID != id {
-				// Id-less server notification or a frame for another id — route
-				// to the seam (0020/0021 replace this), never correlate here.
-				c.handleServerFrame(json.RawMessage(raw))
-				continue
-			}
-			if resp.Error != nil {
-				return nil, lastEventID, &RPCError{Code: resp.Error.Code, Message: resp.Error.Message}
-			}
-			return resp.Result, lastEventID, nil
+			return nil, lastEventID, fmt.Errorf("stream read: %w", err)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, lastEventID, fmt.Errorf("stream read: %w", err)
+}
+
+// dispatchFrame parses one SSE data payload. If it is the JSON-RPC response for
+// wantID it returns (result, rpcErr, true); an id-less frame or a frame for a
+// different id is routed to the notification seam and returns matched=false. A
+// non-JSON-RPC payload is ignored.
+func (c *StreamableHTTPClient) dispatchFrame(raw, wantID string) (json.RawMessage, error, bool) {
+	var resp jsonrpcResponse
+	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+		return nil, nil, false // not a JSON-RPC frame — skip
 	}
-	return nil, lastEventID, errStreamClosed
+	if resp.ID != wantID {
+		// Id-less server notification or a frame for another id — route to the
+		// seam (0020/0021 replace this), never correlate here.
+		c.handleServerFrame(json.RawMessage(raw))
+		return nil, nil, false
+	}
+	if resp.Error != nil {
+		return nil, &RPCError{Code: resp.Error.Code, Message: resp.Error.Message}, true
+	}
+	return resp.Result, nil, true
 }
 
 // resume reconnects a broken response stream via a GET carrying Last-Event-Id,

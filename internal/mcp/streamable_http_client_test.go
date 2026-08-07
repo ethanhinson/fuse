@@ -215,6 +215,30 @@ func TestStreamableStreamingResponse(t *testing.T) {
 	}
 }
 
+// A single SSE data: frame larger than bufio.Scanner's token cap must not fail —
+// large tool results (file contents, wiki pages) arrive as one frame.
+func TestStreamableLargeStreamFrame(t *testing.T) {
+	big := strings.Repeat("A", 512*1024) // 512 KiB, well past Scanner's 64 KiB default
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, id, _ := observe(&reqRecord{}, r)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fl := w.(http.Flusher)
+		fmt.Fprintf(w, "id: e1\ndata: %s\n\n", rpcResult(id, map[string]any{"blob": big}))
+		fl.Flush()
+	}))
+	defer srv.Close()
+
+	client, _ := newStreamableHTTPClient("s", srv.URL, "", config.MCPAuthConfig{})
+	raw, err := client.call(context.Background(), "tools/call", nil)
+	if err != nil {
+		t.Fatalf("call with large frame: %v", err)
+	}
+	if !strings.Contains(string(raw), big) {
+		t.Fatalf("large payload truncated (%d bytes returned)", len(raw))
+	}
+}
+
 // --- Task 5: session lifecycle — echo on every request + DELETE on stop ---
 
 func TestStreamableStopDeletesSession(t *testing.T) {
