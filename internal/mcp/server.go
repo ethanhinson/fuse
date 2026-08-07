@@ -73,7 +73,7 @@ func (s *Server) dispatch(ctx context.Context, req serverReq) serverResp {
 	switch req.Method {
 	case "initialize":
 		return s.ok(req.ID, map[string]any{
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": negotiateVersion(req.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "fuse", "version": "1.0.0"},
 		})
@@ -84,6 +84,32 @@ func (s *Server) dispatch(ctx context.Context, req serverReq) serverResp {
 	default:
 		return s.errResp(req.ID, ErrMethodNotFound, "method not found: "+req.Method)
 	}
+}
+
+// serverDefaultProtocolVersion is the MCP version fuse's server advertises when
+// the client requests an unrecognized (or no) version.
+const serverDefaultProtocolVersion = "2025-03-26"
+
+// recognizedProtocolVersions are the versions fuse's server will echo back to a
+// client (version negotiation, server side).
+var recognizedProtocolVersions = map[string]bool{
+	"2025-03-26": true,
+	"2024-11-05": true,
+}
+
+// negotiateVersion echoes the client's requested protocolVersion when fuse
+// recognizes it, else advertises the server default.
+func negotiateVersion(params json.RawMessage) string {
+	var p struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if len(params) > 0 {
+		_ = json.Unmarshal(params, &p)
+	}
+	if recognizedProtocolVersions[p.ProtocolVersion] {
+		return p.ProtocolVersion
+	}
+	return serverDefaultProtocolVersion
 }
 
 func (s *Server) handleList(id json.RawMessage) serverResp {

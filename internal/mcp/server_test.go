@@ -104,6 +104,55 @@ func TestDispatchUnknownMethodIs32601(t *testing.T) {
 	}
 }
 
+func initReq(t *testing.T, version string) serverReq {
+	t.Helper()
+	var params json.RawMessage
+	if version != "" {
+		params = json.RawMessage(`{"protocolVersion":"` + version + `"}`)
+	}
+	return serverReq{JSONRPC: "2.0", ID: json.RawMessage(`"1"`), Method: "initialize", Params: params}
+}
+
+func initResultVersion(t *testing.T, resp serverResp) string {
+	t.Helper()
+	if resp.Error != nil {
+		t.Fatalf("initialize returned error: %+v", resp.Error)
+	}
+	var r struct {
+		ProtocolVersion string         `json:"protocolVersion"`
+		Capabilities    map[string]any `json:"capabilities"`
+	}
+	if err := json.Unmarshal(resp.Result, &r); err != nil {
+		t.Fatalf("unmarshal initialize result: %v", err)
+	}
+	if _, ok := r.Capabilities["tools"]; !ok {
+		t.Errorf("server must advertise the tools capability, got %v", r.Capabilities)
+	}
+	return r.ProtocolVersion
+}
+
+func TestInitializeEchoesRecognizedVersion(t *testing.T) {
+	s := newTestServer(tools.NewRegistry())
+	if got := initResultVersion(t, s.dispatch(context.Background(), initReq(t, "2025-03-26"))); got != "2025-03-26" {
+		t.Errorf("echoed version = %q, want 2025-03-26", got)
+	}
+	// A recognized older version negotiates down to that version.
+	if got := initResultVersion(t, s.dispatch(context.Background(), initReq(t, "2024-11-05"))); got != "2024-11-05" {
+		t.Errorf("echoed version = %q, want 2024-11-05", got)
+	}
+}
+
+func TestInitializeUnknownVersionFallsBackToDefault(t *testing.T) {
+	s := newTestServer(tools.NewRegistry())
+	if got := initResultVersion(t, s.dispatch(context.Background(), initReq(t, "1999-01-01"))); got != serverDefaultProtocolVersion {
+		t.Errorf("unknown version → %q, want default %q", got, serverDefaultProtocolVersion)
+	}
+	// No params at all → default.
+	if got := initResultVersion(t, s.dispatch(context.Background(), initReq(t, ""))); got != serverDefaultProtocolVersion {
+		t.Errorf("no version → %q, want default %q", got, serverDefaultProtocolVersion)
+	}
+}
+
 // echoTool is a minimal registered tool for server tests.
 type echoTool struct{}
 
