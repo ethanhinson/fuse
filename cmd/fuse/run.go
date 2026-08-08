@@ -472,6 +472,19 @@ func wireChildBlackboard(childToolReg *tools.Registry, bb *agent.Blackboard, chi
 	}
 }
 
+// wireRootBlackboard registers the five blackboard tools on a root tool registry,
+// bound to the root node for provenance. It is the root-side counterpart to
+// wireChildBlackboard: every agent entry point (main.go run(), shell.go,
+// research_probe.go) calls it after building its root registry, so the shared
+// call site is the single place root blackboard wiring lives — a dropped call in
+// any one entry point is a visible divergence, and the wiring assertion test
+// exercises this exact helper (learning patch-every-cloned-child-builder).
+func wireRootBlackboard(toolReg *tools.Registry, bb *agent.Blackboard, rootNode *agent.AgentNode) {
+	for _, t := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {
+		toolReg.Register(t)
+	}
+}
+
 // contains reports whether s contains v.
 func contains(s []string, v string) bool {
 	for _, x := range s {

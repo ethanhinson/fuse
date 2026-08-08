@@ -239,9 +239,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	}
 	toolReg.Register(rootSpawn)
 	// Root-node-wired blackboard tools (provenance = rootNode).
-	for _, t := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {
-		toolReg.Register(t)
-	}
+	wireRootBlackboard(toolReg, bb, rootNode)
 
 	// Root renderer: tree node + recorder, same MultiRenderer shape as children.
 	rootR := tui.NewMultiRenderer(

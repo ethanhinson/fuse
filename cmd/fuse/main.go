@@ -226,9 +226,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
 		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
 	// Root-node-wired blackboard tools (provenance = rootNode).
-	for _, t := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {
-		toolReg.Register(t)
-	}
+	wireRootBlackboard(toolReg, bb, rootNode)
 
 	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil, oneShotBudget, rateGate)
 	if err != nil {

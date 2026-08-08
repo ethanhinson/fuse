@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/agent"
@@ -38,9 +41,8 @@ func TestRootBlackboardToolsWired(t *testing.T) {
 	for _, tl := range tools.DefaultTools() {
 		reg.Register(tl)
 	}
-	for _, tl := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {
-		reg.Register(tl)
-	}
+	// Exercise the real production helper the entry points call.
+	wireRootBlackboard(reg, bb, rootNode)
 
 	names := regNames(reg)
 	for _, n := range blackboardToolNames {
@@ -135,4 +137,49 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestEveryAgentEntryPointWiresBlackboard is the regression net the spec asked
+// for: the blackboard tool must be wired at every agent entry point (root +
+// child builder). The child-builder closures and root registration live inline
+// in three files, so a helper-level registry test cannot catch a site that
+// simply never calls the wiring. This test enumerates the entry-point sources by
+// grepping the tree for the child-builder marker (never a frozen list — learning
+// patch-every-cloned-child-builder) and asserts each such file calls BOTH
+// wireRootBlackboard and wireChildBlackboard. Dropping either call from any
+// entry point — or adding a fourth entry point that forgets the wiring — fails
+// here.
+func TestEveryAgentEntryPointWiresBlackboard(t *testing.T) {
+	entries, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sites := 0
+	for _, f := range entries {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := string(src)
+		// A child-builder closure is the signature of an agent entry point.
+		if !strings.Contains(s, "agent.WithChildBuilder(") {
+			continue
+		}
+		sites++
+		if !strings.Contains(s, "wireRootBlackboard(") {
+			t.Errorf("%s builds an agent (WithChildBuilder) but never calls wireRootBlackboard — root blackboard wiring missing", f)
+		}
+		if !strings.Contains(s, "wireChildBlackboard(") {
+			t.Errorf("%s builds an agent (WithChildBuilder) but never calls wireChildBlackboard — child blackboard wiring missing", f)
+		}
+	}
+	// Guard against the marker changing out from under the test (which would make
+	// it silently pass by finding zero sites). Today there are three entry points:
+	// main.go, shell.go, research_probe.go.
+	if sites < 3 {
+		t.Errorf("expected >=3 agent entry-point files with WithChildBuilder, found %d — re-check the marker", sites)
+	}
 }
