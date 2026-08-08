@@ -12,12 +12,12 @@ related: [20]
 discovered_from: [19]
 adrs: []
 spec: docs/superpowers/specs/2026-08-08-mcp-resource-subscriptions-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-08-mcp-resource-subscriptions.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/mcp-resource-subscriptions
-claimed_at: 2026-08-08T19:23:36Z
+claimed_at: 2026-08-08T19:27:45Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-08-mcp-resource-subscriptions-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-mcp-resource-subscriptions-design.md) |
+| Plan | [2026-08-08-mcp-resource-subscriptions.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-resource-subscriptions/docs/superpowers/plans/2026-08-08-mcp-resource-subscriptions.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
