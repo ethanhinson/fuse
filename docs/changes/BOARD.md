@@ -10,7 +10,7 @@
 | [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | ⏳ waiting on #20 — not yet built |
 | [0022](active/0022-mcp-websocket-transport.md) | WebSocket transport for MCP | `low` | `feat` | needs-brainstorm |
 | [0023](active/0023-agent-blackboard.md) | Shared result blackboard for inter-agent communication | `high` | `feat` | build-ready |
-| [0024](active/0024-structured-delegation.md) | Structured delegation — expected result schemas for spawn_agent | `medium` | `feat` | needs-brainstorm |
+| [0024](active/0024-structured-delegation.md) | Structured delegation — expected result schemas for spawn_agent | `medium` | `feat` | build-ready |
 | [0025](active/0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | `medium` | `feat` | ⏳ waiting on #23 — not yet built |
 | [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | ⏳ waiting on #23 — not yet built |
 | [0027](active/0027-context-summarization.md) | Anchored context summarization at compression threshold | `high` | `feat` | build-ready |
