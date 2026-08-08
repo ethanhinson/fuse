@@ -2,7 +2,7 @@
 id: 26
 slug: agent-workflow-composition
 title: Workflow composition — chain, fan-out, and conditional routing
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-06
@@ -13,12 +13,12 @@ discovered_from: []
 adrs: [14]
 spec: docs/superpowers/specs/2026-08-08-agent-workflow-composition-design.md
 plan: docs/superpowers/plans/2026-08-08-agent-workflow-composition-plan.md
-results:
+results: docs/results/2026-08-08-agent-workflow-composition-results.md
 trivial: false
 auto_groomable:
 branch: feat/agent-workflow-composition
-claimed_at: 2026-08-08T22:08:21Z
-pr:
+claimed_at: 2026-08-08T22:11:18Z
+pr: https://github.com/ethanhinson/fuse/pull/32
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-08-agent-workflow-composition-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-agent-workflow-composition-design.md) |
 | Plan | [2026-08-08-agent-workflow-composition-plan.md](https://github.com/ethanhinson/fuse/blob/feat/agent-workflow-composition/docs/superpowers/plans/2026-08-08-agent-workflow-composition-plan.md) |
+| Results | [2026-08-08-agent-workflow-composition-results.md](https://github.com/ethanhinson/fuse/blob/feat/agent-workflow-composition/docs/results/2026-08-08-agent-workflow-composition-results.md) |
+| PR | [#32](https://github.com/ethanhinson/fuse/pull/32) |
 | ADRs | [ADR-0014](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0014-pipeline-conditional-routing-skip-propagation.md) |
 <!-- docket:artifacts:end -->
 
