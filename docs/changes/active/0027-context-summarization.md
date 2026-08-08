@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/context-summarization
-claimed_at: 2026-08-08T08:55:01Z
+claimed_at: 2026-08-08T08:58:00Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -77,3 +77,36 @@ shape: (1) segment persistence is **deferred to change 0030** via a no-op `Segme
 **anchored** (the previous summary is updated incrementally); (4) the default summarizer model is
 the **main model** (`context.summarization.model` empty). This change anchors a four-change
 cluster — 0028/0029/0030 all build on it — so the scope is kept deliberately tight.
+
+## Reconcile log
+
+### 2026-08-08 — reconcile before build (implementer)
+
+Reconciled the change + spec against current `main` (`internal/agent/loop.go`,
+`internal/config/schema.go`, `internal/model/adapter.go`) and the related cluster
+(#0012 `done`, #0028/#0029/#0030 still proposed). Findings:
+
+- **Dependency satisfied.** `depends_on: [12]` (subagent-ux) is archived `done` — build-ready
+  confirmed, matching the digest.
+- **Trigger site is exactly as specced.** The over-budget branch in `Agent.Run` still calls
+  `pruneOldToolResults(messages, protectBudget(window, false))` inside `if estimate > budget`.
+  The spec cites `loop.go:142`; the branch now sits at `loop.go:141` after unrelated edits —
+  cosmetic line drift only, the insertion point is unambiguous. No code has moved out from under
+  the design.
+- **Constants unchanged.** `pruneThresholdPct = 85`, `pruneProtectTokens = 40_000`,
+  `bytesPerToken = 4`, `protectBudget(window, recovery)` all present as the spec assumes; the
+  summarizer threshold shares the same 85% and the recency selector reuses
+  `protectBudget(window, false)`.
+- **Config pattern confirmed.** The existing `AutoConfig.ClassifierModel` (a named secondary
+  model alias) is the precedent for `context.summarization.model` — same shape, empty ⇒ main
+  model (D4).
+- **Bounded transport confirmed.** `internal/model/adapter.go` exposes `WithTraceLabel`,
+  `RequestTimeout`, `ResponseHeaderTimeout`, `RetryBackoff`, `MaxAttempts` — the summarizer will
+  reuse this transport with a distinct `summarizer` trace label per the `bound-every-model-call`
+  learning.
+- **Widened seam is authoritative.** The spec's 2026-08-08 amendment (from grooming #0030) widens
+  `SegmentSink.Archive` to take the `SegmentRegion` struct; #0030's design D1 corroborates it.
+  Ship the widened struct signature so #0030 plugs in without a seam mismatch.
+
+No obsolescence, no scope drift, no fundamental invalidation. AUTO_CAPTURE disabled — no adjacent
+follow-up work surfaced beyond the already-tracked #0028/#0029/#0030 cluster. Proceeding to plan.
