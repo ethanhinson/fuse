@@ -77,6 +77,11 @@ type Manager struct {
 	trackMu      sync.Mutex
 	tracking     map[string]*callTracking
 	tokenCounter atomic.Uint64
+
+	// progressObservers receive correlated ProgressEvents (D5). The TUI layer
+	// subscribes via OnProgress.
+	progressMu        sync.Mutex
+	progressObservers []ProgressObserver
 }
 
 // NewManager starts all configured MCP servers and registers their tools.
@@ -87,6 +92,9 @@ func NewManager(servers []config.MCPServerConfig, reg *tools.Registry) (*Manager
 		servers: make(map[string]*managedServer),
 		reg:     reg,
 	}
+	// Register the built-in notification handlers before any server is added, so
+	// a $/progress (or $/stream, Task 6) arriving during discovery is routed.
+	m.OnNotification(progressNotifyMethod, m.handleProgress)
 	for _, srv := range servers {
 		if err := m.Add(srv); err != nil {
 			log.Printf("[mcp] skipping server %q: %v", srv.Name, err)
