@@ -172,13 +172,97 @@ func TestTUI_BlackboardTabScreenshot(t *testing.T) {
 	frame := captureOverlayFrame(t, tm, "blackboard-tab")
 
 	for _, want := range []string{
-		"plan/outline",       // structured key
-		`"steps":3`,          // its JSON value
-		"facet/sqlite",       // second key
-		"research/facet-2",   // child writer provenance
+		"plan/outline",     // structured key
+		`"steps":3`,        // its JSON value
+		"facet/sqlite",     // second key
+		"research/facet-2", // child writer provenance
 	} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("blackboard-tab screenshot missing %q\n---\n%s", want, frame)
 		}
+	}
+}
+
+// boardShellModel builds a ShellModel wired with a real tree + a prepopulated
+// blackboard, ready to drive through the live program. Shared by the discovery
+// tests below.
+func boardShellModel(t *testing.T) ShellModel {
+	t.Helper()
+	tree := agent.NewAgentTree("alpha", "test/model")
+	root := tree.Node(tree.RootID())
+	bb := agent.NewBlackboard(tree)
+	bb.Put("plan/outline", map[string]any{"steps": float64(3)}, root.ID, "alpha")
+	build := func(_ string, r agent.Renderer, _ permissions.ApprovalFunc) (*agent.Agent, error) {
+		return agent.New(assistantOnce(""), noopToolExec{}, r, "test/model", "", 25, 0), nil
+	}
+	return NewShellModel("alpha", false, "", testRegistry(), nil, build, permissions.NewSessionMode(permissions.ModeSmart), true).
+		WithTree(tree).
+		WithBlackboard(bb)
+}
+
+// TestTUI_BlackboardSlashOpensBoard proves the /blackboard slash command lands
+// the overlay DIRECTLY on the Blackboard section — no "b" press needed — driven
+// as real keystrokes through the live program. This is the dedicated entry point
+// the user asked for alongside the in-overlay "b" swap.
+func TestTUI_BlackboardSlashOpensBoard(t *testing.T) {
+	m := boardShellModel(t)
+
+	bridgeCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(110, 30))
+	StartBridges(bridgeCtx, tm.GetProgram(), m.Channel(), nil, nil)
+	t.Cleanup(func() { tm.Quit() })
+
+	for _, r := range "/blackboard" {
+		tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// The board header and the entry must appear WITHOUT any "b" keystroke.
+	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+		s := stripANSI(b)
+		return bytes.Contains(s, []byte("Blackboard")) && bytes.Contains(s, []byte("plan/outline"))
+	}, teatest.WithDuration(10*time.Second), teatest.WithCheckInterval(20*time.Millisecond))
+
+	frame := captureOverlayFrame(t, tm, "blackboard-slash")
+	if !strings.Contains(frame, "plan/outline") || !strings.Contains(frame, `"steps":3`) {
+		t.Errorf("/blackboard did not open on the board\n%s", frame)
+	}
+}
+
+// TestTUI_BlackboardReachableFromDetail proves the "b" swap into the board works
+// from a node's DETAIL view, not just the top-level tree list — the "another
+// swap" the user asked for. Flow: /agents → Enter (open detail of the root node)
+// → b (board). The board must render even though we entered from detail.
+func TestTUI_BlackboardReachableFromDetail(t *testing.T) {
+	m := boardShellModel(t)
+
+	bridgeCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(110, 30))
+	StartBridges(bridgeCtx, tm.GetProgram(), m.Channel(), nil, nil)
+	t.Cleanup(func() { tm.Quit() })
+
+	// Open the agents overlay on the tree list.
+	for _, r := range "/agents" {
+		tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+		return bytes.Contains(stripANSI(b), []byte("j/k"))
+	}, teatest.WithDuration(10*time.Second), teatest.WithCheckInterval(20*time.Millisecond))
+
+	// Enter the selected node's detail view, THEN swap to the board with "b".
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+
+	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+		s := stripANSI(b)
+		return bytes.Contains(s, []byte("Blackboard")) && bytes.Contains(s, []byte("plan/outline"))
+	}, teatest.WithDuration(10*time.Second), teatest.WithCheckInterval(20*time.Millisecond))
+
+	frame := captureOverlayFrame(t, tm, "blackboard-from-detail")
+	if !strings.Contains(frame, "plan/outline") {
+		t.Errorf("b did not reach the board from the detail view\n%s", frame)
 	}
 }

@@ -74,6 +74,15 @@ func (m *AgentsModel) WithBlackboard(bb *agent.Blackboard) *AgentsModel {
 	return m
 }
 
+// ShowBlackboard opens the overlay directly on the Blackboard section, as if the
+// user had pressed "b". Used by the /blackboard slash command so it lands on the
+// board rather than the tree list. Returns the receiver for chaining.
+func (m *AgentsModel) ShowBlackboard() *AgentsModel {
+	m.inBlackboard = true
+	m.bbScroll = 0
+	return m
+}
+
 // Init is a no-op; the parent ShellModel owns the tree-update subscription.
 func (m *AgentsModel) Init() tea.Cmd { return nil }
 
@@ -92,6 +101,15 @@ func (m *AgentsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// its queue is non-empty), so only navigation keys arrive here.
 		if m.inBlackboard {
 			return m.handleBlackboardKey(msg)
+		}
+		// "b" is a global swap into the Blackboard from the tree list OR a node's
+		// detail view — the board is session-scoped, so it should be reachable
+		// wherever you are in the overlay, not only from the top-level tree.
+		// (The expanded single-event reader keeps "b" for its own scrolling.)
+		if msg.String() == "b" && !m.inEventView {
+			m.inBlackboard = true
+			m.bbScroll = 0
+			return m, nil
 		}
 		if m.inEventView {
 			return m.handleEventViewKey(msg)
@@ -189,10 +207,8 @@ func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if n > 0 && m.selected < n {
 			m.tree.CancelNode(m.nodes[m.selected].ID)
 		}
-	case "b":
-		// Toggle the session Blackboard section into the detail pane.
-		m.inBlackboard = true
-		m.bbScroll = 0
+	// "b" (enter Blackboard) is handled globally in Update, before sub-view
+	// dispatch, so it works from the detail view too — not repeated here.
 	case "q", "esc":
 		return m, func() tea.Msg { return agentsExitMsg{} }
 	}
@@ -316,7 +332,11 @@ func (m *AgentsModel) handleMouse(msg tea.MouseMsg) {
 // the pane and must window, not clip.
 func (m *AgentsModel) buildTreeLines(w int) []string {
 	rows := m.renderTreeRows(w)
-	help := treeHelpStyle.Render("j/k select  enter inspect  b board  x cancel  esc exit")
+	help := fitHelp(
+		"j/k select  enter inspect  b board  x cancel  esc exit",
+		"j/k · enter · b board · x · esc",
+		w,
+	)
 
 	visRows := m.height - 1
 	if visRows < 1 {
@@ -544,7 +564,11 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 			evtLines = all[m.detailScroll:endIdx]
 		}
 	}
-	help := treeHelpStyle.Render("j/k select  enter expand  g/G first/last  esc back")
+	help := fitHelp(
+		"j/k select  enter expand  b board  g/G first/last  esc back",
+		"j/k · enter · b board · esc",
+		w,
+	)
 
 	out := append([]string{header, rule}, evtLines...)
 	for len(out) < m.height-1 {
@@ -561,7 +585,11 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 func (m *AgentsModel) buildBlackboardLines(w int) []string {
 	header := lipgloss.NewStyle().Bold(true).Render(fitLine("Blackboard", w))
 	rule := lipgloss.NewStyle().Foreground(colMuted).Render(strings.Repeat("─", w))
-	help := treeHelpStyle.Render("j/k scroll  g top  b/esc back to tree")
+	help := fitHelp(
+		"j/k scroll  g top  b/esc back to tree",
+		"j/k · g · b/esc back",
+		w,
+	)
 
 	var body []string
 	if m.blackboard == nil {
@@ -712,7 +740,11 @@ func (m *AgentsModel) buildEventViewLines(n agent.NodeView, visible []agent.Agen
 	}
 	window := lines[m.eventScroll:end]
 
-	help := treeHelpStyle.Render("j/k scroll  g/G top/bottom  esc back to events")
+	help := fitHelp(
+		"j/k scroll  g/G top/bottom  esc back to events",
+		"j/k · g/G · esc back",
+		w,
+	)
 	out := append([]string{header, rule}, window...)
 	for len(out) < m.height-1 {
 		out = append(out, "")
@@ -967,6 +999,23 @@ func nodeElapsed(n agent.NodeView) string {
 // fitLine truncates s to w visible cells and then space-pads to exactly w.
 // This guarantees every column line is exactly w cells wide so that manual
 // column joining produces correct output without overflow or misalignment.
+// fitHelp renders a pane's help bar to fit width w without truncation jamming
+// against the divider: it prefers the full text, falls back to a compact form
+// when the pane is too narrow (the common case for the 40% tree column), and
+// only truncates if even the compact form overflows. Returned styled and padded
+// to exactly w so the divider column stays aligned. Without this a long help
+// string is hard-truncated by fitLine mid-word, dropping keys (e.g. "esc exit")
+// and butting the text straight up against the divider.
+func fitHelp(full, compact string, w int) string {
+	if lipgloss.Width(full) <= w {
+		return fitLine(treeHelpStyle.Render(full), w)
+	}
+	if lipgloss.Width(compact) <= w {
+		return fitLine(treeHelpStyle.Render(compact), w)
+	}
+	return fitLine(treeHelpStyle.Render(compact), w)
+}
+
 func fitLine(s string, w int) string {
 	vw := lipgloss.Width(s)
 	switch {
