@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/structured-delegation
-claimed_at: 2026-08-08T09:22:45Z
+claimed_at: 2026-08-08T09:24:30Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -74,3 +74,50 @@ a mismatch **degrades to free text, surfaces a note the model reads, and is logg
 and an `AgentNode` event — never fails the spawn; (4) `expects` on **both** the `spawn_agent` tool
 param and `SpawnOpts`. Two grooming findings shaped this: no Go/skill code consumes a structured
 result today (research is skill-driven, ADR-0002), and no JSON-Schema library is vendored yet.
+
+## Reconcile log
+
+### 2026-08-08 — reconcile before build (implementer)
+
+Verified the spec against the current tree (`origin/main` @ 106b792). The design holds — no
+fundamental invalidation, only line-number drift and a few wiring refinements to fold into the
+plan:
+
+- **Dependency #12** (`subagent-ux`) is archived `done`; **#26** (workflow-composition, the intended
+  consumer of the `Structured` handle) is still `proposed`, so the "foundation ahead of its
+  consumer" premise stands. **#23** (blackboard) and **#27** (context-summarization) did **not**
+  touch `spawn.go`/`spawn_agent.go`; the recent editors were **#0034** (workflows) and **#0036**
+  (scheduler/quotas).
+- **Current shapes (verbatim):** `SpawnOpts` (`internal/agent/spawn.go:40`) has fields
+  `Label, Task, SystemPrompt, Tools, ModelID, MaxTurns, MaxTokens, Worker` — **no `Expects`** yet.
+  `SpawnDone` (`spawn.go:54`) is `{Result string; Err error}` — **no `Structured`**. `AgentHandle`
+  (`spawn.go:61`) exposes `Wait() SpawnDone` only — **no `Result()`**. The result-assembly site is
+  `spawn.go:250` (`s.buildChild(...)`) → `spawn.go:266` (`doneCh <- SpawnDone{Result, Err}`).
+- **Tool surface:** `spawn_agent` `Parameters()` (`spawn_agent.go:107`) advertises
+  `label, task, system_prompt, tools, model` (+ conditional `worker`) — **no `expects`**;
+  `spawnAgentInput` at `:152`; `SpawnRequest` at `:13`. Note the tool's `Execute` (`:184`) now
+  composes the result as `result + t.budgetLine() + t.quotaWarning()` — the `(matched…)`/`(did NOT
+  match…)` note therefore rides **inside `done.Result`** (assembled in `spawn.go`), composing
+  cleanly with those existing suffixes rather than being a fourth suffix seam in the tool.
+- **THREE child-builder/adapter sites, not two.** Per learning `patch-every-cloned-child-builder`,
+  `expects` must thread through the `agent.SpawnOpts{...}` construction and the `SpawnFunc` adapter
+  in **all three**: `cmd/fuse/main.go` (`SpawnOpts` @ ~204, adapter returns `done.Result, done.Err`
+  @ ~223), `cmd/fuse/research_probe.go` (@ ~144/adapter), and `cmd/fuse/shell.go` (@ ~189/adapter).
+  Each adapter yields its spawn slot around `handle.Wait()`
+  (learning `slot-cap-yield-while-blocked-on-children`), so `Structured` must survive that
+  yield/unyield path — it does, since it lives on `SpawnDone` returned by `Wait()`. Enumerate the
+  sites by grep at build time.
+- **Observability:** `AgentNode.AddEvent(AgentEvent)` at `internal/agent/tree.go:114`; `AgentEvent`
+  is `{Kind EventKind; Name string; Payload map[string]any; TS time.Time}` (`tree.go:82`). The
+  `EventKind` enum (`tree.go`) has **no** dedicated schema-mismatch kind — the mismatch event should
+  reuse an existing kind with a labeled `Name` (e.g. `KindError`/`KindToolResult` + a
+  `"schema_mismatch"` `Name` and error in `Payload`), or add one `EventKind` in the same change.
+  Plan should pick one explicitly.
+- **Dependency:** `go.mod` (Go 1.26.5) vendors **no** JSON-Schema library — D2's vendor step
+  (`github.com/santhosh-tekuri/jsonschema` or equivalent) is still required.
+- **Verification seam is present:** `cmd/fuse/blackboard_gateway_e2e_test.go` already drives the
+  real binary against a scripted gateway double — the model to copy for the match/mismatch
+  real-binary test (learning `verify-tool-loop-at-gateway-seam`). Existing unit tests:
+  `internal/agent/spawn_test.go`, `internal/tools/spawn_agent_test.go`.
+
+Scope, out-of-scope, and the four design decisions are unchanged. No auto-capture (disabled).
