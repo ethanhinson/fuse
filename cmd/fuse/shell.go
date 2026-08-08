@@ -289,9 +289,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
 		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
 	// Root-node-wired blackboard tools (provenance = rootNode).
-	for _, t := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {
-		toolReg.Register(t)
-	}
+	wireRootBlackboard(toolReg, bb, rootNode)
 
 	// Start the 250ms dirty-node flusher; the same ctx stops the bridges.
 	flushCtx, cancelFlusher := context.WithCancel(context.Background())
