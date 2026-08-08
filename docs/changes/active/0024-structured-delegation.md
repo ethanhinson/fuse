@@ -10,14 +10,14 @@ updated: 2026-08-08
 depends_on: [12]
 related: [23, 26]
 discovered_from: []
-adrs: []
+adrs: [12]
 spec: docs/superpowers/specs/2026-08-08-structured-delegation-design.md
 plan: docs/superpowers/plans/0024-structured-delegation.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/structured-delegation
-claimed_at: 2026-08-08T09:26:00Z
+claimed_at: 2026-08-08T09:44:00Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-08-structured-delegation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-structured-delegation-design.md) |
 | Plan | [0024-structured-delegation.md](https://github.com/ethanhinson/fuse/blob/feat/structured-delegation/docs/superpowers/plans/0024-structured-delegation.md) |
+| ADRs | [ADR-0012](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0012-vendor-jsonschema-validation-library.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
