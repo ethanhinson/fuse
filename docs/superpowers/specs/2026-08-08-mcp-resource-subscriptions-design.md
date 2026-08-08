@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0021 — MCP resource subscriptions — push-based updates](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0021-mcp-resource-subscriptions.md)**
+> ↩ **[Change 0021 — MCP resource subscriptions — push-based updates](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-08-0021-mcp-resource-subscriptions.md)**
 <!-- docket:backlink:end -->
 
 # MCP resource subscriptions — push-based updates

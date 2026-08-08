@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-08-mcp-resource-subscriptions-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-mcp-resource-subscriptions-design.md) |
-| Plan | [2026-08-08-mcp-resource-subscriptions.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-resource-subscriptions/docs/superpowers/plans/2026-08-08-mcp-resource-subscriptions.md) |
-| Results | [2026-08-08-mcp-resource-subscriptions-results.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-resource-subscriptions/docs/results/2026-08-08-mcp-resource-subscriptions-results.md) |
+| Plan | [2026-08-08-mcp-resource-subscriptions.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-08-mcp-resource-subscriptions.md) |
+| Results | [2026-08-08-mcp-resource-subscriptions-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-08-mcp-resource-subscriptions-results.md) |
 | PR | [#31](https://github.com/ethanhinson/fuse/pull/31) |
 | ADRs | [ADR-0013](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0013-tools-registry-owns-concurrency-safety.md) |
 <!-- docket:artifacts:end -->
