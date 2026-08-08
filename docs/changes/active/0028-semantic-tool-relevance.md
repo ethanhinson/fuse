@@ -2,7 +2,7 @@
 id: 28
 slug: semantic-tool-relevance
 title: Semantic tool-result relevance scoring for smarter pruning
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-06
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/semantic-tool-relevance
+claimed_at: 2026-08-08T22:42:24Z
 pr:
 blocked_by:
 reconciled: false
