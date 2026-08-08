@@ -17,6 +17,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0011](0011-streamable-http-mcp-transport-request-scoped.md) — Streamable HTTP MCP transport is request-scoped with in-band session ownership (Accepted) ← change #18 · relates to ADR-0010
 - [ADR-0012](0012-vendor-jsonschema-validation-library.md) — Vendor a JSON-Schema validation library for structured-delegation result validation (Accepted) ← change #24
 - [ADR-0013](0013-tools-registry-owns-concurrency-safety.md) — tools.Registry is the home for concurrency safety (config-watch live reload) (Accepted) ← change #21
+- [ADR-0014](0014-pipeline-conditional-routing-skip-propagation.md) — Pipeline conditional-routing execution semantics (skip-propagation join) (Accepted) ← change #26
 
 ## Superseded / Reversed
 
