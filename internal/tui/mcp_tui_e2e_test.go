@@ -101,6 +101,82 @@ func TestTUI_MCPToolRoundTrip(t *testing.T) {
 	}
 }
 
+// TestTUI_MCPResultScreenshot drives a turn that calls three MCP tools returning
+// three different content types (text, image, embedded resource) through the
+// real client→server path inside the live TUI, then captures a visual-
+// confirmation screenshot of the rendered transcript. It is the end-to-end proof
+// that the robust MCP result rendering (renderMCPResult) reaches the screen —
+// every content type visible, nothing silently dropped. Set FUSE_SCREENSHOT_DIR
+// to collect the .ansi/.txt/.png artifacts.
+func TestTUI_MCPResultScreenshot(t *testing.T) {
+	reg := tools.NewRegistry()
+	mgr, err := mcp.NewManager([]config.MCPServerConfig{{
+		Name:      "mock",
+		Transport: "stdio",
+		Command:   []string{os.Args[0], "-test.run=TestTUIMockMCPHelper"},
+		Env:       map[string]string{"FUSE_TUI_MOCK_MCP": "1"},
+	}}, reg)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	defer mgr.Close()
+	for _, name := range []string{"mcp:mock/ok_echo", "mcp:mock/get_image", "mcp:mock/get_resource"} {
+		if !reg.Has(name) {
+			t.Fatalf("tool %s not registered (discovery failed)", name)
+		}
+	}
+
+	// Turn 1: call every content-type tool plus the error path. Turn 2: reply.
+	cmp := &scriptedCompleter{responses: []model.CompletionResp{
+		{ToolCalls: []model.ToolCall{
+			{ID: "1", Name: "mcp:mock/ok_echo", Arguments: `{"text":"hello from MCP"}`},
+			{ID: "2", Name: "mcp:mock/get_image", Arguments: `{}`},
+			{ID: "3", Name: "mcp:mock/get_resource", Arguments: `{}`},
+			{ID: "4", Name: "mcp:mock/explode", Arguments: `{}`},
+		}},
+		{Content: "Text, image, resource, and an error — all rendered above."},
+	}}
+
+	exec := regExec{reg: reg}
+	build := func(_ string, r agent.Renderer, _ permissions.ApprovalFunc) (*agent.Agent, error) {
+		return agent.New(cmp, exec, r, "test/model", "", 25, 0), nil
+	}
+	// verbose=true so full result descriptors render in the transcript.
+	m := NewShellModel("alpha", true, "", testRegistry(), nil, build, permissions.NewSessionMode(permissions.ModeSmart), true)
+
+	bridgeCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(96, 34))
+	StartBridges(bridgeCtx, tm.GetProgram(), m.Channel(), nil, nil)
+	t.Cleanup(func() { tm.Quit() })
+
+	for _, r := range "show me MCP results" {
+		tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+
+	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
+		return bytes.Contains(stripANSI(b), []byte("rendered above"))
+	}, teatest.WithDuration(15*time.Second), teatest.WithCheckInterval(20*time.Millisecond))
+
+	// Capture the visual-confirmation screenshot of the settled transcript.
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	frame := captureFrame(t, tm, "mcp-results")
+
+	// Every content type must be visible — the whole point of the rendering
+	// upgrade is that nothing is silently dropped — plus the surfaced error code.
+	for _, want := range []string{
+		"echoed: hello from MCP",
+		"[image: image/png",
+		"[resource: file:///readme.md",
+		"resource gone (mock)",
+	} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("screenshot frame missing %q\n---\n%s", want, frame)
+		}
+	}
+}
+
 // TestTUIMockMCPHelper is not a real test: re-execed with FUSE_TUI_MOCK_MCP=1 it
 // becomes a minimal stdio MCP server, then exits. Under a normal run it no-ops.
 func TestTUIMockMCPHelper(t *testing.T) {
@@ -144,6 +220,8 @@ func TestTUIMockMCPHelper(t *testing.T) {
 			send(req.ID, map[string]any{"tools": []map[string]any{
 				{"name": "ok_echo", "description": "echo the text argument", "inputSchema": map[string]any{"type": "object"}},
 				{"name": "explode", "description": "fails with an MCP error code", "inputSchema": map[string]any{"type": "object"}},
+				{"name": "get_image", "description": "returns an image content block", "inputSchema": map[string]any{"type": "object"}},
+				{"name": "get_resource", "description": "returns an embedded resource", "inputSchema": map[string]any{"type": "object"}},
 			}}, nil)
 		case "tools/call":
 			switch req.Params.Name {
@@ -155,6 +233,24 @@ func TestTUIMockMCPHelper(t *testing.T) {
 				send(req.ID, map[string]any{
 					"content": []map[string]any{{"type": "text", "text": "echoed: " + a.Text}},
 					"isError": false,
+				}, nil)
+			case "get_image":
+				// 3 KB of base64 "image" — exercises the non-text descriptor path.
+				send(req.ID, map[string]any{
+					"content": []map[string]any{{
+						"type": "image", "mimeType": "image/png",
+						"data": strings.Repeat("A", 4096),
+					}},
+				}, nil)
+			case "get_resource":
+				send(req.ID, map[string]any{
+					"content": []map[string]any{{
+						"type": "resource",
+						"resource": map[string]any{
+							"uri": "file:///readme.md", "mimeType": "text/markdown",
+							"text": "# Project\nGenerated docs.",
+						},
+					}},
 				}, nil)
 			case "explode":
 				send(req.ID, nil, map[string]any{"code": mcp.ErrResourceNotFound, "message": "resource gone (mock)"})
