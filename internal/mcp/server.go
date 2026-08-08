@@ -43,6 +43,12 @@ type Server struct {
 	// the same encoder as its eventual response — without this lock those writes
 	// could interleave and corrupt the JSON-RPC stream.
 	encMu sync.Mutex
+
+	// subMu guards subscribed — the set of resource URIs this connection has
+	// resources/subscribe'd to. pushResourceUpdated only writes a
+	// notifications/resources/updated frame for a URI in this set (Task 5).
+	subMu      sync.Mutex
+	subscribed map[string]bool
 }
 
 // NewServer creates a Server that reads JSON-RPC 2.0 from r and writes to w.
@@ -112,6 +118,13 @@ func (s *Server) dispatch(ctx context.Context, req serverReq) serverResp {
 				// streaming advertises id-less $/progress support so a client's
 				// Supports("streaming") gate (D2) can pass against fuse's server.
 				"streaming": map[string]any{},
+				// resources advertises the fuse://tools resource surface with
+				// subscribe support so a client's Supports("resources.subscribe")
+				// gate (D5) passes against fuse's own server (dogfood).
+				"resources": map[string]any{
+					"subscribe":   true,
+					"listChanged": false,
+				},
 			},
 			"serverInfo": map[string]any{"name": "fuse", "version": "1.0.0"},
 		})
@@ -119,6 +132,14 @@ func (s *Server) dispatch(ctx context.Context, req serverReq) serverResp {
 		return s.handleList(req.ID)
 	case "tools/call":
 		return s.handleCall(ctx, req)
+	case "resources/list":
+		return s.handleResourcesList(req.ID)
+	case "resources/read":
+		return s.handleResourcesRead(req)
+	case "resources/subscribe":
+		return s.handleResourcesSubscribe(req)
+	case "resources/unsubscribe":
+		return s.handleResourcesUnsubscribe(req)
 	default:
 		return s.errResp(req.ID, ErrMethodNotFound, "method not found: "+req.Method)
 	}

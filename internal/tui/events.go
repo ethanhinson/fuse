@@ -49,6 +49,15 @@ type approvalResponse struct {
 	AllowForSession bool
 }
 
+// MCPResourceUpdatedMsg is sent when a subscribed MCP resource pushes a
+// notifications/resources/updated (change 0021). The shell flags the URI stale
+// and surfaces an indicator; it never auto-re-reads (D2). Server+URI identify the
+// resource so multiple servers' resources don't collide.
+type MCPResourceUpdatedMsg struct {
+	Server string
+	URI    string
+}
+
 // tickMsg is emitted by the per-second timer while the agent is running.
 type tickMsg struct{}
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/session"
@@ -173,6 +174,24 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// overlay shows live rate-gate utilization (change 0036); nil is the no-gate
 	// fast path and renders no rate-gate segment.
 	m = m.WithRateGate(rateBucket)
+
+	// Route MCP resource-updated pushes (change 0021) into the TUI: a subscribed
+	// server's notifications/resources/updated fans a ResourceUpdatedEvent, which
+	// we forward as an MCPResourceUpdatedMsg onto the model channel (StartBridges
+	// pumps it into the program). The observer runs on a client read-pump
+	// goroutine, so it MUST be non-blocking — a buffered send that drops when the
+	// channel is momentarily full (a later push re-flags the same URI anyway; the
+	// indicator is idempotent per URI). Never auto-re-reads (D2).
+	if mgr := mcpProv.Manager(); mgr != nil {
+		ch := m.Channel()
+		mgr.OnResource(func(e mcp.ResourceUpdatedEvent) {
+			select {
+			case ch <- tui.MCPResourceUpdatedMsg{Server: e.Server, URI: e.URI}:
+			default:
+			}
+		})
+	}
+
 	// The parent-channel approval func for children: same TUI channel as the
 	// root turn, wrapped per-child by PrefixApproval below so the human sees
 	// which subagent is asking. Enforces the configured mode instead of the old

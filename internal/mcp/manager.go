@@ -82,6 +82,20 @@ type Manager struct {
 	// subscribes via OnProgress.
 	progressMu        sync.Mutex
 	progressObservers []ProgressObserver
+
+	// resourceMu guards the resource-subscription state: the stale-URI set (D2 —
+	// a pushed notifications/resources/updated flags a URI stale, never auto-reads)
+	// and the observer fan-out (D5) the TUI subscribes to via OnResource.
+	resourceMu        sync.Mutex
+	staleURIs         map[string]map[string]bool // server -> uri -> stale
+	resourceObservers []ResourceObserver
+
+	// subMu guards the ref-counted subscription tracker (D-constraint: re-subscribe
+	// on reconnect). Keyed by server name (survives a reconnect that replaces the
+	// managedServer) -> uri -> ref count. A URI's wire resources/subscribe is sent
+	// on the 0→1 transition and resources/unsubscribe on the 1→0 transition.
+	subMu   sync.Mutex
+	subRefs map[string]map[string]int
 }
 
 // NewManager starts all configured MCP servers and registers their tools.
@@ -96,6 +110,7 @@ func NewManager(servers []config.MCPServerConfig, reg *tools.Registry) (*Manager
 	// a $/progress (or $/stream, Task 6) arriving during discovery is routed.
 	m.OnNotification(progressNotifyMethod, m.handleProgress)
 	m.OnNotification(streamNotifyMethod, m.handleStream)
+	m.OnNotification(resourceUpdatedMethod, m.handleResourceUpdated)
 	for _, srv := range servers {
 		if err := m.Add(srv); err != nil {
 			log.Printf("[mcp] skipping server %q: %v", srv.Name, err)
@@ -140,6 +155,18 @@ func (m *Manager) Stop(name string) error {
 	}
 	delete(m.servers, name)
 	m.mu.Unlock()
+
+	// Clear this server's per-server subscription and resource state so a later
+	// Add of the same name starts clean. Without this, a Stop/Add cycle leaves
+	// non-zero refcounts in subRefs, causing the re-added server's first
+	// Subscribe to see the URI as already-referenced and silently skip the wire
+	// resources/subscribe (S3). Guard each map under its own mutex.
+	m.subMu.Lock()
+	delete(m.subRefs, name)
+	m.subMu.Unlock()
+	m.resourceMu.Lock()
+	delete(m.staleURIs, name)
+	m.resourceMu.Unlock()
 
 	if ms.conn != nil {
 		ms.conn.stop()

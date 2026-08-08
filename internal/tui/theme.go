@@ -15,6 +15,9 @@ var (
 	statusModelStyle = lipgloss.NewStyle().Bold(true).Foreground(colNormal)
 	statusRunStyle   = lipgloss.NewStyle().Foreground(colAmber)
 	spinnerStyle     = lipgloss.NewStyle().Foreground(colAmber)
+	// mcpStaleStyle marks a subscribed MCP resource whose server pushed an update
+	// (change 0021) — amber, an attention cue that never blocks (D2: never auto-read).
+	mcpStaleStyle = lipgloss.NewStyle().Foreground(colAmber).Bold(true)
 
 	// Chrome
 	ruleStyle        = lipgloss.NewStyle().Foreground(colMuted)
