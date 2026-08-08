@@ -50,7 +50,20 @@ const (
 // launched concurrently, each step instance being one sp.Spawn call. Inputs are
 // resolved from the blackboard (glob-expanded) and substituted into the prompt as
 // {{key}}; outputs are written back (a literal key for a single instance, or
-// glob-namespaced keys for a fanout). Conditions/Default route after each step.
+// glob-namespaced keys for a fanout).
+//
+// Conditional routing affects execution (change 0026, FIX 2). A step with any
+// conditions or a non-empty default is a ROUTER; on success route() picks its
+// chosen successor (first matching condition's goto, else default, else none).
+// A step named as a router's goto/default target is BRANCH-GATED: it runs only
+// when a router releases it (chose it), is SKIPPED (outputs absent) once every
+// router targeting it has decided without choosing it, and — because a skipped
+// step's outputs are absent — carries its depends_on downstream into the skip.
+// Steps that are no router's target keep pure depends_on readiness, so a
+// pipeline with no conditions/default behaves exactly as a plain DAG. Routing
+// evaluation is total (route never errors: a type-mismatch or missing-key
+// condition simply does not match and falls through to default/none).
+//
 // The terminal status is always written to pipeline.status. Run returns a
 // non-nil error only when the pipeline failed (State == StateFailed).
 //
@@ -70,29 +83,86 @@ func Run(ctx context.Context, p *Pipeline, sp *agent.Spawner, bb *agent.Blackboa
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 
+	// Routing wiring (change 0026). A ROUTER is a step with any conditions or a
+	// non-empty default; its ROUTING TARGETS are the union of every condition Goto
+	// and its Default. A step named as a routing target of at least one router is
+	// ROUTED (branch-gated): it does not launch on depends_on readiness alone —
+	// it waits for its router(s) to decide, launching only when RELEASED by a
+	// router that chose it. A routed step whose every router has decided WITHOUT
+	// releasing it is SKIPPED. Non-routed steps keep pure readiness scheduling, so
+	// a pipeline without any conditions/default behaves exactly as before.
+	routers := map[string][]string{} // routed step -> router step names targeting it
+	for _, s := range p.Steps {
+		for _, tgt := range routingTargets(s) {
+			routers[tgt] = append(routers[tgt], s.Name)
+		}
+	}
+	isRouted := func(name string) bool { _, ok := routers[name]; return ok }
+
 	var (
 		mu         sync.Mutex
-		completed  = map[string]bool{} // step names that finished (done or skipped)
+		done       = map[string]bool{} // steps that ran to completion (outputs written)
+		skipped    = map[string]bool{} // steps settled without running (branch not taken)
+		released   = map[string]bool{} // routed steps a router chose (eligible to run)
+		routerDone = map[string]int{}  // routed step -> count of its routers that decided
 		started    = map[string]bool{}
 		failed     bool
 		failedStep string
 	)
 
-	depsSatisfied := func(s Step) bool {
+	// settled reports whether a step has reached a terminal state (ran or skipped).
+	settled := func(name string) bool { return done[name] || skipped[name] }
+
+	// depsAllDone reports whether every depends_on ran to completion (a skipped
+	// dependency is NOT "done" — its outputs are absent — so it does not satisfy a
+	// dependent, which propagates the skip in launchReady).
+	depsAllDone := func(s Step) bool {
 		for _, d := range s.DependsOn {
-			if !completed[d] {
+			if !done[d] {
 				return false
 			}
 		}
 		return true
 	}
 
+	// depHasSkip reports whether any depends_on was skipped, which propagates the
+	// skip to this step (a branch not taken carries its downstream with it).
+	depHasSkip := func(s Step) bool {
+		for _, d := range s.DependsOn {
+			if skipped[d] {
+				return true
+			}
+		}
+		return false
+	}
+
+	// routersAllDecided reports whether every router targeting name has decided
+	// (settled). Only then can a routed, unreleased step be conclusively skipped.
+	routersAllDecided := func(name string) bool {
+		return routerDone[name] >= len(routers[name])
+	}
+
 	var wg sync.WaitGroup
+	var launchReady func()
+
+	// markSkipped settles name as skipped (no outputs) and records the skip against
+	// any routed target it routes to, so a router that never ran still counts as a
+	// decision for its targets. Caller holds mu.
+	var markSkipped func(name string)
+	markSkipped = func(name string) {
+		if settled(name) || started[name] {
+			return
+		}
+		skipped[name] = true
+		// A skipped router still "decides" its targets (by not releasing them).
+		for _, tgt := range routingTargets(byName[name]) {
+			routerDone[tgt]++
+		}
+	}
 
 	// runStep executes one step (its instances) and, on completion, records its
-	// completion and launches any newly-ready steps. Recursion happens on child
-	// goroutines so ready siblings run concurrently.
-	var launchReady func()
+	// completion, applies routing, and launches any newly-ready steps. Recursion
+	// happens on child goroutines so ready siblings run concurrently.
 	runStep := func(s Step) {
 		defer wg.Done()
 		outputs, stepErr := executeStep(runCtx, s, sp, bb)
@@ -104,8 +174,12 @@ func Run(ctx context.Context, p *Pipeline, sp *agent.Spawner, bb *agent.Blackboa
 		}
 		if stepErr != nil {
 			if s.OnError.Kind == ErrorSkip {
-				// Record completion, leave outputs absent, continue.
-				completed[s.Name] = true
+				// Record completion, leave outputs absent, continue. A skip still
+				// decides this step's routing targets (it took no branch).
+				done[s.Name] = true
+				for _, tgt := range routingTargets(s) {
+					routerDone[tgt]++
+				}
 			} else {
 				failed = true
 				failedStep = s.Name
@@ -120,26 +194,57 @@ func Run(ctx context.Context, p *Pipeline, sp *agent.Spawner, bb *agent.Blackboa
 			for k, v := range outputs {
 				bb.Put(k, v, engineWriterID, engineWriterLabel)
 			}
-			completed[s.Name] = true
-			// Evaluate routing for its side effects (documented behavior); the
-			// readiness scheduler drives actual execution. route never errors.
-			_, _ = route(s, bb)
+			done[s.Name] = true
+			// Routing: pick the chosen target (first matching condition, else
+			// default, else none). Release the chosen target; every other routing
+			// target of this router counts as decided-not-chosen. route never errors.
+			chosen, ok := route(s, bb)
+			for _, tgt := range routingTargets(s) {
+				routerDone[tgt]++
+			}
+			if ok && chosen != "" {
+				released[chosen] = true
+			}
 		}
 		launchReady()
 	}
 
 	launchReady = func() {
-		// Caller holds mu.
-		for _, s := range p.Steps {
-			if started[s.Name] || completed[s.Name] {
-				continue
+		// Caller holds mu. A fixpoint pass: launching/skipping a step can settle
+		// another, so iterate until a full sweep makes no change.
+		for {
+			changed := false
+			for _, s := range p.Steps {
+				if settled(s.Name) || started[s.Name] {
+					continue
+				}
+				// A step downstream of a skipped (not-taken) branch is itself skipped.
+				if depHasSkip(s) {
+					markSkipped(s.Name)
+					changed = true
+					continue
+				}
+				if !depsAllDone(s) {
+					continue
+				}
+				// A routed step is gated on its routers' decision: it runs only if a
+				// router released it; if every router has decided without releasing it,
+				// it is skipped; otherwise it keeps waiting.
+				if isRouted(s.Name) && !released[s.Name] {
+					if routersAllDecided(s.Name) {
+						markSkipped(s.Name)
+						changed = true
+					}
+					continue
+				}
+				started[s.Name] = true
+				changed = true
+				wg.Add(1)
+				go runStep(s)
 			}
-			if !depsSatisfied(s) {
-				continue
+			if !changed {
+				return
 			}
-			started[s.Name] = true
-			wg.Add(1)
-			go runStep(s)
 		}
 	}
 

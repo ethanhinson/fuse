@@ -55,6 +55,28 @@ func evalCondition(c Condition, bb *agent.Blackboard) bool {
 	}
 }
 
+// routingTargets returns the set of steps this step can route to: every
+// condition Goto (non-empty) plus Default (when set), de-duplicated in first-seen
+// order. It is the static edge set the engine uses to identify branch-gated
+// (routed) steps; empty for a step with no conditions and no default. See route
+// for the runtime decision among these targets.
+func routingTargets(s Step) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	for _, c := range s.Conditions {
+		add(c.Goto)
+	}
+	add(s.Default)
+	return out
+}
+
 // route returns the next step to run after this one completes. The first
 // matching condition's Goto wins; otherwise Default; otherwise ("", false)
 // meaning "no explicit route, rely on readiness scheduling".

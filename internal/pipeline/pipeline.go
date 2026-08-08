@@ -37,10 +37,12 @@ type Step struct {
 	Expects json.RawMessage `yaml:"expects,omitempty" json:"expects,omitempty"`
 	// OnError selects the failure policy for this step (default fail).
 	OnError ErrorPolicy `yaml:"on_error,omitempty" json:"on_error,omitempty"`
-	// Conditions route to the next step; the first match's Goto wins.
+	// Conditions route to the next step; the first match's Goto wins. A step with
+	// conditions (or a default) is a router: its chosen target runs and its other
+	// targets are skipped (change 0026 — routing affects execution, see engine.Run).
 	Conditions []Condition `yaml:"conditions,omitempty" json:"conditions,omitempty"`
-	// Default is the next step when no condition matches (empty => fall through to
-	// readiness-driven scheduling only).
+	// Default is the next step when no condition matches (empty => no branch is
+	// taken; a target reachable only via this router is then skipped).
 	Default string `yaml:"default,omitempty" json:"default,omitempty"`
 }
 

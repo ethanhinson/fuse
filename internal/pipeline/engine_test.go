@@ -428,6 +428,148 @@ func TestEngineExpectsMismatchDegrades(t *testing.T) {
 	}
 }
 
+// ranSet runs a pipeline and returns the set of step labels that actually
+// spawned (executed), for routing assertions.
+func ranSet(t *testing.T, p *Pipeline, seed map[string]any) (map[string]bool, *agent.Blackboard, Status, error) {
+	t.Helper()
+	tree := agent.NewAgentTreeWithConcurrency("root", "m", 8)
+	bb := agent.NewBlackboard(tree)
+	for k, v := range seed {
+		bb.Put(k, v, "seed", "seed")
+	}
+	var mu sync.Mutex
+	ran := map[string]bool{}
+	sp := fakeSpawner(t, tree, func(opts agent.SpawnOpts) (string, error) {
+		mu.Lock()
+		ran[opts.Label] = true
+		mu.Unlock()
+		return "out:" + opts.Label, nil
+	})
+	st, err := Run(context.Background(), p, sp, bb)
+	return ran, bb, st, err
+}
+
+// TestEngineRoutingGotoRedirects: a condition's goto force-schedules the named
+// step; the other routing target (default's step) is skipped.
+func TestEngineRoutingGotoRedirects(t *testing.T) {
+	// start writes flag=go; its condition routes to "hot", default is "cold".
+	p := &Pipeline{Name: "r", Steps: []Step{
+		{Name: "start", Worker: "w", Prompt: "x", Outputs: []string{"flag"},
+			Conditions: []Condition{{Key: "flag", Op: "eq", Value: "out:start", Goto: "hot"}},
+			Default:    "cold"},
+		{Name: "hot", Worker: "w", Prompt: "h", DependsOn: []string{"start"}, Outputs: []string{"hotout"}},
+		{Name: "cold", Worker: "w", Prompt: "c", DependsOn: []string{"start"}, Outputs: []string{"coldout"}},
+	}}
+	ran, bb, st, err := ranSet(t, p, nil)
+	if err != nil || st.State != StateCompleted {
+		t.Fatalf("want completed, got st=%+v err=%v", st, err)
+	}
+	if !ran["start"] || !ran["hot"] {
+		t.Fatalf("start and the goto target hot must run: %v", ran)
+	}
+	if ran["cold"] {
+		t.Fatalf("the non-chosen branch cold must NOT run: %v", ran)
+	}
+	if _, ok := bb.Get("coldout"); ok {
+		t.Fatalf("skipped branch must not write outputs")
+	}
+	if _, ok := bb.Get("hotout"); !ok {
+		t.Fatalf("taken branch must write outputs")
+	}
+}
+
+// TestEngineRoutingDefaultTaken: no condition matches => default step runs, the
+// condition's goto branch is skipped.
+func TestEngineRoutingDefaultTaken(t *testing.T) {
+	p := &Pipeline{Name: "r", Steps: []Step{
+		{Name: "start", Worker: "w", Prompt: "x", Outputs: []string{"flag"},
+			// This condition will NOT match (flag != "nope").
+			Conditions: []Condition{{Key: "flag", Op: "eq", Value: "nope", Goto: "hot"}},
+			Default:    "cold"},
+		{Name: "hot", Worker: "w", Prompt: "h", DependsOn: []string{"start"}, Outputs: []string{"hotout"}},
+		{Name: "cold", Worker: "w", Prompt: "c", DependsOn: []string{"start"}, Outputs: []string{"coldout"}},
+	}}
+	ran, _, st, err := ranSet(t, p, nil)
+	if err != nil || st.State != StateCompleted {
+		t.Fatalf("want completed, got st=%+v err=%v", st, err)
+	}
+	if !ran["start"] || !ran["cold"] {
+		t.Fatalf("default target cold must run: %v", ran)
+	}
+	if ran["hot"] {
+		t.Fatalf("unmatched condition's goto target hot must NOT run: %v", ran)
+	}
+}
+
+// TestEngineRoutingBranchNotTakenDownstreamSkipped: a step downstream of a
+// non-taken branch is also skipped (skip propagates through depends_on).
+func TestEngineRoutingBranchNotTakenDownstreamSkipped(t *testing.T) {
+	p := &Pipeline{Name: "r", Steps: []Step{
+		{Name: "start", Worker: "w", Prompt: "x", Outputs: []string{"flag"},
+			Conditions: []Condition{{Key: "flag", Op: "eq", Value: "out:start", Goto: "hot"}},
+			Default:    "cold"},
+		{Name: "hot", Worker: "w", Prompt: "h", DependsOn: []string{"start"}},
+		{Name: "cold", Worker: "w", Prompt: "c", DependsOn: []string{"start"}},
+		{Name: "cold-child", Worker: "w", Prompt: "cc", DependsOn: []string{"cold"}},
+	}}
+	ran, _, st, err := ranSet(t, p, nil)
+	if err != nil || st.State != StateCompleted {
+		t.Fatalf("want completed, got st=%+v err=%v", st, err)
+	}
+	if ran["cold"] || ran["cold-child"] {
+		t.Fatalf("skipped branch and its downstream must NOT run: %v", ran)
+	}
+	if !ran["hot"] {
+		t.Fatalf("taken branch must run: %v", ran)
+	}
+}
+
+// TestEngineRoutingTypeMismatchFallsThrough: a type-mismatch/missing-key
+// condition falls through to default (total routing, no error).
+func TestEngineRoutingTypeMismatchFallsThrough(t *testing.T) {
+	p := &Pipeline{Name: "r", Steps: []Step{
+		{Name: "start", Worker: "w", Prompt: "x", Outputs: []string{"flag"},
+			// gt against a string value is a type mismatch => false => fall through.
+			Conditions: []Condition{
+				{Key: "flag", Op: "gt", Value: 5, Goto: "hot"},
+				{Key: "missing", Op: "exists", Goto: "warm"},
+			},
+			Default: "cold"},
+		{Name: "hot", Worker: "w", Prompt: "h", DependsOn: []string{"start"}},
+		{Name: "warm", Worker: "w", Prompt: "wm", DependsOn: []string{"start"}},
+		{Name: "cold", Worker: "w", Prompt: "c", DependsOn: []string{"start"}},
+	}}
+	ran, _, st, err := ranSet(t, p, nil)
+	if err != nil || st.State != StateCompleted {
+		t.Fatalf("want completed, got st=%+v err=%v", st, err)
+	}
+	if !ran["cold"] {
+		t.Fatalf("mismatched conditions must fall through to default cold: %v", ran)
+	}
+	if ran["hot"] || ran["warm"] {
+		t.Fatalf("unmatched goto targets must NOT run: %v", ran)
+	}
+}
+
+// TestEngineNoRoutingUnaffected: a plain depends_on pipeline (no conditions/
+// default) runs every step — routing wiring must not skip anything.
+func TestEngineNoRoutingUnaffected(t *testing.T) {
+	p := &Pipeline{Name: "plain", Steps: []Step{
+		{Name: "a", Worker: "w", Prompt: "x", Outputs: []string{"oa"}},
+		{Name: "b", Worker: "w", Prompt: "y", DependsOn: []string{"a"}, Outputs: []string{"ob"}},
+		{Name: "c", Worker: "w", Prompt: "z", DependsOn: []string{"a"}, Outputs: []string{"oc"}},
+	}}
+	ran, _, st, err := ranSet(t, p, nil)
+	if err != nil || st.State != StateCompleted {
+		t.Fatalf("want completed, got st=%+v err=%v", st, err)
+	}
+	for _, n := range []string{"a", "b", "c"} {
+		if !ran[n] {
+			t.Fatalf("plain pipeline must run every step, missing %q: %v", n, ran)
+		}
+	}
+}
+
 // TestEngineDeadlockShapeUnderTightSlots: with the scheduler slot cap equal to
 // the total fanout, a fanout step must still complete. This regresses
 // slot-cap-yield-while-blocked-on-children: the coordinator must not itself hold
