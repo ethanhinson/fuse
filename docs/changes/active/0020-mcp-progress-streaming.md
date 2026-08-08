@@ -2,7 +2,7 @@
 id: 20
 slug: mcp-progress-streaming
 title: MCP `$/progress` notifications and streaming tool results
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-06
@@ -16,8 +16,9 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/mcp-progress-streaming
 pr:
+claimed_at: 2026-08-08T09:23:13Z
 blocked_by:
 reconciled: false
 ---
