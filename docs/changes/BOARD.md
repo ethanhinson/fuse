@@ -1,12 +1,17 @@
 # Backlog
 
-**39 changes** — 🟡 2 proposed · ⚪ 1 deferred · ✅ 30 done · 🗑️ 6 killed
+**39 changes** — 🟢 1 in progress · 🟡 1 proposed · ⚪ 1 deferred · ✅ 30 done · 🗑️ 6 killed
 
-## 🟡 Proposed (2)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | [spec](../superpowers/specs/2026-08-08-semantic-tool-relevance-design.md) | `feat/semantic-tool-relevance` |
+
+## 🟡 Proposed (1)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | build-ready |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | build-ready |
 
 ## ⚪ Deferred (1)
