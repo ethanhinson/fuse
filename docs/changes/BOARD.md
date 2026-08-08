@@ -1,14 +1,13 @@
 # Backlog
 
-**39 changes** — 🟡 9 proposed · ⚪ 1 deferred · ✅ 24 done · 🗑️ 5 killed
+**39 changes** — 🟡 8 proposed · ⚪ 1 deferred · ✅ 24 done · 🗑️ 6 killed
 
-## 🟡 Proposed (9)
+## 🟡 Proposed (8)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0020](active/0020-mcp-progress-streaming.md) | MCP `$/progress` notifications and streaming tool results | `medium` | `feat` | build-ready |
 | [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | ⏳ waiting on #20 — not yet built |
-| [0022](active/0022-mcp-websocket-transport.md) | WebSocket transport for MCP | `low` | `feat` | needs-brainstorm |
 | [0023](active/0023-agent-blackboard.md) | Shared result blackboard for inter-agent communication | `high` | `feat` | build-ready |
 | [0024](active/0024-structured-delegation.md) | Structured delegation — expected result schemas for spawn_agent | `medium` | `feat` | build-ready |
 | [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | ⏳ waiting on #23 — not yet built |
@@ -27,7 +26,6 @@ graph TD
   0019 --> 0020
   0019 --> 0021
   0020 --> 0021
-  0007 --> 0022
   0012 --> 0023
   0012 --> 0024
   0023 --> 0026
@@ -36,17 +34,17 @@ graph TD
   0027 --> 0028
   0012 --> 0029
   0027 --> 0030
-  0007:::done
   0012:::done
   0019:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (29)</summary>
+<details><summary>✅🗑️ Archive — done + killed (30)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
+| [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0018](archive/2026-08-08-0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | 2026-08-08 |
 | [0036](archive/2026-08-07-0036-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | 2026-08-07 |
 | [0031](archive/2026-08-07-0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | 2026-08-07 |
