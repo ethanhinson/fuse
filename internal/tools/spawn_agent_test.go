@@ -261,3 +261,62 @@ func TestTighterBudget_ShowsTighterInLine(t *testing.T) {
 		t.Errorf("budget line should report the tighter 6/8, got:\n%s", res.Output)
 	}
 }
+
+// --- change 0024: expects (result schema) param ---
+
+// captureSpawn records the SpawnRequest it receives so a test can assert what
+// the tool threaded across the seam.
+func captureSpawn(got *SpawnRequest) SpawnFunc {
+	return func(_ context.Context, req SpawnRequest) (string, error) {
+		*got = req
+		return "ok", nil
+	}
+}
+
+func TestSpawnAgentTool_ExpectsParamAdvertised(t *testing.T) {
+	tool := NewSpawnAgentTool(okSpawn("x"))
+	props := tool.Parameters()["properties"].(map[string]any)
+	e, ok := props["expects"].(map[string]any)
+	if !ok {
+		t.Fatal("expects param must be advertised in Parameters()")
+	}
+	if e["type"] != "object" {
+		t.Errorf("expects param type = %v, want object", e["type"])
+	}
+	// expects is optional: never in required.
+	req := tool.Parameters()["required"].([]string)
+	for _, r := range req {
+		if r == "expects" {
+			t.Error("expects must be optional, not in required")
+		}
+	}
+}
+
+func TestSpawnAgentTool_ExpectsRoundTripsThroughSeam(t *testing.T) {
+	var got SpawnRequest
+	tool := NewSpawnAgentTool(captureSpawn(&got))
+	args := `{"label":"c","task":"do","expects":{"type":"object","properties":{"n":{"type":"integer"}}}}`
+	res := tool.Execute(context.Background(), args)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if got.Expects == nil {
+		t.Fatal("expects did not reach SpawnRequest")
+	}
+	m, ok := got.Expects.(map[string]any)
+	if !ok || m["type"] != "object" {
+		t.Fatalf("expects wrong shape at seam: %#v", got.Expects)
+	}
+}
+
+func TestSpawnAgentTool_AbsentExpectsIsNil(t *testing.T) {
+	var got SpawnRequest
+	tool := NewSpawnAgentTool(captureSpawn(&got))
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if got.Expects != nil {
+		t.Fatalf("absent expects must leave req.Expects nil; got %#v", got.Expects)
+	}
+}

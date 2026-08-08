@@ -208,6 +208,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 				ModelID:      req.Model,
 				Tools:        req.Tools,
 				Worker:       req.Worker,
+				Expects:      req.Expects,
 			}
 			handle, herr := spawner.Spawn(ctx, opts)
 			if herr != nil {

@@ -20,6 +20,11 @@ type SpawnRequest struct {
 	// spawns and outside a workflow. When set, the child's registry is built
 	// from that worker's allowlist (the Tools subset may only narrow it).
 	Worker string
+	// Expects, when non-nil, is the model-supplied JSON Schema (a decoded object)
+	// describing the shape the child's final result should take (change 0024). The
+	// agent seam injects it into the child's system prompt and validates the
+	// child's output against it. Nil ⇒ no schema requested (prior behavior).
+	Expects any
 }
 
 // SpawnFunc is injected into SpawnAgentTool to break the import cycle between
@@ -134,6 +139,13 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 			"type":        "string",
 			"description": "Optional model ID (defaults to the parent's model).",
 		},
+		"expects": map[string]any{
+			"type": "object",
+			"description": "Optional JSON Schema describing the shape you want the child's " +
+				"final result to take. When set, the child is asked to emit only conforming " +
+				"JSON and its output is validated against this schema; the result is annotated " +
+				"with whether it matched. A mismatch never fails the spawn.",
+		},
 	}
 	// Inside a workflow subtree, offer a typed `worker` param enumerating the
 	// workflow's worker names; the child's registry is then the worker's
@@ -157,12 +169,13 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 }
 
 type spawnAgentInput struct {
-	Label        string   `json:"label"`
-	Task         string   `json:"task"`
-	SystemPrompt string   `json:"system_prompt"`
-	Tools        []string `json:"tools"`
-	Model        string   `json:"model"`
-	Worker       string   `json:"worker"`
+	Label        string         `json:"label"`
+	Task         string         `json:"task"`
+	SystemPrompt string         `json:"system_prompt"`
+	Tools        []string       `json:"tools"`
+	Model        string         `json:"model"`
+	Worker       string         `json:"worker"`
+	Expects      map[string]any `json:"expects"`
 }
 
 // Execute parses the input, spawns a child agent, and blocks until it completes.
@@ -175,14 +188,21 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, args string) Result {
 		return Result{IsError: true, Output: "spawn_agent: label and task are required"}
 	}
 
-	result, err := t.spawn(ctx, SpawnRequest{
+	req := SpawnRequest{
 		Label:        input.Label,
 		Task:         input.Task,
 		SystemPrompt: input.SystemPrompt,
 		Model:        input.Model,
 		Tools:        input.Tools,
 		Worker:       input.Worker,
-	})
+	}
+	// Thread the expected-result schema only when the model supplied one, so an
+	// absent `expects` leaves req.Expects nil (a typed-nil map would read as
+	// non-nil downstream and trigger empty-schema validation). Change 0024.
+	if input.Expects != nil {
+		req.Expects = input.Expects
+	}
+	result, err := t.spawn(ctx, req)
 	if err != nil {
 		// Error results carry the error verbatim (which, for a budget-exhausted
 		// spawn, already tells the model to stop) — never a budget line.
