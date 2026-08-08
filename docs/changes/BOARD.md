@@ -1,6 +1,6 @@
 # Backlog
 
-**39 changes** — 🟡 11 proposed · 🔵 1 implemented · ✅ 23 done · 🗑️ 4 killed
+**39 changes** — 🟡 11 proposed · ✅ 24 done · 🗑️ 4 killed
 
 ## 🟡 Proposed (11)
 
@@ -18,15 +18,8 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | needs-brainstorm |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0018](active/0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | `high` | `feat` | [#24](https://github.com/ethanhinson/fuse/pull/24) |  |
-
 ```mermaid
 graph TD
-  0007 --> 0018
   0019 --> 0020
   0019 --> 0021
   0007 --> 0022
@@ -47,10 +40,11 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (27)</summary>
+<details><summary>✅🗑️ Archive — done + killed (28)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0018](archive/2026-08-08-0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | 2026-08-08 |
 | [0036](archive/2026-08-07-0036-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | 2026-08-07 |
 | [0031](archive/2026-08-07-0031-fuse-mcp-error-codes.md) | Adopt MCP-specific JSON-RPC error code range | 2026-08-07 |
 | [0019](archive/2026-08-07-0019-mcp-capability-negotiation.md) | MCP capability negotiation — structured init handshake | 2026-08-07 |
@@ -68,13 +62,12 @@ graph TD
 | [0013](archive/2026-08-05-0013-startup-banner.md) | ASCII art startup banner — shell init & fuse help | 2026-08-05 |
 | [0012](archive/2026-08-05-0012-subagent-ux.md) | First-Class Subagent UX — Spawn, Tree Visualization & Inspect | 2026-08-05 |
 | [0011](archive/2026-08-05-0011-deep-research.md) | Deep Research Mode — Web Search + Fan-out Synthesis | 2026-08-05 |
-| [0010](archive/2026-08-04-0010-shell-slash-command-ui.md) | Shell Slash-Command Autocomplete + MCP & Skill Invocation | 2026-08-04 |
 | [0009](archive/2026-08-04-0009-mcp-management-cli.md) | `fuse mcps` MCP Server Management CLI + `/mcps` Shell Built-in | 2026-08-04 |
 
 **Older done (collapsed)**
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 8 done |
+| [2026-08](archive/) | 9 done |
 
 </details>
