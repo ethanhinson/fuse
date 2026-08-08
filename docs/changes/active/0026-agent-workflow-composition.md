@@ -2,7 +2,7 @@
 id: 26
 slug: agent-workflow-composition
 title: Workflow composition — chain, fan-out, and conditional routing
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-06
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/agent-workflow-composition
+claimed_at: 2026-08-08T21:06:37Z
 pr:
 blocked_by:
 reconciled: false
