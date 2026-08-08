@@ -1,14 +1,19 @@
 # Backlog
 
-**39 changes** — 🟡 8 proposed · ⚪ 1 deferred · ✅ 24 done · 🗑️ 6 killed
+**39 changes** — 🟢 1 in progress · 🟡 7 proposed · ⚪ 1 deferred · ✅ 24 done · 🗑️ 6 killed
 
-## 🟡 Proposed (8)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0023](active/0023-agent-blackboard.md) | Shared result blackboard for inter-agent communication | `high` | `feat` | [spec](../superpowers/specs/2026-08-08-agent-blackboard-design.md) | `feat/agent-blackboard` |
+
+## 🟡 Proposed (7)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0020](active/0020-mcp-progress-streaming.md) | MCP `$/progress` notifications and streaming tool results | `medium` | `feat` | build-ready |
 | [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | ⏳ waiting on #20 — not yet built |
-| [0023](active/0023-agent-blackboard.md) | Shared result blackboard for inter-agent communication | `high` | `feat` | build-ready |
 | [0024](active/0024-structured-delegation.md) | Structured delegation — expected result schemas for spawn_agent | `medium` | `feat` | build-ready |
 | [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | ⏳ waiting on #23 — not yet built |
 | [0027](active/0027-context-summarization.md) | Anchored context summarization at compression threshold | `high` | `feat` | build-ready |
