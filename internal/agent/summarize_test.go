@@ -209,3 +209,106 @@ func reqText(req model.CompletionReq) string {
 	}
 	return b.String()
 }
+
+// --- Task 4: summary message assembly + recovery-pointer rule ---
+
+func TestSummaryMessageOmitsPointerWhenEmpty(t *testing.T) {
+	m := buildSummaryMessage("Objective: x\nNext: y", "")
+	if strings.Contains(m.Content, "grep your past") {
+		t.Errorf("empty pointer must omit the recovery line; got:\n%s", m.Content)
+	}
+	if !strings.Contains(m.Content, "Objective: x") {
+		t.Errorf("summary body missing:\n%s", m.Content)
+	}
+}
+
+func TestSummaryMessageIncludesPointerWhenPresent(t *testing.T) {
+	m := buildSummaryMessage("Objective: x", "/home/u/.fuse/sessions/s1/segments/0003")
+	if !strings.Contains(m.Content, "grep your past") {
+		t.Errorf("non-empty pointer must include the recovery line; got:\n%s", m.Content)
+	}
+	if !strings.Contains(m.Content, "/home/u/.fuse/sessions/s1/segments/0003") {
+		t.Errorf("recovery line must carry the pointer path; got:\n%s", m.Content)
+	}
+}
+
+func TestSummaryMessagePairingValid(t *testing.T) {
+	// The injected summary must not be a tool-role message (which pruneOldToolResults
+	// could re-stub) and must not carry an orphaned tool_call. An assistant text
+	// message with no ToolCalls is the safe shape.
+	m := buildSummaryMessage("Objective: x", "")
+	if m.Role == "tool" {
+		t.Errorf("summary injected as a tool message would be re-stubbed by pruning")
+	}
+	if len(m.ToolCalls) != 0 {
+		t.Errorf("summary message carries %d tool_calls; would orphan a pair", len(m.ToolCalls))
+	}
+
+	// Splice the summary in place of a raw tool-result span and assert pairing
+	// stays valid: every tool-role message references an assistant tool_call that
+	// precedes it, and every assistant tool_call has a matching tool result.
+	history := []model.Message{
+		{Role: "user", Content: "do it"},
+		{Role: "assistant", ToolCalls: []model.ToolCall{{ID: "c1", Name: "read_file"}}},
+		toolMsg2("c1", "read_file", "old body"), // this span gets replaced
+		m,                                       // injected summary at the boundary
+		{Role: "assistant", ToolCalls: []model.ToolCall{{ID: "c2", Name: "grep"}}},
+		toolMsg2("c2", "grep", "recent"),
+	}
+	// Wait: replacing c1's result with the summary would orphan c1. In the loop
+	// the summary REPLACES the raw span including the assistant tool_call that
+	// produced it. Model the post-replacement history: the c1 pair is gone,
+	// summary sits where it was.
+	post := []model.Message{
+		{Role: "user", Content: "do it"},
+		m,
+		{Role: "assistant", ToolCalls: []model.ToolCall{{ID: "c2", Name: "grep"}}},
+		toolMsg2("c2", "grep", "recent"),
+	}
+	if err := checkPairing(post); err != nil {
+		t.Errorf("post-injection pairing invalid: %v", err)
+	}
+	// Pre-replacement history should also validate (sanity that checkPairing works).
+	if err := checkPairing(history); err != nil {
+		t.Errorf("pre-injection sanity pairing invalid: %v", err)
+	}
+	// A prune pass over the post history must not touch the summary.
+	before := post[1].Content
+	pruneOldToolResults(post, 0)
+	if post[1].Content != before {
+		t.Errorf("prune re-stubbed the summary message: %q -> %q", before, post[1].Content)
+	}
+}
+
+func toolMsg2(callID, name, content string) model.Message {
+	return model.Message{Role: "tool", ToolCallID: callID, Name: name, Content: content}
+}
+
+// checkPairing asserts every tool-role message references a preceding assistant
+// tool_call id and every assistant tool_call has a following tool result — the
+// provider pairing invariant the injection must preserve.
+func checkPairing(msgs []model.Message) error {
+	open := map[string]bool{}
+	for _, m := range msgs {
+		switch m.Role {
+		case "assistant":
+			for _, tc := range m.ToolCalls {
+				open[tc.ID] = true
+			}
+		case "tool":
+			if m.ToolCallID == "" || !open[m.ToolCallID] {
+				return errPairing("tool result with no matching open tool_call: id=" + m.ToolCallID)
+			}
+			delete(open, m.ToolCallID)
+		}
+	}
+	if len(open) > 0 {
+		return errPairing("unanswered tool_call remains open")
+	}
+	return nil
+}
+
+type pairingErr string
+
+func (e pairingErr) Error() string { return string(e) }
+func errPairing(s string) error    { return pairingErr(s) }
