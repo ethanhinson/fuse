@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -132,5 +133,49 @@ func TestServerAdvertisesResourcesCapability(t *testing.T) {
 	}
 	if !caps.Supports("resources.subscribe") {
 		t.Errorf("server must advertise resources.subscribe, got %v", r.Capabilities)
+	}
+}
+
+// TestServerPushResourceUpdatedDeliversToSubscriber: after a resources/subscribe,
+// pushResourceUpdated writes a well-formed id-less notifications/resources/updated
+// frame; an unsubscribed connection receives nothing.
+func TestServerPushResourceUpdatedDeliversToSubscriber(t *testing.T) {
+	// Unsubscribed connection: push writes nothing.
+	var buf bytes.Buffer
+	s := NewServer(bytes.NewReader(nil), &buf, tools.NewRegistry(), nil)
+	s.pushResourceUpdated("fuse://tools")
+	if buf.Len() != 0 {
+		t.Errorf("push to an unsubscribed connection wrote %d bytes, want 0", buf.Len())
+	}
+
+	// Subscribe, then push: exactly one id-less resources/updated frame.
+	resp := s.dispatch(context.Background(), resReq(t, "resources/subscribe", map[string]any{"uri": "fuse://tools"}))
+	if resp.Error != nil {
+		t.Fatalf("resources/subscribe errored: %+v", resp.Error)
+	}
+	s.pushResourceUpdated("fuse://tools")
+
+	frames := decodeFrames(t, buf.Bytes())
+	if len(frames) != 1 {
+		t.Fatalf("push wrote %d frames, want 1: %s", len(frames), buf.Bytes())
+	}
+	f := frames[0]
+	if f["method"] != "notifications/resources/updated" {
+		t.Errorf("frame method = %v, want notifications/resources/updated", f["method"])
+	}
+	if _, hasID := f["id"]; hasID {
+		t.Errorf("resources/updated frame must be id-less: %v", f)
+	}
+	params, _ := f["params"].(map[string]any)
+	if params["uri"] != "fuse://tools" {
+		t.Errorf("frame uri = %v, want fuse://tools", params["uri"])
+	}
+
+	// After unsubscribe, a further push writes nothing more.
+	buf.Reset()
+	s.dispatch(context.Background(), resReq(t, "resources/unsubscribe", map[string]any{"uri": "fuse://tools"}))
+	s.pushResourceUpdated("fuse://tools")
+	if buf.Len() != 0 {
+		t.Errorf("push after unsubscribe wrote %d bytes, want 0", buf.Len())
 	}
 }
