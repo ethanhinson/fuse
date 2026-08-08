@@ -1,12 +1,17 @@
 # Backlog
 
-**39 changes** — 🟡 4 proposed · ⚪ 1 deferred · ✅ 28 done · 🗑️ 6 killed
+**39 changes** — 🟢 1 in progress · 🟡 3 proposed · ⚪ 1 deferred · ✅ 28 done · 🗑️ 6 killed
 
-## 🟡 Proposed (4)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | [spec](../superpowers/specs/2026-08-08-mcp-resource-subscriptions-design.md) | `feat/mcp-resource-subscriptions` |
+
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | build-ready |
 | [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | build-ready |
 | [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | build-ready |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | build-ready |
