@@ -52,6 +52,30 @@ type jsonrpcResponse struct {
 	Error   *jsonrpcError   `json:"error,omitempty"`
 }
 
+// jsonrpcInbound is a permissive frame that captures BOTH the response fields
+// (id/result/error) and a notification's method/params in a single decode. A
+// read pump sniffs it: a frame with a method and no id is a server→client
+// notification (e.g. "$/progress"), routed to the notification router; anything
+// with an id is a response, fanned to the matching pending caller.
+type jsonrpcInbound struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      string          `json:"id"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *jsonrpcError   `json:"error,omitempty"`
+}
+
+// isNotification reports whether the inbound frame is an id-less notification
+// (a method with no id). Response frames carry an id; requests from the server
+// are not part of fuse's client contract.
+func (f jsonrpcInbound) isNotification() bool { return f.Method != "" && f.ID == "" }
+
+// response projects the inbound frame's response fields.
+func (f jsonrpcInbound) response() jsonrpcResponse {
+	return jsonrpcResponse{JSONRPC: f.JSONRPC, ID: f.ID, Result: f.Result, Error: f.Error}
+}
+
 type jsonrpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -68,6 +92,11 @@ type StdioClient struct {
 	counter atomic.Uint64
 	done    chan struct{}
 	once    sync.Once
+
+	// router receives id-less notification frames (e.g. "$/progress"). Nil for
+	// clients constructed without a manager, in which case notifications are
+	// dropped (pre-#0020 behavior).
+	router notificationRouter
 
 	logMu   sync.Mutex
 	logRing []string
@@ -156,17 +185,27 @@ func (c *StdioClient) drainStderr(r io.Reader) {
 	}
 }
 
-// readPump drains the server's stdout and fans responses to waiting callers.
+// readPump drains the server's stdout, routing id-less notifications to the
+// router and fanning id-keyed responses to waiting callers.
 func (c *StdioClient) readPump() {
 	defer c.closeAll()
 	for {
-		var resp jsonrpcResponse
-		if err := c.dec.Decode(&resp); err != nil {
+		var frame jsonrpcInbound
+		if err := c.dec.Decode(&frame); err != nil {
 			if err != io.EOF {
 				// swallow — server exited or closed stdout
 			}
 			return
 		}
+		// An id-less notification (e.g. "$/progress") is routed BEFORE the pending
+		// lookup — it has no id, so the old code dropped it (the load-bearing bug).
+		if frame.isNotification() {
+			if c.router != nil {
+				c.router.dispatchNotification(c.name, frame.Method, frame.Params)
+			}
+			continue
+		}
+		resp := frame.response()
 		c.mu.Lock()
 		ch, ok := c.pending[resp.ID]
 		if ok {
