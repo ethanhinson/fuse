@@ -2,7 +2,7 @@
 id: 22
 slug: mcp-websocket-transport
 title: WebSocket transport for MCP
-status: proposed
+status: killed
 priority: low
 type: feat
 created: 2026-08-06
@@ -63,3 +63,7 @@ Killed at grooming (2026-08-08) after research showed WebSocket MCP is a phantom
 - **Already covered.** Streamable HTTP (#0018, done) + legacy HTTP/SSE (#0007, done) reach the entire live MCP ecosystem today.
 
 Watch item, not a reason to keep this open: the MCP transport working group has repeatedly entertained bidirectional transports (SEP-1288, gRPC #1352, postMessage #1005), and MCP governance moved under the Linux Foundation in Dec 2025. If WebSocket is ever adopted into the spec with real servers to reach, file a fresh change then — there is nothing merged to build against now.
+
+## Why killed
+
+Phantom MCP transport: not in spec (SEP-1288 closed unmerged), no real servers/clients, superseded by Streamable HTTP (#0018) + HTTP/SSE (#0007)
