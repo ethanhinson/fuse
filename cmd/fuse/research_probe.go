@@ -217,7 +217,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 		)
 		return func(ctx context.Context, req tools.SpawnRequest) (string, error) {
 			handle, herr := spawner.Spawn(ctx, agent.SpawnOpts{
-				Label: req.Label, Task: req.Task, SystemPrompt: req.SystemPrompt, ModelID: req.Model, Tools: req.Tools, Worker: req.Worker,
+				Label: req.Label, Task: req.Task, SystemPrompt: req.SystemPrompt, ModelID: req.Model, Tools: req.Tools, Worker: req.Worker, Expects: req.Expects,
 			})
 			if herr != nil {
 				return "", herr

@@ -269,6 +269,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				ModelID:      req.Model,
 				Tools:        req.Tools,
 				Worker:       req.Worker,
+				Expects:      req.Expects,
 			}
 			handle, herr := spawner.Spawn(ctx, opts)
 			if herr != nil {
