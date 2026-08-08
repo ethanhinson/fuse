@@ -4,11 +4,19 @@ import (
 	"encoding/json"
 )
 
-// toolsResourceURI is the URI of fuse's dogfood resource: the live tool catalog
+// ToolsResourceURI is the URI of fuse's dogfood resource: the live tool catalog
 // derived from the server's registry (D5). A client can resources/read it to
 // snapshot the exposed tools and resources/subscribe to be pushed a
 // notifications/resources/updated whenever the catalog changes (config reload).
-const toolsResourceURI = "fuse://tools"
+const ToolsResourceURI = "fuse://tools"
+
+// toolsResourceURI is the unexported alias used at internal call sites.
+const toolsResourceURI = ToolsResourceURI
+
+// PushResourceUpdated writes an id-less notifications/resources/updated frame for
+// a URI to this connection when it is subscribed (a no-op otherwise). Exported so
+// the `fuse mcp-server` config-watch (cmd/fuse) can push on a tool-catalog change.
+func (s *Server) PushResourceUpdated(uri string) { s.pushResourceUpdated(uri) }
 
 // handleResourcesList returns the server's exposed resources — currently only the
 // fuse://tools catalog.

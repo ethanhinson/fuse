@@ -63,6 +63,15 @@ func (r *Registry) Has(name string) bool {
 	return ok
 }
 
+// Tools returns every registered tool in registration order.
+func (r *Registry) Tools() []Tool {
+	out := make([]Tool, 0, len(r.order))
+	for _, name := range r.order {
+		out = append(out, r.byName[name])
+	}
+	return out
+}
+
 // Schemas returns the model-facing schema for every registered tool.
 func (r *Registry) Schemas() []model.ToolSchema {
 	out := make([]model.ToolSchema, 0, len(r.order))
