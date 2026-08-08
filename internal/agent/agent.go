@@ -67,7 +67,34 @@ type Agent struct {
 	// 0027 ships only the no-op default; #0030 implements a real sink). Never nil
 	// once SetSummarizer is called — a nil sink argument installs the no-op.
 	segmentSink SegmentSink
+
+	// relevanceScorer ranks tool results for relevance-aware pruning (change
+	// 0028). Always non-nil after New() — the always-on heuristic scorer is the
+	// default; pruneOldToolResults never sees nil. context.relevance.heuristic:
+	// false installs the pure-recency scorer (the no-op degeneration path), not
+	// a nil.
+	relevanceScorer RelevanceScorer
+	// recencyFloor is the percentage of the protection budget reserved for the
+	// guaranteed recency floor (change 0028). 0 ⇒ the spec default (50) via
+	// recencyFloorPct(); an explicit value from config overrides.
+	recencyFloor int
 }
+
+// recencyFloorPct returns the effective recency-floor percentage: the spec
+// default (50) when unset, otherwise the configured value clamped to [0,100].
+func (a *Agent) recencyFloorPct() int {
+	if a.recencyFloor <= 0 {
+		return defaultRecencyFloorPct
+	}
+	if a.recencyFloor > 100 {
+		return 100
+	}
+	return a.recencyFloor
+}
+
+// defaultRecencyFloorPct is the spec default fraction of the protection budget
+// reserved for the guaranteed recency floor.
+const defaultRecencyFloorPct = 50
 
 // SetSummarizer enables Tier 2 anchored summarization (change 0027). A non-nil
 // s wires the bounded summarizer; sink receives the raw pre-summarization region
@@ -99,6 +126,22 @@ func (a *Agent) EnableSummarization(c Completer, modelID string, maxOutput int, 
 // leaves spawn_agent always visible.
 func (a *Agent) SetStripSpawn(fn func() bool) { a.stripSpawn = fn }
 
+// SetRelevanceScorer installs the tool-result relevance scorer used by
+// relevance-aware pruning (change 0028). A nil s keeps/installs the always-on
+// heuristic default, so the prune step never runs without a scorer. Mirrors
+// SetStripSpawn.
+func (a *Agent) SetRelevanceScorer(s RelevanceScorer) {
+	if s == nil {
+		s = defaultHeuristicScorer()
+	}
+	a.relevanceScorer = s
+}
+
+// SetRecencyFloorPct sets the percentage of the protection budget reserved for
+// the guaranteed recency floor (change 0028). Out-of-range values are clamped
+// by recencyFloorPct(); 0 keeps the spec default (50).
+func (a *Agent) SetRecencyFloorPct(pct int) { a.recencyFloor = pct }
+
 // New builds an Agent. modelID is the gateway model id; systemPrompt, when
 // non-empty, is injected as the first message of each run. maxTurns <= 0 means
 // unlimited turns (the loop never returns ErrMaxTurns); a positive maxTurns
@@ -113,5 +156,8 @@ func New(m Completer, t ToolExecutor, r Renderer, modelID, systemPrompt string, 
 		systemPrompt: systemPrompt,
 		maxTurns:     maxTurns,
 		maxTokens:    maxTokens,
+		// Relevance-aware pruning is always on (change 0028): the heuristic
+		// scorer is the default so pruneOldToolResults never sees a nil scorer.
+		relevanceScorer: defaultHeuristicScorer(),
 	}
 }
