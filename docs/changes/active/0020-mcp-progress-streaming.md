@@ -18,9 +18,9 @@ trivial: false
 auto_groomable:
 branch: feat/mcp-progress-streaming
 pr:
-claimed_at: 2026-08-08T09:23:13Z
+claimed_at: 2026-08-08T09:25:00Z
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -76,3 +76,31 @@ read-pump notification route: fuse's pumps drop id-less frames today (learning
 `mcp-read-pumps-drop-inbound-notifications`), so this must be verified against the real
 `fuse mcps list --live` seam, not the in-package fake. Dependency **0019** (capability
 negotiation) is `done` and merged, supplying the `notify` path and `Supports(key)` accessor.
+
+## Reconcile log
+
+### 2026-08-08 — reconcile before build (docket-implement-next)
+
+Re-read the change body + spec against current `origin/main` (tip `106b792`), the linked spec,
+related #18/#21, recently-archived #19, and the live `internal/mcp` code. Findings:
+
+- **Dependency #19 is `done`/archived** (`2026-08-07-0019-mcp-capability-negotiation.md`); all of
+  its prerequisite seams the spec builds on are present on `origin/main`: `ServerCapabilities.Supports(key)`
+  (`internal/mcp/capabilities.go:29`), the id-less `mcpConn.notify` send path (`internal/mcp/conn.go:14`),
+  the `jsonrpcNotification { Method; Params }` frame (`internal/mcp/client.go:41`), and per-server
+  `caps` tracking on the manager (`internal/mcp/manager.go:56`). Design is **not** invalidated —
+  build-ready as specified.
+- **Line-number drift only** in the spec's cited seams (the pump moved to `readPump` at
+  `client.go:160` and the SSE id-less drop to `http_client.go:273-274`); the *structure* the spec
+  describes is intact. No spec edit needed — the seams are named, not just line-pinned.
+- **Scope nuance to fold into the plan (not a design change):** `tools.Tool.Execute(ctx, args) Result`
+  (`internal/tools/registry.go`) carries **no `AgentNode` reference and no progress channel**, and
+  `MCPTool` holds only an `mcpConn` (`internal/mcp/tool.go:20`) — so the spec's "emit a `ProgressEvent`
+  on the `AgentNode`" and "manager records `token → (AgentNode, ring buffer)`" cannot be wired
+  through the tool's return value. The progress→node association must be **manager-mediated**: the
+  manager owns the `token → call-tracking` map and exposes a subscribe/event seam the TUI/agent-tree
+  observes (mirroring how `internal/tui/mcp_provider.go` already reaches the manager), rather than
+  threading a node handle through `Execute`. The plan will make the pump-route + notification-router
+  + server-emit the load-bearing tasks and treat the node-binding as a manager event surface.
+- `AUTO_CAPTURE_ENABLED=false` this repo — no adjacent-work stubs minted; no follow-ups surfaced
+  beyond #0021's already-tracked router reuse.
