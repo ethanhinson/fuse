@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/semantic-tool-relevance
-claimed_at: 2026-08-08T22:42:24Z
+claimed_at: 2026-08-08T22:44:06Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -55,3 +55,17 @@ fuse's context pruning today (change 0012) is purely recency-based: `pruneOldToo
 ## Dependency
 
 `depends_on: [27]` — #0027 (anchored summarization) establishes the summarize-then-prune ordering and names this change as the one that swaps recency-based candidate selection for relevance-based. This design composes with #0027 (the recency floor keeps the tail #0027 relies on intact); the reconcile pass re-validates the shared `loop.go` seam against the real post-#0027 code at build time.
+
+## Reconcile log
+
+### 2026-08-08
+
+Reconciled against current `main` reality after claim; design confirmed valid, no scope changes.
+
+- **Dependency satisfied.** #0027 (context-summarization) is archived `done`, so `depends_on: [27]` is met; #28 is build-ready.
+- **Seam re-validated (the design's named build-time check).** #0027 did **not** move the candidate-selection seam. In `internal/agent/loop.go`, `pruneOldToolResults(messages, protectTokens)` still walks tool results newest→oldest by the `protectTokens` recency rule (unchanged from #0012); #0027 added `summarizationRegion`/`isProtected`/`dropPriorSummary` and a summarize pass that runs *before* the prune at the over-budget branch (loop.go ~line 292), then falls through to the unchanged Tier-1 `pruneOldToolResults` (loop.go line 340; recovery path line 370). The spec's prune-algorithm anchor (reserve floor → score rest → fill remainder) applies to `pruneOldToolResults` exactly as written. No re-anchoring needed.
+- **Turn/query sourcing note (for the plan, not a scope change).** `pruneOldToolResults` currently takes only `(messages, protectTokens)`. The `ScoreContext.Query` (latest user message), `RecentArgs`, and per-result `Turn` are all derivable from the `messages` slice itself (user/assistant/tool boundaries) — the loop's `turn` counter need not be threaded through. The Agent gains the `relevanceScorer` field per spec; the prune signature is extended to consult it. This is an implementation detail the plan resolves; it does not change scope.
+- **Config pattern confirmed.** `internal/config/schema.go` uses the `ContextConfig` → `SummarizationConfig` + `rawContextConfig`/`rawSummarizationConfig` mirror + `Default()` pattern; the new `context.relevance` block slots in identically.
+- **#0030 (segment-store) relationship.** #0030 is a sibling build-ready candidate, not a dependency; it implements `a.segmentSink` (the archive path referenced at loop.go ~line 299). #28 operates strictly inside `pruneOldToolResults` candidate selection and does not touch the sink, so the two compose without conflict.
+- **Learnings applied.** `bound-every-model-call` and `verify-tool-loop-at-gateway-seam` (both already cited in the spec's classifier + verification sections) govern the optional hybrid classifier path.
+- Auto-capture disabled (`AUTO_CAPTURE_ENABLED=false`) — no follow-up stubs minted; no adjacent follow-up work surfaced this pass.
