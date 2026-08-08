@@ -2,7 +2,9 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -72,4 +74,50 @@ func TestRegistryExecuteRecoversPanics(t *testing.T) {
 	if !strings.Contains(res.Output, "tool exploded") {
 		t.Errorf("panic message missing: %q", res.Output)
 	}
+}
+
+// TestRegistryConcurrentReadWrite drives concurrent writers (Register/Unregister)
+// against concurrent readers (Schemas/Has/Execute/Tools). The fuse mcp-server's
+// config-watch goroutine reconciles the registry (Register/Unregister) in-place
+// while the MCP Serve loop dispatches tools/list -> Schemas, tools/call ->
+// Has+Execute, and resources/read -> Schemas concurrently. Without a mutex on
+// Registry the concurrent map read+write panics under -race. Run with
+// `go test -race` to exercise the invariant.
+func TestRegistryConcurrentReadWrite(t *testing.T) {
+	r := NewRegistry()
+	// Seed a stable tool so readers always have something to observe.
+	r.Register(fakeTool{name: "seed"})
+
+	const goroutines = 8
+	const iterations = 200
+	var wg sync.WaitGroup
+
+	// Writers: churn a per-goroutine tool name via Register/Unregister.
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			name := fmt.Sprintf("tool-%d", g)
+			for i := 0; i < iterations; i++ {
+				r.Register(fakeTool{name: name})
+				r.Unregister(name)
+			}
+		}(g)
+	}
+
+	// Readers: hammer every read path while the writers mutate the maps.
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				_ = r.Schemas()
+				_ = r.Tools()
+				_ = r.Has("seed")
+				_ = r.Execute(context.Background(), "seed", "{}")
+			}
+		}()
+	}
+
+	wg.Wait()
 }

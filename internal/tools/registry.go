@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"sync"
 
 	"github.com/ethanhinson/fuse/internal/model"
 )
@@ -25,7 +26,14 @@ type Tool interface {
 }
 
 // Registry holds tools keyed by name in registration order.
+//
+// It is safe for concurrent use: the fuse mcp-server's config-watch goroutine
+// reconciles the registry in-place (Register/Unregister) while the MCP Serve
+// loop concurrently reads it (tools/list -> Schemas, tools/call -> Has+Execute,
+// resources/read -> Schemas). mu guards order and byName: read methods take an
+// RLock, write methods a Lock.
 type Registry struct {
+	mu     sync.RWMutex
 	order  []string
 	byName map[string]Tool
 }
@@ -37,6 +45,8 @@ func NewRegistry() *Registry {
 
 // Register adds a tool. Re-registering a name overwrites it but keeps order.
 func (r *Registry) Register(t Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, exists := r.byName[t.Name()]; !exists {
 		r.order = append(r.order, t.Name())
 	}
@@ -45,6 +55,8 @@ func (r *Registry) Register(t Tool) {
 
 // Unregister removes a tool by name. No-op if not present.
 func (r *Registry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.byName[name]; !ok {
 		return
 	}
@@ -59,12 +71,16 @@ func (r *Registry) Unregister(name string) {
 
 // Has reports whether a tool is registered under name.
 func (r *Registry) Has(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	_, ok := r.byName[name]
 	return ok
 }
 
 // Tools returns every registered tool in registration order.
 func (r *Registry) Tools() []Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]Tool, 0, len(r.order))
 	for _, name := range r.order {
 		out = append(out, r.byName[name])
@@ -74,6 +90,8 @@ func (r *Registry) Tools() []Tool {
 
 // Schemas returns the model-facing schema for every registered tool.
 func (r *Registry) Schemas() []model.ToolSchema {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]model.ToolSchema, 0, len(r.order))
 	for _, name := range r.order {
 		t := r.byName[name]
@@ -93,7 +111,9 @@ func (r *Registry) Schemas() []model.ToolSchema {
 // calls run on agent goroutines, where an unrecovered panic kills the whole
 // process (observed live: an inverted read range took down the TUI).
 func (r *Registry) Execute(ctx context.Context, name, args string) (res Result) {
+	r.mu.RLock()
 	t, ok := r.byName[name]
+	r.mu.RUnlock()
 	if !ok {
 		return Result{IsError: true, Output: fmt.Sprintf("unknown tool %q", name)}
 	}
@@ -121,6 +141,8 @@ func (r *Registry) Execute(ctx context.Context, name, args string) (res Result) 
 // that names spawn_agent selects the parent's tool here and the builder replaces
 // it with the child-wired one.
 func (r *Registry) Subset(names []string) (*Registry, []string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := NewRegistry()
 	var unknown []string
 	for _, n := range names {
@@ -135,6 +157,8 @@ func (r *Registry) Subset(names []string) (*Registry, []string) {
 
 // Clone returns a shallow copy of the registry with the same tool references.
 func (r *Registry) Clone() *Registry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := &Registry{
 		order:  make([]string, len(r.order)),
 		byName: make(map[string]Tool, len(r.byName)),
