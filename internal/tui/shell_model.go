@@ -1151,6 +1151,11 @@ func (m *ShellModel) appendResultLines(out string, isError bool, toolName string
 			tl.first = "  " + errorArrowStyle.Render("✗") + " "
 			tl.cont = "    "
 			tl.text = errorTextStyle.Render(l)
+			// pre:true so refreshViewport's hangWrap skips the non-ANSI-aware
+			// wordwrap pass, which would strip the red color escapes and render
+			// the error as plain gray text. The hard-wrap safety net still bounds
+			// long lines. (Same reason glamour output is marked pre.)
+			tl.pre = true
 		case useGutter:
 			g := gutterStyle.Render(fmt.Sprintf("%*d │ ", gutterW, i+1))
 			if i == 0 {
