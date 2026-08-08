@@ -751,6 +751,8 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "/agents":
 		return m.enterAgentsView()
+	case "/blackboard":
+		return m.enterBlackboardView()
 	case "/approvals":
 		if len(m.approvalLog) == 0 {
 			m.appendLine(headerStyle.Render("No permission decisions this session."))
@@ -965,13 +967,30 @@ func (m *ShellModel) refreshInlineBlocks() {
 	}
 }
 
-// enterAgentsView switches to the AgentsModel overlay.
+// enterAgentsView switches to the AgentsModel overlay on the tree list.
 func (m ShellModel) enterAgentsView() (tea.Model, tea.Cmd) {
+	return m.openAgentsOverlay(false)
+}
+
+// enterBlackboardView opens the AgentsModel overlay directly on the Blackboard
+// section — the /blackboard slash command. The board lives inside the agents
+// overlay (it is session-scoped, shown alongside the tree), so this is the same
+// overlay as /agents, just landed on the board.
+func (m ShellModel) enterBlackboardView() (tea.Model, tea.Cmd) {
+	return m.openAgentsOverlay(true)
+}
+
+// openAgentsOverlay builds and activates the agents overlay. When onBlackboard
+// is true it lands on the Blackboard section instead of the tree list.
+func (m ShellModel) openAgentsOverlay(onBlackboard bool) (tea.Model, tea.Cmd) {
 	if m.tree == nil {
 		m.appendLine("no agent tree active")
 		return m, nil
 	}
 	m.agentsModel = NewAgentsModel(m.tree, m.rateGate).WithBlackboard(m.blackboard)
+	if onBlackboard {
+		m.agentsModel.ShowBlackboard()
+	}
 	m.agentsModel.width = m.vp.Width
 	m.agentsModel.height = m.vp.Height + chromeHeight
 	m.agentsActive = true
