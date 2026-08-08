@@ -13,6 +13,22 @@ func okSpawn(result string) SpawnFunc {
 	}
 }
 
+// TestSpawnAgentTool_ToolsParamWarnsAboutBlackboard pins the prompting fix in the
+// tools param schema: a narrow subset silently strips blackboard access from the
+// child, so the description must warn the model about it. Guards against regress.
+func TestSpawnAgentTool_ToolsParamWarnsAboutBlackboard(t *testing.T) {
+	tool := NewSpawnAgentTool(okSpawn("ok"))
+	params := tool.Parameters()
+	props, _ := params["properties"].(map[string]any)
+	toolsProp, _ := props["tools"].(map[string]any)
+	desc, _ := toolsProp["description"].(string)
+	for _, want := range []string{"blackboard", "subset"} {
+		if !strings.Contains(strings.ToLower(desc), want) {
+			t.Errorf("tools param description must warn about %q; got: %q", want, desc)
+		}
+	}
+}
+
 func TestSpawnAgentTool_NoBudgetFuncOmitsLine(t *testing.T) {
 	tool := NewSpawnAgentTool(okSpawn("child said hi"))
 	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)

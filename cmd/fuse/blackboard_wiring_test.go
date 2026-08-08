@@ -130,6 +130,20 @@ func TestChildBlackboardPresentWhenSubsetIncludes(t *testing.T) {
 	}
 }
 
+// TestSpawnBlockWarnsAboutBlackboardSubset guards the prompting fix: because a
+// narrow tools subset silently strips blackboard access from a child (see
+// TestChildBlackboardAbsentWhenSubsetExcludes), the spawn system-prompt block
+// MUST warn the model to omit `tools` or include blackboard_* when children need
+// shared memory — otherwise a debate/ensemble produces an empty board. This
+// pins that guidance so it can't silently regress.
+func TestSpawnBlockWarnsAboutBlackboardSubset(t *testing.T) {
+	for _, want := range []string{"blackboard", "subset", "shared memory"} {
+		if !strings.Contains(strings.ToLower(spawnAgentBlock), strings.ToLower(want)) {
+			t.Errorf("spawnAgentBlock must mention %q so models don't strip blackboard from children", want)
+		}
+	}
+}
+
 func sortedKeys(m map[string]bool) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
