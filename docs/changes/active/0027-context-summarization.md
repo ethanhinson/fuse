@@ -2,7 +2,7 @@
 id: 27
 slug: context-summarization
 title: Anchored context summarization at compression threshold
-status: proposed
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-06
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/context-summarization
+claimed_at: 2026-08-08T08:55:01Z
 pr:
 blocked_by:
 reconciled: false
