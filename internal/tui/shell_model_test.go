@@ -9,7 +9,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/reflow/ansi"
+	"github.com/muesli/termenv"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -469,7 +471,34 @@ func TestAppendResultLinesPlainAndError(t *testing.T) {
 	if got := ansiRE.ReplaceAllString(rle[0].cont, ""); got != "    " {
 		t.Errorf("error cont = %q, want 4 spaces", got)
 	}
+	// Error lines must be pre:true so hangWrap skips the non-ANSI-aware wordwrap
+	// that would strip the red color — the BUG-1 regression (error text rendered
+	// as plain gray). Assert the color survives the wrap under a real color
+	// profile (tests default to Ascii, which emits no color at all).
+	if !rle[0].pre {
+		t.Error("error result line must be pre:true so wordwrap doesn't strip its color")
+	}
+	prevProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	me2 := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	me2.lines = nil
+	me2.appendResultLines("boom error text", true, "bash")
+	errLine := resultLinesOnly(me2)[0]
+	var sawRed bool
+	for _, row := range hangWrap(errLine, 80) {
+		if strings.Contains(row, "boom") && strings.Contains(row, redSeq) {
+			sawRed = true
+		}
+	}
+	lipgloss.SetColorProfile(prevProfile)
+	if !sawRed {
+		t.Error("wrapped error row lost its red color (wordwrap stripped it) — BUG-1 regression")
+	}
 }
+
+// redSeq is the ANSI escape lipgloss emits for colRed (#e06c75) under a
+// TrueColor profile: 38;2;224;108;117. Used to assert error styling survives.
+const redSeq = "38;2;224;108;117"
 
 // TestAssistantMsgIsPreWrapped (spec Test 3): assistant glamour output is
 // stored pre:true (skips wordwrap), and after the viewport shrinks the
