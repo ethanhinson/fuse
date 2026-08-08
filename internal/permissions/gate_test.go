@@ -63,6 +63,46 @@ func TestSafeListAutoApproves(t *testing.T) {
 	}
 }
 
+// TestBlackboardToolsAutoApprove: every blackboard_* tool auto-approves in smart
+// mode without an approval prompt (change 0023 — session-only in-memory store).
+func TestBlackboardToolsAutoApprove(t *testing.T) {
+	prompted := false
+	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
+		prompted = true
+		return false, false, nil
+	}
+	names := []string{
+		"blackboard_write", "blackboard_read", "blackboard_wait",
+		"blackboard_keys", "blackboard_delete",
+	}
+	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry(names...), approve)
+	for _, name := range names {
+		if res := g.Execute(context.Background(), name, `{}`); res.IsError {
+			t.Errorf("blackboard tool %q returned error: %s", name, res.Output)
+		}
+	}
+	if prompted {
+		t.Fatal("blackboard tools must auto-approve without an approval prompt")
+	}
+}
+
+// TestBlackboardWriteDemotableViaAlwaysPrompt: a user who wants the prompt back
+// can still demote a blackboard tool via permissions.always_prompt — the safe
+// default is not a lock-in.
+func TestBlackboardWriteDemotableViaAlwaysPrompt(t *testing.T) {
+	prompted := false
+	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
+		prompted = true
+		return true, false, nil
+	}
+	cfg := config.PermissionsConfig{Mode: "smart", AlwaysPrompt: []string{"blackboard_write"}}
+	g := New(cfg, newTestRegistry("blackboard_write"), approve)
+	g.Execute(context.Background(), "blackboard_write", `{}`)
+	if !prompted {
+		t.Fatal("always_prompt should re-enable the approval prompt for blackboard_write")
+	}
+}
+
 func TestAlwaysPromptDemotesSafeList(t *testing.T) {
 	prompted := false
 	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
