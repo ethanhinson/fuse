@@ -148,6 +148,28 @@ Default: a **no-op sink** returning `("", nil)`. #0030 implements the real sink.
 pointer is non-empty the summary carries a "grep your past at `<path>`" line; with the no-op
 sink that line is omitted. `Archive` errors are best-effort — logged, never fatal to the turn.
 
+> **Amendment (2026-08-08, from grooming #0030).** The seam is **widened** from the positional
+> `Archive(region []model.Message)` above to a struct so the sink receives the turn range and
+> savings metadata directly instead of reverse-engineering them:
+>
+> ```go
+> type SegmentRegion struct {
+>     TurnStart, TurnEnd int             // inclusive turn range compacted
+>     Messages           []model.Message // raw pre-summary region
+>     Summary            string          // the ODSNF summary that replaced it
+>     ToolNames          []string        // distinct tool names (index grep key)
+>     TokensBefore, TokensAfter int      // savings metadata
+> }
+> type SegmentSink interface {
+>     Archive(r SegmentRegion) (pointer string, err error)
+> }
+> ```
+>
+> The no-op default (`return "", nil`) and the recovery-pointer emission rule are unchanged;
+> only the argument shape changes. Whoever builds #0027 should ship this widened signature so
+> #0030 plugs in without a seam mismatch — see the #0030 design spec
+> (`2026-08-08-segment-store-design.md`, D1).
+
 ### Config surface (`internal/config/schema.go`)
 
 New `context.summarization` block (alongside the existing `context_window`):
