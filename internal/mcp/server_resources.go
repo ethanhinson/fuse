@@ -10,9 +10,6 @@ import (
 // notifications/resources/updated whenever the catalog changes (config reload).
 const ToolsResourceURI = "fuse://tools"
 
-// toolsResourceURI is the unexported alias used at internal call sites.
-const toolsResourceURI = ToolsResourceURI
-
 // PushResourceUpdated writes an id-less notifications/resources/updated frame for
 // a URI to this connection when it is subscribed (a no-op otherwise). Exported so
 // the `fuse mcp-server` config-watch (cmd/fuse) can push on a tool-catalog change.
@@ -23,7 +20,7 @@ func (s *Server) PushResourceUpdated(uri string) { s.pushResourceUpdated(uri) }
 func (s *Server) handleResourcesList(id json.RawMessage) serverResp {
 	return s.ok(id, map[string]any{
 		"resources": []map[string]any{{
-			"uri":         toolsResourceURI,
+			"uri":         ToolsResourceURI,
 			"name":        "Fuse tool catalog",
 			"description": "The live catalog of tools this fuse server exposes; pushes an update when the catalog changes.",
 			"mimeType":    "application/json",
@@ -43,13 +40,13 @@ func (s *Server) handleResourcesRead(req serverReq) serverResp {
 	if err := json.Unmarshal(req.Params, &p); err != nil {
 		return s.errResp(req.ID, ErrInvalidParams, "invalid params: "+err.Error())
 	}
-	if p.URI != toolsResourceURI {
+	if p.URI != ToolsResourceURI {
 		return s.errResp(req.ID, ErrResourceNotFound, "resource not found: "+p.URI)
 	}
 	catalog := s.toolCatalogJSON()
 	return s.ok(req.ID, map[string]any{
 		"contents": []map[string]any{{
-			"uri":      toolsResourceURI,
+			"uri":      ToolsResourceURI,
 			"mimeType": "application/json",
 			"text":     catalog,
 		}},
@@ -65,7 +62,7 @@ func (s *Server) handleResourcesSubscribe(req serverReq) serverResp {
 	if err := json.Unmarshal(req.Params, &p); err != nil {
 		return s.errResp(req.ID, ErrInvalidParams, "invalid params: "+err.Error())
 	}
-	if p.URI != toolsResourceURI {
+	if p.URI != ToolsResourceURI {
 		return s.errResp(req.ID, ErrResourceNotFound, "resource not found: "+p.URI)
 	}
 	s.subMu.Lock()
