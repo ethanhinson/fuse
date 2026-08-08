@@ -6,12 +6,12 @@ status: proposed
 priority: medium
 type: feat
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-08
 depends_on: [19]
 related: [18, 21]
 discovered_from: [19]
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-08-mcp-progress-streaming-design.md
 plan:
 results:
 trivial: false
@@ -27,6 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-08-mcp-progress-streaming-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-mcp-progress-streaming-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
@@ -35,17 +36,42 @@ Long-running MCP tool calls (code execution, multi-step retrievals, build comman
 
 ## What changes
 
-- **`$/progress` notification sender** in the MCP client: tools can emit `{"jsonrpc":"2.0","method":"$/progress","params":{"progressToken":"...","progress":0.5,"total":1.0}}` during execution. The client-side notification handler routes these to the agent tree as progress events (new `ProgressEvent` type on `AgentNode`).
-- **`$/progress` notification receiver** in the MCP server (`mcp_server.go`): when fuse's MCP server receives a `$/progress` notification from the client, it forwards it to the tool's renderer (TUI progress bar or plain-text percentage).
-- **`$/stream` notification support**: tools that support streaming (e.g. a search that returns results incrementally) emit `$/stream` notifications with partial content chunks. The fuse MCP client assembles chunks in order and presents the full stream as the tool result, while optionally updating inline in the TUI.
-- **Progress token tracking**: tool calls that include a `progressToken` in their MCP arguments are tracked by the manager; progress notifications are matched by token and forwarded to the agent tree.
-- **TUI integration**: the agent tree node for a running tool shows a progress bar (e.g. `[████░░░░] 50%`); streaming tools show a rolling partial content line that resolves to the final result on completion.
+- **Inbound notification route in both read pumps** (the foundational fix): today
+  `StdioClient.readPump` and `httpClient.readSSEPump` are pure id-keyed response demultiplexers
+  and **silently drop every id-less server notification**. Both grow a "no id → notification
+  router" branch. Nothing downstream can receive progress until the pump does this first.
+- **Feature-generic notification router** on the manager, keyed by notification `method`, so
+  `$/progress`, `$/stream`, and later change 0021's `notifications/resources/updated` share one
+  seam.
+- **`$/progress` receive → agent tree**: the client mints a `progressToken` per call and injects
+  it into the `tools/call` `_meta`; matched notifications emit a new `ProgressEvent` on the
+  `AgentNode`, rendered as a progress bar on the running tool node.
+- **`$/stream` hybrid buffering**: chunks feed a bounded ring buffer for a live rolling TUI line,
+  but the agent **loop receives the concatenated complete result** — the loop's contract is
+  unchanged and spill/prune apply to the final value.
+- **fuse MCP server emits `$/progress`**: `Server.handleCall` threads a progress callback into
+  tool execution that writes id-less `$/progress` frames back over the transport when the call
+  supplied a token.
+- **Capability-gated, fail-open**: send a token / expect streaming only when
+  `Supports("streaming")` (from change 0019) is true; a non-advertising server gets today's
+  blocking behavior, never an error (ADR-0010 posture).
 
 ## Out of scope
 
 - `$/stream` on the client side for fuse's own tool results (web_search, bash) — only MCP-tool results stream.
 - Streaming partial child agent prose into the parent (agent-runtime concern, not MCP).
+- Progressive partial results **into the agent loop** — the loop receives the complete
+  concatenated result; progressive delivery is deferred (tool-result-contract blast radius).
 
-## Research notes (input for the brainstorm)
+## Design decisions
 
-The `$/progress` notification carries `progressToken` (string or integer, matching the one in the original tool call), `progress` (number, 0.0–1.0 or count), and optional `total` (for determinate progress). The `$/stream` notification has the same shape with a `delta` field containing the incremental content. The key design tension is whether the MCP client buffering model should be "hold until complete" (current behavior) or "stream progressively" (new). The safest path is a hybrid: stream into a ring buffer for the TUI display, but deliver the concatenated result as the tool result value — so the agent loop sees the same complete result it does today, but the human sees progress. This matches how Claude Code handles it.
+Design settled through an interactive brainstorm on 2026-08-08 and captured in the linked spec.
+Four decisions fixed the shape: (1) **both** `$/progress` and `$/stream`, on **both** the client
+(receive) and fuse's MCP server (emit) sides; (2) **capability-gated, fail-open** on
+`Supports("streaming")` — a non-advertising server degrades silently to blocking; (3) **hybrid
+buffering** — live stream to the TUI, complete concatenated result to the agent loop; (4) a
+**feature-generic notification router** that change 0021 reuses. The load-bearing task is the
+read-pump notification route: fuse's pumps drop id-less frames today (learning
+`mcp-read-pumps-drop-inbound-notifications`), so this must be verified against the real
+`fuse mcps list --live` seam, not the in-package fake. Dependency **0019** (capability
+negotiation) is `done` and merged, supplying the `notify` path and `Supports(key)` accessor.
