@@ -10,14 +10,14 @@ updated: 2026-08-08
 depends_on: [23, 24]
 related: [12, 23, 24]
 discovered_from: []
-adrs: []
+adrs: [14]
 spec: docs/superpowers/specs/2026-08-08-agent-workflow-composition-design.md
 plan: docs/superpowers/plans/2026-08-08-agent-workflow-composition-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/agent-workflow-composition
-claimed_at: 2026-08-08T21:15:46Z
+claimed_at: 2026-08-08T22:08:21Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-08-agent-workflow-composition-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-agent-workflow-composition-design.md) |
 | Plan | [2026-08-08-agent-workflow-composition-plan.md](https://github.com/ethanhinson/fuse/blob/feat/agent-workflow-composition/docs/superpowers/plans/2026-08-08-agent-workflow-composition-plan.md) |
+| ADRs | [ADR-0014](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0014-pipeline-conditional-routing-skip-propagation.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
