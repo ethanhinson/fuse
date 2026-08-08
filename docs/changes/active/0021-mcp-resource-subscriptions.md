@@ -2,7 +2,7 @@
 id: 21
 slug: mcp-resource-subscriptions
 title: MCP resource subscriptions — push-based updates
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-06
@@ -13,12 +13,12 @@ discovered_from: [19]
 adrs: [13]
 spec: docs/superpowers/specs/2026-08-08-mcp-resource-subscriptions-design.md
 plan: docs/superpowers/plans/2026-08-08-mcp-resource-subscriptions.md
-results:
+results: docs/results/2026-08-08-mcp-resource-subscriptions-results.md
 trivial: false
 auto_groomable:
 branch: feat/mcp-resource-subscriptions
-claimed_at: 2026-08-08T19:59:44Z
-pr:
+claimed_at: 2026-08-08T20:02:08Z
+pr: https://github.com/ethanhinson/fuse/pull/31
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-08-mcp-resource-subscriptions-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-mcp-resource-subscriptions-design.md) |
 | Plan | [2026-08-08-mcp-resource-subscriptions.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-resource-subscriptions/docs/superpowers/plans/2026-08-08-mcp-resource-subscriptions.md) |
+| Results | [2026-08-08-mcp-resource-subscriptions-results.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-resource-subscriptions/docs/results/2026-08-08-mcp-resource-subscriptions-results.md) |
+| PR | [#31](https://github.com/ethanhinson/fuse/pull/31) |
 | ADRs | [ADR-0013](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0013-tools-registry-owns-concurrency-safety.md) |
 <!-- docket:artifacts:end -->
 
