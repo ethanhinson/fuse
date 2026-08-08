@@ -18,6 +18,19 @@ type mcpToolDef struct {
 	InputSchema map[string]any `json:"inputSchema"`
 }
 
+// callTracker is the manager seam MCPTool uses to bind a streaming tools/call to
+// a progress token. beginCall mints a token and registers per-call tracking
+// state (ring buffer, observer fanout) keyed by that token; the returned end
+// func clears the tracking entry and returns the concatenated stream buffer, if
+// any chunks arrived. A nil tracker (or unsupported streaming) means the token
+// is never minted and Execute takes the byte-identical pre-#0020 path.
+type callTracker interface {
+	// beginCall registers tracking for a streaming tools/call and returns the
+	// minted progress token plus an end func. The end func returns the buffered
+	// stream result (empty when no $/stream chunks arrived).
+	beginCall(server, tool string) (token string, end func() string)
+}
+
 // MCPTool wraps a single MCP server tool as a tools.Tool.
 type MCPTool struct {
 	client      mcpConn
@@ -25,6 +38,14 @@ type MCPTool struct {
 	toolName    string
 	description string
 	inputSchema map[string]any
+
+	// supportsStreaming is true when the server advertised the "streaming"
+	// capability at init (D2). Only then is a progress token minted/injected.
+	supportsStreaming bool
+	// tracker is the manager seam that mints tokens and tracks per-call state.
+	// Nil when the tool was constructed without a manager (unit tests) or the
+	// server does not support streaming.
+	tracker callTracker
 }
 
 func (t *MCPTool) Name() string               { return "mcp:" + t.serverName + "/" + t.toolName }
@@ -38,10 +59,22 @@ func (t *MCPTool) Execute(ctx context.Context, args string) tools.Result {
 		return tools.Result{IsError: true, Output: fmt.Sprintf("bad arguments: %v", err)}
 	}
 
-	raw, err := t.client.call(ctx, "tools/call", map[string]any{
+	callParams := map[string]any{
 		"name":      t.toolName,
 		"arguments": params,
-	})
+	}
+
+	// Streaming path (D2): only when the server advertised "streaming" AND a
+	// tracker is wired do we mint a progress token and inject it via _meta. When
+	// unsupported, the params are byte-identical to the pre-#0020 blocking path
+	// (fail-open, ADR-0010) — no _meta key is added.
+	if t.supportsStreaming && t.tracker != nil {
+		token, end := t.tracker.beginCall(t.serverName, t.toolName)
+		defer end()
+		callParams["_meta"] = map[string]any{"progressToken": token}
+	}
+
+	raw, err := t.client.call(ctx, "tools/call", callParams)
 	if err != nil {
 		// Surface a downstream server's JSON-RPC error code alongside the message
 		// so the model can distinguish MCP-specific conditions (e.g. -32900 tool

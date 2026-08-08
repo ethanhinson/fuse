@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -70,6 +71,12 @@ type Manager struct {
 	// the handler registered here for the frame's method.
 	notifyMu       sync.Mutex
 	notifyHandlers map[string]NotificationHandler
+
+	// tracking binds an in-flight streaming tools/call to its progress token
+	// (D2). trackMu guards the map; tokenCounter mints unique tokens.
+	trackMu      sync.Mutex
+	tracking     map[string]*callTracking
+	tokenCounter atomic.Uint64
 }
 
 // NewManager starts all configured MCP servers and registers their tools.
@@ -98,7 +105,13 @@ func (m *Manager) Add(srv config.MCPServerConfig) error {
 		m.mu.Unlock()
 		return err
 	}
+	// Wire streaming support onto each discovered tool (D2). Only tools whose
+	// server advertised the "streaming" capability mint/inject a progress token;
+	// the manager is the callTracker seam.
+	supportsStreaming := caps.Supports("streaming")
 	for _, t := range discovered {
+		t.supportsStreaming = supportsStreaming
+		t.tracker = m
 		m.reg.Register(t)
 	}
 	m.mu.Lock()
