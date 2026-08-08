@@ -6,13 +6,14 @@ import (
 )
 
 // callTracking is the per-call state bound to a progress token while a streaming
-// tools/call is in flight: which server/tool it belongs to. Task 6 adds the
-// bounded ring buffer that assembles $/stream chunks.
+// tools/call is in flight: which server/tool it belongs to, and the bounded ring
+// buffer that assembles $/stream chunks (created lazily on the first chunk).
 type callTracking struct {
 	server string
 	tool   string
 
-	mu sync.Mutex
+	mu     sync.Mutex
+	stream *streamBuffer
 }
 
 // beginCall registers per-call tracking under a freshly minted progress token
@@ -34,8 +35,14 @@ func (m *Manager) beginCall(server, tool string) (string, func() string) {
 		m.trackMu.Lock()
 		delete(m.tracking, token)
 		m.trackMu.Unlock()
-		// Task 6 returns the concatenated $/stream buffer here.
-		return ""
+
+		// Return the concatenated $/stream buffer, if any chunks arrived (D3).
+		ct.mu.Lock()
+		defer ct.mu.Unlock()
+		if ct.stream == nil {
+			return ""
+		}
+		return ct.stream.assemble()
 	}
 }
 

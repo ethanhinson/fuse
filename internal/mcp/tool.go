@@ -68,13 +68,22 @@ func (t *MCPTool) Execute(ctx context.Context, args string) tools.Result {
 	// tracker is wired do we mint a progress token and inject it via _meta. When
 	// unsupported, the params are byte-identical to the pre-#0020 blocking path
 	// (fail-open, ADR-0010) — no _meta key is added.
+	var streamEnd func() string
 	if t.supportsStreaming && t.tracker != nil {
-		token, end := t.tracker.beginCall(t.serverName, t.toolName)
-		defer end()
+		var token string
+		token, streamEnd = t.tracker.beginCall(t.serverName, t.toolName)
 		callParams["_meta"] = map[string]any{"progressToken": token}
 	}
 
 	raw, err := t.client.call(ctx, "tools/call", callParams)
+
+	// On return, drain the per-call stream buffer (D3). If $/stream chunks
+	// arrived, the loop receives the concatenated COMPLETE result — never the
+	// envelope's placeholder. No chunks ⇒ streamed is "" and the envelope wins.
+	var streamed string
+	if streamEnd != nil {
+		streamed = streamEnd()
+	}
 	if err != nil {
 		// Surface a downstream server's JSON-RPC error code alongside the message
 		// so the model can distinguish MCP-specific conditions (e.g. -32900 tool
@@ -85,6 +94,15 @@ func (t *MCPTool) Execute(ctx context.Context, args string) tools.Result {
 			return tools.Result{IsError: true, Output: fmt.Sprintf("mcp %s/%s: [code %d] %s", t.serverName, t.toolName, rpcErr.Code, rpcErr.Message)}
 		}
 		return tools.Result{IsError: true, Output: fmt.Sprintf("mcp %s/%s: %v", t.serverName, t.toolName, err)}
+	}
+
+	// If the server streamed its output via $/stream, the concatenated buffer IS
+	// the complete result — deliver it in place of the envelope's placeholder.
+	// The envelope's isError flag still governs error status.
+	if streamed != "" {
+		res := renderMCPResult(raw)
+		res.Output = streamed
+		return res
 	}
 
 	return renderMCPResult(raw)
