@@ -1,8 +1,14 @@
 # Backlog
 
-**39 changes** — 🟡 7 proposed · ⚪ 1 deferred · ✅ 25 done · 🗑️ 6 killed
+**39 changes** — 🟢 1 in progress · 🟡 6 proposed · ⚪ 1 deferred · ✅ 25 done · 🗑️ 6 killed
 
-## 🟡 Proposed (7)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0027](active/0027-context-summarization.md) | Anchored context summarization at compression threshold | `high` | `feat` | [spec](../superpowers/specs/2026-08-08-context-summarization-design.md) | `feat/context-summarization` |
+
+## 🟡 Proposed (6)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -10,7 +16,6 @@
 | [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | ⏳ waiting on #20 — not yet built |
 | [0024](active/0024-structured-delegation.md) | Structured delegation — expected result schemas for spawn_agent | `medium` | `feat` | build-ready |
 | [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | ⏳ waiting on #24 — not yet built |
-| [0027](active/0027-context-summarization.md) | Anchored context summarization at compression threshold | `high` | `feat` | build-ready |
 | [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | ⏳ waiting on #27 — not yet built |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
 
