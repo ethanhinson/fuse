@@ -1,12 +1,6 @@
 # Backlog
 
-**39 changes** — 🟢 1 in progress · 🟡 2 proposed · ⚪ 1 deferred · ✅ 29 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | [spec](../superpowers/specs/2026-08-08-agent-workflow-composition-design.md) | `feat/agent-workflow-composition` |
+**39 changes** — 🟡 2 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 29 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (2)
 
@@ -20,6 +14,12 @@
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | [#32](https://github.com/ethanhinson/fuse/pull/32) |  |
 
 ```mermaid
 graph TD
