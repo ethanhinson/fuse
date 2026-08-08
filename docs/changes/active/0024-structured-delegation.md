@@ -6,12 +6,12 @@ status: proposed
 priority: medium
 type: feat
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-08
 depends_on: [12]
-related: [23]
+related: [23, 26]
 discovered_from: []
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-08-structured-delegation-design.md
 plan:
 results:
 trivial: false
@@ -27,6 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-08-structured-delegation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-structured-delegation-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
@@ -35,19 +36,40 @@ reconciled: false
 
 ## What changes
 
-- **`expects` parameter on `SpawnOpts`**: an optional `*model.ToolSchema` (reusing the existing JSON Schema type from the tools registry) describing the expected result shape. Example: `{"type":"object","properties":{"title":{"type":"string"},"findings":{"type":"array"}}}`.
-- **Child agent awareness**: the child's system prompt gains a directive (injected by the spawner) structuring its final output — "Your final message MUST be a JSON object conforming to this schema: <schema>. Do not wrap in markdown code fences."
-- **Result parsing**: the spawner attempts to parse the child's final message as JSON and validate it against the schema. If it parses and validates, `SpawnOutput` carries `Structured any` alongside the raw `text`. If not, the raw text is returned as today (no error — the `expects` is a hint, not a constraint).
-- **`SpawnHandle` enhancement**: a new `Result() (any, error)` method that returns the structured result (or an error if the child didn't produce one). The existing `Wait()` continues to return the raw text.
-- **Tool integration**: `spawn_agent`'s parameters gain an optional `expects` field (JSON Schema as a map). When provided, the tool description is updated to reflect the expected structure.
-- **Default behavior**: when `expects` is nil (the common case), behavior is identical to today — free-text result.
+- **`expects` on both surfaces**: an optional JSON-Schema object on the `spawn_agent` tool params
+  (model-driven) and an `Expects` field on `SpawnOpts` (code-driven). Nil ⇒ behavior identical to
+  today.
+- **Producer-side injection**: when `expects` is set, the spawner augments the child's system
+  prompt — "your final message MUST be a single JSON object conforming to this schema; output only
+  the JSON."
+- **Full JSON-Schema validation** of the child's output against `expects`, using a vendored
+  JSON-Schema library (nested types, enums, formats) — not a shallow key check. JSON is extracted
+  leniently first (strip fences/whitespace).
+- **Structured handle**: `SpawnDone.Structured any` + `AgentHandle.Result() (any, error)` carry the
+  validated value for programmatic callers. `Wait()` still returns raw text. (No consumer exists
+  today — this is the foundation change 0026 consumes.)
+- **Mismatch = degrade + surface + log**: an output that does not validate **never fails the
+  spawn** — the raw text is returned, a `(did NOT match expected schema: <error>)` note is appended
+  for the parent **model**, and the mismatch is recorded in a **labeled trace entry and an
+  `AgentNode` event** (tree drilldown) for the human. A match appends `(matched expected schema)`
+  and populates `Structured`.
 
 ## Out of scope
 
-- Schema validation errors causing spawn failure — always degrade gracefully to free-text.
+- A programmatic consumer of the structured result — none exists today; change 0026 is the first.
+  This change ships the handle, not a consumer.
+- Bounded re-ask of the child on mismatch — deferred (a second child model call per miss).
 - Nested schemas for sub-sub-agents — each child negotiates its own contract.
-- Result schema propagation through the agent tree display.
+- Result-schema propagation through the agent-tree display (beyond the mismatch event).
+- `ensures` (parent-side post-delegation validation) — a possible follow-on.
 
-## Research notes (input for the brainstorm)
+## Design decisions
 
-This follows the pattern of OpenAI's structured outputs / Anthropic's tool-use strict mode — but applied to agent results rather than tool calls. The key risk is false negatives: a child may produce perfectly good structured data that doesn't parse as JSON (e.g. markdown code fence wrapping, trailing text). The validation should be lenient: try to extract JSON from markdown fences, try `json.Unmarshal` after stripping whitespace, and always fall back to the raw text. The `expects` hint is asymmetric — it only constrains what the parent tells the child to produce, not what the parent must consume. A follow-on could add `ensures` (post-delegation validation) for the parent side. The research skill is the natural first adopter: the synthesizer agent could declare `expects: {type: "object", properties: {report: ..., sources: ...}}`.
+Design settled through an interactive brainstorm on 2026-08-08 and captured in the linked spec.
+Four decisions fixed the shape: (1) **both** producer-side injection **and** a programmatic
+`Structured`/`Result()` handle (a foundation ahead of its consumer, change 0026); (2) **full
+JSON-Schema validation** via a vendored library (accepting the dependency for real fidelity); (3)
+a mismatch **degrades to free text, surfaces a note the model reads, and is logged** to the trace
+and an `AgentNode` event — never fails the spawn; (4) `expects` on **both** the `spawn_agent` tool
+param and `SpawnOpts`. Two grooming findings shaped this: no Go/skill code consumes a structured
+result today (research is skill-driven, ADR-0002), and no JSON-Schema library is vendored yet.
