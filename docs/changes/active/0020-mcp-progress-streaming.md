@@ -2,7 +2,7 @@
 id: 20
 slug: mcp-progress-streaming
 title: MCP `$/progress` notifications and streaming tool results
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-06
@@ -17,8 +17,8 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/mcp-progress-streaming
-pr:
-claimed_at: 2026-08-08T09:28:00Z
+pr: https://github.com/ethanhinson/fuse/pull/30
+claimed_at: 2026-08-08T09:52:39Z
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-08-mcp-progress-streaming-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-mcp-progress-streaming-design.md) |
 | Plan | [2026-08-08-mcp-progress-streaming-plan.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-progress-streaming/docs/superpowers/plans/2026-08-08-mcp-progress-streaming-plan.md) |
+| PR | [#30](https://github.com/ethanhinson/fuse/pull/30) |
 <!-- docket:artifacts:end -->
 
 ## Why
