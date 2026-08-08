@@ -6,12 +6,12 @@ status: proposed
 priority: high
 type: feat
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-08
 depends_on: [12]
-related: [12]
+related: [12, 28, 29, 30]
 discovered_from: [12]
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-08-context-summarization-design.md
 plan:
 results:
 trivial: false
@@ -27,6 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-08-context-summarization-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-context-summarization-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
@@ -35,35 +36,43 @@ fuse's context management (change 0012) implements two-tier pruning: at 85% of t
 
 ## What changes
 
-- **Summarization trigger** in the agent loop (`loop.go`): when context budget reaches 85% (same threshold as the existing stub pruning), instead of (or before) stubbing individual tool results, invoke a **summarization pass** over the candidate region (tool results older than the recency-protected tail).
-- **Summarization prompt** using the ODSNF template from the design doc:
-  ```
-  Objective: what the agent was trying to do
-  Details: key findings and intermediate results
-  State: current progress and open items
-  Next: planned next steps
-  Files: files touched and their state
-  ```
-- **Candidate selection**: summarize tool-result spans in groups (by conversation turn or logical task boundary), not individually. The recency-protected tail (~40k newest tokens + last 2 turns) is never summarized.
-- **Summarization model**: configurable via a new `context.summarization.model` config key (default: same as the main model, or a cheaper model if one is configured). The summarizer is itself a bounded agent call (max 2000 output tokens, 30s timeout).
-- **Fallback**: if the summarization call fails (timeout, error, empty output), fall back to the existing stub-pruning behavior — summarization is additive, never regressive.
-- **Segment store**: the pre-summarization transcript is saved as markdown alongside the session log (`~/.fuse/sessions/.../segments/`) for replay and debugging (see change 0030).
-- **Config surface**: new `context.summarization` block in `internal/config/schema.go`:
-  ```yaml
-  context:
-    summarization:
-      enabled: true
-      model: ""  # empty = use the main model
-      threshold: 0.85  # context window fraction
-      max_output: 2000
-  ```
+- **Summarization pass in the agent loop** (`loop.go`): at the existing 85% over-budget point,
+  run an LLM summarization pass over the candidate region (tool results older than the
+  recency-protected tail) **before** the existing stub pruning. Summarize first, prune the raw
+  region, inject the summary at the protected-region boundary — sequence matters.
+- **ODSNF summary template** (Objective / Details / State / Next / Files), the structured format
+  from the design doc that produces actionable summaries.
+- **Anchored (incremental) summaries**: the previous summary is passed back and updated in
+  place, so one living O/D/S/N/F document sits at the boundary rather than summaries stacking up.
+- **Bounded summarizer**: its own per-attempt timeout, response-header timeout, bounded retries,
+  a distinct trace label, and a capped output — an unbounded model call would be a silent stall.
+  Model is configurable (`context.summarization.model`; empty = main model).
+- **Robustness**: an input ladder (drop oldest turns → strip tool outputs) so the summarizer
+  call cannot itself overflow, and a suppression state so repeated summarizer failures cannot
+  hot-loop. Any failure falls back to today's stub pruning — additive, never regressive.
+- **`SegmentSink` seam**: a no-op interface where the raw pre-summarization region would be
+  persisted. **Persistence itself is deferred to change 0030**, which implements the sink; the
+  summary's "grep your past at `<path>`" recovery pointer lights up only once a real sink is
+  wired.
+- **Config surface**: new `context.summarization` block in `internal/config/schema.go`
+  (`enabled` / `model` / `threshold` / `max_output`).
 
 ## Out of scope
 
+- **Segment persistence** — the storage layer is change 0030; this change ships only the no-op
+  `SegmentSink` seam.
+- **Relevance-based candidate selection** — recency selector only; relevance is change 0028.
+- **Read-file dedup pre-pass** — that is change 0029.
 - Continuous summarization (every N turns) — threshold-triggered only.
 - Summarization of user/assistant messages — tool results only.
-- Cross-session summarization — no persistent summary store across sessions.
+- Cross-session summarization — the anchored summary lives for the session only.
 
-## Research notes (input for the brainstorm)
+## Design decisions
 
-The ODSNF template is adapted from Cline's summarization approach and Claude Code's context management. The key empirical finding from the research behind the design doc is that structured templates (Objective/Details/State/Next/Files) produce more actionable summaries than free-form compression — the agent can directly use the "State" and "Next" fields to decide what to do next. The summarizer call itself consumes context tokens (the candidate region + the summarization prompt), so it must run on the full context before pruning — sequence matters: summarize first, then prune the raw content, inject the summary at the boundary of the protected region. Compression ratios vary by content but the design doc estimates 5-10× for typical tool result blobs (read_file outputs, bash results). The biggest risk is that the summary loses information the model needs — the `Next` field mitigates this by explicitly tracking intent, and the segment store ensures the raw data is recoverable.
+Design settled through an interactive brainstorm on 2026-08-08 and captured in the linked spec,
+building on the existing `docs/designs/context-management.md` (Tier 2). Four decisions fixed the
+shape: (1) segment persistence is **deferred to change 0030** via a no-op `SegmentSink` hook;
+(2) both the summarizer **input ladder** and **suppression state** ship in v1; (3) summaries are
+**anchored** (the previous summary is updated incrementally); (4) the default summarizer model is
+the **main model** (`context.summarization.model` empty). This change anchors a four-change
+cluster — 0028/0029/0030 all build on it — so the scope is kept deliberately tight.
