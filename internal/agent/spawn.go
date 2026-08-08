@@ -255,6 +255,17 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 	if err != nil {
 		return AgentHandle{}, err
 	}
+	// SF-2 (slot-leak safety): once enqueueSlot has granted a slot, slotsInUse is
+	// already incremented. If anything below panics before the worker goroutine
+	// takes ownership of the release, the slot would leak permanently and shrink
+	// the global concurrency cap. Guard the synchronous setup so a granted slot is
+	// handed back on panic; slotHeld is cleared once the goroutine owns release.
+	slotHeld := granted
+	defer func() {
+		if slotHeld {
+			sched.releaseSlot()
+		}
+	}()
 
 	node := &AgentNode{
 		ID:       newNodeID(),
@@ -264,17 +275,29 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		Status:   StatusPending,
 		Depth:    depth,
 	}
+	doneCh := make(chan SpawnDone, 1)
+	childCtx, cancel := context.WithCancel(ctx)
+	// SF-3 (cancel race): store the cancel func BEFORE the node is added to the
+	// tree, so a concurrent tree.CancelNode that discovers the node can never read
+	// a nil cancel func. addNode is the point of exposure; SetCancel must precede
+	// it. (Was: addNode then SetCancel, leaving a nil-cancel window.)
+	node.SetCancel(cancel) // allows tree.CancelNode to stop this node
 	if s.tree != nil {
 		s.tree.addNode(node)
 		s.tree.Emit(TreeUpdate{NodeID: node.ID})
 	}
 
-	doneCh := make(chan SpawnDone, 1)
-	childCtx, cancel := context.WithCancel(ctx)
-	node.SetCancel(cancel) // allows tree.CancelNode to stop this node
-
+	// The goroutine now owns slot release for both the granted (fast-path) and
+	// parked (awaitSlot) cases; the synchronous guard above no longer applies.
+	slotHeld = false
 	go func() {
 		defer cancel()
+		// If the slot was already granted synchronously, release it when this
+		// goroutine exits. For the parked case the release defer is registered
+		// after awaitSlot succeeds, so a cancelled waiter never over-releases.
+		if granted {
+			defer sched.releaseSlot()
+		}
 
 		// Width cap: wait for the granted slot (or park-and-wait) while the node
 		// stays visibly pending. Depth limits alone don't bound load when the model
@@ -289,8 +312,8 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 				doneCh <- SpawnDone{Err: childCtx.Err()}
 				return
 			}
+			defer sched.releaseSlot()
 		}
-		defer sched.releaseSlot()
 
 		node.mu.Lock()
 		node.Status = StatusRunning

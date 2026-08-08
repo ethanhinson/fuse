@@ -132,6 +132,90 @@ func TestSpawnTokenQuotaBackstop(t *testing.T) {
 
 // TestSpawnWidthCap verifies the tree-global semaphore bounds concurrently
 // RUNNING children; excess spawns queue as pending rather than all executing.
+// TestSpawnStoresCancelBeforeTreeExposure is the regression test for the
+// cancel-func write race (SF-3): a child cancelled immediately after Spawn (via
+// tree.CancelNode) must actually be cancelled. Before the fix the node was added
+// to the tree before SetCancel ran, so a concurrent CancelNode could read a nil
+// cancel func and silently no-op. Here the child blocks until its context is
+// cancelled; if CancelNode saw a nil func the child would hang and the test
+// would time out.
+func TestSpawnStoresCancelBeforeTreeExposure(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	started := make(chan struct{})
+
+	s := NewSpawner(WithTree(tree), WithChildBuilder(
+		func(ctx context.Context, opts SpawnOpts, node *AgentNode, _ *AgentTree) (string, error) {
+			close(started)
+			<-ctx.Done() // only returns if the cancel func was wired and fired
+			return "", ctx.Err()
+		}))
+
+	h, err := s.Spawn(context.Background(), SpawnOpts{Label: "c"})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	<-started
+	tree.CancelNode(h.NodeID)
+
+	select {
+	case d := <-h.Done:
+		if !errors.Is(d.Err, context.Canceled) {
+			t.Fatalf("child err = %v, want context.Canceled", d.Err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("child not cancelled — CancelNode likely read a nil cancel func")
+	}
+}
+
+// TestSpawnSlotAccountingBalanced is the regression guard for the slot leak
+// (SF-2): after many spawn/complete and spawn/cancel cycles the scheduler's
+// granted-slot count must return to zero. A leaked slot would leave SlotsInUse
+// permanently elevated and shrink the effective concurrency cap. Run under -race
+// to also exercise the cancel-before-exposure ordering concurrently.
+func TestSpawnSlotAccountingBalanced(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	sched := tree.Scheduler()
+
+	s := NewSpawner(WithTree(tree), WithChildBuilder(
+		func(ctx context.Context, opts SpawnOpts, node *AgentNode, _ *AgentTree) (string, error) {
+			if opts.Label == "cancel" {
+				<-ctx.Done()
+				return "", ctx.Err()
+			}
+			return "ok", nil
+		}))
+
+	for i := 0; i < 25; i++ {
+		// Alternate clean completion and immediate cancellation.
+		h, err := s.Spawn(context.Background(), SpawnOpts{Label: "ok"})
+		if err != nil {
+			t.Fatalf("spawn ok %d: %v", i, err)
+		}
+		h.Wait()
+
+		hc, err := s.Spawn(context.Background(), SpawnOpts{Label: "cancel"})
+		if err != nil {
+			t.Fatalf("spawn cancel %d: %v", i, err)
+		}
+		tree.CancelNode(hc.NodeID)
+		hc.Wait()
+	}
+
+	// Slots should have all been released. Poll briefly since release happens on
+	// the worker goroutine as it unwinds.
+	deadline := time.After(2 * time.Second)
+	for {
+		if snap := sched.Snapshot(); snap.SlotsInUse == 0 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("SlotsInUse = %d after balanced cycles, want 0 (slot leak)", sched.Snapshot().SlotsInUse)
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
 func TestSpawnWidthCap(t *testing.T) {
 	tree := NewAgentTree("root", "m")
 	var running, peak atomic.Int32

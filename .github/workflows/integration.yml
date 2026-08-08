@@ -3,6 +3,22 @@ name: Integration
 on: [push, pull_request]
 
 jobs:
+  # Race-detector unit suite. The platform's core value is concurrent
+  # multi-agent execution (scheduler, spawn tree, blackboard), so the full unit
+  # suite must run under -race on every push/PR. This is deliberately Docker-free
+  # and fast, separate from the heavier MCP integration job below.
+  unit-race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run unit tests with race detector
+        run: go test -race ./...
+
   mcp-integration:
     runs-on: ubuntu-latest
     steps:

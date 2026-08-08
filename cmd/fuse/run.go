@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
@@ -279,6 +280,15 @@ func installRelevance(a *agent.Agent, cfg config.Config, traceW io.Writer, gate 
 	a.EnableRelevanceClassifier(adapter, rc.ClassifierModel, rc.ClassifierBatchSize, rc.BorderlineLo, rc.BorderlineHi)
 }
 
+// applyToolTimeout installs the configured per-leaf-tool-call timeout. A zero
+// (unset) config value leaves the agent's built-in default in place; a positive
+// value overrides it. Orchestration tools stay exempt inside the agent.
+func applyToolTimeout(a *agent.Agent, cfg config.Config) {
+	if secs := cfg.Agents.ToolTimeoutSeconds; secs > 0 {
+		a.SetToolTimeout(time.Duration(secs) * time.Second)
+	}
+}
+
 // buildAgentWithRendererAndTrace is like buildAgentWithRenderer but also
 // writes raw API request/response JSON to traceW (when non-nil), attributing
 // blocks to traceLabel. The caller owns traceW's lifecycle; share one
@@ -418,6 +428,7 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	installSummarizer(a, cfg, mc.ID, traceW, gate)
 	installRelevance(a, cfg, traceW, gate)
+	applyToolTimeout(a, cfg)
 	return a, nil
 }
 
@@ -757,5 +768,6 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	installSummarizer(a, cfg, mc.ID, traceW, gate)
 	installRelevance(a, cfg, traceW, gate)
+	applyToolTimeout(a, cfg)
 	return a, mc.ID, nil
 }

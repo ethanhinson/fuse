@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -41,6 +43,72 @@ func (nopRenderer) ToolCall(string, string)         {}
 func (nopRenderer) ToolResult(string, tools.Result) {}
 func (nopRenderer) Errorf(string, ...any)           {}
 func (nopRenderer) Tokens(int, int)                 {}
+
+// blockingExec blocks in Execute until its context is cancelled, recording
+// whether the context was observed as cancelled. Used to prove the per-tool-call
+// timeout fires and cancels the tool's derived context.
+type blockingExec struct {
+	started  chan struct{}
+	canceled chan struct{}
+	once     sync.Once
+}
+
+func (b *blockingExec) Schemas() []model.ToolSchema { return nil }
+func (b *blockingExec) Execute(ctx context.Context, name, args string) tools.Result {
+	b.once.Do(func() { close(b.started) })
+	<-ctx.Done()
+	close(b.canceled)
+	return tools.Result{Output: "unblocked", IsError: true}
+}
+
+// TestPerToolCallTimeout is the regression test for the missing per-tool-call
+// timeout: a hung leaf tool must be abandoned with an error Result instead of
+// blocking the loop forever, and its derived context must be cancelled.
+func TestPerToolCallTimeout(t *testing.T) {
+	exec := &blockingExec{started: make(chan struct{}), canceled: make(chan struct{})}
+	a := New(&scriptedCompleter{}, exec, nopRenderer{}, "m", "", 10, 100)
+	a.SetToolTimeout(50 * time.Millisecond)
+
+	start := time.Now()
+	res := a.executeToolBounded(context.Background(), model.ToolCall{ID: "1", Name: "bash", Arguments: `{}`})
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("executeToolBounded blocked for %v — timeout did not fire", elapsed)
+	}
+	if !res.IsError || !strings.Contains(res.Output, "timeout") {
+		t.Errorf("result = %+v, want an error mentioning the timeout", res)
+	}
+	select {
+	case <-exec.canceled:
+	case <-time.After(2 * time.Second):
+		t.Error("tool's derived context was not cancelled on timeout")
+	}
+}
+
+// TestExemptToolsNotTimedOut proves orchestration tools bypass the per-tool
+// timeout: spawn_agent must run to completion even past the (tiny) timeout.
+func TestExemptToolsNotTimedOut(t *testing.T) {
+	slow := &slowExec{delay: 120 * time.Millisecond}
+	a := New(&scriptedCompleter{}, slow, nopRenderer{}, "m", "", 10, 100)
+	a.SetToolTimeout(10 * time.Millisecond) // far shorter than the tool's work
+
+	res := a.executeToolBounded(context.Background(), model.ToolCall{ID: "1", Name: "spawn_agent", Arguments: `{}`})
+	if res.IsError {
+		t.Fatalf("exempt tool was timed out: %+v", res)
+	}
+	if res.Output != "spawned" {
+		t.Errorf("output = %q, want spawned", res.Output)
+	}
+}
+
+// slowExec sleeps for delay then returns, ignoring cancellation, to model a tool
+// whose real work outlasts a short timeout.
+type slowExec struct{ delay time.Duration }
+
+func (s *slowExec) Schemas() []model.ToolSchema { return nil }
+func (s *slowExec) Execute(ctx context.Context, name, args string) tools.Result {
+	time.Sleep(s.delay)
+	return tools.Result{Output: "spawned"}
+}
 
 func TestRunStopsWhenNoToolCalls(t *testing.T) {
 	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "final answer"}}}

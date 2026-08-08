@@ -1,13 +1,26 @@
-.PHONY: build install test lint test-integration
+.PHONY: build install test test-race lint test-integration
+
+# Version is stamped into the binary via -ldflags. It defaults to `git describe`
+# (tags + short SHA + dirty marker) and falls back to the source default when git
+# is unavailable. Override explicitly with: make build VERSION=1.2.3
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null)
+VERSION_PKG := github.com/ethanhinson/fuse/internal/version
+LDFLAGS := $(if $(VERSION),-X $(VERSION_PKG).Version=$(VERSION))
 
 build:
-	go build -o fuse ./cmd/fuse
+	go build -ldflags "$(LDFLAGS)" -o fuse ./cmd/fuse
 
 install:
-	go install ./cmd/fuse
+	go install -ldflags "$(LDFLAGS)" ./cmd/fuse
 
 test:
 	go test ./...
+
+# test-race runs the suite under the race detector. The platform's core value is
+# concurrent multi-agent execution, so the race build must be a first-class,
+# routinely-run target (and is wired into CI). See the P0 review findings.
+test-race:
+	go test -race ./...
 
 lint:
 	go vet ./...

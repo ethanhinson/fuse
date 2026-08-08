@@ -78,6 +78,9 @@ func (m *Manager) Unsubscribe(ctx context.Context, server, uri string) error {
 // follow-up (0021 is scoped to the dogfood loop via fuse's own mcp-server, proven
 // by the internal/tui e2e). Do not read the presence of this method as a live
 // reconnect-resubscribe guarantee.
+//
+//nolint:unused // staged 0021 infra: retained (with TestResubscribeOnReconnect)
+// for the reconnect follow-up that will invoke it; only a test reaches it today.
 func (m *Manager) resubscribeAll(ctx context.Context, server string) error {
 	conn, err := m.connFor(server)
 	if err != nil {
