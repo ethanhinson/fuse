@@ -2,7 +2,7 @@
 id: 28
 slug: semantic-tool-relevance
 title: Semantic tool-result relevance scoring for smarter pruning
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-06
@@ -13,12 +13,12 @@ discovered_from: [27]
 adrs: [15]
 spec: docs/superpowers/specs/2026-08-08-semantic-tool-relevance-design.md
 plan: docs/superpowers/plans/2026-08-08-semantic-tool-relevance-plan.md
-results:
+results: docs/results/2026-08-08-semantic-tool-relevance-results.md
 trivial: false
 auto_groomable:
 branch: feat/semantic-tool-relevance
-claimed_at: 2026-08-08T23:02:10Z
-pr:
+claimed_at: 2026-08-08T23:04:10Z
+pr: https://github.com/ethanhinson/fuse/pull/33
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-08-semantic-tool-relevance-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-semantic-tool-relevance-design.md) |
 | Plan | [2026-08-08-semantic-tool-relevance-plan.md](https://github.com/ethanhinson/fuse/blob/feat/semantic-tool-relevance/docs/superpowers/plans/2026-08-08-semantic-tool-relevance-plan.md) |
+| Results | [2026-08-08-semantic-tool-relevance-results.md](https://github.com/ethanhinson/fuse/blob/feat/semantic-tool-relevance/docs/results/2026-08-08-semantic-tool-relevance-results.md) |
+| PR | [#33](https://github.com/ethanhinson/fuse/pull/33) |
 | ADRs | [ADR-0015](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0015-per-result-relevance-classification.md) |
 <!-- docket:artifacts:end -->
 
