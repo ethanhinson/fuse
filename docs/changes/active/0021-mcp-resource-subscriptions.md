@@ -2,7 +2,7 @@
 id: 21
 slug: mcp-resource-subscriptions
 title: MCP resource subscriptions — push-based updates
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-06
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/mcp-resource-subscriptions
+claimed_at: 2026-08-08T19:19:14Z
 pr:
 blocked_by:
 reconciled: false
