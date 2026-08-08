@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0018 — Streamable HTTP transport for MCP (v2025-03-26)](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0018-mcp-streamable-http.md)**
+> ↩ **[Change 0018 — Streamable HTTP transport for MCP (v2025-03-26)](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-08-0018-mcp-streamable-http.md)**
 <!-- docket:backlink:end -->
 
 # Streamable HTTP transport for MCP (v2025-03-26)
