@@ -210,6 +210,31 @@ func captureFrame(t *testing.T, tm *teatest.TestModel, name string) string {
 	if !ok {
 		t.Fatalf("capture %q: final model is %T, want ShellModel", name, fm)
 	}
+	return captureModelFrame(t, sm, name)
+}
+
+// captureOverlayFrame is captureFrame for a settled program whose ACTIVE view is
+// an overlay (e.g. the /agents Blackboard tab). An overlay swallows key input —
+// including Ctrl+C — so a keystroke can never quit the program; the caller must
+// tear the program down with tm.Quit() first (which stops the program directly),
+// leaving the overlay state intact on the final model so its View() renders the
+// overlay, not the hidden shell transcript.
+func captureOverlayFrame(t *testing.T, tm *teatest.TestModel, name string) string {
+	t.Helper()
+	tm.Quit() //nolint:errcheck // best-effort: we only need the final model.
+	fm := tm.FinalModel(t, teatest.WithFinalTimeout(5*time.Second))
+	sm, ok := fm.(ShellModel)
+	if !ok {
+		t.Fatalf("capture %q: final model is %T, want ShellModel", name, fm)
+	}
+	return captureModelFrame(t, sm, name)
+}
+
+// captureModelFrame renders a settled ShellModel's View() and writes the
+// screenshot artifacts. Split from captureFrame so overlay captures (which must
+// quit via tm.Quit() rather than a swallowed Ctrl+C) reuse identical rendering.
+func captureModelFrame(t *testing.T, sm ShellModel, name string) string {
+	t.Helper()
 
 	// Force a true-color profile so View() emits real styling — in a non-TTY
 	// test the default lipgloss profile is Ascii (no color), which would make
