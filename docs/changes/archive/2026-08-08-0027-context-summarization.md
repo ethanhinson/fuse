@@ -2,7 +2,7 @@
 id: 27
 slug: context-summarization
 title: Anchored context summarization at compression threshold
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-06
@@ -17,7 +17,7 @@ results: docs/results/2026-08-08-context-summarization-results.md
 trivial: false
 auto_groomable:
 branch: feat/context-summarization
-claimed_at: 2026-08-08T09:19:41Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/28
 blocked_by:
 reconciled: true
