@@ -10,14 +10,14 @@ updated: 2026-08-08
 depends_on: [27]
 related: [27, 29]
 discovered_from: [27]
-adrs: []
+adrs: [15]
 spec: docs/superpowers/specs/2026-08-08-semantic-tool-relevance-design.md
 plan: docs/superpowers/plans/2026-08-08-semantic-tool-relevance-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/semantic-tool-relevance
-claimed_at: 2026-08-08T22:46:41Z
+claimed_at: 2026-08-08T23:02:10Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-08-semantic-tool-relevance-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-semantic-tool-relevance-design.md) |
 | Plan | [2026-08-08-semantic-tool-relevance-plan.md](https://github.com/ethanhinson/fuse/blob/feat/semantic-tool-relevance/docs/superpowers/plans/2026-08-08-semantic-tool-relevance-plan.md) |
+| ADRs | [ADR-0015](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0015-per-result-relevance-classification.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
