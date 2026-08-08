@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -36,6 +37,12 @@ type Server struct {
 	gate *permissions.PermissionGate
 	enc  *json.Encoder
 	dec  *json.Decoder
+
+	// encMu serializes every write on the shared encoder. A tools/call carrying
+	// _meta.progressToken emits id-less $/progress notifications MID-execution on
+	// the same encoder as its eventual response — without this lock those writes
+	// could interleave and corrupt the JSON-RPC stream.
+	encMu sync.Mutex
 }
 
 // NewServer creates a Server that reads JSON-RPC 2.0 from r and writes to w.
@@ -62,11 +69,37 @@ func (s *Server) Serve(ctx context.Context) error {
 		if len(req.ID) == 0 {
 			continue
 		}
+		// tools/call may emit id-less $/progress frames mid-execution; route it
+		// through the encoder-serialized path so those interleave cleanly with
+		// the response.
+		if req.Method == "tools/call" {
+			if err := s.handleCallAndWrite(ctx, req); err != nil {
+				return err
+			}
+			continue
+		}
 		resp := s.dispatch(ctx, req)
-		if err := s.enc.Encode(resp); err != nil {
+		if err := s.encode(resp); err != nil {
 			return fmt.Errorf("mcp server: encode: %w", err)
 		}
 	}
+}
+
+// encode writes one frame under the encoder mutex.
+func (s *Server) encode(v any) error {
+	s.encMu.Lock()
+	defer s.encMu.Unlock()
+	return s.enc.Encode(v)
+}
+
+// handleCallAndWrite runs a tools/call — emitting any $/progress notifications
+// its tool requests — then writes the response, all serialized on the encoder.
+func (s *Server) handleCallAndWrite(ctx context.Context, req serverReq) error {
+	resp := s.handleCall(ctx, req)
+	if err := s.encode(resp); err != nil {
+		return fmt.Errorf("mcp server: encode: %w", err)
+	}
+	return nil
 }
 
 func (s *Server) dispatch(ctx context.Context, req serverReq) serverResp {
@@ -74,8 +107,13 @@ func (s *Server) dispatch(ctx context.Context, req serverReq) serverResp {
 	case "initialize":
 		return s.ok(req.ID, map[string]any{
 			"protocolVersion": negotiateVersion(req.Params),
-			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "fuse", "version": "1.0.0"},
+			"capabilities": map[string]any{
+				"tools": map[string]any{},
+				// streaming advertises id-less $/progress support so a client's
+				// Supports("streaming") gate (D2) can pass against fuse's server.
+				"streaming": map[string]any{},
+			},
+			"serverInfo": map[string]any{"name": "fuse", "version": "1.0.0"},
 		})
 	case "tools/list":
 		return s.handleList(req.ID)
@@ -128,6 +166,13 @@ func (s *Server) handleList(id json.RawMessage) serverResp {
 type callParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	Meta      *callMeta       `json:"_meta"`
+}
+
+// callMeta carries the optional MCP request metadata. progressToken, when
+// present, opts the call into $/progress streaming.
+type callMeta struct {
+	ProgressToken json.RawMessage `json:"progressToken"`
 }
 
 func (s *Server) handleCall(ctx context.Context, req serverReq) serverResp {
@@ -147,11 +192,35 @@ func (s *Server) handleCall(ctx context.Context, req serverReq) serverResp {
 	if args == "" || args == "null" {
 		args = "{}"
 	}
+	// Only when the client requested progress (a non-empty _meta.progressToken)
+	// do we install a reporter; otherwise a tool's ProgressFromContext is nil and
+	// no $/progress frame is ever written (behavior byte-identical to today).
+	if p.Meta != nil && len(p.Meta.ProgressToken) > 0 && string(p.Meta.ProgressToken) != "null" {
+		ctx = withProgress(ctx, s.progressReporter(p.Meta.ProgressToken))
+	}
 	result := s.gate.Execute(ctx, p.Name, args)
 	return s.ok(req.ID, map[string]any{
 		"content": []map[string]any{{"type": "text", "text": result.Output}},
 		"isError": result.IsError,
 	})
+}
+
+// progressReporter returns a ProgressReporter that writes an id-less $/progress
+// notification echoing the client's progressToken, serialized on the encoder so
+// it never interleaves with the eventual response. An encode error is dropped —
+// a broken transport surfaces when the response fails to write.
+func (s *Server) progressReporter(token json.RawMessage) ProgressReporter {
+	return func(progress float64, total *float64) {
+		params := map[string]any{
+			"progressToken": token,
+			"progress":      progress,
+		}
+		if total != nil {
+			params["total"] = *total
+		}
+		note := jsonrpcNotification{JSONRPC: "2.0", Method: "$/progress", Params: params}
+		_ = s.encode(note)
+	}
 }
 
 func (s *Server) ok(id json.RawMessage, v any) serverResp {
