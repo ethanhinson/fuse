@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/agent-blackboard
-claimed_at: 2026-08-08T05:48:54Z
+claimed_at: 2026-08-08T05:51:24Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -88,3 +88,50 @@ timeout-only for v1; (4) each entry records its writing agent. **Change 0025
 inbox is functionally a per-agent blackboard key, so it becomes a thin poll-based convention
 over this store rather than a separate primitive. Downstream change **0026** (workflow
 composition) builds on this substrate. Scope is deliberately kept tight.
+
+## Reconcile log
+
+### 2026-08-08 — reconcile before build (docket-implement-next)
+
+Re-read the change + spec against current `main` code, `depends_on`/`related`, and the
+learnings ledger. Verdict: **build-ready, no scope change; one spec correction recorded
+below.** No fundamental invalidation.
+
+**Verified against current code (all spec anchors accurate):**
+- `AgentTree` ownership hooks — `NewAgentTree` / `NewAgentTreeWithConcurrency`
+  (`internal/agent/tree.go:248`/`256`), one tree per session.
+- Slot-yield API — `AgentTree.YieldSlot(node)` (`tree.go:416`) and
+  `UnyieldSlot(ctx, node) bool` (`tree.go:427`), delegating to the `Scheduler`
+  (`scheduler.go:881`/`899`). Signatures match the spec's `Wait` contract exactly.
+- `AgentNode.ID` / `AgentNode.Label` (`tree.go:91`/`93`) available for provenance.
+- Tool seam — `tools.Tool` interface + `tools.Result` (`internal/tools/registry.go`);
+  `spawn_agent.go` is the modeling reference for `NewXTool` / `Name` / `Description` /
+  `Parameters` / `Execute`. Confirmed the blackboard tool must carry per-node provenance,
+  so — exactly like `spawn_agent` — it is **re-registered per child** bound to `childNode`,
+  not merely inherited through `childToolRegistry`'s Clone/Subset of the parent registry.
+- Race-safe display pattern — `NodeView` / `AgentNode.Snapshot()` (`tree.go:182`) is the
+  model for the required `Blackboard.Snapshot()`.
+- `depends_on: [12]` is satisfied — change 0012 (subagent-ux) is `done`
+  (`archive/2026-08-05-0012-subagent-ux.md`). `related: [24]` (structured-delegation) is
+  still `proposed` and independent — no coupling. Killed #0025 fold-in confirmed.
+
+**Spec correction (wiring sites) — the one drift.** The spec's `## Tool wiring` names the
+child-builder sites as `cmd/fuse/run.go`, `shell.go`, `research_probe.go` and asks to
+"re-grep for a fourth (`workflow.go`)". Grepping the current tree for `WithChildBuilder`
+(and confirmed by learning `patch-every-cloned-child-builder`) the actual agent entry
+points with a root registration **and** a child-builder closure are **`cmd/fuse/main.go`
+(the one-shot `run()` path), `cmd/fuse/shell.go`, and `cmd/fuse/research_probe.go`**.
+`run.go` holds only the shared registry helpers (`defaultToolRegistry`,
+`buildSessionRegistryNoMCP`, `childToolRegistry`) — no builder closure of its own;
+`workflow.go` holds only budget/quota helpers (`budgetFor`, `quotaWarningFor`) — no child
+builder. The spec's own instruction ("enumerate the sites by grep at build time, never
+from this list") governs and is honored: the plan will re-grep and wire all three
+entry-point sites (root + child) plus the shared helper path. No behavioral scope change —
+just the corrected site enumeration.
+
+**Learnings pulled for the plan:** `slot-cap-yield-while-blocked-on-children` (D1's
+mandatory yield + the saturation regression), `patch-every-cloned-child-builder` (grep the
+sites), `verify-tool-loop-at-gateway-seam` (model-sees-tool via a scripted
+`LLM_GATEWAY_URL` double), `teatest-final-frame-via-finalmodel-view` +
+`sanitize-untrusted-bytes-fixed-width-tui` (Blackboard tab render + untrusted-value
+sanitization).
