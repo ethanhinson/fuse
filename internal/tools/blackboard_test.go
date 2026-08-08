@@ -47,7 +47,10 @@ func (f *fakeStore) Delete(key string) {
 
 func (f *fakeStore) Keys(pattern string) []string {
 	all := pattern == "" || pattern == "*"
-	var out []string
+	// Non-nil empty slice, mirroring the real store (agent.Blackboard.Keys uses
+	// make([]string, 0, …)) so a no-match marshals to "[]" not "null" — the tool
+	// contract the model sees. A nil slice here would diverge from production.
+	out := []string{}
 	for k := range f.values {
 		if all {
 			out = append(out, k)
