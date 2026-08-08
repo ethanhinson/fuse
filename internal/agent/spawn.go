@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"sync"
 	"time"
 )
 
@@ -36,6 +37,12 @@ var ErrWorkflowQuotaExhausted = errors.New("agent: workflow spawn quota exhauste
 // once exhausted the tool stays gone in scope — there is no mid-turn abort.
 var ErrTokenQuotaExhausted = errors.New("agent: token quota exhausted")
 
+// ErrNoStructuredResult is returned by AgentHandle.Result when the child produced
+// no validated structured result — either the spawn carried no Expects schema, or
+// the child's output did not match it (change 0024). The raw text is still
+// available via Wait().Result; a mismatch never fails the spawn.
+var ErrNoStructuredResult = errors.New("agent: no structured result (child output absent or did not match the expected schema)")
+
 // SpawnOpts configures a child agent spawn.
 type SpawnOpts struct {
 	Label        string
@@ -48,12 +55,26 @@ type SpawnOpts struct {
 	// Worker names a workflow worker type (change 0034); empty for freeform
 	// spawns. The child builder resolves it to the worker's tool allowlist.
 	Worker string
+	// Expects, when non-nil, is a JSON Schema (a decoded schema document, e.g.
+	// map[string]any) the parent wants the child's final result to conform to
+	// (change 0024). It is an asymmetric hint, not a constraint: the spawner
+	// injects a directive into the child's system prompt asking it to emit only
+	// conforming JSON, and validates the child's output against it on return. A
+	// mismatch NEVER fails the spawn — it degrades to free text with a note. Nil
+	// preserves all prior behavior byte-for-byte.
+	Expects any
 }
 
 // SpawnDone carries the result of a completed child agent.
 type SpawnDone struct {
 	Result string
 	Err    error
+	// Structured is the parsed JSON value from the child's result when it matched
+	// the SpawnOpts.Expects schema (change 0024); nil when no schema was set or
+	// the result did not match. The match note also rides inside Result, so a
+	// SpawnFunc adapter that only forwards Result still conveys the outcome to the
+	// model; Structured is the programmatic channel reachable via Result().
+	Structured any
 }
 
 // AgentHandle holds a reference to a spawned child agent. Cancellation goes
@@ -61,10 +82,58 @@ type SpawnDone struct {
 type AgentHandle struct {
 	NodeID string
 	Done   <-chan SpawnDone
+
+	// memo memoizes the single SpawnDone the channel delivers, so Wait() and
+	// Result() are each callable in any order without double-draining the buffered
+	// channel (change 0024). It is a POINTER so AgentHandle stays copy-safe: the
+	// value is passed/stored/ranged by value across the codebase, and copies must
+	// share the same memoization (and not copy a sync.Once lock).
+	memo *doneMemo
 }
 
-// Wait blocks until the child agent completes and returns its result.
-func (h *AgentHandle) Wait() SpawnDone { return <-h.Done }
+// doneMemo caches the SpawnDone received from an AgentHandle's channel.
+type doneMemo struct {
+	once   sync.Once
+	cached SpawnDone
+}
+
+// waitOnce receives (once) the SpawnDone from the channel and caches it, so
+// repeated or interleaved Wait()/Result() calls return the same value. A
+// zero-value handle (no memo — e.g. a returned {} on error) yields a zero
+// SpawnDone without blocking.
+func (h *AgentHandle) waitOnce() SpawnDone {
+	if h.memo == nil {
+		if h.Done == nil {
+			return SpawnDone{}
+		}
+		h.memo = &doneMemo{}
+	}
+	h.memo.once.Do(func() { h.memo.cached = <-h.Done })
+	return h.memo.cached
+}
+
+// Wait blocks until the child agent completes and returns its result. It is
+// drain-safe: callable alongside Result() in either order (memoized).
+func (h *AgentHandle) Wait() SpawnDone { return h.waitOnce() }
+
+// Result blocks until the child completes and returns the parsed structured
+// value — non-nil only when the spawn carried an Expects schema AND the child's
+// output matched it. It returns the child's run error if the spawn itself failed,
+// or ErrNoStructuredResult when the child produced no structured result (no schema
+// was requested, or the output did not validate — the raw text is still available
+// via Wait().Result). It is drain-safe alongside Wait() (change 0024). This is the
+// programmatic accessor a future consumer (change 0026) uses; the model-facing
+// path never depends on it.
+func (h *AgentHandle) Result() (any, error) {
+	d := h.waitOnce()
+	if d.Err != nil {
+		return nil, d.Err
+	}
+	if d.Structured == nil {
+		return nil, ErrNoStructuredResult
+	}
+	return d.Structured, nil
+}
 
 // ChildBuilder runs a local child agent. node is the child's already-created
 // AgentNode in the tree. It returns the final result text.
@@ -234,6 +303,14 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		var result string
 		var runErr error
 
+		// Producer side (change 0024): when the parent declared an expected result
+		// schema, inject a directive into the child's system prompt asking it to
+		// emit ONLY conforming JSON. Done here in the spawner so all child-builder
+		// adapters inherit it for free. Nil Expects leaves opts untouched.
+		if opts.Expects != nil {
+			opts.SystemPrompt = augmentPromptWithSchema(opts.SystemPrompt, opts.Expects)
+		}
+
 		if s.buildChild != nil {
 			// Backstop: a panic on a child goroutine kills the whole process,
 			// TUI included. Convert it into a child error instead.
@@ -251,6 +328,32 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 			}()
 		}
 
+		// Result side (change 0024): when a schema was expected and the child
+		// succeeded, leniently extract + validate the JSON. On match, populate
+		// Structured and append the match note. On mismatch, NEVER fail the spawn —
+		// keep the raw text, append the mismatch note, and record a labeled tree
+		// event. Done in the child goroutine (off the parent's slot), before the
+		// channel send, so the note rides inside Result and Structured on the same
+		// SpawnDone.
+		var structured any
+		if opts.Expects != nil && runErr == nil {
+			if schema, ok := opts.Expects.(map[string]any); ok {
+				parsed, verr := validateAgainstSchema(schema, result)
+				if verr == nil {
+					structured = parsed
+					result += "\n\n(matched expected schema)"
+				} else {
+					result += "\n\n(result did NOT match expected schema: " + verr.Error() + ")"
+					node.AddEvent(AgentEvent{
+						Kind:    KindError,
+						Name:    "schema_mismatch",
+						Payload: map[string]any{"error": verr.Error()},
+						TS:      time.Now(),
+					})
+				}
+			}
+		}
+
 		if runErr != nil {
 			if errors.Is(runErr, context.Canceled) {
 				node.Finish(StatusCancelled, "")
@@ -263,8 +366,8 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		if s.tree != nil {
 			s.tree.Emit(TreeUpdate{NodeID: node.ID})
 		}
-		doneCh <- SpawnDone{Result: result, Err: runErr}
+		doneCh <- SpawnDone{Result: result, Err: runErr, Structured: structured}
 	}()
 
-	return AgentHandle{NodeID: node.ID, Done: doneCh}, nil
+	return AgentHandle{NodeID: node.ID, Done: doneCh, memo: &doneMemo{}}, nil
 }
