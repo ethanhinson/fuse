@@ -6,12 +6,12 @@ status: proposed
 priority: high
 type: feat
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-08
 depends_on: [12]
 related: [12, 24]
 discovered_from: [12]
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-08-agent-blackboard-design.md
 plan:
 results:
 trivial: false
@@ -27,6 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-08-agent-blackboard-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-agent-blackboard-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
@@ -35,29 +36,41 @@ fuse's subagent model (change 0012) is spawn-and-collect: a parent spawns childr
 
 ## What changes
 
-- **`internal/agent/blackboard.go`** — new `Blackboard` type: a thread-safe (`sync.RWMutex`) map of `string` keys to structured values (JSON-encodable `any`). Key methods:
-  - `Put(key string, value any)` — upsert a value.
-  - `Get(key string) (any, bool)` — read a value.
-  - `Delete(key string)` — remove a key.
-  - `Keys(pattern string) []string` — glob-match keys for discovery.
-  - `Wait(ctx context.Context, key string) (any, error)` — block until a key is set (for producer/consumer patterns).
-  - `Snapshot() map[string]any` — consistent snapshot for tree display.
-- **`blackboard` tool**: a new built-in tool (alongside `spawn_agent`) that exposes the blackboard to the model:
-  - `blackboard_write(key, value)` — structured write (value is a JSON string that gets parsed).
-  - `blackboard_read(key)` — read a key.
-  - `blackboard_wait(key, timeout)` — blocking read with timeout (for coordination).
-  - `blackboard_keys(pattern)` — discovery.
-  - `blackboard_delete(key)` — removal.
-- **Integration with `AgentTree`**: the blackboard is owned by the root `AgentTree` and passed to each `AgentNode` at creation. Children access the root's blackboard transparently (no need to pass handles).
-- **Visualization in the agent tree overlay**: a new "Blackboard" tab in the tree detail pane shows current keys/values with agent-wrote indicators.
-- **Session scoping**: the blackboard is local to a session (in-memory, no persistence). Lifespan equals the agent tree lifespan (one user turn or one-shot run).
+- **`Blackboard` type** (`internal/agent/blackboard.go`) — a thread-safe, session-scoped
+  key→value store owned by the root `AgentTree` and shared by every agent in the session.
+  Values are JSON-encodable structured data; each entry records **which agent wrote it** (for
+  discovery and the tree view). Methods: `Put` / `Get` / `Delete` / `Keys` (glob discovery) /
+  `Wait` (blocking coordination) / `Snapshot` (race-safe read for display).
+- **`blackboard` built-in tool** — exposes the store to the model as five operations:
+  `blackboard_write` / `blackboard_read` / `blackboard_wait` / `blackboard_keys` /
+  `blackboard_delete`. Written values are JSON strings the tool parses; malformed input is a
+  tool error, never a crash.
+- **`blackboard_wait` yields its scheduler slot and requires a timeout.** A blocked waiter
+  releases its concurrency slot (reusing `AgentTree.YieldSlot`/`UnyieldSlot`) so the
+  producer/consumer pattern cannot deadlock the pool — the failure mode that bit change 0012.
+  Every wait is bounded by a required timeout; there are no infinite waits.
+- **AgentTree ownership** — one blackboard per session, lifespan equal to the agent tree
+  (one turn / one-shot run). All descendants share the root blackboard, so a nested spawn sees
+  the same keys.
+- **Tool wiring in every agent builder** — root and all cloned child builders in `cmd/fuse`.
+  Unlike `spawn_agent`, the blackboard tool is always wired (shared-state access is not a
+  spawn capability), but an explicit `tools`-subset exclusion is still honored.
+- **Blackboard tab** in the agent-tree overlay — current keys/values with agent-wrote
+  indicators.
 
 ## Out of scope
 
 - Persistence across sessions — no write-back to disk.
 - Access control (any agent can write any key) — simplicity first; ACLs are a follow-up.
 - Value size limits — bounded implicitly by context budget; no hard cap.
+- Smarter wait liveness (tree-idle / producer-death wake) — timeout-only for v1; a follow-up.
+- Direct agent-to-agent messaging — that is change 0025, which builds on this.
 
-## Research notes (input for the brainstorm)
+## Design decisions
 
-The blackboard pattern is well-established in multi-agent systems: it originated in the Hearsay-II speech recognition system (1970s) and is now used in frameworks like LangGraph (shared state dict), CrewAI (shared memory), and Google ADK (AgentStore). The key design insight is that the blackboard eliminates the need for direct agent-to-agent messaging — agents communicate by reading and writing structured data to a shared space. The `Wait` operation is the crucial enabler for producer/consumer patterns: agent A spawns agent B (the producer) and agent C (the consumer), C calls `blackboard_wait("analysis_result")`, B processes data and writes to that key, C unblocks and uses the result. This is more robust than passing handles or channels because it works across any number of agents and survives agent restarts (within a session). The glob-keyed `Keys` method lets agents discover what data is available without prior agreement on key names — the research skill's facets could each write to a `facet/<name>` key, and a synthesizer agent could discover and aggregate them.
+Design settled through an interactive brainstorm on 2026-08-08 and captured in the linked
+spec. Four decisions fixed the shape: (1) `blackboard_wait` yields its scheduler slot and
+requires a timeout; (2) the full Blackboard tree tab is in scope; (3) wait liveness is
+timeout-only for v1; (4) each entry records its writing agent. Downstream changes **0025**
+(agent-to-agent messaging) and **0026** (workflow composition) build on this substrate, so the
+scope is deliberately kept tight.
