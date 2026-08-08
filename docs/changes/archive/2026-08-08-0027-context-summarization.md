@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-08-context-summarization-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-context-summarization-design.md) |
-| Plan | [2026-08-08-context-summarization-plan.md](https://github.com/ethanhinson/fuse/blob/feat/context-summarization/docs/superpowers/plans/2026-08-08-context-summarization-plan.md) |
-| Results | [2026-08-08-context-summarization-results.md](https://github.com/ethanhinson/fuse/blob/feat/context-summarization/docs/results/2026-08-08-context-summarization-results.md) |
+| Plan | [2026-08-08-context-summarization-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-08-context-summarization-plan.md) |
+| Results | [2026-08-08-context-summarization-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-08-context-summarization-results.md) |
 | PR | [#28](https://github.com/ethanhinson/fuse/pull/28) |
 <!-- docket:artifacts:end -->
 
