@@ -161,3 +161,86 @@ func readParamURI(t *testing.T, conn *recordingConn) string {
 	}
 	return ""
 }
+
+// resourceCollector records ResourceUpdatedEvents from an observer.
+type resourceCollector struct {
+	mu     sync.Mutex
+	events []ResourceUpdatedEvent
+}
+
+func (r *resourceCollector) observe(e ResourceUpdatedEvent) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, e)
+}
+
+func (r *resourceCollector) snapshot() []ResourceUpdatedEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]ResourceUpdatedEvent, len(r.events))
+	copy(out, r.events)
+	return out
+}
+
+// TestResourceUpdatedFlagsStaleAndFansEvent: an id-less
+// notifications/resources/updated routed through the router marks the URI stale
+// and fans a ResourceUpdatedEvent to observers; NO automatic resources/read
+// fires (D2); the next explicit read fetches fresh and clears the stale flag.
+func TestResourceUpdatedFlagsStaleAndFansEvent(t *testing.T) {
+	conn := newRecordingConn()
+	conn.results["resources/read"] = []byte(`{"contents":[{"uri":"fuse://tools","text":"{}"}]}`)
+	m := managerWithConn(t, "srv", conn, `{"resources":{"subscribe":true}}`)
+	defer m.Close()
+	// Register the built-in handler (mirrors NewManager wiring for a live server).
+	m.OnNotification(resourceUpdatedMethod, m.handleResourceUpdated)
+
+	rc := &resourceCollector{}
+	m.OnResource(rc.observe)
+
+	params, _ := json.Marshal(map[string]any{"uri": "fuse://tools"})
+	m.dispatchNotification("srv", resourceUpdatedMethod, params)
+
+	// The URI is flagged stale.
+	if !m.IsStale("srv", "fuse://tools") {
+		t.Error("URI should be flagged stale after a resources/updated push")
+	}
+	// An event was fanned to the observer, carrying server + uri.
+	evts := rc.snapshot()
+	if len(evts) != 1 {
+		t.Fatalf("observer saw %d events, want 1", len(evts))
+	}
+	if evts[0].Server != "srv" || evts[0].URI != "fuse://tools" {
+		t.Errorf("event = %+v, want srv/fuse://tools", evts[0])
+	}
+	// D2: NO automatic resources/read fired on the push.
+	if conn.methodCalls("resources/read") != 0 {
+		t.Errorf("a push must NOT trigger an automatic resources/read, got %d", conn.methodCalls("resources/read"))
+	}
+
+	// The next explicit read fetches fresh AND clears the stale flag.
+	if _, err := m.ReadResource(context.Background(), "srv", "fuse://tools"); err != nil {
+		t.Fatalf("ReadResource: %v", err)
+	}
+	if m.IsStale("srv", "fuse://tools") {
+		t.Error("an explicit read should clear the stale flag")
+	}
+}
+
+// TestResourceUpdatedMalformedDropped: a malformed/empty resources/updated push
+// is silently dropped (fail-open) — no event, no stale flag, no panic.
+func TestResourceUpdatedMalformedDropped(t *testing.T) {
+	m, _ := NewManager(nil, tools.NewRegistry())
+	defer m.Close()
+	rc := &resourceCollector{}
+	m.OnResource(rc.observe)
+
+	m.handleResourceUpdated("srv", []byte(`not json`))
+	m.handleResourceUpdated("srv", []byte(`{}`)) // no uri
+
+	if got := len(rc.snapshot()); got != 0 {
+		t.Errorf("malformed push produced %d events, want 0", got)
+	}
+	if m.IsStale("srv", "") {
+		t.Error("malformed push must not flag a stale URI")
+	}
+}

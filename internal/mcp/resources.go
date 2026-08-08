@@ -61,6 +61,31 @@ func (m *Manager) OnResource(obs ResourceObserver) {
 	m.resourceMu.Unlock()
 }
 
+// handleResourceUpdated is the router handler for
+// notifications/resources/updated (D2/D3). It marks the URI stale and fans a
+// ResourceUpdatedEvent to all observers — it NEVER issues an automatic
+// resources/read (the client re-reads only on an explicit request). A malformed
+// or uri-less push is silently dropped (fail-open); it never panics. Mirrors the
+// handleProgress copy-slice-under-mutex fan-out.
+func (m *Manager) handleResourceUpdated(server string, params json.RawMessage) {
+	var p struct {
+		URI string `json:"uri"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil || p.URI == "" {
+		return
+	}
+	m.markStale(server, p.URI)
+
+	evt := ResourceUpdatedEvent{Server: server, URI: p.URI}
+	m.resourceMu.Lock()
+	obs := make([]ResourceObserver, len(m.resourceObservers))
+	copy(obs, m.resourceObservers)
+	m.resourceMu.Unlock()
+	for _, o := range obs {
+		o(evt)
+	}
+}
+
 // markStale records a URI as stale for a server (a pushed update arrived; the
 // cached view is out of date). Concurrency-safe.
 func (m *Manager) markStale(server, uri string) {

@@ -110,6 +110,7 @@ func NewManager(servers []config.MCPServerConfig, reg *tools.Registry) (*Manager
 	// a $/progress (or $/stream, Task 6) arriving during discovery is routed.
 	m.OnNotification(progressNotifyMethod, m.handleProgress)
 	m.OnNotification(streamNotifyMethod, m.handleStream)
+	m.OnNotification(resourceUpdatedMethod, m.handleResourceUpdated)
 	for _, srv := range servers {
 		if err := m.Add(srv); err != nil {
 			log.Printf("[mcp] skipping server %q: %v", srv.Name, err)
