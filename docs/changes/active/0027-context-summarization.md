@@ -2,7 +2,7 @@
 id: 27
 slug: context-summarization
 title: Anchored context summarization at compression threshold
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-06
@@ -13,12 +13,12 @@ discovered_from: [12]
 adrs: []
 spec: docs/superpowers/specs/2026-08-08-context-summarization-design.md
 plan: docs/superpowers/plans/2026-08-08-context-summarization-plan.md
-results:
+results: docs/results/2026-08-08-context-summarization-results.md
 trivial: false
 auto_groomable:
 branch: feat/context-summarization
-claimed_at: 2026-08-08T08:59:35Z
-pr:
+claimed_at: 2026-08-08T09:19:41Z
+pr: https://github.com/ethanhinson/fuse/pull/28
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-08-context-summarization-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-context-summarization-design.md) |
 | Plan | [2026-08-08-context-summarization-plan.md](https://github.com/ethanhinson/fuse/blob/feat/context-summarization/docs/superpowers/plans/2026-08-08-context-summarization-plan.md) |
+| Results | [2026-08-08-context-summarization-results.md](https://github.com/ethanhinson/fuse/blob/feat/context-summarization/docs/results/2026-08-08-context-summarization-results.md) |
+| PR | [#28](https://github.com/ethanhinson/fuse/pull/28) |
 <!-- docket:artifacts:end -->
 
 ## Why
