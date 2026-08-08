@@ -63,6 +63,13 @@ func Run(ctx context.Context, p *Pipeline, sp *agent.Spawner, bb *agent.Blackboa
 		byName[s.Name] = s
 	}
 
+	// runCtx is a cancellable child of ctx used for the step execution path. On the
+	// first fail under on_error:fail we cancel it so in-flight sibling goroutines
+	// observe cancellation and stop early rather than running to completion on the
+	// shared parent ctx (wasted spawns/tokens). wg.Wait still awaits clean shutdown.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
 	var (
 		mu         sync.Mutex
 		completed  = map[string]bool{} // step names that finished (done or skipped)
@@ -88,7 +95,7 @@ func Run(ctx context.Context, p *Pipeline, sp *agent.Spawner, bb *agent.Blackboa
 	var launchReady func()
 	runStep := func(s Step) {
 		defer wg.Done()
-		outputs, stepErr := executeStep(ctx, s, sp, bb)
+		outputs, stepErr := executeStep(runCtx, s, sp, bb)
 
 		mu.Lock()
 		defer mu.Unlock()
@@ -102,6 +109,10 @@ func Run(ctx context.Context, p *Pipeline, sp *agent.Spawner, bb *agent.Blackboa
 			} else {
 				failed = true
 				failedStep = s.Name
+				// Cancel in-flight siblings so they stop early instead of running to
+				// completion on the shared ctx (FIX 3): the failure is terminal, so
+				// their work is wasted. wg.Wait below still awaits their shutdown.
+				cancelRun()
 				return
 			}
 		} else {

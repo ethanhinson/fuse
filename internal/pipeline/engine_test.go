@@ -217,6 +217,74 @@ func TestEngineOnErrorFail(t *testing.T) {
 	}
 }
 
+// TestEngineOnErrorFailCancelsInFlightSiblings: under on_error:fail, when one
+// step fails fast, a slow in-flight sibling running on the shared ctx must
+// observe cancellation rather than run to completion (FIX 3, change 0026). The
+// two steps have no dependency, so they launch concurrently.
+func TestEngineOnErrorFailCancelsInFlightSiblings(t *testing.T) {
+	tree := agent.NewAgentTreeWithConcurrency("root", "m", 8)
+	bb := agent.NewBlackboard(tree)
+
+	var siblingCancelled int32
+	sp := fakeSpawner(t, tree, func(opts agent.SpawnOpts) (string, error) {
+		switch opts.Label {
+		case "boom":
+			// Fail fast, tripping the fail policy.
+			return "", fmt.Errorf("kaboom")
+		case "slow":
+			return "", nil // unreachable; the child builder honors ctx below
+		}
+		return "ok", nil
+	})
+	// Rebuild the spawner so the slow sibling blocks on ctx and reports cancel.
+	sp = agent.NewSpawner(
+		agent.WithTree(tree),
+		agent.WithNode(tree.Node(tree.RootID())),
+		agent.WithSpawnDepth(0),
+		agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, _ *agent.AgentNode, _ *agent.AgentTree) (string, error) {
+			switch opts.Label {
+			case "boom":
+				// Give the slow sibling time to be in flight before failing.
+				time.Sleep(20 * time.Millisecond)
+				return "", fmt.Errorf("kaboom")
+			case "slow":
+				select {
+				case <-ctx.Done():
+					atomic.StoreInt32(&siblingCancelled, 1)
+					return "", ctx.Err()
+				case <-time.After(5 * time.Second):
+					return "too-slow", nil
+				}
+			}
+			return "ok", nil
+		}),
+	)
+
+	p := &Pipeline{Name: "p", Steps: []Step{
+		{Name: "boom", Worker: "w", Prompt: "x", OnError: ErrorPolicy{Kind: ErrorFail}},
+		{Name: "slow", Worker: "w", Prompt: "y", OnError: ErrorPolicy{Kind: ErrorFail}},
+	}}
+
+	done := make(chan struct{})
+	var st Status
+	var err error
+	go func() {
+		st, err = Run(context.Background(), p, sp, bb)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not return promptly after fail — in-flight sibling was not cancelled")
+	}
+	if err == nil || st.State != StateFailed {
+		t.Fatalf("want failed pipeline, got st=%+v err=%v", st, err)
+	}
+	if atomic.LoadInt32(&siblingCancelled) != 1 {
+		t.Fatal("slow in-flight sibling did not observe ctx cancellation after the fail")
+	}
+}
+
 // TestEngineOnErrorSkip: a failing step with skip continues; its outputs are
 // absent and the pipeline completes.
 func TestEngineOnErrorSkip(t *testing.T) {
