@@ -12,13 +12,13 @@ related: [18, 21]
 discovered_from: [19]
 adrs: []
 spec: docs/superpowers/specs/2026-08-08-mcp-progress-streaming-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-08-mcp-progress-streaming-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/mcp-progress-streaming
 pr:
-claimed_at: 2026-08-08T09:25:00Z
+claimed_at: 2026-08-08T09:28:00Z
 blocked_by:
 reconciled: true
 ---
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-08-mcp-progress-streaming-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-mcp-progress-streaming-design.md) |
+| Plan | [2026-08-08-mcp-progress-streaming-plan.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-progress-streaming/docs/superpowers/plans/2026-08-08-mcp-progress-streaming-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
