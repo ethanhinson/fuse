@@ -12,12 +12,12 @@ related: [12, 28, 29, 30]
 discovered_from: [12]
 adrs: []
 spec: docs/superpowers/specs/2026-08-08-context-summarization-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-08-context-summarization-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/context-summarization
-claimed_at: 2026-08-08T08:58:00Z
+claimed_at: 2026-08-08T08:59:35Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-08-context-summarization-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-context-summarization-design.md) |
+| Plan | [2026-08-08-context-summarization-plan.md](https://github.com/ethanhinson/fuse/blob/feat/context-summarization/docs/superpowers/plans/2026-08-08-context-summarization-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
