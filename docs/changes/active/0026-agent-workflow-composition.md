@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/agent-workflow-composition
-claimed_at: 2026-08-08T21:06:37Z
+claimed_at: 2026-08-08T21:11:02Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -66,3 +66,21 @@ The emphasis of this change is that **fuse generates the pipeline in real time**
 ## Design decisions
 
 Design settled through an interactive brainstorm on 2026-08-08 and captured in the linked spec. Seven decisions fixed the shape: (1) a **new `Pipeline` concept in `internal/pipeline/`**, separate from the existing pool-governance `Workflow` — not an extension of `WorkflowConfig`, not a breaking rename; a pipeline references a workflow to run under its pool. (2) **v1 ships the full engine** — parallel fan-out, `on_error` modes, **and** conditional routing — deferring only the skill-frontmatter block and TUI sub-nodes. (3) **Conditions use a fixed structured-comparison operator set** (`{key, op, value}`), not a vendored expression language. (4) **Deterministic structure, model-authored content** — the engine drives sequencing; each step is a `spawn_agent` call using 0024's `expects` for structured results. (5) **Two front doors, one engine** — the DAG is an IR produced either by hand (authored) or by **runtime synthesis** (fuse generates it from a goal); `pipeline_run` infers the mode, surfaces the generated DAG, and optionally gates it before running. (6) **Generation is bounded and self-correcting** — a synthesized DAG passes the same validator plus resource caps, with a bounded re-ask loop that *ensures* a valid, bounded pipeline or fails loudly (never runs an invalid one), and emits a **data DAG**, not executable code. (7) **Hard `depends_on: [23, 24]`** — written against the real blackboard and structured-delegation APIs (the synthesis step itself consumes 0024), no degradation shim; 0024's spec already names 0026 as its sole consumer. Change 0012 (done) is transitive and moved to `related`.
+
+## Reconcile log
+
+### 2026-08-08 — reconcile before build (implementer)
+
+Re-read the change body and linked spec against current `origin/main` (tip `5ba21bf`, PR #31 merged) and the substrate packages this change builds on. **Verdict: no drift; scope unchanged; proceeding to build.**
+
+- **Dependencies satisfied.** Both hard deps are `done`/archived: `0023-agent-blackboard` and `0024-structured-delegation` (archived 2026-08-08). Build-readiness confirmed against the change file, not just the digest.
+- **Substrate APIs verified present as the spec assumes** (`internal/agent`, `internal/tools`, `internal/config`, `cmd/fuse`):
+  - `agent.Blackboard` — `Put/Get/Delete/Keys(pattern)/Wait`; `Keys` supports `path.Match` glob (`hits/*`); `ForNode()` returns a `tools.BlackboardStore` with provenance + slot-yield. The step-I/O substrate (0023) exists exactly as decision-4 describes.
+  - `agent.SpawnOpts.Expects any` (JSON Schema); `Spawner.Spawn(ctx, SpawnOpts) (AgentHandle, error)`; `AgentHandle.Result() (any, error)` returns the validated structured value (`ErrNoStructuredResult` on no-schema/mismatch); a schema mismatch degrades to free text + note, never a spawn error. The structured-result substrate (0024) matches decision-4's "expects-driven structured results, mismatch is not a step error."
+  - `agent.NewSpawner(...Option)` with `WithTree/WithNode/WithSpawnDepth/WithChildBuilder/WithSpawnBackstop`; `ChildBuilder` closure sets child prompt (`opts.SystemPrompt`), tools (`childToolRegistry` via `Subset`/`Clone`), and model pin (`opts.ModelID`). The engine drives execution through this existing seam — no new spawn path, per decision 1.
+  - Pool governance intact: `config.WorkflowConfig{Skill, Pool, Workers}`, `PoolConfig{Concurrent, Total, MaxDepth, Tokens}`, runtime `agent.WorkflowPool` mirror, scheduler `RegisterPool/Visible/Admit/StripPredicate/tokenQuotaDenied`. A pipeline references a workflow by name to run under its pool (decision 1); not modified.
+- **Three cloned child builders confirmed** (`cmd/fuse/shell.go`, `cmd/fuse/main.go`, `cmd/fuse/research_probe.go`) — per the `patch-every-cloned-child-builder` learning, `pipeline_run` wiring must land in all three; the site count is to be re-derived by grep at build time, not from this list.
+- **Config trust boundary** (ADR-0006): the new `pipeline.synthesis.{max_steps,max_fanout,max_depth,max_attempts}` caps are numeric and land under the same `.fuse.local.yml` tighten-only merge enforcement as pool numbers.
+- **Verification path** available: the gateway-seam e2e harness (`cmd/fuse/*_e2e_test.go` scripted `httptest`/`LLM_GATEWAY_URL` doubles, e.g. `structured_delegation_e2e_test.go`, `blackboard_gateway_e2e_test.go`) is the pattern to drive `pipeline_run({goal})` synthesis-then-execution and `pipeline_run({definition})` direct execution, per the `verify-tool-loop-at-gateway-seam` learning. TUI screenshot evidence via `internal/tui/harness_test.go` `captureFrame` (`FinalModel().View()` + forced `termenv.TrueColor`, `FUSE_SCREENSHOT_DIR` gate, freeze best-effort), per the `teatest-final-frame-via-finalmodel-view` learning.
+
+No scope adjustments, no obsolescence, no follow-up stubs surfaced this pass beyond the two already-declared deferrals (skill-frontmatter `pipelines:` block; TUI step sub-nodes) which the spec already records for follow-up (`discovered_from: 26`). Auto-capture is disabled this run, so those remain prose notes for a human to file post-merge.
