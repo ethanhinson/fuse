@@ -274,7 +274,7 @@ func TestSummaryMessagePairingValid(t *testing.T) {
 	}
 	// A prune pass over the post history must not touch the summary.
 	before := post[1].Content
-	pruneOldToolResults(post, 0)
+	pruneOldToolResults(post, 0, defaultHeuristicScorer(), defaultRecencyFloorPct)
 	if post[1].Content != before {
 		t.Errorf("prune re-stubbed the summary message: %q -> %q", before, post[1].Content)
 	}

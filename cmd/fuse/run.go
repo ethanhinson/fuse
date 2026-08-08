@@ -254,6 +254,31 @@ func installSummarizer(a *agent.Agent, cfg config.Config, mainModelID string, tr
 	a.EnableSummarization(adapter, modelID, s.MaxOutput, nil)
 }
 
+// installRelevance wires relevance-aware pruning config (change 0028) onto a
+// after agent.New. The heuristic scorer is always on (installed by agent.New),
+// so this only applies the configured recency floor and, when a classifier
+// model is set, the optional hybrid LLM classifier — a bounded adapter (reusing
+// the session rate gate) decorated with a distinct "relevance-classifier" trace
+// label (the bound-every-model-call learning). With heuristic:false the
+// pure-recency scorer is installed (the no-op degeneration path); no classifier
+// is wired in that mode.
+func installRelevance(a *agent.Agent, cfg config.Config, traceW io.Writer, gate model.RateGate) {
+	rc := cfg.Context.Relevance
+	a.SetRecencyFloorPct(rc.RecencyFloorPct)
+	if !rc.Heuristic {
+		a.DisableHeuristicRelevance()
+		return
+	}
+	if rc.ClassifierModel == "" {
+		return
+	}
+	adapter := gatewayAdapter(cfg, gate)
+	if traceW != nil {
+		adapter = adapter.WithTraceLabel(traceW, "relevance-classifier")
+	}
+	a.EnableRelevanceClassifier(adapter, rc.ClassifierModel, rc.ClassifierBatchSize, rc.BorderlineLo, rc.BorderlineHi)
+}
+
 // buildAgentWithRendererAndTrace is like buildAgentWithRenderer but also
 // writes raw API request/response JSON to traceW (when non-nil), attributing
 // blocks to traceLabel. The caller owns traceW's lifecycle; share one
@@ -392,6 +417,7 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	installSummarizer(a, cfg, mc.ID, traceW, gate)
+	installRelevance(a, cfg, traceW, gate)
 	return a, nil
 }
 
@@ -730,5 +756,6 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	installSummarizer(a, cfg, mc.ID, traceW, gate)
+	installRelevance(a, cfg, traceW, gate)
 	return a, mc.ID, nil
 }

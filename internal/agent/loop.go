@@ -75,24 +75,104 @@ func messagesSize(msgs []model.Message) int {
 	return total
 }
 
-// pruneOldToolResults stubs tool results outside the protected recent tail
-// and returns the estimated tokens freed. Only "tool" role messages are
-// touched — user intent and assistant tool_calls stay intact, so provider
-// tool pairing remains valid.
-func pruneOldToolResults(messages []model.Message, protectTokens int) int {
-	freed, seen := 0, 0
-	for i := len(messages) - 1; i >= 0; i-- {
-		m := &messages[i]
+// pruneOldToolResults stubs tool results outside the protected budget and
+// returns the estimated tokens freed. Only "tool" role messages are touched —
+// user intent and assistant tool_calls stay intact, so provider tool pairing
+// remains valid.
+//
+// Relevance-aware selection (change 0028): the protection budget is spent in
+// two phases. A guaranteed recency floor (floorPct of protectTokens) protects
+// the newest results exactly as before; the remaining budget is then filled by
+// the highest-relevance results across all ages (scored by scorer, recency as
+// the tiebreaker). Everything not protected by either phase is stubbed.
+//
+// No-op degeneration invariant: with a pure-recency scorer, phase 2 fills the
+// remaining budget newest-first, so the protected set is byte-identical to the
+// pre-0028 recency-only walk.
+func pruneOldToolResults(messages []model.Message, protectTokens int, scorer RelevanceScorer, floorPct int) int {
+	if scorer == nil {
+		scorer = defaultHeuristicScorer()
+	}
+	if floorPct < 0 {
+		floorPct = 0
+	}
+	if floorPct > 100 {
+		floorPct = 100
+	}
+
+	// Collect candidate tool results (role == "tool", not already stubbed),
+	// oldest→newest, with their estimated token cost.
+	type cand struct {
+		idx int
+		tok int
+	}
+	var cands []cand
+	for i := 0; i < len(messages); i++ {
+		m := messages[i]
 		if m.Role != "tool" || m.Content == prunedStub {
 			continue
 		}
-		tok := len(m.Content) / bytesPerToken
-		if seen < protectTokens {
-			seen += tok
+		cands = append(cands, cand{idx: i, tok: len(m.Content) / bytesPerToken})
+	}
+	if len(cands) == 0 {
+		return 0
+	}
+
+	protected := make(map[int]bool, len(cands))
+
+	// Phase 1 — recency floor: protect the newest results up to
+	// floor = protectTokens * floorPct / 100 (newest-first). The <floor test
+	// mirrors the pre-0028 "seen < protectTokens" boundary so the newest result
+	// straddling the floor stays protected.
+	floor := protectTokens * floorPct / 100
+	floorSpent := 0
+	for i := len(cands) - 1; i >= 0; i-- {
+		if floorSpent >= floor {
+			break
+		}
+		protected[cands[i].idx] = true
+		floorSpent += cands[i].tok
+	}
+
+	// Phase 2 — relevance fill: score the remaining candidates and protect the
+	// highest-scoring (recency tiebreaker) until the remaining budget is spent.
+	remaining := protectTokens - floorSpent
+	if remaining > 0 {
+		ctx := deriveScoreContext(messages)
+		turnOf := turnIndices(messages)
+		argsByID := argsByToolCallID(messages)
+		var scored []scoredCandidate
+		for _, c := range cands {
+			if protected[c.idx] {
+				continue
+			}
+			r := toolResultAt(messages, c.idx, argsByID, turnOf)
+			scored = append(scored, scoredCandidate{
+				idx:   c.idx,
+				score: scorer.Score(r, ctx),
+				turn:  turnOf[c.idx],
+				tok:   c.tok,
+			})
+		}
+		sortByScoreDescRecencyDesc(scored)
+		spent := 0
+		for _, s := range scored {
+			if spent >= remaining {
+				break
+			}
+			protected[s.idx] = true
+			spent += s.tok
+		}
+	}
+
+	// Stub every candidate not protected by either phase.
+	freed := 0
+	for _, c := range cands {
+		if protected[c.idx] {
 			continue
 		}
-		freed += tok
-		m.Content = prunedStub
+		freed += c.tok
+		messages[c.idx].Content = prunedStub
 	}
 	return freed
 }
@@ -337,7 +417,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 				estimate = lastUsage + messagesSize(messages[accounted:])/bytesPerToken
 			}
 
-			freed := pruneOldToolResults(messages, protectBudget(window, false))
+			freed := pruneOldToolResults(messages, protectBudget(window, false), a.relevanceScorer, a.recencyFloorPct())
 			if freed > 0 {
 				a.renderer.Errorf("context: ~%dk/%dk tokens — cleared ~%dk of old tool results", estimate/1000, window/1000, freed/1000)
 			}
@@ -367,7 +447,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			// and retry exactly once.
 			if isContextLengthErr(err) && !retriedContext {
 				retriedContext = true
-				if freed := pruneOldToolResults(messages, protectBudget(window, true)); freed > 0 {
+				if freed := pruneOldToolResults(messages, protectBudget(window, true), a.relevanceScorer, a.recencyFloorPct()); freed > 0 {
 					a.renderer.Errorf("context: gateway rejected for length; cleared ~%dk tokens of old tool results, retrying", freed/1000)
 					turn--
 					continue

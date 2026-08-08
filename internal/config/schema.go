@@ -100,10 +100,29 @@ type SummarizationConfig struct {
 	MaxOutput int     `yaml:"max_output"`
 }
 
-// ContextConfig groups context-management knobs. Today it holds only the
-// summarization block (change 0027); context_window stays on ModelConfig.
+// RelevanceConfig configures relevance-aware tool-result pruning (change 0028).
+// Heuristic defaults on; false ⇒ pure-recency (today's behavior). RecencyFloorPct
+// is the fraction of the protection budget reserved for the guaranteed recency
+// floor. BodyScanBytes caps the result-body prefix scanned for overlap + dep
+// tokens. ClassifierModel empty ⇒ heuristic only; else the model id used for the
+// borderline band. ClassifierBatchSize is candidates per classifier call.
+// BorderlineLo/Hi bound the heuristic scores sent to the classifier.
+type RelevanceConfig struct {
+	Heuristic           bool    `yaml:"heuristic"`
+	RecencyFloorPct     int     `yaml:"recency_floor_pct"`
+	BodyScanBytes       int     `yaml:"body_scan_bytes"`
+	ClassifierModel     string  `yaml:"classifier_model"`
+	ClassifierBatchSize int     `yaml:"classifier_batch_size"`
+	BorderlineLo        float64 `yaml:"borderline_lo"`
+	BorderlineHi        float64 `yaml:"borderline_hi"`
+}
+
+// ContextConfig groups context-management knobs. It holds the summarization
+// block (change 0027) and the relevance block (change 0028); context_window
+// stays on ModelConfig.
 type ContextConfig struct {
 	Summarization SummarizationConfig `yaml:"summarization"`
+	Relevance     RelevanceConfig     `yaml:"relevance"`
 }
 
 // PipelineSynthesisConfig holds the caps applied to LLM-synthesized pipelines
@@ -287,6 +306,20 @@ type rawPipelineSynthesisConfig struct {
 // rawContextConfig mirrors ContextConfig on-disk.
 type rawContextConfig struct {
 	Summarization rawSummarizationConfig `yaml:"summarization"`
+	Relevance     rawRelevanceConfig     `yaml:"relevance"`
+}
+
+// rawRelevanceConfig mirrors RelevanceConfig on-disk. Heuristic is a *bool so
+// YAML can distinguish an omitted key (keep the true default) from an explicit
+// `heuristic: false`; the other fields are plain scalars (0/"" = unset).
+type rawRelevanceConfig struct {
+	Heuristic           *bool   `yaml:"heuristic"`
+	RecencyFloorPct     int     `yaml:"recency_floor_pct"`
+	BodyScanBytes       int     `yaml:"body_scan_bytes"`
+	ClassifierModel     string  `yaml:"classifier_model"`
+	ClassifierBatchSize int     `yaml:"classifier_batch_size"`
+	BorderlineLo        float64 `yaml:"borderline_lo"`
+	BorderlineHi        float64 `yaml:"borderline_hi"`
 }
 
 // rawSummarizationConfig mirrors SummarizationConfig on-disk. Enabled is a
@@ -394,6 +427,17 @@ func Default() Config {
 				Enabled:   true,
 				Threshold: 0.85,
 				MaxOutput: 2000,
+			},
+			// Relevance-aware pruning defaults on (change 0028). Heuristic-only
+			// (ClassifierModel empty); the recency floor keeps the newest half of
+			// the protection budget, byte-identical to pre-0028 for that half.
+			Relevance: RelevanceConfig{
+				Heuristic:           true,
+				RecencyFloorPct:     50,
+				BodyScanBytes:       2048,
+				ClassifierBatchSize: 10,
+				BorderlineLo:        0.30,
+				BorderlineHi:        0.60,
 			},
 		},
 		// Pipeline synthesis caps (change 0026): conservative brakes on an
