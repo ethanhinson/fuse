@@ -43,6 +43,33 @@ Reply with the summary text only — do not call any tools.`
 const anchorInstruction = `A previous summary exists below. UPDATE it in place — carry its still-relevant
 content forward and fold in the new tool results — rather than starting over. Emit one merged summary.`
 
+// summaryHeader labels the injected summary so the model recognizes it as a
+// compaction artifact rather than fresh tool output.
+const summaryHeader = "[context compacted — the older tool results below were summarized to free context]"
+
+// buildSummaryMessage assembles the synthetic message injected at the
+// protected-region boundary in place of the raw tool-result span. It is an
+// assistant text message with NO tool_calls: pruneOldToolResults only touches
+// tool-role messages, so the summary is never re-stubbed, and carrying no
+// tool_call means it can never orphan a tool-result pair.
+//
+// The recovery pointer line ("grep your past at <path>") appears ONLY when
+// pointer is non-empty — i.e. a real SegmentSink persisted the raw region
+// (#0030). With the default no-op sink the pointer is empty and the line is
+// omitted (D1).
+func buildSummaryMessage(summary, pointer string) model.Message {
+	var b strings.Builder
+	b.WriteString(summaryHeader)
+	b.WriteString("\n\n")
+	b.WriteString(strings.TrimSpace(summary))
+	if strings.TrimSpace(pointer) != "" {
+		b.WriteString("\n\n")
+		b.WriteString("Recovery: grep your past at ")
+		b.WriteString(pointer)
+	}
+	return model.Message{Role: "assistant", Content: b.String()}
+}
+
 // summarizer runs a bounded LLM summarization pass over an old tool-result
 // region. It reuses the bounded transport (Completer, typically a
 // *model.Adapter decorated WithTraceLabel(..., "summarizer")) so per-attempt
