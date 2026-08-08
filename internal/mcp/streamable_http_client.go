@@ -45,6 +45,11 @@ type StreamableHTTPClient struct {
 	bearerToken string
 	sessionID   string
 	closed      bool
+
+	// router receives id-less notification frames (e.g. "$/progress") observed on
+	// a response stream. Nil for clients constructed without a manager, in which
+	// case notifications are logged and dropped (pre-#0020 behavior).
+	router notificationRouter
 }
 
 const (
@@ -342,20 +347,29 @@ func (c *StreamableHTTPClient) drainStream(body io.Reader, id string) (json.RawM
 // different id is routed to the notification seam and returns matched=false. A
 // non-JSON-RPC payload is ignored.
 func (c *StreamableHTTPClient) dispatchFrame(raw, wantID string) (json.RawMessage, error, bool) {
-	var resp jsonrpcResponse
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+	var frame jsonrpcInbound
+	if err := json.Unmarshal([]byte(raw), &frame); err != nil {
 		return nil, nil, false // not a JSON-RPC frame — skip
 	}
-	if resp.ID != wantID {
-		// Id-less server notification or a frame for another id — route to the
-		// seam (0020/0021 replace this), never correlate here.
+	// An id-less notification (e.g. "$/progress") is routed to the manager; a
+	// frame for a different id (or a non-notification without our id) is handed
+	// to the log-and-drop seam, never correlated here.
+	if frame.isNotification() {
+		if c.router != nil {
+			c.router.dispatchNotification(c.name, frame.Method, frame.Params)
+		} else {
+			c.handleServerFrame(json.RawMessage(raw))
+		}
+		return nil, nil, false
+	}
+	if frame.ID != wantID {
 		c.handleServerFrame(json.RawMessage(raw))
 		return nil, nil, false
 	}
-	if resp.Error != nil {
-		return nil, &RPCError{Code: resp.Error.Code, Message: resp.Error.Message}, true
+	if frame.Error != nil {
+		return nil, &RPCError{Code: frame.Error.Code, Message: frame.Error.Message}, true
 	}
-	return resp.Result, nil, true
+	return frame.Result, nil, true
 }
 
 // resume reconnects a broken response stream via a GET carrying Last-Event-Id,

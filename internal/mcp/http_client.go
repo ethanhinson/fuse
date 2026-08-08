@@ -32,6 +32,11 @@ type httpClient struct {
 	counter     atomic.Uint64
 	done        chan struct{}
 	once        sync.Once
+
+	// router receives id-less notification frames (e.g. "$/progress"). Nil for
+	// clients constructed without a manager, in which case notifications are
+	// dropped (pre-#0020 behavior).
+	router notificationRouter
 }
 
 // newHTTPClient connects to the MCP SSE endpoint and waits for the endpoint event.
@@ -266,12 +271,21 @@ func (c *httpClient) readSSEPump() {
 			raw := strings.Join(dataLines, "\n")
 			dataLines = dataLines[:0]
 
-			var resp jsonrpcResponse
-			if err := json.Unmarshal([]byte(raw), &resp); err != nil {
-				continue // not a JSON-RPC response (e.g. a notification); skip
+			var frame jsonrpcInbound
+			if err := json.Unmarshal([]byte(raw), &frame); err != nil {
+				continue // malformed JSON; skip
 			}
+			// An id-less notification (e.g. "$/progress") is routed BEFORE the
+			// pending lookup — previously it was dropped as "no pending channel".
+			if frame.isNotification() {
+				if c.router != nil {
+					c.router.dispatchNotification(c.name, frame.Method, frame.Params)
+				}
+				continue
+			}
+			resp := frame.response()
 			if resp.ID == "" {
-				continue // notification — no pending channel
+				continue // neither a notification nor a response — skip
 			}
 
 			c.mu.Lock()
