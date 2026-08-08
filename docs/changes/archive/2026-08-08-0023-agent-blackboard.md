@@ -2,7 +2,7 @@
 id: 23
 slug: agent-blackboard
 title: Shared result blackboard for inter-agent communication
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-06
@@ -17,7 +17,7 @@ results: docs/results/2026-08-08-agent-blackboard-results.md
 trivial: false
 auto_groomable:
 branch: feat/agent-blackboard
-claimed_at: 2026-08-08T06:22:09Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/25
 blocked_by:
 reconciled: true
