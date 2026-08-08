@@ -142,6 +142,24 @@ func (a *Agent) SetRelevanceScorer(s RelevanceScorer) {
 // by recencyFloorPct(); 0 keeps the spec default (50).
 func (a *Agent) SetRecencyFloorPct(pct int) { a.recencyFloor = pct }
 
+// EnableRelevanceClassifier installs the optional hybrid LLM classifier over the
+// always-on heuristic (change 0028). c is a bounded Completer (typically a
+// *model.Adapter decorated WithTraceLabel(..., "relevance-classifier")); modelID
+// is the classifier model; batchSize/lo/hi come from config. A nil c or empty
+// modelID is a no-op — the heuristic scorer stays in place. The heuristic used
+// as the classifier's base is the current default (or the configured body-scan
+// cap when ConfigureRelevance built one).
+func (a *Agent) EnableRelevanceClassifier(c Completer, modelID string, batchSize int, lo, hi float64) {
+	if c == nil || modelID == "" {
+		return
+	}
+	base, ok := a.relevanceScorer.(*heuristicScorer)
+	if !ok || base == nil {
+		base = defaultHeuristicScorer()
+	}
+	a.relevanceScorer = newClassifierScorer(base, c, modelID, batchSize, lo, hi)
+}
+
 // New builds an Agent. modelID is the gateway model id; systemPrompt, when
 // non-empty, is injected as the first message of each run. maxTurns <= 0 means
 // unlimited turns (the loop never returns ErrMaxTurns); a positive maxTurns
