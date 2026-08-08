@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/mcp-resource-subscriptions
-claimed_at: 2026-08-08T19:19:14Z
+claimed_at: 2026-08-08T19:23:36Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -84,3 +84,41 @@ no duplicated pump work; (4) **capability-gated, fail-open** on `Supports("resou
 pushes updates on live-reload — per the human's direction to prove MCP infra through fuse's own
 server rather than a test-only fixture, verified end-to-end with the real binary and TUI
 screenshots.
+
+## Reconcile log
+
+### 2026-08-08
+
+Reconciled against current `origin/main` code at claim time. Findings:
+
+- **Dependencies confirmed done.** #0019 (mcp-capability-negotiation) and #0020
+  (mcp-progress-streaming) are both archived as `done`. The two seams the spec relies on are
+  present exactly as designed:
+  - #0019: `func (c ServerCapabilities) Supports(key string) bool` in
+    `internal/mcp/capabilities.go` — `Supports("resources.subscribe")` matches the nested
+    `resources.subscribe == true` shape (D4 gate).
+  - #0020: `func (m *Manager) OnNotification(method string, h NotificationHandler)` in
+    `internal/mcp/notification_router.go` with `NotificationHandler func(server string, params
+    json.RawMessage)`; all three read pumps (`StdioClient.readPump`, `httpClient.readSSEPump`,
+    `StreamableHTTPClient.dispatchFrame`) already route id-less frames to
+    `dispatchNotification` (D3 — register, do not re-solve the pump).
+- **No `resources/*` handling exists today** — confirmed. Only `ErrResourceNotFound` (-32901) and
+  sibling error codes are pre-defined in `internal/mcp/errors.go`. The minimal client + server
+  resource surface (D1) is genuinely net-new, as the spec states.
+- **Event-emission template confirmed.** `ProgressEvent` + `ProgressObserver` +
+  `Manager.OnProgress` (fan to observers) in `internal/mcp/progress.go` is the pattern to mirror
+  for `ResourceUpdatedEvent` + `ResourceObserver` + `Manager.OnResource` (D2).
+- **Server seams confirmed.** `Server.dispatch` (`internal/mcp/server.go`) switches on method
+  (`initialize`/`tools/list`/`tools/call`) — add `resources/*` cases; `Server.encode` serializes
+  all writes under `encMu` (safe id-less push frame). `defaultToolRegistry()` in
+  `cmd/fuse/mcp_server.go` builds a static registry with no reload today — item 7's config-watch
+  is the real mutation source (D5).
+- **TUI parity reference confirmed.** `internal/tui/mcp_provider.go` `applyConfigDiff` +
+  fsnotify+200ms-debounce is the model for the server-side config-watch.
+- **teatest screenshot harness confirmed.** `internal/tui/harness_test.go` `captureFrame` →
+  `tm.FinalModel` → `captureModelFrame` writes `.ansi`/`.txt`/`.png` into `FUSE_SCREENSHOT_DIR`;
+  `internal/tui/mcp_tui_e2e_test.go` shows the `teatest.NewTestModel` + `teatest.WaitFor`
+  end-to-end shape. This is the vehicle for the human's required TUI-screenshot evidence.
+
+**Verdict:** design is valid and unchanged; no scope adjustment needed. No adjacent follow-up work
+crossed the materiality bar this pass (auto-capture disabled). Proceeding to plan.
