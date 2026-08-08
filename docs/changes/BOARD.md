@@ -1,12 +1,17 @@
 # Backlog
 
-**39 changes** — 🟡 3 proposed · ⚪ 1 deferred · ✅ 29 done · 🗑️ 6 killed
+**39 changes** — 🟢 1 in progress · 🟡 2 proposed · ⚪ 1 deferred · ✅ 29 done · 🗑️ 6 killed
 
-## 🟡 Proposed (3)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | [spec](../superpowers/specs/2026-08-08-agent-workflow-composition-design.md) | `feat/agent-workflow-composition` |
+
+## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | build-ready |
 | [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | build-ready |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | build-ready |
 
