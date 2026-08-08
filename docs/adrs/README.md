@@ -16,6 +16,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0010](0010-mcp-client-requires-init-handshake-fails-open-capabilities.md) — MCP client hard-fails on the initialize handshake but fails open on capability content (Accepted) ← change #19
 - [ADR-0011](0011-streamable-http-mcp-transport-request-scoped.md) — Streamable HTTP MCP transport is request-scoped with in-band session ownership (Accepted) ← change #18 · relates to ADR-0010
 - [ADR-0012](0012-vendor-jsonschema-validation-library.md) — Vendor a JSON-Schema validation library for structured-delegation result validation (Accepted) ← change #24
+- [ADR-0013](0013-tools-registry-owns-concurrency-safety.md) — tools.Registry is the home for concurrency safety (config-watch live reload) (Accepted) ← change #21
 
 ## Superseded / Reversed
 
