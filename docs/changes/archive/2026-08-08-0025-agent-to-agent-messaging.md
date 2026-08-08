@@ -2,11 +2,11 @@
 id: 25
 slug: agent-to-agent-messaging
 title: Agent-to-agent messaging — note passing for debate/refine patterns
-status: proposed
+status: killed
 priority: medium
 type: feat
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-08
 depends_on: [12, 23]
 related: [23, 26]
 discovered_from: [23]
@@ -52,3 +52,17 @@ The blackboard (change 0023) enables indirect agent-to-agent communication via s
 ## Research notes (input for the brainstorm)
 
 The debate/refine pattern works as follows: parent spawns agent A (propose solution) and agent B (critique). A calls `agent_message("agent-b", "Here's my proposal...")`. B checks its inbox, formulates a critique, sends `agent_message("agent-a", "This approach has issue X...")`. A checks its inbox, refines, sends back. This loop continues until one agent signals convergence or a turn limit. The parent can monitor the conversation via the event logs and intervene if it stalls. The key design constraint is that messaging must not create deadlock cycles: if every agent is waiting for a message and none can proceed, the system stalls. The inbox capacity of 16 with head-drop prevents unbounded memory growth but could lose messages under heavy load — the blackboard (change 0023) remains the reliable path for important data. The research skill could use this for multi-perspective debate: one agent argues for a position, another argues against, a third synthesizes the debate into a balanced report.
+
+## Why killed
+
+Killed 2026-08-08 during grooming — **redundant with the blackboard (change 0023), and folded into it.** Two findings drove this:
+
+1. **An inbox is a per-agent blackboard key.** Change 0023 already claims the debate/refine use case, and directed messaging is functionally "write to `inbox/<target>/<seq>`, read your own `inbox/<self>/*`." A separate primitive did not earn its surface — so the directed-message idea was folded into 0023 as a thin, poll-based convention over the existing store (see 0023's `## What changes` and `## Design decisions`).
+
+2. **fuse is spawn-and-collect; there is no mid-run inbox.** A spawned child runs its agent loop (`internal/agent/loop.go`) to completion and returns text — there is no inter-turn hook to inject a message into a *running* child. This stub's real-time debate loop (A messages B, B reacts mid-run) assumed live, polling agents that do not exist without a genuine agent-loop change. The folded convention sidesteps this: agents poll their inbox **during their own turns**.
+
+The broader "let fuse interact with other harnesses" idea this raised is being pursued separately as **ACP (Agent Client Protocol)** external-harness interop — two new changes (fuse-as-ACP-agent, fuse-as-ACP-client) to be captured via `docket-new-change`. No change depended on 0025 (0026 depends on `[12, 23, 24]`), so this kill breaks nothing.
+
+## Why killed
+
+Redundant with the blackboard (0023); directed-message idea folded into 0023. ACP external-interop pursued separately.
