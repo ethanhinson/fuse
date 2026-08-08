@@ -2,7 +2,7 @@
 id: 24
 slug: structured-delegation
 title: Structured delegation — expected result schemas for spawn_agent
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-06
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/structured-delegation
+claimed_at: 2026-08-08T09:22:45Z
 pr:
 blocked_by:
 reconciled: false
