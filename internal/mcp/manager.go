@@ -64,6 +64,12 @@ type Manager struct {
 	mu      sync.Mutex
 	servers map[string]*managedServer
 	reg     *tools.Registry
+
+	// notifyMu guards notifyHandlers, the feature-generic inbound-notification
+	// route (D4). A client read pump calls dispatchNotification, which fans to
+	// the handler registered here for the frame's method.
+	notifyMu       sync.Mutex
+	notifyHandlers map[string]NotificationHandler
 }
 
 // NewManager starts all configured MCP servers and registers their tools.
@@ -85,7 +91,7 @@ func NewManager(servers []config.MCPServerConfig, reg *tools.Registry) (*Manager
 // Add starts a new server, discovers its tools, and registers them. No-op if
 // the name is already managed (call Stop first to replace).
 func (m *Manager) Add(srv config.MCPServerConfig) error {
-	conn, discovered, caps, protoVer, err := startAndDiscover(srv)
+	conn, discovered, caps, protoVer, err := startAndDiscover(srv, m)
 	if err != nil {
 		m.mu.Lock()
 		m.servers[srv.Name] = &managedServer{cfg: srv, connErr: err.Error()}
@@ -189,7 +195,10 @@ func (m *Manager) Status() []ServerStatus {
 
 // startAndDiscover spawns one server, runs the MCP init handshake, and returns
 // its discovered MCPTools plus the negotiated capabilities and protocol version.
-func startAndDiscover(srv config.MCPServerConfig) (mcpConn, []*MCPTool, ServerCapabilities, string, error) {
+// The router (the Manager) is attached to the client BEFORE discovery so any
+// id-less notifications a server emits during the handshake are routed, not
+// dropped. router may be nil in unit tests that dial without a manager.
+func startAndDiscover(srv config.MCPServerConfig, router notificationRouter) (mcpConn, []*MCPTool, ServerCapabilities, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), startTimeout+discoverTimeout)
 	defer cancel()
 
@@ -197,6 +206,7 @@ func startAndDiscover(srv config.MCPServerConfig) (mcpConn, []*MCPTool, ServerCa
 	if err != nil {
 		return nil, nil, ServerCapabilities{}, "", err
 	}
+	attachRouter(client, router)
 
 	tools, caps, protoVer, err := handshakeAndDiscover(ctx, client, srv.Name)
 	if err != nil {
@@ -204,6 +214,32 @@ func startAndDiscover(srv config.MCPServerConfig) (mcpConn, []*MCPTool, ServerCa
 		return nil, nil, ServerCapabilities{}, "", err
 	}
 	return client, tools, caps, protoVer, nil
+}
+
+// attachRouter wires a concrete client's read pump to the notification router so
+// inbound id-less frames reach the Manager. Each transport carries its own
+// nil-safe router field. A nil router leaves the pre-#0020 drop behavior intact.
+func attachRouter(conn mcpConn, router notificationRouter) {
+	if router == nil {
+		return
+	}
+	switch c := conn.(type) {
+	case *StdioClient:
+		c.mu.Lock()
+		c.router = router
+		c.mu.Unlock()
+	case *httpClient:
+		c.mu.Lock()
+		c.router = router
+		c.mu.Unlock()
+	case *StreamableHTTPClient:
+		// The streamable client dispatches frames synchronously on the caller's
+		// goroutine (no persistent pump), so its router is set before any call —
+		// guard it with the client mutex for consistency.
+		c.mu.Lock()
+		c.router = router
+		c.mu.Unlock()
+	}
 }
 
 // dial establishes the transport connection for a server without performing the

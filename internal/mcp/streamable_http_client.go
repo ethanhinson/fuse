@@ -355,8 +355,11 @@ func (c *StreamableHTTPClient) dispatchFrame(raw, wantID string) (json.RawMessag
 	// frame for a different id (or a non-notification without our id) is handed
 	// to the log-and-drop seam, never correlated here.
 	if frame.isNotification() {
-		if c.router != nil {
-			c.router.dispatchNotification(c.name, frame.Method, frame.Params)
+		c.mu.Lock()
+		router := c.router
+		c.mu.Unlock()
+		if router != nil {
+			router.dispatchNotification(c.name, frame.Method, frame.Params)
 		} else {
 			c.handleServerFrame(json.RawMessage(raw))
 		}
