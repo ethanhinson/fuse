@@ -12,12 +12,12 @@ related: [12, 23, 24]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-08-agent-workflow-composition-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-08-agent-workflow-composition-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/agent-workflow-composition
-claimed_at: 2026-08-08T21:11:02Z
+claimed_at: 2026-08-08T21:15:46Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-08-agent-workflow-composition-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-agent-workflow-composition-design.md) |
+| Plan | [2026-08-08-agent-workflow-composition-plan.md](https://github.com/ethanhinson/fuse/blob/feat/agent-workflow-composition/docs/superpowers/plans/2026-08-08-agent-workflow-composition-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
