@@ -182,8 +182,8 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
 				childSpawner := makeSpawner(childNode, childNode.Depth)
 				wirePipelineTool(childToolReg,
-					makePipelineRunFn(childSpawner, bb),
-					makePipelineSynthFn(childSpawner, bb, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW),
+					makePipelineRunFn(childSpawner, bb, sched, childNode),
+					makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW),
 					effectiveTools)
 
 				label := childNode.Label
@@ -241,8 +241,8 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
 	rootPipeSpawner := makeSpawner(rootNode, 0)
 	wirePipelineTool(toolReg,
-		makePipelineRunFn(rootPipeSpawner, bb),
-		makePipelineSynthFn(rootPipeSpawner, bb, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW),
+		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode),
+		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW),
 		nil)
 
 	// Root renderer: tree node + recorder, same MultiRenderer shape as children.

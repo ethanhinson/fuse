@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
@@ -135,8 +136,8 @@ func TestPipelineGatewayAuthored(t *testing.T) {
 	spawner := plChildSpawner(tree, rootNode, adapter)
 
 	tool := tools.NewPipelineRunTool(
-		makePipelineRunFn(spawner, bb),
-		makePipelineSynthFn(spawner, bb, rootNode, config.Default(), nil, nil, nil),
+		makePipelineRunFn(spawner, bb, tree.Scheduler(), rootNode),
+		makePipelineSynthFn(spawner, bb, tree.Scheduler(), rootNode, config.Default(), nil, nil, nil),
 	)
 
 	args, _ := json.Marshal(map[string]any{"definition": authoredChainYAML})
@@ -162,6 +163,80 @@ func TestPipelineGatewayAuthored(t *testing.T) {
 	// pipeline.status is written by the engine.
 	if e, ok := bb.Get("pipeline.status"); !ok || e.Value != "completed" {
 		t.Errorf("pipeline.status = %v (ok=%v), want completed", e.Value, ok)
+	}
+}
+
+// TestPipelineRunYieldsSlotUnderTightCap regresses FIX 1 (change 0026): when
+// pipeline_run is invoked from a NON-ROOT child (depth≥1, which holds a scheduler
+// slot) under a TIGHT slot cap (max_concurrent=1), the run fn must yield the
+// calling node's slot around pipeline.Run — otherwise the depth-2 step children it
+// spawns queue forever behind the slot their own ancestor is holding (deadlock;
+// learning: slot-cap-yield-while-blocked-on-children). It asserts the pipeline
+// completes within a timeout.
+//
+// Shape: root spawns ONE depth-1 child (consuming the only slot); that child's
+// builder invokes the pipeline_run fn with a depth-1 spawner. The pipeline is a
+// 2-step chain, so each step child (depth 2) needs the one slot the depth-1
+// parent holds. Without the yield the second Spawn parks forever.
+func TestPipelineRunYieldsSlotUnderTightCap(t *testing.T) {
+	// Cap the whole tree at ONE running child.
+	tree := agent.NewAgentTreeWithConcurrency("root", "cloud/deepseek-v4-flash", 1)
+	rootNode := tree.Node(tree.RootID())
+	bb := agent.NewBlackboard(tree)
+	sched := tree.Scheduler()
+
+	// A scripted child builder that just returns "done" (no gateway needed here —
+	// the deadlock is about slot admission, not model wire behavior).
+	build := func(ctx context.Context, opts agent.SpawnOpts, _ *agent.AgentNode, _ *agent.AgentTree) (string, error) {
+		return "done", nil
+	}
+
+	// Depth-1 spawner factory: the pipeline (invoked inside the depth-1 child)
+	// spawns its step children from here, at depth 2.
+	depth1Spawner := func(node *agent.AgentNode) *agent.Spawner {
+		return agent.NewSpawner(
+			agent.WithTree(tree),
+			agent.WithNode(node),
+			agent.WithSpawnDepth(1),
+			agent.WithChildBuilder(build),
+		)
+	}
+
+	// The root spawner's depth-1 child builder runs pipeline_run as that child,
+	// holding the single slot while the pipeline needs it for its step children.
+	rootSpawner := agent.NewSpawner(
+		agent.WithTree(tree),
+		agent.WithNode(rootNode),
+		agent.WithSpawnDepth(0),
+		agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, _ *agent.AgentTree) (string, error) {
+			runFn := makePipelineRunFn(depth1Spawner(childNode), bb, sched, childNode)
+			return runFn(ctx, []byte(authoredChainYAML))
+		}),
+	)
+
+	done := make(chan struct{})
+	var spawnErr error
+	go func() {
+		defer close(done)
+		h, err := rootSpawner.Spawn(context.Background(), agent.SpawnOpts{Label: "runner", Task: "run the pipeline"})
+		if err != nil {
+			spawnErr = err
+			return
+		}
+		d := h.Wait()
+		spawnErr = d.Err
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pipeline_run deadlocked: depth-1 caller did not yield its slot under a tight cap")
+	}
+	if spawnErr != nil {
+		t.Fatalf("pipeline_run under tight cap errored: %v", spawnErr)
+	}
+	if e, ok := bb.Get("pipeline.status"); !ok || e.Value != "completed" {
+		t.Fatalf("pipeline.status = %v (ok=%v), want completed", e.Value, ok)
 	}
 }
 
@@ -220,8 +295,8 @@ func TestPipelineGatewaySynthesized(t *testing.T) {
 	// Config with a small attempt budget; RequirePool is set by makePipelineSynthFn.
 	cfg := config.Default()
 	tool := tools.NewPipelineRunTool(
-		makePipelineRunFn(spawner, bb),
-		makePipelineSynthFn(spawner, bb, rootNode, cfg, []string{"facet-researcher"}, []string{"read_file"}, nil),
+		makePipelineRunFn(spawner, bb, tree.Scheduler(), rootNode),
+		makePipelineSynthFn(spawner, bb, tree.Scheduler(), rootNode, cfg, []string{"facet-researcher"}, []string{"read_file"}, nil),
 	)
 
 	args, _ := json.Marshal(map[string]any{"goal": "produce a synthesized report"})

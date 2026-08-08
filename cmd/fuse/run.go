@@ -564,7 +564,13 @@ func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *a
 // validates (layers 1–2, no synthesis caps), and runs a caller-authored pipeline
 // over a spawner built for node, sharing state through bb. It returns a
 // human-readable terminal status line; pipeline.status is written by Run.
-func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard) tools.PipelineRunFunc {
+//
+// It yields the CALLING node's scheduler slot around the whole pipeline run,
+// mirroring spawnFuncFrom: when pipeline_run is invoked from a depth≥1 child
+// (which holds a slot), the pipeline spawns step children from the same pool, so
+// a caller that keeps its slot while blocked on those children deadlocks under
+// slot pressure (learning: slot-cap-yield-while-blocked-on-children).
+func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode) tools.PipelineRunFunc {
 	return func(ctx context.Context, definition []byte) (string, error) {
 		p, err := pipeline.Parse(definition)
 		if err != nil {
@@ -574,7 +580,11 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard) tools.Pipel
 		if err := pipeline.Validate(p, pipeline.Caps{}); err != nil {
 			return "", fmt.Errorf("validate: %w", err)
 		}
+		sched.YieldSlot(node)
 		st, _ := pipeline.Run(ctx, p, spawner, bb)
+		if !sched.UnyieldSlot(ctx, node) {
+			return "", ctx.Err()
+		}
 		return pipelineStatusLine(p.Name, st), nil
 	}
 }
@@ -585,7 +595,7 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard) tools.Pipel
 // here — headless there is no interactive confirmer, so a synthesized-and-run
 // pipeline proceeds regardless (documented deviation); the flag is plumbed for a
 // future gate. workers/toolNames form the synthesis palette.
-func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, node *agent.AgentNode, cfg config.Config, workers, toolNames []string, traceW io.Writer) tools.PipelineSynthFunc {
+func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, cfg config.Config, workers, toolNames []string, traceW io.Writer) tools.PipelineSynthFunc {
 	caps := pipeline.Caps{
 		MaxSteps:    cfg.Pipeline.Synthesis.MaxSteps,
 		MaxFanout:   cfg.Pipeline.Synthesis.MaxFanout,
@@ -594,8 +604,17 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, node *age
 		RequirePool: true,
 	}
 	return func(ctx context.Context, goal string, confirm bool) (string, error) {
+		// Yield the calling node's slot around the whole operation (see
+		// makePipelineRunFn): the synthesis child AND the step children spawn from
+		// the same pool, so a caller (depth≥1) that holds its slot while blocked on
+		// them deadlocks under slot pressure
+		// (learning: slot-cap-yield-while-blocked-on-children).
+		sched.YieldSlot(node)
 		p, err := pipeline.Synthesize(ctx, goal, pipeline.SynthContext{Workers: workers, Tools: toolNames}, spawner, caps)
 		if err != nil {
+			if !sched.UnyieldSlot(ctx, node) {
+				return "", ctx.Err()
+			}
 			return "", fmt.Errorf("synthesize: %w", err)
 		}
 		// Publish the generated DAG so it is inspectable before/while it runs.
@@ -611,6 +630,9 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, node *age
 		// confirm gate is a no-op headless (no interactive confirmer wired): proceed.
 		_ = confirm
 		st, _ := pipeline.Run(ctx, p, spawner, bb)
+		if !sched.UnyieldSlot(ctx, node) {
+			return "", ctx.Err()
+		}
 		return pipelineStatusLine(p.Name, st), nil
 	}
 }

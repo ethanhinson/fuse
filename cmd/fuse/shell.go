@@ -234,8 +234,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
 				childSpawner := makeSpawner(childNode, childNode.Depth)
 				wirePipelineTool(childToolReg,
-					makePipelineRunFn(childSpawner, bb),
-					makePipelineSynthFn(childSpawner, bb, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW),
+					makePipelineRunFn(childSpawner, bb, sched, childNode),
+					makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW),
 					opts.Tools)
 
 				r := tui.NewNodeRenderer(childNode, childTree)
@@ -301,8 +301,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
 	rootPipeSpawner := makeSpawner(rootNode, 0)
 	wirePipelineTool(toolReg,
-		makePipelineRunFn(rootPipeSpawner, bb),
-		makePipelineSynthFn(rootPipeSpawner, bb, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW),
+		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode),
+		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW),
 		nil)
 
 	// Start the 250ms dirty-node flusher; the same ctx stops the bridges.
