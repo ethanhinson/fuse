@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,8 +28,9 @@ type treeUpdateMsg struct{ nodeID string }
 //
 // Key bindings per §4.2:
 //
-//	Tree:   j/k navigate  g/G first/last  enter/tab detail  x cancel  esc exit
+//	Tree:   j/k navigate  g/G first/last  enter/tab detail  b board  x cancel  esc exit
 //	Detail: j/k scroll    g/G top/bottom  q/esc/tab back-to-tree
+//	Board:  j/k scroll    g top          b/q/esc/tab back-to-tree
 type AgentsModel struct {
 	tree         *agent.AgentTree
 	nodes        []agent.NodeView // depth-first snapshot, refreshed on tree update
@@ -42,6 +45,11 @@ type AgentsModel struct {
 	eventCount   int  // len(displayEvents) as of last render, for key clamping
 	inEventView  bool // full-content view of the selected event
 	eventScroll  int  // scroll offset within the expanded event
+	// inBlackboard shows the session blackboard snapshot in the detail pane
+	// (change 0023); bbScroll is the first visible line of that view.
+	inBlackboard bool
+	bbScroll     int
+	blackboard   *agent.Blackboard // session blackboard, or nil (no /agents bb tab)
 	width        int
 	height       int
 	// rateGate is the session's shared rate-gate bucket, or nil (change 0036). Its
@@ -55,6 +63,14 @@ type AgentsModel struct {
 func NewAgentsModel(t *agent.AgentTree, gate *ratelimit.Bucket) *AgentsModel {
 	m := &AgentsModel{tree: t, rateGate: gate, followTail: true}
 	m.refreshSnapshot()
+	return m
+}
+
+// WithBlackboard attaches the session blackboard so the overlay can show its
+// snapshot in a Blackboard section (change 0023). Nil is the no-blackboard path:
+// the "b" key then reports the tab is unavailable.
+func (m *AgentsModel) WithBlackboard(bb *agent.Blackboard) *AgentsModel {
+	m.blackboard = bb
 	return m
 }
 
@@ -74,6 +90,9 @@ func (m *AgentsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Approval popups are owned by ShellModel (which intercepts keys while
 		// its queue is non-empty), so only navigation keys arrive here.
+		if m.inBlackboard {
+			return m.handleBlackboardKey(msg)
+		}
 		if m.inEventView {
 			return m.handleEventViewKey(msg)
 		}
@@ -170,8 +189,31 @@ func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if n > 0 && m.selected < n {
 			m.tree.CancelNode(m.nodes[m.selected].ID)
 		}
+	case "b":
+		// Toggle the session Blackboard section into the detail pane.
+		m.inBlackboard = true
+		m.bbScroll = 0
 	case "q", "esc":
 		return m, func() tea.Msg { return agentsExitMsg{} }
+	}
+	return m, nil
+}
+
+// handleBlackboardKey scrolls the blackboard snapshot; b/q/esc/tab returns to
+// the tree.
+func (m *AgentsModel) handleBlackboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "j", "down":
+		m.bbScroll++
+	case "k", "up":
+		if m.bbScroll > 0 {
+			m.bbScroll--
+		}
+	case "g":
+		m.bbScroll = 0
+	case "b", "q", "esc", "tab":
+		m.inBlackboard = false
+		m.bbScroll = 0
 	}
 	return m, nil
 }
@@ -274,7 +316,7 @@ func (m *AgentsModel) handleMouse(msg tea.MouseMsg) {
 // the pane and must window, not clip.
 func (m *AgentsModel) buildTreeLines(w int) []string {
 	rows := m.renderTreeRows(w)
-	help := treeHelpStyle.Render("j/k select  enter inspect  x cancel  esc exit")
+	help := treeHelpStyle.Render("j/k select  enter inspect  b board  x cancel  esc exit")
 
 	visRows := m.height - 1
 	if visRows < 1 {
@@ -434,6 +476,9 @@ func displayEvents(events []agent.AgentEvent) []agent.AgentEvent {
 // event list (one selectable row per event) or, after enter, the full
 // word-wrapped content of the selected event.
 func (m *AgentsModel) buildDetailLines(w int) []string {
+	if m.inBlackboard {
+		return m.buildBlackboardLines(w)
+	}
 	if len(m.nodes) == 0 || m.selected >= len(m.nodes) {
 		return []string{lipgloss.NewStyle().Foreground(colMuted).Render("Select a node to inspect.")}
 	}
@@ -506,6 +551,112 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 		out = append(out, "")
 	}
 	return append(out[:m.height-1], help)
+}
+
+// buildBlackboardLines renders the session blackboard snapshot in the detail
+// pane (change 0023): each key (sorted) with a wrote-by indicator from the
+// writer's label, followed by its JSON-rendered value. Every value/label byte is
+// model/tool-controlled, so it runs through sanitizeDisplay and is hard-wrapped
+// to the pane width before render — no line can exceed w or leak control bytes.
+func (m *AgentsModel) buildBlackboardLines(w int) []string {
+	header := lipgloss.NewStyle().Bold(true).Render(fitLine("Blackboard", w))
+	rule := lipgloss.NewStyle().Foreground(colMuted).Render(strings.Repeat("─", w))
+	help := treeHelpStyle.Render("j/k scroll  g top  b/esc back to tree")
+
+	var body []string
+	if m.blackboard == nil {
+		body = []string{lipgloss.NewStyle().Foreground(colMuted).Render("No blackboard for this session.")}
+	} else {
+		snap := m.blackboard.Snapshot()
+		if len(snap) == 0 {
+			body = []string{lipgloss.NewStyle().Foreground(colMuted).Render("Blackboard is empty.")}
+		} else {
+			keys := make([]string, 0, len(snap))
+			for k := range snap {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+
+			keyStyle := lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+			wroteStyle := lipgloss.NewStyle().Foreground(colMuted)
+			for _, k := range keys {
+				e := snap[k]
+				// Key line: "key  ⟨written by <label>⟩", both fields sanitized and
+				// wrapped as PLAIN text before styling (wrap.String is not ANSI-aware,
+				// so styling must happen after the width split).
+				keyText := sanitizeDisplay(k)
+				wrote := "⟨written by " + sanitizeDisplay(e.WriterLabel) + "⟩"
+				keyPlain := keyText + "  " + wrote
+				keyRows := wrapToWidth(keyPlain, w)
+				for i, kr := range keyRows {
+					// Only the first row carries the accented key; continuation rows
+					// (the wrapped label) render muted to stay visually attached.
+					if i == 0 {
+						body = append(body, keyStyle.Render(kr))
+					} else {
+						body = append(body, wroteStyle.Render(kr))
+					}
+				}
+				// Value line(s): JSON-encoded, sanitized, hard-wrapped, indented.
+				val := sanitizeDisplay(encodeBlackboardValue(e.Value))
+				for _, vl := range wrapToWidth("  "+val, w) {
+					body = append(body, wroteStyle.Render(vl))
+				}
+				body = append(body, "")
+			}
+		}
+	}
+
+	// Scroll window: header + rule occupy 2 rows, help occupies 1.
+	rows := m.height - 3
+	if rows < 1 {
+		rows = 1
+	}
+	if m.bbScroll > len(body)-1 {
+		if len(body) == 0 {
+			m.bbScroll = 0
+		} else {
+			m.bbScroll = len(body) - 1
+		}
+	}
+	if m.bbScroll < 0 {
+		m.bbScroll = 0
+	}
+	end := m.bbScroll + rows
+	if end > len(body) {
+		end = len(body)
+	}
+	var window []string
+	if m.bbScroll < len(body) {
+		window = body[m.bbScroll:end]
+	}
+
+	out := append([]string{header, rule}, window...)
+	for len(out) < m.height-1 {
+		out = append(out, "")
+	}
+	return append(out[:m.height-1], help)
+}
+
+// encodeBlackboardValue JSON-encodes a stored value for display, falling back to
+// a Go-formatted string if it is somehow not encodable.
+func encodeBlackboardValue(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(b)
+}
+
+// wrapToWidth hard-wraps s (already sanitized) so no returned line's display
+// width exceeds w. wrap.String breaks any run longer than w (word boundaries are
+// ignored past the limit), so a single 500-char token still splits.
+func wrapToWidth(s string, w int) []string {
+	if w < 1 {
+		w = 1
+	}
+	wrapped := wrap.String(wordwrap.String(s, w), w)
+	return strings.Split(wrapped, "\n")
 }
 
 // buildEventViewLines renders one event's COMPLETE content, word-wrapped and

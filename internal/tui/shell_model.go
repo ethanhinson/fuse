@@ -198,6 +198,7 @@ type ShellModel struct {
 
 	// Subagent tree and inline summary tracking.
 	tree          *agent.AgentTree
+	blackboard    *agent.Blackboard // session blackboard for the /agents Blackboard tab
 	agentsActive  bool
 	agentsModel   *AgentsModel
 	overlayGen    int // increments per overlay entry; stale overlay ticks are dropped
@@ -269,6 +270,13 @@ func (m ShellModel) WithTree(t *agent.AgentTree) ShellModel {
 	m.tree = t
 	m.inlineByLabel = make(map[string]*inlineAgentState)
 	m.inlineByNode = make(map[string]*inlineAgentState)
+	return m
+}
+
+// WithBlackboard attaches the session blackboard so the /agents overlay can show
+// its snapshot in a Blackboard tab (change 0023). Nil renders no snapshot.
+func (m ShellModel) WithBlackboard(bb *agent.Blackboard) ShellModel {
+	m.blackboard = bb
 	return m
 }
 
@@ -963,7 +971,7 @@ func (m ShellModel) enterAgentsView() (tea.Model, tea.Cmd) {
 		m.appendLine("no agent tree active")
 		return m, nil
 	}
-	m.agentsModel = NewAgentsModel(m.tree, m.rateGate)
+	m.agentsModel = NewAgentsModel(m.tree, m.rateGate).WithBlackboard(m.blackboard)
 	m.agentsModel.width = m.vp.Width
 	m.agentsModel.height = m.vp.Height + chromeHeight
 	m.agentsActive = true
