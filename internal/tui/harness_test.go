@@ -299,6 +299,12 @@ func TestHarness_PlainPromptRoundTrip(t *testing.T) {
 	})
 	h.typeAndSubmit("hello there")
 	h.waitForOutput("the-model-replied-42", 5*time.Second)
+
+	// Exercise the visual-confirmation capture on the simplest path.
+	frame := h.snapshot("plain-prompt")
+	if !strings.Contains(frame, "the-model-replied-42") {
+		t.Errorf("captured frame missing the reply:\n%s", frame)
+	}
 }
 
 // TestHarness_ResearchSlashDispatch is the coverage the e2e gap demanded: the
