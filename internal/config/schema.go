@@ -89,6 +89,23 @@ type MCPServerConfig struct {
 	Auth      MCPAuthConfig     `yaml:"auth"` // http only
 }
 
+// SummarizationConfig configures Tier 2 anchored LLM summarization (change
+// 0027). Enabled defaults on; Model empty ⇒ the session's main model (D4);
+// Threshold shares Tier 1's context-window fraction; MaxOutput caps the
+// summarizer's output tokens.
+type SummarizationConfig struct {
+	Enabled   bool    `yaml:"enabled"`
+	Model     string  `yaml:"model"`
+	Threshold float64 `yaml:"threshold"`
+	MaxOutput int     `yaml:"max_output"`
+}
+
+// ContextConfig groups context-management knobs. Today it holds only the
+// summarization block (change 0027); context_window stays on ModelConfig.
+type ContextConfig struct {
+	Summarization SummarizationConfig `yaml:"summarization"`
+}
+
 // Config is the fully resolved fuse configuration.
 type Config struct {
 	Gateway    Gateway
@@ -118,6 +135,11 @@ type Config struct {
 	// config-level entry for the same name overrides it, and .fuse.local.yml may
 	// only TIGHTEN pool numbers, never loosen them (ADR-0006 trust boundary).
 	Workflows map[string]WorkflowConfig
+	// Context groups context-management knobs (change 0027). Its summarization
+	// block defaults to Tier 2 on with a 0.85 threshold and 2000-token output
+	// cap; the summarizer stays inert until a Completer is wired at the call
+	// site, so the defaults are behavior-identical to pre-0027 until then.
+	Context ContextConfig
 }
 
 // WorkflowConfig is one named workflow: the invocable it binds, its subtree
@@ -215,6 +237,25 @@ type rawConfig struct {
 	// Workflows reuses the resolved WorkflowConfig shape on-disk (plain
 	// maps/lists/ints, no free-text scalars — so yaml.Unmarshal is safe).
 	Workflows map[string]WorkflowConfig `yaml:"workflows"`
+	// Context mirrors ContextConfig on-disk (change 0027). Its summarization
+	// mirror uses a *bool for enabled so an omitted key keeps the true default
+	// while `enabled: false` takes effect (mirrors RespectRobots).
+	Context rawContextConfig `yaml:"context"`
+}
+
+// rawContextConfig mirrors ContextConfig on-disk.
+type rawContextConfig struct {
+	Summarization rawSummarizationConfig `yaml:"summarization"`
+}
+
+// rawSummarizationConfig mirrors SummarizationConfig on-disk. Enabled is a
+// *bool so YAML can distinguish an omitted key (keep the true default) from an
+// explicit `enabled: false`; the other fields are plain scalars (0/"" = unset).
+type rawSummarizationConfig struct {
+	Enabled   *bool   `yaml:"enabled"`
+	Model     string  `yaml:"model"`
+	Threshold float64 `yaml:"threshold"`
+	MaxOutput int     `yaml:"max_output"`
 }
 
 // ProjectConfig is a single per-project override entry keyed by absolute
@@ -302,6 +343,17 @@ func Default() Config {
 		Agents: AgentsConfig{
 			MaxSpawns:     64,
 			MaxConcurrent: 16,
+		},
+		// Tier 2 anchored summarization defaults on (change 0027) with the
+		// documented threshold/output cap. Model empty ⇒ the main model (D4).
+		// The summarizer stays inert until a Completer is wired at the call
+		// site, so this default is behavior-identical to pre-0027.
+		Context: ContextConfig{
+			Summarization: SummarizationConfig{
+				Enabled:   true,
+				Threshold: 0.85,
+				MaxOutput: 2000,
+			},
 		},
 		// The research workflow ships as a built-in default (change 0034): it
 		// binds the research skill to a facet-researcher worker (no spawn_agent,

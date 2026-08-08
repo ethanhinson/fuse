@@ -441,6 +441,25 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 			path, strings.Join(ignoredThroughput, ", "))
 	}
 
+	// context.summarization (change 0027): a present-value-overrides merge like
+	// the research block. Enabled is a *bool so an omitted key keeps the true
+	// default while `enabled: false` disables. Threshold/MaxOutput are 0 = unset;
+	// an absent block keeps the Default() values (0.85 / 2000). No trust-boundary
+	// gating — summarization is not a permission surface.
+	rs := raw.Context.Summarization
+	if rs.Enabled != nil {
+		c.Context.Summarization.Enabled = *rs.Enabled
+	}
+	if rs.Model != "" {
+		c.Context.Summarization.Model = rs.Model
+	}
+	if rs.Threshold != 0 {
+		c.Context.Summarization.Threshold = rs.Threshold
+	}
+	if rs.MaxOutput != 0 {
+		c.Context.Summarization.MaxOutput = rs.MaxOutput
+	}
+
 	// The `models` map holds a `default` string alongside model entries.
 	for k, v := range raw.Models {
 		if k == "default" {

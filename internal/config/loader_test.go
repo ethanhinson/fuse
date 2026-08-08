@@ -1245,3 +1245,100 @@ workflows:
 		t.Errorf("expected a warning naming the loosened workflow; got %q", w)
 	}
 }
+
+// --- change 0027: context.summarization config surface ---
+
+// loadHomeConfig writes cfg as ~/.fuse/config.yml under a temp HOME and loads.
+func loadHomeConfig(t *testing.T, cfg string) Config {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestLoadContextSummarizationFull(t *testing.T) {
+	c := loadHomeConfig(t, "context:\n  summarization:\n    enabled: true\n    model: \"cheap/model\"\n    threshold: 0.85\n    max_output: 2000\n")
+	s := c.Context.Summarization
+	if !s.Enabled {
+		t.Errorf("Enabled = false, want true")
+	}
+	if s.Model != "cheap/model" {
+		t.Errorf("Model = %q, want cheap/model", s.Model)
+	}
+	if s.Threshold != 0.85 {
+		t.Errorf("Threshold = %v, want 0.85", s.Threshold)
+	}
+	if s.MaxOutput != 2000 {
+		t.Errorf("MaxOutput = %d, want 2000", s.MaxOutput)
+	}
+}
+
+func TestLoadContextSummarizationAbsentDefaults(t *testing.T) {
+	// The block is absent entirely: Tier 2 defaults on, with documented defaults.
+	c := loadHomeConfig(t, "max_turns: 30\n")
+	s := c.Context.Summarization
+	if !s.Enabled {
+		t.Errorf("Enabled = false, want true (default on when block absent)")
+	}
+	if s.Model != "" {
+		t.Errorf("Model = %q, want \"\" (default = main model)", s.Model)
+	}
+	if s.Threshold != 0.85 {
+		t.Errorf("Threshold = %v, want 0.85 (default)", s.Threshold)
+	}
+	if s.MaxOutput != 2000 {
+		t.Errorf("MaxOutput = %d, want 2000 (default)", s.MaxOutput)
+	}
+}
+
+func TestLoadContextSummarizationDisabled(t *testing.T) {
+	c := loadHomeConfig(t, "context:\n  summarization:\n    enabled: false\n")
+	if c.Context.Summarization.Enabled {
+		t.Errorf("Enabled = true, want false (explicit disable)")
+	}
+	// Other fields keep their defaults even when only enabled is set.
+	if c.Context.Summarization.Threshold != 0.85 {
+		t.Errorf("Threshold = %v, want 0.85 (default retained)", c.Context.Summarization.Threshold)
+	}
+	if c.Context.Summarization.MaxOutput != 2000 {
+		t.Errorf("MaxOutput = %d, want 2000 (default retained)", c.Context.Summarization.MaxOutput)
+	}
+}
+
+func TestLoadContextSummarizationOnlyModel(t *testing.T) {
+	// Only model set: the other fields keep their defaults.
+	c := loadHomeConfig(t, "context:\n  summarization:\n    model: \"alias/x\"\n")
+	s := c.Context.Summarization
+	if s.Model != "alias/x" {
+		t.Errorf("Model = %q, want alias/x", s.Model)
+	}
+	if !s.Enabled {
+		t.Errorf("Enabled = false, want true (default retained)")
+	}
+	if s.Threshold != 0.85 {
+		t.Errorf("Threshold = %v, want 0.85 (default retained)", s.Threshold)
+	}
+	if s.MaxOutput != 2000 {
+		t.Errorf("MaxOutput = %d, want 2000 (default retained)", s.MaxOutput)
+	}
+}
+
+func TestDefaultContextSummarizationOn(t *testing.T) {
+	// Default() (no file at all) also yields Tier 2 on with defaults.
+	s := Default().Context.Summarization
+	if !s.Enabled || s.Threshold != 0.85 || s.MaxOutput != 2000 {
+		t.Errorf("Default context.summarization = %+v, want {Enabled:true Threshold:0.85 MaxOutput:2000}", s)
+	}
+}
