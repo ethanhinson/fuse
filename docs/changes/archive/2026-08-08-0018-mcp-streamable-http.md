@@ -2,11 +2,11 @@
 id: 18
 slug: mcp-streamable-http
 title: Streamable HTTP transport for MCP (v2025-03-26)
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-06
-updated: 2026-08-07
+updated: 2026-08-08
 depends_on: [7]
 related: [7, 19, 20, 21]
 discovered_from: []
@@ -20,7 +20,7 @@ branch: feat/mcp-streamable-http
 pr: https://github.com/ethanhinson/fuse/pull/24
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-07T06:08:00Z
+claimed_at: 
 ---
 
 ## Artifacts
