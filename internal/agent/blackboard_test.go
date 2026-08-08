@@ -309,3 +309,133 @@ func TestWaitSlotYieldSaturationRegression(t *testing.T) {
 	sc.releaseSlot() // producer's original slot
 	sc.releaseSlot() // consumer's reacquired slot
 }
+
+// TestWaitFastPathSkipsYield (second-pass audit F3): a Wait on an ALREADY-SET key
+// returns via the fast path BEFORE the yield block, so it must NOT release then
+// reacquire the caller's scheduler slot. A spurious yield here would transiently
+// free a slot and let an over-cap child in. Assert SlotsInUse is unchanged.
+func TestWaitFastPathSkipsYield(t *testing.T) {
+	tr := NewAgentTreeWithConcurrency("root", "m", 2)
+	sc := tr.Scheduler()
+	bb := NewBlackboard(tr)
+	node := &AgentNode{ID: newNodeID(), Depth: 1} // depth>=1 so yield is not a no-op
+
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
+		t.Fatal("acquire")
+	}
+	before := sc.Snapshot().SlotsInUse
+
+	bb.Put("k", "ready", "i", "l") // key present => fast path
+	v, err := bb.Wait(context.Background(), "k", time.Second, node)
+	if err != nil || v != "ready" {
+		t.Fatalf("fast-path Wait = (%v, %v), want (ready, nil)", v, err)
+	}
+	if after := sc.Snapshot().SlotsInUse; after != before {
+		t.Fatalf("fast path must not yield: SlotsInUse %d -> %d", before, after)
+	}
+	sc.releaseSlot()
+}
+
+// TestWaitReacquireOnCancelledCtx (second-pass audit F4, corrected): when Wait
+// blocks (yielding its slot) and the ctx is then cancelled, the deferred
+// UnyieldSlot reacquires with the already-cancelled ctx. The finder predicted the
+// reacquire would FAIL and leave the slot released — but that is WRONG when a slot
+// is free: reacquireSlot's enqueueSlot grants IMMEDIATELY (no await, so the
+// cancelled ctx never matters), and SlotsInUse returns to its pre-wait value. The
+// ctx only gates reacquire when it must QUEUE behind a busy slot. This test pins
+// the actual (correct) free-slot behavior; TestWaitReacquireBlockedByBusySlot
+// below covers the genuinely-contended path where cancellation does drop the slot.
+func TestWaitReacquireOnCancelledCtx(t *testing.T) {
+	tr := NewAgentTreeWithConcurrency("root", "m", 1)
+	sc := tr.Scheduler()
+	bb := NewBlackboard(tr)
+	node := &AgentNode{ID: newNodeID(), Depth: 1}
+
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
+		t.Fatal("acquire")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := bb.Wait(ctx, "never", time.Minute, node) // blocks => yields the slot
+		done <- err
+	}()
+
+	// Wait for the yield to land (SlotsInUse drops to 0).
+	deadline := time.Now().Add(2 * time.Second)
+	for sc.Snapshot().SlotsInUse != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := sc.Snapshot().SlotsInUse; got != 0 {
+		t.Fatalf("Wait did not yield the slot: SlotsInUse=%d, want 0", got)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Fatalf("Wait err = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not return on cancel")
+	}
+	// The slot IS reclaimed: it was free, so reacquire granted immediately despite
+	// the cancelled ctx. SlotsInUse returns to 1.
+	if got := sc.Snapshot().SlotsInUse; got != 1 {
+		t.Fatalf("free-slot reacquire should reclaim despite cancel: SlotsInUse=%d, want 1", got)
+	}
+	sc.releaseSlot()
+}
+
+// TestWaitReacquireBlockedByBusySlot (second-pass audit F4, contended variant):
+// the ONLY case where a cancelled reacquire drops the slot — the consumer yields
+// its slot, another party grabs the now-free slot, and THEN the consumer's Wait
+// is cancelled, so its reacquire must QUEUE and the cancelled ctx makes it fail;
+// the consumer ends without a slot (SlotsInUse stays at the cap held by the other
+// party). Confirms the ctx-gated reacquire path.
+func TestWaitReacquireBlockedByBusySlot(t *testing.T) {
+	tr := NewAgentTreeWithConcurrency("root", "m", 1)
+	sc := tr.Scheduler()
+	bb := NewBlackboard(tr)
+	consumer := &AgentNode{ID: newNodeID(), Depth: 1}
+
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
+		t.Fatal("consumer acquire")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := bb.Wait(ctx, "never", time.Minute, consumer) // yields the sole slot
+		done <- err
+	}()
+
+	// After the yield, the slot is free — grab it from another party so the
+	// consumer's later reacquire must queue.
+	deadline := time.Now().Add(2 * time.Second)
+	for sc.Snapshot().SlotsInUse != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := sc.acquireSlot(context.Background(), ""); err != nil {
+		t.Fatal("other-party acquire of freed slot")
+	}
+	if got := sc.Snapshot().SlotsInUse; got != 1 {
+		t.Fatalf("other party should hold the slot: SlotsInUse=%d, want 1", got)
+	}
+
+	cancel() // consumer's reacquire must queue behind the busy slot, then fail on cancel
+	select {
+	case err := <-done:
+		if err != context.Canceled {
+			t.Fatalf("Wait err = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Wait did not return on cancel")
+	}
+	// The other party still holds the only slot; the consumer did NOT reclaim one.
+	if got := sc.Snapshot().SlotsInUse; got != 1 {
+		t.Fatalf("cancelled reacquire behind a busy slot must not reclaim: SlotsInUse=%d, want 1", got)
+	}
+	sc.releaseSlot() // release the other party's slot
+}
