@@ -82,6 +82,13 @@ type Manager struct {
 	// subscribes via OnProgress.
 	progressMu        sync.Mutex
 	progressObservers []ProgressObserver
+
+	// resourceMu guards the resource-subscription state: the stale-URI set (D2 —
+	// a pushed notifications/resources/updated flags a URI stale, never auto-reads)
+	// and the observer fan-out (D5) the TUI subscribes to via OnResource.
+	resourceMu        sync.Mutex
+	staleURIs         map[string]map[string]bool // server -> uri -> stale
+	resourceObservers []ResourceObserver
 }
 
 // NewManager starts all configured MCP servers and registers their tools.
