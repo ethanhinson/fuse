@@ -278,8 +278,11 @@ func (c *httpClient) readSSEPump() {
 			// An id-less notification (e.g. "$/progress") is routed BEFORE the
 			// pending lookup — previously it was dropped as "no pending channel".
 			if frame.isNotification() {
-				if c.router != nil {
-					c.router.dispatchNotification(c.name, frame.Method, frame.Params)
+				c.mu.Lock()
+				router := c.router
+				c.mu.Unlock()
+				if router != nil {
+					router.dispatchNotification(c.name, frame.Method, frame.Params)
 				}
 				continue
 			}
