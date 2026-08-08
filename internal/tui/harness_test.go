@@ -19,12 +19,17 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/exp/teatest"
+	"github.com/muesli/termenv"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -178,6 +183,87 @@ func stripANSI(b []byte) []byte {
 	return ansiRE.ReplaceAll(b, nil)
 }
 
+// snapshot is the harness's visual-confirmation capture: it quits the program,
+// grabs the final rendered frame, and writes screenshot artifacts via
+// captureFrame. Returns the ANSI-stripped frame text for assertions.
+func (h *harness) snapshot(name string) string {
+	h.t.Helper()
+	h.tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	return captureFrame(h.t, h.tm, name)
+}
+
+// captureFrame renders a settled teatest program's final frame and writes
+// visual-confirmation artifacts: <name>.ansi (the rendered frame with styling —
+// the true visual), <name>.txt (ANSI-stripped, diffable), and — when the
+// `freeze` renderer is on PATH — <name>.png. Artifacts land in FUSE_SCREENSHOT_DIR
+// when set (so a human or CI can collect them), else a per-test temp dir (so the
+// suite stays hermetic and dirties no tree). Returns the ANSI-stripped frame.
+//
+// The frame comes from the FINAL MODEL's View(), not the raw output stream: the
+// teardown frame after a quit is blank, whereas View() re-renders the full
+// settled transcript viewport — exactly what the user last saw. The caller must
+// have already quit the program (e.g. sent Ctrl+C).
+func captureFrame(t *testing.T, tm *teatest.TestModel, name string) string {
+	t.Helper()
+	fm := tm.FinalModel(t, teatest.WithFinalTimeout(5*time.Second))
+	sm, ok := fm.(ShellModel)
+	if !ok {
+		t.Fatalf("capture %q: final model is %T, want ShellModel", name, fm)
+	}
+
+	// Force a true-color profile so View() emits real styling — in a non-TTY
+	// test the default lipgloss profile is Ascii (no color), which would make
+	// the screenshot monochrome. Restored immediately so no other test is
+	// affected.
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	raw := []byte(sm.View())
+	lipgloss.SetColorProfile(prev)
+
+	dir := os.Getenv("FUSE_SCREENSHOT_DIR")
+	if dir == "" {
+		dir = t.TempDir()
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("capture %q: mkdir %s: %v", name, dir, err)
+	}
+
+	ansiPath := filepath.Join(dir, name+".ansi")
+	stripped := stripANSI(raw)
+	writeArtifact(t, ansiPath, raw)
+	writeArtifact(t, filepath.Join(dir, name+".txt"), stripped)
+	if png := renderFramePNG(t, ansiPath, filepath.Join(dir, name+".png")); png != "" {
+		t.Logf("screenshot PNG: %s", png)
+	}
+	return string(stripped)
+}
+
+func writeArtifact(t *testing.T, path string, b []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// renderFramePNG renders an ANSI capture to a PNG using the `freeze` CLI
+// (github.com/charmbracelet/freeze). It is strictly best-effort: if freeze is
+// not installed the capture still produces .ansi/.txt and this returns "" — a
+// missing image renderer never fails the test. Returns the PNG path on success.
+func renderFramePNG(t *testing.T, ansiPath, pngPath string) string {
+	t.Helper()
+	exe, err := exec.LookPath("freeze")
+	if err != nil {
+		t.Logf("freeze not on PATH — skipping PNG for %s (install: go install github.com/charmbracelet/freeze@latest)", filepath.Base(pngPath))
+		return ""
+	}
+	cmd := exec.Command(exe, ansiPath, "-o", pngPath, "--padding", "20", "--window")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("freeze render failed for %s: %v (%s)", filepath.Base(pngPath), err, bytes.TrimSpace(out))
+		return ""
+	}
+	return pngPath
+}
+
 // noopToolExec is a ToolExecutor that never runs a tool — the scripted
 // completer under test returns no tool calls, so it is never invoked, but the
 // agent constructor requires a non-nil executor.
@@ -213,6 +299,12 @@ func TestHarness_PlainPromptRoundTrip(t *testing.T) {
 	})
 	h.typeAndSubmit("hello there")
 	h.waitForOutput("the-model-replied-42", 5*time.Second)
+
+	// Exercise the visual-confirmation capture on the simplest path.
+	frame := h.snapshot("plain-prompt")
+	if !strings.Contains(frame, "the-model-replied-42") {
+		t.Errorf("captured frame missing the reply:\n%s", frame)
+	}
 }
 
 // TestHarness_ResearchSlashDispatch is the coverage the e2e gap demanded: the
