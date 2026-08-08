@@ -10,14 +10,14 @@ updated: 2026-08-08
 depends_on: [19, 20]
 related: [20]
 discovered_from: [19]
-adrs: []
+adrs: [13]
 spec: docs/superpowers/specs/2026-08-08-mcp-resource-subscriptions-design.md
 plan: docs/superpowers/plans/2026-08-08-mcp-resource-subscriptions.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/mcp-resource-subscriptions
-claimed_at: 2026-08-08T19:27:45Z
+claimed_at: 2026-08-08T19:59:44Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-08-mcp-resource-subscriptions-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-mcp-resource-subscriptions-design.md) |
 | Plan | [2026-08-08-mcp-resource-subscriptions.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-resource-subscriptions/docs/superpowers/plans/2026-08-08-mcp-resource-subscriptions.md) |
+| ADRs | [ADR-0013](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0013-tools-registry-owns-concurrency-safety.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
