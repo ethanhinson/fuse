@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0026 — Workflow composition — chain, fan-out, and conditional routing](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0026-agent-workflow-composition.md)**
+> ↩ **[Change 0026 — Workflow composition — chain, fan-out, and conditional routing](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-08-0026-agent-workflow-composition.md)**
 <!-- docket:backlink:end -->
 
 # Pipeline composition — deterministic DAG execution over the subagent runtime
