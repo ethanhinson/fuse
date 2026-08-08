@@ -55,11 +55,13 @@ func newClassifierScorer(h *heuristicScorer, c Completer, modelID string, batchS
 }
 
 // Score returns the heuristic score for a clear-cut result, or a classifier-
-// refined score for a borderline result. Because RelevanceScorer.Score is
-// per-result but the classifier batches, a borderline result triggers a single
-// classifier call for JUST that result (batching across a prune pass is handled
-// by ScoreBatch below; Score satisfies the interface and is used where a scorer
-// is consulted one result at a time). Any failure returns the heuristic score.
+// refined score for a borderline result. The RelevanceScorer interface is
+// per-result, so a borderline result triggers a classifier call for just that
+// result; classify() carries the batch machinery (batchSize, multi-candidate
+// parsing) so a future batched prune path can refine a whole borderline band in
+// one call without reworking the classifier. Any failure or non-single response
+// returns the heuristic score and arms suppression. See the change's results
+// note on per-result vs batched classification.
 func (cs *classifierScorer) Score(r ToolResult, ctx ScoreContext) float64 {
 	h := cs.heuristic.Score(r, ctx)
 	if cs.suppressed || !cs.borderline(h) {
