@@ -229,6 +229,37 @@ func mergeThroughput(c *Config, raw rawThroughputConfig, trusted bool) (loosened
 	return loosened
 }
 
+// mergePipeline merges a source's pipeline.synthesis caps onto c (change 0026).
+// Each cap is 0 = unset. From a trusted source a present positive value
+// overrides the current one. From an UNTRUSTED source (.fuse.local.yml) each cap
+// may only TIGHTEN — lower an already-set positive value — mirroring the
+// workflow-pool and throughput tighten-only rules (ADR-0006): a tightening is
+// honored only when the current value is already set (>0) and the new value is a
+// positive number strictly lower than it. Everything else from an untrusted
+// source (raising a set cap, or setting a previously-unset axis) is a loosening,
+// dropped with its key name returned for the aggregated warning.
+func mergePipeline(c *Config, raw rawPipelineSynthesisConfig, trusted bool) (loosened []string) {
+	tighten := func(key string, cur *int, newV int) {
+		if newV <= 0 {
+			return // omitted axis (0), or a nonsensical negative
+		}
+		if trusted {
+			*cur = newV
+			return
+		}
+		if *cur > 0 && newV > 0 && newV < *cur {
+			*cur = newV // strictly-lower positive = tighten, honored
+			return
+		}
+		loosened = append(loosened, key)
+	}
+	tighten("pipeline.synthesis.max_steps", &c.Pipeline.Synthesis.MaxSteps, raw.MaxSteps)
+	tighten("pipeline.synthesis.max_fanout", &c.Pipeline.Synthesis.MaxFanout, raw.MaxFanout)
+	tighten("pipeline.synthesis.max_depth", &c.Pipeline.Synthesis.MaxDepth, raw.MaxDepth)
+	tighten("pipeline.synthesis.max_attempts", &c.Pipeline.Synthesis.MaxAttempts, raw.MaxAttempts)
+	return loosened
+}
+
 // applyProjectOverride merges the per-project permissions entry whose key best
 // matches the current cwd. The winning key is the LONGEST project key that
 // equals cwd or is a path-segment ancestor of it. Keys and cwd are canonicalized
@@ -439,6 +470,15 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	if !trusted && len(ignoredThroughput) > 0 {
 		fmt.Fprintf(warnw, "warning: %s ignores throughput-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
 			path, strings.Join(ignoredThroughput, ", "))
+	}
+
+	// pipeline.synthesis caps (change 0026). Each cap is 0 = unset. From a trusted
+	// source a present positive value overrides; from an untrusted source each may
+	// only TIGHTEN — lower an already-set positive cap — matching the pool-number
+	// tighten-only rule (ADR-0006). A loosening value is dropped and named.
+	if loosened := mergePipeline(c, raw.Pipeline.Synthesis, trusted); !trusted && len(loosened) > 0 {
+		fmt.Fprintf(warnw, "warning: %s ignores pipeline-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
+			path, strings.Join(loosened, ", "))
 	}
 
 	// context.summarization (change 0027): a present-value-overrides merge like

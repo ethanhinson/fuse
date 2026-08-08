@@ -150,9 +150,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// One blackboard per session, shared by every agent in the tree (change 0023).
 	bb := agent.NewBlackboard(tree)
 
-	var makeSpawnFunc func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc
-	makeSpawnFunc = func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
-		spawner := agent.NewSpawner(
+	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
+	makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
+		return spawnFuncFrom(makeSpawner(parentNode, depth), sched, parentNode)
+	}
+	makeSpawner = func(parentNode *agent.AgentNode, depth int) *agent.Spawner {
+		return agent.NewSpawner(
 			agent.WithTree(tree),
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(depth),
@@ -174,6 +177,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 				// Blackboard tools bound to the child's provenance — always wired
 				// (not spawn-gated), honoring an explicit subset that omits them.
 				wireChildBlackboard(childToolReg, bb, childNode, opts.Tools)
+				// pipeline_run bound to the child's own spawner — always wired unless
+				// an explicit subset omits it (mirrors the blackboard wiring). (0026)
+				pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
+				childSpawner := makeSpawner(childNode, childNode.Depth)
+				wirePipelineTool(childToolReg,
+					makePipelineRunFn(childSpawner, bb, sched, childNode),
+					makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW),
+					opts.Tools)
 
 				r := tui.NewRenderer(stdout, *verbose)
 				modelID := opts.ModelID
@@ -200,34 +211,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 				return childResult(msgs, rerr)
 			}),
 		)
-		return func(ctx context.Context, req tools.SpawnRequest) (string, error) {
-			opts := agent.SpawnOpts{
-				Label:        req.Label,
-				Task:         req.Task,
-				SystemPrompt: req.SystemPrompt,
-				ModelID:      req.Model,
-				Tools:        req.Tools,
-				Worker:       req.Worker,
-				Expects:      req.Expects,
-			}
-			handle, herr := spawner.Spawn(ctx, opts)
-			if herr != nil {
-				return "", herr
-			}
-			// Yield this agent's spawn slot while blocked on the child —
-			// parents holding slots while their children queue is a deadlock.
-			sched.YieldSlot(parentNode)
-			done := handle.Wait()
-			if !sched.UnyieldSlot(ctx, parentNode) {
-				return "", ctx.Err()
-			}
-			return done.Result, done.Err
-		}
 	}
 	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
 		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
 	// Root-node-wired blackboard tools (provenance = rootNode).
 	wireRootBlackboard(toolReg, bb, rootNode)
+	// Root pipeline_run bound to the root spawner (provenance = rootNode). (0026)
+	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
+	rootPipeSpawner := makeSpawner(rootNode, 0)
+	wirePipelineTool(toolReg,
+		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode),
+		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW),
+		nil)
 
 	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil, oneShotBudget, rateGate)
 	if err != nil {

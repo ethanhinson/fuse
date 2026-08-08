@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -14,6 +16,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/pipeline"
 	"github.com/ethanhinson/fuse/internal/ratelimit"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -512,6 +515,170 @@ func wireChildBlackboard(childToolReg *tools.Registry, bb *agent.Blackboard, chi
 func wireRootBlackboard(toolReg *tools.Registry, bb *agent.Blackboard, rootNode *agent.AgentNode) {
 	for _, t := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {
 		toolReg.Register(t)
+	}
+}
+
+// pipelinePlanKey is the blackboard key a synthesized pipeline's generated DAG
+// is written to before it runs, so a human (or a downstream tool) can inspect
+// exactly what was composed (change 0026).
+const pipelinePlanKey = "pipeline.plan"
+
+// pipelineWriterID/Label stamp provenance on the pipeline.plan write.
+const (
+	pipelineWriterID    = "pipeline"
+	pipelineWriterLabel = "pipeline"
+)
+
+// spawnFuncFrom adapts a *agent.Spawner into the tools.SpawnFunc seam: it spawns
+// a child, yields the parent's scheduler slot while blocked on it, and unyields
+// on completion (a parent holding a slot while its child queues is a deadlock).
+// The spawner-building and slot-yield logic is identical at every entry point, so
+// it lives here; each site builds its own spawner (with its own child builder)
+// and wraps it through this adapter. Change 0026 extracted it so the same spawner
+// can also back the pipeline_run tool.
+func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *agent.AgentNode) tools.SpawnFunc {
+	return func(ctx context.Context, req tools.SpawnRequest) (string, error) {
+		opts := agent.SpawnOpts{
+			Label:        req.Label,
+			Task:         req.Task,
+			SystemPrompt: req.SystemPrompt,
+			ModelID:      req.Model,
+			Tools:        req.Tools,
+			Worker:       req.Worker,
+			Expects:      req.Expects,
+		}
+		handle, herr := spawner.Spawn(ctx, opts)
+		if herr != nil {
+			return "", herr
+		}
+		sched.YieldSlot(parentNode)
+		done := handle.Wait()
+		if !sched.UnyieldSlot(ctx, parentNode) {
+			return "", ctx.Err()
+		}
+		return done.Result, done.Err
+	}
+}
+
+// makePipelineRunFn returns the authored-pipeline seam (change 0026): it parses,
+// validates (layers 1–2, no synthesis caps), and runs a caller-authored pipeline
+// over a spawner built for node, sharing state through bb. It returns a
+// human-readable terminal status line; pipeline.status is written by Run.
+//
+// It yields the CALLING node's scheduler slot around the whole pipeline run,
+// mirroring spawnFuncFrom: when pipeline_run is invoked from a depth≥1 child
+// (which holds a slot), the pipeline spawns step children from the same pool, so
+// a caller that keeps its slot while blocked on those children deadlocks under
+// slot pressure (learning: slot-cap-yield-while-blocked-on-children).
+func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode) tools.PipelineRunFunc {
+	return func(ctx context.Context, definition []byte) (string, error) {
+		p, err := pipeline.Parse(definition)
+		if err != nil {
+			return "", fmt.Errorf("parse: %w", err)
+		}
+		// Authored path: structural validation only (no synthesis caps).
+		if err := pipeline.Validate(p, pipeline.Caps{}); err != nil {
+			return "", fmt.Errorf("validate: %w", err)
+		}
+		sched.YieldSlot(node)
+		st, _ := pipeline.Run(ctx, p, spawner, bb)
+		if !sched.UnyieldSlot(ctx, node) {
+			return "", ctx.Err()
+		}
+		return pipelineStatusLine(p.Name, st), nil
+	}
+}
+
+// makePipelineSynthFn returns the synthesis seam (change 0026): it synthesizes a
+// pipeline from goal under the config-derived caps, writes the generated DAG to
+// pipeline.plan (best-effort trace alongside), then runs it. confirm is advisory
+// here — headless there is no interactive confirmer, so a synthesized-and-run
+// pipeline proceeds regardless (documented deviation); the flag is plumbed for a
+// future gate. workers/toolNames form the synthesis palette.
+func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, cfg config.Config, workers, toolNames []string, traceW io.Writer) tools.PipelineSynthFunc {
+	caps := pipeline.Caps{
+		MaxSteps:    cfg.Pipeline.Synthesis.MaxSteps,
+		MaxFanout:   cfg.Pipeline.Synthesis.MaxFanout,
+		MaxDepth:    cfg.Pipeline.Synthesis.MaxDepth,
+		MaxAttempts: cfg.Pipeline.Synthesis.MaxAttempts,
+		RequirePool: true,
+	}
+	return func(ctx context.Context, goal string, confirm bool) (string, error) {
+		// Yield the calling node's slot around the whole operation (see
+		// makePipelineRunFn): the synthesis child AND the step children spawn from
+		// the same pool, so a caller (depth≥1) that holds its slot while blocked on
+		// them deadlocks under slot pressure
+		// (learning: slot-cap-yield-while-blocked-on-children).
+		sched.YieldSlot(node)
+		p, err := pipeline.Synthesize(ctx, goal, pipeline.SynthContext{Workers: workers, Tools: toolNames}, spawner, caps)
+		if err != nil {
+			if !sched.UnyieldSlot(ctx, node) {
+				return "", ctx.Err()
+			}
+			return "", fmt.Errorf("synthesize: %w", err)
+		}
+		// Publish the generated DAG so it is inspectable before/while it runs.
+		if plan, merr := json.Marshal(p); merr == nil {
+			var v any
+			if json.Unmarshal(plan, &v) == nil {
+				bb.Put(pipelinePlanKey, v, pipelineWriterID, pipelineWriterLabel)
+			}
+			if traceW != nil {
+				fmt.Fprintf(traceW, "[pipeline] synthesized plan for goal %q: %s\n", goal, plan)
+			}
+		}
+		// confirm gate is a no-op headless (no interactive confirmer wired): proceed.
+		_ = confirm
+		st, _ := pipeline.Run(ctx, p, spawner, bb)
+		if !sched.UnyieldSlot(ctx, node) {
+			return "", ctx.Err()
+		}
+		return pipelineStatusLine(p.Name, st), nil
+	}
+}
+
+// pipelineSynthPalette derives the synthesis palette from the resolved config
+// and the root tool registry: the worker types declared across all workflows and
+// the currently-registered tool names. Both are advisory context the synthesizer
+// draws from (change 0026).
+func pipelineSynthPalette(cfg config.Config, reg *tools.Registry) (workers, toolNames []string) {
+	seen := map[string]bool{}
+	for _, wf := range cfg.Workflows {
+		for name := range wf.Workers {
+			if !seen[name] {
+				seen[name] = true
+				workers = append(workers, name)
+			}
+		}
+	}
+	sort.Strings(workers)
+	for _, s := range reg.Schemas() {
+		toolNames = append(toolNames, s.Name)
+	}
+	sort.Strings(toolNames)
+	return workers, toolNames
+}
+
+// pipelineStatusLine renders a terminal pipeline Status as a single human line.
+func pipelineStatusLine(name string, st pipeline.Status) string {
+	if st.State == pipeline.StateFailed {
+		return fmt.Sprintf("pipeline %s: failed at %s", name, st.FailedStep)
+	}
+	return fmt.Sprintf("pipeline %s: completed", name)
+}
+
+// wirePipelineTool registers the pipeline_run tool on reg, built from the
+// authored-run and synthesis seams. Like the blackboard tools it is ALWAYS wired
+// unless an explicit tools subset omits it: an empty requested list is a full
+// clone (include); a non-empty subset includes it only when it names it. This
+// mirrors wireChildBlackboard's include/exclude logic so a narrow child subset
+// consistently withholds shared-orchestration tools. Called at both the root and
+// every child builder of every agent entry point (change 0026).
+func wirePipelineTool(reg *tools.Registry, runFn tools.PipelineRunFunc, synthFn tools.PipelineSynthFunc, requested []string) {
+	if len(requested) == 0 || contains(requested, "pipeline_run") {
+		reg.Register(tools.NewPipelineRunTool(runFn, synthFn))
+	} else {
+		reg.Unregister("pipeline_run")
 	}
 }
 

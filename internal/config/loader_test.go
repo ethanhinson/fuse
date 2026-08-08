@@ -1342,3 +1342,104 @@ func TestDefaultContextSummarizationOn(t *testing.T) {
 		t.Errorf("Default context.summarization = %+v, want {Enabled:true Threshold:0.85 MaxOutput:2000}", s)
 	}
 }
+
+// --- change 0026: pipeline.synthesis caps config surface ---
+
+// TestDefaultPipelineSynthesisCaps asserts the conservative built-in defaults
+// for the pipeline synthesis caps are present after Default().
+func TestDefaultPipelineSynthesisCaps(t *testing.T) {
+	s := Default().Pipeline.Synthesis
+	if s.MaxSteps != 50 {
+		t.Errorf("MaxSteps = %d, want 50", s.MaxSteps)
+	}
+	if s.MaxFanout != 10 {
+		t.Errorf("MaxFanout = %d, want 10", s.MaxFanout)
+	}
+	if s.MaxDepth != 4 {
+		t.Errorf("MaxDepth = %d, want 4", s.MaxDepth)
+	}
+	if s.MaxAttempts != 3 {
+		t.Errorf("MaxAttempts = %d, want 3", s.MaxAttempts)
+	}
+}
+
+// TestLoadPipelineSynthesisBlock asserts the pipeline: { synthesis: {...} }
+// block unmarshals from a trusted home config and overrides the defaults.
+func TestLoadPipelineSynthesisBlock(t *testing.T) {
+	c := loadHomeConfig(t, `
+pipeline:
+  synthesis:
+    max_steps: 20
+    max_fanout: 6
+    max_depth: 3
+    max_attempts: 2
+`)
+	s := c.Pipeline.Synthesis
+	if s.MaxSteps != 20 {
+		t.Errorf("MaxSteps = %d, want 20", s.MaxSteps)
+	}
+	if s.MaxFanout != 6 {
+		t.Errorf("MaxFanout = %d, want 6", s.MaxFanout)
+	}
+	if s.MaxDepth != 3 {
+		t.Errorf("MaxDepth = %d, want 3", s.MaxDepth)
+	}
+	if s.MaxAttempts != 2 {
+		t.Errorf("MaxAttempts = %d, want 2", s.MaxAttempts)
+	}
+}
+
+// TestLocalPipelineSynthesisTightenOnly asserts the ADR-0006 trust boundary for
+// the repo-plantable .fuse.local.yml on the pipeline caps: it may LOWER a cap
+// (tighten) but a value that would LOOSEN it (raise the cap) is ignored, keeping
+// the trusted home-file value, and a warning is emitted for the loosened axis.
+func TestLocalPipelineSynthesisTightenOnly(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	// Trusted home file establishes the baseline caps.
+	trusted := `
+pipeline:
+  synthesis:
+    max_steps: 30
+    max_fanout: 8
+    max_depth: 4
+    max_attempts: 3
+`
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(trusted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Untrusted local file tries to TIGHTEN max_steps (30 -> 10) and LOOSEN
+	// max_fanout (8 -> 20).
+	local := `
+pipeline:
+  synthesis:
+    max_steps: 10
+    max_fanout: 20
+`
+	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := c.Pipeline.Synthesis
+	if s.MaxSteps != 10 {
+		t.Errorf("MaxSteps = %d, want 10 (local tighten honored)", s.MaxSteps)
+	}
+	if s.MaxFanout != 8 {
+		t.Errorf("MaxFanout = %d, want 8 (local loosening ignored)", s.MaxFanout)
+	}
+	if w := warnings(); !strings.Contains(w, "pipeline.synthesis.max_fanout") {
+		t.Errorf("expected a warning naming the loosened pipeline cap; got %q", w)
+	}
+}

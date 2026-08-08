@@ -134,9 +134,12 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// from production: each child renders through a MultiRenderer that feeds
 	// both the tree (for the hierarchy snapshot) and the shared recorder Log
 	// (for the event transcript). Nothing about the agents themselves is faked.
-	var makeSpawnFunc func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc
-	makeSpawnFunc = func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
-		spawner := agent.NewSpawner(
+	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
+	makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
+		return spawnFuncFrom(makeSpawner(parentNode, depth), sched, parentNode)
+	}
+	makeSpawner = func(parentNode *agent.AgentNode, depth int) *agent.Spawner {
+		return agent.NewSpawner(
 			agent.WithTree(tree),
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(depth),
@@ -174,6 +177,14 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				// (not spawn-gated), honoring an explicit subset that omits them.
 				// effectiveTools is the list childToolRegistry actually built from.
 				wireChildBlackboard(childToolReg, bb, childNode, effectiveTools)
+				// pipeline_run bound to the child's own spawner — always wired unless
+				// an explicit subset omits it (mirrors the blackboard wiring). (0026)
+				pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
+				childSpawner := makeSpawner(childNode, childNode.Depth)
+				wirePipelineTool(childToolReg,
+					makePipelineRunFn(childSpawner, bb, sched, childNode),
+					makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW),
+					effectiveTools)
 
 				label := childNode.Label
 				if label == "" {
@@ -215,20 +226,6 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				return childResult(msgs, rerr)
 			}),
 		)
-		return func(ctx context.Context, req tools.SpawnRequest) (string, error) {
-			handle, herr := spawner.Spawn(ctx, agent.SpawnOpts{
-				Label: req.Label, Task: req.Task, SystemPrompt: req.SystemPrompt, ModelID: req.Model, Tools: req.Tools, Worker: req.Worker, Expects: req.Expects,
-			})
-			if herr != nil {
-				return "", herr
-			}
-			sched.YieldSlot(parentNode)
-			done := handle.Wait()
-			if !sched.UnyieldSlot(ctx, parentNode) {
-				return "", ctx.Err()
-			}
-			return done.Result, done.Err
-		}
 	}
 	rootSpawn := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), budgetFor(tree, act, rootID)).
 		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID))
@@ -240,6 +237,13 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	toolReg.Register(rootSpawn)
 	// Root-node-wired blackboard tools (provenance = rootNode).
 	wireRootBlackboard(toolReg, bb, rootNode)
+	// Root pipeline_run bound to the root spawner (provenance = rootNode). (0026)
+	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
+	rootPipeSpawner := makeSpawner(rootNode, 0)
+	wirePipelineTool(toolReg,
+		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode),
+		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW),
+		nil)
 
 	// Root renderer: tree node + recorder, same MultiRenderer shape as children.
 	rootR := tui.NewMultiRenderer(
