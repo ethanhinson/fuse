@@ -95,7 +95,13 @@ CORRECT (parallel — all in one response):
 ### Rules
 - Emit ALL spawns as parallel tool calls in one response, then summarise once all results arrive.
 - Never read 3+ files one at a time when you can spawn agents.
-- The child agent receives its own full tool set and runs to completion; its final assistant message is the result.`
+- By default (no ` + "`tools`" + ` argument) the child inherits your FULL tool set and runs to completion; its final assistant message is the result.
+
+### Shared memory across agents (blackboard)
+Children can coordinate through a shared, session-wide blackboard (` + "`blackboard_write` / `blackboard_read` / `blackboard_keys` / `blackboard_wait` / `blackboard_delete`" + `) — the substrate for debate, ensemble, and producer/consumer patterns where children exchange intermediate results.
+- To have children collaborate through the blackboard, DO NOT pass a narrow ` + "`tools`" + ` subset that omits it. A non-empty ` + "`tools`" + ` list that leaves out the ` + "`blackboard_*`" + ` tools WITHHOLDS shared memory from the child, so it cannot read or write the board — a common reason a "debate" produces an empty board.
+- Either omit ` + "`tools`" + ` entirely (the child inherits the blackboard), or explicitly include the ` + "`blackboard_*`" + ` tools you need in the subset.
+- Pattern: instruct each child to WRITE its findings/position to a shared key (e.g. ` + "`review/<name>`" + `), then after they return, READ ` + "`review/*`" + ` and synthesise.`
 
 // headlessTurnBackstop is the generous default cap applied to headless entry
 // points (one-shot, non-TTY, mcp-server, research-probe) when max_turns is

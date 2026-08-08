@@ -119,9 +119,16 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 			"description": "Optional system prompt override; fully replaces the inherited one.",
 		},
 		"tools": map[string]any{
-			"type":        "array",
-			"items":       map[string]any{"type": "string"},
-			"description": "Optional subset of parent tools to give the child.",
+			"type":  "array",
+			"items": map[string]any{"type": "string"},
+			"description": "Optional subset of parent tools to give the child. " +
+				"IMPORTANT: a non-empty subset that omits the blackboard_* tools " +
+				"WITHHOLDS shared-memory access from the child — it then cannot read " +
+				"or write the shared blackboard. If you are spawning children to " +
+				"collaborate through the blackboard (debate, ensemble, producer/" +
+				"consumer), either omit this field (the child inherits all tools) or " +
+				"include the blackboard_* tools you need (e.g. blackboard_write, " +
+				"blackboard_read, blackboard_keys) in the subset.",
 		},
 		"model": map[string]any{
 			"type":        "string",
