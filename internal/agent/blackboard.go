@@ -105,9 +105,15 @@ func (b *Blackboard) Keys(pattern string) []string {
 	return out
 }
 
-// Snapshot returns an independent deep copy of every entry under RLock, for
-// race-free TUI reads. Mutating the returned map (or, since entries are values,
-// its entries) does not affect the store.
+// Snapshot returns a shallow, top-level-independent copy of every entry under
+// RLock, for race-free TUI reads. The returned map is safe to insert into,
+// delete from, or replace entries in without affecting the store, and each
+// BlackboardEntry is a value copy (its scalar fields are independent). BUT a
+// reference-typed Value (a map/slice, as produced by JSON object/array writes)
+// is SHARED with the store — this is a shallow copy, not a deep one. That is
+// sufficient because the only consumer, the TUI, treats snapshot values as
+// read-only. Callers MUST NOT mutate a snapshot entry's Value; doing so would
+// race a concurrent writer. (Pinned by TestSnapshotSharesNestedReference.)
 func (b *Blackboard) Snapshot() map[string]BlackboardEntry {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
