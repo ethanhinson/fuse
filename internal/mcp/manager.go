@@ -89,6 +89,13 @@ type Manager struct {
 	resourceMu        sync.Mutex
 	staleURIs         map[string]map[string]bool // server -> uri -> stale
 	resourceObservers []ResourceObserver
+
+	// subMu guards the ref-counted subscription tracker (D-constraint: re-subscribe
+	// on reconnect). Keyed by server name (survives a reconnect that replaces the
+	// managedServer) -> uri -> ref count. A URI's wire resources/subscribe is sent
+	// on the 0→1 transition and resources/unsubscribe on the 1→0 transition.
+	subMu   sync.Mutex
+	subRefs map[string]map[string]int
 }
 
 // NewManager starts all configured MCP servers and registers their tools.
