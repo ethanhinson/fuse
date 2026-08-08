@@ -57,6 +57,13 @@ fuse's subagent model (change 0012) is spawn-and-collect: a parent spawns childr
   spawn capability), but an explicit `tools`-subset exclusion is still honored.
 - **Blackboard tab** in the agent-tree overlay — current keys/values with agent-wrote
   indicators.
+- **Directed-message convention (folded in from killed change 0025)** — a thin, poll-based
+  layer over the blackboard for the debate/refine pattern: a sender writes to a per-agent inbox
+  key namespace (`inbox/<target>/<seq>`) and the target polls its own inbox by glob
+  (`blackboard_keys("inbox/<self>/*")` + read). This is a **convention plus a thin helper**, not
+  a new inbox data structure — it reuses the blackboard's store, provenance, and tree view.
+  Crucially it fits fuse's spawn-and-collect model: an agent polls its inbox **during its own
+  turns** (no mid-run injection, no agent-loop change). No blocking, no delivery guarantees.
 
 ## Out of scope
 
@@ -64,13 +71,19 @@ fuse's subagent model (change 0012) is spawn-and-collect: a parent spawns childr
 - Access control (any agent can write any key) — simplicity first; ACLs are a follow-up.
 - Value size limits — bounded implicitly by context budget; no hard cap.
 - Smarter wait liveness (tree-idle / producer-death wake) — timeout-only for v1; a follow-up.
-- Direct agent-to-agent messaging — that is change 0025, which builds on this.
+- **Real mid-run message injection / live inter-agent debate** — the directed-message
+  convention is poll-based (agents check their inbox during their own turns); injecting a
+  message into a *running* child mid-turn is a genuine agent-loop change, deferred.
+- **ACP (Agent Client Protocol) external-harness interop** — a separate initiative (two changes:
+  fuse-as-ACP-agent and fuse-as-ACP-client), not this change.
 
 ## Design decisions
 
 Design settled through an interactive brainstorm on 2026-08-08 and captured in the linked
 spec. Four decisions fixed the shape: (1) `blackboard_wait` yields its scheduler slot and
 requires a timeout; (2) the full Blackboard tree tab is in scope; (3) wait liveness is
-timeout-only for v1; (4) each entry records its writing agent. Downstream changes **0025**
-(agent-to-agent messaging) and **0026** (workflow composition) build on this substrate, so the
-scope is deliberately kept tight.
+timeout-only for v1; (4) each entry records its writing agent. **Change 0025
+(agent-to-agent messaging) was killed and folded in here** (2026-08-08): a directed-message
+inbox is functionally a per-agent blackboard key, so it becomes a thin poll-based convention
+over this store rather than a separate primitive. Downstream change **0026** (workflow
+composition) builds on this substrate. Scope is deliberately kept tight.
