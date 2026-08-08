@@ -5,6 +5,13 @@ import (
 	"sync"
 )
 
+// compile-time checks: the Manager is both the notification router the pumps
+// call and the call tracker MCPTool uses.
+var (
+	_ notificationRouter = (*Manager)(nil)
+	_ callTracker        = (*Manager)(nil)
+)
+
 // callTracking is the per-call state bound to a progress token while a streaming
 // tools/call is in flight: which server/tool it belongs to, and the bounded ring
 // buffer that assembles $/stream chunks (created lazily on the first chunk).
