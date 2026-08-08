@@ -6,12 +6,12 @@ status: proposed
 priority: medium
 type: feat
 created: 2026-08-06
-updated: 2026-08-06
-depends_on: [12, 23, 24]
-related: [23, 24]
+updated: 2026-08-08
+depends_on: [23, 24]
+related: [12, 23, 24]
 discovered_from: []
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-08-agent-workflow-composition-design.md
 plan:
 results:
 trivial: false
@@ -27,40 +27,35 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-08-agent-workflow-composition-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-agent-workflow-composition-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
 
-fuse's agent model is emergent: the LLM decides when to spawn subagents, in what order, and how to use their results. This is powerful but unpredictable — there is no way to express a fixed workflow ("always do A, then B and C in parallel, then D with the combined result") that the harness executes deterministically. Patterns like chain-of-thought with tool use, map-reduce over search results, and conditional branching (if file X exists, do Y; else Z) are currently encoded ad-hoc in the model's task prompt. A lightweight workflow composition layer — expressed as a simple DAG (directed acyclic graph) of named steps with inputs, outputs, and routing rules — would let skills and CLI tasks declare reliable multi-step processes that the harness executes without the LLM making sequencing decisions on the fly.
+fuse's agent orchestration is *emergent*: the LLM decides when to spawn subagents, in what order, and how to combine their results. That is powerful but non-deterministic — there is no way to declare a fixed process ("do A, then B and C in parallel, then D over the combined result") that the harness executes reliably. Map-reduce over search results and conditional branching (if X, do Y; else Z) are encoded ad-hoc in the model's task prompt today. A **pipeline** — a DAG of named steps with declared dependencies, blackboard-backed inputs/outputs, per-step error policy, and structured routing — lets skills and CLI tasks declare a multi-step process the harness runs *without the model making sequencing decisions*. The model still authors each step's content; the DAG is the deterministic structure. The research skill is the motivating case: "5 parallel searches → dedup → synthesize" as declared structure rather than improvisation.
+
+**Naming:** fuse already owns the word *workflow* — `config.WorkflowConfig` (changes 0034/0036, ADR-0007/0009) binds a skill to a spawn **pool policy** + typed workers (resource governance). This change adds a distinct **control-flow** concept, named **`Pipeline`** to avoid overloading one word across two axes. A pipeline *runs under* a workflow, reusing its pool; the two compose.
 
 ## What changes
 
-- **`Workflow` type** in `internal/agent/` (or a new `internal/workflow/` package): a DAG of `Step` nodes:
-  ```go
-  type Step struct {
-      Name       string
-      Agent      string        // persona or model override
-      Prompt     string        // task for this step
-      Inputs     []string      // blackboard keys to inject into the prompt
-      Outputs    []string      // blackboard keys to write results to
-      DependsOn  []string      // step names that must complete first
-      Next       string        // default next step
-      Conditions []Condition   // conditional routing
-  }
-  ```
-- **`workflow_run` tool**: a new built-in tool that accepts a workflow definition (YAML or JSON) and executes it step-by-step. Steps that list no `DependsOn` run immediately; steps whose dependencies are all satisfied run in parallel goroutines; steps with conditions evaluate the condition against the blackboard and route to the matching next step.
-- **Deterministic execution**: the workflow engine runs steps without LLM sequencing decisions — the DAG structure is the plan. Each step produces its own `spawn_agent` call under the hood, with the step prompt enriched by its `Inputs` from the blackboard.
-- **Error handling**: configurable per-step: `on_error: fail | skip | retry(N)`. A failing step that stops the workflow records the failure and sets a `workflow.status` key on the blackboard.
-- **Integration with skills**: a skill's frontmatter can declare a `workflow:` block, replacing the model-authored procedural body with a DAG that the `workflow_run` tool executes. The existing procedural skill body remains the default.
-- **TUI visibility**: the agent tree shows workflow steps as sub-nodes under a workflow root, with status glyphs and elapsed time per step.
+- **New `internal/pipeline/` package** with a `Pipeline`/`Step` type and a YAML/JSON parser that enforces the DAG at parse time (unique step names, resolvable references, **Tarjan cycle detection** — a cyclic pipeline is rejected before any step runs). A pipeline optionally names a `workflow:` to run under its pool.
+- **`pipeline_run` built-in tool** — accepts a pipeline definition (inline YAML/JSON, or a registered name) and executes the DAG, returning terminal status and writing a `pipeline.status` blackboard key.
+- **Deterministic execution over the existing spawn seam** — the engine (not the model) owns readiness, parallelism, routing, and error policy. Every step whose `depends_on` set is satisfied runs concurrently; each step is one `spawn_agent` call whose prompt is enriched with its `inputs` (blackboard keys). `fanout: N` spawns N parallel instances into a glob output namespace.
+- **Blackboard-backed I/O (change 0023)** — a step's `inputs`/`outputs` are blackboard keys; a step result is readable by a later step or a free-form `spawn_agent` and vice versa.
+- **Structured step results (change 0024)** — a step may declare an `expects` JSON Schema; the validated structured value lands on the output key. A schema mismatch degrades per 0024 (free text + surfaced note) and is *not* a step error.
+- **Per-step error policy** — `on_error: fail | skip | retry(N)`; a hard failure sets `pipeline.status` and stops (or, per policy, skips/retries).
+- **Structured conditional routing** — a step may declare ordered `conditions` of the form `{if: {key, op, value}, goto: <step>}` plus an optional `default`, evaluated by the engine against the blackboard. `op ∈ exists | eq | ne | gt | lt | contains | matches`. No expression engine — a fixed, typed operator set; an operator/type mismatch is a false condition, never an error (routing is total).
 
 ## Out of scope
 
-- Dynamic workflows (steps that add steps at runtime) — static DAG only.
-- Loops / iteration — expressible via recursive workflow calls but not first-class.
-- Visual workflow editor — YAML/JSON authored in a text editor.
-- Distributed execution across machines — local subagent goroutines only.
+- **Skill-frontmatter `pipelines:` block** (a skill body replaced by a declared DAG) — deferred to a follow-up. v1 skills invoke `pipeline_run`.
+- **TUI step sub-nodes** (per-step glyphs / elapsed time under a pipeline root) — deferred to a follow-up; v1 relies on the existing per-`spawn_agent` node.
+- Dynamic pipelines (steps that add steps at runtime) — static DAG only.
+- First-class loops / iteration — expressible via recursive pipeline calls, not a language construct.
+- A CEL / arbitrary-expression condition language — fixed operator set only in v1.
+- Visual editor; distributed execution — hand-authored YAML/JSON, local goroutines only.
+- Renaming the existing `Workflow`/`WorkflowPool` — left untouched; `Pipeline` is additive.
 
-## Research notes (input for the brainstorm)
+## Design decisions
 
-Workflow composition is the middle ground between fully emergent orchestration (what fuse does today via LLM + `spawn_agent`) and fully deterministic pipelines (what LangGraph, Temporal, and Prefect do). The research skill is the natural first use case: instead of the model deciding how to diversify queries, the workflow would declare "parallel 5 search steps → dedup step → synthesize step." The model would still handle the content, but the structure would be deterministic. Key design tension: workflow steps should be composable with the blackboard (inputs/outputs are blackboard keys), so a workflow step can write a result that a subsequent free-form spawn_agent call reads, and vice versa. The DAG must be acyclic enforced at parse time (Tarjan's algorithm for cycle detection). Error handling is where workflows beat pure LLM orchestration: `on_error: retry(3)` is more reliable than hoping the model re-spawns a failed agent.
+Design settled through an interactive brainstorm on 2026-08-08 and captured in the linked spec. Five decisions fixed the shape: (1) a **new `Pipeline` concept in `internal/pipeline/`**, separate from the existing pool-governance `Workflow` — not an extension of `WorkflowConfig`, not a breaking rename; a pipeline references a workflow to run under its pool. (2) **v1 ships the full engine** — parallel fan-out, `on_error` modes, **and** conditional routing — deferring only the skill-frontmatter block and TUI sub-nodes. (3) **Conditions use a fixed structured-comparison operator set** (`{key, op, value}`), not a vendored expression language. (4) **Deterministic structure, model-authored content** — the engine drives sequencing; each step is a `spawn_agent` call using 0024's `expects` for structured results. (5) **Hard `depends_on: [23, 24]`** — written against the real blackboard and structured-delegation APIs, no degradation shim; 0024's spec already names 0026 as its sole consumer. Change 0012 (done) is transitive and moved to `related`.
