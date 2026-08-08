@@ -1,8 +1,8 @@
 # Backlog
 
-**39 changes** — 🟡 10 proposed · ✅ 24 done · 🗑️ 5 killed
+**39 changes** — 🟡 9 proposed · ⚪ 1 deferred · ✅ 24 done · 🗑️ 5 killed
 
-## 🟡 Proposed (10)
+## 🟡 Proposed (9)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -14,8 +14,13 @@
 | [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | ⏳ waiting on #23 — not yet built |
 | [0027](active/0027-context-summarization.md) | Anchored context summarization at compression threshold | `high` | `feat` | build-ready |
 | [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | ⏳ waiting on #27 — not yet built |
-| [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | needs-brainstorm |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
+
+## ⚪ Deferred (1)
+
+| # | Title | Priority | Type |
+|---|-------|----------|------|
+| [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 
 ```mermaid
 graph TD
