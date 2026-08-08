@@ -13,7 +13,7 @@
 | [0024](active/0024-structured-delegation.md) | Structured delegation — expected result schemas for spawn_agent | `medium` | `feat` | needs-brainstorm |
 | [0025](active/0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | `medium` | `feat` | ⏳ waiting on #23 — not yet built |
 | [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | ⏳ waiting on #23 — not yet built |
-| [0027](active/0027-context-summarization.md) | Anchored context summarization at compression threshold | `high` | `feat` | needs-brainstorm |
+| [0027](active/0027-context-summarization.md) | Anchored context summarization at compression threshold | `high` | `feat` | build-ready |
 | [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | ⏳ waiting on #27 — not yet built |
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` | needs-brainstorm |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — not yet built |
