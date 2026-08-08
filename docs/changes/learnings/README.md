@@ -22,6 +22,7 @@ One curated finding per file; this index is the hint surface. Load it, then read
 ## mcp
 
 - [mcp-read-pumps-drop-inbound-notifications](mcp-read-pumps-drop-inbound-notifications.md) — fuse's MCP client read pumps (StdioClient.readPump, httpClient.readSSEPump) match responses by id and silently drop any id-less frame — so inbound server notifications (`$/progress`, `notifications/resources/updated`) are discarded today; adding a notification *sender* does not make fuse *receive* them — a notification route must be added to the pump itself, not just a handler elsewhere · also: notifications, json-rpc, go, streaming, subscriptions ⟨needs promotion⟩
+- [mcp-render-all-content-block-types](mcp-render-all-content-block-types.md) — MCP tools/call returns a content[] array of typed blocks (text, image, audio, resource, resource_link) plus optional structuredContent; a parser that collects only type==text silently drops everything else, so a tool returning only an image renders BLANK to both the transcript and the model — render non-text blocks as descriptors ([image: mime, size]) and never emit empty · also: rendering, tui, tool-results, json ⟨needs promotion⟩
 
 ## testing
 
@@ -31,6 +32,7 @@ One curated finding per file; this index is the hint surface. Load it, then read
 
 - [completer-entry-bypass-dispatch](completer-entry-bypass-dispatch.md) — When a completer selects an entry, dispatch via the entry object directly — not via the text-parsing path that re-parses expansion as a command string · also: architecture, bubbletea
 - [sanitize-untrusted-bytes-fixed-width-tui](sanitize-untrusted-bytes-fixed-width-tui.md) — Any bytes the model or a tool produced can shear a fixed-width TUI — strip ESC/C0/C1/CR, expand tabs (compositor counts \t as one cell, terminal expands it), NUL-sniff binaries before display, and hard-wrap so no line exceeds pane width · also: rendering, sanitization, bubbletea, terminal
+- [teatest-final-frame-via-finalmodel-view](teatest-final-frame-via-finalmodel-view.md) — teatest's FinalOutput returns the terminal teardown frame after a quit (nearly blank), so a TUI screenshot must render the final model's View() instead; and in a non-TTY test the default lipgloss profile is Ascii (no color), so force termenv.TrueColor around the View() call or the capture is monochrome · also: testing, teatest, bubbletea, lipgloss, screenshots ⟨needs promotion⟩
 
 ## verification
 
