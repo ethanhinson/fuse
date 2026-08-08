@@ -4,6 +4,7 @@ One curated finding per file; this index is the hint surface. Load it, then read
 
 ## concurrency
 
+- [race-invisible-to-race-detector-without-concurrent-test](race-invisible-to-race-detector-without-concurrent-test.md) — Adding a live-reload that mutates a shared type read on a request path? The data race is invisible to -race until a test drives a request concurrently with the reload. · also: race, mcp, live-reload, testing ⟨needs promotion⟩
 - [slot-cap-yield-while-blocked-on-children](slot-cap-yield-while-blocked-on-children.md) — Bounded-concurrency caps must not charge a holder that is blocked waiting on other holders — release (yield) the slot while waiting, reacquire after, or nested work deadlocks the pool · also: deadlock, semaphores, goroutines, subagents ⟨needs promotion⟩
 
 ## go
