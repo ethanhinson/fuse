@@ -2,7 +2,7 @@
 id: 21
 slug: mcp-resource-subscriptions
 title: MCP resource subscriptions — push-based updates
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-06
@@ -17,7 +17,7 @@ results: docs/results/2026-08-08-mcp-resource-subscriptions-results.md
 trivial: false
 auto_groomable:
 branch: feat/mcp-resource-subscriptions
-claimed_at: 2026-08-08T20:02:08Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/31
 blocked_by:
 reconciled: true
