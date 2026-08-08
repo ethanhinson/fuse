@@ -7,6 +7,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/ethanhinson/fuse/internal/tools"
 )
 
 // BlackboardEntry is one value stored on the blackboard, with the provenance of
@@ -170,6 +172,59 @@ func (b *Blackboard) Wait(ctx context.Context, key string, timeout time.Duration
 		return nil, fmt.Errorf("blackboard: timed out after %s waiting for key %q", timeout, key)
 	}
 }
+
+// InboxKey shapes a directed-message key for target's inbox at sequence seq:
+// "inbox/<target>/<seq>". The inbox is a pure convention over the existing store
+// (change 0023, Task 6) — no new structure, no blocking, no delivery guarantees.
+// A sender Put/Writes at InboxKey; a target discovers messages via
+// Keys(InboxPattern(self)) and reads each with Get/Read.
+func InboxKey(target, seq string) string {
+	return "inbox/" + target + "/" + seq
+}
+
+// InboxPattern is the glob a target passes to Keys to list its own inbox:
+// "inbox/<self>/*" (path.Match semantics).
+func InboxPattern(self string) string {
+	return "inbox/" + self + "/*"
+}
+
+// ForNode returns a tools.BlackboardStore handle bound to node: Write stamps
+// node's ID/label as provenance and Wait yields node's scheduler slot while
+// blocked. This is the seam cmd/fuse wires per agent — the tool package stays
+// agent-free (it only sees tools.BlackboardStore), and provenance/yielding are
+// bound here where the node is known. One handle per (blackboard, node).
+func (b *Blackboard) ForNode(node *AgentNode) tools.BlackboardStore {
+	return &nodeBlackboard{bb: b, node: node}
+}
+
+// nodeBlackboard adapts *Blackboard to tools.BlackboardStore for a single node,
+// carrying that node's provenance (Write) and yield handle (Wait).
+type nodeBlackboard struct {
+	bb   *Blackboard
+	node *AgentNode
+}
+
+func (n *nodeBlackboard) Write(key string, value any) {
+	n.bb.Put(key, value, n.node.ID, n.node.Label)
+}
+
+func (n *nodeBlackboard) Read(key string) (value any, writerLabel string, ok bool) {
+	e, found := n.bb.Get(key)
+	if !found {
+		return nil, "", false
+	}
+	return e.Value, e.WriterLabel, true
+}
+
+func (n *nodeBlackboard) Delete(key string) { n.bb.Delete(key) }
+
+func (n *nodeBlackboard) Keys(pattern string) []string { return n.bb.Keys(pattern) }
+
+func (n *nodeBlackboard) Wait(ctx context.Context, key string, timeout time.Duration) (any, error) {
+	return n.bb.Wait(ctx, key, timeout, n.node)
+}
+
+var _ tools.BlackboardStore = (*nodeBlackboard)(nil)
 
 // removeWaiter unregisters ch from key's waiter list (on cancel/timeout) so a
 // later Put does not close an abandoned channel and the map does not grow
