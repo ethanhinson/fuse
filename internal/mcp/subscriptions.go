@@ -12,6 +12,15 @@ import (
 // capability-gated (D4): a server that does not advertise resources.subscribe
 // returns an error on an explicit Subscribe (list/read still work — fail-open),
 // and no ref count is recorded.
+//
+// STAGED LIBRARY SURFACE (change 0021): the ref-counted tracker and the wire
+// resources/subscribe / resources/unsubscribe methods here are complete and
+// tested, but this Subscribe (and Unsubscribe/ListResources/ReadResource) is not
+// yet wired to a user-facing affordance against an EXTERNAL server. Change 0021
+// is scoped to the dogfood loop — a fuse client subscribing to fuse's OWN
+// mcp-server, which the internal/tui e2e exercises end-to-end. A user-facing
+// subscribe affordance against arbitrary external servers is deferred follow-up.
+// Do not read this as a live guarantee for external servers yet.
 func (m *Manager) Subscribe(ctx context.Context, server, uri string) error {
 	m.mu.Lock()
 	ms, ok := m.servers[server]
@@ -61,6 +70,14 @@ func (m *Manager) Unsubscribe(ctx context.Context, server, uri string) error {
 // used after a reconnect replaces the connection. Wire failures are aggregated
 // into the returned error but every URI is attempted (a broken re-subscribe of
 // one URI must not skip the others).
+//
+// STAGED LIBRARY SURFACE (change 0021): this is the tracker-side building block
+// for reconnect-resubscribe and is fully tested (TestResubscribeOnReconnect), but
+// it is NOT yet invoked from a live reconnect path — no production reconnect loop
+// calls it today. Wiring resubscribeAll into an actual reconnect is deferred
+// follow-up (0021 is scoped to the dogfood loop via fuse's own mcp-server, proven
+// by the internal/tui e2e). Do not read the presence of this method as a live
+// reconnect-resubscribe guarantee.
 func (m *Manager) resubscribeAll(ctx context.Context, server string) error {
 	conn, err := m.connFor(server)
 	if err != nil {
