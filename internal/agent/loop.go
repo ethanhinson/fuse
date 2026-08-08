@@ -38,6 +38,11 @@ const (
 	// results are protected from pruning (recency protection). The effective
 	// protection also scales down with small context windows.
 	pruneProtectTokens = 40_000
+	// summarizeSuppressTurns is how many subsequent over-budget turns skip the
+	// summarizer after a failure, so a persistently failing summarizer cannot
+	// hot-loop a model call every turn (D2). Internal constant, not config —
+	// mirrors pruneThresholdPct/pruneProtectTokens.
+	summarizeSuppressTurns = 5
 )
 
 // protectBudget returns the recency-protection budget for a window: a
@@ -92,6 +97,138 @@ func pruneOldToolResults(messages []model.Message, protectTokens int) int {
 	return freed
 }
 
+// summarizationRegion identifies the candidate span for Tier 2 summarization:
+// the tool-result messages OLDER than the recency-protected tail (the same span
+// pruneOldToolResults would stub, using the same protectTokens budget). It
+// returns a copy of those messages, the insert index where the summary message
+// should go (just before the protected region begins, at a turn boundary), the
+// distinct tool names in order, and the estimated tokens the region occupies.
+//
+// The region is a fresh slice (safe to hand to a SegmentSink); already-stubbed
+// tool results are skipped so a re-triggered compaction never re-summarizes
+// stubs. Returns ok=false when there is nothing worth summarizing.
+func summarizationRegion(messages []model.Message, protectTokens int) (region []model.Message, insertAt int, toolNames []string, tokens int, ok bool) {
+	// Walk from the end to find the protected/unprotected boundary by the same
+	// recency rule pruneOldToolResults uses.
+	seen := 0
+	firstUnprotected := -1 // index of the oldest-scanning unprotected tool result
+	for i := len(messages) - 1; i >= 0; i-- {
+		m := messages[i]
+		if m.Role != "tool" || m.Content == prunedStub {
+			continue
+		}
+		tok := len(m.Content) / bytesPerToken
+		if seen < protectTokens {
+			seen += tok
+			continue
+		}
+		firstUnprotected = i // keep moving; ends at the OLDEST unprotected result
+	}
+	if firstUnprotected == -1 {
+		return nil, 0, nil, 0, false
+	}
+
+	// Collect the unprotected tool results (oldest→newest) and their span. The
+	// insert index is just before the first protected message after the span —
+	// i.e. right after the last unprotected tool result — so the summary sits at
+	// the boundary of the protected tail.
+	nameSeen := map[string]bool{}
+	lastUnprotected := firstUnprotected
+	for i := firstUnprotected; i < len(messages); i++ {
+		m := messages[i]
+		if m.Role != "tool" || m.Content == prunedStub {
+			continue
+		}
+		tok := len(m.Content) / bytesPerToken
+		// A message is unprotected iff it is not within the protected tail. Recompute
+		// membership: everything from the tail inward up to protectTokens is protected.
+		if isProtected(messages, i, protectTokens) {
+			break
+		}
+		region = append(region, m)
+		tokens += tok
+		lastUnprotected = i
+		if m.Name != "" && !nameSeen[m.Name] {
+			nameSeen[m.Name] = true
+			toolNames = append(toolNames, m.Name)
+		}
+	}
+	if len(region) == 0 {
+		return nil, 0, nil, 0, false
+	}
+	return region, lastUnprotected + 1, toolNames, tokens, true
+}
+
+// dropPriorSummary removes a previously-injected summary message (identified by
+// the summaryHeader prefix) from messages, returning the compacted slice and the
+// accounted/insertAt indices adjusted for the removal. Anchoring keeps exactly
+// one living summary document: the new summary folds the old one in, so the old
+// message is dropped before the new one is inserted. Only the first match is
+// removed (there is never more than one). A prior summary is an assistant text
+// message with no tool_calls, so removing it never orphans a tool pair.
+func dropPriorSummary(messages []model.Message, accounted, insertAt int) ([]model.Message, int, int) {
+	idx := -1
+	for i, m := range messages {
+		if m.Role == "assistant" && len(m.ToolCalls) == 0 && strings.HasPrefix(m.Content, summaryHeader) {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return messages, accounted, insertAt
+	}
+	out := make([]model.Message, 0, len(messages)-1)
+	out = append(out, messages[:idx]...)
+	out = append(out, messages[idx+1:]...)
+	if idx < accounted {
+		accounted--
+	}
+	if idx < insertAt {
+		insertAt--
+	}
+	return out, accounted, insertAt
+}
+
+// insertMessage returns messages with m spliced in at index at (0 ≤ at ≤ len),
+// allocating a fresh slice so callers never alias the original backing array.
+func insertMessage(messages []model.Message, at int, m model.Message) []model.Message {
+	if at < 0 {
+		at = 0
+	}
+	if at > len(messages) {
+		at = len(messages)
+	}
+	out := make([]model.Message, 0, len(messages)+1)
+	out = append(out, messages[:at]...)
+	out = append(out, m)
+	out = append(out, messages[at:]...)
+	return out
+}
+
+// isProtected reports whether the tool result at index i falls within the
+// recency-protected tail (the newest protectTokens of tool results).
+func isProtected(messages []model.Message, i, protectTokens int) bool {
+	seen := 0
+	for j := len(messages) - 1; j >= 0; j-- {
+		m := messages[j]
+		if m.Role != "tool" || m.Content == prunedStub {
+			continue
+		}
+		tok := len(m.Content) / bytesPerToken
+		if seen < protectTokens {
+			if j == i {
+				return true
+			}
+			seen += tok
+			continue
+		}
+		if j == i {
+			return false
+		}
+	}
+	return false
+}
+
 // isContextLengthErr reports whether a gateway error is a context-length
 // rejection (patterns vary per upstream provider behind LiteLLM).
 func isContextLengthErr(err error) bool {
@@ -130,6 +267,13 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	accounted := 0 // messages[:accounted] are covered by lastUsage
 	retriedContext := false
 
+	// Tier 2 summarization state (change 0027), loop-scoped so concurrent agents
+	// never share it: previousSummary is the single living ODSNF document carried
+	// forward (D3, anchoring); suppressUntil is the turn index through which the
+	// summarizer is skipped after a failure (D2).
+	previousSummary := ""
+	suppressUntil := 0
+
 	// a.maxTurns <= 0 means unlimited: the loop runs until the model stops
 	// calling tools, context is exhausted, or the doom-loop detector trips.
 	// A positive maxTurns caps the run and returns ErrMaxTurns. See change 0038.
@@ -140,6 +284,59 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 
 		estimate := lastUsage + messagesSize(messages[accounted:])/bytesPerToken
 		if estimate > budget {
+			// Tier 2 (change 0027): before the deterministic stub prune, run a
+			// bounded LLM summarization pass over the old tool-result region and
+			// inject a single anchored ODSNF summary at the protected-region
+			// boundary. Fail-safe: any failure falls through to Tier-1 and arms a
+			// bounded suppression window so a failing summarizer cannot hot-loop.
+			if a.summarizer != nil && turn >= suppressUntil {
+				protect := protectBudget(window, false)
+				region, insertAt, toolNames, tokensBefore, ok := summarizationRegion(messages, protect)
+				if ok {
+					if summary, done := a.summarizer.summarize(ctx, region, previousSummary); done {
+						// Best-effort archive of the raw region (#0030 implements a real
+						// sink; the default no-op returns "" so no recovery pointer).
+						pointer, aerr := a.segmentSink.Archive(SegmentRegion{
+							Messages:     region,
+							Summary:      summary,
+							ToolNames:    toolNames,
+							TokensBefore: tokensBefore,
+							TokensAfter:  len(summary) / bytesPerToken,
+						})
+						if aerr != nil {
+							a.renderer.Errorf("segment archive failed (non-fatal): %v", aerr)
+							pointer = ""
+						}
+						// Anchoring (D3): the new summary folds the previous one in, so the
+						// prior injected summary message is removed before the new one is
+						// added — only ONE living summary document survives in context.
+						messages, accounted, insertAt = dropPriorSummary(messages, accounted, insertAt)
+						// Inject the summary at the boundary (assistant text message, no
+						// tool_calls — never orphans a pair, never re-stubbed by prune).
+						summaryMsg := buildSummaryMessage(summary, pointer)
+						messages = insertMessage(messages, insertAt, summaryMsg)
+						// Keep the hybrid-accounting boundary aligned: inserting before
+						// `accounted` shifts every later index by one.
+						if insertAt <= accounted {
+							accounted++
+						}
+						previousSummary = summary
+						// Recompute what the prune step will still need to do: the raw
+						// region is stubbed below by the unchanged Tier-1 path.
+						a.renderer.Errorf("context: ~%dk/%dk tokens — summarized ~%dk of old tool results",
+							estimate/1000, window/1000, tokensBefore/1000)
+						// Fall through to the Tier-1 prune, which stubs the now-summarized
+						// raw region (keeping tool pairing valid) and recomputes below.
+					} else {
+						// Summarizer failed or ladder-exhausted: arm suppression.
+						suppressUntil = turn + 1 + summarizeSuppressTurns
+					}
+				}
+				// The summary message was appended after `accounted`, so the estimate
+				// below re-includes it; the raw region is stubbed by the prune. Recompute.
+				estimate = lastUsage + messagesSize(messages[accounted:])/bytesPerToken
+			}
+
 			freed := pruneOldToolResults(messages, protectBudget(window, false))
 			if freed > 0 {
 				a.renderer.Errorf("context: ~%dk/%dk tokens — cleared ~%dk of old tool results", estimate/1000, window/1000, freed/1000)

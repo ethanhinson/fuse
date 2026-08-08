@@ -57,6 +57,42 @@ type Agent struct {
 	// list (active-cap or budget brake). It must be race-safe and must not be
 	// cached across turns. See change 0033.
 	stripSpawn func() bool
+
+	// summarizer, when non-nil, enables Tier 2 anchored summarization (change
+	// 0027): at the over-budget point the loop runs a bounded LLM summarization
+	// pass over the old tool-result region before Tier-1 stub pruning. Nil ⇒
+	// Tier 2 off, byte-identical to the pre-0027 Tier-1 path.
+	summarizer *summarizer
+	// segmentSink receives the raw pre-summarization region for archival (change
+	// 0027 ships only the no-op default; #0030 implements a real sink). Never nil
+	// once SetSummarizer is called — a nil sink argument installs the no-op.
+	segmentSink SegmentSink
+}
+
+// SetSummarizer enables Tier 2 anchored summarization (change 0027). A non-nil
+// s wires the bounded summarizer; sink receives the raw pre-summarization region
+// (nil ⇒ the no-op default sink, which persists nothing and omits the recovery
+// pointer). Passing a nil s leaves Tier 2 off. Mirrors SetStripSpawn. This takes
+// the package-internal summarizer; call sites outside the package use
+// EnableSummarization.
+func (a *Agent) SetSummarizer(s *summarizer, sink SegmentSink) {
+	a.summarizer = s
+	if sink == nil {
+		sink = noopSegmentSink{}
+	}
+	a.segmentSink = sink
+}
+
+// EnableSummarization is the exported wiring entry point for Tier 2 (change
+// 0027): it builds the bounded summarizer from c (a Completer decorated with
+// the "summarizer" trace label at the call site), the resolved summarizer model
+// id, and the output-token cap, then installs it with sink (nil ⇒ the no-op
+// default). c must be non-nil; a nil c is a no-op (Tier 2 stays off).
+func (a *Agent) EnableSummarization(c Completer, modelID string, maxOutput int, sink SegmentSink) {
+	if c == nil {
+		return
+	}
+	a.SetSummarizer(newSummarizer(c, modelID, maxOutput), sink)
 }
 
 // SetStripSpawn installs the per-turn spawn-strip predicate. Nil (default)

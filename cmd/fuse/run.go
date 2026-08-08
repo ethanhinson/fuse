@@ -222,6 +222,29 @@ func gatewayAdapter(cfg config.Config, gate model.RateGate) *model.Adapter {
 	return a
 }
 
+// installSummarizer wires Tier 2 anchored summarization (change 0027) onto a
+// after agent.New. When cfg.Context.Summarization.Enabled it builds a bounded
+// adapter (reusing the session rate gate) decorated with a distinct "summarizer"
+// trace label — the bound-every-model-call learning — resolves the summarizer
+// model (empty ⇒ the session's main model id, D4), and installs it with the
+// default no-op sink (#0030 provides a real sink later). Disabled ⇒ no-op, so the
+// agent stays byte-identical to the pre-0027 Tier-1 path.
+func installSummarizer(a *agent.Agent, cfg config.Config, mainModelID string, traceW io.Writer, gate model.RateGate) {
+	s := cfg.Context.Summarization
+	if !s.Enabled {
+		return
+	}
+	adapter := gatewayAdapter(cfg, gate)
+	if traceW != nil {
+		adapter = adapter.WithTraceLabel(traceW, "summarizer")
+	}
+	modelID := s.Model
+	if modelID == "" {
+		modelID = mainModelID // D4: default summarizer model is the main model
+	}
+	a.EnableSummarization(adapter, modelID, s.MaxOutput, nil)
+}
+
 // buildAgentWithRendererAndTrace is like buildAgentWithRenderer but also
 // writes raw API request/response JSON to traceW (when non-nil), attributing
 // blocks to traceLabel. The caller owns traceW's lifecycle; share one
@@ -359,6 +382,7 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
+	installSummarizer(a, cfg, mc.ID, traceW, gate)
 	return a, nil
 }
 
@@ -532,5 +556,6 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
+	installSummarizer(a, cfg, mc.ID, traceW, gate)
 	return a, mc.ID, nil
 }
