@@ -99,6 +99,10 @@ func TestTUI_MCPToolRoundTrip(t *testing.T) {
 	if !strings.Contains(sent, "-32901") || !strings.Contains(sent, "resource gone") {
 		t.Errorf("surfaced MCP error code missing from agent request:\n%s", sent)
 	}
+
+	// Visual-confirmation screenshot of the settled round-trip transcript.
+	tm.Send(tea.KeyMsg{Type: tea.KeyCtrlC})
+	captureFrame(t, tm, "mcp-roundtrip")
 }
 
 // TestTUI_MCPResultScreenshot drives a turn that calls three MCP tools returning
