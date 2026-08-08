@@ -142,6 +142,12 @@ func (a *Agent) SetRelevanceScorer(s RelevanceScorer) {
 // by recencyFloorPct(); 0 keeps the spec default (50).
 func (a *Agent) SetRecencyFloorPct(pct int) { a.recencyFloor = pct }
 
+// DisableHeuristicRelevance installs the pure-recency scorer (change 0028),
+// selecting the no-op degeneration path: pruning protects exactly the newest
+// protectTokens, byte-identical to pre-0028. Used when context.relevance.
+// heuristic is false.
+func (a *Agent) DisableHeuristicRelevance() { a.relevanceScorer = recencyOnlyScorer() }
+
 // EnableRelevanceClassifier installs the optional hybrid LLM classifier over the
 // always-on heuristic (change 0028). c is a bounded Completer (typically a
 // *model.Adapter decorated WithTraceLabel(..., "relevance-classifier")); modelID
