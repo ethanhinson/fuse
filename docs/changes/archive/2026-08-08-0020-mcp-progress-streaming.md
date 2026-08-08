@@ -2,7 +2,7 @@
 id: 20
 slug: mcp-progress-streaming
 title: MCP `$/progress` notifications and streaming tool results
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-06
@@ -18,7 +18,7 @@ trivial: false
 auto_groomable:
 branch: feat/mcp-progress-streaming
 pr: https://github.com/ethanhinson/fuse/pull/30
-claimed_at: 2026-08-08T09:52:39Z
+claimed_at: 
 blocked_by:
 reconciled: true
 ---
