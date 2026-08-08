@@ -1343,6 +1343,68 @@ func TestDefaultContextSummarizationOn(t *testing.T) {
 	}
 }
 
+// --- change 0028: context.relevance config surface ---
+
+func TestLoadContextRelevanceAbsentDefaults(t *testing.T) {
+	c := loadHomeConfig(t, "max_turns: 30\n")
+	r := c.Context.Relevance
+	if !r.Heuristic {
+		t.Errorf("Heuristic = false, want true (default on when block absent)")
+	}
+	if r.RecencyFloorPct != 50 {
+		t.Errorf("RecencyFloorPct = %d, want 50", r.RecencyFloorPct)
+	}
+	if r.BodyScanBytes != 2048 {
+		t.Errorf("BodyScanBytes = %d, want 2048", r.BodyScanBytes)
+	}
+	if r.ClassifierModel != "" {
+		t.Errorf("ClassifierModel = %q, want \"\"", r.ClassifierModel)
+	}
+	if r.ClassifierBatchSize != 10 {
+		t.Errorf("ClassifierBatchSize = %d, want 10", r.ClassifierBatchSize)
+	}
+	if r.BorderlineLo != 0.30 || r.BorderlineHi != 0.60 {
+		t.Errorf("Borderline = [%v,%v], want [0.30,0.60]", r.BorderlineLo, r.BorderlineHi)
+	}
+}
+
+func TestLoadContextRelevanceHeuristicDisabled(t *testing.T) {
+	c := loadHomeConfig(t, "context:\n  relevance:\n    heuristic: false\n")
+	if c.Context.Relevance.Heuristic {
+		t.Errorf("Heuristic = true, want false (explicit disable)")
+	}
+	// Other fields keep their defaults.
+	if c.Context.Relevance.RecencyFloorPct != 50 {
+		t.Errorf("RecencyFloorPct = %d, want 50 (default retained)", c.Context.Relevance.RecencyFloorPct)
+	}
+}
+
+func TestLoadContextRelevanceOverrides(t *testing.T) {
+	yaml := "context:\n  relevance:\n" +
+		"    recency_floor_pct: 30\n" +
+		"    body_scan_bytes: 4096\n" +
+		"    classifier_model: \"alias/classifier\"\n" +
+		"    classifier_batch_size: 5\n" +
+		"    borderline_lo: 0.2\n" +
+		"    borderline_hi: 0.7\n"
+	r := loadHomeConfig(t, yaml).Context.Relevance
+	if r.RecencyFloorPct != 30 || r.BodyScanBytes != 4096 || r.ClassifierModel != "alias/classifier" ||
+		r.ClassifierBatchSize != 5 || r.BorderlineLo != 0.2 || r.BorderlineHi != 0.7 {
+		t.Errorf("overrides not applied: %+v", r)
+	}
+	if !r.Heuristic {
+		t.Errorf("Heuristic = false, want true (default retained when unset)")
+	}
+}
+
+func TestDefaultContextRelevanceOn(t *testing.T) {
+	r := Default().Context.Relevance
+	if !r.Heuristic || r.RecencyFloorPct != 50 || r.BodyScanBytes != 2048 ||
+		r.ClassifierBatchSize != 10 || r.BorderlineLo != 0.30 || r.BorderlineHi != 0.60 {
+		t.Errorf("Default context.relevance = %+v, want heuristic on with documented defaults", r)
+	}
+}
+
 // --- change 0026: pipeline.synthesis caps config surface ---
 
 // TestDefaultPipelineSynthesisCaps asserts the conservative built-in defaults

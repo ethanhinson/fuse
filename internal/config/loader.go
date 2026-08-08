@@ -500,6 +500,34 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 		c.Context.Summarization.MaxOutput = rs.MaxOutput
 	}
 
+	// context.relevance (change 0028): present-value-overrides merge, mirroring
+	// summarization. Heuristic is a *bool so an omitted key keeps the true
+	// default while `heuristic: false` selects pure-recency. The numeric/float
+	// fields treat 0 as unset so an absent block keeps the Default() values.
+	// Not a permission surface — no trust-boundary gating.
+	rr := raw.Context.Relevance
+	if rr.Heuristic != nil {
+		c.Context.Relevance.Heuristic = *rr.Heuristic
+	}
+	if rr.RecencyFloorPct != 0 {
+		c.Context.Relevance.RecencyFloorPct = rr.RecencyFloorPct
+	}
+	if rr.BodyScanBytes != 0 {
+		c.Context.Relevance.BodyScanBytes = rr.BodyScanBytes
+	}
+	if rr.ClassifierModel != "" {
+		c.Context.Relevance.ClassifierModel = rr.ClassifierModel
+	}
+	if rr.ClassifierBatchSize != 0 {
+		c.Context.Relevance.ClassifierBatchSize = rr.ClassifierBatchSize
+	}
+	if rr.BorderlineLo != 0 {
+		c.Context.Relevance.BorderlineLo = rr.BorderlineLo
+	}
+	if rr.BorderlineHi != 0 {
+		c.Context.Relevance.BorderlineHi = rr.BorderlineHi
+	}
+
 	// The `models` map holds a `default` string alongside model entries.
 	for k, v := range raw.Models {
 		if k == "default" {
