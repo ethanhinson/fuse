@@ -156,6 +156,18 @@ func (m *Manager) Stop(name string) error {
 	delete(m.servers, name)
 	m.mu.Unlock()
 
+	// Clear this server's per-server subscription and resource state so a later
+	// Add of the same name starts clean. Without this, a Stop/Add cycle leaves
+	// non-zero refcounts in subRefs, causing the re-added server's first
+	// Subscribe to see the URI as already-referenced and silently skip the wire
+	// resources/subscribe (S3). Guard each map under its own mutex.
+	m.subMu.Lock()
+	delete(m.subRefs, name)
+	m.subMu.Unlock()
+	m.resourceMu.Lock()
+	delete(m.staleURIs, name)
+	m.resourceMu.Unlock()
+
 	if ms.conn != nil {
 		ms.conn.stop()
 	}

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -103,4 +104,70 @@ func TestResubscribeOnReconnect(t *testing.T) {
 	if got := fresh.methodCalls("resources/subscribe"); got != 2 {
 		t.Errorf("reconnect re-subscribed %d URIs, want 2", got)
 	}
+}
+
+// TestStopClearsSubscriptionState: Stop must delete the server's subRefs and
+// staleURIs entries (S3). Otherwise a Stop/Add cycle leaves a non-zero refcount,
+// and the re-added server's first Subscribe sees the URI as already-referenced
+// and skips the wire resources/subscribe.
+func TestStopClearsSubscriptionState(t *testing.T) {
+	conn := newRecordingConn()
+	m := managerWithConn(t, "srv", conn, `{"resources":{"subscribe":true}}`)
+	defer m.Close()
+	ctx := context.Background()
+
+	if err := m.Subscribe(ctx, "srv", "fuse://tools"); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	m.markStale("srv", "fuse://tools")
+
+	// Sanity: state is present before Stop.
+	m.subMu.Lock()
+	_, hadRef := m.subRefs["srv"]
+	m.subMu.Unlock()
+	if !hadRef {
+		t.Fatal("precondition: subRefs[srv] should exist after Subscribe")
+	}
+	if !m.IsStale("srv", "fuse://tools") {
+		t.Fatal("precondition: URI should be stale after markStale")
+	}
+
+	if err := m.Stop("srv"); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	m.subMu.Lock()
+	_, stillRef := m.subRefs["srv"]
+	m.subMu.Unlock()
+	if stillRef {
+		t.Error("Stop did not clear subRefs[srv]")
+	}
+	m.resourceMu.Lock()
+	_, stillStale := m.staleURIs["srv"]
+	m.resourceMu.Unlock()
+	if stillStale {
+		t.Error("Stop did not clear staleURIs[srv]")
+	}
+
+	// After a Stop/Add cycle, a fresh Subscribe must send the wire subscribe
+	// again (refcount was reset, not left dangling at 1).
+	conn2 := newRecordingConn()
+	m.mu.Lock()
+	m.servers["srv"] = &managedServer{conn: conn2, caps: ServerCapabilities{raw: mustCapsRaw(t, `{"resources":{"subscribe":true}}`)}}
+	m.mu.Unlock()
+	if err := m.Subscribe(ctx, "srv", "fuse://tools"); err != nil {
+		t.Fatalf("re-Subscribe after Stop: %v", err)
+	}
+	if got := conn2.methodCalls("resources/subscribe"); got != 1 {
+		t.Errorf("re-Subscribe after Stop sent resources/subscribe %d times, want 1", got)
+	}
+}
+
+func mustCapsRaw(t *testing.T, capsJSON string) map[string]json.RawMessage {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(capsJSON), &raw); err != nil {
+		t.Fatalf("bad capsJSON: %v", err)
+	}
+	return raw
 }
