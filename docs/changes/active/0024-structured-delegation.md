@@ -12,12 +12,12 @@ related: [23, 26]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-08-structured-delegation-design.md
-plan:
+plan: docs/superpowers/plans/0024-structured-delegation.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/structured-delegation
-claimed_at: 2026-08-08T09:24:30Z
+claimed_at: 2026-08-08T09:26:00Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-08-structured-delegation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-structured-delegation-design.md) |
+| Plan | [0024-structured-delegation.md](https://github.com/ethanhinson/fuse/blob/feat/structured-delegation/docs/superpowers/plans/0024-structured-delegation.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
