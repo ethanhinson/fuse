@@ -1,20 +1,19 @@
 # Backlog
 
-**39 changes** — 🟢 2 in progress · 🟡 4 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 25 done · 🗑️ 6 killed
+**39 changes** — 🟢 1 in progress · 🟡 4 proposed · ⚪ 1 deferred · 🔵 2 implemented · ✅ 25 done · 🗑️ 6 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch |
 |---|-------|----------|------|------|--------|
 | [0020](active/0020-mcp-progress-streaming.md) | MCP `$/progress` notifications and streaming tool results | `medium` | `feat` | [spec](../superpowers/specs/2026-08-08-mcp-progress-streaming-design.md) | `feat/mcp-progress-streaming` |
-| [0024](active/0024-structured-delegation.md) | Structured delegation — expected result schemas for spawn_agent | `medium` | `feat` | [spec](../superpowers/specs/2026-08-08-structured-delegation-design.md) | `feat/structured-delegation` |
 
 ## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0021](active/0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | `medium` | `feat` | ⏳ waiting on #20 — not yet built |
-| [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | ⏳ waiting on #24 — not yet built |
+| [0026](active/0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | `medium` | `feat` | ⏳ waiting on #24 — needs your merge |
 | [0028](active/0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | `medium` | `feat` | ⏳ waiting on #27 — needs your merge |
 | [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | ⏳ waiting on #27 — needs your merge |
 
@@ -24,10 +23,11 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
+## 🔵 Implemented — awaiting merge (2)
 
 | # | Title | Priority | Type | PR | Readiness |
 |---|-------|----------|------|----|-----------|
+| [0024](active/0024-structured-delegation.md) | Structured delegation — expected result schemas for spawn_agent | `medium` | `feat` | [#29](https://github.com/ethanhinson/fuse/pull/29) |  |
 | [0027](active/0027-context-summarization.md) | Anchored context summarization at compression threshold | `high` | `feat` | [#28](https://github.com/ethanhinson/fuse/pull/28) |  |
 
 ```mermaid
