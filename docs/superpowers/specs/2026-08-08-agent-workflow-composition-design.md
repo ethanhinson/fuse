@@ -22,12 +22,27 @@ in what order, and how to combine results. That is powerful but non-deterministi
 This change adds a **pipeline** — a directed acyclic graph (DAG) of named steps
 with declared dependencies, blackboard-backed inputs/outputs, per-step error
 policy, and structured conditional routing — that the **harness** executes
-without the model making sequencing decisions. The model still authors each
-step's *content* (every step is a `spawn_agent` call under the hood); the DAG is
-the *structure*, and the structure is deterministic.
+without the model making sequencing decisions once the DAG is fixed. The model
+still authors each step's *content* (every step is a `spawn_agent` call under the
+hood); the DAG is the *structure*, and executing the structure is deterministic.
+
+The DAG is an **intermediate representation with two front doors**:
+
+- **Authored** — a skill or CLI task hand-writes a pipeline (YAML/JSON). The
+  deterministic base.
+- **Synthesized** — fuse is handed a *goal* and an LLM step **generates the DAG
+  at runtime**, which the same engine then executes. This is the emphasis of the
+  design: rather than a human hardcoding every pipeline, fuse builds the pipeline
+  for the task on the fly, then runs it deterministically. Generation is bounded
+  and validated so a synthesized DAG is guaranteed valid-and-bounded before any
+  step runs (see decision 6).
+
+Both doors produce the same `Pipeline` value and feed the same engine — synthesis
+is a *front end* that emits a DAG, never a second execution path.
 
 The motivating use case is the research skill: "5 parallel searches → dedup →
-synthesize" becomes a declared pipeline rather than model improvisation.
+synthesize" — authored as a fixed pipeline, or synthesized from the goal "research
+X thoroughly" and then executed identically.
 
 ## Goals
 
@@ -47,6 +62,11 @@ synthesize" becomes a declared pipeline rather than model improvisation.
 - **Structured conditional routing**: a step may declare `conditions` — a list of
   `{if: {key, op, value}, goto: <step>}` plus an optional `default` — evaluated by
   the engine against the blackboard to pick the next step.
+- **Runtime synthesis**: `pipeline_run` accepts a *goal* (as an alternative to an
+  authored definition); an LLM step generates a `Pipeline` DAG from the goal, the
+  engine **surfaces** it (trace + blackboard key) with an optional confirmation
+  gate, then executes it. A synthesized DAG is guaranteed **valid and bounded**
+  before execution via a validate-and-retry loop plus resource caps.
 - **Terminal status** surfaced both as the tool return and as a
   `pipeline.status` blackboard key.
 
@@ -64,8 +84,15 @@ synthesize" becomes a declared pipeline rather than model improvisation.
 - **A CEL / arbitrary-expression condition language** — v1 is a fixed operator
   set (below); an expression engine is a later extension if the operator set
   proves insufficient.
-- **A visual editor / distributed execution** — YAML/JSON authored by hand; local
-  subagent goroutines only.
+- **A visual editor / distributed execution** — YAML/JSON authored by hand or
+  synthesized; local subagent goroutines only.
+- **Generating executable code** (model-written Go/script compiled and run) — the
+  synthesis path emits a **data DAG** the existing engine interprets, not code. Running
+  model-authored code is a compile step and a far larger safety surface for no added
+  expressiveness the DAG lacks.
+- **A separate `pipeline_synthesize` tool** — synthesis is a mode of `pipeline_run`,
+  not its own tool; the surface + optional gate already give inspection without a
+  second call.
 - **Renaming the existing `Workflow`/`WorkflowPool`** — left untouched; `Pipeline`
   is additive.
 
@@ -124,10 +151,14 @@ without reworking the engine.
 **In v1:** `Pipeline`/`Step` types; YAML/JSON parse with Tarjan cycle detection;
 ready-step parallel execution; blackboard I/O; `expects`-driven structured
 results; `on_error: fail|skip|retry(N)`; structured conditional routing; the
-`pipeline_run` tool; `pipeline.status` output key.
+`pipeline_run` tool with **both** the authored (`definition`/`name`) and
+**synthesized** (`goal`) front doors, including the surface + optional gate and
+the bounded validate-and-retry generation loop; `pipeline.status` and
+`pipeline.plan` output keys.
 
 **Deferred (each becomes a follow-up stub, `discovered_from: 26`):** the
-skill-frontmatter `pipelines:` block; TUI step sub-nodes.
+skill-frontmatter `pipelines:` block; TUI step sub-nodes (a synthesized DAG surfaced
+as tree nodes is a natural extension of this deferral).
 
 ### 3. Condition DSL: a fixed structured-comparison operator set (no eval engine)
 
@@ -188,15 +219,72 @@ policy. `fanout: N` spawns N parallel instances of the step; their outputs are
 expected to use a glob key namespace (e.g. `hits/*`) so a downstream `inputs:
 [hits/*]` collects them all.
 
-### 5. Hard dependency on 0023 and 0024 (no degradation path)
+### 5. Runtime synthesis — fuse generates the DAG, then runs it (the two front doors)
+
+The DAG is an **intermediate representation**, and the emphasis of this change is
+that fuse **generates** it in real time rather than a human hardcoding every
+pipeline. Two front doors produce the same `Pipeline` value:
+
+- **Authored** — `pipeline_run({definition: <yaml|json>})` or a registered pipeline
+  by name. The deterministic base from decisions 1–4.
+- **Synthesized** — `pipeline_run({goal: "<natural-language goal>"})`. The tool
+  runs an internal **synthesis** LLM call: given the goal (plus the available
+  workers/tools and the pipeline schema as context), the model emits a `Pipeline`
+  DAG. The engine then **surfaces** the generated DAG — a labeled trace entry and
+  a `pipeline.plan` blackboard key — and, when the caller sets `confirm: true`,
+  **gates** execution on confirmation before the first step runs; otherwise it
+  proceeds straight to execution. The surfaced DAG is the record of what fuse
+  decided to do.
+
+**One tool, mode inferred from params:** `definition`/`name` ⇒ authored;
+`goal` ⇒ synthesized. Exactly one must be supplied. Synthesis is a *front end that
+emits a DAG* — once the `Pipeline` value exists, execution is byte-identical to the
+authored path (same engine, same parallelism, same routing, same `on_error`).
+Rejected: a separate `pipeline_synthesize` tool (a two-call inspect-then-run dance
+the model rarely needs, since the surface + gate already give visibility) and
+generating executable **code** rather than a data DAG (running model-written Go is
+a compile step and a far larger safety surface than a validated, bounded data
+structure the existing engine interprets).
+
+### 6. Generation is bounded and self-correcting — a synthesized DAG is guaranteed valid before it runs
+
+A generated DAG is model-authored structure, so the engine must **ensure** it is a
+valid, bounded pipeline before executing it — not merely detect that it is not. Three
+layers, in order, gate every synthesized DAG (the authored path uses layers 1–2 only):
+
+1. **The same parser/validator as the authored path** — unique step names, every
+   `depends_on`/`goto`/`default` resolves to a real step, valid operators, and
+   **Tarjan cycle detection**. If it does not parse, it is not run.
+2. **Resource caps** (synthesis-specific, config-defaulted conservative): `max_steps`,
+   `max_fanout` per step, `max_depth`, and a synthesized pipeline **must bind a
+   workflow pool** so the subtree's concurrency/token caps (ADR-0007/0009) apply.
+   This guards the *valid-but-runaway* DAG — a 500-step or 1000-way-fan-out graph
+   that parses cleanly but would exhaust the pool. "Valid" here means **bounded**,
+   not just acyclic.
+3. **Bounded validate-and-retry** — if layer 1 or 2 rejects the generated DAG, the
+   rejection reason is fed back to the synthesis model for up to **N corrective
+   attempts** (config `synthesis.max_attempts`, default small). This is what turns
+   "the model usually emits a valid DAG" into "the tool *ensures* a valid DAG or
+   fails loudly": a single generation pass cannot guarantee validity, a bounded
+   correction loop converges on one or returns a clear synthesis-failure error the
+   caller (`pipeline_run`) surfaces — it never runs a half-valid graph.
+
+The retry loop and the caps are **synthesis-only**; an authored DAG that violates a
+cap is the author's error (a plain parse/validation error), not something to re-ask
+a model about.
+
+### 7. Hard dependency on 0023 and 0024 (no degradation path)
 
 `depends_on: [23, 24]`. The engine is written against the **real** blackboard
 (0023) and structured-delegation handle (0024) APIs — no shim, no second
 free-text code path to build, test, and later delete. 0026 is simply not
 build-ready (the selector skips it) until both merge. 0024's spec already names
-0026 as its sole consumer, so this ordering is mutual. Change **0012** (subagent
-runtime) is transitively required and already `done`; it is dropped from
-`depends_on` in favor of the two direct substrates (kept in `related`).
+0026 as its sole consumer, so this ordering is mutual. The **synthesis step itself
+consumes 0024** — the synthesis LLM call declares the `Pipeline` schema as its
+`expects`, so the generated DAG comes back as a validated structured value rather
+than free text to parse. Change **0012** (subagent runtime) is transitively
+required and already `done`; it is dropped from `depends_on` in favor of the two
+direct substrates (kept in `related`).
 
 ## Surfaces & data model
 
@@ -231,16 +319,36 @@ type Condition struct {
 }
 ```
 
-- **Parser** (`Parse([]byte) (*Pipeline, error)`): YAML/JSON → `Pipeline`;
-  validates step-name uniqueness, that every `depends_on`/`goto`/`default`
-  references an existing step, and runs **Tarjan cycle detection**; any violation
-  is a parse error naming the offending step(s).
+- **Parser / validator** (`Parse([]byte) (*Pipeline, error)` and
+  `Validate(*Pipeline, Caps) error`): YAML/JSON → `Pipeline`; validates step-name
+  uniqueness, that every `depends_on`/`goto`/`default` references an existing step,
+  valid operators, and runs **Tarjan cycle detection**; `Validate` additionally
+  enforces the resource `Caps` (max steps/fan-out/depth, pool binding) for the
+  synthesis path. Any violation is an error naming the offending step(s).
+- **Synthesizer** (`Synthesize(ctx, goal string, ctxInfo, *agent.Spawner, Caps)
+  (*Pipeline, error)`): runs the synthesis LLM call (declaring the `Pipeline`
+  schema as its 0024 `expects`), then `Parse`→`Validate`; on failure it re-asks
+  the model with the error up to `synthesis.max_attempts` times before returning a
+  synthesis-failure error. Never returns an invalid or over-cap DAG.
 - **Engine** (`Run(ctx, *Pipeline, *agent.Spawner, *agent.Blackboard) (Status,
   error)`): topological, readiness-driven, parallel; owns routing and `on_error`.
-- **`pipeline_run` tool**: params `{definition: <yaml|json string>}` or `{name:
-  <registered pipeline>}`; wired into agent builders like other built-ins.
-  Returns terminal `Status`; also writes `pipeline.status` to the blackboard so a
-  subsequent free-form `spawn_agent` or step can read the outcome.
+  Identical for authored and synthesized DAGs.
+- **`pipeline_run` tool** — mode inferred from params, exactly one required:
+  - `{definition: <yaml|json string>}` or `{name: <registered pipeline>}` — authored.
+  - `{goal: <string>, confirm?: bool}` — synthesized: calls `Synthesize`, writes the
+    generated DAG to the `pipeline.plan` blackboard key and a labeled trace entry,
+    gates on confirmation when `confirm: true`, then runs.
+
+  Wired into agent builders like other built-ins (all three cloned child builders —
+  see the `patch-every-cloned-child-builder` learning). Returns terminal `Status`
+  and writes `pipeline.status` to the blackboard so a subsequent free-form
+  `spawn_agent` or step can read the outcome.
+
+**Config** (`internal/config`, under the existing schema): synthesis caps and the
+retry bound, e.g. `pipeline.synthesis.{max_steps, max_fanout, max_depth,
+max_attempts}` — each 0 = unset/default; conservative defaults. Subject to the
+same `.fuse.local.yml` tighten-only trust boundary (ADR-0006) as pool numbers,
+since a loosened cap is a resource-safety loosening.
 
 ## Error handling
 
@@ -267,10 +375,18 @@ type Condition struct {
   `hits/*` glob round-trip.
 - **`expects` integration**: a step with a schema lands the validated structured
   value; a mismatch degrades (0024) without failing the step.
+- **Synthesis (deterministic, scripted synthesis response)**: with a fake/scripted
+  synthesis reply, assert that a well-formed reply yields a `Pipeline` that runs;
+  that a cyclic/dangling/over-cap reply triggers the re-ask loop with the error fed
+  back; that the loop **fails loudly** after `max_attempts` rather than running an
+  invalid DAG; that the generated DAG is written to `pipeline.plan` and, with
+  `confirm: true`, execution waits for confirmation. Caps (`max_steps`/`max_fanout`/
+  `max_depth`, pool-binding required) each reject an over-cap synthesized DAG.
 - **End-to-end via the real binary** against a scripted `LLM_GATEWAY_URL` double
-  (per the `verify-tool-loop-at-gateway-seam` learning): a `pipeline_run` call
-  drives the DAG and the gateway log shows the expected step spawns in dependency
-  order.
+  (per the `verify-tool-loop-at-gateway-seam` learning): a `pipeline_run({goal})`
+  call drives synthesis then execution, and the gateway log shows first the
+  synthesis call, then the expected step spawns in dependency order — and a
+  `pipeline_run({definition})` call skips synthesis and spawns directly.
 
 ## Open questions carried to build
 
@@ -281,6 +397,16 @@ type Condition struct {
   (like the blackboard tool in 0023), honoring an explicit `tools`-subset
   exclusion. Confirm against the child-builder wiring at build time (three cloned
   builders — see the `patch-every-cloned-child-builder` learning).
+- **What context the synthesizer is given** — at minimum the goal, the `Pipeline`
+  schema, and the available workers/tools of the bound workflow; whether it also
+  sees current blackboard keys is a build-time call. The contract is only that the
+  synthesis call declares the `Pipeline` schema as its 0024 `expects`.
+- **How the confirmation gate is surfaced** in a headless/autonomous run (no human
+  to confirm) — likely `confirm` defaults to `false` (synthesize-and-run) so an
+  autonomous caller is never blocked, with `confirm: true` reserved for
+  interactive/inspectable use. Decide the default at build time.
+- **Default cap values** (`max_steps`/`max_fanout`/`max_depth`/`max_attempts`) —
+  pick conservative defaults at build; they are tighten-only via `.fuse.local.yml`.
 
 ## Dependencies & references
 
