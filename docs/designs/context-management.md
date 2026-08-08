@@ -64,19 +64,47 @@ Replaces the 16KB per-result chop and the 360KB hard turn-failure.
 - **Context-length error recovery**: pattern-match the gateway 400, prune
   aggressively, retry the request once.
 
-### Tier 2 — compaction (follow-up)
+### Tier 2 — anchored compaction (implemented — change 0027)
 
-- Anchored LLM summarization at the 85% threshold when pruning is not
-  enough: verbatim tail (last 2 user turns, 8k-token budget), fixed summary
-  template (Objective / Important Details / Work State / Next Move /
-  Relevant Files), previous summary passed back for incremental update,
-  summarizer input ladder (drop oldest turns → strip tool outputs) so the
-  summary call itself cannot overflow, and a suppression state so failures
-  don't hot-loop (grok-build's design).
-- Segment store: archive the pre-compaction transcript as markdown next to
-  the session log with a "grep your past at <path>" pointer in the summary.
-- Optional Cline-style duplicate-file-read dedup as a pre-compaction pass
-  (30%-savings gate).
+At the same 85% over-budget point, **before** the Tier-1 stub prune, a bounded
+LLM summarization pass runs over the old (recency-unprotected) tool-result
+region and injects a single structured ODSNF summary at the protected-region
+boundary; the raw region is then stubbed by the unchanged Tier-1 path, so tool
+pairing stays valid. Fail-safe: any summarizer failure falls through to Tier-1
+byte-identically and arms a bounded suppression window.
+
+- **Anchored ODSNF summarization** (`internal/agent/summarize.go`): fixed
+  Objective / Details / State / Next / Files template; the previous summary is
+  passed back and updated in place so one living summary document evolves rather
+  than stacking (D3). The call is bounded — it reuses `internal/model`'s adapter
+  (per-attempt timeout, response-header timeout, bounded retries) with a distinct
+  `summarizer` trace label (the `bound-every-model-call` learning) and a
+  `max_output` cap.
+- **Summarizer input ladder** (drop oldest turns → strip tool outputs → give up)
+  so the summarization call itself cannot overflow; ladder-exhaustion falls back
+  to Tier-1.
+- **Suppression state**: after a summarizer failure the next N over-budget turns
+  skip the summarizer (internal constant) so a persistently failing summarizer
+  cannot hot-loop a model call every turn.
+- **Config** (`context.summarization`, `internal/config`): `enabled` (default
+  true), `model` (empty ⇒ the session's main model, D4), `threshold` (default
+  0.85, shares Tier-1's fraction), `max_output` (default 2000). Suppression
+  window and per-attempt timeout are internal constants.
+- **Segment sink seam** (`internal/agent/segment.go`): a widened `SegmentSink`
+  interface receives the raw pre-summarization region plus turn range / tool
+  names / token savings; #0027 ships only the **no-op default** (persists
+  nothing, so the summary omits the recovery pointer). The real disk-backed sink
+  (archive as markdown next to the session log with a "grep your past at <path>"
+  pointer in the summary) is **change 0030**.
+
+**Deferred follow-ups (depend on 0027):**
+
+- Segment store (raw archive, replay, GC): **change 0030** — implements the
+  `SegmentSink` and lights up the recovery-pointer line.
+- Semantic relevance candidate selection (replacing the recency selector):
+  **change 0028**.
+- Cline-style duplicate-file-read dedup as a pre-compaction pass (30%-savings
+  gate): **change 0029**.
 
 ### Non-goals (absent in all three, deliberately)
 
