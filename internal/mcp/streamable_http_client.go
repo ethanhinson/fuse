@@ -408,14 +408,14 @@ func (c *StreamableHTTPClient) resume(ctx context.Context, id, lastEventID strin
 	return nil, fmt.Errorf("mcp streamable %q: %w", c.name, derr)
 }
 
-// handleServerFrame is the seam for inbound server-initiated frames (id-less
-// notifications, or frames for another id) observed on a response stream. Today
-// it logs and discards; changes 0020 ($/progress) and 0021 (resource
-// subscriptions) replace this one method with real notification routing rather
-// than reworking the pump (see the mcp-read-pumps-drop-inbound-notifications
-// learning).
+// handleServerFrame is the fallback for inbound server-initiated frames that are
+// NOT routed as id-less notifications: a frame carrying an id for a call this
+// client is not awaiting (change 0020 routes id-less `method` frames — $/progress,
+// $/stream, and later 0021's resource notifications — through the manager's
+// notification router in dispatchFrame before this method is reached). Such an
+// id-bearing stray frame has no pending channel, so it is logged and dropped.
 func (c *StreamableHTTPClient) handleServerFrame(raw json.RawMessage) {
-	log.Printf("[mcp] %s: dropping unrouted server frame (%d bytes) — notification routing lands in changes 0020/0021", c.name, len(raw))
+	log.Printf("[mcp] %s: dropping unrouted server frame (%d bytes) for another id", c.name, len(raw))
 }
 
 // decodeJSONResult decodes a single synchronous JSON-RPC response body.

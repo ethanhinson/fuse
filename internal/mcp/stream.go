@@ -59,14 +59,62 @@ func (b *streamBuffer) append(delta string) {
 
 // assemble renders the complete buffered stream. When truncation occurred, the
 // elided middle is replaced by a marker (matching the spill.go head+tail style).
+// The head/tail cuts are aligned to rune boundaries — a delta chunk can straddle
+// the byte-exact boundary that append() fills, so trim any trailing partial rune
+// off the head and skip any leading continuation bytes on the tail (spill.go does
+// the same) so the value delivered to the agent loop is always valid UTF-8.
 func (b *streamBuffer) assemble() string {
 	if !b.truncated {
 		return string(b.head)
 	}
+	head := trimTrailingPartialRune(b.head)
+	tail := skipLeadingContinuation(b.tail)
 	marker := fmt.Sprintf(
 		"\n[fuse: stream truncated — showing first %dKB and last %dKB of %dKB]\n",
 		streamRingKeep>>10, streamRingKeep>>10, b.total>>10)
-	return string(b.head) + marker + string(b.tail)
+	return string(head) + marker + string(tail)
+}
+
+// trimTrailingPartialRune drops a dangling multi-byte-rune prefix at the end of a
+// byte-exact head cut, so the head ends on a rune boundary.
+func trimTrailingPartialRune(b []byte) []byte {
+	// Walk back over UTF-8 continuation bytes (0b10xxxxxx) to the lead byte.
+	i := len(b)
+	for i > 0 && b[i-1]&0xC0 == 0x80 {
+		i--
+	}
+	if i == 0 {
+		return b
+	}
+	// If the lead byte announces more bytes than are present, drop the partial rune.
+	lead := b[i-1]
+	var want int
+	switch {
+	case lead&0x80 == 0x00:
+		want = 1
+	case lead&0xE0 == 0xC0:
+		want = 2
+	case lead&0xF0 == 0xE0:
+		want = 3
+	case lead&0xF8 == 0xF0:
+		want = 4
+	default:
+		return b // not a lead byte (already invalid); leave as-is
+	}
+	if len(b)-(i-1) < want {
+		return b[:i-1]
+	}
+	return b
+}
+
+// skipLeadingContinuation advances past any UTF-8 continuation bytes at the start
+// of a byte-exact tail cut, so the tail begins on a rune boundary.
+func skipLeadingContinuation(b []byte) []byte {
+	i := 0
+	for i < len(b) && b[i]&0xC0 == 0x80 {
+		i++
+	}
+	return b[i:]
 }
 
 // partial returns the most recent content (rolling tail) for the TUI. It is the

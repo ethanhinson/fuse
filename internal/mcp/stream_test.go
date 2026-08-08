@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/ethanhinson/fuse/internal/tools"
 )
@@ -111,6 +112,41 @@ func TestStreamRingOverflowKeepsHeadAndTail(t *testing.T) {
 	// The elided middle must NOT be fully present.
 	if strings.Contains(got, middle) {
 		t.Error("assembled must not contain the full elided middle")
+	}
+}
+
+// TestStreamOverflowAssemblesValidUTF8 verifies that when a multi-byte rune
+// straddles the byte-exact head/tail cut, assemble() aligns both cuts to rune
+// boundaries so the value delivered to the agent loop is always valid UTF-8
+// (consistent with internal/tools/spill.go's rune-safe truncation).
+func TestStreamOverflowAssemblesValidUTF8(t *testing.T) {
+	m, _ := NewManager(nil, tools.NewRegistry())
+	defer m.Close()
+
+	token, end := m.beginCall("srv", "runes")
+
+	// "€" is 3 bytes (0xE2 0x82 0xAC). Fill head/middle/tail with a stream made
+	// entirely of € so a rune is virtually guaranteed to straddle both the
+	// head-fill boundary and the rolling-tail drop boundary (neither streamRingKeep
+	// nor the tail window is a multiple of 3).
+	euro := "€"
+	head := strings.Repeat(euro, streamRingKeep) // ~3x over the keep budget
+	middle := strings.Repeat(euro, streamRingKeep*4)
+	tail := strings.Repeat(euro, streamRingKeep)
+	for _, d := range []string{head, middle, tail} {
+		params, _ := json.Marshal(map[string]any{"progressToken": token, "delta": d})
+		m.dispatchNotification("srv", "$/stream", params)
+	}
+
+	got := end()
+	if !strings.Contains(got, "truncated") {
+		t.Fatalf("expected a truncation marker, got %.80q...", got)
+	}
+	if !utf8.ValidString(got) {
+		t.Error("assembled truncated stream must be valid UTF-8 (rune-aligned cuts)")
+	}
+	if strings.ContainsRune(got, '�') {
+		t.Error("assembled truncated stream must not contain the replacement rune from a sheared multi-byte rune")
 	}
 }
 
