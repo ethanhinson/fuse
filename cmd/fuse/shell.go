@@ -145,6 +145,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		rateGate = rateBucket
 	}
 	rootNode := tree.Node(tree.RootID())
+	// One blackboard per session, shared by every agent in the tree (change 0023).
+	bb := agent.NewBlackboard(tree)
 
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
@@ -166,6 +168,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// with a blanket auto-approve.
 	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build, sessionMode, classifierConstructible(cfg))
 	m = m.WithTree(tree)
+	m = m.WithBlackboard(bb)
 	// Hand the same shared bucket to the observability surface so the agents
 	// overlay shows live rate-gate utilization (change 0036); nil is the no-gate
 	// fast path and renders no rate-gate segment.
@@ -201,6 +204,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget).
 						WithQuotaWarning(quotaWarningFor(tree, childNode.ID)))
 				}
+				// Blackboard tools bound to the child's provenance — always wired
+				// (not spawn-gated), honoring an explicit subset that omits them.
+				wireChildBlackboard(childToolReg, bb, childNode, opts.Tools)
 
 				r := tui.NewNodeRenderer(childNode, childTree)
 				// Child agents inherit the parent's permission config and route their
@@ -282,6 +288,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// Register spawn_agent in the tool registry before any agent runs.
 	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
 		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
+	// Root-node-wired blackboard tools (provenance = rootNode).
+	for _, t := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {
+		toolReg.Register(t)
+	}
 
 	// Start the 250ms dirty-node flusher; the same ctx stops the bridges.
 	flushCtx, cancelFlusher := context.WithCancel(context.Background())

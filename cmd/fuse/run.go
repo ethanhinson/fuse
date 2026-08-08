@@ -447,6 +447,41 @@ func shouldWireChildSpawn(requested []string) bool {
 	return false
 }
 
+// wireChildBlackboard registers the blackboard tools on a child's registry with
+// provenance bound to childNode (change 0023, Task 4). The tools are ALWAYS
+// wired — not spawn-gated — because a child that cannot spawn still shares the
+// blackboard. The one exception is an explicit tools subset that omits them: an
+// empty requested list is a full clone (force-include, child-bound); a non-empty
+// subset includes a blackboard tool only when it names it, and even then the
+// version copied from the parent carries the PARENT's provenance, so we
+// re-register the child-bound version. Named-but-child-bound and
+// unnamed-therefore-absent are both honored by rebuilding from scratch: drop the
+// inherited copies, then add back only the ones the subset selects.
+func wireChildBlackboard(childToolReg *tools.Registry, bb *agent.Blackboard, childNode *agent.AgentNode, requested []string) {
+	childTools := tools.NewBlackboardTools(bb.ForNode(childNode))
+	fullClone := len(requested) == 0
+	for _, t := range childTools {
+		name := t.Name()
+		if fullClone || contains(requested, name) {
+			// Force-include (clone) or the subset names it: bind to the child.
+			childToolReg.Register(t)
+		} else {
+			// A subset that omits this blackboard tool withholds it from the child.
+			childToolReg.Unregister(name)
+		}
+	}
+}
+
+// contains reports whether s contains v.
+func contains(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
 // buildAgentCore resolves alias and constructs an Agent bound to renderer r,
 // returning the resolved gateway model id.
 func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode, interactive bool, gate model.RateGate) (*agent.Agent, string, error) {

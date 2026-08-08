@@ -147,6 +147,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// shares it so the session honors one budget.
 	rateGate := sessionRateGate(cfg)
 	rootNode := tree.Node(tree.RootID())
+	// One blackboard per session, shared by every agent in the tree (change 0023).
+	bb := agent.NewBlackboard(tree)
 
 	var makeSpawnFunc func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc
 	makeSpawnFunc = func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
@@ -169,6 +171,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget).
 						WithQuotaWarning(quotaWarningFor(tree, childNode.ID)))
 				}
+				// Blackboard tools bound to the child's provenance — always wired
+				// (not spawn-gated), honoring an explicit subset that omits them.
+				wireChildBlackboard(childToolReg, bb, childNode, opts.Tools)
 
 				r := tui.NewRenderer(stdout, *verbose)
 				modelID := opts.ModelID
@@ -220,6 +225,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
 		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
+	// Root-node-wired blackboard tools (provenance = rootNode).
+	for _, t := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {
+		toolReg.Register(t)
+	}
 
 	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil, oneShotBudget, rateGate)
 	if err != nil {

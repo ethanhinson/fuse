@@ -111,6 +111,8 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// no rpm/tpm axis is configured (fast path).
 	rateGate := sessionRateGate(cfg)
 	rootNode := tree.Node(tree.RootID())
+	// One blackboard per session, shared by every agent in the tree (change 0023).
+	bb := agent.NewBlackboard(tree)
 
 	// research-probe IS a research root: activate the research workflow on the
 	// root node so its whole subtree is governed by the workflow pool and its
@@ -168,6 +170,10 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 					}
 					childToolReg.Register(spawnTool)
 				}
+				// Blackboard tools bound to the child's provenance — always wired
+				// (not spawn-gated), honoring an explicit subset that omits them.
+				// effectiveTools is the list childToolRegistry actually built from.
+				wireChildBlackboard(childToolReg, bb, childNode, effectiveTools)
 
 				label := childNode.Label
 				if label == "" {
@@ -232,6 +238,10 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 		rootSpawn = rootSpawn.WithWorkers(act.workerNames())
 	}
 	toolReg.Register(rootSpawn)
+	// Root-node-wired blackboard tools (provenance = rootNode).
+	for _, t := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {
+		toolReg.Register(t)
+	}
 
 	// Root renderer: tree node + recorder, same MultiRenderer shape as children.
 	rootR := tui.NewMultiRenderer(
