@@ -87,6 +87,35 @@ func TestBlackboardWaitTimeoutBoundary(t *testing.T) {
 	}
 }
 
+// TestBlackboardWaitTimeoutWrongType (second-pass audit BB-T1): a timeout sent as
+// a JSON string ("5" not 5) fails json.Unmarshal into the float64 field and is
+// reported as an 'invalid args' tool error — not coerced, not a panic.
+func TestBlackboardWaitTimeoutWrongType(t *testing.T) {
+	f := newFakeStore()
+	wt := toolByName(NewBlackboardTools(f), "blackboard_wait")
+	r := wt.Execute(context.Background(), `{"key":"k","timeout":"5"}`)
+	if !r.IsError {
+		t.Fatal("string timeout should be a tool error")
+	}
+	if !strings.Contains(r.Output, "invalid args") {
+		t.Fatalf("expected 'invalid args', got: %q", r.Output)
+	}
+}
+
+// TestBlackboardKeyWrongType (second-pass audit BB-T8): a key of the wrong JSON
+// type (number, not string) fails json.Unmarshal and yields the 'invalid args'
+// error — distinct from the downstream 'key is required' empty-key message.
+func TestBlackboardKeyWrongType(t *testing.T) {
+	rd := toolByName(NewBlackboardTools(newFakeStore()), "blackboard_read")
+	r := rd.Execute(context.Background(), `{"key":123}`)
+	if !r.IsError {
+		t.Fatal("numeric key should be a tool error")
+	}
+	if !strings.Contains(r.Output, "invalid args") {
+		t.Fatalf("expected 'invalid args' (not 'key is required'), got: %q", r.Output)
+	}
+}
+
 // TestBlackboardKeysMalformedGlobViaTool confirms the tool surfaces a malformed
 // glob as an empty match (delegated to the store's path.Match contract), not an
 // error — the tool just marshals whatever the store returns.
