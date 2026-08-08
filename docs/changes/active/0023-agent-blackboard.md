@@ -2,7 +2,7 @@
 id: 23
 slug: agent-blackboard
 title: Shared result blackboard for inter-agent communication
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-06
@@ -13,12 +13,12 @@ discovered_from: [12]
 adrs: []
 spec: docs/superpowers/specs/2026-08-08-agent-blackboard-design.md
 plan: docs/superpowers/plans/0023-agent-blackboard.md
-results:
+results: docs/results/2026-08-08-agent-blackboard-results.md
 trivial: false
 auto_groomable:
 branch: feat/agent-blackboard
-claimed_at: 2026-08-08T05:51:24Z
-pr:
+claimed_at: 2026-08-08T06:22:09Z
+pr: https://github.com/ethanhinson/fuse/pull/25
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-08-agent-blackboard-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-agent-blackboard-design.md) |
 | Plan | [0023-agent-blackboard.md](https://github.com/ethanhinson/fuse/blob/feat/agent-blackboard/docs/superpowers/plans/0023-agent-blackboard.md) |
+| Results | [2026-08-08-agent-blackboard-results.md](https://github.com/ethanhinson/fuse/blob/feat/agent-blackboard/docs/results/2026-08-08-agent-blackboard-results.md) |
+| PR | [#25](https://github.com/ethanhinson/fuse/pull/25) |
 <!-- docket:artifacts:end -->
 
 ## Why
