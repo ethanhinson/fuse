@@ -25,8 +25,6 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
-| Artifact | Link |
-|---|---|
 <!-- docket:artifacts:end -->
 
 ## Why
