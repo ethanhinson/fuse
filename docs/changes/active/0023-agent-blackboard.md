@@ -12,7 +12,7 @@ related: [12, 24]
 discovered_from: [12]
 adrs: []
 spec: docs/superpowers/specs/2026-08-08-agent-blackboard-design.md
-plan:
+plan: docs/superpowers/plans/0023-agent-blackboard.md
 results:
 trivial: false
 auto_groomable:
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-08-agent-blackboard-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-agent-blackboard-design.md) |
+| Plan | [0023-agent-blackboard.md](https://github.com/ethanhinson/fuse/blob/feat/agent-blackboard/docs/superpowers/plans/0023-agent-blackboard.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
