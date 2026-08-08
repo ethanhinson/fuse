@@ -210,6 +210,19 @@ type ShellModel struct {
 	// axis is configured (change 0036). Read-only here: the observability surface
 	// consults its live utilization for the status bar / agents overlay.
 	rateGate *ratelimit.Bucket
+
+	// staleResources tracks MCP resources a subscribed server has pushed a
+	// notifications/resources/updated for (change 0021). The status line surfaces
+	// a stale indicator; entries are ordered by first-seen for a stable render.
+	// Never auto-re-read (D2) — the flag is purely a display cue.
+	staleResources    []staleResource
+	staleResourceSeen map[string]bool
+}
+
+// staleResource is one MCP resource flagged stale by a pushed update.
+type staleResource struct {
+	server string
+	uri    string
 }
 
 // NewShellModel builds a ShellModel. alias is the starting model alias;
@@ -409,6 +422,21 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case registryReloadMsg:
 		if m.completer != nil {
 			m.completer.refresh()
+		}
+		m.refreshViewport(m.vp.AtBottom())
+		return m, nil
+
+	case MCPResourceUpdatedMsg:
+		// A subscribed MCP resource changed on the server. Flag it stale for the
+		// status indicator; NEVER auto-re-read (D2). De-dup so repeated pushes for
+		// the same URI don't grow the indicator.
+		key := msg.Server + "\x00" + msg.URI
+		if m.staleResourceSeen == nil {
+			m.staleResourceSeen = map[string]bool{}
+		}
+		if !m.staleResourceSeen[key] {
+			m.staleResourceSeen[key] = true
+			m.staleResources = append(m.staleResources, staleResource{server: msg.Server, uri: msg.URI})
 		}
 		m.refreshViewport(m.vp.AtBottom())
 		return m, nil
@@ -1437,6 +1465,10 @@ func (m ShellModel) View() string {
 		status = statusModelStyle.Render(m.alias) + " " + statusModelStyle.Render(m.statusLine())
 		status += m.agentsHint()
 	}
+	// A subscribed MCP resource push (change 0021) surfaces a stale indicator on
+	// every status branch — an at-a-glance cue that the cached view is out of date
+	// (the client never auto-re-reads, D2). Empty when nothing is stale.
+	status += m.mcpStaleIndicator()
 
 	vpView := m.vp.View()
 	// Pending approval renders as an overlay on the viewport — it disappears
@@ -1454,6 +1486,21 @@ func (m ShellModel) View() string {
 	b.WriteByte('\n')
 	b.WriteString(status)
 	return b.String()
+}
+
+// mcpStaleIndicator renders the status-bar fragment for MCP resources a
+// subscribed server has pushed an update for (change 0021). It names each stale
+// URI so the user knows exactly which resource is out of date; it is a passive
+// cue only — the client never auto-re-reads (D2). Empty when nothing is stale.
+func (m ShellModel) mcpStaleIndicator() string {
+	if len(m.staleResources) == 0 {
+		return ""
+	}
+	uris := make([]string, 0, len(m.staleResources))
+	for _, r := range m.staleResources {
+		uris = append(uris, r.uri)
+	}
+	return " " + mcpStaleStyle.Render("⟳ stale: "+strings.Join(uris, ", "))
 }
 
 // statusLine produces the session-mode indicator fragment for the default
