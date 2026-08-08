@@ -2,7 +2,7 @@
 id: 24
 slug: structured-delegation
 title: Structured delegation — expected result schemas for spawn_agent
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-06
@@ -17,7 +17,7 @@ results: docs/results/2026-08-08-structured-delegation-results.md
 trivial: false
 auto_groomable:
 branch: feat/structured-delegation
-claimed_at: 2026-08-08T09:48:00Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/29
 blocked_by:
 reconciled: true
