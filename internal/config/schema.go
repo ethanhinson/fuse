@@ -106,6 +106,24 @@ type ContextConfig struct {
 	Summarization SummarizationConfig `yaml:"summarization"`
 }
 
+// PipelineSynthesisConfig holds the caps applied to LLM-synthesized pipelines
+// (change 0026). Each is a synthesis-time brake mapped onto pipeline.Caps: the
+// synthesizer's proposed DAG must fit under these before it is run. 0 = that
+// check skipped (matching pipeline.Caps semantics), though Default() supplies
+// conservative positive values.
+type PipelineSynthesisConfig struct {
+	MaxSteps    int `yaml:"max_steps"`
+	MaxFanout   int `yaml:"max_fanout"`
+	MaxDepth    int `yaml:"max_depth"`
+	MaxAttempts int `yaml:"max_attempts"`
+}
+
+// PipelineConfig groups pipeline-composition knobs (change 0026). Today it holds
+// only the synthesis caps block.
+type PipelineConfig struct {
+	Synthesis PipelineSynthesisConfig `yaml:"synthesis"`
+}
+
 // Config is the fully resolved fuse configuration.
 type Config struct {
 	Gateway    Gateway
@@ -140,6 +158,10 @@ type Config struct {
 	// cap; the summarizer stays inert until a Completer is wired at the call
 	// site, so the defaults are behavior-identical to pre-0027 until then.
 	Context ContextConfig
+	// Pipeline holds pipeline-composition knobs (change 0026). Its synthesis
+	// block caps LLM-synthesized DAGs; the untrusted .fuse.local.yml may only
+	// TIGHTEN those caps (ADR-0006), exactly like the workflow pool numbers.
+	Pipeline PipelineConfig
 }
 
 // WorkflowConfig is one named workflow: the invocable it binds, its subtree
@@ -241,6 +263,25 @@ type rawConfig struct {
 	// mirror uses a *bool for enabled so an omitted key keeps the true default
 	// while `enabled: false` takes effect (mirrors RespectRobots).
 	Context rawContextConfig `yaml:"context"`
+	// Pipeline mirrors PipelineConfig on-disk (change 0026). Every cap is a plain
+	// int (0 = unset), so the tighten-only local merge distinguishes an omitted
+	// axis from a present one exactly like the throughput axes; the merge happens
+	// in mergeFile.
+	Pipeline rawPipelineConfig `yaml:"pipeline"`
+}
+
+// rawPipelineConfig mirrors PipelineConfig on-disk (change 0026).
+type rawPipelineConfig struct {
+	Synthesis rawPipelineSynthesisConfig `yaml:"synthesis"`
+}
+
+// rawPipelineSynthesisConfig mirrors PipelineSynthesisConfig on-disk. Every cap
+// is a plain int: 0 = unset (an omitted axis), a present value is nonzero.
+type rawPipelineSynthesisConfig struct {
+	MaxSteps    int `yaml:"max_steps"`
+	MaxFanout   int `yaml:"max_fanout"`
+	MaxDepth    int `yaml:"max_depth"`
+	MaxAttempts int `yaml:"max_attempts"`
 }
 
 // rawContextConfig mirrors ContextConfig on-disk.
@@ -353,6 +394,17 @@ func Default() Config {
 				Enabled:   true,
 				Threshold: 0.85,
 				MaxOutput: 2000,
+			},
+		},
+		// Pipeline synthesis caps (change 0026): conservative brakes on an
+		// LLM-synthesized DAG. These map onto pipeline.Caps at the wiring site.
+		// The untrusted .fuse.local.yml may only TIGHTEN them (ADR-0006).
+		Pipeline: PipelineConfig{
+			Synthesis: PipelineSynthesisConfig{
+				MaxSteps:    50,
+				MaxFanout:   10,
+				MaxDepth:    4,
+				MaxAttempts: 3,
 			},
 		},
 		// The research workflow ships as a built-in default (change 0034): it
