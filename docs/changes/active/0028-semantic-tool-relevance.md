@@ -6,12 +6,12 @@ status: proposed
 priority: medium
 type: feat
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-08
 depends_on: [27]
 related: [27, 29]
 discovered_from: [27]
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-08-semantic-tool-relevance-design.md
 plan:
 results:
 trivial: false
@@ -27,43 +27,30 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-08-semantic-tool-relevance-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-semantic-tool-relevance-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
 
-The current context pruning strategy (change 0012) is recency-based: the newest ~40k tokens of tool results are protected, everything older is a pruning candidate. This is simple but naive — an old tool result about a fundamental architectural decision may be far more important than a recent `ls` output. Recency-based pruning discards the important old content while keeping the trivial new content. A **relevance scoring** system that ranks tool results by their importance to the current task — using a lightweight heuristic (tool type, result size, keyword overlap with recent queries) and optionally an LLM classifier — would retain the most important content regardless of age, making much better use of the finite context window.
+fuse's context pruning today (change 0012) is purely recency-based: `pruneOldToolResults` in `internal/agent/loop.go` protects the newest ~40k tokens of tool results and stubs everything older. Age is a poor proxy for importance — an old `read_file` of a core source file, or the `grep` that located the symbol the model keeps returning to, gets discarded, while a trivial recent `list_directory` is kept just because it is newer. A **relevance scorer** that ranks tool results by importance to the current task retains the most important content regardless of age, making far better use of the finite context window — without changing how large that window is.
 
 ## What changes
 
-- **`RelevanceScorer` interface** in `internal/agent/` (or `internal/context/`):
-  ```go
-  type RelevanceScorer interface {
-      Score(toolName string, args string, result string, query string, turn int) float64
-  }
-  ```
-- **Heuristic scorer** (default, always-on): a rule-based scorer that assigns higher relevance to:
-  - Tool type: `read_file` > `grep` > `bash` > `list_directory` (read results are more likely to be re-read)
-  - File paths matching recent `grep`/`read_file` queries (keyword overlap)
-  - Error results (higher retention — model may need to debug)
-  - Results with "TODO", "FIXME", or error keywords (higher relevance)
-  - Tool results from the current turn's dependency chain (parents of tools that were re-called)
-- **LLM classifier scorer** (optional, gated): a lightweight model call that scores a batch of candidate results for relevance to the current conversation. Gated behind `context.relevance.classifier_model` config.
-- **Relevance-aware pruning**: instead of "protect newest N tokens," the pruning pass scores all tool results, sorts by relevance, and retains the top N tokens worth of results. Recency is a tiebreaker for equal scores.
-- **Config surface**:
-  ```yaml
-  context:
-    relevance:
-      heuristic: true
-      classifier_model: ""  # empty = heuristic only
-      classifier_batch_size: 10  # results per classifier call
-  ```
+- **`RelevanceScorer` interface** (`internal/agent/relevance.go`): `Score(ToolResult, ScoreContext) float64` in `[0,1]`, deterministic. The Agent defaults to the heuristic scorer.
+- **Floor + budget reallocation** (not full replace): `protectBudget` stays the ceiling. A guaranteed **recency floor** (`recency_floor_pct`, default 50% of the budget) is always protected as today; the *remaining* budget is filled by the highest-relevance results across **all ages**. Recency is also the top-weighted score signal and the tiebreaker — so a recency-only scorer degenerates to today's behavior byte-for-byte (the safety invariant).
+- **Heuristic scorer** (always-on, pure, single-pass): tool-type base weight (`read_file` > `grep` > `bash` > `list_directory`); keyword overlap of the current query + recent tool args against this result's args **and a capped body prefix**; a boost for error/`TODO`/`FIXME` signal keywords; and **bounded dependency reuse** — a result whose distinctive path/identifier tokens reappear in a *later* tool's args scores higher (one `token → turn` map, cleared per user turn; no cross-tool graph).
+- **Hybrid LLM classifier** (optional, gated by `context.relevance.classifier_model`): the heuristic ranks everything first; only results in the **borderline band** (default 0.30–0.60) are batched to the classifier for a refined score. Clear-cut results skip the model call. The call is fully bounded (timeouts, retries, distinct trace label) and **any failure falls back to the heuristic ranking** — additive and never worse than recency, mirroring #0027's summarizer posture.
+- **Relevance-aware `pruneOldToolResults`**: reserve the recency floor, score the rest, fill the remaining budget by score (recency tiebreaker), stub the unprotected remainder. All existing invariants preserved (only `role == "tool"` messages touched; tool-call pairing intact; freed-token contract unchanged).
+- **Config surface**: new `context.relevance` block (`heuristic`, `recency_floor_pct`, `body_scan_bytes`, `classifier_model`, `classifier_batch_size`, `borderline_lo`/`borderline_hi`).
 
 ## Out of scope
 
-- Embedding-based semantic similarity (requires a vector store) — heuristic + LLM classifier is sufficient.
-- Per-tool custom scorers — the heuristic scorer is extensible by tool name.
-- Feedback loop (model marking results as useful/useless) — deferred.
+- **Full cross-tool reference graph** (body-parsing structured references) — bounded token-reuse plus the hybrid classifier cover the case; the graph is a separable follow-on, valuable once #0024/#0026 make references structured.
+- Embedding-based semantic similarity (vector store).
+- Per-tool custom scorer plugins — the heuristic's tool-type table is extended in-code.
+- Feedback loop (model marking results useful/useless) — deferred.
+- Enlarging the token ceiling — this change reallocates a fixed budget, never grows it.
 
-## Research notes (input for the brainstorm)
+## Dependency
 
-The heuristic scorer is inspired by the observation that in agent transcripts, certain tool result types are far more likely to be re-referenced: `read_file` outputs (the code itself), `grep` results (location references), and error outputs (the model needs to understand failures). The keyword overlap signal is cheap (string matching against the current user message and recent assistant tool calls) and catches the common case of "I just read a config file and now I need to recall its content." The LLM classifier scorer is the more powerful option: it takes the last user message + the candidate tool result and scores it 0-1. The design tension is latency vs. quality: the heuristic scorer is instant (<1ms) but has blind spots; the classifier adds 500ms-2s per batch but catches nuance. The hybrid approach (heuristic first, classifier only for borderline scores) is the most practical. The turn-based dependency chain tracking is a novel idea from the Grok Build codebase: if tool B's arguments reference tool A's result, tool A is higher relevance because the model may need to re-verify.
+`depends_on: [27]` — #0027 (anchored summarization) establishes the summarize-then-prune ordering and names this change as the one that swaps recency-based candidate selection for relevance-based. This design composes with #0027 (the recency floor keeps the tail #0027 relies on intact); the reconcile pass re-validates the shared `loop.go` seam against the real post-#0027 code at build time.
