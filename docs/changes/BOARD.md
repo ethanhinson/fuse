@@ -1,6 +1,12 @@
 # Backlog
 
-**40 changes** — ⚪ 1 deferred · ✅ 33 done · 🗑️ 6 killed
+**41 changes** — 🟡 1 proposed · ⚪ 1 deferred · ✅ 33 done · 🗑️ 6 killed
+
+## 🟡 Proposed (1)
+
+| # | Title | Priority | Type | Readiness |
+|---|-------|----------|------|-----------|
+| [0041](active/0041-agents-panel-ux.md) | Agents split-panel UX — focus indicator, reliable scrolling, blackboard readability | `medium` | `feat` | build-ready |
 
 ## ⚪ Deferred (1)
 
@@ -11,6 +17,7 @@
 ```mermaid
 graph TD
   0012 --> 0029
+  0041
   0012:::done
   classDef done fill:#d3f9d8;
 ```
