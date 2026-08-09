@@ -12,7 +12,7 @@ related: []
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/0041-agents-panel-ux.md
-plan:
+plan: docs/superpowers/plans/2026-08-09-agents-panel-ux.md
 results:
 trivial: false
 auto_groomable:
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0041-agents-panel-ux.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0041-agents-panel-ux.md) |
+| Plan | [2026-08-09-agents-panel-ux.md](https://github.com/ethanhinson/fuse/blob/feat/agents-panel-ux/docs/superpowers/plans/2026-08-09-agents-panel-ux.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
