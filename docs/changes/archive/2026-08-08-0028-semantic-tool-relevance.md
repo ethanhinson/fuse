@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-08-semantic-tool-relevance-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-semantic-tool-relevance-design.md) |
-| Plan | [2026-08-08-semantic-tool-relevance-plan.md](https://github.com/ethanhinson/fuse/blob/feat/semantic-tool-relevance/docs/superpowers/plans/2026-08-08-semantic-tool-relevance-plan.md) |
-| Results | [2026-08-08-semantic-tool-relevance-results.md](https://github.com/ethanhinson/fuse/blob/feat/semantic-tool-relevance/docs/results/2026-08-08-semantic-tool-relevance-results.md) |
+| Plan | [2026-08-08-semantic-tool-relevance-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-08-semantic-tool-relevance-plan.md) |
+| Results | [2026-08-08-semantic-tool-relevance-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-08-semantic-tool-relevance-results.md) |
 | PR | [#33](https://github.com/ethanhinson/fuse/pull/33) |
 | ADRs | [ADR-0015](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0015-per-result-relevance-classification.md) |
 <!-- docket:artifacts:end -->
