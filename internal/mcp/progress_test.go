@@ -55,6 +55,7 @@ func TestProgressNotificationFansToObserver(t *testing.T) {
 	})
 	m.dispatchNotification("srv", "$/progress", params2)
 
+	m.waitNotifyDrained() // dispatch is async; block until both are handled
 	evts := pc.snapshot()
 	if len(evts) != 2 {
 		t.Fatalf("observer saw %d events, want 2", len(evts))
@@ -87,6 +88,7 @@ func TestProgressUnmatchedTokenDropped(t *testing.T) {
 	params, _ := json.Marshal(map[string]any{"progressToken": "ghost", "progress": 1.0})
 	m.dispatchNotification("srv", "$/progress", params)
 
+	m.waitNotifyDrained()
 	if got := len(pc.snapshot()); got != 0 {
 		t.Errorf("unmatched token produced %d events, want 0", got)
 	}
@@ -107,6 +109,7 @@ func TestProgressAfterEndDropped(t *testing.T) {
 	params, _ := json.Marshal(map[string]any{"progressToken": token, "progress": 1.0})
 	m.dispatchNotification("srv", "$/progress", params)
 
+	m.waitNotifyDrained()
 	if got := len(pc.snapshot()); got != 0 {
 		t.Errorf("late token produced %d events, want 0", got)
 	}

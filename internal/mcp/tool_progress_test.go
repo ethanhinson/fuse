@@ -46,6 +46,7 @@ type fakeTracker struct {
 	token   string
 	begins  int
 	ends    int
+	drains  int
 	server  string
 	toolNm  string
 }
@@ -56,6 +57,8 @@ func (f *fakeTracker) beginCall(server, tool string) (string, func() string) {
 	f.toolNm = tool
 	return f.token, func() string { f.ends++; return "" }
 }
+
+func (f *fakeTracker) drainNotifications() { f.drains++ }
 
 // TestExecuteInjectsProgressTokenWhenStreaming: with streaming supported, the
 // tools/call params carry _meta.progressToken == the minted token, and the

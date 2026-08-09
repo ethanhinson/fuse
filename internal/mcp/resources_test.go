@@ -200,6 +200,7 @@ func TestResourceUpdatedFlagsStaleAndFansEvent(t *testing.T) {
 	params, _ := json.Marshal(map[string]any{"uri": "fuse://tools"})
 	m.dispatchNotification("srv", resourceUpdatedMethod, params)
 
+	m.waitNotifyDrained() // dispatch is async; block until the handler ran
 	// The URI is flagged stale.
 	if !m.IsStale("srv", "fuse://tools") {
 		t.Error("URI should be flagged stale after a resources/updated push")

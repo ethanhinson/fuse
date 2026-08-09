@@ -67,10 +67,23 @@ type Manager struct {
 	reg     *tools.Registry
 
 	// notifyMu guards notifyHandlers, the feature-generic inbound-notification
-	// route (D4). A client read pump calls dispatchNotification, which fans to
-	// the handler registered here for the frame's method.
+	// route (D4). A client read pump calls dispatchNotification, which enqueues
+	// onto notifyQueue; a single worker goroutine drains it and fans to the
+	// handler registered here for the frame's method.
 	notifyMu       sync.Mutex
 	notifyHandlers map[string]NotificationHandler
+
+	// Asynchronous notification dispatch (change #18 / P2): handlers used to run
+	// inline on the sending client's read-pump goroutine, so a slow handler
+	// blocked ALL response dispatch on that connection. They now run on one
+	// dedicated worker draining a bounded queue; the read-pump only does a
+	// non-blocking enqueue. A single worker preserves global (and thus
+	// per-server) notification ordering. notifyStart lazily launches the worker
+	// on first dispatch; closing notifyDone stops it on Close.
+	notifyQueue chan queuedNotification
+	notifyStart sync.Once
+	notifyDone  chan struct{}
+	notifyWG    sync.WaitGroup
 
 	// tracking binds an in-flight streaming tools/call to its progress token
 	// (D2). trackMu guards the map; tokenCounter mints unique tokens.
@@ -177,7 +190,9 @@ func (m *Manager) Stop(name string) error {
 	return nil
 }
 
-// Close terminates all managed MCP server processes.
+// Close terminates all managed MCP server processes. Read-pumps are stopped
+// first (so no new notifications are enqueued), then the notification worker is
+// drained and stopped — any notifications already queued are still delivered.
 func (m *Manager) Close() {
 	m.mu.Lock()
 	names := make([]string, 0, len(m.servers))
@@ -188,6 +203,7 @@ func (m *Manager) Close() {
 	for _, name := range names {
 		_ = m.Stop(name)
 	}
+	m.stopNotifyWorker()
 }
 
 // Servers returns a snapshot of ServerInfo for each managed server.
