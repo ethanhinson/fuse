@@ -1,0 +1,24 @@
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+'########:'##::::'##::'######::'########:                                       
+ ##.....:: ##:::: ##:'##... ##: ##.....::                                       
+ ##::::::: ##:::: ##: ##:::..:: ##:::::::                                       
+ ######::: ##:::: ##:. ######:: ######:::                                       
+ ##...:::: ##:::: ##::..... ##: ##...::::                                       
+ ##::::::: ##:::: ##:'##::: ##: ##:::::::                                       
+ ##:::::::. #######::. ######:: ########:                                       
+..:::::::::.......::::......:::........::                                       
+                                                                                
+  multi-model agent harness  --  v0.1.0-dev                                     
+                                                                                
+  fuse "<task>"   run an agent on a one-shot task                               
+  fuse shell      start an interactive agent shell                              
+  fuse help       show all commands                                             
+                                                                                
+model: alpha — /model NAME to switch, /verbose to toggle, /exit to quit         
+────────────────────────────────────────────────────────────────────────────────
+[alpha] > type a task, /model NAME, /verbose, /exit                                       
+alpha mode: smart

@@ -32,7 +32,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "config error: %v\n", err)
 		return 1
 	}
+	// Fail loudly at startup on a malformed config rather than silently defaulting
+	// (e.g. a typo'd permissions.mode) or deferring the failure to the first
+	// gateway call (a bad model reference). This single gate covers every
+	// subcommand, since they all dispatch below this point.
+	if err := cfg.Validate(); err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
 	reg := registryFromConfig(cfg)
+	if err := validateModelRefs(cfg, reg); err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
 
 	// Subcommand dispatch (only the ones that are not the default task run).
 	if len(args) > 0 {

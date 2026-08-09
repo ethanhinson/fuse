@@ -60,6 +60,12 @@ var dangerousNames = map[string]bool{
 	"reboot":   true,
 	"curl":     true,
 	"wget":     true,
+	// sudoedit (aka `sudo -e`) is a distinct executable from sudo that opens an
+	// editor with elevated privileges. sudo itself is caught by the wrapper
+	// guard, but sudoedit is a plain argv[0] and would otherwise be classified
+	// as a normal command — so it must be denied here alongside the other
+	// privilege/destruction vectors.
+	"sudoedit": true,
 }
 
 // dangerousGitSubcommands are git subcommands that are dangerous even though

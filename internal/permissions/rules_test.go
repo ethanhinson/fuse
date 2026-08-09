@@ -35,6 +35,12 @@ func TestEvalRules_Precedence(t *testing.T) {
 			want:        VerdictDeny,
 		},
 		{
+			desc:        "sudoedit is a dangerous name — denied even under a broad allow",
+			cmd:         "sudoedit /etc/hosts",
+			autoApprove: []string{"bash:*"},
+			want:        VerdictDeny,
+		},
+		{
 			desc: "unmatched command defaults to ask, never allow",
 			cmd:  "frobnicate --wibble",
 			want: VerdictAsk,

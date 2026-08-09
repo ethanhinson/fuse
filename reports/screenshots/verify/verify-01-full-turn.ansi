@@ -1,0 +1,24 @@
+                                                                                
+'########:'##::::'##::'######::'########:                                       
+ ##.....:: ##:::: ##:'##... ##: ##.....::                                       
+ ##::::::: ##:::: ##: ##:::..:: ##:::::::                                       
+ ######::: ##:::: ##:. ######:: ######:::                                       
+ ##...:::: ##:::: ##::..... ##: ##...::::                                       
+ ##::::::: ##:::: ##:'##::: ##: ##:::::::                                       
+ ##:::::::. #######::. ######:: ########:                                       
+..:::::::::.......::::......:::........::                                       
+                                                                                
+  multi-model agent harness  --  v0.1.0-dev                                     
+                                                                                
+  fuse "<task>"   run an agent on a one-shot task                               
+  fuse shell      start an interactive agent shell                              
+  fuse help       show all commands                                             
+                                                                                
+model: alpha — /model NAME to switch, /verbose to toggle, /exit to quit         
+                                                                                
+── alpha ──────────────                                                         
+> does the shell still work end to end?                                         
+Fix verified: the shell turn completed cleanly.                                 
+[38;2;92;99;112m────────────────────────────────────────────────────────────────────────────────[0m
+[38;2;86;182;194m[alpha][0m > [7mt[0m[38;5;240mype a task, /model NAME, /verbose, /exit[0m                                       
+[1;38;2;171;178;191malpha[0m [1;38;2;171;178;191mmode: smart[0m
