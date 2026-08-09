@@ -2,11 +2,11 @@
 id: 30
 slug: segment-store
 title: Segment store — pre-compaction transcript archive for replay
-status: proposed
+status: in-progress
 priority: low
 type: feat
 created: 2026-08-06
-updated: 2026-08-08
+updated: 2026-08-09
 depends_on: [27]
 related: [27, 29]
 discovered_from: [27]
@@ -16,10 +16,11 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/segment-store
 pr:
 blocked_by:
 reconciled: false
+claimed_at: 2026-08-09T03:34:37Z
 ---
 
 ## Artifacts
