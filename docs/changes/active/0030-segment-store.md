@@ -10,7 +10,7 @@ updated: 2026-08-09
 depends_on: [27]
 related: [27, 29]
 discovered_from: [27]
-adrs: []
+adrs: [17, 18, 19]
 spec: docs/superpowers/specs/2026-08-08-segment-store-design.md
 plan: docs/superpowers/plans/2026-08-09-segment-store-plan.md
 results:
@@ -20,7 +20,7 @@ branch: feat/segment-store
 pr:
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-09T03:42:23Z
+claimed_at: 2026-08-09T04:17:43Z
 ---
 
 ## Artifacts
@@ -30,6 +30,7 @@ claimed_at: 2026-08-09T03:42:23Z
 |---|---|
 | Spec | [2026-08-08-segment-store-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-segment-store-design.md) |
 | Plan | [2026-08-09-segment-store-plan.md](https://github.com/ethanhinson/fuse/blob/feat/segment-store/docs/superpowers/plans/2026-08-09-segment-store-plan.md) |
+| ADRs | [ADR-0017](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0017-segment-store-fssink-subpackage-split.md), [ADR-0018](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0018-per-session-directory-layout-flat-log-read-compat.md), [ADR-0019](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0019-process-global-segment-sink-holder.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
