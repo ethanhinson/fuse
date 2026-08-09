@@ -1,18 +1,18 @@
 # Backlog
 
-**41 changes** — 🟢 1 in progress · ⚪ 1 deferred · ✅ 33 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0041](active/0041-agents-panel-ux.md) | Agents split-panel UX — focus indicator, reliable scrolling, blackboard readability | `medium` | `feat` | [spec](../superpowers/specs/0041-agents-panel-ux.md) | `feat/agents-panel-ux` |
+**41 changes** — ⚪ 1 deferred · 🔵 1 implemented · ✅ 33 done · 🗑️ 6 killed
 
 ## ⚪ Deferred (1)
 
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0041](active/0041-agents-panel-ux.md) | Agents split-panel UX — focus indicator, reliable scrolling, blackboard readability | `medium` | `feat` | [#44](https://github.com/ethanhinson/fuse/pull/44) |  |
 
 ```mermaid
 graph TD
