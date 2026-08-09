@@ -39,10 +39,10 @@ func DefaultRegistry() *Registry {
 		"kimi":           {ID: "cloud/kimi-k3", MaxTokens: 16384, Persona: "research"},
 		"glm":            {ID: "cloud/glm-5.2", MaxTokens: 16384, Persona: "general"},
 		"qwen-cloud":     {ID: "cloud/qwen3-8b", MaxTokens: 4096, Persona: "general"},
-		"qwen-coder":     {ID: "local/qwen-coder-7b", MaxTokens: 4096, Persona: "coding"},
-		"qwen-local":     {ID: "local/qwen-7b", MaxTokens: 4096, Persona: "general"},
-		"llama":          {ID: "local/llama3.1:8b", MaxTokens: 2048, Persona: "general"},
-		"claude":         {ID: "claude/sonnet", MaxTokens: 16384, Persona: "general"},
+		// local routes to the self-hosted llama.cpp server behind the gateway
+		// (OpenAI-compatible /v1). Replaces the retired bionic/Ollama locals.
+		"local":  {ID: "local/llama-cpp", MaxTokens: 4096, Persona: "general"},
+		"claude": {ID: "claude/sonnet", MaxTokens: 16384, Persona: "general"},
 		// Claude Sonnet 5 via the gateway's OpenRouter route (distinct from the
 		// credit-blocked Anthropic "claude/sonnet" route above).
 		"sonnet-5": {ID: "claude/sonnet-5", MaxTokens: 16384, Persona: "general"},

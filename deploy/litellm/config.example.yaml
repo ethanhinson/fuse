@@ -1,0 +1,26 @@
+# LiteLLM gateway config for fuse's local model route.
+#
+# fuse's default gateway is http://localhost:4000/v1 with key `llm-gateway-local`
+# (see internal/config/schema.go Default()). This file stands up that gateway and
+# maps the `local` alias (registry ID `local/llama-cpp`) to a self-hosted
+# llama.cpp server. It replaces the retired `bionic` local model.
+#
+# Run:
+#   llama-server -hf ggml-org/gemma-3-1b-it-GGUF --port 8080 --host 127.0.0.1
+#   litellm --config deploy/litellm/config.example.yaml --port 4000
+#   fuse -model local "your prompt"
+
+model_list:
+  - model_name: local/llama-cpp
+    litellm_params:
+      # openai/ = pass through to any OpenAI-compatible endpoint.
+      model: openai/gemma-3-1b-it
+      # llama.cpp llama-server. On studio, point at the llama.cpp host,
+      # e.g. http://studio.local:8080/v1
+      api_base: http://127.0.0.1:8080/v1
+      # llama.cpp ignores this unless started with --api-key.
+      api_key: "sk-noauth"
+
+general_settings:
+  # Must match fuse's default Gateway.Key so the Bearer token is accepted.
+  master_key: llm-gateway-local
