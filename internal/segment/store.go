@@ -5,6 +5,7 @@
 package segment
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -63,10 +64,17 @@ func SegmentsDir(baseDir, sessionID string) string {
 // IndexFileName is the per-session segment index file name.
 const IndexFileName = "index.json"
 
+// rawRegionFence is the language tag on the fenced code block that carries the
+// raw region's on-disk JSON encoding inside the "## Raw region" section.
+const rawRegionFence = "```json"
+
 // RenderSegment renders a segment to its on-disk markdown form: YAML
 // front-matter, the ## Summary section, and the ## Raw region section. The raw
-// region is stored VERBATIM (role + optional [tool name] + content) — sanitizing
-// is a TUI render concern, not a storage one.
+// region is stored as a self-delimiting JSON array of messages inside a fenced
+// code block so reconstruction (LoadSegment) is exact and lossless — arbitrary
+// tool output (including lines that look like message headers) round-trips
+// byte-for-byte. Sanitizing/pretty-printing is a TUI render concern (see
+// RenderRawRegion), not a storage one.
 func RenderSegment(s Segment) string {
 	var b strings.Builder
 	b.WriteString("---\n")
@@ -83,19 +91,43 @@ func RenderSegment(s Segment) string {
 	b.WriteString("\n\n")
 
 	b.WriteString("## Raw region\n\n")
-	b.WriteString(RenderRawRegion(s.Messages))
+	b.WriteString(renderRawRegionStore(s.Messages))
 	if !strings.HasSuffix(b.String(), "\n") {
 		b.WriteString("\n")
 	}
 	return b.String()
 }
 
+// renderRawRegionStore encodes the raw region for ON-DISK storage: the message
+// slice as a JSON array inside a ```json fenced code block. JSON is
+// self-delimiting, so LoadSegment reconstructs every field (Role, Name, Content,
+// ToolCallID, ToolCalls) exactly regardless of what the content contains — no
+// line-scanning heuristic that arbitrary tool output could spoof. This is the
+// storage format; RenderRawRegion is the separate human-readable display form.
+func renderRawRegionStore(msgs []model.Message) string {
+	if msgs == nil {
+		msgs = []model.Message{}
+	}
+	enc, err := json.MarshalIndent(msgs, "", "  ")
+	if err != nil {
+		// model.Message is plain data; marshaling cannot realistically fail.
+		enc = []byte("[]")
+	}
+	var b strings.Builder
+	b.WriteString(rawRegionFence)
+	b.WriteString("\n")
+	b.Write(enc)
+	b.WriteString("\n```\n")
+	return b.String()
+}
+
 // RenderRawRegion renders a message region as parseable-but-readable blocks:
 // each message opens with a header line "<role> [<name>]:" (the "[<name>]" part
 // omitted for messages without a tool name), followed by the raw content on the
-// next lines, then a blank separator. Content is stored raw (no sanitizing).
-// LoadSegment parses this format back into messages (role + name), which
-// segment_read's tool_filter needs.
+// next lines, then a blank separator. This is the HUMAN-READABLE display form
+// used by segment_read's tool output and the TUI show-original drill-in — it is
+// NOT the on-disk storage format (see renderRawRegionStore / LoadSegment) and is
+// never parsed back.
 func RenderRawRegion(msgs []model.Message) string {
 	var b strings.Builder
 	for _, m := range msgs {

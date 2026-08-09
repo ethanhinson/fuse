@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/ethanhinson/fuse/internal/model"
@@ -28,13 +27,10 @@ func ReadIndex(segDir string) (Index, error) {
 	return idx, nil
 }
 
-// rawHeaderRE matches a raw-region message header line "<role> [<name>]:" or
-// "<role>:". The name group is optional.
-var rawHeaderRE = regexp.MustCompile(`^(\S+?)(?: \[(.+)\])?:$`)
-
 // LoadSegment reads and parses a segment file at path, reconstructing its raw
-// region messages (role + name + content) from the "## Raw region" section so a
-// caller can filter by tool name.
+// region messages (role + name + content + tool metadata) from the "## Raw
+// region" section so a caller can filter by tool name or re-render the original
+// transcript exactly.
 func LoadSegment(path string) (Segment, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -52,35 +48,31 @@ func LoadSegment(path string) (Segment, error) {
 	return seg, nil
 }
 
-// parseRawRegion parses the block format RenderRawRegion emits back into
-// messages. Content between a header and the next header (or EOF) is the
-// message body, with the trailing blank separator trimmed.
+// parseRawRegion parses the on-disk raw region (a JSON array of messages inside
+// a ```json fenced code block, as renderRawRegionStore emits) back into the
+// message slice. Because JSON is self-delimiting, every field round-trips
+// exactly regardless of message content — no line-scanning heuristic that
+// arbitrary tool output could spoof into a false message boundary. A missing or
+// malformed block yields no messages (best-effort recovery, never a panic).
 func parseRawRegion(raw string) []model.Message {
-	lines := strings.Split(raw, "\n")
-	var out []model.Message
-	var cur *model.Message
-	var buf []string
-	flush := func() {
-		if cur == nil {
-			return
-		}
-		cur.Content = strings.TrimRight(strings.Join(buf, "\n"), "\n")
-		out = append(out, *cur)
-		cur = nil
-		buf = nil
+	start := strings.Index(raw, rawRegionFence)
+	if start < 0 {
+		return nil
 	}
-	for _, ln := range lines {
-		if m := rawHeaderRE.FindStringSubmatch(ln); m != nil {
-			flush()
-			cur = &model.Message{Role: m[1], Name: m[2]}
-			continue
-		}
-		if cur != nil {
-			buf = append(buf, ln)
-		}
+	rest := raw[start+len(rawRegionFence):]
+	// The JSON begins after the fence line's newline.
+	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[nl+1:]
 	}
-	flush()
-	return out
+	end := strings.Index(rest, "\n```")
+	if end < 0 {
+		return nil
+	}
+	var msgs []model.Message
+	if err := json.Unmarshal([]byte(rest[:end]), &msgs); err != nil {
+		return nil
+	}
+	return msgs
 }
 
 // sectionBetween returns the text between the start marker and the end marker.

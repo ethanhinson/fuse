@@ -52,9 +52,14 @@ func TestRenderSegmentFormat(t *testing.T) {
 	if !strings.Contains(out, "## Raw region") {
 		t.Errorf("missing ## Raw region section")
 	}
-	// Raw region renders role + tool name + content, unsanitized.
-	if !strings.Contains(out, "[read_file]") {
-		t.Errorf("raw region missing tool name marker")
+	// Raw region is stored as a self-delimiting ```json fenced block so
+	// reconstruction is lossless (see TestRawRegionRoundTripLossless).
+	if !strings.Contains(out, "```json") {
+		t.Errorf("raw region must be a ```json fenced block; got:\n%s", out)
+	}
+	// The tool name and content are carried as JSON fields, not a header line.
+	if !strings.Contains(out, `"Name": "read_file"`) {
+		t.Errorf("raw region missing tool name field")
 	}
 	if !strings.Contains(out, "file contents here") {
 		t.Errorf("raw region missing tool content")
