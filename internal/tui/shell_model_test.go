@@ -986,3 +986,78 @@ func TestStatusBarShowsAgentCounter(t *testing.T) {
 		t.Errorf("idle status bar should fall back to plain hint: %q", view)
 	}
 }
+
+// --- Update-handler extraction (P1 #11) ---------------------------------------
+// These tests exercise the handlers extracted from the monolithic Update switch.
+// Each is driven BOTH through Update(msg) (dispatch still routes correctly) and
+// directly (the extraction's payoff: the handler is now unit-testable in
+// isolation). Behavior must match the pre-refactor inline logic exactly.
+
+func TestHandleToolCall_QueuesNonSpawn(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	if len(m.pendingCalls) != 0 {
+		t.Fatalf("precondition: pendingCalls = %d, want 0", len(m.pendingCalls))
+	}
+	// Via Update dispatch.
+	next, _ := m.Update(ToolCallMsg{Name: "bash", Args: `{"command":"ls"}`})
+	m = next.(ShellModel)
+	if len(m.pendingCalls) != 1 || m.pendingCalls[0].name != "bash" {
+		t.Fatalf("after Update: pendingCalls = %+v, want one 'bash'", m.pendingCalls)
+	}
+	// Directly on the extracted handler.
+	next2, _ := m.handleToolCall(ToolCallMsg{Name: "read_file", Args: `{"path":"x"}`})
+	m = next2.(ShellModel)
+	if len(m.pendingCalls) != 2 || m.pendingCalls[1].name != "read_file" {
+		t.Fatalf("after direct call: pendingCalls = %+v, want bash then read_file", m.pendingCalls)
+	}
+}
+
+func TestHandleToolResult_PopsQueuedCallFIFO(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	// Queue two calls, then feed two results; each result must pop the head.
+	m, _ = mustShell(m.handleToolCall(ToolCallMsg{Name: "bash", Args: "{}"}))
+	m, _ = mustShell(m.handleToolCall(ToolCallMsg{Name: "read_file", Args: "{}"}))
+	if len(m.pendingCalls) != 2 {
+		t.Fatalf("precondition: want 2 queued, got %d", len(m.pendingCalls))
+	}
+	next, _ := m.Update(ToolResultMsg{Name: "bash", Output: "ok"})
+	m = next.(ShellModel)
+	if len(m.pendingCalls) != 1 || m.pendingCalls[0].name != "read_file" {
+		t.Fatalf("after first result: queue = %+v, want only read_file", m.pendingCalls)
+	}
+	m, _ = mustShell(m.handleToolResult(ToolResultMsg{Name: "read_file", Output: "data"}))
+	if len(m.pendingCalls) != 0 {
+		t.Fatalf("after second result: want empty queue, got %d", len(m.pendingCalls))
+	}
+}
+
+func TestHandleAgentDone_ClearsRunningAndRecordsHistory(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	m.running = true
+	hist := []model.Message{{Role: "user", Content: "hi"}, {Role: "assistant", Content: "yo"}}
+	next, _ := m.Update(AgentDoneMsg{History: hist})
+	m = next.(ShellModel)
+	if m.running {
+		t.Error("running should be false after AgentDoneMsg")
+	}
+	if len(m.history) != 2 {
+		t.Errorf("history = %d msgs, want 2", len(m.history))
+	}
+}
+
+func TestHandleWindowSize_SetsViewportViaHandler(t *testing.T) {
+	m := NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true)
+	next, _ := m.handleWindowSize(tea.WindowSizeMsg{Width: 100, Height: 40})
+	m = next.(ShellModel)
+	if m.vp.Width != 100 {
+		t.Errorf("viewport width = %d, want 100", m.vp.Width)
+	}
+	if !m.ready {
+		t.Error("model should be ready after window size")
+	}
+}
+
+// mustShell unwraps a (tea.Model, tea.Cmd) pair to a ShellModel for chaining.
+func mustShell(next tea.Model, cmd tea.Cmd) (ShellModel, tea.Cmd) {
+	return next.(ShellModel), cmd
+}
