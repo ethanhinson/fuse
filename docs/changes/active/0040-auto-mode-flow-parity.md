@@ -2,7 +2,7 @@
 id: 40
 slug: auto-mode-flow-parity
 title: Auto-mode flow parity — in-workspace edits auto-approve
-status: proposed
+status: in-progress
 priority: high
 type: fix
 created: 2026-08-09
@@ -16,9 +16,10 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/auto-mode-flow-parity
 pr:
 blocked_by:
+claimed_at: 2026-08-09T18:41:47Z
 reconciled: false
 ---
 
