@@ -60,6 +60,29 @@ func NewLogger(dir string) (*Logger, error) {
 	return &Logger{f: f, w: bufio.NewWriter(f)}, nil
 }
 
+// SessionDir returns the per-session directory <baseDir>/<sessionID> (change
+// 0030). It holds session.jsonl and the segments/ subtree.
+func SessionDir(baseDir, sessionID string) string {
+	return filepath.Join(baseDir, sessionID)
+}
+
+// NewSessionLogger opens the session log under the per-session directory
+// <baseDir>/<sessionID>/session.jsonl (change 0030, keyed by the root
+// AgentNode.ID). The directory is created if absent. Existing flat *.jsonl logs
+// in baseDir are left untouched (read-compatible; no migration).
+func NewSessionLogger(baseDir, sessionID string) (*Logger, error) {
+	dir := SessionDir(baseDir, sessionID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("session log dir: %w", err)
+	}
+	path := filepath.Join(dir, "session.jsonl")
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("session log create: %w", err)
+	}
+	return &Logger{f: f, w: bufio.NewWriter(f)}, nil
+}
+
 // Write appends a log entry to the session file. It returns any error and also
 // latches the first failure in the Logger (see Err) so a hot per-child call site
 // can ignore the per-write return and surface a single error at Close.

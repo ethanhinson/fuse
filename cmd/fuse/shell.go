@@ -16,6 +16,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/segment"
 	"github.com/ethanhinson/fuse/internal/session"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -113,24 +114,11 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// model via grep/read_file (see docs/designs/context-management.md).
 	tools.SetSpillDir(filepath.Join(filepath.Dir(session.DefaultLogDir()), "tool-output"))
 
-	// Session log: sweep stale files and open a fresh log.
+	// Session log: sweep stale files. The log itself opens after the agent tree
+	// exists, so it can live under the per-session directory keyed by the root
+	// AgentNode.ID (change 0030).
 	logDir := session.DefaultLogDir()
 	go session.SweepOld(logDir, 7*24*time.Hour)
-	sessLog, serr := session.NewLogger(logDir)
-	if serr != nil {
-		log.Printf("session log: %v", serr)
-		sessLog = nil
-	} else {
-		// Surface a logging failure once, at close, rather than silently. The
-		// per-entry Write on the hot child path stays fire-and-forget (Logger
-		// latches the first error), so a full disk or closed file no longer
-		// vanishes without a trace. See session.Logger.Err/Close.
-		defer func() {
-			if err := sessLog.Close(); err != nil {
-				log.Printf("session log: %v", err)
-			}
-		}()
-	}
 
 	// Agent tree for subagent tracking. The tree-global spawn budget backstops
 	// runaway fan-out; its count feeds the budget line injected into results.
@@ -154,6 +142,28 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		rateGate = rateBucket
 	}
 	rootNode := tree.Node(tree.RootID())
+
+	// Session log + segment store, keyed by the root AgentNode.ID (change 0030):
+	// the log lives at ~/.fuse/sessions/<root-id>/session.jsonl and the concrete
+	// SegmentSink writes pre-compaction regions under that dir's segments/. The
+	// sink is installed for every agent built this session via installSummarizer.
+	sessLog, serr := session.NewSessionLogger(logDir, tree.RootID())
+	if serr != nil {
+		log.Printf("session log: %v", serr)
+		sessLog = nil
+	} else {
+		// Surface a logging failure once, at close, rather than silently. The
+		// per-entry Write on the hot child path stays fire-and-forget (Logger
+		// latches the first error), so a full disk or closed file no longer
+		// vanishes without a trace. See session.Logger.Err/Close.
+		defer func() {
+			if err := sessLog.Close(); err != nil {
+				log.Printf("session log: %v", err)
+			}
+		}()
+	}
+	setActiveSegmentSink(segment.NewFSSegmentSink(logDir, tree.RootID()))
+
 	// One blackboard per session, shared by every agent in the tree (change 0023).
 	bb := agent.NewBlackboard(tree)
 
