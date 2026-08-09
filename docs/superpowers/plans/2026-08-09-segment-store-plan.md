@@ -198,3 +198,39 @@ migrating existing flat `*.jsonl` logs into the per-session dir (old logs stay f
   session dir at construction (like `SetSpillDir`).
 - **TUI metadata chattiness** — reading `index.json` per header render is chatty; cache or ride a
   compaction event. Decide at Task 8.
+
+## Scope expansion — compression & non-destructive GC (PR #41 follow-up)
+
+Correction to the original design: the age sweeps deleted data and segments were
+stored uncompressed. New tasks make archival gzip-compressed, non-destructive,
+and self-describing, gated by an antagonistic answer-quality suite.
+
+### Task 11 — `internal/archive` helper (TDD)
+- `Archive(path, MetaFunc)`: gzip `path` → `path+".gz"` (0o600), write a
+  `path+".gz.meta.yml"` YAML sidecar (common fields + caller domain fields),
+  `os.Remove` the original. Idempotent on `.gz` / pre-existing `.gz`.
+- `Open(path)`: transparent read — prefer `path`, fall back to `path+".gz"`,
+  gunzip on magic bytes. Generic (no `session`/`tools` import).
+- Tier-1 round-trip tests incl. one `.gz` from the SYSTEM `gzip` binary.
+
+### Task 12 — Born-compressed segment seam (TDD)
+- `FSSegmentSink.Archive` writes gzip → `<n>.md.gz`; index records the on-disk
+  name; `index.json` stays uncompressed. `segment.LoadSegment` gunzips
+  transparently + `.gz` path fallback. Keep the lossless JSON raw-region format.
+
+### Task 13 — Convert the three sweeps delete → gzip-archive (TDD)
+- `session.SweepOld` (logs): gzip + session-domain sidecar, skip `.gz`.
+- `session.SweepOldSegments`: non-destructive back-compat bridge — compress
+  legacy plaintext `.md` in place, re-point index Path, never delete/prune;
+  born-compressed skipped. No second destructive horizon.
+- `tools.sweepSpillDir`: gzip + spill-domain sidecar, skip `.gz`/`.meta.yml`.
+
+### Task 14 — `read_file` gzip-transparent (TDD)
+- `tools.read` opens via `archive.Open`; binary guard on decompressed bytes;
+  spill recovery hint resolves post-archival.
+
+### Task 15 — Antagonistic answer-quality suite (TDD, the gate)
+- Tiers 1–5 including the Tier-4 gz-vs-plaintext end-to-end parity gate through
+  the real `a.Run` loop (mirrors the bd6f140 relevance-rescue drive test).
+
+### Task 16 — Full-suite gate under `-race`, `go vet`, docs, ADR-0020.
