@@ -1,0 +1,12 @@
+Peter Lowe's Ad and tracking server list — Attribution
+
+Source: https://pgl.yoyo.org/as/serverlist.php?hostformat=hosts;showintro=0
+Author: Peter Lowe (https://pgl.yoyo.org/adservers/)
+Snapshot pinned 2026-08-09.
+
+Peter Lowe's list is distributed free of charge for personal and
+non-commercial use. The bundled data/blocklist-domains.txt file is a small
+hand-authored representative subset in the one-domain-per-line format,
+provided for offline testing, with attribution to the upstream author.
+
+This attribution notice must be retained alongside the redistributed data.

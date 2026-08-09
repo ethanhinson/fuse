@@ -1,0 +1,16 @@
+# Curated one-domain-per-line blocklist snapshot (Peter Lowe's list style)
+# License / attribution: see LICENSE-PeterLowe.txt
+# Source: https://pgl.yoyo.org/as/serverlist.php?hostformat=hosts;showintro=0
+# Pin date: 2026-08-09
+# Small hand-authored representative subset for offline tests.
+
+ad-broker.example
+banner-network.example
+serve-ads.example
+metrics-beacon.example
+retargeting.example
+affiliate-tracker.example
+popup-ads.example
+sketchy-redirect.example
+scam-offer.example
+data-broker.example

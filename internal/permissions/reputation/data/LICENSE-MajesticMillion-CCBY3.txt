@@ -1,0 +1,16 @@
+Majestic Million — CC BY 3.0 Attribution
+
+Source: https://downloads.majestic.com/majestic_million.csv
+Provider: Majestic (https://majestic.com/reports/majestic-million)
+Snapshot pinned 2026-08-09.
+
+The Majestic Million data is licensed under the Creative Commons
+Attribution 3.0 Unported License (CC BY 3.0):
+https://creativecommons.org/licenses/by/3.0/
+
+Attribution: "Contains data from the Majestic Million
+(https://majestic.com/reports/majestic-million), licensed under CC BY 3.0."
+
+The bundled data/popularity.csv file is a small hand-authored
+Majestic-Million-style subset of well-known hosts, provided for offline
+testing. This attribution line must be retained alongside the data.

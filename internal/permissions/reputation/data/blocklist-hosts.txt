@@ -1,0 +1,26 @@
+# Title: Curated hosts-format blocklist snapshot (StevenBlack/hosts style)
+# License: MIT (see LICENSE-StevenBlack-MIT.txt)
+# Source: https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+# Pin date: 2026-08-09
+# This is a small hand-authored representative subset for offline tests.
+#
+# Format: `0.0.0.0 domain` per line. Lines starting with # are comments.
+# Blank lines are ignored.
+
+0.0.0.0 malware-test.example
+0.0.0.0 phishing-test.example
+0.0.0.0 badware.example
+0.0.0.0 tracker.example
+0.0.0.0 ads.doubleclick-test.example
+0.0.0.0 analytics.tracking-test.example
+0.0.0.0 pixel.adserver-test.example
+0.0.0.0 malvertising.example
+0.0.0.0 cryptominer-test.example
+0.0.0.0 spyware-test.example
+
+# A second block, to make sure the parser keeps scanning past comments.
+0.0.0.0 fake-login.example
+0.0.0.0 credential-harvest.example
+0.0.0.0 clickfraud.example
+0.0.0.0 popunder-ads.example
+0.0.0.0 telemetry-collector.example
