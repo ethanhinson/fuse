@@ -5,8 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
+
+	"github.com/ethanhinson/fuse/internal/archive"
 )
 
 type readTool struct{}
@@ -50,12 +51,17 @@ func (readTool) Execute(ctx context.Context, args string) Result {
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return Result{IsError: true, Output: fmt.Sprintf("bad arguments: %v", err)}
 	}
-	data, err := os.ReadFile(a.Path)
+	// Transparent decompression: a ".gz" (or a bare path whose file is now a
+	// "<path>.gz" archive) is gunzipped so the model's generic read_file keeps
+	// working on archived spill/log files. Plaintext files pass through unchanged.
+	// A truncated/corrupt gzip returns an error, never a panic.
+	data, err := archive.Open(a.Path)
 	if err != nil {
 		return Result{IsError: true, Output: err.Error()}
 	}
 	// Refuse binaries: raw executable bytes poison the model context and the
-	// control characters corrupt terminal rendering.
+	// control characters corrupt terminal rendering. The check runs on the
+	// DECOMPRESSED bytes so a gzipped binary is still refused.
 	head := data
 	if len(head) > 8192 {
 		head = head[:8192]

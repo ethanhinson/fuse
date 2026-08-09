@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ethanhinson/fuse/internal/archive"
 )
 
 func TestLoggerWriteAndClose(t *testing.T) {
@@ -59,14 +61,21 @@ func TestLoggerSurfacesWriteErrorAtClose(t *testing.T) {
 	}
 }
 
-func TestSweepOldRemovesStale(t *testing.T) {
+// TestSweepOldArchivesStale: SweepOld is now NON-DESTRUCTIVE — a stale log is
+// gzip-compressed to "<name>.gz" with a metadata sidecar, not deleted, and its
+// content is still recoverable byte-for-byte (change 0030 scope expansion).
+func TestSweepOldArchivesStale(t *testing.T) {
 	dir := t.TempDir()
 	old := filepath.Join(dir, "2000-01-01-aaaaaa.jsonl")
 	fresh := filepath.Join(dir, "2999-01-01-bbbbbb.jsonl")
-	for _, p := range []string{old, fresh} {
-		if err := os.WriteFile(p, []byte("{}\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+	oldBody := `{"ts":"2000-01-01T00:00:00Z","node_id":"n1","label":"root","kind":"spawn"}
+{"ts":"2000-01-01T00:00:01Z","node_id":"n2","parent_id":"n1","kind":"done","depth":1}
+`
+	if err := os.WriteFile(old, []byte(oldBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fresh, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 	// Backdate the "old" file well past the cutoff.
 	past := time.Now().Add(-30 * 24 * time.Hour)
@@ -76,11 +85,54 @@ func TestSweepOldRemovesStale(t *testing.T) {
 
 	SweepOld(dir, 7*24*time.Hour, "*.jsonl")
 
+	// Original gone, .gz + sidecar present.
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
-		t.Error("stale log should have been swept")
+		t.Error("stale log original should have been archived (removed) after gzip")
 	}
+	if _, err := os.Stat(old + ".gz"); err != nil {
+		t.Errorf("stale log not gzip-archived: %v", err)
+	}
+	if _, err := os.Stat(old + ".gz.meta.yml"); err != nil {
+		t.Errorf("stale log metadata sidecar not written: %v", err)
+	}
+	// Fresh log untouched.
 	if _, err := os.Stat(fresh); err != nil {
 		t.Error("fresh log should survive")
+	}
+	// The archived content is recoverable byte-for-byte.
+	got, err := archive.Open(old)
+	if err != nil {
+		t.Fatalf("recover archived log: %v", err)
+	}
+	if string(got) != oldBody {
+		t.Errorf("archived log not byte-identical:\n got %q\nwant %q", got, oldBody)
+	}
+	// The sidecar carries session-domain fields describing WHAT is in the file.
+	sc, err := os.ReadFile(old + ".gz.meta.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"entry_count", "node_ids", "root_label", "kinds"} {
+		if !strings.Contains(string(sc), field) {
+			t.Errorf("sidecar missing session field %q:\n%s", field, sc)
+		}
+	}
+}
+
+// TestSweepOldSkipsAlreadyGz: an already-archived ".gz" log is left alone.
+func TestSweepOldSkipsAlreadyGz(t *testing.T) {
+	dir := t.TempDir()
+	gz := filepath.Join(dir, "2000-01-01-cccccc.jsonl.gz")
+	if err := os.WriteFile(gz, []byte("\x1f\x8bfake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-30 * 24 * time.Hour)
+	_ = os.Chtimes(gz, past, past)
+
+	SweepOld(dir, 7*24*time.Hour, "*.jsonl")
+
+	if _, err := os.Stat(gz); err != nil {
+		t.Error("already-archived .gz log should be left alone")
 	}
 }
 
@@ -117,9 +169,19 @@ func join(ss []string) string {
 	return out
 }
 
-func TestSweepOldSegmentsRemovesStalePrunesIndex(t *testing.T) {
+// TestSweepOldSegmentsCompressesLegacyPlaintextKeepsDiscoverable: the segment
+// sweep is now NON-DESTRUCTIVE. New segments are born ".md.gz" (Part A) so the
+// sweep skips them; a LEGACY plaintext ".md" older than the horizon is gzipped
+// in place to ".md.gz" and the index Path re-pointed — it stays discoverable and
+// recoverable, never deleted (change 0030 scope expansion).
+func TestSweepOldSegmentsCompressesLegacyPlaintextKeepsDiscoverable(t *testing.T) {
 	base := t.TempDir()
 	segDir := writeSegForSweep(t, base, "sess-a", []string{"1-2-1.md", "3-4-1.md"})
+	// Give the legacy plaintext a real rendered body so recovery can be asserted.
+	rendered := "---\nturn_start: 1\nturn_end: 2\n---\n\n## Summary\n\ns\n\n## Raw region\n\n```json\n[]\n```\n"
+	if err := os.WriteFile(filepath.Join(segDir, "1-2-1.md"), []byte(rendered), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	stale := filepath.Join(segDir, "1-2-1.md")
 	past := time.Now().Add(-30 * 24 * time.Hour)
 	if err := os.Chtimes(stale, past, past); err != nil {
@@ -128,36 +190,61 @@ func TestSweepOldSegmentsRemovesStalePrunesIndex(t *testing.T) {
 
 	SweepOldSegments(base, 14*24*time.Hour)
 
+	// Legacy plaintext compressed in place, NOT deleted.
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Error(">14d segment should have been swept")
+		t.Error("legacy plaintext .md should be compressed away (replaced by .md.gz)")
 	}
-	if _, err := os.Stat(filepath.Join(segDir, "3-4-1.md")); err != nil {
-		t.Error("<=14d segment should survive")
+	if _, err := os.Stat(stale + ".gz"); err != nil {
+		t.Errorf("legacy .md not gzipped in place: %v", err)
 	}
-	// index.json pruned to drop the swept entry.
+	// Recoverable byte-for-byte through the transparent reader.
+	got, err := archive.Open(stale)
+	if err != nil {
+		t.Fatalf("recover compressed segment: %v", err)
+	}
+	if string(got) != rendered {
+		t.Errorf("compressed segment not byte-identical")
+	}
+	// index.json: the entry stays (still discoverable), Path re-pointed to .md.gz.
 	b, err := os.ReadFile(filepath.Join(segDir, "index.json"))
 	if err != nil {
 		t.Fatalf("index.json read: %v", err)
 	}
-	if strings.Contains(string(b), "1-2-1.md") {
-		t.Error("index.json still references the swept segment")
+	if !strings.Contains(string(b), "1-2-1.md.gz") {
+		t.Errorf("index.json Path not re-pointed to the compressed name:\n%s", b)
 	}
 	if !strings.Contains(string(b), "3-4-1.md") {
-		t.Error("index.json lost the surviving segment")
+		t.Error("index.json lost the untouched segment")
 	}
 }
 
-func TestSweepOldSegmentsRemovesEmptiedSessionDir(t *testing.T) {
+// TestSweepOldSegmentsSkipsBornCompressed: a segment already stored as ".md.gz"
+// is never touched (no double-compress, no delete), even when stale.
+func TestSweepOldSegmentsSkipsBornCompressed(t *testing.T) {
 	base := t.TempDir()
-	segDir := writeSegForSweep(t, base, "sess-empty", []string{"1-1-1.md"})
-	past := time.Now().Add(-30 * 24 * time.Hour)
-	_ = os.Chtimes(filepath.Join(segDir, "1-1-1.md"), past, past)
+	segDir := filepath.Join(base, "sess-gz", "segments")
+	if err := os.MkdirAll(segDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gzSeg := filepath.Join(segDir, "1-1-1.md.gz")
+	if err := os.WriteFile(gzSeg, []byte("\x1f\x8bfake"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	idx := `{"session_id":"sess-gz","segments":[{"path":"1-1-1.md.gz"}]}`
+	if err := os.WriteFile(filepath.Join(segDir, "index.json"), []byte(idx), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-90 * 24 * time.Hour)
+	_ = os.Chtimes(gzSeg, past, past)
 
 	SweepOldSegments(base, 14*24*time.Hour)
 
-	// The whole session dir should be gone once its last segment is swept.
-	if _, err := os.Stat(filepath.Join(base, "sess-empty")); !os.IsNotExist(err) {
-		t.Error("emptied session dir should be removed")
+	if _, err := os.Stat(gzSeg); err != nil {
+		t.Error("born-compressed .md.gz segment should never be deleted by the sweep")
+	}
+	b, _ := os.ReadFile(filepath.Join(segDir, "index.json"))
+	if !strings.Contains(string(b), "1-1-1.md.gz") {
+		t.Error("born-compressed segment wrongly pruned from index")
 	}
 }
 
@@ -178,8 +265,13 @@ func TestSweepOldSegmentsDescendsSymlinkedSessionDir(t *testing.T) {
 
 	SweepOldSegments(base, 14*24*time.Hour)
 
+	// The sweep descended the symlink and compressed the legacy plaintext in place
+	// (non-destructive): the original .md is gone but the .md.gz replaces it.
 	if _, err := os.Stat(filepath.Join(realSeg, "9-9-1.md")); !os.IsNotExist(err) {
-		t.Error("stale segment inside a symlinked session dir was not swept (IsDir skipped the symlink)")
+		t.Error("stale legacy segment inside a symlinked session dir was not compressed (IsDir skipped the symlink)")
+	}
+	if _, err := os.Stat(filepath.Join(realSeg, "9-9-1.md.gz")); err != nil {
+		t.Errorf("stale legacy segment not gzipped in place inside symlinked dir: %v", err)
 	}
 }
 

@@ -3,12 +3,17 @@ package session
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/ethanhinson/fuse/internal/archive"
 )
 
 // LogEntry is one line in the JSONL session log.
@@ -129,10 +134,18 @@ func (l *Logger) Close() error {
 	}
 }
 
-// SweepOld deletes files matching pattern (a filepath.Match glob, e.g.
-// "*.jsonl") older than maxAge from dir. Non-fatal. The pattern parameter
-// (change 0030) generalizes the previously hardcoded "*.jsonl" so the segment
-// sweep can share the age/glob machinery.
+// SweepOld ARCHIVES files matching pattern (a filepath.Match glob, e.g.
+// "*.jsonl") older than maxAge from dir: it gzip-compresses each to "<name>.gz"
+// and writes a metadata sidecar describing WHAT is in the file, then removes the
+// original — NON-DESTRUCTIVE (the data survives, compressed and self-describing).
+// This is the change 0030 scope correction: age sweeps compress rather than
+// delete. Already-archived ".gz" files are skipped. Non-fatal throughout,
+// matching the original best-effort contract (a failed archive drops that one
+// file, the sweep continues).
+//
+// The pattern parameter generalizes the previously hardcoded "*.jsonl" so the
+// segment sweep can share the age/glob machinery. Session logs (the sole caller
+// today, pattern "*.jsonl") get session-domain sidecar fields via logMeta.
 func SweepOld(dir string, maxAge time.Duration, pattern string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -140,23 +153,43 @@ func SweepOld(dir string, maxAge time.Duration, pattern string) {
 	}
 	cutoff := time.Now().Add(-maxAge)
 	for _, e := range entries {
-		if ok, _ := filepath.Match(pattern, e.Name()); !ok {
+		name := e.Name()
+		if ok, _ := filepath.Match(pattern, name); !ok {
 			continue
+		}
+		if strings.HasSuffix(name, archive.GzSuffix) {
+			continue // already archived on a prior sweep
 		}
 		info, err := e.Info()
 		if err != nil {
 			continue
 		}
 		if info.ModTime().Before(cutoff) {
-			os.Remove(filepath.Join(dir, e.Name())) //nolint:errcheck
+			// Attach session-domain metadata for JSONL logs; other patterns fall
+			// back to the common fields only.
+			var mf archive.MetaFunc
+			if strings.HasSuffix(name, ".jsonl") {
+				mf = logMeta
+			}
+			_, _ = archive.Archive(filepath.Join(dir, name), mf) // best-effort
 		}
 	}
 }
 
-// SweepOldSegments sweeps stale segment files under baseDir/*/segments/*.md
-// older than maxAge (change 0030, 14-day window at the call site), prunes their
-// entries from each session's index.json, and removes a session directory left
-// empty after the sweep. Non-fatal throughout — GC never blocks a session.
+// SweepOldSegments is the NON-DESTRUCTIVE segment GC (change 0030 scope
+// correction). New segments are born gzip-compressed as "*.md.gz" (see
+// fssink.Archive), so the common case is a no-op. This sweep exists only to
+// retroactively compress LEGACY plaintext "*.md" segments older than maxAge
+// (baseDir/*/segments/*.md, 14-day window at the call site): it gzips each in
+// place to "<name>.md.gz", removes the plaintext original, and re-points that
+// entry's Path in index.json — the segment stays discoverable and recoverable,
+// it is NEVER deleted. Because nothing is truly removed, the index is not pruned
+// and non-empty session dirs are never torn down.
+//
+// Policy note: creation-time compression (Part A) is the primary mechanism; this
+// age sweep is the back-compat bridge for segments that predate it. There is no
+// second destructive horizon — segments are retained indefinitely, merely
+// compressed. A future purge, if ever wanted, would be a separate long horizon.
 //
 // Symlink safety (learning dirent-isdir-skips-symlinks): a session dir reached
 // through a symlink reports DirEntry.IsDir() == false, so the descent falls back
@@ -183,39 +216,72 @@ func SweepOldSegments(baseDir string, maxAge time.Duration) {
 	}
 }
 
-// sweepSessionSegments sweeps one session directory's segments/ subtree, prunes
-// its index.json, and removes the session dir if it is left empty.
+// sweepSessionSegments compresses one session directory's legacy plaintext
+// "*.md" segments older than cutoff in place, re-pointing their index.json Path
+// entries. Born-compressed "*.md.gz" segments are skipped (already stored the
+// new way). Nothing is deleted, so the index is never pruned and dirs are never
+// torn down.
 func sweepSessionSegments(sessionDir string, cutoff time.Time) {
 	segDir := filepath.Join(sessionDir, "segments")
 	segs, err := os.ReadDir(segDir)
 	if err != nil {
 		return
 	}
-	swept := map[string]bool{}
+	// renamed maps an old plaintext name to its new compressed name so the index
+	// Path can be re-pointed.
+	renamed := map[string]string{}
 	for _, s := range segs {
-		if ok, _ := filepath.Match("*.md", s.Name()); !ok {
+		name := s.Name()
+		// Only legacy plaintext .md (not the born-compressed .md.gz).
+		if ok, _ := filepath.Match("*.md", name); !ok {
 			continue
 		}
 		info, err := s.Info()
 		if err != nil {
 			continue
 		}
-		if info.ModTime().Before(cutoff) {
-			if os.Remove(filepath.Join(segDir, s.Name())) == nil {
-				swept[s.Name()] = true
-			}
+		if !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if compressSegmentInPlace(filepath.Join(segDir, name)) {
+			renamed[name] = name + ".gz"
 		}
 	}
-	if len(swept) > 0 {
-		pruneIndex(filepath.Join(segDir, "index.json"), swept)
+	if len(renamed) > 0 {
+		repointIndex(filepath.Join(segDir, "index.json"), renamed)
 	}
-	removeIfEmpty(segDir)
-	removeIfEmpty(sessionDir)
 }
 
-// pruneIndex rewrites index.json to drop entries whose Path was swept. A missing
-// or unparseable index is left alone.
-func pruneIndex(idxPath string, swept map[string]bool) {
+// compressSegmentInPlace gzips a legacy plaintext segment file to "<path>.gz"
+// and removes the plaintext original. Non-fatal: on any error it leaves the
+// plaintext in place (still readable) and reports false. Returns true only when
+// the plaintext was successfully replaced by the compressed form.
+func compressSegmentInPlace(path string) bool {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(content); err != nil {
+		return false
+	}
+	if err := zw.Close(); err != nil {
+		return false
+	}
+	if err := os.WriteFile(path+".gz", buf.Bytes(), 0o600); err != nil {
+		return false
+	}
+	if err := os.Remove(path); err != nil {
+		return false
+	}
+	return true
+}
+
+// repointIndex rewrites index.json so any entry whose Path was compressed points
+// at the new ".gz" name. The entry is KEPT (still discoverable) — this sweep
+// never prunes. A missing or unparseable index is left alone.
+func repointIndex(idxPath string, renamed map[string]string) {
 	b, err := os.ReadFile(idxPath)
 	if err != nil {
 		return
@@ -227,20 +293,22 @@ func pruneIndex(idxPath string, swept map[string]bool) {
 	if err := json.Unmarshal(b, &idx); err != nil {
 		return
 	}
-	kept := idx.Segments[:0]
-	for _, raw := range idx.Segments {
-		var e struct {
-			Path string `json:"path"`
-		}
-		if json.Unmarshal(raw, &e) == nil && swept[e.Path] {
+	changed := false
+	for i, raw := range idx.Segments {
+		var e map[string]any
+		if json.Unmarshal(raw, &e) != nil {
 			continue
 		}
-		kept = append(kept, raw)
+		p, _ := e["path"].(string)
+		if np, ok := renamed[p]; ok {
+			e["path"] = np
+			if nb, merr := json.Marshal(e); merr == nil {
+				idx.Segments[i] = nb
+				changed = true
+			}
+		}
 	}
-	idx.Segments = kept
-	// If no segments remain, drop the index file so the dir can be removed.
-	if len(idx.Segments) == 0 {
-		os.Remove(idxPath) //nolint:errcheck
+	if !changed {
 		return
 	}
 	out, err := json.Marshal(idx)
@@ -248,15 +316,4 @@ func pruneIndex(idxPath string, swept map[string]bool) {
 		return
 	}
 	os.WriteFile(idxPath, out, 0o600) //nolint:errcheck
-}
-
-// removeIfEmpty removes dir if it contains no entries. Non-fatal.
-func removeIfEmpty(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	if len(entries) == 0 {
-		os.Remove(dir) //nolint:errcheck
-	}
 }
