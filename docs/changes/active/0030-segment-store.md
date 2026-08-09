@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/segment-store
 pr:
 blocked_by:
-reconciled: false
-claimed_at: 2026-08-09T03:34:37Z
+reconciled: true
+claimed_at: 2026-08-09T03:39:05Z
 ---
 
 ## Artifacts
@@ -66,7 +66,60 @@ becomes lossless-with-recovery. Design detail is in the linked spec; at proposal
 
 ## Coordination
 
-- **Depends on #0027** (anchored summarization), which is `proposed`/specced but not yet built.
-  This change widens #0027's `SegmentSink` seam; #0027's spec is amended to record the widened
-  `SegmentRegion` struct. The implementer's reconcile pass must re-validate the seam against
-  merged reality at #0030 build time.
+- **Depends on #0027** (anchored summarization), now **`done`** (PR #28 merged). #0027 already
+  shipped the **widened struct-based `SegmentSink` seam** (`internal/agent/segment.go`:
+  `SegmentRegion` + `Archive(r SegmentRegion) (string, error)`), the `noopSegmentSink` default,
+  and the recovery-pointer line (`internal/agent/summarize.go` `buildSummaryMessage`). So the
+  seam-widening and #0027 spec-amendment work items are **already satisfied** and drop from this
+  change's scope. Two follow-on gaps remain for #0030 to close (see the Reconcile log):
+  (a) `SegmentRegion.TurnStart/TurnEnd` are declared but not populated at the invocation site
+  (`internal/agent/loop.go`); #0030 wires the turn-range computation (`turnIndices` already
+  exists in `internal/agent/relevance.go`), and (b) the root `AgentNode.ID` is not available at
+  `NewLogger` time, so the per-session directory (D2) uses the spec's lazy-creation fallback.
+
+## Reconcile log
+
+### 2026-08-09 — reconciled against merged origin/main (tip bd6f140)
+
+Re-validated the change + spec against merged reality. #0027 is now `done` (PR #28). Findings
+from a full code survey of the cited seams:
+
+- **`SegmentSink` seam — already widened (scope drop).** #0027 shipped the struct-based seam the
+  spec's D1 required verbatim: `internal/agent/segment.go` defines `SegmentRegion{TurnStart,
+  TurnEnd, Messages, Summary, ToolNames, TokensBefore, TokensAfter}` and
+  `SegmentSink.Archive(r SegmentRegion) (pointer string, err error)`, plus `noopSegmentSink`
+  returning `("", nil)`. The recovery-pointer line is emitted by `buildSummaryMessage` in
+  `internal/agent/summarize.go` only when the pointer is non-empty. **Consequences:** the
+  "widen the seam" and "amend #0027's spec" work items (spec D1 + item 7) are already done and
+  are removed from scope — this change now only implements the concrete filesystem sink against
+  the existing seam.
+- **DRIFT 1 — turn range not populated.** The sink is invoked at `internal/agent/loop.go` with
+  `SegmentRegion{Messages, Summary, ToolNames, TokensBefore, TokensAfter}` — `TurnStart/TurnEnd`
+  are left zero. `turnIndices([]model.Message) []int` already exists in
+  `internal/agent/relevance.go`. **Folded into scope:** #0030 wires the turn-range computation at
+  the invocation site (derive min/max turn from the region) so the sink and index carry a real
+  turn range. Small, contained; not a seam change.
+- **DRIFT 2 — session-id timing.** `session.NewLogger(dir)` (`internal/session/log.go`) is
+  constructed in `cmd/fuse/shell.go` BEFORE the root `AgentNode` (and its `ID`) exists, so the
+  session-id cannot be woven into the log path at logger-construction time. This is exactly the
+  risk spec D2 anticipated; **resolution: take the spec's documented fallback** — create the
+  per-session directory lazily on first log/segment write (or thread the root id in after tree
+  construction). Recorded here as the chosen path; the plan will pick the least-invasive of the
+  two.
+- **Tool wiring confirmed.** `DefaultTools()` (`internal/tools/registry.go`) → root registry via
+  `defaultToolRegistry` (`cmd/fuse/run.go`), and children via `childToolRegistry`/`Registry.Subset`
+  (`cmd/fuse/run.go`, `cmd/fuse/main.go`). Adding `segment_read` to `DefaultTools()` auto-wires it
+  everywhere; per the `patch-every-cloned-child-builder` learning the plan re-derives the
+  child-wiring sites by grep at build time and confirms flow-through.
+- **GC confirmed.** `session.SweepOld(dir, maxAge)` (`internal/session/log.go`) exists,
+  non-fatal, called from `cmd/fuse/shell.go` with a hardcoded 7-day `*.jsonl` window. Spec D5's
+  parameterization (add a `pattern` arg, keep the 7-day `*.jsonl` log call, add a 14-day segment
+  sweep, symlink-safe per `dirent-isdir-skips-symlinks`) stands unchanged.
+- **TUI confirmed.** `renderDetailHeader`, `handleDetailKey`, `buildEventViewLines` all present
+  in `internal/tui/agents_model.go`; the `s` key is unbound and free for the "show original"
+  action. Spec D6 stands.
+
+No new ADRs cited or produced during reconcile. Auto-capture is disabled
+(`AUTO_CAPTURE_ENABLED=false`), so adjacent follow-ups (e.g. the `fuse replay` command) are
+noted in the spec's Follow-ups, not minted. Design is **not** invalidated — scope narrows
+(seam already exists) and two anticipated build-time gaps are now explicit.
