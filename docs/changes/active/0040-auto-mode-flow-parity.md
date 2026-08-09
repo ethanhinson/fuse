@@ -55,8 +55,14 @@ ADR-0006 (`.fuse.local.yml` tighten-only trust boundary) unchanged.
 - **Path-scope the edit tools** — route `write_file`/`edit_file` through the existing
   workspace-containment heuristic: an in-workspace path auto-approves, an escape (`../`,
   out-of-root symlink, garbled `path`) still asks the human.
-- **Extend the safe-list** — add `segment_read` (read-only) and the network-read/orchestration
-  tools (`web_search`, `web_fetch`, `skill`, `pipeline_run`) so they stop hitting the classifier.
+- **Extend the safe-list** — add `segment_read` (read-only), `web_search` (a controlled query
+  to a known, configured engine — no arbitrary egress), and the orchestration tools (`skill`,
+  `pipeline_run`, whose children are independently re-gated).
+- **Keep `web_fetch` gated on the domain** — it pulls a model-chosen arbitrary URL, so the host
+  is the risk surface (malware, drive-by, prompt-injection, SSRF). A static host-deny floor
+  (malware / IP-literal / loopback / RFC-1918 private ranges) runs before a domain-reputation-
+  aware classifier verdict; new `permissions.auto.fetch_deny` / `fetch_ask` host globs let a
+  user tighten it further.
 - **Give the classifier context** — plumb the user's messages into the classifier (the
   0017 D7 intent, currently `nil`) via the `context.Context`, preserving input hygiene
   (tool results / actor reasoning still excluded).
@@ -67,15 +73,16 @@ ADR-0006 (`.fuse.local.yml` tighten-only trust boundary) unchanged.
 
 - OS-level sandboxing (Seatbelt/Landlock/bubblewrap).
 - Two-stage classifier CoT (a noted future upgrade from 0017).
-- Any change to bash segment evaluation, the egress boundary, or the dangerous-command list.
-- Config schema additions (`AutoConfig` already carries the needed knobs).
+- Any change to bash segment evaluation, the (bash) egress boundary, or the dangerous-command list.
+- A live domain-reputation API for `web_fetch` (v1 uses a built-in host floor + the classifier's
+  own knowledge; a network lookup is a future upgrade).
 
 ## Open questions
 
 - Final `valveTotalLimit` value once only true gray-area denies count (defer to measurement
   after the core fix lands — see spec D4).
-- Whether `web_search`/`web_fetch` should be safe-listed unconditionally or remain classifier-
-  gated per user taste (spec leans safe-list; revisit if noisy).
+- The exact contents of the built-in `web_fetch` host-deny floor (which malware/parked-domain
+  hosts to seed beyond the IP-literal / loopback / RFC-1918 SSRF entries — settle at build).
 
 ## Reconcile log
 

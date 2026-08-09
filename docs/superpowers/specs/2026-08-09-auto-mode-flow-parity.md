@@ -37,9 +37,28 @@ In `resolveAuto`'s non-bash branch (`gate.go:405-410`), before falling to the cl
 
 Reuses `withinWorkspace` / `resolveExisting` verbatim — symlink-aware, and already handles not-yet-created files by resolving the deepest existing ancestor. No new bypass class: it admits only paths the same check bash mutations already trust.
 
-### D2 — Extend the safe-list
+### D2 — Extend the safe-list (but NOT `web_fetch`)
 
-Add to `onSafeList` / `safeList` (`policy.go`): `segment_read` (read-only), and `web_search` / `web_fetch` / `skill` / `pipeline_run` (network-read + orchestration, matching the existing `spawn_agent` rationale — children are independently re-gated by a cloned gate). Each entry carries a rationale comment like the existing `spawn_agent` / blackboard entries. A user who wants any of them gated again can demote via `permissions.always_prompt`.
+Add to `onSafeList` / `safeList` (`policy.go`): `segment_read` (read-only), `web_search`, `skill`, and `pipeline_run`.
+
+- **`web_search` is safe-listed.** It is a controlled query to a *known, configured* search engine (Brave / Tavily / a config-driven `CustomHTTPProvider`) — the endpoint is fixed by config, not chosen by the model, so there is no arbitrary-egress surface to reputation-check. A query string cannot reach a hostile host.
+- **`web_fetch` is deliberately NOT safe-listed** — see D2a. It pulls a model-chosen arbitrary URL, so the *domain* is the risk surface (a fetched page can carry malware payloads, drive-by content, prompt-injection, or exfil-beacon URLs). It stays classifier-gated with a domain-reputation signal.
+- **`skill` / `pipeline_run`** are orchestration whose spawned children inherit a cloned gate (same mode/rules/classifier), so every action they take is independently gated — matching the existing `spawn_agent` rationale.
+
+Each entry carries a rationale comment like the existing `spawn_agent` / blackboard entries. A user who wants any of them gated again can demote via `permissions.always_prompt`.
+
+### D2a — `web_fetch` domain-reputation gating
+
+`web_fetch` remains routed to the classifier in `resolveAuto`'s non-bash branch (its `url` arg is already passed as the classifier's `command`, so the target domain is *already visible* to the verdict call — `research.Scraper` also already enforces robots.txt at fetch time). Two additive refinements, both fail-safe:
+
+1. **Static host deny/ask floor (deterministic, runs before the classifier).** Extract the host from the `url` and check it against a small built-in reputation floor plus optional config lists:
+   - A built-in **deny** set of known-bad / no-fetch hosts (malware, IP-literal hosts, `localhost`/loopback and RFC-1918 private ranges — SSRF guard) ⇒ **deny**.
+   - `permissions.auto.fetch_deny` / `permissions.auto.fetch_ask` config globs (host-matched, per-project via the existing `projects:` map, honoring the ADR-0006 trust boundary — these are *tightening* keys so they may come from either config file) ⇒ deny / ask.
+   - A malformed/opaque URL (no parseable host) ⇒ **ask** (fail toward the human).
+   - Otherwise fall through to the classifier.
+2. **Classifier sees the domain explicitly.** The pending-call prompt for `web_fetch` names the target host and instructs the (block-biased) classifier to weigh domain reputation — an unrecognized or low-reputation host biases toward ask/deny, a well-known documentation/reference host biases toward allow. No external reputation API call in v1 (the classifier's own knowledge is the signal); a live reputation lookup is a noted future upgrade, out of scope here.
+
+Net: `web_fetch` of a well-known host in an active research task flows; a fetch of a sketchy or private-range host stops. This is the "spam/malware signal from the domain" the human called out — the host is the discriminator, not the mere fact of fetching.
 
 ### D3 — Give the classifier its context (fulfills 0017 D7)
 
@@ -63,26 +82,31 @@ Plumb the user's messages to `classifyOrAsk` so gray-area verdicts are informed 
 - **ADR-0006 trust boundary intact.** No loosening key is read from `.fuse.local.yml`; `workspaceRoot` is process-derived (`run.go:425`).
 - **ADR-0005 unchanged.** Per-segment bash evaluation is untouched; D1 adds allow paths for the edit tools only, never relaxing segment evaluation.
 - **Classifier hygiene intact (D3).** Only `role=="user"` turns are forwarded.
+- **`web_fetch` egress stays gated (D2a).** It is *not* safe-listed; a static host-deny floor (malware/IP-literal/loopback/RFC-1918 SSRF guard) runs before a domain-reputation-aware classifier verdict. `fetch_deny`/`fetch_ask` are tightening keys, so they honor ADR-0006 from either config file.
 - **Escape hatches preserved.** Out-of-workspace edits, egress, dangerous commands still stop; `always_prompt` re-arms any safe-listed tool.
 
 ---
 
 ## What changes (files)
 
-- `internal/permissions/gate.go` — non-bash edit-tool branch (D1); ctx-read for classifier context (D3).
-- `internal/permissions/policy.go` — safe-list additions (D2).
-- `internal/permissions/classifier.go` — accept forwarded user messages (already parameterized as `Classify(ctx, userMessages, …)`).
+- `internal/permissions/gate.go` — non-bash edit-tool branch (D1); `web_fetch` host-floor + domain-aware classifier routing (D2a); ctx-read for classifier context (D3).
+- `internal/permissions/policy.go` — safe-list additions: `segment_read`, `web_search`, `skill`, `pipeline_run` — **not** `web_fetch` (D2).
+- `internal/permissions/classifier.go` — accept forwarded user messages (already parameterized as `Classify(ctx, userMessages, …)`); domain-reputation instruction in the `web_fetch` pending-call prompt (D2a).
+- `internal/permissions/heuristics.go` (or a small new `fetchhost.go`) — host extraction + built-in deny floor (malware/IP-literal/loopback/RFC-1918) and config-glob host matching (D2a).
+- `internal/config/schema.go` — `AutoConfig` gains `fetch_deny` / `fetch_ask` (`[]string`, host globs); tightening keys, so honored from either config file (D2a).
 - `internal/agent/loop.go` — attach user messages to ctx before tool execute (D3).
-- Tests across `internal/permissions/*_test.go` and any agent seam test.
+- Tests across `internal/permissions/*_test.go`, `internal/config/loader_test.go`, and any agent seam test.
 
-No config schema change: `AutoConfig` already carries `deny` / `ask` / `classifier_model`.
+Config schema addition: `AutoConfig` gains `fetch_deny` / `fetch_ask` (D2a). `deny` / `ask` / `classifier_model` are unchanged.
 
 ---
 
 ## Testing notes
 
 - **Edit-tool scoping** (`heuristics_test.go` / `gate_test.go`): `write_file` / `edit_file` with (a) in-workspace path → allow, (b) `../` escape → ask, (c) symlink-out-of-root → ask, (d) not-yet-created in-workspace file → allow, (e) missing/garbled `path` → ask.
-- **Safe-list** (`safelist_test.go`): each newly added tool → allow in smart & auto.
+- **Safe-list** (`safelist_test.go`): each newly added tool (`segment_read`, `web_search`, `skill`, `pipeline_run`) → allow in smart & auto; **`web_fetch` → NOT auto-allowed** (routes to the host floor / classifier).
+- **`web_fetch` host floor** (`gate_test.go` / new `fetchhost_test.go`): (a) well-known host → falls through to classifier, (b) IP-literal / `localhost` / `10.x`/`192.168.x`/`172.16-31.x` → deny (SSRF), (c) `fetch_deny` glob match → deny, `fetch_ask` glob → ask, (d) malformed URL / no host → ask. Assert the *layer* that decides, not just the outcome.
+- **Loader** (`loader_test.go`): `fetch_deny`/`fetch_ask` parse; as tightening keys they merge from `.fuse.local.yml` too (unlike the loosening `auto.*` block).
 - **Classifier context** (`classifier_test.go`): stub gateway asserts forwarded messages contain the user turns and still contain **no** tool-result / assistant messages.
 - **Valve** (`valve_test.go`): a run of in-workspace edits does not advance the valve; only classifier denies do.
 - **Regression:** the existing bypass corpus (spec 0017 "Testing notes") stays green.
@@ -93,15 +117,17 @@ No config schema change: `AutoConfig` already carries `deny` / `ask` / `classifi
 
 - OS-level sandboxing (Seatbelt/Landlock/bubblewrap).
 - Two-stage classifier CoT (spec 0017's noted future upgrade).
-- Any change to bash segment evaluation, egress boundary, or the dangerous-command list.
-- Config schema additions.
+- Any change to bash segment evaluation, the (bash) egress boundary, or the dangerous-command list.
+- A **live** domain-reputation API for `web_fetch` — v1 uses the built-in host floor + the classifier's own knowledge; a network reputation lookup is a future upgrade.
+- Config schema additions **beyond** `AutoConfig.fetch_deny` / `fetch_ask` (D2a).
 
 ---
 
 ## Recommended sequencing (for the build plan)
 
 1. **D1 + D2** first — isolated to `internal/permissions/`, no agent seam; removes ~90% of the stopping and is independently shippable/testable.
-2. **D3** next — adds the agent→ctx seam; improves residual gray-area quality.
-3. **D4** last — guided by measurement once D1–D3 land.
+2. **D2a** (`web_fetch` host floor + config keys) — self-contained in `permissions` + `config`; can ride with D1+D2 or land right after.
+3. **D3** next — adds the agent→ctx seam; improves residual gray-area quality (and feeds the D2a domain verdict).
+4. **D4** last — guided by measurement once D1–D3 land.
 
 May build as one PR or split D1+D2 / D3+D4; the plan step decides.
