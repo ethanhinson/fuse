@@ -2,7 +2,7 @@
 id: 41
 slug: agents-panel-ux
 title: Agents split-panel UX — focus indicator, reliable scrolling, blackboard readability
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-09
@@ -17,7 +17,7 @@ results: docs/results/2026-08-09-agents-panel-ux-results.md
 trivial: false
 auto_groomable:
 branch: feat/agents-panel-ux
-claimed_at: 2026-08-09T20:43:42Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/44
 blocked_by:
 reconciled: true
