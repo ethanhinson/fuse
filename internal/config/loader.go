@@ -14,6 +14,37 @@ import (
 // stderr and is swappable in tests.
 var warnw io.Writer = os.Stderr
 
+// tightenNumeric applies the ADR-0006 tighten-only merge rule for a single
+// numeric axis where a SMALLER positive value is the stronger (more restrictive)
+// setting — throughput rates, session-token ceilings, pipeline caps, queue
+// bounds, tool timeouts. It is the one place that rule lives, so every axis
+// behaves identically:
+//
+//   - newV <= 0 (omitted, or a nonsensical negative that would DISABLE a set
+//     limit): dropped from EVERY source, trusted included. reported=false.
+//   - trusted source: newV overrides unconditionally. reported=false.
+//   - untrusted source: honored only as a strict tightening — the current value
+//     is already set (>0) and newV is positive and strictly lower. Otherwise the
+//     change is a loosening: dropped, reported=true so the caller can name it in
+//     the aggregated startup warning.
+//
+// Generic over int/float64 so the float64 queue_bound shares the exact int
+// logic. Returns whether the change should be reported as an ignored loosening.
+func tightenNumeric[T ~int | ~float64](cur *T, newV T, trusted bool) (reported bool) {
+	if newV <= 0 {
+		return false
+	}
+	if trusted {
+		*cur = newV
+		return false
+	}
+	if *cur > 0 && newV < *cur {
+		*cur = newV // strictly-lower positive = tighten, honored
+		return false
+	}
+	return true // loosening from an untrusted source — drop and report
+}
+
 // Load resolves configuration by starting from Default(), merging
 // ~/.fuse/config.yml if present, then .fuse.local.yml in the CWD if present,
 // and finally applying LLM_GATEWAY_URL / LLM_GATEWAY_KEY env overrides.
@@ -198,22 +229,9 @@ func mergeWorkflows(c *Config, raw map[string]WorkflowConfig, trusted bool) (loo
 // only strengthen a limit its trusted owner already chose, never author one.
 func mergeThroughput(c *Config, raw rawThroughputConfig, trusted bool) (loosened []string) {
 	tighten := func(key string, cur *int, newV int) {
-		if newV <= 0 {
-			// Omitted axis (0), or a nonsensical negative that would DISABLE an
-			// already-set positive limit (0 = unlimited). Dropped from every source,
-			// trusted included, mirroring the MaxSpawns/MaxConcurrent negative clamp
-			// above — a negative throughput axis is never a valid tightening.
-			return
+		if tightenNumeric(cur, newV, trusted) {
+			loosened = append(loosened, key)
 		}
-		if trusted {
-			*cur = newV
-			return
-		}
-		if *cur > 0 && newV > 0 && newV < *cur {
-			*cur = newV // strictly-lower positive = tighten, honored
-			return
-		}
-		loosened = append(loosened, key)
 	}
 	tighten("throughput.requests_per_minute", &c.Throughput.RequestsPerMinute, raw.RequestsPerMinute)
 	tighten("throughput.tokens_per_minute", &c.Throughput.TokensPerMinute, raw.TokensPerMinute)
@@ -240,18 +258,9 @@ func mergeThroughput(c *Config, raw rawThroughputConfig, trusted bool) (loosened
 // dropped with its key name returned for the aggregated warning.
 func mergePipeline(c *Config, raw rawPipelineSynthesisConfig, trusted bool) (loosened []string) {
 	tighten := func(key string, cur *int, newV int) {
-		if newV <= 0 {
-			return // omitted axis (0), or a nonsensical negative
+		if tightenNumeric(cur, newV, trusted) {
+			loosened = append(loosened, key)
 		}
-		if trusted {
-			*cur = newV
-			return
-		}
-		if *cur > 0 && newV > 0 && newV < *cur {
-			*cur = newV // strictly-lower positive = tighten, honored
-			return
-		}
-		loosened = append(loosened, key)
 	}
 	tighten("pipeline.synthesis.max_steps", &c.Pipeline.Synthesis.MaxSteps, raw.MaxSteps)
 	tighten("pipeline.synthesis.max_fanout", &c.Pipeline.Synthesis.MaxFanout, raw.MaxFanout)
@@ -441,14 +450,8 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	// only TIGHTEN — lower an already-set positive bound — mirroring the
 	// workflow-pool tighten-only rule (ADR-0006). A negative value is nonsensical
 	// for a queue multiplier (it would zero the pool queue), so it is dropped.
-	if raw.Agents.QueueBound > 0 {
-		if trusted {
-			c.Agents.QueueBound = raw.Agents.QueueBound
-		} else if c.Agents.QueueBound > 0 && raw.Agents.QueueBound < c.Agents.QueueBound {
-			c.Agents.QueueBound = raw.Agents.QueueBound // strictly-lower positive = tighten
-		} else {
-			ignoredThroughput = append(ignoredThroughput, "agents.queue_bound")
-		}
+	if tightenNumeric(&c.Agents.QueueBound, raw.Agents.QueueBound, trusted) {
+		ignoredThroughput = append(ignoredThroughput, "agents.queue_bound")
 	}
 
 	// tool_timeout_seconds: the per-leaf-tool-call watchdog. 0 = unset (the agent
@@ -456,14 +459,8 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	// a tightening control (ADR-0006): a trusted source sets any positive value;
 	// an untrusted source may only LOWER an already-set positive timeout, never
 	// raise or introduce one. A negative value is nonsensical and is dropped.
-	if raw.Agents.ToolTimeoutSeconds > 0 {
-		if trusted {
-			c.Agents.ToolTimeoutSeconds = raw.Agents.ToolTimeoutSeconds
-		} else if c.Agents.ToolTimeoutSeconds > 0 && raw.Agents.ToolTimeoutSeconds < c.Agents.ToolTimeoutSeconds {
-			c.Agents.ToolTimeoutSeconds = raw.Agents.ToolTimeoutSeconds // strictly-lower = tighten
-		} else {
-			ignoredThroughput = append(ignoredThroughput, "agents.tool_timeout_seconds")
-		}
+	if tightenNumeric(&c.Agents.ToolTimeoutSeconds, raw.Agents.ToolTimeoutSeconds, trusted) {
+		ignoredThroughput = append(ignoredThroughput, "agents.tool_timeout_seconds")
 	}
 
 	// Workflows: a config-level entry overrides any prior one for the same name.
