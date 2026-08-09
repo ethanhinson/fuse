@@ -66,8 +66,9 @@ ADR-0006 (`.fuse.local.yml` tighten-only trust boundary) unchanged.
   data sources — StevenBlack/hosts (MIT) + optionally hagezi TIF (GPL-3.0) for the blocklist,
   Majestic Million (CC BY 3.0) for the known-good popularity nudge — all embeddable; restrictive-
   ToU sources (URLhaus/OpenPhish/PhishTank/Spamhaus) are runtime-query-only and never bundled.
-  An inert `fetch_reputation` config seam (D2b) is defined for a future live API (Google Safe
-  Browsing free tier) but no provider is implemented in this change.
+  No live reputation API is included: the only free option (Google Safe Browsing) is
+  non-commercial-only and would make fuse un-embeddable commercially, so it's excluded outright
+  rather than left as a seam — the embedded blocklist + classifier are the signal.
 - **Give the classifier context** — plumb the user's messages into the classifier (the
   0017 D7 intent, currently `nil`) via the `context.Context`, preserving input hygiene
   (tool results / actor reasoning still excluded).
@@ -79,8 +80,9 @@ ADR-0006 (`.fuse.local.yml` tighten-only trust boundary) unchanged.
 - OS-level sandboxing (Seatbelt/Landlock/bubblewrap).
 - Two-stage classifier CoT (a noted future upgrade from 0017).
 - Any change to bash segment evaluation, the (bash) egress boundary, or the dangerous-command list.
-- Implementing a live domain-reputation provider (the `fetch_reputation` seam is defined inert;
-  wiring Google Safe Browsing / URLhaus is a future drop-in — see spec D2b).
+- Any live domain-reputation API (deliberately excluded — the only free option, Google Safe
+  Browsing, is non-commercial-only; a paid provider like Google Web Risk is its own future
+  change if ever wanted — see spec D2a).
 
 ## Open questions
 

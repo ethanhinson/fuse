@@ -57,7 +57,7 @@ Each entry carries a rationale comment like the existing `spawn_agent` / blackbo
    - `permissions.auto.fetch_deny` / `permissions.auto.fetch_ask` config globs (host-matched, per-project via the existing `projects:` map, honoring the ADR-0006 trust boundary — these are *tightening* keys so they may come from either config file) ⇒ deny / ask.
    - A malformed/opaque URL (no parseable host) ⇒ **ask** (fail toward the human).
    - Otherwise fall through to the classifier (with an allowlist/known-good nudge, below).
-2. **Classifier sees the domain explicitly.** The pending-call prompt for `web_fetch` names the target host and instructs the (block-biased) classifier to weigh domain reputation — an unrecognized or low-reputation host biases toward ask/deny, a well-known documentation/reference host biases toward allow. The hardcoded known-good host seed and the popularity-list membership are passed as *nudges* in the prompt (never an absolute bypass — a compromised `*.github.io` page must still be deniable). No external reputation API call in v1 (blocklist data + the classifier's own knowledge are the signal); a live reputation API is D2b, gated off by default.
+2. **Classifier sees the domain explicitly.** The pending-call prompt for `web_fetch` names the target host and instructs the (block-biased) classifier to weigh domain reputation — an unrecognized or low-reputation host biases toward ask/deny, a well-known documentation/reference host biases toward allow. The hardcoded known-good host seed and the popularity-list membership are passed as *nudges* in the prompt (never an absolute bypass — a compromised `*.github.io` page must still be deniable). No external reputation API call (blocklist data + the classifier's own knowledge are the signal — see *No live reputation API* below for why a live API is deliberately excluded).
 
 Net: `web_fetch` of a well-known host in an active research task flows; a fetch of a sketchy, blocklisted, or private-range host stops. This is the "spam/malware signal from the domain" the human called out — the host is the discriminator, not the mere fact of fetching.
 
@@ -78,13 +78,7 @@ All sources below were verified live (fetched, not recalled) with licenses check
 
 **Snapshot & refresh:** the embedded lists are bundled as a pinned, dated snapshot (reproducible builds; offline-first — no network dependency to gate a fetch). A `Makefile`/`go generate` target re-pulls and re-pins them; staleness is acceptable because the SSRF guard, config `fetch_deny`, and the classifier are independent layers. License texts for the bundled lists ship alongside the data (MIT + CC BY 3.0 attribution, GPL-3.0 text if TIF is kept).
 
-### D2b — Optional live reputation API (off by default, future-friendly seam)
-
-A live pre-fetch reputation lookup is defined as an **opt-in** layer, disabled by default, so v1 stays offline-first:
-- **Google Safe Browsing Lookup API v4/v5** — genuinely free, single API key (free GCP project), up to 500 URLs/request, fast JSON verdict ideal for pre-fetch gating. **Caveat surfaced to users: non-commercial use only** — a commercial build must switch to the paid Web Risk API.
-- **URLhaus API** (free Auth-Key) as a complementary malware-URL signal; **VirusTotal** (4/min, 500/day, non-commercial) is enrichment-only, too rate-limited to gate inline.
-
-Wire a `permissions.auto.fetch_reputation` config block (provider + key + `enabled: false` default) as the seam; the provider call sits between the static floor and the classifier when enabled. Implementing an actual provider is **out of scope for this change** — D2b defines only the config surface and the insertion point so the future upgrade is a drop-in.
+**No live reputation API.** A live pre-fetch reputation lookup was considered and **rejected** (not deferred): the only genuinely-free option, Google Safe Browsing, is **non-commercial-use only**, which would make fuse un-embeddable in a commercial build — an unacceptable licensing constraint to bake in even as an off-by-default seam (the other free APIs — URLhaus Auth-Key, VirusTotal — are either restrictive-ToU or too rate-limited to gate inline). The embedded license-clean blocklist + the classifier are the malware/reputation signal; there is no `fetch_reputation` config key. If a commercially-licensed provider (e.g. Google Web Risk, paid) is ever wanted, it is its own future change, not a seam pre-committed here.
 
 ### D3 — Give the classifier its context (fulfills 0017 D7)
 
@@ -120,11 +114,11 @@ Plumb the user's messages to `classifyOrAsk` so gray-area verdicts are informed 
 - `internal/permissions/classifier.go` — accept forwarded user messages (already parameterized as `Classify(ctx, userMessages, …)`); domain-reputation instruction in the `web_fetch` pending-call prompt (D2a).
 - `internal/permissions/fetchhost.go` (new) — host extraction, hardcoded SSRF guard (IP-literal/loopback/RFC-1918/link-local), embedded-blocklist lookup, known-good allow-bias seed, and config-glob host matching (D2a).
 - `internal/permissions/reputation/` (new) — embedded blocklist + popularity-list snapshots (`//go:embed`), a `go generate` / `Makefile` target to re-pull-and-pin them, and the bundled license texts (MIT + CC BY 3.0, GPL-3.0 if TIF kept). Source URLs pinned in the generator (D2a *Reputation data sources*).
-- `internal/config/schema.go` — `AutoConfig` gains `fetch_deny` / `fetch_ask` (`[]string`, host globs); tightening keys (D2a). Plus a `fetch_reputation` block (provider/key/`enabled: false`) as the D2b seam — parsed but no provider implemented.
+- `internal/config/schema.go` — `AutoConfig` gains `fetch_deny` / `fetch_ask` (`[]string`, host globs); tightening keys (D2a). No `fetch_reputation` key (deliberately excluded — see D2a *No live reputation API*).
 - `internal/agent/loop.go` — attach user messages to ctx before tool execute (D3).
 - Tests across `internal/permissions/*_test.go`, `internal/config/loader_test.go`, and any agent seam test.
 
-Config schema additions: `AutoConfig` gains `fetch_deny` / `fetch_ask` (D2a) and the inert `fetch_reputation` seam (D2b). `deny` / `ask` / `classifier_model` are unchanged.
+Config schema additions: `AutoConfig` gains `fetch_deny` / `fetch_ask` (D2a) only. `deny` / `ask` / `classifier_model` are unchanged.
 
 ---
 
@@ -134,7 +128,7 @@ Config schema additions: `AutoConfig` gains `fetch_deny` / `fetch_ask` (D2a) and
 - **Safe-list** (`safelist_test.go`): each newly added tool (`segment_read`, `web_search`, `skill`, `pipeline_run`) → allow in smart & auto; **`web_fetch` → NOT auto-allowed** (routes to the host floor / classifier).
 - **`web_fetch` host floor** (`fetchhost_test.go`): (a) well-known/known-good host → falls through to classifier with an allow nudge, (b) IP-literal / `localhost` / `10.x`/`192.168.x`/`172.16-31.x`/`169.254.x`/`::1` → deny (SSRF), (c) embedded-blocklist host → deny, (d) `fetch_deny` glob → deny / `fetch_ask` glob → ask, (e) malformed URL / no host → ask. Assert the *layer* that decides, not just the outcome.
 - **Embedded lists** (`reputation` pkg test): the `//go:embed` snapshots parse, are non-empty, and a couple of known-bad fixtures resolve as blocked; a known-good popularity host resolves as ranked. (No network in tests — the pinned snapshot is the fixture.)
-- **Loader** (`loader_test.go`): `fetch_deny`/`fetch_ask` parse and, as tightening keys, merge from `.fuse.local.yml` too (unlike the loosening `auto.*` block); the `fetch_reputation` seam parses with `enabled: false` default.
+- **Loader** (`loader_test.go`): `fetch_deny`/`fetch_ask` parse and, as tightening keys, merge from `.fuse.local.yml` too (unlike the loosening `auto.*` block).
 - **Classifier context** (`classifier_test.go`): stub gateway asserts forwarded messages contain the user turns and still contain **no** tool-result / assistant messages.
 - **Valve** (`valve_test.go`): a run of in-workspace edits does not advance the valve; only classifier denies do.
 - **Regression:** the existing bypass corpus (spec 0017 "Testing notes") stays green.
@@ -146,8 +140,8 @@ Config schema additions: `AutoConfig` gains `fetch_deny` / `fetch_ask` (D2a) and
 - OS-level sandboxing (Seatbelt/Landlock/bubblewrap).
 - Two-stage classifier CoT (spec 0017's noted future upgrade).
 - Any change to bash segment evaluation, the (bash) egress boundary, or the dangerous-command list.
-- **Implementing** a live domain-reputation provider — D2b defines only the inert `fetch_reputation` config seam + insertion point; the actual Safe Browsing / URLhaus provider call is a future drop-in. v1 gates on the embedded blocklist + classifier alone.
-- Config schema additions **beyond** `AutoConfig.fetch_deny` / `fetch_ask` and the inert `fetch_reputation` seam.
+- **Any live domain-reputation API** — deliberately excluded (not deferred): the only free option (Google Safe Browsing) is non-commercial-only and would make fuse un-embeddable commercially; there is no `fetch_reputation` seam. A paid provider like Google Web Risk is its own future change if ever wanted. This change gates on the embedded license-clean blocklist + the classifier alone.
+- Config schema additions **beyond** `AutoConfig.fetch_deny` / `fetch_ask`.
 
 ---
 
