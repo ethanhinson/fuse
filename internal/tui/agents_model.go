@@ -120,6 +120,15 @@ func (m *AgentsModel) SelectedNodeID() string {
 	return m.nodes[m.selected].ID
 }
 
+// rightFocused reports whether the right column (detail/blackboard/event/segment)
+// currently holds focus, derived entirely from the existing view-state flags —
+// there is no separate focus source of truth. False means the left (tree) column
+// is focused. The colored-border focus indicator and the wheel-scroll routing
+// both key off this.
+func (m *AgentsModel) rightFocused() bool {
+	return m.inDetail || m.inBlackboard || m.inEventView || m.inSegmentView
+}
+
 // Init is a no-op; the parent ShellModel owns the tree-update subscription.
 func (m *AgentsModel) Init() tea.Cmd { return nil }
 
