@@ -173,7 +173,7 @@ func TestTUI_BlackboardTabScreenshot(t *testing.T) {
 
 	for _, want := range []string{
 		"plan/outline",     // structured key
-		`"steps":3`,        // its JSON value
+		`"steps": 3`,       // its JSON value (pretty-printed, change 0041 Task 6)
 		"facet/sqlite",     // second key
 		"research/facet-2", // child writer provenance
 	} {
@@ -225,7 +225,7 @@ func TestTUI_BlackboardSlashOpensBoard(t *testing.T) {
 	}, teatest.WithDuration(10*time.Second), teatest.WithCheckInterval(20*time.Millisecond))
 
 	frame := captureOverlayFrame(t, tm, "blackboard-slash")
-	if !strings.Contains(frame, "plan/outline") || !strings.Contains(frame, `"steps":3`) {
+	if !strings.Contains(frame, "plan/outline") || !strings.Contains(frame, `"steps": 3`) {
 		t.Errorf("/blackboard did not open on the board\n%s", frame)
 	}
 }

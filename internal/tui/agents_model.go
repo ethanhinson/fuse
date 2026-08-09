@@ -830,6 +830,7 @@ func (m *AgentsModel) buildBlackboardLines(w int) []string {
 	)
 
 	var body []string
+	var groupStarts []int // body-line index of each writer-group header
 	if m.blackboard == nil {
 		body = []string{lipgloss.NewStyle().Foreground(colMuted).Render("No blackboard for this session.")}
 	} else {
@@ -837,39 +838,7 @@ func (m *AgentsModel) buildBlackboardLines(w int) []string {
 		if len(snap) == 0 {
 			body = []string{lipgloss.NewStyle().Foreground(colMuted).Render("Blackboard is empty.")}
 		} else {
-			keys := make([]string, 0, len(snap))
-			for k := range snap {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-
-			keyStyle := lipgloss.NewStyle().Foreground(colCyan).Bold(true)
-			wroteStyle := lipgloss.NewStyle().Foreground(colMuted)
-			for _, k := range keys {
-				e := snap[k]
-				// Key line: "key  ⟨written by <label>⟩", both fields sanitized and
-				// wrapped as PLAIN text before styling (wrap.String is not ANSI-aware,
-				// so styling must happen after the width split).
-				keyText := sanitizeDisplay(k)
-				wrote := "⟨written by " + sanitizeDisplay(e.WriterLabel) + "⟩"
-				keyPlain := keyText + "  " + wrote
-				keyRows := wrapToWidth(keyPlain, w)
-				for i, kr := range keyRows {
-					// Only the first row carries the accented key; continuation rows
-					// (the wrapped label) render muted to stay visually attached.
-					if i == 0 {
-						body = append(body, keyStyle.Render(kr))
-					} else {
-						body = append(body, wroteStyle.Render(kr))
-					}
-				}
-				// Value line(s): JSON-encoded, sanitized, hard-wrapped, indented.
-				val := sanitizeDisplay(encodeBlackboardValue(e.Value))
-				for _, vl := range wrapToWidth("  "+val, w) {
-					body = append(body, wroteStyle.Render(vl))
-				}
-				body = append(body, "")
-			}
+			body, groupStarts = m.blackboardBody(snap, w)
 		}
 	}
 
@@ -897,11 +866,139 @@ func (m *AgentsModel) buildBlackboardLines(w int) []string {
 		window = body[m.bbScroll:end]
 	}
 
+	// Sticky per-writer header: if the top of the window sits inside a group whose
+	// header has scrolled above the window, pin that header as the first visible
+	// line (one pinned header; no nested pinning). Drop the last content row so the
+	// pinned header does not push the window over its row budget.
+	if len(window) > 0 {
+		if gs := stickyGroupStart(groupStarts, m.bbScroll); gs >= 0 && gs < m.bbScroll {
+			pinned := stickyPinned(body[gs])
+			trimmed := window
+			if len(trimmed) >= rows && len(trimmed) > 1 {
+				trimmed = trimmed[:len(trimmed)-1]
+			}
+			window = append([]string{pinned}, trimmed...)
+		}
+	}
+
 	out := append([]string{header, rule}, window...)
 	for len(out) < m.height-1 {
 		out = append(out, "")
 	}
 	return append(out[:m.height-1], help)
+}
+
+// blackboardBody builds the grouped blackboard body lines and the body-line index
+// of each writer-group header. Entries bucket by writer (WriterLabel, falling back
+// to WriterID, then "(unknown)"); groups are ordered most-recent-first by the
+// group's max WrittenAt; keys are sorted alphabetically within a group. Every
+// model/tool-controlled field is sanitized and hard-wrapped to w so no line can
+// exceed the pane width or leak control bytes.
+func (m *AgentsModel) blackboardBody(snap map[string]agent.BlackboardEntry, w int) (body []string, groupStarts []int) {
+	type group struct {
+		name   string
+		latest time.Time
+		keys   []string
+	}
+	byName := map[string]*group{}
+	for k, e := range snap {
+		name := writerGroupName(e)
+		g := byName[name]
+		if g == nil {
+			g = &group{name: name}
+			byName[name] = g
+		}
+		g.keys = append(g.keys, k)
+		if e.WrittenAt.After(g.latest) {
+			g.latest = e.WrittenAt
+		}
+	}
+	groups := make([]*group, 0, len(byName))
+	for _, g := range byName {
+		sort.Strings(g.keys)
+		groups = append(groups, g)
+	}
+	// Most-recent-writer-first; ties broken by name for a stable, deterministic order.
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].latest.Equal(groups[j].latest) {
+			return groups[i].name < groups[j].name
+		}
+		return groups[i].latest.After(groups[j].latest)
+	})
+
+	groupHeaderStyle := lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+	metaStyle := lipgloss.NewStyle().Foreground(colMuted)
+	valStyle := lipgloss.NewStyle().Foreground(colNormal)
+	sepStyle := lipgloss.NewStyle().Foreground(colMuted)
+
+	for _, g := range groups {
+		groupStarts = append(groupStarts, len(body))
+		// Group header: "▌ <writer>" sanitized + fit to width.
+		hdr := "▌ " + sanitizeDisplay(g.name)
+		for _, hr := range wrapToWidth(hdr, w) {
+			body = append(body, groupHeaderStyle.Render(hr))
+		}
+		for ki, k := range g.keys {
+			e := snap[k]
+			// Key line: accented key, muted "written by" meta.
+			keyRows := wrapToWidth(sanitizeDisplay(k), w)
+			for _, kr := range keyRows {
+				body = append(body, keyStyle.Render(kr))
+			}
+			for _, mr := range wrapToWidth("  ⟨written by "+sanitizeDisplay(e.WriterLabel)+"⟩", w) {
+				body = append(body, metaStyle.Render(mr))
+			}
+			// Value line(s): pretty JSON for objects/arrays (each already-indented
+			// line wrapped individually), inline for scalars; normal contrast.
+			for _, vl := range encodeBlackboardValueLines(e.Value, w) {
+				body = append(body, valStyle.Render(vl))
+			}
+			// Separator between entries within a group (muted rule).
+			if ki < len(g.keys)-1 {
+				body = append(body, sepStyle.Render(fitLine(strings.Repeat("─", maxInt(1, w/3)), w)))
+			}
+		}
+		body = append(body, "") // blank line between groups
+	}
+	return body, groupStarts
+}
+
+// writerGroupName picks the display bucket for an entry: WriterLabel, then
+// WriterID, then "(unknown)".
+func writerGroupName(e agent.BlackboardEntry) string {
+	if s := strings.TrimSpace(e.WriterLabel); s != "" {
+		return e.WriterLabel
+	}
+	if s := strings.TrimSpace(e.WriterID); s != "" {
+		return e.WriterID
+	}
+	return "(unknown)"
+}
+
+// stickyGroupStart returns the body-line index of the header of the group that
+// contains body line `top`, or -1 if none. groupStarts is ascending.
+func stickyGroupStart(groupStarts []int, top int) int {
+	gs := -1
+	for _, s := range groupStarts {
+		if s <= top {
+			gs = s
+		} else {
+			break
+		}
+	}
+	return gs
+}
+
+// stickyPinned re-renders a group header line as a pinned header (kept identical
+// to the in-body header so the text is stable as it pins/unpins).
+func stickyPinned(headerLine string) string { return headerLine }
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // encodeBlackboardValue JSON-encodes a stored value for display, falling back to
@@ -912,6 +1009,32 @@ func encodeBlackboardValue(v any) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return string(b)
+}
+
+// encodeBlackboardValueLines renders a stored value as display lines fit to width
+// w. Scalars (string/number/bool/nil) render inline on a single indented line;
+// object/array values pretty-print as 2-space-indented JSON with EACH already-
+// indented line sanitized and wrapped individually (indentation preserved, the
+// blob never re-flowed as one string — guardrail 2). Every returned line's display
+// width is <= w.
+func encodeBlackboardValueLines(v any, w int) []string {
+	switch v.(type) {
+	case map[string]any, []any:
+		b, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			return wrapToWidth("  "+sanitizeDisplay(encodeBlackboardValue(v)), w)
+		}
+		var out []string
+		for _, raw := range strings.Split(string(b), "\n") {
+			// Preserve the JSON indentation; wrap this one already-indented line.
+			for _, wl := range wrapToWidth("  "+sanitizeDisplay(raw), w) {
+				out = append(out, wl)
+			}
+		}
+		return out
+	default:
+		return wrapToWidth("  "+sanitizeDisplay(encodeBlackboardValue(v)), w)
+	}
 }
 
 // wrapToWidth hard-wraps s (already sanitized) so no returned line's display
