@@ -1,6 +1,12 @@
 # Backlog
 
-**39 changes** — ⚪ 1 deferred · ✅ 32 done · 🗑️ 6 killed
+**40 changes** — 🟡 1 proposed · ⚪ 1 deferred · ✅ 32 done · 🗑️ 6 killed
+
+## 🟡 Proposed (1)
+
+| # | Title | Priority | Type | Readiness |
+|---|-------|----------|------|-----------|
+| [0040](active/0040-auto-mode-flow-parity.md) | Auto-mode flow parity — in-workspace edits auto-approve | `high` | `fix` | build-ready |
 
 ## ⚪ Deferred (1)
 
@@ -11,6 +17,7 @@
 ```mermaid
 graph TD
   0012 --> 0029
+  0040
   0012:::done
   classDef done fill:#d3f9d8;
 ```
