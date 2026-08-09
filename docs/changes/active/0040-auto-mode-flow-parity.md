@@ -12,14 +12,14 @@ related: [17]
 discovered_from: []
 adrs: [5, 6]
 spec: docs/superpowers/specs/2026-08-09-auto-mode-flow-parity.md
-plan:
+plan: docs/superpowers/plans/2026-08-09-auto-mode-flow-parity-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-flow-parity
 pr:
 blocked_by:
-claimed_at: 2026-08-09T18:44:34Z
+claimed_at: 2026-08-09T18:50:11Z
 reconciled: true
 ---
 
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-09-auto-mode-flow-parity.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-09-auto-mode-flow-parity.md) |
+| Plan | [2026-08-09-auto-mode-flow-parity-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-flow-parity/docs/superpowers/plans/2026-08-09-auto-mode-flow-parity-plan.md) |
 | ADRs | [ADR-0005](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
 <!-- docket:artifacts:end -->
 
