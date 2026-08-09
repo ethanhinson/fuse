@@ -195,6 +195,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build, sessionMode, classifierConstructible(cfg))
 	m = m.WithTree(tree)
 	m = m.WithBlackboard(bb)
+	// Segment surface (change 0030): the /agents overlay reads this session's
+	// segments/ dir for the compaction indicator and "s" show-original.
+	m = m.WithSegmentsDir(segment.SegmentsDir(logDir, tree.RootID()))
 	// Hand the same shared bucket to the observability surface so the agents
 	// overlay shows live rate-gate utilization (change 0036); nil is the no-gate
 	// fast path and renders no rate-gate segment.

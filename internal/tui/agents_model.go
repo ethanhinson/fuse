@@ -56,6 +56,25 @@ type AgentsModel struct {
 	// live utilization joins the scheduler summary block at the top of the tree
 	// pane so the overlay shows the throughput brake alongside the pool counters.
 	rateGate *ratelimit.Bucket
+
+	// segmentsDir is the session's segments/ directory (change 0030), or "" when
+	// segment archiving is off. The header reads its index.json (cached) to show
+	// the segments indicator, and "s" reads the archived raw regions into the
+	// existing event drill-in. segCache/segCacheMod cache the last parsed index so
+	// the per-render header read is not a fresh disk hit every frame.
+	segmentsDir   string
+	segCache      *segmentSummaryData
+	segCacheMod   time.Time
+	inSegmentView bool               // showing archived raw region in the drill-in
+	segEvents     []agent.AgentEvent // synthetic single event feeding buildEventViewLines
+}
+
+// segmentSummaryData is the cached, parsed segments summary for the header
+// indicator: the segment count and total tokens before/after.
+type segmentSummaryData struct {
+	count        int
+	tokensBefore int
+	tokensAfter  int
 }
 
 // NewAgentsModel creates an AgentsModel backed by the given tree, with an
@@ -71,6 +90,14 @@ func NewAgentsModel(t *agent.AgentTree, gate *ratelimit.Bucket) *AgentsModel {
 // the "b" key then reports the tab is unavailable.
 func (m *AgentsModel) WithBlackboard(bb *agent.Blackboard) *AgentsModel {
 	m.blackboard = bb
+	return m
+}
+
+// WithSegmentsDir attaches the session's segments/ directory (change 0030) so
+// the detail header can show the compaction indicator and "s" can open the
+// archived raw region in the drill-in. Empty ("") is the no-segments path.
+func (m *AgentsModel) WithSegmentsDir(dir string) *AgentsModel {
+	m.segmentsDir = dir
 	return m
 }
 
@@ -106,10 +133,13 @@ func (m *AgentsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// detail view — the board is session-scoped, so it should be reachable
 		// wherever you are in the overlay, not only from the top-level tree.
 		// (The expanded single-event reader keeps "b" for its own scrolling.)
-		if msg.String() == "b" && !m.inEventView {
+		if msg.String() == "b" && !m.inEventView && !m.inSegmentView {
 			m.inBlackboard = true
 			m.bbScroll = 0
 			return m, nil
+		}
+		if m.inSegmentView {
+			return m.handleSegmentViewKey(msg)
 		}
 		if m.inEventView {
 			return m.handleEventViewKey(msg)
@@ -256,12 +286,40 @@ func (m *AgentsModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.inEventView = true
 			m.eventScroll = 0
 		}
+	case "s":
+		// Show original (change 0030): open the archived raw region in the existing
+		// event drill-in (it already sanitizes). Only meaningful when this session
+		// has archived segments (root node). A no-op otherwise.
+		if raw := m.loadSegmentRegions(); raw != "" {
+			m.segEvents = []agent.AgentEvent{{
+				Kind:    agent.KindToolResult,
+				Name:    "archived raw region",
+				Payload: map[string]any{"output": raw},
+			}}
+			m.inSegmentView = true
+			m.eventScroll = 0
+		}
 	case "q", "esc", "tab":
 		m.inDetail = false
 		m.detailScroll = 0
 		m.followTail = true
 	}
 	return m, nil
+}
+
+// handleSegmentViewKey scrolls the archived raw-region drill-in and backs out to
+// the detail event list on esc/q/tab (change 0030). It reuses the event-view
+// scroll semantics so the reader behaves identically to the normal drill-in.
+func (m *AgentsModel) handleSegmentViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "esc", "tab":
+		m.inSegmentView = false
+		m.segEvents = nil
+		m.eventScroll = 0
+		return m, nil
+	default:
+		return m.handleEventViewKey(msg)
+	}
 }
 
 // handleEventViewKey scrolls within one expanded event.
@@ -518,10 +576,20 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 	}
 	m.inEventView = false
 
-	header := m.renderDetailHeader(n, w)
+	// "s" show-original: render the archived raw region through the SAME event
+	// drill-in (it already sanitizes — learning sanitize-untrusted-bytes-fixed-
+	// width-tui — so no new render path). segEvents is a synthetic single event
+	// holding the raw region text.
+	if m.inSegmentView && len(m.segEvents) > 0 {
+		m.eventSel = 0
+		return m.buildEventViewLines(n, m.segEvents, w)
+	}
+	m.inSegmentView = false
+
+	headerLines := strings.Split(m.renderDetailHeader(n, w), "\n")
 	rule := lipgloss.NewStyle().Foreground(colMuted).Render(strings.Repeat("─", w))
 
-	rows := m.height - 3 // header + rule + help
+	rows := m.height - 2 - len(headerLines) // header line(s) + rule + help
 	if rows < 1 {
 		rows = 1
 	}
@@ -565,12 +633,13 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 		}
 	}
 	help := fitHelp(
-		"j/k select  enter expand  b board  g/G first/last  esc back",
-		"j/k · enter · b board · esc",
+		"j/k select  enter expand  s original  b board  g/G first/last  esc back",
+		"j/k · enter · s orig · b board · esc",
 		w,
 	)
 
-	out := append([]string{header, rule}, evtLines...)
+	out := append(append([]string{}, headerLines...), rule)
+	out = append(out, evtLines...)
 	for len(out) < m.height-1 {
 		out = append(out, "")
 	}
@@ -799,11 +868,18 @@ func (m *AgentsModel) renderDetailHeader(n agent.NodeView, w int) string {
 	}
 
 	rightS := glyph + lipgloss.NewStyle().Foreground(colMuted).Render(" "+elapsed+tokens)
-	return fitLine(
+	top := fitLine(
 		lipgloss.NewStyle().Foreground(colNormal).Render(label)+
 			strings.Repeat(" ", space)+rightS,
 		w,
 	)
+	// Compaction indicator (change 0030): a compact segments line under the
+	// header when the (root) node has archived segments. Returned as a second
+	// line joined by "\n"; buildDetailLines splits it back out.
+	if ind := m.segmentIndicatorLine(n); ind != "" {
+		return top + "\n" + fitLine(lipgloss.NewStyle().Foreground(colMuted).Render(ind), w)
+	}
+	return top
 }
 
 // renderEventLines renders one selectable row per (pre-filtered) event; the
