@@ -61,8 +61,8 @@ func TestSegmentGatewaySeamArchivesAndRecovers(t *testing.T) {
 	base := t.TempDir()
 	const rootID = "root-seam"
 	sink := fssink.NewFSSegmentSink(base, rootID)
-	prev := activeSegmentSink
-	t.Cleanup(func() { activeSegmentSink = prev })
+	prev := currentSegmentSink()
+	t.Cleanup(func() { setActiveSegmentSink(prev) })
 	setActiveSegmentSink(sink)
 
 	segDir := segment.SegmentsDir(base, rootID)

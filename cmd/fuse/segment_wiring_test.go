@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/agent"
@@ -13,10 +14,10 @@ import (
 // TestActiveSegmentSinkDefaultsNil: with no sink installed, installSummarizer
 // wires the agent with a nil sink (→ the no-op default inside the agent).
 func TestActiveSegmentSinkResolvesInstalled(t *testing.T) {
-	prev := activeSegmentSink
-	t.Cleanup(func() { activeSegmentSink = prev })
+	prev := currentSegmentSink()
+	t.Cleanup(func() { setActiveSegmentSink(prev) })
 
-	activeSegmentSink = nil
+	setActiveSegmentSink(nil)
 	if got := currentSegmentSink(); got != nil {
 		t.Errorf("currentSegmentSink() = %v, want nil when none installed", got)
 	}
@@ -32,6 +33,23 @@ func TestActiveSegmentSinkResolvesInstalled(t *testing.T) {
 		t.Errorf("currentSegmentSink() type = %T, want *fssink.FSSegmentSink", got)
 	}
 	var _ agent.SegmentSink = got // compile-time interface satisfaction
+}
+
+// TestActiveSegmentSinkConcurrentAccess exercises the holder's RWMutex: concurrent
+// setters and readers (installSummarizer reads it on child-spawn goroutines) must
+// be race-free. Meaningful only under `go test -race`.
+func TestActiveSegmentSinkConcurrentAccess(t *testing.T) {
+	prev := currentSegmentSink()
+	t.Cleanup(func() { setActiveSegmentSink(prev) })
+
+	base := t.TempDir()
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(2)
+		go func() { defer wg.Done(); setActiveSegmentSink(fssink.NewFSSegmentSink(base, "r")) }()
+		go func() { defer wg.Done(); _ = currentSegmentSink() }()
+	}
+	wg.Wait()
 }
 
 // TestNewSessionLoggerPerSessionDir: a new session's log lands under

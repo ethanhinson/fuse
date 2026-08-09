@@ -268,15 +268,29 @@ func gatewayAdapter(cfg config.Config, gate model.RateGate) *model.Adapter {
 // installSummarizer for every agent built in the session. Nil ⇒ installSummarizer
 // passes nil to the agent, which installs the no-op default (persists nothing,
 // omits the recovery pointer). One process serves one shell session, so a single
-// package-level holder is sufficient — mirroring tools.SetSpillDir's model.
-var activeSegmentSink agent.SegmentSink
+// package-level holder is sufficient. It is guarded by an RWMutex — matching its
+// siblings tools.SetSpillDir and tools.SetSegmentsDir — because installSummarizer
+// reads it on child-spawn goroutines, so a happens-before convention alone is not
+// enough.
+var (
+	activeSegmentSinkMu sync.RWMutex
+	activeSegmentSink   agent.SegmentSink
+)
 
 // setActiveSegmentSink installs the session's SegmentSink for all subsequently
 // built agents.
-func setActiveSegmentSink(s agent.SegmentSink) { activeSegmentSink = s }
+func setActiveSegmentSink(s agent.SegmentSink) {
+	activeSegmentSinkMu.Lock()
+	activeSegmentSink = s
+	activeSegmentSinkMu.Unlock()
+}
 
 // currentSegmentSink returns the installed session SegmentSink (nil when none).
-func currentSegmentSink() agent.SegmentSink { return activeSegmentSink }
+func currentSegmentSink() agent.SegmentSink {
+	activeSegmentSinkMu.RLock()
+	defer activeSegmentSinkMu.RUnlock()
+	return activeSegmentSink
+}
 
 // installSummarizer wires Tier 2 anchored summarization (change 0027) onto a
 // after agent.New. When cfg.Context.Summarization.Enabled it builds a bounded
