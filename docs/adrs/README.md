@@ -21,6 +21,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0015](0015-per-result-relevance-classification.md) — Per-result relevance classification over a per-result scorer interface (Accepted) ← change #28
 - [ADR-0016](0016-subagent-spawn-tree-runtime.md) — Subagent runtime is an append-only spawn tree with bounded depth and width and slot-yield deadlock avoidance (Accepted) ← change #12 · relates to ADR-0002, ADR-0007
 - [ADR-0017](0017-segment-store-fssink-subpackage-split.md) — Split the segment store into an agent-free internal/segment package and an agent-dependent internal/segment/fssink subpackage to break an import cycle (Accepted) ← change #30
+- [ADR-0018](0018-per-session-directory-layout-flat-log-read-compat.md) — Per-session directory layout for session logs and segments, with flat-log read-compatibility and no migration (Accepted) ← change #30 · relates to ADR-0017
 
 ## Superseded / Reversed
 
