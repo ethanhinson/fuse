@@ -257,6 +257,10 @@ type AgentsConfig struct {
 	MaxSpawns     int     `yaml:"max_spawns"`
 	MaxConcurrent int     `yaml:"max_concurrent"`
 	QueueBound    float64 `yaml:"queue_bound"`
+	// ToolTimeoutSeconds bounds a single leaf tool call (bash, read, web_fetch,
+	// …). 0 selects the agent default (120s). Orchestration tools (spawn_agent,
+	// pipeline_run) are always exempt — they await child agents by design.
+	ToolTimeoutSeconds int `yaml:"tool_timeout_seconds"`
 }
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
@@ -357,9 +361,10 @@ type rawPermissionsConfig struct {
 
 // rawAgentsConfig mirrors AgentsConfig on-disk.
 type rawAgentsConfig struct {
-	MaxSpawns     int     `yaml:"max_spawns"`
-	MaxConcurrent int     `yaml:"max_concurrent"`
-	QueueBound    float64 `yaml:"queue_bound"`
+	MaxSpawns          int     `yaml:"max_spawns"`
+	MaxConcurrent      int     `yaml:"max_concurrent"`
+	QueueBound         float64 `yaml:"queue_bound"`
+	ToolTimeoutSeconds int     `yaml:"tool_timeout_seconds"`
 }
 
 // rawThroughputConfig mirrors ThroughputConfig on-disk. Every numeric is

@@ -451,6 +451,21 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 		}
 	}
 
+	// tool_timeout_seconds: the per-leaf-tool-call watchdog. 0 = unset (the agent
+	// applies its 120s default). A SHORTER timeout is more restrictive, so this is
+	// a tightening control (ADR-0006): a trusted source sets any positive value;
+	// an untrusted source may only LOWER an already-set positive timeout, never
+	// raise or introduce one. A negative value is nonsensical and is dropped.
+	if raw.Agents.ToolTimeoutSeconds > 0 {
+		if trusted {
+			c.Agents.ToolTimeoutSeconds = raw.Agents.ToolTimeoutSeconds
+		} else if c.Agents.ToolTimeoutSeconds > 0 && raw.Agents.ToolTimeoutSeconds < c.Agents.ToolTimeoutSeconds {
+			c.Agents.ToolTimeoutSeconds = raw.Agents.ToolTimeoutSeconds // strictly-lower = tighten
+		} else {
+			ignoredThroughput = append(ignoredThroughput, "agents.tool_timeout_seconds")
+		}
+	}
+
 	// Workflows: a config-level entry overrides any prior one for the same name.
 	// From an untrusted source (.fuse.local.yml) pool numbers may only TIGHTEN
 	// (lower an existing cap); a loosening value is ignored and the workflow is

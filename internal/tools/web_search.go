@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/research"
@@ -26,9 +27,13 @@ type webSearchTool struct {
 	// most once — its result (or error) is cached in provider/resolveErr.
 	resolve func() (research.SearchProvider, error)
 
+	// once guards the single provider resolution. Execute is called concurrently
+	// on a shared tool instance (multiple agents run in parallel), so the
+	// resolve-and-cache must be atomic; a plain boolean check-and-set here is a
+	// data race on provider/resolveErr/resolved.
+	once       sync.Once
 	provider   research.SearchProvider
 	resolveErr error
-	resolved   bool
 }
 
 // NewWebSearch returns the web_search tool bound to cfg. The provider is
@@ -75,12 +80,13 @@ type webSearchArgs struct {
 }
 
 // providerOnce resolves the provider exactly once, caching the result and any
-// error so a misconfiguration is reported consistently on every call.
+// error so a misconfiguration is reported consistently on every call. Safe for
+// concurrent use: sync.Once serialises the resolution across parallel Execute
+// calls on the shared tool instance.
 func (t *webSearchTool) providerOnce() (research.SearchProvider, error) {
-	if !t.resolved {
+	t.once.Do(func() {
 		t.provider, t.resolveErr = t.resolve()
-		t.resolved = true
-	}
+	})
 	return t.provider, t.resolveErr
 }
 

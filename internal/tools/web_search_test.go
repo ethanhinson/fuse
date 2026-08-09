@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/research"
@@ -132,5 +133,32 @@ func TestWebSearchProviderResolutionError(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(res.Output), "setup") {
 		t.Errorf("error should mention setup, got %q", res.Output)
+	}
+}
+
+// TestWebSearchResolvesProviderOnceConcurrently is the regression test for the
+// providerOnce data race: under many parallel Execute calls on a shared tool
+// instance, the resolver must run exactly once (sync.Once), not once-per-racing
+// goroutine. Run under -race to also catch the underlying write race.
+func TestWebSearchResolvesProviderOnceConcurrently(t *testing.T) {
+	var resolveCalls int32
+	tool := newWebSearchWithResolver(func() (research.SearchProvider, error) {
+		atomic.AddInt32(&resolveCalls, 1)
+		return &fakeSearchProvider{results: []research.SearchResult{{Title: "t", URL: "u", Snippet: "s"}}}, nil
+	})
+
+	const goroutines = 50
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			_ = tool.Execute(context.Background(), `{"query":"hello"}`)
+		}()
+	}
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&resolveCalls); got != 1 {
+		t.Errorf("resolver ran %d times, want exactly 1 (sync.Once)", got)
 	}
 }

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -78,6 +79,40 @@ type Agent struct {
 	// guaranteed recency floor (change 0028). 0 ⇒ the spec default (50) via
 	// recencyFloorPct(); an explicit value from config overrides.
 	recencyFloor int
+
+	// toolTimeout bounds a single leaf tool call. A hanging tool (e.g. a bash
+	// command that never returns) must not block the whole agent loop forever.
+	// 0 selects DefaultToolTimeout. Orchestration tools that legitimately run
+	// for a long time (spawn_agent, pipeline_run — they await child agents) are
+	// exempt via toolTimeoutExempt; capping them would break multi-agent runs.
+	toolTimeout time.Duration
+}
+
+// DefaultToolTimeout bounds a single leaf tool call when no explicit timeout is
+// configured. Chosen to comfortably cover slow-but-legitimate work (large web
+// fetch, long build) while still breaking a truly hung call.
+const DefaultToolTimeout = 120 * time.Second
+
+// toolTimeoutExempt reports whether a tool is exempt from the per-tool-call
+// timeout because it legitimately runs long by awaiting other agents. These are
+// bounded by their own budgets/scheduler, the parent context, and (for
+// pipelines) per-step controls — not by the leaf-tool watchdog.
+func toolTimeoutExempt(name string) bool {
+	switch name {
+	case "spawn_agent", "pipeline_run":
+		return true
+	default:
+		return false
+	}
+}
+
+// SetToolTimeout sets the per-tool-call timeout for leaf tools. A non-positive
+// value restores DefaultToolTimeout. Orchestration tools remain exempt.
+func (a *Agent) SetToolTimeout(d time.Duration) {
+	if d <= 0 {
+		d = DefaultToolTimeout
+	}
+	a.toolTimeout = d
 }
 
 // recencyFloorPct returns the effective recency-floor percentage: the spec
@@ -183,5 +218,6 @@ func New(m Completer, t ToolExecutor, r Renderer, modelID, systemPrompt string, 
 		// Relevance-aware pruning is always on (change 0028): the heuristic
 		// scorer is the default so pruneOldToolResults never sees a nil scorer.
 		relevanceScorer: defaultHeuristicScorer(),
+		toolTimeout:     DefaultToolTimeout,
 	}
 }

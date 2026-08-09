@@ -547,14 +547,14 @@ func (a *Agent) executeTools(ctx context.Context, calls []model.ToolCall) []mode
 			go func(i int, call model.ToolCall) {
 				defer wg.Done()
 				a.renderer.ToolCall(call.Name, call.Arguments)
-				results[i] = toolResult{call: call, res: a.tools.Execute(ctx, call.Name, call.Arguments)}
+				results[i] = toolResult{call: call, res: a.executeToolBounded(ctx, call)}
 			}(i, call)
 		}
 		wg.Wait()
 	} else {
 		for i, call := range calls {
 			a.renderer.ToolCall(call.Name, call.Arguments)
-			results[i] = toolResult{call: call, res: a.tools.Execute(ctx, call.Name, call.Arguments)}
+			results[i] = toolResult{call: call, res: a.executeToolBounded(ctx, call)}
 		}
 	}
 
@@ -571,6 +571,47 @@ func (a *Agent) executeTools(ctx context.Context, calls []model.ToolCall) []mode
 		})
 	}
 	return msgs
+}
+
+// executeToolBounded runs one tool call under the per-tool-call timeout so a
+// hung leaf tool (e.g. a bash command that never returns) cannot block the whole
+// agent loop indefinitely. Orchestration tools (spawn_agent, pipeline_run) are
+// exempt — they legitimately run long by awaiting child agents and are bounded
+// by their own budgets and the parent context. On timeout the tool's derived
+// context is cancelled (so a well-behaved tool unwinds) and an error Result is
+// returned to the model describing what happened; the underlying goroutine is
+// left to observe cancellation on its own rather than blocking the loop.
+func (a *Agent) executeToolBounded(ctx context.Context, call model.ToolCall) tools.Result {
+	if toolTimeoutExempt(call.Name) {
+		return a.tools.Execute(ctx, call.Name, call.Arguments)
+	}
+	timeout := a.toolTimeout
+	if timeout <= 0 {
+		timeout = DefaultToolTimeout
+	}
+	tctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	done := make(chan tools.Result, 1)
+	go func() {
+		done <- a.tools.Execute(tctx, call.Name, call.Arguments)
+	}()
+
+	select {
+	case res := <-done:
+		return res
+	case <-tctx.Done():
+		// Distinguish a per-tool timeout from overall cancellation so the model
+		// gets an actionable message rather than a bare context error.
+		if errors.Is(tctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			return tools.Result{
+				IsError: true,
+				Output: fmt.Sprintf("tool %q exceeded the %s per-call timeout and was abandoned; "+
+					"try a narrower or faster invocation", call.Name, timeout),
+			}
+		}
+		return tools.Result{IsError: true, Output: fmt.Sprintf("tool %q cancelled: %v", call.Name, tctx.Err())}
+	}
 }
 
 // withSystem prepends the system prompt (if any) to the message slice sent to
