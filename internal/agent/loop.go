@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -518,7 +519,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			}
 		}
 
-		toolMsgs := a.executeTools(ctx, resp.ToolCalls)
+		toolMsgs := a.executeTools(ctx, messages, resp.ToolCalls)
 		messages = append(messages, toolMsgs...)
 	}
 	return messages, ErrMaxTurns
@@ -547,8 +548,15 @@ type toolResult struct {
 // executeTools runs the tool calls from a single model response. When the
 // response contains 2+ spawn_agent calls they run concurrently; all other
 // combinations execute sequentially to avoid tool-state conflicts.
-func (a *Agent) executeTools(ctx context.Context, calls []model.ToolCall) []model.Message {
+func (a *Agent) executeTools(ctx context.Context, messages []model.Message, calls []model.ToolCall) []model.Message {
 	results := make([]toolResult, len(calls))
+
+	// Carry the user's conversation turns to the auto-mode classifier via the
+	// permissions ctx-carry seam, so the gate can plumb them into its verdict
+	// call WITHOUT widening the ToolExecutor interface (which would create an
+	// agent<->permissions import cycle). userTurns is defense-in-depth: it drops
+	// tool results and assistant reasoning up front; the classifier re-filters.
+	tctx := permissions.WithUserMessages(ctx, userTurns(messages))
 
 	// Parallel path: 2+ spawn_agent calls can safely run concurrently.
 	// Each goroutine announces its own ToolCall before starting Execute so the
@@ -568,14 +576,14 @@ func (a *Agent) executeTools(ctx context.Context, calls []model.ToolCall) []mode
 			go func(i int, call model.ToolCall) {
 				defer wg.Done()
 				a.renderer.ToolCall(call.Name, call.Arguments)
-				results[i] = toolResult{call: call, res: a.executeToolBounded(ctx, call)}
+				results[i] = toolResult{call: call, res: a.executeToolBounded(tctx, call)}
 			}(i, call)
 		}
 		wg.Wait()
 	} else {
 		for i, call := range calls {
 			a.renderer.ToolCall(call.Name, call.Arguments)
-			results[i] = toolResult{call: call, res: a.executeToolBounded(ctx, call)}
+			results[i] = toolResult{call: call, res: a.executeToolBounded(tctx, call)}
 		}
 	}
 
@@ -592,6 +600,23 @@ func (a *Agent) executeTools(ctx context.Context, calls []model.ToolCall) []mode
 		})
 	}
 	return msgs
+}
+
+// userTurns filters a running conversation down to the user-authored turns
+// (Role=="user"), dropping tool results, assistant reasoning, and the system
+// prompt. It is defense-in-depth for the auto-mode classifier seam: the
+// classifier itself re-filters (permissions.buildMessages drops non-user
+// roles), but narrowing here keeps a malicious tool result or actor
+// rationalization out of the ctx-carried slice in the first place. It returns
+// nil when there are no user turns.
+func userTurns(msgs []model.Message) []model.Message {
+	var out []model.Message
+	for _, m := range msgs {
+		if m.Role == "user" {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // executeToolBounded runs one tool call under the per-tool-call timeout so a

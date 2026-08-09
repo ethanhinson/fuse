@@ -495,9 +495,13 @@ func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string
 		return g.valveTripped()
 	}
 
-	// User-message history is not plumbed into the gate for Task 7; the
-	// classifier still functions from the pending-call turn alone.
-	switch g.classifier.Classify(ctx, nil, name, command) {
+	// The user's conversation turns are carried on ctx by the agent loop via
+	// permissions.WithUserMessages (the ctx-carry seam, avoiding widening
+	// agent.ToolExecutor). userMessagesFrom is nil-safe: when the loop never
+	// wired them, this is nil and the classifier functions from the pending-call
+	// turn alone. The classifier itself re-filters to user turns as defense in
+	// depth (buildMessages drops non-user roles).
+	switch g.classifier.Classify(ctx, userMessagesFrom(ctx), name, command) {
 	case VerdictAllow:
 		g.valve.recordNonBlock()
 		return VerdictAllow, ""
@@ -532,9 +536,10 @@ func (g *PermissionGate) classifyWebFetch(ctx context.Context, args string, r fe
 		return g.valveTripped()
 	}
 
-	// User-message history is not plumbed into the gate (parity with classifyOrAsk);
-	// the classifier still functions from the pending-call turn alone.
-	switch g.classifier.ClassifyWebFetch(ctx, nil, r.Host, r.AllowNudge, args) {
+	// The user's conversation turns are carried on ctx (parity with
+	// classifyOrAsk); userMessagesFrom is nil-safe, so a context that never
+	// passed through WithUserMessages preserves the pending-call-only behavior.
+	switch g.classifier.ClassifyWebFetch(ctx, userMessagesFrom(ctx), r.Host, r.AllowNudge, args) {
 	case VerdictAllow:
 		g.valve.recordNonBlock()
 		return VerdictAllow, ""
