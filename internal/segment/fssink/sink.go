@@ -1,4 +1,9 @@
-package segment
+// Package fssink implements the concrete filesystem SegmentSink for the
+// pre-compaction transcript archive (change 0030). It lives in its own package
+// so that internal/segment (the schema + reader, imported by internal/tools for
+// the segment_read tool) stays free of the internal/agent dependency the sink
+// needs — otherwise tools -> segment -> agent -> tools would be an import cycle.
+package fssink
 
 import (
 	"encoding/json"
@@ -9,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/segment"
 )
 
 // FSSegmentSink is the concrete filesystem SegmentSink (change 0030). It writes
@@ -34,7 +40,7 @@ func NewFSSegmentSink(baseDir, sessionID string) *FSSegmentSink {
 
 // segmentsDir is the session's segments directory.
 func (s *FSSegmentSink) segmentsDir() string {
-	return filepath.Join(s.baseDir, s.sessionID, "segments")
+	return segment.SegmentsDir(s.baseDir, s.sessionID)
 }
 
 // Archive persists the raw pre-summarization region and returns the absolute
@@ -56,15 +62,15 @@ func (s *FSSegmentSink) Archive(r agent.SegmentRegion) (string, error) {
 	// the in-process counter, then skip past any name that already exists on disk.
 	s.seq++
 	seq := s.seq
-	name := FileName(r.TurnStart, r.TurnEnd, seq)
+	name := segment.FileName(r.TurnStart, r.TurnEnd, seq)
 	for fileExists(filepath.Join(dir, name)) {
 		s.seq++
 		seq = s.seq
-		name = FileName(r.TurnStart, r.TurnEnd, seq)
+		name = segment.FileName(r.TurnStart, r.TurnEnd, seq)
 	}
 	path := filepath.Join(dir, name)
 
-	seg := Segment{
+	seg := segment.Segment{
 		TurnStart:    r.TurnStart,
 		TurnEnd:      r.TurnEnd,
 		Tools:        r.ToolNames,
@@ -74,11 +80,11 @@ func (s *FSSegmentSink) Archive(r agent.SegmentRegion) (string, error) {
 		Summary:      r.Summary,
 		Messages:     r.Messages,
 	}
-	if err := os.WriteFile(path, []byte(RenderSegment(seg)), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(segment.RenderSegment(seg)), 0o600); err != nil {
 		return "", fmt.Errorf("segment write: %w", err)
 	}
 
-	if err := s.appendIndex(dir, IndexEntry{
+	if err := s.appendIndex(dir, segment.IndexEntry{
 		TurnStart:    r.TurnStart,
 		TurnEnd:      r.TurnEnd,
 		Tools:        r.ToolNames,
@@ -94,9 +100,9 @@ func (s *FSSegmentSink) Archive(r agent.SegmentRegion) (string, error) {
 
 // appendIndex reads (or initializes) the session's index.json, appends entry,
 // and writes it back. Caller holds s.mu.
-func (s *FSSegmentSink) appendIndex(dir string, entry IndexEntry) error {
+func (s *FSSegmentSink) appendIndex(dir string, entry segment.IndexEntry) error {
 	idxPath := filepath.Join(dir, "index.json")
-	idx := Index{SessionID: s.sessionID}
+	idx := segment.Index{SessionID: s.sessionID}
 	if b, err := os.ReadFile(idxPath); err == nil {
 		_ = json.Unmarshal(b, &idx) // a corrupt index is rebuilt, not fatal
 		idx.SessionID = s.sessionID

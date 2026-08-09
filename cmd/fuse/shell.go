@@ -17,6 +17,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/segment"
+	"github.com/ethanhinson/fuse/internal/segment/fssink"
 	"github.com/ethanhinson/fuse/internal/session"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -162,7 +163,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			}
 		}()
 	}
-	setActiveSegmentSink(segment.NewFSSegmentSink(logDir, tree.RootID()))
+	setActiveSegmentSink(fssink.NewFSSegmentSink(logDir, tree.RootID()))
+	// Point the segment_read tool at this session's segments dir so the model can
+	// recover raw pre-compaction regions the sink archived (change 0030).
+	tools.SetSegmentsDir(segment.SegmentsDir(logDir, tree.RootID()))
 
 	// One blackboard per session, shared by every agent in the tree (change 0023).
 	bb := agent.NewBlackboard(tree)

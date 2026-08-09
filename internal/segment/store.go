@@ -6,6 +6,7 @@ package segment
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,6 +54,15 @@ func FileName(turnStart, turnEnd, seq int) string {
 	return fmt.Sprintf("%d-%d-%d.md", turnStart, turnEnd, seq)
 }
 
+// SegmentsDir returns the segments directory for a session:
+// <baseDir>/<sessionID>/segments.
+func SegmentsDir(baseDir, sessionID string) string {
+	return filepath.Join(baseDir, sessionID, "segments")
+}
+
+// IndexFileName is the per-session segment index file name.
+const IndexFileName = "index.json"
+
 // RenderSegment renders a segment to its on-disk markdown form: YAML
 // front-matter, the ## Summary section, and the ## Raw region section. The raw
 // region is stored VERBATIM (role + optional [tool name] + content) — sanitizing
@@ -80,9 +90,12 @@ func RenderSegment(s Segment) string {
 	return b.String()
 }
 
-// RenderRawRegion renders a message region as plain text: each message on its
-// own line(s) prefixed with its role and, for tool messages, the tool name in
-// brackets. Content is stored raw (no sanitizing).
+// RenderRawRegion renders a message region as parseable-but-readable blocks:
+// each message opens with a header line "<role> [<name>]:" (the "[<name>]" part
+// omitted for messages without a tool name), followed by the raw content on the
+// next lines, then a blank separator. Content is stored raw (no sanitizing).
+// LoadSegment parses this format back into messages (role + name), which
+// segment_read's tool_filter needs.
 func RenderRawRegion(msgs []model.Message) string {
 	var b strings.Builder
 	for _, m := range msgs {
@@ -92,9 +105,9 @@ func RenderRawRegion(msgs []model.Message) string {
 			b.WriteString(m.Name)
 			b.WriteString("]")
 		}
-		b.WriteString(": ")
+		b.WriteString(":\n")
 		b.WriteString(m.Content)
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 	}
 	return b.String()
 }

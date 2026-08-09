@@ -1,4 +1,4 @@
-package segment
+package fssink
 
 import (
 	"encoding/json"
@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/segment"
 )
 
 // compile-time: FSSegmentSink satisfies the agent.SegmentSink interface.
@@ -54,7 +55,7 @@ func TestFSSinkArchiveWritesFileAndIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("index.json not written: %v", err)
 	}
-	var idx Index
+	var idx segment.Index
 	if err := json.Unmarshal(idxBytes, &idx); err != nil {
 		t.Fatalf("index.json bad: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestFSSinkSeqDisambiguatesRepeatedRange(t *testing.T) {
 	}
 	// Both indexed.
 	idxBytes, _ := os.ReadFile(filepath.Join(base, "sess-1", "segments", "index.json"))
-	var idx Index
+	var idx segment.Index
 	_ = json.Unmarshal(idxBytes, &idx)
 	if len(idx.Segments) != 2 {
 		t.Errorf("index entries = %d, want 2", len(idx.Segments))
@@ -131,7 +132,7 @@ func TestFSSinkConcurrentArchiveNoCorruption(t *testing.T) {
 	if err != nil {
 		t.Fatalf("index.json missing: %v", err)
 	}
-	var idx Index
+	var idx segment.Index
 	if err := json.Unmarshal(idxBytes, &idx); err != nil {
 		t.Fatalf("index.json corrupted under concurrency: %v", err)
 	}

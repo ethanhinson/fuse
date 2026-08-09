@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/agent"
-	"github.com/ethanhinson/fuse/internal/segment"
+	"github.com/ethanhinson/fuse/internal/segment/fssink"
 	"github.com/ethanhinson/fuse/internal/session"
 )
 
@@ -22,14 +22,14 @@ func TestActiveSegmentSinkResolvesInstalled(t *testing.T) {
 	}
 
 	base := t.TempDir()
-	sink := segment.NewFSSegmentSink(base, "root-xyz")
+	sink := fssink.NewFSSegmentSink(base, "root-xyz")
 	setActiveSegmentSink(sink)
 	got := currentSegmentSink()
 	if got == nil {
 		t.Fatalf("currentSegmentSink() = nil after setActiveSegmentSink")
 	}
-	if _, ok := got.(*segment.FSSegmentSink); !ok {
-		t.Errorf("currentSegmentSink() type = %T, want *segment.FSSegmentSink", got)
+	if _, ok := got.(*fssink.FSSegmentSink); !ok {
+		t.Errorf("currentSegmentSink() type = %T, want *fssink.FSSegmentSink", got)
 	}
 	var _ agent.SegmentSink = got // compile-time interface satisfaction
 }
