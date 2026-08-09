@@ -60,9 +60,14 @@ ADR-0006 (`.fuse.local.yml` tighten-only trust boundary) unchanged.
   `pipeline_run`, whose children are independently re-gated).
 - **Keep `web_fetch` gated on the domain** — it pulls a model-chosen arbitrary URL, so the host
   is the risk surface (malware, drive-by, prompt-injection, SSRF). A static host-deny floor
-  (malware / IP-literal / loopback / RFC-1918 private ranges) runs before a domain-reputation-
-  aware classifier verdict; new `permissions.auto.fetch_deny` / `fetch_ask` host globs let a
-  user tighten it further.
+  (hardcoded SSRF guard + an **embedded, license-clean malware/phishing blocklist**) runs before
+  a domain-reputation-aware classifier verdict; new `permissions.auto.fetch_deny` / `fetch_ask`
+  host globs let a user tighten it further. The spec (D2a) names the concrete, license-verified
+  data sources — StevenBlack/hosts (MIT) + optionally hagezi TIF (GPL-3.0) for the blocklist,
+  Majestic Million (CC BY 3.0) for the known-good popularity nudge — all embeddable; restrictive-
+  ToU sources (URLhaus/OpenPhish/PhishTank/Spamhaus) are runtime-query-only and never bundled.
+  An inert `fetch_reputation` config seam (D2b) is defined for a future live API (Google Safe
+  Browsing free tier) but no provider is implemented in this change.
 - **Give the classifier context** — plumb the user's messages into the classifier (the
   0017 D7 intent, currently `nil`) via the `context.Context`, preserving input hygiene
   (tool results / actor reasoning still excluded).
@@ -74,15 +79,16 @@ ADR-0006 (`.fuse.local.yml` tighten-only trust boundary) unchanged.
 - OS-level sandboxing (Seatbelt/Landlock/bubblewrap).
 - Two-stage classifier CoT (a noted future upgrade from 0017).
 - Any change to bash segment evaluation, the (bash) egress boundary, or the dangerous-command list.
-- A live domain-reputation API for `web_fetch` (v1 uses a built-in host floor + the classifier's
-  own knowledge; a network lookup is a future upgrade).
+- Implementing a live domain-reputation provider (the `fetch_reputation` seam is defined inert;
+  wiring Google Safe Browsing / URLhaus is a future drop-in — see spec D2b).
 
 ## Open questions
 
 - Final `valveTotalLimit` value once only true gray-area denies count (defer to measurement
   after the core fix lands — see spec D4).
-- The exact contents of the built-in `web_fetch` host-deny floor (which malware/parked-domain
-  hosts to seed beyond the IP-literal / loopback / RFC-1918 SSRF entries — settle at build).
+- Whether to keep hagezi TIF (GPL-3.0) in the embedded blocklist or stay MIT-only with
+  StevenBlack + Peter Lowe's list, to avoid shipping GPL data (spec D2a lays out both; decide
+  at build based on the project's licensing preference).
 
 ## Reconcile log
 
