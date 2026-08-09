@@ -181,6 +181,37 @@ func registryFromConfig(cfg config.Config) *model.Registry {
 	return reg
 }
 
+// validateModelRefs checks that every model alias referenced in cfg resolves in
+// reg. It lives here (not in the config package) because it needs the resolved
+// model.Registry, keeping config a leaf package. A dangling reference otherwise
+// fails only at the first gateway call for that model — often deep into a run —
+// so surfacing it at startup is a real usability win. The default model alias
+// and both context-classifier models are checked; empty (unset) refs are skipped.
+func validateModelRefs(cfg config.Config, reg *model.Registry) error {
+	check := func(field, alias string) error {
+		if alias == "" {
+			return nil
+		}
+		if _, err := reg.Resolve(alias); err != nil {
+			return fmt.Errorf("config: %s references unknown model %q; run `fuse models` to list configured aliases", field, alias)
+		}
+		return nil
+	}
+	if err := check("models.default", cfg.Models.Default); err != nil {
+		return err
+	}
+	if err := check("context.summarization.model", cfg.Context.Summarization.Model); err != nil {
+		return err
+	}
+	if err := check("context.relevance.classifier_model", cfg.Context.Relevance.ClassifierModel); err != nil {
+		return err
+	}
+	if err := check("permissions.auto.classifier_model", cfg.Permissions.Auto.ClassifierModel); err != nil {
+		return err
+	}
+	return nil
+}
+
 // mergeEntry returns a registry with alias set to mc, preserving other entries.
 func mergeEntry(reg *model.Registry, alias string, mc model.ModelConfig) *model.Registry {
 	entries := map[string]model.ModelConfig{}
