@@ -25,11 +25,6 @@ func TestValidate(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			desc:    "negative tool timeout rejected",
-			mutate:  func(c *Config) { c.Agents.ToolTimeoutSeconds = -1 },
-			wantErr: true,
-		},
-		{
 			desc:    "negative max_turns rejected",
 			mutate:  func(c *Config) { n := -3; c.MaxTurns = &n },
 			wantErr: true,

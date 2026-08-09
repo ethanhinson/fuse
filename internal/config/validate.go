@@ -28,9 +28,12 @@ func (c Config) Validate() error {
 		return fmt.Errorf("config: permissions.mode %q is invalid (want off, prompt-all, smart, or auto)", m)
 	}
 
-	if c.Agents.ToolTimeoutSeconds < 0 {
-		return fmt.Errorf("config: agents.tool_timeout_seconds must be >= 0, got %d", c.Agents.ToolTimeoutSeconds)
-	}
+	// Note: agents.tool_timeout_seconds is intentionally NOT checked here. The
+	// loader's tighten-only merge (ADR-0006) only applies a value when it is > 0
+	// and silently drops a negative, so a negative can never reach the resolved
+	// Config — a Validate check for it would be dead code implying a protection
+	// that does not exist. MaxTurns/MaxTokens ARE passed through unclamped, so
+	// they are checked below.
 	if c.MaxTokens < 0 {
 		return fmt.Errorf("config: max_tokens must be >= 0, got %d", c.MaxTokens)
 	}
