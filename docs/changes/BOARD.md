@@ -1,12 +1,12 @@
 # Backlog
 
-**40 changes** — 🟡 1 proposed · ⚪ 1 deferred · ✅ 32 done · 🗑️ 6 killed
+**40 changes** — 🟢 1 in progress · ⚪ 1 deferred · ✅ 32 done · 🗑️ 6 killed
 
-## 🟡 Proposed (1)
+## 🟢 In progress (1)
 
-| # | Title | Priority | Type | Readiness |
-|---|-------|----------|------|-----------|
-| [0040](active/0040-auto-mode-flow-parity.md) | Auto-mode flow parity — in-workspace edits auto-approve | `high` | `fix` | build-ready |
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0040](active/0040-auto-mode-flow-parity.md) | Auto-mode flow parity — in-workspace edits auto-approve | `high` | `fix` | [spec](../superpowers/specs/2026-08-09-auto-mode-flow-parity.md) | `feat/auto-mode-flow-parity` |
 
 ## ⚪ Deferred (1)
 
