@@ -2,7 +2,7 @@
 id: 40
 slug: auto-mode-flow-parity
 title: Auto-mode flow parity — in-workspace edits auto-approve
-status: implemented
+status: done
 priority: high
 type: fix
 created: 2026-08-09
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/auto-mode-flow-parity
 pr: https://github.com/ethanhinson/fuse/pull/43
 blocked_by:
-claimed_at: 2026-08-09T19:22:20Z
+claimed_at: 
 reconciled: true
 ---
 
