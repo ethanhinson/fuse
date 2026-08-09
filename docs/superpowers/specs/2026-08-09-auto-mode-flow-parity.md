@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0040 — Auto-mode flow parity — in-workspace edits auto-approve](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0040-auto-mode-flow-parity.md)**
+> ↩ **[Change 0040 — Auto-mode flow parity — in-workspace edits auto-approve](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-09-0040-auto-mode-flow-parity.md)**
 <!-- docket:backlink:end -->
 
 # Auto Mode Flow Parity — In-Workspace Edits Auto-Approve
