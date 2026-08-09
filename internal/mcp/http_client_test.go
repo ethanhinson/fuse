@@ -217,6 +217,44 @@ func TestHTTPClientSSEParsing(t *testing.T) {
 	}
 }
 
+// TestHTTPClientLargeSSEFrame is the regression test for the legacy SSE pump's
+// 64KB bufio.Scanner cap: a single data: line carrying a large tool result must
+// not silently kill the pump. Before the fix, a >64KB result overflowed the
+// Scanner token limit, readSSEPump returned early, and the call blocked until
+// timeout. The raised buffer (maxSSELineBytes) lets it through.
+func TestHTTPClientLargeSSEFrame(t *testing.T) {
+	srv := newSSETestServerFull()
+	defer srv.Close()
+
+	// ~256KB payload — comfortably over Scanner's 64KB default, under the 1MB cap.
+	big := strings.Repeat("x", 256*1024)
+	srv.addHandler("bigresult", func(id string, params json.RawMessage) jsonrpcResponse {
+		result, _ := json.Marshal(map[string]string{"data": big})
+		return jsonrpcResponse{JSONRPC: "2.0", ID: id, Result: result}
+	})
+
+	client, err := newHTTPClient("test-large", srv.srv.URL, "")
+	if err != nil {
+		t.Fatalf("newHTTPClient: %v", err)
+	}
+	defer client.stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	raw, err := client.call(ctx, "bigresult", nil)
+	if err != nil {
+		t.Fatalf("call bigresult: %v (large SSE frame likely killed the pump)", err)
+	}
+	var result map[string]string
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(result["data"]) != len(big) {
+		t.Errorf("payload len = %d, want %d (frame truncated)", len(result["data"]), len(big))
+	}
+}
+
 // TestHTTPClientMultipleConcurrentCalls verifies that multiple concurrent
 // in-flight requests are correctly matched to their responses.
 func TestHTTPClientMultipleConcurrentCalls(t *testing.T) {

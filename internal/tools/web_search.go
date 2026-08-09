@@ -34,6 +34,15 @@ type webSearchTool struct {
 	once       sync.Once
 	provider   research.SearchProvider
 	resolveErr error
+
+	// cache dedups identical queries within a session/run. The tool instance is
+	// shared for the process lifetime and searches cost a network round trip
+	// (and provider rate budget), so agents that re-issue the same query — a
+	// common pattern in multi-agent research — hit the cache instead of the
+	// provider. Keyed by (query, maxResults); only successful non-empty results
+	// are cached so a transient failure or an empty result can be retried.
+	cacheMu sync.RWMutex
+	cache   map[string][]research.SearchResult
 }
 
 // NewWebSearch returns the web_search tool bound to cfg. The provider is
@@ -90,6 +99,25 @@ func (t *webSearchTool) providerOnce() (research.SearchProvider, error) {
 	return t.provider, t.resolveErr
 }
 
+// cachedResults returns the cached results for key, if any. A returned copy is
+// unnecessary: the slice is never mutated after storeResults, only read+formatted.
+func (t *webSearchTool) cachedResults(key string) ([]research.SearchResult, bool) {
+	t.cacheMu.RLock()
+	defer t.cacheMu.RUnlock()
+	r, ok := t.cache[key]
+	return r, ok
+}
+
+// storeResults caches a successful non-empty result set under key.
+func (t *webSearchTool) storeResults(key string, results []research.SearchResult) {
+	t.cacheMu.Lock()
+	defer t.cacheMu.Unlock()
+	if t.cache == nil {
+		t.cache = make(map[string][]research.SearchResult)
+	}
+	t.cache[key] = results
+}
+
 func (t *webSearchTool) Execute(ctx context.Context, args string) Result {
 	var a webSearchArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
@@ -103,17 +131,23 @@ func (t *webSearchTool) Execute(ctx context.Context, args string) Result {
 		maxResults = webSearchDefaultMaxResults
 	}
 
-	provider, err := t.providerOnce()
-	if err != nil {
-		return Result{IsError: true, Output: fmt.Sprintf("web_search: provider setup failed: %v", err)}
-	}
-
-	results, err := provider.Search(ctx, a.Query, maxResults)
-	if err != nil {
-		return Result{IsError: true, Output: fmt.Sprintf("web_search: search failed: %v", err)}
-	}
-	if len(results) == 0 {
-		return Result{Output: fmt.Sprintf("No results for %q.", a.Query)}
+	cacheKey := fmt.Sprintf("%d\x00%s", maxResults, a.Query)
+	results, cached := t.cachedResults(cacheKey)
+	if !cached {
+		provider, err := t.providerOnce()
+		if err != nil {
+			return Result{IsError: true, Output: fmt.Sprintf("web_search: provider setup failed: %v", err)}
+		}
+		results, err = provider.Search(ctx, a.Query, maxResults)
+		if err != nil {
+			return Result{IsError: true, Output: fmt.Sprintf("web_search: search failed: %v", err)}
+		}
+		if len(results) == 0 {
+			// Don't cache an empty result — it may be transient — but return the
+			// same message as before.
+			return Result{Output: fmt.Sprintf("No results for %q.", a.Query)}
+		}
+		t.storeResults(cacheKey, results)
 	}
 
 	var b strings.Builder

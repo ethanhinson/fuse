@@ -162,3 +162,43 @@ func TestWebSearchResolvesProviderOnceConcurrently(t *testing.T) {
 		t.Errorf("resolver ran %d times, want exactly 1 (sync.Once)", got)
 	}
 }
+
+// TestWebSearchCachesRepeatQueries is the regression test for #22: an identical
+// query re-issued within the run must hit the in-run cache instead of the
+// provider, while a different query or maxResults still reaches the provider.
+func TestWebSearchCachesRepeatQueries(t *testing.T) {
+	fake := &fakeSearchProvider{results: []research.SearchResult{{Title: "t", URL: "u", Snippet: "s"}}}
+	tool := newWebSearchWithResolver(func() (research.SearchProvider, error) { return fake, nil })
+
+	// Same query twice -> provider called once.
+	_ = tool.Execute(context.Background(), `{"query":"golang"}`)
+	_ = tool.Execute(context.Background(), `{"query":"golang"}`)
+	if calls, _, _ := fake.snapshot(); calls != 1 {
+		t.Fatalf("repeat query hit provider %d times, want 1 (cache miss)", calls)
+	}
+
+	// Different query -> provider called again.
+	_ = tool.Execute(context.Background(), `{"query":"rust"}`)
+	if calls, _, _ := fake.snapshot(); calls != 2 {
+		t.Fatalf("distinct query: provider calls = %d, want 2", calls)
+	}
+
+	// Same query text but different maxResults -> distinct cache key -> provider.
+	_ = tool.Execute(context.Background(), `{"query":"golang","max_results":10}`)
+	if calls, _, _ := fake.snapshot(); calls != 3 {
+		t.Fatalf("different maxResults must bypass cache: calls = %d, want 3", calls)
+	}
+}
+
+// TestWebSearchDoesNotCacheEmptyOrError confirms transient empties/errors are
+// not cached, so a later retry can still reach the provider.
+func TestWebSearchDoesNotCacheEmptyOrError(t *testing.T) {
+	fake := &fakeSearchProvider{results: nil} // empty results
+	tool := newWebSearchWithResolver(func() (research.SearchProvider, error) { return fake, nil })
+
+	_ = tool.Execute(context.Background(), `{"query":"nothing"}`)
+	_ = tool.Execute(context.Background(), `{"query":"nothing"}`)
+	if calls, _, _ := fake.snapshot(); calls != 2 {
+		t.Fatalf("empty result must not be cached: provider calls = %d, want 2", calls)
+	}
+}

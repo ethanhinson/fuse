@@ -121,7 +121,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		log.Printf("session log: %v", serr)
 		sessLog = nil
 	} else {
-		defer sessLog.Close()
+		// Surface a logging failure once, at close, rather than silently. The
+		// per-entry Write on the hot child path stays fire-and-forget (Logger
+		// latches the first error), so a full disk or closed file no longer
+		// vanishes without a trace. See session.Logger.Err/Close.
+		defer func() {
+			if err := sessLog.Close(); err != nil {
+				log.Printf("session log: %v", err)
+			}
+		}()
 	}
 
 	// Agent tree for subagent tracking. The tree-global spawn budget backstops

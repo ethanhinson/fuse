@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -251,10 +252,21 @@ func (c *httpClient) notify(ctx context.Context, method string, params any) erro
 	return nil
 }
 
+// maxSSELineBytes caps a single SSE line the legacy pump will buffer. The
+// bufio.Scanner default is 64KB, which a single data: line carrying a large
+// tool result (file contents, a fetched page) can exceed — Scanner then stops
+// with bufio.ErrTooLong and the pump would silently die. 1MB matches the size
+// class of tool results the streamable transport already accommodates.
+const maxSSELineBytes = 1024 * 1024
+
 // readSSEPump reads the SSE stream and fans JSON-RPC responses to pending callers.
 func (c *httpClient) readSSEPump() {
 	defer c.closeAll()
 	scanner := bufio.NewScanner(c.sseBody)
+	// Raise the per-line token cap above Scanner's 64KB default so a large SSE
+	// data: line does not silently kill the pump (mirrors the streamable client,
+	// which uses bufio.Reader to avoid the ceiling entirely).
+	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
 	var dataLines []string
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -301,6 +313,12 @@ func (c *httpClient) readSSEPump() {
 				ch <- resp
 			}
 		}
+	}
+	// Surface a scanner error (I/O failure, or a line still over the raised cap)
+	// instead of dropping it silently — the deferred closeAll unblocks pending
+	// callers, but without this a truncating read looked like a clean EOF.
+	if err := scanner.Err(); err != nil {
+		log.Printf("[mcp] %s: SSE read pump stopped: %v", c.name, err)
 	}
 }
 
