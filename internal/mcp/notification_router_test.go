@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/tools"
 )
@@ -31,6 +32,7 @@ func TestManagerDispatchNotificationDeliversToHandler(t *testing.T) {
 
 	m.dispatchNotification("srv1", "$/progress", json.RawMessage(`{"progress":0.5}`))
 
+	m.waitNotifyDrained() // dispatch is async; the barrier also gives happens-before
 	if called != 1 {
 		t.Fatalf("handler called %d times, want 1", called)
 	}
@@ -53,10 +55,12 @@ func TestManagerNotificationHandlersAreIsolated(t *testing.T) {
 	m.OnNotification("$/stream", func(string, json.RawMessage) { streamCalls++ })
 
 	m.dispatchNotification("s", "$/progress", nil)
+	m.waitNotifyDrained()
 	if progressCalls != 1 || streamCalls != 0 {
 		t.Fatalf("progress=%d stream=%d, want 1/0", progressCalls, streamCalls)
 	}
 	m.dispatchNotification("s", "$/stream", nil)
+	m.waitNotifyDrained()
 	if progressCalls != 1 || streamCalls != 1 {
 		t.Fatalf("progress=%d stream=%d, want 1/1", progressCalls, streamCalls)
 	}
@@ -92,4 +96,81 @@ func TestManagerDispatchRaceClean(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestSlowHandlerDoesNotBlockDispatch is the regression test for #18: a slow
+// notification handler must NOT block dispatchNotification (the read-pump call
+// site). Before the fix, handlers ran inline on the read-pump, so a blocking
+// handler stalled all response dispatch on that connection. Now dispatch only
+// does a non-blocking enqueue, so it returns immediately regardless of handler
+// speed.
+func TestSlowHandlerDoesNotBlockDispatch(t *testing.T) {
+	m, _ := NewManager(nil, tools.NewRegistry())
+	defer m.Close()
+
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	m.OnNotification("$/slow", func(string, json.RawMessage) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-release // block the worker until the test releases it
+	})
+
+	// First dispatch occupies the worker in the blocking handler.
+	m.dispatchNotification("s", "$/slow", nil)
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never ran")
+	}
+
+	// While the worker is blocked, further dispatches must return immediately
+	// (non-blocking enqueue), never wedging the caller (the read-pump).
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < notifyQueueSize+50; i++ {
+			m.dispatchNotification("s", "$/slow", nil) // extras beyond cap are dropped+logged
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dispatchNotification blocked while a handler was slow — the read-pump would stall")
+	}
+
+	close(release) // let the worker drain so Close() is clean
+}
+
+// TestNotificationOrderingPreserved confirms the single worker preserves
+// enqueue (FIFO) order across notifications.
+func TestNotificationOrderingPreserved(t *testing.T) {
+	m, _ := NewManager(nil, tools.NewRegistry())
+	defer m.Close()
+
+	var mu sync.Mutex
+	var order []string
+	m.OnNotification("$/seq", func(_ string, params json.RawMessage) {
+		mu.Lock()
+		order = append(order, string(params))
+		mu.Unlock()
+	})
+
+	for i := 0; i < 20; i++ {
+		m.dispatchNotification("s", "$/seq", json.RawMessage([]byte{byte('a' + i)}))
+	}
+	m.waitNotifyDrained()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != 20 {
+		t.Fatalf("delivered %d, want 20", len(order))
+	}
+	for i, v := range order {
+		if want := string([]byte{byte('a' + i)}); v != want {
+			t.Fatalf("order[%d] = %q, want %q (FIFO broken)", i, v, want)
+		}
+	}
 }

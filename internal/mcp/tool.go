@@ -29,6 +29,13 @@ type callTracker interface {
 	// minted progress token plus an end func. The end func returns the buffered
 	// stream result (empty when no $/stream chunks arrived).
 	beginCall(server, tool string) (token string, end func() string)
+	// drainNotifications blocks until every notification enqueued so far has been
+	// dispatched. $/stream deltas are dispatched asynchronously off the read-pump
+	// (change #18), so a streaming Execute must drain them before assembling its
+	// buffer — otherwise it could read a partial/empty stream. Deltas for this
+	// call were all enqueued before tools/call returned (the read-pump processes
+	// frames in order), so draining here captures them all.
+	drainNotifications()
 }
 
 // MCPTool wraps a single MCP server tool as a tools.Tool.
@@ -80,8 +87,14 @@ func (t *MCPTool) Execute(ctx context.Context, args string) tools.Result {
 	// On return, drain the per-call stream buffer (D3). If $/stream chunks
 	// arrived, the loop receives the concatenated COMPLETE result — never the
 	// envelope's placeholder. No chunks ⇒ streamed is "" and the envelope wins.
+	// $/stream deltas now dispatch asynchronously (change #18), so first wait for
+	// the notification worker to drain the deltas this call enqueued before
+	// assembling — otherwise the buffer could be read partial/empty.
 	var streamed string
 	if streamEnd != nil {
+		if t.tracker != nil {
+			t.tracker.drainNotifications()
+		}
 		streamed = streamEnd()
 	}
 	if err != nil {

@@ -54,6 +54,7 @@ func TestStreamChunksAssembleIntoBuffer(t *testing.T) {
 		m.dispatchNotification("srv", "$/stream", params)
 	}
 
+	m.waitNotifyDrained() // stream deltas dispatch async; block before assembling
 	got := end()
 	if got != "Hello, streaming world" {
 		t.Errorf("assembled = %q, want %q", got, "Hello, streaming world")
@@ -73,6 +74,7 @@ func TestStreamRollingPartialSanitized(t *testing.T) {
 	params, _ := json.Marshal(map[string]any{"progressToken": token, "delta": "a\x1b[31mb\rc"})
 	m.dispatchNotification("srv", "$/stream", params)
 
+	m.waitNotifyDrained()
 	partial := m.StreamPartial(token)
 	if strings.ContainsAny(partial, "\x1b\r") {
 		t.Errorf("partial %q still carries control bytes", partial)
@@ -99,6 +101,7 @@ func TestStreamRingOverflowKeepsHeadAndTail(t *testing.T) {
 		m.dispatchNotification("srv", "$/stream", params)
 	}
 
+	m.waitNotifyDrained()
 	got := end()
 	if !strings.HasPrefix(got, "H") {
 		t.Errorf("assembled must start with the head bytes: %.20q", got)
@@ -138,6 +141,7 @@ func TestStreamOverflowAssemblesValidUTF8(t *testing.T) {
 		m.dispatchNotification("srv", "$/stream", params)
 	}
 
+	m.waitNotifyDrained()
 	got := end()
 	if !strings.Contains(got, "truncated") {
 		t.Fatalf("expected a truncation marker, got %.80q...", got)
