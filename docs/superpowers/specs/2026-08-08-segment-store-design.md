@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0030 — Segment store — pre-compaction transcript archive for replay](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0030-segment-store.md)**
+> ↩ **[Change 0030 — Segment store — pre-compaction transcript archive for replay](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-09-0030-segment-store.md)**
 <!-- docket:backlink:end -->
 
 # Segment store — pre-compaction transcript archive for replay
