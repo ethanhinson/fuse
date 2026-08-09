@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -213,5 +214,50 @@ func TestValve_SharedAcrossCloneForChild(t *testing.T) {
 	parent.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(3)))
 	if stub.calls != 3 {
 		t.Fatalf("valve tripped by child must pause the parent too; classifier calls = %d", stub.calls)
+	}
+}
+
+// TestValve_InWorkspaceEditsDoNotAdvanceValve proves the D4 accept-edits posture:
+// in-workspace write_file/edit_file calls resolve to VerdictAllow via the D1
+// path-scoping branch BEFORE ever reaching the classifier, so they never feed the
+// escalation valve. Only true classifier denies advance it. This is the structural
+// fix that stops routine, task-implied edits from tripping the valve mid-task.
+func TestValve_InWorkspaceEditsDoNotAdvanceValve(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks(tempdir): %v", err)
+	}
+	inWorkspace := filepath.Join(root, "file.go")
+
+	// A classifier that would DENY (block) everything it sees — so if any edit
+	// reached it, the valve would advance and, past 3, trip.
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
+	cls := newTestClassifier(t, stub)
+	approve, called := newApproveRecorder(true)
+	g := New(autoCfg(config.AutoConfig{}, nil, nil),
+		newTestRegistry("write_file", "edit_file"), approve,
+		WithWorkspaceRoot(root), WithClassifier(cls))
+
+	// Far more in-workspace edits than either valve threshold (3 consecutive / 20
+	// total). If any advanced the valve, it would trip well before the end.
+	for i := 0; i < 25; i++ {
+		toolName := "write_file"
+		if i%2 == 1 {
+			toolName = "edit_file"
+		}
+		res := g.Execute(context.Background(), toolName, `{"path":`+jsonStr(inWorkspace)+`}`)
+		if res.IsError {
+			t.Fatalf("edit %d: in-workspace edit must auto-approve, got error: %s", i, res.Output)
+		}
+	}
+
+	if stub.calls != 0 {
+		t.Fatalf("in-workspace edits must never reach the classifier; got %d classifier calls", stub.calls)
+	}
+	if *called {
+		t.Fatal("in-workspace edits must not route to the human approval func")
+	}
+	if consecutive, total := g.valve.counts(); consecutive != 0 || total != 0 {
+		t.Fatalf("in-workspace edits must not advance the valve; got consecutive=%d total=%d", consecutive, total)
 	}
 }

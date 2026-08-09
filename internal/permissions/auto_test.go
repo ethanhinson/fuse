@@ -146,13 +146,18 @@ func TestAutoMode_NonBashSafeTool_AutoApprovesViaSafeList(t *testing.T) {
 	}
 }
 
+// TestAutoMode_NonBashUnknownTool_RoutesToClassifier uses a genuinely unknown,
+// non-safe, non-edit tool ("some_tool"): the edit tools write_file/edit_file now
+// have their own path-scoping branch in resolveAuto (D1) and no longer fall through
+// to the classifier, so the classifier-fall-through contract must be exercised by a
+// tool that is neither safe-listed nor an edit tool.
 func TestAutoMode_NonBashUnknownTool_RoutesToClassifier(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
 	cls := newTestClassifier(t, stub)
 	approve, called := newApproveRecorder(true)
 	g := New(autoCfg(config.AutoConfig{}, nil, nil),
-		newTestRegistry("write_file"), approve, WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
-	res := g.Execute(context.Background(), "write_file", `{"path":"x"}`)
+		newTestRegistry("some_tool"), approve, WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+	res := g.Execute(context.Background(), "some_tool", `{"path":"x"}`)
 	if !res.IsError {
 		t.Fatalf("non-bash unknown tool with classifier deny should deny, got: %s", res.Output)
 	}
@@ -169,11 +174,14 @@ func TestAutoMode_NonBashUnknownTool_RoutesToClassifier(t *testing.T) {
 	}
 }
 
+// TestAutoMode_NonBashUnknownTool_NoClassifier_Asks guards the fail-closed ask for
+// the residual gray area (an unknown, non-edit tool with no classifier wired).
+// See the sibling test above for why write_file is no longer a valid stand-in.
 func TestAutoMode_NonBashUnknownTool_NoClassifier_Asks(t *testing.T) {
 	approve, called := newApproveRecorder(true)
 	g := New(autoCfg(config.AutoConfig{}, nil, nil),
-		newTestRegistry("write_file"), approve, WithWorkspaceRoot(t.TempDir()))
-	res := g.Execute(context.Background(), "write_file", `{"path":"x"}`)
+		newTestRegistry("some_tool"), approve, WithWorkspaceRoot(t.TempDir()))
+	res := g.Execute(context.Background(), "some_tool", `{"path":"x"}`)
 	if res.IsError {
 		t.Fatalf("no classifier should fall closed to human ask (approve=true), got: %s", res.Output)
 	}

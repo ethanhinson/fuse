@@ -406,6 +406,37 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (Ve
 		if onSafeList(name) {
 			return VerdictAllow, ""
 		}
+		// Edit tools carry a single "path" arg rather than a shell command: scope it
+		// against the workspace exactly as the bash heuristic scopes mutating path
+		// args. An in-workspace target auto-approves; anything the scope cannot prove
+		// in-workspace (an escape, a symlink whose target escapes, a missing/garbled
+		// path) fails toward the human — never toward the classifier.
+		if isEditTool(name) {
+			path, ok := editPath(args)
+			if !ok {
+				return VerdictAsk, ""
+			}
+			if withinWorkspace(path, g.workspaceRoot) {
+				return VerdictAllow, ""
+			}
+			return VerdictAsk, ""
+		}
+		// web_fetch carries a URL rather than a shell command: apply the static host
+		// floor first (SSRF / config deny/ask / blocklist), and only a fallthrough
+		// host reaches the reputation-aware classifier. A missing/garbled url makes
+		// classifyFetchHost return Ask("malformed-url"), so it fails toward the human.
+		if name == "web_fetch" {
+			r := classifyFetchHost(fetchURL(args), g.cfg.Auto.FetchDeny, g.cfg.Auto.FetchAsk)
+			switch r.Verdict {
+			case VerdictDeny:
+				return VerdictDeny, "denied by auto-mode web_fetch host floor (" + r.DecidedBy + "): " + r.Host
+			case VerdictAsk:
+				return VerdictAsk, ""
+			default:
+				// Fallthrough host ⇒ reputation-aware classifier (valve-enforced).
+				return g.classifyWebFetch(ctx, args, r)
+			}
+		}
 		return g.classifyOrAsk(ctx, name, args)
 	}
 
@@ -464,9 +495,13 @@ func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string
 		return g.valveTripped()
 	}
 
-	// User-message history is not plumbed into the gate for Task 7; the
-	// classifier still functions from the pending-call turn alone.
-	switch g.classifier.Classify(ctx, nil, name, command) {
+	// The user's conversation turns are carried on ctx by the agent loop via
+	// permissions.WithUserMessages (the ctx-carry seam, avoiding widening
+	// agent.ToolExecutor). userMessagesFrom is nil-safe: when the loop never
+	// wired them, this is nil and the classifier functions from the pending-call
+	// turn alone. The classifier itself re-filters to user turns as defense in
+	// depth (buildMessages drops non-user roles).
+	switch g.classifier.Classify(ctx, userMessagesFrom(ctx), name, command) {
 	case VerdictAllow:
 		g.valve.recordNonBlock()
 		return VerdictAllow, ""
@@ -477,6 +512,40 @@ func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string
 		// block that reaches a threshold is itself surfaced normally.
 		g.valve.recordBlock()
 		return VerdictDeny, "denied by auto-mode classifier: " + command
+	default:
+		g.valve.recordNonBlock()
+		return VerdictAsk, ""
+	}
+}
+
+// classifyWebFetch consults the reputation-aware web_fetch classifier for a final
+// verdict on a fallthrough host, or fails closed to VerdictAsk when no classifier
+// is wired. It is a sibling of classifyOrAsk and enforces the SAME escalation
+// valve: the valve is consulted before the classifier (a tripped valve pauses auto
+// mode without a call — VerdictAsk interactive, a summary-error VerdictDeny
+// otherwise), a deny is recorded as a block (advancing/tripping the valve) and an
+// allow/ask resets the consecutive counter. r carries the static floor's host and
+// AllowNudge, threaded to the classifier as a reputation bias hint.
+func (g *PermissionGate) classifyWebFetch(ctx context.Context, args string, r fetchFloorResult) (Verdict, string) {
+	if g.classifier == nil {
+		return VerdictAsk, ""
+	}
+
+	// Valve already tripped ⇒ pause auto mode without consulting the classifier.
+	if g.valve.tripped() {
+		return g.valveTripped()
+	}
+
+	// The user's conversation turns are carried on ctx (parity with
+	// classifyOrAsk); userMessagesFrom is nil-safe, so a context that never
+	// passed through WithUserMessages preserves the pending-call-only behavior.
+	switch g.classifier.ClassifyWebFetch(ctx, userMessagesFrom(ctx), r.Host, r.AllowNudge, args) {
+	case VerdictAllow:
+		g.valve.recordNonBlock()
+		return VerdictAllow, ""
+	case VerdictDeny:
+		g.valve.recordBlock()
+		return VerdictDeny, "denied by auto-mode web_fetch classifier: " + r.Host
 	default:
 		g.valve.recordNonBlock()
 		return VerdictAsk, ""
@@ -494,6 +563,43 @@ func (g *PermissionGate) valveTripped() (Verdict, string) {
 	return VerdictDeny, fmt.Sprintf(
 		"auto mode paused: escalation valve tripped after %d consecutive / %d total classifier blocks this session (thresholds: %d consecutive, %d total)",
 		consecutive, total, valveConsecutiveLimit, valveTotalLimit)
+}
+
+// isEditTool reports whether name is one of the workspace-scoped edit tools whose
+// single "path" arg is path-scoped in auto mode (rather than routed to the
+// classifier as a shell command).
+func isEditTool(name string) bool {
+	return name == "write_file" || name == "edit_file"
+}
+
+// editPath extracts the "path" arg from an edit tool's JSON args. ok is false when
+// the args are unparseable or the path is missing/empty, so the caller fails toward
+// the human rather than scoping a garbled path.
+func editPath(args string) (path string, ok bool) {
+	var v struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(args), &v); err != nil {
+		return "", false
+	}
+	if v.Path == "" {
+		return "", false
+	}
+	return v.Path, true
+}
+
+// fetchURL extracts the "url" arg from a web_fetch tool's JSON args (the built-in
+// web_fetch schema names it "url"). A non-JSON or missing-url args string yields
+// "", which classifyFetchHost treats as a malformed URL ⇒ Ask (fail toward the
+// human) rather than a fallthrough.
+func fetchURL(args string) string {
+	var v struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(args), &v); err == nil {
+		return v.URL
+	}
+	return ""
 }
 
 // bashCommand extracts the shell command string from a bash tool's JSON args,

@@ -506,6 +506,108 @@ permissions:
 	}
 }
 
+// TestLocalFileFetchFloorTightens asserts that auto.fetch_deny / auto.fetch_ask
+// in the repo-plantable (untrusted) .fuse.local.yml ARE honored (they are
+// TIGHTENING host-glob floors, ADR-0006), while the loosening auto.* keys in the
+// SAME file (classifier_model, deny, ask) are still dropped and reported as
+// ignored under the "permissions.auto" aggregate.
+func TestLocalFileFetchFloorTightens(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	local := `
+permissions:
+  auto:
+    classifier_model: evil-model
+    deny: ["bash:rm *"]
+    fetch_deny: ["*.evil.com"]
+    fetch_ask: ["staging.example.com"]
+`
+	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Tightening host-glob floors are honored from the untrusted file.
+	if len(c.Permissions.Auto.FetchDeny) != 1 || c.Permissions.Auto.FetchDeny[0] != "*.evil.com" {
+		t.Errorf("auto.fetch_deny = %v, want [*.evil.com] (local tightening honored)", c.Permissions.Auto.FetchDeny)
+	}
+	if len(c.Permissions.Auto.FetchAsk) != 1 || c.Permissions.Auto.FetchAsk[0] != "staging.example.com" {
+		t.Errorf("auto.fetch_ask = %v, want [staging.example.com] (local tightening honored)", c.Permissions.Auto.FetchAsk)
+	}
+
+	// Loosening auto.* keys in the same file are still dropped.
+	if c.Permissions.Auto.ClassifierModel != "" {
+		t.Errorf("auto.classifier_model = %q, want empty (local loosening ignored)", c.Permissions.Auto.ClassifierModel)
+	}
+	if len(c.Permissions.Auto.Deny) != 0 {
+		t.Errorf("auto.deny = %v, want empty (local loosening ignored)", c.Permissions.Auto.Deny)
+	}
+
+	// The loosening block must be reported; the tightening keys must NOT.
+	w := warnings()
+	if !strings.Contains(w, "permissions.auto") {
+		t.Errorf("warning %q must name the ignored loosening auto block", w)
+	}
+	if strings.Contains(w, "fetch_deny") || strings.Contains(w, "fetch_ask") {
+		t.Errorf("warning %q must not name the honored tightening fetch keys", w)
+	}
+}
+
+// TestTrustedFileFetchFloorHonored asserts the trusted ~/.fuse/config.yml honors
+// the fetch floor alongside the loosening auto.* keys (all auto.* honored when
+// trusted).
+func TestTrustedFileFetchFloorHonored(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	trusted := `
+permissions:
+  auto:
+    classifier_model: my-model
+    fetch_deny: ["*.evil.com"]
+    fetch_ask: ["staging.example.com"]
+`
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(trusted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Permissions.Auto.ClassifierModel != "my-model" {
+		t.Errorf("auto.classifier_model = %q, want my-model (trusted honored)", c.Permissions.Auto.ClassifierModel)
+	}
+	if len(c.Permissions.Auto.FetchDeny) != 1 || c.Permissions.Auto.FetchDeny[0] != "*.evil.com" {
+		t.Errorf("auto.fetch_deny = %v, want [*.evil.com] (trusted honored)", c.Permissions.Auto.FetchDeny)
+	}
+	if len(c.Permissions.Auto.FetchAsk) != 1 || c.Permissions.Auto.FetchAsk[0] != "staging.example.com" {
+		t.Errorf("auto.fetch_ask = %v, want [staging.example.com] (trusted honored)", c.Permissions.Auto.FetchAsk)
+	}
+	if w := warnings(); w != "" {
+		t.Errorf("trusted file must not warn, got %q", w)
+	}
+}
+
 // canon canonicalizes a path via EvalSymlinks so expected project keys match
 // the loader's canonicalization (macOS /var → /private/var).
 func canon(t *testing.T, p string) string {

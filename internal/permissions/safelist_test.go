@@ -1,6 +1,61 @@
 package permissions
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/ethanhinson/fuse/internal/config"
+)
+
+// TestOnSafeList_D2Additions locks the D2 safe-list extension: the four newly
+// safe-listed orchestration/read-only tools resolve safe, while web_fetch (a
+// model-chosen arbitrary-egress surface) and the edit tools (path-scoped by their
+// own D1 branch, not the safe list) must NOT be on the safe list.
+func TestOnSafeList_D2Additions(t *testing.T) {
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"segment_read", true},
+		{"web_search", true},
+		{"skill", true},
+		{"pipeline_run", true},
+		// web_fetch is deliberately excluded: its endpoint is model-chosen, so it is
+		// an arbitrary-egress surface that must reach the classifier/human, not the
+		// safe list.
+		{"web_fetch", false},
+		// Edit tools are handled by resolveAuto's own D1 path-scoping branch, never
+		// the safe list.
+		{"write_file", false},
+		{"edit_file", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := onSafeList(tc.name); got != tc.want {
+				t.Errorf("onSafeList(%q) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolveAuto_D2_WebSearchAllowedWebFetchNot proves the safe-list additions
+// flow through resolveAuto in ModeAuto with a nil classifier: web_search takes the
+// onSafeList allow short-circuit, while web_fetch (not safe-listed, not an edit
+// tool) falls through to the fail-closed VerdictAsk. The nil classifier makes the
+// allow verdict provably come from the safe list, not a classifier decision.
+func TestResolveAuto_D2_WebSearchAllowedWebFetchNot(t *testing.T) {
+	g := New(config.PermissionsConfig{Mode: "auto"}, newTestRegistry("web_search", "web_fetch"), AlwaysApprove)
+	if g.classifier != nil {
+		t.Fatal("test precondition: classifier must be nil")
+	}
+
+	if got, _ := g.resolveAuto(context.Background(), "web_search", `{"query":"golang"}`); got != VerdictAllow {
+		t.Errorf("resolveAuto(web_search) = %v, want %v (safe-listed)", got, VerdictAllow)
+	}
+	if got, _ := g.resolveAuto(context.Background(), "web_fetch", `{"url":"https://example.com"}`); got == VerdictAllow {
+		t.Errorf("resolveAuto(web_fetch) = %v, want NOT VerdictAllow (arbitrary egress must not auto-approve)", got)
+	}
+}
 
 // TestIsReadOnlySafe_Segments drives isReadOnlySafe per segment, exercising the
 // flag-inspecting conditionals for find/git/sed and the plain read-only utils.
