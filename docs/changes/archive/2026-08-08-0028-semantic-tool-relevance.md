@@ -2,7 +2,7 @@
 id: 28
 slug: semantic-tool-relevance
 title: Semantic tool-result relevance scoring for smarter pruning
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-06
@@ -17,7 +17,7 @@ results: docs/results/2026-08-08-semantic-tool-relevance-results.md
 trivial: false
 auto_groomable:
 branch: feat/semantic-tool-relevance
-claimed_at: 2026-08-08T23:04:10Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/33
 blocked_by:
 reconciled: true
