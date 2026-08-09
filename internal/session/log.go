@@ -26,6 +26,12 @@ type LogEntry struct {
 type Logger struct {
 	f *os.File
 	w *bufio.Writer
+	// firstErr latches the first write/flush failure so a hot, per-child write
+	// path need not log on every call (which could spam under a full disk).
+	// Callers surface it once via Err()/Close() instead. bufio.Writer already
+	// latches its own error, but this also captures the marshal path and gives
+	// the caller a single place to check.
+	firstErr error
 }
 
 // DefaultLogDir returns ~/.fuse/sessions.
@@ -40,7 +46,11 @@ func NewLogger(dir string) (*Logger, error) {
 		return nil, fmt.Errorf("session log dir: %w", err)
 	}
 	var buf [3]byte
-	crand.Read(buf[:])
+	if _, err := crand.Read(buf[:]); err != nil {
+		// Extremely unlikely; fall back to a time-based suffix so the filename
+		// stays unique-ish rather than failing session logging entirely.
+		return nil, fmt.Errorf("session log rand: %w", err)
+	}
 	name := fmt.Sprintf("%s-%x.jsonl", time.Now().Format("2006-01-02"), buf)
 	path := filepath.Join(dir, name)
 	f, err := os.Create(path)
@@ -50,23 +60,51 @@ func NewLogger(dir string) (*Logger, error) {
 	return &Logger{f: f, w: bufio.NewWriter(f)}, nil
 }
 
-// Write appends a log entry to the session file.
+// Write appends a log entry to the session file. It returns any error and also
+// latches the first failure in the Logger (see Err) so a hot per-child call site
+// can ignore the per-write return and surface a single error at Close.
 func (l *Logger) Write(entry LogEntry) error {
 	b, err := json.Marshal(entry)
 	if err != nil {
+		l.setErr(err)
 		return err
 	}
-	l.w.Write(b)        //nolint:errcheck
-	l.w.WriteByte('\n') //nolint:errcheck
-	return l.w.Flush()
+	// bufio.Writer latches its own first error; Flush returns it. Writing then
+	// flushing surfaces disk-full / closed-file failures that were previously
+	// dropped by the //nolint:errcheck on the intermediate writes.
+	_, _ = l.w.Write(b)
+	_ = l.w.WriteByte('\n')
+	if err := l.w.Flush(); err != nil {
+		l.setErr(err)
+		return err
+	}
+	return nil
 }
 
-// Close flushes and closes the log file.
-func (l *Logger) Close() error {
-	if err := l.w.Flush(); err != nil {
-		return err
+func (l *Logger) setErr(err error) {
+	if l.firstErr == nil {
+		l.firstErr = err
 	}
-	return l.f.Close()
+}
+
+// Err returns the first write/flush error seen, or nil. Lets a caller that
+// ignores per-Write returns still detect that session logging silently failed.
+func (l *Logger) Err() error { return l.firstErr }
+
+// Close flushes and closes the log file. It prefers to report a close/flush
+// failure, falling back to any latched write error so a caller checking only
+// Close still learns that logging failed.
+func (l *Logger) Close() error {
+	flushErr := l.w.Flush()
+	closeErr := l.f.Close()
+	switch {
+	case flushErr != nil:
+		return flushErr
+	case closeErr != nil:
+		return closeErr
+	default:
+		return l.firstErr
+	}
 }
 
 // SweepOld deletes session log files older than maxAge from dir. Non-fatal.
