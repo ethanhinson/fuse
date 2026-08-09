@@ -2,7 +2,7 @@
 id: 41
 slug: agents-panel-ux
 title: Agents split-panel UX — focus indicator, reliable scrolling, blackboard readability
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-09
@@ -13,12 +13,12 @@ discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/0041-agents-panel-ux.md
 plan: docs/superpowers/plans/2026-08-09-agents-panel-ux.md
-results:
+results: docs/results/2026-08-09-agents-panel-ux-results.md
 trivial: false
 auto_groomable:
 branch: feat/agents-panel-ux
-claimed_at: 2026-08-09T20:11:59Z
-pr:
+claimed_at: 2026-08-09T20:43:42Z
+pr: https://github.com/ethanhinson/fuse/pull/44
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [0041-agents-panel-ux.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0041-agents-panel-ux.md) |
 | Plan | [2026-08-09-agents-panel-ux.md](https://github.com/ethanhinson/fuse/blob/feat/agents-panel-ux/docs/superpowers/plans/2026-08-09-agents-panel-ux.md) |
+| Results | [2026-08-09-agents-panel-ux-results.md](https://github.com/ethanhinson/fuse/blob/feat/agents-panel-ux/docs/results/2026-08-09-agents-panel-ux-results.md) |
+| PR | [#44](https://github.com/ethanhinson/fuse/pull/44) |
 <!-- docket:artifacts:end -->
 
 ## Why
