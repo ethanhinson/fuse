@@ -275,3 +275,63 @@ func TestBlackboardPrettyJSON(t *testing.T) {
 		}
 	}
 }
+
+// TestBlackboardNextPrevGroupNav: with >=3 writer groups, n moves bbScroll to the
+// next group's first line and p to the previous; both clamp at the ends.
+func TestBlackboardNextPrevGroupNav(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	tree := agent.NewAgentTree("root", "m")
+	bb := agent.NewBlackboard(tree)
+	// Three writers, distinct WrittenAt so ordering is deterministic.
+	bb.Put("c/k", "v", "id-c", "carol")
+	time.Sleep(3 * time.Millisecond)
+	bb.Put("b/k", "v", "id-b", "bob")
+	time.Sleep(3 * time.Millisecond)
+	bb.Put("a/k", "v", "id-a", "alice")
+
+	m := NewAgentsModel(tree, nil).WithBlackboard(bb)
+	m.width, m.height = 100, 30
+	enterBoard(m)
+	m.buildBlackboardLines(60) // prime
+
+	// Groups most-recent-first: alice(0), bob(?), carol(?). Compute starts.
+	_, starts := m.blackboardBody(bb.Snapshot(), 60)
+	if len(starts) < 3 {
+		t.Fatalf("expected >=3 group starts, got %d", len(starts))
+	}
+
+	// From top, n moves to second group's start.
+	m.bbScroll = 0
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.bbScroll != starts[1] {
+		t.Errorf("n from group 0 should land on starts[1]=%d, got %d", starts[1], m.bbScroll)
+	}
+	// n again -> third group.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.bbScroll != starts[2] {
+		t.Errorf("n should land on starts[2]=%d, got %d", starts[2], m.bbScroll)
+	}
+	// n at last group clamps (stays at last).
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.bbScroll != starts[2] {
+		t.Errorf("n at last group should clamp at starts[2]=%d, got %d", starts[2], m.bbScroll)
+	}
+
+	// p walks back.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if m.bbScroll != starts[1] {
+		t.Errorf("p should land on starts[1]=%d, got %d", starts[1], m.bbScroll)
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if m.bbScroll != starts[0] {
+		t.Errorf("p should land on starts[0]=%d, got %d", starts[0], m.bbScroll)
+	}
+	// p at first group clamps at first.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	if m.bbScroll != starts[0] {
+		t.Errorf("p at first group should clamp at starts[0]=%d, got %d", starts[0], m.bbScroll)
+	}
+}

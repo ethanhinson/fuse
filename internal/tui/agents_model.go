@@ -400,11 +400,65 @@ func (m *AgentsModel) handleBlackboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "g":
 		m.bbScroll = 0
+	case "n":
+		// Jump to the next writer group's first line (clamps at the last group).
+		if starts := m.blackboardGroupStarts(); len(starts) > 0 {
+			for _, s := range starts {
+				if s > m.bbScroll {
+					m.bbScroll = s
+					break
+				}
+			}
+		}
+	case "p":
+		// Jump to the previous writer group's first line (clamps at the first).
+		if starts := m.blackboardGroupStarts(); len(starts) > 0 {
+			target := starts[0]
+			for _, s := range starts {
+				if s < m.bbScroll {
+					target = s
+				} else {
+					break
+				}
+			}
+			m.bbScroll = target
+		}
 	case "b", "q", "esc", "tab":
 		m.inBlackboard = false
 		m.bbScroll = 0
 	}
 	return m, nil
+}
+
+// blackboardGroupStarts returns the body-line index of each writer-group header
+// for the current snapshot, reusing the same grouping as the render path so n/p
+// navigation lands exactly on a group's first line. Empty when there is no board.
+func (m *AgentsModel) blackboardGroupStarts() []int {
+	if m.blackboard == nil {
+		return nil
+	}
+	snap := m.blackboard.Snapshot()
+	if len(snap) == 0 {
+		return nil
+	}
+	// Compute at the SAME content width the render uses so wrapped-line counts (and
+	// thus group-start indices) match exactly: the detail pane is 60% of the width
+	// minus the divider column, minus 1 for its single border glyph.
+	_, starts := m.blackboardBody(snap, m.blackboardContentWidth())
+	return starts
+}
+
+// blackboardContentWidth returns the content width the blackboard body is built
+// to during View() — the detail pane width (60% split minus the divider) minus the
+// pane's single border glyph. Mirrors the width math in View().
+func (m *AgentsModel) blackboardContentWidth() int {
+	treeW := m.width * 40 / 100
+	detailW := m.width - treeW - 1
+	w := detailW - 1 // single (right) border glyph
+	if w < 1 {
+		w = 1
+	}
+	return w
 }
 
 func (m *AgentsModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -824,8 +878,8 @@ func (m *AgentsModel) buildBlackboardLines(w int) []string {
 	header := lipgloss.NewStyle().Bold(true).Render(fitLine("Blackboard", w))
 	rule := lipgloss.NewStyle().Foreground(colMuted).Render(strings.Repeat("─", w))
 	help := fitHelp(
-		"j/k scroll  g top  b/esc back to tree",
-		"j/k · g · b/esc back",
+		"j/k scroll  n/p group  g top  b/esc back to tree",
+		"j/k · n/p group · g · b/esc",
 		w,
 	)
 
