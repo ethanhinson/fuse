@@ -81,9 +81,10 @@ func Load() (Config, error) {
 }
 
 // mergePermissions merges a raw permissions subtree onto c following the
-// trust-boundary rules: loosening keys (mode/session_allow/auto_approve/auto.*)
-// are honored only when trusted, otherwise each present one is collected into
-// the returned ignored slice; tightening keys (always_prompt/disabled) are
+// trust-boundary rules: loosening keys (mode/session_allow/auto_approve/
+// auto.classifier_model/auto.deny/auto.ask) are honored only when trusted,
+// otherwise each present one is collected into the returned ignored slice;
+// tightening keys (always_prompt/disabled/auto.fetch_deny/auto.fetch_ask) are
 // honored from either source. It emits no warning itself — the caller renders
 // the single aggregated warning line from the returned slice.
 func mergePermissions(c *Config, raw rawPermissionsConfig, trusted bool) (ignored []string) {
@@ -116,13 +117,31 @@ func mergePermissions(c *Config, raw rawPermissionsConfig, trusted bool) (ignore
 	if len(raw.Disabled) > 0 {
 		c.Permissions.Disabled = raw.Disabled
 	}
-	// The whole permissions.auto.* block is loosening surface.
+	// permissions.auto splits by trust posture: classifier_model/deny/ask are
+	// LOOSENING (they widen what the auto-mode gate lets through, so honored only
+	// from a trusted source, else reported ignored), while fetch_deny/fetch_ask are
+	// TIGHTENING host-glob floors (ADR-0006) honored from EITHER source.
+	//
+	// The trusted branch assigns the whole raw.Auto (loosening keys included); the
+	// fetch_* assignment below then re-lands them from an untrusted file too. On the
+	// trusted path the fetch_* re-assignment is a harmless idempotent copy of what
+	// the whole-struct assignment already set.
 	if raw.Auto.ClassifierModel != "" || len(raw.Auto.Deny) > 0 || len(raw.Auto.Ask) > 0 {
 		if trusted {
 			c.Permissions.Auto = raw.Auto
 		} else {
 			ignored = append(ignored, "permissions.auto")
 		}
+	}
+	// Tightening host-glob floors: honored from either trusted or untrusted source,
+	// even when the loosening branch above skipped the block. Assigned onto whatever
+	// Auto now holds (the trusted whole-struct copy, or the surviving default) so an
+	// untrusted file's fetch_* still lands.
+	if len(raw.Auto.FetchDeny) > 0 {
+		c.Permissions.Auto.FetchDeny = raw.Auto.FetchDeny
+	}
+	if len(raw.Auto.FetchAsk) > 0 {
+		c.Permissions.Auto.FetchAsk = raw.Auto.FetchAsk
 	}
 	return ignored
 }

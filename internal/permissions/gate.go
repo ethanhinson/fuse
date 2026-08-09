@@ -421,6 +421,22 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (Ve
 			}
 			return VerdictAsk, ""
 		}
+		// web_fetch carries a URL rather than a shell command: apply the static host
+		// floor first (SSRF / config deny/ask / blocklist), and only a fallthrough
+		// host reaches the reputation-aware classifier. A missing/garbled url makes
+		// classifyFetchHost return Ask("malformed-url"), so it fails toward the human.
+		if name == "web_fetch" {
+			r := classifyFetchHost(fetchURL(args), g.cfg.Auto.FetchDeny, g.cfg.Auto.FetchAsk)
+			switch r.Verdict {
+			case VerdictDeny:
+				return VerdictDeny, "denied by auto-mode web_fetch host floor (" + r.DecidedBy + "): " + r.Host
+			case VerdictAsk:
+				return VerdictAsk, ""
+			default:
+				// Fallthrough host ⇒ reputation-aware classifier (valve-enforced).
+				return g.classifyWebFetch(ctx, args, r)
+			}
+		}
 		return g.classifyOrAsk(ctx, name, args)
 	}
 
@@ -498,6 +514,39 @@ func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string
 	}
 }
 
+// classifyWebFetch consults the reputation-aware web_fetch classifier for a final
+// verdict on a fallthrough host, or fails closed to VerdictAsk when no classifier
+// is wired. It is a sibling of classifyOrAsk and enforces the SAME escalation
+// valve: the valve is consulted before the classifier (a tripped valve pauses auto
+// mode without a call — VerdictAsk interactive, a summary-error VerdictDeny
+// otherwise), a deny is recorded as a block (advancing/tripping the valve) and an
+// allow/ask resets the consecutive counter. r carries the static floor's host and
+// AllowNudge, threaded to the classifier as a reputation bias hint.
+func (g *PermissionGate) classifyWebFetch(ctx context.Context, args string, r fetchFloorResult) (Verdict, string) {
+	if g.classifier == nil {
+		return VerdictAsk, ""
+	}
+
+	// Valve already tripped ⇒ pause auto mode without consulting the classifier.
+	if g.valve.tripped() {
+		return g.valveTripped()
+	}
+
+	// User-message history is not plumbed into the gate (parity with classifyOrAsk);
+	// the classifier still functions from the pending-call turn alone.
+	switch g.classifier.ClassifyWebFetch(ctx, nil, r.Host, r.AllowNudge, args) {
+	case VerdictAllow:
+		g.valve.recordNonBlock()
+		return VerdictAllow, ""
+	case VerdictDeny:
+		g.valve.recordBlock()
+		return VerdictDeny, "denied by auto-mode web_fetch classifier: " + r.Host
+	default:
+		g.valve.recordNonBlock()
+		return VerdictAsk, ""
+	}
+}
+
 // valveTripped returns the verdict for a tripped escalation valve: VerdictAsk in
 // an interactive gate (fall back to the human), or VerdictDeny carrying a
 // structured summary error in a non-interactive gate (abort the run).
@@ -532,6 +581,20 @@ func editPath(args string) (path string, ok bool) {
 		return "", false
 	}
 	return v.Path, true
+}
+
+// fetchURL extracts the "url" arg from a web_fetch tool's JSON args (the built-in
+// web_fetch schema names it "url"). A non-JSON or missing-url args string yields
+// "", which classifyFetchHost treats as a malformed URL ⇒ Ask (fail toward the
+// human) rather than a fallthrough.
+func fetchURL(args string) string {
+	var v struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(args), &v); err == nil {
+		return v.URL
+	}
+	return ""
 }
 
 // bashCommand extracts the shell command string from a bash tool's JSON args,

@@ -46,6 +46,14 @@ type AutoConfig struct {
 	ClassifierModel string   `yaml:"classifier_model"`
 	Deny            []string `yaml:"deny"`
 	Ask             []string `yaml:"ask"`
+	// FetchDeny and FetchAsk are host-glob floors for the web_fetch auto-mode gate:
+	// a matched host is denied (FetchDeny) or forced to a human ask (FetchAsk) before
+	// the classifier is ever consulted. Unlike classifier_model/deny/ask (which are
+	// LOOSENING and honored only from the trusted ~/.fuse/config.yml), these are
+	// TIGHTENING keys (ADR-0006) and MAY come from the repo-plantable .fuse.local.yml:
+	// a checked-in file can only add host denials/asks, never weaken the gate.
+	FetchDeny []string `yaml:"fetch_deny"`
+	FetchAsk  []string `yaml:"fetch_ask"`
 }
 
 // CustomProviderConfig describes a user-supplied JSON search endpoint,

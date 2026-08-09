@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -252,6 +254,79 @@ func jsonStr(s string) string {
 		panic(err)
 	}
 	return string(b)
+}
+
+// TestResolveAuto_WebFetchFallthroughToClassifier proves the web_fetch host floor
+// routes a fallthrough host (not SSRF / config-denied / blocklisted / known-good)
+// to the classifier, and that a classifier deny advances the escalation valve
+// exactly like the bash classifier path. A stub classifier returning deny is
+// consulted 3 times (the 3 fallthrough hosts) then the valve trips: the 4th
+// fallthrough call must NOT reach the classifier again.
+func TestResolveAuto_WebFetchFallthroughToClassifier(t *testing.T) {
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
+	cls := newTestClassifier(t, stub)
+	approve, called := newApproveRecorder(true)
+	// Non-interactive so a tripped valve aborts rather than falling to the human.
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), approve,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+
+	// example.com is a fallthrough host: not SSRF, not in any config list, not
+	// blocklisted, not known-good. Each distinct host avoids the verdict cache.
+	hosts := []string{"a.example.com", "b.example.com", "c.example.com"}
+	for i, h := range hosts {
+		res := g.Execute(context.Background(), "web_fetch", `{"url":"https://`+h+`/x"}`)
+		if !res.IsError {
+			t.Fatalf("block %d: classifier deny on a fallthrough host should surface as an error, got: %s", i, res.Output)
+		}
+		if *called {
+			t.Fatalf("block %d: classifier deny must not route to the human", i)
+		}
+	}
+	if stub.calls != 3 {
+		t.Fatalf("expected 3 classifier calls (3 fallthrough web_fetch hosts) before the valve trips, got %d", stub.calls)
+	}
+
+	// The 4th fallthrough call finds the valve tripped: no further classifier call.
+	res := g.Execute(context.Background(), "web_fetch", `{"url":"https://d.example.com/x"}`)
+	if stub.calls != 3 {
+		t.Fatalf("valve tripped: classifier must not be consulted again, got %d calls", stub.calls)
+	}
+	if !res.IsError {
+		t.Fatalf("non-interactive valve trip must abort with an error, got: %s", res.Output)
+	}
+}
+
+// TestResolveAuto_WebFetchStaticFloor proves the static host floor decides before
+// the classifier: an SSRF host denies (classifier never consulted) and a
+// fetch_deny glob match denies with the config-deny reason.
+func TestResolveAuto_WebFetchStaticFloor(t *testing.T) {
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow","reason":"x"}`}}
+	cls := newTestClassifier(t, stub)
+
+	// SSRF: loopback host denies without consulting the classifier.
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), AlwaysApprove,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+	v, reason := g.resolveAuto(context.Background(), "web_fetch", `{"url":"http://127.0.0.1/x"}`)
+	if v != VerdictDeny {
+		t.Fatalf("SSRF host must deny, got %v", v)
+	}
+	if stub.calls != 0 {
+		t.Fatalf("SSRF deny must not consult the classifier, got %d calls", stub.calls)
+	}
+	if !strings.Contains(reason, "ssrf") {
+		t.Errorf("SSRF deny reason should name the layer; got %q", reason)
+	}
+
+	// fetch_deny glob match denies with the config-deny reason.
+	g2 := New(autoCfg(config.AutoConfig{FetchDeny: []string{"*.evil.com"}}, nil, nil),
+		newTestRegistry("web_fetch"), AlwaysApprove, WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+	v2, reason2 := g2.resolveAuto(context.Background(), "web_fetch", `{"url":"https://sub.evil.com/x"}`)
+	if v2 != VerdictDeny {
+		t.Fatalf("fetch_deny match must deny, got %v", v2)
+	}
+	if !strings.Contains(reason2, "config-deny") {
+		t.Errorf("fetch_deny reason should name the layer; got %q", reason2)
+	}
 }
 
 func TestPromptAll_PromptsEvenSafeTools(t *testing.T) {

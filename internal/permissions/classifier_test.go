@@ -136,6 +136,90 @@ func TestClassifyInputHygiene(t *testing.T) {
 	}
 }
 
+// TestClassifyWebFetch_PromptNamesHostAndReputation proves the web_fetch verdict
+// call names the target host, instructs the model to weigh domain reputation, and
+// carries the known-good hint — while preserving input hygiene: only the system
+// instruction, the user's own turns, and the pending prompt reach the model (no
+// tool-result or assistant-reasoning messages).
+func TestClassifyWebFetch_PromptNamesHostAndReputation(t *testing.T) {
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"ask","reason":"unknown host"}`}}
+	c := newTestClassifier(t, stub)
+
+	userMessages := []model.Message{
+		{Role: "user", Content: "fetch the docs from that site"},
+		{Role: "tool", ToolCallID: "call_1", Name: "web_fetch", Content: "SECRET_TOOL_RESULT page body"},
+		{Role: "assistant", Content: "ACTOR_REASONING I will fetch it"},
+		{Role: "user", Content: "go ahead"},
+	}
+
+	got := c.ClassifyWebFetch(context.Background(), userMessages, "unknown-blog.example", false, `{"url":"https://unknown-blog.example/x"}`)
+	if got != VerdictAsk {
+		t.Fatalf("expected VerdictAsk from the stub, got %v", got)
+	}
+	if stub.calls != 1 {
+		t.Fatalf("expected exactly 1 completer call, got %d", stub.calls)
+	}
+
+	var joined strings.Builder
+	sawUser := false
+	for _, m := range stub.lastReq.Messages {
+		joined.WriteString(m.Role)
+		joined.WriteString("|")
+		joined.WriteString(m.Content)
+		joined.WriteString("\n")
+		if m.Role == "tool" {
+			t.Errorf("web_fetch classifier prompt must not contain a tool-result message (Role==tool)")
+		}
+		if m.Role == "assistant" {
+			t.Errorf("web_fetch classifier prompt must not contain an assistant message")
+		}
+		if strings.Contains(m.Content, "fetch the docs from that site") {
+			sawUser = true
+		}
+	}
+	blob := joined.String()
+
+	if !sawUser {
+		t.Errorf("web_fetch prompt must contain the user's messages; got:\n%s", blob)
+	}
+	if strings.Contains(blob, "SECRET_TOOL_RESULT") || strings.Contains(blob, "ACTOR_REASONING") {
+		t.Errorf("web_fetch prompt leaked a tool result / actor reasoning; got:\n%s", blob)
+	}
+	// The pending prompt must name the target host.
+	if !strings.Contains(blob, "unknown-blog.example") {
+		t.Errorf("web_fetch prompt must name the target host; got:\n%s", blob)
+	}
+	// The pending prompt must instruct reputation weighting.
+	lower := strings.ToLower(blob)
+	if !strings.Contains(lower, "reputation") {
+		t.Errorf("web_fetch prompt must instruct domain-reputation weighting; got:\n%s", blob)
+	}
+}
+
+// TestClassifyWebFetch_KnownGoodHintNotABypass proves the known-good hint is
+// surfaced to the model as a bias, not an absolute bypass: the prompt must still
+// carry the reputation instruction AND state that a compromised subdomain of a
+// good host stays deniable.
+func TestClassifyWebFetch_KnownGoodHintNotABypass(t *testing.T) {
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow","reason":"docs"}`}}
+	c := newTestClassifier(t, stub)
+
+	c.ClassifyWebFetch(context.Background(), nil, "docs.example.com", true, `{"url":"https://docs.example.com/x"}`)
+
+	var blob string
+	for _, m := range stub.lastReq.Messages {
+		blob += m.Content + "\n"
+	}
+	lower := strings.ToLower(blob)
+	if !strings.Contains(lower, "docs.example.com") {
+		t.Errorf("prompt must name the host; got:\n%s", blob)
+	}
+	// The known-good hint must be communicated as non-absolute (deniable).
+	if !strings.Contains(lower, "not") || !strings.Contains(lower, "deniab") {
+		t.Errorf("prompt must state the known-good hint is not an absolute bypass (still deniable); got:\n%s", blob)
+	}
+}
+
 func TestClassifyCachesByToolAndNormalizedCommand(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"cached"}`}}
 	c := newTestClassifier(t, stub)

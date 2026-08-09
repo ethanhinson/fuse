@@ -185,6 +185,73 @@ func (c *Classifier) classifyUncached(ctx context.Context, userMessages []model.
 	return parseVerdict(resp.Content)
 }
 
+// ClassifyWebFetch returns a block-biased verdict for a pending web_fetch call
+// that survived the static host floor (a "fallthrough" host). It reuses the
+// hygienic prompt discipline (system + the user's own turns + one pending prompt),
+// but the pending prompt is web_fetch-aware: it names the target host and
+// instructs the model to weigh domain reputation, biasing an unrecognized/
+// low-reputation host toward ask/deny and a well-known documentation/reference
+// host toward allow. knownGood carries the static floor's AllowNudge as a bias
+// hint that is explicitly NOT an absolute bypass — a compromised subdomain of a
+// good host must still be deniable. Verdicts are cached per session keyed by
+// (toolName, rawArgs), so an identical pending fetch is classified at most once.
+//
+// Fail-closed contract matches Classify: a completer timeout/error or a
+// malformed reply resolves to VerdictAsk.
+func (c *Classifier) ClassifyWebFetch(ctx context.Context, userMessages []model.Message, host string, knownGood bool, rawArgs string) Verdict {
+	if v, ok := c.cache.Lookup("web_fetch", rawArgs); ok {
+		return v
+	}
+	req := model.CompletionReq{
+		Model:     c.modelID,
+		Messages:  c.buildWebFetchMessages(userMessages, host, knownGood),
+		MaxTokens: classifierMaxTokens,
+	}
+	resp, err := c.client.Complete(ctx, req)
+	var v Verdict
+	if err != nil {
+		v = VerdictAsk
+	} else {
+		v = parseVerdict(resp.Content)
+	}
+	c.cache.Store("web_fetch", rawArgs, v)
+	return v
+}
+
+// buildWebFetchMessages assembles the web_fetch classifier prompt with the same
+// input hygiene as buildMessages (system + user turns only, no tool results or
+// assistant reasoning), but ends with the web_fetch-specific pending prompt.
+func (c *Classifier) buildWebFetchMessages(userMessages []model.Message, host string, knownGood bool) []model.Message {
+	msgs := make([]model.Message, 0, len(userMessages)+2)
+	msgs = append(msgs, model.Message{Role: "system", Content: classifierSystemPrompt})
+	for _, m := range userMessages {
+		if m.Role != "user" {
+			continue // drop tool results, assistant reasoning, and anything else.
+		}
+		if strings.TrimSpace(m.Content) == "" {
+			continue
+		}
+		msgs = append(msgs, model.Message{Role: "user", Content: m.Content})
+	}
+	msgs = append(msgs, model.Message{Role: "user", Content: webFetchPendingPrompt(host, knownGood)})
+	return msgs
+}
+
+// webFetchPendingPrompt renders the web_fetch pending call as the final user turn,
+// naming the target host and instructing domain-reputation weighting. The
+// known-good hint is stated as a bias, not a bypass: a compromised subdomain of a
+// good host must still be deniable.
+func webFetchPendingPrompt(host string, knownGood bool) string {
+	return fmt.Sprintf(
+		"Pending tool call to classify:\ntool: web_fetch\ntarget host: %s\n\n"+
+			"Weigh domain reputation: an unrecognized or low-reputation host biases toward \"ask\" or \"deny\"; "+
+			"a well-known documentation/reference host biases toward \"allow\". "+
+			"A known-good hint for this host is %t, but this hint is NOT an absolute bypass — "+
+			"a compromised subdomain of an otherwise good host must still be deniable.\n\n"+
+			"Respond with the JSON verdict object.",
+		host, knownGood)
+}
+
 // buildMessages assembles the hygienic classifier prompt. INPUT HYGIENE
 // (non-negotiable): only the system instruction, the user's own messages, and a
 // final description of the pending tool call are included. Tool-result messages
