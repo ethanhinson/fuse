@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0041 — Agents split-panel UX — focus indicator, reliable scrolling, blackboard readability](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0041-agents-panel-ux.md)**
+> ↩ **[Change 0041 — Agents split-panel UX — focus indicator, reliable scrolling, blackboard readability](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-09-0041-agents-panel-ux.md)**
 <!-- docket:backlink:end -->
 
 # Spec 0041 — Agents split-panel UX: focus indicator, focused-panel scrolling, blackboard readability

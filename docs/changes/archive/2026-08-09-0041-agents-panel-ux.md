@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0041-agents-panel-ux.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0041-agents-panel-ux.md) |
-| Plan | [2026-08-09-agents-panel-ux.md](https://github.com/ethanhinson/fuse/blob/feat/agents-panel-ux/docs/superpowers/plans/2026-08-09-agents-panel-ux.md) |
-| Results | [2026-08-09-agents-panel-ux-results.md](https://github.com/ethanhinson/fuse/blob/feat/agents-panel-ux/docs/results/2026-08-09-agents-panel-ux-results.md) |
+| Plan | [2026-08-09-agents-panel-ux.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-09-agents-panel-ux.md) |
+| Results | [2026-08-09-agents-panel-ux-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-09-agents-panel-ux-results.md) |
 | PR | [#44](https://github.com/ethanhinson/fuse/pull/44) |
 <!-- docket:artifacts:end -->
 
