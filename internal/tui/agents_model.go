@@ -37,9 +37,11 @@ type AgentsModel struct {
 	nodeByID     map[string]agent.NodeView
 	lastChildOf  map[string]string // parentID → last child's ID
 	selected     int
-	treeScroll   int // first visible row of the tree pane
+	treeScroll   int  // first visible row of the tree pane
+	treeManual   bool // wheel scrolled the tree; suppress selection-follow this frame
 	inDetail     bool
 	detailScroll int  // first visible event row in the detail list
+	detailManual bool // wheel scrolled the detail list; suppress selection-follow
 	followTail   bool // selection sticks to the newest event until user moves up
 	eventSel     int  // selected event (index into displayEvents)
 	eventCount   int  // len(displayEvents) as of last render, for key clamping
@@ -355,16 +357,20 @@ func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.selected < n-1 {
 			m.selected++
 		}
+		m.treeManual = false // selection keys re-engage selection-follow scrolling
 	case "k", "up":
 		if m.selected > 0 {
 			m.selected--
 		}
+		m.treeManual = false
 	case "g":
 		m.selected = 0
+		m.treeManual = false
 	case "G":
 		if n > 0 {
 			m.selected = n - 1
 		}
+		m.treeManual = false
 	case "enter", "tab":
 		m.inDetail = true
 		m.detailScroll = 0
@@ -408,16 +414,20 @@ func (m *AgentsModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.eventSel++
 		}
 		m.followTail = m.eventSel >= m.eventCount-1
+		m.detailManual = false // selection keys re-engage selection-follow scrolling
 	case "k", "up":
 		if m.eventSel > 0 {
 			m.eventSel--
 		}
 		m.followTail = false
+		m.detailManual = false
 	case "g":
 		m.eventSel = 0
 		m.followTail = false
+		m.detailManual = false
 	case "G":
 		m.followTail = true
+		m.detailManual = false
 	case "enter":
 		if m.eventCount > 0 {
 			m.inEventView = true
@@ -479,43 +489,48 @@ func (m *AgentsModel) handleEventViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleMouse: the wheel follows the active pane — node selection in the
-// tree, event selection in the detail list, content scroll in an expanded
-// event.
+// wheelStep is the number of lines the mouse wheel scrolls per event.
+const wheelStep = 3
+
+// handleMouse: the wheel scrolls the FOCUSED pane's OFFSET (not its selection),
+// keyed off the current view-state flags (change 0041). The selection cursor is
+// moved only by j/k/arrows now; the wheel never drags it. Each offset is floored
+// at 0 here and clamped to its content's upper bound at render time by the
+// corresponding build*Lines (which re-clamp every frame), so the view can't scroll
+// past content in either direction.
 func (m *AgentsModel) handleMouse(msg tea.MouseMsg) {
 	up := msg.Button == tea.MouseButtonWheelUp
 	down := msg.Button == tea.MouseButtonWheelDown
 	if !up && !down {
 		return
 	}
+	delta := wheelStep
+	if up {
+		delta = -wheelStep
+	}
 	switch {
-	case m.inEventView:
-		if up {
-			m.eventScroll -= 3
-			if m.eventScroll < 0 {
-				m.eventScroll = 0
-			}
-		} else {
-			m.eventScroll += 3 // clamped at render time
+	case m.inEventView, m.inSegmentView:
+		// Expanded event / archived segment region both scroll eventScroll.
+		m.eventScroll += delta
+		if m.eventScroll < 0 {
+			m.eventScroll = 0
+		}
+	case m.inBlackboard:
+		m.bbScroll += delta
+		if m.bbScroll < 0 {
+			m.bbScroll = 0
 		}
 	case m.inDetail:
-		if up {
-			if m.eventSel > 0 {
-				m.eventSel--
-			}
-			m.followTail = false
-		} else {
-			if m.eventSel < m.eventCount-1 {
-				m.eventSel++
-			}
-			m.followTail = m.eventSel >= m.eventCount-1
+		m.detailManual = true
+		m.detailScroll += delta
+		if m.detailScroll < 0 {
+			m.detailScroll = 0
 		}
-	default: // tree pane
-		if up && m.selected > 0 {
-			m.selected--
-		}
-		if down && m.selected < len(m.nodes)-1 {
-			m.selected++
+	default: // tree pane (left focus)
+		m.treeManual = true
+		m.treeScroll += delta
+		if m.treeScroll < 0 {
+			m.treeScroll = 0
 		}
 	}
 }
@@ -537,12 +552,16 @@ func (m *AgentsModel) buildTreeLines(w int) []string {
 	if visRows < 1 {
 		visRows = 1
 	}
-	// Keep the selection inside the window.
-	if m.selected < m.treeScroll {
-		m.treeScroll = m.selected
-	}
-	if m.selected >= m.treeScroll+visRows {
-		m.treeScroll = m.selected - visRows + 1
+	// Keep the selection inside the window — unless the wheel is driving the scroll
+	// (treeManual), in which case the offset is honored as-is and the selection may
+	// sit off-screen (change 0041: the wheel scrolls the view, not the cursor).
+	if !m.treeManual {
+		if m.selected < m.treeScroll {
+			m.treeScroll = m.selected
+		}
+		if m.selected >= m.treeScroll+visRows {
+			m.treeScroll = m.selected - visRows + 1
+		}
 	}
 	if maxScroll := len(rows) - visRows; m.treeScroll > maxScroll {
 		m.treeScroll = maxScroll
@@ -745,22 +764,35 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 			evtLines = []string{muted.Render("Cancelled before producing events.")}
 		}
 	} else {
-		// Selection: follow the newest event until the user moves off it.
-		if m.followTail || m.eventSel >= len(visible)-1 {
-			m.eventSel = len(visible) - 1
-			m.followTail = true
-		}
-		if m.eventSel < 0 {
+		// Selection: follow the newest event until the user moves off it — unless
+		// the wheel is driving the scroll (detailManual), in which case the offset is
+		// honored as-is and the selection may sit off-screen (change 0041).
+		if !m.detailManual {
+			if m.followTail || m.eventSel >= len(visible)-1 {
+				m.eventSel = len(visible) - 1
+				m.followTail = true
+			}
+			if m.eventSel < 0 {
+				m.eventSel = 0
+			}
+			// Keep the selection in the visible window.
+			if m.eventSel < m.detailScroll {
+				m.detailScroll = m.eventSel
+			}
+			if m.eventSel >= m.detailScroll+rows {
+				m.detailScroll = m.eventSel - rows + 1
+			}
+		} else if m.eventSel < 0 {
 			m.eventSel = 0
 		}
-		// Keep the selection in the visible window.
-		if m.eventSel < m.detailScroll {
-			m.detailScroll = m.eventSel
-		}
-		if m.eventSel >= m.detailScroll+rows {
-			m.detailScroll = m.eventSel - rows + 1
-		}
 		all := m.renderEventLines(n, visible, w)
+		// Clamp the manual scroll to valid content bounds.
+		if maxScroll := len(all) - rows; m.detailScroll > maxScroll {
+			m.detailScroll = maxScroll
+		}
+		if m.detailScroll < 0 {
+			m.detailScroll = 0
+		}
 		endIdx := m.detailScroll + rows
 		if endIdx > len(all) {
 			endIdx = len(all)
