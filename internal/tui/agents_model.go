@@ -37,9 +37,11 @@ type AgentsModel struct {
 	nodeByID     map[string]agent.NodeView
 	lastChildOf  map[string]string // parentID → last child's ID
 	selected     int
-	treeScroll   int // first visible row of the tree pane
+	treeScroll   int  // first visible row of the tree pane
+	treeManual   bool // sticky: set by a wheel scroll, cleared by a selection key (j/k/g/G) or a pane enter/exit; while set, suppresses selection-follow scrolling
 	inDetail     bool
 	detailScroll int  // first visible event row in the detail list
+	detailManual bool // sticky: set by a wheel scroll, cleared by a selection key (j/k/g/G) or a pane enter/exit; while set, suppresses selection-follow
 	followTail   bool // selection sticks to the newest event until user moves up
 	eventSel     int  // selected event (index into displayEvents)
 	eventCount   int  // len(displayEvents) as of last render, for key clamping
@@ -120,6 +122,15 @@ func (m *AgentsModel) SelectedNodeID() string {
 	return m.nodes[m.selected].ID
 }
 
+// rightFocused reports whether the right column (detail/blackboard/event/segment)
+// currently holds focus, derived entirely from the existing view-state flags —
+// there is no separate focus source of truth. False means the left (tree) column
+// is focused. The colored-border focus indicator and the wheel-scroll routing
+// both key off this.
+func (m *AgentsModel) rightFocused() bool {
+	return m.inDetail || m.inBlackboard || m.inEventView || m.inSegmentView
+}
+
 // Init is a no-op; the parent ShellModel owns the tree-update subscription.
 func (m *AgentsModel) Init() tea.Cmd { return nil }
 
@@ -190,23 +201,59 @@ func (m *AgentsModel) View() string {
 	if h < 1 {
 		h = 1
 	}
+
+	// Colored-border focus indicator (change 0041). Each pane is boxed by manual
+	// border glyphs drawn INSIDE the existing fit-line width budget, so the join
+	// shape and exact-width invariant are unchanged. The border costs 2 rows
+	// (top+bottom) per pane. The center divider column is SUBSUMED as the shared
+	// vertical seam: the tree pane draws only its left border and the detail pane
+	// only its right border, and the existing 1-col divChar between them serves as
+	// the single interior seam — so no doubled vertical bars. That means each pane
+	// loses exactly one interior column (its own outer border glyph), so the
+	// content budget shrinks by 1 per pane, not 2.
+	treeContentW := treeW - 1 // left border glyph only
+	if treeContentW < 1 {
+		treeContentW = 1
+	}
+	detailContentW := detailW - 1 // right border glyph only
+	if detailContentW < 1 {
+		detailContentW = 1
+	}
+	contentH := h - 2
+	if contentH < 1 {
+		contentH = 1
+	}
+
+	// Thread the reduced content height through m.height exactly as the scheduler
+	// header shrink does: build*Lines read m.height internally.
 	fullHeight := m.height
-	m.height = h
-	treeLines := m.buildTreeLines(treeW)
-	detailLines := m.buildDetailLines(detailW)
+	m.height = contentH
+	treeLines := m.buildTreeLines(treeContentW)
+	detailLines := m.buildDetailLines(detailContentW)
 	m.height = fullHeight
-	for len(treeLines) < h {
-		treeLines = append(treeLines, strings.Repeat(" ", treeW))
+	for len(treeLines) < contentH {
+		treeLines = append(treeLines, strings.Repeat(" ", treeContentW))
 	}
-	for len(detailLines) < h {
-		detailLines = append(detailLines, strings.Repeat(" ", detailW))
+	for len(detailLines) < contentH {
+		detailLines = append(detailLines, strings.Repeat(" ", detailContentW))
 	}
+
+	// Which side is hot: the focused pane's border/title use the accent color, the
+	// other muted.
+	treeAccent, detailAccent := colCyan, colMuted
+	if m.rightFocused() {
+		treeAccent, detailAccent = colMuted, colCyan
+	}
+	// Tree pane: left border only (drawRight=false). Detail pane: right border only
+	// (drawLeft=false). The seam between them is the shared divChar.
+	treePane := boxPane(treeLines, treeW, contentH, "agents", treeAccent, true, false)
+	detailPane := boxPane(detailLines, detailW, contentH, m.detailTitle(), detailAccent, false, true)
 
 	divChar := lipgloss.NewStyle().Foreground(colMuted).Render("│")
 	lines := make([]string, 0, len(header)+h)
 	lines = append(lines, header...)
 	for i := 0; i < h; i++ {
-		lines = append(lines, fitLine(treeLines[i], treeW)+divChar+fitLine(detailLines[i], detailW))
+		lines = append(lines, fitLine(treePane[i], treeW)+divChar+fitLine(detailPane[i], detailW))
 	}
 
 	var b strings.Builder
@@ -219,6 +266,88 @@ func (m *AgentsModel) View() string {
 	return b.String()
 }
 
+// detailTitle names the right pane by its current sub-view, for the border top.
+func (m *AgentsModel) detailTitle() string {
+	switch {
+	case m.inBlackboard:
+		return "blackboard"
+	case m.inSegmentView:
+		return "segment"
+	case m.inEventView:
+		return "event"
+	case m.inDetail:
+		return "detail"
+	default:
+		return "detail"
+	}
+}
+
+// boxPane wraps contentLines in a manual box border colored by `border`, returning
+// exactly contentH+2 lines each paneW cells wide. drawLeft/drawRight select which
+// vertical edges this pane draws — the center split subsumes the shared divider by
+// having the left pane draw only its left edge and the right pane only its right
+// edge, so the interior seam is a single glyph, not a doubled bar. The border
+// glyphs live inside the pane's own width budget so the caller's
+// fitLine(...)+divChar+fitLine(...) join keeps the exact total width. The title is
+// embedded in the top border row in the same color. Nothing here re-flows content;
+// each content line is padded to the interior width and framed.
+func boxPane(contentLines []string, paneW, contentH int, title string, border lipgloss.Color, drawLeft, drawRight bool) []string {
+	bs := lipgloss.NewStyle().Foreground(border)
+	edges := 0
+	if drawLeft {
+		edges++
+	}
+	if drawRight {
+		edges++
+	}
+	inner := paneW - edges // columns available for content between vertical glyphs
+	if inner < 1 {
+		inner = 1
+	}
+
+	leftTop, rightTop, leftBot, rightBot := "", "", "", ""
+	left, right := "", ""
+	if drawLeft {
+		leftTop, leftBot, left = "┌", "└", "│"
+	}
+	if drawRight {
+		rightTop, rightBot, right = "┐", "┘", "│"
+	}
+
+	top := leftTop + fitBorderTop(title, inner) + rightTop
+	bottom := leftBot + strings.Repeat("─", inner) + rightBot
+
+	out := make([]string, 0, contentH+2)
+	out = append(out, bs.Render(top))
+	lg, rg := bs.Render(left), bs.Render(right)
+	for i := 0; i < contentH; i++ {
+		var c string
+		if i < len(contentLines) {
+			c = contentLines[i]
+		}
+		out = append(out, lg+fitLine(c, inner)+rg)
+	}
+	out = append(out, bs.Render(bottom))
+	return out
+}
+
+// fitBorderTop builds the interior of a box's top border for a run of `inner`
+// cells: a title embedded between dashes as ─ title ─────, padded/truncated so the
+// interior is exactly `inner` cells wide (excludes the two corner glyphs).
+func fitBorderTop(title string, inner int) string {
+	title = sanitizeDisplay(title)
+	// "─ " + title + " " leader, then fill the rest with ─.
+	lead := "─ "
+	tail := " "
+	base := lead + title + tail
+	bw := lipgloss.Width(base)
+	if bw >= inner {
+		// Title too wide for the border: just fill with dashes.
+		return strings.Repeat("─", inner)
+	}
+	return base + strings.Repeat("─", inner-bw)
+}
+
 // ─── key handlers ─────────────────────────────────────────────────────────────
 
 func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -228,21 +357,26 @@ func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.selected < n-1 {
 			m.selected++
 		}
+		m.treeManual = false // selection keys re-engage selection-follow scrolling
 	case "k", "up":
 		if m.selected > 0 {
 			m.selected--
 		}
+		m.treeManual = false
 	case "g":
 		m.selected = 0
+		m.treeManual = false
 	case "G":
 		if n > 0 {
 			m.selected = n - 1
 		}
+		m.treeManual = false
 	case "enter", "tab":
 		m.inDetail = true
 		m.detailScroll = 0
 		m.eventSel = 0
-		m.followTail = true // land on the newest event of the chosen node
+		m.detailManual = false // clear any stale wheel flag so followTail lands on tail
+		m.followTail = true    // land on the newest event of the chosen node
 	case "x":
 		if n > 0 && m.selected < n {
 			m.tree.CancelNode(m.nodes[m.selected].ID)
@@ -267,11 +401,65 @@ func (m *AgentsModel) handleBlackboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "g":
 		m.bbScroll = 0
+	case "n":
+		// Jump to the next writer group's first line (clamps at the last group).
+		if starts := m.blackboardGroupStarts(); len(starts) > 0 {
+			for _, s := range starts {
+				if s > m.bbScroll {
+					m.bbScroll = s
+					break
+				}
+			}
+		}
+	case "p":
+		// Jump to the previous writer group's first line (clamps at the first).
+		if starts := m.blackboardGroupStarts(); len(starts) > 0 {
+			target := starts[0]
+			for _, s := range starts {
+				if s < m.bbScroll {
+					target = s
+				} else {
+					break
+				}
+			}
+			m.bbScroll = target
+		}
 	case "b", "q", "esc", "tab":
 		m.inBlackboard = false
 		m.bbScroll = 0
 	}
 	return m, nil
+}
+
+// blackboardGroupStarts returns the body-line index of each writer-group header
+// for the current snapshot, reusing the same grouping as the render path so n/p
+// navigation lands exactly on a group's first line. Empty when there is no board.
+func (m *AgentsModel) blackboardGroupStarts() []int {
+	if m.blackboard == nil {
+		return nil
+	}
+	snap := m.blackboard.Snapshot()
+	if len(snap) == 0 {
+		return nil
+	}
+	// Compute at the SAME content width the render uses so wrapped-line counts (and
+	// thus group-start indices) match exactly: the detail pane is 60% of the width
+	// minus the divider column, minus 1 for its single border glyph.
+	_, starts := m.blackboardBody(snap, m.blackboardContentWidth())
+	return starts
+}
+
+// blackboardContentWidth returns the content width the blackboard body is built
+// to during View() — the detail pane width (60% split minus the divider) minus the
+// pane's single border glyph. Mirrors the width math in View().
+func (m *AgentsModel) blackboardContentWidth() int {
+	treeW := m.width * 40 / 100
+	detailW := m.width - treeW - 1
+	w := detailW - 1 // single (right) border glyph
+	if w < 1 {
+		w = 1
+	}
+	return w
 }
 
 func (m *AgentsModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -281,16 +469,20 @@ func (m *AgentsModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.eventSel++
 		}
 		m.followTail = m.eventSel >= m.eventCount-1
+		m.detailManual = false // selection keys re-engage selection-follow scrolling
 	case "k", "up":
 		if m.eventSel > 0 {
 			m.eventSel--
 		}
 		m.followTail = false
+		m.detailManual = false
 	case "g":
 		m.eventSel = 0
 		m.followTail = false
+		m.detailManual = false
 	case "G":
 		m.followTail = true
+		m.detailManual = false
 	case "enter":
 		if m.eventCount > 0 {
 			m.inEventView = true
@@ -312,6 +504,8 @@ func (m *AgentsModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc", "tab":
 		m.inDetail = false
 		m.detailScroll = 0
+		m.detailManual = false // returning to the tree clears the wheel flag
+		m.treeManual = false   // re-engage the tree's selection-follow scrolling
 		m.followTail = true
 	}
 	return m, nil
@@ -352,43 +546,48 @@ func (m *AgentsModel) handleEventViewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleMouse: the wheel follows the active pane — node selection in the
-// tree, event selection in the detail list, content scroll in an expanded
-// event.
+// wheelStep is the number of lines the mouse wheel scrolls per event.
+const wheelStep = 3
+
+// handleMouse: the wheel scrolls the FOCUSED pane's OFFSET (not its selection),
+// keyed off the current view-state flags (change 0041). The selection cursor is
+// moved only by j/k/arrows now; the wheel never drags it. Each offset is floored
+// at 0 here and clamped to its content's upper bound at render time by the
+// corresponding build*Lines (which re-clamp every frame), so the view can't scroll
+// past content in either direction.
 func (m *AgentsModel) handleMouse(msg tea.MouseMsg) {
 	up := msg.Button == tea.MouseButtonWheelUp
 	down := msg.Button == tea.MouseButtonWheelDown
 	if !up && !down {
 		return
 	}
+	delta := wheelStep
+	if up {
+		delta = -wheelStep
+	}
 	switch {
-	case m.inEventView:
-		if up {
-			m.eventScroll -= 3
-			if m.eventScroll < 0 {
-				m.eventScroll = 0
-			}
-		} else {
-			m.eventScroll += 3 // clamped at render time
+	case m.inEventView, m.inSegmentView:
+		// Expanded event / archived segment region both scroll eventScroll.
+		m.eventScroll += delta
+		if m.eventScroll < 0 {
+			m.eventScroll = 0
+		}
+	case m.inBlackboard:
+		m.bbScroll += delta
+		if m.bbScroll < 0 {
+			m.bbScroll = 0
 		}
 	case m.inDetail:
-		if up {
-			if m.eventSel > 0 {
-				m.eventSel--
-			}
-			m.followTail = false
-		} else {
-			if m.eventSel < m.eventCount-1 {
-				m.eventSel++
-			}
-			m.followTail = m.eventSel >= m.eventCount-1
+		m.detailManual = true
+		m.detailScroll += delta
+		if m.detailScroll < 0 {
+			m.detailScroll = 0
 		}
-	default: // tree pane
-		if up && m.selected > 0 {
-			m.selected--
-		}
-		if down && m.selected < len(m.nodes)-1 {
-			m.selected++
+	default: // tree pane (left focus)
+		m.treeManual = true
+		m.treeScroll += delta
+		if m.treeScroll < 0 {
+			m.treeScroll = 0
 		}
 	}
 }
@@ -410,12 +609,16 @@ func (m *AgentsModel) buildTreeLines(w int) []string {
 	if visRows < 1 {
 		visRows = 1
 	}
-	// Keep the selection inside the window.
-	if m.selected < m.treeScroll {
-		m.treeScroll = m.selected
-	}
-	if m.selected >= m.treeScroll+visRows {
-		m.treeScroll = m.selected - visRows + 1
+	// Keep the selection inside the window — unless the wheel is driving the scroll
+	// (treeManual), in which case the offset is honored as-is and the selection may
+	// sit off-screen (change 0041: the wheel scrolls the view, not the cursor).
+	if !m.treeManual {
+		if m.selected < m.treeScroll {
+			m.treeScroll = m.selected
+		}
+		if m.selected >= m.treeScroll+visRows {
+			m.treeScroll = m.selected - visRows + 1
+		}
 	}
 	if maxScroll := len(rows) - visRows; m.treeScroll > maxScroll {
 		m.treeScroll = maxScroll
@@ -618,22 +821,35 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 			evtLines = []string{muted.Render("Cancelled before producing events.")}
 		}
 	} else {
-		// Selection: follow the newest event until the user moves off it.
-		if m.followTail || m.eventSel >= len(visible)-1 {
-			m.eventSel = len(visible) - 1
-			m.followTail = true
-		}
-		if m.eventSel < 0 {
+		// Selection: follow the newest event until the user moves off it — unless
+		// the wheel is driving the scroll (detailManual), in which case the offset is
+		// honored as-is and the selection may sit off-screen (change 0041).
+		if !m.detailManual {
+			if m.followTail || m.eventSel >= len(visible)-1 {
+				m.eventSel = len(visible) - 1
+				m.followTail = true
+			}
+			if m.eventSel < 0 {
+				m.eventSel = 0
+			}
+			// Keep the selection in the visible window.
+			if m.eventSel < m.detailScroll {
+				m.detailScroll = m.eventSel
+			}
+			if m.eventSel >= m.detailScroll+rows {
+				m.detailScroll = m.eventSel - rows + 1
+			}
+		} else if m.eventSel < 0 {
 			m.eventSel = 0
 		}
-		// Keep the selection in the visible window.
-		if m.eventSel < m.detailScroll {
-			m.detailScroll = m.eventSel
-		}
-		if m.eventSel >= m.detailScroll+rows {
-			m.detailScroll = m.eventSel - rows + 1
-		}
 		all := m.renderEventLines(n, visible, w)
+		// Clamp the manual scroll to valid content bounds.
+		if maxScroll := len(all) - rows; m.detailScroll > maxScroll {
+			m.detailScroll = maxScroll
+		}
+		if m.detailScroll < 0 {
+			m.detailScroll = 0
+		}
 		endIdx := m.detailScroll + rows
 		if endIdx > len(all) {
 			endIdx = len(all)
@@ -665,12 +881,13 @@ func (m *AgentsModel) buildBlackboardLines(w int) []string {
 	header := lipgloss.NewStyle().Bold(true).Render(fitLine("Blackboard", w))
 	rule := lipgloss.NewStyle().Foreground(colMuted).Render(strings.Repeat("─", w))
 	help := fitHelp(
-		"j/k scroll  g top  b/esc back to tree",
-		"j/k · g · b/esc back",
+		"j/k scroll  n/p group  g top  b/esc back to tree",
+		"j/k · n/p group · g · b/esc",
 		w,
 	)
 
 	var body []string
+	var groupStarts []int // body-line index of each writer-group header
 	if m.blackboard == nil {
 		body = []string{lipgloss.NewStyle().Foreground(colMuted).Render("No blackboard for this session.")}
 	} else {
@@ -678,39 +895,7 @@ func (m *AgentsModel) buildBlackboardLines(w int) []string {
 		if len(snap) == 0 {
 			body = []string{lipgloss.NewStyle().Foreground(colMuted).Render("Blackboard is empty.")}
 		} else {
-			keys := make([]string, 0, len(snap))
-			for k := range snap {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-
-			keyStyle := lipgloss.NewStyle().Foreground(colCyan).Bold(true)
-			wroteStyle := lipgloss.NewStyle().Foreground(colMuted)
-			for _, k := range keys {
-				e := snap[k]
-				// Key line: "key  ⟨written by <label>⟩", both fields sanitized and
-				// wrapped as PLAIN text before styling (wrap.String is not ANSI-aware,
-				// so styling must happen after the width split).
-				keyText := sanitizeDisplay(k)
-				wrote := "⟨written by " + sanitizeDisplay(e.WriterLabel) + "⟩"
-				keyPlain := keyText + "  " + wrote
-				keyRows := wrapToWidth(keyPlain, w)
-				for i, kr := range keyRows {
-					// Only the first row carries the accented key; continuation rows
-					// (the wrapped label) render muted to stay visually attached.
-					if i == 0 {
-						body = append(body, keyStyle.Render(kr))
-					} else {
-						body = append(body, wroteStyle.Render(kr))
-					}
-				}
-				// Value line(s): JSON-encoded, sanitized, hard-wrapped, indented.
-				val := sanitizeDisplay(encodeBlackboardValue(e.Value))
-				for _, vl := range wrapToWidth("  "+val, w) {
-					body = append(body, wroteStyle.Render(vl))
-				}
-				body = append(body, "")
-			}
+			body, groupStarts = m.blackboardBody(snap, w)
 		}
 	}
 
@@ -719,12 +904,11 @@ func (m *AgentsModel) buildBlackboardLines(w int) []string {
 	if rows < 1 {
 		rows = 1
 	}
-	if m.bbScroll > len(body)-1 {
-		if len(body) == 0 {
-			m.bbScroll = 0
-		} else {
-			m.bbScroll = len(body) - 1
-		}
+	// Clamp to [0, max(0, len(body)-rows)] so the pane cannot over-scroll past
+	// the last full window into a mostly-blank view (spec Decision 2; mirrors the
+	// detail pane's len(all)-rows clamp).
+	if maxScroll := len(body) - rows; m.bbScroll > maxScroll {
+		m.bbScroll = maxScroll
 	}
 	if m.bbScroll < 0 {
 		m.bbScroll = 0
@@ -738,11 +922,139 @@ func (m *AgentsModel) buildBlackboardLines(w int) []string {
 		window = body[m.bbScroll:end]
 	}
 
+	// Sticky per-writer header: if the top of the window sits inside a group whose
+	// header has scrolled above the window, pin that header as the first visible
+	// line (one pinned header; no nested pinning). Drop the last content row so the
+	// pinned header does not push the window over its row budget.
+	if len(window) > 0 {
+		if gs := stickyGroupStart(groupStarts, m.bbScroll); gs >= 0 && gs < m.bbScroll {
+			pinned := stickyPinned(body[gs])
+			trimmed := window
+			if len(trimmed) >= rows && len(trimmed) > 1 {
+				trimmed = trimmed[:len(trimmed)-1]
+			}
+			window = append([]string{pinned}, trimmed...)
+		}
+	}
+
 	out := append([]string{header, rule}, window...)
 	for len(out) < m.height-1 {
 		out = append(out, "")
 	}
 	return append(out[:m.height-1], help)
+}
+
+// blackboardBody builds the grouped blackboard body lines and the body-line index
+// of each writer-group header. Entries bucket by writer (WriterLabel, falling back
+// to WriterID, then "(unknown)"); groups are ordered most-recent-first by the
+// group's max WrittenAt; keys are sorted alphabetically within a group. Every
+// model/tool-controlled field is sanitized and hard-wrapped to w so no line can
+// exceed the pane width or leak control bytes.
+func (m *AgentsModel) blackboardBody(snap map[string]agent.BlackboardEntry, w int) (body []string, groupStarts []int) {
+	type group struct {
+		name   string
+		latest time.Time
+		keys   []string
+	}
+	byName := map[string]*group{}
+	for k, e := range snap {
+		name := writerGroupName(e)
+		g := byName[name]
+		if g == nil {
+			g = &group{name: name}
+			byName[name] = g
+		}
+		g.keys = append(g.keys, k)
+		if e.WrittenAt.After(g.latest) {
+			g.latest = e.WrittenAt
+		}
+	}
+	groups := make([]*group, 0, len(byName))
+	for _, g := range byName {
+		sort.Strings(g.keys)
+		groups = append(groups, g)
+	}
+	// Most-recent-writer-first; ties broken by name for a stable, deterministic order.
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].latest.Equal(groups[j].latest) {
+			return groups[i].name < groups[j].name
+		}
+		return groups[i].latest.After(groups[j].latest)
+	})
+
+	groupHeaderStyle := lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+	keyStyle := lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+	metaStyle := lipgloss.NewStyle().Foreground(colMuted)
+	valStyle := lipgloss.NewStyle().Foreground(colNormal)
+	sepStyle := lipgloss.NewStyle().Foreground(colMuted)
+
+	for _, g := range groups {
+		groupStarts = append(groupStarts, len(body))
+		// Group header: "▌ <writer>" sanitized + fit to width.
+		hdr := "▌ " + sanitizeDisplay(g.name)
+		for _, hr := range wrapToWidth(hdr, w) {
+			body = append(body, groupHeaderStyle.Render(hr))
+		}
+		for ki, k := range g.keys {
+			e := snap[k]
+			// Key line: accented key, muted "written by" meta.
+			keyRows := wrapToWidth(sanitizeDisplay(k), w)
+			for _, kr := range keyRows {
+				body = append(body, keyStyle.Render(kr))
+			}
+			for _, mr := range wrapToWidth("  ⟨written by "+sanitizeDisplay(e.WriterLabel)+"⟩", w) {
+				body = append(body, metaStyle.Render(mr))
+			}
+			// Value line(s): pretty JSON for objects/arrays (each already-indented
+			// line wrapped individually), inline for scalars; normal contrast.
+			for _, vl := range encodeBlackboardValueLines(e.Value, w) {
+				body = append(body, valStyle.Render(vl))
+			}
+			// Separator between entries within a group (muted rule).
+			if ki < len(g.keys)-1 {
+				body = append(body, sepStyle.Render(fitLine(strings.Repeat("─", maxInt(1, w/3)), w)))
+			}
+		}
+		body = append(body, "") // blank line between groups
+	}
+	return body, groupStarts
+}
+
+// writerGroupName picks the display bucket for an entry: WriterLabel, then
+// WriterID, then "(unknown)".
+func writerGroupName(e agent.BlackboardEntry) string {
+	if s := strings.TrimSpace(e.WriterLabel); s != "" {
+		return e.WriterLabel
+	}
+	if s := strings.TrimSpace(e.WriterID); s != "" {
+		return e.WriterID
+	}
+	return "(unknown)"
+}
+
+// stickyGroupStart returns the body-line index of the header of the group that
+// contains body line `top`, or -1 if none. groupStarts is ascending.
+func stickyGroupStart(groupStarts []int, top int) int {
+	gs := -1
+	for _, s := range groupStarts {
+		if s <= top {
+			gs = s
+		} else {
+			break
+		}
+	}
+	return gs
+}
+
+// stickyPinned re-renders a group header line as a pinned header (kept identical
+// to the in-body header so the text is stable as it pins/unpins).
+func stickyPinned(headerLine string) string { return headerLine }
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // encodeBlackboardValue JSON-encodes a stored value for display, falling back to
@@ -753,6 +1065,32 @@ func encodeBlackboardValue(v any) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return string(b)
+}
+
+// encodeBlackboardValueLines renders a stored value as display lines fit to width
+// w. Scalars (string/number/bool/nil) render inline on a single indented line;
+// object/array values pretty-print as 2-space-indented JSON with EACH already-
+// indented line sanitized and wrapped individually (indentation preserved, the
+// blob never re-flowed as one string — guardrail 2). Every returned line's display
+// width is <= w.
+func encodeBlackboardValueLines(v any, w int) []string {
+	switch v.(type) {
+	case map[string]any, []any:
+		b, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			return wrapToWidth("  "+sanitizeDisplay(encodeBlackboardValue(v)), w)
+		}
+		var out []string
+		for _, raw := range strings.Split(string(b), "\n") {
+			// Preserve the JSON indentation; wrap this one already-indented line.
+			for _, wl := range wrapToWidth("  "+sanitizeDisplay(raw), w) {
+				out = append(out, wl)
+			}
+		}
+		return out
+	default:
+		return wrapToWidth("  "+sanitizeDisplay(encodeBlackboardValue(v)), w)
+	}
 }
 
 // wrapToWidth hard-wraps s (already sanitized) so no returned line's display

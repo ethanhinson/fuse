@@ -39,8 +39,10 @@ func TestBlackboardTabRendersEntries(t *testing.T) {
 	if !strings.Contains(view, "facet/a") {
 		t.Errorf("blackboard view should show key facet/a\n%s", view)
 	}
-	if !strings.Contains(view, `"steps":3`) {
-		t.Errorf("blackboard view should show JSON value with steps:3\n%s", view)
+	// Object values now pretty-print as indented JSON (change 0041, Task 6), so the
+	// "steps" key renders on its own indented line with a space after the colon.
+	if !strings.Contains(view, `"steps": 3`) {
+		t.Errorf("blackboard view should show pretty JSON value with steps: 3\n%s", view)
 	}
 	if !strings.Contains(view, "research/facet-2") {
 		t.Errorf("blackboard view should show wrote-by label research/facet-2\n%s", view)
