@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ethanhinson/fuse/internal/archive"
 )
 
 // Spill-file truncation: oversized tool results keep a head+tail preview
@@ -46,6 +50,12 @@ func SetSpillDir(dir string) {
 	go sweepSpillDir(dir)
 }
 
+// sweepSpillDir ARCHIVES stale spill files (gzip + a spill-domain metadata
+// sidecar) instead of deleting them — NON-DESTRUCTIVE (change 0030 scope
+// correction). The full output stays recoverable byte-for-byte; read_file
+// resolves the ".gz" transparently so the recovery hint keeps working after
+// archival. Already-archived ".gz"/".meta.yml" files are skipped. Best-effort
+// throughout, matching the original contract.
 func sweepSpillDir(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -53,11 +63,52 @@ func sweepSpillDir(dir string) {
 	}
 	cutoff := time.Now().Add(-spillMaxAge)
 	for _, e := range entries {
+		name := e.Name()
+		if strings.HasSuffix(name, archive.GzSuffix) || strings.HasSuffix(name, archive.MetaSuffix) {
+			continue // already archived on a prior sweep
+		}
 		info, err := e.Info()
 		if err == nil && info.ModTime().Before(cutoff) {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
+			_, _ = archive.Archive(filepath.Join(dir, name), spillMeta(name)) // best-effort
 		}
 	}
+}
+
+// spillMeta returns an archive.MetaFunc that adds spill-domain sidecar fields
+// derived from the spill filename ("<unix>_<seq>_<toolname>.txt", see
+// writeSpill) and a short head preview of the decompressed content.
+func spillMeta(fileName string) archive.MetaFunc {
+	toolName, createdUnix := parseSpillName(fileName)
+	return func(content []byte) map[string]any {
+		const headMax = 200
+		head := content
+		if len(head) > headMax {
+			head = head[:headMax]
+		}
+		m := map[string]any{
+			"tool_name": toolName,
+			"head":      string(head),
+		}
+		if createdUnix > 0 {
+			m["created_unix"] = createdUnix
+		}
+		return m
+	}
+}
+
+// parseSpillName extracts the tool name and creation unix time from a spill
+// filename "<unix>_<seq>_<toolname>.txt". Missing/malformed parts degrade
+// gracefully (empty tool name, zero time).
+func parseSpillName(name string) (toolName string, createdUnix int64) {
+	base := strings.TrimSuffix(name, ".txt")
+	parts := strings.SplitN(base, "_", 3)
+	if len(parts) >= 1 {
+		createdUnix, _ = strconv.ParseInt(parts[0], 10, 64)
+	}
+	if len(parts) >= 3 {
+		toolName = parts[2]
+	}
+	return toolName, createdUnix
 }
 
 // SpillOutput bounds a tool result to the inline budget. Oversized output is

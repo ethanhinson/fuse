@@ -187,7 +187,11 @@ func pruneOldToolResults(messages []model.Message, protectTokens int, scorer Rel
 // The region is a fresh slice (safe to hand to a SegmentSink); already-stubbed
 // tool results are skipped so a re-triggered compaction never re-summarizes
 // stubs. Returns ok=false when there is nothing worth summarizing.
-func summarizationRegion(messages []model.Message, protectTokens int) (region []model.Message, insertAt int, toolNames []string, tokens int, ok bool) {
+//
+// firstIdx/lastIdx are the region's first and last ORIGINAL indices in messages
+// (the min/max message indices of the compacted span), so the caller can derive
+// the inclusive turn range via turnIndices (#0030 DRIFT 1).
+func summarizationRegion(messages []model.Message, protectTokens int) (region []model.Message, insertAt int, toolNames []string, tokens, firstIdx, lastIdx int, ok bool) {
 	// Walk from the end to find the protected/unprotected boundary by the same
 	// recency rule pruneOldToolResults uses.
 	seen := 0
@@ -205,7 +209,7 @@ func summarizationRegion(messages []model.Message, protectTokens int) (region []
 		firstUnprotected = i // keep moving; ends at the OLDEST unprotected result
 	}
 	if firstUnprotected == -1 {
-		return nil, 0, nil, 0, false
+		return nil, 0, nil, 0, 0, 0, false
 	}
 
 	// Collect the unprotected tool results (oldest→newest) and their span. The
@@ -214,6 +218,7 @@ func summarizationRegion(messages []model.Message, protectTokens int) (region []
 	// the boundary of the protected tail.
 	nameSeen := map[string]bool{}
 	lastUnprotected := firstUnprotected
+	firstRegionIdx := -1
 	for i := firstUnprotected; i < len(messages); i++ {
 		m := messages[i]
 		if m.Role != "tool" || m.Content == prunedStub {
@@ -225,6 +230,9 @@ func summarizationRegion(messages []model.Message, protectTokens int) (region []
 		if isProtected(messages, i, protectTokens) {
 			break
 		}
+		if firstRegionIdx == -1 {
+			firstRegionIdx = i
+		}
 		region = append(region, m)
 		tokens += tok
 		lastUnprotected = i
@@ -234,9 +242,9 @@ func summarizationRegion(messages []model.Message, protectTokens int) (region []
 		}
 	}
 	if len(region) == 0 {
-		return nil, 0, nil, 0, false
+		return nil, 0, nil, 0, 0, 0, false
 	}
-	return region, lastUnprotected + 1, toolNames, tokens, true
+	return region, lastUnprotected + 1, toolNames, tokens, firstRegionIdx, lastUnprotected, true
 }
 
 // dropPriorSummary removes a previously-injected summary message (identified by
@@ -371,12 +379,17 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			// bounded suppression window so a failing summarizer cannot hot-loop.
 			if a.summarizer != nil && turn >= suppressUntil {
 				protect := protectBudget(window, false)
-				region, insertAt, toolNames, tokensBefore, ok := summarizationRegion(messages, protect)
+				region, insertAt, toolNames, tokensBefore, firstIdx, lastIdx, ok := summarizationRegion(messages, protect)
 				if ok {
 					if summary, done := a.summarizer.summarize(ctx, region, previousSummary); done {
+						// Turn span of the compacted region, derived from the region's
+						// original message indices (#0030 DRIFT 1).
+						ti := turnIndices(messages)
 						// Best-effort archive of the raw region (#0030 implements a real
 						// sink; the default no-op returns "" so no recovery pointer).
 						pointer, aerr := a.segmentSink.Archive(SegmentRegion{
+							TurnStart:    ti[firstIdx],
+							TurnEnd:      ti[lastIdx],
 							Messages:     region,
 							Summary:      summary,
 							ToolNames:    toolNames,

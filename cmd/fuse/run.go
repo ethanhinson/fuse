@@ -263,6 +263,35 @@ func gatewayAdapter(cfg config.Config, gate model.RateGate) *model.Adapter {
 	return a
 }
 
+// activeSegmentSink is the session's concrete SegmentSink (change 0030), set
+// once at session start (keyed by the root AgentNode.ID) and consumed by
+// installSummarizer for every agent built in the session. Nil ⇒ installSummarizer
+// passes nil to the agent, which installs the no-op default (persists nothing,
+// omits the recovery pointer). One process serves one shell session, so a single
+// package-level holder is sufficient. It is guarded by an RWMutex — matching its
+// siblings tools.SetSpillDir and tools.SetSegmentsDir — because installSummarizer
+// reads it on child-spawn goroutines, so a happens-before convention alone is not
+// enough.
+var (
+	activeSegmentSinkMu sync.RWMutex
+	activeSegmentSink   agent.SegmentSink
+)
+
+// setActiveSegmentSink installs the session's SegmentSink for all subsequently
+// built agents.
+func setActiveSegmentSink(s agent.SegmentSink) {
+	activeSegmentSinkMu.Lock()
+	activeSegmentSink = s
+	activeSegmentSinkMu.Unlock()
+}
+
+// currentSegmentSink returns the installed session SegmentSink (nil when none).
+func currentSegmentSink() agent.SegmentSink {
+	activeSegmentSinkMu.RLock()
+	defer activeSegmentSinkMu.RUnlock()
+	return activeSegmentSink
+}
+
 // installSummarizer wires Tier 2 anchored summarization (change 0027) onto a
 // after agent.New. When cfg.Context.Summarization.Enabled it builds a bounded
 // adapter (reusing the session rate gate) decorated with a distinct "summarizer"
@@ -283,7 +312,10 @@ func installSummarizer(a *agent.Agent, cfg config.Config, mainModelID string, tr
 	if modelID == "" {
 		modelID = mainModelID // D4: default summarizer model is the main model
 	}
-	a.EnableSummarization(adapter, modelID, s.MaxOutput, nil)
+	// #0030: hand the session's concrete SegmentSink (keyed by the root
+	// AgentNode.ID) so a compaction persists its raw region and the injected
+	// summary carries a recovery pointer. Nil ⇒ the agent's no-op default.
+	a.EnableSummarization(adapter, modelID, s.MaxOutput, currentSegmentSink())
 }
 
 // installRelevance wires relevance-aware pruning config (change 0028) onto a

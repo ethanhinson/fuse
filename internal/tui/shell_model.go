@@ -199,6 +199,7 @@ type ShellModel struct {
 	// Subagent tree and inline summary tracking.
 	tree          *agent.AgentTree
 	blackboard    *agent.Blackboard // session blackboard for the /agents Blackboard tab
+	segmentsDir   string            // session segments/ dir for the /agents indicator + "s" (0030)
 	agentsActive  bool
 	agentsModel   *AgentsModel
 	overlayGen    int // increments per overlay entry; stale overlay ticks are dropped
@@ -290,6 +291,14 @@ func (m ShellModel) WithTree(t *agent.AgentTree) ShellModel {
 // its snapshot in a Blackboard tab (change 0023). Nil renders no snapshot.
 func (m ShellModel) WithBlackboard(bb *agent.Blackboard) ShellModel {
 	m.blackboard = bb
+	return m
+}
+
+// WithSegmentsDir attaches the session's segments/ directory so the /agents
+// overlay can show the compaction indicator and open archived raw regions via
+// "s" (change 0030). Empty ("") disables the surface.
+func (m ShellModel) WithSegmentsDir(dir string) ShellModel {
+	m.segmentsDir = dir
 	return m
 }
 
@@ -1058,7 +1067,7 @@ func (m ShellModel) openAgentsOverlay(onBlackboard bool) (tea.Model, tea.Cmd) {
 		m.appendLine("no agent tree active")
 		return m, nil
 	}
-	m.agentsModel = NewAgentsModel(m.tree, m.rateGate).WithBlackboard(m.blackboard)
+	m.agentsModel = NewAgentsModel(m.tree, m.rateGate).WithBlackboard(m.blackboard).WithSegmentsDir(m.segmentsDir)
 	if onBlackboard {
 		m.agentsModel.ShowBlackboard()
 	}

@@ -179,5 +179,6 @@ func DefaultTools() []Tool {
 		NewEditFile(),
 		NewListDirectory(),
 		NewGrep(),
+		NewSegmentRead(currentSegmentsDir),
 	}
 }
