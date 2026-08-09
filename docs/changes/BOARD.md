@@ -1,12 +1,12 @@
 # Backlog
 
-**41 changes** — 🟡 1 proposed · ⚪ 1 deferred · ✅ 33 done · 🗑️ 6 killed
+**41 changes** — 🟢 1 in progress · ⚪ 1 deferred · ✅ 33 done · 🗑️ 6 killed
 
-## 🟡 Proposed (1)
+## 🟢 In progress (1)
 
-| # | Title | Priority | Type | Readiness |
-|---|-------|----------|------|-----------|
-| [0041](active/0041-agents-panel-ux.md) | Agents split-panel UX — focus indicator, reliable scrolling, blackboard readability | `medium` | `feat` | build-ready |
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0041](active/0041-agents-panel-ux.md) | Agents split-panel UX — focus indicator, reliable scrolling, blackboard readability | `medium` | `feat` | [spec](../superpowers/specs/0041-agents-panel-ux.md) | `feat/agents-panel-ux` |
 
 ## ⚪ Deferred (1)
 
