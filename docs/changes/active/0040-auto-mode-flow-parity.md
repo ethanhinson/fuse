@@ -2,7 +2,7 @@
 id: 40
 slug: auto-mode-flow-parity
 title: Auto-mode flow parity — in-workspace edits auto-approve
-status: in-progress
+status: implemented
 priority: high
 type: fix
 created: 2026-08-09
@@ -17,9 +17,9 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-flow-parity
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/43
 blocked_by:
-claimed_at: 2026-08-09T18:50:11Z
+claimed_at: 2026-08-09T19:22:20Z
 reconciled: true
 ---
 
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-09-auto-mode-flow-parity.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-09-auto-mode-flow-parity.md) |
 | Plan | [2026-08-09-auto-mode-flow-parity-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-flow-parity/docs/superpowers/plans/2026-08-09-auto-mode-flow-parity-plan.md) |
+| PR | [#43](https://github.com/ethanhinson/fuse/pull/43) |
 | ADRs | [ADR-0005](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
 <!-- docket:artifacts:end -->
 
