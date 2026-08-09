@@ -1,6 +1,12 @@
 # Backlog
 
-**41 changes** — ⚪ 1 deferred · ✅ 34 done · 🗑️ 6 killed
+**42 changes** — 🟡 1 proposed · ⚪ 1 deferred · ✅ 34 done · 🗑️ 6 killed
+
+## 🟡 Proposed (1)
+
+| # | Title | Priority | Type | Readiness |
+|---|-------|----------|------|-----------|
+| [0042](active/0042-return-result-structured-delegation.md) | Fix structured-delegation (expects) vs tool-calling collision via a return_result tool | `high` | `fix` | build-ready |
 
 ## ⚪ Deferred (1)
 
@@ -11,6 +17,7 @@
 ```mermaid
 graph TD
   0012 --> 0029
+  0042
   0012:::done
   classDef done fill:#d3f9d8;
 ```
