@@ -1,6 +1,6 @@
 # Backlog
 
-**39 changes** — ⚪ 1 deferred · 🔵 1 implemented · ✅ 31 done · 🗑️ 6 killed
+**39 changes** — ⚪ 1 deferred · ✅ 32 done · 🗑️ 6 killed
 
 ## ⚪ Deferred (1)
 
@@ -8,25 +8,18 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | [#41](https://github.com/ethanhinson/fuse/pull/41) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
-  0027 --> 0030
   0012:::done
-  0027:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (37)</summary>
+<details><summary>✅🗑️ Archive — done + killed (38)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0030](archive/2026-08-09-0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | 2026-08-09 |
 | [0028](archive/2026-08-08-0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | 2026-08-08 |
 | [0027](archive/2026-08-08-0027-context-summarization.md) | Anchored context summarization at compression threshold | 2026-08-08 |
 | [0026](archive/2026-08-08-0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | 2026-08-08 |
@@ -43,7 +36,6 @@ graph TD
 | [0039](archive/2026-08-06-0039-agents-tab-idle-timer-and-model.md) | Agents tab — timer runs before the first prompt; shows the default model, not the selected one | 2026-08-06 |
 | [0038](archive/2026-08-06-0038-turn-budget-retirement.md) | Retire the interactive turn cap — unlimited shell turns, headless backstop, doom-loop detection | 2026-08-06 |
 | [0037](archive/2026-08-06-0037-redirect-guard-lenience.md) | Redirect fail-closed guard — allow /dev/null targets and fd-dups, keep failing closed on real files | 2026-08-06 |
-| [0035](archive/2026-08-06-0035-live-mode-switch.md) | Mode switch must bite mid-turn — gates read the SessionMode holder live, not a construction snapshot | 2026-08-06 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
 | [0016](archive/2026-08-05-0016-one-shot-cli-approvals.md) | Remove the AlwaysApprove one-shot bypass; surface approvals at the CLI | 2026-08-05 |
 | [0011](archive/2026-08-05-0011-deep-research.md) | Deep Research Mode — Web Search + Fan-out Synthesis | 2026-08-05 |
@@ -53,6 +45,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 16 done |
+| [2026-08](archive/) | 17 done |
 
 </details>
