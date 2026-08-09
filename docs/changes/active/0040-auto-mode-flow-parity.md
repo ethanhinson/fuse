@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/auto-mode-flow-parity
 pr:
 blocked_by:
-claimed_at: 2026-08-09T18:41:47Z
-reconciled: false
+claimed_at: 2026-08-09T18:44:34Z
+reconciled: true
 ---
 
 ## Artifacts
@@ -96,3 +96,49 @@ ADR-0006 (`.fuse.local.yml` tighten-only trust boundary) unchanged.
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-09 — reconcile (docket-implement-next)
+
+Verified the spec's file:line citations against current `main`-tree code (via a read-only
+exploration pass). Result: **spec valid, no scope change, no obsolescence.**
+
+- **Citations confirmed (minor line drift, none material):**
+  - `internal/permissions/policy.go` safe-list (`safeList` / `onSafeList`) at ~71-98; current
+    entries `read_file`, `list_directory`, `grep`, `spawn_agent`, `ask_user` plus dynamic
+    `codeindex_*` / `blackboard_*` prefixes. The seven tools this change touches
+    (`write_file`, `edit_file`, `segment_read`, `web_search`, `web_fetch`, `skill`,
+    `pipeline_run`) are confirmed **absent** — the fix's premise holds.
+  - `internal/permissions/gate.go`: `resolveAuto` non-bash branch (~404-410) → `classifyOrAsk`
+    (~457-484) calls `Classify(ctx, nil, name, command)` at ~469 — the D3 `nil` history is real;
+    `workspaceRoot` field at ~72 wired via `run.go:425`; valve `valveConsecutiveLimit=3` /
+    `valveTotalLimit=20` (~100-101), `recordBlock` (~104-112).
+  - `internal/permissions/heuristics.go`: `withinWorkspace` (~140-158) + `resolveExisting`
+    (~160-183), symlink-aware, deepest-existing-ancestor resolution — the D1 machinery exists.
+  - `internal/permissions/classifier.go`: `Classify(ctx, userMessages, toolName, command)` at
+    ~163 — **`userMessages` is already a parameter**, so D3 is a plumb-through, not a signature
+    change; `buildMessages` (~194-199) already drops non-user roles (hygiene intact).
+  - `internal/agent/loop.go`: `executeToolBounded` (~605) → `a.tools.Execute` at 607/618.
+  - `internal/agent/agent.go`: `ToolExecutor` interface (~17-19) — D3's ctx-carry avoids
+    widening it.
+  - `internal/config/schema.go`: `AutoConfig` has `ClassifierModel`, `Deny`, `Ask`; **no**
+    `fetch_deny`/`fetch_ask` yet — this change adds them (tightening keys, per ADR-0006).
+  - Tool arg shapes: `write_file`/`edit_file` expose a `path` arg; all seven tool names are
+    registered.
+  - Report `reports/2026-08-09-auto-mode-flow-parity.md` exists on the integration branch.
+  - Test scaffolding present: `heuristics_test.go`, `gate_test.go`, `safelist_test.go`,
+    `classifier_test.go`, `valve_test.go` all exist.
+- **New files to create (correctly absent today):** `internal/permissions/fetchhost.go`,
+  `internal/permissions/reputation/`.
+- **ADR-0005 / ADR-0006 unchanged and honored** — no relaxation of per-segment bash evaluation;
+  `fetch_deny`/`fetch_ask` classified as *tightening* keys (ADR-0006's fail-safe rule for new
+  permission keys), so they may merge from `.fuse.local.yml`.
+- **Open question resolved (licensing):** default to **MIT-only** for the embedded blocklist —
+  StevenBlack/hosts (MIT) + Peter Lowe's list (explicit redistribution permission), **dropping
+  hagezi TIF (GPL-3.0)** so fuse ships no GPL data. Keeps the whole embed license-clean for a
+  commercial build; Majestic Million (CC BY 3.0) stays for the popularity nudge with its credit
+  line. The plan may add TIF later behind a build tag if wanted; the SSRF guard + config
+  `fetch_deny` + classifier remain independent layers, so a slightly narrower list is acceptable.
+- **Open question deferred (as designed):** `valveTotalLimit` retune stays deferred to
+  post-landing measurement (spec D4) — not a build blocker.
+
+Related change 0017 (auto-mode) is already `done`; no in-flight work overlaps this change.
