@@ -199,23 +199,59 @@ func (m *AgentsModel) View() string {
 	if h < 1 {
 		h = 1
 	}
+
+	// Colored-border focus indicator (change 0041). Each pane is boxed by manual
+	// border glyphs drawn INSIDE the existing fit-line width budget, so the join
+	// shape and exact-width invariant are unchanged. The border costs 2 rows
+	// (top+bottom) per pane. The center divider column is SUBSUMED as the shared
+	// vertical seam: the tree pane draws only its left border and the detail pane
+	// only its right border, and the existing 1-col divChar between them serves as
+	// the single interior seam — so no doubled vertical bars. That means each pane
+	// loses exactly one interior column (its own outer border glyph), so the
+	// content budget shrinks by 1 per pane, not 2.
+	treeContentW := treeW - 1 // left border glyph only
+	if treeContentW < 1 {
+		treeContentW = 1
+	}
+	detailContentW := detailW - 1 // right border glyph only
+	if detailContentW < 1 {
+		detailContentW = 1
+	}
+	contentH := h - 2
+	if contentH < 1 {
+		contentH = 1
+	}
+
+	// Thread the reduced content height through m.height exactly as the scheduler
+	// header shrink does: build*Lines read m.height internally.
 	fullHeight := m.height
-	m.height = h
-	treeLines := m.buildTreeLines(treeW)
-	detailLines := m.buildDetailLines(detailW)
+	m.height = contentH
+	treeLines := m.buildTreeLines(treeContentW)
+	detailLines := m.buildDetailLines(detailContentW)
 	m.height = fullHeight
-	for len(treeLines) < h {
-		treeLines = append(treeLines, strings.Repeat(" ", treeW))
+	for len(treeLines) < contentH {
+		treeLines = append(treeLines, strings.Repeat(" ", treeContentW))
 	}
-	for len(detailLines) < h {
-		detailLines = append(detailLines, strings.Repeat(" ", detailW))
+	for len(detailLines) < contentH {
+		detailLines = append(detailLines, strings.Repeat(" ", detailContentW))
 	}
+
+	// Which side is hot: the focused pane's border/title use the accent color, the
+	// other muted.
+	treeAccent, detailAccent := colCyan, colMuted
+	if m.rightFocused() {
+		treeAccent, detailAccent = colMuted, colCyan
+	}
+	// Tree pane: left border only (drawRight=false). Detail pane: right border only
+	// (drawLeft=false). The seam between them is the shared divChar.
+	treePane := boxPane(treeLines, treeW, contentH, "agents", treeAccent, true, false)
+	detailPane := boxPane(detailLines, detailW, contentH, m.detailTitle(), detailAccent, false, true)
 
 	divChar := lipgloss.NewStyle().Foreground(colMuted).Render("│")
 	lines := make([]string, 0, len(header)+h)
 	lines = append(lines, header...)
 	for i := 0; i < h; i++ {
-		lines = append(lines, fitLine(treeLines[i], treeW)+divChar+fitLine(detailLines[i], detailW))
+		lines = append(lines, fitLine(treePane[i], treeW)+divChar+fitLine(detailPane[i], detailW))
 	}
 
 	var b strings.Builder
@@ -226,6 +262,88 @@ func (m *AgentsModel) View() string {
 		}
 	}
 	return b.String()
+}
+
+// detailTitle names the right pane by its current sub-view, for the border top.
+func (m *AgentsModel) detailTitle() string {
+	switch {
+	case m.inBlackboard:
+		return "blackboard"
+	case m.inSegmentView:
+		return "segment"
+	case m.inEventView:
+		return "event"
+	case m.inDetail:
+		return "detail"
+	default:
+		return "detail"
+	}
+}
+
+// boxPane wraps contentLines in a manual box border colored by `border`, returning
+// exactly contentH+2 lines each paneW cells wide. drawLeft/drawRight select which
+// vertical edges this pane draws — the center split subsumes the shared divider by
+// having the left pane draw only its left edge and the right pane only its right
+// edge, so the interior seam is a single glyph, not a doubled bar. The border
+// glyphs live inside the pane's own width budget so the caller's
+// fitLine(...)+divChar+fitLine(...) join keeps the exact total width. The title is
+// embedded in the top border row in the same color. Nothing here re-flows content;
+// each content line is padded to the interior width and framed.
+func boxPane(contentLines []string, paneW, contentH int, title string, border lipgloss.Color, drawLeft, drawRight bool) []string {
+	bs := lipgloss.NewStyle().Foreground(border)
+	edges := 0
+	if drawLeft {
+		edges++
+	}
+	if drawRight {
+		edges++
+	}
+	inner := paneW - edges // columns available for content between vertical glyphs
+	if inner < 1 {
+		inner = 1
+	}
+
+	leftTop, rightTop, leftBot, rightBot := "", "", "", ""
+	left, right := "", ""
+	if drawLeft {
+		leftTop, leftBot, left = "┌", "└", "│"
+	}
+	if drawRight {
+		rightTop, rightBot, right = "┐", "┘", "│"
+	}
+
+	top := leftTop + fitBorderTop(title, inner) + rightTop
+	bottom := leftBot + strings.Repeat("─", inner) + rightBot
+
+	out := make([]string, 0, contentH+2)
+	out = append(out, bs.Render(top))
+	lg, rg := bs.Render(left), bs.Render(right)
+	for i := 0; i < contentH; i++ {
+		var c string
+		if i < len(contentLines) {
+			c = contentLines[i]
+		}
+		out = append(out, lg+fitLine(c, inner)+rg)
+	}
+	out = append(out, bs.Render(bottom))
+	return out
+}
+
+// fitBorderTop builds the interior of a box's top border for a run of `inner`
+// cells: a title embedded between dashes as ─ title ─────, padded/truncated so the
+// interior is exactly `inner` cells wide (excludes the two corner glyphs).
+func fitBorderTop(title string, inner int) string {
+	title = sanitizeDisplay(title)
+	// "─ " + title + " " leader, then fill the rest with ─.
+	lead := "─ "
+	tail := " "
+	base := lead + title + tail
+	bw := lipgloss.Width(base)
+	if bw >= inner {
+		// Title too wide for the border: just fill with dashes.
+		return strings.Repeat("─", inner)
+	}
+	return base + strings.Repeat("─", inner-bw)
 }
 
 // ─── key handlers ─────────────────────────────────────────────────────────────
