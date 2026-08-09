@@ -285,6 +285,52 @@ func TestRunSegmentSinkRecordsAndPointerAppears(t *testing.T) {
 	}
 }
 
+// TestRunSegmentSinkReceivesTurnRange: the sink's SegmentRegion carries the
+// min/max turn indices of the compacted region (DRIFT 1). The over-budget
+// history has 3 turns of tool results (one user turn opens all of them at turn
+// 0 in this crafted slice), so the compacted region's turn span is derived from
+// turnIndices, not left zero. Here every tool result shares turn 0, so the span
+// is 0..0 — but the assertion is that TurnEnd is set from the region's last
+// index rather than being an untouched zero for a region whose last message is
+// at a later turn. We build a multi-turn history to make the range non-trivial.
+func TestRunSegmentSinkReceivesTurnRange(t *testing.T) {
+	big := strings.Repeat("x", 8000) // ~2000 tokens each
+	// Two user turns: the first turn's tool results are turn 0, the second's are
+	// turn 1. Both old regions are unprotected and get compacted together, so the
+	// region spans turns 0..1.
+	history := []model.Message{
+		{Role: "user", Content: "first task"},
+		{Role: "assistant", ToolCalls: []model.ToolCall{{ID: "1", Name: "read_file"}}},
+		{Role: "tool", ToolCallID: "1", Name: "read_file", Content: big},
+		{Role: "user", Content: "second task"},
+		{Role: "assistant", ToolCalls: []model.ToolCall{{ID: "2", Name: "read_file"}}},
+		{Role: "tool", ToolCallID: "2", Name: "read_file", Content: big},
+		{Role: "assistant", ToolCalls: []model.ToolCall{{ID: "3", Name: "grep"}}},
+		{Role: "tool", ToolCallID: "3", Name: "grep", Content: big},
+	}
+
+	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.ContextWindow = 4000
+	sc := &countingSummarizerCompleter{summary: "Objective: x"}
+	sink := &fakeSink{pointer: "/seg/0001"}
+	a.SetSummarizer(newSummarizer(sc, "m", 2000), sink)
+
+	if _, err := a.Run(context.Background(), history); err != nil {
+		t.Fatalf("run err = %v", err)
+	}
+	if sink.calls != 1 {
+		t.Fatalf("sink.Archive calls = %d, want 1", sink.calls)
+	}
+	// The region's first message is at turn 0, its last at turn 1.
+	if sink.last.TurnStart != 0 {
+		t.Errorf("TurnStart = %d, want 0", sink.last.TurnStart)
+	}
+	if sink.last.TurnEnd != 1 {
+		t.Errorf("TurnEnd = %d, want 1 (derived from turnIndices, not left zero)", sink.last.TurnEnd)
+	}
+}
+
 // TestRunSegmentSinkErrorNotFatal: a sink returning an error is logged, not
 // fatal; the turn still proceeds with the summary (no pointer).
 func TestRunSegmentSinkErrorNotFatal(t *testing.T) {
