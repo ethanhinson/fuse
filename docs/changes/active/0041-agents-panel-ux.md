@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/agents-panel-ux
-claimed_at: 2026-08-09T20:09:59Z
+claimed_at: 2026-08-09T20:11:59Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -91,3 +91,34 @@ spec.
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-09
+
+Reconciled against current `origin/main`. All three defects and every code
+citation in the spec verified against live code — no drift:
+
+- `internal/tui/agents_model.go`: `View()` (168-220) still hand-joins with
+  `fitLine(...)+divChar+fitLine(...)` (the exact-width invariant the spec's
+  width-accounting risk turns on); `divChar` muted at 205. `handleMouse()`
+  (358-394) confirmed to move **selection** (`m.selected`/`m.eventSel`) for the
+  list panes and to have **no `inBlackboard` case** (falls to `default:` tree),
+  exactly the reported bugs. `buildBlackboardLines()` (664-746) still sorts by
+  key with no writer grouping, renders values via `wroteStyle` (muted
+  `colMuted`) and single-line `encodeBlackboardValue` (`json.Marshal`).
+- State flags `inDetail`/`inBlackboard`/`inEventView`/`inSegmentView` and offsets
+  `treeScroll`/`detailScroll`/`eventScroll`/`bbScroll` all present as cited.
+- `internal/agent/blackboard.go`: `BlackboardEntry` still carries `WriterID`,
+  `WriterLabel`, `WrittenAt`; `Snapshot()` returns `map[string]BlackboardEntry`
+  (117-125). No data-model change needed, as the spec assumes.
+- `internal/tui/theme.go`: palette matches — `colCyan #56b6c2` (accent),
+  `colNormal #abb2bf` (target for readable values), `colMuted #5c6370`.
+- `internal/tui/shell_model.go` (526-530) still forwards all `tea.MouseMsg` to
+  the agents model — no forwarding change required.
+
+**Open-question resolution.** Spec Decision 2 / open question "does a `tab`
+focus-switch already exist" — **yes**: `tab` already toggles left↔right
+(tree→detail at 241; detail/blackboard/event/segment→tree at 270/312/325/348).
+The build reuses the existing `tab` for focus rather than introducing a new
+binding; the wheel-routing rework keys off the same derived left/right focus.
+
+No scope change, no obsolescence — design fully valid. Proceeding to plan/build.
