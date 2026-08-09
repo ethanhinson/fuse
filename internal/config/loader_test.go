@@ -1505,3 +1505,58 @@ pipeline:
 		t.Errorf("expected a warning naming the loosened pipeline cap; got %q", w)
 	}
 }
+
+// TestTightenNumeric pins the extracted ADR-0006 tighten-only helper directly,
+// covering every branch for both int and float64 axes. This is the single
+// source of truth the throughput/pipeline/queue_bound/tool_timeout merges now
+// share, so its behavior must not drift.
+func TestTightenNumeric(t *testing.T) {
+	t.Run("int", func(t *testing.T) {
+		cases := []struct {
+			desc         string
+			cur, newV    int
+			trusted      bool
+			wantCur      int
+			wantReported bool
+		}{
+			{"omitted (0) is a no-op", 100, 0, false, 100, false},
+			{"negative dropped even when trusted", 100, -5, true, 100, false},
+			{"trusted sets any positive", 100, 500, true, 500, false},
+			{"trusted may introduce from unset", 0, 500, true, 500, false},
+			{"untrusted strict tighten honored", 100, 40, false, 40, false},
+			{"untrusted raise is loosening", 100, 500, false, 100, true},
+			{"untrusted equal is loosening (not strict)", 100, 100, false, 100, true},
+			{"untrusted set-from-unset is loosening", 0, 40, false, 0, true},
+		}
+		for _, tc := range cases {
+			t.Run(tc.desc, func(t *testing.T) {
+				cur := tc.cur
+				reported := tightenNumeric(&cur, tc.newV, tc.trusted)
+				if cur != tc.wantCur {
+					t.Errorf("cur = %d, want %d", cur, tc.wantCur)
+				}
+				if reported != tc.wantReported {
+					t.Errorf("reported = %v, want %v", reported, tc.wantReported)
+				}
+			})
+		}
+	})
+
+	t.Run("float64 (queue_bound)", func(t *testing.T) {
+		// Trusted override.
+		cur := 2.0
+		if tightenNumeric(&cur, 3.5, true) || cur != 3.5 {
+			t.Errorf("trusted float override failed: cur=%v", cur)
+		}
+		// Untrusted strict tighten.
+		cur = 2.0
+		if tightenNumeric(&cur, 1.5, false) || cur != 1.5 {
+			t.Errorf("untrusted float tighten failed: cur=%v", cur)
+		}
+		// Untrusted raise is loosening.
+		cur = 2.0
+		if !tightenNumeric(&cur, 4.0, false) || cur != 2.0 {
+			t.Errorf("untrusted float raise should be reported and dropped: cur=%v", cur)
+		}
+	})
+}
