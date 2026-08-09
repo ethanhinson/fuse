@@ -78,6 +78,20 @@ var safeList = map[string]bool{
 	// separate y/s/n permission prompt in front of the question is redundant (a
 	// double prompt). The question overlay IS the human gate.
 	"ask_user": true,
+	// segment_read is read-only over an existing transcript segment; no side
+	// effects.
+	"segment_read": true,
+	// web_search issues a controlled query to a config-fixed engine (Brave/Tavily/
+	// custom); the endpoint is not model-chosen, so there is no arbitrary-egress
+	// surface (unlike web_fetch, which is deliberately NOT safe-listed).
+	"web_search": true,
+	// skill is orchestration: it loads skill instructions, and any spawned child
+	// inherits a cloned, independently-gated gate — same rationale as spawn_agent,
+	// so the skill call itself is inert.
+	"skill": true,
+	// pipeline_run is orchestration: spawned children inherit a cloned gate and are
+	// independently re-gated — same rationale as spawn_agent.
+	"pipeline_run": true,
 }
 
 // onSafeList returns true for the hard-coded safe set, all codeindex_* tools, and
