@@ -142,6 +142,58 @@ func TestWheelBlackboardRegression(t *testing.T) {
 	}
 }
 
+// TestDetailReentryFollowsTailAfterWheel is the finding-2 regression: after the
+// wheel sets detailManual on the detail list, tabbing back to the tree and
+// re-entering detail must follow the tail (newest event selected, followTail
+// effective) on the FIRST render — no j/k press required. Before the fix the
+// stale detailManual flag suppressed selection-follow for one frame.
+func TestDetailReentryFollowsTailAfterWheel(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	tree := agent.NewAgentTree("root", "m")
+	root := tree.Node(tree.RootID())
+	for i := 0; i < 40; i++ {
+		root.AddEvent(agent.AgentEvent{Kind: agent.KindAssistant, Payload: map[string]any{"text": "line"}})
+	}
+	m := NewAgentsModel(tree, nil)
+	m.width, m.height = 100, 12
+
+	// Enter detail and wheel up to set detailManual (manual scroll off the tail).
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m.View()
+	for i := 0; i < 5; i++ {
+		wheel(m, false) // up
+		m.View()
+	}
+	if !m.detailManual {
+		t.Fatal("wheel up should have set detailManual")
+	}
+
+	// Tab back to the tree, then re-enter detail.
+	m.Update(tea.KeyMsg{Type: tea.KeyTab}) // detail -> tree
+	if m.detailManual {
+		t.Error("exiting to the tree should clear detailManual")
+	}
+	if m.treeManual {
+		t.Error("returning to the tree should clear treeManual")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyTab}) // tree -> detail
+	if m.detailManual {
+		t.Error("re-entering detail should clear detailManual")
+	}
+
+	// First render after re-entry must land on the tail without any j/k press.
+	m.View()
+	if !m.followTail {
+		t.Error("re-entry did not follow the tail on the first render (followTail not effective)")
+	}
+	if m.eventSel != m.eventCount-1 {
+		t.Errorf("re-entry did not select the newest event on first render: eventSel=%d eventCount=%d", m.eventSel, m.eventCount)
+	}
+}
+
 // TestWheelEventViewScrollsOffset: in an expanded event the wheel moves eventScroll.
 func TestWheelEventViewScrollsOffset(t *testing.T) {
 	tree := agent.NewAgentTree("root", "m")
@@ -153,8 +205,8 @@ func TestWheelEventViewScrollsOffset(t *testing.T) {
 	root.AddEvent(agent.AgentEvent{Kind: agent.KindAssistant, Payload: map[string]any{"text": long}})
 	m := NewAgentsModel(tree, nil)
 	m.width, m.height = 100, 12
-	m.Update(tea.KeyMsg{Type: tea.KeyTab}) // detail
-	m.View()                               // primes eventCount so enter can expand
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})   // detail
+	m.View()                                 // primes eventCount so enter can expand
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // expand event
 	m.View()
 	if !m.inEventView {

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -14,7 +15,8 @@ import (
 // TestBlackboardTabScrollClampsAtEnd refutes the "bbScroll has no upper bound"
 // concern: holding 'j' (scroll down) past the content must clamp — the board
 // keeps at least the last row visible and never renders a fully empty pane or
-// panics. buildBlackboardLines clamps bbScroll to len(body)-1 each render.
+// panics. buildBlackboardLines clamps bbScroll to max(0, len(body)-rows) each
+// render (spec Decision 2).
 func TestBlackboardTabScrollClampsAtEnd(t *testing.T) {
 	prev := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)
@@ -51,6 +53,73 @@ func TestBlackboardTabScrollClampsAtEnd(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
 	if top := m.View(); !strings.Contains(top, "a/one") {
 		t.Errorf("'g' did not return to the top; view:\n%s", top)
+	}
+}
+
+// TestBlackboardBottomClampToLastFullWindow asserts the spec Decision 2 bottom
+// clamp: with content taller than the pane, slamming scroll-down far past the end
+// must leave bbScroll at max(0, len(body)-visibleRows) — the last FULL window,
+// not a near-empty pane clamped to len(body)-1.
+func TestBlackboardBottomClampToLastFullWindow(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	tree := agent.NewAgentTree("root", "m")
+	root := tree.Node(tree.RootID())
+	bb := agent.NewBlackboard(tree)
+	for i := 0; i < 20; i++ {
+		bb.Put(fmt.Sprintf("k%02d", i), map[string]any{"v": i}, root.ID, "root")
+	}
+
+	m := NewAgentsModel(tree, nil).WithBlackboard(bb)
+	m.width, m.height = 100, 12 // small height so content exceeds the window
+
+	// Compute the render's own body length and body-row budget the same way View()
+	// does, so the expected bottom clamp is exact. View() temporarily shrinks
+	// m.height (scheduler-header + border rows) before buildBlackboardLines reads
+	// it, and buildBlackboardLines then spends 3 of those rows on header/rule/help
+	// (rows = m.height-3). Mirror that here rather than assuming the raw height.
+	body, _ := m.blackboardBody(bb.Snapshot(), m.blackboardContentWidth())
+	header := m.schedulerHeaderLines(m.width)
+	if len(header) > m.height-1 {
+		header = header[:m.height-1]
+	}
+	h := m.height - len(header)
+	if h < 1 {
+		h = 1
+	}
+	contentH := h - 2
+	if contentH < 1 {
+		contentH = 1
+	}
+	visibleRows := contentH - 3 // the "rows" budget buildBlackboardLines computes
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+	wantMax := len(body) - visibleRows
+	if wantMax < 0 {
+		wantMax = 0
+	}
+	if len(body) <= visibleRows {
+		t.Fatalf("test needs content taller than the pane: len(body)=%d visibleRows=%d", len(body), visibleRows)
+	}
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	// Slam 'j' far past the end.
+	for i := 0; i < 500; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	}
+	m.View() // render applies the clamp
+
+	// The clamp must land on the last FULL window (max(0, len(body)-visibleRows)),
+	// not len(body)-1 (which would leave a near-empty pane).
+	if m.bbScroll != wantMax {
+		t.Errorf("bottom clamp = %d, want max(0, len(body)-visibleRows) = %d (len(body)=%d visibleRows=%d)",
+			m.bbScroll, wantMax, len(body), visibleRows)
+	}
+	if m.bbScroll == len(body)-1 {
+		t.Errorf("bottom clamp regressed to len(body)-1 (%d): over-scrolls into a near-empty pane", m.bbScroll)
 	}
 }
 

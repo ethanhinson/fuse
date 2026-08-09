@@ -38,10 +38,10 @@ type AgentsModel struct {
 	lastChildOf  map[string]string // parentID → last child's ID
 	selected     int
 	treeScroll   int  // first visible row of the tree pane
-	treeManual   bool // wheel scrolled the tree; suppress selection-follow this frame
+	treeManual   bool // sticky: set by a wheel scroll, cleared by a selection key (j/k/g/G) or a pane enter/exit; while set, suppresses selection-follow scrolling
 	inDetail     bool
 	detailScroll int  // first visible event row in the detail list
-	detailManual bool // wheel scrolled the detail list; suppress selection-follow
+	detailManual bool // sticky: set by a wheel scroll, cleared by a selection key (j/k/g/G) or a pane enter/exit; while set, suppresses selection-follow
 	followTail   bool // selection sticks to the newest event until user moves up
 	eventSel     int  // selected event (index into displayEvents)
 	eventCount   int  // len(displayEvents) as of last render, for key clamping
@@ -375,7 +375,8 @@ func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.inDetail = true
 		m.detailScroll = 0
 		m.eventSel = 0
-		m.followTail = true // land on the newest event of the chosen node
+		m.detailManual = false // clear any stale wheel flag so followTail lands on tail
+		m.followTail = true    // land on the newest event of the chosen node
 	case "x":
 		if n > 0 && m.selected < n {
 			m.tree.CancelNode(m.nodes[m.selected].ID)
@@ -503,6 +504,8 @@ func (m *AgentsModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc", "tab":
 		m.inDetail = false
 		m.detailScroll = 0
+		m.detailManual = false // returning to the tree clears the wheel flag
+		m.treeManual = false   // re-engage the tree's selection-follow scrolling
 		m.followTail = true
 	}
 	return m, nil
@@ -901,12 +904,11 @@ func (m *AgentsModel) buildBlackboardLines(w int) []string {
 	if rows < 1 {
 		rows = 1
 	}
-	if m.bbScroll > len(body)-1 {
-		if len(body) == 0 {
-			m.bbScroll = 0
-		} else {
-			m.bbScroll = len(body) - 1
-		}
+	// Clamp to [0, max(0, len(body)-rows)] so the pane cannot over-scroll past
+	// the last full window into a mostly-blank view (spec Decision 2; mirrors the
+	// detail pane's len(all)-rows clamp).
+	if maxScroll := len(body) - rows; m.bbScroll > maxScroll {
+		m.bbScroll = maxScroll
 	}
 	if m.bbScroll < 0 {
 		m.bbScroll = 0

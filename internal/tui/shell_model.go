@@ -181,9 +181,9 @@ type ShellModel struct {
 	approvals   []approvalState  // FIFO; head is the request awaiting y/s/n
 	approvalLog []approvalRecord // answered requests, recallable via /approvals
 
-	asks    []askState             // FIFO; head is the ask_user question awaiting input
-	askResp []chan<- tools.Answer  // parallel to asks: reply channel per queued question
-	askLog  []askRecord            // answered questions, recallable via /questions
+	asks    []askState            // FIFO; head is the ask_user question awaiting input
+	askResp []chan<- tools.Answer // parallel to asks: reply channel per queued question
+	askLog  []askRecord           // answered questions, recallable via /questions
 
 	md        *glamour.TermRenderer // nil until first WindowSizeMsg; recreated on resize
 	reg       *model.Registry
