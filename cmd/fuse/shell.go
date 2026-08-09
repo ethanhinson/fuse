@@ -119,7 +119,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// exists, so it can live under the per-session directory keyed by the root
 	// AgentNode.ID (change 0030).
 	logDir := session.DefaultLogDir()
-	go session.SweepOld(logDir, 7*24*time.Hour)
+	go session.SweepOld(logDir, 7*24*time.Hour, "*.jsonl")
+	// Segment GC (change 0030): sweep pre-compaction segment archives older than
+	// the 14-day window and prune their index entries, alongside the log sweep.
+	go session.SweepOldSegments(logDir, 14*24*time.Hour)
 
 	// Agent tree for subagent tracking. The tree-global spawn budget backstops
 	// runaway fan-out; its count feeds the budget line injected into results.

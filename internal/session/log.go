@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -130,15 +129,18 @@ func (l *Logger) Close() error {
 	}
 }
 
-// SweepOld deletes session log files older than maxAge from dir. Non-fatal.
-func SweepOld(dir string, maxAge time.Duration) {
+// SweepOld deletes files matching pattern (a filepath.Match glob, e.g.
+// "*.jsonl") older than maxAge from dir. Non-fatal. The pattern parameter
+// (change 0030) generalizes the previously hardcoded "*.jsonl" so the segment
+// sweep can share the age/glob machinery.
+func SweepOld(dir string, maxAge time.Duration, pattern string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	cutoff := time.Now().Add(-maxAge)
 	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".jsonl") {
+		if ok, _ := filepath.Match(pattern, e.Name()); !ok {
 			continue
 		}
 		info, err := e.Info()
@@ -148,5 +150,113 @@ func SweepOld(dir string, maxAge time.Duration) {
 		if info.ModTime().Before(cutoff) {
 			os.Remove(filepath.Join(dir, e.Name())) //nolint:errcheck
 		}
+	}
+}
+
+// SweepOldSegments sweeps stale segment files under baseDir/*/segments/*.md
+// older than maxAge (change 0030, 14-day window at the call site), prunes their
+// entries from each session's index.json, and removes a session directory left
+// empty after the sweep. Non-fatal throughout — GC never blocks a session.
+//
+// Symlink safety (learning dirent-isdir-skips-symlinks): a session dir reached
+// through a symlink reports DirEntry.IsDir() == false, so the descent falls back
+// to os.Stat rather than trusting the dirent, otherwise a symlinked session dir
+// would be silently skipped.
+func SweepOldSegments(baseDir string, maxAge time.Duration) {
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-maxAge)
+	for _, e := range entries {
+		isDir := e.IsDir()
+		if !isDir {
+			// Follow symlinks (and anything IsDir() misreports) via a stat.
+			if info, serr := os.Stat(filepath.Join(baseDir, e.Name())); serr == nil && info.IsDir() {
+				isDir = true
+			}
+		}
+		if !isDir {
+			continue
+		}
+		sweepSessionSegments(filepath.Join(baseDir, e.Name()), cutoff)
+	}
+}
+
+// sweepSessionSegments sweeps one session directory's segments/ subtree, prunes
+// its index.json, and removes the session dir if it is left empty.
+func sweepSessionSegments(sessionDir string, cutoff time.Time) {
+	segDir := filepath.Join(sessionDir, "segments")
+	segs, err := os.ReadDir(segDir)
+	if err != nil {
+		return
+	}
+	swept := map[string]bool{}
+	for _, s := range segs {
+		if ok, _ := filepath.Match("*.md", s.Name()); !ok {
+			continue
+		}
+		info, err := s.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			if os.Remove(filepath.Join(segDir, s.Name())) == nil {
+				swept[s.Name()] = true
+			}
+		}
+	}
+	if len(swept) > 0 {
+		pruneIndex(filepath.Join(segDir, "index.json"), swept)
+	}
+	removeIfEmpty(segDir)
+	removeIfEmpty(sessionDir)
+}
+
+// pruneIndex rewrites index.json to drop entries whose Path was swept. A missing
+// or unparseable index is left alone.
+func pruneIndex(idxPath string, swept map[string]bool) {
+	b, err := os.ReadFile(idxPath)
+	if err != nil {
+		return
+	}
+	var idx struct {
+		SessionID string            `json:"session_id"`
+		Segments  []json.RawMessage `json:"segments"`
+	}
+	if err := json.Unmarshal(b, &idx); err != nil {
+		return
+	}
+	kept := idx.Segments[:0]
+	for _, raw := range idx.Segments {
+		var e struct {
+			Path string `json:"path"`
+		}
+		if json.Unmarshal(raw, &e) == nil && swept[e.Path] {
+			continue
+		}
+		kept = append(kept, raw)
+	}
+	idx.Segments = kept
+	// If no segments remain, drop the index file so the dir can be removed.
+	if len(idx.Segments) == 0 {
+		os.Remove(idxPath) //nolint:errcheck
+		return
+	}
+	out, err := json.Marshal(idx)
+	if err != nil {
+		return
+	}
+	os.WriteFile(idxPath, out, 0o600) //nolint:errcheck
+}
+
+// removeIfEmpty removes dir if it contains no entries. Non-fatal.
+func removeIfEmpty(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	if len(entries) == 0 {
+		os.Remove(dir) //nolint:errcheck
 	}
 }
