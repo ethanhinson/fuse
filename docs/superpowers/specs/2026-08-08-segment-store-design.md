@@ -249,7 +249,53 @@ Generalize the log sweeper and add a segment sweep:
   chatty; prefer a compaction event the loop already emits, falling back to a cached read.
   Decide at build.
 
+## Compression & non-destructive GC (scope expansion, PR #41)
+
+A correction to this design's own choices: the age sweeps DELETED data
+(`os.Remove`) and segments were stored UNCOMPRESSED. This expansion makes all
+archival gzip-compressed, non-destructive, and self-describing, and gates it with
+an antagonistic answer-quality suite proving no degradation when recovered data
+lives in a gzipped archive.
+
+### Design
+
+- **Born-compressed segments (creation-time compression).** `FSSegmentSink`
+  writes `RenderSegment` output through `gzip` to `<n>.md.gz` (0o600); the index
+  records the on-disk `.md.gz` name. `index.json` itself stays UNCOMPRESSED (it
+  is small and scanned on every `segment_read`). `LoadSegment` gunzips
+  transparently by sniffing the gzip magic (0x1f 0x8b) and falls back from a bare
+  `.md` path to `<path>.gz`, so old plaintext and new compressed segments both
+  load through the one seam. The lossless JSON raw-region format inside the file
+  is untouched — gzip wraps the whole rendered file.
+- **`internal/archive` helper.** Domain-agnostic `Archive(path, MetaFunc)` /
+  `Open(path)`. `Archive` gzips to `<path>.gz`, writes a `<path>.gz.meta.yml` YAML
+  sidecar describing WHAT is in the file (common: `archived_at`, `original_name`,
+  `original_bytes`, `compressed_bytes`; plus caller domain fields), then removes
+  the original. Idempotent. `Open` reads plaintext or gzip transparently. It
+  imports neither `session` nor `tools` (no cycle) — each caller supplies a
+  `MetaFunc`.
+- **Sidecar frontmatter.** Session logs: `entry_count`, `first_ts`, `last_ts`,
+  `node_ids`, `root_label`, `max_depth`, `kinds`. Spill: `tool_name`,
+  `created_unix`, `head` preview.
+- **Three sweeps converted delete → gzip-archive.** `session.SweepOld` (logs,
+  7d) and `tools.sweepSpillDir` (spill, 7d): born plaintext, sweep gzips them at
+  the current horizon. `session.SweepOldSegments` (14d): segments are born
+  `.md.gz`, so this becomes a non-destructive back-compat bridge that only
+  compresses legacy plaintext `.md` in place and re-points the index Path — it
+  never deletes or index-prunes, and there is no second destructive horizon.
+- **`read_file` gzip-transparent.** Opens via `archive.Open`; the binary-refusal
+  guard runs on decompressed bytes; the spill recovery hint resolves after
+  archival.
+
+### Policy (documented in ADR-0020)
+
+Segments are born compressed (creation-time), not sweep-compressed. The index
+stays uncompressed. Data is retained indefinitely, merely compressed — no
+destructive GC horizon.
+
 ## Follow-ups (not this change)
 
 - `fuse replay` built on the segment store + session log.
 - Tuning the 14-day GC window / output caps to config if usage shows a need.
+- A separate optional long-horizon PURGE for truly-ancient `.gz` archives, if
+  disk usage ever warrants it (deliberately not built here).

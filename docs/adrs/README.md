@@ -23,6 +23,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0017](0017-segment-store-fssink-subpackage-split.md) — Split the segment store into an agent-free internal/segment package and an agent-dependent internal/segment/fssink subpackage to break an import cycle (Accepted) ← change #30
 - [ADR-0018](0018-per-session-directory-layout-flat-log-read-compat.md) — Per-session directory layout for session logs and segments, with flat-log read-compatibility and no migration (Accepted) ← change #30 · relates to ADR-0017
 - [ADR-0019](0019-process-global-segment-sink-holder.md) — Process-global, lock-guarded segment sink holder as the sink-injection mechanism in cmd/fuse (Accepted) ← change #30 · relates to ADR-0017, ADR-0018
+- [ADR-0020](0020-born-compressed-non-destructive-segment-store.md) — Segments are born gzip-compressed with an uncompressed index, and age sweeps compress rather than delete (non-destructive GC) (Accepted) ← change #30 · relates to ADR-0017, ADR-0018, ADR-0019
 
 ## Superseded / Reversed
 

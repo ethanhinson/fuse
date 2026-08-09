@@ -10,7 +10,7 @@ updated: 2026-08-09
 depends_on: [27]
 related: [27, 29]
 discovered_from: [27]
-adrs: [17, 18, 19]
+adrs: [17, 18, 19, 20]
 spec: docs/superpowers/specs/2026-08-08-segment-store-design.md
 plan: docs/superpowers/plans/2026-08-09-segment-store-plan.md
 results: docs/results/2026-08-09-segment-store-results.md
