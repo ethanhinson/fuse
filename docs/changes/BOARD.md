@@ -1,12 +1,12 @@
 # Backlog
 
-**39 changes** — 🟡 1 proposed · ⚪ 1 deferred · ✅ 31 done · 🗑️ 6 killed
+**39 changes** — 🟢 1 in progress · ⚪ 1 deferred · ✅ 31 done · 🗑️ 6 killed
 
-## 🟡 Proposed (1)
+## 🟢 In progress (1)
 
-| # | Title | Priority | Type | Readiness |
-|---|-------|----------|------|-----------|
-| [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | build-ready |
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0030](active/0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | `low` | `feat` | [spec](../superpowers/specs/2026-08-08-segment-store-design.md) | `feat/segment-store` |
 
 ## ⚪ Deferred (1)
 
