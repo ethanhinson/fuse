@@ -73,6 +73,11 @@ var safeList = map[string]bool{
 	"list_directory": true,
 	"grep":           true,
 	"spawn_agent":    true,
+	// ask_user only poses an interactive question to the human and blocks for
+	// their answer — the human is already in the loop and can dismiss it, so a
+	// separate y/s/n permission prompt in front of the question is redundant (a
+	// double prompt). The question overlay IS the human gate.
+	"ask_user": true,
 }
 
 // onSafeList returns true for the hard-coded safe set, all codeindex_* tools, and

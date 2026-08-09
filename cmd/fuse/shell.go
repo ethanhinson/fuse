@@ -174,6 +174,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// One blackboard per session, shared by every agent in the tree (change 0023).
 	bb := agent.NewBlackboard(tree)
 
+	// Human-messaging substrate (ADR-0022): a per-node message bus, an @handle
+	// registry (root registered up front), and an async advisory router backed by
+	// a cheap model. Children register their handles and receive their own
+	// injector in the spawn factory below.
+	humanBus := agent.NewHumanBus(tree)
+	handleReg := agent.NewHandleRegistry()
+	handleReg.Register(rootNode.ID, alias)
+	humanRouter := newHumanRouter(cfg, reg)
+
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
 		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true, rateGate)
@@ -185,6 +194,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		// to root-initiated spawns too. See change 0033; unified through the
 		// scheduler's visibility predicate in change 0036.
 		ag.SetStripSpawn(sched.StripPredicate(rootNode.ID))
+		// Root's human-message injector: drains humanq/<root> at each turn boundary.
+		ag.SetHumanInjector(agent.NewHumanInjector(rootNode.ID, humanBus))
 		return ag, nil
 	}
 
@@ -198,6 +209,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// Segment surface (change 0030): the /agents overlay reads this session's
 	// segments/ dir for the compaction indicator and "s" show-original.
 	m = m.WithSegmentsDir(segment.SegmentsDir(logDir, tree.RootID()))
+	m = m.WithHumanMessaging(humanBus, handleReg, humanRouter)
 	// Hand the same shared bucket to the observability surface so the agents
 	// overlay shows live rate-gate utilization (change 0036); nil is the no-gate
 	// fast path and renders no rate-gate segment.
@@ -236,7 +248,13 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			agent.WithTree(tree),
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(parentDepth),
+			// Completion hook (ADR-0022): bubble a finished child's undelivered
+			// human messages up to its parent so none are silently stranded.
+			agent.WithHumanBus(humanBus),
 			agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
+				// Register a human-typeable @handle for this child (auto-derived from
+				// its label, collision-disambiguated) so the human can address it.
+				handleReg.Register(childNode.ID, opts.Label)
 				// Child-specific tool registry (clone or subset); unknown tool
 				// names fail the spawn so the model can self-correct.
 				childToolReg, terr := childToolRegistry(toolReg, opts.Tools)
@@ -296,6 +314,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				// (reversible), the lifetime budget strips (permanent), the queue
 				// bound strips (reversible). See change 0033, unified in change 0036.
 				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
+				// Child's human-message injector: drains humanq/<child> each turn.
+				a.SetHumanInjector(agent.NewHumanInjector(childNode.ID, humanBus))
 
 				history := []model.Message{{Role: "user", Content: opts.Task}}
 				msgs, rerr := a.Run(ctx, history)
@@ -325,6 +345,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
 	// Root-node-wired blackboard tools (provenance = rootNode).
 	wireRootBlackboard(toolReg, bb, rootNode)
+	// ask_user: reaches the human through the same TUI channel as approvals, so
+	// the model can pose a structured multiple-choice question and block for the
+	// answer, which returns as the tool result (and thus into context).
+	toolReg.Register(tools.NewAskUserTool(tui.NewTeaAskFunc(m.Channel())))
 	// Root pipeline_run bound to the root spawner (provenance = rootNode). (0026)
 	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
 	rootPipeSpawner := makeSpawner(rootNode, 0)

@@ -110,6 +110,16 @@ func (m *AgentsModel) ShowBlackboard() *AgentsModel {
 	return m
 }
 
+// SelectedNodeID returns the ID of the currently-highlighted tree node, or ""
+// when the snapshot is empty. Used by the human-messaging router to default
+// bare-prose targets to the node the human is looking at (ADR-0022).
+func (m *AgentsModel) SelectedNodeID() string {
+	if m == nil || m.selected < 0 || m.selected >= len(m.nodes) {
+		return ""
+	}
+	return m.nodes[m.selected].ID
+}
+
 // Init is a no-op; the parent ShellModel owns the tree-update subscription.
 func (m *AgentsModel) Init() tea.Cmd { return nil }
 

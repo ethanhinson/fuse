@@ -119,19 +119,39 @@ func newHarness(t *testing.T, opts harnessOpts) *harness {
 
 	m := NewShellModel(opts.Alias, false, "", testRegistry(), opts.SlashReg, build, permissions.NewSessionMode(permissions.ModeSmart), true)
 
+	h := startHarnessWithModelSized(t, m, opts.Width, opts.Height)
+	h.cmp = cmp
+	return h
+}
+
+// startHarnessWithModel boots teatest around an already-constructed ShellModel
+// at the default 80x24 terminal. Tests needing a custom AgentBuilder (e.g. one
+// wiring a real ask_user tool to the model channel) build the model themselves
+// and still get the load-bearing bridge pump.
+func startHarnessWithModel(t *testing.T, m ShellModel) *harness {
+	return startHarnessWithModelSized(t, m, 80, 24)
+}
+
+// startHarnessWithModelSized is startHarnessWithModel with an explicit terminal
+// size. Extracted from newHarness so both the opts-driven and prebuilt-model
+// entry points share the bridge/teardown wiring.
+func startHarnessWithModelSized(t *testing.T, m ShellModel, width, height int) *harness {
+	t.Helper()
+	if width == 0 {
+		width = 80
+	}
+	if height == 0 {
+		height = 24
+	}
 	bridgeCtx, cancel := context.WithCancel(context.Background())
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(width, height))
 
-	tm := teatest.NewTestModel(t, m,
-		teatest.WithInitialTermSize(opts.Width, opts.Height),
-	)
-
-	// Pump agent-renderer events (AssistantMsg, AgentDoneMsg, …) from the
-	// model's channel into the program, exactly as StartBridges does in the
-	// real shell. tree/slashReg are nil here: this harness targets the
-	// single-agent transcript path, not the multi-agent drilldown view.
+	// Pump agent-renderer events from the model's channel into the program,
+	// exactly as StartBridges does in the real shell. tree/slashReg are nil: this
+	// harness targets the single-agent transcript path.
 	StartBridges(bridgeCtx, tm.GetProgram(), m.Channel(), nil, nil)
 
-	h := &harness{t: t, tm: tm, m: m, cmp: cmp, cancelBridge: cancel}
+	h := &harness{t: t, tm: tm, m: m, cancelBridge: cancel}
 	t.Cleanup(h.close)
 	return h
 }

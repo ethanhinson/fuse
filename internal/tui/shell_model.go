@@ -21,6 +21,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/ratelimit"
+	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/version"
 )
 
@@ -180,6 +181,10 @@ type ShellModel struct {
 	approvals   []approvalState  // FIFO; head is the request awaiting y/s/n
 	approvalLog []approvalRecord // answered requests, recallable via /approvals
 
+	asks    []askState             // FIFO; head is the ask_user question awaiting input
+	askResp []chan<- tools.Answer  // parallel to asks: reply channel per queued question
+	askLog  []askRecord            // answered questions, recallable via /questions
+
 	md        *glamour.TermRenderer // nil until first WindowSizeMsg; recreated on resize
 	reg       *model.Registry
 	slashReg  *SlashRegistry
@@ -200,6 +205,10 @@ type ShellModel struct {
 	tree          *agent.AgentTree
 	blackboard    *agent.Blackboard // session blackboard for the /agents Blackboard tab
 	segmentsDir   string            // session segments/ dir for the /agents indicator + "s" (0030)
+	humanBus      *agent.HumanBus   // per-node human-message queues (ADR-0022)
+	handleReg     *agent.HandleRegistry
+	router        agent.RouterLLM // async advisory classifier; nil ⇒ default routing only
+	queue         *queueState     // non-nil while the /queue editor is open
 	agentsActive  bool
 	agentsModel   *AgentsModel
 	overlayGen    int // increments per overlay entry; stale overlay ticks are dropped
@@ -299,6 +308,16 @@ func (m ShellModel) WithBlackboard(bb *agent.Blackboard) ShellModel {
 // "s" (change 0030). Empty ("") disables the surface.
 func (m ShellModel) WithSegmentsDir(dir string) ShellModel {
 	m.segmentsDir = dir
+	return m
+}
+
+// WithHumanMessaging wires the human-message substrate (ADR-0022): the per-node
+// bus, the @handle registry, and an optional async router. Nil bus/registry
+// disable the feature (input while busy is dropped as before).
+func (m ShellModel) WithHumanMessaging(bus *agent.HumanBus, reg *agent.HandleRegistry, router agent.RouterLLM) ShellModel {
+	m.humanBus = bus
+	m.handleReg = reg
+	m.router = router
 	return m
 }
 
@@ -438,6 +457,18 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.enqueueApproval(msg)
 		return m, nil
 
+	case AskQuestionMsg:
+		// The ask_user tool blocks on RespCh until the user answers; queue it as
+		// a live overlay exactly like an approval.
+		m.enqueueAsk(msg)
+		return m, nil
+
+	case routerDecisionMsg:
+		// The async advisory router returned; apply its verdict on the main
+		// goroutine (ADR-0022). A no-op if it declined or errored.
+		m.applyRouterDecision(msg)
+		return m, nil
+
 	case TokensMsg:
 		m.inputTokens += msg.Input
 		m.outputTokens += msg.Output
@@ -478,10 +509,15 @@ func (m ShellModel) handleOverlayMsg(msg tea.Msg) (handled bool, model tea.Model
 		m.agentsModel.refreshSnapshot()
 		return true, m, agentOverlayTick(m.overlayGen)
 	case tea.KeyMsg:
-		// A pending approval owns the keyboard regardless of the active view;
-		// the queue lives in ShellModel so overlay exit can't orphan a RespCh.
+		// A pending approval or question owns the keyboard regardless of the
+		// active view; both queues live in ShellModel so overlay exit can't orphan
+		// a RespCh. Approval takes priority (it gates a tool already mid-flight).
 		if len(m.approvals) > 0 {
 			model, cmd := m.handleApprovalKey(msg)
+			return true, model, cmd
+		}
+		if len(m.asks) > 0 {
+			model, cmd := m.handleAskKey(msg)
 			return true, model, cmd
 		}
 		newModel, cmd := m.agentsModel.Update(msg)
@@ -618,6 +654,7 @@ func (m ShellModel) handleAgentDone(msg AgentDoneMsg) (tea.Model, tea.Cmd) {
 	m.history = msg.History
 	m.running = false
 	m.drainApprovals()
+	m.drainAsks()
 	m.input.Focus()
 	// Freeze the root node's clock — the loop is over; the agents view
 	// must stop counting.
@@ -642,9 +679,19 @@ func (m ShellModel) handleAgentDone(msg AgentDoneMsg) (tea.Model, tea.Cmd) {
 
 // handleKey processes key bindings.
 func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The /queue editor, when open, owns the keyboard.
+	if m.queue != nil {
+		if handled, model, cmd := m.handleQueueKey(msg); handled {
+			return model, cmd
+		}
+	}
 	// While an approval is pending, intercept y/s/n/Esc before normal input.
 	if len(m.approvals) > 0 {
 		return m.handleApprovalKey(msg)
+	}
+	// A pending ask_user question owns the keyboard next.
+	if len(m.asks) > 0 {
+		return m.handleAskKey(msg)
 	}
 
 	// While the completer is active, intercept navigation keys.
@@ -705,7 +752,23 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyEnter:
 		line := strings.TrimSpace(m.input.Value())
-		if line == "" || m.running {
+		if line == "" {
+			return m, nil
+		}
+		// Human-messaging routing (ADR-0022): /btw, @all, @handle, /rename, and —
+		// while an agent is busy — queued messages are all handled here rather than
+		// dropped. Falls through to the normal slash/prompt path for routeNormal.
+		if m.humanBus != nil && m.handleReg != nil {
+			r := classifyInput(line, m.tree, m.handleReg, m.blackboard, m.running, len(m.asks) > 0, m.selectedNodeID())
+			if r.Kind != routeNormal && r.Kind != routeRespond {
+				m.input.Reset()
+				if m.completer != nil {
+					m.completer.deactivate()
+				}
+				return m.dispatchHumanRoute(r)
+			}
+		}
+		if m.running {
 			return m, nil
 		}
 		m.input.Reset()
@@ -841,6 +904,34 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.appendLine(headerStyle.Render(fmt.Sprintf("Permission decisions (%d):", len(m.approvalLog))))
 		for _, rec := range m.approvalLog {
 			m.appendLine("  " + renderApprovalRecord(rec))
+		}
+		return m, nil
+	case "/queue":
+		if m.humanBus == nil {
+			m.appendLine(headerStyle.Render("Human messaging is not enabled in this session."))
+			return m, nil
+		}
+		m.openQueue()
+		return m, nil
+	case "/queuedemo":
+		// Hidden demo seam: pre-populate the queue so the editor can be shown
+		// (screenshots/videos) without a live agent. Not in the completer.
+		if m.humanBus != nil && m.tree != nil {
+			root := m.tree.RootID()
+			m.humanBus.Enqueue(root, agent.ModeQueued, "@alpha", "also add error handling")
+			m.humanBus.Enqueue(root, agent.ModeBroadcast, "@all", "keep changes minimal")
+			m.humanBus.Enqueue(root, agent.ModeQueued, "@alpha", "and write integration tests")
+			m.openQueue()
+		}
+		return m, nil
+	case "/questions":
+		if len(m.askLog) == 0 {
+			m.appendLine(headerStyle.Render("No questions answered this session."))
+			return m, nil
+		}
+		m.appendLine(headerStyle.Render(fmt.Sprintf("Answered questions (%d):", len(m.askLog))))
+		for _, rec := range m.askLog {
+			m.appendLine("  " + renderAskRecord(rec))
 		}
 		return m, nil
 	case "/verbose":
@@ -1303,6 +1394,15 @@ func approvalStatusText(n int) string {
 	return "Awaiting permission…"
 }
 
+// askStatusText renders the status-bar label for a pending ask_user question,
+// including queue depth when more than one question is waiting.
+func askStatusText(n int) string {
+	if n > 1 {
+		return fmt.Sprintf("Awaiting your answer… (1 of %d)", n)
+	}
+	return "Awaiting your answer…"
+}
+
 // isLoopApproval reports whether an approval request is a doom-loop
 // force-through (tagged with the permissions sentinel ToolName) rather than a
 // real tool call — the popup and the key handler render/handle it differently.
@@ -1486,6 +1586,8 @@ func (m ShellModel) View() string {
 		base := m.agentsModel.View()
 		if len(m.approvals) > 0 {
 			base = overlayApprovalOnView(base, m.approvals[0].req, len(m.approvals), m.agentsModel.width)
+		} else if len(m.asks) > 0 {
+			base = overlayAskOnView(base, m.asks[0], len(m.asks), m.agentsModel.width)
 		}
 		return base
 	}
@@ -1502,6 +1604,10 @@ func (m ShellModel) View() string {
 		status = approvalHeaderStyle.Render("⚠") + " " +
 			statusRunStyle.Render(approvalStatusText(len(m.approvals))) + " " +
 			ruleStyle.Render("press y · s · n")
+	case len(m.asks) > 0:
+		status = askHeaderStyle.Render("?") + " " +
+			statusRunStyle.Render(askStatusText(len(m.asks))) + " " +
+			ruleStyle.Render("↑/↓ · Enter · Esc")
 	case m.running:
 		elapsed := formatElapsed(time.Since(m.runStart))
 		tok := formatTokens(m.inputTokens)
@@ -1527,6 +1633,10 @@ func (m ShellModel) View() string {
 	// the moment it is answered, leaving only the compact decision record.
 	if len(m.approvals) > 0 {
 		vpView = overlayApprovalOnView(vpView, m.approvals[0].req, len(m.approvals), width)
+	} else if len(m.asks) > 0 {
+		vpView = overlayAskOnView(vpView, m.asks[0], len(m.asks), width)
+	} else if m.queue != nil {
+		vpView = renderQueueOverlay(vpView, m.queue, width)
 	}
 
 	var b strings.Builder
