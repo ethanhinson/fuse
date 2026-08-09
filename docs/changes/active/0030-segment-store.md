@@ -12,7 +12,7 @@ related: [27, 29]
 discovered_from: [27]
 adrs: []
 spec: docs/superpowers/specs/2026-08-08-segment-store-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-09-segment-store-plan.md
 results:
 trivial: false
 auto_groomable:
@@ -20,7 +20,7 @@ branch: feat/segment-store
 pr:
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-09T03:39:05Z
+claimed_at: 2026-08-09T03:42:23Z
 ---
 
 ## Artifacts
@@ -29,6 +29,7 @@ claimed_at: 2026-08-09T03:39:05Z
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-08-segment-store-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-segment-store-design.md) |
+| Plan | [2026-08-09-segment-store-plan.md](https://github.com/ethanhinson/fuse/blob/feat/segment-store/docs/superpowers/plans/2026-08-09-segment-store-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
