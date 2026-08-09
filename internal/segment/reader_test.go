@@ -1,6 +1,8 @@
 package segment
 
 import (
+	"bytes"
+	"compress/gzip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +10,105 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/model"
 )
+
+// gzTo writes content gzip-compressed to path (test helper mirroring how the
+// sink now stores segments on disk).
+func gzTo(t *testing.T, path string, content []byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(content); err != nil {
+		t.Fatalf("gzip write: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("gzip close: %v", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+}
+
+// TestLoadSegmentGzipTransparent: a segment stored gzip-compressed at "<n>.md.gz"
+// loads to the SAME messages as the identical plaintext ".md" segment. This is
+// the segment-seam half of the no-degradation guarantee (change 0030 scope
+// expansion).
+func TestLoadSegmentGzipTransparent(t *testing.T) {
+	orig := []model.Message{
+		{Role: "tool", Name: "read_file", Content: "the API key rotation interval is 4217 seconds"},
+		{Role: "assistant", Content: "noted"},
+	}
+	seg := Segment{TurnStart: 3, TurnEnd: 5, TS: time.Now().UTC(), Summary: "s", Messages: orig}
+	rendered := []byte(RenderSegment(seg))
+
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "3-5-1.md")
+	if err := os.WriteFile(plain, rendered, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gz := filepath.Join(dir, "3-5-2.md.gz")
+	gzTo(t, gz, rendered)
+
+	plainSeg, err := LoadSegment(plain)
+	if err != nil {
+		t.Fatalf("LoadSegment(plain): %v", err)
+	}
+	gzSeg, err := LoadSegment(gz)
+	if err != nil {
+		t.Fatalf("LoadSegment(gz): %v", err)
+	}
+	if len(plainSeg.Messages) != len(gzSeg.Messages) {
+		t.Fatalf("message count differs: plain=%d gz=%d", len(plainSeg.Messages), len(gzSeg.Messages))
+	}
+	for i := range plainSeg.Messages {
+		p, g := plainSeg.Messages[i], gzSeg.Messages[i]
+		if p.Role != g.Role || p.Name != g.Name || p.ToolCallID != g.ToolCallID || p.Content != g.Content {
+			t.Errorf("msg[%d] differs between plain and gz backing:\n plain=%+v\n    gz=%+v", i, p, g)
+		}
+	}
+	if gzSeg.Summary != plainSeg.Summary {
+		t.Errorf("summary differs: plain=%q gz=%q", plainSeg.Summary, gzSeg.Summary)
+	}
+}
+
+// TestLoadSegmentGzFallbackByPath: LoadSegment given a bare ".md" path whose file
+// is missing but a "<path>.gz" exists resolves the .gz automatically. Lets an
+// index Path pointing at ".md" keep working if the on-disk file became ".md.gz".
+func TestLoadSegmentGzFallbackByPath(t *testing.T) {
+	orig := []model.Message{{Role: "tool", Name: "grep", Content: "needle 4217"}}
+	seg := Segment{TurnStart: 1, TurnEnd: 1, TS: time.Now().UTC(), Summary: "s", Messages: orig}
+	rendered := []byte(RenderSegment(seg))
+
+	dir := t.TempDir()
+	// Only the .gz exists; the plain .md does not.
+	gzTo(t, filepath.Join(dir, "1-1-1.md.gz"), rendered)
+
+	got, err := LoadSegment(filepath.Join(dir, "1-1-1.md"))
+	if err != nil {
+		t.Fatalf("LoadSegment fallback: %v", err)
+	}
+	if len(got.Messages) != 1 || got.Messages[0].Content != "needle 4217" {
+		t.Errorf("gz fallback did not recover content: %+v", got.Messages)
+	}
+}
+
+// TestLoadSegmentTruncatedGz: a corrupt/truncated .md.gz errors, never panics.
+func TestLoadSegmentTruncatedGz(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "9-9-1.md.gz")
+	gzTo(t, path, bytes.Repeat([]byte("x"), 2000))
+	full, _ := os.ReadFile(path)
+	if err := os.WriteFile(path, full[:len(full)/2], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("LoadSegment panicked on truncated gz: %v", r)
+		}
+	}()
+	if _, err := LoadSegment(path); err == nil {
+		t.Errorf("LoadSegment on truncated gz should error")
+	}
+}
 
 // TestRawRegionRoundTripLossless is the data-integrity guard for the raw region:
 // content that LOOKS like the old human-readable header format (or any other

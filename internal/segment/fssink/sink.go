@@ -6,6 +6,8 @@
 package fssink
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -60,13 +62,15 @@ func (s *FSSegmentSink) Archive(r agent.SegmentRegion) (string, error) {
 
 	// Pick a file name whose seq disambiguates a repeated turn range: probe from
 	// the in-process counter, then skip past any name that already exists on disk.
+	// Segments are born gzip-compressed (change 0030 scope expansion), so the
+	// on-disk name carries the ".gz" suffix and the collision probe checks it.
 	s.seq++
 	seq := s.seq
-	name := segment.FileName(r.TurnStart, r.TurnEnd, seq)
+	name := segment.FileNameGz(r.TurnStart, r.TurnEnd, seq)
 	for fileExists(filepath.Join(dir, name)) {
 		s.seq++
 		seq = s.seq
-		name = segment.FileName(r.TurnStart, r.TurnEnd, seq)
+		name = segment.FileNameGz(r.TurnStart, r.TurnEnd, seq)
 	}
 	path := filepath.Join(dir, name)
 
@@ -80,10 +84,22 @@ func (s *FSSegmentSink) Archive(r agent.SegmentRegion) (string, error) {
 		Summary:      r.Summary,
 		Messages:     r.Messages,
 	}
-	if err := os.WriteFile(path, []byte(segment.RenderSegment(seg)), 0o600); err != nil {
+	// Non-destructive by construction: the raw region is preserved on disk,
+	// merely gzip-compressed. LoadSegment gunzips it transparently, so the
+	// segment_read tool, the TUI show-original drill-in, and the index all
+	// inherit compression without change. The whole rendered file (front-matter
+	// + summary + lossless JSON raw region) is wrapped in gzip; the format inside
+	// is untouched.
+	compressed, err := gzipBytes([]byte(segment.RenderSegment(seg)))
+	if err != nil {
+		return "", fmt.Errorf("segment gzip: %w", err)
+	}
+	if err := os.WriteFile(path, compressed, 0o600); err != nil {
 		return "", fmt.Errorf("segment write: %w", err)
 	}
 
+	// The index Path records the ON-DISK name (now "<...>.md.gz"); index.json
+	// itself stays uncompressed (it is small and must be scanned per call).
 	if err := s.appendIndex(dir, segment.IndexEntry{
 		TurnStart:    r.TurnStart,
 		TurnEnd:      r.TurnEnd,
@@ -96,6 +112,19 @@ func (s *FSSegmentSink) Archive(r agent.SegmentRegion) (string, error) {
 		return "", fmt.Errorf("segment index: %w", err)
 	}
 	return path, nil
+}
+
+// gzipBytes gzip-compresses b with default settings.
+func gzipBytes(b []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(b); err != nil {
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // appendIndex reads (or initializes) the session's index.json, appends entry,

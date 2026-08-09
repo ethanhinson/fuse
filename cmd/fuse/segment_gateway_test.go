@@ -104,7 +104,7 @@ func TestSegmentGatewaySeamArchivesAndRecovers(t *testing.T) {
 	}
 	var mdFile, idxFile string
 	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".md") {
+		if strings.HasSuffix(e.Name(), ".md.gz") {
 			mdFile = e.Name()
 		}
 		if e.Name() == segment.IndexFileName {
@@ -112,7 +112,7 @@ func TestSegmentGatewaySeamArchivesAndRecovers(t *testing.T) {
 		}
 	}
 	if mdFile == "" {
-		t.Fatal("no segment .md file written under the session dir")
+		t.Fatal("no segment .md.gz file written under the session dir")
 	}
 	if idxFile == "" {
 		t.Fatal("no index.json written under the session dir")

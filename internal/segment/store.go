@@ -49,10 +49,23 @@ type Index struct {
 	Segments  []IndexEntry `json:"segments"`
 }
 
-// FileName is the segment file name for a turn range and disambiguating seq:
-// "<turnStart>-<turnEnd>-<seq>.md".
+// FileName is the LOGICAL segment file name for a turn range and disambiguating
+// seq: "<turnStart>-<turnEnd>-<seq>.md". This is the name recorded in the index
+// and used to probe for collisions; the ON-DISK file is written gzip-compressed
+// with the ".gz" suffix (see FileNameGz) after the change 0030 scope expansion.
 func FileName(turnStart, turnEnd, seq int) string {
 	return fmt.Sprintf("%d-%d-%d.md", turnStart, turnEnd, seq)
+}
+
+// GzSuffix is appended to the logical segment name for the on-disk compressed
+// file. Segments are born compressed (creation-time compression, change 0030
+// scope expansion): the sink writes RenderSegment output through gzip and the
+// reader gunzips transparently, so the whole recovery path is unchanged.
+const GzSuffix = ".gz"
+
+// FileNameGz is the ON-DISK segment file name: FileName + GzSuffix.
+func FileNameGz(turnStart, turnEnd, seq int) string {
+	return FileName(turnStart, turnEnd, seq) + GzSuffix
 }
 
 // SegmentsDir returns the segments directory for a session:

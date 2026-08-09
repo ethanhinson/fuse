@@ -16,6 +16,13 @@ import (
 // compile-time: FSSegmentSink satisfies the agent.SegmentSink interface.
 var _ agent.SegmentSink = (*FSSegmentSink)(nil)
 
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func sampleRegion(ts, te int) agent.SegmentRegion {
 	return agent.SegmentRegion{
 		TurnStart:    ts,
@@ -38,16 +45,26 @@ func TestFSSinkArchiveWritesFileAndIndex(t *testing.T) {
 	}
 
 	segDir := filepath.Join(base, "sess-1", "segments")
-	wantFile := filepath.Join(segDir, "12-18-1.md")
+	wantFile := filepath.Join(segDir, "12-18-1.md.gz")
 	if ptr != wantFile {
 		t.Errorf("pointer = %q, want absolute path %q", ptr, wantFile)
 	}
-	body, err := os.ReadFile(wantFile)
+	// The on-disk segment is gzip-compressed (born compressed, change 0030 scope
+	// expansion): assert the magic bytes AND that LoadSegment transparently
+	// recovers the raw body.
+	raw, err := os.ReadFile(wantFile)
 	if err != nil {
 		t.Fatalf("segment file not written: %v", err)
 	}
-	if !strings.Contains(string(body), "## Raw region") || !strings.Contains(string(body), "raw body") {
-		t.Errorf("segment file content wrong:\n%s", body)
+	if len(raw) < 2 || raw[0] != 0x1f || raw[1] != 0x8b {
+		t.Errorf("segment not gzip on disk (first bytes % x)", raw[:minInt(2, len(raw))])
+	}
+	seg, err := segment.LoadSegment(wantFile)
+	if err != nil {
+		t.Fatalf("LoadSegment: %v", err)
+	}
+	if len(seg.Messages) == 0 || !strings.Contains(seg.Messages[0].Content, "raw body") {
+		t.Errorf("raw body lost after gzip: %+v", seg.Messages)
 	}
 
 	// index.json: exactly one entry.
@@ -66,8 +83,8 @@ func TestFSSinkArchiveWritesFileAndIndex(t *testing.T) {
 		t.Fatalf("index entries = %d, want 1", len(idx.Segments))
 	}
 	e := idx.Segments[0]
-	if e.Path != "12-18-1.md" {
-		t.Errorf("index path = %q, want 12-18-1.md (relative to segments/)", e.Path)
+	if e.Path != "12-18-1.md.gz" {
+		t.Errorf("index path = %q, want 12-18-1.md.gz (on-disk name relative to segments/)", e.Path)
 	}
 	if e.TurnStart != 12 || e.TurnEnd != 18 {
 		t.Errorf("index turn range = %d..%d, want 12..18", e.TurnStart, e.TurnEnd)
@@ -83,11 +100,11 @@ func TestFSSinkSeqDisambiguatesRepeatedRange(t *testing.T) {
 	if p1 == p2 {
 		t.Fatalf("repeated turn range produced identical paths: %q", p1)
 	}
-	if !strings.HasSuffix(p1, "1-3-1.md") {
-		t.Errorf("first path = %q, want suffix 1-3-1.md", p1)
+	if !strings.HasSuffix(p1, "1-3-1.md.gz") {
+		t.Errorf("first path = %q, want suffix 1-3-1.md.gz", p1)
 	}
-	if !strings.HasSuffix(p2, "1-3-2.md") {
-		t.Errorf("second path = %q, want suffix 1-3-2.md", p2)
+	if !strings.HasSuffix(p2, "1-3-2.md.gz") {
+		t.Errorf("second path = %q, want suffix 1-3-2.md.gz", p2)
 	}
 	// Both indexed.
 	idxBytes, _ := os.ReadFile(filepath.Join(base, "sess-1", "segments", "index.json"))

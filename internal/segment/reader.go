@@ -1,13 +1,23 @@
 package segment
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/ethanhinson/fuse/internal/model"
 )
+
+// gzMagic is the two-byte gzip magic number (RFC 1952). Segments born after the
+// change 0030 scope expansion are stored gzip-compressed as "<name>.md.gz"; old
+// plaintext ".md" segments remain readable. LoadSegment sniffs these bytes so it
+// stays transparent to both.
+var gzMagic = [2]byte{0x1f, 0x8b}
 
 // ReadIndex reads a session's index.json from its segments directory. A missing
 // index is not an error — it returns an empty Index so callers treat "no
@@ -34,6 +44,22 @@ func ReadIndex(segDir string) (Index, error) {
 func LoadSegment(path string) (Segment, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
+		// Back-compat / rename tolerance: an index Path may name a bare ".md"
+		// whose on-disk file is now the compressed ".md.gz". Try that before
+		// giving up.
+		if os.IsNotExist(err) && !strings.HasSuffix(path, ".gz") {
+			if gb, gerr := os.ReadFile(path + ".gz"); gerr == nil {
+				b = gb
+			} else {
+				return Segment{}, err
+			}
+		} else {
+			return Segment{}, err
+		}
+	}
+	// Transparent decompression: new segments are gzip; old ones are plaintext.
+	b, err = gunzipIfNeeded(b)
+	if err != nil {
 		return Segment{}, err
 	}
 	body := string(b)
@@ -46,6 +72,25 @@ func LoadSegment(path string) (Segment, error) {
 	raw := sectionAfter(body, "## Raw region")
 	seg.Messages = parseRawRegion(raw)
 	return seg, nil
+}
+
+// gunzipIfNeeded decompresses b when it begins with the gzip magic number, else
+// returns b unchanged. A corrupt/truncated gzip stream yields an error (never a
+// panic).
+func gunzipIfNeeded(b []byte) ([]byte, error) {
+	if len(b) < 2 || b[0] != gzMagic[0] || b[1] != gzMagic[1] {
+		return b, nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(b))
+	if err != nil {
+		return nil, fmt.Errorf("segment gzip open: %w", err)
+	}
+	defer zr.Close()
+	out, err := io.ReadAll(zr)
+	if err != nil {
+		return nil, fmt.Errorf("segment gzip read: %w", err)
+	}
+	return out, nil
 }
 
 // parseRawRegion parses the on-disk raw region (a JSON array of messages inside
