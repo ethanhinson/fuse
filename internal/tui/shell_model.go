@@ -329,35 +329,8 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// switch below, so agent events keep updating the transcript (and timers
 	// keep ticking) while the overlay is open.
 	if m.agentsActive && m.agentsModel != nil {
-		switch msg := msg.(type) {
-		case agentsExitMsg:
-			m.agentsActive = false
-			m.agentsModel = nil
-			m.refreshViewport(m.vp.AtBottom())
-			return m, nil
-		case agentOverlayTickMsg:
-			// Periodic 250ms tick: re-read tree state so elapsed times update even
-			// when the agent is quiet (thinking, no events emitted). Stale ticks
-			// from a previous overlay session are dropped, not re-armed.
-			if msg.gen != m.overlayGen {
-				return m, nil
-			}
-			m.agentsModel.refreshSnapshot()
-			return m, agentOverlayTick(m.overlayGen)
-		case tea.KeyMsg:
-			// A pending approval owns the keyboard regardless of the active view;
-			// the queue lives in ShellModel so overlay exit can't orphan a RespCh.
-			if len(m.approvals) > 0 {
-				return m.handleApprovalKey(msg)
-			}
-			newModel, cmd := m.agentsModel.Update(msg)
-			m.agentsModel = newModel.(*AgentsModel)
-			return m, cmd
-		case tea.MouseMsg:
-			// Wheel scrolls the overlay's detail pane, not the hidden shell viewport.
-			newModel, _ := m.agentsModel.Update(msg)
-			m.agentsModel = newModel.(*AgentsModel)
-			return m, nil
+		if handled, model, cmd := m.handleOverlayMsg(msg); handled {
+			return model, cmd
 		}
 	}
 
@@ -377,26 +350,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.WindowSizeMsg:
-		h := msg.Height - chromeHeight
-		if h < 1 {
-			h = 1
-		}
-		m.vp.Width = msg.Width
-		m.vp.Height = h
-		m.input.Width = msg.Width
-		m.ready = true
-		if m.agentsModel != nil {
-			m.agentsModel.width = msg.Width
-			m.agentsModel.height = msg.Height
-		}
-		if r, err := glamour.NewTermRenderer(
-			glamour.WithStylePath(m.glamourStyle),
-			glamour.WithWordWrap(msg.Width),
-		); err == nil {
-			m.md = r
-		}
-		m.refreshViewport(true)
-		return m, nil
+		return m.handleWindowSize(msg)
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -452,77 +406,10 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ToolCallMsg:
-		// spawn_agent: insert a live inline block instead of the spinner line.
-		if msg.Name == "spawn_agent" && m.tree != nil {
-			var input struct {
-				Label string `json:"label"`
-			}
-			_ = json.Unmarshal([]byte(msg.Args), &input)
-			if input.Label != "" {
-				if len(m.lines) > 0 {
-					m.lines = append(m.lines, transcriptLine{})
-				}
-				block := &inlineAgentState{label: input.Label, lineIdx: len(m.lines), seq: m.inlineSeq}
-				m.inlineSeq++
-				if m.inlineByLabel == nil {
-					m.inlineByLabel = make(map[string]*inlineAgentState)
-				}
-				m.inlineByLabel[input.Label] = block
-				runLine := renderInlineRunning(input.Label, "0s", 0, 0)
-				parts := strings.SplitN(runLine, "\n", 2)
-				m.lines = append(m.lines, transcriptLine{text: parts[0]})
-				if len(parts) > 1 {
-					m.lines = append(m.lines, transcriptLine{text: parts[1]})
-				} else {
-					m.lines = append(m.lines, transcriptLine{})
-				}
-				m.refreshViewport(true)
-				return m, nil
-			}
-		}
-		args := sanitizeDisplay(msg.Args)
-		if !m.verbose {
-			args = truncate(args, previewLimit)
-		}
-		// Queue the call; its bullet renders together with its result so a
-		// batch of N announced calls yields N separated call+result pairs.
-		m.pendingCalls = append(m.pendingCalls, pendingToolCall{
-			name: msg.Name,
-			text: toolNameStyle.Render(msg.Name) + toolArgsStyle.Render("("+args+")"),
-		})
-		m.refreshViewport(true)
-		return m, nil
+		return m.handleToolCall(msg)
 
 	case ToolResultMsg:
-		// Labelled spawn_agent calls render via the inline block, not the
-		// queue — skip their results unless a queued spawn_agent entry exists
-		// (the unlabelled fallback path does queue). One exception: a spawn
-		// rejected by the budget/depth backstop never creates a tree node, so
-		// no node event will ever settle its block — the error result is the
-		// only signal, and it must flip the block out of "Running".
-		if msg.Name == "spawn_agent" && m.tree != nil &&
-			(len(m.pendingCalls) == 0 || m.pendingCalls[0].name != "spawn_agent") {
-			if msg.IsError && m.settleRejectedSpawn(msg.Output) {
-				m.refreshViewport(m.vp.AtBottom())
-			}
-			return m, nil
-		}
-		// Render this result's own call bullet, popped FIFO — results arrive
-		// in call order, so the head is always the matching call.
-		if len(m.pendingCalls) > 0 {
-			pc := m.pendingCalls[0]
-			m.pendingCalls = m.pendingCalls[1:]
-			if len(m.lines) > 0 {
-				m.lines = append(m.lines, transcriptLine{})
-			}
-			m.lines = append(m.lines, transcriptLine{text: toolBulletStyle.Render("●") + " " + pc.text})
-		}
-		out := msg.Output
-		if !m.verbose {
-			out = previewResult(out)
-		}
-		m.appendResultLines(out, msg.IsError, msg.Name)
-		return m, nil
+		return m.handleToolResult(msg)
 
 	case AgentErrMsg:
 		// Settle any still-queued calls before showing the error; their
@@ -533,34 +420,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case AgentDoneMsg:
-		m.settlePendingCalls()
-		// No block may outlive its turn as "Running": any still-unadopted
-		// inline block has no node to settle it and never will.
-		for m.settleRejectedSpawn("spawn did not complete") {
-		}
-		m.history = msg.History
-		m.running = false
-		m.drainApprovals()
-		m.input.Focus()
-		// Freeze the root node's clock — the loop is over; the agents view
-		// must stop counting.
-		if m.tree != nil {
-			m.tree.EndTurn(m.turnFailed)
-		}
-		// Persist this turn's agent tree into the chat history: the live
-		// inline blocks scroll away, but the run's shape shouldn't.
-		if m.tree != nil {
-			if summary := renderTreeSummary(m.tree, m.runStart); len(summary) > 0 {
-				m.lines = append(m.lines, transcriptLine{text: subagentFooterStyle.Render(
-					fmt.Sprintf("  ↳ %d subagent(s) this turn — Tab to inspect events", len(summary)),
-				)})
-				for _, s := range summary {
-					m.lines = append(m.lines, transcriptLine{text: s})
-				}
-			}
-		}
-		m.refreshViewport(m.vp.AtBottom())
-		return m, nil
+		return m.handleAgentDone(msg)
 
 	case PermissionRequestMsg:
 		// Keep the call queued: after approval its execution continues and the
@@ -586,6 +446,189 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+// handleOverlayMsg routes messages while the agents overlay is active. It
+// returns handled=false for messages the overlay does not own, so they fall
+// through to Update's shared switch — keeping the transcript and timers live
+// underneath the overlay. Value receiver returning the mutated copy.
+func (m ShellModel) handleOverlayMsg(msg tea.Msg) (handled bool, model tea.Model, cmd tea.Cmd) {
+	switch msg := msg.(type) {
+	case agentsExitMsg:
+		m.agentsActive = false
+		m.agentsModel = nil
+		m.refreshViewport(m.vp.AtBottom())
+		return true, m, nil
+	case agentOverlayTickMsg:
+		// Periodic 250ms tick: re-read tree state so elapsed times update even
+		// when the agent is quiet (thinking, no events emitted). Stale ticks
+		// from a previous overlay session are dropped, not re-armed.
+		if msg.gen != m.overlayGen {
+			return true, m, nil
+		}
+		m.agentsModel.refreshSnapshot()
+		return true, m, agentOverlayTick(m.overlayGen)
+	case tea.KeyMsg:
+		// A pending approval owns the keyboard regardless of the active view;
+		// the queue lives in ShellModel so overlay exit can't orphan a RespCh.
+		if len(m.approvals) > 0 {
+			model, cmd := m.handleApprovalKey(msg)
+			return true, model, cmd
+		}
+		newModel, cmd := m.agentsModel.Update(msg)
+		m.agentsModel = newModel.(*AgentsModel)
+		return true, m, cmd
+	case tea.MouseMsg:
+		// Wheel scrolls the overlay's detail pane, not the hidden shell viewport.
+		newModel, _ := m.agentsModel.Update(msg)
+		m.agentsModel = newModel.(*AgentsModel)
+		return true, m, nil
+	}
+	return false, m, nil
+}
+
+// handleWindowSize recomputes viewport/input dimensions on resize and rebuilds
+// the glamour renderer at the new width so markdown re-wraps. Value receiver.
+func (m ShellModel) handleWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
+	h := msg.Height - chromeHeight
+	if h < 1 {
+		h = 1
+	}
+	m.vp.Width = msg.Width
+	m.vp.Height = h
+	m.input.Width = msg.Width
+	m.ready = true
+	if m.agentsModel != nil {
+		m.agentsModel.width = msg.Width
+		m.agentsModel.height = msg.Height
+	}
+	if r, err := glamour.NewTermRenderer(
+		glamour.WithStylePath(m.glamourStyle),
+		glamour.WithWordWrap(msg.Width),
+	); err == nil {
+		m.md = r
+	}
+	m.refreshViewport(true)
+	return m, nil
+}
+
+// handleToolCall renders an announced tool call. A labelled spawn_agent call
+// opens a live inline agent block instead of the queued spinner line; every
+// other call (and the unlabelled spawn_agent fallback) is queued so its bullet
+// renders together with its result. Value receiver returning the mutated copy,
+// matching Update's contract.
+func (m ShellModel) handleToolCall(msg ToolCallMsg) (tea.Model, tea.Cmd) {
+	// spawn_agent: insert a live inline block instead of the spinner line.
+	if msg.Name == "spawn_agent" && m.tree != nil {
+		var input struct {
+			Label string `json:"label"`
+		}
+		_ = json.Unmarshal([]byte(msg.Args), &input)
+		if input.Label != "" {
+			if len(m.lines) > 0 {
+				m.lines = append(m.lines, transcriptLine{})
+			}
+			block := &inlineAgentState{label: input.Label, lineIdx: len(m.lines), seq: m.inlineSeq}
+			m.inlineSeq++
+			if m.inlineByLabel == nil {
+				m.inlineByLabel = make(map[string]*inlineAgentState)
+			}
+			m.inlineByLabel[input.Label] = block
+			runLine := renderInlineRunning(input.Label, "0s", 0, 0)
+			parts := strings.SplitN(runLine, "\n", 2)
+			m.lines = append(m.lines, transcriptLine{text: parts[0]})
+			if len(parts) > 1 {
+				m.lines = append(m.lines, transcriptLine{text: parts[1]})
+			} else {
+				m.lines = append(m.lines, transcriptLine{})
+			}
+			m.refreshViewport(true)
+			return m, nil
+		}
+	}
+	args := sanitizeDisplay(msg.Args)
+	if !m.verbose {
+		args = truncate(args, previewLimit)
+	}
+	// Queue the call; its bullet renders together with its result so a
+	// batch of N announced calls yields N separated call+result pairs.
+	m.pendingCalls = append(m.pendingCalls, pendingToolCall{
+		name: msg.Name,
+		text: toolNameStyle.Render(msg.Name) + toolArgsStyle.Render("("+args+")"),
+	})
+	m.refreshViewport(true)
+	return m, nil
+}
+
+// handleToolResult renders a tool result against its queued call bullet (popped
+// FIFO), except for labelled spawn_agent results, which render via the inline
+// block — with the one exception that a backstop-rejected spawn (no tree node,
+// no node event) is settled here from its error result. Value receiver.
+func (m ShellModel) handleToolResult(msg ToolResultMsg) (tea.Model, tea.Cmd) {
+	// Labelled spawn_agent calls render via the inline block, not the
+	// queue — skip their results unless a queued spawn_agent entry exists
+	// (the unlabelled fallback path does queue). One exception: a spawn
+	// rejected by the budget/depth backstop never creates a tree node, so
+	// no node event will ever settle its block — the error result is the
+	// only signal, and it must flip the block out of "Running".
+	if msg.Name == "spawn_agent" && m.tree != nil &&
+		(len(m.pendingCalls) == 0 || m.pendingCalls[0].name != "spawn_agent") {
+		if msg.IsError && m.settleRejectedSpawn(msg.Output) {
+			m.refreshViewport(m.vp.AtBottom())
+		}
+		return m, nil
+	}
+	// Render this result's own call bullet, popped FIFO — results arrive
+	// in call order, so the head is always the matching call.
+	if len(m.pendingCalls) > 0 {
+		pc := m.pendingCalls[0]
+		m.pendingCalls = m.pendingCalls[1:]
+		if len(m.lines) > 0 {
+			m.lines = append(m.lines, transcriptLine{})
+		}
+		m.lines = append(m.lines, transcriptLine{text: toolBulletStyle.Render("●") + " " + pc.text})
+	}
+	out := msg.Output
+	if !m.verbose {
+		out = previewResult(out)
+	}
+	m.appendResultLines(out, msg.IsError, msg.Name)
+	return m, nil
+}
+
+// handleAgentDone settles the finished turn: it flushes queued calls and
+// unadopted inline blocks, records the returned history, unblocks input, freezes
+// the root node's clock, and persists a compact subagent-tree summary into the
+// transcript. Value receiver.
+func (m ShellModel) handleAgentDone(msg AgentDoneMsg) (tea.Model, tea.Cmd) {
+	m.settlePendingCalls()
+	// No block may outlive its turn as "Running": any still-unadopted
+	// inline block has no node to settle it and never will.
+	for m.settleRejectedSpawn("spawn did not complete") {
+	}
+	m.history = msg.History
+	m.running = false
+	m.drainApprovals()
+	m.input.Focus()
+	// Freeze the root node's clock — the loop is over; the agents view
+	// must stop counting.
+	if m.tree != nil {
+		m.tree.EndTurn(m.turnFailed)
+	}
+	// Persist this turn's agent tree into the chat history: the live
+	// inline blocks scroll away, but the run's shape shouldn't.
+	if m.tree != nil {
+		if summary := renderTreeSummary(m.tree, m.runStart); len(summary) > 0 {
+			m.lines = append(m.lines, transcriptLine{text: subagentFooterStyle.Render(
+				fmt.Sprintf("  ↳ %d subagent(s) this turn — Tab to inspect events", len(summary)),
+			)})
+			for _, s := range summary {
+				m.lines = append(m.lines, transcriptLine{text: s})
+			}
+		}
+	}
+	m.refreshViewport(m.vp.AtBottom())
+	return m, nil
 }
 
 // handleKey processes key bindings.
