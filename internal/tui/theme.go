@@ -57,4 +57,20 @@ var (
 				MarginTop(1)
 	approvalHeaderStyle = lipgloss.NewStyle().Foreground(colAmber).Bold(true)
 	approvalKeysStyle   = lipgloss.NewStyle().Foreground(colMuted)
+
+	// ask_user question block. Borderless, flowing in the transcript like Claude
+	// Code's AskUserQuestion — a neutral request for input, not a boxed warning.
+	askHeaderStyle   = lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+	askQuestionStyle = lipgloss.NewStyle().Foreground(colNormal).Bold(true)
+	askChipStyle     = lipgloss.NewStyle().Foreground(colNormal).Background(colMuted).Padding(0, 1)
+	askCursorStyle   = lipgloss.NewStyle().Foreground(colCyan).Bold(true)
+	askSelectedStyle = lipgloss.NewStyle().Foreground(colCyan)
+	askOptionStyle   = lipgloss.NewStyle().Foreground(colNormal)
+	askDescStyle     = lipgloss.NewStyle().Foreground(colMuted)
+	askDividerStyle  = lipgloss.NewStyle().Foreground(colMuted)
+	askKeysStyle     = lipgloss.NewStyle().Foreground(colMuted)
+
+	// Human-messaging (ADR-0022): routed messages and /btw asides in the transcript.
+	humanMsgStyle = lipgloss.NewStyle().Foreground(colGreen).Bold(true)
+	asideStyle    = lipgloss.NewStyle().Foreground(colCyan).Bold(true)
 )

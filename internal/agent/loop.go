@@ -370,6 +370,14 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			return messages, err
 		}
 
+		// Turn boundary: drain any human messages queued for this node and inject
+		// them as a single batched user turn before the model is called (ADR-0022).
+		// This is a self-pull — the node reads its own queue at a point where it is
+		// between model calls — so ADR-0016's run-to-completion contract holds.
+		if hm, ok := a.humanInjector.Poll(); ok {
+			messages = append(messages, hm)
+		}
+
 		estimate := lastUsage + messagesSize(messages[accounted:])/bytesPerToken
 		if estimate > budget {
 			// Tier 2 (change 0027): before the deterministic stub prune, run a

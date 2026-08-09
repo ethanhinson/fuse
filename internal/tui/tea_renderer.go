@@ -43,6 +43,27 @@ func (r *TeaRenderer) Tokens(input, output int) {
 // TeaRenderer satisfies the agent.Renderer interface.
 var _ agent.Renderer = (*TeaRenderer)(nil)
 
+// NewTeaAskFunc returns a tools.AskFunc that sends an AskQuestionMsg to ch and
+// blocks until the TUI delivers the human's Answer. It mirrors
+// NewTeaApprovalFunc: buffered reply channel, ctx-cancellable on both the send
+// and the wait, so a turn abort never wedges the agent goroutine.
+func NewTeaAskFunc(ch chan<- tea.Msg) tools.AskFunc {
+	return func(ctx context.Context, q tools.Question) (tools.Answer, error) {
+		respCh := make(chan tools.Answer, 1)
+		select {
+		case ch <- AskQuestionMsg{Question: q, RespCh: respCh}:
+		case <-ctx.Done():
+			return tools.Answer{}, ctx.Err()
+		}
+		select {
+		case ans := <-respCh:
+			return ans, nil
+		case <-ctx.Done():
+			return tools.Answer{}, ctx.Err()
+		}
+	}
+}
+
 // NewTeaApprovalFunc returns a permissions.ApprovalFunc that sends a
 // PermissionRequestMsg to ch and blocks until the TUI responds.
 func NewTeaApprovalFunc(ch chan<- tea.Msg) permissions.ApprovalFunc {

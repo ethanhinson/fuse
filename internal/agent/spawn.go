@@ -161,6 +161,11 @@ func WithSpawnBackstop(fn func(newDepth int) error) Option {
 	return func(s *Spawner) { s.backstop = fn }
 }
 
+// WithHumanBus installs the human-message bus so a spawned child's undelivered
+// queue is bubbled to its parent when the child finishes (ADR-0022 completion
+// hook). Nil (default) is a no-op.
+func WithHumanBus(bus *HumanBus) Option { return func(s *Spawner) { s.humanBus = bus } }
+
 // Spawner provides the Spawn method for creating child agents.
 type Spawner struct {
 	tree       *AgentTree
@@ -168,6 +173,7 @@ type Spawner struct {
 	depth      int
 	buildChild ChildBuilder
 	backstop   func(newDepth int) error
+	humanBus   *HumanBus
 }
 
 // NewSpawner creates a Spawner with the provided options.
@@ -388,6 +394,12 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		}
 		if s.tree != nil {
 			s.tree.Emit(TreeUpdate{NodeID: node.ID})
+		}
+		// Completion hook (ADR-0022): bubble any messages the human queued for this
+		// child that were never drained (e.g. its final turn emitted no tool call,
+		// so Poll never fired) up to the parent, so none are silently stranded.
+		if s.humanBus != nil {
+			s.humanBus.OnNodeComplete(node.ID)
 		}
 		doneCh <- SpawnDone{Result: result, Err: runErr, Structured: structured}
 	}()

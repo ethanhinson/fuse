@@ -3,6 +3,15 @@
 # built binary (make build)
 /fuse
 
+# macOS finder cruft
+.DS_Store
+
+# local scratch + generated review artifacts (screenshots, videos, ad-hoc reports)
+scratchpad/
+reports/screenshots/
+reports/*.md
+ANALYSIS.md
+
 # docket:start (managed by docket — do not hand-edit)
 .docket/
 .worktrees/

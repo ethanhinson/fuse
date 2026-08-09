@@ -17,6 +17,8 @@ func NewBuiltinProvider() *BuiltinProvider {
 			{Command: "/agents", Description: "Open the live agent tree (also: Tab)", Kind: KindBuiltin, expand: func() string { return "/agents" }},
 			{Command: "/blackboard", Description: "Open the shared agent blackboard (also: b in /agents)", Kind: KindBuiltin, expand: func() string { return "/blackboard" }},
 			{Command: "/approvals", Description: "Show this session's permission decisions", Kind: KindBuiltin, expand: func() string { return "/approvals" }},
+			{Command: "/questions", Description: "Show this session's answered ask_user questions", Kind: KindBuiltin, expand: func() string { return "/questions" }},
+			{Command: "/queue", Description: "Open the pending human-message queue editor (edit/reorder/delete)", Kind: KindBuiltin, expand: func() string { return "/queue" }},
 		},
 	}
 }

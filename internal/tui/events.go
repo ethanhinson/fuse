@@ -5,6 +5,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/tools"
 )
 
 // Message types carrying agent output from the agent goroutine back into the
@@ -47,6 +48,16 @@ type PermissionRequestMsg struct {
 type approvalResponse struct {
 	Approved        bool
 	AllowForSession bool
+}
+
+// AskQuestionMsg is sent by the ask_user tool (via NewTeaAskFunc) when the model
+// wants the human to answer a structured multiple-choice question. RespCh
+// receives exactly one Answer. It mirrors PermissionRequestMsg: the request
+// carries its own reply channel so N concurrent agents can each block on their
+// own question without racing.
+type AskQuestionMsg struct {
+	Question tools.Question
+	RespCh   chan<- tools.Answer
 }
 
 // MCPResourceUpdatedMsg is sent when a subscribed MCP resource pushes a

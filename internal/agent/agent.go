@@ -86,7 +86,18 @@ type Agent struct {
 	// for a long time (spawn_agent, pipeline_run — they await child agents) are
 	// exempt via toolTimeoutExempt; capping them would break multi-agent runs.
 	toolTimeout time.Duration
+
+	// humanInjector, when set, is polled at the top of every turn: it drains this
+	// node's human-message queue (ADR-0022) and injects a single batched user
+	// message before the next model call. Nil ⇒ no human messaging, byte-identical
+	// to the pre-0051 loop. The node self-pulls its own queue — no cross-goroutine
+	// push into a running node, honoring ADR-0016's run-to-completion contract.
+	humanInjector *HumanInjector
 }
+
+// SetHumanInjector wires the per-node human-message injector (ADR-0022). Passing
+// nil is a no-op (the field stays nil). Set once at build time, before Run.
+func (a *Agent) SetHumanInjector(inj *HumanInjector) { a.humanInjector = inj }
 
 // DefaultToolTimeout bounds a single leaf tool call when no explicit timeout is
 // configured. Chosen to comfortably cover slow-but-legitimate work (large web
