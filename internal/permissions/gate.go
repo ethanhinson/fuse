@@ -406,6 +406,21 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (Ve
 		if onSafeList(name) {
 			return VerdictAllow, ""
 		}
+		// Edit tools carry a single "path" arg rather than a shell command: scope it
+		// against the workspace exactly as the bash heuristic scopes mutating path
+		// args. An in-workspace target auto-approves; anything the scope cannot prove
+		// in-workspace (an escape, a symlink whose target escapes, a missing/garbled
+		// path) fails toward the human — never toward the classifier.
+		if isEditTool(name) {
+			path, ok := editPath(args)
+			if !ok {
+				return VerdictAsk, ""
+			}
+			if withinWorkspace(path, g.workspaceRoot) {
+				return VerdictAllow, ""
+			}
+			return VerdictAsk, ""
+		}
 		return g.classifyOrAsk(ctx, name, args)
 	}
 
@@ -494,6 +509,29 @@ func (g *PermissionGate) valveTripped() (Verdict, string) {
 	return VerdictDeny, fmt.Sprintf(
 		"auto mode paused: escalation valve tripped after %d consecutive / %d total classifier blocks this session (thresholds: %d consecutive, %d total)",
 		consecutive, total, valveConsecutiveLimit, valveTotalLimit)
+}
+
+// isEditTool reports whether name is one of the workspace-scoped edit tools whose
+// single "path" arg is path-scoped in auto mode (rather than routed to the
+// classifier as a shell command).
+func isEditTool(name string) bool {
+	return name == "write_file" || name == "edit_file"
+}
+
+// editPath extracts the "path" arg from an edit tool's JSON args. ok is false when
+// the args are unparseable or the path is missing/empty, so the caller fails toward
+// the human rather than scoping a garbled path.
+func editPath(args string) (path string, ok bool) {
+	var v struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(args), &v); err != nil {
+		return "", false
+	}
+	if v.Path == "" {
+		return "", false
+	}
+	return v.Path, true
 }
 
 // bashCommand extracts the shell command string from a bash tool's JSON args,

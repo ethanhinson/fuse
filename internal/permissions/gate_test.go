@@ -2,6 +2,9 @@ package permissions
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -183,6 +186,72 @@ func TestSessionCacheSkipsSubsequentPrompts(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("expected exactly 1 prompt, got %d", calls)
 	}
+}
+
+// TestResolveAuto_EditToolsPathScoped proves the auto-mode edit-tool branch of
+// resolveAuto path-scopes write_file/edit_file against the workspace root: an
+// in-workspace target auto-approves, anything the scope cannot prove in-workspace
+// (an escape, a symlink whose target escapes, a missing/garbled path) fails toward
+// the human as VerdictAsk. The gate carries a nil classifier so any fall-through
+// would be VerdictAsk — the allow cases must come from the edit-tool branch itself.
+func TestResolveAuto_EditToolsPathScoped(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks(tempdir): %v", err)
+	}
+
+	// An in-workspace symlink whose target escapes the root: the link lives inside
+	// the workspace but resolves outside it, so the scope must catch it.
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks(outside): %v", err)
+	}
+	escLink := filepath.Join(root, "escape-link")
+	if err := os.Symlink(outside, escLink); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	escapingViaLink := filepath.Join(escLink, "target.txt")
+
+	inWorkspace := filepath.Join(root, "sub", "file.txt")
+
+	cases := []struct {
+		desc string
+		name string
+		args string
+		want Verdict
+	}{
+		{"a: write_file in-workspace", "write_file", `{"path":` + jsonStr(inWorkspace) + `}`, VerdictAllow},
+		{"b: edit_file in-workspace", "edit_file", `{"path":` + jsonStr(inWorkspace) + `}`, VerdictAllow},
+		{"c: path escaping root via ..", "write_file", `{"path":` + jsonStr(filepath.Join(root, "..", "escape.txt")) + `}`, VerdictAsk},
+		{"d: not-yet-created in-workspace file", "write_file", `{"path":` + jsonStr(filepath.Join(root, "brand", "new", "leaf.txt")) + `}`, VerdictAllow},
+		{"e: in-workspace symlink whose target escapes", "write_file", `{"path":` + jsonStr(escapingViaLink) + `}`, VerdictAsk},
+		{"f: empty path", "write_file", `{"path":""}`, VerdictAsk},
+		{"f: missing path key", "write_file", `{"other":"x"}`, VerdictAsk},
+		{"f: unparseable args", "edit_file", `{not json`, VerdictAsk},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			g := New(config.PermissionsConfig{Mode: "auto"}, newTestRegistry(tc.name), AlwaysApprove,
+				WithWorkspaceRoot(root))
+			if g.classifier != nil {
+				t.Fatal("test precondition: classifier must be nil")
+			}
+			got, _ := g.resolveAuto(context.Background(), tc.name, tc.args)
+			if got != tc.want {
+				t.Errorf("resolveAuto(%q, %s) = %v, want %v", tc.name, tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+// jsonStr returns s quoted as a JSON string literal for embedding in test args.
+func jsonStr(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
 }
 
 func TestPromptAll_PromptsEvenSafeTools(t *testing.T) {
