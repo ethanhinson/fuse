@@ -299,6 +299,28 @@ Stage A is landable on its own.
 > A's green state or balloons in scope, STOP, drop the Stage B commits, and defer it to its own
 > change — note the deferral in the PR body + results. Prefer a clean Stage-A-only PR.
 
+### DECISION (2026-08-10): Stage B DEFERRED to its own change.
+
+After landing Stage A green (full suite + -race), a feasibility pass on the two adapters
+confirmed the fenced risk is real, so Stage B is **deferred**, exactly as the fence provides:
+
+- **LiteLLM HTTP `Adapter`** (`internal/model/adapter.go`) already streams internally
+  (`Stream: true`); `readStream` parses per-delta content at the `content.WriteString(d.Content)`
+  point. Surfacing `model.delta` needs a `func(delta string)` callback threaded through
+  `Complete → completeOnce → readStream`/`readBuffered` and the retry loop — a **non-additive**
+  change to the hot, well-tested model-transport core.
+- **`CLIAdapter`** (`cmd/fuse/cli_adapter.go`) uses `--output-format json` + `cmd.Output()`
+  (buffers the whole subprocess output, one JSON parse). Streaming requires switching to
+  `--output-format stream-json`, a streaming subprocess pipe reader, and a distinct parse path,
+  all coupled to the per-invocation HITL relay — genuinely gnarlier and non-additive.
+
+Forcing this into the PR risks dragging Stage A red / ballooning scope, which the spec fence and
+the caller both say to avoid. The `Event` schema already carries `KindModelDelta` +
+`ModelDeltaPayload` (delta-ready), so Stage B is a pure additive follow-up with **no schema
+rework**: add a `StreamingCompleter` capability interface, implement it in both adapters, and
+emit `model.delta` between `model.call.start` and `model.call.end`. Recommended as its own change
+(`runtime-eventstore-streaming-deltas`).
+
 ### Task 9 — streaming path on `Completer`
 
 **Files:** `internal/agent/agent.go` (interface), fakes.
