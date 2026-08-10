@@ -1,18 +1,18 @@
 # Backlog
 
-**45 changes** — 🟢 1 in progress · ⚪ 1 deferred · ✅ 37 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0045](active/0045-runtime-interface-and-binding.md) | Runtime interface + second binding — prove the platform boundary is emergent | `high` | `feat` | [spec](../superpowers/specs/0045-runtime-interface-and-binding.md) | `feat/runtime-interface-and-binding` |
+**45 changes** — ⚪ 1 deferred · 🔵 1 implemented · ✅ 37 done · 🗑️ 6 killed
 
 ## ⚪ Deferred (1)
 
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0045](active/0045-runtime-interface-and-binding.md) | Runtime interface + second binding — prove the platform boundary is emergent | `high` | `feat` | [#48](https://github.com/ethanhinson/fuse/pull/48) |  |
 
 ```mermaid
 graph TD
