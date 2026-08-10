@@ -23,7 +23,7 @@ func (b blockingCompleter) Complete(ctx context.Context, req model.CompletionReq
 	return model.CompletionResp{Content: "ok"}, nil
 }
 
-func newTestRuntime(t *testing.T, fake agent.Completer) *inProcRuntime {
+func newTestRuntime(t *testing.T, fake agent.Completer) Runtime {
 	t.Helper()
 	return New(Deps{
 		BaseDir:       t.TempDir(),
@@ -95,7 +95,8 @@ func TestSendEnqueuesForRoot(t *testing.T) {
 	}
 
 	// The message is enqueued on the root node's human-bus queue (ADR-0022).
-	lp := rt.loops[h.ID()]
+	// New returns the Runtime interface; reach the concrete loop state under test.
+	lp := rt.(*inProcRuntime).loops[h.ID()]
 	pending := lp.humanBus.Pending(h.ID())
 	if len(pending) != 1 || pending[0].Text != "more work" {
 		t.Fatalf("root queue = %+v, want one 'more work' message", pending)

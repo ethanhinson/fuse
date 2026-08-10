@@ -12,12 +12,10 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/banner"
 	"github.com/ethanhinson/fuse/internal/config"
-	"github.com/ethanhinson/fuse/internal/model"
-	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/session"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
-	"github.com/ethanhinson/fuse/internal/tui"
 	"github.com/ethanhinson/fuse/internal/version"
 )
 
@@ -158,114 +156,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// nil when no rpm/tpm axis is configured (fast path). Every agent adapter below
 	// shares it so the session honors one budget.
 	rateGate := sessionRateGate(cfg)
-	rootNode := tree.Node(tree.RootID())
-	// One blackboard per session, shared by every agent in the tree (change 0023).
-	bb := agent.NewBlackboard(tree)
 
-	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
-	makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
-		return spawnFuncFrom(makeSpawner(parentNode, depth), sched, parentNode)
-	}
-	makeSpawner = func(parentNode *agent.AgentNode, depth int) *agent.Spawner {
-		return agent.NewSpawner(
-			agent.WithTree(tree),
-			agent.WithNode(parentNode),
-			agent.WithSpawnDepth(depth),
-			// Spawn lifecycle events (change 0044): the Spawner is the single choke
-			// point that emits spawn.start/spawn.done — cloned child-builder site 1 of 3
-			// (learning patch-every-cloned-child-builder).
-			agent.WithEventStore(currentEventStore()),
-			agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
-				childToolReg, terr := childToolRegistry(toolReg, opts.Tools)
-				if terr != nil {
-					return "", terr
-				}
-				if childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(opts.Tools) {
-					// Depth strip (static): a child at MaxDepth can never spawn.
-					// Folded-in fix (change 0034): a parent that omits spawn_agent
-					// from its requested tools subset withholds it from the child.
-					// Either way, drop any copy inherited from the parent's registry.
-					childToolReg.Unregister("spawn_agent")
-				} else {
-					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget).
-						WithQuotaWarning(quotaWarningFor(tree, childNode.ID)))
-				}
-				// Blackboard tools bound to the child's provenance — always wired
-				// (not spawn-gated), honoring an explicit subset that omits them.
-				wireChildBlackboard(childToolReg, bb, childNode, opts.Tools)
-				// pipeline_run bound to the child's own spawner — always wired unless
-				// an explicit subset omits it (mirrors the blackboard wiring). (0026)
-				pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
-				childSpawner := makeSpawner(childNode, childNode.Depth)
-				wirePipelineTool(childToolReg,
-					makePipelineRunFn(childSpawner, bb, sched, childNode),
-					makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW),
-					opts.Tools)
-
-				r := tui.NewRenderer(stdout, *verbose)
-				modelID := opts.ModelID
-				if modelID == "" {
-					modelID = *modelAlias
-				}
-				var a *agent.Agent
-				var aerr error
-				// Subagent approvals route to the parent channel, prefixed so the
-				// human sees which child is asking (same posture as CloneForChild).
-				childApprove := permissions.PrefixApproval(opts.Label, rootApprove)
-				// One-shot passes no session-mode source: gates default to
-				// cfg.Permissions.Mode exactly as before this seam.
-				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate)
-				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, *verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate)
-				}
-				if aerr != nil {
-					return "", aerr
-				}
-				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
-				a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
-				// Event stream wiring (change 0043) — cloned child-builder site 2 of 3.
-				a.SetEventSink(currentEventStore())
-				a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
-				// spawn.start / spawn.done are emitted by the Spawner (change 0044),
-				// the single choke point — no per-site emission here.
-				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
-				// Report the RAW run error to the Spawner's spawn.done event (change
-				// 0044) so its `kind` matches the direct session-log write even when
-				// childResult collapses a max-turns/loop stop into a partial-success
-				// string.
-				opts.RunErrSink().Set(rerr)
-				return childResult(msgs, rerr)
-			}),
-		)
-	}
-	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
-		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
-	// Root-node-wired blackboard tools (provenance = rootNode).
-	wireRootBlackboard(toolReg, bb, rootNode)
-	// Root pipeline_run bound to the root spawner (provenance = rootNode). (0026)
-	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
-	rootPipeSpawner := makeSpawner(rootNode, 0)
-	wirePipelineTool(toolReg,
-		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode),
-		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW),
-		nil)
-
-	a, modelID, err := buildAgentCore(cfg, reg, *modelAlias, tui.NewRenderer(stdout, *verbose), oneShotSystemBlock, traceW, "root", toolReg, rootApprove, nil, oneShotBudget, rateGate)
+	// Binding #1a (change 0045): the one-shot path now drives the engine through the
+	// in-process Runtime. buildOneShotRuntimeDeps holds the tree/scheduler/blackboard,
+	// spawn factory, and tool wiring exactly as before (behavior-preserving
+	// relocation); the renderer/gate stay in cmd/fuse via BuildAgent's closure.
+	deps := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate)
+	rt := runtime.New(deps)
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: task, ModelID: *modelAlias})
 	if err != nil {
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
-	a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
-	// Event stream wiring (change 0043): consistent with the child sites. One-shot
-	// installs no real store (currentEventStore returns the no-op), so this is inert
-	// here but keeps the root symmetric with the interactive path.
-	a.SetEventSink(currentEventStore())
-	a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
-	_ = modelID
-
-	_, err = a.Run(context.Background(), []model.Message{{Role: "user", Content: task}})
-	if err != nil {
+	if _, err := h.Wait(); err != nil {
 		fmt.Fprintf(stderr, "run error: %v\n", err)
 		return 1
 	}

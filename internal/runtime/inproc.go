@@ -37,9 +37,24 @@ type Deps struct {
 	// in which case an empty registry is used.
 	NewToolRegistry func() *tools.Registry
 	// BaseDir is where per-loop fsstore event logs live (e.g. session.DefaultLogDir()).
+	// When "", StartLoop uses event.NoopStore{} instead of opening an fsstore — the
+	// one-shot binding uses this so its behavior stays byte-identical (no new files).
 	BaseDir string
-	// MaxConcurrent seeds the loop tree's scheduler concurrency.
+	// MaxConcurrent seeds the loop tree's scheduler concurrency (used only when Tree
+	// is nil, i.e. when StartLoop creates its own tree).
 	MaxConcurrent int
+	// InstallGlobalStore, when non-nil, is called by StartLoop with the store the
+	// Runtime opened for the loop. It is the single-loop compatibility bridge
+	// (Decision Note D-1): cmd-site child builders still read the package-global
+	// event store, so a binding passes its setActiveEventStore here so those readers
+	// see the Runtime-owned store. The Runtime does NOT import cmd/fuse — the hook is
+	// a plain func the binding supplies.
+	InstallGlobalStore func(event.EventStore)
+	// Tree, when non-nil, is the agent tree StartLoop drives instead of creating one.
+	// The research-probe and shell bindings supply their externally-observed tree so
+	// they can still call probe.Summarize / render the tree after the loop runs. When
+	// nil, StartLoop creates its own tree from cfg.ModelID + MaxConcurrent.
+	Tree *agent.AgentTree
 }
 
 // inProcRuntime is the concrete in-process Runtime. It owns each loop's event
@@ -67,8 +82,9 @@ type loop struct {
 // New builds an in-process Runtime. deps carries the collaborators a binding
 // constructs (model Completer/agent factory, tool registry factory, config) so the
 // Runtime stays free of cmd-layer policy. The event store is opened per-loop under
-// deps.BaseDir/<rootID> at StartLoop time.
-func New(deps Deps) *inProcRuntime {
+// deps.BaseDir/<rootID> at StartLoop time. It returns the Runtime interface so a
+// binding consumes the seam abstractly (the concrete *inProcRuntime is unexported).
+func New(deps Deps) Runtime {
 	return &inProcRuntime{deps: deps, loops: map[string]*loop{}}
 }
 
@@ -77,13 +93,34 @@ func New(deps Deps) *inProcRuntime {
 // SetNodeIdentity + Agent.Run; the run executes in a goroutine and the returned
 // handle awaits it.
 func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHandle, error) {
-	tree := agent.NewAgentTreeWithConcurrency(cfg.ModelID, cfg.ModelID, r.deps.MaxConcurrent)
+	// Use a caller-supplied tree when the binding externally observes it
+	// (research-probe/shell keep their tree for probe.Summarize / rendering); else
+	// create one from cfg + MaxConcurrent.
+	tree := r.deps.Tree
+	if tree == nil {
+		tree = agent.NewAgentTreeWithConcurrency(cfg.ModelID, cfg.ModelID, r.deps.MaxConcurrent)
+	}
 	rootID := tree.RootID()
 	rootNode := tree.Node(rootID)
 
-	store, err := fsstore.NewFSEventStore(r.deps.BaseDir, rootID)
-	if err != nil {
-		return nil, fmt.Errorf("runtime: open event store: %w", err)
+	// BaseDir == "" ⇒ NoopStore (one-shot keeps byte-identical behavior: no new
+	// event log files). Otherwise open a per-loop fsstore under BaseDir/<rootID>.
+	var store event.EventStore
+	if r.deps.BaseDir == "" {
+		store = event.NoopStore{}
+	} else {
+		fs, err := fsstore.NewFSEventStore(r.deps.BaseDir, rootID)
+		if err != nil {
+			return nil, fmt.Errorf("runtime: open event store: %w", err)
+		}
+		store = fs
+	}
+	// Single-loop compatibility bridge (Decision Note D-1): install the Runtime-owned
+	// store into the binding's package-global holder so cmd-site child builders that
+	// read currentEventStore() see it. The Runtime owns the lifecycle; the holder is
+	// only a reader-visibility shim.
+	if r.deps.InstallGlobalStore != nil {
+		r.deps.InstallGlobalStore(store)
 	}
 
 	var toolReg *tools.Registry
@@ -95,7 +132,9 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 
 	a, _, err := r.deps.BuildAgent(cfg.ModelID, toolReg)
 	if err != nil {
-		_ = store.Close()
+		if c, ok := store.(interface{ Close() error }); ok {
+			_ = c.Close()
+		}
 		return nil, fmt.Errorf("runtime: build agent: %w", err)
 	}
 	a.SetEventSink(store)
