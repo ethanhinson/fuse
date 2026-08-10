@@ -30,6 +30,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0024](0024-eventstore-independent-of-segment-store.md) — EventStore is independent of the segment store — events born plaintext, segments untouched (Accepted) ← change #43 · relates to ADR-0017, ADR-0018, ADR-0019, ADR-0020
 - [ADR-0025](0025-eventstore-ordering-backpressure.md) — EventStore ordering and back-pressure — store-allocated Seq, non-blocking drop-newest-with-gap subscriber delivery (Accepted) ← change #43 · relates to ADR-0016, ADR-0019, ADR-0024
 - [ADR-0026](0026-handle-returning-spawn-seam-agent-free-interface.md) — Handle-returning spawn seam via an agent-free interface in internal/tools (Accepted) ← change #44 · relates to ADR-0016, ADR-0017
+- [ADR-0027](0027-runtime-owns-loop-eventstore-global-holder-bridge.md) — Runtime owns the loop event store as instance state; process-global holders kept as a single-loop compatibility bridge (Accepted) ← change #45 · relates to ADR-0025, ADR-0019, ADR-0016
 
 ## Superseded / Reversed
 
