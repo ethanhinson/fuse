@@ -67,11 +67,17 @@ func sdReqHasToolResult(body []byte) bool {
 }
 
 // runStructuredDelegationSeam drives a real root Agent (real model.Adapter →
-// scripted gateway) that spawns one real child Agent through a real Spawner, with
-// the parent attaching an `expects` schema. childJSON is what the child turn
-// returns as its final message. It returns the parent's spawn_agent tool result
-// text (which carries the schema note). This is the real-binary seam the teatest
-// harness never reaches (learning verify-tool-loop-at-gateway-seam).
+// scripted gateway) that spawns one real child Agent through a real Spawner. The
+// expected-result schema is attached on the CODE path — the spawnFn (standing in
+// for the pipeline/cmd wiring) sets agent.SpawnOpts.Expects directly — because as
+// of change 0042 (D7) the freeform spawn_agent TOOL is prose-only and never
+// carries `expects`. The parent's tool call still emits an `expects` key in its
+// args to prove the tool drops it (it must NOT reach the SpawnRequest); the
+// schema that actually drives validation comes from the code path. childJSON is
+// what the child turn returns as its final message. It returns the parent's
+// spawn_agent tool result text (which carries the schema note). This is the
+// real-binary seam the teatest harness never reaches (learning
+// verify-tool-loop-at-gateway-seam).
 func runStructuredDelegationSeam(t *testing.T, childJSON string) string {
 	t.Helper()
 
@@ -119,7 +125,10 @@ func runStructuredDelegationSeam(t *testing.T, childJSON string) string {
 			mu.Unlock()
 			io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"done"}}]}`)
 		default:
-			// Parent's first turn: call spawn_agent with an expects schema.
+			// Parent's first turn: call spawn_agent. It includes an `expects` key in
+			// its args on purpose — the prose-only tool (0042 D7) must DROP it, which
+			// spawnFn asserts. The schema that drives validation is attached on the
+			// code path instead.
 			args := `{"label":"kid","task":"compute","expects":` + expectsSchema + `}`
 			b, _ := json.Marshal(args)
 			io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"",`+
@@ -148,9 +157,18 @@ func runStructuredDelegationSeam(t *testing.T, childJSON string) string {
 	)
 
 	spawnFn := func(ctx context.Context, req tools.SpawnRequest) (string, error) {
+		// The freeform tool is prose-only (0042 D7): an `expects` key in the model's
+		// args must be dropped, so req.Expects is nil here. Guard that, then attach
+		// the schema on the code path — the surviving structured-delegation seam
+		// (agent.SpawnOpts.Expects), which the pipeline/cmd wiring drives directly.
+		if req.Expects != nil {
+			t.Errorf("tool must drop `expects` from args; req.Expects = %#v", req.Expects)
+		}
+		var expects any
+		_ = json.Unmarshal([]byte(expectsSchema), &expects)
 		h, herr := spawner.Spawn(ctx, agent.SpawnOpts{
 			Label: req.Label, Task: req.Task, SystemPrompt: req.SystemPrompt,
-			ModelID: req.Model, Tools: req.Tools, Worker: req.Worker, Expects: req.Expects,
+			ModelID: req.Model, Tools: req.Tools, Worker: req.Worker, Expects: expects,
 		})
 		if herr != nil {
 			return "", herr
