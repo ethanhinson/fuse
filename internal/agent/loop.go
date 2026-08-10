@@ -574,6 +574,9 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 					a.expectsSink.set(parsed)
 					msgs := a.executeReturnResultTurn(ctx, turn, messages, resp.ToolCalls, "result recorded")
 					messages = append(messages, msgs...)
+					// turn.end (change 0043): the structured-delegation terminal path
+					// closes the turn just like every other terminal path.
+					a.emit(event.KindTurnEnd, turn, event.TurnEndPayload{Turn: turn})
 					return messages, nil
 				}
 				// Non-conforming: retry unless the cap is exhausted.
@@ -585,6 +588,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 						"return_result exhausted: unable to produce a conforming result after "+
 							fmt.Sprintf("%d", returnResultAttempts+1)+" attempts")
 					messages = append(messages, msgs...)
+					a.emit(event.KindTurnEnd, turn, event.TurnEndPayload{Turn: turn})
 					return messages, nil
 				}
 				returnResultAttempts++
@@ -592,6 +596,9 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 					"return_result arguments did not match the required schema: "+verr.Error()+
 						" — fix the arguments and call return_result again.")
 				messages = append(messages, msgs...)
+				// turn.end (change 0043): the return_result retry path also closes its
+				// turn before looping to the next one.
+				a.emit(event.KindTurnEnd, turn, event.TurnEndPayload{Turn: turn})
 				continue
 			}
 		}
@@ -896,6 +903,20 @@ func (a *Agent) executeReturnResultTurn(ctx context.Context, turn int, messages 
 			a.renderer.ToolCall(c.Name, c.Arguments)
 			res := tools.Result{Output: rrOutput}
 			a.renderer.ToolResult(c.Name, res)
+			// tool.call / tool.result (change 0043): the synthesized return_result
+			// call is loop-handled (never dispatched to the registry), but it is still
+			// a tool interaction the model performed — emit both so the event stream
+			// is symmetric with normal tool calls. (Review finding.)
+			a.emit(event.KindToolCall, turn, event.ToolCallPayload{
+				ID:   c.ID,
+				Name: c.Name,
+				Args: json.RawMessage(c.Arguments),
+			})
+			a.emit(event.KindToolResult, turn, event.ToolResultPayload{
+				ID:     c.ID,
+				Name:   c.Name,
+				Result: rrOutput,
+			})
 			out = append(out, model.Message{
 				Role:       "tool",
 				ToolCallID: c.ID,

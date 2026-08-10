@@ -180,6 +180,52 @@ func TestNonBlockingSlowSubscriber(t *testing.T) {
 	}
 }
 
+// TestConcurrentReplayDuringAppend is the reader-vs-writer race guard (learning
+// race-invisible-to-race-detector-without-concurrent-test): Replay reads the file
+// while Append writes it concurrently. -race only fires this if a test actually
+// overlaps the two, so drive them in tight loops. Replay must never corrupt or
+// deadlock against a concurrent Append; the worst legal outcome is Replay seeing a
+// prefix of the stream.
+func TestConcurrentReplayDuringAppend(t *testing.T) {
+	s, _ := newStore(t)
+	_, sub := s.Subscribe() // a live subscriber so the fan-out path runs too
+	defer sub()
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { // writer
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			_ = s.Append(event.Event{Kind: event.KindToolCall, Turn: i})
+		}
+		close(done)
+	}()
+	go func() { // reader, racing the writer
+		defer wg.Done()
+		for {
+			evs, err := s.Replay(0)
+			if err != nil {
+				t.Errorf("Replay during Append: %v", err)
+				return
+			}
+			// Seqs in a Replay snapshot must be strictly increasing (never corrupt).
+			for i := 1; i < len(evs); i++ {
+				if evs[i].Seq <= evs[i-1].Seq {
+					t.Errorf("non-monotonic Seq in Replay snapshot: %d then %d", evs[i-1].Seq, evs[i].Seq)
+					return
+				}
+			}
+			select {
+			case <-done:
+				return
+			default:
+			}
+		}
+	}()
+	wg.Wait()
+}
+
 // TestConcurrentAppendNoCorruption: N goroutines Append concurrently; the file has
 // N well-formed lines with monotone unique Seqs (mutex guard). Run under -race.
 func TestConcurrentAppendNoCorruption(t *testing.T) {

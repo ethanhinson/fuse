@@ -244,6 +244,50 @@ func TestEmitLoopTrip(t *testing.T) {
 	}
 }
 
+// TestEmitReturnResultTurn: the structured-delegation (return_result) terminal
+// path is symmetric with every other turn — it emits turn.end, and the synthetic
+// return_result call emits tool.call + tool.result (review finding, change 0043).
+func TestEmitReturnResultTurn(t *testing.T) {
+	schema := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"name": map[string]any{"type": "string"}},
+		"required":   []any{"name"},
+	}
+	comp := &scriptedCompleter{responses: []model.CompletionResp{
+		{ToolCalls: []model.ToolCall{{ID: "1", Name: "return_result", Arguments: `{"name":"Ada"}`}}},
+	}}
+	rec := &recordingStore{}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 100)
+	var sink ExpectsSink
+	a.SetExpects(schema, &sink)
+	a.SetEventSink(rec)
+
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "go"}}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	ks := rec.kinds()
+	// The terminal return_result turn must still close with turn.end...
+	if !hasKind(ks, event.KindTurnEnd) {
+		t.Errorf("return_result terminal path did not emit turn.end; kinds = %v", ks)
+	}
+	// ...and the synthetic return_result call is emitted as tool.call + tool.result.
+	if !hasKind(ks, event.KindToolCall) || !hasKind(ks, event.KindToolResult) {
+		t.Errorf("synthetic return_result call not emitted as tool.call/tool.result; kinds = %v", ks)
+	}
+	// The tool.result for return_result carries its output.
+	tr, ok := rec.first(event.KindToolResult)
+	if !ok {
+		t.Fatal("no tool.result event")
+	}
+	var trp event.ToolResultPayload
+	if err := json.Unmarshal(tr.Payload, &trp); err != nil {
+		t.Fatalf("tool.result payload: %v", err)
+	}
+	if trp.Name != "return_result" {
+		t.Errorf("tool.result name = %q, want return_result", trp.Name)
+	}
+}
+
 // TestEmitDefaultNoopNeverPanics: an Agent with no event sink installed (the New
 // default) runs without panicking — emission is inert.
 func TestEmitDefaultNoopNeverPanics(t *testing.T) {

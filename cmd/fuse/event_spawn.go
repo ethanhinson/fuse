@@ -103,7 +103,14 @@ func projectEventToLog(e event.Event) (session.LogEntry, bool) {
 		kind = "error"
 	}
 	return session.LogEntry{
-		TS:       e.TS,
+		// The shipped session.jsonl direct write uses time.Now() (LOCAL) — see
+		// shell.go. The event stream stamps TS in UTC (correct for a durable,
+		// replayable record), so the projection converts back to Local here so the
+		// projected log is BYTE-IDENTICAL to the current shipped log. This keeps the
+		// "log adapts" byte-equivalence true in production (not merely in a test that
+		// pre-normalizes the timezone), which is the gate for the trivial follow-up
+		// that deletes the direct write. (Review finding, change 0043.)
+		TS:       e.TS.Local(),
 		NodeID:   pl.ChildNodeID,
 		ParentID: pl.ParentID,
 		Label:    pl.Label,
