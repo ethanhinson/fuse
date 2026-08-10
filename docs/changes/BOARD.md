@@ -1,19 +1,13 @@
 # Backlog
 
-**50 changes** — 🟢 1 in progress · 🟡 4 proposed · ⚪ 1 deferred · ✅ 38 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0046](active/0046-multi-loop-host-deglobalize-event-store.md) | De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id | `high` | `refactor` | [spec](../superpowers/specs/0046-multi-loop-host-deglobalize-event-store.md) | `feat/multi-loop-host-deglobalize-event-store` |
+**50 changes** — 🟡 4 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 38 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0047](active/0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | `medium` | `feat` | ⏳ waiting on #46 — not yet built |
-| [0048](active/0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | `medium` | `feat` | ⏳ waiting on #46 — not yet built |
+| [0047](active/0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | `medium` | `feat` | ⏳ waiting on #46 — needs your merge |
+| [0048](active/0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | `medium` | `feat` | ⏳ waiting on #46 — needs your merge |
 | [0049](active/0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | `medium` | `feat` | ⏳ waiting on #48 — not yet built |
 | [0050](active/0050-client-sdk.md) | Client SDK — thin-client library, same API local-or-remote | `medium` | `feat` | ⏳ waiting on #48 — not yet built |
 
@@ -22,6 +16,12 @@
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0046](active/0046-multi-loop-host-deglobalize-event-store.md) | De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id | `high` | `refactor` | [#49](https://github.com/ethanhinson/fuse/pull/49) |  |
 
 ```mermaid
 graph TD
