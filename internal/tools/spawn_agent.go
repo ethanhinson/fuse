@@ -20,10 +20,12 @@ type SpawnRequest struct {
 	// spawns and outside a workflow. When set, the child's registry is built
 	// from that worker's allowlist (the Tools subset may only narrow it).
 	Worker string
-	// Expects, when non-nil, is the model-supplied JSON Schema (a decoded object)
-	// describing the shape the child's final result should take (change 0024). The
-	// agent seam injects it into the child's system prompt and validates the
-	// child's output against it. Nil ⇒ no schema requested (prior behavior).
+	// Expects, when non-nil, is a JSON Schema (a decoded object) describing the
+	// shape the child's final result should take (change 0024). The agent seam
+	// injects it into the child's system prompt and validates the child's output
+	// against it. Nil ⇒ no schema requested (prose result). As of change 0042 (D7)
+	// the freeform spawn_agent tool never populates this — it is prose-only for the
+	// model. Only the pipeline/code path sets it (via agent.SpawnOpts.Expects).
 	Expects any
 }
 
@@ -105,7 +107,7 @@ func (t *SpawnAgentTool) Name() string { return "spawn_agent" }
 // Description returns the tool description shown to the model.
 func (t *SpawnAgentTool) Description() string {
 	return "Spawn a child agent to execute a subtask concurrently. " +
-		"The child runs to completion and returns its final result."
+		"The child runs to completion and returns its findings as prose."
 }
 
 // Parameters returns the JSON schema for the tool input.
@@ -139,13 +141,6 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 			"type":        "string",
 			"description": "Optional model ID (defaults to the parent's model).",
 		},
-		"expects": map[string]any{
-			"type": "object",
-			"description": "Optional JSON Schema describing the shape you want the child's " +
-				"final result to take. When set, the child is asked to emit only conforming " +
-				"JSON and its output is validated against this schema; the result is annotated " +
-				"with whether it matched. A mismatch never fails the spawn.",
-		},
 	}
 	// Inside a workflow subtree, offer a typed `worker` param enumerating the
 	// workflow's worker names; the child's registry is then the worker's
@@ -169,13 +164,12 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 }
 
 type spawnAgentInput struct {
-	Label        string         `json:"label"`
-	Task         string         `json:"task"`
-	SystemPrompt string         `json:"system_prompt"`
-	Tools        []string       `json:"tools"`
-	Model        string         `json:"model"`
-	Worker       string         `json:"worker"`
-	Expects      map[string]any `json:"expects"`
+	Label        string   `json:"label"`
+	Task         string   `json:"task"`
+	SystemPrompt string   `json:"system_prompt"`
+	Tools        []string `json:"tools"`
+	Model        string   `json:"model"`
+	Worker       string   `json:"worker"`
 }
 
 // Execute parses the input, spawns a child agent, and blocks until it completes.
@@ -196,12 +190,10 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, args string) Result {
 		Tools:        input.Tools,
 		Worker:       input.Worker,
 	}
-	// Thread the expected-result schema only when the model supplied one, so an
-	// absent `expects` leaves req.Expects nil (a typed-nil map would read as
-	// non-nil downstream and trigger empty-schema validation). Change 0024.
-	if input.Expects != nil {
-		req.Expects = input.Expects
-	}
+	// Freeform model-driven spawns are prose-only: the tool no longer accepts an
+	// `expects` schema, so req.Expects stays zero here and any `expects` key in the
+	// raw args is ignored (change 0042, D7). The pipeline/code path still sets
+	// SpawnOpts.Expects directly for structured delegation — that seam is untouched.
 	result, err := t.spawn(ctx, req)
 	if err != nil {
 		// Error results carry the error verbatim (which, for a budget-exhausted

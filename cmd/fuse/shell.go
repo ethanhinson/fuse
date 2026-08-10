@@ -314,6 +314,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				// (reversible), the lifetime budget strips (permanent), the queue
 				// bound strips (reversible). See change 0033, unified in change 0036.
 				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
+				a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
 				// Child's human-message injector: drains humanq/<child> each turn.
 				a.SetHumanInjector(agent.NewHumanInjector(childNode.ID, humanBus))
 

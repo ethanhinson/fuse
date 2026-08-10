@@ -222,6 +222,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				// registered subtree), and the queue bound into one rule — tighter
 				// scope wins.
 				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
+				a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 				return childResult(msgs, rerr)
 			}),

@@ -262,7 +262,7 @@ func TestTighterBudget_ShowsTighterInLine(t *testing.T) {
 	}
 }
 
-// --- change 0024: expects (result schema) param ---
+// --- change 0042 (D7): freeform spawn_agent is prose-only ---
 
 // captureSpawn records the SpawnRequest it receives so a test can assert what
 // the tool threaded across the seam.
@@ -273,26 +273,27 @@ func captureSpawn(got *SpawnRequest) SpawnFunc {
 	}
 }
 
-func TestSpawnAgentTool_ExpectsParamAdvertised(t *testing.T) {
+// The model-facing tool no longer advertises an `expects` param: freeform
+// model-driven spawns are prose-only (change 0042, D7). Structured delegation
+// survives on the pipeline/code path via agent.SpawnOpts.Expects, not here.
+func TestSpawnAgentTool_ExpectsParamNotAdvertised(t *testing.T) {
 	tool := NewSpawnAgentTool(okSpawn("x"))
 	props := tool.Parameters()["properties"].(map[string]any)
-	e, ok := props["expects"].(map[string]any)
-	if !ok {
-		t.Fatal("expects param must be advertised in Parameters()")
+	if _, ok := props["expects"]; ok {
+		t.Fatal("expects param must NOT be advertised in Parameters() — prose-only")
 	}
-	if e["type"] != "object" {
-		t.Errorf("expects param type = %v, want object", e["type"])
-	}
-	// expects is optional: never in required.
+	// And it must never appear in required either.
 	req := tool.Parameters()["required"].([]string)
 	for _, r := range req {
 		if r == "expects" {
-			t.Error("expects must be optional, not in required")
+			t.Error("expects must not appear in required")
 		}
 	}
 }
 
-func TestSpawnAgentTool_ExpectsRoundTripsThroughSeam(t *testing.T) {
+// A raw `expects` key in the args is ignored/dropped — it never threads into the
+// SpawnRequest, so the freeform child gets no schema (change 0042, D7).
+func TestSpawnAgentTool_ExpectsInArgsIsDropped(t *testing.T) {
 	var got SpawnRequest
 	tool := NewSpawnAgentTool(captureSpawn(&got))
 	args := `{"label":"c","task":"do","expects":{"type":"object","properties":{"n":{"type":"integer"}}}}`
@@ -300,12 +301,8 @@ func TestSpawnAgentTool_ExpectsRoundTripsThroughSeam(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("unexpected error: %s", res.Output)
 	}
-	if got.Expects == nil {
-		t.Fatal("expects did not reach SpawnRequest")
-	}
-	m, ok := got.Expects.(map[string]any)
-	if !ok || m["type"] != "object" {
-		t.Fatalf("expects wrong shape at seam: %#v", got.Expects)
+	if got.Expects != nil {
+		t.Fatalf("expects key in args must be dropped; got %#v", got.Expects)
 	}
 }
 

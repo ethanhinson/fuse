@@ -45,9 +45,12 @@ func TestSpawnNilExpects_ByteIdentical(t *testing.T) {
 	}
 }
 
-// TestSpawnExpects_ProducerPromptInjection verifies the child's effective system
-// prompt carries the JSON-only directive with the serialized schema when Expects
-// is set, and is untouched when nil.
+// TestSpawnExpects_ProducerPromptInjection verifies the change-0042 producer-side
+// behavior: with Expects (a map schema) set, the child's effective system prompt
+// carries the SHORT return_result hint (naming the tool + the serialized schema),
+// preserves the base prompt, and does NOT carry the superseded "final message MUST
+// be a single JSON object" directive (which competed with the tool channel — the
+// bug this change fixes). Task 3 supersedes the pre-0042 directive assertion.
 func TestSpawnExpects_ProducerPromptInjection(t *testing.T) {
 	tree := NewAgentTree("root", "m")
 	schema := map[string]any{
@@ -67,11 +70,19 @@ func TestSpawnExpects_ProducerPromptInjection(t *testing.T) {
 	if !strings.Contains(got, "base prompt") {
 		t.Errorf("injected prompt must preserve the base prompt; got %q", got)
 	}
-	if !strings.Contains(got, "JSON Schema") || !strings.Contains(got, "\"type\":\"object\"") {
-		t.Errorf("injected prompt must carry the directive + serialized schema; got %q", got)
+	if !strings.Contains(got, "return_result") {
+		t.Errorf("injected prompt must name the return_result tool; got %q", got)
 	}
-	if !strings.Contains(got, "ONLY") {
-		t.Errorf("injected prompt must ask for JSON only; got %q", got)
+	if !strings.Contains(got, "JSON Schema") || !strings.Contains(got, "\"type\":\"object\"") {
+		t.Errorf("injected prompt must carry the serialized schema; got %q", got)
+	}
+	// The superseded message-channel directive must be gone (D2).
+	if strings.Contains(got, "final message MUST be a single JSON object") {
+		t.Errorf("injected prompt must NOT carry the superseded JSON-only directive; got %q", got)
+	}
+	// The spawner must have allocated a capture sink for the map-schema path.
+	if captured.ExpectsSink() == nil {
+		t.Errorf("map-schema Expects must allocate a return_result capture sink")
 	}
 }
 

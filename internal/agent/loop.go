@@ -24,6 +24,12 @@ var ErrContextTooLarge = errors.New("agent: conversation context too large")
 
 const loopLimit = 3
 
+// returnResultCap bounds structured-delegation self-repair (change 0042 D4): up
+// to this many non-conforming return_result calls are answered with the
+// validation error and retried; the next one ends the run with no captured value
+// (ErrNoStructuredResult at the spawner, never a hard failure). N=2 per spec.
+const returnResultCap = 2
+
 // Context budgeting (see docs/designs/context-management.md). Token counting
 // is hybrid: the provider-reported usage of the last response is exact; only
 // the delta appended since is estimated at bytes/4, so the estimate resets to
@@ -363,6 +369,13 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	previousSummary := ""
 	suppressUntil := 0
 
+	// Structured-delegation state (change 0042): when expects is set, the loop
+	// offers a synthesized return_result tool and treats a conforming call as
+	// terminal. returnResultAttempts counts non-conforming return_result calls; on
+	// the (N+1)th it stops being treated as retryable and the run ends with no
+	// captured value (ErrNoStructuredResult posture at the spawner). See D3/D4.
+	returnResultAttempts := 0
+
 	// a.maxTurns <= 0 means unlimited: the loop runs until the model stops
 	// calling tools, context is exhausted, or the doom-loop detector trips.
 	// A positive maxTurns caps the run and returns ErrMaxTurns. See change 0038.
@@ -456,6 +469,13 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		if a.stripSpawn != nil && a.stripSpawn() {
 			schemas = withoutSpawnAgent(schemas)
 		}
+		// Structured-delegation (change 0042): offer the synthesized return_result
+		// tool alongside the registry's tools when expects is set, so the child
+		// returns its verdict on the tool channel. Per-run only — a child with no
+		// expects never sees it (the append is guarded on expectsSchema != nil).
+		if a.expectsSchema != nil {
+			schemas = withReturnResultTool(schemas, a.expectsSchema)
+		}
 		req := model.CompletionReq{
 			Model:     a.modelID,
 			Messages:  a.withSystem(messages),
@@ -489,6 +509,60 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 
 		if len(resp.ToolCalls) == 0 {
 			return messages, nil
+		}
+
+		// Structured-delegation interception (change 0042): when expects is set,
+		// a return_result call is handled by the loop, not dispatched to the
+		// registry. A conforming call is TERMINAL — capture the validated value and
+		// end the run (no further assistant message required). A non-conforming call
+		// returns the validation error as its tool result so the child self-repairs,
+		// bounded by returnResultCap; on exhaustion the run ends with no capture
+		// (ErrNoStructuredResult posture at the spawner). Any sibling tool calls in
+		// the same response (e.g. a write_file the child issued alongside its verdict)
+		// still execute normally — the two channels never compete.
+		//
+		// Doom-loop interaction: the identical-call detector (loopLimit=3) runs
+		// BELOW this block, so a return_result-only response is intercepted here and
+		// never reaches the detector — the return_result retry cap bounds repair
+		// independently of the doom-loop detector. (Exhaustion here ends the run
+		// before the detector could trip on identical retries.)
+		if a.expectsSchema != nil {
+			var rr *model.ToolCall
+			for i := range resp.ToolCalls {
+				if resp.ToolCalls[i].Name == returnResultToolName {
+					rr = &resp.ToolCalls[i]
+					break
+				}
+			}
+			if rr != nil {
+				parsed, verr := validateAgainstSchema(a.expectsSchema, rr.Arguments)
+				if verr == nil {
+					// Terminal: capture + emit a trivial tool result, run any siblings,
+					// then end the run. The captured value flows to the spawner via the
+					// sink; SpawnDone.Result stays the human-facing text (may be empty).
+					a.expectsSink.set(parsed)
+					msgs := a.executeReturnResultTurn(ctx, messages, resp.ToolCalls, "result recorded")
+					messages = append(messages, msgs...)
+					return messages, nil
+				}
+				// Non-conforming: retry unless the cap is exhausted.
+				if returnResultAttempts >= returnResultCap {
+					// Exhausted: end the run with no captured value. The spawner sees
+					// no structured result and falls back / returns ErrNoStructuredResult.
+					a.renderer.Errorf("return_result: %d invalid attempts — giving up on a structured result", returnResultAttempts)
+					msgs := a.executeReturnResultTurn(ctx, messages, resp.ToolCalls,
+						"return_result exhausted: unable to produce a conforming result after "+
+							fmt.Sprintf("%d", returnResultAttempts+1)+" attempts")
+					messages = append(messages, msgs...)
+					return messages, nil
+				}
+				returnResultAttempts++
+				msgs := a.executeReturnResultTurn(ctx, messages, resp.ToolCalls,
+					"return_result arguments did not match the required schema: "+verr.Error()+
+						" — fix the arguments and call return_result again.")
+				messages = append(messages, msgs...)
+				continue
+			}
 		}
 
 		fps := make([]string, 0, len(resp.ToolCalls))
@@ -693,6 +767,72 @@ func withoutSpawnAgent(schemas []model.ToolSchema) []model.ToolSchema {
 			continue
 		}
 		out = append(out, s)
+	}
+	return out
+}
+
+// withReturnResultTool returns schemas with the synthesized return_result tool
+// (change 0042) appended — its Parameters are the expects schema. It allocates a
+// fresh slice so it never mutates the registry's backing array. If a real tool
+// named return_result already exists it is dropped in favor of the synthesized
+// one (the Expects child's structured-output channel wins; documented in the
+// spec — today none exists).
+func withReturnResultTool(schemas []model.ToolSchema, expects map[string]any) []model.ToolSchema {
+	out := make([]model.ToolSchema, 0, len(schemas)+1)
+	for _, s := range schemas {
+		if s.Name == returnResultToolName {
+			continue
+		}
+		out = append(out, s)
+	}
+	out = append(out, model.ToolSchema{
+		Name:        returnResultToolName,
+		Description: returnResultDescription(),
+		Parameters:  returnResultSchema(expects),
+	})
+	return out
+}
+
+// executeReturnResultTurn builds the tool-result messages for a response that
+// carried a return_result call (change 0042). The return_result call itself is
+// answered with rrOutput (a trivial "result recorded" on success, or the
+// validation error on retry/exhaustion) WITHOUT dispatching it to the registry;
+// any sibling calls in the same response are dispatched normally so the child's
+// real work (e.g. a write_file issued alongside its verdict) still happens. The
+// returned messages preserve the response's call order for valid tool pairing.
+func (a *Agent) executeReturnResultTurn(ctx context.Context, messages []model.Message, calls []model.ToolCall, rrOutput string) []model.Message {
+	// Dispatch the non-return_result siblings through the normal path.
+	var siblings []model.ToolCall
+	for _, c := range calls {
+		if c.Name == returnResultToolName {
+			continue
+		}
+		siblings = append(siblings, c)
+	}
+	sibResults := map[string]model.Message{}
+	if len(siblings) > 0 {
+		for _, m := range a.executeTools(ctx, messages, siblings) {
+			sibResults[m.ToolCallID] = m
+		}
+	}
+
+	out := make([]model.Message, 0, len(calls))
+	for _, c := range calls {
+		if c.Name == returnResultToolName {
+			a.renderer.ToolCall(c.Name, c.Arguments)
+			res := tools.Result{Output: rrOutput}
+			a.renderer.ToolResult(c.Name, res)
+			out = append(out, model.Message{
+				Role:       "tool",
+				ToolCallID: c.ID,
+				Name:       c.Name,
+				Content:    rrOutput,
+			})
+			continue
+		}
+		if m, ok := sibResults[c.ID]; ok {
+			out = append(out, m)
+		}
 	}
 	return out
 }

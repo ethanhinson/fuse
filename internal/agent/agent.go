@@ -93,6 +93,64 @@ type Agent struct {
 	// to the pre-0051 loop. The node self-pulls its own queue — no cross-goroutine
 	// push into a running node, honoring ADR-0016's run-to-completion contract.
 	humanInjector *HumanInjector
+
+	// expectsSchema, when non-nil, is the JSON Schema the spawner declared for this
+	// child's structured result (change 0042). When set, Run offers a synthesized
+	// return_result tool (parameters = this schema) and treats a conforming
+	// return_result call as terminal, writing the validated value into expectsSink.
+	// Nil ⇒ no return_result tool, byte-identical to the pre-0042 loop.
+	expectsSchema map[string]any
+	// expectsSink receives the validated return_result value so the spawner (which
+	// does not construct this Agent) can read the structured result back after Run.
+	// It is the shared holder that closes the "spawner owns SpawnOpts.Expects but
+	// the loop sees return_result" gap (change 0042). Non-nil iff expectsSchema is.
+	expectsSink *ExpectsSink
+}
+
+// ExpectsSink is the shared holder through which a child Agent's loop hands the
+// validated return_result value back to the spawner that requested it (change
+// 0042). The spawner allocates one per Expects-carrying spawn, threads it into
+// the child Agent via SetExpects, and reads Value()/Captured() after Run returns.
+// It is deliberately tiny and single-goroutine: the loop writes it before Run
+// returns and the spawner reads it after, so no lock is needed.
+type ExpectsSink struct {
+	captured bool
+	value    any
+}
+
+// Captured reports whether the loop captured a validated return_result value.
+func (s *ExpectsSink) Captured() bool { return s != nil && s.captured }
+
+// Value returns the captured structured value (nil if none was captured).
+func (s *ExpectsSink) Value() any {
+	if s == nil {
+		return nil
+	}
+	return s.value
+}
+
+// set records a captured value; called once by the loop on a valid return_result.
+func (s *ExpectsSink) set(v any) {
+	if s == nil {
+		return
+	}
+	s.captured = true
+	s.value = v
+}
+
+// SetExpects installs the structured-delegation schema + capture sink on this
+// Agent (change 0042). When schema is non-nil the run offers a synthesized
+// return_result tool and treats a conforming call as terminal, writing the
+// validated value into sink. A nil schema is a no-op (leaves the pre-0042 loop
+// untouched). Set once at build time, before Run. This is the seam the cmd-site
+// child builders call with opts.Expects + the spawner-allocated sink so the
+// structured value flows back to the spawner (option (a) in the plan).
+func (a *Agent) SetExpects(schema map[string]any, sink *ExpectsSink) {
+	if schema == nil {
+		return
+	}
+	a.expectsSchema = schema
+	a.expectsSink = sink
 }
 
 // SetHumanInjector wires the per-node human-message injector (ADR-0022). Passing
