@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/runtime-interface-and-binding
 pr:
 blocked_by:
-claimed_at: 2026-08-10T17:12:23Z
-reconciled: false
+claimed_at: 2026-08-10T17:16:10Z
+reconciled: true
 ---
 
 ## Artifacts
@@ -98,3 +98,53 @@ reattach story: a client disconnects, reconnects with its last Seq, and misses n
 - **Approval gating in binding #2** — auto-approve (the "policy lives in the binding; this
   binding's policy is no gate" stance) vs a relay. Lean: auto-approve, documented as the
   binding's choice, not the seam's.
+
+## Reconcile log
+
+### 2026-08-10 — reconciled against current code (implementer)
+
+Re-read the spec, the five cited ADRs (16, 22, 24, 25, 26), and current code at the
+integration-branch tip. **The design holds — no obsolescence, no fundamental invalidation, no
+scope change.** Dependency 0044 is merged/archived (`2026-08-10-0044-spawn-handle-async.md`); its
+ADR-0026 confirms `Spawner.Spawn → (agent.AgentHandle, error)` and that the future Runtime consumes
+`agent.AgentHandle` directly (the `tools.SpawnHandle` interface is the tool-layer view only). All
+spec anchors verified present in current code — no drift:
+
+- **Three cmd-site builders confirmed**: one-shot in `cmd/fuse/main.go`, interactive in
+  `cmd/fuse/shell.go`, research in `cmd/fuse/research_probe.go`; shared builders
+  `buildAgentCore` + `spawnFuncFrom` live in `cmd/fuse/run.go`.
+- **Exact post-New setter names** (spec's "named like" resolves to): `SetEventSink`,
+  `SetNodeIdentity`, `EnableSummarization` (not `SetSummarization`), plus `SetStripSpawn`,
+  `SetHumanInjector`, `SetExpects`. `agent.New(m, t, r, modelID, systemPrompt, maxTurns,
+  maxTokens)`; loop entry `(*Agent).Run(ctx, history)`.
+- **Loop handle key**: `(*AgentTree).RootID()` (`internal/agent/tree.go`).
+- **EventStore**: interface in `internal/event` (`Subscribe() (<-chan Event, func())`,
+  `Replay(from Seq) ([]Event, error)`), JSONL impl in `internal/event/fsstore` (note the
+  subpackage — the impl is reached via the interface, not `internal/event` directly). Types
+  `event.Seq` (uint64) and `event.Event`.
+- **Process-global holders present** (ADR-0019 pattern, `cmd/fuse/run.go`): `setActiveEventStore` /
+  `currentEventStore` (RW-mutex, no-op default when nil) and `setActiveSegmentSink` /
+  `currentSegmentSink`. These are the D1 open-question target.
+- **Human-bus IS implemented in code** (`internal/agent/humanmsg.go`): `HumanBus`
+  (`NewHumanBus(tree)`, `Enqueue`/`Drain`/`OnNodeComplete`), wired via `SetHumanInjector` +
+  `NewHumanInjector(nodeID, humanBus)`. So `Runtime.Send` has a concrete, existing target — the
+  turn-boundary self-pull path. (Note: ADR-0022 metadata still reads `status: Proposed` / `change:
+  0051` even though the substrate landed; that is a metadata lag, not a design gap — flag for a
+  future ADR-status reconcile, not this change's job.)
+- **`internal/runtime` does not exist yet** — clean slate, no partial work to fold in.
+- **Tool-call MCP server** `cmd/fuse/mcp_server.go` present and untouched (out-of-scope invariant
+  holds); stdio `mcp.NewServer(os.Stdin, os.Stdout, ...)` + `notifications/resources/updated`
+  push pattern is the reusable model for binding #2's live tail. Subcommand dispatch is a
+  `switch args[0]` in `main.go` (`mcp-server → runMCPServer`); `loop-server` hooks in there.
+- **Tests**: `go test ./...`; race gate via `make test-race` (`go test -race ./...`).
+
+**One constraint sharpened (folds into D1/planning, not a scope change).** ADR-0025 makes the
+per-session-global Seq allocator assume **one process ⇒ one session** (ADR-0019); its own
+Consequences say a multi-session-per-process store "would revisit Seq allocation." So the open
+question "N concurrent loops per loop-server process" is *not free*: **interface designed for N
+(loopID-keyed), in-process impl stays single-loop-per-process for this change**, with the holder
+migration to instance state scoped carefully (a full de-globalization / multi-loop Seq allocator is
+its own later change). This is the spec's existing lean, now backed by the ADR-0025 constraint.
+
+Auto-capture is disabled (`AUTO_CAPTURE_ENABLED=false`); the ADR-0022-status-lag observation above
+is reported in-prose only, not minted.
