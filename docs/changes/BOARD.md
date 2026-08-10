@@ -1,6 +1,16 @@
 # Backlog
 
-**45 changes** — ⚪ 1 deferred · 🔵 1 implemented · ✅ 37 done · 🗑️ 6 killed
+**50 changes** — 🟡 5 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 37 done · 🗑️ 6 killed
+
+## 🟡 Proposed (5)
+
+| # | Title | Priority | Type | Readiness |
+|---|-------|----------|------|-----------|
+| [0046](active/0046-multi-loop-host-deglobalize-event-store.md) | De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id | `high` | `refactor` | ⏳ waiting on #45 — needs your merge |
+| [0047](active/0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | `medium` | `feat` | ⏳ waiting on #46 — not yet built |
+| [0048](active/0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | `medium` | `feat` | ⏳ waiting on #46 — not yet built |
+| [0049](active/0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | `medium` | `feat` | ⏳ waiting on #48 — not yet built |
+| [0050](active/0050-client-sdk.md) | Client SDK — thin-client library, same API local-or-remote | `medium` | `feat` | ⏳ waiting on #48 — not yet built |
 
 ## ⚪ Deferred (1)
 
@@ -18,6 +28,12 @@
 graph TD
   0012 --> 0029
   0044 --> 0045
+  0045 --> 0046
+  0046 --> 0047
+  0046 --> 0048
+  0048 --> 0049
+  0048 --> 0050
+  0049 --> 0050
   0012:::done
   0044:::done
   classDef done fill:#d3f9d8;
