@@ -2,11 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
 
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -381,8 +383,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// A positive maxTurns caps the run and returns ErrMaxTurns. See change 0038.
 	for turn := 0; a.maxTurns <= 0 || turn < a.maxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
+			a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
 			return messages, err
 		}
+		// turn.start (change 0043): every turn boundary is a first-class event.
+		a.emit(event.KindTurnStart, turn, event.TurnStartPayload{Turn: turn})
 
 		// Turn boundary: drain any human messages queued for this node and inject
 		// them as a single batched user turn before the model is called (ADR-0022).
@@ -422,6 +427,16 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 							a.renderer.Errorf("segment archive failed (non-fatal): %v", aerr)
 							pointer = ""
 						}
+						// context.summarize (change 0043): emitted beside the segment
+						// archive so a consumer sees the Tier-2 compaction as an event.
+						a.emit(event.KindSummarize, turn, event.SummarizePayload{
+							TurnStart:    ti[firstIdx],
+							TurnEnd:      ti[lastIdx],
+							ToolNames:    toolNames,
+							TokensBefore: tokensBefore,
+							TokensAfter:  len(summary) / bytesPerToken,
+							Pointer:      pointer,
+						})
 						// Anchoring (D3): the new summary folds the previous one in, so the
 						// prior injected summary message is removed before the new one is
 						// added — only ONE living summary document survives in context.
@@ -461,6 +476,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 				err := fmt.Errorf("%w: ~%dk tokens against a %dk window even after pruning — delegate to spawn_agent children or start a fresh session",
 					ErrContextTooLarge, estimate/1000, window/1000)
 				a.renderer.Errorf("%v", err)
+				a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
 				return messages, err
 			}
 		}
@@ -482,6 +498,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			Tools:     schemas,
 			MaxTokens: a.maxTokens,
 		}
+		// model.call.start (change 0043): the model-call boundary opens here.
+		a.emit(event.KindModelCallStart, turn, event.ModelCallStartPayload{
+			Model:    a.modelID,
+			MsgCount: len(req.Messages),
+		})
 		resp, err := a.model.Complete(ctx, req)
 		if err != nil {
 			// The estimate said we fit but the provider disagreed: prune hard
@@ -496,8 +517,16 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 				}
 			}
 			a.renderer.Errorf("model error: %v", err)
+			a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
 			return messages, err
 		}
+		// model.call.end (change 0043): full assistant response + usage + tool refs.
+		a.emit(event.KindModelCallEnd, turn, event.ModelCallEndPayload{
+			Content:      resp.Content,
+			InputTokens:  resp.InputTokens,
+			OutputTokens: resp.OutputTokens,
+			ToolCalls:    toolCallRefs(resp.ToolCalls),
+		})
 		a.renderer.Tokens(resp.InputTokens, resp.OutputTokens)
 		lastUsage = resp.InputTokens + resp.OutputTokens
 
@@ -508,6 +537,8 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		accounted = len(messages)
 
 		if len(resp.ToolCalls) == 0 {
+			// turn.end (change 0043): the no-tool-calls terminal path.
+			a.emit(event.KindTurnEnd, turn, event.TurnEndPayload{Turn: turn})
 			return messages, nil
 		}
 
@@ -541,7 +572,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 					// then end the run. The captured value flows to the spawner via the
 					// sink; SpawnDone.Result stays the human-facing text (may be empty).
 					a.expectsSink.set(parsed)
-					msgs := a.executeReturnResultTurn(ctx, messages, resp.ToolCalls, "result recorded")
+					msgs := a.executeReturnResultTurn(ctx, turn, messages, resp.ToolCalls, "result recorded")
 					messages = append(messages, msgs...)
 					return messages, nil
 				}
@@ -550,14 +581,14 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 					// Exhausted: end the run with no captured value. The spawner sees
 					// no structured result and falls back / returns ErrNoStructuredResult.
 					a.renderer.Errorf("return_result: %d invalid attempts — giving up on a structured result", returnResultAttempts)
-					msgs := a.executeReturnResultTurn(ctx, messages, resp.ToolCalls,
+					msgs := a.executeReturnResultTurn(ctx, turn, messages, resp.ToolCalls,
 						"return_result exhausted: unable to produce a conforming result after "+
 							fmt.Sprintf("%d", returnResultAttempts+1)+" attempts")
 					messages = append(messages, msgs...)
 					return messages, nil
 				}
 				returnResultAttempts++
-				msgs := a.executeReturnResultTurn(ctx, messages, resp.ToolCalls,
+				msgs := a.executeReturnResultTurn(ctx, turn, messages, resp.ToolCalls,
 					"return_result arguments did not match the required schema: "+verr.Error()+
 						" — fix the arguments and call return_result again.")
 				messages = append(messages, msgs...)
@@ -570,6 +601,9 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			fps = append(fps, fingerprint(c.Name, c.Arguments))
 		}
 		if detector.seen(fps) {
+			// loop.detector.trip (change 0043): emitted whenever the doom-loop
+			// detector fires, before the interactive/abort branch below.
+			a.emit(event.KindLoopTrip, turn, event.LoopTripPayload{Turn: turn})
 			repeated := repeatedCallNames(resp.ToolCalls)
 			// Interactive posture: force the repeated call(s) through a human
 			// with a "possible loop" preview rather than aborting. On approval
@@ -580,23 +614,45 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 				preview := fmt.Sprintf("possible loop: %s repeated %d times — continue?", repeated, loopLimit)
 				approved, err := a.LoopApproval(ctx, preview)
 				if err != nil {
+					a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
 					return messages, err
 				}
 				if !approved {
 					a.renderer.Errorf("aborting: %s repeated %d times (not approved)", repeated, loopLimit)
-					return messages, fmt.Errorf("%w: %s repeated %d times", ErrLoopDetected, repeated, loopLimit)
+					lerr := fmt.Errorf("%w: %s repeated %d times", ErrLoopDetected, repeated, loopLimit)
+					a.emit(event.KindError, turn, event.ErrorPayload{Err: lerr.Error(), Turn: turn})
+					return messages, lerr
 				}
 				detector.reset()
 			} else {
 				a.renderer.Errorf("aborting: %s repeated %d times", repeated, loopLimit)
-				return messages, fmt.Errorf("%w: %s repeated %d times", ErrLoopDetected, repeated, loopLimit)
+				lerr := fmt.Errorf("%w: %s repeated %d times", ErrLoopDetected, repeated, loopLimit)
+				a.emit(event.KindError, turn, event.ErrorPayload{Err: lerr.Error(), Turn: turn})
+				return messages, lerr
 			}
 		}
 
-		toolMsgs := a.executeTools(ctx, messages, resp.ToolCalls)
+		toolMsgs := a.executeTools(ctx, turn, messages, resp.ToolCalls)
 		messages = append(messages, toolMsgs...)
+		// turn.end (change 0043): the tool-dispatch path completed this turn.
+		a.emit(event.KindTurnEnd, turn, event.TurnEndPayload{Turn: turn})
 	}
+	// error (change 0043): the loop hit its max-turns cap.
+	a.emit(event.KindError, a.maxTurns, event.ErrorPayload{Err: ErrMaxTurns.Error(), Turn: a.maxTurns})
 	return messages, ErrMaxTurns
+}
+
+// toolCallRefs projects model tool calls to lightweight event refs (id+name) for
+// the model.call.end payload.
+func toolCallRefs(calls []model.ToolCall) []event.ToolCallRef {
+	if len(calls) == 0 {
+		return nil
+	}
+	refs := make([]event.ToolCallRef, 0, len(calls))
+	for _, c := range calls {
+		refs = append(refs, event.ToolCallRef{ID: c.ID, Name: c.Name})
+	}
+	return refs
 }
 
 // repeatedCallNames renders the tool-call set for a doom-loop preview/abort
@@ -622,8 +678,19 @@ type toolResult struct {
 // executeTools runs the tool calls from a single model response. When the
 // response contains 2+ spawn_agent calls they run concurrently; all other
 // combinations execute sequentially to avoid tool-state conflicts.
-func (a *Agent) executeTools(ctx context.Context, messages []model.Message, calls []model.ToolCall) []model.Message {
+func (a *Agent) executeTools(ctx context.Context, turn int, messages []model.Message, calls []model.ToolCall) []model.Message {
 	results := make([]toolResult, len(calls))
+
+	// tool.call (change 0043): emit one event per requested call, with full args,
+	// before any dispatch — greppable, ordered, and independent of the parallel /
+	// serial execution path below.
+	for _, c := range calls {
+		a.emit(event.KindToolCall, turn, event.ToolCallPayload{
+			ID:   c.ID,
+			Name: c.Name,
+			Args: json.RawMessage(c.Arguments),
+		})
+	}
 
 	// Carry the user's conversation turns to the auto-mode classifier via the
 	// permissions ctx-carry seam, so the gate can plumb them into its verdict
@@ -664,6 +731,13 @@ func (a *Agent) executeTools(ctx context.Context, messages []model.Message, call
 	msgs := make([]model.Message, 0, len(calls))
 	for _, r := range results {
 		a.renderer.ToolResult(r.call.Name, r.res)
+		// tool.result (change 0043): full result output + error flag, per call.
+		a.emit(event.KindToolResult, turn, event.ToolResultPayload{
+			ID:      r.call.ID,
+			Name:    r.call.Name,
+			Result:  r.res.Output,
+			IsError: r.res.IsError,
+		})
 		// Output is already spill-bounded by the tool registry; history and
 		// display see the same recoverable form.
 		msgs = append(msgs, model.Message{
@@ -800,7 +874,7 @@ func withReturnResultTool(schemas []model.ToolSchema, expects map[string]any) []
 // any sibling calls in the same response are dispatched normally so the child's
 // real work (e.g. a write_file issued alongside its verdict) still happens. The
 // returned messages preserve the response's call order for valid tool pairing.
-func (a *Agent) executeReturnResultTurn(ctx context.Context, messages []model.Message, calls []model.ToolCall, rrOutput string) []model.Message {
+func (a *Agent) executeReturnResultTurn(ctx context.Context, turn int, messages []model.Message, calls []model.ToolCall, rrOutput string) []model.Message {
 	// Dispatch the non-return_result siblings through the normal path.
 	var siblings []model.ToolCall
 	for _, c := range calls {
@@ -811,7 +885,7 @@ func (a *Agent) executeReturnResultTurn(ctx context.Context, messages []model.Me
 	}
 	sibResults := map[string]model.Message{}
 	if len(siblings) > 0 {
-		for _, m := range a.executeTools(ctx, messages, siblings) {
+		for _, m := range a.executeTools(ctx, turn, messages, siblings) {
 			sibResults[m.ToolCallID] = m
 		}
 	}
