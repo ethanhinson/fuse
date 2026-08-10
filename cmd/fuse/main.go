@@ -65,6 +65,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runMCPs(args[1:], cfg, stdout, stderr)
 		case "mcp-server":
 			return runMCPServer(args[1:], cfg, stdout, stderr)
+		case "loop-server":
+			return runLoopServer(args[1:], cfg, reg, stdout, stderr)
 		case "help":
 			banner.Print(stdout, version.Version)
 			fmt.Fprintln(stdout, "commands:")
@@ -73,6 +75,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "  fuse shell        start an interactive agent shell")
 			fmt.Fprintln(stdout, "  fuse research-probe \"<q>\"  run + observe the research flow headlessly")
 			fmt.Fprintln(stdout, "  fuse mcps         list connected MCP servers")
+			fmt.Fprintln(stdout, "  fuse loop-server  headless stdio JSON-RPC loop-control server (binding #2)")
 			fmt.Fprintln(stdout, "  fuse help         show this help")
 			return 0
 		}
