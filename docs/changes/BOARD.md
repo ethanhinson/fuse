@@ -1,18 +1,18 @@
 # Backlog
 
-**44 changes** — 🟢 1 in progress · ⚪ 1 deferred · ✅ 36 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0044](active/0044-spawn-handle-async.md) | Spawn handle-async — location-transparent spawning behind a handle-returning contract | `high` | `refactor` | [spec](../superpowers/specs/0044-spawn-handle-async.md) | `feat/spawn-handle-async` |
+**44 changes** — ⚪ 1 deferred · 🔵 1 implemented · ✅ 36 done · 🗑️ 6 killed
 
 ## ⚪ Deferred (1)
 
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0044](active/0044-spawn-handle-async.md) | Spawn handle-async — location-transparent spawning behind a handle-returning contract | `high` | `refactor` | [#47](https://github.com/ethanhinson/fuse/pull/47) |  |
 
 ```mermaid
 graph TD
