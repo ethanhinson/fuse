@@ -1,6 +1,12 @@
 # Backlog
 
-**42 changes** — ⚪ 1 deferred · ✅ 35 done · 🗑️ 6 killed
+**43 changes** — 🟡 1 proposed · ⚪ 1 deferred · ✅ 35 done · 🗑️ 6 killed
+
+## 🟡 Proposed (1)
+
+| # | Title | Priority | Type | Readiness |
+|---|-------|----------|------|-----------|
+| [0043](active/0043-runtime-eventstore-seam.md) | Runtime EventStore seam — typed, pluggable, introspectable loop event stream | `high` | `feat` | build-ready |
 
 ## ⚪ Deferred (1)
 
@@ -11,6 +17,7 @@
 ```mermaid
 graph TD
   0012 --> 0029
+  0043
   0012:::done
   classDef done fill:#d3f9d8;
 ```
