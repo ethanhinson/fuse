@@ -1,8 +1,8 @@
 # Backlog
 
-**50 changes** — 🟡 4 proposed · ⚪ 1 deferred · ✅ 39 done · 🗑️ 6 killed
+**51 changes** — 🟡 5 proposed · ⚪ 1 deferred · ✅ 39 done · 🗑️ 6 killed
 
-## 🟡 Proposed (4)
+## 🟡 Proposed (5)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -10,6 +10,7 @@
 | [0048](active/0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | `medium` | `feat` | needs-brainstorm |
 | [0049](active/0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | `medium` | `feat` | ⏳ waiting on #48 — not yet built |
 | [0050](active/0050-client-sdk.md) | Client SDK — thin-client library, same API local-or-remote | `medium` | `feat` | ⏳ waiting on #48 — not yet built |
+| [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + Loki, as a projection over the event stream | `medium` | `feat` | needs-brainstorm |
 
 ## ⚪ Deferred (1)
 
@@ -25,6 +26,7 @@ graph TD
   0048 --> 0049
   0048 --> 0050
   0049 --> 0050
+  0046 --> 0051
   0012:::done
   0046:::done
   classDef done fill:#d3f9d8;
