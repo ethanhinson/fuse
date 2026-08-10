@@ -12,14 +12,14 @@ related: [23, 24, 34, 36, 42, 43]
 discovered_from: [43]
 adrs: [16, 17]
 spec: docs/superpowers/specs/0044-spawn-handle-async.md
-plan:
+plan: docs/superpowers/plans/0044-spawn-handle-async-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/spawn-handle-async
 pr:
 blocked_by:
-claimed_at: 2026-08-10T06:45:37Z
+claimed_at: 2026-08-10T06:48:39Z
 reconciled: true
 ---
 
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0044-spawn-handle-async.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0044-spawn-handle-async.md) |
+| Plan | [0044-spawn-handle-async-plan.md](https://github.com/ethanhinson/fuse/blob/feat/spawn-handle-async/docs/superpowers/plans/0044-spawn-handle-async-plan.md) |
 | ADRs | [ADR-0016](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0016-subagent-spawn-tree-runtime.md), [ADR-0017](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0017-segment-store-fssink-subpackage-split.md) |
 <!-- docket:artifacts:end -->
 
