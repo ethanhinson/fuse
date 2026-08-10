@@ -32,6 +32,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0026](0026-handle-returning-spawn-seam-agent-free-interface.md) — Handle-returning spawn seam via an agent-free interface in internal/tools (Accepted) ← change #44 · relates to ADR-0016, ADR-0017
 - [ADR-0027](0027-runtime-owns-loop-eventstore-global-holder-bridge.md) — Runtime owns the loop event store as instance state; process-global holders kept as a single-loop compatibility bridge (Accepted) ← change #45 · relates to ADR-0025, ADR-0019, ADR-0016
 - [ADR-0028](0028-loopserver-new-jsonrpc-server-not-mcp-extension.md) — Binding #2 is a new internal/loopserver JSON-RPC server, not an extension of internal/mcp (Accepted) ← change #45 · relates to ADR-0027
+- [ADR-0029](0029-shell-partial-runtime-binding.md) — The interactive shell is a partial Runtime binding — construction+store through the seam, turn cadence retained by the TUI (Accepted) ← change #45 · relates to ADR-0027, ADR-0028
 
 ## Superseded / Reversed
 
