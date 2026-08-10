@@ -2,11 +2,11 @@
 id: 42
 slug: return-result-structured-delegation
 title: Fix structured-delegation (expects) vs tool-calling collision via a return_result tool
-status: proposed
+status: in-progress
 priority: high
 type: fix
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-10
 depends_on: []
 related: [24]
 discovered_from: []
@@ -16,9 +16,10 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/return-result-structured-delegation
 pr:
 blocked_by:
+claimed_at: 2026-08-10T00:02:00Z
 reconciled: false
 ---
 
