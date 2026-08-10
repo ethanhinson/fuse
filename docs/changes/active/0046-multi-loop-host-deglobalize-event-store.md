@@ -2,7 +2,7 @@
 id: 46
 slug: multi-loop-host-deglobalize-event-store
 title: De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id
-status: in-progress
+status: implemented
 priority: high
 type: refactor
 created: 2026-08-10
@@ -13,13 +13,13 @@ discovered_from: [45]
 adrs: [25, 27, 30]
 spec: docs/superpowers/specs/0046-multi-loop-host-deglobalize-event-store.md
 plan: docs/superpowers/plans/2026-08-10-multi-loop-host-deglobalize-event-store.md
-results:
+results: docs/results/2026-08-10-multi-loop-host-deglobalize-event-store-results.md
 trivial: false
 auto_groomable:
 branch: feat/multi-loop-host-deglobalize-event-store
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/49
 blocked_by:
-claimed_at: 2026-08-10T19:26:47Z
+claimed_at: 2026-08-10T19:28:53Z
 reconciled: true
 ---
 
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [0046-multi-loop-host-deglobalize-event-store.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0046-multi-loop-host-deglobalize-event-store.md) |
 | Plan | [2026-08-10-multi-loop-host-deglobalize-event-store.md](https://github.com/ethanhinson/fuse/blob/feat/multi-loop-host-deglobalize-event-store/docs/superpowers/plans/2026-08-10-multi-loop-host-deglobalize-event-store.md) |
+| Results | [2026-08-10-multi-loop-host-deglobalize-event-store-results.md](https://github.com/ethanhinson/fuse/blob/feat/multi-loop-host-deglobalize-event-store/docs/results/2026-08-10-multi-loop-host-deglobalize-event-store-results.md) |
+| PR | [#49](https://github.com/ethanhinson/fuse/pull/49) |
 | ADRs | [ADR-0025](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0025-eventstore-ordering-backpressure.md), [ADR-0027](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0027-runtime-owns-loop-eventstore-global-holder-bridge.md), [ADR-0030](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0030-deglobalize-eventstore-multiloop-hosting.md) |
 <!-- docket:artifacts:end -->
 
