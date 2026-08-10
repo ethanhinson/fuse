@@ -1,12 +1,12 @@
 # Backlog
 
-**44 changes** — 🟡 1 proposed · ⚪ 1 deferred · ✅ 36 done · 🗑️ 6 killed
+**44 changes** — 🟢 1 in progress · ⚪ 1 deferred · ✅ 36 done · 🗑️ 6 killed
 
-## 🟡 Proposed (1)
+## 🟢 In progress (1)
 
-| # | Title | Priority | Type | Readiness |
-|---|-------|----------|------|-----------|
-| [0044](active/0044-spawn-handle-async.md) | Spawn handle-async — location-transparent spawning behind a handle-returning contract | `high` | `refactor` | build-ready |
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0044](active/0044-spawn-handle-async.md) | Spawn handle-async — location-transparent spawning behind a handle-returning contract | `high` | `refactor` | [spec](../superpowers/specs/0044-spawn-handle-async.md) | `feat/spawn-handle-async` |
 
 ## ⚪ Deferred (1)
 
