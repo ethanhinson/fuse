@@ -56,6 +56,13 @@ func TestTwoBindingsOneSeamEventParity(t *testing.T) {
 	}
 	reg := registryFromConfig(cfg)
 	alias := reg.Default
+	// Derive the resolved gateway model id from the registry so the load-bearing guard
+	// tracks a registry-default change instead of a brittle hardcoded literal.
+	defMC, rerr := reg.Resolve(alias)
+	if rerr != nil {
+		t.Fatalf("resolve default model %q: %v", alias, rerr)
+	}
+	wantModelID := defMC.ID
 
 	// --- CLI side (binding #1b: research-probe) — its OWN engine + fsstore. ---
 	cliEvents := runResearchProbeSideForParity(t, cfg, reg, alias, task)
@@ -74,7 +81,7 @@ func TestTwoBindingsOneSeamEventParity(t *testing.T) {
 	// Guard against a trivially-equal empty-payload stream: the run MUST have gone
 	// through the gateway (a model.call.start with the resolved model id) and closed
 	// the turn — otherwise "identical" would be vacuous.
-	assertLoadBearingStream(t, cliNorm, reply)
+	assertLoadBearingStream(t, cliNorm, wantModelID, reply)
 	if !reflect.DeepEqual(cliNorm, serverNorm) {
 		t.Fatalf("event streams diverge.\n CLI (%d): %+v\n SRV (%d): %+v", len(cliNorm), cliNorm, len(serverNorm), serverNorm)
 	}
@@ -212,9 +219,11 @@ func normalizePayload(t *testing.T, e event.Event) map[string]any {
 
 // assertLoadBearingStream guards against a vacuous parity pass on two empty streams:
 // it requires the normalized stream to contain a turn.start, a model.call.start
-// carrying the resolved gateway model id, a model.call.end carrying the scripted
-// reply, and a turn.end — the substance that makes "identical" meaningful.
-func assertLoadBearingStream(t *testing.T, ns []normEvent, wantReply string) {
+// carrying the resolved gateway model id (wantModelID, derived from the registry
+// default so a registry change doesn't make this guard brittle), a model.call.end
+// carrying the scripted reply, and a turn.end — the substance that makes "identical"
+// meaningful.
+func assertLoadBearingStream(t *testing.T, ns []normEvent, wantModelID, wantReply string) {
 	t.Helper()
 	var sawTurnStart, sawTurnEnd, sawModelID, sawReply bool
 	for _, e := range ns {
@@ -224,7 +233,7 @@ func assertLoadBearingStream(t *testing.T, ns []normEvent, wantReply string) {
 		case event.KindTurnEnd:
 			sawTurnEnd = true
 		case event.KindModelCallStart:
-			if e.Payload["model"] == "cloud/deepseek-v4-flash" {
+			if e.Payload["model"] == wantModelID {
 				sawModelID = true
 			}
 		case event.KindModelCallEnd:
