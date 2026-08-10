@@ -12,14 +12,14 @@ related: [24]
 discovered_from: []
 adrs: [12]
 spec: docs/superpowers/specs/0042-return-result-structured-delegation.md
-plan:
+plan: docs/superpowers/plans/2026-08-10-return-result-structured-delegation-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/return-result-structured-delegation
 pr:
 blocked_by:
-claimed_at: 2026-08-10T00:03:30Z
+claimed_at: 2026-08-10T00:05:00Z
 reconciled: true
 ---
 
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0042-return-result-structured-delegation.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0042-return-result-structured-delegation.md) |
+| Plan | [2026-08-10-return-result-structured-delegation-plan.md](https://github.com/ethanhinson/fuse/blob/feat/return-result-structured-delegation/docs/superpowers/plans/2026-08-10-return-result-structured-delegation-plan.md) |
 | ADRs | [ADR-0012](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0012-vendor-jsonschema-validation-library.md) |
 <!-- docket:artifacts:end -->
 
