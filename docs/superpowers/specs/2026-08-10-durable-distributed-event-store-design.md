@@ -287,39 +287,65 @@ so live-model turns should be minimal.
 
 - **Depends on 0046** (`multi-loop-host-deglobalize-event-store`, ADR-0030, merged commit 22480d5)
   — 0047 makes durable the per-loop store and loop_id registry that 0046 established as per-loop
-  instance state / in-memory map. Note: as of grooming checkout the `internal/runtime` and
-  `internal/loopserver` packages exist per the ADR ledger (ADR-0028/ADR-0030) but are not yet in
-  the local working tree; the **build reconcile pass re-validates** against real symbols — anchor to
-  the seam shapes named in ADR-0030/ADR-0025/ADR-0024, not to line numbers.
+  instance state / in-memory map. **Reconcile note (2026-08-10):** the build reconcile confirmed
+  `internal/event`, `internal/event/fsstore`, `internal/runtime`, and `internal/loopserver` are all
+  present in the working tree now (0046 merged) and their seam shapes match this spec's anchors
+  (verified against real symbols, not line numbers). See *Reconcile* at the end of this spec.
 - **Blocks / precedes** 0048 (networked binding), 0049 (auth/multi-tenancy — builds on 0047's
   storage-level tenant boundary), and 0050 (client SDK) in the "make the seam hostable" arc.
 
-## Open questions (resolve at build reconcile)
+## Open questions — RESOLVED at build reconcile (2026-08-10)
 
-- **Testing Postgres without a standing DB.** How to keep the suite runnable with no permanent
-  Postgres: dockerized/ephemeral Postgres, testcontainers, or a build-tagged integration test that
-  the unit suite skips. Decide so `go test ./...` stays green on a bare checkout.
-- **Postgres schema/keying.** Exact schema — `(tenant_id, loop_id, seq, ts, kind, payload)` for the
-  event stream, plus the registry columns (ownership/liveness: which instance owns a live loop,
-  last-heartbeat/state) — the retention/rotation policy, and the per-loop Seq allocation mechanism
-  (transaction/advisory-lock boundary vs. per-loop sequence) that preserves ADR-0025's single total
-  order. Decide the primary key / index on `(tenant_id, loop_id, seq)` for the `Replay(from)`
-  cursor.
-- **fsstore tenant partitioning shape.** Confirm subdirectory-per-tenant
-  (`<baseDir>/<tenant_id>/<loop_id>/events.jsonl`) vs. another keyspace-partition scheme, and that
-  durable resolution (list/resolve loop_ids under a tenant) reads cleanly from the filesystem.
-- **Reconcile with ADR-0030: supersede vs. amend.** And how liveness/ownership is represented in the
-  durable registry vs. the in-memory `r.loops` map — the leading design is the in-memory map becomes
-  a **cache** over the durable registry; confirm this does not re-introduce a shared-mutable-state
-  hazard across instances (learning `deglobalize-holder-also-per-instance-the-shared-graph`).
-- **Non-blocking Append under Postgres.** Exactly how the durable write + `LISTEN`/`NOTIFY` publish
-  preserve ADR-0025's never-block-the-loop guarantee — async publish, a bounded outbound queue, or a
-  decoupled writer — without losing the notify or dropping durability.
-- **Observability hook shape (D5).** Exactly how the `context.Context` / trace-context threads
-  through the durable interface **and** the `LISTEN`/`NOTIFY` hop without pulling an OTEL dependency
-  into `internal/event` now — a no-op propagation shim vs. a bare `context.Context` parameter on the
-  ops — and whether `node_id` is a store-construction value or a per-op parameter. Decide so 0051 can
-  attach an exporter without an interface change.
+All six are settled here and carried into the plan. (See *Reconcile* below for the code re-validation
+they rest on.)
+
+1. **Testing Postgres without a standing DB → build-tagged integration suite.** The Postgres backend
+   and its behavioral tests live behind a `//go:build pgstore` tag and use `testcontainers-go` to spin
+   an ephemeral Postgres. A bare `go test ./...` (no tag) **never compiles or runs** the pg files, so it
+   stays green with **no Postgres and no Docker present** — the non-negotiable bare-checkout constraint.
+   The **one** shared behavioral suite is run against fsstore unconditionally and against Postgres only
+   under `-tags pgstore`; the pg path **skips cleanly** (via `t.Skip`) if the container runtime is
+   unavailable, so even `-tags pgstore` never hard-fails on a Docker-less box.
+2. **Postgres schema/keying → settled.** `events(tenant_id text, loop_id text, seq bigint, ts
+   timestamptz, kind text, node_id text, parent_id text, depth int, turn int, payload jsonb)` with
+   **PK `(tenant_id, loop_id, seq)`** (also the `Replay(from)` cursor index). Per-loop Seq is allocated
+   under a **transaction-scoped per-loop advisory lock** (`pg_advisory_xact_lock` keyed on
+   `(tenant_id, loop_id)`) as `seq = COALESCE(MAX(seq),0)+1` scoped to that loop — a **per-loop** total
+   order (**not** a global sequence), honoring ADR-0025. `Replay(from)` =
+   `WHERE tenant_id=$1 AND loop_id=$2 AND seq>$3 ORDER BY seq`. Registry table
+   `loops(tenant_id text, loop_id text, owner_node_id text, live bool, created_at timestamptz,
+   updated_at timestamptz)` PK `(tenant_id, loop_id)`. **Retention/rotation: none in 0047**
+   (append-only, a documented follow-up), matching fsstore's current no-rotation behavior.
+3. **fsstore tenant partitioning → subdirectory-per-tenant.**
+   `<baseDir>/<tenant_id>/<loop_id>/events.jsonl`; resolution and replay never cross the tenant prefix.
+   An empty/default `tenant_id` maps to a reserved default segment so single-tenant local behavior is
+   byte-preserved. Loop-id resolution under a tenant is a directory list under `<baseDir>/<tenant_id>/`.
+4. **Reconcile ADR-0030 (supersede vs amend) + liveness → map becomes a cache; ADR recorded at build.**
+   The in-memory `r.loops` map becomes a **cache/projection over the durable registry**: the durable
+   registry is the source of truth for a loop's *existence* and *liveness/ownership*, while a **live**
+   loop is still owned and driven by exactly one instance's in-memory `*loop`. Registry writes (created,
+   live-on-instance-I, finished) are the ownership record; each instance derives liveness from the
+   durable registry, **not** from a construction-time shared object (guarding the
+   `deglobalize-holder-also-per-instance-the-shared-graph` hazard — no shared cached snapshot mutated
+   across instances; two concurrent starts on the same `(tenant_id, loop_id)` collide on the PK, not
+   silently clobber). **The ADR is recorded via `docket-adr` at Step 6; leading direction is to AMEND
+   ADR-0030** with a dated `## Update` (its value-threading + policy-free-seam decisions still hold; 0047
+   only makes *existence* durable), escalating to a **superseding** ADR only if the durable-registry seam
+   materially reshapes the Runtime value-threading contract. **ADR-0024 and ADR-0025 are preserved.**
+5. **Non-blocking Append under Postgres → synchronous durable INSERT, decoupled async NOTIFY.** Append
+   performs the durable INSERT synchronously (durability first), then hands the `NOTIFY` to a
+   **decoupled bounded async publisher** (a single goroutine draining a bounded queue; overflow drops
+   with a gap marker, never blocks). Append thus never blocks on `NOTIFY` delivery or on a slow/absent
+   subscriber, preserving ADR-0025/ADR-0016's never-wedge-a-scheduler-slot guarantee. Subscriber fan-out
+   remains drop-newest-with-gap. The durable write itself is bounded and off any subscriber's critical
+   path.
+6. **Observability hook shape (D5) → bare `context.Context`, no OTEL.** A **bare `context.Context`** is
+   the first parameter of the durable-store ops (`Append`, `Replay`, `Subscribe`/resolution) and threads
+   the pub/sub `LISTEN`/`NOTIFY` hop — **no OTEL import, exporter, or `/metrics` surface** in 0047 — so
+   0051 can attach an exporter without an interface change. The `(tenant_id, loop_id, node_id)` labeling
+   triple is exposed on telemetry-relevant ops in a consumer-readable form; `node_id` stays the per-event
+   envelope value (already on `internal/event.Event`) plus an owning-instance `node_id` captured at store
+   construction.
 
 ## Assumptions
 
@@ -356,3 +382,38 @@ the build reconcile may adjust):
   `node_id` is a construction value or a per-op arg — both are flagged as open questions.
 - **Live-model verification is minimized**, since the load-bearing verifications are
   storage/concurrency tests; where a live turn is needed the non-Anthropic gateway policy applies.
+
+## Reconcile (2026-08-10, build reconcile pass)
+
+Re-validated against the **real current tree** (0046 merged; the packages the original spec said "were
+not yet in the local working tree" are now present). Anchored to seam SHAPES, not line numbers.
+
+**Confirmed matching anchors (no drift):**
+
+- `internal/event/store.go` — `EventStore { Append(Event) error; Subscribe() (<-chan Event, func());
+  Replay(from Seq) ([]Event, error) }` + `NoopStore`. This is the D1 seam verbatim.
+- `internal/event/event.go` — `Event` envelope carries `Seq, TS, NodeID, ParentID, Depth, Turn, Kind,
+  Payload`; `node_id` already present (folds into the D5 labeling triple). Payloads plaintext
+  `json.RawMessage` (ADR-0024).
+- `internal/event/fsstore/store.go` — `FSEventStore` writes `<baseDir>/<sessionID>/events.jsonl`,
+  Seq allocated under `s.mu` (`s.seq++; e.Seq = s.seq`), non-blocking drop-newest-with-gap fan-out
+  (`Dropped()` counter). ADR-0024/0025 intact. `NewFSEventStore(baseDir, sessionID)` is the extension
+  point for D2 tenant partitioning (subdir-per-tenant).
+- `internal/runtime/inproc.go` — `inProcRuntime.loops map[string]*loop`; `Observe`/`Attach`/`Send`/
+  `Spawn` resolve loop_id **only** via `lookup()` against that in-memory map (`ErrLoopNotFound`,
+  `ErrLoopFinished`). This is precisely the cold-process gap D4 fixes. `Runtime.Observe(loopID string)`
+  and `Attach(loopID string, from Seq)` today carry **neither** `context.Context` **nor** `tenant_id` —
+  the D2/D5 signature changes land here and on `LoopConfig`.
+- `internal/loopserver/server.go` — `serveObserve` **already** implements subscribe-before-replay +
+  dedup-at-watermark over the JSON-RPC wire (the `replay-live-handoff-dedup-at-watermark` discipline),
+  with `observeParams{LoopID, FromSeq}` and gap flagging. 0047 **extends this same discipline** to the
+  Postgres pub/sub tail; `reattach_test.go` is the existing proof for the in-proc path.
+- `cmd/fuse/loop_server.go` — `buildLoopServerRuntimeDeps` wires `BaseDir: session.DefaultLogDir()`
+  and is the **only** multi-loop binding; it is the composition-root seam where a Postgres backend is
+  selected. Runtime closes each loop's store on run completion; `Replay` opens its own reader, so
+  Attach-after-completion works (an obligation D3 must preserve cross-process).
+
+**Environment:** Go 1.26.5; Docker daemon running locally; **no** Postgres/pgx/testcontainers deps in
+`go.mod` — confirming OQ1's constraint (bare `go test ./...` must stay green with no PG). No obsolescence
+and no fundamental invalidation; scope stays one change / one PR (D1–D5). All six open questions resolved
+above.
