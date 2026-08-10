@@ -103,6 +103,32 @@ func TestDispatchLoopSendCallsRuntime(t *testing.T) {
 	}
 }
 
+// TestDispatchLoopSendFinishedLoopIsError proves loop.send to a finished (or unknown)
+// loop maps the runtime sentinel to a JSON-RPC error (codeInvalidParams), NOT an OK
+// response — a client sending to a stale loop_id must be told, not silently accepted.
+func TestDispatchLoopSendFinishedLoopIsError(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"finished", runtime.ErrLoopFinished},
+		{"unknown", runtime.ErrLoopNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fr := &fakeRuntime{sendErr: tc.err}
+			s := NewServer(nil, nil, fr)
+			r := req{JSONRPC: "2.0", ID: json.RawMessage(`5`), Method: "loop.send", Params: json.RawMessage(`{"loop_id":"loop-abc","input":"x"}`)}
+			got := s.dispatch(context.Background(), r)
+			if got.Error == nil {
+				t.Fatalf("got OK result %s, want a JSON-RPC error", got.Result)
+			}
+			if got.Error.Code != codeInvalidParams {
+				t.Fatalf("error code = %d, want codeInvalidParams (%d)", got.Error.Code, codeInvalidParams)
+			}
+		})
+	}
+}
+
 func TestUnknownMethod(t *testing.T) {
 	s := NewServer(nil, nil, &fakeRuntime{})
 	r := req{JSONRPC: "2.0", ID: json.RawMessage(`3`), Method: "loop.nope"}

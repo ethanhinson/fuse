@@ -32,6 +32,10 @@ type Runtime interface {
 	StartLoop(ctx context.Context, cfg LoopConfig) (LoopHandle, error)
 
 	// Send injects human input at the loop's next turn boundary (ADR-0022 human-bus).
+	// It returns ErrLoopNotFound for an unknown loop and ErrLoopFinished when the
+	// loop's run goroutine has already completed (its injector no longer drains, so
+	// enqueuing would strand the message); a still-running loop enqueues and returns
+	// nil.
 	Send(ctx context.Context, loopID string, input string) error
 
 	// Spawn starts a child agent under the loop and returns a handle wrapping

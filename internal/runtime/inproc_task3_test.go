@@ -78,7 +78,41 @@ func TestObserveAndAttach(t *testing.T) {
 	}
 }
 
+// TestSendEnqueuesForRoot proves Send to a RUNNING loop enqueues on the root node's
+// human-bus queue (ADR-0022). The completer blocks before the first turn, so the run
+// goroutine is live but its injector has not drained yet — the enqueue is observable.
 func TestSendEnqueuesForRoot(t *testing.T) {
+	release := make(chan struct{})
+	rt := newTestRuntime(t, blockingCompleter{release: release})
+
+	h, err := rt.StartLoop(context.Background(), LoopConfig{Task: "hi", ModelID: "cloud/x"})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	// The loop is running (completer blocked): Send must enqueue and return nil.
+	if err := rt.Send(context.Background(), h.ID(), "more work"); err != nil {
+		t.Fatalf("Send to running loop: %v", err)
+	}
+
+	// The message is enqueued on the root node's human-bus queue (ADR-0022).
+	// New returns the Runtime interface; reach the concrete loop state under test.
+	lp := rt.(*inProcRuntime).loops[h.ID()]
+	pending := lp.humanBus.Pending(h.ID())
+	if len(pending) != 1 || pending[0].Text != "more work" {
+		t.Fatalf("root queue = %+v, want one 'more work' message", pending)
+	}
+
+	// Let the run finish so the test doesn't leak the goroutine.
+	close(release)
+	if _, err := h.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+}
+
+// TestSendToFinishedLoopReturnsErrLoopFinished proves Send to a loop whose run
+// goroutine has already completed returns the distinguishable ErrLoopFinished sentinel
+// rather than silently stranding the input on a queue nothing drains.
+func TestSendToFinishedLoopReturnsErrLoopFinished(t *testing.T) {
 	fake := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}
 	rt := newTestRuntime(t, fake)
 
@@ -90,16 +124,14 @@ func TestSendEnqueuesForRoot(t *testing.T) {
 		t.Fatalf("Wait: %v", err)
 	}
 
-	if err := rt.Send(context.Background(), h.ID(), "more work"); err != nil {
-		t.Fatalf("Send: %v", err)
+	if err := rt.Send(context.Background(), h.ID(), "more work"); !errors.Is(err, ErrLoopFinished) {
+		t.Fatalf("Send to finished loop err = %v, want ErrLoopFinished", err)
 	}
 
-	// The message is enqueued on the root node's human-bus queue (ADR-0022).
-	// New returns the Runtime interface; reach the concrete loop state under test.
+	// Nothing was enqueued: the finished-loop path returns before Enqueue.
 	lp := rt.(*inProcRuntime).loops[h.ID()]
-	pending := lp.humanBus.Pending(h.ID())
-	if len(pending) != 1 || pending[0].Text != "more work" {
-		t.Fatalf("root queue = %+v, want one 'more work' message", pending)
+	if pending := lp.humanBus.Pending(h.ID()); len(pending) != 0 {
+		t.Fatalf("finished loop should not enqueue; queue = %+v", pending)
 	}
 }
 

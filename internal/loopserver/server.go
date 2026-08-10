@@ -14,6 +14,7 @@ package loopserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -175,12 +176,18 @@ func (s *Server) handleStart(ctx context.Context, r req) resp {
 	return s.okResp(r.ID, startResult{LoopID: h.ID()})
 }
 
+// handleSend maps a finished/unknown loop to codeInvalidParams: both are
+// client-addressable conditions (a stale or wrong loop_id) rather than server faults,
+// so the client can correct the request. Any other Send error is codeInternal.
 func (s *Server) handleSend(ctx context.Context, r req) resp {
 	var p sendParams
 	if err := json.Unmarshal(r.Params, &p); err != nil {
 		return s.errResp(r.ID, codeInvalidParams, "invalid params: "+err.Error())
 	}
 	if err := s.rt.Send(ctx, p.LoopID, p.Input); err != nil {
+		if errors.Is(err, runtime.ErrLoopFinished) || errors.Is(err, runtime.ErrLoopNotFound) {
+			return s.errResp(r.ID, codeInvalidParams, err.Error())
+		}
 		return s.errResp(r.ID, codeInternal, err.Error())
 	}
 	return s.okResp(r.ID, map[string]any{})

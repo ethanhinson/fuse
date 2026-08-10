@@ -17,6 +17,12 @@ import (
 // a known, started loop on this Runtime.
 var ErrLoopNotFound = errors.New("runtime: loop not found")
 
+// ErrLoopFinished is returned by Send when the target loop's run goroutine has
+// already completed. Its human-bus injector no longer drains at a turn boundary, so
+// enqueuing would strand the message forever; Send reports this distinguishable
+// condition instead of silently accepting the input.
+var ErrLoopFinished = errors.New("runtime: loop finished")
+
 // Deps are the binding-supplied collaborators the Runtime composes. None are
 // renderer/TUI/gate types; a binding wires those around the Runtime, not into it.
 type Deps struct {
@@ -223,10 +229,24 @@ func (r *inProcRuntime) Attach(loopID string, from event.Seq) ([]event.Event, er
 // It enqueues for the root node; the root injector installed at StartLoop drains it
 // at the next turn boundary. ModeRespond = a direct reply to that node (not a
 // broadcast).
+//
+// Send distinguishes three cases: an unknown loop returns ErrLoopNotFound; a loop
+// whose run goroutine has already finished returns ErrLoopFinished (its injector no
+// longer drains, so enqueuing would strand the message forever); a still-running
+// loop enqueues and returns nil.
 func (r *inProcRuntime) Send(ctx context.Context, loopID string, input string) error {
 	lp, err := r.lookup(loopID)
 	if err != nil {
 		return err
+	}
+	// A finished loop's injector will never drain another message. Report it instead
+	// of silently stranding the input on the queue.
+	if lp.handle != nil {
+		select {
+		case <-lp.handle.done:
+			return fmt.Errorf("%w: %q", ErrLoopFinished, loopID)
+		default:
+		}
 	}
 	lp.humanBus.Enqueue(lp.node.ID, agent.ModeRespond, "@human", input)
 	return nil
