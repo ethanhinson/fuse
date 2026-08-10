@@ -17,6 +17,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/segment"
 	"github.com/ethanhinson/fuse/internal/segment/fssink"
 	"github.com/ethanhinson/fuse/internal/session"
@@ -269,144 +270,29 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// blanket-auto-approve bypass.
 	childBaseApprove := tui.NewTeaApprovalFunc(m.Channel())
 
-	// SpawnFunc factory — self-referential so child agents get their own spawner.
-	var makeSpawner func(parentNode *agent.AgentNode, parentDepth int) *agent.Spawner
-	makeSpawnFunc := func(parentNode *agent.AgentNode, parentDepth int) tools.SpawnFunc {
-		return spawnFuncFrom(makeSpawner(parentNode, parentDepth), sched, parentNode)
-	}
-	makeSpawner = func(parentNode *agent.AgentNode, parentDepth int) *agent.Spawner {
-		return agent.NewSpawner(
-			agent.WithTree(tree),
-			agent.WithNode(parentNode),
-			agent.WithSpawnDepth(parentDepth),
-			// Completion hook (ADR-0022): bubble a finished child's undelivered
-			// human messages up to its parent so none are silently stranded.
-			agent.WithHumanBus(humanBus),
-			// Spawn lifecycle events (change 0044): emitted by the Spawner choke
-			// point — cloned child-builder site 2 of 3.
-			agent.WithEventStore(currentEventStore()),
-			agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
-				// Register a human-typeable @handle for this child (auto-derived from
-				// its label, collision-disambiguated) so the human can address it.
-				handleReg.Register(childNode.ID, opts.Label)
-				// Child-specific tool registry (clone or subset); unknown tool
-				// names fail the spawn so the model can self-correct.
-				childToolReg, terr := childToolRegistry(toolReg, opts.Tools)
-				if terr != nil {
-					return "", terr
-				}
-				if childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(opts.Tools) {
-					// Depth strip (static): a child at MaxDepth can never spawn.
-					// Folded-in fix (change 0034): a parent that omits spawn_agent
-					// from its requested tools subset withholds it from the child.
-					// Either way, drop any copy inherited via Clone()/Subset().
-					childToolReg.Unregister("spawn_agent")
-				} else {
-					// Replace spawn_agent with one wired to the child's spawner.
-					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget).
-						WithQuotaWarning(quotaWarningFor(tree, childNode.ID)))
-				}
-				// Blackboard tools bound to the child's provenance — always wired
-				// (not spawn-gated), honoring an explicit subset that omits them.
-				wireChildBlackboard(childToolReg, bb, childNode, opts.Tools)
-				// pipeline_run bound to the child's own spawner — always wired unless
-				// an explicit subset omits it (mirrors the blackboard wiring). (0026)
-				pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
-				childSpawner := makeSpawner(childNode, childNode.Depth)
-				wirePipelineTool(childToolReg,
-					makePipelineRunFn(childSpawner, bb, sched, childNode),
-					makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW),
-					opts.Tools)
+	// Binding #1b (change 0045): the shell routes engine CONSTRUCTION and store
+	// ownership through the in-process Runtime's Deps seam. buildShellRuntimeDeps
+	// wires the child-builder closure (cloned child-builder site 2 of 3) and
+	// registers the root's spawn_agent / blackboard / pipeline tools on toolReg — a
+	// behavior-preserving relocation of the block that lived here. The TUI keeps
+	// ownership of rendering + turn cadence (via the build seam above), human
+	// messaging, the projected-log consumer, and the segment sink (plan NOTE on
+	// shell.go). The Runtime is constructed for seam symmetry / binding-#2 reuse; the
+	// shell continues to open/close its own event store because the TUI — not
+	// StartLoop — drives turns.
+	_ = runtime.New(buildShellRuntimeDeps(shellDepsInput{
+		cfg: cfg, reg: reg, alias: alias, toolReg: toolReg, tree: tree, bb: bb,
+		verbose: verbose, skillBlock: skillBlock, sessionMode: sessionMode,
+		humanBus: humanBus, handleReg: handleReg, sessLog: sessLog,
+		traceW: traceW, rateGate: rateGate, logDir: logDir,
+		childApprove: childBaseApprove, rootApprove: childBaseApprove,
+	}))
 
-				r := tui.NewNodeRenderer(childNode, childTree)
-				// Child agents inherit the parent's permission config and route their
-				// approvals to the same parent TUI channel, prefixed so the human sees
-				// which subagent is asking. The configured mode is enforced for
-				// children exactly as for the root (no blanket-auto-approve bypass).
-				childApprove := permissions.PrefixApproval(opts.Label, childBaseApprove)
-
-				modelAlias := opts.ModelID
-				if modelAlias == "" {
-					modelAlias = alias
-				}
-
-				var a *agent.Agent
-				var aerr error
-				// Children spawned inside the interactive shell inherit its
-				// interactive posture — a human is reachable via the shell.
-				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate)
-				} else {
-					a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate)
-				}
-				if aerr != nil {
-					return "", aerr
-				}
-				// Per-turn spawn-strip brake: omit spawn_agent from this child's
-				// tool schemas when admission from its scope would not currently be
-				// granted or queued within bound — the active-child cap queues
-				// (reversible), the lifetime budget strips (permanent), the queue
-				// bound strips (reversible). See change 0033, unified in change 0036.
-				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
-				a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
-				// Child's human-message injector: drains humanq/<child> each turn.
-				a.SetHumanInjector(agent.NewHumanInjector(childNode.ID, humanBus))
-				// Event stream wiring (change 0043): the child emits its loop events
-				// into the session store, tagged with its node identity.
-				a.SetEventSink(currentEventStore())
-				a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
-
-				// spawn.start / spawn.done are emitted by the Spawner (change 0044),
-				// the single choke point every spawn passes through — replacing the
-				// per-cmd-site emission 0043 wired here. The direct sessLog.Write below
-				// is independent and unchanged; the event-stream projection consumer
-				// (startProjectedLogConsumer) still reproduces the same LogEntry from the
-				// Spawner-emitted spawn.done.
-				history := []model.Message{{Role: "user", Content: opts.Task}}
-				msgs, rerr := a.Run(ctx, history)
-				// Report the RAW run error to the Spawner's spawn.done event (change
-				// 0044) so the projected session log's `kind` matches this direct
-				// write's raw-error selection below — the byte-equivalence 0043 relies
-				// on — even when childResult collapses a max-turns/loop stop into a
-				// partial-success string (runErr == nil).
-				opts.RunErrSink().Set(rerr)
-
-				if sessLog != nil {
-					kind := "done"
-					if rerr != nil {
-						kind = "error"
-					}
-					_ = sessLog.Write(session.LogEntry{
-						TS:       time.Now(),
-						NodeID:   childNode.ID,
-						ParentID: childNode.ParentID,
-						Label:    childNode.Label,
-						Depth:    childNode.Depth,
-						Kind:     kind,
-					})
-				}
-
-				return childResult(msgs, rerr)
-			}),
-		)
-	}
-
-	// Register spawn_agent in the tool registry before any agent runs.
-	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
-		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
-	// Root-node-wired blackboard tools (provenance = rootNode).
-	wireRootBlackboard(toolReg, bb, rootNode)
 	// ask_user: reaches the human through the same TUI channel as approvals, so
 	// the model can pose a structured multiple-choice question and block for the
-	// answer, which returns as the tool result (and thus into context).
+	// answer, which returns as the tool result (and thus into context). Registered
+	// here because it depends on the ShellModel channel built above.
 	toolReg.Register(tools.NewAskUserTool(tui.NewTeaAskFunc(m.Channel())))
-	// Root pipeline_run bound to the root spawner (provenance = rootNode). (0026)
-	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
-	rootPipeSpawner := makeSpawner(rootNode, 0)
-	wirePipelineTool(toolReg,
-		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode),
-		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW),
-		nil)
 
 	// Start the 250ms dirty-node flusher; the same ctx stops the bridges.
 	flushCtx, cancelFlusher := context.WithCancel(context.Background())

@@ -244,9 +244,9 @@ func (r *inProcRuntime) Spawn(ctx context.Context, loopID string, opts SpawnOpts
 		agent.WithTree(lp.tree),
 		agent.WithNode(lp.node),
 		agent.WithSpawnDepth(lp.node.Depth),
-		agent.WithEventStore(lp.store),   // spawn.start/spawn.done land on the same stream
+		agent.WithEventStore(lp.store),        // spawn.start/spawn.done land on the same stream
 		agent.WithChildBuilder(lp.buildChild), // the binding's per-loop child policy
-		agent.WithHumanBus(lp.humanBus),  // bubble a child's undelivered messages up
+		agent.WithHumanBus(lp.humanBus),       // bubble a child's undelivered messages up
 	)
 	h, herr := spawner.Spawn(ctx, agent.SpawnOpts{
 		Label:        opts.Label,
@@ -267,6 +267,6 @@ func (r *inProcRuntime) Spawn(ctx context.Context, loopID string, opts SpawnOpts
 // without importing internal/agent's async internals at the call site.
 type spawnHandle struct{ h agent.AgentHandle }
 
-func (s spawnHandle) NodeID() string       { return s.h.NodeID }
+func (s spawnHandle) NodeID() string        { return s.h.NodeID }
 func (s spawnHandle) Wait() agent.SpawnDone { return s.h.Wait() }
 func (s spawnHandle) Result() (any, error)  { return s.h.Result() }
