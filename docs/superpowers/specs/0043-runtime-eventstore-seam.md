@@ -244,6 +244,30 @@ staging costs nothing architecturally — Stage A simply does not *emit* the del
   is forward-compatible with a per-loop handle in change 3 (it should be: a handle just
   narrows `Subscribe` to a `NodeID` subtree).
 
+### Open questions — RESOLVED at reconcile (2026-08-10)
+
+The plan is bound to these resolutions (see the change's `## Reconcile log` for rationale):
+
+- **Segment-store overlap → (b) lean/independent.** `events.jsonl` carries full boundary
+  payloads, born plaintext + append-only; the **segment store is left untouched**. Unifying
+  (resolution (a)) would be a risky refactor of ADR-0020's proven non-destructive store and is
+  *not* de-risking Stage A work. Transient content overlap accepted; a later change may dedupe.
+- **`Seq` → per-session-global, allocated inside the store under its lock.** The per-session
+  store instance is the monotonic allocator; `Append` assigns `Seq` under the file-handle lock.
+  Callers never pre-set `Seq`. Single total order → clean `Replay(from)` cursor.
+- **Back-pressure → bounded per-subscriber buffer + drop-newest-with-gap-marker.** Delivery is
+  a non-blocking send; a full buffer drops the newest event for that subscriber and raises a gap
+  marker. `Append` and the loop never block on a subscriber (ADR-0016 preserved); guarded by a
+  non-blocking-send regression test.
+- **`Observe` → session-scoped `Subscribe()`**, forward-compatible with a per-loop `NodeID`
+  narrowing in change 3.
+
+**Anchor note:** the `EventStore` type + interface live in the agent-free leaf `internal/event`
+(cleaner than the segment precedent, whose `SegmentSink` interface sits in `internal/agent`
+because `SegmentRegion` embeds `[]model.Message` — `Event` has no such dependency). The single
+current direct `Logger.Write` site is `cmd/fuse/shell.go` (child-completion "done"/"error"),
+which the log-as-consumer projection reproduces; `SpawnDone` is `{Result, Err, Structured}`.
+
 ## Verification
 
 - **Additive-ness:** the full existing suite passes with Stage A landed and **no existing
