@@ -2,7 +2,7 @@
 id: 47
 slug: durable-distributed-event-store
 title: Durable / distributed event store — survives restart and is shared across instances
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-10
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/durable-distributed-event-store
+claimed_at: 2026-08-10T21:43:26Z
 pr:
 blocked_by:
 reconciled: false
