@@ -2,7 +2,7 @@
 id: 27
 slug: runtime-owns-loop-eventstore-global-holder-bridge
 title: Runtime owns the loop event store as instance state; process-global holders kept as a single-loop compatibility bridge
-status: Accepted
+status: Superseded by ADR-30
 date: 2026-08-10
 supersedes: []
 reverses: []
