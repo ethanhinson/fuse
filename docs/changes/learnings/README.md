@@ -39,6 +39,7 @@ One curated finding per file; this index is the hint surface. Load it, then read
 ## testing
 
 - [mutex-test-double-concurrent-provider](mutex-test-double-concurrent-provider.md) — Mutex-protect both getter and setter on test doubles shared with goroutines — a lock on one side only is still a race · also: concurrency, race, goroutines
+- [parity-test-feeds-each-side-its-own-production-source](parity-test-feeds-each-side-its-own-production-source.md) — Testing that a re-derived output (a projection, a replacement writer) is byte-identical to the original it will replace? Feed each side its own real production source — a shared synthetic input makes the test blind to the exact divergence it exists to catch. · also: equivalence, projection, refactoring, go, timestamps ⟨needs promotion⟩
 
 ## tui
 
