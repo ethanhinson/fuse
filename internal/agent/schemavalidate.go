@@ -138,6 +138,61 @@ func augmentPromptWithSchema(prompt string, schema any) string {
 	return prompt + "\n\n" + directive
 }
 
+// returnResultToolName is the name of the synthesized per-child structured-output
+// tool (change 0042). When a spawn carries an Expects schema, a tool by this name
+// is offered to the child whose parameters schema IS the expects schema, so the
+// child returns its verdict on the tool channel — the same channel its working
+// tools use — instead of via a contradictory "final message = JSON" directive.
+const returnResultToolName = "return_result"
+
+// returnResultSchema returns the parameters schema for the synthesized
+// return_result tool: it IS the expects schema, verbatim (change 0042 D1). The
+// value is used both as the tool's advertised Parameters and as the schema the
+// loop validates the call's arguments against, so there is exactly one schema of
+// record and no drift between what the model is shown and what is enforced.
+func returnResultSchema(expects map[string]any) map[string]any { return expects }
+
+// returnResultDescription is the description advertised for the synthesized
+// return_result tool (change 0042 D1). It names the tool, says to call it once
+// when done, and points the child at doing its work with the other tools first —
+// deliberately non-contradictory with the tool set.
+func returnResultDescription() string {
+	return "Call return_result exactly once, when your task is complete, to deliver your " +
+		"final structured result. Its arguments must conform to the required schema. Do your " +
+		"work with the other tools first, then call return_result once to finish."
+}
+
+// returnResultHint is the short, non-contradictory system-prompt addition used on
+// the return_result path INSTEAD of augmentPromptWithSchema (change 0042 D2). It
+// names return_result as the way to finish and, unlike the old directive, never
+// tells the child its final MESSAGE must be JSON — so it does not compete with the
+// tool channel. The schema is serialized so the child knows the required shape; a
+// schema that fails to marshal still yields a usable (schema-less) hint.
+func returnResultHint(schema any) string {
+	b, err := json.Marshal(schema)
+	if err != nil {
+		return "When your task is complete, call the return_result tool once with your final " +
+			"structured result. Use your other tools to do the work first."
+	}
+	return "When your task is complete, call the return_result tool once with your final " +
+		"structured result conforming to this JSON Schema: " + string(b) +
+		". Use your other tools (e.g. writing files) to do the work first; return_result is " +
+		"only for delivering the final result — do not put the result object into any other tool's arguments."
+}
+
+// augmentPromptWithReturnResult appends the return_result hint (change 0042 D2)
+// to a child's system prompt, replacing the pre-0042 augmentPromptWithSchema
+// directive on the structured-delegation path. Unlike that directive it never
+// tells the child its final MESSAGE must be JSON, so it does not compete with the
+// tool channel. An empty base prompt yields the hint alone.
+func augmentPromptWithReturnResult(prompt string, schema map[string]any) string {
+	hint := returnResultHint(schema)
+	if strings.TrimSpace(prompt) == "" {
+		return hint
+	}
+	return prompt + "\n\n" + hint
+}
+
 // validateAgainstSchema leniently extracts a JSON value from raw and validates it
 // against the given JSON Schema (a decoded schema document, typically a
 // map[string]any from the model's `expects` param). On success it returns the
