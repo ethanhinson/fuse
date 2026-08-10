@@ -87,8 +87,9 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 	// childBuilder is the loop's per-child runner (cloned child-builder site 1 of 3,
 	// learning patch-every-cloned-child-builder). It is BOTH the ChildBuilder every
 	// makeSpawner wires (so the root's spawn_agent tool fan-out is unchanged) AND the
-	// runtime.Deps.BuildChild the Runtime's own Spawner uses for binding #2. Extracted
-	// to a named var so the same closure backs both.
+	// child-builder BuildAgent returns to the Runtime for its own Spawner (change 0046
+	// retired the separate Deps.BuildChild field). Extracted to a named var so the same
+	// closure backs both.
 	childBuilder := func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
 		childToolReg, terr := childToolRegistry(toolReg, opts.Tools)
 		if terr != nil {
