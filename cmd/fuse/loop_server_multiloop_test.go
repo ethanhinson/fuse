@@ -114,7 +114,7 @@ func TestLoopServerHostsNConcurrentLoops(t *testing.T) {
 	// Each loop's durable stream carries ONLY its own reply, with contiguous per-loop
 	// Seq from 1.
 	for i, id := range ids {
-		evs, aerr := rt.Attach(id, 0)
+		evs, aerr := rt.Attach(context.Background(), event.DefaultTenant, id, 0)
 		if aerr != nil {
 			t.Fatalf("loop %d Attach: %v", i, aerr)
 		}

@@ -87,11 +87,25 @@ func buildLoopServerRuntimeDeps(cfg config.Config, reg *model.Registry, modelAli
 	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
 	rateGate model.RateGate) runtime.Deps {
 
+	// Select the SHARED durable backend (change 0047): a process-wide durable event
+	// store + loop registry, threaded into Deps as VALUES so the loop-server resolves
+	// loops via the durable seam and a FRESH process can reattach to a prior process's
+	// loop (cold cross-process reattach). The untagged build always returns the
+	// filesystem backend (no pgx import); the pgstore build may return Postgres. On the
+	// unlikely selector error, fall back to nil (the legacy per-loop fsstore path via
+	// BaseDir still works — just without cross-process reattach).
+	durableStore, durableReg, derr := selectDurableBackend(cfg)
+	if derr != nil {
+		durableStore, durableReg = nil, nil
+	}
+
 	return runtime.Deps{
-		// REAL fsstore per loop: observe/attach need durable history. The Runtime closes
-		// each loop's store when its run completes — that releases the write handle and
-		// closes live subscriber channels (terminating observe pumps), while Attach keeps
-		// working because fsstore.Replay opens its own reader from events.jsonl.
+		// DurableStore/Registry are the 0047 durable seam (shared, cross-process). When
+		// set, StartLoop emits into this shared store per StreamKey and registers the
+		// loop's liveness, so observe/attach resolve loops a prior process started. BaseDir
+		// remains set as the legacy fallback (used only when DurableStore is nil).
+		DurableStore:  durableStore,
+		Registry:      durableReg,
 		BaseDir:       session.DefaultLogDir(),
 		MaxConcurrent: cfg.Agents.MaxConcurrent,
 		// The per-loop tool registry is built fresh per loop from the same source as the
