@@ -1,12 +1,12 @@
 # Backlog
 
-**42 changes** — 🟡 1 proposed · ⚪ 1 deferred · ✅ 34 done · 🗑️ 6 killed
+**42 changes** — 🟢 1 in progress · ⚪ 1 deferred · ✅ 34 done · 🗑️ 6 killed
 
-## 🟡 Proposed (1)
+## 🟢 In progress (1)
 
-| # | Title | Priority | Type | Readiness |
-|---|-------|----------|------|-----------|
-| [0042](active/0042-return-result-structured-delegation.md) | Fix structured-delegation (expects) vs tool-calling collision via a return_result tool | `high` | `fix` | build-ready |
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0042](active/0042-return-result-structured-delegation.md) | Fix structured-delegation (expects) vs tool-calling collision via a return_result tool | `high` | `fix` | [spec](../superpowers/specs/0042-return-result-structured-delegation.md) | `feat/return-result-structured-delegation` |
 
 ## ⚪ Deferred (1)
 
