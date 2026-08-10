@@ -246,6 +246,122 @@ func TestObserveMarksGap(t *testing.T) {
 	}
 }
 
+// TestObserveDedupesReplayLiveOverlap proves the reattach "no duplication" contract:
+// an event whose Seq is already covered by the replay watermark must NOT be
+// re-delivered by the live pump, and a genuine gap AFTER the watermark is still
+// flagged. Here Attach replays Seq 1,2,3 (watermark=3) and the live channel ALSO
+// delivers Seq 3 (the overlap) then Seq 4 — the client must see 1,2,3,4 exactly once
+// (3 not doubled) with no spurious gap on 4. A second observe with an overlap then a
+// post-watermark hole (Seq 6 after watermark 3) must flag gap:true on 6.
+func TestObserveDedupesReplayLiveOverlap(t *testing.T) {
+	live := make(chan event.Event, 2)
+	fr := &fakeRuntime{
+		attachHist: []event.Event{
+			{Seq: 1, Kind: event.KindTurnStart},
+			{Seq: 2, Kind: event.KindModelCallStart},
+			{Seq: 3, Kind: event.KindModelCallEnd},
+		},
+		observeCh: live,
+	}
+
+	sr, sw := io.Pipe()
+	cr, cw := io.Pipe()
+	s := NewServer(cr, sw, fr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Serve(ctx) }()
+	go func() {
+		enc := json.NewEncoder(cw)
+		_ = enc.Encode(req{JSONRPC: "2.0", ID: json.RawMessage(`12`), Method: "loop.observe", Params: json.RawMessage(`{"loop_id":"loop-abc"}`)})
+	}()
+
+	dec := json.NewDecoder(sr)
+
+	// Response: replayed:3, last_seq:3.
+	var f0 rawFrame
+	if err := dec.Decode(&f0); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	var res observeResult
+	if err := json.Unmarshal(f0.Result, &res); err != nil {
+		t.Fatalf("unmarshal observeResult: %v", err)
+	}
+	if res.Replayed != 3 || res.LastSeq != 3 {
+		t.Fatalf("observeResult = %+v, want replayed:3 last_seq:3", res)
+	}
+
+	// Replay notes for Seq 1,2,3.
+	for _, wantSeq := range []event.Seq{1, 2, 3} {
+		np := readNote(t, dec)
+		if np.Event.Seq != wantSeq {
+			t.Fatalf("replay note seq = %d, want %d", np.Event.Seq, wantSeq)
+		}
+		if np.Gap {
+			t.Fatalf("replay note seq %d unexpectedly flagged gap", wantSeq)
+		}
+	}
+
+	// Live channel delivers the OVERLAP (Seq 3) then Seq 4. Seq 3 must be skipped;
+	// the NEXT note the client reads must be Seq 4, not a duplicated Seq 3.
+	live <- event.Event{Seq: 3, Kind: event.KindModelCallEnd}
+	live <- event.Event{Seq: 4, Kind: event.KindTurnEnd}
+	np := readNote(t, dec)
+	if np.Event.Seq != 4 {
+		t.Fatalf("live note seq = %d, want 4 (Seq 3 overlap must be deduped, not doubled)", np.Event.Seq)
+	}
+	if np.Gap {
+		t.Fatalf("live note seq 4 unexpectedly flagged gap (contiguous with watermark 3)")
+	}
+}
+
+// TestObserveMarksGapAfterOverlap proves that after deduping an overlap, a true hole
+// past the watermark is still flagged: watermark 3, live delivers overlap Seq 3 then
+// Seq 6 — Seq 6 carries gap:true.
+func TestObserveMarksGapAfterOverlap(t *testing.T) {
+	live := make(chan event.Event, 2)
+	fr := &fakeRuntime{
+		attachHist: []event.Event{
+			{Seq: 1, Kind: event.KindTurnStart},
+			{Seq: 2, Kind: event.KindModelCallStart},
+			{Seq: 3, Kind: event.KindModelCallEnd},
+		},
+		observeCh: live,
+	}
+
+	sr, sw := io.Pipe()
+	cr, cw := io.Pipe()
+	s := NewServer(cr, sw, fr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Serve(ctx) }()
+	go func() {
+		enc := json.NewEncoder(cw)
+		_ = enc.Encode(req{JSONRPC: "2.0", ID: json.RawMessage(`13`), Method: "loop.observe", Params: json.RawMessage(`{"loop_id":"loop-abc"}`)})
+	}()
+
+	dec := json.NewDecoder(sr)
+	var f0 rawFrame
+	if err := dec.Decode(&f0); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	readNote(t, dec)
+	readNote(t, dec)
+	readNote(t, dec)
+
+	// Overlap Seq 3 (deduped) then a hole to Seq 6 — Seq 6 must be gap:true.
+	live <- event.Event{Seq: 3, Kind: event.KindModelCallEnd}
+	live <- event.Event{Seq: 6, Kind: event.KindTurnEnd}
+	np := readNote(t, dec)
+	if np.Event.Seq != 6 {
+		t.Fatalf("live note seq = %d, want 6", np.Event.Seq)
+	}
+	if !np.Gap {
+		t.Fatalf("live note seq 6 should be flagged gap (watermark 3, hole 4-5)")
+	}
+}
+
 // readNote decodes the next frame and asserts it is an id-less loop.event
 // notification, returning its params.
 func readNote(t *testing.T, dec *json.Decoder) eventNoteParams {

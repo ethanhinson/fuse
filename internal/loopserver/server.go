@@ -191,10 +191,12 @@ func (s *Server) handleSend(ctx context.Context, r req) resp {
 // response carrying the replay watermark FIRST, replays events since from_seq as
 // id-less loop.event notifications, then live-tails the channel on a goroutine
 // pushing further loop.event notifications until ctx is done or the channel closes.
-// The FIRST post-gap live event is flagged gap:true (ADR-0025 drop-newest
-// detection: ev.Seq > prev+1), telling the client to re-observe from its last-seen
-// seq. It writes its own frames (response + notifications) under the shared encoder
-// mutex rather than returning a resp, because it emits many frames, not one.
+// Live events already covered by the replay watermark (the subscribe→replay overlap)
+// are deduped so the client sees each Seq exactly once; the FIRST genuinely-new
+// post-gap live event is flagged gap:true (ADR-0025 drop-newest detection: ev.Seq >
+// prev+1), telling the client to re-observe from its last-seen seq. It writes its own
+// frames (response + notifications) under the shared encoder mutex rather than
+// returning a resp, because it emits many frames, not one.
 func (s *Server) serveObserve(ctx context.Context, r req) error {
 	var p observeParams
 	if err := json.Unmarshal(r.Params, &p); err != nil {
@@ -202,7 +204,10 @@ func (s *Server) serveObserve(ctx context.Context, r req) error {
 	}
 	// 1) Subscribe BEFORE replay so no event slips between replay end and live start.
 	//    The channel is buffered; nothing is drained until the pump starts (after the
-	//    response + replay notes), so live events queue rather than race the replay.
+	//    response + replay notes), so live events queue rather than race the replay. An
+	//    event appended in the subscribe→replay window is delivered on BOTH paths; the
+	//    live pump dedups it against the replay watermark (see step 5) so the client
+	//    never sees a duplicate.
 	ch, cancel, err := s.rt.Observe(p.LoopID)
 	if err != nil {
 		return s.encode(s.errResp(r.ID, codeInternal, err.Error()))
@@ -228,8 +233,13 @@ func (s *Server) serveObserve(ctx context.Context, r req) error {
 		s.pushEvent(p.LoopID, ev, false)
 	}
 	// 5) Live tail on a goroutine until ctx done or the loop's store closes (channel
-	//    closed). Detect a Seq gap (ADR-0025 drop-newest) and flag the first post-gap
-	//    event so the client Attach-replays the hole.
+	//    closed). Because Observe subscribes BEFORE Attach replays, an event appended
+	//    in that window is BOTH replayed (advancing `last`) AND delivered live; the
+	//    watermark dedup below (ev.Seq <= last) drops that overlap so the client sees
+	//    each Seq exactly once (reattach "no duplication" contract). prev starts at the
+	//    replay watermark so the FIRST genuinely-new live event's gap is computed
+	//    against the watermark; a true hole past the watermark is still flagged
+	//    (ADR-0025 drop-newest: ev.Seq > prev+1).
 	go func() {
 		defer cancel()
 		prev := last
@@ -240,6 +250,12 @@ func (s *Server) serveObserve(ctx context.Context, r req) error {
 			case ev, ok := <-ch:
 				if !ok {
 					return
+				}
+				// Skip any event already covered by replay (the subscribe/attach
+				// overlap window). This must NOT advance prev, so the next genuinely-new
+				// event's gap is still measured against the watermark.
+				if ev.Seq <= last {
+					continue
 				}
 				gap := ev.Seq > prev+1 && prev != 0
 				s.pushEvent(p.LoopID, ev, gap)
