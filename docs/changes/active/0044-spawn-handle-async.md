@@ -2,11 +2,11 @@
 id: 44
 slug: spawn-handle-async
 title: Spawn handle-async — location-transparent spawning behind a handle-returning contract
-status: proposed
+status: in-progress
 priority: high
 type: refactor
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-10
 depends_on: [43]
 related: [23, 24, 34, 36, 42, 43]
 discovered_from: [43]
@@ -16,10 +16,10 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/spawn-handle-async
 pr:
 blocked_by:
-claimed_at:
+claimed_at: 2026-08-10T06:42:26Z
 reconciled: false
 ---
 
