@@ -219,6 +219,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 					return "", aerr
 				}
 				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
+				a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 				return childResult(msgs, rerr)
 			}),
