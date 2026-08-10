@@ -21,10 +21,10 @@ import (
 
 // TestSegmentGatewaySeamArchivesAndRecovers drives a real agent turn through the
 // production segment wiring (real model.Adapters POSTing to a scripted httptest
-// gateway, the concrete FSSegmentSink installed via the same
-// setActiveSegmentSink → currentSegmentSink → EnableSummarization path
-// installSummarizer uses) and asserts the loop wiring end-to-end at the gateway
-// seam (learning verify-tool-loop-at-gateway-seam):
+// gateway, the concrete FSSegmentSink threaded per-loop into EnableSummarization
+// exactly as installSummarizer now does with its segSink value, change 0046) and
+// asserts the loop wiring end-to-end at the gateway seam (learning
+// verify-tool-loop-at-gateway-seam):
 //
 //	(a) a segment file + index.json entry are written under ~/.fuse/sessions/<id>/
 //	(b) the post-compaction MAIN request carries the summary WITH the
@@ -61,9 +61,6 @@ func TestSegmentGatewaySeamArchivesAndRecovers(t *testing.T) {
 	base := t.TempDir()
 	const rootID = "root-seam"
 	sink := fssink.NewFSSegmentSink(base, rootID)
-	prev := currentSegmentSink()
-	t.Cleanup(func() { setActiveSegmentSink(prev) })
-	setActiveSegmentSink(sink)
 
 	segDir := segment.SegmentsDir(base, rootID)
 	tools.SetSegmentsDir(segDir)
@@ -77,10 +74,10 @@ func TestSegmentGatewaySeamArchivesAndRecovers(t *testing.T) {
 	mainAdapter := model.NewAdapter(srv.URL, "tkn", srv.Client())
 	a := agent.New(mainAdapter, reg, gwNopRenderer{}, "cloud/model", "", 2, 128)
 	a.ContextWindow = 4000
-	// Wire Tier 2 exactly as installSummarizer does, threading the real sink via
-	// currentSegmentSink() (not nil).
+	// Wire Tier 2 exactly as installSummarizer now does, threading the real sink as a
+	// per-loop value (change 0046 — not a process-global).
 	sumAdapter := model.NewAdapter(srv.URL, "tkn", srv.Client())
-	a.EnableSummarization(sumAdapter, "cloud/model", 2000, currentSegmentSink())
+	a.EnableSummarization(sumAdapter, "cloud/model", 2000, sink)
 
 	big := strings.Repeat("RAWDATA-", 1000) // ~8000 bytes each, unique marker
 	history := []model.Message{

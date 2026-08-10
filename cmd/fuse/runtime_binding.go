@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/probe"
@@ -16,22 +18,55 @@ import (
 	"github.com/ethanhinson/fuse/internal/tui"
 )
 
+// eventStoreHolder is a per-loop, INSTANCE-scoped indirection that carries the
+// Runtime-owned event store from BuildAgent (where StartLoop hands it in as a
+// value) to the child-builder / spawner closures a Deps builder wires eagerly at
+// construction time (change 0046). It replaces the retired process-global
+// currentEventStore()/setActiveEventStore holder: because each Deps builder creates
+// its OWN holder, N concurrent single-loop bindings never clobber each other. It is
+// mutex-guarded because the child-builder/spawner read it on child-spawn goroutines
+// while BuildAgent sets it on the StartLoop goroutine. Unset ⇒ get() returns the
+// no-op default so an emission before StartLoop never nil-panics.
+type eventStoreHolder struct {
+	mu    sync.RWMutex
+	store event.EventStore
+}
+
+func (h *eventStoreHolder) set(s event.EventStore) {
+	h.mu.Lock()
+	h.store = s
+	h.mu.Unlock()
+}
+
+func (h *eventStoreHolder) get() event.EventStore {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.store == nil {
+		return event.NoopStore{}
+	}
+	return h.store
+}
+
 // runtime_binding.go is CLI binding #1's construction seam over internal/runtime.
 // Each entry point (one-shot, shell, research-probe) assembles a runtime.Deps that
 // closes over its own renderer / approval gate / tool wiring — those cmd-layer
 // policy types stay in cmd/fuse and never cross into the Runtime. The Runtime
-// receives only construction closures (BuildAgent / BuildChild) plus the store
-// ownership hooks (BaseDir / InstallGlobalStore / Tree). The child-builder closures
-// here are the ONLY cmd-site callers of a.Run() — they are the child runner the
-// Runtime's Spawner invokes, not a root-loop drive (see TestNoDirectEngineDriveAtCmdSites).
+// receives only construction closures (BuildAgent, the per-loop factory that also
+// returns the loop's child-builder) plus the store ownership hooks (BaseDir / Tree).
+// The child-builder closures here are the ONLY cmd-site callers of a.Run() — they are
+// the child runner the Runtime's Spawner invokes, not a root-loop drive (see
+// TestNoDirectEngineDriveAtCmdSites). The per-loop event store flows in as a VALUE
+// through BuildAgent + a per-Deps-instance eventStoreHolder (change 0046), never a
+// process-global.
 
 // buildOneShotRuntimeDeps assembles runtime.Deps for the one-shot entry point,
 // closing over the resolved cfg/reg/toolReg/renderer/approve wiring exactly as the
 // pre-migration builder did. The renderer, approval gate, and tool registry stay in
 // cmd/fuse — the seam receives only construction closures, never those types by
 // name. BaseDir is "" so the Runtime installs a NoopStore (one-shot writes no event
-// log — byte-identical to pre-migration). InstallGlobalStore bridges the package
-// global so cmd-site child builders reading currentEventStore() see the same store.
+// log — byte-identical to pre-migration). BuildAgent publishes the Runtime-owned
+// store to the per-loop holder so the eagerly-wired child-builder / spawner closures
+// emit onto it (change 0046 — no process-global).
 func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, tree *agent.AgentTree, stdout io.Writer, verbose bool, traceW io.Writer,
 	rootApprove permissions.ApprovalFunc, oneShotSystemBlock string, oneShotBudget bool,
@@ -41,6 +76,9 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 	rootNode := tree.Node(tree.RootID())
 	// One blackboard per session, shared by every agent in the tree (change 0023).
 	bb := agent.NewBlackboard(tree)
+	// Per-loop store holder (change 0046): BuildAgent sets it from the Runtime-owned
+	// store; the child-builder/spawner closures below read it instead of a global.
+	storeHolder := &eventStoreHolder{}
 
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
 	makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
@@ -91,17 +129,18 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		// One-shot passes no session-mode source: gates default to
 		// cfg.Permissions.Mode exactly as before this seam.
 		if opts.SystemPrompt != "" {
-			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate)
+			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil)
 		} else {
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate)
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil)
 		}
 		if aerr != nil {
 			return "", aerr
 		}
 		a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 		a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
-		// Event stream wiring (change 0043) — cloned child-builder site 2 of 3.
-		a.SetEventSink(currentEventStore())
+		// Event stream wiring (change 0043/0046): the child emits into the loop's own
+		// store, resolved from the per-loop holder (no process-global).
+		a.SetEventSink(storeHolder.get())
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044),
 		// the single choke point — no per-site emission here.
@@ -118,9 +157,9 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			agent.WithTree(tree),
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(depth),
-			// Spawn lifecycle events (change 0044): the Spawner is the single choke
-			// point that emits spawn.start/spawn.done.
-			agent.WithEventStore(currentEventStore()),
+			// Spawn lifecycle events (change 0044/0046): the Spawner is the single choke
+			// point that emits spawn.start/spawn.done onto the loop's own store.
+			agent.WithEventStore(storeHolder.get()),
 			agent.WithChildBuilder(childBuilder),
 		)
 	}
@@ -137,25 +176,26 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		nil)
 
 	return runtime.Deps{
-		Tree:               tree,
-		BaseDir:            "", // NoopStore: one-shot writes no event log (byte-identical).
-		MaxConcurrent:      cfg.Agents.MaxConcurrent,
-		InstallGlobalStore: setActiveEventStore,
-		NewToolRegistry:    func() *tools.Registry { return toolReg },
-		BuildChild:         childBuilder,
-		BuildAgent: func(modelID string, reg2 *tools.Registry) (*agent.Agent, string, error) {
-			a, mid, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate)
+		Tree:            tree,
+		BaseDir:         "", // NoopStore: one-shot writes no event log (byte-identical).
+		MaxConcurrent:   cfg.Agents.MaxConcurrent,
+		NewToolRegistry: func() *tools.Registry { return toolReg },
+		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+			// Publish the Runtime-owned store to the per-loop holder so the eagerly-wired
+			// child-builder/spawner closures above emit onto THIS loop's store (change
+			// 0046). One-shot is single-loop-per-process; the holder is instance state.
+			storeHolder.set(store)
+			a, mid, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate, nil)
 			if err != nil {
-				return nil, "", err
+				return nil, nil, "", err
 			}
 			a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
-			// Event stream wiring (change 0043): the Runtime installed the store via
-			// InstallGlobalStore before calling BuildAgent, so currentEventStore()
-			// returns the Runtime-owned store (NoopStore for one-shot). SetEventSink is
-			// also called by StartLoop with the same store — symmetric, inert here.
-			a.SetEventSink(currentEventStore())
+			// Event stream wiring (change 0043/0046): the root emits onto the loop's own
+			// store. SetEventSink is also called by StartLoop with the same store —
+			// symmetric, inert here.
+			a.SetEventSink(store)
 			a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
-			return a, mid, nil
+			return a, childBuilder, mid, nil
 		},
 	}
 }
@@ -179,8 +219,7 @@ type researchProbeDepsInput struct {
 // buildResearchProbeRuntimeDeps assembles runtime.Deps for the research-probe entry
 // point. It preserves the probe's unique wiring: MultiRenderer (tree node +
 // recorder), workflow activation (worker allowlists, pool backstop), AlwaysApprove
-// (headless). BaseDir is "" (NoopStore — the probe writes no event log, matching the
-// pre-migration behavior where currentEventStore returned the no-op default). The
+// (headless). BaseDir is "" (NoopStore — the probe writes no event log). The
 // tree is supplied by the caller (Deps.Tree) so probe.Summarize still sees it after
 // h.Wait(). Cloned child-builder site 3 of 3 (learning patch-every-cloned-child-builder).
 func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
@@ -192,6 +231,9 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 	rootNode := tree.Node(tree.RootID())
 	// One blackboard per session, shared by every agent in the tree (change 0023).
 	bb := agent.NewBlackboard(tree)
+	// Per-loop store holder (change 0046): set by BuildAgent from the Runtime-owned
+	// store; read by the child-builder/spawner closures below.
+	storeHolder := &eventStoreHolder{}
 
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
 	makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
@@ -263,9 +305,9 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		var aerr error
 		// research-probe is headless (no TTY, AlwaysApprove) ⇒ backstopped.
 		if opts.SystemPrompt != "" {
-			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false, rateGate)
+			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false, rateGate, nil)
 		} else {
-			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate)
+			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -276,8 +318,9 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		// scope wins.
 		a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 		a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
-		// Event stream wiring (change 0043) — cloned child-builder site 3 of 3.
-		a.SetEventSink(currentEventStore())
+		// Event stream wiring (change 0043/0046) — cloned child-builder site 3 of 3:
+		// the child emits onto the loop's own store via the per-loop holder.
+		a.SetEventSink(storeHolder.get())
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044).
 		msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
@@ -292,8 +335,9 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(depth),
 			agent.WithSpawnBackstop(backstopFor(tree, act, rootID)),
-			// Spawn lifecycle events (change 0044): emitted by the Spawner choke point.
-			agent.WithEventStore(currentEventStore()),
+			// Spawn lifecycle events (change 0044/0046): emitted by the Spawner choke
+			// point onto the loop's own store.
+			agent.WithEventStore(storeHolder.get()),
 			agent.WithChildBuilder(childBuilder),
 		)
 	}
@@ -316,30 +360,32 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		nil)
 
 	return runtime.Deps{
-		Tree:               tree,
-		BaseDir:            "", // NoopStore: research-probe writes no event log (byte-identical).
-		MaxConcurrent:      cfg.Agents.MaxConcurrent,
-		InstallGlobalStore: setActiveEventStore,
-		NewToolRegistry:    func() *tools.Registry { return toolReg },
-		BuildChild:         childBuilder,
-		BuildAgent: func(modelID string, reg2 *tools.Registry) (*agent.Agent, string, error) {
+		Tree:            tree,
+		BaseDir:         "", // NoopStore: research-probe writes no event log (byte-identical).
+		MaxConcurrent:   cfg.Agents.MaxConcurrent,
+		NewToolRegistry: func() *tools.Registry { return toolReg },
+		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+			// Publish the Runtime-owned store so the eagerly-wired child-builder/spawner
+			// closures emit onto THIS loop's store (change 0046). Research-probe is
+			// single-loop-per-process; the holder is instance state.
+			storeHolder.set(store)
 			// Root renderer: tree node + recorder, same MultiRenderer shape as children.
 			rootR := tui.NewMultiRenderer(
 				tui.NewNodeRenderer(rootNode, tree),
 				logSink.Recorder("root"),
 			)
-			a, mid, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate)
+			a, mid, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate, nil)
 			if err != nil {
-				return nil, "", err
+				return nil, nil, "", err
 			}
 			// The root is the workflow root: its own spawn schema is governed by the
 			// workflow pool composed with the global brakes, folded into the
 			// scheduler's unified visibility predicate (change 0036).
 			a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
-			// Event stream wiring (change 0043): symmetric with the child sites.
-			a.SetEventSink(currentEventStore())
+			// Event stream wiring (change 0043/0046): symmetric with the child sites.
+			a.SetEventSink(store)
 			a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
-			return a, mid, nil
+			return a, childBuilder, mid, nil
 		},
 	}
 }
@@ -370,6 +416,18 @@ type shellDepsInput struct {
 	traceW      io.Writer
 	rateGate    model.RateGate
 	logDir      string
+	// eventStore is the shell's own session event store, opened in shell.go BEFORE this
+	// builder runs (the TUI — not StartLoop — drives shell turns, so the shell owns the
+	// store lifecycle). It seeds the per-loop holder directly so the child-builder /
+	// spawner closures emit onto the same store the shell's own root build closure uses
+	// (change 0046 — replaces the retired currentEventStore() global). May be nil (the
+	// wiring test, or an open failure) ⇒ the holder's no-op default.
+	eventStore event.EventStore
+	// segmentSink is the shell's own per-session SegmentSink (change 0030), threaded
+	// per-loop through installSummarizer instead of the retired setActiveSegmentSink
+	// global (change 0046). Nil ⇒ the agent's no-op default. It is the sink the shell's
+	// own root build closure (shell.go) also uses, so root and children share one sink.
+	segmentSink agent.SegmentSink
 	// childApprove is the per-child base approval func (the TUI channel); rootApprove
 	// is the build-seam approval used by BuildAgent for the root construction. In the
 	// wiring-assertion test both may be nil.
@@ -380,9 +438,10 @@ type shellDepsInput struct {
 // buildShellRuntimeDeps assembles runtime.Deps for the interactive shell. It wires
 // the child-builder closure (cloned child-builder site 2 of 3), registers the root's
 // spawn_agent / blackboard / pipeline tools on toolReg (side effect the TUI relies
-// on), and routes the event store through the Runtime instance (BaseDir + install
-// hook) instead of the shell calling setActiveEventStore directly. BuildAgent builds
-// a root agent with a discarding default renderer — the TUI's own AgentBuilder seam
+// on), and seeds the per-loop store holder from the shell's OWN event store (the shell
+// owns its store lifecycle because the TUI — not StartLoop — drives turns, change
+// 0046). BuildAgent builds a root agent with a discarding default renderer — the TUI's
+// own AgentBuilder seam
 // (which owns the per-turn renderer) is what actually drives shell turns; BuildAgent
 // exists for seam symmetry and binding-#2 reuse.
 func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
@@ -401,6 +460,12 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 	if bb == nil {
 		bb = agent.NewBlackboard(tree)
 	}
+	// Per-loop store holder (change 0046): the shell owns its store lifecycle (the TUI
+	// drives turns, not StartLoop), so the holder is seeded directly from the shell's
+	// own store here rather than by BuildAgent. The child-builder/spawner closures read
+	// it instead of the retired currentEventStore() global.
+	storeHolder := &eventStoreHolder{}
+	storeHolder.set(in.eventStore)
 
 	var makeSpawner func(parentNode *agent.AgentNode, parentDepth int) *agent.Spawner
 	makeSpawnFunc := func(parentNode *agent.AgentNode, parentDepth int) tools.SpawnFunc {
@@ -458,9 +523,9 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		// Children spawned inside the interactive shell inherit its
 		// interactive posture — a human is reachable via the shell.
 		if opts.SystemPrompt != "" {
-			a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate)
+			a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink)
 		} else {
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate)
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -474,9 +539,10 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		if humanBus != nil {
 			a.SetHumanInjector(agent.NewHumanInjector(childNode.ID, humanBus))
 		}
-		// Event stream wiring (change 0043): the child emits its loop events
-		// into the session store, tagged with its node identity.
-		a.SetEventSink(currentEventStore())
+		// Event stream wiring (change 0043/0046): the child emits its loop events
+		// into the session store (the shell's own store via the per-loop holder),
+		// tagged with its node identity.
+		a.SetEventSink(storeHolder.get())
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044), the
@@ -518,8 +584,9 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 			// Completion hook (ADR-0022): bubble a finished child's undelivered
 			// human messages up to its parent so none are silently stranded.
 			agent.WithHumanBus(humanBus),
-			// Spawn lifecycle events (change 0044): emitted by the Spawner choke point.
-			agent.WithEventStore(currentEventStore()),
+			// Spawn lifecycle events (change 0044/0046): emitted by the Spawner choke
+			// point onto the shell's own store via the per-loop holder.
+			agent.WithEventStore(storeHolder.get()),
 			agent.WithChildBuilder(childBuilder),
 		)
 	}
@@ -538,28 +605,32 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		nil)
 
 	return runtime.Deps{
-		Tree:               tree,
-		BaseDir:            in.logDir, // Runtime owns the fsstore lifecycle (D-1).
-		MaxConcurrent:      cfg.Agents.MaxConcurrent,
-		InstallGlobalStore: setActiveEventStore,
-		NewToolRegistry:    func() *tools.Registry { return toolReg },
-		BuildChild:         childBuilder,
-		BuildAgent: func(modelID string, reg2 *tools.Registry) (*agent.Agent, string, error) {
+		Tree:            tree,
+		BaseDir:         in.logDir, // present for seam symmetry; the shell's TUI drives turns, not StartLoop.
+		MaxConcurrent:   cfg.Agents.MaxConcurrent,
+		NewToolRegistry: func() *tools.Registry { return toolReg },
+		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			// The TUI's own AgentBuilder seam builds the per-turn root with the live
 			// renderer; BuildAgent here builds a root with a discarding renderer for
 			// seam symmetry / binding-#2 reuse. It honors the same wiring the shell's
-			// build closure applies (strip predicate, injector, event sink).
-			a, err := buildAgentWithRendererAndTrace(cfg, reg, alias, tui.NewRenderer(io.Discard, verbose), verbose, skillBlock, reg2, in.rootApprove, traceW, "root", sessionMode, true, rateGate)
+			// build closure applies (strip predicate, injector, event sink). The shell
+			// owns its store lifecycle, so if StartLoop DID drive this loop the Runtime's
+			// store is published to the holder; otherwise the holder keeps the shell's
+			// own store (seeded above).
+			if store != nil {
+				storeHolder.set(store)
+			}
+			a, err := buildAgentWithRendererAndTrace(cfg, reg, alias, tui.NewRenderer(io.Discard, verbose), verbose, skillBlock, reg2, in.rootApprove, traceW, "root", sessionMode, true, rateGate, in.segmentSink)
 			if err != nil {
-				return nil, "", err
+				return nil, nil, "", err
 			}
 			a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
 			if humanBus != nil {
 				a.SetHumanInjector(agent.NewHumanInjector(rootNode.ID, humanBus))
 			}
-			a.SetEventSink(currentEventStore())
+			a.SetEventSink(storeHolder.get())
 			a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
-			return a, modelID, nil
+			return a, childBuilder, modelID, nil
 		},
 	}
 }
