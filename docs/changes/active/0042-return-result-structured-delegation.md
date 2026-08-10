@@ -2,7 +2,7 @@
 id: 42
 slug: return-result-structured-delegation
 title: Fix structured-delegation (expects) vs tool-calling collision via a return_result tool
-status: implemented
+status: in-progress
 priority: high
 type: fix
 created: 2026-08-09
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/return-result-structured-delegation
 pr: https://github.com/ethanhinson/fuse/pull/45
 blocked_by:
-claimed_at: 2026-08-10T00:22:00Z
+claimed_at: 2026-08-10T01:14:48Z
 reconciled: true
 ---
 
@@ -70,11 +70,19 @@ and onto the tool channel:
 - Result assembly reads the structured value from the captured `return_result` call
   instead of re-validating the final message; a lenient final-message fallback keeps
   behavior no worse than today for children that never call the tool.
-- One implementation choke point (`agent.SpawnOpts.Expects`) fixes both the spawn path
-  and pipelines.
+- One implementation choke point (`agent.SpawnOpts.Expects`) drives the code path
+  (pipelines and code-generated spawns).
+- **Architectural boundary (added):** remove the `expects` param from the freeform
+  `spawn_agent` tool so model-driven spawns return **prose**; `expects` is reserved for
+  the pipeline / code-generated path (which sets `SpawnOpts.Expects` directly and is
+  untouched). For a code-editor / problem-solver whose subagent results are consumed by
+  another LLM, prose is the right default; forcing a schema is what invited the collision.
+  With the affordance gone, the collision is structurally impossible on the freeform
+  path, and `return_result` fires only where a machine consumes the result.
 
 Design detail, the rejected alternatives (prompt reword, provider-native
-`response_format`, agent-extractor), and the exact code sites are in the linked spec.
+`response_format`, agent-extractor, and keep-but-soften the param), and the exact code
+sites are in the linked spec.
 
 ## Out of scope
 
@@ -127,3 +135,19 @@ in the `agent` package (loop + spawner), and the cmd-site child builders stay un
 Design is sound and NOT fundamentally invalidated. `auto_capture` is disabled repo-wide, so no
 stubs minted this pass; no adjacent follow-up work surfaced beyond the ADR question the spec
 already defers to review.
+
+### 2026-08-10 — reopened (implemented → in-progress): scope added by human decision
+
+Live verification of the shipped `return_result` fix (driving `glm` on a by-domain review +
+novelty debate against the feature branch) confirmed it works — 11/11 structured returns
+well-formed across all 9 domains — but also showed the old failure mode still occurs occasionally
+(1 path-less `write_file{content:{...}}` cram in 20 writes). Root discussion concluded that
+`expects` is the wrong DEFAULT for the freeform, model-driven `spawn_agent` path (consumer is
+another LLM; prose is better and carries nuance), and belongs only where a MACHINE consumes the
+result (pipelines / code-generated spawns, which set `SpawnOpts.Expects` directly).
+
+Decision (human): **remove the `expects` param from the `spawn_agent` tool** (prose-only freeform
+path); keep `SpawnOpts.Expects` + `return_result` for the code path. Folded into THIS change and
+shipping in the SAME PR (#45) as the `return_result` work — the two are halves of one idea. Spec
+updated with the added decision + D7 + testing. Reopened to in-progress to extend the existing
+`feat/return-result-structured-delegation` branch; branch/pr/plan/results retained.

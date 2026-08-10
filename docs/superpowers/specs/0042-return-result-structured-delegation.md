@@ -75,6 +75,44 @@ the same kind of action — no contradictory directive, no channel competition.
   grading surface, silent wrongness is the worst failure, so extraction must not be the
   default.
 
+## Decision (added) — the freeform `spawn_agent` path returns PROSE; `expects` is reserved for the pipeline / code-generated path
+
+Live verification of the `return_result` fix (driving `glm` on a by-domain review +
+novelty debate) confirmed the fix works — 11/11 structured returns well-formed across
+all domains — but also surfaced the deeper issue: **`expects` is the wrong default for a
+model-driven, freeform code-editing / problem-solving spawn.** For that class of work the
+consumer of a subagent's result is *another LLM* (the parent synthesizing), which reads
+prose fine and benefits from its nuance; forcing a rigid final object couples "doing" with
+"formatting," invites premature structure, and — as observed — nudges the model to invent
+`expects` schemas for inherently prose-shaped tasks (a code review), occasionally routing
+its result through `write_file` instead. `expects` belongs where the consumer is **code**:
+authored pipelines (routing/gating on the result) and any code-generated spawn.
+
+**The two paths are already fully separable in the codebase** (verified): the pipeline /
+authored path sets `agent.SpawnOpts.Expects` **directly**
+(`internal/pipeline/engine.go:357`, `internal/pipeline/synthesize.go:52`) and never
+touches the `spawn_agent` tool; the **only** model-facing entry for `expects` is the
+`spawn_agent` tool's `expects` param (`internal/tools/spawn_agent.go:142-148` schema →
+`spawnAgentInput.Expects` line 177 → `req.Expects` lines 202-204).
+
+**Decision:** **remove the `expects` param from the `spawn_agent` tool** — delete it from
+the tool's advertised schema, from `spawnAgentInput`, and from the `req.Expects` threading.
+Freeform model-driven spawns become **prose-only**. `agent.SpawnOpts.Expects` and the whole
+`return_result` machinery (above) **remain unchanged** for pipelines and code-generated
+spawns — that path is where structured delegation is correct. Net effect: `return_result`
+now only ever fires on the code-driven path, which is exactly where a machine consumer
+needs it.
+
+**Rejected — "keep the param but soften its description":** relies on the model heeding
+guidance to *not* reach for a tool it can see — the same guidance-dependent design class
+that produced the original collision. Removing the affordance is the robust choice; a tool
+the model cannot see is a tool it cannot misuse.
+
+**Scope note:** this decision is folded into change 0042 (this spec) and ships in the same
+PR (#45) as the `return_result` work — the two are halves of one idea (structured return
+belongs to the code path only), and shipping them together avoids an intermediate state
+where `return_result` exists yet the model can still request `expects` on freeform spawns.
+
 ## Design
 
 All changes converge at the single choke point (`spawn.go:339`) so spawn + pipeline are
@@ -145,6 +183,24 @@ fixed together.
   (which already parses "structured value or text") still composes — its structured
   branch now receives the `return_result`-sourced value.
 
+### D7 — Remove `expects` from the freeform `spawn_agent` tool (prose-only model path)
+
+Per the added decision above: strip the model-facing `expects` affordance so freeform
+spawns are prose-only, leaving the code path's `SpawnOpts.Expects` untouched.
+
+- Delete the `expects` property from the `spawn_agent` tool's advertised parameters
+  (`internal/tools/spawn_agent.go:142-148`).
+- Delete the `Expects` field from `spawnAgentInput` (`spawn_agent.go:177`) and the
+  `if input.Expects != nil { req.Expects = input.Expects }` threading
+  (`spawn_agent.go:202-204`). `SpawnRequest.Expects` may remain as a field for the
+  code/pipeline path, but nothing model-facing populates it anymore.
+- Update the `spawn_agent` tool description to state that a child returns its findings
+  as prose (no structured-schema option on this path).
+- Consequence to verify: with no model-facing `expects`, a freeform child is never given
+  a `return_result` tool and never carries the schema directive — so the collision is
+  not merely mitigated but **structurally impossible** on the freeform path. The
+  `return_result` machinery (D1–D5) now fires only via the pipeline/code path.
+
 ## Affected code
 
 - `internal/agent/spawn.go` — `spawn.go:339-340` (stop directive; install tool),
@@ -154,9 +210,10 @@ fixed together.
 - `internal/agent/schemavalidate.go` — reuse `validateAgainstSchema`; `return_result`
   tool schema construction may live here or beside the spawner.
 - A new synthesized tool (small) — `return_result`, schema = the `expects` schema.
-- `internal/tools/spawn_agent.go` — update the `expects` param description
-  (`spawn_agent.go:142-148`) to mention the child returns via `return_result` (helps the
-  *parent* model reason about it); no arg-shape change.
+- `internal/tools/spawn_agent.go` — **remove** the `expects` param (schema
+  `spawn_agent.go:142-148`, `spawnAgentInput.Expects` line 177, threading lines 202-204);
+  reword the tool description to prose-only (D7). This supersedes the earlier plan to
+  merely reword the param.
 - Docs: note the mechanism change under change 0024 lineage; consider an ADR update or
   a new ADR recording "structured delegation returns via a synthesized `return_result`
   tool, not a final-message directive" (supersedes the directive approach of ADR-0012's
@@ -202,6 +259,11 @@ it is an escape hatch, not the default. Recorded here so the choice is not re-li
   `return_result` still yields a structured result via the lenient fallback (D5).
 - **Pipeline:** an authored pipeline step with `expects` gets a structured result via the
   same path (`engine.go`/`synthesize.go` compose unchanged).
+- **D7 — spawn_agent prose-only:** the `spawn_agent` tool's advertised schema does NOT
+  contain an `expects` property; a model-supplied `expects` in raw args is ignored (or
+  rejected) rather than threaded to `SpawnRequest`; a freeform spawn is given no
+  `return_result` tool and no schema directive. Assert the pipeline path (`SpawnOpts.Expects`
+  set directly) is unaffected and still yields a structured result.
 
 ## Open questions (resolve at build time)
 
