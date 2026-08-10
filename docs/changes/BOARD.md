@@ -1,12 +1,12 @@
 # Backlog
 
-**50 changes** — 🟡 5 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 37 done · 🗑️ 6 killed
+**50 changes** — 🟡 5 proposed · ⚪ 1 deferred · ✅ 38 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0046](active/0046-multi-loop-host-deglobalize-event-store.md) | De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id | `high` | `refactor` | ⏳ waiting on #45 — needs your merge |
+| [0046](active/0046-multi-loop-host-deglobalize-event-store.md) | De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id | `high` | `refactor` | build-ready |
 | [0047](active/0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | `medium` | `feat` | ⏳ waiting on #46 — not yet built |
 | [0048](active/0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | `medium` | `feat` | ⏳ waiting on #46 — not yet built |
 | [0049](active/0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | `medium` | `feat` | ⏳ waiting on #48 — not yet built |
@@ -18,16 +18,9 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0045](active/0045-runtime-interface-and-binding.md) | Runtime interface + second binding — prove the platform boundary is emergent | `high` | `feat` | [#48](https://github.com/ethanhinson/fuse/pull/48) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
-  0044 --> 0045
   0045 --> 0046
   0046 --> 0047
   0046 --> 0048
@@ -35,14 +28,15 @@ graph TD
   0048 --> 0050
   0049 --> 0050
   0012:::done
-  0044:::done
+  0045:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (43)</summary>
+<details><summary>✅🗑️ Archive — done + killed (44)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0045](archive/2026-08-10-0045-runtime-interface-and-binding.md) | Runtime interface + second binding — prove the platform boundary is emergent | 2026-08-10 |
 | [0044](archive/2026-08-10-0044-spawn-handle-async.md) | Spawn handle-async — location-transparent spawning behind a handle-returning contract | 2026-08-10 |
 | [0043](archive/2026-08-10-0043-runtime-eventstore-seam.md) | Runtime EventStore seam — typed, pluggable, introspectable loop event stream | 2026-08-10 |
 | [0042](archive/2026-08-10-0042-return-result-structured-delegation.md) | Fix structured-delegation (expects) vs tool-calling collision via a return_result tool | 2026-08-10 |
@@ -59,7 +53,6 @@ graph TD
 | [0021](archive/2026-08-08-0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | 2026-08-08 |
 | [0020](archive/2026-08-08-0020-mcp-progress-streaming.md) | MCP `$/progress` notifications and streaming tool results | 2026-08-08 |
 | [0018](archive/2026-08-08-0018-mcp-streamable-http.md) | Streamable HTTP transport for MCP (v2025-03-26) | 2026-08-08 |
-| [0036](archive/2026-08-07-0036-agent-scheduler.md) | Agent scheduler — global queue, cross-pool fairness, and turn-level throughput limits | 2026-08-07 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
 | [0016](archive/2026-08-05-0016-one-shot-cli-approvals.md) | Remove the AlwaysApprove one-shot bypass; surface approvals at the CLI | 2026-08-05 |
 | [0011](archive/2026-08-05-0011-deep-research.md) | Deep Research Mode — Web Search + Fan-out Synthesis | 2026-08-05 |
@@ -69,6 +62,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 22 done |
+| [2026-08](archive/) | 23 done |
 
 </details>
