@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -11,6 +12,10 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
+
+// ErrLoopNotFound is returned by Observe/Attach/Send/Spawn when the loopID is not
+// a known, started loop on this Runtime.
+var ErrLoopNotFound = errors.New("runtime: loop not found")
 
 // Deps are the binding-supplied collaborators the Runtime composes. None are
 // renderer/TUI/gate types; a binding wires those around the Runtime, not into it.
@@ -143,20 +148,86 @@ func (h *loopHandle) Wait() ([]model.Message, error) {
 	return h.msgs, h.err
 }
 
-// --- Task 3: Observe / Attach / Send / Spawn implemented next ---
+// lookup returns the loop for loopID under the mutex, or ErrLoopNotFound.
+func (r *inProcRuntime) lookup(loopID string) (*loop, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lp, ok := r.loops[loopID]
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
+	}
+	return lp, nil
+}
 
+// Observe returns a live event tail plus an idempotent unsubscribe
+// (EventStore.Subscribe). Delivery is non-blocking end to end (ADR-0016/0025): a
+// slow observer drops the newest event with a gap rather than wedging the loop.
 func (r *inProcRuntime) Observe(loopID string) (<-chan event.Event, func(), error) {
-	panic("not implemented") // implemented in Task 3
+	lp, err := r.lookup(loopID)
+	if err != nil {
+		return nil, nil, err
+	}
+	ch, cancel := lp.store.Subscribe()
+	return ch, cancel, nil
 }
 
+// Attach returns durable history with Seq > from (EventStore.Replay) for reconnect.
 func (r *inProcRuntime) Attach(loopID string, from event.Seq) ([]event.Event, error) {
-	panic("not implemented") // implemented in Task 3
+	lp, err := r.lookup(loopID)
+	if err != nil {
+		return nil, err
+	}
+	return lp.store.Replay(from)
 }
 
+// Send injects human input at the loop's next turn boundary (ADR-0022 human-bus).
+// It enqueues for the root node; the root injector installed at StartLoop drains it
+// at the next turn boundary. ModeRespond = a direct reply to that node (not a
+// broadcast).
 func (r *inProcRuntime) Send(ctx context.Context, loopID string, input string) error {
-	panic("not implemented") // implemented in Task 3
+	lp, err := r.lookup(loopID)
+	if err != nil {
+		return err
+	}
+	lp.humanBus.Enqueue(lp.node.ID, agent.ModeRespond, "@human", input)
+	return nil
 }
 
+// Spawn starts a child agent under the loop and returns a handle wrapping
+// agent.AgentHandle (ADR-0026). The Spawner emits spawn.start/spawn.done onto the
+// loop's own event stream so an observer sees child lifecycle without the handle.
 func (r *inProcRuntime) Spawn(ctx context.Context, loopID string, opts SpawnOpts) (SpawnHandle, error) {
-	panic("not implemented") // implemented in Task 3
+	lp, err := r.lookup(loopID)
+	if err != nil {
+		return nil, err
+	}
+	spawner := agent.NewSpawner(
+		agent.WithTree(lp.tree),
+		agent.WithNode(lp.node),
+		agent.WithSpawnDepth(lp.node.Depth),
+		agent.WithEventStore(lp.store),   // spawn.start/spawn.done land on the same stream
+		agent.WithChildBuilder(lp.buildChild), // the binding's per-loop child policy
+		agent.WithHumanBus(lp.humanBus),  // bubble a child's undelivered messages up
+	)
+	h, herr := spawner.Spawn(ctx, agent.SpawnOpts{
+		Label:        opts.Label,
+		Task:         opts.Task,
+		SystemPrompt: opts.SystemPrompt,
+		ModelID:      opts.ModelID,
+		Tools:        opts.Tools,
+		Worker:       opts.Worker,
+		Expects:      opts.Expects,
+	})
+	if herr != nil {
+		return nil, herr
+	}
+	return spawnHandle{h: h}, nil
 }
+
+// spawnHandle wraps agent.AgentHandle (ADR-0026) so a binding awaits a child
+// without importing internal/agent's async internals at the call site.
+type spawnHandle struct{ h agent.AgentHandle }
+
+func (s spawnHandle) NodeID() string       { return s.h.NodeID }
+func (s spawnHandle) Wait() agent.SpawnDone { return s.h.Wait() }
+func (s spawnHandle) Result() (any, error)  { return s.h.Result() }
