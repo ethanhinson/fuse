@@ -57,6 +57,20 @@ type Deps struct {
 	// they can still call probe.Summarize / render the tree after the loop runs. When
 	// nil, StartLoop creates its own tree from cfg.ModelID + MaxConcurrent.
 	Tree *agent.AgentTree
+	// DurableStore, when non-nil, is the shared, tenant-scoped, cross-process event
+	// store (change 0047). It is threaded in as a VALUE at the composition root
+	// (cmd/fuse) — never a construction-time global — preserving the policy-free-seam
+	// invariant (ADR-0030) and the de-globalization learning: each StartLoop opens its
+	// own StreamKey against this store; a fresh instance derives liveness from the
+	// Registry, never from a shared in-memory object. When nil, StartLoop keeps the
+	// legacy per-loop fsstore + in-memory-only path so single-loop CLI bindings stay
+	// byte-identical (they pass nil).
+	DurableStore event.DurableStore
+	// Registry, when non-nil, is the durable loop-existence/liveness registry paired
+	// with DurableStore (usually the same value). It is the source of truth that lets
+	// inProcRuntime.lookup resolve a loop a PRIOR process started even though r.loops
+	// is empty on this instance. When nil, resolution is in-memory-only (r.loops).
+	Registry event.LoopRegistry
 }
 
 // inProcRuntime is the concrete in-process Runtime. It owns each loop's event
@@ -73,6 +87,7 @@ type inProcRuntime struct {
 // design real while only one is populated per process.
 type loop struct {
 	id         string
+	key        event.StreamKey // durable (tenant, loop) identity (change 0047)
 	tree       *agent.AgentTree
 	node       *agent.AgentNode
 	store      event.EventStore
@@ -105,10 +120,20 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	rootID := tree.RootID()
 	rootNode := tree.Node(rootID)
 
-	// BaseDir == "" ⇒ NoopStore (one-shot keeps byte-identical behavior: no new
-	// event log files). Otherwise open a per-loop fsstore under BaseDir/<rootID>.
+	tenant := event.NormalizeTenant(cfg.Tenant)
+	key := event.StreamKey{Tenant: tenant, Loop: event.LoopID(rootID)}
+
+	// Store selection (change 0047):
+	//   - DurableStore present ⇒ the loop emits into the SHARED, cross-process store
+	//     via a per-loop StreamKey adapter (durableSink), and its existence/liveness is
+	//     registered in the durable Registry so a cold instance can resolve it.
+	//   - else BaseDir == "" ⇒ NoopStore (one-shot keeps byte-identical behavior).
+	//   - else the legacy per-loop fsstore under BaseDir/<rootID>.
 	var store event.EventStore
-	if r.deps.BaseDir == "" {
+	durable := r.deps.DurableStore != nil
+	if durable {
+		store = &durableSink{store: r.deps.DurableStore, key: key}
+	} else if r.deps.BaseDir == "" {
 		store = event.NoopStore{}
 	} else {
 		fs, err := fsstore.NewFSEventStore(r.deps.BaseDir, rootID)
@@ -116,6 +141,18 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 			return nil, fmt.Errorf("runtime: open event store: %w", err)
 		}
 		store = fs
+	}
+
+	// Register the loop's existence + mark it live BEFORE the run goroutine starts, so a
+	// concurrent cold instance can resolve it (and observe live) immediately. Register
+	// is idempotent; SetLive(true) records this instance as owner.
+	if r.deps.Registry != nil {
+		if err := r.deps.Registry.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: rootID, Live: true}); err != nil {
+			return nil, fmt.Errorf("runtime: register loop: %w", err)
+		}
+		if err := r.deps.Registry.SetLive(ctx, key, true, rootID); err != nil {
+			return nil, fmt.Errorf("runtime: set loop live: %w", err)
+		}
 	}
 
 	var toolReg *tools.Registry
@@ -140,6 +177,7 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 
 	lp := &loop{
 		id:         rootID,
+		key:        key,
 		tree:       tree,
 		node:       rootNode,
 		store:      store,
@@ -162,12 +200,19 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		defer close(h.done)
 		msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: cfg.Task}})
 		h.msgs, h.err = msgs, rerr
+		// Mark the loop finished in the durable registry so a cold instance resolves it
+		// as replay-only (Send ⇒ ErrLoopFinished). Use context.Background(): the run's
+		// ctx may already be canceled at completion, but the liveness flip must land.
+		if r.deps.Registry != nil {
+			_ = r.deps.Registry.SetLive(context.Background(), key, false, rootID)
+		}
 		// Close the loop's event store on run completion: it releases the fsstore write
 		// handle (no per-loop file-handle leak) AND closes its live subscriber channels,
 		// so a loop.observe pump terminates without relying on client-ctx or process
 		// exit. Attach still works afterward — fsstore.Replay opens its own reader
-		// independent of the (now-closed) write handle. NoopStore has no Close, so the
-		// assertion is a no-op there (one-shot binding keeps byte-identical behavior).
+		// independent of the (now-closed) write handle. NoopStore and the durable-sink
+		// adapter have no-op Close (the shared durable store must NOT be closed per loop),
+		// so this stays byte-identical for the legacy paths.
 		if c, ok := store.(interface{ Close() error }); ok {
 			_ = c.Close()
 		}
@@ -194,7 +239,9 @@ func (h *loopHandle) Wait() ([]model.Message, error) {
 	return h.msgs, h.err
 }
 
-// lookup returns the loop for loopID under the mutex, or ErrLoopNotFound.
+// lookup returns the loop for loopID under the mutex, or ErrLoopNotFound. This is
+// the LEGACY resolution path (r.loops is the source of truth); Send still uses it
+// because injecting a human message requires the live in-process loop object.
 func (r *inProcRuntime) lookup(loopID string) (*loop, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -205,25 +252,63 @@ func (r *inProcRuntime) lookup(loopID string) (*loop, error) {
 	return lp, nil
 }
 
-// Observe returns a live event tail plus an idempotent unsubscribe
-// (EventStore.Subscribe). Delivery is non-blocking end to end (ADR-0016/0025): a
-// slow observer drops the newest event with a gap rather than wedging the loop.
-func (r *inProcRuntime) Observe(loopID string) (<-chan event.Event, func(), error) {
-	lp, err := r.lookup(loopID)
+// loopCache returns the cached live *loop for loopID under the mutex, or nil. With
+// the durable seam present, r.loops is demoted to a per-instance CACHE: a hit is the
+// live loop; a miss falls through to the durable Registry (see resolveDurable).
+func (r *inProcRuntime) loopCache(loopID string) *loop {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.loops[loopID]
+}
+
+// resolveDurable resolves a (tenant, loopID) against the durable Registry when the
+// r.loops cache misses. It maps event.ErrLoopUnknown to runtime.ErrLoopNotFound so
+// callers see one "not found" sentinel regardless of backend. It returns
+// (record, true, nil) when the loop exists durably.
+func (r *inProcRuntime) resolveDurable(ctx context.Context, tenant event.TenantID, loopID string) (event.LoopRecord, event.StreamKey, error) {
+	key := event.StreamKey{Tenant: event.NormalizeTenant(tenant), Loop: event.LoopID(loopID)}
+	if r.deps.Registry == nil {
+		return event.LoopRecord{}, key, fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
+	}
+	rec, err := r.deps.Registry.Resolve(ctx, key)
+	if err != nil {
+		if errors.Is(err, event.ErrLoopUnknown) {
+			return event.LoopRecord{}, key, fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
+		}
+		return event.LoopRecord{}, key, err
+	}
+	return rec, key, nil
+}
+
+// Observe returns a live event tail plus an idempotent unsubscribe. Delivery is
+// non-blocking end to end (ADR-0016/0025): a slow observer drops the newest event
+// with a gap rather than wedging the loop. A cache hit subscribes to the loop's own
+// store; a cache miss + durable Resolve subscribes to the shared durable store's
+// cross-instance channel (so a loop a prior process started is observable here).
+func (r *inProcRuntime) Observe(ctx context.Context, tenant event.TenantID, loopID string) (<-chan event.Event, func(), error) {
+	if lp := r.loopCache(loopID); lp != nil {
+		ch, cancel := lp.store.Subscribe()
+		return ch, cancel, nil
+	}
+	_, key, err := r.resolveDurable(ctx, tenant, loopID)
 	if err != nil {
 		return nil, nil, err
 	}
-	ch, cancel := lp.store.Subscribe()
-	return ch, cancel, nil
+	return r.deps.DurableStore.Subscribe(ctx, key)
 }
 
-// Attach returns durable history with Seq > from (EventStore.Replay) for reconnect.
-func (r *inProcRuntime) Attach(loopID string, from event.Seq) ([]event.Event, error) {
-	lp, err := r.lookup(loopID)
+// Attach returns durable history with Seq > from for reconnect. A cache hit replays
+// the loop's own store; a cache miss + durable Resolve replays the shared durable
+// store (the cold cross-process reattach path — the 0047 fix).
+func (r *inProcRuntime) Attach(ctx context.Context, tenant event.TenantID, loopID string, from event.Seq) ([]event.Event, error) {
+	if lp := r.loopCache(loopID); lp != nil {
+		return lp.store.Replay(from)
+	}
+	_, key, err := r.resolveDurable(ctx, tenant, loopID)
 	if err != nil {
 		return nil, err
 	}
-	return lp.store.Replay(from)
+	return r.deps.DurableStore.Replay(ctx, key, from)
 }
 
 // Send injects human input at the loop's next turn boundary (ADR-0022 human-bus).
@@ -236,9 +321,21 @@ func (r *inProcRuntime) Attach(loopID string, from event.Seq) ([]event.Event, er
 // longer drains, so enqueuing would strand the message forever); a still-running
 // loop enqueues and returns nil.
 func (r *inProcRuntime) Send(ctx context.Context, loopID string, input string) error {
-	lp, err := r.lookup(loopID)
-	if err != nil {
-		return err
+	lp := r.loopCache(loopID)
+	if lp == nil {
+		// Not live in THIS instance's cache. With the durable seam present, resolve the
+		// loop's existence/liveness: a finished loop ⇒ ErrLoopFinished (replay-only); a
+		// still-live loop owned by ANOTHER instance ⇒ ErrLoopNotFound here (this instance
+		// holds no injector for it); an unknown loop ⇒ ErrLoopNotFound. Without the seam,
+		// resolveDurable returns ErrLoopNotFound directly (legacy in-memory behavior).
+		rec, _, rerr := r.resolveDurable(ctx, event.DefaultTenant, loopID)
+		if rerr != nil {
+			return rerr
+		}
+		if !rec.Live {
+			return fmt.Errorf("%w: %q", ErrLoopFinished, loopID)
+		}
+		return fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
 	}
 	// A finished loop's injector will never drain another message. Report it instead
 	// of silently stranding the input on the queue.
@@ -283,6 +380,47 @@ func (r *inProcRuntime) Spawn(ctx context.Context, loopID string, opts SpawnOpts
 	}
 	return spawnHandle{h: h}, nil
 }
+
+// durableSink adapts an event.DurableStore + fixed StreamKey down to the legacy
+// event.EventStore interface (Append(Event)/Subscribe()/Replay(Seq)) that the agent
+// engine and Spawner consume as their event sink. It lets a loop emit into the
+// shared, cross-process durable store (change 0047) without the engine learning the
+// tenant/context/key vocabulary. It carries a background context for the store ops:
+// the loop's own run ctx governs the RUN, but event emission must not be canceled by
+// a client disconnect (mirrors the completion SetLive using context.Background()).
+//
+// Close is a NO-OP: the durable store is SHARED across every loop and instance, so a
+// single loop's completion must never close it (that would tear down other loops'
+// streams and the cross-instance tail). This is the counterpart to the legacy
+// fsstore's per-loop Close — durability + subscriber lifetime are the store's own.
+type durableSink struct {
+	store event.DurableStore
+	key   event.StreamKey
+}
+
+func (d *durableSink) Append(e event.Event) error {
+	return d.store.Append(context.Background(), d.key, e)
+}
+
+func (d *durableSink) Subscribe() (<-chan event.Event, func()) {
+	ch, cancel, err := d.store.Subscribe(context.Background(), d.key)
+	if err != nil {
+		// Degrade gracefully to a closed channel (a consumer range ends at once) rather
+		// than nil-panicking — mirrors NoopStore.Subscribe's contract.
+		closed := make(chan event.Event)
+		close(closed)
+		return closed, func() {}
+	}
+	return ch, cancel
+}
+
+func (d *durableSink) Replay(from event.Seq) ([]event.Event, error) {
+	return d.store.Replay(context.Background(), d.key, from)
+}
+
+// Close is intentionally a no-op (see the durableSink doc): the shared durable store
+// must not be closed on a single loop's completion.
+func (d *durableSink) Close() error { return nil }
 
 // spawnHandle wraps agent.AgentHandle (ADR-0026) so a binding awaits a child
 // without importing internal/agent's async internals at the call site.

@@ -94,6 +94,7 @@ type sendParams struct {
 }
 type observeParams struct {
 	LoopID  string    `json:"loop_id"`
+	Tenant  string    `json:"tenant,omitempty"`
 	FromSeq event.Seq `json:"from_seq,omitempty"`
 }
 type observeResult struct {
@@ -225,12 +226,12 @@ func (s *Server) serveObserve(ctx context.Context, r req) error {
 	//    event appended in the subscribe→replay window is delivered on BOTH paths; the
 	//    live pump dedups it against the replay watermark (see step 5) so the client
 	//    never sees a duplicate.
-	ch, cancel, err := s.rt.Observe(p.LoopID)
+	ch, cancel, err := s.rt.Observe(ctx, event.TenantID(p.Tenant), p.LoopID)
 	if err != nil {
 		return s.encode(s.errResp(r.ID, codeInternal, err.Error()))
 	}
 	// 2) Read durable history since from_seq.
-	hist, err := s.rt.Attach(p.LoopID, p.FromSeq)
+	hist, err := s.rt.Attach(ctx, event.TenantID(p.Tenant), p.LoopID, p.FromSeq)
 	if err != nil {
 		cancel()
 		return s.encode(s.errResp(r.ID, codeInternal, err.Error()))
