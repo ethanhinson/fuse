@@ -26,18 +26,21 @@ var ErrLoopFinished = errors.New("runtime: loop finished")
 // Deps are the binding-supplied collaborators the Runtime composes. None are
 // renderer/TUI/gate types; a binding wires those around the Runtime, not into it.
 type Deps struct {
-	// BuildAgent constructs the root *agent.Agent for a loop from its resolved
-	// model id and the per-loop tool registry, using the binding's own completer/
-	// tools/gate wiring. It is the one seam through which a binding injects its
-	// engine construction WITHOUT the Runtime importing cmd-layer builders. Returns
-	// the agent and the resolved gateway model id.
-	BuildAgent func(modelID string, toolReg *tools.Registry) (*agent.Agent, string, error)
-	// BuildChild runs a local child agent for a Spawn (agent.ChildBuilder). It is
-	// loop-specific policy the binding supplies; a binding still owns what the child
-	// renders/gates INSIDE that closure. agent.ChildBuilder is an agent type, not a
-	// renderer/TUI/MCP type, so it does not break the policy-free constraint. May be
-	// nil (Spawn then runs the child with no builder — the child produces no result).
-	BuildChild agent.ChildBuilder
+	// BuildAgent is the per-loop construction factory: for one loop it builds the
+	// root *agent.Agent AND the loop's child-builder, both bound to THIS loop's own
+	// event store and tree (the two per-loop values the Runtime opens/creates at
+	// StartLoop). It is the one seam through which a binding injects its engine
+	// construction WITHOUT the Runtime importing cmd-layer builders, and the mechanism
+	// that de-globalizes the event-store read path (change 0046): the store flows in
+	// as a VALUE, so N concurrent loops on one Runtime never share a store.
+	//
+	// Returns the root agent, the loop's child-builder (agent.ChildBuilder — an agent
+	// type, not a renderer/TUI/MCP type, so it does not break the policy-free
+	// constraint; may be nil, in which case Spawn runs children with no builder), and
+	// the resolved gateway model id. store is the loop's EventStore; tree is the loop's
+	// AgentTree (Deps.Tree when the binding observes its own tree, else one the Runtime
+	// created); toolReg is the per-loop tool registry.
+	BuildAgent func(store event.EventStore, tree *agent.AgentTree, modelID string, toolReg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error)
 	// NewToolRegistry builds the per-loop tool registry (spawn_agent etc. are wired
 	// by the binding via BuildAgent's closure over the same registry). May be nil,
 	// in which case an empty registry is used.
@@ -49,13 +52,6 @@ type Deps struct {
 	// MaxConcurrent seeds the loop tree's scheduler concurrency (used only when Tree
 	// is nil, i.e. when StartLoop creates its own tree).
 	MaxConcurrent int
-	// InstallGlobalStore, when non-nil, is called by StartLoop with the store the
-	// Runtime opened for the loop. It is the single-loop compatibility bridge
-	// (Decision Note D-1): cmd-site child builders still read the package-global
-	// event store, so a binding passes its setActiveEventStore here so those readers
-	// see the Runtime-owned store. The Runtime does NOT import cmd/fuse — the hook is
-	// a plain func the binding supplies.
-	InstallGlobalStore func(event.EventStore)
 	// Tree, when non-nil, is the agent tree StartLoop drives instead of creating one.
 	// The research-probe and shell bindings supply their externally-observed tree so
 	// they can still call probe.Summarize / render the tree after the loop runs. When
@@ -121,13 +117,6 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		}
 		store = fs
 	}
-	// Single-loop compatibility bridge (Decision Note D-1): install the Runtime-owned
-	// store into the binding's package-global holder so cmd-site child builders that
-	// read currentEventStore() see it. The Runtime owns the lifecycle; the holder is
-	// only a reader-visibility shim.
-	if r.deps.InstallGlobalStore != nil {
-		r.deps.InstallGlobalStore(store)
-	}
 
 	var toolReg *tools.Registry
 	if r.deps.NewToolRegistry != nil {
@@ -136,7 +125,10 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		toolReg = tools.NewRegistry()
 	}
 
-	a, _, err := r.deps.BuildAgent(cfg.ModelID, toolReg)
+	// BuildAgent is the per-loop factory: it binds the root agent AND the loop's
+	// child-builder to THIS loop's own store + tree (change 0046 de-globalization).
+	// The store flows in as a value, so N concurrent loops never share one.
+	a, buildChild, _, err := r.deps.BuildAgent(store, tree, cfg.ModelID, toolReg)
 	if err != nil {
 		if c, ok := store.(interface{ Close() error }); ok {
 			_ = c.Close()
@@ -152,7 +144,7 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		node:       rootNode,
 		store:      store,
 		humanBus:   agent.NewHumanBus(tree),
-		buildChild: r.deps.BuildChild,
+		buildChild: buildChild,
 	}
 	r.mu.Lock()
 	if r.loops == nil {
