@@ -40,3 +40,9 @@ The Seq allocation MODEL is unchanged and the decision still stands: Seq is stil
 This is proven by concurrent N-loop tests (`internal/runtime/multiloop_test.go` and `cmd/fuse/loop_server_multiloop_test.go`) that assert each loop's `Replay` returns only its own events with contiguous per-loop Seq, under `go test -race`.
 
 Net: the "would revisit Seq allocation" caveat in this ADR's Consequences is resolved — the per-store allocator was already the right primitive; #46 simply made "one store per loop" real. No supersession needed.
+
+## Update
+
+**2026-08-10 (change #47; see ADR-0031):** Change #47 (durable-distributed-event-store) adds a deployable Postgres `DurableStore` backend behind the same `internal/event` seam. This ADR's Decision is UNCHANGED and now holds for that backend too: the store is still the SOLE per-loop Seq allocator yielding one total order per loop, and `Append` still NEVER blocks the loop (preserving ADR-0016).
+
+The Postgres backend honors this model with a **transaction-scoped per-loop advisory lock** — a per-loop total order, explicitly NOT a global sequence — and does a synchronous durable INSERT under that lock, then hands `NOTIFY` (the cross-instance `LISTEN`/`NOTIFY` pub/sub) to a decoupled bounded async publisher, so `Append` never back-pressures on delivery. The shared behavioral conformance suite runs against both fsstore and the Postgres backend, so neither may silently regress the sole-allocator / non-blocking-`Append` guarantees. No supersession needed.

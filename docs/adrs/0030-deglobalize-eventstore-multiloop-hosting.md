@@ -82,3 +82,25 @@ isolated event stream (no cross-loop bleed, contiguous per-loop `Seq` from 1),
 proven by `internal/runtime/multiloop_test.go` and
 `cmd/fuse/loop_server_multiloop_test.go`, both under `go test -race`. Full suite
 plus `-race ./...` green.
+
+## Update
+
+**2026-08-10 (change #47; see ADR-0031):** Change #47
+(durable-distributed-event-store) makes a loop's EXISTENCE and liveness durable
+and cross-instance-reachable via a backend-agnostic durable store + loop
+registry. As part of that, the in-memory `r.loops` map on `inProcRuntime` — which
+this ADR established as the per-loop, per-process source of truth for a loop's
+existence — is DEMOTED to a cache/projection over the durable registry; the
+durable registry becomes the source of truth for existence and
+liveness/ownership.
+
+This is an AMENDMENT, not a supersession. Every decision in this ADR still
+stands: the process-global holders remain deleted, the per-loop store and tree
+still flow as VALUES, `BuildAgent` still inverts the dependency and returns the
+child-builder, and `internal/runtime` still imports no `cmd/fuse` (the
+policy-free seam). #47 does not reverse any of that — it BUILDS ON it, adding a
+durable layer beneath the value-threaded seam. Supersession would wrongly signal
+that this ADR's value-threading decision was reversed, which it was not: only the
+source of truth for loop existence moved (in-memory map → durable registry), and
+a live loop is still owned and driven by exactly one instance's in-memory
+`*loop`. No supersession needed.
