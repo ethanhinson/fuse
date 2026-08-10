@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0044 — Spawn handle-async — location-transparent spawning behind a handle-returning contract](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0044-spawn-handle-async.md)**
+> ↩ **[Change 0044 — Spawn handle-async — location-transparent spawning behind a handle-returning contract](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-10-0044-spawn-handle-async.md)**
 <!-- docket:backlink:end -->
 
 # Spec 0044 — Spawn handle-async: location-transparent spawning behind a handle-returning contract

@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0044-spawn-handle-async.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0044-spawn-handle-async.md) |
-| Plan | [0044-spawn-handle-async-plan.md](https://github.com/ethanhinson/fuse/blob/feat/spawn-handle-async/docs/superpowers/plans/0044-spawn-handle-async-plan.md) |
-| Results | [2026-08-10-spawn-handle-async-results.md](https://github.com/ethanhinson/fuse/blob/feat/spawn-handle-async/docs/results/2026-08-10-spawn-handle-async-results.md) |
+| Plan | [0044-spawn-handle-async-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/0044-spawn-handle-async-plan.md) |
+| Results | [2026-08-10-spawn-handle-async-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-10-spawn-handle-async-results.md) |
 | PR | [#47](https://github.com/ethanhinson/fuse/pull/47) |
 | ADRs | [ADR-0016](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0016-subagent-spawn-tree-runtime.md), [ADR-0017](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0017-segment-store-fssink-subpackage-split.md), [ADR-0026](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0026-handle-returning-spawn-seam-agent-free-interface.md) |
 <!-- docket:artifacts:end -->
