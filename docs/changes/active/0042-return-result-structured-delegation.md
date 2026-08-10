@@ -10,7 +10,7 @@ updated: 2026-08-10
 depends_on: []
 related: [24]
 discovered_from: []
-adrs: [12]
+adrs: [12, 23]
 spec: docs/superpowers/specs/0042-return-result-structured-delegation.md
 plan: docs/superpowers/plans/2026-08-10-return-result-structured-delegation-plan.md
 results:
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/return-result-structured-delegation
 pr:
 blocked_by:
-claimed_at: 2026-08-10T00:05:00Z
+claimed_at: 2026-08-10T00:20:00Z
 reconciled: true
 ---
 
@@ -30,7 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [0042-return-result-structured-delegation.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0042-return-result-structured-delegation.md) |
 | Plan | [2026-08-10-return-result-structured-delegation-plan.md](https://github.com/ethanhinson/fuse/blob/feat/return-result-structured-delegation/docs/superpowers/plans/2026-08-10-return-result-structured-delegation-plan.md) |
-| ADRs | [ADR-0012](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0012-vendor-jsonschema-validation-library.md) |
+| ADRs | [ADR-0012](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0012-vendor-jsonschema-validation-library.md), [ADR-0023](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0023-structured-delegation-return-result-tool.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
