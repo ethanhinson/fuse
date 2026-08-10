@@ -13,6 +13,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/event/fsstore"
 	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
@@ -171,6 +172,32 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// recover raw pre-compaction regions the sink archived (change 0030).
 	tools.SetSegmentsDir(segment.SegmentsDir(logDir, tree.RootID()))
 
+	// Loop event stream (change 0043): install the per-session EventStore next to
+	// the segment sink, keyed by the same root id. Every agent built this session
+	// emits its loop events here (via currentEventStore()). Best-effort: a failure
+	// to open the store leaves the no-op default installed, so nothing breaks.
+	var eventStore *fsstore.FSEventStore
+	if es, eerr := fsstore.NewFSEventStore(logDir, tree.RootID()); eerr != nil {
+		log.Printf("event store: %v", eerr)
+	} else {
+		eventStore = es
+		setActiveEventStore(es)
+		defer func() {
+			if cerr := es.Close(); cerr != nil {
+				log.Printf("event store: %v", cerr)
+			}
+		}()
+	}
+	// Session log re-expressed as a CONSUMER of the event stream (change 0043,
+	// "log adapts"): a subscriber projects spawn.done events into the exact current
+	// session.jsonl LogEntry format and writes them to a parallel projected log,
+	// run transiently alongside the direct sessLog.Write and verified byte-identical
+	// (the direct writes are deleted in a trivial follow-up once equivalence holds).
+	if eventStore != nil && sessLog != nil {
+		stopConsumer := startProjectedLogConsumer(eventStore, logDir, tree.RootID())
+		defer stopConsumer()
+	}
+
 	// One blackboard per session, shared by every agent in the tree (change 0023).
 	bb := agent.NewBlackboard(tree)
 
@@ -196,6 +223,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		ag.SetStripSpawn(sched.StripPredicate(rootNode.ID))
 		// Root's human-message injector: drains humanq/<root> at each turn boundary.
 		ag.SetHumanInjector(agent.NewHumanInjector(rootNode.ID, humanBus))
+		// Event stream wiring (change 0043): the root agent emits its loop events,
+		// tagged with the root node identity.
+		ag.SetEventSink(currentEventStore())
+		ag.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
 		return ag, nil
 	}
 
@@ -317,9 +348,22 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
 				// Child's human-message injector: drains humanq/<child> each turn.
 				a.SetHumanInjector(agent.NewHumanInjector(childNode.ID, humanBus))
+				// Event stream wiring (change 0043): the child emits its loop events
+				// into the session store, tagged with its node identity.
+				a.SetEventSink(currentEventStore())
+				a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
+
+				// spawn.start (change 0043): the spawn boundary opens here, at the
+				// cmd/fuse child-run site (the loop itself never spawns).
+				emitSpawnStart(currentEventStore(), childNode, opts.Task)
 
 				history := []model.Message{{Role: "user", Content: opts.Task}}
 				msgs, rerr := a.Run(ctx, history)
+
+				// spawn.done (change 0043): carries the same fields the direct
+				// session-log write uses, so the log projection (event_log_consumer)
+				// reproduces the exact LogEntry.
+				emitSpawnDone(currentEventStore(), childNode, msgs, rerr, opts.ExpectsSink())
 
 				if sessLog != nil {
 					kind := "done"

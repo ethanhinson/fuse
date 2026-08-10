@@ -198,6 +198,52 @@ func TestEmitMaxTurns(t *testing.T) {
 	}
 }
 
+// TestEmitSummarize: a Tier-2 summarization pass emits a context.summarize event
+// carrying the turn span and token accounting (coverage for the summarize kind).
+func TestEmitSummarize(t *testing.T) {
+	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}
+	rec := &recordingStore{}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.ContextWindow = 4000
+	a.SetEventSink(rec)
+	sc := &countingSummarizerCompleter{summary: "Objective: read files\nNext: continue"}
+	a.SetSummarizer(newSummarizer(sc, "m", 2000), nil)
+
+	if _, err := a.Run(context.Background(), overBudgetHistory()); err != nil {
+		t.Fatalf("run err = %v", err)
+	}
+	e, ok := rec.first(event.KindSummarize)
+	if !ok {
+		t.Fatalf("no context.summarize event; kinds = %v", rec.kinds())
+	}
+	var pl event.SummarizePayload
+	if err := json.Unmarshal(e.Payload, &pl); err != nil {
+		t.Fatalf("summarize payload: %v", err)
+	}
+	if pl.TokensBefore == 0 {
+		t.Errorf("summarize payload missing token accounting: %+v", pl)
+	}
+}
+
+// TestEmitLoopTrip: the doom-loop detector firing emits a loop.detector.trip
+// event (coverage for the loop-trip kind). Three byte-identical tool-call
+// responses trip the loopLimit=3 detector; with no LoopApproval hook the loop
+// aborts, so we also see the error event.
+func TestEmitLoopTrip(t *testing.T) {
+	call := model.CompletionResp{ToolCalls: []model.ToolCall{{ID: "c", Name: "bash", Arguments: `{"cmd":"ls"}`}}}
+	comp := &scriptedCompleter{responses: []model.CompletionResp{call, call, call, call}}
+	rec := &recordingStore{}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 20, 100)
+	a.SetEventSink(rec)
+	_, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "go"}})
+	if !errors.Is(err, ErrLoopDetected) {
+		t.Fatalf("err = %v, want ErrLoopDetected", err)
+	}
+	if !hasKind(rec.kinds(), event.KindLoopTrip) {
+		t.Errorf("no loop.detector.trip event; kinds = %v", rec.kinds())
+	}
+}
+
 // TestEmitDefaultNoopNeverPanics: an Agent with no event sink installed (the New
 // default) runs without panicking — emission is inert.
 func TestEmitDefaultNoopNeverPanics(t *testing.T) {
