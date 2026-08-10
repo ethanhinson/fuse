@@ -12,6 +12,7 @@ func TestRuntimeInterfaceShape(t *testing.T) {
 	_ = LoopConfig{Task: "t", ModelID: "m"}
 	_ = SpawnOpts{Label: "l", Task: "t", SystemPrompt: "s", ModelID: "m", Tools: []string{"bash"}, Worker: "w", Expects: map[string]any{}}
 	var _ Runtime = (Runtime)(nil)
+	var _ Runtime = (*inProcRuntime)(nil)
 	var _ event.Seq = event.Seq(0)
 	_ = context.Background()
 }
