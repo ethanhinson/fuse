@@ -63,6 +63,34 @@ type SpawnOpts struct {
 	// mismatch NEVER fails the spawn — it degrades to free text with a note. Nil
 	// preserves all prior behavior byte-for-byte.
 	Expects any
+
+	// expectsSink is the spawner-allocated holder through which the child Agent's
+	// loop returns its validated return_result value (change 0042). spawnLocal
+	// allocates it when Expects is a map[string]any and threads it here so each
+	// cmd-site child builder can hand it to the Agent via a.SetExpects(opts.Expects,
+	// opts.ExpectsSink) — the single seam that lets the loop's captured value reach
+	// the spawner without changing ChildBuilder's (string, error) return. It is
+	// unexported-by-accessor: builders read it via ExpectsSink(). Nil when the spawn
+	// carries no map schema, in which case SetExpects is a no-op.
+	expectsSink *ExpectsSink
+}
+
+// ExpectsSink returns the spawner-allocated return_result capture holder for this
+// spawn (change 0042), or nil when the spawn carries no structured-delegation
+// schema. Child builders pass it into the child Agent via
+// a.SetExpects(opts.Expects, opts.ExpectsSink()) so the loop's validated
+// return_result value flows back to the spawner's result assembly.
+func (o SpawnOpts) ExpectsSink() *ExpectsSink { return o.expectsSink }
+
+// ExpectsSchema returns the decoded map[string]any expects schema for this spawn,
+// or nil when Expects is unset or not a map (change 0042). Child builders pass it
+// to a.SetExpects so the one-line wiring is uniform across all cmd sites without
+// each repeating the type assertion.
+func (o SpawnOpts) ExpectsSchema() map[string]any {
+	if m, ok := o.Expects.(map[string]any); ok {
+		return m
+	}
+	return nil
 }
 
 // SpawnDone carries the result of a completed child agent.
@@ -332,12 +360,33 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		var result string
 		var runErr error
 
-		// Producer side (change 0024): when the parent declared an expected result
-		// schema, inject a directive into the child's system prompt asking it to
-		// emit ONLY conforming JSON. Done here in the spawner so all child-builder
-		// adapters inherit it for free. Nil Expects leaves opts untouched.
+		// Producer side (change 0042, supersedes 0024's directive): when the parent
+		// declared an expected result schema, install the structured-output channel.
+		// If the schema is a map[string]any (the real case), allocate the capture
+		// sink and inject a SHORT, non-contradictory hint naming the synthesized
+		// return_result tool — NOT the old "final message = only JSON" directive,
+		// which competed with the tool channel and caused the result object to be
+		// crammed into a working tool's arguments (the bug this change fixes). The
+		// sink is threaded via opts.expectsSink so each cmd-site child builder can
+		// call a.SetExpects(opts.Expects, opts.ExpectsSink()); the loop offers the
+		// return_result tool, validates it, and writes the captured value here.
+		//
+		// Fallback (D5, back-compat): a non-map Expects (or a child builder that
+		// never wires SetExpects and never calls return_result — e.g. the fixedBuilder
+		// in tests) leaves no sink capture; result assembly below then falls back to
+		// the lenient final-message validation exactly as pre-0042, so behavior is
+		// never worse than today and existing spawn_expects tests stay green.
+		var sink *ExpectsSink
 		if opts.Expects != nil {
-			opts.SystemPrompt = augmentPromptWithSchema(opts.SystemPrompt, opts.Expects)
+			if schema, ok := opts.Expects.(map[string]any); ok {
+				sink = &ExpectsSink{}
+				opts.expectsSink = sink
+				opts.SystemPrompt = augmentPromptWithReturnResult(opts.SystemPrompt, schema)
+			} else {
+				// Non-map schema: no return_result tool is synthesizable; retain the
+				// legacy directive path so the lenient fallback can still validate.
+				opts.SystemPrompt = augmentPromptWithSchema(opts.SystemPrompt, opts.Expects)
+			}
 		}
 
 		if s.buildChild != nil {
@@ -364,9 +413,20 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		// event. Done in the child goroutine (off the parent's slot), before the
 		// channel send, so the note rides inside Result and Structured on the same
 		// SpawnDone.
+		//
+		// Change 0042: the structured result now comes primarily from the validated
+		// return_result call the loop captured into `sink`. When one was captured we
+		// use it directly (no re-validation, no note mutation — the human-facing text
+		// stays whatever the child last said). When NONE was captured (a child that
+		// never called return_result: an older prompt, a fixedBuilder in tests, or a
+		// model that chose the message channel), fall back to the lenient
+		// final-message validation EXACTLY as pre-0042 (D5) — keeping the match /
+		// mismatch notes and the schema_mismatch tree event.
 		var structured any
 		if opts.Expects != nil && runErr == nil {
-			if schema, ok := opts.Expects.(map[string]any); ok {
+			if sink.Captured() {
+				structured = sink.Value()
+			} else if schema, ok := opts.Expects.(map[string]any); ok {
 				parsed, verr := validateAgainstSchema(schema, result)
 				if verr == nil {
 					structured = parsed
