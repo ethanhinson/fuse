@@ -72,6 +72,11 @@ func TestEveryAgentEntryPointWiresPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Since change 0045 (binding #1) the three cloned child builders are consolidated
+	// as three child-builder CLOSURES through one runtime.Deps seam in
+	// runtime_binding.go: count closures, not files. Each of the three builders wires
+	// pipeline_run at BOTH the root and inside the child builder, so a file holding N
+	// child-builder closures must have >= 2*N wirePipelineTool calls.
 	sites := 0
 	for _, e := range entries {
 		f := e.Name()
@@ -83,17 +88,18 @@ func TestEveryAgentEntryPointWiresPipeline(t *testing.T) {
 			t.Fatal(err)
 		}
 		s := string(src)
-		if !strings.Contains(s, "agent.WithChildBuilder(") {
+		n := strings.Count(s, "agent.WithChildBuilder(")
+		if n == 0 {
 			continue
 		}
-		sites++
-		// Two calls are expected per entry point: one at the root, one in the child
-		// builder — so require at least two occurrences of the helper.
-		if strings.Count(s, "wirePipelineTool(") < 2 {
-			t.Errorf("%s builds an agent (WithChildBuilder) but does not call wirePipelineTool at both the root and the child builder", f)
+		sites += n
+		// Two calls are expected per builder: one at the root, one in the child
+		// builder — so require at least 2*n occurrences of the helper.
+		if strings.Count(s, "wirePipelineTool(") < 2*n {
+			t.Errorf("%s holds %d child-builder closures but has fewer than %d wirePipelineTool calls — a builder omits root or child pipeline wiring", f, n, 2*n)
 		}
 	}
 	if sites < 3 {
-		t.Errorf("expected >=3 agent entry-point files with WithChildBuilder, found %d — re-check the marker", sites)
+		t.Errorf("expected >=3 child-builder closures with WithChildBuilder, found %d — re-check the marker", sites)
 	}
 }

@@ -168,6 +168,11 @@ func TestEveryAgentEntryPointWiresBlackboard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Since change 0045 (binding #1) the three cloned child builders are consolidated
+	// as three child-builder CLOSURES through one runtime.Deps seam in
+	// runtime_binding.go, so we count closures (agent.WithChildBuilder occurrences)
+	// across all non-test files rather than one-per-file. A file that contains ANY
+	// child-builder closure must call BOTH wireRootBlackboard and wireChildBlackboard.
 	sites := 0
 	for _, f := range entries {
 		if strings.HasSuffix(f, "_test.go") {
@@ -178,11 +183,12 @@ func TestEveryAgentEntryPointWiresBlackboard(t *testing.T) {
 			t.Fatal(err)
 		}
 		s := string(src)
-		// A child-builder closure is the signature of an agent entry point.
-		if !strings.Contains(s, "agent.WithChildBuilder(") {
+		// Each child-builder closure is one cloned agent-construction site.
+		n := strings.Count(s, "agent.WithChildBuilder(")
+		if n == 0 {
 			continue
 		}
-		sites++
+		sites += n
 		if !strings.Contains(s, "wireRootBlackboard(") {
 			t.Errorf("%s builds an agent (WithChildBuilder) but never calls wireRootBlackboard — root blackboard wiring missing", f)
 		}
@@ -190,10 +196,10 @@ func TestEveryAgentEntryPointWiresBlackboard(t *testing.T) {
 			t.Errorf("%s builds an agent (WithChildBuilder) but never calls wireChildBlackboard — child blackboard wiring missing", f)
 		}
 	}
-	// Guard against the marker changing out from under the test (which would make
-	// it silently pass by finding zero sites). Today there are three entry points:
-	// main.go, shell.go, research_probe.go.
+	// Guard against the marker changing out from under the test (which would make it
+	// silently pass by finding zero sites). Today there are three child-builder
+	// closures: one-shot, shell, research-probe — all in runtime_binding.go.
 	if sites < 3 {
-		t.Errorf("expected >=3 agent entry-point files with WithChildBuilder, found %d — re-check the marker", sites)
+		t.Errorf("expected >=3 child-builder closures with WithChildBuilder, found %d — re-check the marker", sites)
 	}
 }
