@@ -6,7 +6,7 @@
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0047](active/0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | `medium` | `feat` | needs-brainstorm |
+| [0047](active/0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | `medium` | `feat` | build-ready |
 | [0048](active/0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | `medium` | `feat` | needs-brainstorm |
 | [0049](active/0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | `medium` | `feat` | ⏳ waiting on #48 — not yet built |
 | [0050](active/0050-client-sdk.md) | Client SDK — thin-client library, same API local-or-remote | `medium` | `feat` | ⏳ waiting on #48 — not yet built |
