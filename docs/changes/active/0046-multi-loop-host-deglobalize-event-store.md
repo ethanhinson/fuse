@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/multi-loop-host-deglobalize-event-store
 pr:
 blocked_by:
-claimed_at: 2026-08-10T18:52:53Z
-reconciled: false
+claimed_at: 2026-08-10T18:55:56Z
+reconciled: true
 ---
 
 ## Artifacts
@@ -96,3 +96,54 @@ Detailed design is in the linked spec.
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-10 — reconcile against origin/main (7c4bf4d, #45 merged)
+
+Verified the change + spec 0046 against current `origin/main` code. **The design is sound and
+accurate; scope holds. No kill, no fundamental invalidation.** Findings that sharpen the build:
+
+- **Confirmed the seam is already N-loop-shaped.** `internal/runtime/inproc.go` owns each loop's
+  store as instance state in `loops map[string]*loop` keyed by `tree.RootID()`; `Observe`/`Attach`/
+  `Send`/`Spawn` already dispatch by loop_id to the per-loop store. `internal/loopserver/server.go`'s
+  `loop.start` already registers the loop in that map and returns its loop_id; `loop.send`/
+  `loop.observe` already dispatch by loop_id. So the loopserver layer is *not* structurally capped at
+  one loop — the cap is purely the process-global read path underneath.
+
+- **The single blocking global is the child-builder / spawner READ path**, not the store write side.
+  All four `runtime.Deps` builders in `cmd/fuse` (one-shot `runtime_binding.go`, shell, research-probe,
+  and loop-server `loop_server.go`) wire their `BuildAgent` closure, `BuildChild` child-builder, and
+  every `makeSpawner` to `currentEventStore()` — a process-global (`activeEventStore` + RWMutex in
+  `run.go`) installed via `Deps.InstallGlobalStore: setActiveEventStore`, which `StartLoop` calls at
+  loop-start time. A second concurrent `StartLoop` **clobbers** that one global slot, so the first
+  loop's agents then emit into the second loop's store. This is the exact ADR-0027 hazard.
+
+- **De-globalization requires threading the per-loop store as a value, not a closure capture.** The
+  `Deps` struct is built once per binding, but `StartLoop` runs per loop and is where the store is
+  opened. So the store must flow into `BuildAgent` / `BuildChild` / the spawner wiring as an explicit
+  parameter at StartLoop time (the spec's "lean: per-loop factory closure created at StartLoop"), so
+  each loop's agents resolve *their own* store. This is a deliberate, called-out adjustment to the
+  `Deps.BuildAgent` shape (spec non-goal #5 permits a deliberate exception); the `Runtime` *interface*
+  (StartLoop/Send/Spawn/Observe/Attach) is untouched. `InstallGlobalStore` + the `currentEventStore()`
+  accessor are then removed (no surviving reader) or reduced to a documented no-op — build-time call.
+
+- **Segment sink is a parallel global with the same hazard, handled asymmetrically today.**
+  `activeSegmentSink` (RWMutex in `run.go`) is read at `run.go:350` (`EnableSummarization` inside
+  `buildAgentCore`) and set directly in `shell.go:171` via `setActiveSegmentSink` — there is **no
+  `Deps` hook** for it (unlike the event store). The loop-server binding does not set a segment sink
+  at all. Spec goal is to migrate BOTH; the build must thread the per-loop segment sink through the
+  same per-loop path (or scope it per loop) so summarization resolves the owning loop's sink. Because
+  only the shell installs one today, the multi-loop-server path is the load-bearing case; shell stays
+  single-loop-per-process in practice, so its segment-sink wiring must stay byte-identical.
+
+- **Existing pin to update:** `cmd/fuse/event_store_holder_test.go` directly exercises
+  `setActiveEventStore`/`currentEventStore`; it will be removed or rewritten with the global. Other
+  callers of these accessors: `run.go` (defs + `currentSegmentSink()` at :350), `shell.go`,
+  `two_bindings_parity_test.go`, `segment_gateway_test.go`, `segment_wiring_test.go`.
+
+- **ADR actions (settle at build via docket-adr):** supersede **ADR-0027** (the global-holder bridge
+  is retired). For **ADR-0025**, Seq is already per-`fsstore`-instance, so the allocation model does
+  not change — a dated `## Update` amendment (one-process-one-session premise retired; per-loop Seq
+  proven isolated) is the likely action rather than a supersession. Final call at build time.
+
+- No adjacent follow-up work to auto-capture (AUTO_CAPTURE disabled anyway). Scope unchanged; spec
+  needs no body edit — findings above are build-directing detail, not scope drift.
