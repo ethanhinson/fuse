@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/return-result-structured-delegation
 pr:
 blocked_by:
-claimed_at: 2026-08-10T00:02:00Z
-reconciled: false
+claimed_at: 2026-08-10T00:03:30Z
+reconciled: true
 ---
 
 ## Artifacts
@@ -92,3 +92,35 @@ Design detail, the rejected alternatives (prompt reword, provider-native
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-10 — reconcile (docket-implement-next)
+
+Verified the spec against current `main` code. All cited code sites still hold:
+
+- `internal/agent/spawn.go:339-340` — directive injection (`augmentPromptWithSchema`) at
+  the single choke point, confirmed. Result assembly at `spawn.go:362-404`, confirmed.
+- `internal/agent/loop.go` — tool dispatch is in `executeTools` (loop.go:551), invoked from
+  the `Run` loop at loop.go:522; range still matches the spec's "around loop.go:455-526".
+- `internal/agent/schemavalidate.go` — `validateAgainstSchema` + `augmentPromptWithSchema`
+  present and reusable; the ADR-0012 vendored validator (`santhosh-tekuri/jsonschema/v6`)
+  is intact.
+- Pipeline path (`internal/pipeline/engine.go:349-376` `spawnOnce`) reads structured results
+  via `AgentHandle.Result()` → `SpawnDone.Structured`, so fixing `spawnLocal` to source
+  `Structured` from the captured `return_result` value fixes pipelines with no
+  pipeline-specific code (spec D6 confirmed). `synthesize.go:54` uses the same `sp.Spawn`.
+- `internal/tools/spawn_agent.go:142-148` — `expects` param description present; parent-facing
+  wording update per spec still applies.
+
+Scope refinement (not an invalidation): the `ChildBuilder` seam
+(`agent.ChildBuilder = func(...) (string, error)`) returns only text, and is defined at THREE
+cmd sites (`cmd/fuse/main.go:174`, `cmd/fuse/shell.go:254`, `cmd/fuse/research_probe.go:147`).
+The captured `return_result` value therefore must flow back to `spawnLocal` through a
+package-internal channel driven off `opts.Expects` at the choke point — NOT by widening the
+`ChildBuilder` signature (which would churn all three cmd sites and any external adapter). The
+design still converges at `spawn.go` exactly as the spec requires; this note records the
+implementation shape the plan/build must honor: the synthesized tool + terminal handling live
+in the `agent` package (loop + spawner), and the cmd-site child builders stay untouched.
+
+Design is sound and NOT fundamentally invalidated. `auto_capture` is disabled repo-wide, so no
+stubs minted this pass; no adjacent follow-up work surfaced beyond the ADR question the spec
+already defers to review.
