@@ -2,7 +2,7 @@
 id: 45
 slug: runtime-interface-and-binding
 title: Runtime interface + second binding — prove the platform boundary is emergent
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-10
@@ -13,13 +13,13 @@ discovered_from: [43]
 adrs: [16, 22, 24, 25, 26, 27, 28, 29]
 spec: docs/superpowers/specs/0045-runtime-interface-and-binding.md
 plan: docs/superpowers/plans/2026-08-10-runtime-interface-and-binding.md
-results:
+results: docs/results/2026-08-10-runtime-interface-and-binding-results.md
 trivial: false
 auto_groomable:
 branch: feat/runtime-interface-and-binding
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/48
 blocked_by:
-claimed_at: 2026-08-10T17:26:58Z
+claimed_at: 2026-08-10T18:26:57Z
 reconciled: true
 ---
 
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [0045-runtime-interface-and-binding.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0045-runtime-interface-and-binding.md) |
 | Plan | [2026-08-10-runtime-interface-and-binding.md](https://github.com/ethanhinson/fuse/blob/feat/runtime-interface-and-binding/docs/superpowers/plans/2026-08-10-runtime-interface-and-binding.md) |
+| Results | [2026-08-10-runtime-interface-and-binding-results.md](https://github.com/ethanhinson/fuse/blob/feat/runtime-interface-and-binding/docs/results/2026-08-10-runtime-interface-and-binding-results.md) |
+| PR | [#48](https://github.com/ethanhinson/fuse/pull/48) |
 | ADRs | [ADR-0016](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0016-subagent-spawn-tree-runtime.md), [ADR-0022](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0022-human-message-bus-per-node-queue-async-router.md), [ADR-0024](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0024-eventstore-independent-of-segment-store.md), [ADR-0025](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0025-eventstore-ordering-backpressure.md), [ADR-0026](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0026-handle-returning-spawn-seam-agent-free-interface.md), [ADR-0027](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0027-runtime-owns-loop-eventstore-global-holder-bridge.md), [ADR-0028](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0028-loopserver-new-jsonrpc-server-not-mcp-extension.md), [ADR-0029](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0029-shell-partial-runtime-binding.md) |
 <!-- docket:artifacts:end -->
 
