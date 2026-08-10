@@ -170,6 +170,15 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		defer close(h.done)
 		msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: cfg.Task}})
 		h.msgs, h.err = msgs, rerr
+		// Close the loop's event store on run completion: it releases the fsstore write
+		// handle (no per-loop file-handle leak) AND closes its live subscriber channels,
+		// so a loop.observe pump terminates without relying on client-ctx or process
+		// exit. Attach still works afterward — fsstore.Replay opens its own reader
+		// independent of the (now-closed) write handle. NoopStore has no Close, so the
+		// assertion is a no-op there (one-shot binding keeps byte-identical behavior).
+		if c, ok := store.(interface{ Close() error }); ok {
+			_ = c.Close()
+		}
 	}()
 	return h, nil
 }

@@ -172,8 +172,12 @@ func buildLoopServerRuntimeDeps(cfg config.Config, reg *model.Registry, modelAli
 		nil)
 
 	return runtime.Deps{
-		Tree:               tree,
-		BaseDir:            session.DefaultLogDir(), // REAL fsstore: observe/attach need durable history.
+		Tree: tree,
+		// REAL fsstore: observe/attach need durable history. The Runtime closes this
+		// store when the loop's run completes — that releases the write handle and
+		// closes live subscriber channels (terminating observe pumps), while Attach
+		// keeps working because fsstore.Replay opens its own reader from events.jsonl.
+		BaseDir:            session.DefaultLogDir(),
 		MaxConcurrent:      cfg.Agents.MaxConcurrent,
 		InstallGlobalStore: setActiveEventStore,
 		NewToolRegistry:    func() *tools.Registry { return toolReg },

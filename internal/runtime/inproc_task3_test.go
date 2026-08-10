@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/event"
@@ -135,13 +136,63 @@ func TestSendToFinishedLoopReturnsErrLoopFinished(t *testing.T) {
 	}
 }
 
-func TestSpawnReturnsHandle(t *testing.T) {
+// TestObserveChannelClosesOnLoopCompletion proves FIX 3: when the loop's run
+// goroutine completes the Runtime closes the loop's event store, which closes its live
+// subscriber channels — so an Observe pump terminates (ranges to completion) without
+// relying on client-ctx cancellation or process exit, and no fsstore handle leaks.
+func TestObserveChannelClosesOnLoopCompletion(t *testing.T) {
 	fake := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}
+	rt := newTestRuntime(t, fake)
+
+	h, err := rt.StartLoop(context.Background(), LoopConfig{Task: "hi", ModelID: "cloud/x"})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	ch, cancel, err := rt.Observe(h.ID())
+	if err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	defer cancel()
+
+	if _, err := h.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+
+	// Draining the channel must terminate (range returns) because store.Close closed
+	// the subscriber channel on run completion. A hang here means the pump would never
+	// stop. A background timer fails the test rather than hanging the suite forever.
+	done := make(chan struct{})
+	go func() {
+		for range ch {
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Observe channel never closed after loop completion (store not closed)")
+	}
+
+	// Attach must STILL work after the store is closed (Replay opens its own reader).
+	evs, err := rt.Attach(h.ID(), 0)
+	if err != nil {
+		t.Fatalf("Attach after completion: %v", err)
+	}
+	if !hasKind(evs, event.KindTurnStart) {
+		t.Errorf("durable history unreadable after store close: %v", evs)
+	}
+}
+
+func TestSpawnReturnsHandle(t *testing.T) {
+	// The root completer blocks so the loop is still RUNNING (its store open) while we
+	// Spawn a child — post-FIX-3 the Runtime closes the store on run completion, so a
+	// spawn must land on the live store, not after the loop has finished.
+	release := make(chan struct{})
 	rt := New(Deps{
 		BaseDir:       t.TempDir(),
 		MaxConcurrent: 2,
 		BuildAgent: func(modelID string, reg *tools.Registry) (*agent.Agent, string, error) {
-			return agent.New(fake, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), modelID, nil
+			return agent.New(blockingCompleter{release: release}, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), modelID, nil
 		},
 		BuildChild: func(ctx context.Context, opts agent.SpawnOpts, node *agent.AgentNode, tree *agent.AgentTree) (string, error) {
 			return opts.Task + "-out", nil
@@ -151,9 +202,6 @@ func TestSpawnReturnsHandle(t *testing.T) {
 	h, err := rt.StartLoop(context.Background(), LoopConfig{Task: "hi", ModelID: "cloud/x"})
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
-	}
-	if _, err := h.Wait(); err != nil {
-		t.Fatalf("Wait: %v", err)
 	}
 
 	sh, err := rt.Spawn(context.Background(), h.ID(), SpawnOpts{Label: "child", Task: "x"})
@@ -168,13 +216,19 @@ func TestSpawnReturnsHandle(t *testing.T) {
 		t.Error("spawn handle NodeID() is empty")
 	}
 
-	// spawn.start + spawn.done appear on the same event stream.
+	// spawn.start + spawn.done appear on the same event stream (read while the store
+	// is still open — the loop is blocked in the completer).
 	evs, err := rt.Attach(h.ID(), 0)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 	if !hasKind(evs, event.KindSpawnStart) || !hasKind(evs, event.KindSpawnDone) {
 		t.Errorf("spawn events missing from stream: %v", evs)
+	}
+
+	close(release)
+	if _, err := h.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
 	}
 }
 
