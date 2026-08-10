@@ -4,6 +4,7 @@ One curated finding per file; this index is the hint surface. Load it, then read
 
 ## architecture
 
+- [replay-live-handoff-dedup-at-watermark](replay-live-handoff-dedup-at-watermark.md) — An observe seam that subscribes-to-live AND replays history double-delivers any event that lands between the two steps — subscribe first (drop nothing), then dedup at the replay watermark (drop live events with Seq <= last replayed); a plain sequential test cannot see it. · also: eventstore, concurrency, streaming ⟨needs promotion⟩
 - [structured-return-via-synthesized-tool](structured-return-via-synthesized-tool.md) — to get a structured value back from a subagent that also uses tools, synthesize a dedicated return_result tool (schema = the expected shape) offered only to Expects children — do NOT instruct the model to emit the structure in its final message; a final-message directive collides with tool-calling (the child crams the structured object into an unrelated tool's args, e.g. write_file.content with no path) · also: agents, subagents, tool-use, structured-output ⟨needs promotion⟩
 
 ## concurrency
