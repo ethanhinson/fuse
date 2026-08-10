@@ -27,11 +27,12 @@ import (
 // verify-tool-loop-at-gateway-seam); the two event streams are produced
 // independently, never copied.
 //
-// The two bindings are driven SEQUENTIALLY because cmd/fuse's event store holder is
-// a package global (Decision Note D-1): each StartLoop installs its own fsstore via
-// InstallGlobalStore=setActiveEventStore, so overlapping runs would clobber each
-// other. Sequential single-turn runs keep each side's stream isolated to its own
-// temp-dir fsstore, read back via runtime.Attach.
+// The two bindings are driven SEQUENTIALLY here only because this test compares ONE
+// run per side for byte-equivalence; each side already owns an isolated per-loop
+// fsstore (change 0046 retired the process-global holder, so overlapping runs no
+// longer clobber — that isolation is proven separately by the N-concurrent-loop
+// tests). Sequential single-turn runs keep the comparison deterministic, read back
+// via runtime.Attach.
 func TestTwoBindingsOneSeamEventParity(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 

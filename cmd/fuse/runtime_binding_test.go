@@ -113,9 +113,10 @@ func TestResearchProbeRuntimeParity(t *testing.T) {
 
 // TestBuildShellRuntimeDeps is a wiring assertion (matching the
 // blackboard_wiring_test.go / spawn_func_from_test.go style): buildShellRuntimeDeps
-// returns a Deps whose BuildAgent produces a non-nil *agent.Agent and whose
-// BuildChild is non-nil. A headless bubbletea assertion is impractical; the shell's
-// end-to-end behavior stays covered by the existing shell_test.go teatest.
+// returns a Deps whose BuildAgent (the per-loop factory, change 0046) produces a
+// non-nil *agent.Agent AND a non-nil per-loop child-builder. A headless bubbletea
+// assertion is impractical; the shell's end-to-end behavior stays covered by the
+// existing shell_test.go teatest.
 func TestBuildShellRuntimeDeps(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := config.Default()
@@ -127,18 +128,21 @@ func TestBuildShellRuntimeDeps(t *testing.T) {
 		cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
 		verbose: false, skillBlock: "block", childApprove: nil, rootApprove: nil,
 	})
-	if deps.BuildChild == nil {
-		t.Fatal("BuildChild is nil")
-	}
 	if deps.BuildAgent == nil {
 		t.Fatal("BuildAgent is nil")
 	}
-	a, _, err := deps.BuildAgent(reg.Default, toolReg)
+	// BuildAgent now returns the loop's child-builder as its second result (the field
+	// Deps.BuildChild is retired). The shell owns its own store, so pass its holder's
+	// no-op default here (nil store ⇒ the shell's seeded store stays in use).
+	a, childBuilder, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg)
 	if err != nil {
 		t.Fatalf("BuildAgent: %v", err)
 	}
 	if a == nil {
 		t.Fatal("BuildAgent returned nil agent")
+	}
+	if childBuilder == nil {
+		t.Fatal("BuildAgent returned nil child-builder")
 	}
 }
 

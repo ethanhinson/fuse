@@ -62,8 +62,8 @@ func TestStartLoopRunsAndEmits(t *testing.T) {
 	rt := New(Deps{
 		BaseDir:       baseDir,
 		MaxConcurrent: 1,
-		BuildAgent: func(modelID string, reg *tools.Registry) (*agent.Agent, string, error) {
-			return agent.New(fake, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), modelID, nil
+		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+			return agent.New(fake, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), nil, modelID, nil
 		},
 	})
 

@@ -3,53 +3,30 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/segment/fssink"
 	"github.com/ethanhinson/fuse/internal/session"
 )
 
-// TestActiveSegmentSinkDefaultsNil: with no sink installed, installSummarizer
-// wires the agent with a nil sink (→ the no-op default inside the agent).
-func TestActiveSegmentSinkResolvesInstalled(t *testing.T) {
-	prev := currentSegmentSink()
-	t.Cleanup(func() { setActiveSegmentSink(prev) })
-
-	setActiveSegmentSink(nil)
-	if got := currentSegmentSink(); got != nil {
-		t.Errorf("currentSegmentSink() = %v, want nil when none installed", got)
-	}
-
+// TestInstallSummarizerThreadsPerLoopSink proves the segment sink is now a per-loop
+// VALUE threaded into installSummarizer (change 0046 — the setActiveSegmentSink /
+// currentSegmentSink process-global is retired). With summarization enabled it
+// accepts a concrete *fssink.FSSegmentSink (interface satisfaction is load-bearing:
+// the shell hands its own sink; one-shot/probe/loop-server hand nil) and with it
+// disabled it is inert regardless of the sink argument.
+func TestInstallSummarizerThreadsPerLoopSink(t *testing.T) {
 	base := t.TempDir()
-	sink := fssink.NewFSSegmentSink(base, "root-xyz")
-	setActiveSegmentSink(sink)
-	got := currentSegmentSink()
-	if got == nil {
-		t.Fatalf("currentSegmentSink() = nil after setActiveSegmentSink")
-	}
-	if _, ok := got.(*fssink.FSSegmentSink); !ok {
-		t.Errorf("currentSegmentSink() type = %T, want *fssink.FSSegmentSink", got)
-	}
-	var _ agent.SegmentSink = got // compile-time interface satisfaction
-}
+	var sink agent.SegmentSink = fssink.NewFSSegmentSink(base, "root-xyz")
 
-// TestActiveSegmentSinkConcurrentAccess exercises the holder's RWMutex: concurrent
-// setters and readers (installSummarizer reads it on child-spawn goroutines) must
-// be race-free. Meaningful only under `go test -race`.
-func TestActiveSegmentSinkConcurrentAccess(t *testing.T) {
-	prev := currentSegmentSink()
-	t.Cleanup(func() { setActiveSegmentSink(prev) })
-
-	base := t.TempDir()
-	var wg sync.WaitGroup
-	for i := 0; i < 16; i++ {
-		wg.Add(2)
-		go func() { defer wg.Done(); setActiveSegmentSink(fssink.NewFSSegmentSink(base, "r")) }()
-		go func() { defer wg.Done(); _ = currentSegmentSink() }()
-	}
-	wg.Wait()
+	// Disabled ⇒ inert: installSummarizer returns without wiring, whether the sink is
+	// a real value or nil. A nil-panic here would fail the test.
+	disabled := config.Config{}
+	a := agent.New(nil, nil, nil, "cloud/model", "", 1, 0)
+	installSummarizer(a, disabled, "cloud/model", nil, nil, sink)
+	installSummarizer(a, disabled, "cloud/model", nil, nil, nil)
 }
 
 // TestNewSessionLoggerPerSessionDir: a new session's log lands under

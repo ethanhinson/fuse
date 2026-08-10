@@ -29,8 +29,8 @@ func newTestRuntime(t *testing.T, fake agent.Completer) Runtime {
 	return New(Deps{
 		BaseDir:       t.TempDir(),
 		MaxConcurrent: 2,
-		BuildAgent: func(modelID string, reg *tools.Registry) (*agent.Agent, string, error) {
-			return agent.New(fake, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), modelID, nil
+		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+			return agent.New(fake, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), nil, modelID, nil
 		},
 	})
 }
@@ -191,11 +191,11 @@ func TestSpawnReturnsHandle(t *testing.T) {
 	rt := New(Deps{
 		BaseDir:       t.TempDir(),
 		MaxConcurrent: 2,
-		BuildAgent: func(modelID string, reg *tools.Registry) (*agent.Agent, string, error) {
-			return agent.New(blockingCompleter{release: release}, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), modelID, nil
-		},
-		BuildChild: func(ctx context.Context, opts agent.SpawnOpts, node *agent.AgentNode, tree *agent.AgentTree) (string, error) {
-			return opts.Task + "-out", nil
+		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+			childBuilder := func(ctx context.Context, opts agent.SpawnOpts, node *agent.AgentNode, tree *agent.AgentTree) (string, error) {
+				return opts.Task + "-out", nil
+			}
+			return agent.New(blockingCompleter{release: release}, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), childBuilder, modelID, nil
 		},
 	})
 

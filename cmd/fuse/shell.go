@@ -13,6 +13,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/event/fsstore"
 	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -168,21 +169,27 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			}
 		}()
 	}
-	setActiveSegmentSink(fssink.NewFSSegmentSink(logDir, tree.RootID()))
+	// Segment sink (change 0030/0046): the shell's own per-session SegmentSink,
+	// keyed by the root id. It is threaded per-loop through the summarizer install
+	// (installSummarizer) instead of the retired setActiveSegmentSink global — the
+	// shell owns one session, so this single value flows into every agent it builds.
+	segmentSink := fssink.NewFSSegmentSink(logDir, tree.RootID())
 	// Point the segment_read tool at this session's segments dir so the model can
 	// recover raw pre-compaction regions the sink archived (change 0030).
 	tools.SetSegmentsDir(segment.SegmentsDir(logDir, tree.RootID()))
 
-	// Loop event stream (change 0043): install the per-session EventStore next to
+	// Loop event stream (change 0043/0046): open the per-session EventStore next to
 	// the segment sink, keyed by the same root id. Every agent built this session
-	// emits its loop events here (via currentEventStore()). Best-effort: a failure
-	// to open the store leaves the no-op default installed, so nothing breaks.
-	var eventStore *fsstore.FSEventStore
+	// emits its loop events here. It flows per-loop through the Deps store holder and
+	// the root build closure below instead of the retired currentEventStore() global.
+	// Best-effort: a failure to open leaves the store nil ⇒ the holder's no-op default.
+	var eventStore event.EventStore = event.NoopStore{}
+	storeOpened := false
 	if es, eerr := fsstore.NewFSEventStore(logDir, tree.RootID()); eerr != nil {
 		log.Printf("event store: %v", eerr)
 	} else {
 		eventStore = es
-		setActiveEventStore(es)
+		storeOpened = true
 		defer func() {
 			if cerr := es.Close(); cerr != nil {
 				log.Printf("event store: %v", cerr)
@@ -194,7 +201,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// session.jsonl LogEntry format and writes them to a parallel projected log,
 	// run transiently alongside the direct sessLog.Write and verified byte-identical
 	// (the direct writes are deleted in a trivial follow-up once equivalence holds).
-	if eventStore != nil && sessLog != nil {
+	// Only wire it when a REAL store opened — the no-op default has no live channel.
+	if storeOpened && sessLog != nil {
 		stopConsumer := startProjectedLogConsumer(eventStore, logDir, tree.RootID())
 		defer stopConsumer()
 	}
@@ -213,7 +221,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
-		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true, rateGate)
+		// segmentSink is threaded per-loop (change 0046) rather than read from a global.
+		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true, rateGate, segmentSink)
 		if err != nil {
 			return nil, err
 		}
@@ -224,9 +233,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		ag.SetStripSpawn(sched.StripPredicate(rootNode.ID))
 		// Root's human-message injector: drains humanq/<root> at each turn boundary.
 		ag.SetHumanInjector(agent.NewHumanInjector(rootNode.ID, humanBus))
-		// Event stream wiring (change 0043): the root agent emits its loop events,
+		// Event stream wiring (change 0043/0046): the root agent emits its loop events
+		// onto the shell's own store (threaded per-loop, not read from a global),
 		// tagged with the root node identity.
-		ag.SetEventSink(currentEventStore())
+		ag.SetEventSink(eventStore)
 		ag.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
 		return ag, nil
 	}
@@ -285,6 +295,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		verbose: verbose, skillBlock: skillBlock, sessionMode: sessionMode,
 		humanBus: humanBus, handleReg: handleReg, sessLog: sessLog,
 		traceW: traceW, rateGate: rateGate, logDir: logDir,
+		eventStore: eventStore, segmentSink: segmentSink,
 		childApprove: childBaseApprove, rootApprove: childBaseApprove,
 	}))
 

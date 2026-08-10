@@ -15,7 +15,6 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
-	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/pipeline"
@@ -264,74 +263,18 @@ func gatewayAdapter(cfg config.Config, gate model.RateGate) *model.Adapter {
 	return a
 }
 
-// activeSegmentSink is the session's concrete SegmentSink (change 0030), set
-// once at session start (keyed by the root AgentNode.ID) and consumed by
-// installSummarizer for every agent built in the session. Nil ⇒ installSummarizer
-// passes nil to the agent, which installs the no-op default (persists nothing,
-// omits the recovery pointer). One process serves one shell session, so a single
-// package-level holder is sufficient. It is guarded by an RWMutex — matching its
-// siblings tools.SetSpillDir and tools.SetSegmentsDir — because installSummarizer
-// reads it on child-spawn goroutines, so a happens-before convention alone is not
-// enough.
-var (
-	activeSegmentSinkMu sync.RWMutex
-	activeSegmentSink   agent.SegmentSink
-)
-
-// setActiveSegmentSink installs the session's SegmentSink for all subsequently
-// built agents.
-func setActiveSegmentSink(s agent.SegmentSink) {
-	activeSegmentSinkMu.Lock()
-	activeSegmentSink = s
-	activeSegmentSinkMu.Unlock()
-}
-
-// currentSegmentSink returns the installed session SegmentSink (nil when none).
-func currentSegmentSink() agent.SegmentSink {
-	activeSegmentSinkMu.RLock()
-	defer activeSegmentSinkMu.RUnlock()
-	return activeSegmentSink
-}
-
-// activeEventStore is the session's concrete EventStore (change 0043), set once at
-// session start (keyed by the root AgentNode.ID) and consumed by every agent built
-// in the session for loop-event emission. It mirrors activeSegmentSink exactly
-// (ADR-0019): a package-level holder guarded by an RWMutex because it is read on
-// child-spawn goroutines, resting on the one-process-one-session invariant. Unset ⇒
-// currentEventStore returns the no-op default so emission never nil-panics on
-// one-shot / probe / mcp paths.
-var (
-	activeEventStoreMu sync.RWMutex
-	activeEventStore   event.EventStore
-)
-
-// setActiveEventStore installs the session's EventStore for all subsequently built
-// agents.
-func setActiveEventStore(s event.EventStore) {
-	activeEventStoreMu.Lock()
-	activeEventStore = s
-	activeEventStoreMu.Unlock()
-}
-
-// currentEventStore returns the installed session EventStore, or the no-op default
-// when none was installed (so every emission point has a safe, non-nil sink).
-func currentEventStore() event.EventStore {
-	activeEventStoreMu.RLock()
-	defer activeEventStoreMu.RUnlock()
-	if activeEventStore == nil {
-		return event.NoopStore{}
-	}
-	return activeEventStore
-}
-
 // installSummarizer wires Tier 2 anchored summarization (change 0027) onto a
 // after agent.New. When cfg.Context.Summarization.Enabled it builds a bounded
 // adapter (reusing the session rate gate) decorated with a distinct "summarizer"
 // trace label — the bound-every-model-call learning — resolves the summarizer
-// model (empty ⇒ the session's main model id, D4), and installs it with the
-// default no-op sink (#0030 provides a real sink later). Disabled ⇒ no-op, so the
-// agent stays byte-identical to the pre-0027 Tier-1 path.
-func installSummarizer(a *agent.Agent, cfg config.Config, mainModelID string, traceW io.Writer, gate model.RateGate) {
+// model (empty ⇒ the session's main model id, D4), and installs it with segSink.
+// Disabled ⇒ no-op, so the agent stays byte-identical to the pre-0027 Tier-1 path.
+//
+// segSink is the loop's own SegmentSink (change 0046 — threaded as a value instead
+// of the retired process-global currentSegmentSink()); nil ⇒ the agent's no-op
+// default (persists nothing, omits the recovery pointer). Only the interactive
+// shell installs a real sink; one-shot / probe / loop-server pass nil.
+func installSummarizer(a *agent.Agent, cfg config.Config, mainModelID string, traceW io.Writer, gate model.RateGate, segSink agent.SegmentSink) {
 	s := cfg.Context.Summarization
 	if !s.Enabled {
 		return
@@ -344,10 +287,10 @@ func installSummarizer(a *agent.Agent, cfg config.Config, mainModelID string, tr
 	if modelID == "" {
 		modelID = mainModelID // D4: default summarizer model is the main model
 	}
-	// #0030: hand the session's concrete SegmentSink (keyed by the root
-	// AgentNode.ID) so a compaction persists its raw region and the injected
-	// summary carries a recovery pointer. Nil ⇒ the agent's no-op default.
-	a.EnableSummarization(adapter, modelID, s.MaxOutput, currentSegmentSink())
+	// #0030: hand the loop's concrete SegmentSink (keyed by the root AgentNode.ID)
+	// so a compaction persists its raw region and the injected summary carries a
+	// recovery pointer. Nil ⇒ the agent's no-op default.
+	a.EnableSummarization(adapter, modelID, s.MaxOutput, segSink)
 }
 
 // installRelevance wires relevance-aware pruning config (change 0028) onto a
@@ -388,12 +331,12 @@ func applyToolTimeout(a *agent.Agent, cfg config.Config) {
 // writes raw API request/response JSON to traceW (when non-nil), attributing
 // blocks to traceLabel. The caller owns traceW's lifecycle; share one
 // syncWriter across all agents of a session so concurrent blocks stay whole.
-func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate) (*agent.Agent, error) {
+func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
 	_ = verbose
-	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, traceLabel, toolReg, approve, sm, interactive, gate)
+	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, traceLabel, toolReg, approve, sm, interactive, gate, segSink)
 	return a, err
 }
 
@@ -492,7 +435,7 @@ func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.A
 
 // buildChildAgent builds an agent with an explicitly provided system prompt,
 // bypassing persona composition. Used when spawn_agent sets system_prompt.
-func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate) (*agent.Agent, error) {
+func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
@@ -521,7 +464,7 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
-	installSummarizer(a, cfg, mc.ID, traceW, gate)
+	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
 	installRelevance(a, cfg, traceW, gate)
 	applyToolTimeout(a, cfg)
 	return a, nil
@@ -850,7 +793,7 @@ func contains(s []string, v string) bool {
 
 // buildAgentCore resolves alias and constructs an Agent bound to renderer r,
 // returning the resolved gateway model id.
-func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode, interactive bool, gate model.RateGate) (*agent.Agent, string, error) {
+func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink) (*agent.Agent, string, error) {
 	mc, err := reg.Resolve(alias)
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
@@ -885,7 +828,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
-	installSummarizer(a, cfg, mc.ID, traceW, gate)
+	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
 	installRelevance(a, cfg, traceW, gate)
 	applyToolTimeout(a, cfg)
 	return a, mc.ID, nil
