@@ -2,7 +2,7 @@
 id: 46
 slug: multi-loop-host-deglobalize-event-store
 title: De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id
-status: implemented
+status: done
 priority: high
 type: refactor
 created: 2026-08-10
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/multi-loop-host-deglobalize-event-store
 pr: https://github.com/ethanhinson/fuse/pull/49
 blocked_by:
-claimed_at: 2026-08-10T19:28:53Z
+claimed_at: 
 reconciled: true
 ---
 
