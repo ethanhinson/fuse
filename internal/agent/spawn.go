@@ -76,6 +76,47 @@ type SpawnOpts struct {
 	// unexported-by-accessor: builders read it via ExpectsSink(). Nil when the spawn
 	// carries no map schema, in which case SetExpects is a no-op.
 	expectsSink *ExpectsSink
+
+	// rawErrSink is the spawner-allocated holder through which a child builder
+	// reports the CHILD'S RAW run error (change 0044) — the un-collapsed error from
+	// a.Run, before childResult swallows ErrMaxTurns/ErrLoopDetected into a "[stopped:
+	// …]" partial-success string. The Spawner reads it to source the spawn.done
+	// event's Err field, so the event's error signal matches the direct session-log
+	// write's raw-error `kind` selection (byte-equivalence for 0043's log projection).
+	// It is SEPARATE from SpawnDone.Err (the control/handle path, which stays nil on
+	// the stop path to preserve the model-facing partial-success contract). Builders
+	// write it via opts.RunErrSink().Set(rerr); nil-safe when unallocated.
+	rawErrSink *RunErrSink
+}
+
+// RunErrSink is the spawner-allocated holder a child builder uses to report the
+// child's raw run error to the Spawner for spawn.done emission (change 0044),
+// distinct from the collapsed error the handle/model see. Nil-safe: Set on a nil
+// sink is a no-op and Err returns nil, so a builder that never wires it (older
+// builder, a test fixedBuilder) leaves the event's Err empty exactly as before.
+type RunErrSink struct {
+	mu  sync.Mutex
+	err error
+}
+
+// Set records the child's raw run error. Nil-safe.
+func (s *RunErrSink) Set(err error) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.err = err
+	s.mu.Unlock()
+}
+
+// Err returns the recorded raw run error, or nil. Nil-safe.
+func (s *RunErrSink) Err() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
 }
 
 // ExpectsSink returns the spawner-allocated return_result capture holder for this
@@ -84,6 +125,12 @@ type SpawnOpts struct {
 // a.SetExpects(opts.Expects, opts.ExpectsSink()) so the loop's validated
 // return_result value flows back to the spawner's result assembly.
 func (o SpawnOpts) ExpectsSink() *ExpectsSink { return o.expectsSink }
+
+// RunErrSink returns the spawner-allocated raw-run-error holder for this spawn
+// (change 0044), or nil when unallocated. A child builder calls
+// opts.RunErrSink().Set(rerr) with the raw error from a.Run so the Spawner's
+// spawn.done event carries the same error signal the direct session-log write uses.
+func (o SpawnOpts) RunErrSink() *RunErrSink { return o.rawErrSink }
 
 // ExpectsSchema returns the decoded map[string]any expects schema for this spawn,
 // or nil when Expects is unset or not a map (change 0042). Child builders pass it
@@ -423,6 +470,14 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 			}
 		}
 
+		// Raw-run-error channel (change 0044): the child builder reports the
+		// un-collapsed a.Run error here so the spawn.done event's Err matches the
+		// direct session-log write's raw-error `kind` selection (byte-equivalence for
+		// 0043's projection). Distinct from SpawnDone.Err, which stays the collapsed
+		// control-path error the handle/model see.
+		rawErrSink := &RunErrSink{}
+		opts.rawErrSink = rawErrSink
+
 		if s.buildChild != nil {
 			// Backstop: a panic on a child goroutine kills the whole process,
 			// TUI included. Convert it into a child error instead.
@@ -502,7 +557,18 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		// is a best-effort side effect of the same completion, never read back by the
 		// handle. Emitted before the channel send so a same-goroutine ordering is
 		// deterministic for tests.
-		s.emitSpawnDone(node, result, runErr, structured)
+		//
+		// The event's Err is the child's RAW run error (rawErrSink) when the builder
+		// reported one — so the projected session log's `kind` matches the direct
+		// write's raw-error selection even on the max-turns/loop path where the
+		// control-path runErr was collapsed to nil (a partial-success string). Falls
+		// back to runErr when no sink error was reported (real failure, or a builder
+		// that never wires the sink).
+		eventErr := runErr
+		if re := rawErrSink.Err(); re != nil {
+			eventErr = re
+		}
+		s.emitSpawnDone(node, result, eventErr, structured)
 		doneCh <- SpawnDone{Result: result, Err: runErr, Structured: structured}
 	}()
 

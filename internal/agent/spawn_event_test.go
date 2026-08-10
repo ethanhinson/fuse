@@ -137,6 +137,67 @@ func TestSpawnerEmitsSpawnDoneError(t *testing.T) {
 	}
 }
 
+// TestSpawnerSpawnDoneUsesRawErrOnStopPath is the change-0044 regression guard for
+// the review's finding 1: on the max-turns / loop-detected path, cmd's childResult
+// collapses the run error to nil and returns a "[stopped: …]" partial-success
+// string — so the CONTROL path (SpawnDone.Err, the handle/model) sees nil, but the
+// child builder reports the RAW error via opts.RunErrSink().Set. The Spawner's
+// spawn.done event must then carry that raw error (non-empty Err), so 0043's log
+// projection selects kind:"error", byte-matching the direct session-log write.
+// Without the sink the event's Err would be empty (kind:"done") and the projected
+// and direct logs would diverge exactly here.
+func TestSpawnerSpawnDoneUsesRawErrOnStopPath(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	rec := &recordingStore{}
+	root := tree.Node(tree.RootID())
+
+	s := NewSpawner(
+		WithTree(tree), WithNode(root), WithSpawnDepth(0), WithEventStore(rec),
+		WithChildBuilder(func(ctx context.Context, opts SpawnOpts, node *AgentNode, _ *AgentTree) (string, error) {
+			// Mimic cmd's childResult on the max-turns stop path: report the RAW
+			// error to the Spawner, but RETURN a partial-success string with nil
+			// control error (the model/handle contract).
+			opts.RunErrSink().Set(ErrMaxTurns)
+			return "[stopped: agent: max turns reached — result may be incomplete]\n\npartial", nil
+		}),
+	)
+	h, err := s.Spawn(context.Background(), SpawnOpts{Label: "w", Task: "t"})
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	done := h.Wait()
+	// Control path: the handle/model see the partial-success string with NO error
+	// (the model-facing contract is byte-unchanged).
+	if done.Err != nil {
+		t.Fatalf("control-path SpawnDone.Err = %v, want nil on the stop path", done.Err)
+	}
+	if done.Result == "" {
+		t.Fatal("control-path Result should carry the partial text")
+	}
+
+	// Observation path: the spawn.done event carries the RAW error, so a projection
+	// would select kind:"error" — matching the direct session-log write.
+	var dp *event.SpawnDonePayload
+	rec.mu.Lock()
+	evs := append([]event.Event(nil), rec.events...)
+	rec.mu.Unlock()
+	for _, e := range evs {
+		if e.Kind == event.KindSpawnDone {
+			var p event.SpawnDonePayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			dp = &p
+		}
+	}
+	if dp == nil {
+		t.Fatal("no spawn.done emitted")
+	}
+	if dp.Err == "" {
+		t.Fatal("spawn.done Err empty on the stop path — projection would wrongly select kind:done, diverging from the direct write")
+	}
+}
+
 // TestSpawnerNoEventStoreIsInert: a Spawner with no EventStore (the default,
 // as in one-shot/probe/mcp paths pre-wiring) spawns normally and never panics —
 // the default NoopStore swallows emission.

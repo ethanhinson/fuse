@@ -231,6 +231,9 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 				// spawn.start / spawn.done are emitted by the Spawner (change 0044).
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
+				// Raw run error → Spawner spawn.done (change 0044): matches the
+				// session-log `kind` even when childResult collapses a stop to success.
+				opts.RunErrSink().Set(rerr)
 				return childResult(msgs, rerr)
 			}),
 		)

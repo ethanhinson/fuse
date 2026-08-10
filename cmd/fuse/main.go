@@ -230,6 +230,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 				// spawn.start / spawn.done are emitted by the Spawner (change 0044),
 				// the single choke point — no per-site emission here.
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
+				// Report the RAW run error to the Spawner's spawn.done event (change
+				// 0044) so its `kind` matches the direct session-log write even when
+				// childResult collapses a max-turns/loop stop into a partial-success
+				// string.
+				opts.RunErrSink().Set(rerr)
 				return childResult(msgs, rerr)
 			}),
 		)

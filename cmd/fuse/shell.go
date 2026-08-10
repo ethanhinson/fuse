@@ -364,6 +364,12 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				// Spawner-emitted spawn.done.
 				history := []model.Message{{Role: "user", Content: opts.Task}}
 				msgs, rerr := a.Run(ctx, history)
+				// Report the RAW run error to the Spawner's spawn.done event (change
+				// 0044) so the projected session log's `kind` matches this direct
+				// write's raw-error selection below — the byte-equivalence 0043 relies
+				// on — even when childResult collapses a max-turns/loop stop into a
+				// partial-success string (runErr == nil).
+				opts.RunErrSink().Set(rerr)
 
 				if sessLog != nil {
 					kind := "done"
