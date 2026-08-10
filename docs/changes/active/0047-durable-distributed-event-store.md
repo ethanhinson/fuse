@@ -12,12 +12,12 @@ related: [43, 45, 46, 48, 49, 51]
 discovered_from: [45]
 adrs: []
 spec: docs/superpowers/specs/2026-08-10-durable-distributed-event-store-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-10-durable-distributed-event-store.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/durable-distributed-event-store
-claimed_at: 2026-08-10T21:45:26Z
+claimed_at: 2026-08-10T21:51:16Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-10-durable-distributed-event-store-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-10-durable-distributed-event-store-design.md) |
+| Plan | [2026-08-10-durable-distributed-event-store.md](https://github.com/ethanhinson/fuse/blob/feat/durable-distributed-event-store/docs/superpowers/plans/2026-08-10-durable-distributed-event-store.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
