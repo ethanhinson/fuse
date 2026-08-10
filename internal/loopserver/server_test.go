@@ -3,6 +3,7 @@ package loopserver
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/event"
@@ -118,4 +119,150 @@ func TestLoopStartBadParams(t *testing.T) {
 	if got.Error == nil || got.Error.Code != codeInvalidParams {
 		t.Fatalf("got %+v, want invalid-params", got.Error)
 	}
+}
+
+// rawFrame is a loose decode target that captures either a response (Result/Error)
+// or a loop.event notification (Method/Params). This is the RAW JSON-RPC test
+// client — NOT fuse's mcp client, whose read pump drops id-less notifications
+// (learning mcp-read-pumps-drop-inbound-notifications).
+type rawFrame struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params"`
+	Result  json.RawMessage `json:"result"`
+	Error   *rpcError       `json:"error"`
+}
+
+func TestObserveReplaysThenTails(t *testing.T) {
+	live := make(chan event.Event, 1)
+	fr := &fakeRuntime{
+		attachHist: []event.Event{
+			{Seq: 1, Turn: 0, Kind: event.KindTurnStart},
+			{Seq: 2, Turn: 0, Kind: event.KindModelCallStart},
+		},
+		observeCh: live,
+	}
+
+	// Server writes to sw; the test reads server output off sr with a raw decoder.
+	// The server reads its requests from cr; the test writes requests to cw.
+	sr, sw := io.Pipe()
+	cr, cw := io.Pipe()
+	s := NewServer(cr, sw, fr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Serve(ctx) }()
+
+	// Send the observe request.
+	go func() {
+		enc := json.NewEncoder(cw)
+		_ = enc.Encode(req{JSONRPC: "2.0", ID: json.RawMessage(`10`), Method: "loop.observe", Params: json.RawMessage(`{"loop_id":"loop-abc"}`)})
+	}()
+
+	dec := json.NewDecoder(sr)
+
+	// 1) First frame is the observe response with replayed:2,last_seq:2.
+	var f0 rawFrame
+	if err := dec.Decode(&f0); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(f0.ID) == 0 || f0.Error != nil {
+		t.Fatalf("frame 0 not a success response: %+v", f0)
+	}
+	var res observeResult
+	if err := json.Unmarshal(f0.Result, &res); err != nil {
+		t.Fatalf("unmarshal observeResult: %v", err)
+	}
+	if res.Replayed != 2 || res.LastSeq != 2 {
+		t.Fatalf("observeResult = %+v, want replayed:2 last_seq:2", res)
+	}
+
+	// 2) Two id-less loop.event notifications for the replayed Seq 1,2.
+	for _, wantSeq := range []event.Seq{1, 2} {
+		np := readNote(t, dec)
+		if np.Event.Seq != wantSeq {
+			t.Fatalf("replay note seq = %d, want %d", np.Event.Seq, wantSeq)
+		}
+		if np.Gap {
+			t.Fatalf("replay note seq %d unexpectedly flagged gap", wantSeq)
+		}
+	}
+
+	// 3) Feed a live event (Seq 3) and read its loop.event notification.
+	live <- event.Event{Seq: 3, Turn: 0, Kind: event.KindTurnEnd}
+	np := readNote(t, dec)
+	if np.Event.Seq != 3 {
+		t.Fatalf("live note seq = %d, want 3", np.Event.Seq)
+	}
+	if np.LoopID != "loop-abc" {
+		t.Fatalf("live note loop_id = %q, want loop-abc", np.LoopID)
+	}
+	if np.Gap {
+		t.Fatalf("live note seq 3 unexpectedly flagged gap (contiguous)")
+	}
+}
+
+func TestObserveMarksGap(t *testing.T) {
+	live := make(chan event.Event, 1)
+	fr := &fakeRuntime{
+		attachHist: []event.Event{
+			{Seq: 1, Kind: event.KindTurnStart},
+			{Seq: 2, Kind: event.KindModelCallStart},
+		},
+		observeCh: live,
+	}
+
+	sr, sw := io.Pipe()
+	cr, cw := io.Pipe()
+	s := NewServer(cr, sw, fr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Serve(ctx) }()
+	go func() {
+		enc := json.NewEncoder(cw)
+		_ = enc.Encode(req{JSONRPC: "2.0", ID: json.RawMessage(`11`), Method: "loop.observe", Params: json.RawMessage(`{"loop_id":"loop-abc"}`)})
+	}()
+
+	dec := json.NewDecoder(sr)
+
+	// Drain the response + the two replay notes.
+	var f0 rawFrame
+	if err := dec.Decode(&f0); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	readNote(t, dec)
+	readNote(t, dec)
+
+	// Feed Seq 5 (watermark was 2) — first post-gap live event must be gap:true.
+	live <- event.Event{Seq: 5, Kind: event.KindTurnEnd}
+	np := readNote(t, dec)
+	if np.Event.Seq != 5 {
+		t.Fatalf("live note seq = %d, want 5", np.Event.Seq)
+	}
+	if !np.Gap {
+		t.Fatalf("live note seq 5 should be flagged gap (prev watermark 2)")
+	}
+}
+
+// readNote decodes the next frame and asserts it is an id-less loop.event
+// notification, returning its params.
+func readNote(t *testing.T, dec *json.Decoder) eventNoteParams {
+	t.Helper()
+	var f rawFrame
+	if err := dec.Decode(&f); err != nil {
+		t.Fatalf("decode note: %v", err)
+	}
+	if len(f.ID) != 0 {
+		t.Fatalf("expected id-less notification, got id=%s", f.ID)
+	}
+	if f.Method != "loop.event" {
+		t.Fatalf("note method = %q, want loop.event", f.Method)
+	}
+	var np eventNoteParams
+	if err := json.Unmarshal(f.Params, &np); err != nil {
+		t.Fatalf("unmarshal eventNoteParams: %v", err)
+	}
+	return np
 }

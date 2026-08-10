@@ -91,6 +91,28 @@ type sendParams struct {
 	LoopID string `json:"loop_id"`
 	Input  string `json:"input"`
 }
+type observeParams struct {
+	LoopID  string    `json:"loop_id"`
+	FromSeq event.Seq `json:"from_seq,omitempty"`
+}
+type observeResult struct {
+	Replayed int       `json:"replayed"`
+	LastSeq  event.Seq `json:"last_seq"`
+}
+
+// eventNote is the id-less loop.event notification frame carrying one event to an
+// observing client. json.Encoder writes it immediately (no buffering), so a raw
+// json.Decoder client reads each notification as it is pushed.
+type eventNote struct {
+	JSONRPC string          `json:"jsonrpc"`
+	Method  string          `json:"method"`
+	Params  eventNoteParams `json:"params"`
+}
+type eventNoteParams struct {
+	LoopID string      `json:"loop_id"`
+	Event  event.Event `json:"event"`
+	Gap    bool        `json:"gap,omitempty"`
+}
 
 // Serve reads and dispatches JSON-RPC frames until the reader hits EOF or ctx is
 // done via a decode error. Notifications (no id) receive no response.
@@ -104,6 +126,15 @@ func (s *Server) Serve(ctx context.Context) error {
 			return fmt.Errorf("loopserver: decode: %w", err)
 		}
 		if len(r.ID) == 0 { // notification: no response
+			continue
+		}
+		// loop.observe writes its own response (before the replay notifications) and
+		// spawns a live-tail pump, so it is not routed through the return-and-encode
+		// path; every other method returns a single resp that Serve encodes.
+		if r.Method == "loop.observe" {
+			if err := s.serveObserve(ctx, r); err != nil {
+				return err
+			}
 			continue
 		}
 		out := s.dispatch(ctx, r)
@@ -127,8 +158,6 @@ func (s *Server) dispatch(ctx context.Context, r req) resp {
 		return s.handleStart(ctx, r)
 	case "loop.send":
 		return s.handleSend(ctx, r)
-	case "loop.observe":
-		return s.handleObserve(ctx, r)
 	default:
 		return s.errResp(r.ID, codeMethodNotFound, "method not found: "+r.Method)
 	}
@@ -157,12 +186,78 @@ func (s *Server) handleSend(ctx context.Context, r req) resp {
 	return s.okResp(r.ID, map[string]any{})
 }
 
-// handleObserve is a temporary stub returning method-not-found; it is replaced by
-// the real replay-then-live-tail body in Task 7.
-func (s *Server) handleObserve(ctx context.Context, r req) resp {
-	_ = ctx
-	_ = event.Seq(0)
-	return s.errResp(r.ID, codeMethodNotFound, "method not found: loop.observe")
+// serveObserve subscribes to the loop's live tail BEFORE replaying durable history
+// (so no event slips between replay-end and live-start), writes the observe
+// response carrying the replay watermark FIRST, replays events since from_seq as
+// id-less loop.event notifications, then live-tails the channel on a goroutine
+// pushing further loop.event notifications until ctx is done or the channel closes.
+// The FIRST post-gap live event is flagged gap:true (ADR-0025 drop-newest
+// detection: ev.Seq > prev+1), telling the client to re-observe from its last-seen
+// seq. It writes its own frames (response + notifications) under the shared encoder
+// mutex rather than returning a resp, because it emits many frames, not one.
+func (s *Server) serveObserve(ctx context.Context, r req) error {
+	var p observeParams
+	if err := json.Unmarshal(r.Params, &p); err != nil {
+		return s.encode(s.errResp(r.ID, codeInvalidParams, "invalid params: "+err.Error()))
+	}
+	// 1) Subscribe BEFORE replay so no event slips between replay end and live start.
+	//    The channel is buffered; nothing is drained until the pump starts (after the
+	//    response + replay notes), so live events queue rather than race the replay.
+	ch, cancel, err := s.rt.Observe(p.LoopID)
+	if err != nil {
+		return s.encode(s.errResp(r.ID, codeInternal, err.Error()))
+	}
+	// 2) Read durable history since from_seq.
+	hist, err := s.rt.Attach(p.LoopID, p.FromSeq)
+	if err != nil {
+		cancel()
+		return s.encode(s.errResp(r.ID, codeInternal, err.Error()))
+	}
+	last := p.FromSeq
+	if n := len(hist); n > 0 {
+		last = hist[n-1].Seq
+	}
+	// 3) Response acknowledges the subscription and the replay watermark FIRST, so a
+	//    raw client reads the resp before the replayed loop.event notifications.
+	if err := s.encode(s.okResp(r.ID, observeResult{Replayed: len(hist), LastSeq: last})); err != nil {
+		cancel()
+		return fmt.Errorf("loopserver: encode: %w", err)
+	}
+	// 4) Replay durable history, each as an id-less loop.event notification.
+	for _, ev := range hist {
+		s.pushEvent(p.LoopID, ev, false)
+	}
+	// 5) Live tail on a goroutine until ctx done or the loop's store closes (channel
+	//    closed). Detect a Seq gap (ADR-0025 drop-newest) and flag the first post-gap
+	//    event so the client Attach-replays the hole.
+	go func() {
+		defer cancel()
+		prev := last
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-ch:
+				if !ok {
+					return
+				}
+				gap := ev.Seq > prev+1 && prev != 0
+				s.pushEvent(p.LoopID, ev, gap)
+				prev = ev.Seq
+			}
+		}
+	}()
+	return nil
+}
+
+// pushEvent writes one id-less loop.event notification under the shared encoder
+// mutex (via encode), serializing it against responses and other notifications.
+func (s *Server) pushEvent(loopID string, ev event.Event, gap bool) {
+	_ = s.encode(eventNote{
+		JSONRPC: "2.0",
+		Method:  "loop.event",
+		Params:  eventNoteParams{LoopID: loopID, Event: ev, Gap: gap},
+	})
 }
 
 func (s *Server) okResp(id json.RawMessage, v any) resp {
