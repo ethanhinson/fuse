@@ -24,6 +24,9 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0018](0018-per-session-directory-layout-flat-log-read-compat.md) — Per-session directory layout for session logs and segments, with flat-log read-compatibility and no migration (Accepted) ← change #30 · relates to ADR-0017
 - [ADR-0019](0019-process-global-segment-sink-holder.md) — Process-global, lock-guarded segment sink holder as the sink-injection mechanism in cmd/fuse (Accepted) ← change #30 · relates to ADR-0017, ADR-0018
 - [ADR-0020](0020-born-compressed-non-destructive-segment-store.md) — Segments are born gzip-compressed with an uncompressed index, and age sweeps compress rather than delete (non-destructive GC) (Accepted) ← change #30 · relates to ADR-0017, ADR-0018, ADR-0019
+- [ADR-0021](0021-human-is-a-participant-node-in-the-agent-tree.md) — The human is a first-class participant in the agent tree — questions route from the asking node and replies route back to it, in three phases (Proposed) ← change #0050 · relates to ADR-0007, ADR-0016, ADR-0023
+- [ADR-0022](0022-human-message-bus-per-node-queue-async-router.md) — Human messages ride one substrate — a per-node blackboard queue, self-pulled at turn boundaries, with an async advisory router and completion-hook bubbling (Proposed) ← change #0051 · relates to ADR-0007, ADR-0016, ADR-0021, ADR-0023
+- [ADR-0023](0023-structured-delegation-return-result-tool.md) — Structured delegation returns via a synthesized return_result tool, not a final-message directive (Accepted) ← change #42 · relates to ADR-0012
 
 ## Superseded / Reversed
 
