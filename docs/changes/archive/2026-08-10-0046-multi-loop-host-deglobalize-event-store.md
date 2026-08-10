@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0046-multi-loop-host-deglobalize-event-store.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0046-multi-loop-host-deglobalize-event-store.md) |
-| Plan | [2026-08-10-multi-loop-host-deglobalize-event-store.md](https://github.com/ethanhinson/fuse/blob/feat/multi-loop-host-deglobalize-event-store/docs/superpowers/plans/2026-08-10-multi-loop-host-deglobalize-event-store.md) |
-| Results | [2026-08-10-multi-loop-host-deglobalize-event-store-results.md](https://github.com/ethanhinson/fuse/blob/feat/multi-loop-host-deglobalize-event-store/docs/results/2026-08-10-multi-loop-host-deglobalize-event-store-results.md) |
+| Plan | [2026-08-10-multi-loop-host-deglobalize-event-store.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-10-multi-loop-host-deglobalize-event-store.md) |
+| Results | [2026-08-10-multi-loop-host-deglobalize-event-store-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-10-multi-loop-host-deglobalize-event-store-results.md) |
 | PR | [#49](https://github.com/ethanhinson/fuse/pull/49) |
 | ADRs | [ADR-0025](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0025-eventstore-ordering-backpressure.md), [ADR-0027](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0027-runtime-owns-loop-eventstore-global-holder-bridge.md), [ADR-0030](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0030-deglobalize-eventstore-multiloop-hosting.md) |
 <!-- docket:artifacts:end -->

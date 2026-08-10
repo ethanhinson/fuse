@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0046 — De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0046-multi-loop-host-deglobalize-event-store.md)**
+> ↩ **[Change 0046 — De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-10-0046-multi-loop-host-deglobalize-event-store.md)**
 <!-- docket:backlink:end -->
 
 # Spec 0046 — De-globalize the event store + multi-loop host: one process hosts N loops keyed by loop_id
