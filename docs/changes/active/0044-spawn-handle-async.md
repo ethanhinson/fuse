@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/spawn-handle-async
 pr:
 blocked_by:
-claimed_at: 2026-08-10T06:42:26Z
-reconciled: false
+claimed_at: 2026-08-10T06:45:37Z
+reconciled: true
 ---
 
 ## Artifacts
@@ -108,3 +108,58 @@ model-visible output, new Go-visible contract."
 - **Pipeline call-site audit** — confirm every pipeline consumer already uses
   `handle.Wait()`/`Result()` (unaffected) rather than a string-returning helper this change
   removes.
+
+## Reconcile log
+
+### 2026-08-10 — reconciled against origin/main @ 6720354 (post-0043 merge)
+
+Verified the change against the current code; the spec is sound and stays authoritative.
+Findings that sharpen (but do not invalidate) the plan:
+
+1. **Dependency 0043 is `done` (PR #46 merged, merge 6720354).** origin/main now carries
+   `internal/event` (envelope, `KindSpawnStart`/`KindSpawnDone`, `SpawnStartPayload`/
+   `SpawnDonePayload`, `EventStore`). Build-ready confirmed.
+
+2. **Single shared `SpawnFunc` adapter, not three.** Change 0026 already consolidated the three
+   cmd-site adapters into one `spawnFuncFrom` (`cmd/fuse/run.go:671`), used by main.go (one-shot),
+   shell.go, and research_probe.go. It is the sole place that pre-collapses the handle
+   (`Spawn` → `YieldSlot` → `handle.Wait()` → `UnyieldSlot` → `(done.Result, done.Err)`). The
+   migration therefore edits **one** adapter + the `SpawnFunc` type + the tool, not three adapters.
+   The three cmd sites still each build their own child builder (`emitSpawn*` clone sites remain
+   three) — the D3 "big-bang, three sites" intent holds, but the adapter surface is singular.
+
+3. **Import cycle is real.** `internal/tools` does NOT import `internal/agent` (ask_user.go /
+   blackboard.go only reference it in comments explaining the deliberate non-import). Returning
+   `agent.AgentHandle` from `tools.SpawnFunc` reintroduces the cycle `SpawnFunc` was created to
+   break. Resolution chosen for planning: **define a minimal handle interface in `internal/tools`**
+   that `*agent.AgentHandle` satisfies (the less-invasive of the spec's two options; moving
+   `AgentHandle`/`SpawnDone` out of `internal/agent` would ripple through spawn.go + pipeline +
+   many tests). `SpawnDone.Structured` is NOT needed by the tool (only Go callers use it), so the
+   tools-side interface can stay tiny. An ADR will record this.
+
+4. **Pipeline is unaffected — confirmed.** `internal/pipeline/engine.go` and `synthesize.go` call
+   `sp.Spawn(...)` and consume via `h.Result()` / `h.Wait()` directly on `agent.AgentHandle`; they
+   never touch `tools.SpawnFunc`. The signature change does not reach them.
+
+5. **`spawn.start`/`spawn.done` emission ALREADY EXISTS at the cmd-site child builders (0043).**
+   `cmd/fuse/event_spawn.go` defines `emitSpawnStart`/`emitSpawnDone`, called inside all three child
+   builders (main.go:226/228, shell.go:358/366, research_probe.go:229/231), plus a projected
+   log-consumer proven byte-identical to the direct session log. The spec's D2 open question
+   ("emit from Spawner vs adapter") is thus really "**relocate 0043's cmd-site emission into the
+   Spawner** (single choke point) vs leave it where 0043 put it." Per the spec's lean and the
+   change brief, the plan will move emission into the `Spawner` (`spawnLocal`): emit `spawn.start`
+   at admission and `spawn.done` from the same completion that builds `SpawnDone{Result,Structured}`.
+   The `Spawner` gains an `EventStore` via a `WithEventStore` option — no new import cycle, since
+   `internal/agent` already imports `internal/event`. **Byte-identity guard:** 0043's projected
+   session log uses only event metadata (NodeID/ParentID/Label/Depth/Kind), so relocation keeps the
+   projection byte-identical; but note `SpawnDone.Result` (from `childResult`, which prepends a
+   "[stopped: …]" marker on max-turns/loop) differs from 0043's `lastAssistantText(msgs)` on those
+   edge cases — the plan must decide and record how the relocated `spawn.done` `Result` is sourced
+   so no observation regresses. This relocation, and removing the now-redundant cmd-site emitters,
+   is the one place the plan must proceed carefully.
+
+Scope unchanged. Runtime interface extraction (#3) and any networked backend remain out of scope.
+
+Follow-ups surfaced (auto-capture disabled → reported here, not minted): 0043 left a trivial
+follow-up to delete the direct `sessLog.Write` once the projected log is proven equivalent; this
+change may make that deletion cleaner but does not own it — leave as a separate change.
