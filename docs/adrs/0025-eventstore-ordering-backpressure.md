@@ -6,7 +6,7 @@ status: Accepted
 date: 2026-08-09
 supersedes: []
 reverses: []
-relates_to: [16, 19, 24]
+relates_to: [16, 19, 24, 30]
 change: 43
 ---
 
@@ -30,3 +30,13 @@ Subscriber delivery is NON-BLOCKING with a bounded per-subscriber buffer and dro
 - (+) Durability is decoupled from liveness: a slow consumer loses live events (visibly, via the gap marker) but never loses history — Replay reads the full JSONL.
 - (−) A slow live subscriber sees a gap rather than every event; it must reconcile via Replay(from lastSeq) if it needs completeness. This is the deliberate trade over blocking the loop.
 - (−) The single global counter assumes one process per session (ADR-0019); a future multi-session-per-process or networked store would revisit Seq allocation.
+
+## Update
+
+**2026-08-10 (change #46; see ADR-0030):** Change #46 (de-globalize the event store + multi-loop host) retired the one-process-one-session premise this ADR rested on. One `fuse loop-server` process now hosts N concurrent loops, each with its OWN `fsstore` event-store instance.
+
+The Seq allocation MODEL is unchanged and the decision still stands: Seq is still allocated inside the store under its own lock (`s.seq++; e.Seq = s.seq`), the store is still the sole allocator, and each store still yields a single total order with a clean `Replay(from Seq)` cursor. What changed is only the SCOPE of "the store": it is now per-LOOP, not per-process. Each loop's Seq stream is independent and starts at 1; there is provably NO cross-loop Seq bleed and no shared global counter.
+
+This is proven by concurrent N-loop tests (`internal/runtime/multiloop_test.go` and `cmd/fuse/loop_server_multiloop_test.go`) that assert each loop's `Replay` returns only its own events with contiguous per-loop Seq, under `go test -race`.
+
+Net: the "would revisit Seq allocation" caveat in this ADR's Consequences is resolved — the per-store allocator was already the right primitive; #46 simply made "one store per loop" real. No supersession needed.
