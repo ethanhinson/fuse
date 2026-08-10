@@ -2,7 +2,7 @@
 id: 43
 slug: runtime-eventstore-seam
 title: Runtime EventStore seam — typed, pluggable, introspectable loop event stream
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-09
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/runtime-eventstore-seam
 pr: https://github.com/ethanhinson/fuse/pull/46
 blocked_by:
-claimed_at: 2026-08-10T05:31:07Z
+claimed_at: 
 reconciled: true
 ---
 
