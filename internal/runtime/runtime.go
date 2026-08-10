@@ -32,11 +32,14 @@ type Runtime interface {
 	StartLoop(ctx context.Context, cfg LoopConfig) (LoopHandle, error)
 
 	// Send injects human input at the loop's next turn boundary (ADR-0022 human-bus).
-	// It returns ErrLoopNotFound for an unknown loop and ErrLoopFinished when the
-	// loop's run goroutine has already completed (its injector no longer drains, so
-	// enqueuing would strand the message); a still-running loop enqueues and returns
-	// nil.
-	Send(ctx context.Context, loopID string, input string) error
+	// It is tenant-scoped: resolution (cache hit AND durable fall-through) is keyed on
+	// (tenant, loopID), so a Send under tenant X never lands on tenant Y's loop. It
+	// returns ErrLoopNotFound for an unknown loop and ErrLoopFinished when the loop's
+	// run goroutine has already completed (its injector no longer drains, so enqueuing
+	// would strand the message); a still-running loop enqueues and returns nil.
+	// Single-tenant callers pass event.DefaultTenant (or "" — NormalizeTenant maps it
+	// to the default) for byte-identical behavior.
+	Send(ctx context.Context, tenant event.TenantID, loopID string, input string) error
 
 	// Spawn starts a child agent under the loop and returns a handle wrapping
 	// agent.AgentHandle (ADR-0026: Wait()/Result()/Done).

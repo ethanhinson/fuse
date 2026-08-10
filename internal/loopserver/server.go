@@ -91,6 +91,7 @@ type startResult struct {
 type sendParams struct {
 	LoopID string `json:"loop_id"`
 	Input  string `json:"input"`
+	Tenant string `json:"tenant,omitempty"`
 }
 type observeParams struct {
 	LoopID  string    `json:"loop_id"`
@@ -195,7 +196,7 @@ func (s *Server) handleSend(ctx context.Context, r req) resp {
 	if err := json.Unmarshal(r.Params, &p); err != nil {
 		return s.errResp(r.ID, codeInvalidParams, "invalid params: "+err.Error())
 	}
-	if err := s.rt.Send(ctx, p.LoopID, p.Input); err != nil {
+	if err := s.rt.Send(ctx, event.TenantID(p.Tenant), p.LoopID, p.Input); err != nil {
 		if errors.Is(err, runtime.ErrLoopFinished) || errors.Is(err, runtime.ErrLoopNotFound) {
 			return s.errResp(r.ID, codeInvalidParams, err.Error())
 		}

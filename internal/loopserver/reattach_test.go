@@ -25,7 +25,9 @@ type storeBackedRuntime struct {
 func (r *storeBackedRuntime) StartLoop(ctx context.Context, cfg runtime.LoopConfig) (runtime.LoopHandle, error) {
 	return storeHandle{id: r.loopID}, nil
 }
-func (r *storeBackedRuntime) Send(ctx context.Context, loopID, input string) error { return nil }
+func (r *storeBackedRuntime) Send(ctx context.Context, tenant event.TenantID, loopID, input string) error {
+	return nil
+}
 func (r *storeBackedRuntime) Spawn(ctx context.Context, loopID string, opts runtime.SpawnOpts) (runtime.SpawnHandle, error) {
 	return nil, nil
 }

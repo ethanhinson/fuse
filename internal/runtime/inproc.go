@@ -144,14 +144,13 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	}
 
 	// Register the loop's existence + mark it live BEFORE the run goroutine starts, so a
-	// concurrent cold instance can resolve it (and observe live) immediately. Register
-	// is idempotent; SetLive(true) records this instance as owner.
+	// concurrent cold instance can resolve it (and observe live) immediately. Register is
+	// an idempotent upsert that writes Live:true and the owner in ONE row-write — the run
+	// goroutine later flips liveness via SetLive(false) at completion. (No redundant
+	// SetLive(true) here: Register already recorded liveness + ownership.)
 	if r.deps.Registry != nil {
 		if err := r.deps.Registry.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: rootID, Live: true}); err != nil {
 			return nil, fmt.Errorf("runtime: register loop: %w", err)
-		}
-		if err := r.deps.Registry.SetLive(ctx, key, true, rootID); err != nil {
-			return nil, fmt.Errorf("runtime: set loop live: %w", err)
 		}
 	}
 
@@ -252,13 +251,25 @@ func (r *inProcRuntime) lookup(loopID string) (*loop, error) {
 	return lp, nil
 }
 
-// loopCache returns the cached live *loop for loopID under the mutex, or nil. With
-// the durable seam present, r.loops is demoted to a per-instance CACHE: a hit is the
-// live loop; a miss falls through to the durable Registry (see resolveDurable).
-func (r *inProcRuntime) loopCache(loopID string) *loop {
+// loopCache returns the cached live *loop for (tenant, loopID) under the mutex, or
+// nil. With the durable seam present, r.loops is demoted to a per-instance CACHE: a
+// hit is the live loop; a miss falls through to the durable Registry (see
+// resolveDurable). The map key is the BARE loopID, but the durable layer is strictly
+// tenant-scoped — so a hit is only valid when the cached loop's tenant matches the
+// requested tenant. On a tenant MISMATCH this returns nil (treated as a cache miss),
+// forcing the tenant-scoped durable fall-through rather than returning another
+// tenant's live store. tenant is normalized so "" and event.DefaultTenant agree.
+func (r *inProcRuntime) loopCache(tenant event.TenantID, loopID string) *loop {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.loops[loopID]
+	lp := r.loops[loopID]
+	if lp == nil {
+		return nil
+	}
+	if lp.key.Tenant != event.NormalizeTenant(tenant) {
+		return nil // tenant mismatch: fall through to the tenant-scoped durable registry
+	}
+	return lp
 }
 
 // resolveDurable resolves a (tenant, loopID) against the durable Registry when the
@@ -286,7 +297,7 @@ func (r *inProcRuntime) resolveDurable(ctx context.Context, tenant event.TenantI
 // store; a cache miss + durable Resolve subscribes to the shared durable store's
 // cross-instance channel (so a loop a prior process started is observable here).
 func (r *inProcRuntime) Observe(ctx context.Context, tenant event.TenantID, loopID string) (<-chan event.Event, func(), error) {
-	if lp := r.loopCache(loopID); lp != nil {
+	if lp := r.loopCache(tenant, loopID); lp != nil {
 		ch, cancel := lp.store.Subscribe()
 		return ch, cancel, nil
 	}
@@ -301,7 +312,7 @@ func (r *inProcRuntime) Observe(ctx context.Context, tenant event.TenantID, loop
 // the loop's own store; a cache miss + durable Resolve replays the shared durable
 // store (the cold cross-process reattach path — the 0047 fix).
 func (r *inProcRuntime) Attach(ctx context.Context, tenant event.TenantID, loopID string, from event.Seq) ([]event.Event, error) {
-	if lp := r.loopCache(loopID); lp != nil {
+	if lp := r.loopCache(tenant, loopID); lp != nil {
 		return lp.store.Replay(from)
 	}
 	_, key, err := r.resolveDurable(ctx, tenant, loopID)
@@ -320,15 +331,17 @@ func (r *inProcRuntime) Attach(ctx context.Context, tenant event.TenantID, loopI
 // whose run goroutine has already finished returns ErrLoopFinished (its injector no
 // longer drains, so enqueuing would strand the message forever); a still-running
 // loop enqueues and returns nil.
-func (r *inProcRuntime) Send(ctx context.Context, loopID string, input string) error {
-	lp := r.loopCache(loopID)
+func (r *inProcRuntime) Send(ctx context.Context, tenant event.TenantID, loopID string, input string) error {
+	lp := r.loopCache(tenant, loopID)
 	if lp == nil {
-		// Not live in THIS instance's cache. With the durable seam present, resolve the
-		// loop's existence/liveness: a finished loop ⇒ ErrLoopFinished (replay-only); a
-		// still-live loop owned by ANOTHER instance ⇒ ErrLoopNotFound here (this instance
-		// holds no injector for it); an unknown loop ⇒ ErrLoopNotFound. Without the seam,
-		// resolveDurable returns ErrLoopNotFound directly (legacy in-memory behavior).
-		rec, _, rerr := r.resolveDurable(ctx, event.DefaultTenant, loopID)
+		// Not live in THIS instance's cache (or a tenant mismatch on the bare-loopID
+		// cache key — loopCache returns nil for a wrong-tenant hit). With the durable seam
+		// present, resolve the loop's existence/liveness UNDER THE REQUESTED TENANT: a
+		// finished loop ⇒ ErrLoopFinished (replay-only); a still-live loop owned by ANOTHER
+		// instance ⇒ ErrLoopNotFound here (this instance holds no injector for it); an
+		// unknown loop (or one under a different tenant) ⇒ ErrLoopNotFound. Without the
+		// seam, resolveDurable returns ErrLoopNotFound directly (legacy in-memory behavior).
+		rec, _, rerr := r.resolveDurable(ctx, tenant, loopID)
 		if rerr != nil {
 			return rerr
 		}

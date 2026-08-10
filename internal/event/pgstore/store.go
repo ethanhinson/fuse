@@ -68,7 +68,8 @@ type PGStore struct {
 
 	// pub is the decoupled async publisher: Append enqueues here (non-blocking),
 	// the publisher goroutine drains it and issues NOTIFY. A full queue drops the
-	// oldest-pending notify and bumps dropped — Append never blocks on NOTIFY.
+	// incoming NOTIFY (drop-newest-with-gap) and bumps dropped — Append never blocks
+	// on NOTIFY.
 	pub chan notifyMsg
 
 	mu       sync.Mutex

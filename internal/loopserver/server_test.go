@@ -22,6 +22,7 @@ type fakeRuntime struct {
 
 	sendLoopID string
 	sendInput  string
+	sendTenant event.TenantID
 	sendErr    error
 
 	attachHist []event.Event
@@ -44,7 +45,8 @@ func (f *fakeRuntime) StartLoop(ctx context.Context, cfg runtime.LoopConfig) (ru
 	return runtimeHandle{id: f.startID}, nil
 }
 
-func (f *fakeRuntime) Send(ctx context.Context, loopID, input string) error {
+func (f *fakeRuntime) Send(ctx context.Context, tenant event.TenantID, loopID, input string) error {
+	f.sendTenant = tenant
 	f.sendLoopID = loopID
 	f.sendInput = input
 	return f.sendErr
@@ -100,7 +102,7 @@ func TestDispatchLoopSendCallsRuntime(t *testing.T) {
 	fr := &fakeRuntime{}
 	s := NewServer(nil, nil, fr)
 
-	r := req{JSONRPC: "2.0", ID: json.RawMessage(`2`), Method: "loop.send", Params: json.RawMessage(`{"loop_id":"loop-abc","input":"more"}`)}
+	r := req{JSONRPC: "2.0", ID: json.RawMessage(`2`), Method: "loop.send", Params: json.RawMessage(`{"loop_id":"loop-abc","input":"more","tenant":"tenant-x"}`)}
 	got := s.dispatch(context.Background(), r)
 
 	if got.Error != nil {
@@ -108,6 +110,10 @@ func TestDispatchLoopSendCallsRuntime(t *testing.T) {
 	}
 	if fr.sendLoopID != "loop-abc" || fr.sendInput != "more" {
 		t.Fatalf("Send args = (%q,%q), want (loop-abc,more)", fr.sendLoopID, fr.sendInput)
+	}
+	// The tenant on sendParams must reach the runtime seam (FIX 1: Send tenant threading).
+	if fr.sendTenant != event.TenantID("tenant-x") {
+		t.Fatalf("Send tenant = %q, want tenant-x", fr.sendTenant)
 	}
 }
 

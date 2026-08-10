@@ -91,7 +91,7 @@ func TestSendEnqueuesForRoot(t *testing.T) {
 		t.Fatalf("StartLoop: %v", err)
 	}
 	// The loop is running (completer blocked): Send must enqueue and return nil.
-	if err := rt.Send(context.Background(), h.ID(), "more work"); err != nil {
+	if err := rt.Send(context.Background(), event.DefaultTenant, h.ID(), "more work"); err != nil {
 		t.Fatalf("Send to running loop: %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestSendToFinishedLoopReturnsErrLoopFinished(t *testing.T) {
 		t.Fatalf("Wait: %v", err)
 	}
 
-	if err := rt.Send(context.Background(), h.ID(), "more work"); !errors.Is(err, ErrLoopFinished) {
+	if err := rt.Send(context.Background(), event.DefaultTenant, h.ID(), "more work"); !errors.Is(err, ErrLoopFinished) {
 		t.Fatalf("Send to finished loop err = %v, want ErrLoopFinished", err)
 	}
 
@@ -242,7 +242,7 @@ func TestLoopNotFound(t *testing.T) {
 	if _, err := rt.Attach(context.Background(), event.DefaultTenant, "nope", 0); !errors.Is(err, ErrLoopNotFound) {
 		t.Errorf("Attach err = %v, want ErrLoopNotFound", err)
 	}
-	if err := rt.Send(context.Background(), "nope", ""); !errors.Is(err, ErrLoopNotFound) {
+	if err := rt.Send(context.Background(), event.DefaultTenant, "nope", ""); !errors.Is(err, ErrLoopNotFound) {
 		t.Errorf("Send err = %v, want ErrLoopNotFound", err)
 	}
 	if _, err := rt.Spawn(context.Background(), "nope", SpawnOpts{}); !errors.Is(err, ErrLoopNotFound) {
