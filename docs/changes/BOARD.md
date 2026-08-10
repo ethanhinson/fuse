@@ -1,12 +1,17 @@
 # Backlog
 
-**44 changes** — 🟡 2 proposed · ⚪ 1 deferred · ✅ 35 done · 🗑️ 6 killed
+**44 changes** — 🟢 1 in progress · 🟡 1 proposed · ⚪ 1 deferred · ✅ 35 done · 🗑️ 6 killed
 
-## 🟡 Proposed (2)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0043](active/0043-runtime-eventstore-seam.md) | Runtime EventStore seam — typed, pluggable, introspectable loop event stream | `high` | `feat` | [spec](../superpowers/specs/0043-runtime-eventstore-seam.md) | `feat/runtime-eventstore-seam` |
+
+## 🟡 Proposed (1)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0043](active/0043-runtime-eventstore-seam.md) | Runtime EventStore seam — typed, pluggable, introspectable loop event stream | `high` | `feat` | build-ready |
 | [0044](active/0044-spawn-handle-async.md) | Spawn handle-async — location-transparent spawning behind a handle-returning contract | `high` | `refactor` | ⏳ waiting on #43 — not yet built |
 
 ## ⚪ Deferred (1)
