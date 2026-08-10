@@ -1,24 +1,24 @@
 # Backlog
 
-**44 changes** — 🟢 1 in progress · 🟡 1 proposed · ⚪ 1 deferred · ✅ 35 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0043](active/0043-runtime-eventstore-seam.md) | Runtime EventStore seam — typed, pluggable, introspectable loop event stream | `high` | `feat` | [spec](../superpowers/specs/0043-runtime-eventstore-seam.md) | `feat/runtime-eventstore-seam` |
+**44 changes** — 🟡 1 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 35 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (1)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0044](active/0044-spawn-handle-async.md) | Spawn handle-async — location-transparent spawning behind a handle-returning contract | `high` | `refactor` | ⏳ waiting on #43 — not yet built |
+| [0044](active/0044-spawn-handle-async.md) | Spawn handle-async — location-transparent spawning behind a handle-returning contract | `high` | `refactor` | ⏳ waiting on #43 — needs your merge |
 
 ## ⚪ Deferred (1)
 
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0043](active/0043-runtime-eventstore-seam.md) | Runtime EventStore seam — typed, pluggable, introspectable loop event stream | `high` | `feat` | [#46](https://github.com/ethanhinson/fuse/pull/46) |  |
 
 ```mermaid
 graph TD
