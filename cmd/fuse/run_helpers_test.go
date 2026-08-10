@@ -161,8 +161,8 @@ func TestChildToolRegistryOmitsSpawnWhenSubsetOmitsIt(t *testing.T) {
 	for _, tl := range tools.DefaultTools() {
 		reg.Register(tl)
 	}
-	reg.Register(tools.NewSpawnAgentTool(func(ctx context.Context, req tools.SpawnRequest) (string, error) {
-		return "", nil
+	reg.Register(tools.NewSpawnAgentTool(func(ctx context.Context, req tools.SpawnRequest) (tools.SpawnHandle, error) {
+		return nil, nil
 	}))
 
 	sub, err := childToolRegistry(reg, []string{"read_file"})

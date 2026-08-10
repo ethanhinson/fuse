@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/session"
 )
@@ -126,41 +125,8 @@ func TestProjectEventToLogIgnoresNonSpawnKinds(t *testing.T) {
 	}
 }
 
-// TestEmitSpawnStartDone: the spawn boundary helpers append well-formed
-// spawn.start / spawn.done events to the store.
-func TestEmitSpawnStartDone(t *testing.T) {
-	rec := &recordStore{}
-	node := &agent.AgentNode{ID: "c1", ParentID: "root", Label: "worker", Depth: 1}
-	emitSpawnStart(rec, node, "do the thing")
-	emitSpawnDone(rec, node, nil, nil, nil)
-
-	if len(rec.events) != 2 {
-		t.Fatalf("expected 2 events, got %d", len(rec.events))
-	}
-	if rec.events[0].Kind != event.KindSpawnStart || rec.events[1].Kind != event.KindSpawnDone {
-		t.Fatalf("kinds = %q,%q", rec.events[0].Kind, rec.events[1].Kind)
-	}
-	var sp event.SpawnStartPayload
-	if err := json.Unmarshal(rec.events[0].Payload, &sp); err != nil {
-		t.Fatalf("spawn.start payload: %v", err)
-	}
-	if sp.ChildNodeID != "c1" || sp.Label != "worker" || sp.Task != "do the thing" {
-		t.Errorf("spawn.start payload = %+v", sp)
-	}
-}
-
-// recordStore is a minimal in-memory EventStore for cmd/fuse tests.
-type recordStore struct {
-	events []event.Event
-}
-
-func (r *recordStore) Append(e event.Event) error {
-	r.events = append(r.events, e)
-	return nil
-}
-func (r *recordStore) Subscribe() (<-chan event.Event, func()) {
-	ch := make(chan event.Event)
-	close(ch)
-	return ch, func() {}
-}
-func (r *recordStore) Replay(from event.Seq) ([]event.Event, error) { return r.events, nil }
+// Note (change 0044): TestEmitSpawnStartDone and its recordStore double were
+// removed with the cmd-site emitters they exercised — spawn.start / spawn.done
+// emission now lives in the Spawner (internal/agent/spawn.go) and is covered by
+// TestSpawnerEmitsSpawnStartDone there. The projection tests above (the CONSUMER
+// side) remain the cmd/fuse gate for the "log adapts" byte-equivalence.

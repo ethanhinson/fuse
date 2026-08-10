@@ -6,78 +6,17 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/event"
-	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/session"
 )
 
-// emitSpawnStart records a spawn.start event at the cmd/fuse child-run boundary
-// (change 0043). The loop itself never spawns; the spawn tool's child-run closure
-// is where the child's lifecycle begins, so the two spawn lifecycle events are
-// emitted here (via the process-global store) rather than inside Agent.Run. This
-// is one of the three cloned child-builder sites (learning
-// patch-every-cloned-child-builder) — shell.go, main.go, research_probe.go all
-// call this.
-func emitSpawnStart(store event.EventStore, childNode *agent.AgentNode, task string) {
-	if store == nil || childNode == nil {
-		return
-	}
-	pl, err := event.MarshalPayload(event.SpawnStartPayload{
-		ChildNodeID: childNode.ID,
-		Label:       childNode.Label,
-		Task:        task,
-	})
-	if err != nil {
-		return
-	}
-	_ = store.Append(event.Event{
-		NodeID:   childNode.ID,
-		ParentID: childNode.ParentID,
-		Depth:    childNode.Depth,
-		Kind:     event.KindSpawnStart,
-		Payload:  pl,
-	})
-}
-
-// emitSpawnDone records a spawn.done event carrying everything the current
-// session-log projection needs to reproduce the child-completion LogEntry, plus
-// the spawn result and any structured-delegation value (change 0042). Err is set
-// from rerr, mirroring the direct sessLog.Write "done"/"error" Kind selection.
-func emitSpawnDone(store event.EventStore, childNode *agent.AgentNode, msgs []model.Message, rerr error, sink *agent.ExpectsSink) {
-	if store == nil || childNode == nil {
-		return
-	}
-	errStr := ""
-	if rerr != nil {
-		errStr = rerr.Error()
-	}
-	var structured json.RawMessage
-	if sink != nil && sink.Captured() {
-		if b, merr := json.Marshal(sink.Value()); merr == nil {
-			structured = b
-		}
-	}
-	pl, err := event.MarshalPayload(event.SpawnDonePayload{
-		ChildNodeID: childNode.ID,
-		ParentID:    childNode.ParentID,
-		Label:       childNode.Label,
-		Depth:       childNode.Depth,
-		Result:      lastAssistantText(msgs),
-		Err:         errStr,
-		Structured:  structured,
-	})
-	if err != nil {
-		return
-	}
-	_ = store.Append(event.Event{
-		NodeID:   childNode.ID,
-		ParentID: childNode.ParentID,
-		Depth:    childNode.Depth,
-		Kind:     event.KindSpawnDone,
-		Payload:  pl,
-	})
-}
+// Note (change 0044): the spawn.start / spawn.done EMITTERS moved from here into
+// the Spawner (internal/agent/spawn.go) — the single choke point every spawn
+// passes through. This file retains only the CONSUMER side: the projection of a
+// spawn.done event back into the forensic session log, proving the "log adapts"
+// byte-equivalence with the direct sessLog.Write. The Spawner-emitted spawn.done
+// carries the same node-identity fields this projection reads, so the projected
+// log stays byte-identical.
 
 // projectEventToLog re-expresses the loop event stream as the forensic session
 // log (change 0043, "log adapts"): a spawn.done event projects to the exact

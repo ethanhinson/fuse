@@ -171,6 +171,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			agent.WithTree(tree),
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(depth),
+			// Spawn lifecycle events (change 0044): the Spawner is the single choke
+			// point that emits spawn.start/spawn.done — cloned child-builder site 1 of 3
+			// (learning patch-every-cloned-child-builder).
+			agent.WithEventStore(currentEventStore()),
 			agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
 				childToolReg, terr := childToolRegistry(toolReg, opts.Tools)
 				if terr != nil {
@@ -223,9 +227,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 				// Event stream wiring (change 0043) — cloned child-builder site 2 of 3.
 				a.SetEventSink(currentEventStore())
 				a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
-				emitSpawnStart(currentEventStore(), childNode, opts.Task)
+				// spawn.start / spawn.done are emitted by the Spawner (change 0044),
+				// the single choke point — no per-site emission here.
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
-				emitSpawnDone(currentEventStore(), childNode, msgs, rerr, opts.ExpectsSink())
 				return childResult(msgs, rerr)
 			}),
 		)
