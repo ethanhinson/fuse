@@ -115,8 +115,15 @@ type eventNoteParams struct {
 	Gap    bool        `json:"gap,omitempty"`
 }
 
-// Serve reads and dispatches JSON-RPC frames until the reader hits EOF or ctx is
-// done via a decode error. Notifications (no id) receive no response.
+// Serve reads and dispatches JSON-RPC frames until the reader hits EOF or a decode
+// error. Notifications (no id) receive no response.
+//
+// Decode-error policy is FAIL-FAST (verified, not chosen for convenience): a streaming
+// json.Decoder cannot resync mid-stream — after a syntax error it returns that same
+// error indefinitely, so a trailing valid frame is unreachable. Rather than spin, on a
+// non-EOF decode error Serve emits ONE null-id parse-error response (codeParseError) so
+// the client learns its stream is corrupt, then returns and tears down the connection.
+// A fresh connection re-establishes a clean decoder.
 func (s *Server) Serve(ctx context.Context) error {
 	for {
 		var r req
@@ -124,6 +131,9 @@ func (s *Server) Serve(ctx context.Context) error {
 			if err == io.EOF {
 				return nil
 			}
+			// Best-effort notify the client the stream is unparseable, then fail fast
+			// (json.Decoder cannot resync — see the method doc).
+			_ = s.encode(s.errResp(json.RawMessage("null"), codeParseError, "parse error: "+err.Error()))
 			return fmt.Errorf("loopserver: decode: %w", err)
 		}
 		if len(r.ID) == 0 { // notification: no response

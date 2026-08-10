@@ -388,6 +388,54 @@ func TestObserveMarksGapAfterOverlap(t *testing.T) {
 	}
 }
 
+// TestServeMalformedFrameEmitsParseErrorThenFailsFast proves the decode-error
+// contract (FIX 4): a streaming json.Decoder cannot resync mid-stream after a syntax
+// error (it returns the same error forever), so Serve emits a null-id parse-error
+// response (codeParseError) and then fails fast — the trailing VALID frame after a
+// malformed one is NOT processed. This documents the fail-fast choice and exercises
+// the codeParseError constant.
+func TestServeMalformedFrameEmitsParseErrorThenFailsFast(t *testing.T) {
+	fr := &fakeRuntime{startID: "loop-xyz"}
+
+	sr, sw := io.Pipe()
+	cr, cw := io.Pipe()
+	s := NewServer(cr, sw, fr)
+
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- s.Serve(context.Background()) }()
+
+	// A malformed frame followed by a well-formed loop.start. The valid frame must NOT
+	// be processed (json.Decoder cannot resync).
+	go func() {
+		_, _ = io.WriteString(cw, `{bad json`+"\n")
+		_, _ = io.WriteString(cw, `{"jsonrpc":"2.0","id":9,"method":"loop.start","params":{"task":"t"}}`+"\n")
+		_ = cw.Close()
+	}()
+
+	dec := json.NewDecoder(sr)
+	// First (and only) frame the client sees is the parse-error response: null id,
+	// codeParseError.
+	var f rawFrame
+	if err := dec.Decode(&f); err != nil {
+		t.Fatalf("decode parse-error response: %v", err)
+	}
+	if f.Error == nil || f.Error.Code != codeParseError {
+		t.Fatalf("frame = %+v, want a codeParseError (%d) error", f, codeParseError)
+	}
+	if string(f.ID) != "null" {
+		t.Fatalf("parse-error response id = %s, want null", f.ID)
+	}
+
+	// Serve must return (fail-fast) rather than process the trailing valid frame; if it
+	// had processed it, the fake would record startCfg.Task = "t".
+	if err := <-serveDone; err == nil {
+		t.Fatal("Serve returned nil, want a decode error (fail-fast)")
+	}
+	if fr.startCfg.Task == "t" {
+		t.Fatal("Serve processed the trailing valid frame after a malformed one (should fail fast)")
+	}
+}
+
 // readNote decodes the next frame and asserts it is an id-less loop.event
 // notification, returning its params.
 func readNote(t *testing.T, dec *json.Decoder) eventNoteParams {
