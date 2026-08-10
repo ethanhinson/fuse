@@ -2,7 +2,7 @@
 id: 47
 slug: durable-distributed-event-store
 title: Durable / distributed event store — survives restart and is shared across instances
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-10
@@ -13,12 +13,12 @@ discovered_from: [45]
 adrs: [31]
 spec: docs/superpowers/specs/2026-08-10-durable-distributed-event-store-design.md
 plan: docs/superpowers/plans/2026-08-10-durable-distributed-event-store.md
-results:
+results: docs/results/2026-08-10-durable-distributed-event-store-results.md
 trivial: false
 auto_groomable:
 branch: feat/durable-distributed-event-store
-claimed_at: 2026-08-10T21:51:16Z
-pr:
+claimed_at: 2026-08-10T22:30:57Z
+pr: https://github.com/ethanhinson/fuse/pull/50
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-10-durable-distributed-event-store-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-10-durable-distributed-event-store-design.md) |
 | Plan | [2026-08-10-durable-distributed-event-store.md](https://github.com/ethanhinson/fuse/blob/feat/durable-distributed-event-store/docs/superpowers/plans/2026-08-10-durable-distributed-event-store.md) |
+| Results | [2026-08-10-durable-distributed-event-store-results.md](https://github.com/ethanhinson/fuse/blob/feat/durable-distributed-event-store/docs/results/2026-08-10-durable-distributed-event-store-results.md) |
+| PR | [#50](https://github.com/ethanhinson/fuse/pull/50) |
 | ADRs | [ADR-0031](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0031-durable-distributed-event-store-loop-registry.md) |
 <!-- docket:artifacts:end -->
 
