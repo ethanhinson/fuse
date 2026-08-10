@@ -10,7 +10,43 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/tools"
 )
+
+// rrCompleter is a minimal scripted Completer that emits queued responses in
+// order, used to drive the real agent loop's return_result path from a pipeline
+// test (change 0042).
+type rrCompleter struct {
+	responses []model.CompletionResp
+	i         int
+}
+
+func (c *rrCompleter) Complete(_ context.Context, _ model.CompletionReq) (model.CompletionResp, error) {
+	if c.i >= len(c.responses) {
+		return model.CompletionResp{Content: "done"}, nil
+	}
+	r := c.responses[c.i]
+	c.i++
+	return r, nil
+}
+
+// rrExec is a no-op ToolExecutor advertising no registry tools; the loop still
+// injects the synthesized return_result tool when expects is set.
+type rrExec struct{}
+
+func (rrExec) Schemas() []model.ToolSchema { return nil }
+func (rrExec) Execute(_ context.Context, _ string, _ string) tools.Result {
+	return tools.Result{Output: "ok"}
+}
+
+type rrRenderer struct{}
+
+func (rrRenderer) Assistant(string)                {}
+func (rrRenderer) ToolCall(string, string)         {}
+func (rrRenderer) ToolResult(string, tools.Result) {}
+func (rrRenderer) Errorf(string, ...any)           {}
+func (rrRenderer) Tokens(int, int)                 {}
 
 // fakeSpawner builds a real agent.Spawner whose child builder is scripted: it
 // invokes fn(opts) to produce the child's result text, honoring cancellation.
@@ -447,6 +483,51 @@ func ranSet(t *testing.T, p *Pipeline, seed map[string]any) (map[string]bool, *a
 	})
 	st, err := Run(context.Background(), p, sp, bb)
 	return ran, bb, st, err
+}
+
+// TestEngineExpectsViaReturnResult: an authored pipeline step with `expects`
+// gets its structured result through the full change-0042 return_result path.
+// The child builder here mirrors the cmd sites: it constructs a real Agent, wires
+// SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()), and runs a loop whose
+// scripted model calls return_result. The validated value must land on the output
+// key via h.Result() → SpawnDone.Structured → spawnOnce — with NO pipeline code
+// change. This proves engine.go/synthesize.go compose over the new mechanism.
+func TestEngineExpectsViaReturnResult(t *testing.T) {
+	tree := agent.NewAgentTree("root", "m")
+	bb := agent.NewBlackboard(tree)
+	root := tree.Node(tree.RootID())
+	sp := agent.NewSpawner(
+		agent.WithTree(tree),
+		agent.WithNode(root),
+		agent.WithSpawnDepth(0),
+		agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, _ *agent.AgentNode, _ *agent.AgentTree) (string, error) {
+			comp := &rrCompleter{responses: []model.CompletionResp{
+				{ToolCalls: []model.ToolCall{{ID: "1", Name: "return_result", Arguments: `{"answer":42}`}}},
+			}}
+			a := agent.New(comp, rrExec{}, rrRenderer{}, "m", opts.SystemPrompt, 10, 100)
+			a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // identical to the cmd-site wiring
+			_, err := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
+			return "", err
+		}),
+	)
+	p := &Pipeline{Name: "p", Steps: []Step{
+		{Name: "s", Worker: "w", Prompt: "x", Outputs: []string{"o"},
+			Expects: []byte(`{"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"]}`)},
+	}}
+	if _, err := Run(context.Background(), p, sp, bb); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	e, ok := bb.Get("o")
+	if !ok {
+		t.Fatal("output not written")
+	}
+	m, ok := e.Value.(map[string]any)
+	if !ok {
+		t.Fatalf("expected structured map from return_result, got %T: %#v", e.Value, e.Value)
+	}
+	if m["answer"] != float64(42) {
+		t.Fatalf("structured value wrong: %#v", m)
+	}
 }
 
 // TestEngineRoutingGotoRedirects: a condition's goto force-schedules the named

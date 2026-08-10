@@ -142,9 +142,10 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 		"expects": map[string]any{
 			"type": "object",
 			"description": "Optional JSON Schema describing the shape you want the child's " +
-				"final result to take. When set, the child is asked to emit only conforming " +
-				"JSON and its output is validated against this schema; the result is annotated " +
-				"with whether it matched. A mismatch never fails the spawn.",
+				"final result to take. When set, the child is given a return_result tool whose " +
+				"arguments must conform to this schema; it does its work with its other tools and " +
+				"then calls return_result once to deliver the structured result, which is validated " +
+				"against this schema. A mismatch never fails the spawn.",
 		},
 	}
 	// Inside a workflow subtree, offer a typed `worker` param enumerating the
