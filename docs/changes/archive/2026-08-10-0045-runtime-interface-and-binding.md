@@ -2,7 +2,7 @@
 id: 45
 slug: runtime-interface-and-binding
 title: Runtime interface + second binding — prove the platform boundary is emergent
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-10
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/runtime-interface-and-binding
 pr: https://github.com/ethanhinson/fuse/pull/48
 blocked_by:
-claimed_at: 2026-08-10T18:26:57Z
+claimed_at: 
 reconciled: true
 ---
 
