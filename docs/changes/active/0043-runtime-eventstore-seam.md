@@ -12,7 +12,7 @@ related: [23, 24, 30, 36, 42]
 discovered_from: []
 adrs: [16, 17, 18, 19, 20]
 spec: docs/superpowers/specs/0043-runtime-eventstore-seam.md
-plan:
+plan: docs/superpowers/plans/2026-08-10-runtime-eventstore-seam-plan.md
 results:
 trivial: false
 auto_groomable:
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0043-runtime-eventstore-seam.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0043-runtime-eventstore-seam.md) |
+| Plan | [2026-08-10-runtime-eventstore-seam-plan.md](https://github.com/ethanhinson/fuse/blob/feat/runtime-eventstore-seam/docs/superpowers/plans/2026-08-10-runtime-eventstore-seam-plan.md) |
 | ADRs | [ADR-0016](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0016-subagent-spawn-tree-runtime.md), [ADR-0017](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0017-segment-store-fssink-subpackage-split.md), [ADR-0018](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0018-per-session-directory-layout-flat-log-read-compat.md), [ADR-0019](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0019-process-global-segment-sink-holder.md), [ADR-0020](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0020-born-compressed-non-destructive-segment-store.md) |
 <!-- docket:artifacts:end -->
 
