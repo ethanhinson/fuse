@@ -144,6 +144,9 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(depth),
 			agent.WithSpawnBackstop(backstopFor(tree, act, rootID)),
+			// Spawn lifecycle events (change 0044): emitted by the Spawner choke
+			// point — cloned child-builder site 3 of 3.
+			agent.WithEventStore(currentEventStore()),
 			agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
 				// Resolve the effective tool list: inside a workflow a selected
 				// worker's allowlist is authoritative (opts.Tools may only narrow
@@ -226,9 +229,11 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				// Event stream wiring (change 0043) — cloned child-builder site 3 of 3.
 				a.SetEventSink(currentEventStore())
 				a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
-				emitSpawnStart(currentEventStore(), childNode, opts.Task)
+				// spawn.start / spawn.done are emitted by the Spawner (change 0044).
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
-				emitSpawnDone(currentEventStore(), childNode, msgs, rerr, opts.ExpectsSink())
+				// Raw run error → Spawner spawn.done (change 0044): matches the
+				// session-log `kind` even when childResult collapses a stop to success.
+				opts.RunErrSink().Set(rerr)
 				return childResult(msgs, rerr)
 			}),
 		)

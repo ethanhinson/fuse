@@ -282,6 +282,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			// Completion hook (ADR-0022): bubble a finished child's undelivered
 			// human messages up to its parent so none are silently stranded.
 			agent.WithHumanBus(humanBus),
+			// Spawn lifecycle events (change 0044): emitted by the Spawner choke
+			// point — cloned child-builder site 2 of 3.
+			agent.WithEventStore(currentEventStore()),
 			agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
 				// Register a human-typeable @handle for this child (auto-derived from
 				// its label, collision-disambiguated) so the human can address it.
@@ -353,17 +356,20 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 				a.SetEventSink(currentEventStore())
 				a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 
-				// spawn.start (change 0043): the spawn boundary opens here, at the
-				// cmd/fuse child-run site (the loop itself never spawns).
-				emitSpawnStart(currentEventStore(), childNode, opts.Task)
-
+				// spawn.start / spawn.done are emitted by the Spawner (change 0044),
+				// the single choke point every spawn passes through — replacing the
+				// per-cmd-site emission 0043 wired here. The direct sessLog.Write below
+				// is independent and unchanged; the event-stream projection consumer
+				// (startProjectedLogConsumer) still reproduces the same LogEntry from the
+				// Spawner-emitted spawn.done.
 				history := []model.Message{{Role: "user", Content: opts.Task}}
 				msgs, rerr := a.Run(ctx, history)
-
-				// spawn.done (change 0043): carries the same fields the direct
-				// session-log write uses, so the log projection (event_log_consumer)
-				// reproduces the exact LogEntry.
-				emitSpawnDone(currentEventStore(), childNode, msgs, rerr, opts.ExpectsSink())
+				// Report the RAW run error to the Spawner's spawn.done event (change
+				// 0044) so the projected session log's `kind` matches this direct
+				// write's raw-error selection below — the byte-equivalence 0043 relies
+				// on — even when childResult collapses a max-turns/loop stop into a
+				// partial-success string (runErr == nil).
+				opts.RunErrSink().Set(rerr)
 
 				if sessLog != nil {
 					kind := "done"

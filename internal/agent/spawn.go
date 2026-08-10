@@ -2,11 +2,14 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime/debug"
 	"sync"
 	"time"
+
+	"github.com/ethanhinson/fuse/internal/event"
 )
 
 // ErrMaxDepthExceeded is returned when a spawn would exceed MaxDepth.
@@ -73,6 +76,47 @@ type SpawnOpts struct {
 	// unexported-by-accessor: builders read it via ExpectsSink(). Nil when the spawn
 	// carries no map schema, in which case SetExpects is a no-op.
 	expectsSink *ExpectsSink
+
+	// rawErrSink is the spawner-allocated holder through which a child builder
+	// reports the CHILD'S RAW run error (change 0044) — the un-collapsed error from
+	// a.Run, before childResult swallows ErrMaxTurns/ErrLoopDetected into a "[stopped:
+	// …]" partial-success string. The Spawner reads it to source the spawn.done
+	// event's Err field, so the event's error signal matches the direct session-log
+	// write's raw-error `kind` selection (byte-equivalence for 0043's log projection).
+	// It is SEPARATE from SpawnDone.Err (the control/handle path, which stays nil on
+	// the stop path to preserve the model-facing partial-success contract). Builders
+	// write it via opts.RunErrSink().Set(rerr); nil-safe when unallocated.
+	rawErrSink *RunErrSink
+}
+
+// RunErrSink is the spawner-allocated holder a child builder uses to report the
+// child's raw run error to the Spawner for spawn.done emission (change 0044),
+// distinct from the collapsed error the handle/model see. Nil-safe: Set on a nil
+// sink is a no-op and Err returns nil, so a builder that never wires it (older
+// builder, a test fixedBuilder) leaves the event's Err empty exactly as before.
+type RunErrSink struct {
+	mu  sync.Mutex
+	err error
+}
+
+// Set records the child's raw run error. Nil-safe.
+func (s *RunErrSink) Set(err error) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.err = err
+	s.mu.Unlock()
+}
+
+// Err returns the recorded raw run error, or nil. Nil-safe.
+func (s *RunErrSink) Err() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
 }
 
 // ExpectsSink returns the spawner-allocated return_result capture holder for this
@@ -81,6 +125,12 @@ type SpawnOpts struct {
 // a.SetExpects(opts.Expects, opts.ExpectsSink()) so the loop's validated
 // return_result value flows back to the spawner's result assembly.
 func (o SpawnOpts) ExpectsSink() *ExpectsSink { return o.expectsSink }
+
+// RunErrSink returns the spawner-allocated raw-run-error holder for this spawn
+// (change 0044), or nil when unallocated. A child builder calls
+// opts.RunErrSink().Set(rerr) with the raw error from a.Run so the Spawner's
+// spawn.done event carries the same error signal the direct session-log write uses.
+func (o SpawnOpts) RunErrSink() *RunErrSink { return o.rawErrSink }
 
 // ExpectsSchema returns the decoded map[string]any expects schema for this spawn,
 // or nil when Expects is unset or not a map (change 0042). Child builders pass it
@@ -194,6 +244,23 @@ func WithSpawnBackstop(fn func(newDepth int) error) Option {
 // hook). Nil (default) is a no-op.
 func WithHumanBus(bus *HumanBus) Option { return func(s *Spawner) { s.humanBus = bus } }
 
+// WithEventStore installs the loop event stream on the Spawner so it emits the
+// spawn.start / spawn.done lifecycle pair for every child (change 0044). The
+// Spawner is the single choke point every spawn passes through and already builds
+// SpawnDone{Result,Structured}, so both the in-process backend and any future
+// networked backend emit uniformly from here — rather than from each cloned
+// cmd-site child builder (where 0043 first wired it). A nil store installs the
+// inert NoopStore, so a Spawner without one emits into the void (one-shot / probe
+// / mcp paths, and every existing test) exactly as before.
+func WithEventStore(s event.EventStore) Option {
+	return func(sp *Spawner) {
+		if s == nil {
+			s = event.NoopStore{}
+		}
+		sp.eventStore = s
+	}
+}
+
 // Spawner provides the Spawn method for creating child agents.
 type Spawner struct {
 	tree       *AgentTree
@@ -202,13 +269,21 @@ type Spawner struct {
 	buildChild ChildBuilder
 	backstop   func(newDepth int) error
 	humanBus   *HumanBus
+	// eventStore is the loop event stream (change 0044). The Spawner emits the
+	// spawn.start / spawn.done lifecycle pair here — the observation path that lets
+	// an observer see child completion without holding the handle. Defaults to the
+	// inert NoopStore so a Spawner without WithEventStore never nil-panics.
+	eventStore event.EventStore
 }
 
 // NewSpawner creates a Spawner with the provided options.
 func NewSpawner(opts ...Option) *Spawner {
-	s := &Spawner{}
+	s := &Spawner{eventStore: event.NoopStore{}}
 	for _, o := range opts {
 		o(s)
+	}
+	if s.eventStore == nil {
+		s.eventStore = event.NoopStore{}
 	}
 	return s
 }
@@ -321,6 +396,12 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		s.tree.Emit(TreeUpdate{NodeID: node.ID})
 	}
 
+	// spawn.start (change 0044): the spawn boundary opens HERE, at admission, from
+	// the single Spawner choke point — before the child goroutine runs — so an
+	// observer sees the start of every spawn's lifecycle whether the backend is
+	// in-process or (later) networked. Best-effort; never blocks (ADR-0016).
+	s.emitSpawnStart(node, opts.Task)
+
 	// The goroutine now owns slot release for both the granted (fast-path) and
 	// parked (awaitSlot) cases; the synchronous guard above no longer applies.
 	slotHeld = false
@@ -388,6 +469,14 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 				opts.SystemPrompt = augmentPromptWithSchema(opts.SystemPrompt, opts.Expects)
 			}
 		}
+
+		// Raw-run-error channel (change 0044): the child builder reports the
+		// un-collapsed a.Run error here so the spawn.done event's Err matches the
+		// direct session-log write's raw-error `kind` selection (byte-equivalence for
+		// 0043's projection). Distinct from SpawnDone.Err, which stays the collapsed
+		// control-path error the handle/model see.
+		rawErrSink := &RunErrSink{}
+		opts.rawErrSink = rawErrSink
 
 		if s.buildChild != nil {
 			// Backstop: a panic on a child goroutine kills the whole process,
@@ -461,8 +550,95 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 		if s.humanBus != nil {
 			s.humanBus.OnNodeComplete(node.ID)
 		}
+		// spawn.done (change 0044): emit the completion on the event stream from the
+		// same place SpawnDone is assembled, carrying the child's Result / Err /
+		// Structured — the observation path a Subscribe()r sees without a handle. The
+		// handle channel below stays the in-process control path (D2); this emission
+		// is a best-effort side effect of the same completion, never read back by the
+		// handle. Emitted before the channel send so a same-goroutine ordering is
+		// deterministic for tests.
+		//
+		// The event's Err is the child's RAW run error (rawErrSink) when the builder
+		// reported one — so the projected session log's `kind` matches the direct
+		// write's raw-error selection even on the max-turns/loop path where the
+		// control-path runErr was collapsed to nil (a partial-success string). Falls
+		// back to runErr when no sink error was reported (real failure, or a builder
+		// that never wires the sink).
+		eventErr := runErr
+		if re := rawErrSink.Err(); re != nil {
+			eventErr = re
+		}
+		s.emitSpawnDone(node, result, eventErr, structured)
 		doneCh <- SpawnDone{Result: result, Err: runErr, Structured: structured}
 	}()
 
 	return AgentHandle{NodeID: node.ID, Done: doneCh, memo: &doneMemo{}}, nil
+}
+
+// emitSpawnStart appends a spawn.start event for the given child node (change
+// 0044). Best-effort: a nil/absent store is the inert NoopStore, and an Append
+// error is swallowed (the loop's own event emission has the same posture,
+// ADR-0016) — spawning must never fail on an observation-channel hiccup.
+func (s *Spawner) emitSpawnStart(node *AgentNode, task string) {
+	if s.eventStore == nil || node == nil {
+		return
+	}
+	pl, err := event.MarshalPayload(event.SpawnStartPayload{
+		ChildNodeID: node.ID,
+		Label:       node.Label,
+		Task:        task,
+	})
+	if err != nil {
+		return
+	}
+	_ = s.eventStore.Append(event.Event{
+		NodeID:   node.ID,
+		ParentID: node.ParentID,
+		Depth:    node.Depth,
+		Kind:     event.KindSpawnStart,
+		Payload:  pl,
+	})
+}
+
+// emitSpawnDone appends a spawn.done event carrying the child's final Result, its
+// run error (if any), and the structured-delegation value (change 0044). The
+// Result is the child builder's returned string (i.e. SpawnDone.Result), which on
+// max-turns / loop-detected carries a "[stopped: …]" marker — a faithful record of
+// what the child ultimately produced. The 0043 log projection reads only the
+// node-identity fields from this payload, so the projected session log stays
+// byte-identical regardless of the Result source. Structured (any) is marshaled to
+// raw JSON; a marshal failure just omits it. Best-effort, like emitSpawnStart.
+func (s *Spawner) emitSpawnDone(node *AgentNode, result string, rerr error, structured any) {
+	if s.eventStore == nil || node == nil {
+		return
+	}
+	errStr := ""
+	if rerr != nil {
+		errStr = rerr.Error()
+	}
+	var raw json.RawMessage
+	if structured != nil {
+		if b, merr := json.Marshal(structured); merr == nil {
+			raw = b
+		}
+	}
+	pl, err := event.MarshalPayload(event.SpawnDonePayload{
+		ChildNodeID: node.ID,
+		ParentID:    node.ParentID,
+		Label:       node.Label,
+		Depth:       node.Depth,
+		Result:      result,
+		Err:         errStr,
+		Structured:  raw,
+	})
+	if err != nil {
+		return
+	}
+	_ = s.eventStore.Append(event.Event{
+		NodeID:   node.ID,
+		ParentID: node.ParentID,
+		Depth:    node.Depth,
+		Kind:     event.KindSpawnDone,
+		Payload:  pl,
+	})
 }

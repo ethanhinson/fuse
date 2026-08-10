@@ -6,10 +6,19 @@ import (
 	"testing"
 )
 
-// okSpawn is a SpawnFunc that returns a fixed child result with no error.
+// fakeHandle is a test SpawnHandle that returns a fixed SpawnResult (change 0044).
+// It stands in for the cmd/fuse adapter over agent.AgentHandle, letting the tool's
+// model-facing contract be asserted without importing internal/agent.
+type fakeHandle struct{ res SpawnResult }
+
+func (h fakeHandle) WaitResult() SpawnResult { return h.res }
+
+// okSpawn is a SpawnFunc that returns a handle whose result is a fixed string with
+// no error. The tool awaits it internally (change 0044) and produces the same
+// model-facing output as the pre-0044 string-returning seam.
 func okSpawn(result string) SpawnFunc {
-	return func(_ context.Context, _ SpawnRequest) (string, error) {
-		return result, nil
+	return func(_ context.Context, _ SpawnRequest) (SpawnHandle, error) {
+		return fakeHandle{res: SpawnResult{Result: result}}, nil
 	}
 }
 
@@ -77,8 +86,8 @@ func TestSpawnAgentTool_BudgetLineClampsRemainingAtZero(t *testing.T) {
 func TestSpawnAgentTool_NoBudgetLineOnSpawnError(t *testing.T) {
 	// A failed spawn returns the error verbatim, with no budget line appended —
 	// the model needs the clean error to react to.
-	failing := func(_ context.Context, _ SpawnRequest) (string, error) {
-		return "", context.Canceled
+	failing := func(_ context.Context, _ SpawnRequest) (SpawnHandle, error) {
+		return nil, context.Canceled
 	}
 	budget := func() (used, max int) { return 3, 16 }
 	tool := NewSpawnAgentToolWithBudget(failing, budget)
@@ -157,8 +166,8 @@ func TestSpawnAgentTool_QuotaWarningRidesAlongsideBudgetLine(t *testing.T) {
 }
 
 func TestSpawnAgentTool_NoQuotaWarningOnSpawnError(t *testing.T) {
-	failing := func(_ context.Context, _ SpawnRequest) (string, error) {
-		return "", context.Canceled
+	failing := func(_ context.Context, _ SpawnRequest) (SpawnHandle, error) {
+		return nil, context.Canceled
 	}
 	quota := func() string { return "\n\ntoken quota exhausted: conclude now" }
 	tool := NewSpawnAgentToolWithBudget(failing, nil).WithQuotaWarning(quota)
@@ -208,9 +217,9 @@ func TestSpawnAgentTool_WithWorkersAddsEnum(t *testing.T) {
 
 func TestSpawnAgentTool_WorkerThreadedToSpawnFunc(t *testing.T) {
 	var got SpawnRequest
-	spawn := func(_ context.Context, req SpawnRequest) (string, error) {
+	spawn := func(_ context.Context, req SpawnRequest) (SpawnHandle, error) {
 		got = req
-		return "ok", nil
+		return fakeHandle{res: SpawnResult{Result: "ok"}}, nil
 	}
 	tool := NewSpawnAgentTool(spawn).WithWorkers([]string{"facet-researcher"})
 	res := tool.Execute(context.Background(), `{"label":"c","task":"do","worker":"facet-researcher"}`)
@@ -267,9 +276,9 @@ func TestTighterBudget_ShowsTighterInLine(t *testing.T) {
 // captureSpawn records the SpawnRequest it receives so a test can assert what
 // the tool threaded across the seam.
 func captureSpawn(got *SpawnRequest) SpawnFunc {
-	return func(_ context.Context, req SpawnRequest) (string, error) {
+	return func(_ context.Context, req SpawnRequest) (SpawnHandle, error) {
 		*got = req
-		return "ok", nil
+		return fakeHandle{res: SpawnResult{Result: "ok"}}, nil
 	}
 }
 
@@ -315,5 +324,52 @@ func TestSpawnAgentTool_AbsentExpectsIsNil(t *testing.T) {
 	}
 	if got.Expects != nil {
 		t.Fatalf("absent expects must leave req.Expects nil; got %#v", got.Expects)
+	}
+}
+
+// --- change 0044: handle-returning SpawnFunc; tool blocks internally ---
+
+// TestSpawnAgentTool_AwaitsHandleForModelContract is the D1 gate: with the new
+// handle-returning SpawnFunc, the tool must block on handle.WaitResult() and emit
+// the SAME model-facing string as the pre-0044 string-returning seam — prose +
+// budget line + quota line, in that order. "Same model-visible output, new
+// Go-visible contract."
+func TestSpawnAgentTool_AwaitsHandleForModelContract(t *testing.T) {
+	budget := func() (used, max int) { return 2, 10 }
+	quota := func() string { return "\n\ntoken quota exhausted: conclude now" }
+	spawn := func(_ context.Context, _ SpawnRequest) (SpawnHandle, error) {
+		return fakeHandle{res: SpawnResult{Result: "child prose"}}, nil
+	}
+	tool := NewSpawnAgentToolWithBudget(spawn, budget).WithQuotaWarning(quota)
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	want := "child prose" +
+		"\n\nagent budget: 2/10 used (8 remaining)" +
+		"\n\ntoken quota exhausted: conclude now"
+	if res.Output != want {
+		t.Fatalf("model-facing output changed:\n got %q\nwant %q", res.Output, want)
+	}
+}
+
+// TestSpawnAgentTool_HandleErrorIsErrorResult: a handle that completes with a run
+// error (distinct from a spawn refused before it started) surfaces as an error
+// result with no budget/quota line — the same clean-error posture the model needs.
+func TestSpawnAgentTool_HandleErrorIsErrorResult(t *testing.T) {
+	budget := func() (used, max int) { return 3, 16 }
+	spawn := func(_ context.Context, _ SpawnRequest) (SpawnHandle, error) {
+		return fakeHandle{res: SpawnResult{Err: context.DeadlineExceeded}}, nil
+	}
+	tool := NewSpawnAgentToolWithBudget(spawn, budget)
+	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
+	if !res.IsError {
+		t.Fatal("expected an error result when the handle completes with an error")
+	}
+	if strings.Contains(res.Output, "agent budget") {
+		t.Errorf("no budget line on a handle-error result, got:\n%s", res.Output)
+	}
+	if !strings.Contains(res.Output, "spawn_agent:") {
+		t.Errorf("error result should be prefixed spawn_agent:, got:\n%s", res.Output)
 	}
 }

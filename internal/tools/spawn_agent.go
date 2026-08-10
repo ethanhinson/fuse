@@ -29,10 +29,38 @@ type SpawnRequest struct {
 	Expects any
 }
 
-// SpawnFunc is injected into SpawnAgentTool to break the import cycle between
-// the tools registry and the agent package. It returns the child agent's final
-// result text. The wiring code in cmd/fuse adapts agent.Spawner.Spawn to it.
-type SpawnFunc func(ctx context.Context, req SpawnRequest) (result string, err error)
+// SpawnResult is the tools-visible completion of a spawned child agent: the prose
+// result text and the run error. It deliberately omits the structured-delegation
+// value — only Go callers (the pipeline engine, and change 3's Runtime) consume
+// that, via *agent.AgentHandle directly. The tool needs only the text to build the
+// model-facing result (change 0044).
+type SpawnResult struct {
+	Result string
+	Err    error
+}
+
+// SpawnHandle is the agent-free handle the tools spawn seam awaits (change 0044).
+// It is the location-transparent shape of a spawn: a caller gets a handle back and
+// awaits the result, whether the child ran in-process or (later) remotely.
+// *agent.AgentHandle satisfies this through a thin cmd/fuse adapter, which keeps
+// internal/tools free of an internal/agent import — the very cycle SpawnFunc was
+// created to break. The tool blocks on WaitResult() internally (D1), so the
+// model-facing contract is byte-unchanged; the async handle is exposed only to Go
+// callers of SpawnFunc.
+type SpawnHandle interface {
+	// WaitResult blocks until the child completes and returns its prose result and
+	// run error. It is the tools-side analogue of agent.AgentHandle.Wait().
+	WaitResult() SpawnResult
+}
+
+// SpawnFunc is injected into SpawnAgentTool to break the import cycle between the
+// tools registry and the agent package. As of change 0044 it is handle-returning:
+// it starts a spawn and returns a SpawnHandle the caller awaits (the tool awaits it
+// internally; the pipeline/Runtime awaits it as the async seam). The wiring code in
+// cmd/fuse adapts agent.Spawner.Spawn — which already returns agent.AgentHandle — to
+// this seam. A non-nil error means the spawn was refused before it started
+// (depth/budget/quota); a nil-error handle always completes via WaitResult().
+type SpawnFunc func(ctx context.Context, req SpawnRequest) (SpawnHandle, error)
 
 // BudgetFunc reports the tree-global spawn budget at call time: how many child
 // agents have been created so far and the ceiling. A max of 0 means no budget
@@ -194,13 +222,24 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, args string) Result {
 	// `expects` schema, so req.Expects stays zero here and any `expects` key in the
 	// raw args is ignored (change 0042, D7). The pipeline/code path still sets
 	// SpawnOpts.Expects directly for structured delegation — that seam is untouched.
-	result, err := t.spawn(ctx, req)
+	//
+	// Change 0044: SpawnFunc is now handle-returning. The tool blocks INTERNALLY on
+	// handle.WaitResult() and returns the same result string (prose + budget line +
+	// quota line) to the model — the model-facing contract is byte-unchanged. The
+	// async handle is exposed only to the Go caller of SpawnFunc (pipeline/Runtime);
+	// the model never sees it. A spawn refused before it started (depth/budget/quota)
+	// surfaces the error verbatim exactly as before.
+	handle, err := t.spawn(ctx, req)
 	if err != nil {
 		// Error results carry the error verbatim (which, for a budget-exhausted
 		// spawn, already tells the model to stop) — never a budget line.
 		return Result{IsError: true, Output: fmt.Sprintf("spawn_agent: %v", err)}
 	}
-	return Result{Output: result + t.budgetLine() + t.quotaWarning()}
+	done := handle.WaitResult()
+	if done.Err != nil {
+		return Result{IsError: true, Output: fmt.Sprintf("spawn_agent: %v", done.Err)}
+	}
+	return Result{Output: done.Result + t.budgetLine() + t.quotaWarning()}
 }
 
 // quotaWarning returns the token-quota warning suffix to append to a successful

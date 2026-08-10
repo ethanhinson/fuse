@@ -661,15 +661,44 @@ const (
 	pipelineWriterLabel = "pipeline"
 )
 
-// spawnFuncFrom adapts a *agent.Spawner into the tools.SpawnFunc seam: it spawns
-// a child, yields the parent's scheduler slot while blocked on it, and unyields
-// on completion (a parent holding a slot while its child queues is a deadlock).
-// The spawner-building and slot-yield logic is identical at every entry point, so
-// it lives here; each site builds its own spawner (with its own child builder)
-// and wraps it through this adapter. Change 0026 extracted it so the same spawner
-// can also back the pipeline_run tool.
+// cmdSpawnHandle adapts an agent.AgentHandle to the tools.SpawnHandle seam (change
+// 0044): it holds the handle plus the slot-yield context, and performs the
+// parent's scheduler-slot yield/unyield AROUND the actual block in WaitResult() —
+// so the parent yields its slot only while genuinely blocked on the child (a
+// parent holding a slot while its child queues is a deadlock, learning
+// slot-cap-yield-while-blocked-on-children). The tool (or any Go caller) awaits the
+// handle by calling WaitResult(); the async agent.AgentHandle never crosses into
+// internal/tools, keeping that package free of an internal/agent import.
+type cmdSpawnHandle struct {
+	ctx        context.Context
+	handle     agent.AgentHandle
+	sched      *agent.Scheduler
+	parentNode *agent.AgentNode
+}
+
+// WaitResult yields the parent's slot, blocks on the child, then unyields — the
+// exact timing spawnFuncFrom performed inline before 0044, now moved to await
+// time. An unyield that cannot re-acquire (context cancelled) surfaces the ctx
+// error, matching the prior behavior.
+func (h cmdSpawnHandle) WaitResult() tools.SpawnResult {
+	h.sched.YieldSlot(h.parentNode)
+	done := h.handle.Wait()
+	if !h.sched.UnyieldSlot(h.ctx, h.parentNode) {
+		return tools.SpawnResult{Err: h.ctx.Err()}
+	}
+	return tools.SpawnResult{Result: done.Result, Err: done.Err}
+}
+
+// spawnFuncFrom adapts a *agent.Spawner into the handle-returning tools.SpawnFunc
+// seam (change 0044): it starts the spawn and returns a cmdSpawnHandle the caller
+// awaits, rather than pre-awaiting and collapsing the handle to a string. The
+// spawner-building is identical at every entry point, so it lives here; each site
+// builds its own spawner (with its own child builder) and wraps it through this
+// adapter. Change 0026 extracted it so the same spawner can also back the
+// pipeline_run tool; change 0044 made the seam handle-returning so the same spawner
+// can back a location-transparent Runtime later.
 func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *agent.AgentNode) tools.SpawnFunc {
-	return func(ctx context.Context, req tools.SpawnRequest) (string, error) {
+	return func(ctx context.Context, req tools.SpawnRequest) (tools.SpawnHandle, error) {
 		opts := agent.SpawnOpts{
 			Label:        req.Label,
 			Task:         req.Task,
@@ -681,14 +710,9 @@ func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *a
 		}
 		handle, herr := spawner.Spawn(ctx, opts)
 		if herr != nil {
-			return "", herr
+			return nil, herr
 		}
-		sched.YieldSlot(parentNode)
-		done := handle.Wait()
-		if !sched.UnyieldSlot(ctx, parentNode) {
-			return "", ctx.Err()
-		}
-		return done.Result, done.Err
+		return cmdSpawnHandle{ctx: ctx, handle: handle, sched: sched, parentNode: parentNode}, nil
 	}
 }
 

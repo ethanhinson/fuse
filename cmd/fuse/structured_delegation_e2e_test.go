@@ -156,7 +156,7 @@ func runStructuredDelegationSeam(t *testing.T, childJSON string) string {
 		}),
 	)
 
-	spawnFn := func(ctx context.Context, req tools.SpawnRequest) (string, error) {
+	spawnFn := func(ctx context.Context, req tools.SpawnRequest) (tools.SpawnHandle, error) {
 		// The freeform tool is prose-only (0042 D7): an `expects` key in the model's
 		// args must be dropped, so req.Expects is nil here. Guard that, then attach
 		// the schema on the code path — the surviving structured-delegation seam
@@ -171,10 +171,10 @@ func runStructuredDelegationSeam(t *testing.T, childJSON string) string {
 			ModelID: req.Model, Tools: req.Tools, Worker: req.Worker, Expects: expects,
 		})
 		if herr != nil {
-			return "", herr
+			return nil, herr
 		}
-		d := h.Wait()
-		return d.Result, d.Err
+		// Change 0044: the seam is handle-returning; the tool awaits it internally.
+		return sdSpawnHandle{h: h}, nil
 	}
 
 	// Root registry offers the real spawn_agent tool.
@@ -220,4 +220,14 @@ func TestStructuredDelegationSeam_Mismatch(t *testing.T) {
 	if !strings.Contains(got, `"answer":"not-an-int"`) {
 		t.Errorf("mismatch must preserve the child's raw text, got:\n%s", got)
 	}
+}
+
+// sdSpawnHandle adapts an agent.AgentHandle to the tools.SpawnHandle seam for the
+// structured-delegation e2e test (change 0044): the tool awaits WaitResult()
+// internally, exactly as production does through cmdSpawnHandle.
+type sdSpawnHandle struct{ h agent.AgentHandle }
+
+func (s sdSpawnHandle) WaitResult() tools.SpawnResult {
+	d := s.h.Wait()
+	return tools.SpawnResult{Result: d.Result, Err: d.Err}
 }
