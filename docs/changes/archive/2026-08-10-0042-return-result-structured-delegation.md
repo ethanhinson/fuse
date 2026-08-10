@@ -2,7 +2,7 @@
 id: 42
 slug: return-result-structured-delegation
 title: Fix structured-delegation (expects) vs tool-calling collision via a return_result tool
-status: implemented
+status: done
 priority: high
 type: fix
 created: 2026-08-09
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/return-result-structured-delegation
 pr: https://github.com/ethanhinson/fuse/pull/45
 blocked_by:
-claimed_at: 2026-08-10T01:14:48Z
+claimed_at: 
 reconciled: true
 ---
 
