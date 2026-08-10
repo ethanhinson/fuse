@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0043 — Runtime EventStore seam — typed, pluggable, introspectable loop event stream](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0043-runtime-eventstore-seam.md)**
+> ↩ **[Change 0043 — Runtime EventStore seam — typed, pluggable, introspectable loop event stream](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-10-0043-runtime-eventstore-seam.md)**
 <!-- docket:backlink:end -->
 
 # Spec 0043 — Runtime EventStore seam: a typed, pluggable, introspectable loop event stream
