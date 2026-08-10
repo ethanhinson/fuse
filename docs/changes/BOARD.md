@@ -1,12 +1,13 @@
 # Backlog
 
-**43 changes** — 🟡 1 proposed · ⚪ 1 deferred · ✅ 35 done · 🗑️ 6 killed
+**44 changes** — 🟡 2 proposed · ⚪ 1 deferred · ✅ 35 done · 🗑️ 6 killed
 
-## 🟡 Proposed (1)
+## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0043](active/0043-runtime-eventstore-seam.md) | Runtime EventStore seam — typed, pluggable, introspectable loop event stream | `high` | `feat` | build-ready |
+| [0044](active/0044-spawn-handle-async.md) | Spawn handle-async — location-transparent spawning behind a handle-returning contract | `high` | `refactor` | ⏳ waiting on #43 — not yet built |
 
 ## ⚪ Deferred (1)
 
@@ -18,6 +19,7 @@
 graph TD
   0012 --> 0029
   0043
+  0043 --> 0044
   0012:::done
   classDef done fill:#d3f9d8;
 ```
