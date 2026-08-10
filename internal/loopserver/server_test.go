@@ -12,11 +12,13 @@ import (
 )
 
 // fakeRuntime is a test double satisfying runtime.Runtime. It records the last
-// StartLoop/Send arguments and returns scripted Attach/Observe results.
+// StartLoop/Send arguments and returns scripted Attach/Observe results. It also
+// records the tenant threaded onto Observe/Attach (change 0047) so a test can assert
+// the tenant reaches the runtime seam.
 type fakeRuntime struct {
-	startCfg  runtime.LoopConfig
-	startID   string
-	startErr  error
+	startCfg runtime.LoopConfig
+	startID  string
+	startErr error
 
 	sendLoopID string
 	sendInput  string
@@ -28,6 +30,10 @@ type fakeRuntime struct {
 	observeCh   chan event.Event
 	observeErr  error
 	observeStop bool
+
+	// observeTenant / attachTenant record the tenant the last Observe/Attach carried.
+	observeTenant event.TenantID
+	attachTenant  event.TenantID
 }
 
 func (f *fakeRuntime) StartLoop(ctx context.Context, cfg runtime.LoopConfig) (runtime.LoopHandle, error) {
@@ -48,14 +54,16 @@ func (f *fakeRuntime) Spawn(ctx context.Context, loopID string, opts runtime.Spa
 	return nil, nil
 }
 
-func (f *fakeRuntime) Observe(loopID string) (<-chan event.Event, func(), error) {
+func (f *fakeRuntime) Observe(ctx context.Context, tenant event.TenantID, loopID string) (<-chan event.Event, func(), error) {
+	f.observeTenant = tenant
 	if f.observeErr != nil {
 		return nil, nil, f.observeErr
 	}
 	return f.observeCh, func() { f.observeStop = true }, nil
 }
 
-func (f *fakeRuntime) Attach(loopID string, from event.Seq) ([]event.Event, error) {
+func (f *fakeRuntime) Attach(ctx context.Context, tenant event.TenantID, loopID string, from event.Seq) ([]event.Event, error) {
+	f.attachTenant = tenant
 	return f.attachHist, f.attachErr
 }
 
@@ -226,6 +234,43 @@ func TestObserveReplaysThenTails(t *testing.T) {
 	}
 	if np.Gap {
 		t.Fatalf("live note seq 3 unexpectedly flagged gap (contiguous)")
+	}
+}
+
+// TestObserveThreadsTenant proves a tenant-scoped loop.observe threads its tenant
+// through to rt.Observe AND rt.Attach (change 0047 tenant isolation). The wire dedup
+// path is unchanged; only the tenant now reaches the runtime seam.
+func TestObserveThreadsTenant(t *testing.T) {
+	live := make(chan event.Event, 1)
+	fr := &fakeRuntime{
+		attachHist: []event.Event{{Seq: 1, Kind: event.KindTurnStart}},
+		observeCh:  live,
+	}
+
+	sr, sw := io.Pipe()
+	cr, cw := io.Pipe()
+	s := NewServer(cr, sw, fr)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Serve(ctx) }()
+	go func() {
+		_ = json.NewEncoder(cw).Encode(req{JSONRPC: "2.0", ID: json.RawMessage(`30`),
+			Method: "loop.observe", Params: json.RawMessage(`{"loop_id":"loop-abc","tenant":"acme"}`)})
+	}()
+
+	dec := json.NewDecoder(sr)
+	var f0 rawFrame
+	if err := dec.Decode(&f0); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	// Read the one replayed note so we know Observe+Attach have both been called.
+	_ = readNote(t, dec)
+
+	if fr.observeTenant != event.TenantID("acme") {
+		t.Fatalf("Observe tenant = %q, want acme", fr.observeTenant)
+	}
+	if fr.attachTenant != event.TenantID("acme") {
+		t.Fatalf("Attach tenant = %q, want acme", fr.attachTenant)
 	}
 }
 

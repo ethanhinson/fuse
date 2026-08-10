@@ -29,11 +29,11 @@ func (r *storeBackedRuntime) Send(ctx context.Context, loopID, input string) err
 func (r *storeBackedRuntime) Spawn(ctx context.Context, loopID string, opts runtime.SpawnOpts) (runtime.SpawnHandle, error) {
 	return nil, nil
 }
-func (r *storeBackedRuntime) Observe(loopID string) (<-chan event.Event, func(), error) {
+func (r *storeBackedRuntime) Observe(ctx context.Context, tenant event.TenantID, loopID string) (<-chan event.Event, func(), error) {
 	ch, cancel := r.store.Subscribe()
 	return ch, cancel, nil
 }
-func (r *storeBackedRuntime) Attach(loopID string, from event.Seq) ([]event.Event, error) {
+func (r *storeBackedRuntime) Attach(ctx context.Context, tenant event.TenantID, loopID string, from event.Seq) ([]event.Event, error) {
 	return r.store.Replay(from)
 }
 
