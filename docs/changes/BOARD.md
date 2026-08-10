@@ -1,18 +1,18 @@
 # Backlog
 
-**42 changes** — ⚪ 1 deferred · 🔵 1 implemented · ✅ 34 done · 🗑️ 6 killed
+**42 changes** — 🟢 1 in progress · ⚪ 1 deferred · ✅ 34 done · 🗑️ 6 killed
+
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0042](active/0042-return-result-structured-delegation.md) | Fix structured-delegation (expects) vs tool-calling collision via a return_result tool | `high` | `fix` | [spec](../superpowers/specs/0042-return-result-structured-delegation.md) | `feat/return-result-structured-delegation` |
 
 ## ⚪ Deferred (1)
 
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
-
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0042](active/0042-return-result-structured-delegation.md) | Fix structured-delegation (expects) vs tool-calling collision via a return_result tool | `high` | `fix` | [#45](https://github.com/ethanhinson/fuse/pull/45) |  |
 
 ```mermaid
 graph TD
