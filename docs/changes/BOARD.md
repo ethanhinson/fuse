@@ -1,6 +1,12 @@
 # Backlog
 
-**44 changes** — ⚪ 1 deferred · ✅ 37 done · 🗑️ 6 killed
+**45 changes** — 🟡 1 proposed · ⚪ 1 deferred · ✅ 37 done · 🗑️ 6 killed
+
+## 🟡 Proposed (1)
+
+| # | Title | Priority | Type | Readiness |
+|---|-------|----------|------|-----------|
+| [0045](active/0045-runtime-interface-and-binding.md) | Runtime interface + second binding — prove the platform boundary is emergent | `high` | `feat` | build-ready |
 
 ## ⚪ Deferred (1)
 
@@ -11,7 +17,9 @@
 ```mermaid
 graph TD
   0012 --> 0029
+  0044 --> 0045
   0012:::done
+  0044:::done
   classDef done fill:#d3f9d8;
 ```
 
