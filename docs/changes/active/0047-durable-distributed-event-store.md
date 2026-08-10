@@ -10,7 +10,7 @@ updated: 2026-08-10
 depends_on: [46]
 related: [43, 45, 46, 48, 49, 51]
 discovered_from: [45]
-adrs: []
+adrs: [31]
 spec: docs/superpowers/specs/2026-08-10-durable-distributed-event-store-design.md
 plan: docs/superpowers/plans/2026-08-10-durable-distributed-event-store.md
 results:
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-10-durable-distributed-event-store-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-10-durable-distributed-event-store-design.md) |
 | Plan | [2026-08-10-durable-distributed-event-store.md](https://github.com/ethanhinson/fuse/blob/feat/durable-distributed-event-store/docs/superpowers/plans/2026-08-10-durable-distributed-event-store.md) |
+| ADRs | [ADR-0031](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0031-durable-distributed-event-store-loop-registry.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
