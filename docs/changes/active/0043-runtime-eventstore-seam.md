@@ -2,11 +2,11 @@
 id: 43
 slug: runtime-eventstore-seam
 title: Runtime EventStore seam — typed, pluggable, introspectable loop event stream
-status: proposed
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-09
-updated: 2026-08-09
+updated: 2026-08-10
 depends_on: []
 related: [23, 24, 30, 36, 42]
 discovered_from: []
@@ -16,10 +16,10 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/runtime-eventstore-seam
 pr:
 blocked_by:
-claimed_at:
+claimed_at: 2026-08-10T04:55:11Z
 reconciled: false
 ---
 
