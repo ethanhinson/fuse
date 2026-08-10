@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
@@ -105,6 +106,21 @@ type Agent struct {
 	// It is the shared holder that closes the "spawner owns SpawnOpts.Expects but
 	// the loop sees return_result" gap (change 0042). Non-nil iff expectsSchema is.
 	expectsSink *ExpectsSink
+
+	// eventSink is the loop event stream (change 0043). The loop emits a typed
+	// event at every state transition via a.emit(...). Never nil after New (defaults
+	// to event.NoopStore), so no emission point can nil-panic; a real store is wired
+	// post-New via SetEventSink from cmd/fuse, exactly as segmentSink is threaded via
+	// EnableSummarization. Emission is best-effort — an Append error is logged and the
+	// turn continues, mirroring segmentSink.Archive.
+	eventSink event.EventStore
+	// node identity for emitted events (matches the AgentNode in the spawn tree).
+	// Set post-New via SetNodeIdentity from the site that knows the node (root at
+	// shell.go, children in the spawn closure). Empty/zero on probe/one-shot paths —
+	// harmless, the events just carry no node identity.
+	nodeID   string
+	parentID string
+	depth    int
 }
 
 // ExpectsSink is the shared holder through which a child Agent's loop hands the
@@ -230,6 +246,58 @@ func (a *Agent) EnableSummarization(c Completer, modelID string, maxOutput int, 
 // leaves spawn_agent always visible.
 func (a *Agent) SetStripSpawn(fn func() bool) { a.stripSpawn = fn }
 
+// SetEventSink installs the loop event stream (change 0043). A nil sink installs
+// the no-op default so emission stays safe. Called post-New from cmd/fuse, exactly
+// as EnableSummarization threads the segment sink.
+func (a *Agent) SetEventSink(s event.EventStore) {
+	if s == nil {
+		s = event.NoopStore{}
+	}
+	a.eventSink = s
+}
+
+// SetNodeIdentity records this agent's identity in the spawn tree so emitted
+// events carry the node coordinates (matches AgentNode.ID/ParentID/Depth). Unset ⇒
+// empty/zero, harmless on probe/one-shot paths.
+func (a *Agent) SetNodeIdentity(nodeID, parentID string, depth int) {
+	a.nodeID = nodeID
+	a.parentID = parentID
+	a.depth = depth
+}
+
+// emit is the single greppable event-emission helper (change 0043): every loop
+// state transition calls a.emit(kind, turn, payload). It stamps node identity and
+// turn onto the envelope, marshals the payload, and Appends best-effort — an error
+// is surfaced to the renderer and the turn continues, mirroring segmentSink.Archive
+// (loop.go). A nil payload emits an event with no body. The explicit per-call Kind
+// keeps the emitted transition set auditable by grep, deliberately not a hidden
+// central interceptor.
+func (a *Agent) emit(kind event.Kind, turn int, payload any) {
+	if a.eventSink == nil {
+		return
+	}
+	ev := event.Event{
+		NodeID:   a.nodeID,
+		ParentID: a.parentID,
+		Depth:    a.depth,
+		Turn:     turn,
+		Kind:     kind,
+	}
+	if payload != nil {
+		raw, err := event.MarshalPayload(payload)
+		if err != nil {
+			if a.renderer != nil {
+				a.renderer.Errorf("event emit marshal (%s) failed (non-fatal): %v", kind, err)
+			}
+			return
+		}
+		ev.Payload = raw
+	}
+	if err := a.eventSink.Append(ev); err != nil && a.renderer != nil {
+		a.renderer.Errorf("event emit (%s) failed (non-fatal): %v", kind, err)
+	}
+}
+
 // SetRelevanceScorer installs the tool-result relevance scorer used by
 // relevance-aware pruning (change 0028). A nil s keeps/installs the always-on
 // heuristic default, so the prune step never runs without a scorer. Mirrors
@@ -288,5 +356,9 @@ func New(m Completer, t ToolExecutor, r Renderer, modelID, systemPrompt string, 
 		// scorer is the default so pruneOldToolResults never sees a nil scorer.
 		relevanceScorer: defaultHeuristicScorer(),
 		toolTimeout:     DefaultToolTimeout,
+		// Event emission is always safe: the no-op store is the default so every
+		// a.emit(...) call is a no-op until a real store is wired post-New (change
+		// 0043). Mirrors the segment sink's no-op default.
+		eventSink: event.NoopStore{},
 	}
 }

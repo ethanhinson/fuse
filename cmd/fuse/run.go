@@ -15,6 +15,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/pipeline"
@@ -290,6 +291,37 @@ func currentSegmentSink() agent.SegmentSink {
 	activeSegmentSinkMu.RLock()
 	defer activeSegmentSinkMu.RUnlock()
 	return activeSegmentSink
+}
+
+// activeEventStore is the session's concrete EventStore (change 0043), set once at
+// session start (keyed by the root AgentNode.ID) and consumed by every agent built
+// in the session for loop-event emission. It mirrors activeSegmentSink exactly
+// (ADR-0019): a package-level holder guarded by an RWMutex because it is read on
+// child-spawn goroutines, resting on the one-process-one-session invariant. Unset ⇒
+// currentEventStore returns the no-op default so emission never nil-panics on
+// one-shot / probe / mcp paths.
+var (
+	activeEventStoreMu sync.RWMutex
+	activeEventStore   event.EventStore
+)
+
+// setActiveEventStore installs the session's EventStore for all subsequently built
+// agents.
+func setActiveEventStore(s event.EventStore) {
+	activeEventStoreMu.Lock()
+	activeEventStore = s
+	activeEventStoreMu.Unlock()
+}
+
+// currentEventStore returns the installed session EventStore, or the no-op default
+// when none was installed (so every emission point has a safe, non-nil sink).
+func currentEventStore() event.EventStore {
+	activeEventStoreMu.RLock()
+	defer activeEventStoreMu.RUnlock()
+	if activeEventStore == nil {
+		return event.NoopStore{}
+	}
+	return activeEventStore
 }
 
 // installSummarizer wires Tier 2 anchored summarization (change 0027) onto a

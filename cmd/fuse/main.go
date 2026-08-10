@@ -220,7 +220,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 				}
 				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 				a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
+				// Event stream wiring (change 0043) — cloned child-builder site 2 of 3.
+				a.SetEventSink(currentEventStore())
+				a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
+				emitSpawnStart(currentEventStore(), childNode, opts.Task)
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
+				emitSpawnDone(currentEventStore(), childNode, msgs, rerr, opts.ExpectsSink())
 				return childResult(msgs, rerr)
 			}),
 		)
@@ -243,6 +248,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
+	// Event stream wiring (change 0043): consistent with the child sites. One-shot
+	// installs no real store (currentEventStore returns the no-op), so this is inert
+	// here but keeps the root symmetric with the interactive path.
+	a.SetEventSink(currentEventStore())
+	a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
 	_ = modelID
 
 	_, err = a.Run(context.Background(), []model.Message{{Role: "user", Content: task}})

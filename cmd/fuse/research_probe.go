@@ -223,7 +223,12 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 				// scope wins.
 				a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 				a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
+				// Event stream wiring (change 0043) — cloned child-builder site 3 of 3.
+				a.SetEventSink(currentEventStore())
+				a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
+				emitSpawnStart(currentEventStore(), childNode, opts.Task)
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
+				emitSpawnDone(currentEventStore(), childNode, msgs, rerr, opts.ExpectsSink())
 				return childResult(msgs, rerr)
 			}),
 		)
@@ -261,6 +266,9 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// into the scheduler's unified visibility predicate (change 0036). Its depth
 	// (0 == rootDepth) keeps it below the pool's max_depth limit.
 	rootAgent.SetStripSpawn(sched.StripPredicate(rootNode.ID))
+	// Event stream wiring (change 0043): symmetric with the child + one-shot sites.
+	rootAgent.SetEventSink(currentEventStore())
+	rootAgent.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
 
 	// The task the root receives is the /research skill body with the question
 	// woven in as ARGUMENTS — exactly what the KindSkill slash path injects.
