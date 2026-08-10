@@ -33,6 +33,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0028](0028-loopserver-new-jsonrpc-server-not-mcp-extension.md) — Binding #2 is a new internal/loopserver JSON-RPC server, not an extension of internal/mcp (Accepted) ← change #45 · relates to ADR-0027
 - [ADR-0029](0029-shell-partial-runtime-binding.md) — The interactive shell is a partial Runtime binding — construction+store through the seam, turn cadence retained by the TUI (Accepted) ← change #45 · relates to ADR-0027, ADR-0028
 - [ADR-0030](0030-deglobalize-eventstore-multiloop-hosting.md) — De-globalize the event store and segment sink; thread per-loop state as values so one process hosts N concurrent loops (Accepted) ← change #46 → supersedes ADR-0027 · relates to ADR-0025, ADR-0019
+- [ADR-0031](0031-durable-distributed-event-store-loop-registry.md) — Durable, backend-agnostic event store + durable loop registry — existence and history survive restart and are reachable from any instance (Accepted) ← change #47 · relates to ADR-0024, ADR-0025, ADR-0027, ADR-0030
 
 ## Superseded / Reversed
 
