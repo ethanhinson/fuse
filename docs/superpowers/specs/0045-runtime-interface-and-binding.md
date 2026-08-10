@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0045 — Runtime interface + second binding — prove the platform boundary is emergent](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0045-runtime-interface-and-binding.md)**
+> ↩ **[Change 0045 — Runtime interface + second binding — prove the platform boundary is emergent](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-10-0045-runtime-interface-and-binding.md)**
 <!-- docket:backlink:end -->
 
 # Spec 0045 — Runtime interface + second binding: prove the platform boundary is emergent
