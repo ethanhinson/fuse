@@ -385,21 +385,26 @@ func (s *PGStore) listenOnce() {
 // deliver fetches the event named by msg and fans it out non-blockingly to every
 // matching subscriber (drop-newest-with-gap).
 func (s *PGStore) deliver(ctx context.Context, msg notifyMsg) {
-	// Snapshot matching subscribers under the lock, then send outside it.
+	// Snapshot the ids of matching subscribers under the lock, then fetch the row
+	// OUTSIDE the lock (a DB round-trip must not hold the mutex). We snapshot ids —
+	// not the *subscriber values — so the send below can re-validate membership
+	// under the re-acquired lock: a concurrent unsubscribe/Close closes sub.ch and
+	// removes it from s.subs, so sending only to ids still present is what keeps this
+	// from ever sending on a closed channel.
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return
 	}
 	want := event.StreamKey{Tenant: event.TenantID(msg.Tenant), Loop: event.LoopID(msg.Loop)}
-	var targets []*subscriber
-	for _, sub := range s.subs {
+	var ids []int
+	for id, sub := range s.subs {
 		if sub.key == want {
-			targets = append(targets, sub)
+			ids = append(ids, id)
 		}
 	}
 	s.mu.Unlock()
-	if len(targets) == 0 {
+	if len(ids) == 0 {
 		return
 	}
 
@@ -412,8 +417,17 @@ func (s *PGStore) deliver(ctx context.Context, msg notifyMsg) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, sub := range targets {
-		// Only deliver if still subscribed (guard against a concurrent cancel).
+	if s.closed {
+		return
+	}
+	for _, id := range ids {
+		// Re-validate membership under the held lock: unsubscribe/Close delete the
+		// entry (and close its channel) under s.mu, so a still-present entry is
+		// guaranteed open. Non-blocking send: a full buffer drops + records a gap.
+		sub, ok := s.subs[id]
+		if !ok {
+			continue
+		}
 		select {
 		case sub.ch <- ev:
 		default:
