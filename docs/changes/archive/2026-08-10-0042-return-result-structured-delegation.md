@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0042-return-result-structured-delegation.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0042-return-result-structured-delegation.md) |
-| Plan | [2026-08-10-return-result-structured-delegation-plan.md](https://github.com/ethanhinson/fuse/blob/feat/return-result-structured-delegation/docs/superpowers/plans/2026-08-10-return-result-structured-delegation-plan.md) |
-| Results | [2026-08-10-return-result-structured-delegation-results.md](https://github.com/ethanhinson/fuse/blob/feat/return-result-structured-delegation/docs/results/2026-08-10-return-result-structured-delegation-results.md) |
+| Plan | [2026-08-10-return-result-structured-delegation-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-10-return-result-structured-delegation-plan.md) |
+| Results | [2026-08-10-return-result-structured-delegation-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-10-return-result-structured-delegation-results.md) |
 | PR | [#45](https://github.com/ethanhinson/fuse/pull/45) |
 | ADRs | [ADR-0012](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0012-vendor-jsonschema-validation-library.md), [ADR-0023](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0023-structured-delegation-return-result-tool.md) |
 <!-- docket:artifacts:end -->

@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0042 — Fix structured-delegation (expects) vs tool-calling collision via a return_result tool](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0042-return-result-structured-delegation.md)**
+> ↩ **[Change 0042 — Fix structured-delegation (expects) vs tool-calling collision via a return_result tool](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-10-0042-return-result-structured-delegation.md)**
 <!-- docket:backlink:end -->
 
 # Spec 0042 — Fix structured-delegation (`expects`) vs. tool-calling collision via a `return_result` tool
