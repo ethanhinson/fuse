@@ -2,7 +2,7 @@
 id: 44
 slug: spawn-handle-async
 title: Spawn handle-async — location-transparent spawning behind a handle-returning contract
-status: in-progress
+status: implemented
 priority: high
 type: refactor
 created: 2026-08-09
@@ -10,16 +10,16 @@ updated: 2026-08-10
 depends_on: [43]
 related: [23, 24, 34, 36, 42, 43]
 discovered_from: [43]
-adrs: [16, 17]
+adrs: [16, 17, 26]
 spec: docs/superpowers/specs/0044-spawn-handle-async.md
 plan: docs/superpowers/plans/0044-spawn-handle-async-plan.md
-results:
+results: docs/results/2026-08-10-spawn-handle-async-results.md
 trivial: false
 auto_groomable:
 branch: feat/spawn-handle-async
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/47
 blocked_by:
-claimed_at: 2026-08-10T06:48:39Z
+claimed_at: 2026-08-10T07:11:05Z
 reconciled: true
 ---
 
@@ -30,7 +30,9 @@ reconciled: true
 |---|---|
 | Spec | [0044-spawn-handle-async.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0044-spawn-handle-async.md) |
 | Plan | [0044-spawn-handle-async-plan.md](https://github.com/ethanhinson/fuse/blob/feat/spawn-handle-async/docs/superpowers/plans/0044-spawn-handle-async-plan.md) |
-| ADRs | [ADR-0016](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0016-subagent-spawn-tree-runtime.md), [ADR-0017](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0017-segment-store-fssink-subpackage-split.md) |
+| Results | [2026-08-10-spawn-handle-async-results.md](https://github.com/ethanhinson/fuse/blob/feat/spawn-handle-async/docs/results/2026-08-10-spawn-handle-async-results.md) |
+| PR | [#47](https://github.com/ethanhinson/fuse/pull/47) |
+| ADRs | [ADR-0016](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0016-subagent-spawn-tree-runtime.md), [ADR-0017](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0017-segment-store-fssink-subpackage-split.md), [ADR-0026](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0026-handle-returning-spawn-seam-agent-free-interface.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
