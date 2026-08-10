@@ -2,7 +2,7 @@
 id: 44
 slug: spawn-handle-async
 title: Spawn handle-async — location-transparent spawning behind a handle-returning contract
-status: implemented
+status: done
 priority: high
 type: refactor
 created: 2026-08-09
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/spawn-handle-async
 pr: https://github.com/ethanhinson/fuse/pull/47
 blocked_by:
-claimed_at: 2026-08-10T07:11:05Z
+claimed_at: 
 reconciled: true
 ---
 
