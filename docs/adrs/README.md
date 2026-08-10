@@ -28,6 +28,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0022](0022-human-message-bus-per-node-queue-async-router.md) — Human messages ride one substrate — a per-node blackboard queue, self-pulled at turn boundaries, with an async advisory router and completion-hook bubbling (Proposed) ← change #0051 · relates to ADR-0007, ADR-0016, ADR-0021, ADR-0023
 - [ADR-0023](0023-structured-delegation-return-result-tool.md) — Structured delegation returns via a synthesized return_result tool, not a final-message directive (Accepted) ← change #42 · relates to ADR-0012
 - [ADR-0024](0024-eventstore-independent-of-segment-store.md) — EventStore is independent of the segment store — events born plaintext, segments untouched (Accepted) ← change #43 · relates to ADR-0017, ADR-0018, ADR-0019, ADR-0020
+- [ADR-0025](0025-eventstore-ordering-backpressure.md) — EventStore ordering and back-pressure — store-allocated Seq, non-blocking drop-newest-with-gap subscriber delivery (Accepted) ← change #43 · relates to ADR-0016, ADR-0019, ADR-0024
 
 ## Superseded / Reversed
 
