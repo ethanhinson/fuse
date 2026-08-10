@@ -12,14 +12,14 @@ related: [22, 23, 36, 43, 44]
 discovered_from: [43]
 adrs: [16, 22, 24, 25, 26]
 spec: docs/superpowers/specs/0045-runtime-interface-and-binding.md
-plan:
+plan: docs/superpowers/plans/2026-08-10-runtime-interface-and-binding.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/runtime-interface-and-binding
 pr:
 blocked_by:
-claimed_at: 2026-08-10T17:16:10Z
+claimed_at: 2026-08-10T17:26:58Z
 reconciled: true
 ---
 
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [0045-runtime-interface-and-binding.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0045-runtime-interface-and-binding.md) |
+| Plan | [2026-08-10-runtime-interface-and-binding.md](https://github.com/ethanhinson/fuse/blob/feat/runtime-interface-and-binding/docs/superpowers/plans/2026-08-10-runtime-interface-and-binding.md) |
 | ADRs | [ADR-0016](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0016-subagent-spawn-tree-runtime.md), [ADR-0022](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0022-human-message-bus-per-node-queue-async-router.md), [ADR-0024](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0024-eventstore-independent-of-segment-store.md), [ADR-0025](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0025-eventstore-ordering-backpressure.md), [ADR-0026](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0026-handle-returning-spawn-seam-agent-free-interface.md) |
 <!-- docket:artifacts:end -->
 
