@@ -29,6 +29,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0023](0023-structured-delegation-return-result-tool.md) — Structured delegation returns via a synthesized return_result tool, not a final-message directive (Accepted) ← change #42 · relates to ADR-0012
 - [ADR-0024](0024-eventstore-independent-of-segment-store.md) — EventStore is independent of the segment store — events born plaintext, segments untouched (Accepted) ← change #43 · relates to ADR-0017, ADR-0018, ADR-0019, ADR-0020
 - [ADR-0025](0025-eventstore-ordering-backpressure.md) — EventStore ordering and back-pressure — store-allocated Seq, non-blocking drop-newest-with-gap subscriber delivery (Accepted) ← change #43 · relates to ADR-0016, ADR-0019, ADR-0024
+- [ADR-0026](0026-handle-returning-spawn-seam-agent-free-interface.md) — Handle-returning spawn seam via an agent-free interface in internal/tools (Accepted) ← change #44 · relates to ADR-0016, ADR-0017
 
 ## Superseded / Reversed
 
