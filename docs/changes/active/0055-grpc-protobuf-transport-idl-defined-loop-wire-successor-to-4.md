@@ -2,7 +2,7 @@
 id: 55
 slug: grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4
 title: Connect/protobuf transport — IDL-defined loop.* wire, successor to #48
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-11
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4
+claimed_at: 2026-08-11T05:25:56Z
 pr:
 blocked_by:
 reconciled: false
