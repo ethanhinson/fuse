@@ -26,8 +26,18 @@ CREATE TABLE IF NOT EXISTS loops (
     tenant_id     text        NOT NULL,
     loop_id       text        NOT NULL,
     owner_node_id text        NOT NULL DEFAULT '',
+    owner         text        NOT NULL DEFAULT '',
     live          boolean     NOT NULL DEFAULT false,
+    lease_expiry  timestamptz,
     created_at    timestamptz NOT NULL,
     updated_at    timestamptz NOT NULL,
     PRIMARY KEY (tenant_id, loop_id)
 );
+
+-- Idempotent migration for change 0049 (auth/multi-tenancy): an existing 0047
+-- database that predates these columns upgrades cleanly on the next Open. A fresh
+-- database already gets them from the CREATE TABLE above; these ADDs are no-ops
+-- there. owner is the authorization subject (the tenant principal), distinct from
+-- owner_node_id (the liveness/node id); lease_expiry NULL means no lease.
+ALTER TABLE loops ADD COLUMN IF NOT EXISTS owner        text NOT NULL DEFAULT '';
+ALTER TABLE loops ADD COLUMN IF NOT EXISTS lease_expiry timestamptz;
