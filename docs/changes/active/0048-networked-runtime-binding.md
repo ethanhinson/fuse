@@ -8,7 +8,7 @@ type: feat
 created: 2026-08-10
 updated: 2026-08-11
 depends_on: [46, 47]
-related: [45, 46, 47]
+related: [45, 46, 47, 53]
 discovered_from: [45]
 adrs: [32]
 spec: docs/superpowers/specs/2026-08-11-networked-runtime-binding-design.md
