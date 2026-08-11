@@ -1,8 +1,8 @@
 # Backlog
 
-**59 changes** — 🟡 6 proposed · ⚪ 1 deferred · ✅ 46 done · 🗑️ 6 killed
+**60 changes** — 🟡 7 proposed · ⚪ 1 deferred · ✅ 46 done · 🗑️ 6 killed
 
-## 🟡 Proposed (6)
+## 🟡 Proposed (7)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -12,6 +12,7 @@
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` | needs-brainstorm |
 | [0058](active/0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | `medium` | `feat` | needs-brainstorm |
 | [0059](active/0059-mcp-full-binding-wiring-e2e-tested.md) | Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths | `critical` | `feat` | build-ready |
+| [0060](active/0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md) | Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app | `medium` | `feat` | needs-brainstorm |
 
 ## ⚪ Deferred (1)
 
@@ -28,6 +29,7 @@ graph TD
   0052 --> 0057
   0052 --> 0058
   0052 --> 0059
+  0060
   0012:::done
   0046:::done
   0050:::done
