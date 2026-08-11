@@ -10,14 +10,14 @@ updated: 2026-08-11T17:29:20Z
 depends_on: [48, 49, 55]
 related: [45, 48, 49, 55]
 discovered_from: [45]
-adrs: [26, 33, 34]
+adrs: [26, 33, 34, 35]
 spec: docs/superpowers/specs/2026-08-11-client-sdk-design.md
 plan: docs/superpowers/plans/2026-08-11-client-sdk-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/client-sdk
-claimed_at: 2026-08-11T17:33:54Z
+claimed_at: 2026-08-11T18:34:20Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,7 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-11-client-sdk-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-client-sdk-design.md) |
 | Plan | [2026-08-11-client-sdk-plan.md](https://github.com/ethanhinson/fuse/blob/feat/client-sdk/docs/superpowers/plans/2026-08-11-client-sdk-plan.md) |
-| ADRs | [ADR-0026](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0026-handle-returning-spawn-seam-agent-free-interface.md), [ADR-0033](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0033-networked-binding-connect-protobuf-fuse-loop-v1.md), [ADR-0034](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0034-edge-enforced-auth-multi-tenancy-loop-ownership.md) |
+| ADRs | [ADR-0026](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0026-handle-returning-spawn-seam-agent-free-interface.md), [ADR-0033](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0033-networked-binding-connect-protobuf-fuse-loop-v1.md), [ADR-0034](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0034-edge-enforced-auth-multi-tenancy-loop-ownership.md), [ADR-0035](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0035-sdk-local-backend-takes-prebuilt-runtime.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
