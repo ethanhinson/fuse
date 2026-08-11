@@ -2,7 +2,7 @@
 id: 52
 slug: tool-identity-propagation
 title: Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-11
@@ -16,9 +16,10 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/tool-identity-propagation
 pr:
 blocked_by:
+claimed_at: 2026-08-11T19:24:49Z
 reconciled: false
 ---
 
