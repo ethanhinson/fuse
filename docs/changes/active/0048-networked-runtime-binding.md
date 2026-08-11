@@ -2,7 +2,7 @@
 id: 48
 slug: networked-runtime-binding
 title: Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-10
@@ -13,14 +13,14 @@ discovered_from: [45]
 adrs: [32]
 spec: docs/superpowers/specs/2026-08-11-networked-runtime-binding-design.md
 plan: docs/superpowers/plans/2026-08-11-networked-runtime-binding.md
-results:
+results: docs/results/2026-08-11-networked-runtime-binding-results.md
 trivial: false
 auto_groomable:
 branch: feat/networked-runtime-binding
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/51
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-11T02:10:00Z
+claimed_at: 2026-08-11T02:49:50Z
 ---
 
 ## Artifacts
@@ -30,6 +30,8 @@ claimed_at: 2026-08-11T02:10:00Z
 |---|---|
 | Spec | [2026-08-11-networked-runtime-binding-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-networked-runtime-binding-design.md) |
 | Plan | [2026-08-11-networked-runtime-binding.md](https://github.com/ethanhinson/fuse/blob/feat/networked-runtime-binding/docs/superpowers/plans/2026-08-11-networked-runtime-binding.md) |
+| Results | [2026-08-11-networked-runtime-binding-results.md](https://github.com/ethanhinson/fuse/blob/feat/networked-runtime-binding/docs/results/2026-08-11-networked-runtime-binding-results.md) |
+| PR | [#51](https://github.com/ethanhinson/fuse/pull/51) |
 | ADRs | [ADR-0032](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0032-binding-3-websocket-session-http-replay-shared-dispatch.md) |
 <!-- docket:artifacts:end -->
 
