@@ -103,6 +103,44 @@ cheap scripted `LLM_GATEWAY_URL` double, never Claude/Anthropic (project policy)
 typed field on the proto requests rather than an untyped JSON field. #55 changes the encoding, not the
 trust model.
 
+### Resilience to ingress conditions (in scope — a software-architecture requirement)
+
+The loops run as an **application behind a reverse proxy / gateway**: TLS terminates at ingress and a
+load balancer sits in front. *Configuring* that infrastructure is an ops concern (below, out of
+scope) — but the transport software MUST be **written to the conditions those create**, because a
+proxy and an LB change the runtime reality the code experiences. Four constraints are first-class:
+
+1. **A dropped stream is normal, and a reconnect may land on a different instance.** An L7 LB drains,
+   idle-times, or rebalances connections, and a rolling deploy cuts them — so the `Observe`
+   server-stream WILL drop mid-life, and the client's re-open may be routed to a **different backend
+   instance** than the one that served `StartLoop`. The transport treats every post-open drop as a
+   clean reconnect (never a fault), and reconnect-to-a-different-instance must still replay correctly.
+   **This is a stated architectural reliance on #46 + #47:** loops are hostable N-per-process (#46) and
+   their existence + history are durable and cross-instance-reachable (#47), so `Observe(from_seq)` on
+   instance B replays a loop started on instance A. #55 depends on that being true and MUST NOT assume
+   sticky sessions / connection affinity.
+2. **Parked-loop streams must survive idle timeouts.** Loops **park** between turns and can be quiet
+   for a long time; a gateway silently kills an idle stream. #55 adopts a keepalive posture (HTTP/2
+   pings and/or periodic heartbeat/gap frames on the `Observe` stream) so a parked-but-alive loop's
+   stream is not reaped — or, where cheaper, the client cleanly and promptly re-establishes from
+   `from_seq`. This is a deliberate design choice, not an assumed-away one.
+3. **TLS-at-the-edge / forwarded-header awareness.** With TLS terminated at ingress the server sees
+   plaintext HTTP carrying the real scheme/host in `X-Forwarded-*` (or equivalent). The transport must
+   not hard-assume its own TLS, nor derive URLs/logged origins from the wrong scheme; it trusts the
+   forwarded metadata at the ingress boundary.
+4. **Deadline / retry safety through an intermediary.** Connect propagates deadlines and a proxy may
+   impose its own; unary `StartLoop`/`Send` retries through an intermediary must be idempotent-safe and
+   must rewind the request body per attempt (learning `rewind-request-body-on-manual-retry`, the Go
+   client analogue).
+
+**Acceptance (tested in #55, per the testbed's purpose):** the test suite MUST prove (a) an `Observe`
+stream **reconnecting to a different instance** replays correctly with no loss/dup — a two-instance
+test over the durable store (#47), forcing the reconnect onto the second instance — and (b) a
+**parked/idle** stream survives (keepalive) or cleanly re-establishes past a simulated idle timeout.
+Both build on the concurrent live+replay discipline (force an append into the subscribe→replay gap;
+learning `replay-live-handoff-dedup-at-watermark`). Live model traffic uses a scripted
+`LLM_GATEWAY_URL` double, never Claude/Anthropic.
+
 ## Consequences
 
 **Enables.** One protobuf schema is the single source of truth for the `loop.*` wire, and every SDK
@@ -119,9 +157,12 @@ Connect streaming (the WS learnings carry over in spirit but not in code). Bidi 
 the browser — accepted, because the protocol doesn't use it.
 
 **Dependencies.** `depends_on: []` — #55 is **independently buildable** now; it supersedes #48 but
-does not depend on it (#48 is done, and #55 replaces its transport). #55 **gates #50**: both SDKs
-generate from #55's proto, so #50 (and the Wander testbed) cannot build until #55 lands. #55 does
-**not** depend on #49 — tenant stays pass-through/unenforced here, exactly as #48 shipped it.
+does not depend on it (#48 is done, and #55 replaces its transport). It **relies architecturally on
+#46 (multi-loop hosting) and #47 (durable, cross-instance event store + registry)** — both `done`, so
+`related:`, not `depends_on` gates — because the different-instance reconnect requirement is only
+satisfiable over #47's durable store. #55 **gates #50**: both SDKs generate from #55's proto, so #50
+(and the Wander testbed) cannot build until #55 lands. #55 does **not** depend on #49 — tenant stays
+pass-through/unenforced here, exactly as #48 shipped it.
 
 ## Out of scope
 
@@ -131,8 +172,12 @@ generate from #55's proto, so #50 (and the Wander testbed) cannot build until #5
 - **A Python / mobile SDK** — later; #55's proto is what makes them cheap.
 - **Any change to the `Runtime` seam or the stdio binding #2** — #55 changes only the networked
   transport, reusing the extracted dispatch core.
-- **Production deployment hardening** (TLS termination topology, load-balancing, multi-instance
-  routing, auth infra) — Wander is a testbed; operational concerns are out of scope here.
+- **Ingress *configuration*** — provisioning TLS certs, choosing/configuring the specific reverse
+  proxy / gateway / load balancer, and deployment topology. These are environment concerns. **Note the
+  distinction:** being *resilient to the conditions* an LB and a TLS-terminating proxy create
+  (connection recycling, reconnect-to-a-different-instance, idle-timeout of parked streams, forwarded
+  headers, deadline/retry safety) is **in scope** — a software-architecture requirement, see
+  *Resilience to ingress conditions* above. #55 owns the resilience; the environment owns the config.
 - **Observability emission** (OTEL / `/metrics`) — change #51.
 
 ## Open questions (for plan-time reconcile)
@@ -145,5 +190,11 @@ generate from #55's proto, so #50 (and the Wander testbed) cannot build until #5
   `internal/event` transport-free (favor edge-mapping).
 - Connect streaming framing over HTTP/1.1 vs. HTTP/2 for the `Observe` stream, and confirming
   `connect-es` server-streaming behaves under a real browser reconnect (the core testbed assertion).
+- **Keepalive mechanism for parked streams** — HTTP/2 pings vs. an application-level heartbeat/gap
+  frame on `Observe`, and the idle interval, chosen so a common gateway's default idle timeout does not
+  reap a parked-but-alive loop.
+- **Two-instance test harness** — how the different-instance-reconnect acceptance test stands up two
+  `connect-go` servers over one durable store (#47) and forces the client's re-open onto the second
+  (an in-test router/toggle), without a real LB.
 - Exact retirement of #48's `coder/websocket` binding + tests (delete vs. keep behind a build tag for
   reference) — default: delete, since ADR-0032 is superseded and nothing consumes it.

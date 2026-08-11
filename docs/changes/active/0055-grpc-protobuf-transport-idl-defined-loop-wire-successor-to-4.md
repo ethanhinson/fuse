@@ -8,7 +8,7 @@ type: feat
 created: 2026-08-11
 updated: 2026-08-11
 depends_on: []
-related: [48, 50]
+related: [46, 47, 48, 50]
 discovered_from: [50]
 adrs: [32]
 spec: docs/superpowers/specs/2026-08-11-grpc-connect-transport-design.md
@@ -67,14 +67,23 @@ full design; at proposal altitude:
   re-opens the stream on reconnect. Every post-open stream error is a clean reconnect, not a fault.
 - **Generated stubs are the contract change 50 consumes** — Go (`connect-go`) + TS (`connect-es`) from
   one proto. #55 owns the wire; #50 owns the SDK ergonomics over it.
+- **Resilient to ingress conditions (in scope).** The loops are an application behind a reverse
+  proxy / gateway; #55's transport is written to that reality: a dropped `Observe` stream is normal and
+  a reconnect may land on a **different instance** and must still replay (an architectural reliance on
+  #46 multi-loop hosting + #47 durable cross-instance store — no sticky sessions assumed); **parked**
+  loops' idle streams survive via keepalive or cleanly re-establish; forwarded-header/scheme awareness
+  when TLS terminates at ingress; deadline/retry safety through an intermediary. #55's tests **prove**
+  the different-instance reconnect and the idle-parked cases.
 - **tenant stays pass-through/unenforced** (a typed proto field now); identity is change 49.
 
 ## Out of scope
 
 - The **SDKs** (Go + TS, local backend, credential seam) — change 50, consuming #55's stubs.
 - **Auth / identity enforcement** — change 49; #55 keeps tenant pass-through.
-- **Production hardening** (TLS topology, load-balancing, multi-instance routing) — Wander is a
-  testbed.
+- **Ingress *configuration*** — provisioning TLS certs, choosing/configuring the specific proxy /
+  gateway / load balancer, deployment topology. Environment concerns — *distinct from* being resilient
+  to the conditions they create, which is in scope (above). #55 owns the resilience; the environment
+  owns the config.
 - **Any change to the `Runtime` seam or stdio binding #2** — #55 changes only the networked transport.
 - **Observability** (OTEL / `/metrics`) — change 51.
 
