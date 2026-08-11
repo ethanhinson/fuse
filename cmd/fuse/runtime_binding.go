@@ -74,7 +74,7 @@ func (h *eventStoreHolder) get() event.EventStore {
 func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, tree *agent.AgentTree, stdout io.Writer, verbose bool, traceW io.Writer,
 	rootApprove permissions.ApprovalFunc, oneShotSystemBlock string, oneShotBudget bool,
-	rateGate model.RateGate) runtime.Deps {
+	rateGate model.RateGate) (runtime.Deps, func()) {
 
 	sched := tree.Scheduler()
 	rootNode := tree.Node(tree.RootID())
@@ -100,6 +100,17 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		fmt.Fprintf(os.Stderr, "one-shot: mcp manager: %v\n", err)
 	} else {
 		oneShotMCP = mgr
+	}
+	// oneShotMCPClose closes the manager at most once (change #59 review S2): wired into
+	// Deps.LoopTeardown for the normal-completion path and returned so the caller can
+	// also invoke it on a StartLoop error return, where the completion goroutine never runs.
+	var oneShotMCPCloseOnce sync.Once
+	oneShotMCPClose := func() {
+		oneShotMCPCloseOnce.Do(func() {
+			if oneShotMCP != nil {
+				oneShotMCP.Close()
+			}
+		})
 	}
 
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
@@ -213,11 +224,14 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			return toolidentity.WithPrincipal(ctx, localPrincipal(cfg))
 		},
 		// LoopTeardown closes the one-shot MCP manager at loop completion so its
-		// read-pump/notify goroutines do not outlive the run.
+		// read-pump/notify goroutines do not outlive the run. Idempotent (sync.Once):
+		// it runs on the normal completion goroutine AND may be invoked once more on a
+		// StartLoop error return (change #59 review S2), so a failure after the manager
+		// dialed still releases it. A double Close would otherwise re-walk an emptied
+		// server map — harmless — but Once makes the intent explicit and the arg is
+		// ignored (one-shot is single-loop, one manager).
 		LoopTeardown: func(_ *tools.Registry) {
-			if oneShotMCP != nil {
-				oneShotMCP.Close()
-			}
+			oneShotMCPClose()
 		},
 		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			// Publish the Runtime-owned store to the per-loop holder so the eagerly-wired
@@ -236,7 +250,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
 			return a, childBuilder, mid, nil
 		},
-	}
+	}, oneShotMCPClose
 }
 
 // researchProbeDepsInput carries the research-probe binding's wiring into its Deps

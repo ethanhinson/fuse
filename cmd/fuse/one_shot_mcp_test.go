@@ -44,7 +44,7 @@ func TestOneShot_AttachesMCPViaSharedHelper(t *testing.T) {
 	toolReg := defaultToolRegistry(cfg.Research, nil)
 	tree := agent.NewAgentTreeWithConcurrency("cloud/x", "cloud/x", 1)
 
-	deps := buildOneShotRuntimeDeps(cfg, reg, "cloud/x", toolReg, tree, io.Discard, false, nil,
+	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, "cloud/x", toolReg, tree, io.Discard, false, nil,
 		permissions.AlwaysApprove, spawnAgentBlock, false, nil)
 
 	if deps.LoopContext == nil {
@@ -77,6 +77,9 @@ func TestOneShot_AttachesMCPViaSharedHelper(t *testing.T) {
 	if deps.LoopTeardown != nil {
 		deps.LoopTeardown(toolReg)
 	}
+	// The returned close func is idempotent (change #59 review S2): calling it after the
+	// LoopTeardown above already closed the manager must be a harmless no-op, not a panic.
+	oneShotMCPClose()
 }
 
 // TestOneShot_NoTenantOrPrincipalFlag is the explicit non-goal guard (spec §3): the

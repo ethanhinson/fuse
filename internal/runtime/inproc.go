@@ -275,6 +275,15 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		if c, ok := store.(interface{ Close() error }); ok {
 			_ = c.Close()
 		}
+		// Symmetric teardown (change #59): NewToolRegistry may already have attached
+		// live resources to toolReg — notably the loop-server's per-loop mcp.Manager
+		// (dialed servers + read-pump/notify goroutines). A StartLoop failure after that
+		// point must release them, or the manager and its goroutines leak and the
+		// binding's per-loop tracking map is never cleared. The completion goroutine
+		// below is never reached on this early-return path, so run it here.
+		if r.deps.LoopTeardown != nil {
+			r.deps.LoopTeardown(toolReg)
+		}
 		return nil, fmt.Errorf("runtime: build agent: %w", err)
 	}
 	a.SetEventSink(store)

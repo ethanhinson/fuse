@@ -340,11 +340,12 @@ func looksLikeJWS(s string) bool {
 	return strings.Contains(s, "eyJhbGciOiJIUzI1NiI")
 }
 
-// TestAcceptance_UnauthorizedAndWrongAudienceThroughLoopServer is checklist points 3
-// (403 for an unauthorized principal, distinguishable tool error) and 5 (wrong-audience
-// rejected). It reuses the rentals server's own contract (proven in Task 6) but asserts
-// it THROUGH the loop-server binding: a loop whose principal's tenant the rentals server
-// does not accept surfaces a distinguishable tool error in its stream.
+// TestAcceptance_UnauthorizedThroughLoopServer is checklist point 3 (403 for an
+// unauthorized principal, surfaced as a distinguishable tool error). It reuses the
+// rentals server's own contract (proven in Task 6) but asserts it THROUGH the loop-server
+// binding: a loop whose principal's tenant the rentals server does not accept surfaces a
+// distinguishable tool error in its stream. (Point 5, wrong-audience, has its own
+// binding-level test below: TestAcceptance_WrongAudienceThroughLoopServer.)
 func TestAcceptance_UnauthorizedThroughLoopServer(t *testing.T) {
 	// Server accepts only acme; the loop authenticates as globex — globex's token
 	// verifies under no server key ⇒ the rentals server 403s it (-32001), surfaced as a
@@ -396,6 +397,68 @@ func TestAcceptance_UnauthorizedThroughLoopServer(t *testing.T) {
 	got := toolResultText(t, client, sr.Msg.LoopId)
 	if !strings.Contains(got, "-32001") {
 		t.Fatalf("unauthorized principal must surface a distinguishable 403 tool error through the binding; tool.result was %q", got)
+	}
+}
+
+// TestAcceptance_WrongAudienceThroughLoopServer is checklist point 5 asserted THROUGH
+// the loop-server binding (its seam-level twin is rentals_test.go's wrong-audience case).
+// The MCP server config declares an audience the rentals server does NOT accept, so the
+// egress mints a token bound (RFC 8707 resource) to the wrong audience; the rentals server
+// rejects it and the loop surfaces a distinguishable -32001 tool error. The principal is
+// otherwise fully authorized (acme/alice verifies under the server's key) — isolating the
+// failure to the audience binding, not the identity.
+func TestAcceptance_WrongAudienceThroughLoopServer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// Server accepts acme AND only its own audience; the MCP config below binds tokens to
+	// a DIFFERENT audience, so an authorized principal is still rejected on audience alone.
+	tenantKeys := map[event.TenantID][]byte{"acme": deriveTenantKey([]byte(loopSigningKey), "acme")}
+	rsrv := rentals.NewServer(rentals.Config{Audience: rentalsAudience, TenantKeys: tenantKeys})
+	t.Cleanup(rsrv.Close)
+
+	gln, _ := net.Listen("tcp", "127.0.0.1:0")
+	gsrv := &http.Server{Handler: scriptedRentalsGateway()}
+	go func() { _ = gsrv.Serve(gln) }()
+	t.Cleanup(func() { _ = gsrv.Close() })
+
+	cfg := config.Config{
+		Gateway: config.Gateway{URL: "http://" + gln.Addr().String(), Key: "tkn"},
+		MCPServers: []config.MCPServerConfig{{
+			// Declared audience differs from the rentals server's accepted audience: the
+			// minted delegation token is bound to this wrong resource → rejected.
+			Name: "rentals", Transport: "sse", URL: rsrv.URL(), Audience: "https://wrong.example",
+			Auth: config.MCPAuthConfig{Type: "identity"},
+		}},
+		ToolIdentity: config.ToolIdentityConfig{SigningKey: loopSigningKey},
+		LoopServer: config.LoopServerConfig{Auth: []config.AuthTokenConfig{
+			{Token: "acme-tok", Tenant: "acme", Subject: "alice"},
+		}},
+		Permissions: config.PermissionsConfig{Mode: "off"},
+	}
+	reg := registryFromConfig(cfg)
+	dir := t.TempDir()
+	store := fsstore.NewDurableFSStore(dir)
+	deps := buildLoopServerRuntimeDeps(cfg, reg, reg.Default, defaultToolRegistry(cfg.Research, nil),
+		spawnAgentBlock, permissions.AlwaysApprove, sessionRateGate(cfg))
+	deps.DurableStore, deps.Registry, deps.BaseDir = store, store, ""
+	rt := runtime.New(deps)
+	verifier := loopauth.NewStaticVerifier(map[string]loopauth.Principal{"acme-tok": {Tenant: "acme", Subject: "alice"}})
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- serveNet(ctx, ln, rt, verifier, store) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	client := bearerClient("http://"+ln.Addr().String(), "acme-tok")
+	sr, err := client.StartLoop(context.Background(), connect.NewRequest(&loopv1.StartLoopRequest{
+		Task: rentalsTask("mcp:rentals/search_rentals", `{"query":""}`),
+	}))
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	waitForTurnEndByObserve(t, client, sr.Msg.LoopId)
+	got := toolResultText(t, client, sr.Msg.LoopId)
+	if !strings.Contains(got, "-32001") {
+		t.Fatalf("wrong-audience token must be rejected with a distinguishable -32001 tool error through the binding; tool.result was %q", got)
 	}
 }
 

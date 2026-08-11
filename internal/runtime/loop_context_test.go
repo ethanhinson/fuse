@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/agent"
@@ -74,5 +75,36 @@ func TestStartLoop_AppliesLoopContext(t *testing.T) {
 	}
 	if got := run("bob"); got != "bob" {
 		t.Fatalf("loop for bob: tool saw ctx subject %q, want bob", got)
+	}
+}
+
+// TestStartLoop_TeardownOnBuildAgentError proves the runtime releases per-loop
+// resources when StartLoop fails AFTER NewToolRegistry has attached them (change #59
+// review S1). NewToolRegistry stands in for the loop-server's per-loop mcp.Manager
+// attach; when BuildAgent then errors, StartLoop must invoke Deps.LoopTeardown with the
+// SAME registry, or the manager (and its goroutines) leaks and the binding's tracking
+// map is never cleared. The completion goroutine never runs on this early-return path,
+// so teardown has to happen inline.
+func TestStartLoop_TeardownOnBuildAgentError(t *testing.T) {
+	loopReg := tools.NewRegistry()
+	var torndown *tools.Registry
+
+	deps := Deps{
+		MaxConcurrent:   1,
+		NewToolRegistry: func() *tools.Registry { return loopReg },
+		BuildAgent: func(event.EventStore, *agent.AgentTree, string, *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+			return nil, nil, "", errors.New("boom")
+		},
+		LoopTeardown: func(r *tools.Registry) { torndown = r },
+	}
+	rt := New(deps)
+	if _, err := rt.StartLoop(context.Background(), LoopConfig{Task: "go", ModelID: "cloud/x"}); err == nil {
+		t.Fatal("StartLoop must return the BuildAgent error")
+	}
+	if torndown == nil {
+		t.Fatal("LoopTeardown was not invoked on a post-NewToolRegistry StartLoop failure — the per-loop manager would leak")
+	}
+	if torndown != loopReg {
+		t.Fatalf("LoopTeardown got the wrong registry: %p, want the loop's own %p", torndown, loopReg)
 	}
 }
