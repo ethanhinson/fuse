@@ -1,12 +1,17 @@
 # Backlog
 
-**55 changes** — 🟡 4 proposed · ⚪ 1 deferred · ✅ 44 done · 🗑️ 6 killed
+**55 changes** — 🟢 1 in progress · 🟡 3 proposed · ⚪ 1 deferred · ✅ 44 done · 🗑️ 6 killed
 
-## 🟡 Proposed (4)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0050](active/0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | `medium` | `feat` | [spec](../superpowers/specs/2026-08-11-client-sdk-design.md) | `feat/client-sdk` |
+
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0050](active/0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | `medium` | `feat` | build-ready |
 | [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + Loki, as a projection over the event stream | `medium` | `feat` | needs-brainstorm |
 | [0052](active/0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | `medium` | `feat` | build-ready |
 | [0054](active/0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | `medium` | `feat` | needs-brainstorm |
