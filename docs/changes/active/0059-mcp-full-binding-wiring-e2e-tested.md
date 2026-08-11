@@ -17,7 +17,7 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/mcp-full-binding-wiring-e2e-tested
-claimed_at: 2026-08-11T21:37:06Z
+claimed_at: 2026-08-11T21:38:04Z
 pr:
 blocked_by:
 reconciled: true
@@ -68,6 +68,23 @@ Filed 2026-08-11 immediately after merging #52 (PR #55), at the human's explicit
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-11 — reconcile (docket-implement-next)
+
+Verified the spec against the **current integration tip** `origin/main` (`fab812c`, PR #55 / #52 merged). The dependency `#52` is `done`; ADR-0036 (the egress seam this change consumes) is `Accepted`; cited ADR-0034/0028/0029 present. **No scope change, no obsolescence, no new constraints** — the spec is accurate as written and NOT invalidated.
+
+Load-bearing spec claims re-confirmed against `origin/main` (feature branch cuts from here):
+
+- `cmd/fuse/shell.go:77-84` — the inline MCP-attach block (`mcpOpts` / `buildToolIdentitySource` / `mcp.WithCredentialSource` / `logToolIdentityPosture` / `tui.NewMCPProvider`) is exactly as the spec quotes; shell also does `WithToolPrincipal(localPrincipal(cfg))` (`shell.go:265`). This is the block to factor into the shared `mcpAttach` helper.
+- `cmd/fuse/loop_server.go` — `buildLoopServerRuntimeDeps` (:86) builds per-loop `NewToolRegistry`/`BuildAgent` closures and `cloneServerToolRegistry` (:225) with **zero MCP references** — the exact gap this change closes. Change 0046's per-loop isolation (fresh tree/store/registry per loop) is present as the spec assumes.
+- `cmd/fuse/loop_serve_net.go` — `buildLoopVerifier` (:48) maps bearer token → `loopauth.Principal{Tenant, Subject}` at the Connect edge (dev token → `event.DefaultTenant`); the authenticated principal exists but is never threaded into the tool-call context, as the spec states.
+- `cmd/fuse/run.go` — 0 MCP references (one-shot is MCP-blind, per spec §3).
+- `cmd/fuse/tool_identity.go` — `buildTargetMediator` (:78), `buildToolIdentitySource` (:121), `localPrincipal` (:214 → `loopauth.Principal{Tenant: event.DefaultTenant}`) all present; the STS signing-key map is keyed **single-tenant on `event.DefaultTenant`** (:173) — precisely the shim §2 generalizes to per-loop tenant.
+- `internal/toolidentity/` (`context.go` carrier `WithPrincipal`/`PrincipalFrom`, `broker.go`, `exchange.go`, `seam.go`) and `internal/loopauth/verifier.go` all present.
+
+Follow-up already captured: the live (Tavily-style) rentals data backend + Wander demo wiring is out of scope here and is filed as **#60** (`related`) — no new stub minted (auto-capture disabled; and it already exists).
+
+Reconcile caution recorded for the build: a broad code-verification sweep initially read the **local checked-out worktree** (HEAD `22480d5`, which predates the #52 merge) and wrongly reported the whole `toolidentity`/`loopauth`/`loop_serve_net` surface as absent. It is present on `origin/main`. Build agents MUST resolve code claims against `origin/main`, not the ambient local `main` — the local `main` here is behind origin.
 
 ### 2026-08-11 — reconcile (docket-implement-next)
 
