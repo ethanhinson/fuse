@@ -1,0 +1,10 @@
+{
+  "name": "fuse-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "description": "npm workspace root for the fuse repo (proto codegen + the @fuse/sdk client SDK). The Go module is unaffected; this file only wires the JS packages.",
+  "workspaces": [
+    "proto",
+    "sdk/ts"
+  ]
+}
