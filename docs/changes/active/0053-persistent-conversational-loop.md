@@ -8,7 +8,7 @@ type: feat
 created: 2026-08-10
 updated: 2026-08-11
 depends_on: [48]
-related: [46, 47, 49]
+related: [46, 47, 49, 54]
 discovered_from: [48]
 adrs: []
 spec: docs/superpowers/specs/2026-08-10-persistent-conversational-loop-design.md
@@ -96,10 +96,19 @@ new handle type. See the linked spec for the full design; at proposal altitude:
   ownership model layers on top of, not something this change adjudicates.
 - **A versioned external session envelope / client-SDK session ergonomics** — change 0050.
   This change adds the runtime primitive; the SDK wraps it.
+- **Surviving client disconnect / resume-by-refresh — change 0054.** A parked loop blocks
+  on the **per-connection context** (`ServeWS` → `handleStart(ctx)` → `StartLoop(ctx)` →
+  `a.Run(ctx)`), so a client disconnect cancels it: the park returns, the registry flips the
+  loop to finished, and the in-memory transcript is discarded. So this change makes a
+  conversation survive **idle** (no message between turns), NOT **disconnect**. A user
+  refreshing the page and getting their transcript + loop memory back — the "attach from
+  your phone" north-star in the Why above — requires decoupling session lifetime from the
+  connection, transcript durability/rehydration, and likely REST/HTTP resume endpoints.
+  That is filed as **change 0054 (durable, resumable sessions)**.
 - **Cross-instance session migration / durable park state.** A parked loop lives in its
   owning process's memory (the transcript is in-memory). Resuming a *finished/evicted*
   session from durable history on a cold instance is a larger question (registry liveness +
-  transcript rehydration) deferred until 0049/0050 need it.
+  transcript rehydration) — owned by change 0054.
 - **Idle/session timeout, backpressure on an abandoned parked loop, max concurrent
   sessions** — operational policy on top of the primitive.
 - **Streaming token deltas** (`model.delta`) for the chat surface — independent; the demo
