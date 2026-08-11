@@ -4,6 +4,7 @@ One curated finding per file; this index is the hint surface. Load it, then read
 
 ## architecture
 
+- [persistent-loop-needs-explicit-completion-event](persistent-loop-needs-explicit-completion-event.md) — Once a run persists across turns (a loop that parks instead of finishing), a client can no longer infer 'this exchange is done, send the next message' from the SHAPE of the event stream — there is no run-end and no store-close between turns to key off. Emit an explicit completion event (e.g. loop.parked carrying the final answer) at the park boundary; reconstructing completion from stream shape desyncs the moment the one-shot lifecycle goes away. · also: events, runtime, lifecycle, streaming, ux ⟨needs promotion⟩
 - [replay-live-handoff-dedup-at-watermark](replay-live-handoff-dedup-at-watermark.md) — An observe seam that subscribes-to-live AND replays history double-delivers any event that lands between the two steps — subscribe first (drop nothing), then dedup at the replay watermark (drop live events with Seq <= last replayed); a plain sequential test cannot see it. · also: eventstore, concurrency, streaming ⟨needs promotion⟩
 - [structured-return-via-synthesized-tool](structured-return-via-synthesized-tool.md) — to get a structured value back from a subagent that also uses tools, synthesize a dedicated return_result tool (schema = the expected shape) offered only to Expects children — do NOT instruct the model to emit the structure in its final message; a final-message directive collides with tool-calling (the child crams the structured object into an unrelated tool's args, e.g. write_file.content with no path) · also: agents, subagents, tool-use, structured-output ⟨needs promotion⟩
 
@@ -56,6 +57,10 @@ One curated finding per file; this index is the hint surface. Load it, then read
 ## verification
 
 - [verify-tool-loop-at-gateway-seam](verify-tool-loop-at-gateway-seam.md) — when a change alters what the model sees or does per turn (tool schemas, budgets, strips, caps), verify with the real binary against a scripted LLM_GATEWAY_URL double that logs each request's tools[] — the TUI harness fakes the Completer seam and never exercises the cmd/fuse wiring · also: agents, tui, testing, mcp ⟨needs promotion⟩
+
+## websocket
+
+- [websocket-read-errors-are-not-closeerror](websocket-read-errors-are-not-closeerror.md) — A WebSocket transport must treat EVERY post-handshake read error as a clean shutdown — abnormal peer close (TCP RST / no close frame) surfaces as raw io.ErrUnexpectedEOF or *net.OpError, and a self-Close race as net.ErrClosed, NEVER as a websocket.CloseError; matching only CloseError makes a routine client drop look like a server error, and a WS conn cannot resume after a read error anyway so mapping all of them to io.EOF is correct. · also: transport, error-handling, networking, go ⟨needs promotion⟩
 
 ## workflow
 
