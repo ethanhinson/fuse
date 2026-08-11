@@ -10,7 +10,7 @@ updated: 2026-08-11
 depends_on: [46, 47]
 related: [45, 46, 47]
 discovered_from: [45]
-adrs: []
+adrs: [32]
 spec: docs/superpowers/specs/2026-08-11-networked-runtime-binding-design.md
 plan: docs/superpowers/plans/2026-08-11-networked-runtime-binding.md
 results:
@@ -30,6 +30,7 @@ claimed_at: 2026-08-11T02:10:00Z
 |---|---|
 | Spec | [2026-08-11-networked-runtime-binding-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-networked-runtime-binding-design.md) |
 | Plan | [2026-08-11-networked-runtime-binding.md](https://github.com/ethanhinson/fuse/blob/feat/networked-runtime-binding/docs/superpowers/plans/2026-08-11-networked-runtime-binding.md) |
+| ADRs | [ADR-0032](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0032-binding-3-websocket-session-http-replay-shared-dispatch.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
