@@ -84,6 +84,26 @@ See the linked spec for the full design; at proposal altitude:
   `tenant_id` present-but-unenforced today (matching change 48) and becomes the real auth carrier when
   change 49 lands — so 49 adds no breaking change to either SDK surface.
 
+## Acceptance — the real end-to-end proof (inherited from #55's deferred smoke gap)
+
+Change 55 shipped a **wire-contract** smoke test (real `connect-es` stub + real `connect-go` handler),
+but against a **`fakeRuntime`** emitting scripted events, with a thin one-frame reconnect check that
+**skips silently** when the node toolchain is absent. That proves the pipes connect, not that the
+system works. #50 owns closing that gap — its acceptance MUST demonstrate:
+
+- **A real loop, not a fake backend.** The TS SDK (via Wander, the testbed) drives a **real hosted
+  loop** end-to-end — `startLoop` → `send` → `observe` → explicit completion — against the actual
+  `Runtime`/engine over #55's Connect wire, not a scripted `fakeRuntime`. Live model traffic uses a
+  scripted `LLM_GATEWAY_URL` double, never Claude/Anthropic (project policy).
+- **Rigorous no-loss/no-dup from the TS client.** The reconnect assertion must prove the hard property
+  — an event landing in the **subscribe→replay gap** is neither lost nor duplicated after
+  `observe(from_seq)` re-open — from the **TS** side, not only in #55's Go resilience tests.
+- **Actual browser reach.** Prove `connect-es` server-streaming + reconnect **in a real browser**
+  (the manual check deferred at #55's merge gate), not just a `connect-node` client.
+- **No silent-skip in CI.** The TS SDK's test lane must **fail loud** (or be a tracked, required CI
+  job) rather than `t.Skip` green when the toolchain is missing — so "tests pass" cannot hide an
+  unexercised TS path.
+
 ## Out of scope
 
 - A **Python (or mobile-native) SDK** — a later change; #50 ships Go + TS/JS. The versioned envelope
