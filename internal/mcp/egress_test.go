@@ -30,12 +30,21 @@ type capturingSSEServer struct {
 	resource []string // MCP-Resource header per POST, in arrival order
 }
 
-func newCapturingSSEServer() *capturingSSEServer {
+// newCapturingSSEServer starts the double and registers its shutdown via
+// t.Cleanup. Ordering matters: httptest.Server.Close() blocks until the hijacked
+// handleSSE goroutine returns, which only happens after the client's SSE body is
+// closed by client.stop(). Since t.Cleanup runs LIFO and newToolOverHTTP (called
+// AFTER this) registers client.stop, the client is stopped FIRST and the server
+// closes cleanly — a plain `defer srv.Close()` in the test would instead run
+// before the client-stop cleanup and deadlock in teardown.
+func newCapturingSSEServer(t *testing.T) *capturingSSEServer {
+	t.Helper()
 	s := &capturingSSEServer{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sse", s.handleSSE)
 	mux.HandleFunc("/messages", s.handleMessages)
 	s.srv = httptest.NewServer(mux)
+	t.Cleanup(s.srv.Close)
 	return s
 }
 
@@ -147,8 +156,7 @@ func stsSource(t *testing.T, tenant event.TenantID, key []byte) *toolidentity.Br
 // token is per-principal (minted from the initiator's identity), never a shared
 // static token.
 func TestEgress_TwoPrincipalsDistinctTokens(t *testing.T) {
-	srv := newCapturingSSEServer()
-	defer srv.Close()
+	srv := newCapturingSSEServer(t)
 
 	const tenant = event.TenantID("acme")
 	src := stsSource(t, tenant, []byte("k-acme-secret"))
@@ -193,8 +201,7 @@ func TestEgress_TwoPrincipalsDistinctTokens(t *testing.T) {
 // the configured static credential and NO initiator identity (the token is the
 // same regardless of principal, and the broker marks it identity-free).
 func TestEgress_StaticTierNoIdentity(t *testing.T) {
-	srv := newCapturingSSEServer()
-	defer srv.Close()
+	srv := newCapturingSSEServer(t)
 
 	src := toolidentity.NewBroker(nil, map[string]toolidentity.StaticCredential{
 		"cap": {Scheme: "Bearer", Token: "static-secret"},
@@ -231,8 +238,7 @@ func TestEgress_StaticTierNoIdentity(t *testing.T) {
 // Execute takes the byte-identical pre-#52 path — the client's static bearerToken
 // is what reaches the downstream, and no resource header is added.
 func TestEgress_NoSourceUsesStaticClientToken(t *testing.T) {
-	srv := newCapturingSSEServer()
-	defer srv.Close()
+	srv := newCapturingSSEServer(t)
 
 	tool := newToolOverHTTP(t, srv, "baked-in-token", nil, toolidentity.Target{})
 
@@ -257,8 +263,7 @@ func TestEgress_NoSourceUsesStaticClientToken(t *testing.T) {
 // (undeclared OAuth target — no audience) surfaces as a tool error and NEVER
 // reaches the network, and the error message carries no token.
 func TestEgress_ResolveErrorSurfacesAsToolErrorNoToken(t *testing.T) {
-	srv := newCapturingSSEServer()
-	defer srv.Close()
+	srv := newCapturingSSEServer(t)
 
 	src := stsSource(t, event.TenantID("acme"), []byte("k"))
 	// Undeclared: OAuth tier with an empty audience → broker denies.
@@ -287,10 +292,8 @@ func TestEgress_AudienceBindingIsPerTarget(t *testing.T) {
 	const tenant = event.TenantID("acme")
 	src := stsSource(t, tenant, []byte("k"))
 
-	srvA := newCapturingSSEServer()
-	defer srvA.Close()
-	srvB := newCapturingSSEServer()
-	defer srvB.Close()
+	srvA := newCapturingSSEServer(t)
+	srvB := newCapturingSSEServer(t)
 
 	toolA := newToolOverHTTP(t, srvA, "", src, toolidentity.Target{Name: "A", Audience: "aud-A", Tier: toolidentity.TierOAuth})
 	toolB := newToolOverHTTP(t, srvB, "", src, toolidentity.Target{Name: "B", Audience: "aud-B", Tier: toolidentity.TierOAuth})
