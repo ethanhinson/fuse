@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/tool-identity-propagation
 pr:
 blocked_by:
-claimed_at: 2026-08-11T19:24:49Z
-reconciled: false
+claimed_at: 2026-08-11T19:29:25Z
+reconciled: true
 ---
 
 ## Artifacts
@@ -122,3 +122,75 @@ credential, so the downstream — not fuse — adjudicates:
   ceilings, human-approval hooks) and how it composes with fuse's existing approval func.
 - **Redaction.** Exact mechanism to keep credentials out of the event stream / logs / model
   context, given fuse's persist-and-replay design.
+
+## Reconcile log
+
+### 2026-08-11 — reconciled against `origin/main` @ 59dbd31
+
+**Scope-adjustable reconcile (not a re-brainstorm).** The design intent — a per-call
+identity-propagation egress seam, RFC 8693 delegation exchange behind a pluggable
+`TokenExchanger`, the tiered OAuth/static-fallback MCP rework, per-call mediation on the
+existing approval gate, and credential redaction from the event stream — is fully intact.
+Both deps (#48 networked binding, #49 auth/multi-tenancy) merged to `main` exactly as the
+spec anticipated, so several open questions now have concrete, code-grounded answers. No
+obsolescence; no fundamental invalidation; no escalation warranted. Auto-capture disabled
+this repo (nothing minted).
+
+**Current-reality findings folded in (verified on `origin/main` @ 59dbd31):**
+
+- **Principal source is settled (`internal/loopauth`).** #49/ADR-0034 shipped
+  `loopauth.Principal{Tenant event.TenantID, Subject string}` behind a pluggable `Verifier`
+  seam, resolved at the Connect edge by `authInterceptor` and read via
+  `loopconnect.PrincipalFrom(ctx) (Principal, bool)`. **Key constraint the spec must
+  absorb:** the `Principal` carries **identity only, no credential/token** — so the "where
+  the initiator's downstream identity comes from" open question is real. For this first PR
+  the `subject_token` is derived from the authenticated `Principal` (its `Subject`/`Tenant`)
+  via the built-in STS; cross-issuer/external-AS exchange rides the `TokenExchanger` seam's
+  external impl, not this PR.
+
+- **The concrete gap is confirmed and located.** `internal/mcp/manager.go:dial()` resolves a
+  single token once via `GetAccessToken(srv.Name, srv.URL, srv.Auth)` and bakes it into
+  `httpClient.bearerToken` (`internal/mcp/http_client.go`), reused for every caller and every
+  call. The connection is per-server (established at server-add), **not** per tool call — so
+  per-caller identity requires attaching the credential **per call** (per-request header
+  injection at the egress seam), not per connection. This shapes the MCP rework scope: the
+  egress seam sits between the tool-call site and the transport `call()`, injecting a
+  freshly-minted, audience-bound token per call rather than the static per-server bearer.
+
+- **Approval gate is the mediation point (D5), signature known.**
+  `permissions.PermissionGate.Execute(ctx, name, args)` wraps the registry and calls
+  `ApprovalFunc(ctx, ApprovalRequest{ToolName, Args, Preview})` per tool call
+  (`internal/permissions/gate.go`), invoked from `internal/agent/loop.go`'s tool loop. D5's
+  target/scope ceilings extend THIS gate (sourced from the loop-start root of trust), not a
+  parallel PDP.
+
+- **Redaction (D6) is structural, not a scrubber.** `tool.call`/`tool.result` events
+  (`event.ToolCallPayload.Args` / `ToolResultPayload.Result`, emitted in
+  `internal/agent/loop.go` with **no redaction today**) carry model-supplied args/results —
+  credentials never flow through them because the minted token lives only in the outbound
+  transport header, never in tool args. The build-time verification is a structural assertion
+  that no minted credential reaches the event payloads / durable store / logs, plus keeping
+  the token out of any error string surfaced back into the loop.
+
+- **Identity threading is the hard cross-cutting seam.** `Principal` is on the Connect-edge
+  ctx, but `internal/runtime` is deliberately policy-free (ADR-0030) and does not thread
+  identity down to `internal/mcp`. The egress seam therefore carries the propagated identity
+  as a **request-context value** threaded from loop-start (the `BuildAgent` factory in
+  `cmd/fuse/loop_server.go`) to the MCP `Execute`, mirroring the existing
+  `permissions.WithUserMessages(ctx, …)` context-carry precedent — never reconstructed from
+  model output (honors the root-of-trust constraint).
+
+- **Composition-root pattern to mirror.** The `TokenExchanger` (and the credential broker
+  front) wire at the `cmd/fuse` composition root with the same two-implementation discipline
+  as the store/verifier seams (built-in minimal STS as the zero-config default; external-AS
+  exchanger behind config), keeping `internal/runtime` free of the seam.
+
+**Scope note for the plan (large change, one PR).** D1–D7 is a broad surface. The plan lands
+the coherent architectural spine end-to-end: the egress seam (D1) + pluggable `TokenExchanger`
+with the built-in minimal STS (D2) + tiered OAuth/explicit-static MCP rework injecting the
+credential per call with `resource`/audience binding (D3) + the broker-shaped no-long-lived-
+secret posture and per-tenant isolation (D4) + per-call mediation ceilings on the existing
+approval gate (D5) + the redaction constraint + tests (D6) + the ADR (D7). The external-AS
+exchanger and a separate out-of-process broker service stay behind their seams as follow-ons,
+consistent with the spec's "seam is fixed, placement is open" framing — not new scope cuts,
+the spec already scopes them as pluggable.
