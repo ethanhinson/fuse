@@ -1,12 +1,6 @@
 # Backlog
 
-**55 changes** — 🟢 1 in progress · 🟡 3 proposed · ⚪ 1 deferred · ✅ 44 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0050](active/0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | `medium` | `feat` | [spec](../superpowers/specs/2026-08-11-client-sdk-design.md) | `feat/client-sdk` |
+**55 changes** — 🟡 3 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 44 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (3)
 
@@ -21,6 +15,12 @@
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0050](active/0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | `medium` | `feat` | [#54](https://github.com/ethanhinson/fuse/pull/54) |  |
 
 ```mermaid
 graph TD
