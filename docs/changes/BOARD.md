@@ -10,7 +10,7 @@
 | [0050](active/0050-client-sdk.md) | Client SDK — thin-client library, same API local-or-remote | `medium` | `feat` | ⏳ waiting on #48 — needs your merge |
 | [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + Loki, as a projection over the event stream | `medium` | `feat` | needs-brainstorm |
 | [0052](active/0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | `medium` | `feat` | ⏳ waiting on #48 — needs your merge |
-| [0053](active/0053-persistent-conversational-loop.md) | Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat | `medium` | `feat` | ⏳ code on #48's branch — needs your merge |
+| [0053](active/0053-persistent-conversational-loop.md) | Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat | `medium` | `feat` | ⏳ waiting on #48 — needs your merge |
 
 ## ⚪ Deferred (1)
 
