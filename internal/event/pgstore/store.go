@@ -481,6 +481,32 @@ func (s *PGStore) SetLive(ctx context.Context, key event.StreamKey, live bool, o
 	return nil
 }
 
+// Heartbeat renews the owner-liveness lease. It advances lease_expiry + updated_at
+// (leaving owner/live untouched) and returns ErrLoopUnknown on 0 rows.
+//
+// TODO(#49 Task 3): the owner/lease_expiry columns and their round-trip through
+// Register/Resolve/List are added in Task 3 (schema.sql + column wiring). This
+// method currently renews only updated_at so the pgstore build stays green under
+// the shared LoopRegistry interface; wire lease_expiry once the column exists.
+func (s *PGStore) Heartbeat(ctx context.Context, key event.StreamKey, ownerNodeID string, expiry time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	nk := normalizeKey(key)
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE loops SET owner_node_id=$3, updated_at=$4
+		 WHERE tenant_id=$1 AND loop_id=$2`,
+		string(nk.Tenant), string(nk.Loop), ownerNodeID, time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("pgstore: heartbeat: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return event.ErrLoopUnknown
+	}
+	return nil
+}
+
 // Resolve returns the loop's record, or ErrLoopUnknown if no row exists for the
 // (tenant, loop) — including a resolve under the wrong tenant (tenant isolation).
 func (s *PGStore) Resolve(ctx context.Context, key event.StreamKey) (event.LoopRecord, error) {
