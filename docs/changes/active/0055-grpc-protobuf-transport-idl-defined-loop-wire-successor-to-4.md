@@ -12,12 +12,12 @@ related: [46, 47, 48, 50]
 discovered_from: [50]
 adrs: [32]
 spec: docs/superpowers/specs/2026-08-11-grpc-connect-transport-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-11-grpc-connect-transport-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4
-claimed_at: 2026-08-11T05:28:35Z
+claimed_at: 2026-08-11T05:32:23Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-11-grpc-connect-transport-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-grpc-connect-transport-design.md) |
+| Plan | [2026-08-11-grpc-connect-transport-plan.md](https://github.com/ethanhinson/fuse/blob/feat/grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4/docs/superpowers/plans/2026-08-11-grpc-connect-transport-plan.md) |
 | ADRs | [ADR-0032](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0032-binding-3-websocket-session-http-replay-shared-dispatch.md) |
 <!-- docket:artifacts:end -->
 
