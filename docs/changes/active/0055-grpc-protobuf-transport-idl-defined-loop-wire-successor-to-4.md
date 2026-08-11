@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4
-claimed_at: 2026-08-11T05:25:56Z
+claimed_at: 2026-08-11T05:28:35Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -97,3 +97,54 @@ full design; at proposal altitude:
 - Whether Go maps protobuf `Event` at the transport edge to keep `internal/event` transport-free
   (favored) or adopts the generated type deeper.
 - Confirming `connect-es` server-streaming under a real browser reconnect — the core testbed assertion.
+
+## Reconcile log
+
+### 2026-08-11 — reconcile against origin/main (build-time)
+
+Spec verified accurate against `origin/main` (the base the feature branch cuts from). No fundamental
+invalidation; scope holds. Findings folded in:
+
+- **#48's binding IS on `origin/main` exactly as the spec/ADR-0032 describe.** `internal/loopserver/`
+  carries the extracted dispatch core (`transport.go`: the `conn` interface — `readRequest(ctx)
+  (req, error)` returning `io.EOF` to end, `encode(v any) error` owning the one-mutex-per-conn write
+  serialization — plus the shared `req`/`resp`/`startParams`/`sendParams`/`observeParams`/`eventNote`
+  frame types), the stdio transport (`stdio.go`), and the network binding (`net.go`: `ServeWS(ctx,
+  *websocket.Conn, rt)` over `github.com/coder/websocket` + `NewReplayHandler(rt)` exposing
+  `GET /loops/{id}/events?from=&tenant=` → `rt.Attach`). `go.mod` on origin/main has the
+  `coder/websocket` dependency. So the reuse point (dispatch core + `serveObserve`'s
+  subscribe-before-replay + dedup-at-watermark `ev.Seq <= last` + gap-marker `ev.Seq > prev+1 &&
+  prev != 0`) and the deletion target (WS binding + HTTP replay + `coder/websocket` dep) both exist —
+  #55 proceeds as written. (NOTE: the local checkout was ~20 commits behind origin/main and did not
+  have these files; irrelevant because the feature branch cuts from `origin/main`, but recorded as a
+  build-loop lesson to harvest — always inspect the integration branch, not the local tree.)
+- **The `runtime.Runtime` seam is untouched and already satisfies the multi-instance requirement.**
+  `internal/runtime/runtime.go` — `StartLoop(ctx, LoopConfig) (LoopHandle, error)`, `Send(ctx, tenant,
+  loopID, input) error`, `Observe(ctx, tenant, loopID) (<-chan event.Event, func(), error)`,
+  `Attach(ctx, tenant, loopID, from) ([]event.Event, error)`. `Observe`/`Attach` already resolve a loop
+  via the durable registry (cross-instance), so spec Resilience §1 (reconnect-to-a-different-instance
+  replays over #47's durable store) is satisfiable with NO seam change — the Connect `Observe` RPC wraps
+  exactly this. #46 (multi-loop host) and #47 (durable store: `internal/event/{store,registry}.go`,
+  `pgstore`, `fsstore`) are `done` on origin/main.
+- **`event.Event` carries NO tenant field** (`Seq, TS, NodeID, ParentID, Depth, Turn, Kind, Payload`);
+  tenant flows through the seam METHODS, not the event struct. So the proto `Event` message mirrors
+  those 8 fields; `tenant_id` is a typed field on the *request* messages (StartLoop/Send/Observe),
+  pass-through/unenforced — not on the event. Adjusts the spec's "Seq, tenant, the event payload"
+  wording to: request-level tenant, event-level Seq+payload.
+- **protobuf/Connect toolchain is NOT yet present** — no `connectrpc`/`bufbuild`/`google.golang.org/
+  protobuf` in `go.mod`/`go.sum`; no `buf`/`protoc`/`protoc-gen-go` on PATH; no `*.proto`/`buf.yaml`.
+  `node`/`npm` ARE available (for `connect-es`). Plan-time default (open question 1): **buf +
+  generate-and-commit** the Go (`connect-go`) and TS (`connect-es`) stubs, so the build has no live
+  codegen dependency and CI stays hermetic; pin plugin versions in `buf.gen.yaml`.
+- **Generated TS stub location (informed at build-time):** change 50's TS SDK will live as an npm
+  workspace in THIS repo (`sdk/ts`), Wander a sibling workspace. So the connect-es output lands inside
+  the repo's TS workspace layout (e.g. `proto/gen/ts` or `sdk/ts/gen`) — importable by #50's SDK as a
+  sibling — rather than a separate repo. Go stubs use the normal Go module path
+  (`github.com/ethanhinson/fuse/...`). Codegen-output location only; no scope/acceptance-test change.
+- **Gateway-double pattern is established** — `cmd/fuse/loop_server_multiloop_test.go` builds a scripted
+  `httptest.NewServer` and `t.Setenv("LLM_GATEWAY_URL", srv.URL)`; #55's acceptance tests reuse this
+  (never Claude/Anthropic, project policy). The two-instance reconnect test stands up two `connect-go`
+  servers over one durable store and toggles the client's re-open onto the second (in-test router).
+
+`reconciled: true`. Auto-capture disabled this repo → the local-tree-staleness lesson is reported in
+the run output for the learnings harvest, not minted as a stub.
