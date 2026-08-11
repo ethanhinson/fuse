@@ -1,8 +1,8 @@
 # Backlog
 
-**53 changes** — 🟡 5 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 40 done · 🗑️ 6 killed
+**53 changes** — 🟡 4 proposed · ⚪ 1 deferred · 🔵 2 implemented · ✅ 40 done · 🗑️ 6 killed
 
-## 🟡 Proposed (5)
+## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -10,7 +10,6 @@
 | [0050](active/0050-client-sdk.md) | Client SDK — thin-client library, same API local-or-remote | `medium` | `feat` | ⏳ waiting on #48 — needs your merge |
 | [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + Loki, as a projection over the event stream | `medium` | `feat` | needs-brainstorm |
 | [0052](active/0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | `medium` | `feat` | ⏳ waiting on #48 — needs your merge |
-| [0053](active/0053-persistent-conversational-loop.md) | Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat | `medium` | `feat` | ⏳ waiting on #48 — needs your merge |
 
 ## ⚪ Deferred (1)
 
@@ -18,11 +17,12 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
+## 🔵 Implemented — awaiting merge (2)
 
 | # | Title | Priority | Type | PR | Readiness |
 |---|-------|----------|------|----|-----------|
 | [0048](active/0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | `medium` | `feat` | [#51](https://github.com/ethanhinson/fuse/pull/51) |  |
+| [0053](active/0053-persistent-conversational-loop.md) | Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat | `medium` | `feat` | [#51](https://github.com/ethanhinson/fuse/pull/51) |  |
 
 ```mermaid
 graph TD
