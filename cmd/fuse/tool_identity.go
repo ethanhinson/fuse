@@ -55,11 +55,18 @@ func buildToolIdentitySource(cfg config.Config) (toolidentity.CredentialSource, 
 		}
 	}
 
-	// The local (CLI/shell) tenant is the default tenant; the built-in STS signs
-	// its tokens with the configured key. On the networked binding each request's
-	// verified Principal supplies its own tenant; a multi-tenant deployment would
-	// extend TenantKeys — for the single-user local shell one key is the whole
-	// story.
+	// SINGLE-TENANT ASSUMPTION (explicit): the built-in STS is keyed ONLY for
+	// event.DefaultTenant here, because the sole path that wires MCP tools into
+	// the agent registry today is the single-user local shell (see the change #52
+	// reconcile log). A request whose Principal carries any OTHER tenant would fail
+	// closed with ErrTenantNotConfigured.
+	//
+	// TODO(#52-followup): when MCP egress is wired into the multi-tenant
+	// loop-server path (loop_server.go / loop_serve_net.go, which do NOT attach MCP
+	// today), this must build TenantKeys for every configured tenant (or resolve
+	// per-tenant signing material from the host's key source) — otherwise every
+	// non-default tenant silently fails closed. Do not remove this note until that
+	// wiring exists.
 	sts, err := toolidentity.NewBuiltinSTS(toolidentity.BuiltinSTSConfig{
 		Issuer: "fuse",
 		TTL:    ttl,

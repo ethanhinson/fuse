@@ -115,8 +115,6 @@ func (s *capturingSSEServer) capturedResources() []string {
 	return append([]string(nil), s.resource...)
 }
 
-func (s *capturingSSEServer) Close() { s.srv.Close() }
-
 // newToolOverHTTP builds an MCPTool whose client is a live httpClient connected
 // to the capturing server, with the given static bearer token baked in, plus the
 // supplied source + target for the identity path (both zero for the no-source
