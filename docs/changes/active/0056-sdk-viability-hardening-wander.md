@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/sdk-viability-hardening-wander
-claimed_at: 2026-08-11T23:22:02Z
+claimed_at: 2026-08-11T23:41:00Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -88,3 +88,53 @@ detail in the linked spec. Three parts:
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-11 — reconciled against origin/main (b7cebf4); spec holds, one naming clarification, no scope change
+
+Reconciled #56 against current `origin/main` after `#50`/`#55` reached `done` (both archived
+2026-08-11) and `#59` (mcp-full-binding-wiring) merged (`origin/main` tip `b7cebf4`). Verified all
+spec claims against `origin/main` via `git show`/`git ls-tree` (learning
+`reconcile-verify-claims-against-origin-not-working-tree`). **The spec's design decisions all hold
+on current code — no re-map, no invalidation, no obsolescence. `depends_on: [50]` stays correct
+(#50 is `done`; #54 is still `proposed` and deliberately NOT a dependency — Wander stays
+stateless-across-page-loads).**
+
+Current-code anchors confirmed (the build targets these, not the spec's prose):
+
+- **TS SDK `@fuse/sdk` at `sdk/ts/`** (root npm workspace: `package.json` workspaces = `proto`,
+  `sdk/ts`). Public surface today: `createClient({baseUrl, credentials:{token,tenant}, transport?})`
+  → `startLoop / send / observe / isCompletion / KIND_LOOP_PARKED`. `observe(loopId, fromSeq?)` is an
+  async iterable that reconnects transparently with exponential backoff (cap 30s), tracks `seq`,
+  dedups at the watermark, surfaces `gap`. The three seeded must-haves are genuinely absent and
+  confirmed as real gaps: **(1)** no connection-state surface (connecting/live/reconnecting/closed) —
+  reconnect is purely internal; **(2)** no transient-vs-terminal error classification — the reconnect
+  loop's `catch {}` swallows *every* error, so a terminal condition (auth rejected, loop finished)
+  hot-loops forever instead of surfacing; **(3)** no explicit/idempotent teardown beyond breaking the
+  `for await` (no `close()`/AbortSignal for page-unload). These are exactly the spec's acceptance-2
+  features and each is Wander-consumed.
+- **Wire `fuse.loop.v1`** (`proto/fuse/loop/v1/loop.proto`, gen TS at `proto/gen/ts/...`,
+  gen Go at `internal/loopwire/v1` + `loopv1connect`): `StartLoop`/`Send` unary, `Observe(from_seq)`
+  server-stream (history-then-live), completion is the explicit `loop.parked` event kind. No wire work
+  is in scope — the SDK builds on this.
+- **Existing `examples/concierge-demo/`** is a *prior*, WS-era concierge over binding #3's raw
+  `loop.*` JSON-RPC (change #48) with a Node relay — **it does NOT use `@fuse/sdk`.** The spec's
+  `examples/wander/` is genuinely additive: the SDK-driven (`@connectrpc/connect-web` over the #55
+  Connect wire) concierge. Clarification only, no scope change; the new app is not a rewrite of the
+  old demo and the old demo is left untouched.
+- **CI (`.github/workflows/integration.yml`)** has `unit-race` (Go `-race`) + `mcp-integration`
+  (Docker + **playwright-go** chromium already installed). There is **no TS/node lane and no
+  browser lane driving `@fuse/sdk`** — the acceptance-3 headless-browser reconnect lane is net-new,
+  with `playwright-go` as an in-repo toolchain precedent.
+- **Gateway-double harness pattern** established by `sdk/fuse/acceptance_test.go`: build `cmd/fuse`,
+  exec `fuse loop-serve-net --addr 127.0.0.1:<port>` with a scripted in-test `LLM_GATEWAY_URL`
+  (never Claude/Anthropic — project policy) and the built-in dev token `fuse-dev-token` → tenant
+  `_default`. The browser lane reuses this real-engine harness (and `sdk/ts/test/server/main.go`'s
+  `URL <url>`-printing fakeRuntime pattern for the pure-wire/dedup slice). Relevant learnings for the
+  build: `scripted-gateway-double-double-escapes-tool-args` (pass PLAIN JSON tool args),
+  `smoke-over-fake-backend-proves-wire-not-system` (keep the lane loud on toolchain absence),
+  `replay-live-handoff-dedup-at-watermark`, `persistent-loop-needs-explicit-completion-event`,
+  `websocket-read-errors-are-not-closeerror` (ported to the Connect-stream shape for error
+  classification), `httptest-defer-close-before-tcleanup-deadlock`.
+
+No auto-capture: `AUTO_CAPTURE_ENABLED=false` this repo — any adjacent follow-ups surfaced during
+build are reported in the run report, not minted.
