@@ -2,11 +2,11 @@
 id: 53
 slug: persistent-conversational-loop
 title: Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat
-status: proposed
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-10
-updated: 2026-08-10
+updated: 2026-08-11
 depends_on: [48]
 related: [46, 47, 49]
 discovered_from: [48]
@@ -17,9 +17,9 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/networked-runtime-binding
-pr:
+pr: 51
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -107,10 +107,16 @@ new handle type. See the linked spec for the full design; at proposal altitude:
 
 ## Note on current state
 
-The design in the linked spec is **already implemented on the `feat/networked-runtime-binding`
-branch** (0048's branch) and committed there alongside the concierge demo, because it was
-built to make that demo prove multi-turn end-to-end. This change record documents the
-decision and scope; the code is expected to ride 0048's PR (#51) rather than a separate
-branch. If 0048 lands without it, this change is re-homed onto its own branch. It is filed
-as `proposed` (not `implemented`) because it has not been through the docket build/review
-lifecycle as an independent change — the writeup is the deliverable here.
+The design in the linked spec is implemented on the `feat/networked-runtime-binding`
+branch (0048's branch) as a single commit (`7ae2cb1`,
+`feat(runtime): #53 persistent conversational loop — interactive mode + loop.parked`)
+alongside the concierge demo, because it was built to make that demo prove multi-turn
+end-to-end.
+
+**Reconciled 2026-08-11:** that commit had been built and committed locally but never
+pushed, so for a time it was absent from PR #51 despite this note asserting it rode along.
+The commit has now been pushed onto `feat/networked-runtime-binding` (a clean fast-forward;
+build + `vet` + affected-package tests green locally beforehand), so it rides 0048's PR
+(#51) as intended. Status is `implemented`, PR `51`. This change did not go through the
+docket build/review lifecycle as an independent change — the writeup + the reconciliation
+are the deliverable here; it closes out to `done` when #51 merges.
