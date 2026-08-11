@@ -2,7 +2,7 @@
 id: 53
 slug: persistent-conversational-loop
 title: Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-10
