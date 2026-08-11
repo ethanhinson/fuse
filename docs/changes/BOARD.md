@@ -1,19 +1,13 @@
 # Backlog
 
-**55 changes** — 🟢 1 in progress · 🟡 5 proposed · ⚪ 1 deferred · ✅ 42 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0055](active/0055-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4.md) | Connect/protobuf transport — IDL-defined loop.* wire, successor to #48 | `medium` | `feat` | [spec](../superpowers/specs/2026-08-11-grpc-connect-transport-design.md) | `feat/grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4` |
+**55 changes** — 🟡 5 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 42 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0049](active/0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | `medium` | `feat` | needs-brainstorm |
-| [0050](active/0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | `medium` | `feat` | ⏳ waiting on #49 — not yet built |
+| [0050](active/0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | `medium` | `feat` | ⏳ waiting on #55 — needs your merge |
 | [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + Loki, as a projection over the event stream | `medium` | `feat` | needs-brainstorm |
 | [0052](active/0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | `medium` | `feat` | ⏳ waiting on #49 — not yet built |
 | [0054](active/0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | `medium` | `feat` | needs-brainstorm |
@@ -23,6 +17,12 @@
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0055](active/0055-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4.md) | Connect/protobuf transport — IDL-defined loop.* wire, successor to #48 | `medium` | `feat` | [#52](https://github.com/ethanhinson/fuse/pull/52) |  |
 
 ```mermaid
 graph TD
