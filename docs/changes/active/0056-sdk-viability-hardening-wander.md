@@ -11,7 +11,7 @@ depends_on: [50]
 related: [49, 54, 55]
 discovered_from: [50]
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-11-sdk-viability-hardening-wander-design.md
 plan:
 results:
 trivial: false
@@ -25,6 +25,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-08-11-sdk-viability-hardening-wander-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-sdk-viability-hardening-wander-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
@@ -41,47 +44,45 @@ SDK/runtime fixes are the change.
 
 ## What changes
 
-Proposal altitude — the design pass must decompose "make any web app viable" down to a
-single PR's worth of scope. Seeds (from change #50's results file
-`docs/results/2026-08-11-client-sdk-results.md`, linked from the archived change
-`archive/2026-08-11-0050-client-sdk.md`):
+**One PR: build Wander, fix what it surfaces.** Wander — a vacation-rental-concierge demo in
+plain HTML/CSS/JS, shipped as a committed example (`examples/wander/`) over `@fuse/sdk` — is the
+acceptance vehicle, not the deliverable. Its concrete features are the spec's acceptance criteria;
+the SDK bugfixes and must-have features land as building against a real app surfaces them. Design
+detail in the linked spec. Three parts:
 
-- **Browser-reach proof, deferred at BOTH #55 and #50 merge gates:** drive the TS SDK in a
-  REAL browser — startLoop → send → observe → reconnect over `@connectrpc/connect-web`, kill
-  the network mid-stream, assert transparent reconnect resumes with no-loss/no-dup. #50 only
-  proved this from a node test over the identical wire. Wander is where it gets exercised for
-  real; a headless-browser CI lane may be part of this change.
-- **The small must-have web-app features** the SDK surface is missing for a browser app to be
-  viable at all — surface them by building Wander (ergonomic session/connection lifecycle,
-  error/reconnect UX hooks, whatever the real app hits).
-- **Bugs / rough edges** in the SDK's startLoop→send→observe→reconnect surface that only
-  appear under a real app.
+- **Wander (the forcing function).** A concierge chat: multi-turn conversation over one persistent
+  loop (#53), streaming replies keyed on `Observe(fromSeq)`, completion from the explicit
+  `loop.parked`/`IsCompletion` event, and a visible connection-state indicator. Stateless across
+  page loads (a refresh starts a fresh session) — deliberately, to hold the #54 boundary.
+- **SDK must-have features & bugfixes.** Connection-state / lifecycle hooks; transient-vs-terminal
+  error surfacing at the SDK boundary (abnormal mid-stream drop = resumable, not fatal); idempotent
+  teardown to release a stream on unload; plus whatever genuine rough edges Wander hits — each
+  recorded in the results file with the interaction that surfaced it.
+- **Real-browser reconnect proof as a permanent CI lane.** A headless-browser (Playwright /
+  headless Chromium) lane driving `@fuse/sdk` over `@connectrpc/connect-web` against a real
+  `connect-go` server, killing the network mid-stream and asserting transparent resume with
+  no-loss/no-dup — the check deferred at #55 and #50, now enforced in CI. Loud on toolchain
+  absence; scripted `LLM_GATEWAY_URL` double, never Claude/Anthropic.
 
 ## Out of scope
 
-- **Durable/resumable sessions (refresh-to-restore, cross-device resume) = change #54.** This
-  change does NOT re-litigate transcript durability or the REST resume surface; it consumes
-  whatever #54 lands. State the boundary clearly so the two don't overlap. If a Wander
-  must-have REQUIRES durable sessions, note it as a dependency for the brainstorm to resolve
-  rather than absorbing #54's scope.
+- **Durable/resumable sessions (refresh-to-restore, cross-device resume) = change #54.** Wander is
+  designed stateless-across-page-loads precisely so it needs nothing #54 owns. `depends_on` stays
+  `[50]`, not `[54]`. If a demo-critical feature turns out to genuinely require durable sessions,
+  the move is to add `depends_on: [54]` and descope that feature here (recorded in the reconcile
+  log) — NOT to absorb #54's persistence work.
 - **Python / mobile-native SDKs** — later, separate changes (#50 follow-ups).
-- **A batteries-included Go runtime-from-config builder** — explicitly out of scope per
-  ADR-0035.
-
-## Note
-
-Keep it to ~one PR. Flag for the brainstorm: (1) settle the #54 boundary, (2) decide whether
-the real-browser CI lane lands here or stays a manual gate, (3) decompose "viable web app" to
-a concrete must-have list driven by actually building Wander. Filed 2026-08-11 as a #50
-follow-up (auto_capture disabled this repo, so captured by hand).
+- **A batteries-included Go runtime-from-config builder** — out of scope per ADR-0035; Wander is a
+  browser app over the TS remote SDK and does not touch the Go local backend.
+- **A production deployment / hosting story for Wander** — it is an example app run against a local
+  or dev-hosted loop.
 
 ## Open questions
 
-- The #54 durable-sessions boundary: which Wander must-haves (if any) actually require durable
-  sessions, and are they a `depends_on` rather than in-scope work here?
-- Does the real-browser reconnect proof land as a headless-browser CI lane in this change, or
-  stay a manual gate?
-- What is the concrete must-have web-app feature list once Wander is actually built?
+- The exact must-have feature list is finalized against the real app at build time (that is the
+  point of dogfooding); the spec's seeds are the near-certain core.
+- Playwright vs. a lighter headless-Chromium harness is a build-time toolchain choice — the
+  requirement is "a real browser, network-killed mid-stream, in CI, loud on absence."
 
 ## Reconcile log
 
