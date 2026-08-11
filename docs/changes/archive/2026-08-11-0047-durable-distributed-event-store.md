@@ -2,11 +2,11 @@
 id: 47
 slug: durable-distributed-event-store
 title: Durable / distributed event store — survives restart and is shared across instances
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-10
-updated: 2026-08-10
+updated: 2026-08-11
 depends_on: [46]
 related: [43, 45, 46, 48, 49, 51]
 discovered_from: [45]
@@ -17,7 +17,7 @@ results: docs/results/2026-08-10-durable-distributed-event-store-results.md
 trivial: false
 auto_groomable:
 branch: feat/durable-distributed-event-store
-claimed_at: 2026-08-10T22:30:57Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/50
 blocked_by:
 reconciled: true
