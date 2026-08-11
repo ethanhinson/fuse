@@ -38,6 +38,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopconnect"
+	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/runtime"
@@ -47,8 +48,7 @@ import (
 // configured mode and the observe-call count (so a reconnect sees different behavior than
 // the first open).
 type stateRuntime struct {
-	mode         string
-	terminalCode connect.Code
+	mode string
 
 	mu       sync.Mutex
 	hist     []event.Event
@@ -71,10 +71,6 @@ func (r *stateRuntime) Spawn(ctx context.Context, loopID string, opts runtime.Sp
 // fresh live channel per call (closing it ends that stream), and grows durable history so
 // a reconnect's Attach(fromSeq) replays what earlier passes delivered.
 func (r *stateRuntime) Observe(ctx context.Context, tenant event.TenantID, loopID string) (<-chan event.Event, func(), error) {
-	if r.mode == "terminal" {
-		return nil, nil, connect.NewError(r.terminalCode, errors.New("statesrv: scripted terminal error"))
-	}
-
 	r.mu.Lock()
 	r.observeN++
 	n := r.observeN
@@ -136,6 +132,19 @@ type stateHandle struct{ id string }
 func (h stateHandle) ID() string                     { return h.id }
 func (h stateHandle) Wait() ([]model.Message, error) { return nil, nil }
 
+// terminalHandler wraps a LoopServiceHandler and overrides Observe to return a fixed
+// terminal Connect error, so the SDK sees the terminal code on the WIRE (the real handler
+// remaps a runtime Observe error to CodeInternal, which is transient by D2 — we need the
+// terminal code itself to reach the client to exercise the stop-reconnect path).
+type terminalHandler struct {
+	loopv1connect.LoopServiceHandler
+	code connect.Code
+}
+
+func (t terminalHandler) Observe(ctx context.Context, req *connect.Request[loopv1.ObserveRequest], stream *connect.ServerStream[loopv1.ObserveEvent]) error {
+	return connect.NewError(t.code, errors.New("statesrv: scripted terminal error"))
+}
+
 func terminalCodeFromEnv() connect.Code {
 	switch os.Getenv("TERMINAL_CODE") {
 	case "permission_denied":
@@ -154,10 +163,14 @@ func main() {
 	if mode == "" {
 		mode = "reopen"
 	}
-	rt := &stateRuntime{mode: mode, terminalCode: terminalCodeFromEnv()}
+	rt := &stateRuntime{mode: mode}
 
-	handler := loopconnect.NewHandler(rt).WithKeepalive(time.Hour)
-	path, h := loopv1connect.NewLoopServiceHandler(handler)
+	var svc loopv1connect.LoopServiceHandler = loopconnect.NewHandler(rt).WithKeepalive(time.Hour)
+	if mode == "terminal" {
+		// Wrap so Observe returns the terminal code on the wire (see terminalHandler).
+		svc = terminalHandler{LoopServiceHandler: svc, code: terminalCodeFromEnv()}
+	}
+	path, h := loopv1connect.NewLoopServiceHandler(svc)
 
 	mux := http.NewServeMux()
 	mux.Handle(path, h)

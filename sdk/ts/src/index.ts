@@ -16,6 +16,8 @@
 // resuming from the last-seen seq (no loss / no dup across the reconnect).
 
 import {
+  Code,
+  ConnectError,
   createClient as createConnectClient,
   type Interceptor,
   type Transport,
@@ -105,6 +107,48 @@ export interface ObserveOptions {
    * close / double-abort is a no-op.
    */
   signal?: AbortSignal;
+}
+
+/**
+ * FuseTerminalError is thrown out of {@link Client.observe}'s async iterator when the
+ * stream fails with a TERMINAL Connect code (change 0056, D2) — one the reconnect loop
+ * must NOT retry: `unauthenticated` / `permission_denied` (auth rejected), `not_found`
+ * (unknown loop) or `failed_precondition` (finished loop). It carries the Connect `code`
+ * (a numeric `@connectrpc/connect` `Code`) so an app can render the right affordance
+ * instead of hot-looping on a raw Connect error.
+ */
+export class FuseTerminalError extends Error {
+  /** The terminal Connect `Code` that stopped the observe. */
+  readonly code: Code;
+  constructor(code: Code, message: string) {
+    super(message);
+    this.name = "FuseTerminalError";
+    this.code = code;
+  }
+}
+
+// TERMINAL_CODES is the D2 terminal set — the four Connect codes the loop handler
+// (internal/loopconnect) emits that a reconnect can never recover from:
+//   - Unauthenticated / PermissionDenied — auth rejected or tenant spoof / cross-owner;
+//   - NotFound                            — the loop does not exist for this tenant;
+//   - FailedPrecondition                  — the loop is finished (no longer accepts input).
+// Everything else (a mid-stream network drop, a clean stream end) is TRANSIENT →
+// reconnect, which ports websocket-read-errors-are-not-closeerror to the Connect-stream
+// shape (a post-handshake read/close is a resume signal, not a fault).
+const TERMINAL_CODES: ReadonlySet<Code> = new Set<Code>([
+  Code.Unauthenticated,
+  Code.PermissionDenied,
+  Code.NotFound,
+  Code.FailedPrecondition,
+]);
+
+// terminalCodeOf returns the terminal Connect Code if `err` is a ConnectError whose code
+// is in the terminal set, else undefined (transient → reconnect).
+function terminalCodeOf(err: unknown): Code | undefined {
+  if (err instanceof ConnectError && TERMINAL_CODES.has(err.code)) {
+    return err.code;
+  }
+  return undefined;
 }
 
 /** The completion event kind for an interactive loop (see D5 in the plan). */
@@ -287,9 +331,18 @@ export function createClient(options: ClientOptions): Client {
                   yield toDomainEvent(ev, frame.gap);
                 }
                 // Clean stream end (server closed the tail): fall through to re-open.
-              } catch {
-                // A stream error (post-handshake read/close) is a clean reconnect signal,
-                // not a fault: fall through to re-open Observe(last).
+              } catch (err) {
+                // D2 classification. A TERMINAL Connect code (auth rejected, unknown or
+                // finished loop) can never be recovered by re-observing from `last`, so
+                // STOP the loop and surface a typed FuseTerminalError (the `finally` fires
+                // `closed`). Everything else is a transient post-handshake read/close — a
+                // clean reconnect signal, not a fault (ported from
+                // websocket-read-errors-are-not-closeerror) — so fall through to re-open.
+                const code = terminalCodeOf(err);
+                if (code !== undefined) {
+                  const detail = err instanceof ConnectError ? err.rawMessage : String(err);
+                  throw new FuseTerminalError(code, `fuse observe terminated: ${detail}`);
+                }
               }
               // Re-open from the last-seen seq. The server replays history since `last`
               // then live-tails; the watermark dedup above drops any overlap frame.
