@@ -2,7 +2,7 @@
 id: 52
 slug: tool-identity-propagation
 title: Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-11
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/tool-identity-propagation
 pr: https://github.com/ethanhinson/fuse/pull/55
 blocked_by:
-claimed_at: 2026-08-11T20:29:13Z
+claimed_at: 
 reconciled: true
 ---
 
