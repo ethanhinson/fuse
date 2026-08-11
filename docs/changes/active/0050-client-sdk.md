@@ -7,8 +7,8 @@ priority: medium
 type: feat
 created: 2026-08-10
 updated: 2026-08-11
-depends_on: [48, 49]
-related: [45, 48, 49]
+depends_on: [48, 49, 55]
+related: [45, 48, 49, 55]
 discovered_from: [45]
 adrs: [26, 32]
 spec: docs/superpowers/specs/2026-08-11-client-sdk-design.md
@@ -56,18 +56,20 @@ SDK alongside the Go one**, and the reason the cross-language wire contract is i
 
 See the linked spec for the full design; at proposal altitude:
 
-- **Versioned wire envelope, generated from Go.** A TS client and a Go server don't share types, so
-  the `loop.*` envelope + `event.Event` shape is pinned as a **versioned contract**; the TS types +
-  `wire_version` constant are **generated from the Go `internal/event` + `internal/loopserver`
-  types** (one source of truth, drift-proof). This is the piece change 48 deferred to #50.
+- **Versioned wire envelope comes from change 55.** A TS client and a Go server don't share types, so
+  the `loop.*` envelope + `event.Event` shape must be a **versioned, schema-first contract**. That
+  contract is now owned by **change 55** (the gRPC/protobuf transport, successor to change 48,
+  superseding ADR-0032) — #50 **depends on 55** and generates both SDKs' clients from 55's IDL,
+  rather than hand-generating TS types from Go structs over 48's JSON wire.
 - **Runtime-parity, not "transparent."** The network is not invisible: both SDKs **surface** the
   event stream, the replay cursor (last `event.Seq`), gap/reconnect, and the **explicit
   park/completion event** as first-class — a client cannot infer "done" or "safe to reconnect" from
   the *shape* of a persistent loop's stream.
-- **Extract change 48's WS/HTTP client** into the Go SDK as the single Go remote impl
-  (subscribe-before-replay + dedup-at-watermark + gap-driven re-observe, promoted to library-grade).
-  The TS SDK **re-implements** the same discipline against the same versioned envelope — kept honest
-  by the contract, not by shared code.
+- **Remote client over change 55's gRPC wire.** The Go SDK's remote backend and the TS SDK both drive
+  change 55's transport, generating their stubs from its IDL. The reconnect discipline
+  (subscribe-before-replay + dedup-at-watermark + gap-driven re-observe) is preserved over 55's
+  streaming; if 55 keeps a browser bridge (a 55 open question), the TS SDK targets whatever browser
+  path 55 lands. (Change 48's WS/HTTP client is superseded by 55, not extracted.)
 - **Credential seam, pass-through now.** Each constructor takes an identity/tenant seam that forwards
   `tenant_id` present-but-unenforced today (matching change 48) and becomes the real auth carrier when
   change 49 lands — so 49 adds no breaking change to either SDK surface.
@@ -89,7 +91,8 @@ See the linked spec for the full design; at proposal altitude:
 - Go package home/name (`sdk/` vs `pkg/fusesdk`) and TS package layout (npm workspace, bundler,
   publish target) — plan-time; the Go package must be importable from outside the module, never under
   `internal/`.
-- The Go→TS codegen mechanism and where the `wire_version` constant lives so both sides read one value.
+- How the SDKs consume change 55's IDL (generated stubs, package boundaries) and the browser path 55
+  settles on — re-validated at the build reconcile pass once 55 is designed.
 - Exact completion-signal API shape in each language (typed event on the stream, a handle await, or
   both) — the requirement (completion observable without stream-shape inference) is fixed; the surface
   is a plan-time call.

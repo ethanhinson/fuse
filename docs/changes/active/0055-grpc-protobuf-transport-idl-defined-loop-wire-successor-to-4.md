@@ -8,9 +8,9 @@ type: feat
 created: 2026-08-11
 updated: 2026-08-11
 depends_on: []
-related: []
+related: [48, 50]
 discovered_from: [50]
-adrs: []
+adrs: [32]
 spec:
 plan:
 results:
@@ -25,6 +25,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| ADRs | [ADR-0032](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0032-binding-3-websocket-session-http-replay-shared-dispatch.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

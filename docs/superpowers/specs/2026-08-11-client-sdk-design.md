@@ -49,13 +49,13 @@ scope *now* rather than deferred to a later SDK.
    seam** — `StartLoop` / `Send` / `Observe` / `Attach`, keyed on `loopID`. The term is
    *Runtime-parity*; the word "transparent" is deliberately avoided in the spec and in code doc
    comments (the network is not invisible — see decision 4).
-3. **A versioned, language-neutral wire envelope is IN scope** (this is the change from the Go-only
-   first sketch). A TS client and a Go server do not share types the way two Go peers do, so the
-   `loop.*` envelope + `event.Event` shape must be pinned as a **versioned contract** both SDKs
-   target. **Source of truth = the Go types**: the TS types (and a wire-version constant) are
-   **generated from the Go `internal/event` + `internal/loopserver` types** via a codegen step, so
-   the envelope has one home and TS cannot silently drift from the server. This mirrors the "one
-   implementation" discipline #48 used server-side.
+3. **The versioned wire contract is owned by change 55, and #50 depends on it.** A TS client and a Go
+   server do not share types the way two Go peers do, so the `loop.*` envelope + `event.Event` shape
+   must be a **versioned, schema-first contract** both SDKs target. Rather than generate TS types from
+   Go structs over #48's JSON wire, that contract is now a **separate change (#55)** — a gRPC/protobuf
+   transport, successor to #48, **superseding ADR-0032**. #50 `depends_on: [55]` and both SDKs
+   generate their clients from #55's IDL. (This replaces the Go-only sketch's "codegen from Go structs
+   over #48's JSON wire"; the schema IDL is now the single source of truth.)
 4. **One API, mechanics surfaced.** The method surface is identical across backends *and* languages,
    **but** the event stream, the replay cursor (last `event.Seq`), gap/reconnect, and the **explicit
    park/completion event** are *first-class* — because a client **cannot** infer "this exchange is
@@ -64,11 +64,11 @@ scope *now* rather than deferred to a later SDK.
    double-delivers events landing between subscribe and replay
    (`replay-live-handoff-dedup-at-watermark`). Both SDKs are *honest* about the persistent-loop
    lifecycle rather than papering over it.
-5. **Extract #48's WS/HTTP client into the Go SDK** as the single Go remote-backend implementation —
-   one home for the dedup-at-watermark + gap-driven re-observe discipline, matching the "one
-   implementation, two transports" pattern #48 already used server-side. The TS SDK **re-implements**
-   the same reconnect/dedup discipline in TS against the *same versioned envelope* (it cannot import
-   Go); the envelope contract is what keeps the two client implementations honest, not shared code.
+5. **Both SDKs drive change 55's gRPC transport**, generating their stubs from its IDL — the Go remote
+   backend and the TS client alike. The reconnect discipline (subscribe-before-replay +
+   dedup-at-watermark + gap-driven re-observe) is preserved over #55's streaming model. The generated
+   contract, not shared code, is what keeps the Go and TS clients honest (TS cannot import Go).
+   (#48's JSON WS/HTTP client is superseded by #55, not extracted into the SDK.)
 6. **Credential seam, pass-through now.** Each SDK's constructor takes an identity/tenant seam that
    today forwards `tenant_id` on the wire **present-but-unenforced** (matching #48), and becomes the
    real auth carrier when #49 lands. The surface is designed once, in both languages; #49 adds no
@@ -87,8 +87,9 @@ of two backends** picked by the constructor:
 - **Local backend** — a thin adapter holding an in-process `runtime.Runtime` (built through the same
   composition root `cmd/fuse` uses), forwarding each SDK call directly. No network; the SDK call *is*
   the seam call.
-- **Remote backend** — the **extracted #48 client** (decision 5), promoted from test-facing to
-  library-grade: WebSocket for the full session + the stateless HTTP endpoint for `Attach(from)`.
+- **Remote backend** — drives **change 55's gRPC transport** (decision 5), generating its stub from
+  55's IDL: the full session (`StartLoop` / `Send` / `Observe` + the event tail) + replay `Attach(from)`
+  over 55's streaming.
 
 Both satisfy one internal backend interface; the public client is backend-agnostic. The constructor
 switch is the *only* place local-vs-remote is named.
@@ -97,23 +98,25 @@ switch is the *only* place local-vs-remote is named.
 
 Add a TS/JS package (home/tooling — npm workspace layout, bundler — decided at plan time) presenting
 the **same Runtime-parity surface** — `startLoop` / `send` / `observe` / `attach` — **remote-only**
-over WS + HTTP. It targets the versioned wire envelope (below), tracks the last `Seq`, and
+over change 55's transport. It consumes 55's generated TS stubs, tracks the last `Seq`, and
 re-implements the **subscribe-before-replay + dedup-at-watermark + gap-driven re-observe** reconnect
 discipline in TS. It surfaces the same first-class mechanics (event stream, replay cursor, explicit
-completion) as the Go SDK. Its WS layer must treat **every** post-handshake read/close as a clean
-shutdown and reconnect from `lastSeq` (the browser-side analogue of learning
-`websocket-read-errors-are-not-closeerror`). No local backend — a browser has no in-process
-`Runtime`.
+completion) as the Go SDK. Its connection layer must treat **every** post-handshake read/close as a
+clean shutdown and reconnect from `lastSeq` (the browser-side analogue of learning
+`websocket-read-errors-are-not-closeerror`). **Browser reach depends on 55:** gRPC has no native
+browser support, so whether the browser path is grpc-web + a proxy or a WS/JSON bridge is a #55 open
+question the TS SDK inherits. No local backend — a browser has no in-process `Runtime`.
 
-### The versioned wire envelope (decision 3)
+### The versioned wire contract (decision 3) — owned by change 55
 
-The `loop.*` request/response envelope and the `event.Event` shape are pinned as a **versioned
-contract** (a `wire_version` constant + the typed shapes). **Codegen from the Go types is the source
-of truth**: a build step emits the TS type definitions (and the version constant) from
-`internal/event` + `internal/loopserver`, so the Go server, the Go SDK, and the TS SDK all speak one
-envelope and the TS side cannot silently drift. The Go SDK reuses the Go types directly; the TS SDK
-consumes the generated definitions. Envelope evolution is versioned from day one, so a later
-independently-deployed client/server can negotiate.
+The `loop.*` request/response envelope and the `event.Event` shape are pinned as a **versioned,
+schema-first contract** — but that contract is **not built in #50**. It is change **#55** (a
+gRPC/protobuf transport, successor to #48, superseding ADR-0032): #55 defines the `loop.*` protocol +
+`event.Event` in an IDL, stands up the transport, and emits the generated Go and TS stubs. #50
+`depends_on: [55]` and consumes those generated stubs — the Go SDK's remote backend and the TS SDK
+both target #55's wire. This is a deliberate reversal of the earlier "codegen from Go structs over
+#48's JSON wire" sketch: the human chose to reopen the transport decision and let a schema IDL be the
+single source of truth, accepting that #50 (and Wander) now waits on #55.
 
 ### Surfacing the persistent-loop mechanics (decision 4)
 
@@ -150,39 +153,45 @@ SDK proves it is portable across *languages*; and the versioned wire envelope gi
 to fill in both languages.
 
 **Costs / gives up.** This is materially larger than a Go-only #50: two client implementations of the
-reconnect/dedup discipline (Go extracted + TS re-implemented), a codegen pipeline Go→TS with its own
-CI/build wiring, and a JS package's toolchain (bundling, publishing) the repo does not have today.
-The two client implementations must be kept honest by the shared *contract* (codegen + envelope
-version), since they share no code — a divergence risk that did not exist in the Go-only sketch. The
-credential seam is a shape, not enforcement: until #49 lands, both remote backends are
-single-trust-domain (a non-goal carried from #48/#45), and the spec must not imply otherwise. #50
-cannot ship until *both* SDKs and the envelope are done — a bigger, slower unit than the Go-only cut.
+reconnect/dedup discipline (Go + TS), each generated from #55's IDL, and a JS package toolchain
+(bundling, publishing) the repo does not have today. The two clients are kept honest by #55's
+generated *contract*, since they share no code. **The dominant cost is now the #55 dependency:** the
+SDKs cannot be built until a brand-new, undesigned gRPC transport lands — so #50 and the Wander demo
+are gated on #55 (plus #49). Had the SDKs targeted #48's existing JSON wire (codegen from Go structs),
+#50 could have proceeded once #49 landed; the IDL-first choice trades that near-term path for a
+single schema source of truth and no later wire migration. The credential seam is a shape, not
+enforcement: until #49 lands, both remote backends are single-trust-domain (a non-goal carried from
+#48/#45).
 
-**Dependencies.** `depends_on: [48, 49]`. #48 is **done** (the transport + the client to extract, and
-the Go types the envelope is generated from). #49 is **proposed / needs-brainstorm** and gates
-*build* — the reconcile pass re-validates this spec against #49's actual identity decision at build
-time; if #49's credential model differs from the pass-through seam sketched here, reconcile adjusts
-the seam (in both languages), not the rest of the design.
+**Dependencies.** `depends_on: [48, 49, 55]`. #48 is **done** (the transport #55 supersedes). #49 is
+**proposed / needs-brainstorm** and gates *build* — the reconcile pass re-validates this spec against
+#49's actual identity decision at build time. **#55** (the gRPC/protobuf transport) is **newly minted
+and undesigned**, and now gates the whole SDK: both SDKs generate against its IDL, so #50 cannot build
+until #55's wire exists. This is the cost of the human's decision to reopen the transport via an IDL
+rather than ship the SDKs on #48's JSON wire — Wander is now downstream of #55 as well as #49.
 
 ## Out of scope
 
-- **A Python (or mobile-native) SDK** — a later change; #50 ships Go + TS/JS. The versioned envelope
-  built here is exactly what makes those cheap later.
+- **A Python (or mobile-native) SDK** — a later change; #50 ships Go + TS/JS. #55's IDL is exactly
+  what makes those cheap later.
+- **The gRPC/protobuf transport + IDL itself** — change #55. #50 *consumes* #55's generated stubs; it
+  does not define the wire or the transport.
 - **The auth *mechanism*** (tokens / mTLS / OIDC) and enforcement — change #49. #50 defines only the
   credential *seam* the mechanism plugs into, in both languages.
 - **The Wander app itself** — #50 ships the SDK Wander consumes, not Wander. Wander is the motivating
   consumer and the acceptance target, not a deliverable of this change.
 - **Any change to the `Runtime` seam** — the SDKs are clients *over* the seam.
 - **Observability emission** (OTEL / `/metrics`) — change #51.
-- **TLS / deployment topology / load-balancing** — operational concerns beneath change #48's transport.
+- **TLS / deployment topology / load-balancing** — operational concerns beneath the transport (#48 → #55).
 
 ## Open questions (for plan-time reconcile)
 
 - Go package home/name (`sdk/` vs `pkg/fusesdk`) and TS package layout (npm workspace, bundler,
   publish target) — plan-time; the Go package must be importable from outside the module and never
   under `internal/`.
-- The codegen mechanism Go→TS (a tool/library vs. a small bespoke generator) and where the
-  `wire_version` constant lives so Go and TS read the same value.
+- How the SDKs consume #55's generated stubs (package boundaries, versioning), and the browser path
+  #55 settles on (grpc-web + proxy vs. a WS/JSON bridge) that the TS SDK inherits — re-validated once
+  #55 is designed.
 - The precise completion-signal API in each language (a typed event on the stream, a handle await, or
   both) — the *requirement* (completion observable without stream-shape inference) is fixed; the
   surface is a plan-time call.
