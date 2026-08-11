@@ -1,12 +1,12 @@
 # Backlog
 
-**52 changes** — 🟡 5 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 39 done · 🗑️ 6 killed
+**52 changes** — 🟡 5 proposed · ⚪ 1 deferred · ✅ 40 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0048](active/0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | `medium` | `feat` | ⏳ waiting on #47 — needs your merge |
+| [0048](active/0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | `medium` | `feat` | build-ready |
 | [0049](active/0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | `medium` | `feat` | ⏳ waiting on #48 — not yet built |
 | [0050](active/0050-client-sdk.md) | Client SDK — thin-client library, same API local-or-remote | `medium` | `feat` | ⏳ waiting on #48 — not yet built |
 | [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + Loki, as a projection over the event stream | `medium` | `feat` | needs-brainstorm |
@@ -18,16 +18,9 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0047](active/0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | `medium` | `feat` | [#50](https://github.com/ethanhinson/fuse/pull/50) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
-  0046 --> 0047
   0046 --> 0048
   0047 --> 0048
   0048 --> 0049
@@ -38,13 +31,15 @@ graph TD
   0049 --> 0052
   0012:::done
   0046:::done
+  0047:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (45)</summary>
+<details><summary>✅🗑️ Archive — done + killed (46)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0047](archive/2026-08-11-0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | 2026-08-11 |
 | [0046](archive/2026-08-10-0046-multi-loop-host-deglobalize-event-store.md) | De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id | 2026-08-10 |
 | [0045](archive/2026-08-10-0045-runtime-interface-and-binding.md) | Runtime interface + second binding — prove the platform boundary is emergent | 2026-08-10 |
 | [0044](archive/2026-08-10-0044-spawn-handle-async.md) | Spawn handle-async — location-transparent spawning behind a handle-returning contract | 2026-08-10 |
@@ -61,7 +56,6 @@ graph TD
 | [0023](archive/2026-08-08-0023-agent-blackboard.md) | Shared result blackboard for inter-agent communication | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0021](archive/2026-08-08-0021-mcp-resource-subscriptions.md) | MCP resource subscriptions — push-based updates | 2026-08-08 |
-| [0020](archive/2026-08-08-0020-mcp-progress-streaming.md) | MCP `$/progress` notifications and streaming tool results | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
 | [0016](archive/2026-08-05-0016-one-shot-cli-approvals.md) | Remove the AlwaysApprove one-shot bypass; surface approvals at the CLI | 2026-08-05 |
 | [0011](archive/2026-08-05-0011-deep-research.md) | Deep Research Mode — Web Search + Fan-out Synthesis | 2026-08-05 |
@@ -71,6 +65,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 24 done |
+| [2026-08](archive/) | 25 done |
 
 </details>
