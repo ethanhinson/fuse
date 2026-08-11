@@ -2,7 +2,7 @@
 id: 59
 slug: mcp-full-binding-wiring-e2e-tested
 title: Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths
-status: in-progress
+status: implemented
 priority: critical
 type: feat
 created: 2026-08-11
@@ -13,12 +13,12 @@ discovered_from: [52]
 adrs: [36]
 spec: docs/superpowers/specs/2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md
 plan: docs/superpowers/plans/2026-08-11-mcp-full-binding-wiring-e2e-tested-plan.md
-results:
+results: docs/results/2026-08-11-mcp-full-binding-wiring-e2e-tested-results.md
 trivial: false
 auto_groomable:
 branch: feat/mcp-full-binding-wiring-e2e-tested
-claimed_at: 2026-08-11T21:38:04Z
-pr:
+claimed_at: 2026-08-11T22:43:34Z
+pr: https://github.com/ethanhinson/fuse/pull/56
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md) |
 | Plan | [2026-08-11-mcp-full-binding-wiring-e2e-tested-plan.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-full-binding-wiring-e2e-tested/docs/superpowers/plans/2026-08-11-mcp-full-binding-wiring-e2e-tested-plan.md) |
+| Results | [2026-08-11-mcp-full-binding-wiring-e2e-tested-results.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-full-binding-wiring-e2e-tested/docs/results/2026-08-11-mcp-full-binding-wiring-e2e-tested-results.md) |
+| PR | [#56](https://github.com/ethanhinson/fuse/pull/56) |
 | ADRs | [ADR-0036](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0036-tool-authz-delegated-downstream-rfc8693-egress-seam.md) |
 <!-- docket:artifacts:end -->
 
