@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/networked-runtime-binding
 pr:
 blocked_by:
-reconciled: false
-claimed_at: 2026-08-11T02:04:34Z
+reconciled: true
+claimed_at: 2026-08-11T02:10:00Z
 ---
 
 ## Artifacts
@@ -78,3 +78,46 @@ protocol** — not a new protocol. See the linked spec for the full design; at p
 - **Observability emission** (OTEL / `/metrics`) — change 51.
 - **TLS / deployment topology / cross-instance load-balancing** — operational concerns on top of the
   transport.
+
+## Reconcile log
+
+### 2026-08-11 — build reconcile (claim → plan)
+
+Reconciled against `origin/main` (tip `d6d3e77`), the spec, related changes 45/46/47, and current code.
+Design is **fully valid**; scope unchanged; no obsolescence. Open questions from the spec resolved:
+
+- **Dependency #47 (PR #50) has MERGED into `origin/main`** — the durable EventStore + registry seam
+  (`DurableStore`/`Registry` on `runtime.Deps`, selected via `selectDurableBackend` in
+  `cmd/fuse/loop_server.go`) is present. The spec's "if 47 slips, 48 waits" contingency is closed:
+  47 is `done`. Binding #3 resolves loops through the same durable seam the loop-server already uses.
+- **Extraction target confirmed** — `internal/loopserver/server.go` couples dispatch to stdio via
+  `enc *json.Encoder` / `dec *json.Decoder`, with the `encMu` shared-encoder mutex serializing
+  responses against id-less `loop.event` notifications. `serveObserve` implements subscribe-before-replay
+  + dedup-at-watermark (`ev.Seq <= last`) + gap detection (`ev.Seq > prev+1 && prev != 0`, ADR-0025
+  drop-newest). This is exactly the discipline to preserve verbatim. **Structuring decision (open q1):**
+  keep the extracted core inside `internal/loopserver` with a `transport` frame-read/write abstraction
+  and `stdio.go` + `net.go` transports (over a new sibling package) — least churn, keeps binding #2
+  behaviorally identical. Actual method params today are `from_seq` / `tenant` (not the spec's prose
+  `from`/`tenant_id`) — the wire is inherited as-is.
+- **Composition root reuse** — the new subcommand calls `buildLoopServerRuntimeDeps(...)` +
+  `runtime.New(deps)` identically to `runLoopServer` (`cmd/fuse/loop_server.go`), then serves over
+  WS/HTTP instead of `loopserver.NewServer(stdin, stdout, rt)`. Per-loop `BuildAgent` factory (change
+  46) is inherited unchanged; N concurrent loops stay isolated.
+- **Wire format (D5)** — `event.Event` (`internal/event/event.go`: `Seq uint64` → `json:"seq"`, full
+  existing encoding) and `event.TenantID` (`string`) cross unchanged. No new envelope.
+- **HTTP replay (open q2)** — maps directly to `rt.Attach(ctx, tenant, loopID, from) ([]event.Event, error)`.
+  Stateless `GET /loops/{id}/events?from=<seq>` (+ optional tenant carrier), returning the durable
+  history JSON array. No `loop.start`/`loop.send` on HTTP (D3).
+- **Dependency (D6)** — `github.com/coder/websocket` is NOT in `go.mod` (Go 1.26.5); latest v1.8.15 is
+  fetchable from the proxy. Real new dep, as the spec anticipated.
+- **Testing (open q3)** — the in-process WS client↔server test MUST drive live + replay concurrently
+  (force an append into the subscribe→replay gap) per the `replay-live-handoff-dedup-at-watermark`
+  learning; a sequential test cannot see the double-delivery. The WS client read pump must route id-less
+  `loop.event` notification frames distinctly from id-keyed responses (`mcp-read-pumps-drop-inbound-notifications`
+  learning). Live verification, per project policy, uses a cheap scripted `LLM_GATEWAY_URL` double —
+  never Claude/Anthropic.
+- **ADR (open q5)** — the binding-#3 transport decision (WS-full-session + thin-HTTP-replay, shared
+  core, `coder/websocket`) is recorded at Step 6, relating to ADR-0028 (JSON-RPC-not-MCP) and the
+  multi-loop / durable-store ADRs (0030/0031).
+
+No follow-up work surfaced that would warrant a new change (`auto_capture` is disabled anyway).
