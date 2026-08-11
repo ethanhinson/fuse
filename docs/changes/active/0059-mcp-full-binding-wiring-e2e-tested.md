@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/mcp-full-binding-wiring-e2e-tested
-claimed_at: 2026-08-11T21:33:13Z
+claimed_at: 2026-08-11T21:37:06Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -68,3 +68,35 @@ Filed 2026-08-11 immediately after merging #52 (PR #55), at the human's explicit
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-11 — reconcile (docket-implement-next)
+
+Reconciled against current `origin/main` (tip `fab812c`, the merge of PR #55 = change #52
+tool-identity-propagation), cited/recent ADRs, and the `related` changes. **Verdict: build-ready
+as specified, no scope change.** The spec was groomed against merged #52 on `origin/main` and
+remains accurate to it.
+
+- **#52 infrastructure confirmed present on the branch base (`origin/main`)** — the whole engine the
+  spec assumes exists and matches the spec's quotes:
+  - `internal/toolidentity/` (`seam.go` CredentialSource, `context.go` `WithPrincipal`/`PrincipalFrom`,
+    `exchange.go` built-in HS256 STS, `broker.go` credential Broker).
+  - `internal/loopauth/verifier.go` (#49 `Verifier` → `loopauth.Principal{Tenant, Subject}`).
+  - `cmd/fuse/loop_serve_net.go` (`buildLoopVerifier`, the Connect auth edge) and
+    `cmd/fuse/loop_server.go` (`buildLoopServerRuntimeDeps`, per-loop isolation from #46 —
+    still MCP-blind, exactly the gap this change closes).
+  - `cmd/fuse/shell.go:77-84` — the inline `mcpOpts` + `buildToolIdentitySource(cfg)` +
+    `mcp.WithCredentialSource` + `logToolIdentityPosture` block the shared attach helper refactors.
+  - `permissions` `TargetMediator` seam (#52 Task 5) and complete-mediation wiring (round-2 fix).
+- **Note on tooling:** an initial code-scan read the repo's *stale working-tree files* (a `main`
+  checkout predating the #52/#55 merge, so `toolidentity/` was absent on disk) and wrongly reported
+  the infrastructure missing. Re-verified directly against `origin/main` via `git show`/`git ls-tree` —
+  everything is present. The feature branch cuts from `origin/main`, so the base is correct.
+- **`related` movement, no impact on scope:** #50 client-sdk (PR #54) merged; #56
+  sdk-viability-hardening is now build-ready behind #59 in the queue; #60 already captures the
+  live-Tavily backend follow-up the spec defers. No new constraint folds in.
+- **ADRs:** consumes ADR-0036 (delegated tool authz egress seam) + ADR-0034 (edge-enforced tenancy);
+  ADR-0036's own "Costs/limits" names the shell-only wiring + single-tenant `DefaultTenant` STS with a
+  follow-up TODO — precisely this change. Likely no new ADR (spec §ADRs); will record at build only if
+  the principal-threading seam or the shared-helper boundary encodes a durable decision.
+- Auto-capture disabled (`AUTO_CAPTURE_ENABLED=false`) — no stubs minted; nothing material surfaced
+  beyond what #60 already captures.
