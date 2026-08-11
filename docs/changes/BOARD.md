@@ -1,12 +1,6 @@
 # Backlog
 
-**56 changes** — 🟢 1 in progress · 🟡 3 proposed · ⚪ 1 deferred · ✅ 45 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0052](active/0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | `medium` | `feat` | [spec](../superpowers/specs/2026-08-11-tool-identity-propagation-design.md) | `feat/tool-identity-propagation` |
+**56 changes** — 🟡 3 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 45 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (3)
 
@@ -21,6 +15,12 @@
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0052](active/0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | `medium` | `feat` | [#55](https://github.com/ethanhinson/fuse/pull/55) |  |
 
 ```mermaid
 graph TD
