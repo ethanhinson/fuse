@@ -10,14 +10,14 @@ updated: 2026-08-11
 depends_on: [48]
 related: [45, 46, 47, 48, 50, 51, 53]
 discovered_from: [45, 47]
-adrs: []
+adrs: [34]
 spec: docs/superpowers/specs/2026-08-11-auth-multi-tenancy-design.md
 plan: docs/superpowers/plans/2026-08-11-auth-multi-tenancy-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/auth-multi-tenancy
-claimed_at: 2026-08-11T07:16:47Z
+claimed_at: 2026-08-11T07:50:11Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-11-auth-multi-tenancy-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-auth-multi-tenancy-design.md) |
 | Plan | [2026-08-11-auth-multi-tenancy-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auth-multi-tenancy/docs/superpowers/plans/2026-08-11-auth-multi-tenancy-plan.md) |
+| ADRs | [ADR-0034](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0034-edge-enforced-auth-multi-tenancy-loop-ownership.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
