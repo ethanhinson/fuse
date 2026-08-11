@@ -13,7 +13,6 @@ package loopserver
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,27 +66,29 @@ func (t *wsTransport) encode(v any) error {
 	return t.c.Write(t.ctx, websocket.MessageText, b)
 }
 
-// readRequest reads one discrete WS message and unmarshals it into a req frame. A
-// clean client close is reported as io.EOF (via the io.EOF the core's Serve loop
-// checks) so the core ends the session without error.
+// readRequest reads one discrete WS message and unmarshals it into a req frame. ANY
+// terminating read error is reported as io.EOF (the sentinel the core's Serve loop
+// compares against, err == io.EOF, to return nil): a WebSocket connection cannot be
+// resumed after a read error — the framing stream is desynchronized — so every
+// post-handshake read failure is end-of-session, whether it is a clean close frame, an
+// abnormal peer drop (TCP RST / half-open: Conn.Read returns io.ErrUnexpectedEOF or a
+// *net.OpError, never a websocket.CloseError), a race with our own Close
+// (net.ErrClosed), or a cancelled/expired context. This is the WS analogue of stdio's
+// fail-fast, but the clean WS outcome is EOF/return-nil rather than a parse-error frame.
 //
-// On a malformed message this emits ONE null-id parse-error frame (mirroring the
-// stdio transport's fail-fast policy and reusing the shared parseErrorFrame builder
-// so the frame is byte-identical), then returns a non-EOF error the core surfaces by
-// returning. Unlike stdio there is no streaming decoder that must resync — WS frames
-// are message-delimited — but the session is still torn down on a corrupt frame,
-// matching binding #2's contract.
+// A MALFORMED-but-readable message is a DIFFERENT path: Read returns bytes
+// successfully and the json.Unmarshal below fails. That is not a read error, so it is
+// unaffected — it still emits ONE null-id parse-error frame (mirroring the stdio
+// transport's fail-fast policy and reusing the shared parseErrorFrame builder so the
+// frame is byte-identical), then returns a non-EOF error the core surfaces by
+// returning, tearing down the session, matching binding #2's contract.
 func (t *wsTransport) readRequest(ctx context.Context) (req, error) {
 	_, data, err := t.c.Read(ctx)
 	if err != nil {
-		// A clean or abnormal close ends the read loop. Normalize any close (and a
-		// cancelled context) to io.EOF so the core's Serve loop returns nil, matching
-		// stdio's clean-EOF path. The core compares err == io.EOF exactly, so we must
-		// return io.EOF itself. Non-close read errors are surfaced as-is.
-		if isWSClosed(err) || ctx.Err() != nil {
-			return req{}, io.EOF
-		}
-		return req{}, fmt.Errorf("loopserver: ws read: %w", err)
+		// Any read error after the handshake ends the session; normalize it to the
+		// io.EOF sentinel the core compares exactly so Serve returns nil (clean
+		// shutdown), matching stdio's clean-EOF path.
+		return req{}, io.EOF
 	}
 	var r req
 	if err := json.Unmarshal(data, &r); err != nil {
@@ -95,18 +96,6 @@ func (t *wsTransport) readRequest(ctx context.Context) (req, error) {
 		return req{}, fmt.Errorf("loopserver: ws decode: %w", err)
 	}
 	return r, nil
-}
-
-// isWSClosed reports whether err indicates the WebSocket connection has closed
-// (either side), so the read loop can end cleanly.
-func isWSClosed(err error) bool {
-	var ce websocket.CloseError
-	if errors.As(err, &ce) {
-		return true
-	}
-	// Dial/Accept teardown and abnormal closes surface as generic errors; treating a
-	// net-closed read as EOF keeps ServeWS returning nil on client drop.
-	return errors.Is(err, context.Canceled)
 }
 
 // ServeWS runs one full loop.* JSON-RPC session over a single WebSocket connection

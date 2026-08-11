@@ -439,6 +439,101 @@ func TestWSConcurrentReattachDedup(t *testing.T) {
 	}
 }
 
+// --- Test C: abnormal client close is a clean EOF shutdown -----------------------
+
+// TestWSAbnormalCloseIsCleanShutdown proves that an ABNORMAL client disconnect (the
+// underlying TCP conn closed WITHOUT a WebSocket close handshake, via CloseNow) makes
+// ServeWS return nil, not a wrapped read error. On such a drop the server's Conn.Read
+// never sees a websocket.CloseError — it gets the raw io.ErrUnexpectedEOF / *net.OpError
+// off the truncated framing read — so a classifier that only matches CloseError (or
+// only context.Canceled) misclassifies a routine peer drop as a fatal Serve error. Any
+// terminating read after the handshake must end the session cleanly as io.EOF.
+func TestWSAbnormalCloseIsCleanShutdown(t *testing.T) {
+	r := &cancelSignalRuntime{
+		loopID:   "loop-abnormal",
+		live:     make(chan event.Event, 1),
+		hist:     []event.Event{{Seq: 1, Kind: event.KindTurnStart}},
+		released: make(chan struct{}),
+	}
+	_, conn, done := serveOneWS(t, r)
+	ctx := context.Background()
+	cl := newWSClient(ctx, conn)
+
+	// Establish an observe so the server session is actively blocked in readRequest.
+	f := cl.call(t, "loop.observe", observeParams{LoopID: "loop-abnormal"})
+	if f.Error != nil {
+		t.Fatalf("observe error: %+v", f.Error)
+	}
+	_ = cl.nextEvent(t) // drain the one replayed note
+
+	// ABNORMAL close: tear down the underlying TCP conn with NO close handshake. The
+	// server's next Read yields a raw io.ErrUnexpectedEOF / *net.OpError, never a
+	// websocket.CloseError.
+	if err := conn.CloseNow(); err != nil {
+		t.Fatalf("CloseNow: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ServeWS returned %v on abnormal close, want nil (clean EOF shutdown)", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ServeWS did not return after abnormal client close")
+	}
+}
+
+// TestWSMidSessionCancelIsCleanShutdown proves that cancelling the session context
+// mid-read ends the session cleanly (io.EOF -> nil), covering context.Canceled /
+// context.DeadlineExceeded read errors as end-of-session rather than fatal.
+func TestWSMidSessionCancelIsCleanShutdown(t *testing.T) {
+	r := &cancelSignalRuntime{
+		loopID:   "loop-cancel",
+		live:     make(chan event.Event, 1),
+		hist:     []event.Event{{Seq: 1, Kind: event.KindTurnStart}},
+		released: make(chan struct{}),
+	}
+	done := make(chan error, 1)
+	sctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		c, err := websocket.Accept(w, req, nil)
+		if err != nil {
+			done <- err
+			return
+		}
+		// Drive Serve under the cancellable session context, not req.Context().
+		done <- ServeWS(sctx, c, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	url := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.Dial(context.Background(), url, nil)
+	if err != nil {
+		t.Fatalf("ws dial: %v", err)
+	}
+	defer conn.CloseNow()
+	cl := newWSClient(context.Background(), conn)
+
+	f := cl.call(t, "loop.observe", observeParams{LoopID: "loop-cancel"})
+	if f.Error != nil {
+		t.Fatalf("observe error: %+v", f.Error)
+	}
+	_ = cl.nextEvent(t)
+
+	// Cancel the session context mid-session: the server's Read returns a context error.
+	cancel()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ServeWS returned %v on mid-session cancel, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ServeWS did not return after mid-session context cancel")
+	}
+}
+
 // --- Goroutine cleanup: client drop tears down the server session ----------------
 
 // cancelSignalRuntime is a runtime double whose Observe cancel() closes a channel
