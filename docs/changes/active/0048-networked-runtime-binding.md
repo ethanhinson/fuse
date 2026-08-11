@@ -12,7 +12,7 @@ related: [45, 46, 47]
 discovered_from: [45]
 adrs: []
 spec: docs/superpowers/specs/2026-08-11-networked-runtime-binding-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-11-networked-runtime-binding.md
 results:
 trivial: false
 auto_groomable:
@@ -29,6 +29,7 @@ claimed_at: 2026-08-11T02:10:00Z
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-11-networked-runtime-binding-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-networked-runtime-binding-design.md) |
+| Plan | [2026-08-11-networked-runtime-binding.md](https://github.com/ethanhinson/fuse/blob/feat/networked-runtime-binding/docs/superpowers/plans/2026-08-11-networked-runtime-binding.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
