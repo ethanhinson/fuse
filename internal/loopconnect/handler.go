@@ -33,6 +33,14 @@ import (
 type Handler struct {
 	rt runtime.Runtime
 
+	// baseCtx is the LOOP-LIFETIME context StartLoop launches loops under. It is
+	// decoupled from the per-unary-request context on purpose: a unary StartLoop
+	// request context is cancelled the instant the RPC returns its loop_id, so tying
+	// the loop's Run to it would kill the loop before its first turn completes. baseCtx
+	// is the server's lifetime (set by the composition root via WithBaseContext); its
+	// cancellation is the correct loop-shutdown signal. Defaults to context.Background.
+	baseCtx context.Context
+
 	// keepalive is the idle Observe heartbeat interval (Task 4). Zero uses the
 	// package default (defaultKeepalive); a test injects a short interval.
 	keepalive time.Duration
@@ -41,9 +49,20 @@ type Handler struct {
 // compile-time assertion that Handler satisfies the generated service interface.
 var _ loopv1connect.LoopServiceHandler = (*Handler)(nil)
 
-// NewHandler builds a Handler over rt.
+// NewHandler builds a Handler over rt. Loops launch under context.Background() unless
+// a lifetime context is supplied via WithBaseContext.
 func NewHandler(rt runtime.Runtime) *Handler {
-	return &Handler{rt: rt}
+	return &Handler{rt: rt, baseCtx: context.Background()}
+}
+
+// WithBaseContext sets the loop-lifetime context StartLoop launches loops under (the
+// server's serve/shutdown context), so a server shutdown tears running loops down and
+// a returning unary request does NOT. A nil ctx keeps the default (Background).
+func (h *Handler) WithBaseContext(ctx context.Context) *Handler {
+	if ctx != nil {
+		h.baseCtx = ctx
+	}
+	return h
 }
 
 // StartLoop constructs and drives one loop from the request, returning its loop_id.
@@ -51,7 +70,10 @@ func NewHandler(rt runtime.Runtime) *Handler {
 // server-side condition here).
 func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.StartLoopRequest]) (*connect.Response[loopv1.StartLoopResponse], error) {
 	m := req.Msg
-	handle, err := h.rt.StartLoop(ctx, runtime.LoopConfig{
+	// Launch under the LOOP-LIFETIME context, NOT the per-request ctx (which connect
+	// cancels the moment this unary RPC returns — that would kill the loop before its
+	// first turn). See Handler.baseCtx.
+	handle, err := h.rt.StartLoop(h.baseCtx, runtime.LoopConfig{
 		Task:        m.Task,
 		ModelID:     m.Model,
 		Tenant:      event.TenantID(m.Tenant),

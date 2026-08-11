@@ -26,10 +26,11 @@ type fakeRuntime struct {
 	sendErr error
 
 	// recorded call args for tenant/threading assertions.
-	sawStartCfg runtime.LoopConfig
-	sawSendTn   event.TenantID
-	sawSendLoop string
-	sawSendIn   string
+	sawStartCfg    runtime.LoopConfig
+	sawStartCtxErr error // ctx.Err() at StartLoop time (must be nil: loop-lifetime ctx)
+	sawSendTn      event.TenantID
+	sawSendLoop    string
+	sawSendIn      string
 
 	// Observe/Attach hooks (used by later tasks).
 	live      chan event.Event
@@ -40,6 +41,7 @@ type fakeRuntime struct {
 
 func (f *fakeRuntime) StartLoop(ctx context.Context, cfg runtime.LoopConfig) (runtime.LoopHandle, error) {
 	f.sawStartCfg = cfg
+	f.sawStartCtxErr = ctx.Err()
 	if f.startErr != nil {
 		return nil, f.startErr
 	}
@@ -175,5 +177,31 @@ func TestEventMapperRoundTrip(t *testing.T) {
 	back := fromProtoEvent(pe)
 	if back.Seq != in.Seq || back.NodeID != in.NodeID || back.Kind != in.Kind || string(back.Payload) != string(in.Payload) || !back.TS.Equal(in.TS) {
 		t.Fatalf("round-trip lost a field: %+v vs %+v", back, in)
+	}
+}
+
+// TestStartLoopLaunchesUnderLoopLifetimeContext is a regression guard for the request-
+// context decoupling bug: connect cancels a unary request's context the instant the
+// RPC returns, so if StartLoop launched the loop under the request ctx the loop would
+// die before its first turn. The handler must launch under its loop-lifetime baseCtx.
+// This asserts the ctx the seam received is NOT already cancelled even though the
+// client request's own context is cancelled right after.
+func TestStartLoopLaunchesUnderLoopLifetimeContext(t *testing.T) {
+	rt := &fakeRuntime{startID: "loop-x"}
+	// The handler's baseCtx is a live (never-cancelled here) context.
+	_, h := loopv1connect.NewLoopServiceHandler(NewHandler(rt))
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	client := loopv1connect.NewLoopServiceClient(srv.Client(), srv.URL)
+
+	// Use a request context we cancel immediately AFTER the call returns.
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := client.StartLoop(ctx, connect.NewRequest(&loopv1.StartLoopRequest{Task: "t"}))
+	cancel()
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	if rt.sawStartCtxErr != nil {
+		t.Fatalf("StartLoop seam ctx was already errored (%v) — loop tied to request ctx, would die early", rt.sawStartCtxErr)
 	}
 }
