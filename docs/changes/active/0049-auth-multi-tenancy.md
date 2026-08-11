@@ -6,12 +6,12 @@ status: proposed
 priority: medium
 type: feat
 created: 2026-08-10
-updated: 2026-08-10
+updated: 2026-08-11
 depends_on: [48]
-related: [45, 46, 47, 48]
+related: [45, 46, 47, 48, 50, 51, 53]
 discovered_from: [45, 47]
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-11-auth-multi-tenancy-design.md
 plan:
 results:
 trivial: false
@@ -25,6 +25,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-08-11-auth-multi-tenancy-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-auth-multi-tenancy-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
@@ -37,49 +40,49 @@ loop_id ownership, and per-tenant isolation boundaries over the networked seam.
 
 ## What changes
 
-To be designed during grooming. At a sketch: an auth layer over the networked binding that
-establishes caller identity, records loop_id ownership at `loop.start`, and enforces per-tenant
-isolation on every subsequent operation (send / observe / replay), so tenants cannot see or drive
-each other's loops.
+An auth + multi-tenancy layer over the networked binding (change 48). Full design in the linked
+spec; at proposal altitude:
 
-### Folded-in findings from the 0047 dogfood (discovered_from: 47)
+- **Bearer-token identity behind a pluggable `Verifier` seam.** A token on the WS handshake and HTTP
+  replay request resolves to a `Principal{tenant, subject}`. A static/configured token verifier
+  ships as the default; the seam is shaped so OIDC/JWT/mTLS verifiers slot in later without a re-cut
+  (the same two-implementation discipline as the store seam). The verifier lives at the **binding
+  edge** — `internal/runtime` gains no auth import and keeps the policy-free seam (ADR-0030).
+- **Token is authoritative for tenant.** Tenant is derived solely from the verified principal; the
+  wire `tenant` field is never trusted (validated must-match-or-rejected). `loop.start` derives
+  `(tenant, owner)` from the token so all three verbs converge on one token-derived `(tenant, loop)`
+  key — the fix for finding 1.
+- **Ownership binding + per-request authorization.** `loop.start` records `(tenant, owner=subject)`
+  in the durable registry; every `send`/`observe`/`replay` authorizes against it. Cross-tenant →
+  `loop not found`; cross-owner (same tenant) → a distinguishable **`forbidden`** error (finding 2).
+  Ownership is read from the durable registry (source of truth), not the in-memory cache.
+- **Owner liveness lease (heartbeat + TTL).** `LoopRecord` gains a lease; the owning instance
+  heartbeats to renew it; a cold instance treats `Live && lease-expired` as abandoned and may
+  reap/re-own — the same lease shape docket uses for claim reclaim (finding 3). Added to both the
+  fsstore and Postgres backends behind the existing conformance suite.
+- **Reconnect is first-class and re-authorized.** Change 48's client-driven stateless reconnect
+  (track last `Seq`, re-observe `from=<lastSeq>`, ride subscribe-before-replay + dedup-at-watermark)
+  is preserved and re-authorized on every handshake. **Re-own on reconnect:** when the reconnecting
+  caller is the recorded owner and the prior owner's lease has expired (redeploy/crash), the new
+  instance re-owns, renews the lease, and resumes serving — so "attach to your running loop from your
+  phone after the server redeployed" works end-to-end.
 
-Building and dogfooding 0047 (a real `fuse loop-server` loop persisted to Postgres, live-tailed
-cross-process) surfaced three concrete gaps that live squarely in 0049's tenant/ownership/liveness
-boundary and must be fixed here:
+### Findings folded in from the 0047 dogfood (discovered_from: 47)
 
-1. **`loop.start` carries no tenant → the loop-server binding is single-tenant.** The durable
-   *store* is fully tenant-scoped (0047), but `loop.start`'s params are `{task, model}` only, so
-   every loop lands under `event.DefaultTenant` (`_default`), while `loop.send` / `loop.observe`
-   already accept a tenant. The asymmetry is a real trap: a `loop.send` under tenant X for a loop
-   started via `loop.start` (which is `_default`) returns `runtime: loop not found`. 0049 must make
-   tenant (and, with auth, the authenticated identity) a **first-class parameter of `loop.start`**
-   so the binding is genuinely multi-tenant and the three verbs agree on the key.
-
-2. **Loop ownership is not enforced on the wire.** 0047 records `OwnerNodeID` in the durable
-   registry, but nothing checks that the caller sending/observing a loop is entitled to it. 0049
-   binds authenticated identity → `(tenant, owner)` at `loop.start` and enforces it on every
-   subsequent `send` / `observe` / `replay` (cross-tenant AND cross-owner denial), returning a
-   **distinguishable authz error** rather than `loop not found`.
-
-3. **Stale liveness on hard process death.** A loop-server killed mid-run leaves its registry record
-   `live: true` (it never reaches the clean-completion `SetLive(false)`), so a cold instance sees a
-   "live" loop no process owns. 0049 needs an **owner liveness lease / heartbeat** (owner TTL) so a
-   cold instance can distinguish genuinely-live from abandoned and reap / re-own it — the same
-   lease shape docket already uses for claim reclaim.
+The design closes three gaps a real `fuse loop-server` dogfood surfaced, all verified present in the
+merged code: (1) `loop.start` carries no tenant so the binding is single-tenant; (2) loop ownership
+is recorded but unenforced on the wire; (3) a hard-killed server leaves `Live: true` forever with no
+lease to distinguish live from abandoned. See the spec for how each is closed.
 
 ## Out of scope
 
-To be defined during grooming. The transport itself is change 48; the client SDK is change 50.
-
-## Open questions
-
-- Identity / auth mechanism (tokens, mTLS, OIDC — TBD).
-- Where loop_id → owner is recorded, and how it interacts with the durable store (change 47).
-- Isolation boundary granularity (per-user, per-org) and cross-tenant denial semantics.
-- **From finding 1:** exact shape of tenant/identity on `loop.start` — a param, or derived from the
-  authenticated principal — and how the three loop verbs converge on one `(tenant, loop)` key.
-- **From finding 2:** authz error taxonomy — is "not yours" distinguishable from "doesn't exist",
-  or deliberately collapsed to avoid a loop-id oracle across tenants?
-- **From finding 3:** liveness-lease TTL, who renews it (owner heartbeat vs. store-side), and the
-  reap/re-own semantics for an expired-lease live loop.
+- The WS/HTTP transport itself — change 48 (done).
+- Client SDK ergonomics / versioned external wire envelope — change 50.
+- Observability emission (OTEL, `/metrics`) — change 51; this change only carries the already-threaded
+  context and `(tenant, loop, node)` triple.
+- Rich verifiers (OIDC/JWT signature checking, mTLS, token issuance/rotation/revocation) — the seam
+  is shaped for them; only the static bearer impl ships here.
+- TLS termination / deployment topology / cross-instance load-balancing — operational concerns.
+- A nested per-org→per-user isolation hierarchy — the boundary here is `(tenant, owner)`.
+- Resuming a *completed* one-shot loop's execution on re-own (re-own serves replay for a finished
+  loop; resuming a parked persistent loop rides change 53's persistence primitive).
