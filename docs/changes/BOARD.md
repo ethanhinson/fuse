@@ -1,6 +1,6 @@
 # Backlog
 
-**55 changes** — 🟡 3 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 44 done · 🗑️ 6 killed
+**55 changes** — 🟡 3 proposed · ⚪ 1 deferred · ✅ 45 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (3)
 
@@ -16,18 +16,9 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0050](active/0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | `medium` | `feat` | [#54](https://github.com/ethanhinson/fuse/pull/54) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
-  0048 --> 0050
-  0049 --> 0050
-  0055 --> 0050
   0046 --> 0051
   0048 --> 0052
   0049 --> 0052
@@ -37,16 +28,16 @@ graph TD
   0048:::done
   0049:::done
   0053:::done
-  0055:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (50)</summary>
+<details><summary>✅🗑️ Archive — done + killed (51)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
 | [0055](archive/2026-08-11-0055-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4.md) | Connect/protobuf transport — IDL-defined loop.* wire, successor to #48 | 2026-08-11 |
 | [0053](archive/2026-08-11-0053-persistent-conversational-loop.md) | Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat | 2026-08-11 |
+| [0050](archive/2026-08-11-0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | 2026-08-11 |
 | [0049](archive/2026-08-11-0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | 2026-08-11 |
 | [0048](archive/2026-08-11-0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | 2026-08-11 |
 | [0047](archive/2026-08-11-0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | 2026-08-11 |
@@ -59,7 +50,6 @@ graph TD
 | [0040](archive/2026-08-09-0040-auto-mode-flow-parity.md) | Auto-mode flow parity — in-workspace edits auto-approve | 2026-08-09 |
 | [0030](archive/2026-08-09-0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | 2026-08-09 |
 | [0028](archive/2026-08-08-0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | 2026-08-08 |
-| [0027](archive/2026-08-08-0027-context-summarization.md) | Anchored context summarization at compression threshold | 2026-08-08 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -71,6 +61,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 29 done |
+| [2026-08](archive/) | 30 done |
 
 </details>
