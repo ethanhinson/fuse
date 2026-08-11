@@ -2,7 +2,7 @@
 id: 49
 slug: auth-multi-tenancy
 title: Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-10
@@ -13,12 +13,12 @@ discovered_from: [45, 47]
 adrs: [34]
 spec: docs/superpowers/specs/2026-08-11-auth-multi-tenancy-design.md
 plan: docs/superpowers/plans/2026-08-11-auth-multi-tenancy-plan.md
-results:
+results: docs/results/2026-08-11-auth-multi-tenancy-results.md
 trivial: false
 auto_groomable:
 branch: feat/auth-multi-tenancy
-claimed_at: 2026-08-11T07:50:11Z
-pr:
+claimed_at: 2026-08-11T07:52:04Z
+pr: https://github.com/ethanhinson/fuse/pull/53
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-11-auth-multi-tenancy-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-auth-multi-tenancy-design.md) |
 | Plan | [2026-08-11-auth-multi-tenancy-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auth-multi-tenancy/docs/superpowers/plans/2026-08-11-auth-multi-tenancy-plan.md) |
+| Results | [2026-08-11-auth-multi-tenancy-results.md](https://github.com/ethanhinson/fuse/blob/feat/auth-multi-tenancy/docs/results/2026-08-11-auth-multi-tenancy-results.md) |
+| PR | [#53](https://github.com/ethanhinson/fuse/pull/53) |
 | ADRs | [ADR-0034](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0034-edge-enforced-auth-multi-tenancy-loop-ownership.md) |
 <!-- docket:artifacts:end -->
 
