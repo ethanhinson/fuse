@@ -81,6 +81,13 @@ type PermissionGate struct {
 	// child's classifier blocks count toward the same session valve. It is nil
 	// outside auto mode wiring only if never constructed; New always allocates it.
 	valve *escalationValve
+
+	// mediator, when wired (WithTargetMediator), is the complete-mediation seam
+	// (change #52 D5): every tool call is checked against the principal/tenant
+	// target allowlist + scope ceilings BEFORE any mode/approval logic, and a
+	// denial there is terminal — even ModeOff cannot bypass it. Nil ⇒ no mediation
+	// in the path (byte-identical to pre-#52 behavior).
+	mediator TargetMediator
 }
 
 // escalationValve tracks classifier-layer block verdicts across a session and
@@ -320,6 +327,20 @@ func (g *PermissionGate) Execute(ctx context.Context, name, args string) tools.R
 
 // resolve applies the 3-source policy merge and returns the final ToolPolicy.
 func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPolicy, error) {
+	// Complete mediation (change #52 D5) runs FIRST and is terminal: a tool that
+	// reaches a downstream target not on the principal's allowlist — or requesting
+	// scope beyond the ceiling — is denied regardless of mode or approval, because
+	// "the tool exists and its args are schema-valid" is not authorization. This
+	// enforces authority, not user preference, so even ModeOff cannot bypass it.
+	if g.mediator != nil {
+		if allowed, reason := g.mediator.MediateTarget(ctx, name, args); !allowed {
+			if reason == "" {
+				reason = "tool target denied by policy (not on the caller's allowlist)"
+			}
+			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason}, nil
+		}
+	}
+
 	// Disabled list overrides everything.
 	for _, d := range g.cfg.Disabled {
 		if d == name {
@@ -648,6 +669,9 @@ func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
 		// approval/verdict caches, it is shared by reference so a child's classifier
 		// blocks count toward the same session valve as the parent.
 		valve: g.valve,
+		// The complete-mediation seam is shared by reference: a child agent's
+		// downstream tool calls inherit the same principal/tenant target ceiling.
+		mediator: g.mediator,
 	}
 	return child
 }
