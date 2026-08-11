@@ -2,7 +2,7 @@
 id: 50
 slug: client-sdk
 title: Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-10
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/client-sdk
+claimed_at: 2026-08-11T17:25:36Z
 pr:
 blocked_by:
 reconciled: false
