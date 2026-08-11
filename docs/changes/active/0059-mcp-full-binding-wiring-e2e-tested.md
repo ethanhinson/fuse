@@ -8,7 +8,7 @@ type: feat
 created: 2026-08-11
 updated: 2026-08-11
 depends_on: [52]
-related: [48, 49, 55, 57, 58]
+related: [48, 49, 55, 57, 58, 60]
 discovered_from: [52]
 adrs: [36]
 spec: docs/superpowers/specs/2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md
@@ -51,7 +51,8 @@ Wire MCP tool execution into **every** loop binding — first-class on the **loo
 - **Loop-server MCP attach + real principal.** `buildLoopServerRuntimeDeps` (binding #2/#3) constructs a **per-loop** MCP manager (tools registered into each loop's own registry — no cross-loop bleed) and threads the **real authenticated loop-start principal** (from #49's verifier) to `MCPTool.Execute` via the existing `toolidentity.WithPrincipal` carrier. This retires the `DefaultTenant` single-tenant shim on the loop-server path by construction — #52's per-tenant STS finally mints for a real principal.
 - **One-shot** attaches MCP via the shared helper, seeding the same local `localPrincipal` → `DefaultTenant` the shell uses. **No new CLI identity flag** (explicit non-goal — loop-server is the multi-tenant path).
 - **Shell / one-shot keep `DefaultTenant`** — they are local single-user CLI paths; the shim survives only as the value they supply to the helper, not a special path.
-- **Permanent CI acceptance lane** — the **full** #52 verification checklist, run **through the loop-server binding**: two loops started by *different* principals, each calling the **same real (scripted) MCP server**, present **distinct, audience-bound, delegated tokens** (user in `sub`, fuse in `act`); the server adjudicates (403 for the unauthorized principal surfaces as a distinguishable tool error); wrong-audience is rejected; complete-mediation denies an undeclared target through the loop-server path (even under `AlwaysApprove`); and no credential leaks into the event stream / durable store / logs. Loops driven concurrently; loud on toolchain absence; scripted `LLM_GATEWAY_URL` double, never Claude/Anthropic.
+- **A real, stateful Wander rentals MCP server** as the lane's backend — grounded in Wander's own domain (`examples/concierge-demo`), not a contrived fixture. It owns a **per-principal favorites store** and a **mutating** `favorite_listing` write (plus `search_rentals` / `list_favorites`), so the acceptance verifies identity on a real *write* path — the downstream acts on *the caller's* data, isolated per tenant — not just a read-only 403. Real MCP wire + real per-principal token adjudication + real per-principal state; only the listing *data* is canned (behind a seam) to keep the lane hermetic. The live-Tavily backend + demo wiring is follow-up **#60**.
+- **Permanent CI acceptance lane** — the **full** #52 verification checklist, run **through the loop-server binding**: two loops started by *different* principals, each calling the **same real rentals MCP server**, present **distinct, audience-bound, delegated tokens** (user in `sub`, fuse in `act`); the server adjudicates (403 for the unauthorized principal surfaces as a distinguishable tool error); **A's `favorite_listing` write is invisible to B's `list_favorites`** (per-principal write isolation — the confused-deputy property, on a mutating path); wrong-audience is rejected; complete-mediation denies an undeclared target through the loop-server path (even under `AlwaysApprove`); and no credential leaks into the event stream / durable store / logs. Loops driven concurrently; loud on toolchain absence; scripted `LLM_GATEWAY_URL` double, never Claude/Anthropic.
 
 ## Out of scope
 

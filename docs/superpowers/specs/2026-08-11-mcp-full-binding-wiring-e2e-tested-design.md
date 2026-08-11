@@ -143,33 +143,82 @@ The introspection commands stay execution-less (no credential source). Out of sc
 
 ## Acceptance — permanent CI lane (the full #52 checklist, through the binding)
 
-A new end-to-end test lane, run against a **real scripted MCP server** (a stand-up test server
-speaking the MCP wire — NOT a mock of our own client), driving the **loop-server binding**. It
-asserts the complete #52 verification checklist that was previously only provable at the seam:
+### The real MCP server under test: Wander's rentals server
+
+The lane's "real MCP server" is a **Wander-domain rentals MCP server** — not an abstract scripted
+double. Wander (`examples/concierge-demo`, the vacation-rental travel concierge) is fuse's SDK/demo
+testbed; grounding the acceptance in its actual domain dogfoods a real service scenario (a concierge
+loop querying a rentals server *as the authenticated user*) rather than proving identity against a
+contrived fixture. This aligns with the project rule to prove new MCP/infra features through a real
+fuse-domain server over test-only fixtures.
+
+It is a **genuinely real MCP server** with **real, per-principal mutable state** — not a read-only
+oracle. Deep enough to actually verify what we are building: the point of #52 identity is that a
+tool call reaching a downstream carries *the caller's* identity and the downstream acts *on that
+caller's data*. A read-only 403 check proves the token is *presented*; a **stateful write scoped to
+the caller** proves the identity is *acted on and isolated* — the confused-deputy scenario #52 exists
+to prevent. So the server owns a small **per-principal favorites store** and exposes both a read and a
+**mutating** tool:
+
+- `search_rentals(query)` → listings (read; data source seam, below).
+- `favorite_listing(listing_id)` → **writes** the listing into the *calling principal's* favorites
+  set, keyed by the token's `sub`/tenant. Idempotent per principal.
+- `list_favorites()` → returns **only the calling principal's** favorites.
+
+The server is real on three axes: **real MCP wire + handshake** (fuse's client talks to it exactly as
+any external server), **real per-principal token adjudication** (it reads the delegated token's
+`sub`/`act`/`aud`, authorizes by principal, 403s an unauthorized one), and **real per-principal state
+isolation** (tenant A's `favorite_listing` is invisible to tenant B's `list_favorites` — a store
+partitioned by the *token identity*, never by a client-supplied arg). Kept deliberately simple: an
+in-memory per-principal map, reset per test run. No DB engine required — the isolation property, not
+the persistence tech, is what the lane verifies.
+
+Only the **read** tool's *listing data* varies behind a **data-source seam**:
+
+- **Canned/deterministic backend (default — the permanent CI lane).** Fixed, in-repo rental listings;
+  no network, no key. Hermetic and green-able forever — the identity + write-isolation assertions do
+  not depend on *which* listings come back, only on the wire, the token check, and the per-principal
+  store, so canned data proves the identity path with zero flakiness.
+- **Live backend (the Wander demo — follow-up, out of scope here).** The same server with `search_rentals`
+  backed by real rental lookups (Tavily-style). Faithful for the runnable demo but network/key-dependent;
+  it powers Wander in the browser, **not** the permanent CI lane. Captured as follow-up **change #60**;
+  this change ships the server + its canned backend + the favorites store + the seam.
+
+The server binary/harness lives with the test lane (co-located under the acceptance harness or a demo
+package Wander can also import); this change owns the **canned** path and the **favorites store**.
+
+### Checklist (asserted against the canned lane, through the loop-server binding)
 
 1. **Two loops, two principals, one server.** Two loops started on the loop-server by *different*
    authenticated principals (distinct tenant/subject via `buildLoopVerifier` tokens), each calling
-   the **same** real MCP server.
+   the **same** rentals MCP server.
 2. **Distinct, audience-bound, delegated tokens.** Each loop's call presents a *different* token:
    the initiator in `sub`, fuse in the `act` claim, audience-bound (RFC 8707 `resource`) to the
    server's declared target. The two tokens are provably distinct per principal.
-3. **Downstream adjudication.** The scripted server adjudicates by identity: it returns 403 for the
-   unauthorized principal, which surfaces to the loop as a **distinguishable tool error** (not a
-   generic failure), and success for the authorized one.
-4. **Wrong-audience rejected.** A token minted for the wrong audience is rejected by the server.
-5. **Complete-mediation denial through the binding.** A tool reaching a target **not on the
+3. **Downstream adjudication.** The rentals server adjudicates by identity: it returns rental
+   listings for the authorized principal and **403 for the unauthorized** one, which surfaces to the
+   loop as a **distinguishable tool error** (not a generic failure).
+4. **Per-principal write isolation (the deep assertion).** Loop A calls `favorite_listing(X)`; the
+   listing lands in **A's** favorites, keyed by A's token identity. Loop B then calls `list_favorites()`
+   and gets **B's** set — which does **not** contain X. A's write is invisible to B and vice-versa,
+   proving the downstream acts on *the caller's* data (the identity is carried, adjudicated, **and
+   acted upon**), and that a client-supplied arg can never reach another principal's state. This is the
+   confused-deputy property #52 exists to prevent, verified on a real mutating path — not just a read.
+5. **Wrong-audience rejected.** A token minted for the wrong audience is rejected by the server.
+6. **Complete-mediation denial through the binding.** A tool reaching a target **not on the
    principal's allowlist / not declared in config** is denied terminally by the `TargetMediator`
    on the loop-server path, independent of permission mode (loop-server is `AlwaysApprove`) — proving
    mediation is not bypassed by the auto-approve binding policy.
-6. **No credential leak.** No minted token or downstream credential appears in the **event stream**,
+7. **No credential leak.** No minted token or downstream credential appears in the **event stream**,
    the **durable store** (0047 fsstore/pgstore), or **logs** — reusing #52's redaction guard,
    asserted on the loop-server path.
 
 **Harness discipline** (grounded in existing learnings):
 
-- **Real backend for the acceptance.** The scripted MCP server is a *real* server the fuse client
-  talks to over the wire — not a mock of our client — so the lane proves the *system*, not just that
-  the wire serializes (`smoke-over-fake-backend-proves-wire-not-system`).
+- **Real server for the acceptance.** The rentals MCP server is a *real* server the fuse client talks
+  to over the wire — not a mock of our client — so the lane proves the *system*, not just that the
+  wire serializes (`smoke-over-fake-backend-proves-wire-not-system`). Only its rental *data* is canned;
+  its wire and its per-principal token adjudication are real.
 - **Loud on toolchain absence.** If the lane cannot run (missing toolchain / server binary), it fails
   loudly or is a **loud skip** — never a silent `t.Skip` that lets a green suite hide that the path
   never ran (`smoke-over-fake-backend-proves-wire-not-system`).
@@ -192,6 +241,9 @@ works, with #52 identity, through the actual service binding, and a test kills i
   drives it through the real bindings.
 - **A one-shot CLI identity flag** (`--tenant`/`--principal`) — explicit non-goal (§3).
 - **`fuse mcps` gaining tool execution** — stays introspection-only.
+- **The rentals server's live (Tavily-style) data backend and its wiring into the runnable Wander
+  demo** — this change ships the server + its *canned* backend + the data-source seam for the CI
+  lane; the live backend and demo UX are follow-up **change #60** (Wander / #56 territory).
 
 ## Open questions for build-time reconcile
 
@@ -200,8 +252,9 @@ works, with #52 identity, through the actual service binding, and a test kills i
   loop-server's per-loop, principal-per-loop reality.
 - Generalizing the STS signing-key map from `DefaultTenant`-only to per-loop tenant — confirm the
   #52 Broker/STS per-tenant isolation is reached, not re-implemented.
-- Whether the real scripted MCP server for the lane is fuse's own MCP server (dogfood, preferred where
-  it can express the identity/403 scenarios) or a purpose-built scripted server.
+- The rentals server's exact tool surface — the mutating `favorite_listing` write plus at least one
+  read (`list_favorites` / `search_rentals`) — and how its per-principal store is keyed and reset
+  between test runs (see *The rentals server* above).
 
 ## ADRs
 
