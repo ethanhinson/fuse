@@ -1,14 +1,14 @@
 # Backlog
 
-**55 changes** — 🟡 4 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 43 done · 🗑️ 6 killed
+**55 changes** — 🟡 4 proposed · ⚪ 1 deferred · ✅ 44 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0050](active/0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | `medium` | `feat` | ⏳ waiting on #49 — needs your merge |
+| [0050](active/0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | `medium` | `feat` | build-ready |
 | [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + Loki, as a projection over the event stream | `medium` | `feat` | needs-brainstorm |
-| [0052](active/0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | `medium` | `feat` | ⏳ waiting on #49 — needs your merge |
+| [0052](active/0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | `medium` | `feat` | build-ready |
 | [0054](active/0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | `medium` | `feat` | needs-brainstorm |
 
 ## ⚪ Deferred (1)
@@ -17,16 +17,9 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0049](active/0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | `medium` | `feat` | [#53](https://github.com/ethanhinson/fuse/pull/53) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
-  0048 --> 0049
   0048 --> 0050
   0049 --> 0050
   0055 --> 0050
@@ -37,17 +30,19 @@ graph TD
   0012:::done
   0046:::done
   0048:::done
+  0049:::done
   0053:::done
   0055:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (49)</summary>
+<details><summary>✅🗑️ Archive — done + killed (50)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
 | [0055](archive/2026-08-11-0055-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4.md) | Connect/protobuf transport — IDL-defined loop.* wire, successor to #48 | 2026-08-11 |
 | [0053](archive/2026-08-11-0053-persistent-conversational-loop.md) | Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat | 2026-08-11 |
+| [0049](archive/2026-08-11-0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | 2026-08-11 |
 | [0048](archive/2026-08-11-0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | 2026-08-11 |
 | [0047](archive/2026-08-11-0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | 2026-08-11 |
 | [0046](archive/2026-08-10-0046-multi-loop-host-deglobalize-event-store.md) | De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id | 2026-08-10 |
@@ -60,7 +55,6 @@ graph TD
 | [0030](archive/2026-08-09-0030-segment-store.md) | Segment store — pre-compaction transcript archive for replay | 2026-08-09 |
 | [0028](archive/2026-08-08-0028-semantic-tool-relevance.md) | Semantic tool-result relevance scoring for smarter pruning | 2026-08-08 |
 | [0027](archive/2026-08-08-0027-context-summarization.md) | Anchored context summarization at compression threshold | 2026-08-08 |
-| [0026](archive/2026-08-08-0026-agent-workflow-composition.md) | Workflow composition — chain, fan-out, and conditional routing | 2026-08-08 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -72,6 +66,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 28 done |
+| [2026-08](archive/) | 29 done |
 
 </details>
