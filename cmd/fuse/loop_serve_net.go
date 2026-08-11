@@ -10,9 +10,12 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/coder/websocket"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+
 	"github.com/ethanhinson/fuse/internal/config"
-	"github.com/ethanhinson/fuse/internal/loopserver"
+	"github.com/ethanhinson/fuse/internal/loopconnect"
+	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/runtime"
@@ -34,15 +37,19 @@ var serveNetContext = func() (context.Context, context.CancelFunc) {
 }
 
 // runLoopServeNet implements the `fuse loop-serve-net` subcommand (binding #3): the
-// networked (WebSocket + HTTP) loop-control server. It exposes the SAME policy-free
+// networked Connect/protobuf (fuse.loop.v1) loop-control server — successor to the
+// JSON-over-WebSocket wire (#48, ADR-0032 superseded). It exposes the SAME policy-free
 // multi-loop runtime.Runtime that binding #2 (loop-server) serves over stdio — the
 // composition root (buildLoopServerRuntimeDeps + runtime.New) is REUSED verbatim, not
-// re-wired — over two network transports:
+// re-wired — over the Connect service:
 //
-//   - WS /ws            — the full loop.* JSON-RPC session (loop.start / loop.send /
-//     loop.observe + server-push loop.event tail), one session per connection.
-//   - GET /loops/{id}/events — the thin stateless HTTP replay endpoint (Attach
-//     catch-up); read-only, no live tail, no connection state.
+//   - StartLoop / Send (unary) and Observe (server-streaming history-then-live) at
+//     /fuse.loop.v1.LoopService/*, browser-reachable over HTTP/2 with no proxy.
+//     Observe(from_seq) subsumes the WS-era live tail AND the HTTP replay/Attach
+//     catch-up, so there is no separate /ws or /loops/ route.
+//
+// The handler is served over h2c (HTTP/2 cleartext) so gRPC and gRPC-Web clients work
+// over a plain TCP listener; Connect and Connect's HTTP/1.1 fallback also work.
 //
 // Its documented policy is AUTO-APPROVE (permissions.AlwaysApprove): there is no human
 // on a TTY to gate tool calls over the network, exactly as binding #2. That is THIS
@@ -52,7 +59,7 @@ var serveNetContext = func() (context.Context, context.CancelFunc) {
 func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("loop-serve-net", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	addr := fs.String("addr", "127.0.0.1:8787", "TCP address to serve the WS+HTTP loop-control endpoints on")
+	addr := fs.String("addr", "127.0.0.1:8787", "TCP address to serve the Connect/protobuf loop-control endpoints on")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -92,44 +99,34 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 	return 0
 }
 
-// serveNet mounts the WS accept handler and the HTTP replay handler on one
-// http.ServeMux and serves them over ln until ctx is cancelled, then shuts the server
-// down. It is the testable core runLoopServeNet calls: a test starts it on a
-// 127.0.0.1:0 listener with a fake Runtime, learns the chosen port off the listener,
-// and cancels ctx to shut down — no real signal, no live model.
+// serveNet mounts the connect-go LoopService handler on one http.ServeMux and serves
+// it over ln (h2c) until ctx is cancelled, then shuts the server down. It is the
+// testable core runLoopServeNet calls: a test starts it on a 127.0.0.1:0 listener with
+// a fake Runtime, learns the chosen port off the listener, and cancels ctx to shut
+// down — no real signal, no live model.
 //
-// The mux mounts two routes over the SAME runtime.Runtime:
-//   - /ws                 — WS accept -> loopserver.ServeWS (full loop.* session).
-//   - GET /loops/{id}/events — delegated to loopserver.NewReplayHandler (self-contained
-//     for its own pattern; the replay handler owns stateless Attach catch-up).
+// The mux mounts the single Connect service over the SAME runtime.Runtime. The handler
+// is given the serve/shutdown ctx as its loop-lifetime context (WithBaseContext) so a
+// unary StartLoop's returning request context does NOT kill the loop, but a server
+// shutdown does.
 func serveNet(ctx context.Context, ln net.Listener, rt runtime.Runtime) error {
 	mux := http.NewServeMux()
 
-	// WS accept: upgrade, then run one full loop.* session over the connection. ServeWS
-	// closes the connection when it returns; the request context is derived from the
-	// server's base context (below), so a shutdown cancels in-flight sessions.
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			// Accept already wrote the failure response.
-			return
-		}
-		_ = loopserver.ServeWS(r.Context(), conn, rt)
-	})
-
-	// GET /loops/{id}/events — the self-contained stateless replay handler owns its own
-	// pattern registration, so delegate the whole subtree to it.
-	mux.Handle("/loops/", loopserver.NewReplayHandler(rt))
+	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx)
+	path, connectHandler := loopv1connect.NewLoopServiceHandler(handler)
+	mux.Handle(path, connectHandler)
 
 	srv := &http.Server{
-		Handler: mux,
-		// BaseContext threads the serve/shutdown ctx into every request (incl. the WS
-		// session's r.Context()), so a ctx cancel tears down in-flight observe pumps.
+		// h2c lets gRPC / gRPC-Web / Connect clients negotiate HTTP/2 over cleartext on
+		// this plain TCP listener; Connect's HTTP/1.1 fallback also works.
+		Handler: h2c.NewHandler(mux, &http2.Server{}),
+		// BaseContext threads the serve/shutdown ctx into every request, so a ctx cancel
+		// tears down in-flight Observe streams (their handler selects on ctx.Done()).
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
 	// Shut the server down when ctx is cancelled (signal or test). Close() unblocks
-	// Serve immediately; in-flight WS sessions observe the cancelled BaseContext and
+	// Serve immediately; in-flight Observe streams observe the cancelled BaseContext and
 	// return, releasing their subscriptions.
 	go func() {
 		<-ctx.Done()

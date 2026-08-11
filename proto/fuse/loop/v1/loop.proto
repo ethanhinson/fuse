@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+// Package fuse.loop.v1 is the IDL-defined loop.* wire for the networked binding
+// (change 0055), successor to the JSON-over-WebSocket wire (#48, ADR-0032
+// superseded). It exposes loop control — StartLoop / Send (unary) and Observe
+// (server-streaming history-then-live) — as a Connect service so a browser can
+// reach it over HTTP/2 with no proxy. Tenant is a typed, pass-through request
+// field (identity enforcement is #0049). The per-kind payload shapes are NOT
+// re-modeled here: payload stays raw JSON bytes (#50 owns SDK ergonomics), and
+// kind stays a string to avoid lock-stepping a proto enum with internal/event.Kind.
+package fuse.loop.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/ethanhinson/fuse/internal/loopwire/v1;loopv1";
+
+// LoopService is the networked loop-control surface. Unary + server-streaming only
+// (no bidi): Observe(from_seq) subsumes both live tail and Attach/HTTP-replay
+// catch-up, so a reconnecting client re-opens Observe from its last-seen seq.
+service LoopService {
+  // StartLoop constructs and drives one agent loop, returning its loop_id.
+  rpc StartLoop(StartLoopRequest) returns (StartLoopResponse);
+  // Send injects human input at the loop's next turn boundary.
+  rpc Send(SendRequest) returns (SendResponse);
+  // Observe streams history since from_seq then live events; a reconnecting client
+  // re-opens it from its last-seen seq (the WS-era Attach/HTTP-replay role).
+  rpc Observe(ObserveRequest) returns (stream ObserveEvent);
+}
+
+message StartLoopRequest {
+  string task = 1;
+  string model = 2;
+  string tenant = 3;
+  bool interactive = 4;
+}
+
+message StartLoopResponse {
+  string loop_id = 1;
+}
+
+message SendRequest {
+  string loop_id = 1;
+  string input = 2;
+  string tenant = 3;
+}
+
+message SendResponse {}
+
+message ObserveRequest {
+  string loop_id = 1;
+  uint64 from_seq = 2;
+  string tenant = 3;
+}
+
+// ObserveEvent carries either a domain event or a keepalive/gap marker frame.
+message ObserveEvent {
+  Event event = 1;    // unset on a bare keepalive
+  bool gap = 2;       // true when a sequence gap preceded this event (re-observe hint)
+  bool keepalive = 3; // true on an idle heartbeat frame (no event); survives idle timeout
+}
+
+// Event mirrors internal/event.Event at the transport edge. payload is raw JSON
+// (the existing json.RawMessage); kind is a string discriminant.
+message Event {
+  uint64 seq = 1;
+  google.protobuf.Timestamp ts = 2;
+  string node_id = 3;
+  string parent_id = 4;
+  int32 depth = 5;
+  int32 turn = 6;
+  string kind = 7;
+  bytes payload = 8;
+}

@@ -213,3 +213,34 @@ driver model, `--trace <file>` also writes the raw gateway request/response
 JSON, and `--timeout <dur>` bounds the whole run (default 3m). Nothing about the
 agents is faked — the recorder is just an `agent.Renderer` layered over the
 production wiring, so what you see is exactly what `/research` does.
+
+## Networked loop-control — `loop-serve-net` (Connect/protobuf)
+
+`fuse loop-serve-net` exposes the same policy-free multi-loop runtime that
+`loop-server` serves over stdio, but over the network as a
+[Connect](https://connectrpc.com) service (`fuse.loop.v1`, IDL in
+`proto/fuse/loop/v1/loop.proto`). It is browser-reachable over HTTP/2 with no
+proxy and speaks Connect, gRPC, and gRPC-Web (served over h2c):
+
+```sh
+fuse loop-serve-net --addr 127.0.0.1:8787
+```
+
+The service is three RPCs:
+
+- `StartLoop` / `Send` — unary; `tenant` is a typed pass-through field.
+- `Observe(from_seq)` — server-streaming history-then-live: it replays durable
+  history since `from_seq`, then live-tails, deduping the replay/live overlap at
+  the watermark and flagging a `gap` when a sequence hole is detected. A
+  reconnecting client (any instance, resolved cross-instance via the durable
+  store) simply re-opens `Observe` from its last-seen seq — this single stream
+  subsumes both the live tail and catch-up replay. Idle streams receive periodic
+  `keepalive` frames so a parked loop survives a gateway idle timeout.
+
+The wire stubs are generate-and-commit (`make proto`, requires `buf` +
+`protoc-gen-go`/`protoc-gen-connect-go` on PATH and `cd proto && npm ci` for the
+TS `protoc-gen-es` plugin); committed Go stubs live in `internal/loopwire/v1`
+and TS stubs in `proto/gen/ts`.
+
+This replaces the earlier JSON-over-WebSocket wire (change #48, ADR-0032
+superseded): there is no `/ws` or `/loops/{id}/events` route anymore.

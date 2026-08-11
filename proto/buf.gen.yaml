@@ -1,0 +1,20 @@
+version: v2
+plugins:
+  # Go message stubs → internal/loopwire/v1 (module-relative via go_package).
+  - local: protoc-gen-go
+    out: ../
+    opt:
+      - module=github.com/ethanhinson/fuse
+  # connect-go service stubs → alongside the Go message stubs.
+  - local: protoc-gen-connect-go
+    out: ../
+    opt:
+      - module=github.com/ethanhinson/fuse
+  # connect-es v2 TS stubs (messages + service descriptors) → proto/gen/ts.
+  # In connect-es v2 the Connect client is created at runtime from these descriptors
+  # (@connectrpc/connect createClient), so protoc-gen-es alone is sufficient.
+  - local: ["npx", "protoc-gen-es"]
+    out: gen/ts
+    opt:
+      - target=ts
+      - import_extension=js
