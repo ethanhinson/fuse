@@ -1,0 +1,29 @@
+{
+  "name": "@fuse/sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Runtime-parity, remote-only TypeScript/JS client for the fuse.loop.v1 wire. Drives a loop over Connect (browser via @connectrpc/connect-web) with a bearer+tenant credential seam.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "2.13.0",
+    "@connectrpc/connect": "^2.0.0",
+    "@connectrpc/connect-web": "^2.0.0"
+  },
+  "devDependencies": {
+    "@connectrpc/connect-node": "^2.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.4.0"
+  }
+}

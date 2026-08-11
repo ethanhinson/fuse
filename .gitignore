@@ -6,6 +6,10 @@
 # macOS finder cruft
 .DS_Store
 
+# npm workspaces: never commit installed deps or the TS SDK build output
+node_modules/
+sdk/ts/dist/
+
 # local scratch + generated review artifacts (screenshots, videos, ad-hoc reports)
 scratchpad/
 reports/screenshots/
