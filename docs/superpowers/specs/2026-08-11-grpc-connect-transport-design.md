@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0055 — Connect/protobuf transport — IDL-defined loop.* wire, successor to](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0055-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4.md)**
+> ↩ **[Change 0055 — Connect/protobuf transport — IDL-defined loop.* wire, successor to](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-11-0055-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4.md)**
 <!-- docket:backlink:end -->
 
 # gRPC/Connect transport — a protobuf-IDL `loop.*` wire, successor to #48
