@@ -2,7 +2,7 @@
 id: 55
 slug: grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4
 title: Connect/protobuf transport — IDL-defined loop.* wire, successor to #48
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-11
@@ -17,7 +17,7 @@ results: docs/results/2026-08-11-grpc-protobuf-transport-idl-defined-loop-wire-s
 trivial: false
 auto_groomable:
 branch: feat/grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4
-claimed_at: 2026-08-11T06:20:06Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/52
 blocked_by:
 reconciled: true
