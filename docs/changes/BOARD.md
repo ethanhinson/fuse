@@ -1,8 +1,14 @@
 # Backlog
 
-**55 changes** — 🟡 6 proposed · ⚪ 1 deferred · ✅ 42 done · 🗑️ 6 killed
+**55 changes** — 🟢 1 in progress · 🟡 5 proposed · ⚪ 1 deferred · ✅ 42 done · 🗑️ 6 killed
 
-## 🟡 Proposed (6)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0055](active/0055-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4.md) | Connect/protobuf transport — IDL-defined loop.* wire, successor to #48 | `medium` | `feat` | [spec](../superpowers/specs/2026-08-11-grpc-connect-transport-design.md) | `feat/grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4` |
+
+## 🟡 Proposed (5)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -11,7 +17,6 @@
 | [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + Loki, as a projection over the event stream | `medium` | `feat` | needs-brainstorm |
 | [0052](active/0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | `medium` | `feat` | ⏳ waiting on #49 — not yet built |
 | [0054](active/0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | `medium` | `feat` | needs-brainstorm |
-| [0055](active/0055-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4.md) | Connect/protobuf transport — IDL-defined loop.* wire, successor to #48 | `medium` | `feat` | build-ready |
 
 ## ⚪ Deferred (1)
 
