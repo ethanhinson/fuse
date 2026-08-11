@@ -2,7 +2,7 @@
 id: 59
 slug: mcp-full-binding-wiring-e2e-tested
 title: Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths
-status: implemented
+status: done
 priority: critical
 type: feat
 created: 2026-08-11
@@ -17,7 +17,7 @@ results: docs/results/2026-08-11-mcp-full-binding-wiring-e2e-tested-results.md
 trivial: false
 auto_groomable:
 branch: feat/mcp-full-binding-wiring-e2e-tested
-claimed_at: 2026-08-11T22:43:34Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/56
 blocked_by:
 reconciled: true
