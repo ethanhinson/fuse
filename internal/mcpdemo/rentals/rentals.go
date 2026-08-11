@@ -90,9 +90,11 @@ type Server struct {
 	// verification key). A token is authorized under the tenant whose key verifies it.
 	tenantKeys map[event.TenantID][]byte
 
-	mu       sync.Mutex
-	favs     map[principalKey]map[string]bool // principal -> set of listing ids
-	sseConns []chan string
+	mu        sync.Mutex
+	favs      map[principalKey]map[string]bool // principal -> set of listing ids
+	sseConns  []chan string
+	authSeen  []string // Authorization header per tools/call, in arrival order
+	resources []string // MCP-Resource header per tools/call, in arrival order
 }
 
 // Config configures a rentals Server.
@@ -137,6 +139,23 @@ func (s *Server) URL() string { return s.httptest.URL }
 
 // Close stops the server.
 func (s *Server) Close() { s.httptest.Close() }
+
+// CapturedAuths returns the Authorization header of every tools/call received, in
+// arrival order — so an acceptance test can assert per-principal tokens are distinct
+// and Bearer-scheme (spec checklist point 2), read from the REAL wire.
+func (s *Server) CapturedAuths() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.authSeen...)
+}
+
+// CapturedResources returns the MCP-Resource (RFC 8707 audience) header of every
+// tools/call received, in arrival order.
+func (s *Server) CapturedResources() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.resources...)
+}
 
 // handleSSE holds one long-lived SSE stream per client, announcing the /messages
 // endpoint then relaying JSON-RPC responses.
@@ -201,6 +220,12 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	case "tools/list":
 		result = map[string]any{"tools": toolDefs()}
 	case "tools/call":
+		// Record the raw credential + audience that arrived on the wire so a test can
+		// assert per-principal distinctness (point 2) directly from the server side.
+		s.mu.Lock()
+		s.authSeen = append(s.authSeen, r.Header.Get("Authorization"))
+		s.resources = append(s.resources, r.Header.Get("MCP-Resource"))
+		s.mu.Unlock()
 		result, rpcErr = s.handleToolCall(r, req.Params)
 	default:
 		// notifications/initialized and other notifications: 202, no reply frame.
