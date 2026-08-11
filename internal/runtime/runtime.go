@@ -64,6 +64,14 @@ type LoopConfig struct {
 	Task    string         // the initial user task
 	ModelID string         // resolved gateway model id; "" ⇒ the binding resolves the default first
 	Tenant  event.TenantID // isolation boundary; empty ⇒ event.DefaultTenant
+
+	// Interactive requests persistent conversational mode: the loop parks at each
+	// terminal turn boundary awaiting the next Send instead of finishing, so one
+	// loop_id carries a multi-turn conversation with server-authoritative history
+	// (the transcript is retained in-memory across turns). The loop still ends on
+	// context cancellation. Default false ⇒ single-task run-to-completion, so every
+	// existing binding is unaffected.
+	Interactive bool
 }
 
 // LoopHandle observes and awaits one running loop.

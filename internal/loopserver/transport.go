@@ -61,6 +61,12 @@ type rpcError struct {
 type startParams struct {
 	Task  string `json:"task"`
 	Model string `json:"model,omitempty"`
+	// Interactive requests persistent conversational mode for this loop: it parks at
+	// each terminal turn awaiting the next loop.send instead of finishing, so one
+	// loop_id carries a multi-turn conversation. Omitted/false ⇒ single-task
+	// run-to-completion (binding #2's stdio clients never set it, so they are
+	// byte-identical). A chat client (binding #3 WS) sets it true.
+	Interactive bool `json:"interactive,omitempty"`
 }
 type startResult struct {
 	LoopID string `json:"loop_id"`

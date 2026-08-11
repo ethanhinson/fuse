@@ -95,6 +95,15 @@ type Agent struct {
 	// push into a running node, honoring ADR-0016's run-to-completion contract.
 	humanInjector *HumanInjector
 
+	// interactive, when true, turns the root loop's terminal path (a model response
+	// with no tool calls) into a PARK instead of a return: the run blocks at the turn
+	// boundary awaiting the next human message (humanInjector.Wait), so one loop_id
+	// carries a full multi-turn conversation with server-authoritative history. The
+	// loop still exits on ctx cancellation (client disconnect / shutdown) or when no
+	// bus is wired. False ⇒ byte-identical single-task run-to-completion (ADR-0016).
+	// Only meaningful with humanInjector set; a spawned child is never interactive.
+	interactive bool
+
 	// expectsSchema, when non-nil, is the JSON Schema the spawner declared for this
 	// child's structured result (change 0042). When set, Run offers a synthesized
 	// return_result tool (parameters = this schema) and treats a conforming
@@ -172,6 +181,21 @@ func (a *Agent) SetExpects(schema map[string]any, sink *ExpectsSink) {
 // SetHumanInjector wires the per-node human-message injector (ADR-0022). Passing
 // nil is a no-op (the field stays nil). Set once at build time, before Run.
 func (a *Agent) SetHumanInjector(inj *HumanInjector) { a.humanInjector = inj }
+
+// SetInteractive enables persistent conversational mode on the root loop: at the
+// terminal turn boundary (no tool calls) the run parks awaiting the next human
+// message instead of returning (see the interactive field). It is a no-op posture
+// unless a HumanInjector with a bus is also wired. Default false preserves the
+// single-task run-to-completion contract for every existing binding.
+func (a *Agent) SetInteractive(v bool) { a.interactive = v }
+
+// SetMaxTurns overrides the per-run turn cap after construction. A value <= 0 means
+// unlimited. An interactive (persistent conversational) loop MUST be uncapped: each
+// resumed exchange consumes real turns, so a finite cap would end the whole
+// conversation once total turns crossed it. The runtime lifts the cap here when it
+// enables interactive mode, independent of any per-turn backstop a one-shot binding
+// wants.
+func (a *Agent) SetMaxTurns(n int) { a.maxTurns = n }
 
 // DefaultToolTimeout bounds a single leaf tool call when no explicit timeout is
 // configured. Chosen to comfortably cover slow-but-legitimate work (large web

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -104,16 +105,79 @@ type HumanMsg struct {
 // versus per-message blackboard keys (ADR-0022). It mirrors nothing into the
 // blackboard by itself; the TUI reads it directly through the snapshot methods.
 type HumanBus struct {
-	mu      sync.Mutex
-	queues  map[string][]HumanMsg // nodeID -> ordered pending messages
-	log     []HumanMsg            // append-only delivered/terminal record
-	seq     atomic.Uint64
-	tree    *AgentTree // for parent lookup on completion bubbling; may be nil in tests
+	mu     sync.Mutex
+	queues map[string][]HumanMsg // nodeID -> ordered pending messages
+	log    []HumanMsg            // append-only delivered/terminal record
+	seq    atomic.Uint64
+	tree   *AgentTree // for parent lookup on completion bubbling; may be nil in tests
+
+	// notify holds a per-node buffered (cap 1) signal channel used by an
+	// INTERACTIVE loop to park at its turn boundary and wake when a message is
+	// enqueued for it (WaitForMessage). It is orthogonal to Poll/Drain — a
+	// non-interactive loop never calls WaitForMessage, so it is byte-identical to
+	// the pre-existing poll-only bus. Lazily created per node on first use under mu.
+	notify map[string]chan struct{}
 }
 
 // NewHumanBus returns an empty bus bound to tree (nil-safe for unit tests).
 func NewHumanBus(tree *AgentTree) *HumanBus {
-	return &HumanBus{queues: map[string][]HumanMsg{}, tree: tree}
+	return &HumanBus{queues: map[string][]HumanMsg{}, tree: tree, notify: map[string]chan struct{}{}}
+}
+
+// notifyChanLocked returns (creating if absent) the cap-1 signal channel for a
+// node. Caller must hold b.mu.
+func (b *HumanBus) notifyChanLocked(nodeID string) chan struct{} {
+	if b.notify == nil {
+		b.notify = map[string]chan struct{}{}
+	}
+	ch, ok := b.notify[nodeID]
+	if !ok {
+		ch = make(chan struct{}, 1)
+		b.notify[nodeID] = ch
+	}
+	return ch
+}
+
+// signalLocked wakes any WaitForMessage parked on this node's channel. The channel
+// is cap-1 and coalescing: a pending signal is not duplicated (a parked waiter
+// drains the whole queue on wake, so one wake covers N enqueues). Caller holds b.mu.
+func (b *HumanBus) signalLocked(nodeID string) {
+	ch := b.notifyChanLocked(nodeID)
+	select {
+	case ch <- struct{}{}:
+	default: // already signaled and undrained — coalesce
+	}
+}
+
+// WaitForMessage blocks until a message is pending for nodeID or ctx is done. It is
+// the parking primitive for an INTERACTIVE loop's turn boundary: the loop calls it
+// when the model produced no tool calls, so the run stays alive awaiting the next
+// human turn instead of returning. It returns nil when woken by an enqueue (the
+// caller then Polls to drain), or ctx.Err() when the context is cancelled (the
+// caller ends the run). A pre-existing pending message returns immediately, so a
+// message enqueued in the gap between the terminal model response and the park is
+// never missed.
+func (b *HumanBus) WaitForMessage(ctx context.Context, nodeID string) error {
+	b.mu.Lock()
+	// Fast path: something already queued (enqueued before we parked) — don't block.
+	if len(b.queues[nodeID]) > 0 {
+		b.mu.Unlock()
+		return nil
+	}
+	ch := b.notifyChanLocked(nodeID)
+	// Drain any stale signal so we block on the NEXT enqueue, not a spent one.
+	select {
+	case <-ch:
+	default:
+	}
+	b.mu.Unlock()
+
+	select {
+	case <-ch:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // nextSeq returns the next global monotonic sequence number.
@@ -135,6 +199,10 @@ func (b *HumanBus) Enqueue(nodeID string, mode MsgMode, handle, text string) Hum
 		Handle:   handle,
 	}
 	b.queues[nodeID] = append(b.queues[nodeID], msg)
+	// Wake an interactive loop parked in WaitForMessage on this node (no-op for a
+	// non-interactive loop, which never parks). Signal happens under mu so it cannot
+	// race the queue append a waiter will drain.
+	b.signalLocked(nodeID)
 	return msg
 }
 
@@ -365,6 +433,24 @@ type HumanInjector struct {
 func NewHumanInjector(nodeID string, bus *HumanBus) *HumanInjector {
 	return &HumanInjector{nodeID: nodeID, bus: bus}
 }
+
+// Wait blocks until a human message is pending for this node or ctx is done. It is
+// the parking primitive an INTERACTIVE loop uses at its turn boundary: after the
+// model produces no tool calls, the loop calls Wait so the run stays alive awaiting
+// the next human turn, then Polls to inject it. A nil bus (no human messaging wired)
+// returns immediately with a non-nil error so the caller falls back to the normal
+// terminal return — an interactive loop is only meaningful with a bus. Returns nil
+// when a message is ready to Poll, or ctx.Err() on cancellation.
+func (h *HumanInjector) Wait(ctx context.Context) error {
+	if h == nil || h.bus == nil {
+		return errNoBus
+	}
+	return h.bus.WaitForMessage(ctx, h.nodeID)
+}
+
+// errNoBus signals HumanInjector.Wait was called without a bus (interactive mode is
+// only meaningful with human messaging wired); the loop treats it as "cannot park".
+var errNoBus = fmt.Errorf("agent: interactive loop has no human bus to await")
 
 // Poll drains this node's queue and returns a SINGLE batched user message (queued
 // segments joined by a separator) — not N consecutive user messages, which some

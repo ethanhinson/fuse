@@ -116,7 +116,7 @@ func (s *Server) handleStart(ctx context.Context, r req) resp {
 	if err := json.Unmarshal(r.Params, &p); err != nil {
 		return s.errResp(r.ID, codeInvalidParams, "invalid params: "+err.Error())
 	}
-	h, err := s.rt.StartLoop(ctx, runtime.LoopConfig{Task: p.Task, ModelID: p.Model})
+	h, err := s.rt.StartLoop(ctx, runtime.LoopConfig{Task: p.Task, ModelID: p.Model, Interactive: p.Interactive})
 	if err != nil {
 		return s.errResp(r.ID, codeInternal, err.Error())
 	}

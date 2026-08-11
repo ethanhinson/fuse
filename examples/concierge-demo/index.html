@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Wander · Vacation Rental Concierge</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+  <!-- ─────────────────────────── Sidebar / activity ─────────────────────── -->
+  <aside class="rail">
+    <div class="brand">
+      <div class="mark">✷</div>
+      <div>
+        <div class="brand-name">Wander</div>
+        <div class="brand-sub">rental concierge</div>
+      </div>
+    </div>
+
+    <div class="conn">
+      <span id="dot" class="dot dot-idle"></span>
+      <span id="conn-text">connecting…</span>
+    </div>
+
+    <div class="rail-section-title">Live agent activity</div>
+    <div id="activity" class="activity">
+      <div class="activity-empty">The concierge’s reasoning, web searches, and sub-agents will stream here.</div>
+    </div>
+
+    <div class="rail-foot">
+      <div class="stat"><span id="stat-turns">0</span><label>turns</label></div>
+      <div class="stat"><span id="stat-searches">0</span><label>searches</label></div>
+      <div class="stat"><span id="stat-agents">0</span><label>agents</label></div>
+      <div class="stat"><span id="stat-events">0</span><label>events</label></div>
+    </div>
+    <div class="powered">
+      binding&nbsp;#3 · <code>loop-serve-net</code> · WS + HTTP replay
+    </div>
+  </aside>
+
+  <!-- ─────────────────────────────── Chat ───────────────────────────────── -->
+  <main class="chat">
+    <header class="chat-head">
+      <div>
+        <h1>Your travel concierge</h1>
+        <p id="loop-label">Ask about a destination and I’ll search the live web for real stays.</p>
+      </div>
+      <button id="reset" class="ghost-btn" title="Start a fresh conversation">＋ New</button>
+    </header>
+
+    <div id="thread" class="thread"></div>
+
+    <form id="composer" class="composer" autocomplete="off">
+      <div class="chips" id="chips">
+        <button type="button" class="chip">Beachfront villas in Tulum under $250/night</button>
+        <button type="button" class="chip">Ski chalets near Niseko for a family of 5</button>
+        <button type="button" class="chip">Pet-friendly cabins in the Smoky Mountains</button>
+      </div>
+      <div class="composer-row">
+        <input id="input" type="text" placeholder="Where do you want to go?" />
+        <button id="send" type="submit" class="send-btn" disabled>
+          <span class="send-label">Search</span>
+        </button>
+      </div>
+    </form>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
