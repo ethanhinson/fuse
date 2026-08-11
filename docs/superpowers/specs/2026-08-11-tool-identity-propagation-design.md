@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0052 — Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0052-tool-identity-propagation.md)**
+> ↩ **[Change 0052 — Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-11-0052-tool-identity-propagation.md)**
 <!-- docket:backlink:end -->
 
 # Spec 0052 — Tool/resource identity propagation: per-call RFC 8693 token exchange to downstream MCP/APIs
