@@ -3,6 +3,7 @@ module github.com/ethanhinson/fuse
 go 1.26.5
 
 require (
+	connectrpc.com/connect v1.20.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0
@@ -20,6 +21,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.40.0
+	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
 	mvdan.cc/sh/v3 v3.13.1
 )

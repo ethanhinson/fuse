@@ -1,0 +1,14 @@
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  except:
+    - PACKAGE_VERSION_SUFFIX
+    # Observe streams ObserveEvent frames (event | keepalive | gap marker), not a
+    # single "response"; the frame name is the wire contract, so keep it.
+    - RPC_RESPONSE_STANDARD_NAME
+breaking:
+  use:
+    - FILE

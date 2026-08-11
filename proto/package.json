@@ -1,0 +1,10 @@
+{
+  "name": "fuse-proto-codegen",
+  "version": "0.0.0",
+  "private": true,
+  "description": "buf TS codegen toolchain for the fuse.loop.v1 wire (protoc-gen-es). Run `npm ci` here before `make proto`.",
+  "devDependencies": {
+    "@bufbuild/protoc-gen-es": "2.13.0",
+    "@bufbuild/protobuf": "2.13.0"
+  }
+}
