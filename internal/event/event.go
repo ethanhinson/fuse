@@ -39,6 +39,13 @@ const (
 	KindSummarize      Kind = "context.summarize"
 	KindLoopTrip       Kind = "loop.detector.trip"
 	KindError          Kind = "error"
+	// KindLoopParked marks an interactive (persistent conversational) loop reaching a
+	// terminal turn and PARKING to await the next human input, rather than finishing.
+	// It is the deterministic "this exchange is complete, send your next message"
+	// signal a conversational client needs — the alternative (guessing completion from
+	// the absence of further events) is unreliable. Emitted only in interactive mode
+	// just before the park; never in a one-shot run.
+	KindLoopParked Kind = "loop.parked"
 )
 
 // Event is the stable envelope over every loop state transition. Payload is the
@@ -161,4 +168,13 @@ type LoopTripPayload struct {
 type ErrorPayload struct {
 	Err  string `json:"err"`
 	Turn int    `json:"turn"`
+}
+
+// LoopParkedPayload accompanies KindLoopParked. Content carries the assistant's final
+// answer text for the exchange just completed (the terminal no-tool response), so a
+// conversational client can render the reply directly from this one event instead of
+// reconstructing which model.call.end was terminal. Turn is the turn that produced it.
+type LoopParkedPayload struct {
+	Turn    int    `json:"turn"`
+	Content string `json:"content"`
 }

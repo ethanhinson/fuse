@@ -539,6 +539,32 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		if len(resp.ToolCalls) == 0 {
 			// turn.end (change 0043): the no-tool-calls terminal path.
 			a.emit(event.KindTurnEnd, turn, event.TurnEndPayload{Turn: turn})
+
+			// Interactive (persistent conversational) mode: instead of ending the run,
+			// PARK at this turn boundary awaiting the next human message, so one loop_id
+			// carries a full multi-turn conversation with in-memory history preserved
+			// across turns. The next iteration's top-of-loop Poll (ADR-0022 self-pull)
+			// injects the awaited message as a user turn — history is server-authoritative
+			// because `messages` (the whole transcript) is carried forward unchanged.
+			//
+			// The park ends the run ONLY on ctx cancellation (client disconnect / server
+			// shutdown) or when there is no bus to await (Wait returns errNoBus) — both
+			// fall through to the normal terminal return, so a non-interactive loop and a
+			// bus-less interactive loop are byte-identical to the pre-change behavior.
+			if a.interactive && a.humanInjector != nil {
+				// Announce the park FIRST: a deterministic "exchange complete, awaiting
+				// your next message" signal carrying the final answer, so a conversational
+				// client renders the reply and re-enables input without guessing which
+				// model.call.end was terminal.
+				a.emit(event.KindLoopParked, turn, event.LoopParkedPayload{Turn: turn, Content: resp.Content})
+				if werr := a.humanInjector.Wait(ctx); werr == nil {
+					// A message is pending; loop back so the top-of-turn Poll injects it.
+					// maxTurns is unlimited for an interactive loop (set by the binding),
+					// so the turn counter never caps a live conversation.
+					continue
+				}
+				// errNoBus or ctx cancellation: end the run like a normal terminal turn.
+			}
 			return messages, nil
 		}
 

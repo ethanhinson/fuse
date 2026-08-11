@@ -96,6 +96,29 @@ func TestDispatchLoopStartReturnsLoopID(t *testing.T) {
 	if fr.startCfg.Task != "hi" || fr.startCfg.ModelID != "cloud/x" {
 		t.Fatalf("StartLoop cfg = %+v, want Task=hi ModelID=cloud/x", fr.startCfg)
 	}
+	// Interactive defaults false when the param is omitted — binding #2 (stdio) never
+	// sets it, so its loops stay single-task run-to-completion.
+	if fr.startCfg.Interactive {
+		t.Fatalf("StartLoop cfg.Interactive = true, want false when param omitted")
+	}
+}
+
+// TestDispatchLoopStartInteractiveFlows proves the persistent-conversation opt-in
+// crosses the wire: a loop.start carrying "interactive":true reaches the runtime as
+// LoopConfig.Interactive, so a WS chat client gets a parking loop while stdio clients
+// (which omit the field) do not.
+func TestDispatchLoopStartInteractiveFlows(t *testing.T) {
+	fr := &fakeRuntime{startID: "loop-int"}
+	s := NewServer(nil, nil, fr)
+
+	r := req{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: "loop.start", Params: json.RawMessage(`{"task":"chat","model":"cloud/x","interactive":true}`)}
+	got := s.dispatch(context.Background(), r)
+	if got.Error != nil {
+		t.Fatalf("unexpected error: %+v", got.Error)
+	}
+	if !fr.startCfg.Interactive {
+		t.Fatalf("StartLoop cfg.Interactive = false, want true when param is set")
+	}
 }
 
 func TestDispatchLoopSendCallsRuntime(t *testing.T) {

@@ -193,6 +193,17 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	// Root human-message injector so Send() lands at a turn boundary (ADR-0022).
 	a.SetHumanInjector(agent.NewHumanInjector(rootNode.ID, lp.humanBus))
 
+	// Persistent conversational mode (opt-in): the loop parks at each terminal turn
+	// boundary awaiting the next Send, so one loop_id carries a multi-turn chat with
+	// server-authoritative history. Only meaningful alongside the injector above. An
+	// interactive loop must run uncapped: each resumed exchange consumes real turns,
+	// so any finite per-run backstop the binding baked into the agent would end the
+	// whole conversation once total turns crossed it. Lift it here.
+	if cfg.Interactive {
+		a.SetInteractive(true)
+		a.SetMaxTurns(0)
+	}
+
 	h := &loopHandle{id: rootID, done: make(chan struct{})}
 	lp.handle = h
 	go func() {
