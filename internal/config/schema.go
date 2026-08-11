@@ -79,8 +79,20 @@ type ResearchConfig struct {
 }
 
 // MCPAuthConfig holds authentication settings for an HTTP MCP server.
+//
+// The `type` selects both the transport credential AND the identity-propagation
+// tier (change #52). Identity-propagating types mint a per-call, audience-bound
+// delegation token from the loop initiator's identity (TierOAuth); the legacy
+// types carry a per-server static credential with NO initiator identity
+// (TierStatic). Existing "bearer"/"oauth2" map to TierStatic so nothing breaks.
 type MCPAuthConfig struct {
-	Type         string   `yaml:"type"`          // none | bearer | oauth2
+	// Type selects the credential + tier:
+	//   none                        — no credential (transport-open)
+	//   bearer | oauth2 | static    — TierStatic: per-server static credential,
+	//                                 identity-free (the legacy default)
+	//   identity | oauth-exchange   — TierOAuth: per-call RFC 8693 delegation token,
+	//                                 audience-bound to the server's Audience (#52)
+	Type         string   `yaml:"type"`
 	ClientID     string   `yaml:"client_id"`     // optional; absent = dynamic registration
 	ClientSecret string   `yaml:"client_secret"` // optional; used as bearer token for type=bearer
 	Scopes       []string `yaml:"scopes"`
@@ -95,6 +107,15 @@ type MCPServerConfig struct {
 	URL       string            `yaml:"url"`       // http only
 	Env       map[string]string `yaml:"env"`
 	Auth      MCPAuthConfig     `yaml:"auth"` // http only
+
+	// Audience is the RFC 8707 resource identifier a minted delegation token is
+	// bound to when this server is an identity-propagation (TierOAuth) target
+	// (change #52). Required for identity/oauth-exchange auth types; ignored for
+	// static tiers. Sourced from trusted config, never from model output.
+	Audience string `yaml:"audience"`
+	// Scopes are the downstream scopes a minted delegation token requests. Sourced
+	// from config (the tool declaration), never from model output.
+	Scopes []string `yaml:"scopes"`
 }
 
 // SummarizationConfig configures Tier 2 anchored LLM summarization (change
@@ -229,6 +250,33 @@ type Config struct {
 	// from the trusted ~/.fuse/config.yml — a repo-plantable .fuse.local.yml must
 	// not be able to mint or widen credentials (ADR-0006 trust boundary).
 	LoopServer LoopServerConfig
+	// ToolIdentity configures the tool/resource identity-propagation egress
+	// (change #52): the built-in STS signing key(s) used to mint per-call,
+	// audience-bound delegation tokens for identity-propagating MCP servers, and
+	// the local principal used off the networked binding (CLI/shell). Inert unless
+	// at least one MCP server is configured with an identity/oauth-exchange auth
+	// type. Like LoopServer it is a credential surface (a signing key mints
+	// downstream-trusted tokens), so it is honored ONLY from the trusted
+	// ~/.fuse/config.yml — never from a repo-plantable .fuse.local.yml (ADR-0006).
+	ToolIdentity ToolIdentityConfig
+}
+
+// ToolIdentityConfig configures change #52's identity-propagation egress seam.
+// An empty block leaves the seam un-wired (byte-identical to pre-#52: MCP tools
+// use their static per-server token). It becomes active when the composition
+// root builds a CredentialSource from it — which it does only when at least one
+// MCP server declares an identity-propagating auth type.
+type ToolIdentityConfig struct {
+	// SigningKey is the symmetric key the built-in STS signs local delegation
+	// tokens with, for the default/local tenant. Trusted-config only. When empty,
+	// identity-propagating MCP servers cannot mint and are reported at startup.
+	SigningKey string `yaml:"signing_key"`
+	// TTL is the minted token lifetime (e.g. "5m"); empty ⇒ the STS default.
+	TTL string `yaml:"ttl"`
+	// LocalSubject is the authorization subject stamped as the loop initiator on
+	// the non-networked (CLI/shell) paths, where there is no bearer token to
+	// resolve a Principal from. Empty ⇒ "local". The tenant is the default tenant.
+	LocalSubject string `yaml:"local_subject"`
 }
 
 // WorkflowConfig is one named workflow: the invocable it binds, its subtree
@@ -343,6 +391,11 @@ type rawConfig struct {
 	// token→principal verifier map and the lease TTL for `loop-serve-net`. It is a
 	// credential surface honored ONLY from the trusted home file (see mergeFile).
 	LoopServer LoopServerConfig `yaml:"loop_server"`
+	// ToolIdentity mirrors ToolIdentityConfig on-disk (change #52): the built-in
+	// STS signing key + local subject for identity-propagation. A credential
+	// surface (the signing key mints downstream-trusted tokens) honored ONLY from
+	// the trusted home file (see mergeFile).
+	ToolIdentity ToolIdentityConfig `yaml:"tool_identity"`
 }
 
 // rawPipelineConfig mirrors PipelineConfig on-disk (change 0026).

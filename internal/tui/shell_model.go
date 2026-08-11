@@ -18,9 +18,11 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/banner"
+	"github.com/ethanhinson/fuse/internal/loopauth"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/ratelimit"
+	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/version"
 )
@@ -227,6 +229,23 @@ type ShellModel struct {
 	// Never auto-re-read (D2) — the flag is purely a display cue.
 	staleResources    []staleResource
 	staleResourceSeen map[string]bool
+
+	// toolPrincipal is the authenticated loop initiator seeded onto the per-turn
+	// agent-run context (change #52), so an identity-propagating MCP tool call
+	// mints a per-call credential from it. Zero value ⇒ no principal is seeded and
+	// the egress seam (if wired) fails closed on an OAuth-tier target — never a
+	// silent downgrade. Set by the composition root via SetToolPrincipal.
+	toolPrincipal loopauth.Principal
+}
+
+// WithToolPrincipal seeds the local authorization identity (change #52) the shell
+// stamps onto each agent-run context, so an identity-propagating MCP tool call
+// mints a delegation token from it. On the single-user local shell this is the
+// configured local principal; there is no bearer token to resolve one from.
+// Chainable value method, matching WithTree/WithBlackboard.
+func (m ShellModel) WithToolPrincipal(p loopauth.Principal) ShellModel {
+	m.toolPrincipal = p
+	return m
 }
 
 // staleResource is one MCP resource flagged stale by a pushed update.
@@ -1062,7 +1081,8 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	history := m.history
 	build := m.build
 
-	tree := m.tree // capture for closure
+	tree := m.tree                  // capture for closure
+	toolPrincipal := m.toolPrincipal // capture for closure (change #52)
 	run := func() tea.Msg {
 		approve := NewTeaApprovalFunc(ch)
 		var r agent.Renderer = NewTeaRenderer(ch)
@@ -1078,7 +1098,15 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 			ch <- AgentDoneMsg{History: history}
 			return nil
 		}
-		updated, rerr := a.Run(context.Background(), history)
+		// Seed the local authorization identity onto the run context (change #52)
+		// so an identity-propagating MCP tool call mints a per-call credential from
+		// it. A zero principal seeds nothing — the egress seam fails closed rather
+		// than minting under an empty identity.
+		runCtx := context.Background()
+		if toolPrincipal.Subject != "" {
+			runCtx = toolidentity.WithPrincipal(runCtx, toolPrincipal)
+		}
+		updated, rerr := a.Run(runCtx, history)
 		if rerr != nil {
 			ch <- AgentErrMsg{Err: rerr.Error()}
 		}

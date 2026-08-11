@@ -69,7 +69,19 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		skillProv = nil
 	}
 
-	mcpProv, err := tui.NewMCPProvider(config.Path(), cfg, toolReg)
+	// Tool/resource identity propagation (change #52): when an MCP server is
+	// configured with an identity-propagating auth type, build the egress
+	// CredentialSource and wire it into the manager so each MCP tool call mints a
+	// per-call, audience-bound delegation token from the local principal. Inert
+	// (nil source) otherwise — MCP tools keep their static-token path.
+	var mcpOpts []mcp.ManagerOption
+	if src, reason := buildToolIdentitySource(cfg); src != nil {
+		mcpOpts = append(mcpOpts, mcp.WithCredentialSource(src))
+		logToolIdentityPosture(os.Stderr, cfg, true, "")
+	} else if reason != "" {
+		logToolIdentityPosture(os.Stderr, cfg, false, reason)
+	}
+	mcpProv, err := tui.NewMCPProvider(config.Path(), cfg, toolReg, mcpOpts...)
 	if err != nil {
 		log.Printf("mcp provider: %v", err)
 		mcpProv = nil
@@ -248,6 +260,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build, sessionMode, classifierConstructible(cfg))
 	m = m.WithTree(tree)
 	m = m.WithBlackboard(bb)
+	// Seed the local authorization identity (change #52) so identity-propagating
+	// MCP tool calls mint a per-call credential from it.
+	m = m.WithToolPrincipal(localPrincipal(cfg))
 	// Segment surface (change 0030): the /agents overlay reads this session's
 	// segments/ dir for the compaction indicator and "s" show-original.
 	m = m.WithSegmentsDir(segment.SegmentsDir(logDir, tree.RootID()))

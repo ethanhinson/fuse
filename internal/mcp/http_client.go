@@ -176,9 +176,14 @@ func (c *httpClient) call(ctx context.Context, method string, params any) (json.
 		return nil, fmt.Errorf("mcp http %q build request: %w", c.name, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	if c.bearerToken != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.bearerToken)
-	}
+	// A per-call credential on ctx (resolved by MCPTool.Execute from the loop
+	// initiator's identity) wins and binds the request to the target audience;
+	// otherwise fall back to the static bearerToken baked in at dial (back-compat).
+	applyCallAuth(ctx, httpReq.Header.Set, func() {
+		if c.bearerToken != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+c.bearerToken)
+		}
+	})
 
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
@@ -237,9 +242,11 @@ func (c *httpClient) notify(ctx context.Context, method string, params any) erro
 		return fmt.Errorf("mcp http %q build notify: %w", c.name, err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	if c.bearerToken != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.bearerToken)
-	}
+	applyCallAuth(ctx, httpReq.Header.Set, func() {
+		if c.bearerToken != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+c.bearerToken)
+		}
+	})
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("mcp http %q notify post: %w", c.name, err)

@@ -33,13 +33,19 @@ type MCPProvider struct {
 
 // NewMCPProvider creates the initial Manager from cfg, builds entries, and
 // starts watching configPath for changes.
-func NewMCPProvider(configPath string, cfg config.Config, toolReg *tools.Registry) (*MCPProvider, error) {
+//
+// opts are forwarded verbatim to mcp.NewManager — notably mcp.WithCredentialSource
+// (change #52), which stamps every discovered/reconnected MCP tool with the
+// identity-propagation egress seam so a per-call, audience-bound credential is
+// minted from the loop initiator's identity. Passing no opts leaves MCP tools on
+// their pre-#52 static-token path (byte-identical behavior).
+func NewMCPProvider(configPath string, cfg config.Config, toolReg *tools.Registry, opts ...mcp.ManagerOption) (*MCPProvider, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
 	}
 
-	mgr, err := mcp.NewManager(cfg.MCPServers, toolReg)
+	mgr, err := mcp.NewManager(cfg.MCPServers, toolReg, opts...)
 	if err != nil {
 		w.Close()
 		return nil, err
