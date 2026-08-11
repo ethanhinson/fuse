@@ -52,7 +52,16 @@ SDK alongside the Go one**, and the reason the cross-language wire contract is i
 - **Go SDK** — local in-process backend **and** remote WS/HTTP backend, one constructor switch; both
   ship. The literal "same API local-or-remote" thesis.
 - **TS/JS SDK** — **remote-only** (a browser has no in-process Go `Runtime`), full Runtime-parity over
-  WS + HTTP, so the **Wander** browser app can start, drive, observe, and replay loops.
+  change 55's Connect transport, so the **Wander** browser app can start, drive, observe, and replay
+  loops.
+
+Both live in **this repo**: the TS SDK is a **monorepo npm workspace** (e.g. `sdk/ts`) and **Wander is
+a sibling workspace package** depending on it — chosen because the proto, the Go SDK, and the TS SDK
+co-evolve in lockstep right now, so a monorepo makes each proto→Go→TS→Wander change atomic and keeps
+change 55's generated-stub codegen trivial; Wander still consumes the SDK through its package boundary
+(exercising the real surface, not relative imports). Extraction to a standalone repo is a later option
+once the wire stabilizes; a git submodule was rejected as painful for the current lockstep
+co-development.
 
 See the linked spec for the full design; at proposal altitude:
 
@@ -65,11 +74,12 @@ See the linked spec for the full design; at proposal altitude:
   event stream, the replay cursor (last `event.Seq`), gap/reconnect, and the **explicit
   park/completion event** as first-class — a client cannot infer "done" or "safe to reconnect" from
   the *shape* of a persistent loop's stream.
-- **Remote client over change 55's gRPC wire.** The Go SDK's remote backend and the TS SDK both drive
-  change 55's transport, generating their stubs from its IDL. The reconnect discipline
-  (subscribe-before-replay + dedup-at-watermark + gap-driven re-observe) is preserved over 55's
-  streaming; if 55 keeps a browser bridge (a 55 open question), the TS SDK targets whatever browser
-  path 55 lands. (Change 48's WS/HTTP client is superseded by 55, not extracted.)
+- **Remote client over change 55's Connect wire.** The Go SDK's remote backend and the TS SDK both
+  drive change 55's Connect/protobuf transport, generating their stubs (`connect-go` / `connect-es`)
+  from its proto. The reconnect discipline (subscribe-before-replay + dedup-at-watermark + gap-driven
+  re-observe) is preserved over 55's server-streaming; the TS SDK reaches it in-browser via
+  `connect-es` with **no proxy** (55's settled browser path). (Change 48's WS/HTTP client is superseded
+  by 55, not extracted.)
 - **Credential seam, pass-through now.** Each constructor takes an identity/tenant seam that forwards
   `tenant_id` present-but-unenforced today (matching change 48) and becomes the real auth carrier when
   change 49 lands — so 49 adds no breaking change to either SDK surface.
@@ -88,9 +98,10 @@ See the linked spec for the full design; at proposal altitude:
 
 ## Open questions
 
-- Go package home/name (`sdk/` vs `pkg/fusesdk`) and TS package layout (npm workspace, bundler,
-  publish target) — plan-time; the Go package must be importable from outside the module, never under
-  `internal/`.
+- Go package home/name (`sdk/` vs `pkg/fusesdk`) — plan-time; must be importable from outside the
+  module, never under `internal/`. **TS package home is decided:** a **monorepo npm workspace** in this
+  repo (e.g. `sdk/ts`), with Wander as a sibling workspace package consuming it — see *What changes*.
+  Bundler + publish target remain plan-time.
 - How the SDKs consume change 55's IDL (generated stubs, package boundaries) and the browser path 55
   settles on — re-validated at the build reconcile pass once 55 is designed.
 - Exact completion-signal API shape in each language (typed event on the stream, a handle await, or

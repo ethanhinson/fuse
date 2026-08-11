@@ -96,9 +96,13 @@ switch is the *only* place local-vs-remote is named.
 
 ### A TS/JS SDK: Runtime-parity, remote-only, for the browser (Wander)
 
-Add a TS/JS package (home/tooling — npm workspace layout, bundler — decided at plan time) presenting
-the **same Runtime-parity surface** — `startLoop` / `send` / `observe` / `attach` — **remote-only**
-over change 55's transport. It consumes 55's generated TS stubs, tracks the last `Seq`, and
+Add a TS/JS package — a **monorepo npm workspace in this repo** (e.g. `sdk/ts`), with **Wander a
+sibling workspace package** depending on it (bundler/publish target plan-time) — presenting the **same
+Runtime-parity surface** — `startLoop` / `send` / `observe` / `attach` — **remote-only** over change
+55's transport. The monorepo home is chosen because the proto (#55), the Go SDK, and this TS SDK
+co-evolve in lockstep, making each change atomic and #55's Go→TS codegen trivial; extraction to a
+standalone repo is a later option once the wire stabilizes, and a git submodule was rejected as
+painful for lockstep co-development. It consumes 55's generated TS stubs, tracks the last `Seq`, and
 re-implements the **subscribe-before-replay + dedup-at-watermark + gap-driven re-observe** reconnect
 discipline in TS. It surfaces the same first-class mechanics (event stream, replay cursor, explicit
 completion) as the Go SDK. Its connection layer must treat **every** post-handshake read/close as a
@@ -186,9 +190,9 @@ rather than ship the SDKs on #48's JSON wire — Wander is now downstream of #55
 
 ## Open questions (for plan-time reconcile)
 
-- Go package home/name (`sdk/` vs `pkg/fusesdk`) and TS package layout (npm workspace, bundler,
-  publish target) — plan-time; the Go package must be importable from outside the module and never
-  under `internal/`.
+- Go package home/name (`sdk/` vs `pkg/fusesdk`) — plan-time; must be importable from outside the
+  module, never under `internal/`. (TS home is settled: a monorepo `sdk/ts` workspace with Wander a
+  sibling; only bundler + publish target remain plan-time.)
 - How the SDKs consume #55's generated stubs (package boundaries, versioning), and the browser path
   #55 settles on (grpc-web + proxy vs. a WS/JSON bridge) that the TS SDK inherits — re-validated once
   #55 is designed.
