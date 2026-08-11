@@ -69,18 +69,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		skillProv = nil
 	}
 
-	// Tool/resource identity propagation (change #52): when an MCP server is
-	// configured with an identity-propagating auth type, build the egress
-	// CredentialSource and wire it into the manager so each MCP tool call mints a
-	// per-call, audience-bound delegation token from the local principal. Inert
-	// (nil source) otherwise — MCP tools keep their static-token path.
-	var mcpOpts []mcp.ManagerOption
-	if src, reason := buildToolIdentitySource(cfg); src != nil {
-		mcpOpts = append(mcpOpts, mcp.WithCredentialSource(src))
-		logToolIdentityPosture(os.Stderr, cfg, true, "")
-	} else if reason != "" {
-		logToolIdentityPosture(os.Stderr, cfg, false, reason)
-	}
+	// Tool/resource identity propagation (change #52 / #59): resolve the MCP attach
+	// options through the single shared composition-root helper (spec §1) so the
+	// shell wires the egress CredentialSource + complete-mediation gate + posture
+	// log the same way every loop binding does — no binding attaches MCP without it.
+	// The mediator permissions.Option the helper returns is applied to the shell's
+	// per-turn approve gate via buildGate (which calls buildTargetMediator on the
+	// same config); the manager options carry the egress seam. Inert (no source, nil
+	// mediator) when no identity-propagating server is configured.
+	mcpOpts, _ := mcpAttach(cfg, os.Stderr)
 	mcpProv, err := tui.NewMCPProvider(config.Path(), cfg, toolReg, mcpOpts...)
 	if err != nil {
 		log.Printf("mcp provider: %v", err)

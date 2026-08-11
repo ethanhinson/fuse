@@ -293,3 +293,36 @@ and TS stubs in `proto/gen/ts`.
 
 This replaces the earlier JSON-over-WebSocket wire (change #48, ADR-0032
 superseded): there is no `/ws` or `/loops/{id}/events` route anymore.
+
+### MCP on every binding, with the real per-principal identity (change #59)
+
+MCP tool execution is attached on **every** loop binding — the shell, the one-shot
+CLI, the research probe, and both loop-servers — through one composition-root helper,
+`mcpAttach(cfg, w)` in `cmd/fuse`. It resolves, together, the identity-propagation
+egress seam (`mcp.WithCredentialSource`, when an identity-propagating MCP server is
+configured — change #52) **and** the complete-mediation `TargetMediator` gate, so no
+binding can wire a manager without also wiring the egress credential seam and the
+target-allowlist gate. A misconfiguration is logged loud at startup, never silent.
+
+On the **loop-server** paths this is first-class and **per-loop**: each hosted loop
+gets its **own** `mcp.Manager`, its tools registered into **that loop's own** cloned
+tool registry, and the manager closed at loop teardown — two concurrent loops never
+share a manager, a registry, or a credential. Crucially, the loop-server threads the
+**real authenticated principal** the Connect edge resolved (`sub` = the initiating
+user, `act` = fuse) into the egress, so each outbound MCP `tools/call` presents a
+short-lived, **audience-bound, per-principal delegation token** minted for that user
+and tenant — never a shared static token and never the `_default` shim. The minted
+token lives only on the outbound transport header: it never appears in the event
+stream, the durable store, logs, or model context.
+
+The identity travels as a **context value** stamped by the composition root
+(`toolidentity.WithPrincipal`) through the runtime's policy-free `LoopContext` /
+`LoopTeardown` seams — `internal/runtime` imports no auth, MCP, or `cmd/fuse` type
+(ADR-0030 preserved). A permanent CI acceptance lane
+(`cmd/fuse/loop_serve_net_rentals_acceptance_test.go`) drives two authenticated
+principals concurrently through the loop-server binding against a real stateful
+rentals MCP server (`internal/mcpdemo/rentals`, importable by Wander), under `-race`,
+asserting the full #52 checklist — distinct per-principal tokens, downstream 403 as a
+distinguishable tool error, per-principal write isolation, wrong-audience rejection,
+complete mediation of an undeclared target even under auto-approve, and no credential
+leak — so a regression kills the build.

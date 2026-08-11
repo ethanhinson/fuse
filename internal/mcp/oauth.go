@@ -313,6 +313,16 @@ func GetAccessToken(serverName, serverURL string, cfg config.MCPAuthConfig) (str
 		return cfg.ClientSecret, nil
 	case "oauth2":
 		return getOAuth2Token(serverName, serverURL, cfg)
+	case "identity", "oauth-exchange":
+		// Identity-propagation tiers (change #52/#59) carry NO dial-time static token:
+		// the per-call, audience-bound delegation token is minted from the loop
+		// initiator's identity at MCPTool.Execute and injected onto the outbound
+		// request by the egress seam (applyCallAuth), never baked into the client. So
+		// the transport dials with an empty token — the handshake (initialize/tools/list)
+		// runs unauthenticated or under whatever the server permits pre-auth, and each
+		// tools/call then presents its own delegated token. Returning ("", nil) here lets
+		// these servers dial at all (previously they failed with "unknown auth type").
+		return "", nil
 	default:
 		return "", fmt.Errorf("unknown auth type %q", cfg.Type)
 	}

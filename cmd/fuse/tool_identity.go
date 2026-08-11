@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"strings"
@@ -10,9 +12,40 @@ import (
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopauth"
+	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/toolidentity"
 )
+
+// mcpAttach is the single composition-root helper every loop binding calls to
+// wire an mcp.Manager. It resolves, together, the identity-propagation egress
+// seam (the mcp.WithCredentialSource ManagerOption, when a source is configured)
+// AND the complete-mediation TargetMediator permissions.Option — so no binding
+// can construct a manager without also wiring the egress seam + the mediation
+// gate. Co-locating them here (with buildToolIdentitySource / buildTargetMediator)
+// is the structural spine (spec §1): the two options are derived from the same
+// config in one place and cannot drift apart per binding.
+//
+// It also writes the startup posture log to w (the security-relevant one-liner
+// describing each MCP server's resolved tier, or the fail-closed reason), so a
+// misconfiguration is never silent regardless of which binding attached MCP.
+//
+// Contract:
+//   - mcpOpts carries WithCredentialSource exactly when buildToolIdentitySource
+//     yields a source; empty otherwise (pre-#52 static-token path, byte-identical).
+//   - mediator is non-nil exactly when an identity-propagating server is declared
+//     (buildTargetMediator's gate), independent of whether a signing key resolved —
+//     an identity server with no key still declares a target the mediator gates.
+func mcpAttach(cfg config.Config, w io.Writer) (mcpOpts []mcp.ManagerOption, mediator permissions.Option) {
+	if src, reason := buildToolIdentitySource(cfg); src != nil {
+		mcpOpts = append(mcpOpts, mcp.WithCredentialSource(src))
+		logToolIdentityPosture(w, cfg, true, "")
+	} else if reason != "" {
+		logToolIdentityPosture(w, cfg, false, reason)
+	}
+	mediator = buildTargetMediator(cfg)
+	return mcpOpts, mediator
+}
 
 // configTargetMediator is the concrete complete-mediation gate (change #52 D5)
 // wired at the composition root. It enforces, from the loop-start root of trust
@@ -154,24 +187,17 @@ func buildToolIdentitySource(cfg config.Config) (toolidentity.CredentialSource, 
 		}
 	}
 
-	// SINGLE-TENANT ASSUMPTION (explicit): the built-in STS is keyed ONLY for
-	// event.DefaultTenant here, because the sole path that wires MCP tools into
-	// the agent registry today is the single-user local shell (see the change #52
-	// reconcile log). A request whose Principal carries any OTHER tenant would fail
-	// closed with ErrTenantNotConfigured.
-	//
-	// TODO(#52-followup): when MCP egress is wired into the multi-tenant
-	// loop-server path (loop_server.go / loop_serve_net.go, which do NOT attach MCP
-	// today), this must build TenantKeys for every configured tenant (or resolve
-	// per-tenant signing material from the host's key source) — otherwise every
-	// non-default tenant silently fails closed. Do not remove this note until that
-	// wiring exists.
+	// Per-loop tenant STS keying (change #59): the built-in STS is keyed for EVERY
+	// tenant the loop-verifier knows (from loop_server.auth) plus event.DefaultTenant,
+	// so a request whose Principal carries the real per-loop tenant mints under THAT
+	// tenant's own signing key. This reaches #52's existing per-tenant signing-key
+	// isolation (D4) — it is wiring the real tenant through, not a new mechanism. The
+	// shell/one-shot single-user paths still supply DefaultTenant and are byte-identical
+	// (its key is the raw signing key; see toolIdentityTenantKeys).
 	sts, err := toolidentity.NewBuiltinSTS(toolidentity.BuiltinSTSConfig{
-		Issuer: "fuse",
-		TTL:    ttl,
-		TenantKeys: map[event.TenantID][]byte{
-			event.DefaultTenant: []byte(cfg.ToolIdentity.SigningKey),
-		},
+		Issuer:     "fuse",
+		TTL:        ttl,
+		TenantKeys: toolIdentityTenantKeys(cfg),
 	})
 	if err != nil {
 		return nil, fmt.Sprintf("tool_identity: building the built-in STS failed: %v", err)
@@ -190,6 +216,48 @@ func buildToolIdentitySource(cfg config.Config) (toolidentity.CredentialSource, 
 	}
 
 	return toolidentity.NewBroker(sts, static, nil), ""
+}
+
+// toolIdentityTenantKeys builds the STS per-tenant signing-key map (change #59). It
+// keys every tenant the loop-verifier knows (declared under loop_server.auth) plus
+// event.DefaultTenant, so the built-in STS can mint for the real per-loop tenant on
+// the loop-server path — reaching #52's per-tenant credential isolation (D4), not a
+// new mechanism.
+//
+// Derivation (root-of-trust): the DefaultTenant key is the raw configured signing
+// key VERBATIM, so the single-user shell/one-shot paths stay byte-identical to the
+// pre-#59 single-tenant keying. Every NAMED tenant gets a cryptographically distinct
+// key derived deterministically from the same trusted signing material via
+// HMAC-SHA256(signingKey, "fuse-tool-identity-tenant:"+tenant). This gives each
+// tenant its own key from one configured secret — a token minted for tenant A never
+// verifies under tenant B's key (the STS Verify path), the compound-key isolation
+// the broker/STS design already provides — while requiring no per-tenant key config.
+// A future host key source can replace this derivation behind the same seam without
+// touching the callers.
+func toolIdentityTenantKeys(cfg config.Config) map[event.TenantID][]byte {
+	signingKey := []byte(cfg.ToolIdentity.SigningKey)
+	keys := map[event.TenantID][]byte{
+		// DefaultTenant uses the raw signing key — byte-identical to pre-#59.
+		event.DefaultTenant: signingKey,
+	}
+	for _, a := range cfg.LoopServer.Auth {
+		tenant := event.NormalizeTenant(event.TenantID(a.Tenant))
+		if _, ok := keys[tenant]; ok {
+			continue // DefaultTenant (or a repeat) already keyed; do not re-derive.
+		}
+		keys[tenant] = deriveTenantKey(signingKey, tenant)
+	}
+	return keys
+}
+
+// deriveTenantKey derives a per-tenant signing key from the configured signing
+// material. It is a keyed hash (HMAC), so the derived key is cryptographically
+// bound to BOTH the secret and the tenant id — two tenants can never collide, and
+// the secret is not recoverable from a derived key.
+func deriveTenantKey(signingKey []byte, tenant event.TenantID) []byte {
+	mac := hmac.New(sha256.New, signingKey)
+	mac.Write([]byte("fuse-tool-identity-tenant:" + string(tenant)))
+	return mac.Sum(nil)
 }
 
 // mcpStaticToken resolves the static bearer token for a legacy-tier MCP server

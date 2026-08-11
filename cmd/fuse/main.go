@@ -167,10 +167,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// in-process Runtime. buildOneShotRuntimeDeps holds the tree/scheduler/blackboard,
 	// spawn factory, and tool wiring exactly as before (behavior-preserving
 	// relocation); the renderer/gate stay in cmd/fuse via BuildAgent's closure.
-	deps := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate)
+	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate)
 	rt := runtime.New(deps)
 	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: task, ModelID: *modelAlias})
 	if err != nil {
+		// StartLoop failed before the completion goroutine (which runs LoopTeardown) could
+		// launch, so close the one-shot MCP manager here or its dialed servers +
+		// read-pump/notify goroutines leak (change #59 review S2). Idempotent.
+		oneShotMCPClose()
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}

@@ -2,18 +2,22 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/probe"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/session"
+	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tui"
 )
@@ -70,7 +74,7 @@ func (h *eventStoreHolder) get() event.EventStore {
 func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, tree *agent.AgentTree, stdout io.Writer, verbose bool, traceW io.Writer,
 	rootApprove permissions.ApprovalFunc, oneShotSystemBlock string, oneShotBudget bool,
-	rateGate model.RateGate) runtime.Deps {
+	rateGate model.RateGate) (runtime.Deps, func()) {
 
 	sched := tree.Scheduler()
 	rootNode := tree.Node(tree.RootID())
@@ -79,6 +83,35 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 	// Per-loop store holder (change 0046): BuildAgent sets it from the Runtime-owned
 	// store; the child-builder/spawner closures below read it instead of a global.
 	storeHolder := &eventStoreHolder{}
+
+	// MCP attach on the one-shot path (change #59, Task 5): route through the SAME
+	// shared helper every binding uses, so one-shot can list + invoke MCP tools with
+	// #52 identity propagation. mcp.NewManager registers the configured servers' tools
+	// into the one-shot registry (mcpOpts carry the egress CredentialSource); the loop
+	// initiator is seeded as localPrincipal(cfg) (→ DefaultTenant) via LoopContext
+	// below, mirroring the shell's local-identity model — NO new CLI identity flag
+	// (explicit non-goal). The mediator reaches the gate via buildGate →
+	// buildTargetMediator. One-shot is single-loop-per-process, so one manager over the
+	// one registry; it is closed at loop completion via LoopTeardown. A no-op when no
+	// MCP server is configured (no dial, no goroutines).
+	mcpOpts, _ := mcpAttach(cfg, os.Stderr)
+	var oneShotMCP *mcp.Manager
+	if mgr, err := mcp.NewManager(cfg.MCPServers, toolReg, mcpOpts...); err != nil {
+		fmt.Fprintf(os.Stderr, "one-shot: mcp manager: %v\n", err)
+	} else {
+		oneShotMCP = mgr
+	}
+	// oneShotMCPClose closes the manager at most once (change #59 review S2): wired into
+	// Deps.LoopTeardown for the normal-completion path and returned so the caller can
+	// also invoke it on a StartLoop error return, where the completion goroutine never runs.
+	var oneShotMCPCloseOnce sync.Once
+	oneShotMCPClose := func() {
+		oneShotMCPCloseOnce.Do(func() {
+			if oneShotMCP != nil {
+				oneShotMCP.Close()
+			}
+		})
+	}
 
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
 	makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
@@ -181,6 +214,25 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		BaseDir:         "", // NoopStore: one-shot writes no event log (byte-identical).
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
 		NewToolRegistry: func() *tools.Registry { return toolReg },
+		// LoopContext seeds the one-shot loop initiator as the config-derived local
+		// principal (change #59, Task 5) — subject from cfg.ToolIdentity.LocalSubject,
+		// DefaultTenant — exactly the shell's local-identity model, so identity-propagating
+		// MCP calls mint a per-call credential from it. No per-invocation tenant/principal
+		// input (explicit non-goal). Stamped at the composition root, not the runtime seam
+		// (ADR-0030).
+		LoopContext: func(ctx context.Context, _ runtime.LoopConfig) context.Context {
+			return toolidentity.WithPrincipal(ctx, localPrincipal(cfg))
+		},
+		// LoopTeardown closes the one-shot MCP manager at loop completion so its
+		// read-pump/notify goroutines do not outlive the run. Idempotent (sync.Once):
+		// it runs on the normal completion goroutine AND may be invoked once more on a
+		// StartLoop error return (change #59 review S2), so a failure after the manager
+		// dialed still releases it. A double Close would otherwise re-walk an emptied
+		// server map — harmless — but Once makes the intent explicit and the arg is
+		// ignored (one-shot is single-loop, one manager).
+		LoopTeardown: func(_ *tools.Registry) {
+			oneShotMCPClose()
+		},
 		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			// Publish the Runtime-owned store to the per-loop holder so the eagerly-wired
 			// child-builder/spawner closures above emit onto THIS loop's store (change
@@ -198,7 +250,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
 			return a, childBuilder, mid, nil
 		},
-	}
+	}, oneShotMCPClose
 }
 
 // researchProbeDepsInput carries the research-probe binding's wiring into its Deps
@@ -223,6 +275,16 @@ type researchProbeDepsInput struct {
 // (headless). BaseDir is "" (NoopStore — the probe writes no event log). The
 // tree is supplied by the caller (Deps.Tree) so probe.Summarize still sees it after
 // h.Wait(). Cloned child-builder site 3 of 3 (learning patch-every-cloned-child-builder).
+//
+// MCP attach choice (change #59, Task 5): the research-probe deliberately does NOT
+// attach an MCP manager. It is a bounded web-research fan-out over a fixed,
+// research-specific tool palette (web_search/web_fetch + spawn/blackboard/pipeline)
+// driving workflow workers; it exposes no configured downstream MCP target and has no
+// authenticated per-user identity to propagate (it runs under AlwaysApprove with no
+// principal surface). Attaching MCP here would add downstream reach the probe's role
+// does not call for. The two loop bindings that DO carry MCP — the shell and the
+// loop-server (and the one-shot local path) — go through mcpAttach; this site is the
+// documented exception, not an accidental omission.
 func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 	cfg, reg, alias := in.cfg, in.reg, in.alias
 	toolReg, tree, act, rootID := in.toolReg, in.tree, in.act, in.rootID
