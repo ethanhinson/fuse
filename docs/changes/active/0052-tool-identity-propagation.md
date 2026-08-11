@@ -11,7 +11,7 @@ depends_on: [48, 49]
 related: [43, 47, 50, 51]
 discovered_from: [47, 49]
 adrs: []
-spec:
+spec: docs/superpowers/specs/2026-08-11-tool-identity-propagation-design.md
 plan:
 results:
 trivial: false
@@ -25,6 +25,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-08-11-tool-identity-propagation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-tool-identity-propagation-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
@@ -51,10 +54,10 @@ correctness gap and, per the current MCP spec, a **prohibited** pattern (token p
 
 ## What changes
 
-To be designed during grooming. The research-backed leading direction: an
-**identity-propagation egress seam** on every tool/MCP call that exchanges the
-authenticated loop-initiator's identity for a **short-lived, audience-bound, downscoped**
-downstream credential, so the downstream — not fuse — adjudicates. Sketch:
+Design settled during grooming (full design in the linked spec). An
+**identity-propagation egress seam** on every tool/MCP call exchanges the authenticated
+loop-initiator's identity for a **short-lived, audience-bound, downscoped** downstream
+credential, so the downstream — not fuse — adjudicates:
 
 - **Per-call token exchange (RFC 8693).** At the tool/MCP egress, exchange
   `subject_token` (loop initiator) + `actor_token` (fuse) at an authorization server for a
