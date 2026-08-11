@@ -6,8 +6,9 @@ package loopserver
 // the extracted dispatch core (server.go) verbatim — no replay/observe/dedup logic
 // is reimplemented here.
 //
-// The thin stateless HTTP replay endpoint (Attach catch-up) is added by a later
-// task; it lives in this file too but is not implemented yet.
+// This file also hosts the thin stateless HTTP replay endpoint (Attach catch-up):
+// a plain GET exposing runtime.Runtime.Attach(loop_id, from) as durable history,
+// distinct from the WS full-session transport — no live tail, no connection state.
 
 import (
 	"context"
@@ -15,9 +16,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"strconv"
 	"sync"
 
 	"github.com/coder/websocket"
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/runtime"
 )
 
@@ -116,4 +120,75 @@ func ServeWS(ctx context.Context, c *websocket.Conn, rt runtime.Runtime) error {
 	// Best-effort clean close; ignore the error (the peer may already be gone).
 	_ = c.Close(websocket.StatusNormalClosure, "")
 	return err
+}
+
+// --- Thin stateless HTTP replay endpoint (binding #3, D3) ------------------------
+
+// NewReplayHandler returns an http.Handler exposing the durable catch-up path over
+// the runtime seam: GET /loops/{id}/events?from=<seq>&tenant=<t> answers with the
+// history rt.Attach(ctx, tenant, id, from) returns, as a JSON array of event.Event
+// (seq > from), Content-Type application/json.
+//
+// It is deliberately STATELESS: every request is an independent, idempotent history
+// read with no live tail and no accumulated connection state — the WS transport
+// (ServeWS) owns live observe and all mutation (loop.start/loop.send). HTTP is
+// read-only replay only (D3): there is no start/send route here.
+//
+// tenant is carried present-but-unenforced via the ?tenant= query param (identity is
+// #0049), defaulting to empty when absent — the same way the WS observe params carry
+// it. from defaults to 0 and MUST parse as a non-negative uint64 (malformed or
+// negative -> 400). An Attach error (e.g. an unknown loop) maps to 404 with a JSON
+// error body.
+//
+// Task 5's loop-serve-net subcommand mounts this handler (alongside the WS accept
+// handler) on the process's http.ServeMux.
+func NewReplayHandler(rt runtime.Runtime) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /loops/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		tenant := r.URL.Query().Get("tenant") // unenforced (#0049); "" when absent.
+
+		// from defaults to 0; reject a nonparsable or negative value with 400.
+		from := uint64(0)
+		if raw := r.URL.Query().Get("from"); raw != "" {
+			v, err := strconv.ParseUint(raw, 10, 64)
+			if err != nil {
+				writeJSONError(w, http.StatusBadRequest, "invalid from: "+raw)
+				return
+			}
+			from = v
+		}
+
+		hist, err := rt.Attach(r.Context(), event.TenantID(tenant), id, event.Seq(from))
+		if err != nil {
+			// An Attach failure (unknown loop, etc.) is a client-addressable 404 — the
+			// requested loop's durable history could not be resolved.
+			writeJSONError(w, http.StatusNotFound, err.Error())
+			return
+		}
+
+		// Marshal the slice; a nil/empty history must still be a JSON array, never null,
+		// so the response shape is stable.
+		if hist == nil {
+			hist = []event.Event{}
+		}
+		body, err := json.Marshal(hist)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "marshal history: "+err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+	})
+	return mux
+}
+
+// writeJSONError writes a JSON error body ({"error": msg}) with the given status and
+// Content-Type application/json, so every non-2xx response is machine-parseable.
+func writeJSONError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	body, _ := json.Marshal(map[string]string{"error": msg})
+	_, _ = w.Write(body)
 }
