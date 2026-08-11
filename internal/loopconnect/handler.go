@@ -145,9 +145,16 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 	// cancels the moment this unary RPC returns — that would kill the loop before its
 	// first turn). See Handler.baseCtx.
 	handle, err := h.rt.StartLoop(h.baseCtx, runtime.LoopConfig{
-		Task:        m.Task,
-		ModelID:     m.Model,
-		Tenant:      tenant,
+		Task:    m.Task,
+		ModelID: m.Model,
+		Tenant:  tenant,
+		// Thread the authenticated initiator's subject (change #59) so the loop-server's
+		// Deps.LoopContext hook stamps the REAL principal (tenant + subject) onto the run
+		// context — the MCP egress then mints a per-call delegation token with this user
+		// in `sub` and fuse in `act`, per tenant, never a seeded local default. When no
+		// principal is present (un-intercepted/registry-less test paths) Subject is empty
+		// and the loop-server hook falls back to the tenant-only local principal.
+		Subject:     p.Subject,
 		Interactive: m.Interactive,
 	})
 	if err != nil {

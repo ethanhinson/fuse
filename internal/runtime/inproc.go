@@ -88,6 +88,18 @@ type Deps struct {
 	// deterministic. The renewer's tick cadence uses a real timer regardless — Now only
 	// governs the expiry timestamps and the reap comparison.
 	Now func() time.Time
+	// LoopContext, when non-nil, decorates the loop-lifetime context the loop's run
+	// (and thus every tool Execute) derives from, once per StartLoop. It is the
+	// policy-free seam the composition root (cmd/fuse) uses to stamp the authenticated
+	// loop-initiator's identity onto the run context — via toolidentity.WithPrincipal —
+	// so the MCP egress mints a per-call, per-principal delegation token (change #59).
+	//
+	// The runtime NEVER learns loopauth/toolidentity: it only invokes this closure with
+	// the (context, LoopConfig) it already holds, so the auth import graph stays out of
+	// internal/runtime (ADR-0030). The decorated context is per-loop, so two concurrent
+	// loops started by different principals derive independent identities and never
+	// cross. Nil ⇒ the run context is used verbatim (byte-identical to pre-#59).
+	LoopContext func(ctx context.Context, cfg LoopConfig) context.Context
 }
 
 // defaultLeaseTTL is the owner-liveness lease duration used when Deps.LeaseTTL is zero.
@@ -303,9 +315,22 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		r.startLeaseRenewer(ctx, key, rootID, stopRenew)
 	}
 
+	// Decorate the run context with the composition root's per-loop identity hook
+	// (change #59). The runtime never learns what the decorator stamps — it only
+	// invokes the closure — so the auth import graph stays out of internal/runtime
+	// (ADR-0030). This is the seam where the authenticated loop-initiator's Principal
+	// reaches every tool Execute (via toolidentity.WithPrincipal, supplied by cmd/fuse),
+	// so the MCP egress mints per-principal, per-tenant tokens. Per-loop and applied
+	// once here, so it holds for every turn without per-turn re-plumbing; two concurrent
+	// loops derive independent contexts and never cross.
+	runCtx := ctx
+	if r.deps.LoopContext != nil {
+		runCtx = r.deps.LoopContext(ctx, cfg)
+	}
+
 	go func() {
 		defer close(h.done)
-		msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: cfg.Task}})
+		msgs, rerr := a.Run(runCtx, []model.Message{{Role: "user", Content: cfg.Task}})
 		h.msgs, h.err = msgs, rerr
 		// Stop the lease renewer FIRST so it can no longer race a Heartbeat past the
 		// SetLive(false) below (a stray post-completion Heartbeat would re-mark a stale

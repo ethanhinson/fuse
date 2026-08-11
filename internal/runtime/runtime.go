@@ -65,6 +65,15 @@ type LoopConfig struct {
 	ModelID string         // resolved gateway model id; "" ⇒ the binding resolves the default first
 	Tenant  event.TenantID // isolation boundary; empty ⇒ event.DefaultTenant
 
+	// Subject is the authenticated loop-initiator's subject (the `sub` of the
+	// per-call delegation token minted at the MCP egress). It is a BARE string here
+	// on purpose: the runtime seam must not import an auth package (ADR-0030), so the
+	// principal travels as primitives (Tenant + Subject) that the composition root's
+	// Deps.LoopContext hook reconstitutes into a loopauth.Principal via
+	// toolidentity.WithPrincipal. Empty on the local CLI paths (they supply their own
+	// principal through LoopContext instead).
+	Subject string
+
 	// Interactive requests persistent conversational mode: the loop parks at each
 	// terminal turn boundary awaiting the next Send instead of finishing, so one
 	// loop_id carries a multi-turn conversation with server-authoritative history

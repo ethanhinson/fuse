@@ -9,12 +9,14 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/loopauth"
 	"github.com/ethanhinson/fuse/internal/loopserver"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/session"
 	"github.com/ethanhinson/fuse/internal/skills"
+	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -108,6 +110,19 @@ func buildLoopServerRuntimeDeps(cfg config.Config, reg *model.Registry, modelAli
 		Registry:      durableReg,
 		BaseDir:       session.DefaultLogDir(),
 		MaxConcurrent: cfg.Agents.MaxConcurrent,
+		// LoopContext threads the REAL authenticated loop-initiator principal onto the
+		// run context (change #59, Task 3). The Connect edge resolved the principal and
+		// carried its tenant + subject on LoopConfig; here — at the composition root, not
+		// the policy-free runtime seam (ADR-0030) — we reconstitute the loopauth.Principal
+		// and stamp it via toolidentity.WithPrincipal, so MCPTool.Execute mints a per-call
+		// delegation token for the REAL user (user in `sub`, fuse in `act`), per tenant.
+		// Each loop derives its own context, so two concurrent loops never cross. This is
+		// the loop-server analogue of the shell's WithToolPrincipal, adapted to the
+		// per-loop, principal-per-loop reality — retiring the DefaultTenant shim here by
+		// construction.
+		LoopContext: func(ctx context.Context, lc runtime.LoopConfig) context.Context {
+			return toolidentity.WithPrincipal(ctx, loopServerPrincipal(lc))
+		},
 		// The per-loop tool registry is built fresh per loop from the same source as the
 		// server's default, so each loop's root tool wiring binds to its own tree below.
 		NewToolRegistry: func() *tools.Registry {
@@ -224,4 +239,23 @@ func buildLoopServerRuntimeDeps(cfg config.Config, reg *model.Registry, modelAli
 // two loops mutate one shared registry (change 0046 multi-loop isolation).
 func cloneServerToolRegistry(base *tools.Registry) *tools.Registry {
 	return base.Clone()
+}
+
+// loopServerPrincipal reconstitutes the authenticated loop-initiator's Principal
+// from the per-loop LoopConfig the Connect edge populated (change #59, Task 3). The
+// tenant and subject originate from the loop-start root of trust — the bearer token
+// the verifier resolved at the Connect edge — NEVER from model output.
+//
+// Fallback: when no authenticated subject is present (an un-intercepted or
+// registry-less path — the pure-transport tests, or a local `fuse loop-server` over
+// stdio with no auth), the subject is empty. Rather than mint under the zero,
+// spoofable Principal (which would fail closed for an OAuth target), stamp a single
+// explicit local subject scoped to the loop's tenant — mirroring localPrincipal on
+// the CLI paths. The tenant is normalized so "" folds to _default.
+func loopServerPrincipal(lc runtime.LoopConfig) loopauth.Principal {
+	subject := lc.Subject
+	if subject == "" {
+		subject = "local"
+	}
+	return loopauth.Principal{Tenant: event.NormalizeTenant(lc.Tenant), Subject: subject}
 }
