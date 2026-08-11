@@ -1,8 +1,14 @@
 # Backlog
 
-**60 changes** — 🟡 7 proposed · ⚪ 1 deferred · ✅ 46 done · 🗑️ 6 killed
+**60 changes** — 🟢 1 in progress · 🟡 6 proposed · ⚪ 1 deferred · ✅ 46 done · 🗑️ 6 killed
 
-## 🟡 Proposed (7)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0059](active/0059-mcp-full-binding-wiring-e2e-tested.md) | Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths | `critical` | `feat` | [spec](../superpowers/specs/2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md) | `feat/mcp-full-binding-wiring-e2e-tested` |
+
+## 🟡 Proposed (6)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -11,7 +17,6 @@
 | [0056](active/0056-sdk-viability-hardening-wander.md) | SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app | `medium` | `feat` | build-ready |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` | needs-brainstorm |
 | [0058](active/0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | `medium` | `feat` | needs-brainstorm |
-| [0059](active/0059-mcp-full-binding-wiring-e2e-tested.md) | Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths | `critical` | `feat` | build-ready |
 | [0060](active/0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md) | Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app | `medium` | `feat` | needs-brainstorm |
 
 ## ⚪ Deferred (1)
