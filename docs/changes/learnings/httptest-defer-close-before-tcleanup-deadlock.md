@@ -2,7 +2,7 @@
 slug: httptest-defer-close-before-tcleanup-deadlock
 hook: "defer runs before t.Cleanup (LIFO across two mechanisms): defer srv.Close() on an httptest server with a live goroutine (SSE pump) deadlocks against a t.Cleanup(client.stop) that would end it — register BOTH teardowns with t.Cleanup so the client stops first"
 topics: [testing, concurrency, httptest, mcp]
-changes: [52]
+changes: [52, 59]
 created: 2026-08-11
 updated: 2026-08-11
 promotion_state: candidate
@@ -30,3 +30,9 @@ stops first). Keeping teardown in a single mechanism restores predictable orderi
   packages timed out at 600s. Moving server shutdown into `t.Cleanup` (LIFO → client stops first)
   cleared the deadlock. Surfaced during the change's whole-branch review + suite run, not by any
   single failing assertion.
+- 2026-08-11 (#59, PR #56) — the loop-server MCP acceptance lane hit the identical deadlock: the
+  stub/rentals SSE servers loop on `r.Context().Done()`, so `httptest.Server.Close()` blocked until
+  fuse's SSE read-pump disconnected. Fixed by teardown ordering so the MCP manager/client closes
+  before the server (`LoopTeardown` before the server's cleanup, mirroring `egress_test.go`'s
+  `capturingSSEServer`). Same 600s `cmd/fuse` package timeout as the #52 hit — the finding fired
+  exactly as written, a second time on a different binding.
