@@ -12,7 +12,7 @@ related: [49, 54, 55]
 discovered_from: [50]
 adrs: []
 spec: docs/superpowers/specs/2026-08-11-sdk-viability-hardening-wander-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-11-sdk-viability-hardening-wander-plan.md
 results:
 trivial: false
 auto_groomable:
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-11-sdk-viability-hardening-wander-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-sdk-viability-hardening-wander-design.md) |
+| Plan | [2026-08-11-sdk-viability-hardening-wander-plan.md](https://github.com/ethanhinson/fuse/blob/feat/sdk-viability-hardening-wander/docs/superpowers/plans/2026-08-11-sdk-viability-hardening-wander-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
