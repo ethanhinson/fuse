@@ -2,7 +2,7 @@
 id: 52
 slug: tool-identity-propagation
 title: Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-11
@@ -13,13 +13,13 @@ discovered_from: [47, 49]
 adrs: [36]
 spec: docs/superpowers/specs/2026-08-11-tool-identity-propagation-design.md
 plan: docs/superpowers/plans/2026-08-11-tool-identity-propagation-plan.md
-results:
+results: docs/results/2026-08-11-tool-identity-propagation-results.md
 trivial: false
 auto_groomable:
 branch: feat/tool-identity-propagation
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/55
 blocked_by:
-claimed_at: 2026-08-11T20:26:34Z
+claimed_at: 2026-08-11T20:29:13Z
 reconciled: true
 ---
 
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-11-tool-identity-propagation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-tool-identity-propagation-design.md) |
 | Plan | [2026-08-11-tool-identity-propagation-plan.md](https://github.com/ethanhinson/fuse/blob/feat/tool-identity-propagation/docs/superpowers/plans/2026-08-11-tool-identity-propagation-plan.md) |
+| Results | [2026-08-11-tool-identity-propagation-results.md](https://github.com/ethanhinson/fuse/blob/feat/tool-identity-propagation/docs/results/2026-08-11-tool-identity-propagation-results.md) |
+| PR | [#55](https://github.com/ethanhinson/fuse/pull/55) |
 | ADRs | [ADR-0036](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0036-tool-authz-delegated-downstream-rfc8693-egress-seam.md) |
 <!-- docket:artifacts:end -->
 
