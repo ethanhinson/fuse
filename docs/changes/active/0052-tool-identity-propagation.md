@@ -10,7 +10,7 @@ updated: 2026-08-11
 depends_on: [48, 49]
 related: [43, 47, 50, 51]
 discovered_from: [47, 49]
-adrs: []
+adrs: [36]
 spec: docs/superpowers/specs/2026-08-11-tool-identity-propagation-design.md
 plan: docs/superpowers/plans/2026-08-11-tool-identity-propagation-plan.md
 results:
@@ -19,7 +19,7 @@ auto_groomable:
 branch: feat/tool-identity-propagation
 pr:
 blocked_by:
-claimed_at: 2026-08-11T19:32:44Z
+claimed_at: 2026-08-11T20:26:34Z
 reconciled: true
 ---
 
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-11-tool-identity-propagation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-tool-identity-propagation-design.md) |
 | Plan | [2026-08-11-tool-identity-propagation-plan.md](https://github.com/ethanhinson/fuse/blob/feat/tool-identity-propagation/docs/superpowers/plans/2026-08-11-tool-identity-propagation-plan.md) |
+| ADRs | [ADR-0036](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0036-tool-authz-delegated-downstream-rfc8693-egress-seam.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
