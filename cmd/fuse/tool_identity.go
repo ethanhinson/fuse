@@ -10,9 +10,40 @@ import (
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopauth"
+	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/toolidentity"
 )
+
+// mcpAttach is the single composition-root helper every loop binding calls to
+// wire an mcp.Manager. It resolves, together, the identity-propagation egress
+// seam (the mcp.WithCredentialSource ManagerOption, when a source is configured)
+// AND the complete-mediation TargetMediator permissions.Option — so no binding
+// can construct a manager without also wiring the egress seam + the mediation
+// gate. Co-locating them here (with buildToolIdentitySource / buildTargetMediator)
+// is the structural spine (spec §1): the two options are derived from the same
+// config in one place and cannot drift apart per binding.
+//
+// It also writes the startup posture log to w (the security-relevant one-liner
+// describing each MCP server's resolved tier, or the fail-closed reason), so a
+// misconfiguration is never silent regardless of which binding attached MCP.
+//
+// Contract:
+//   - mcpOpts carries WithCredentialSource exactly when buildToolIdentitySource
+//     yields a source; empty otherwise (pre-#52 static-token path, byte-identical).
+//   - mediator is non-nil exactly when an identity-propagating server is declared
+//     (buildTargetMediator's gate), independent of whether a signing key resolved —
+//     an identity server with no key still declares a target the mediator gates.
+func mcpAttach(cfg config.Config, w io.Writer) (mcpOpts []mcp.ManagerOption, mediator permissions.Option) {
+	if src, reason := buildToolIdentitySource(cfg); src != nil {
+		mcpOpts = append(mcpOpts, mcp.WithCredentialSource(src))
+		logToolIdentityPosture(w, cfg, true, "")
+	} else if reason != "" {
+		logToolIdentityPosture(w, cfg, false, reason)
+	}
+	mediator = buildTargetMediator(cfg)
+	return mcpOpts, mediator
+}
 
 // configTargetMediator is the concrete complete-mediation gate (change #52 D5)
 // wired at the composition root. It enforces, from the loop-start root of trust
