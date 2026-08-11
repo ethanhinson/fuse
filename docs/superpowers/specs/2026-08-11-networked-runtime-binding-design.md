@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0048 — Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0048-networked-runtime-binding.md)**
+> ↩ **[Change 0048 — Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-11-0048-networked-runtime-binding.md)**
 <!-- docket:backlink:end -->
 
 # Networked binding over the Runtime seam — design
