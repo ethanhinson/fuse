@@ -79,8 +79,20 @@ type ResearchConfig struct {
 }
 
 // MCPAuthConfig holds authentication settings for an HTTP MCP server.
+//
+// The `type` selects both the transport credential AND the identity-propagation
+// tier (change #52). Identity-propagating types mint a per-call, audience-bound
+// delegation token from the loop initiator's identity (TierOAuth); the legacy
+// types carry a per-server static credential with NO initiator identity
+// (TierStatic). Existing "bearer"/"oauth2" map to TierStatic so nothing breaks.
 type MCPAuthConfig struct {
-	Type         string   `yaml:"type"`          // none | bearer | oauth2
+	// Type selects the credential + tier:
+	//   none                        — no credential (transport-open)
+	//   bearer | oauth2 | static    — TierStatic: per-server static credential,
+	//                                 identity-free (the legacy default)
+	//   identity | oauth-exchange   — TierOAuth: per-call RFC 8693 delegation token,
+	//                                 audience-bound to the server's Audience (#52)
+	Type         string   `yaml:"type"`
 	ClientID     string   `yaml:"client_id"`     // optional; absent = dynamic registration
 	ClientSecret string   `yaml:"client_secret"` // optional; used as bearer token for type=bearer
 	Scopes       []string `yaml:"scopes"`
@@ -95,6 +107,15 @@ type MCPServerConfig struct {
 	URL       string            `yaml:"url"`       // http only
 	Env       map[string]string `yaml:"env"`
 	Auth      MCPAuthConfig     `yaml:"auth"` // http only
+
+	// Audience is the RFC 8707 resource identifier a minted delegation token is
+	// bound to when this server is an identity-propagation (TierOAuth) target
+	// (change #52). Required for identity/oauth-exchange auth types; ignored for
+	// static tiers. Sourced from trusted config, never from model output.
+	Audience string `yaml:"audience"`
+	// Scopes are the downstream scopes a minted delegation token requests. Sourced
+	// from config (the tool declaration), never from model output.
+	Scopes []string `yaml:"scopes"`
 }
 
 // SummarizationConfig configures Tier 2 anchored LLM summarization (change

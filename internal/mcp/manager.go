@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -66,6 +67,14 @@ type Manager struct {
 	servers map[string]*managedServer
 	reg     *tools.Registry
 
+	// source is the optional identity-propagation egress seam (change #52). When
+	// set, each discovered MCPTool is stamped with it plus the server's declared
+	// Target, so Execute resolves a per-call, audience-bound credential from the
+	// loop initiator's identity. Nil (the default) keeps the pre-#52 behavior:
+	// tools use the client's static bearerToken. The composition root (cmd/fuse)
+	// wires this in a LATER task; a manager built without it behaves as today.
+	source toolidentity.CredentialSource
+
 	// notifyMu guards notifyHandlers, the feature-generic inbound-notification
 	// route (D4). A client read pump calls dispatchNotification, which enqueues
 	// onto notifyQueue; a single worker goroutine drains it and fans to the
@@ -111,13 +120,29 @@ type Manager struct {
 	subRefs map[string]map[string]int
 }
 
+// ManagerOption configures a Manager at construction. Options are additive and
+// back-compatible: a Manager built with no options behaves exactly as before.
+type ManagerOption func(*Manager)
+
+// WithCredentialSource wires the identity-propagation egress seam (change #52)
+// onto the Manager. Every tool discovered thereafter is stamped with the source
+// and its server's declared toolidentity.Target, so MCPTool.Execute resolves a
+// per-call, audience-bound credential from the loop initiator's identity instead
+// of using the client's static token. A nil source is a no-op (pre-#52 behavior).
+func WithCredentialSource(src toolidentity.CredentialSource) ManagerOption {
+	return func(m *Manager) { m.source = src }
+}
+
 // NewManager starts all configured MCP servers and registers their tools.
 // Servers that fail to start or time out on tools/list are skipped with a
 // warning; the session continues with the remaining servers.
-func NewManager(servers []config.MCPServerConfig, reg *tools.Registry) (*Manager, error) {
+func NewManager(servers []config.MCPServerConfig, reg *tools.Registry, opts ...ManagerOption) (*Manager, error) {
 	m := &Manager{
 		servers: make(map[string]*managedServer),
 		reg:     reg,
+	}
+	for _, opt := range opts {
+		opt(m)
 	}
 	// Register the built-in notification handlers before any server is added, so
 	// a $/progress (or $/stream, Task 6) arriving during discovery is routed.
@@ -146,9 +171,18 @@ func (m *Manager) Add(srv config.MCPServerConfig) error {
 	// server advertised the "streaming" capability mint/inject a progress token;
 	// the manager is the callTracker seam.
 	supportsStreaming := caps.Supports("streaming")
+	// When an identity-propagation source is wired (change #52), stamp each tool
+	// with it plus the server's declared Target (audience/scopes/tier from config),
+	// so Execute resolves a per-call, audience-bound credential. Nil source leaves
+	// the tool on the pre-#52 static-token path.
+	target := srv.ToolIdentityTarget()
 	for _, t := range discovered {
 		t.supportsStreaming = supportsStreaming
 		t.tracker = m
+		if m.source != nil {
+			t.source = m.source
+			t.target = target
+		}
 		m.reg.Register(t)
 	}
 	m.mu.Lock()

@@ -215,7 +215,7 @@ func (c *StreamableHTTPClient) attempt(ctx context.Context, method string, body 
 	if err != nil {
 		return nil, fmt.Errorf("mcp streamable %q build request: %w", c.name, err)
 	}
-	c.setHeaders(req, body != nil)
+	c.setHeaders(ctx, req, body != nil)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("mcp streamable %q %s: %w", c.name, method, err)
@@ -224,8 +224,11 @@ func (c *StreamableHTTPClient) attempt(ctx context.Context, method string, body 
 	return resp, nil
 }
 
-// setHeaders applies the common Streamable HTTP request headers under mu.
-func (c *StreamableHTTPClient) setHeaders(req *http.Request, hasBody bool) {
+// setHeaders applies the common Streamable HTTP request headers under mu. A
+// per-call credential on ctx (resolved from the loop initiator's identity by
+// MCPTool.Execute) sets Authorization and binds the request to the target
+// audience; without one it falls back to the static bearerToken (back-compat).
+func (c *StreamableHTTPClient) setHeaders(ctx context.Context, req *http.Request, hasBody bool) {
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	if hasBody {
 		req.Header.Set("Content-Type", "application/json")
@@ -235,9 +238,11 @@ func (c *StreamableHTTPClient) setHeaders(req *http.Request, hasBody bool) {
 	c.mu.Lock()
 	token, sess := c.bearerToken, c.sessionID
 	c.mu.Unlock()
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
+	applyCallAuth(ctx, req.Header.Set, func() {
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+	})
 	if sess != "" {
 		req.Header.Set(hdrSessionID, sess)
 	}
@@ -385,7 +390,7 @@ func (c *StreamableHTTPClient) resume(ctx context.Context, id, lastEventID strin
 	if err != nil {
 		return nil, fmt.Errorf("mcp streamable %q build resume: %w", c.name, err)
 	}
-	c.setHeaders(req, false)
+	c.setHeaders(ctx, req, false)
 	req.Header.Set(hdrLastEvent, lastEventID)
 
 	resp, err := c.http.Do(req)

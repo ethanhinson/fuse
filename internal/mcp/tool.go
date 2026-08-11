@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -53,6 +54,16 @@ type MCPTool struct {
 	// Nil when the tool was constructed without a manager (unit tests) or the
 	// server does not support streaming.
 	tracker callTracker
+
+	// source is the identity-propagation egress seam. When non-nil, Execute
+	// resolves a per-call credential from the loop initiator's Principal and the
+	// declared target BEFORE the tools/call, threading it onto ctx. Nil keeps the
+	// byte-identical pre-#52 path: the client's static bearerToken is used.
+	source toolidentity.CredentialSource
+	// target is the downstream this tool reaches, declared by config (never the
+	// model). Its Audience binds the minted token (RFC 8707) and its Tier selects
+	// the auth path. Zero value when source is nil.
+	target toolidentity.Target
 }
 
 func (t *MCPTool) Name() string               { return "mcp:" + t.serverName + "/" + t.toolName }
@@ -80,6 +91,29 @@ func (t *MCPTool) Execute(ctx context.Context, args string) tools.Result {
 		var token string
 		token, streamEnd = t.tracker.beginCall(t.serverName, t.toolName)
 		callParams["_meta"] = map[string]any{"progressToken": token}
+	}
+
+	// Identity-propagation egress (change #52): when a CredentialSource is wired,
+	// resolve a per-call, audience-bound credential from the loop initiator's
+	// Principal and the declared target, then thread it onto ctx so the transport
+	// sets Authorization from it (never from a shared static token). A resolution
+	// error (denied/undeclared target, exchange failure, unconfigured static
+	// credential) surfaces as a tool error — WITHOUT the token, which lives only in
+	// the outbound header via cred.Header(). Nil source ⇒ the byte-identical
+	// pre-#52 path: the client's static bearerToken is used.
+	if t.source != nil {
+		principal, _ := toolidentity.PrincipalFrom(ctx)
+		cred, cerr := t.source.CredentialFor(ctx, principal, t.target)
+		if cerr != nil {
+			if streamEnd != nil {
+				if t.tracker != nil {
+					t.tracker.drainNotifications()
+				}
+				streamEnd()
+			}
+			return tools.Result{IsError: true, Output: fmt.Sprintf("mcp %s/%s: credential denied: %v", t.serverName, t.toolName, cerr)}
+		}
+		ctx = WithCallAuth(ctx, cred, t.target)
 	}
 
 	raw, err := t.client.call(ctx, "tools/call", callParams)
