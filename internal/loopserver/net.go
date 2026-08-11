@@ -1,13 +1,119 @@
 package loopserver
 
-// This file is the future home of binding #3's WebSocket transport (the WS
-// `conn` implementation) and the thin stateless HTTP replay handler. For now it
-// carries only a compile-only proof that the github.com/coder/websocket
-// dependency resolves and links; the real transport logic is added by a later
-// task in the networked-runtime-binding plan.
+// This file is binding #3's WebSocket transport: the WS implementation of the
+// transport-agnostic conn abstraction (transport.go) plus the ServeWS entrypoint
+// that runs one full loop.* session over a single WebSocket connection. It reuses
+// the extracted dispatch core (server.go) verbatim — no replay/observe/dedup logic
+// is reimplemented here.
+//
+// The thin stateless HTTP replay endpoint (Attach catch-up) is added by a later
+// task; it lives in this file too but is not implemented yet.
 
-import "github.com/coder/websocket"
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"sync"
 
-// _ pins a trivially-used symbol from coder/websocket so the import is exercised
-// by the compiler without introducing any runtime behavior yet.
-var _ = websocket.MessageText
+	"github.com/coder/websocket"
+	"github.com/ethanhinson/fuse/internal/runtime"
+)
+
+// wsTransport is the WebSocket implementation of conn. It reads discrete JSON-RPC
+// request frames from one *websocket.Conn and writes response + id-less loop.event
+// notification frames back, serialized under a single per-connection write mutex.
+//
+// coder/websocket's Write is NOT concurrency-safe, so the mutex is mandatory — it is
+// the same shared-write-serialization contract stdio's encMu provides: a mid-observe
+// loop.event notification (pushed from the observe pump goroutine) must never
+// interleave with another write and corrupt the frame stream.
+//
+// Because WS delivers DISCRETE messages, readRequest handles parse errors
+// per-message (there is no streaming decoder to resync): a malformed message emits
+// one null-id parse-error frame via the shared parseErrorFrame path the core expects
+// and returns a non-EOF error, which the core surfaces by returning (tearing down the
+// session).
+type wsTransport struct {
+	c   *websocket.Conn
+	ctx context.Context
+
+	// writeMu serializes every Write on this connection. See the type doc: coder/
+	// websocket Write is not concurrency-safe, and the observe pump writes loop.event
+	// notifications concurrently with response writes.
+	writeMu sync.Mutex
+}
+
+// newWSTransport builds a WS transport over c bound to ctx (the session lifetime
+// context: Read/Write are cancelled when ctx is done and when the connection drops).
+func newWSTransport(ctx context.Context, c *websocket.Conn) *wsTransport {
+	return &wsTransport{c: c, ctx: ctx}
+}
+
+// encode marshals v and writes it as one text WebSocket message under the shared
+// per-connection write mutex.
+func (t *wsTransport) encode(v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("loopserver: ws marshal: %w", err)
+	}
+	t.writeMu.Lock()
+	defer t.writeMu.Unlock()
+	return t.c.Write(t.ctx, websocket.MessageText, b)
+}
+
+// readRequest reads one discrete WS message and unmarshals it into a req frame. A
+// clean client close is reported as io.EOF (via the io.EOF the core's Serve loop
+// checks) so the core ends the session without error.
+//
+// On a malformed message this emits ONE null-id parse-error frame (mirroring the
+// stdio transport's fail-fast policy and reusing the shared parseErrorFrame builder
+// so the frame is byte-identical), then returns a non-EOF error the core surfaces by
+// returning. Unlike stdio there is no streaming decoder that must resync — WS frames
+// are message-delimited — but the session is still torn down on a corrupt frame,
+// matching binding #2's contract.
+func (t *wsTransport) readRequest(ctx context.Context) (req, error) {
+	_, data, err := t.c.Read(ctx)
+	if err != nil {
+		// A clean or abnormal close ends the read loop. Normalize any close (and a
+		// cancelled context) to io.EOF so the core's Serve loop returns nil, matching
+		// stdio's clean-EOF path. The core compares err == io.EOF exactly, so we must
+		// return io.EOF itself. Non-close read errors are surfaced as-is.
+		if isWSClosed(err) || ctx.Err() != nil {
+			return req{}, io.EOF
+		}
+		return req{}, fmt.Errorf("loopserver: ws read: %w", err)
+	}
+	var r req
+	if err := json.Unmarshal(data, &r); err != nil {
+		_ = t.encode(parseErrorFrame(err.Error()))
+		return req{}, fmt.Errorf("loopserver: ws decode: %w", err)
+	}
+	return r, nil
+}
+
+// isWSClosed reports whether err indicates the WebSocket connection has closed
+// (either side), so the read loop can end cleanly.
+func isWSClosed(err error) bool {
+	var ce websocket.CloseError
+	if errors.As(err, &ce) {
+		return true
+	}
+	// Dial/Accept teardown and abnormal closes surface as generic errors; treating a
+	// net-closed read as EOF keeps ServeWS returning nil on client drop.
+	return errors.Is(err, context.Canceled)
+}
+
+// ServeWS runs one full loop.* JSON-RPC session over a single WebSocket connection
+// against rt. It builds a Server over the WS transport and drives Serve(ctx),
+// reusing the extracted dispatch/observe/replay core verbatim. It returns when the
+// client disconnects, ctx is cancelled, or a fatal frame error occurs, then closes
+// the connection.
+func ServeWS(ctx context.Context, c *websocket.Conn, rt runtime.Runtime) error {
+	s := &Server{rt: rt, conn: newWSTransport(ctx, c)}
+	err := s.Serve(ctx)
+	// Best-effort clean close; ignore the error (the peer may already be gone).
+	_ = c.Close(websocket.StatusNormalClosure, "")
+	return err
+}
