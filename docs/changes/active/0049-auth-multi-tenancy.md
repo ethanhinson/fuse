@@ -12,12 +12,12 @@ related: [45, 46, 47, 48, 50, 51, 53]
 discovered_from: [45, 47]
 adrs: []
 spec: docs/superpowers/specs/2026-08-11-auth-multi-tenancy-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-11-auth-multi-tenancy-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/auth-multi-tenancy
-claimed_at: 2026-08-11T07:13:54Z
+claimed_at: 2026-08-11T07:16:47Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-11-auth-multi-tenancy-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-auth-multi-tenancy-design.md) |
+| Plan | [2026-08-11-auth-multi-tenancy-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auth-multi-tenancy/docs/superpowers/plans/2026-08-11-auth-multi-tenancy-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
