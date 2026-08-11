@@ -2,7 +2,7 @@
 id: 48
 slug: networked-runtime-binding
 title: Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-10
@@ -16,10 +16,11 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/networked-runtime-binding
 pr:
 blocked_by:
 reconciled: false
+claimed_at: 2026-08-11T02:04:34Z
 ---
 
 ## Artifacts
