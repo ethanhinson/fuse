@@ -276,6 +276,7 @@ export function createClient(options: ClientOptions): Client {
         typeof arg === "bigint" ? { fromSeq: arg } : (arg ?? {});
       const fromSeq = opts.fromSeq ?? 0n;
       const onState = opts.onState;
+      const signal = opts.signal;
 
       // emitState fires the lifecycle callback (D1), guarding against a throwing consumer
       // callback taking down the reconnect loop.
@@ -305,6 +306,11 @@ export function createClient(options: ClientOptions): Client {
           // from `last`. A hard error that is not a clean end still triggers a resume —
           // the browser analogue of a websocket read error being a reconnect, not a fault.
           try {
+            // D3: an already-aborted signal closes immediately, delivering nothing. The
+            // `finally` fires `closed`.
+            if (signal?.aborted) {
+              return;
+            }
             for (;;) {
               let deliveredThisPass = false;
               // `connecting` at the top of every pass (initial open AND every re-open).
@@ -313,7 +319,9 @@ export function createClient(options: ClientOptions): Client {
               // `finally` on the for-await guarantees the underlying HTTP stream is torn
               // down whether this pass ends by completion, a thrown error, OR the CONSUMER
               // breaking out of the outer generator (which propagates return() to us).
-              const stream = wire.observe({ loopId, fromSeq: last, tenant });
+              // Threading D3's `signal` into wire.observe aborts the underlying HTTP
+              // stream at the transport when the caller tears down (page unload).
+              const stream = wire.observe({ loopId, fromSeq: last, tenant }, { signal });
               try {
                 for await (const frame of stream) {
                   if (frame.keepalive || !frame.event) {
@@ -332,6 +340,14 @@ export function createClient(options: ClientOptions): Client {
                 }
                 // Clean stream end (server closed the tail): fall through to re-open.
               } catch (err) {
+                // D3 first: an abort is a caller-initiated teardown, NOT a fault or a
+                // reconnect signal — the underlying stream throws an abort error, which we
+                // must swallow and exit on (the `finally` fires `closed`). Check the signal
+                // rather than the error shape so a transport-specific abort error still
+                // classifies correctly.
+                if (signal?.aborted) {
+                  return;
+                }
                 // D2 classification. A TERMINAL Connect code (auth rejected, unknown or
                 // finished loop) can never be recovered by re-observing from `last`, so
                 // STOP the loop and surface a typed FuseTerminalError (the `finally` fires
@@ -343,6 +359,10 @@ export function createClient(options: ClientOptions): Client {
                   const detail = err instanceof ConnectError ? err.rawMessage : String(err);
                   throw new FuseTerminalError(code, `fuse observe terminated: ${detail}`);
                 }
+              }
+              // A clean stream end while aborted is also a teardown: exit, do not re-open.
+              if (signal?.aborted) {
+                return;
               }
               // Re-open from the last-seen seq. The server replays history since `last`
               // then live-tails; the watermark dedup above drops any overlap frame.

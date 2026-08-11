@@ -79,6 +79,11 @@ func (r *stateRuntime) Observe(ctx context.Context, tenant event.TenantID, loopI
 	live := make(chan event.Event, 8)
 
 	switch r.mode {
+	case "park":
+		// Deliver seq 1 then keep the live channel OPEN (never closed): the stream parks
+		// so the client can consume one event and abort mid-stream (D3 teardown test).
+		r.appendHist(event.Event{Seq: 1, Kind: event.KindTurnStart})
+		live <- event.Event{Seq: 1, Kind: event.KindTurnStart}
 	case "reopen":
 		if n == 1 {
 			// First pass: land 1,2 in history+live, then CLOSE (clean end → reconnect).
