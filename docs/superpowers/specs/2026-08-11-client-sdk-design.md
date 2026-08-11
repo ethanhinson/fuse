@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0050 — Client SDK — thin-client library, same API local-or-remote](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0050-client-sdk.md)**
+> ↩ **[Change 0050 — Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-11-0050-client-sdk.md)**
 <!-- docket:backlink:end -->
 
 # Client SDK — Runtime-parity Go + TS/JS libraries over one versioned wire
