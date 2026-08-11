@@ -11,7 +11,7 @@
 | [0056](active/0056-sdk-viability-hardening-wander.md) | SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app | `medium` | `feat` | build-ready |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` | needs-brainstorm |
 | [0058](active/0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | `medium` | `feat` | needs-brainstorm |
-| [0059](active/0059-mcp-full-binding-wiring-e2e-tested.md) | Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths | `critical` | `feat` | needs-brainstorm |
+| [0059](active/0059-mcp-full-binding-wiring-e2e-tested.md) | Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths | `critical` | `feat` | build-ready |
 
 ## ⚪ Deferred (1)
 
