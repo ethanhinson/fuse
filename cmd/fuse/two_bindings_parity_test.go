@@ -138,7 +138,7 @@ func driveLoopAndAttach(t *testing.T, deps runtime.Deps, task, alias string) []e
 	if _, werr := h.Wait(); werr != nil {
 		t.Fatalf("loop run error: %v", werr)
 	}
-	evs, aerr := rt.Attach(h.ID(), 0)
+	evs, aerr := rt.Attach(context.Background(), event.DefaultTenant, h.ID(), 0)
 	if aerr != nil {
 		t.Fatalf("Attach: %v", aerr)
 	}

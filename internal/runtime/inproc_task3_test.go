@@ -45,7 +45,7 @@ func TestObserveAndAttach(t *testing.T) {
 	}
 
 	// Subscribe BEFORE the loop produces events (the completer is blocked).
-	ch, cancel, err := rt.Observe(h.ID())
+	ch, cancel, err := rt.Observe(context.Background(), event.DefaultTenant, h.ID())
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestObserveAndAttach(t *testing.T) {
 	}
 
 	// Attach returns durable history from Seq 0.
-	evs, err := rt.Attach(h.ID(), 0)
+	evs, err := rt.Attach(context.Background(), event.DefaultTenant, h.ID(), 0)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestSendEnqueuesForRoot(t *testing.T) {
 		t.Fatalf("StartLoop: %v", err)
 	}
 	// The loop is running (completer blocked): Send must enqueue and return nil.
-	if err := rt.Send(context.Background(), h.ID(), "more work"); err != nil {
+	if err := rt.Send(context.Background(), event.DefaultTenant, h.ID(), "more work"); err != nil {
 		t.Fatalf("Send to running loop: %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestSendToFinishedLoopReturnsErrLoopFinished(t *testing.T) {
 		t.Fatalf("Wait: %v", err)
 	}
 
-	if err := rt.Send(context.Background(), h.ID(), "more work"); !errors.Is(err, ErrLoopFinished) {
+	if err := rt.Send(context.Background(), event.DefaultTenant, h.ID(), "more work"); !errors.Is(err, ErrLoopFinished) {
 		t.Fatalf("Send to finished loop err = %v, want ErrLoopFinished", err)
 	}
 
@@ -148,7 +148,7 @@ func TestObserveChannelClosesOnLoopCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
-	ch, cancel, err := rt.Observe(h.ID())
+	ch, cancel, err := rt.Observe(context.Background(), event.DefaultTenant, h.ID())
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestObserveChannelClosesOnLoopCompletion(t *testing.T) {
 	}
 
 	// Attach must STILL work after the store is closed (Replay opens its own reader).
-	evs, err := rt.Attach(h.ID(), 0)
+	evs, err := rt.Attach(context.Background(), event.DefaultTenant, h.ID(), 0)
 	if err != nil {
 		t.Fatalf("Attach after completion: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestSpawnReturnsHandle(t *testing.T) {
 
 	// spawn.start + spawn.done appear on the same event stream (read while the store
 	// is still open — the loop is blocked in the completer).
-	evs, err := rt.Attach(h.ID(), 0)
+	evs, err := rt.Attach(context.Background(), event.DefaultTenant, h.ID(), 0)
 	if err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -236,13 +236,13 @@ func TestLoopNotFound(t *testing.T) {
 	fake := &scriptedCompleter{}
 	rt := newTestRuntime(t, fake)
 
-	if _, _, err := rt.Observe("nope"); !errors.Is(err, ErrLoopNotFound) {
+	if _, _, err := rt.Observe(context.Background(), event.DefaultTenant, "nope"); !errors.Is(err, ErrLoopNotFound) {
 		t.Errorf("Observe err = %v, want ErrLoopNotFound", err)
 	}
-	if _, err := rt.Attach("nope", 0); !errors.Is(err, ErrLoopNotFound) {
+	if _, err := rt.Attach(context.Background(), event.DefaultTenant, "nope", 0); !errors.Is(err, ErrLoopNotFound) {
 		t.Errorf("Attach err = %v, want ErrLoopNotFound", err)
 	}
-	if err := rt.Send(context.Background(), "nope", ""); !errors.Is(err, ErrLoopNotFound) {
+	if err := rt.Send(context.Background(), event.DefaultTenant, "nope", ""); !errors.Is(err, ErrLoopNotFound) {
 		t.Errorf("Send err = %v, want ErrLoopNotFound", err)
 	}
 	if _, err := rt.Spawn(context.Background(), "nope", SpawnOpts{}); !errors.Is(err, ErrLoopNotFound) {

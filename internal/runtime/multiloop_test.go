@@ -78,7 +78,7 @@ func TestNConcurrentLoopsIsolatedStreams(t *testing.T) {
 	// Each loop's durable stream: contiguous monotonic Seq from 1, and it carries
 	// ONLY its own turn events (isolation).
 	for i, id := range ids {
-		evs, err := rt.Attach(id, 0)
+		evs, err := rt.Attach(context.Background(), event.DefaultTenant, id, 0)
 		if err != nil {
 			t.Fatalf("loop %d Attach: %v", i, err)
 		}

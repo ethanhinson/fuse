@@ -5,6 +5,18 @@ import "testing"
 // compile-time assertion that NoopStore implements EventStore.
 var _ EventStore = NoopStore{}
 
+// TestNormalizeTenantDefaults asserts the durable seam's tenant normalization:
+// the empty tenant maps to DefaultTenant (single-tenant local behavior), any other
+// tenant passes through unchanged.
+func TestNormalizeTenantDefaults(t *testing.T) {
+	if got := NormalizeTenant(""); got != DefaultTenant {
+		t.Fatalf("NormalizeTenant(\"\") = %q, want %q", got, DefaultTenant)
+	}
+	if got := NormalizeTenant("acme"); got != TenantID("acme") {
+		t.Fatalf("NormalizeTenant(acme) = %q, want acme", got)
+	}
+}
+
 // TestNoopStoreInert asserts the no-op default store is safe and does nothing —
 // it is the nil-holder default so no emission point ever nil-panics.
 func TestNoopStoreInert(t *testing.T) {

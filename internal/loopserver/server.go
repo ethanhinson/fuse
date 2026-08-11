@@ -91,9 +91,11 @@ type startResult struct {
 type sendParams struct {
 	LoopID string `json:"loop_id"`
 	Input  string `json:"input"`
+	Tenant string `json:"tenant,omitempty"`
 }
 type observeParams struct {
 	LoopID  string    `json:"loop_id"`
+	Tenant  string    `json:"tenant,omitempty"`
 	FromSeq event.Seq `json:"from_seq,omitempty"`
 }
 type observeResult struct {
@@ -194,7 +196,7 @@ func (s *Server) handleSend(ctx context.Context, r req) resp {
 	if err := json.Unmarshal(r.Params, &p); err != nil {
 		return s.errResp(r.ID, codeInvalidParams, "invalid params: "+err.Error())
 	}
-	if err := s.rt.Send(ctx, p.LoopID, p.Input); err != nil {
+	if err := s.rt.Send(ctx, event.TenantID(p.Tenant), p.LoopID, p.Input); err != nil {
 		if errors.Is(err, runtime.ErrLoopFinished) || errors.Is(err, runtime.ErrLoopNotFound) {
 			return s.errResp(r.ID, codeInvalidParams, err.Error())
 		}
@@ -225,12 +227,12 @@ func (s *Server) serveObserve(ctx context.Context, r req) error {
 	//    event appended in the subscribe→replay window is delivered on BOTH paths; the
 	//    live pump dedups it against the replay watermark (see step 5) so the client
 	//    never sees a duplicate.
-	ch, cancel, err := s.rt.Observe(p.LoopID)
+	ch, cancel, err := s.rt.Observe(ctx, event.TenantID(p.Tenant), p.LoopID)
 	if err != nil {
 		return s.encode(s.errResp(r.ID, codeInternal, err.Error()))
 	}
 	// 2) Read durable history since from_seq.
-	hist, err := s.rt.Attach(p.LoopID, p.FromSeq)
+	hist, err := s.rt.Attach(ctx, event.TenantID(p.Tenant), p.LoopID, p.FromSeq)
 	if err != nil {
 		cancel()
 		return s.encode(s.errResp(r.ID, codeInternal, err.Error()))

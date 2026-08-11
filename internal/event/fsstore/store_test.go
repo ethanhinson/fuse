@@ -1,6 +1,7 @@
 package fsstore
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +11,40 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/event"
 )
+
+// TestFSStoreTenantPartitioning asserts the durable store partitions streams by
+// (tenant, loop): distinct files, distinct per-loop Seq streams starting at 1, and
+// no cross-tenant leak on Replay.
+func TestFSStoreTenantPartitioning(t *testing.T) {
+	base := t.TempDir()
+	s := NewDurableFSStore(base)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	if err := s.Append(ctx, event.StreamKey{Tenant: "acme", Loop: "L1"}, event.Event{Kind: event.KindTurnStart}); err != nil {
+		t.Fatalf("Append acme: %v", err)
+	}
+	if err := s.Append(ctx, event.StreamKey{Tenant: "beta", Loop: "L1"}, event.Event{Kind: event.KindTurnEnd}); err != nil {
+		t.Fatalf("Append beta: %v", err)
+	}
+	// Distinct files under the tenant subdir.
+	if _, err := os.Stat(filepath.Join(base, "acme", "L1", "events.jsonl")); err != nil {
+		t.Fatalf("acme events.jsonl not at expected path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, "beta", "L1", "events.jsonl")); err != nil {
+		t.Fatalf("beta events.jsonl not at expected path: %v", err)
+	}
+	acme, _ := s.Replay(ctx, event.StreamKey{Tenant: "acme", Loop: "L1"}, 0)
+	beta, _ := s.Replay(ctx, event.StreamKey{Tenant: "beta", Loop: "L1"}, 0)
+	if len(acme) != 1 || acme[0].Kind != event.KindTurnStart {
+		t.Fatalf("acme leak: %+v", acme)
+	}
+	if len(beta) != 1 || beta[0].Kind != event.KindTurnEnd {
+		t.Fatalf("beta leak: %+v", beta)
+	}
+	if acme[0].Seq != 1 || beta[0].Seq != 1 {
+		t.Fatalf("per-loop Seq must start at 1")
+	}
+}
 
 func newStore(t *testing.T) (*FSEventStore, string) {
 	t.Helper()
