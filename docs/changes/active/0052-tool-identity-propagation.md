@@ -12,14 +12,14 @@ related: [43, 47, 50, 51]
 discovered_from: [47, 49]
 adrs: []
 spec: docs/superpowers/specs/2026-08-11-tool-identity-propagation-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-11-tool-identity-propagation-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/tool-identity-propagation
 pr:
 blocked_by:
-claimed_at: 2026-08-11T19:29:25Z
+claimed_at: 2026-08-11T19:32:44Z
 reconciled: true
 ---
 
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-11-tool-identity-propagation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-tool-identity-propagation-design.md) |
+| Plan | [2026-08-11-tool-identity-propagation-plan.md](https://github.com/ethanhinson/fuse/blob/feat/tool-identity-propagation/docs/superpowers/plans/2026-08-11-tool-identity-propagation-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
