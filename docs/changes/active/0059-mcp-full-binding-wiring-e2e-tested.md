@@ -12,7 +12,7 @@ related: [48, 49, 55, 57, 58, 60]
 discovered_from: [52]
 adrs: [36]
 spec: docs/superpowers/specs/2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-11-mcp-full-binding-wiring-e2e-tested-plan.md
 results:
 trivial: false
 auto_groomable:
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md) |
+| Plan | [2026-08-11-mcp-full-binding-wiring-e2e-tested-plan.md](https://github.com/ethanhinson/fuse/blob/feat/mcp-full-binding-wiring-e2e-tested/docs/superpowers/plans/2026-08-11-mcp-full-binding-wiring-e2e-tested-plan.md) |
 | ADRs | [ADR-0036](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0036-tool-authz-delegated-downstream-rfc8693-egress-seam.md) |
 <!-- docket:artifacts:end -->
 
