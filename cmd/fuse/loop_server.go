@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopauth"
 	"github.com/ethanhinson/fuse/internal/loopserver"
+	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/runtime"
@@ -101,6 +103,23 @@ func buildLoopServerRuntimeDeps(cfg config.Config, reg *model.Registry, modelAli
 		durableStore, durableReg = nil, nil
 	}
 
+	// Resolve the shared MCP attach options ONCE (change #59, Task 4): they are derived
+	// from trusted config (the identity-propagation egress CredentialSource + the posture
+	// log), so they are safe to share across loops — the egress seam mints per-call,
+	// per-principal tokens from the ctx principal at Execute time, not from any manager
+	// state. The complete-mediation TargetMediator reaches each loop's gate separately via
+	// buildGate → buildTargetMediator(cfg) inside buildAgentCore, so we discard it here.
+	mcpOpts, _ := mcpAttach(cfg, os.Stderr)
+
+	// Per-loop MCP manager registry (change #59, Task 4): each hosted loop gets its OWN
+	// mcp.Manager, constructed in NewToolRegistry and registered into that loop's OWN
+	// cloned tool registry — never a shared manager, registry, or credential across loops
+	// (guardrail deglobalize-holder-also-per-instance-the-shared-graph). Keyed by the
+	// per-loop registry pointer so LoopTeardown closes exactly that loop's manager at loop
+	// completion. sync.Map because NewToolRegistry (StartLoop goroutine) and LoopTeardown
+	// (run-completion goroutine) touch it from different goroutines for concurrent loops.
+	var loopManagers sync.Map // *tools.Registry -> *mcp.Manager
+
 	return runtime.Deps{
 		// DurableStore/Registry are the 0047 durable seam (shared, cross-process). When
 		// set, StartLoop emits into this shared store per StreamKey and registers the
@@ -123,10 +142,35 @@ func buildLoopServerRuntimeDeps(cfg config.Config, reg *model.Registry, modelAli
 		LoopContext: func(ctx context.Context, lc runtime.LoopConfig) context.Context {
 			return toolidentity.WithPrincipal(ctx, loopServerPrincipal(lc))
 		},
+		// LoopTeardown closes THIS loop's own MCP manager at loop completion (change #59,
+		// Task 4), so no manager (and its read-pump/notify goroutines) outlives its loop and
+		// no two loops ever share one. The registry key is the loop's own registry — the
+		// exact one NewToolRegistry attached the manager to.
+		LoopTeardown: func(loopReg *tools.Registry) {
+			if v, ok := loopManagers.LoadAndDelete(loopReg); ok {
+				v.(*mcp.Manager).Close()
+			}
+		},
 		// The per-loop tool registry is built fresh per loop from the same source as the
 		// server's default, so each loop's root tool wiring binds to its own tree below.
+		// It ALSO attaches a per-loop MCP manager (change #59, Task 4): mcp.NewManager
+		// discovers the configured servers' tools and registers them into THIS loop's own
+		// registry (mcpOpts carry the identity-propagation egress seam), so the loop can
+		// list + invoke MCP tools that mint per-principal, per-tenant tokens at Execute.
+		// The manager is tracked by the loop's registry so LoopTeardown closes it at loop
+		// completion. Two concurrent loops get two independent managers over two registries
+		// — no shared MCP state.
 		NewToolRegistry: func() *tools.Registry {
-			return cloneServerToolRegistry(toolReg)
+			loopReg := cloneServerToolRegistry(toolReg)
+			// A no-op when cfg.MCPServers is empty (no dial, no goroutines). NewManager
+			// returns a usable manager even if some servers fail to start (they are skipped
+			// with a warning), so the loop still runs its non-MCP tools.
+			if mgr, err := mcp.NewManager(cfg.MCPServers, loopReg, mcpOpts...); err != nil {
+				fmt.Fprintf(os.Stderr, "loop-server: mcp manager: %v\n", err)
+			} else {
+				loopManagers.Store(loopReg, mgr)
+			}
+			return loopReg
 		},
 		// BuildAgent is the per-loop factory (change 0046): store + tree are THIS loop's
 		// own, so all wiring below is loop-local — no process-global, no cross-loop clobber.

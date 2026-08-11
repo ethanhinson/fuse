@@ -88,6 +88,16 @@ type Deps struct {
 	// deterministic. The renewer's tick cadence uses a real timer regardless — Now only
 	// governs the expiry timestamps and the reap comparison.
 	Now func() time.Time
+	// LoopTeardown, when non-nil, is invoked once at loop-run completion with the
+	// loop's OWN tool registry (the one NewToolRegistry produced and BuildAgent wired).
+	// It is the per-loop cleanup seam a binding uses to release resources it attached
+	// to that registry — notably the loop-server's per-loop mcp.Manager (change #59):
+	// the binding closes the manager it constructed for this registry, so N concurrent
+	// loops each tear down their OWN manager and none leaks past its loop. It runs
+	// alongside the loop's event-store Close, on the run goroutine, after the run
+	// returns. It takes a *tools.Registry (already in the runtime's import set) — never
+	// an mcp/auth type — so the policy-free seam is preserved (ADR-0030). Nil ⇒ no-op.
+	LoopTeardown func(toolReg *tools.Registry)
 	// LoopContext, when non-nil, decorates the loop-lifetime context the loop's run
 	// (and thus every tool Execute) derives from, once per StartLoop. It is the
 	// policy-free seam the composition root (cmd/fuse) uses to stamp the authenticated
@@ -354,6 +364,12 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		// so this stays byte-identical for the legacy paths.
 		if c, ok := store.(interface{ Close() error }); ok {
 			_ = c.Close()
+		}
+		// Per-loop resource teardown (change #59): release anything the binding
+		// attached to THIS loop's registry — the loop-server's per-loop mcp.Manager —
+		// so no manager (and its read-pump/notify goroutines) outlives its loop.
+		if r.deps.LoopTeardown != nil {
+			r.deps.LoopTeardown(toolReg)
 		}
 	}()
 	return h, nil
