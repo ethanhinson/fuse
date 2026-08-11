@@ -2,7 +2,7 @@
 id: 55
 slug: grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4
 title: Connect/protobuf transport — IDL-defined loop.* wire, successor to #48
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-11
@@ -13,12 +13,12 @@ discovered_from: [50]
 adrs: [32, 33]
 spec: docs/superpowers/specs/2026-08-11-grpc-connect-transport-design.md
 plan: docs/superpowers/plans/2026-08-11-grpc-connect-transport-plan.md
-results:
+results: docs/results/2026-08-11-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4-results.md
 trivial: false
 auto_groomable:
 branch: feat/grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4
-claimed_at: 2026-08-11T06:17:53Z
-pr:
+claimed_at: 2026-08-11T06:20:06Z
+pr: https://github.com/ethanhinson/fuse/pull/52
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-11-grpc-connect-transport-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-grpc-connect-transport-design.md) |
 | Plan | [2026-08-11-grpc-connect-transport-plan.md](https://github.com/ethanhinson/fuse/blob/feat/grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4/docs/superpowers/plans/2026-08-11-grpc-connect-transport-plan.md) |
+| Results | [2026-08-11-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4-results.md](https://github.com/ethanhinson/fuse/blob/feat/grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4/docs/results/2026-08-11-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4-results.md) |
+| PR | [#52](https://github.com/ethanhinson/fuse/pull/52) |
 | ADRs | [ADR-0032](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0032-binding-3-websocket-session-http-replay-shared-dispatch.md), [ADR-0033](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0033-networked-binding-connect-protobuf-fuse-loop-v1.md) |
 <!-- docket:artifacts:end -->
 
