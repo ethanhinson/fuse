@@ -2,7 +2,7 @@
 id: 32
 slug: binding-3-websocket-session-http-replay-shared-dispatch
 title: Binding #3 transport — WebSocket full-session + thin stateless HTTP replay over a shared dispatch core
-status: Accepted
+status: Superseded by ADR-33
 date: 2026-08-10
 supersedes: []
 reverses: []
