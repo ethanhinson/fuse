@@ -1,15 +1,15 @@
 ---
 id: 52
-slug: tool-resource-identity-propagation-per-call-rfc-8693-token-e
+slug: tool-identity-propagation
 title: Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs
 status: proposed
 priority: medium
 type: feat
 created: 2026-08-11
 updated: 2026-08-11
-depends_on: []
-related: []
-discovered_from: [49]
+depends_on: [48, 49]
+related: [43, 47, 50, 51]
+discovered_from: [47, 49]
 adrs: []
 spec:
 plan:
