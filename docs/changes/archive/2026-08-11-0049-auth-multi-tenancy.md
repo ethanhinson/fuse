@@ -2,7 +2,7 @@
 id: 49
 slug: auth-multi-tenancy
 title: Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-10
@@ -17,7 +17,7 @@ results: docs/results/2026-08-11-auth-multi-tenancy-results.md
 trivial: false
 auto_groomable:
 branch: feat/auth-multi-tenancy
-claimed_at: 2026-08-11T07:52:04Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/53
 blocked_by:
 reconciled: true
