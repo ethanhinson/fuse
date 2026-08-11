@@ -1,12 +1,6 @@
 # Backlog
 
-**60 changes** — 🟢 1 in progress · 🟡 6 proposed · ⚪ 1 deferred · ✅ 46 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0059](active/0059-mcp-full-binding-wiring-e2e-tested.md) | Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths | `critical` | `feat` | [spec](../superpowers/specs/2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md) | `feat/mcp-full-binding-wiring-e2e-tested` |
+**60 changes** — 🟡 6 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 46 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (6)
 
@@ -24,6 +18,12 @@
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0059](active/0059-mcp-full-binding-wiring-e2e-tested.md) | Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths | `critical` | `feat` | [#56](https://github.com/ethanhinson/fuse/pull/56) |  |
 
 ```mermaid
 graph TD
