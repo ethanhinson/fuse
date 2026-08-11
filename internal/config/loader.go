@@ -531,6 +531,28 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 		}
 	}
 
+	// tool_identity (change #52): the built-in STS signing key + local subject for
+	// tool/resource identity propagation. This is a CREDENTIAL surface — the
+	// signing key mints tokens fuse's own downstreams trust — so it is honored
+	// ONLY from the trusted home file, exactly like loop_server. A repo-plantable
+	// .fuse.local.yml that set a signing key could mint downstream-trusted tokens,
+	// so an untrusted source's block is dropped and named (ADR-0006).
+	if raw.ToolIdentity.SigningKey != "" || raw.ToolIdentity.TTL != "" || raw.ToolIdentity.LocalSubject != "" {
+		if trusted {
+			if raw.ToolIdentity.SigningKey != "" {
+				c.ToolIdentity.SigningKey = raw.ToolIdentity.SigningKey
+			}
+			if raw.ToolIdentity.TTL != "" {
+				c.ToolIdentity.TTL = raw.ToolIdentity.TTL
+			}
+			if raw.ToolIdentity.LocalSubject != "" {
+				c.ToolIdentity.LocalSubject = raw.ToolIdentity.LocalSubject
+			}
+		} else {
+			fmt.Fprintf(warnw, "warning: %s ignores tool_identity (a signing-key credential surface); set it in ~/.fuse/config.yml instead\n", path)
+		}
+	}
+
 	// context.summarization (change 0027): a present-value-overrides merge like
 	// the research block. Enabled is a *bool so an omitted key keeps the true
 	// default while `enabled: false` disables. Threshold/MaxOutput are 0 = unset;
