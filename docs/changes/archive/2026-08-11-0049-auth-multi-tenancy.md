@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-11-auth-multi-tenancy-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-auth-multi-tenancy-design.md) |
-| Plan | [2026-08-11-auth-multi-tenancy-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auth-multi-tenancy/docs/superpowers/plans/2026-08-11-auth-multi-tenancy-plan.md) |
-| Results | [2026-08-11-auth-multi-tenancy-results.md](https://github.com/ethanhinson/fuse/blob/feat/auth-multi-tenancy/docs/results/2026-08-11-auth-multi-tenancy-results.md) |
+| Plan | [2026-08-11-auth-multi-tenancy-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-11-auth-multi-tenancy-plan.md) |
+| Results | [2026-08-11-auth-multi-tenancy-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-11-auth-multi-tenancy-results.md) |
 | PR | [#53](https://github.com/ethanhinson/fuse/pull/53) |
 | ADRs | [ADR-0034](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0034-edge-enforced-auth-multi-tenancy-loop-ownership.md) |
 <!-- docket:artifacts:end -->

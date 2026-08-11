@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0049 — Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0049-auth-multi-tenancy.md)**
+> ↩ **[Change 0049 — Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-11-0049-auth-multi-tenancy.md)**
 <!-- docket:backlink:end -->
 
 # Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service
