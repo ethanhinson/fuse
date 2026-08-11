@@ -76,6 +76,37 @@ export interface Event {
   gap: boolean;
 }
 
+/**
+ * ConnState is the observed connection lifecycle of an {@link Client.observe} stream
+ * (change 0056, D1). It is surfaced via the `onState` callback so an app can render a
+ * connection indicator without reaching into the transport:
+ *
+ *   - `connecting`   — opening (or re-opening) the underlying Observe stream.
+ *   - `live`         — a stream is delivering frames (set on the first delivered frame).
+ *   - `reconnecting` — a stream ended/dropped (transient); backing off before a re-open.
+ *   - `closed`       — the observe is finished: consumer stopped, aborted, or a terminal
+ *                      error stopped the reconnect loop. No further states follow.
+ */
+export type ConnState = "connecting" | "live" | "reconnecting" | "closed";
+
+/**
+ * ObserveOptions is the options-object form of {@link Client.observe} (change 0056, D1/D3).
+ * It is ADDITIVE: the positional `observe(loopId, fromSeq?)` form still works, so the
+ * existing node test is untouched.
+ */
+export interface ObserveOptions {
+  /** Resume cursor: the highest seq already seen (default 0 = from the start). */
+  fromSeq?: bigint;
+  /** Lifecycle callback fired at each {@link ConnState} transition. */
+  onState?: (state: ConnState) => void;
+  /**
+   * AbortSignal for idempotent teardown (D3): aborting stops the reconnect loop, tears
+   * the underlying stream down, and fires `onState('closed')` exactly once. Abort-after-
+   * close / double-abort is a no-op.
+   */
+  signal?: AbortSignal;
+}
+
 /** The completion event kind for an interactive loop (see D5 in the plan). */
 export const KIND_LOOP_PARKED = "loop.parked";
 
@@ -98,8 +129,14 @@ export interface Client {
    * observe streams domain events from `fromSeq` (default 0), skipping keepalives and
    * reconnecting transparently from the last-seen seq on stream end/error. Break the
    * `for await` loop to stop observing (which closes the underlying stream).
+   *
+   * Two additive forms (change 0056, D1):
+   *   - positional `observe(loopId, fromSeq?)` — the original #50 surface (back-compat);
+   *   - options `observe(loopId, { fromSeq?, onState?, signal? })` — surfaces the
+   *     {@link ConnState} lifecycle via `onState` and idempotent teardown via `signal`.
    */
   observe(loopId: string, fromSeq?: bigint): AsyncIterable<Event>;
+  observe(loopId: string, options: ObserveOptions): AsyncIterable<Event>;
 }
 
 function bearerInterceptor(token: string): Interceptor {
@@ -188,7 +225,25 @@ export function createClient(options: ClientOptions): Client {
       await wire.send({ loopId, input, tenant });
     },
 
-    observe(loopId: string, fromSeq: bigint = 0n): AsyncIterable<Event> {
+    observe(loopId: string, arg?: bigint | ObserveOptions): AsyncIterable<Event> {
+      // Normalize the two additive forms (D1): a bigint is the positional fromSeq; an
+      // object is ObserveOptions. Undefined = from the start with no callbacks.
+      const opts: ObserveOptions =
+        typeof arg === "bigint" ? { fromSeq: arg } : (arg ?? {});
+      const fromSeq = opts.fromSeq ?? 0n;
+      const onState = opts.onState;
+
+      // emitState fires the lifecycle callback (D1), guarding against a throwing consumer
+      // callback taking down the reconnect loop.
+      const emitState = (s: ConnState) => {
+        if (!onState) return;
+        try {
+          onState(s);
+        } catch {
+          // A caller's onState must never break the stream: swallow its throw.
+        }
+      };
+
       return {
         async *[Symbol.asyncIterator](): AsyncGenerator<Event> {
           // last is the reconnect cursor: the highest seq delivered so far. On a stream
@@ -205,39 +260,52 @@ export function createClient(options: ClientOptions): Client {
           // Reconnect loop. Each pass opens one server-stream; when it ends we resume
           // from `last`. A hard error that is not a clean end still triggers a resume —
           // the browser analogue of a websocket read error being a reconnect, not a fault.
-          for (;;) {
-            let deliveredThisPass = false;
-            // The Connect stream returned by wire.observe() is an AsyncIterable; a
-            // `finally` on the for-await guarantees the underlying HTTP stream is torn
-            // down whether this pass ends by completion, a thrown error, OR the CONSUMER
-            // breaking out of the outer generator (which propagates return() to us).
-            const stream = wire.observe({ loopId, fromSeq: last, tenant });
-            try {
-              for await (const frame of stream) {
-                if (frame.keepalive || !frame.event) {
-                  continue; // idle heartbeat: no seq, ignore.
+          try {
+            for (;;) {
+              let deliveredThisPass = false;
+              // `connecting` at the top of every pass (initial open AND every re-open).
+              emitState("connecting");
+              // The Connect stream returned by wire.observe() is an AsyncIterable; a
+              // `finally` on the for-await guarantees the underlying HTTP stream is torn
+              // down whether this pass ends by completion, a thrown error, OR the CONSUMER
+              // breaking out of the outer generator (which propagates return() to us).
+              const stream = wire.observe({ loopId, fromSeq: last, tenant });
+              try {
+                for await (const frame of stream) {
+                  if (frame.keepalive || !frame.event) {
+                    continue; // idle heartbeat: no seq, ignore.
+                  }
+                  const ev = frame.event;
+                  if (!deliveredThisPass) {
+                    deliveredThisPass = true;
+                    emitState("live"); // first frame of this pass: the stream is live.
+                  }
+                  if (ev.seq <= last) {
+                    continue; // defensive dedup-at-watermark: never re-yield a seen seq.
+                  }
+                  last = ev.seq;
+                  yield toDomainEvent(ev, frame.gap);
                 }
-                const ev = frame.event;
-                deliveredThisPass = true;
-                if (ev.seq <= last) {
-                  continue; // defensive dedup-at-watermark: never re-yield a seen seq.
-                }
-                last = ev.seq;
-                yield toDomainEvent(ev, frame.gap);
+                // Clean stream end (server closed the tail): fall through to re-open.
+              } catch {
+                // A stream error (post-handshake read/close) is a clean reconnect signal,
+                // not a fault: fall through to re-open Observe(last).
               }
-              // Clean stream end (server closed the tail): fall through to re-open.
-            } catch {
-              // A stream error (post-handshake read/close) is a clean reconnect signal,
-              // not a fault: fall through to re-open Observe(last).
+              // Re-open from the last-seen seq. The server replays history since `last`
+              // then live-tails; the watermark dedup above drops any overlap frame.
+              if (deliveredThisPass) {
+                backoffMs = backoffBaseMs; // healthy stream: clear any accrued penalty.
+              } else {
+                await sleep(backoffMs);
+                backoffMs = Math.min(backoffMs * 2, backoffCapMs);
+              }
+              // About to re-open: signal the reconnecting transition.
+              emitState("reconnecting");
             }
-            // Re-open from the last-seen seq. The server replays history since `last`
-            // then live-tails; the watermark dedup above drops any overlap frame.
-            if (deliveredThisPass) {
-              backoffMs = backoffBaseMs; // healthy stream: clear any accrued penalty.
-            } else {
-              await sleep(backoffMs);
-              backoffMs = Math.min(backoffMs * 2, backoffCapMs);
-            }
+          } finally {
+            // The generator is done (consumer broke out, or a throw propagated): the
+            // observe is closed. Fire `closed` exactly once on the way out.
+            emitState("closed");
           }
         },
       };
