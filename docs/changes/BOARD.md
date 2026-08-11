@@ -1,13 +1,18 @@
 # Backlog
 
-**56 changes** — 🟡 4 proposed · ⚪ 1 deferred · ✅ 45 done · 🗑️ 6 killed
+**56 changes** — 🟢 1 in progress · 🟡 3 proposed · ⚪ 1 deferred · ✅ 45 done · 🗑️ 6 killed
 
-## 🟡 Proposed (4)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0052](active/0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | `medium` | `feat` | [spec](../superpowers/specs/2026-08-11-tool-identity-propagation-design.md) | `feat/tool-identity-propagation` |
+
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + Loki, as a projection over the event stream | `medium` | `feat` | needs-brainstorm |
-| [0052](active/0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | `medium` | `feat` | build-ready |
 | [0054](active/0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | `medium` | `feat` | needs-brainstorm |
 | [0056](active/0056-sdk-viability-hardening-wander.md) | SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app | `medium` | `feat` | build-ready |
 
