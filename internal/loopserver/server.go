@@ -1,14 +1,20 @@
-// Package loopserver is binding #2: a dedicated stdio JSON-RPC 2.0 server that
-// exposes loop control (loop.start / loop.send / loop.observe) over a
-// runtime.Runtime. It is a pure adapter — it imports internal/runtime and
-// internal/event only, and NEVER a renderer, TUI, MCP tool registry, or CLI type
-// (Decision Note D-2). Its "no approval gate" (auto-approve) policy is a binding
-// choice wired by the composition root, not a property of the Runtime seam.
+// Package loopserver is binding #2: a dedicated JSON-RPC 2.0 server that exposes
+// loop control (loop.start / loop.send / loop.observe) over a runtime.Runtime. It
+// is a pure adapter — it imports internal/runtime and internal/event only, and
+// NEVER a renderer, TUI, MCP tool registry, or CLI type (Decision Note D-2). Its
+// "no approval gate" (auto-approve) policy is a binding choice wired by the
+// composition root, not a property of the Runtime seam.
+//
+// The dispatch core is transport-agnostic: Server drives an abstract frame
+// read/write conn (see transport.go) rather than a concrete wire. Stdio is one such
+// transport (stdio.go), built internally by NewServer so binding #2's signature and
+// behavior are unchanged; a WebSocket transport is the second (net.go).
 //
 // The framing mirrors internal/mcp/server.go's proven encoder discipline: every
-// write (responses AND id-less notifications) is serialized under a shared encoder
-// mutex so a mid-observe loop.event notification can never interleave with a
-// response and corrupt the JSON-RPC stream.
+// write (responses AND id-less notifications) is serialized under a shared per-
+// connection write mutex (owned by the transport) so a mid-observe loop.event
+// notification can never interleave with a response and corrupt the JSON-RPC
+// stream.
 package loopserver
 
 import (
@@ -17,7 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/runtime"
@@ -31,112 +36,44 @@ const (
 	codeInternal       = -32603
 )
 
-// Server is a stdio JSON-RPC 2.0 server dedicated to loop control (binding #2). It
-// is a pure adapter over runtime.Runtime — no renderer, TUI, approval gate, or MCP
-// tool registry. Its policy is "no approval gate" (auto-approve), a binding choice
+// Server is a JSON-RPC 2.0 server dedicated to loop control (binding #2). It is a
+// pure adapter over runtime.Runtime — no renderer, TUI, approval gate, or MCP tool
+// registry. Its policy is "no approval gate" (auto-approve), a binding choice
 // documented at the composition root, NOT a property of the Runtime seam.
+//
+// Server owns no wire state itself: it reads request frames from and writes
+// response + notification frames to an abstract conn transport, which owns the
+// single per-connection write mutex serializing every write.
 type Server struct {
-	rt  runtime.Runtime
-	enc *json.Encoder
-	dec *json.Decoder
-
-	// encMu serializes every write on the shared encoder. loop.observe emits id-less
-	// loop.event notifications from a pump goroutine on the same encoder as the
-	// eventual observe response — without this lock those writes could interleave and
-	// corrupt the JSON-RPC stream (mirrors mcp/server.go's $/progress discipline).
-	encMu sync.Mutex
+	rt   runtime.Runtime
+	conn conn
 }
 
 // NewServer creates a Server that reads JSON-RPC 2.0 frames from r and writes them
-// to w, adapting each method to rt.
+// to w over a stdio transport, adapting each method to rt. Its signature is
+// unchanged from binding #2 — the stdio transport is constructed internally.
 func NewServer(r io.Reader, w io.Writer, rt runtime.Runtime) *Server {
 	return &Server{
-		rt:  rt,
-		enc: json.NewEncoder(w),
-		dec: json.NewDecoder(r),
+		rt:   rt,
+		conn: newStdioTransport(r, w),
 	}
 }
 
-// req is the server-side JSON-RPC 2.0 request frame. ID is RawMessage so it
-// roundtrips for both string and integer client IDs (identical shape to mcp).
-type req struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
-// resp is the server-side JSON-RPC 2.0 response frame.
-type resp struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
-}
-
-// rpcError is the JSON-RPC 2.0 error object.
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// method params / results
-type startParams struct {
-	Task  string `json:"task"`
-	Model string `json:"model,omitempty"`
-}
-type startResult struct {
-	LoopID string `json:"loop_id"`
-}
-type sendParams struct {
-	LoopID string `json:"loop_id"`
-	Input  string `json:"input"`
-	Tenant string `json:"tenant,omitempty"`
-}
-type observeParams struct {
-	LoopID  string    `json:"loop_id"`
-	Tenant  string    `json:"tenant,omitempty"`
-	FromSeq event.Seq `json:"from_seq,omitempty"`
-}
-type observeResult struct {
-	Replayed int       `json:"replayed"`
-	LastSeq  event.Seq `json:"last_seq"`
-}
-
-// eventNote is the id-less loop.event notification frame carrying one event to an
-// observing client. json.Encoder writes it immediately (no buffering), so a raw
-// json.Decoder client reads each notification as it is pushed.
-type eventNote struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  eventNoteParams `json:"params"`
-}
-type eventNoteParams struct {
-	LoopID string      `json:"loop_id"`
-	Event  event.Event `json:"event"`
-	Gap    bool        `json:"gap,omitempty"`
-}
-
-// Serve reads and dispatches JSON-RPC frames until the reader hits EOF or a decode
+// Serve reads and dispatches JSON-RPC frames until the transport hits EOF or a read
 // error. Notifications (no id) receive no response.
 //
-// Decode-error policy is FAIL-FAST (verified, not chosen for convenience): a streaming
-// json.Decoder cannot resync mid-stream — after a syntax error it returns that same
-// error indefinitely, so a trailing valid frame is unreachable. Rather than spin, on a
-// non-EOF decode error Serve emits ONE null-id parse-error response (codeParseError) so
-// the client learns its stream is corrupt, then returns and tears down the connection.
-// A fresh connection re-establishes a clean decoder.
+// The decode-error policy (a corrupt/undecodable frame ends the connection) lives
+// in the transport's readRequest, which emits any wire-appropriate error frame
+// (for stdio: one null-id codeParseError frame, since a streaming json.Decoder
+// cannot resync) and returns the wrapped error; Serve surfaces it by returning.
 func (s *Server) Serve(ctx context.Context) error {
 	for {
-		var r req
-		if err := s.dec.Decode(&r); err != nil {
+		r, err := s.conn.readRequest(ctx)
+		if err != nil {
 			if err == io.EOF {
 				return nil
 			}
-			// Best-effort notify the client the stream is unparseable, then fail fast
-			// (json.Decoder cannot resync — see the method doc).
-			_ = s.encode(s.errResp(json.RawMessage("null"), codeParseError, "parse error: "+err.Error()))
-			return fmt.Errorf("loopserver: decode: %w", err)
+			return err
 		}
 		if len(r.ID) == 0 { // notification: no response
 			continue
@@ -157,12 +94,10 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 }
 
-// encode serializes one frame (response or notification) under the shared encoder
-// mutex.
+// encode serializes one frame (response or notification) through the transport,
+// which owns the shared per-connection write mutex.
 func (s *Server) encode(v any) error {
-	s.encMu.Lock()
-	defer s.encMu.Unlock()
-	return s.enc.Encode(v)
+	return s.conn.encode(v)
 }
 
 func (s *Server) dispatch(ctx context.Context, r req) resp {
