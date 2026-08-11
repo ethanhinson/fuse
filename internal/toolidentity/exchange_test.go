@@ -178,3 +178,17 @@ func TestBuiltinSTS_UnknownTenantFails(t *testing.T) {
 		t.Fatal("Exchange for an unconfigured tenant must fail")
 	}
 }
+
+// TestBuiltinSTS_RejectsForgedAlgHeader: a token whose header claims alg!=HS256
+// (e.g. an alg:none confusion attempt) is rejected by Verify even if the rest is
+// well-formed — the header is validated before the signature is trusted.
+func TestBuiltinSTS_RejectsForgedAlgHeader(t *testing.T) {
+	sts := newTestSTS(t)
+	// Forge a token with header {"alg":"none"} and an empty signature.
+	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"attacker","exp":9999999999}`))
+	forged := hdr + "." + payload + "."
+	if err := sts.Verify("tenantA", forged); err == nil {
+		t.Fatal("Verify must reject a token whose alg is not HS256 (alg-confusion)")
+	}
+}

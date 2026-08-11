@@ -35,32 +35,12 @@ type callAuthCtxKey struct{}
 // JSON-RPC body `resource` param because the tools/call body shape is fixed.
 const mcpResourceHeader = "MCP-Resource"
 
-// WithCallCredential returns a child context carrying cred as the per-call
-// downstream credential for the next outbound MCP request. It sets no target
-// audience — use WithCallAuth when the resolved Target is available so the
-// request is audience-bound. Present so callers with only a Credential still
-// have a supported entry point.
-func WithCallCredential(ctx context.Context, cred toolidentity.Credential) context.Context {
-	return context.WithValue(ctx, callAuthCtxKey{}, callAuth{cred: cred})
-}
-
 // WithCallAuth returns a child context carrying both the resolved credential and
 // the declared target for the next outbound MCP request. The transport reads the
 // credential for the Authorization header and the target's Audience for the
 // RFC 8707 resource binding.
 func WithCallAuth(ctx context.Context, cred toolidentity.Credential, target toolidentity.Target) context.Context {
 	return context.WithValue(ctx, callAuthCtxKey{}, callAuth{cred: cred, target: target})
-}
-
-// callCredentialFrom returns the per-call credential threaded on ctx and
-// ok=false when none is present. When ok is false the transport falls back to
-// its static bearerToken field exactly as before (back-compat).
-func callCredentialFrom(ctx context.Context) (toolidentity.Credential, bool) {
-	ca, ok := ctx.Value(callAuthCtxKey{}).(callAuth)
-	if !ok {
-		return toolidentity.Credential{}, false
-	}
-	return ca.cred, true
 }
 
 // callAuthFrom returns the full per-call auth (credential + target) on ctx.

@@ -17,6 +17,15 @@ type StaticCredential struct {
 	Token  string
 }
 
+// String redacts the token so a stray %v of a StaticCredential (or a Broker that
+// holds a map of them) never leaks it — D6 parity with Credential.
+func (c StaticCredential) String() string {
+	return "toolidentity.StaticCredential{Scheme:" + c.Scheme + " Token:<redacted>}"
+}
+
+// GoString redacts the token for the %#v verb too.
+func (c StaticCredential) GoString() string { return c.String() }
+
 // AuditRecord is one credential-mint audit line: who, for what, at which tier,
 // with the delegation chain. It NEVER contains the token itself.
 type AuditRecord struct {

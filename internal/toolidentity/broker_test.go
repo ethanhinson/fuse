@@ -146,3 +146,14 @@ func TestBroker_NoLongLivedOAuthSecret(t *testing.T) {
 		t.Fatal("broker must resolve OAuth via the exchanger seam")
 	}
 }
+
+// TestStaticCredentialRedacts: a StaticCredential formatted via fmt never prints
+// its token (D6 parity with Credential).
+func TestStaticCredentialRedacts(t *testing.T) {
+	sc := StaticCredential{Scheme: "Bearer", Token: "static-secret-should-not-print"}
+	for _, s := range []string{sc.String(), sc.GoString()} {
+		if strings.Contains(s, "static-secret-should-not-print") {
+			t.Fatalf("StaticCredential rendering leaked the token: %q", s)
+		}
+	}
+}

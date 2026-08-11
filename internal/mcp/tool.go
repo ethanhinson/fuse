@@ -113,6 +113,20 @@ func (t *MCPTool) Execute(ctx context.Context, args string) tools.Result {
 			}
 			return tools.Result{IsError: true, Output: fmt.Sprintf("mcp %s/%s: credential denied: %v", t.serverName, t.toolName, cerr)}
 		}
+		// Fail closed on an empty credential: a source wired for this tool that
+		// resolves a token-less credential must NOT silently fall through to an
+		// unauthenticated request (or the client's static token). The broker never
+		// returns an empty-token credential for a reachable target, so this only
+		// fires on a misconfiguration — deny rather than send bare.
+		if cred.Header() == "" {
+			if streamEnd != nil {
+				if t.tracker != nil {
+					t.tracker.drainNotifications()
+				}
+				streamEnd()
+			}
+			return tools.Result{IsError: true, Output: fmt.Sprintf("mcp %s/%s: credential denied: empty credential for target %q", t.serverName, t.toolName, t.target.Name)}
+		}
 		ctx = WithCallAuth(ctx, cred, t.target)
 	}
 

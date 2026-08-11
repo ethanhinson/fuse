@@ -430,6 +430,13 @@ func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.A
 	if sm != nil {
 		opts = append(opts, permissions.WithSessionMode(sm))
 	}
+	// Complete mediation (change #52 D5): when identity propagation is active,
+	// wire the config-driven target-allowlist mediator so a schema-valid MCP tool
+	// call to an undeclared/unknown downstream is denied terminally — even in
+	// ModeOff. Nil (inert) otherwise, keeping pre-#52 behavior byte-identical.
+	if med := buildTargetMediator(cfg); med != nil {
+		opts = append(opts, med)
+	}
 	return permissions.New(cfg.Permissions, toolReg, approve, opts...)
 }
 

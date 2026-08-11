@@ -275,8 +275,10 @@ func TestEgress_ResolveErrorSurfacesAsToolErrorNoToken(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("an undeclared OAuth target must surface as a tool error")
 	}
-	if strings.Contains(res.Output, "k") && strings.Contains(res.Output, "Bearer") {
-		t.Errorf("error output must not leak a token: %q", res.Output)
+	// The error surfaced to the loop must carry no credential material at all — no
+	// "Bearer " scheme, no JWS (a "." -joined base64 token).
+	if strings.Contains(res.Output, "Bearer ") {
+		t.Errorf("error output must not contain a bearer token: %q", res.Output)
 	}
 	if auths := srv.capturedAuths(); len(auths) != 0 {
 		t.Fatalf("a denied credential must never reach the network; got %v", auths)

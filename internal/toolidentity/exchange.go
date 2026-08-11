@@ -145,6 +145,24 @@ func (s *BuiltinSTS) Verify(tenant event.TenantID, token string) error {
 	if len(parts) != 3 {
 		return errors.New("toolidentity: malformed token")
 	}
+	// Validate the JWS header BEFORE trusting the signature: require alg=HS256 so a
+	// forged-header or alg-confusion token (e.g. alg:none, or an asymmetric alg a
+	// future variant might introduce) can never be accepted. Verify hardcodes HMAC,
+	// so this closes the latent alg-confusion footgun rather than relying on it.
+	hdrBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return errors.New("toolidentity: malformed header")
+	}
+	var hdr struct {
+		Alg string `json:"alg"`
+		Typ string `json:"typ"`
+	}
+	if err := json.Unmarshal(hdrBytes, &hdr); err != nil {
+		return errors.New("toolidentity: malformed header claims")
+	}
+	if hdr.Alg != "HS256" {
+		return fmt.Errorf("toolidentity: unexpected token alg %q (want HS256)", hdr.Alg)
+	}
 	signingInput := parts[0] + "." + parts[1]
 	want := hmacSHA256(signingInput, key)
 	got, err := base64.RawURLEncoding.DecodeString(parts[2])

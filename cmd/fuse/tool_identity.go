@@ -1,15 +1,105 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopauth"
+	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/toolidentity"
 )
+
+// configTargetMediator is the concrete complete-mediation gate (change #52 D5)
+// wired at the composition root. It enforces, from the loop-start root of trust
+// (the MCP server config — never model output), the tool→target DECLARATION: a
+// tool call reaching an MCP server may proceed only if that server is configured
+// and its identity tier is DECLARED well enough to reach (an identity/oauth
+// server MUST declare an audience). A schema-valid call to an undeclared or
+// unknown MCP target is denied terminally, even in ModeOff — the gate consults
+// this before any mode/approval logic.
+//
+// It intentionally covers the reachable slice of D5 today: the tool→target
+// declaration allowlist. Richer per-principal/tenant scope ceilings are a
+// follow-on that rides this same seam (they need the multi-tenant loop-server MCP
+// wiring that does not exist yet — see buildToolIdentitySource's TODO).
+type configTargetMediator struct {
+	// targets maps an MCP tool name prefix ("mcp:<server>/") to that server's
+	// declared toolidentity.Target. A tool whose server is absent is unknown.
+	byServer map[string]toolidentity.Target
+}
+
+// newConfigTargetMediator builds the mediator from the MCP server configs. It is
+// nil-safe to construct with no servers (every MCP call is then denied as
+// unknown, and non-MCP tools are always allowed).
+func newConfigTargetMediator(cfg config.Config) *configTargetMediator {
+	m := &configTargetMediator{byServer: map[string]toolidentity.Target{}}
+	for _, s := range cfg.MCPServers {
+		m.byServer[s.Name] = s.ToolIdentityTarget()
+	}
+	return m
+}
+
+// MediateTarget implements permissions.TargetMediator. A non-MCP tool (no
+// "mcp:" prefix) reaches no downstream target and is always permitted. An MCP
+// tool is permitted only when its server is configured AND its declared Target
+// is valid (an identity target must carry an audience); otherwise it is denied.
+func (m *configTargetMediator) MediateTarget(_ context.Context, toolName, _ string) (bool, string) {
+	if !strings.HasPrefix(toolName, "mcp:") {
+		return true, "" // in-process tool: no downstream target to mediate
+	}
+	// toolName is "mcp:<server>/<tool>"; extract <server>.
+	rest := strings.TrimPrefix(toolName, "mcp:")
+	server := rest
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		server = rest[:i]
+	}
+	target, ok := m.byServer[server]
+	if !ok {
+		return false, fmt.Sprintf("tool target %q is not a configured MCP server (root-of-trust allowlist)", server)
+	}
+	if !target.Valid() {
+		return false, fmt.Sprintf("MCP server %q declares an identity tier but no audience — undeclared downstream target, denied", server)
+	}
+	return true, ""
+}
+
+// buildTargetMediator returns the complete-mediation gate option to wire into the
+// permission gate, but ONLY when the identity-propagation seam is active (an
+// identity-propagating MCP server is configured). When inert, it returns nil so
+// pre-#52 behavior is byte-identical (no mediation in the path). Enforcing the
+// allowlist only when identity propagation is on keeps the gate's behavior for
+// existing repos unchanged while making the D5 guarantee real wherever the seam
+// is active.
+func buildTargetMediator(cfg config.Config) permissions.Option {
+	anyIdentity := false
+	for _, s := range cfg.MCPServers {
+		if s.IsIdentityPropagating() {
+			anyIdentity = true
+			break
+		}
+	}
+	if !anyIdentity {
+		return nil
+	}
+	return permissions.WithTargetMediator(newConfigTargetMediator(cfg))
+}
+
+// isHTTPTransport reports whether an MCP server transport carries an outbound
+// HTTP request the egress seam can attach a per-call credential to. The
+// identity-propagation credential is injected only on these transports.
+func isHTTPTransport(transport string) bool {
+	switch transport {
+	case "http", "sse", "streamable-http":
+		return true
+	default: // "stdio" or unset (defaults to stdio in mcp.dial)
+		return false
+	}
+}
 
 // buildToolIdentitySource is the change #52 composition root: it builds the
 // egress CredentialSource (a Broker over the built-in STS plus any explicit
@@ -33,7 +123,16 @@ func buildToolIdentitySource(cfg config.Config) (toolidentity.CredentialSource, 
 	for _, s := range cfg.MCPServers {
 		if s.IsIdentityPropagating() {
 			anyIdentity = true
-			break
+			// An identity-propagating server on a non-HTTP transport is a
+			// misconfiguration: the per-call credential is injected only on the HTTP
+			// egress (applyCallAuth on the HTTP/streamable clients); a stdio server
+			// would mint a delegation token every call that never leaves the process.
+			// Fail closed with a startup reason rather than silently minting into the
+			// void, so the operator fixes the transport instead of believing identity
+			// propagation is active.
+			if !isHTTPTransport(s.Transport) {
+				return nil, fmt.Sprintf("MCP server %q declares an identity/oauth-exchange auth type but transport %q is not http/streamable-http — the minted token cannot be carried over stdio; identity propagation is inert for it", s.Name, s.Transport)
+			}
 		}
 	}
 	if !anyIdentity {

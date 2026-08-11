@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -32,7 +33,7 @@ func TestBuildToolIdentitySource_InertWithoutIdentityServer(t *testing.T) {
 func TestBuildToolIdentitySource_IdentityServerNeedsSigningKey(t *testing.T) {
 	cfg := config.Config{
 		MCPServers: []config.MCPServerConfig{
-			{Name: "api", Audience: "https://api", Auth: config.MCPAuthConfig{Type: "identity"}},
+			{Name: "api", Transport: "http", Audience: "https://api", Auth: config.MCPAuthConfig{Type: "identity"}},
 		},
 	}
 	src, reason := buildToolIdentitySource(cfg)
@@ -42,6 +43,9 @@ func TestBuildToolIdentitySource_IdentityServerNeedsSigningKey(t *testing.T) {
 	if reason == "" {
 		t.Fatal("expected a startup reason explaining the missing signing key")
 	}
+	if !strings.Contains(reason, "signing_key") {
+		t.Fatalf("reason should name the missing signing key, got %q", reason)
+	}
 }
 
 // The happy path: an identity server + a signing key ⇒ a working CredentialSource
@@ -50,8 +54,8 @@ func TestBuildToolIdentitySource_IdentityServerNeedsSigningKey(t *testing.T) {
 func TestBuildToolIdentitySource_MintsForLocalPrincipal(t *testing.T) {
 	cfg := config.Config{
 		MCPServers: []config.MCPServerConfig{
-			{Name: "api", Audience: "https://api.example", Auth: config.MCPAuthConfig{Type: "identity", Scopes: []string{"read"}}},
-			{Name: "legacy", Auth: config.MCPAuthConfig{Type: "bearer", ClientSecret: "legacy-tok"}},
+			{Name: "api", Transport: "http", Audience: "https://api.example", Auth: config.MCPAuthConfig{Type: "identity", Scopes: []string{"read"}}},
+			{Name: "legacy", Transport: "http", Auth: config.MCPAuthConfig{Type: "bearer", ClientSecret: "legacy-tok"}},
 		},
 		ToolIdentity: config.ToolIdentityConfig{SigningKey: "local-signing-key-0123456789", LocalSubject: "ethan"},
 	}
@@ -104,5 +108,24 @@ func TestLocalPrincipal_DefaultsToLocal(t *testing.T) {
 	}
 	if (p == loopauth.Principal{}) {
 		t.Fatal("local principal must never be the zero (spoofable) principal")
+	}
+}
+
+// An identity-propagating server on a stdio transport fails closed with a reason:
+// the per-call credential can only ride an HTTP request, so a stdio identity
+// server would mint a token that never leaves the process (M1).
+func TestBuildToolIdentitySource_StdioIdentityFailsClosed(t *testing.T) {
+	cfg := config.Config{
+		MCPServers: []config.MCPServerConfig{
+			{Name: "api", Transport: "stdio", Audience: "https://api", Auth: config.MCPAuthConfig{Type: "identity"}},
+		},
+		ToolIdentity: config.ToolIdentityConfig{SigningKey: "k"},
+	}
+	src, reason := buildToolIdentitySource(cfg)
+	if src != nil {
+		t.Fatal("a stdio identity server must not yield an active source")
+	}
+	if reason == "" {
+		t.Fatal("expected a startup reason explaining the stdio identity server is inert")
 	}
 }

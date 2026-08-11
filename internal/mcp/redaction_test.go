@@ -106,3 +106,31 @@ func TestRedaction_CredentialFormatsRedacted(t *testing.T) {
 		}
 	}
 }
+
+// emptyCredSource is a CredentialSource that returns a token-less credential —
+// simulating a misconfiguration. MCPTool.Execute must fail closed (deny) rather
+// than send an unauthenticated request (M2).
+type emptyCredSource struct{}
+
+func (emptyCredSource) CredentialFor(context.Context, loopauth.Principal, toolidentity.Target) (toolidentity.Credential, error) {
+	return toolidentity.NewCredential("Bearer", "", true), nil // empty token
+}
+
+func TestEgress_EmptyCredentialFailsClosed(t *testing.T) {
+	conn := &authCapturingConn{}
+	tool := &MCPTool{
+		client:     conn,
+		serverName: "cap",
+		toolName:   "do",
+		source:     emptyCredSource{},
+		target:     toolidentity.Target{Name: "cap", Audience: "https://cap", Tier: toolidentity.TierOAuth},
+	}
+	ctx := toolidentity.WithPrincipal(context.Background(), loopauth.Principal{Tenant: "acme", Subject: "alice"})
+	res := tool.Execute(ctx, `{}`)
+	if !res.IsError {
+		t.Fatal("an empty resolved credential must fail closed (deny), not send bare")
+	}
+	if conn.gotAuthHeader != "" {
+		t.Fatalf("no request must reach the transport with an empty credential; got header %q", conn.gotAuthHeader)
+	}
+}
