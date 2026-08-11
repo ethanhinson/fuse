@@ -10,8 +10,8 @@ updated: 2026-08-11
 depends_on: [52]
 related: [48, 49, 55, 57, 58]
 discovered_from: [52]
-adrs: []
-spec:
+adrs: [36]
+spec: docs/superpowers/specs/2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md
 plan:
 results:
 trivial: false
@@ -21,6 +21,15 @@ pr:
 blocked_by:
 reconciled: false
 ---
+
+## Artifacts
+
+<!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-mcp-full-binding-wiring-e2e-tested-design.md) |
+| ADRs | [ADR-0036](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0036-tool-authz-delegated-downstream-rfc8693-egress-seam.md) |
+<!-- docket:artifacts:end -->
 
 ## Why
 
@@ -34,17 +43,15 @@ The consequence is the thing we can no longer accept: **change #52's per-call id
 
 This is a **critical** correctness-and-process gap. We keep stacking service features (identity #52, HTTP-tool identity #57, sessions #54, SDK #56) on top of a runtime whose primary binding cannot actually run the tool subsystem those features secure. **We will not add further features whose real-world scenario cannot be tested through a deployed binding.** This change closes that gap and makes the end-to-end path the permanent, CI-enforced proof.
 
-## What changes (proposal altitude — design in brainstorm)
+## What changes
 
-Wire MCP tool execution into **every** loop binding that should have it — first-class on the **loop-server** — and prove the full identity-propagation flow end-to-end against a **real MCP server** in CI. The deliverable is "MCP works, with #52 identity, through the actual service binding, and a test kills it if it regresses."
+Wire MCP tool execution into **every** loop binding — first-class on the **loop-server** — through **one shared attach helper**, and prove the full identity-propagation flow end-to-end against a **real MCP server** in a permanent CI lane. The deliverable is "MCP works, with #52 identity, through the actual service binding, and a test kills it if it regresses." Design settled in the linked spec; the load-bearing decisions:
 
-Likely scope to settle in design:
-
-- **Loop-server MCP attach.** Give `buildLoopServerRuntimeDeps` (binding #2) an MCP manager + `WithCredentialSource`, honoring the loop-start principal (per-loop, per-tenant) rather than the shell's single local `DefaultTenant`. This is where #52's multi-tenant STS finally has a real principal to mint for — it likely retires the `TODO(#52-followup)` single-tenant shim.
-- **Principal threading over the wire.** The authenticated loop-start identity (#49, arriving over #48/#55's transport) must reach `MCPTool.Execute`'s `CredentialFor` call on the loop-server path — the context carrier exists (`toolidentity.WithPrincipal`); wire it from the binding, not a seeded local principal.
-- **One-shot / probe policy.** Decide whether one-shot attaches MCP (with what identity) or is explicitly, loudly MCP-less.
-- **Shared attach helper.** Factor the shell's attach-with-credential-source into one helper all bindings use, so a binding cannot silently ship without it again.
-- **End-to-end acceptance as a permanent CI lane.** Two loops started by *different* principals, on the **loop-server**, each calling the **same real MCP server** (a scripted test server, not a mock of our own client), present **distinct, audience-bound, delegated tokens** (user in `sub`, fuse in `act`); the server adjudicates (403 for the unauthorized principal surfaces as a distinguishable tool error); wrong-audience is rejected; the complete-mediation gate denies an undeclared target through the loop-server path; and no credential leaks into the event stream / durable store / logs. This is the #52 verification checklist, finally run **through the binding** and pinned in CI. Loud on toolchain absence; scripted `LLM_GATEWAY_URL` double, never Claude/Anthropic.
+- **One shared attach helper** in the composition root yields the credential-source options **and** the complete-mediation option together, so no binding can wire an MCP manager without also wiring #52's egress seam and `TargetMediator`. Shell is refactored onto it (behavior-preserving); one-shot and loop-server adopt it.
+- **Loop-server MCP attach + real principal.** `buildLoopServerRuntimeDeps` (binding #2/#3) constructs a **per-loop** MCP manager (tools registered into each loop's own registry — no cross-loop bleed) and threads the **real authenticated loop-start principal** (from #49's verifier) to `MCPTool.Execute` via the existing `toolidentity.WithPrincipal` carrier. This retires the `DefaultTenant` single-tenant shim on the loop-server path by construction — #52's per-tenant STS finally mints for a real principal.
+- **One-shot** attaches MCP via the shared helper, seeding the same local `localPrincipal` → `DefaultTenant` the shell uses. **No new CLI identity flag** (explicit non-goal — loop-server is the multi-tenant path).
+- **Shell / one-shot keep `DefaultTenant`** — they are local single-user CLI paths; the shim survives only as the value they supply to the helper, not a special path.
+- **Permanent CI acceptance lane** — the **full** #52 verification checklist, run **through the loop-server binding**: two loops started by *different* principals, each calling the **same real (scripted) MCP server**, present **distinct, audience-bound, delegated tokens** (user in `sub`, fuse in `act`); the server adjudicates (403 for the unauthorized principal surfaces as a distinguishable tool error); wrong-audience is rejected; complete-mediation denies an undeclared target through the loop-server path (even under `AlwaysApprove`); and no credential leaks into the event stream / durable store / logs. Loops driven concurrently; loud on toolchain absence; scripted `LLM_GATEWAY_URL` double, never Claude/Anthropic.
 
 ## Out of scope
 
@@ -54,7 +61,7 @@ Likely scope to settle in design:
 
 ## Note
 
-Filed 2026-08-11 immediately after merging #52 (PR #55), at the human's explicit direction: **stop adding features we cannot test with real-world scenarios.** #52 is sound for its declared scope, but its multi-tenant path was only proven at the seam because no binding wires MCP end-to-end. Marked **critical** and treated as a gate on further service-feature work. Needs a brainstorm to settle the loop-server attach + principal-threading design and the CI harness before it is build-ready — but it should jump the queue.
+Filed 2026-08-11 immediately after merging #52 (PR #55), at the human's explicit direction: **stop adding features we cannot test with real-world scenarios.** #52 is sound for its declared scope, but its multi-tenant path was only proven at the seam because no binding wires MCP end-to-end. Marked **critical** and treated as a gate on further service-feature work. Groomed 2026-08-11 (spec linked); build-ready and jumps the queue.
 
 ## Reconcile log
 
