@@ -9,11 +9,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"time"
 
+	"connectrpc.com/connect"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/loopauth"
 	"github.com/ethanhinson/fuse/internal/loopconnect"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -21,6 +25,59 @@ import (
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/skills"
 )
+
+// devToken is the built-in bearer token synthesized when loop_server.auth is
+// empty in config. It keeps local `loop-serve-net` usable WITHOUT running
+// unauthenticated: every request still MUST present this token, and it maps to
+// the _default tenant with the "dev" subject. Configure real tokens under
+// loop_server.auth in ~/.fuse/config.yml for any shared or deployed server.
+const devToken = "fuse-dev-token"
+
+// buildLoopVerifier constructs the loopauth.Verifier for binding #3 from
+// cfg.LoopServer.Auth (a static token→principal map). Auth is REQUIRED for the
+// networked binding, so the verifier is NEVER empty: when config supplies no
+// tokens we synthesize a single built-in dev token (→ _default tenant) so local
+// use keeps working while every request still authenticates. usedDefault reports
+// whether the dev fallback was synthesized so the caller can log it loudly.
+//
+// Posture note (change 0049): this is fail-USABLE, not fail-open — the server
+// never accepts an unauthenticated request. We deliberately do NOT hard-fail on
+// an empty config because that would break `fuse loop-serve-net` with a bare
+// zero-config for local development (and the dispatch smoke test that runs it),
+// yet a bearer token is still mandatory on the wire.
+func buildLoopVerifier(cfg config.Config) (loopauth.Verifier, bool) {
+	tokens := map[string]loopauth.Principal{}
+	for _, a := range cfg.LoopServer.Auth {
+		if a.Token == "" {
+			continue // an entry with no token is unusable; skip it
+		}
+		tokens[a.Token] = loopauth.Principal{
+			Tenant:  event.TenantID(a.Tenant), // "" normalizes to _default at the store
+			Subject: a.Subject,
+		}
+	}
+	usedDefault := false
+	if len(tokens) == 0 {
+		tokens[devToken] = loopauth.Principal{Tenant: event.DefaultTenant, Subject: "dev"}
+		usedDefault = true
+	}
+	return loopauth.NewStaticVerifier(tokens), usedDefault
+}
+
+// loopLeaseTTL resolves the owner-liveness lease TTL for binding #3 from
+// cfg.LoopServer.LeaseTTL. An empty/unset value returns 0 so runtime.Deps applies
+// its own built-in default; a parse error can't reach here because Config.Validate
+// rejects a malformed lease_ttl at startup, but we defensively return 0 anyway.
+func loopLeaseTTL(cfg config.Config) time.Duration {
+	if cfg.LoopServer.LeaseTTL == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(cfg.LoopServer.LeaseTTL)
+	if err != nil || d < 0 {
+		return 0
+	}
+	return d
+}
 
 // netListen is the seam runLoopServeNet binds its listener through. It is net.Listen
 // in production; a test swaps it for a 127.0.0.1:0 ephemeral listener so it can learn
@@ -56,10 +113,48 @@ var serveNetContext = func() (context.Context, context.CancelFunc) {
 // binding's CHOICE, wired here at the composition root (ADR-0028 stance: the
 // binding owns policy, the Runtime seam stays policy-free), not a property of the
 // Runtime seam.
+//
+// AUTH (change 0049): unlike the stdio + local CLI bindings, EVERY request to this
+// networked binding MUST present an `Authorization: Bearer <token>` credential. The
+// bearer token→principal map (and the owner-liveness lease TTL) come from the trusted
+// ~/.fuse/config.yml `loop_server:` block — a credential surface, so a repo-plantable
+// .fuse.local.yml cannot mint tokens. Identity + authorization live at the Connect
+// edge (the auth interceptor + the registry-backed handler), never in the runtime
+// seam (ADR-0030). When `loop_server.auth` is empty a single built-in dev token
+// (→ _default tenant) is synthesized so local use stays usable — the server still
+// authenticates every request; it never runs open. Config knobs:
+//
+//	loop_server:
+//	  lease_ttl: "30s"          # owner-liveness lease; empty ⇒ runtime default (30s)
+//	  auth:
+//	    - token: <bearer-token> # required per request
+//	      tenant: <tenant-id>   # isolation boundary; empty ⇒ _default
+//	      subject: <subject>    # recorded as a loop's owner
 func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("loop-serve-net", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	addr := fs.String("addr", "127.0.0.1:8787", "TCP address to serve the Connect/protobuf loop-control endpoints on")
+	fs.Usage = func() {
+		fmt.Fprintln(stderr, "usage: fuse loop-serve-net [--addr host:port]")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "Serves the networked Connect/protobuf (fuse.loop.v1) loop-control endpoints.")
+		fmt.Fprintln(stderr, "EVERY request must present an `Authorization: Bearer <token>` credential.")
+		fmt.Fprintln(stderr, "Configure the token→principal map and lease TTL under `loop_server:` in")
+		fmt.Fprintln(stderr, "~/.fuse/config.yml (a trusted, credential-bearing surface):")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "  loop_server:")
+		fmt.Fprintln(stderr, "    lease_ttl: \"30s\"           # owner-liveness lease; empty ⇒ 30s default")
+		fmt.Fprintln(stderr, "    auth:")
+		fmt.Fprintln(stderr, "      - token: <bearer-token>  # required per request")
+		fmt.Fprintln(stderr, "        tenant: <tenant-id>    # isolation boundary; empty ⇒ _default")
+		fmt.Fprintln(stderr, "        subject: <subject>     # recorded as a loop's owner")
+		fmt.Fprintln(stderr)
+		fmt.Fprintf(stderr, "With no loop_server.auth configured, a built-in dev token %q (tenant _default)\n", devToken)
+		fmt.Fprintln(stderr, "is used so local development works; a bearer token is still required on the wire.")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "flags:")
+		fs.PrintDefaults()
+	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -79,9 +174,20 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 	toolReg := defaultToolRegistry(cfg.Research, skillSet.Lookup)
 
 	// REUSE the shared composition root — the exact deps wiring binding #2 uses. Do not
-	// re-wire it here.
+	// re-wire it here. Thread the owner-liveness lease TTL (change 0049) into the deps so
+	// the runtime's heartbeat renewer + reap/re-own operate on the configured TTL.
 	deps := buildLoopServerRuntimeDeps(cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg))
+	deps.LeaseTTL = loopLeaseTTL(cfg)
 	rt := runtime.New(deps)
+
+	// Identity + authorization live at the Connect edge (ADR-0030): build the bearer-
+	// token Verifier from config and hand the edge the durable registry (deps.Registry)
+	// so it can authorize per-loop ownership. The runtime seam never learns any of this.
+	verifier, usedDefault := buildLoopVerifier(cfg)
+	if usedDefault {
+		fmt.Fprintf(stderr, "loop-serve-net: no loop_server.auth configured — using the built-in dev token %q (tenant %q); set loop_server.auth in ~/.fuse/config.yml for a shared server\n",
+			devToken, event.DefaultTenant)
+	}
 
 	ln, err := netListen("tcp", *addr)
 	if err != nil {
@@ -92,7 +198,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 	ctx, stop := serveNetContext()
 	defer stop()
 
-	if err := serveNet(ctx, ln, rt); err != nil {
+	if err := serveNet(ctx, ln, rt, verifier, deps.Registry); err != nil {
 		fmt.Fprintf(stderr, "loop-serve-net: %v\n", err)
 		return 1
 	}
@@ -109,11 +215,23 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 // is given the serve/shutdown ctx as its loop-lifetime context (WithBaseContext) so a
 // unary StartLoop's returning request context does NOT kill the loop, but a server
 // shutdown does.
-func serveNet(ctx context.Context, ln net.Listener, rt runtime.Runtime) error {
+//
+// Auth (change 0049): the auth interceptor authenticates the bearer token on every
+// unary + streaming request (missing/invalid → CodeUnauthenticated) against verifier,
+// and the handler is given the durable registry (WithRegistry) so it authorizes per-
+// loop ownership at the edge — the runtime seam imports no auth (ADR-0030). A nil
+// verifier or nil registry degrades gracefully (interceptor omitted / authz skipped),
+// which the pure-transport E2E test relies on for a subset of its assertions; the
+// production runLoopServeNet always supplies both.
+func serveNet(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry) error {
 	mux := http.NewServeMux()
 
-	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx)
-	path, connectHandler := loopv1connect.NewLoopServiceHandler(handler)
+	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx).WithRegistry(registry)
+	var opts []connect.HandlerOption
+	if verifier != nil {
+		opts = append(opts, connect.WithInterceptors(loopconnect.NewAuthInterceptor(verifier)))
+	}
+	path, connectHandler := loopv1connect.NewLoopServiceHandler(handler, opts...)
 	mux.Handle(path, connectHandler)
 
 	srv := &http.Server{

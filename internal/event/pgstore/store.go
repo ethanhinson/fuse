@@ -130,6 +130,25 @@ func normalizeKey(k event.StreamKey) event.StreamKey {
 	return event.StreamKey{Tenant: event.NormalizeTenant(k.Tenant), Loop: k.Loop}
 }
 
+// nullableTime maps a zero time.Time to a SQL NULL (nil) and a non-zero time to a
+// pointer, so lease_expiry stores NULL for "no lease" rather than the zero instant.
+func nullableTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	u := t.UTC()
+	return &u
+}
+
+// timeFromNullable maps a SQL NULL lease_expiry (nil) back to the zero time.Time and
+// a present value to its UTC time — the inverse of nullableTime.
+func timeFromNullable(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return t.UTC()
+}
+
 // Append records one event on the (tenant, loop) stream. It allocates e.Seq
 // per-loop from 1 under a transaction-scoped per-loop advisory lock (a PER-LOOP
 // total order, NOT a global sequence — ADR-0025), writes durably, commits, then
@@ -446,13 +465,15 @@ func (s *PGStore) Register(ctx context.Context, rec event.LoopRecord) error {
 	nk := normalizeKey(rec.Key)
 	now := time.Now().UTC()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO loops (tenant_id, loop_id, owner_node_id, live, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $5)
+		`INSERT INTO loops (tenant_id, loop_id, owner_node_id, owner, live, lease_expiry, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
 		 ON CONFLICT (tenant_id, loop_id) DO UPDATE
 		   SET owner_node_id = EXCLUDED.owner_node_id,
+		       owner = EXCLUDED.owner,
 		       live = EXCLUDED.live,
+		       lease_expiry = EXCLUDED.lease_expiry,
 		       updated_at = EXCLUDED.updated_at`,
-		string(nk.Tenant), string(nk.Loop), rec.OwnerNodeID, rec.Live, now,
+		string(nk.Tenant), string(nk.Loop), rec.OwnerNodeID, rec.Owner, rec.Live, nullableTime(rec.LeaseExpiry), now,
 	)
 	if err != nil {
 		return fmt.Errorf("pgstore: register: %w", err)
@@ -481,6 +502,29 @@ func (s *PGStore) SetLive(ctx context.Context, key event.StreamKey, live bool, o
 	return nil
 }
 
+// Heartbeat renews the owner-liveness lease. It advances lease_expiry + updated_at
+// and records the renewing node in owner_node_id (matching how Register/SetLive
+// touch owner_node_id + updated_at), leaving owner (the authorization subject) and
+// live untouched. It returns ErrLoopUnknown on 0 rows.
+func (s *PGStore) Heartbeat(ctx context.Context, key event.StreamKey, ownerNodeID string, expiry time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	nk := normalizeKey(key)
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE loops SET lease_expiry=$3, owner_node_id=$4, updated_at=$5
+		 WHERE tenant_id=$1 AND loop_id=$2`,
+		string(nk.Tenant), string(nk.Loop), nullableTime(expiry), ownerNodeID, time.Now().UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("pgstore: heartbeat: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return event.ErrLoopUnknown
+	}
+	return nil
+}
+
 // Resolve returns the loop's record, or ErrLoopUnknown if no row exists for the
 // (tenant, loop) — including a resolve under the wrong tenant (tenant isolation).
 func (s *PGStore) Resolve(ctx context.Context, key event.StreamKey) (event.LoopRecord, error) {
@@ -489,16 +533,18 @@ func (s *PGStore) Resolve(ctx context.Context, key event.StreamKey) (event.LoopR
 	}
 	nk := normalizeKey(key)
 	var (
-		owner     string
-		live      bool
-		createdAt time.Time
-		updatedAt time.Time
+		ownerNode   string
+		owner       string
+		live        bool
+		leaseExpiry *time.Time
+		createdAt   time.Time
+		updatedAt   time.Time
 	)
 	err := s.pool.QueryRow(ctx,
-		`SELECT owner_node_id, live, created_at, updated_at
+		`SELECT owner_node_id, owner, live, lease_expiry, created_at, updated_at
 		 FROM loops WHERE tenant_id=$1 AND loop_id=$2`,
 		string(nk.Tenant), string(nk.Loop),
-	).Scan(&owner, &live, &createdAt, &updatedAt)
+	).Scan(&ownerNode, &owner, &live, &leaseExpiry, &createdAt, &updatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return event.LoopRecord{}, event.ErrLoopUnknown
@@ -507,8 +553,10 @@ func (s *PGStore) Resolve(ctx context.Context, key event.StreamKey) (event.LoopR
 	}
 	return event.LoopRecord{
 		Key:         nk,
-		OwnerNodeID: owner,
+		OwnerNodeID: ownerNode,
+		Owner:       owner,
 		Live:        live,
+		LeaseExpiry: timeFromNullable(leaseExpiry),
 		CreatedAt:   createdAt.UTC(),
 		UpdatedAt:   updatedAt.UTC(),
 	}, nil
@@ -522,7 +570,7 @@ func (s *PGStore) List(ctx context.Context, tenant event.TenantID) ([]event.Loop
 	}
 	nt := event.NormalizeTenant(tenant)
 	rows, err := s.pool.Query(ctx,
-		`SELECT loop_id, owner_node_id, live, created_at, updated_at
+		`SELECT loop_id, owner_node_id, owner, live, lease_expiry, created_at, updated_at
 		 FROM loops WHERE tenant_id=$1 ORDER BY loop_id`,
 		string(nt),
 	)
@@ -534,19 +582,23 @@ func (s *PGStore) List(ctx context.Context, tenant event.TenantID) ([]event.Loop
 	var out []event.LoopRecord
 	for rows.Next() {
 		var (
-			loop      string
-			owner     string
-			live      bool
-			createdAt time.Time
-			updatedAt time.Time
+			loop        string
+			ownerNode   string
+			owner       string
+			live        bool
+			leaseExpiry *time.Time
+			createdAt   time.Time
+			updatedAt   time.Time
 		)
-		if err := rows.Scan(&loop, &owner, &live, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&loop, &ownerNode, &owner, &live, &leaseExpiry, &createdAt, &updatedAt); err != nil {
 			return out, err
 		}
 		out = append(out, event.LoopRecord{
 			Key:         event.StreamKey{Tenant: nt, Loop: event.LoopID(loop)},
-			OwnerNodeID: owner,
+			OwnerNodeID: ownerNode,
+			Owner:       owner,
 			Live:        live,
+			LeaseExpiry: timeFromNullable(leaseExpiry),
 			CreatedAt:   createdAt.UTC(),
 			UpdatedAt:   updatedAt.UTC(),
 		})

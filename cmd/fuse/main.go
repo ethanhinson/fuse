@@ -78,7 +78,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "  fuse research-probe \"<q>\"  run + observe the research flow headlessly")
 			fmt.Fprintln(stdout, "  fuse mcps         list connected MCP servers")
 			fmt.Fprintln(stdout, "  fuse loop-server  headless stdio JSON-RPC loop-control server (binding #2)")
-			fmt.Fprintln(stdout, "  fuse loop-serve-net  networked Connect/protobuf (fuse.loop.v1) loop-control server (binding #3)")
+			fmt.Fprintln(stdout, "  fuse loop-serve-net  networked Connect/protobuf (fuse.loop.v1) loop-control server (binding #3; bearer-token auth)")
 			fmt.Fprintln(stdout, "  fuse help         show this help")
 			return 0
 		}

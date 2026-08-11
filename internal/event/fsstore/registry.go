@@ -26,7 +26,9 @@ var _ event.LoopRegistry = (*FSDurableStore)(nil)
 // time JSON encoding.
 type loopSidecar struct {
 	OwnerNodeID string    `json:"owner_node_id"`
+	Owner       string    `json:"owner"`
 	Live        bool      `json:"live"`
+	LeaseExpiry time.Time `json:"lease_expiry"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -95,7 +97,9 @@ func (s *FSDurableStore) Register(ctx context.Context, rec event.LoopRecord) err
 	now := nowUTC()
 	sc := loopSidecar{
 		OwnerNodeID: rec.OwnerNodeID,
+		Owner:       rec.Owner,
 		Live:        rec.Live,
+		LeaseExpiry: rec.LeaseExpiry,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -147,10 +151,35 @@ func (s *FSDurableStore) Resolve(ctx context.Context, key event.StreamKey) (even
 	return event.LoopRecord{
 		Key:         normalizeKey(key),
 		OwnerNodeID: sc.OwnerNodeID,
+		Owner:       sc.Owner,
 		Live:        sc.Live,
+		LeaseExpiry: sc.LeaseExpiry,
 		CreatedAt:   sc.CreatedAt,
 		UpdatedAt:   sc.UpdatedAt,
 	}, nil
+}
+
+// Heartbeat renews the owner-liveness lease for a registered loop: it advances
+// LeaseExpiry to expiry and UpdatedAt to now, recording the renewing node, while
+// leaving Owner and Live untouched. It returns ErrLoopUnknown if no sidecar exists.
+func (s *FSDurableStore) Heartbeat(ctx context.Context, key event.StreamKey, ownerNodeID string, expiry time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path := s.sidecarPath(key)
+	prev, ok, err := readSidecar(path)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return event.ErrLoopUnknown
+	}
+	prev.OwnerNodeID = ownerNodeID
+	prev.LeaseExpiry = expiry
+	prev.UpdatedAt = nowUTC()
+	return writeSidecar(path, prev)
 }
 
 // List returns all loop records for a tenant by enumerating
@@ -189,7 +218,9 @@ func (s *FSDurableStore) List(ctx context.Context, tenant event.TenantID) ([]eve
 		out = append(out, event.LoopRecord{
 			Key:         event.StreamKey{Tenant: nt, Loop: event.LoopID(loopName)},
 			OwnerNodeID: sc.OwnerNodeID,
+			Owner:       sc.Owner,
 			Live:        sc.Live,
+			LeaseExpiry: sc.LeaseExpiry,
 			CreatedAt:   sc.CreatedAt,
 			UpdatedAt:   sc.UpdatedAt,
 		})

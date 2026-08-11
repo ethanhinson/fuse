@@ -512,6 +512,25 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 			path, strings.Join(loosened, ", "))
 	}
 
+	// loop_server (change 0049): the networked binding's bearer token→principal
+	// verifier map + lease TTL. This is a CREDENTIAL surface — a token grants
+	// access to a tenant/subject — so it is honored ONLY from the trusted home
+	// file. A repo-plantable .fuse.local.yml that set loop_server.auth could mint
+	// itself a token or re-point a tenant, so an untrusted source's block is
+	// dropped and named in the aggregated permission warning (ADR-0006).
+	if len(raw.LoopServer.Auth) > 0 || raw.LoopServer.LeaseTTL != "" {
+		if trusted {
+			if len(raw.LoopServer.Auth) > 0 {
+				c.LoopServer.Auth = raw.LoopServer.Auth
+			}
+			if raw.LoopServer.LeaseTTL != "" {
+				c.LoopServer.LeaseTTL = raw.LoopServer.LeaseTTL
+			}
+		} else {
+			fmt.Fprintf(warnw, "warning: %s ignores loop_server (a bearer-credential surface); set it in ~/.fuse/config.yml instead\n", path)
+		}
+	}
+
 	// context.summarization (change 0027): a present-value-overrides merge like
 	// the research block. Enabled is a *bool so an omitted key keeps the true
 	// default while `enabled: false` disables. Threshold/MaxOutput are 0 = unset;

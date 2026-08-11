@@ -24,7 +24,14 @@ var ErrLoopUnknown = errors.New("event: loop not found in registry")
 type LoopRecord struct {
 	Key         StreamKey
 	OwnerNodeID string
-	Live        bool
+	// Owner is the authorization subject that owns the loop (the tenant principal),
+	// distinct from OwnerNodeID which is the liveness/node id of the serving
+	// instance. Empty means unowned (no ownership constraint enforced).
+	Owner string
+	Live  bool
+	// LeaseExpiry is the owner-liveness lease deadline; a zero value means no lease.
+	// A live record whose lease has expired may be treated as abandoned and re-owned.
+	LeaseExpiry time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -41,6 +48,11 @@ type LoopRegistry interface {
 	// SetLive flips the loop's liveness and records the owning node. A live loop
 	// accepts Sends on its owner; a not-live loop is replay-only.
 	SetLive(ctx context.Context, key StreamKey, live bool, ownerNodeID string) error
+
+	// Heartbeat renews the owner-liveness lease: it advances LeaseExpiry to expiry
+	// and UpdatedAt to now, recording the renewing node in OwnerNodeID. It leaves
+	// Owner and Live untouched. It returns ErrLoopUnknown for an unregistered key.
+	Heartbeat(ctx context.Context, key StreamKey, ownerNodeID string, expiry time.Time) error
 
 	// Resolve returns the loop's record, or ErrLoopUnknown if no record exists for
 	// the (tenant, loop) — including a resolve under the wrong tenant.

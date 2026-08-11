@@ -101,7 +101,7 @@ func RunDurableStoreConformance(t *testing.T, newStore func(t *testing.T) (event
 		if err := store.Append(ctx, kx, event.Event{Kind: event.KindTurnStart}); err != nil {
 			t.Fatalf("Append X: %v", err)
 		}
-		if err := reg.Register(ctx, event.LoopRecord{Key: kx, OwnerNodeID: "nodeX", Live: true}); err != nil {
+		if err := reg.Register(ctx, event.LoopRecord{Key: kx, OwnerNodeID: "nodeX", Owner: "subjectX", Live: true}); err != nil {
 			t.Fatalf("Register X: %v", err)
 		}
 		// Same loop id under a DIFFERENT tenant must not see X's stream or record.
@@ -124,6 +124,69 @@ func RunDurableStoreConformance(t *testing.T, newStore func(t *testing.T) (event
 		lx, _ := reg.List(ctx, "tenantX")
 		if len(lx) != 1 || lx[0].Key != kx {
 			t.Fatalf("List(tenantX) = %+v, want the one X loop", lx)
+		}
+		// The new Owner field round-trips through the tenant-scoped List/Resolve.
+		if lx[0].Owner != "subjectX" {
+			t.Fatalf("List(tenantX) Owner = %q, want subjectX", lx[0].Owner)
+		}
+	})
+
+	t.Run("RegisterOwnerRoundTrips", func(t *testing.T) {
+		_, reg := newStore(t)
+		ctx := context.Background()
+		key := event.StreamKey{Tenant: "acme", Loop: "owned"}
+		if err := reg.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: "nodeA", Owner: "alice", Live: true}); err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+		rec, err := reg.Resolve(ctx, key)
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if rec.Owner != "alice" {
+			t.Fatalf("Resolve Owner = %q, want alice", rec.Owner)
+		}
+	})
+
+	t.Run("HeartbeatAdvancesLeaseLeavesOwnerAndLive", func(t *testing.T) {
+		_, reg := newStore(t)
+		ctx := context.Background()
+		key := event.StreamKey{Tenant: "acme", Loop: "leased"}
+		if err := reg.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: "nodeA", Owner: "alice", Live: true}); err != nil {
+			t.Fatalf("Register: %v", err)
+		}
+		before, err := reg.Resolve(ctx, key)
+		if err != nil {
+			t.Fatalf("Resolve before: %v", err)
+		}
+		expiry := time.Now().UTC().Add(30 * time.Second).Truncate(time.Millisecond)
+		if err := reg.Heartbeat(ctx, key, "nodeA", expiry); err != nil {
+			t.Fatalf("Heartbeat: %v", err)
+		}
+		after, err := reg.Resolve(ctx, key)
+		if err != nil {
+			t.Fatalf("Resolve after: %v", err)
+		}
+		if !after.LeaseExpiry.Equal(expiry) {
+			t.Fatalf("Heartbeat LeaseExpiry = %v, want %v", after.LeaseExpiry, expiry)
+		}
+		if after.UpdatedAt.Before(before.UpdatedAt) {
+			t.Fatalf("Heartbeat regressed UpdatedAt: before=%v after=%v", before.UpdatedAt, after.UpdatedAt)
+		}
+		// Owner and Live are untouched by a heartbeat.
+		if after.Owner != "alice" {
+			t.Fatalf("Heartbeat changed Owner = %q, want alice", after.Owner)
+		}
+		if !after.Live {
+			t.Fatalf("Heartbeat changed Live = %v, want true", after.Live)
+		}
+	})
+
+	t.Run("HeartbeatUnknownKeyErrLoopUnknown", func(t *testing.T) {
+		_, reg := newStore(t)
+		ctx := context.Background()
+		key := event.StreamKey{Tenant: "acme", Loop: "never-registered"}
+		if err := reg.Heartbeat(ctx, key, "nodeA", time.Now().Add(time.Minute)); err != event.ErrLoopUnknown {
+			t.Fatalf("Heartbeat on unknown key = %v, want ErrLoopUnknown", err)
 		}
 	})
 
