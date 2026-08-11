@@ -1,7 +1,7 @@
 ---
 id: 55
 slug: grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4
-title: gRPC/protobuf transport — IDL-defined loop.* wire, successor to #48
+title: Connect/protobuf transport — IDL-defined loop.* wire, successor to #48
 status: proposed
 priority: medium
 type: feat
@@ -11,7 +11,7 @@ depends_on: []
 related: [48, 50]
 discovered_from: [50]
 adrs: [32]
-spec:
+spec: docs/superpowers/specs/2026-08-11-grpc-connect-transport-design.md
 plan:
 results:
 trivial: false
@@ -27,6 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-11-grpc-connect-transport-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-grpc-connect-transport-design.md) |
 | ADRs | [ADR-0032](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0032-binding-3-websocket-session-http-replay-shared-dispatch.md) |
 <!-- docket:artifacts:end -->
 
@@ -40,35 +41,49 @@ so every non-Go SDK (starting with the TS SDK in change 50) must hand-track the 
 types from the Go structs.
 
 A schema-first IDL fixes that at the root: define the `loop.*` protocol and `event.Event` shape once
-in **protobuf** and let a **gRPC** transport carry it, so every binding (Go, TS, future Python/mobile)
-generates its client from one authoritative contract with versioning built in. This is the classic
-answer to "many-language clients over one wire" — deferred at ADR-0032 only because #48 needed to
-ship. This change reopens that decision deliberately, as a **successor to #48 that supersedes
-ADR-0032**.
+in **protobuf** and carry it over a **Connect (connectrpc)** transport, so every binding (Go, TS,
+future Python/mobile) generates its client from one authoritative contract. This is the classic answer
+to "many-language clients over one wire" — deferred at ADR-0032 only because #48 needed to ship. This
+change reopens that decision deliberately, as a **successor to #48 that supersedes ADR-0032**.
+
+**Wander (change 50's consumer) is a throwaway testbed**, so #55 optimizes for *proving the SDK path
+end-to-end, browser included, with one schema* — not production hardening. See the linked spec for the
+full design; at proposal altitude:
 
 ## What changes
 
-To be designed during grooming. At a sketch: define the `loop.*` protocol + `event.Event` in a
-protobuf IDL as the source of truth, and stand up a gRPC transport for the networked binding —
-superseding ADR-0032's JSON-over-WS/HTTP — while preserving the existing `loop.start` / `loop.send` /
-`loop.observe` semantics, the server-push `loop.event` tail, gap markers, and subscribe-before-replay
-+ dedup-at-watermark reattach. The shared dispatch core (extracted in #48) should be reusable under
-the new transport with minimal churn.
+- **Connect + protobuf, replacing #48's JSON wire outright.** Define `loop.*` + `event.Event` in a
+  versioned protobuf schema and serve it with `connect-go`, **reusing #48's extracted
+  transport-agnostic dispatch core** (only the frame layer changes). The `internal/loopserver` stdio
+  binding (#2) and the `Runtime` seam are untouched. #48's `coder/websocket` binding is **removed**
+  (ADR-0032 superseded) — safe because nothing consumes it yet (the SDKs are unbuilt).
+- **Connect for browser reach with NO proxy.** Chosen over classic gRPC because `connect-es` (TS)
+  speaks **unary + server-streaming** directly to a `connect-go` server over HTTP — so Wander reaches
+  the wire with no Envoy/grpc-gateway. The `loop.*` protocol maps cleanly: `loop.start`/`loop.send` are
+  **unary**, `loop.observe` is a **server-stream** of events. **No bidi** is used (and bidi wouldn't
+  work in browsers anyway — the protocol never needs it).
+- **Reattach discipline preserved.** `loop.observe(from_seq)` is a history-then-live server-stream that
+  keeps subscribe-before-replay + dedup-at-watermark + gap markers; client tracks `event.Seq` and
+  re-opens the stream on reconnect. Every post-open stream error is a clean reconnect, not a fault.
+- **Generated stubs are the contract change 50 consumes** — Go (`connect-go`) + TS (`connect-es`) from
+  one proto. #55 owns the wire; #50 owns the SDK ergonomics over it.
+- **tenant stays pass-through/unenforced** (a typed proto field now); identity is change 49.
 
 ## Out of scope
 
-To be defined during grooming. Auth/identity is change 49; the SDKs that consume this wire are change
-50; observability is change 51.
+- The **SDKs** (Go + TS, local backend, credential seam) — change 50, consuming #55's stubs.
+- **Auth / identity enforcement** — change 49; #55 keeps tenant pass-through.
+- **Production hardening** (TLS topology, load-balancing, multi-instance routing) — Wander is a
+  testbed.
+- **Any change to the `Runtime` seam or stdio binding #2** — #55 changes only the networked transport.
+- **Observability** (OTEL / `/metrics`) — change 51.
 
 ## Open questions
 
-- gRPC vs. keeping WebSocket framing but swapping the on-wire encoding to protobuf — how much of
-  ADR-0032's transport is actually replaced.
-- **Browser reach:** gRPC has no native browser support; does Wander's TS SDK (change 50) go through
-  grpc-web + a proxy (Envoy/grpc-gateway), or does the browser path keep a WS/JSON bridge while
-  server-to-server uses gRPC? This directly gates change 50's TS SDK.
-- Migration: #48's JSON transport and its in-process client — replace outright, or run both wires
-  during a transition?
-- Streaming model fit: server-push `loop.event` over gRPC server-streaming vs. the current
-  long-lived WS connection, including reconnect/replay semantics.
-- protobuf vs. Cap'n Proto as the IDL, and where the generated Go/TS types live.
+- protobuf toolchain (buf vs. protoc; generate-and-commit vs. build step) and where the generated
+  Go/TS packages live (shared with change 50's TS package).
+- Whether `Attach` collapses fully into `Observe(from_seq)` (recommended) or stays a distinct unary
+  replay RPC.
+- Whether Go maps protobuf `Event` at the transport edge to keep `internal/event` transport-free
+  (favored) or adopts the generated type deeper.
+- Confirming `connect-es` server-streaming under a real browser reconnect — the core testbed assertion.
