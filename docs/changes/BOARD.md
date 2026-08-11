@@ -1,14 +1,16 @@
 # Backlog
 
-**56 changes** — 🟡 3 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 45 done · 🗑️ 6 killed
+**58 changes** — 🟡 5 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 45 done · 🗑️ 6 killed
 
-## 🟡 Proposed (3)
+## 🟡 Proposed (5)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + Loki, as a projection over the event stream | `medium` | `feat` | needs-brainstorm |
 | [0054](active/0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | `medium` | `feat` | needs-brainstorm |
 | [0056](active/0056-sdk-viability-hardening-wander.md) | SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app | `medium` | `feat` | build-ready |
+| [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` | needs-brainstorm |
+| [0058](active/0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | `medium` | `feat` | needs-brainstorm |
 
 ## ⚪ Deferred (1)
 
@@ -30,6 +32,8 @@ graph TD
   0049 --> 0052
   0053 --> 0054
   0050 --> 0056
+  0052 --> 0057
+  0052 --> 0058
   0012:::done
   0046:::done
   0048:::done
