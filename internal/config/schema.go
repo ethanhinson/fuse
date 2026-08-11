@@ -151,6 +151,39 @@ type PipelineConfig struct {
 	Synthesis PipelineSynthesisConfig `yaml:"synthesis"`
 }
 
+// AuthTokenConfig is one static bearer token→principal mapping for the networked
+// loop-control binding (change 0049). Token is the bearer credential a client
+// presents in `Authorization: Bearer <token>`; Tenant is the isolation boundary
+// the caller acts within (empty ⇒ the storage layer's _default tenant); Subject
+// is the authorization subject recorded as a loop's owner. This is the default
+// StaticVerifier surface — richer verifiers (OIDC/JWT, mTLS) slot in behind the
+// same loopauth.Verifier seam without a config re-cut.
+type AuthTokenConfig struct {
+	Token   string `yaml:"token"`
+	Tenant  string `yaml:"tenant"`
+	Subject string `yaml:"subject"`
+}
+
+// LoopServerConfig configures the networked Connect/protobuf loop-control binding
+// (`fuse loop-serve-net`, change 0049). It is inert for every other binding — the
+// stdio loop-server and the local CLI paths never reach the Connect edge, so they
+// carry no bearer-token requirement and ignore this block entirely.
+//
+//   - Auth is the static token→principal map the default loopauth.StaticVerifier
+//     is built from. When it is empty the composition root synthesizes a single
+//     built-in dev token (mapped to the _default tenant) so local use stays usable
+//     while STILL requiring a bearer token on every request — the binding never
+//     runs unauthenticated. Configure real tokens for any shared/deployed server.
+//   - LeaseTTL is the owner-liveness lease duration threaded into runtime.Deps
+//     (change 0049 Task 7): a live loop's owner renews the lease at ~⅓ TTL, and a
+//     record whose lease has expired is treated as abandoned and re-ownable on a
+//     cold resolve. A duration string (e.g. "30s", "2m"); empty ⇒ the runtime's
+//     built-in default (30s).
+type LoopServerConfig struct {
+	Auth     []AuthTokenConfig `yaml:"auth"`
+	LeaseTTL string            `yaml:"lease_ttl"`
+}
+
 // Config is the fully resolved fuse configuration.
 type Config struct {
 	Gateway    Gateway
@@ -189,6 +222,13 @@ type Config struct {
 	// block caps LLM-synthesized DAGs; the untrusted .fuse.local.yml may only
 	// TIGHTEN those caps (ADR-0006), exactly like the workflow pool numbers.
 	Pipeline PipelineConfig
+	// LoopServer configures the networked Connect/protobuf loop-control binding
+	// (change 0049): the static bearer-token→principal verifier map and the
+	// owner-liveness lease TTL. Inert for every other binding. It is a
+	// bearer-credential surface (a token grants access), so it is honored ONLY
+	// from the trusted ~/.fuse/config.yml — a repo-plantable .fuse.local.yml must
+	// not be able to mint or widen credentials (ADR-0006 trust boundary).
+	LoopServer LoopServerConfig
 }
 
 // WorkflowConfig is one named workflow: the invocable it binds, its subtree
@@ -299,6 +339,10 @@ type rawConfig struct {
 	// axis from a present one exactly like the throughput axes; the merge happens
 	// in mergeFile.
 	Pipeline rawPipelineConfig `yaml:"pipeline"`
+	// LoopServer mirrors LoopServerConfig on-disk (change 0049): the bearer
+	// token→principal verifier map and the lease TTL for `loop-serve-net`. It is a
+	// credential surface honored ONLY from the trusted home file (see mergeFile).
+	LoopServer LoopServerConfig `yaml:"loop_server"`
 }
 
 // rawPipelineConfig mirrors PipelineConfig on-disk (change 0026).

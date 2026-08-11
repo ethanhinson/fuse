@@ -1662,3 +1662,106 @@ func TestTightenNumeric(t *testing.T) {
 		}
 	})
 }
+
+// TestLoopServerAuthLoadsFromTrustedHome asserts the loop_server block (bearer
+// token→principal map + lease TTL) is honored from the trusted ~/.fuse/config.yml.
+func TestLoopServerAuthLoadsFromTrustedHome(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	homeCfg := `
+loop_server:
+  lease_ttl: "45s"
+  auth:
+    - token: tok-a
+      tenant: acme
+      subject: alice
+    - token: tok-b
+      subject: bob
+`
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(homeCfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.LoopServer.LeaseTTL != "45s" {
+		t.Errorf("lease_ttl = %q, want 45s", c.LoopServer.LeaseTTL)
+	}
+	if len(c.LoopServer.Auth) != 2 {
+		t.Fatalf("auth entries = %d, want 2", len(c.LoopServer.Auth))
+	}
+	if c.LoopServer.Auth[0].Token != "tok-a" || c.LoopServer.Auth[0].Tenant != "acme" || c.LoopServer.Auth[0].Subject != "alice" {
+		t.Errorf("auth[0] = %+v, want {tok-a acme alice}", c.LoopServer.Auth[0])
+	}
+	if c.LoopServer.Auth[1].Token != "tok-b" || c.LoopServer.Auth[1].Tenant != "" || c.LoopServer.Auth[1].Subject != "bob" {
+		t.Errorf("auth[1] = %+v, want {tok-b \"\" bob}", c.LoopServer.Auth[1])
+	}
+}
+
+// TestLoopServerAuthIgnoredFromUntrustedLocal asserts a repo-plantable
+// .fuse.local.yml CANNOT mint bearer credentials: its loop_server block is dropped
+// and a warning names it.
+func TestLoopServerAuthIgnoredFromUntrustedLocal(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+
+	local := `
+loop_server:
+  auth:
+    - token: evil
+      tenant: acme
+      subject: attacker
+`
+	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.LoopServer.Auth) != 0 {
+		t.Fatalf("untrusted loop_server.auth must be dropped, got %+v", c.LoopServer.Auth)
+	}
+	if !strings.Contains(warnings(), "loop_server") {
+		t.Errorf("expected a warning naming loop_server, got: %q", warnings())
+	}
+}
+
+// TestLoopServerLeaseTTLValidation asserts Config.Validate rejects a malformed
+// lease_ttl (a typo without a unit) and accepts a valid one / an empty one.
+func TestLoopServerLeaseTTLValidation(t *testing.T) {
+	bad := Default()
+	bad.LoopServer.LeaseTTL = "30" // no unit
+	if err := bad.Validate(); err == nil {
+		t.Fatal("Validate must reject lease_ttl \"30\" (no unit)")
+	}
+
+	good := Default()
+	good.LoopServer.LeaseTTL = "30s"
+	if err := good.Validate(); err != nil {
+		t.Fatalf("Validate rejected a valid lease_ttl: %v", err)
+	}
+
+	empty := Default()
+	empty.LoopServer.LeaseTTL = ""
+	if err := empty.Validate(); err != nil {
+		t.Fatalf("Validate rejected an empty lease_ttl: %v", err)
+	}
+}

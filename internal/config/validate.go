@@ -1,6 +1,9 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // validModes is the set of permission modes ParseMode understands. It is checked
 // explicitly because ParseMode silently maps any unknown token to "smart", which
@@ -54,6 +57,20 @@ func (c Config) Validate() error {
 	}
 	if rel.RecencyFloorPct < 0 || rel.RecencyFloorPct > 100 {
 		return fmt.Errorf("config: context.relevance.recency_floor_pct must be in [0,100], got %d", rel.RecencyFloorPct)
+	}
+
+	// loop_server.lease_ttl (change 0049) is a Go duration string when set; a
+	// typo ("30" without a unit, "sec") must fail loudly at startup rather than
+	// silently falling back to the runtime default and giving a lease TTL nobody
+	// asked for. Empty = unset (the runtime's built-in default) and is fine.
+	if ttl := c.LoopServer.LeaseTTL; ttl != "" {
+		d, err := time.ParseDuration(ttl)
+		if err != nil {
+			return fmt.Errorf("config: loop_server.lease_ttl %q is not a valid duration (e.g. \"30s\", \"2m\"): %w", ttl, err)
+		}
+		if d < 0 {
+			return fmt.Errorf("config: loop_server.lease_ttl must be >= 0, got %s", d)
+		}
 	}
 
 	return nil

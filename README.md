@@ -226,9 +226,58 @@ proxy and speaks Connect, gRPC, and gRPC-Web (served over h2c):
 fuse loop-serve-net --addr 127.0.0.1:8787
 ```
 
+### Authentication and multi-tenancy (change #49)
+
+Unlike the stdio `loop-server` and the local CLI paths, this networked binding
+**requires a bearer token on every request** — identity and authorization live at
+the Connect edge, never in the policy-free runtime seam. Present the credential as
+an `Authorization: Bearer <token>` header; a missing or unknown token is rejected
+with `Unauthenticated` before the handler runs.
+
+The token→principal map and the owner-liveness lease TTL come from the trusted
+`~/.fuse/config.yml` `loop_server:` block (a credential-bearing surface — a
+repo-plantable `.fuse.local.yml` cannot mint tokens):
+
+```yaml
+loop_server:
+  lease_ttl: "30s"            # owner-liveness lease; empty ⇒ 30s runtime default
+  auth:
+    - token: s3cr3t-alice     # the bearer credential a client presents
+      tenant: acme            # isolation boundary; empty ⇒ the _default tenant
+      subject: alice          # authorization subject, recorded as a loop's owner
+    - token: s3cr3t-bob
+      tenant: acme
+      subject: bob
+```
+
+Each principal resolves to a `tenant` (the isolation boundary every store/registry
+op is keyed by) and a `subject` (recorded as a loop's owner). Authorization is then:
+
+- **Tenant spoof** — a request whose wire `tenant` differs from the token's tenant
+  is rejected `PermissionDenied`.
+- **Cross-tenant** — reaching a loop under a different tenant returns `NotFound`
+  (the tenant-scoped resolve simply misses it; a tenant cannot even learn another
+  tenant's loop exists).
+- **Cross-owner** — a same-tenant caller that is not the loop's recorded owner is
+  rejected `PermissionDenied`.
+
+The **lease TTL** is the owner-liveness window: the owning instance renews the
+lease while a loop is live, and a loop whose lease has expired is treated as
+abandoned and re-ownable by a cold instance on reconnect (so a crashed owner does
+not strand a loop). Reconnecting a dropped `Observe` is just re-opening
+`Observe(from_seq)` with the same token — the stream dedups replay/live at the
+watermark, so there is no loss or duplication across the handoff.
+
+If `loop_server.auth` is empty, a single built-in dev token (`fuse-dev-token`,
+mapped to the `_default` tenant) is synthesized so local development works out of
+the box — the server still authenticates every request; it never runs open.
+Configure real tokens for any shared or deployed server.
+
 The service is three RPCs:
 
-- `StartLoop` / `Send` — unary; `tenant` is a typed pass-through field.
+- `StartLoop` / `Send` — unary. The authoritative tenant is the authenticated
+  token's; the wire `tenant` field, when set, must match it (a mismatch is a
+  spoof, see above).
 - `Observe(from_seq)` — server-streaming history-then-live: it replays durable
   history since `from_seq`, then live-tails, deduping the replay/live overlap at
   the watermark and flagging a `gap` when a sequence hole is detected. A

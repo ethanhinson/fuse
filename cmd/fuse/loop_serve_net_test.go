@@ -18,6 +18,44 @@ import (
 	"github.com/ethanhinson/fuse/internal/runtime"
 )
 
+// bearerClientInterceptor is a connect.Interceptor that adds an
+// `Authorization: Bearer <token>` header to every unary and streaming request an
+// acceptance-test client makes, so the server-side auth interceptor authenticates
+// it. An empty token adds no header (to drive the missing-token deny case).
+type bearerClientInterceptor struct{ token string }
+
+func (b bearerClientInterceptor) set(h interface{ Set(string, string) }) {
+	if b.token != "" {
+		h.Set("Authorization", "Bearer "+b.token)
+	}
+}
+
+func (b bearerClientInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		b.set(req.Header())
+		return next(ctx, req)
+	}
+}
+
+func (b bearerClientInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
+		conn := next(ctx, spec)
+		b.set(conn.RequestHeader())
+		return conn
+	}
+}
+
+func (b bearerClientInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return next
+}
+
+// bearerClient builds a LoopService client that presents token as a bearer
+// credential on every request against base.
+func bearerClient(base, token string) loopv1connect.LoopServiceClient {
+	return loopv1connect.NewLoopServiceClient(http.DefaultClient, base,
+		connect.WithInterceptors(bearerClientInterceptor{token: token}))
+}
+
 // TestLoopServeNetDispatchRegistered proves `fuse loop-serve-net` is wired into the
 // dispatch switch. It swaps the netListen seam for a loopback ephemeral listener and
 // the run's context for one we cancel immediately, so runLoopServeNet stands up the
@@ -122,7 +160,11 @@ func TestLoopServeNetEndToEnd(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	serveDone := make(chan error, 1)
-	go func() { serveDone <- serveNet(ctx, ln, fr) }()
+	// This E2E asserts the pure transport (StartLoop + Observe replay/live). A nil
+	// verifier omits the auth interceptor and a nil registry skips per-loop authz, so
+	// the fake runtime is exercised without an ownership-recording registry — the
+	// auth/authz properties get their own dedicated acceptance tests below.
+	go func() { serveDone <- serveNet(ctx, ln, fr, nil, nil) }()
 	t.Cleanup(func() {
 		cancel()
 		select {
