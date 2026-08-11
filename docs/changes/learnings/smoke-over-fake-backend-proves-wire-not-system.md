@@ -2,7 +2,7 @@
 slug: smoke-over-fake-backend-proves-wire-not-system
 hook: "A cross-language smoke test (real generated client stub → real server handler) run against a FAKE/scripted backend proves the WIRE serializes and round-trips, NOT that the system works end-to-end — and if it t.Skips silently when its toolchain is absent, a green suite hides that the path never ran. Keep the rigorous property test (no-loss/no-dup, real lifecycle) on the authoritative side, run the smoke against the real backend for at least one acceptance, and make the skip loud."
 topics: [testing, integration, streaming, cross-language, ci]
-changes: [55, 50]
+changes: [55, 50, 49]
 created: 2026-08-11
 updated: 2026-08-11
 promotion_state: candidate
@@ -48,3 +48,22 @@ report described a `connect-es` smoke as end-to-end proof, but it ran against a 
 reconnect with a single frame, and `t.Skip`ped without the node toolchain. The transport itself and
 its Go-side resilience tests were sound; the overclaim was the lesson. Recorded as a #50 acceptance
 requirement rather than a #55 defect.
+
+## War story — 2026-08-11 (#49, PR #53)
+
+The auth/multi-tenancy build ran a **live** Connect-wire acceptance (auth / spoof-tenant /
+cross-owner-reject / reconnect-no-dup, real transport against a scripted gateway). The one path it
+did **not** cover end-to-end was the two-instance **re-own** story ("redeploy, then re-`Observe`
+from your phone with the same token"): a true second-instance-death simulation over the live wire is
+heavy, so it was covered at the **runtime unit layer** (`internal/runtime/lease_test.go:
+TestResolveReOwnsExpiredLease` and siblings), not as a `cmd/fuse` acceptance test.
+
+The build did the right thing per this finding: rather than let an optimistic "all green" summary
+imply the re-own story was proven end-to-end, it **recorded the deferred proof as an explicit
+acceptance item** — a `## Verify (human)` checkbox in the results file with the exact manual
+reproduction (start a loop, kill the owner, start a fresh instance, re-`Observe(from_seq)` with the
+same bearer, confirm resume). That is this finding's "record the deferred end-to-end proof as an
+explicit acceptance requirement, or it evaporates behind an optimistic build summary" rule applied
+**within one change** (a `## Verify` checkbox) rather than as a hand-off to a downstream change (the
+#55→#50 case above). Both are valid discharges; the invariant is that the gap is written down where
+a human will act on it, never left implicit in a green suite.

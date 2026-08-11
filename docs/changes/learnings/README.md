@@ -42,6 +42,10 @@ One curated finding per file; this index is the hint surface. Load it, then read
 
 - [auto-approve-task-implied-edits-classifier-context](auto-approve-task-implied-edits-classifier-context.md) — In an unattended mode there is no human to ask — structurally auto-approve task-implied in-workspace edits behind a trust boundary you already own, and feed the classifier the user's request instead of running it blind. · also: security, agents, ux ⟨needs promotion⟩
 
+## reconcile
+
+- [reconcile-transport-swapped-under-spec-remap-not-halt](reconcile-transport-swapped-under-spec-remap-not-halt.md) — When the just-in-time reconcile finds the spec was written against a mechanism that a LATER change replaced under it (a transport, an API, a store), first ask whether the design DECISIONS still hold on the new mechanism. If they do, the spec is scope-ADJUSTABLE — re-map the mechanism-specific mechanics (handshake→interceptor, JSON-RPC code→connect.Code, HTTP replay→server-stream) and build, recording the re-map in the ## Reconcile log. Halt only when a decision itself is invalidated, not merely because the words name a dead mechanism. · also: spec-drift, transport, design-vs-mechanism, build-loop ⟨needs promotion⟩
+
 ## testing
 
 - [mutex-test-double-concurrent-provider](mutex-test-double-concurrent-provider.md) — Mutex-protect both getter and setter on test doubles shared with goroutines — a lock on one side only is still a race · also: concurrency, race, goroutines
