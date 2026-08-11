@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0053 — Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0053-persistent-conversational-loop.md)**
+> ↩ **[Change 0053 — Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-11-0053-persistent-conversational-loop.md)**
 <!-- docket:backlink:end -->
 
 # Spec 0053 — Persistent conversational loop: interactive mode
