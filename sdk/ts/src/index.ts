@@ -135,6 +135,11 @@ function withBearer(transport: Transport, token: string): Transport {
   };
 }
 
+/** sleep resolves after ms milliseconds — the reconnect-backoff delay. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function toDomainEvent(wire: WireEvent, gap: boolean): Event {
   return {
     seq: wire.seq,
@@ -189,37 +194,49 @@ export function createClient(options: ClientOptions): Client {
           // last is the reconnect cursor: the highest seq delivered so far. On a stream
           // end/error we re-open Observe(fromSeq = last) so no event is lost or repeated.
           let last = fromSeq;
+          // Reconnect backoff: a stream that ends and re-opens IMMEDIATELY (server down,
+          // an instant error) would hot-spin the CPU and hammer the network. Back off
+          // exponentially (capped) between re-opens, and RESET the backoff the moment a
+          // re-opened stream delivers at least one frame — a healthy stream must not carry
+          // a stale penalty from an earlier blip.
+          const backoffBaseMs = 100;
+          const backoffCapMs = 30_000;
+          let backoffMs = backoffBaseMs;
           // Reconnect loop. Each pass opens one server-stream; when it ends we resume
           // from `last`. A hard error that is not a clean end still triggers a resume —
           // the browser analogue of a websocket read error being a reconnect, not a fault.
           for (;;) {
-            let streamEnded = false;
+            let deliveredThisPass = false;
+            // The Connect stream returned by wire.observe() is an AsyncIterable; a
+            // `finally` on the for-await guarantees the underlying HTTP stream is torn
+            // down whether this pass ends by completion, a thrown error, OR the CONSUMER
+            // breaking out of the outer generator (which propagates return() to us).
+            const stream = wire.observe({ loopId, fromSeq: last, tenant });
             try {
-              for await (const frame of wire.observe({
-                loopId,
-                fromSeq: last,
-                tenant,
-              })) {
+              for await (const frame of stream) {
                 if (frame.keepalive || !frame.event) {
                   continue; // idle heartbeat: no seq, ignore.
                 }
                 const ev = frame.event;
+                deliveredThisPass = true;
                 if (ev.seq <= last) {
                   continue; // defensive dedup-at-watermark: never re-yield a seen seq.
                 }
                 last = ev.seq;
                 yield toDomainEvent(ev, frame.gap);
               }
-              streamEnded = true;
+              // Clean stream end (server closed the tail): fall through to re-open.
             } catch {
               // A stream error (post-handshake read/close) is a clean reconnect signal,
               // not a fault: fall through to re-open Observe(last).
-              streamEnded = true;
             }
-            if (streamEnded) {
-              // Re-open from the last-seen seq. The server replays history since `last`
-              // then live-tails; the watermark dedup above drops any overlap frame.
-              continue;
+            // Re-open from the last-seen seq. The server replays history since `last`
+            // then live-tails; the watermark dedup above drops any overlap frame.
+            if (deliveredThisPass) {
+              backoffMs = backoffBaseMs; // healthy stream: clear any accrued penalty.
+            } else {
+              await sleep(backoffMs);
+              backoffMs = Math.min(backoffMs * 2, backoffCapMs);
             }
           }
         },
