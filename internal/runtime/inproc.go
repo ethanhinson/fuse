@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/event"
@@ -71,7 +72,26 @@ type Deps struct {
 	// inProcRuntime.lookup resolve a loop a PRIOR process started even though r.loops
 	// is empty on this instance. When nil, resolution is in-memory-only (r.loops).
 	Registry event.LoopRegistry
+	// LeaseTTL is the owner-liveness lease duration for a live loop (change 0049 Task 7).
+	// While a loop runs, a background renewer Heartbeats the registry every ~⅓ TTL to
+	// push LeaseExpiry to now+TTL, so a cold instance that resolves the loop can tell a
+	// live owner from an abandoned one (an expired lease ⇒ re-ownable). Zero ⇒ a sane
+	// default (defaultLeaseTTL). Ignored when Registry is nil (in-memory-only bindings).
+	LeaseTTL time.Duration
+	// HeartbeatInterval, when > 0, overrides the renewer's tick cadence (default ~⅓
+	// LeaseTTL). It exists so tests can drive the renewer fast without a fake-clock
+	// library; production leaves it zero.
+	HeartbeatInterval time.Duration
+	// Now, when non-nil, is the clock seam used for lease math (LeaseExpiry = Now()+TTL
+	// on Register/Heartbeat, and the reap comparison Now().After(rec.LeaseExpiry)). It
+	// defaults to time.Now. Tests inject a frozen clock to make the reap/re-own decision
+	// deterministic. The renewer's tick cadence uses a real timer regardless — Now only
+	// governs the expiry timestamps and the reap comparison.
+	Now func() time.Time
 }
+
+// defaultLeaseTTL is the owner-liveness lease duration used when Deps.LeaseTTL is zero.
+const defaultLeaseTTL = 30 * time.Second
 
 // inProcRuntime is the concrete in-process Runtime. It owns each loop's event
 // store as instance state (Decision Note D-1): it opens the *fsstore.FSEventStore
@@ -103,6 +123,66 @@ type loop struct {
 // binding consumes the seam abstractly (the concrete *inProcRuntime is unexported).
 func New(deps Deps) Runtime {
 	return &inProcRuntime{deps: deps, loops: map[string]*loop{}}
+}
+
+// now returns the runtime's clock: the injected Deps.Now seam when set, else time.Now.
+// It governs lease-expiry timestamps and the reap comparison so tests can freeze time.
+func (r *inProcRuntime) now() time.Time {
+	if r.deps.Now != nil {
+		return r.deps.Now()
+	}
+	return time.Now()
+}
+
+// leaseTTL returns the configured owner-liveness lease duration, or defaultLeaseTTL
+// when unset (or non-positive).
+func (r *inProcRuntime) leaseTTL() time.Duration {
+	if r.deps.LeaseTTL > 0 {
+		return r.deps.LeaseTTL
+	}
+	return defaultLeaseTTL
+}
+
+// heartbeatInterval returns the renewer's tick cadence: the explicit override when set,
+// else ~⅓ of the lease TTL (with a small floor so a tiny TTL never yields a zero tick).
+func (r *inProcRuntime) heartbeatInterval() time.Duration {
+	if r.deps.HeartbeatInterval > 0 {
+		return r.deps.HeartbeatInterval
+	}
+	iv := r.leaseTTL() / 3
+	if iv <= 0 {
+		iv = time.Millisecond
+	}
+	return iv
+}
+
+// startLeaseRenewer launches the background heartbeat renewer for a live loop. It runs
+// until ctx is done (the loop's run ctx) OR stop is closed (the run goroutine closes it
+// at completion, alongside SetLive(false)), whichever comes first — so the goroutine
+// never leaks. Each tick Heartbeats the registry to push LeaseExpiry to now()+TTL under
+// this instance's node id (ownerNodeID). Caller guarantees r.deps.Registry != nil.
+func (r *inProcRuntime) startLeaseRenewer(ctx context.Context, key event.StreamKey, ownerNodeID string, stop <-chan struct{}) {
+	ttl := r.leaseTTL()
+	interval := r.heartbeatInterval()
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case <-t.C:
+				// Heartbeat is best-effort: a transient registry error must not kill the
+				// renewer (the next tick retries) — but the loop itself keeps running, so a
+				// persistently-failing registry only widens the reap window, it does not stall
+				// the loop. Use a background context: a client disconnect must not cancel the
+				// liveness renewal (mirrors durableSink / the completion SetLive).
+				_ = r.deps.Registry.Heartbeat(context.Background(), key, ownerNodeID, r.now().Add(ttl))
+			}
+		}
+	}()
 }
 
 // StartLoop constructs and drives one agent loop from cfg (see the Runtime
@@ -149,7 +229,11 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	// goroutine later flips liveness via SetLive(false) at completion. (No redundant
 	// SetLive(true) here: Register already recorded liveness + ownership.)
 	if r.deps.Registry != nil {
-		if err := r.deps.Registry.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: rootID, Live: true}); err != nil {
+		// Seed the initial owner-liveness lease at Register time (change 0049 Task 7): the
+		// renewer below advances it every ~⅓ TTL, and a cold instance treats an expired
+		// lease on a still-live record as abandoned (see resolveDurable's reap/re-own).
+		leaseExpiry := r.now().Add(r.leaseTTL())
+		if err := r.deps.Registry.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: rootID, Live: true, LeaseExpiry: leaseExpiry}); err != nil {
 			return nil, fmt.Errorf("runtime: register loop: %w", err)
 		}
 	}
@@ -206,10 +290,30 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 
 	h := &loopHandle{id: rootID, done: make(chan struct{})}
 	lp.handle = h
+
+	// Owner-liveness lease renewer (change 0049 Task 7): while the loop runs, refresh
+	// LeaseExpiry every ~⅓ TTL so a cold instance can tell a live owner from an
+	// abandoned one. stopRenew is closed at run completion (below) so the renewer exits
+	// promptly even if ctx is not canceled; the renewer ALSO exits on ctx.Done, so it
+	// never leaks. Only when a durable Registry is present — nil-registry single-loop
+	// bindings run no renewer.
+	var stopRenew chan struct{}
+	if r.deps.Registry != nil {
+		stopRenew = make(chan struct{})
+		r.startLeaseRenewer(ctx, key, rootID, stopRenew)
+	}
+
 	go func() {
 		defer close(h.done)
 		msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: cfg.Task}})
 		h.msgs, h.err = msgs, rerr
+		// Stop the lease renewer FIRST so it can no longer race a Heartbeat past the
+		// SetLive(false) below (a stray post-completion Heartbeat would re-mark a stale
+		// lease as fresh). The renewer also observes ctx.Done, but closing stopRenew makes
+		// the shutdown deterministic and immediate.
+		if stopRenew != nil {
+			close(stopRenew)
+		}
 		// Mark the loop finished in the durable registry so a cold instance resolves it
 		// as replay-only (Send ⇒ ErrLoopFinished). Use context.Background(): the run's
 		// ctx may already be canceled at completion, but the liveness flip must land.
@@ -298,6 +402,29 @@ func (r *inProcRuntime) resolveDurable(ctx context.Context, tenant event.TenantI
 			return event.LoopRecord{}, key, fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
 		}
 		return event.LoopRecord{}, key, err
+	}
+	// Reap / re-own on resolve (change 0049 Task 7): a record that is still marked Live
+	// but whose lease has EXPIRED describes a loop whose owning instance died without
+	// flipping SetLive(false) — an abandoned live loop. Rather than surface it as a hard
+	// error or refuse observe/replay, the cold-resolving instance re-owns it: refresh the
+	// lease under THIS node id (Heartbeat with now()+TTL) and record the refreshed record
+	// so observe/attach/replay of the abandoned loop proceeds. This does NOT resurrect a
+	// one-shot's execution nor resume a parked persistent loop's driving (that rides #53);
+	// it only clears the abandoned-lease as a blocker to reading the stream. A non-expired
+	// live record is left to its owner untouched; a not-live (completed) record is served
+	// replay unchanged (its lease is irrelevant once it is done).
+	if rec.Live && !rec.LeaseExpiry.IsZero() && r.now().After(rec.LeaseExpiry) {
+		newExpiry := r.now().Add(r.leaseTTL())
+		// The re-owning node id is the loop's own id (rootID == loopID == key.Loop, the same
+		// value StartLoop records as OwnerNodeID) — this instance now serves the abandoned
+		// loop's stream. Best-effort: on Heartbeat failure fall back to the record as
+		// resolved (the caller still gets a usable, non-error result — the lease simply stays
+		// stale until the next resolve retries).
+		reOwner := string(key.Loop)
+		if err := r.deps.Registry.Heartbeat(ctx, key, reOwner, newExpiry); err == nil {
+			rec.LeaseExpiry = newExpiry
+			rec.OwnerNodeID = reOwner
+		}
 	}
 	return rec, key, nil
 }

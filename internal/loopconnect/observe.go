@@ -54,7 +54,19 @@ func (h *Handler) keepaliveInterval() time.Duration {
 // timeout; the client ignores keepalives for dedup (they carry no Seq).
 func (h *Handler) Observe(ctx context.Context, req *connect.Request[loopv1.ObserveRequest], stream *connect.ServerStream[loopv1.ObserveEvent]) error {
 	m := req.Msg
-	tenant := event.TenantID(m.Tenant)
+
+	// 0) Authorize at the edge BEFORE any subscribe/replay work. The principal was
+	//    stashed on ctx by the interceptor's WrapStreamingHandler. Tenant-spoof is
+	//    PermissionDenied; a tenant-scoped resolve miss is NotFound (this collapses
+	//    cross-tenant access); a different-owner record is PermissionDenied. With no
+	//    principal/registry this is a no-op and the wire tenant is used as today.
+	tenant, p, havePrincipal, aerr := h.effectiveTenant(ctx, m.Tenant)
+	if aerr != nil {
+		return aerr
+	}
+	if aerr := h.authorizeLoop(ctx, tenant, m.LoopId, p, havePrincipal); aerr != nil {
+		return aerr
+	}
 
 	// 1) Subscribe BEFORE replay. cancel() unsubscribes; it is deferred so EVERY
 	//    return path (replay error, live error, ctx cancel, channel close) releases
