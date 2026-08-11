@@ -34,11 +34,12 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0029](0029-shell-partial-runtime-binding.md) — The interactive shell is a partial Runtime binding — construction+store through the seam, turn cadence retained by the TUI (Accepted) ← change #45 · relates to ADR-0027, ADR-0028
 - [ADR-0030](0030-deglobalize-eventstore-multiloop-hosting.md) — De-globalize the event store and segment sink; thread per-loop state as values so one process hosts N concurrent loops (Accepted) ← change #46 → supersedes ADR-0027 · relates to ADR-0025, ADR-0019
 - [ADR-0031](0031-durable-distributed-event-store-loop-registry.md) — Durable, backend-agnostic event store + durable loop registry — existence and history survive restart and are reachable from any instance (Accepted) ← change #47 · relates to ADR-0024, ADR-0025, ADR-0027, ADR-0030
-- [ADR-0032](0032-binding-3-websocket-session-http-replay-shared-dispatch.md) — Binding #3 transport — WebSocket full-session + thin stateless HTTP replay over a shared dispatch core (Accepted) ← change #48 · relates to ADR-0028, ADR-0030, ADR-0031
+- [ADR-0033](0033-networked-binding-connect-protobuf-fuse-loop-v1.md) — Networked binding transport = Connect/protobuf (fuse.loop.v1), replacing the JSON-over-WebSocket + HTTP-replay wire (Accepted) ← change #55 → supersedes ADR-0032 · relates to ADR-0028, ADR-0030, ADR-0031
 
 ## Superseded / Reversed
 
 - [ADR-0027](0027-runtime-owns-loop-eventstore-global-holder-bridge.md) — Runtime owns the loop event store as instance state; process-global holders kept as a single-loop compatibility bridge (Superseded by ADR-30) ← change #45 · relates to ADR-0025, ADR-0019, ADR-0016
+- [ADR-0032](0032-binding-3-websocket-session-http-replay-shared-dispatch.md) — Binding #3 transport — WebSocket full-session + thin stateless HTTP replay over a shared dispatch core (Superseded by ADR-33) ← change #48 · relates to ADR-0028, ADR-0030, ADR-0031
 
 ## Deprecated
 
