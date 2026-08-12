@@ -535,7 +535,7 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	// and carry OTLP credentials. Keep the whole surface trusted-config only.
 	if observabilityConfigured(raw.Observability) {
 		if trusted {
-			c.Observability = raw.Observability
+			c.Observability = raw.Observability.resolve()
 		} else {
 			fmt.Fprintf(warnw, "warning: %s ignores observability (a telemetry egress/access-policy surface); set it in ~/.fuse/config.yml instead\n", path)
 		}
@@ -630,9 +630,9 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	return nil
 }
 
-func observabilityConfigured(o ObservabilityConfig) bool {
+func observabilityConfigured(o rawObservabilityConfig) bool {
 	return o.Metrics.Enabled || o.Metrics.Path != "" || o.Metrics.Bind != "" || o.Metrics.Access != "" || len(o.Metrics.HistogramBuckets) > 0 || len(o.Metrics.Labels) > 0 ||
-		o.Traces.Enabled || o.Traces.Endpoint != "" || o.Traces.Protocol != "" || o.Traces.Insecure || len(o.Traces.Headers) > 0 || o.Traces.QueueSize != 0 || o.Traces.BatchSize != 0 || o.Traces.ExportTimeout != "" || o.Traces.BatchTimeout != "" || o.Traces.SampleRatio != 0 ||
+		o.Traces.Enabled || o.Traces.Endpoint != "" || o.Traces.Protocol != "" || o.Traces.Insecure || len(o.Traces.Headers) > 0 || o.Traces.QueueSize != 0 || o.Traces.BatchSize != 0 || o.Traces.ExportTimeout != "" || o.Traces.BatchTimeout != "" || o.Traces.SampleRatio != nil ||
 		o.Logging.Enabled || o.Logging.Output != "" || o.Logging.File != "" || o.Logging.Level != "" || o.Logging.MaxOverrideTTL != "" ||
 		o.Cardinality.HashVersion != "" || o.Cardinality.Salt != "" || o.Cardinality.Tenant.Budget != 0 || o.Cardinality.Model.Budget != 0 || o.Cardinality.Tool.Budget != 0 || o.InstanceID != ""
 }

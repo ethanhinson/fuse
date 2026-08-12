@@ -44,6 +44,23 @@ func TestObservabilityDisabledIsNoop(t *testing.T) {
 	}
 }
 
+func TestObservabilityExplicitZeroTraceSampleRatioDropsRootSpans(t *testing.T) {
+	cfg := config.Config{Observability: config.ObservabilityConfig{Traces: config.TracesObservabilityConfig{
+		Enabled: true, Endpoint: "127.0.0.1:1", Protocol: "grpc", Insecure: true, SampleRatio: 0,
+	}}}
+	s, err := newObservability(context.Background(), cfg, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close(context.Background()) })
+
+	_, span := s.provider.Tracer("test").Start(context.Background(), "root")
+	defer span.End()
+	if span.IsRecording() {
+		t.Fatal("explicit zero trace sample ratio recorded a root span")
+	}
+}
+
 func TestLoggingAdminRequiresAuthenticationAndTenant(t *testing.T) {
 	var out bytes.Buffer
 	s, err := newObservability(context.Background(), loggingConfig("stdout", ""), &out)

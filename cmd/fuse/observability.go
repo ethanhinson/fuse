@@ -147,11 +147,7 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 		if o.Traces.BatchTimeout != "" {
 			batch.BatchTimeout, _ = time.ParseDuration(o.Traces.BatchTimeout)
 		}
-		ratio := o.Traces.SampleRatio
-		if ratio == 0 {
-			ratio = 1
-		}
-		s.provider = observeotel.NewProvider(exporter, batch, sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))))
+		s.provider = observeotel.NewProvider(exporter, batch, sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(o.Traces.SampleRatio))))
 		s.observer = observeotel.New(s.provider)
 	}
 	if s.metrics != nil {

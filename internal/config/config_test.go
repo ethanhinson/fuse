@@ -78,3 +78,33 @@ func TestObservabilityLoadsOnlyFromTrustedConfiguration(t *testing.T) {
 		t.Fatal("untrusted telemetry egress configuration was accepted")
 	}
 }
+
+func TestTraceSampleRatioDefaultsOnlyWhenOmitted(t *testing.T) {
+	if got := Default().Observability.Traces.SampleRatio; got != 1 {
+		t.Fatalf("default sample ratio = %v, want 1", got)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.yml")
+	base := "observability:\n  traces:\n    enabled: true\n    endpoint: collector:4317\n    protocol: grpc\n"
+	if err := os.WriteFile(path, []byte(base), 0600); err != nil {
+		t.Fatal(err)
+	}
+	omitted := Default()
+	if err := mergeFile(&omitted, path, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := omitted.Observability.Traces.SampleRatio; got != 1 {
+		t.Fatalf("omitted sample ratio = %v, want 1", got)
+	}
+
+	if err := os.WriteFile(path, []byte(base+"    sample_ratio: 0\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	explicitZero := Default()
+	if err := mergeFile(&explicitZero, path, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := explicitZero.Observability.Traces.SampleRatio; got != 0 {
+		t.Fatalf("explicit zero sample ratio = %v, want 0", got)
+	}
+}
