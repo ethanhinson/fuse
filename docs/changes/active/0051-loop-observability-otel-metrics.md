@@ -2,7 +2,7 @@
 id: 51
 slug: loop-observability-otel-metrics
 title: Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-10
@@ -13,14 +13,14 @@ discovered_from: [46]
 adrs: [38, 39, 40, 41]
 spec: docs/superpowers/specs/0051-loop-observability-otel-metrics.md
 plan: docs/superpowers/plans/2026-08-12-loop-observability-otel-metrics.md
-results:
+results: docs/results/2026-08-12-loop-observability-otel-metrics-results.md
 trivial: false
 auto_groomable:
 branch: feat/loop-observability-otel-metrics
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/58
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-12T04:07:55Z
+claimed_at: 2026-08-12T06:08:23Z
 ---
 
 ## Artifacts
@@ -30,6 +30,8 @@ claimed_at: 2026-08-12T04:07:55Z
 |---|---|
 | Spec | [0051-loop-observability-otel-metrics.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0051-loop-observability-otel-metrics.md) |
 | Plan | [2026-08-12-loop-observability-otel-metrics.md](https://github.com/ethanhinson/fuse/blob/feat/loop-observability-otel-metrics/docs/superpowers/plans/2026-08-12-loop-observability-otel-metrics.md) |
+| Results | [2026-08-12-loop-observability-otel-metrics-results.md](https://github.com/ethanhinson/fuse/blob/feat/loop-observability-otel-metrics/docs/results/2026-08-12-loop-observability-otel-metrics-results.md) |
+| PR | [#58](https://github.com/ethanhinson/fuse/pull/58) |
 | ADRs | [ADR-0038](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0038-committed-event-observability-projections.md), [ADR-0039](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0039-committed-event-telemetry-dispatch-bounded-lossy.md), [ADR-0040](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0040-provider-neutral-composite-observer.md), [ADR-0041](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0041-operator-capability-for-process-global-observability.md) |
 <!-- docket:artifacts:end -->
 
