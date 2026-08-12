@@ -14,6 +14,8 @@ package event
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -60,6 +62,125 @@ type Event struct {
 	Turn     int             `json:"turn"`
 	Kind     Kind            `json:"kind"`
 	Payload  json.RawMessage `json:"payload,omitempty"`
+	Trace    *TraceCarrier   `json:"trace,omitempty"`
+}
+
+// TraceCarrier is the repository-owned, durable subset of W3C trace context.
+// It intentionally excludes baggage and provider-specific fields: telemetry
+// propagation must not turn the event log into a header store.
+type TraceCarrier struct {
+	TraceParent string `json:"traceparent"`
+	TraceState  string `json:"tracestate,omitempty"`
+}
+
+// MarshalJSON rejects invalid context before it can enter the durable event log.
+func (c TraceCarrier) MarshalJSON() ([]byte, error) {
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	type wire TraceCarrier
+	return json.Marshal(wire(c))
+}
+
+// UnmarshalJSON rejects malformed durable trace context on replay.
+func (c *TraceCarrier) UnmarshalJSON(b []byte) error {
+	type wire TraceCarrier
+	var decoded wire
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		return err
+	}
+	*c = TraceCarrier(decoded)
+	return c.Validate()
+}
+
+// Validate verifies the W3C traceparent and optional tracestate syntax carried
+// by Fuse. Only this small, portable context is persisted with an event.
+func (c TraceCarrier) Validate() error {
+	if !validTraceParent(c.TraceParent) {
+		return fmt.Errorf("invalid traceparent")
+	}
+	if !validTraceState(c.TraceState) {
+		return fmt.Errorf("invalid tracestate")
+	}
+	return nil
+}
+
+func validTraceParent(v string) bool {
+	parts := strings.Split(v, "-")
+	if len(parts) != 4 || len(parts[0]) != 2 || len(parts[1]) != 32 || len(parts[2]) != 16 || len(parts[3]) != 2 {
+		return false
+	}
+	if parts[0] == "ff" || !lowerHex(parts[0]) || !lowerHex(parts[1]) || !lowerHex(parts[2]) || !lowerHex(parts[3]) {
+		return false
+	}
+	return !allZero(parts[1]) && !allZero(parts[2])
+}
+
+func lowerHex(v string) bool {
+	for _, r := range v {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func allZero(v string) bool {
+	for _, r := range v {
+		if r != '0' {
+			return false
+		}
+	}
+	return true
+}
+
+func validTraceState(v string) bool {
+	if v == "" {
+		return true
+	}
+	if len(v) > 512 {
+		return false
+	}
+	members := strings.Split(v, ",")
+	if len(members) > 32 {
+		return false
+	}
+	for _, member := range members {
+		member = strings.Trim(member, " \t")
+		if member == "" {
+			return false
+		}
+		key, value, ok := strings.Cut(member, "=")
+		if !ok || !validTraceStateKey(key) || !validTraceStateValue(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func validTraceStateKey(key string) bool {
+	if len(key) == 0 || len(key) > 256 {
+		return false
+	}
+	for i, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '*' || r == '/' || (r == '@' && i > 0) {
+			continue
+		}
+		return false
+	}
+	return key[0] >= 'a' && key[0] <= 'z'
+}
+
+func validTraceStateValue(value string) bool {
+	if len(value) == 0 || len(value) > 256 || value[0] == ' ' || value[len(value)-1] == ' ' {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x20 || r > 0x7e || r == ',' || r == '=' {
+			return false
+		}
+	}
+	return true
 }
 
 // MarshalJSONL encodes the event as a single JSON object with NO trailing newline
