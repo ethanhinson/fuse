@@ -121,11 +121,11 @@ func validateObservability(o ObservabilityConfig) error {
 			}
 		}
 		for name, d := range map[string]CardinalityDimensionConfig{"tenant": o.Cardinality.Tenant, "model": o.Cardinality.Model, "tool": o.Cardinality.Tool} {
-			if d.Budget < 0 {
-				return fmt.Errorf("config: observability.cardinality.%s.budget must be nonnegative", name)
+			if d.Budget < 1 {
+				return fmt.Errorf("config: observability.cardinality.%s.budget must be at least 1 to reserve __overflow__", name)
 			}
-			if len(d.Pinned) > d.Budget {
-				return fmt.Errorf("config: observability.cardinality.%s pins exceed budget", name)
+			if len(d.Pinned) > d.Budget-1 {
+				return fmt.Errorf("config: observability.cardinality.%s pins exceed non-overflow capacity", name)
 			}
 		}
 	}

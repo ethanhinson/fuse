@@ -25,9 +25,9 @@ func acceptanceObservabilityConfig() config.Config {
 		Logging:    config.LoggingObservabilityConfig{Enabled: true, Output: "stdout", Level: "debug", MaxOverrideTTL: "1m"},
 		Cardinality: config.CardinalityObservabilityConfig{
 			HashVersion: "sha256-64-v1", Salt: "acceptance",
-			Tenant: config.CardinalityDimensionConfig{Budget: 1, Catalog: []string{"tenant-a"}},
-			Model:  config.CardinalityDimensionConfig{Budget: 1, Catalog: []string{"model-a"}},
-			Tool:   config.CardinalityDimensionConfig{Budget: 1, Catalog: []string{"tool-a"}},
+			Tenant: config.CardinalityDimensionConfig{Budget: 2, Catalog: []string{"tenant-a"}},
+			Model:  config.CardinalityDimensionConfig{Budget: 2, Catalog: []string{"model-a"}},
+			Tool:   config.CardinalityDimensionConfig{Budget: 2, Catalog: []string{"tool-a"}},
 		},
 	}}
 }

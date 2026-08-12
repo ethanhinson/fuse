@@ -102,8 +102,8 @@ func New(cfg Config) (*Recorder, error) {
 	r.reopens = client.NewCounterVec(client.CounterOpts{Name: "fuse_observability_log_reopens_total", Help: "Log reopens."}, []string{"outcome"})
 	r.overrides = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_observability_log_overrides", Help: "Active log overrides."}, []string{"scope"})
 	r.overflow = client.NewCounterVec(client.CounterOpts{Name: "fuse_metrics_label_overflow_total", Help: "Collapsed label observations."}, []string{"dimension", "metric"})
-	r.admitted = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_metrics_label_admitted_values", Help: "Admitted label values."}, []string{"dimension"})
-	r.budget = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_metrics_label_budget", Help: "Configured label budget."}, []string{"dimension"})
+	r.admitted = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_metrics_label_admitted_values", Help: "Admitted non-overflow label values."}, []string{"dimension"})
+	r.budget = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_metrics_label_budget", Help: "Configured label cardinality limit, including __overflow__."}, []string{"dimension"})
 	collectors := []client.Collector{r.loopTotal, r.loopDuration, r.loopActive, r.modelTotal, r.modelDuration, r.attempts, r.toolTotal, r.toolDuration, r.spawnTotal, r.spawnDuration, r.projectionTotal, r.projectionDuration, r.exportErrors, r.dropped, r.reopens, r.overrides, r.overflow, r.admitted, r.budget}
 	for _, c := range collectors {
 		if err := cfg.Registerer.Register(c); err != nil {

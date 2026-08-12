@@ -57,6 +57,27 @@ func TestObservabilityRejectsPartialOrChangedMetricLabelDeclarations(t *testing.
 	}
 }
 
+func TestObservabilityRejectsCardinalityBudgetWithoutOverflowSlot(t *testing.T) {
+	c := Config{Observability: ObservabilityConfig{Metrics: MetricsObservabilityConfig{Enabled: true, Path: "/metrics", Access: "authenticated"}}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("metrics accepted zero cardinality budgets")
+	}
+}
+
+func TestObservabilityRejectsPinsThatConsumeOverflowSlot(t *testing.T) {
+	c := Config{Observability: ObservabilityConfig{
+		Metrics: MetricsObservabilityConfig{Enabled: true, Path: "/metrics", Access: "authenticated"},
+		Cardinality: CardinalityObservabilityConfig{
+			Tenant: CardinalityDimensionConfig{Budget: 1, Catalog: []string{"acme"}, Pinned: []string{"acme"}},
+			Model:  CardinalityDimensionConfig{Budget: 1},
+			Tool:   CardinalityDimensionConfig{Budget: 1},
+		},
+	}}
+	if err := c.Validate(); err == nil {
+		t.Fatal("metrics accepted pin that consumes the overflow slot")
+	}
+}
+
 func TestObservabilityLoadsOnlyFromTrustedConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yml")
 	body := []byte("observability:\n  instance_id: node-a\n  traces:\n    enabled: true\n    endpoint: collector:4317\n    protocol: grpc\n    insecure: true\n    headers: {authorization: secret}\n    queue_size: 32\n    batch_size: 8\n    export_timeout: 2s\n    batch_timeout: 1s\n    sample_ratio: 0.5\n")

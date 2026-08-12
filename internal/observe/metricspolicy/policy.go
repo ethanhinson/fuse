@@ -41,11 +41,11 @@ func New(cfg Config) (*Policy, error) {
 	p := &Policy{budgets: map[Dimension]int{}, admitted: map[Dimension]map[string]struct{}{}}
 	for _, dimension := range []Dimension{TenantID, Model, Tool} {
 		dc := cfg.Dimensions[dimension]
-		if dc.Budget < 0 {
-			return nil, fmt.Errorf("%s budget must be nonnegative", dimension)
+		if dc.Budget < 1 {
+			return nil, fmt.Errorf("%s budget must reserve one slot for %s", dimension, Overflow)
 		}
-		if len(unique(dc.Pinned)) > dc.Budget {
-			return nil, fmt.Errorf("%s pins exceed budget", dimension)
+		if len(unique(dc.Pinned)) > dc.Budget-1 {
+			return nil, fmt.Errorf("%s pins exceed non-overflow capacity", dimension)
 		}
 		catalog := unique(dc.Catalog)
 		pins := unique(dc.Pinned)
@@ -83,7 +83,7 @@ func New(cfg Config) (*Policy, error) {
 			return candidates[i].score < candidates[j].score
 		})
 		for _, c := range candidates {
-			if len(selected) >= dc.Budget {
+			if len(selected) >= dc.Budget-1 {
 				break
 			}
 			selected[c.value] = struct{}{}

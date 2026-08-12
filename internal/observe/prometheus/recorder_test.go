@@ -16,7 +16,7 @@ import (
 func testRecorder(t *testing.T) *Recorder {
 	t.Helper()
 	p, err := metricspolicy.New(metricspolicy.Config{HashVersion: metricspolicy.HashV1, Dimensions: map[metricspolicy.Dimension]metricspolicy.DimensionConfig{
-		metricspolicy.TenantID: {Budget: 1, Catalog: []string{"admitted"}}, metricspolicy.Model: {Budget: 1, Catalog: []string{"m"}}, metricspolicy.Tool: {Budget: 1, Catalog: []string{"tool"}},
+		metricspolicy.TenantID: {Budget: 2, Catalog: []string{"admitted"}}, metricspolicy.Model: {Budget: 2, Catalog: []string{"m"}}, metricspolicy.Tool: {Budget: 2, Catalog: []string{"tool"}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestProjectionActiveCleanupOverflowAndExposition(t *testing.T) {
 		`fuse_loop_active{operation="loop",tenant_id="__overflow__"} 0`,
 		`fuse_metrics_label_overflow_total{dimension="tenant_id",metric="fuse_loop_operations_total"} 1`,
 		`fuse_metrics_label_admitted_values{dimension="tenant_id"} 1`,
-		`fuse_metrics_label_budget{dimension="tenant_id"} 1`,
+		`fuse_metrics_label_budget{dimension="tenant_id"} 2`,
 		`fuse_tool_calls_total{outcome="error",tenant_id="admitted",tool="__overflow__"} 1`,
 	} {
 		if !strings.Contains(body, want) {

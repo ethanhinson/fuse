@@ -240,7 +240,7 @@ func TestAuthenticatedMetricsPolicy(t *testing.T) {
 func TestSeparateMetricsBindEnforcesAccessAndCloses(t *testing.T) {
 	cfg := config.Config{Observability: config.ObservabilityConfig{
 		Metrics:     config.MetricsObservabilityConfig{Enabled: true, Path: "/metrics", Bind: "127.0.0.1:0", Access: "authenticated"},
-		Cardinality: config.CardinalityObservabilityConfig{HashVersion: "sha256-64-v1"},
+		Cardinality: config.CardinalityObservabilityConfig{HashVersion: "sha256-64-v1", Tenant: config.CardinalityDimensionConfig{Budget: 1}, Model: config.CardinalityDimensionConfig{Budget: 1}, Tool: config.CardinalityDimensionConfig{Budget: 1}},
 	}}
 	s, err := newObservability(context.Background(), cfg, &bytes.Buffer{})
 	if err != nil {
