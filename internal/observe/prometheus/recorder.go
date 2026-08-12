@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/observe/metricspolicy"
 	client "github.com/prometheus/client_golang/prometheus"
@@ -129,52 +128,8 @@ func (r *Recorder) label(d metricspolicy.Dimension, v, metric string) string {
 }
 func (r *Recorder) Project(_ context.Context, rec observe.Record) error {
 	started := time.Now()
-	outcome := normalizedOutcome(rec.Outcome)
-	if outcome == "" {
-		outcome = "success"
-	}
 	r.projectionTotal.WithLabelValues(rec.EventName, "success").Inc()
 	r.projectionDuration.WithLabelValues("success").Observe(time.Since(started).Seconds())
-	if rec.EventName == string(event.KindTurnStart) {
-		tenant := r.label(metricspolicy.TenantID, string(rec.TenantID), "fuse_loop_active")
-		key := tenant + "\x00" + string(rec.Operation)
-		r.mu.Lock()
-		r.active[key]++
-		n := r.active[key]
-		r.mu.Unlock()
-		r.loopActive.WithLabelValues(tenant, string(rec.Operation)).Set(float64(n))
-		return nil
-	}
-	if rec.EventName == string(event.KindTurnEnd) || rec.EventName == string(event.KindLoopParked) || rec.EventName == string(event.KindError) {
-		tenant := r.label(metricspolicy.TenantID, string(rec.TenantID), "fuse_loop_operations_total")
-		r.loopTotal.WithLabelValues(tenant, string(rec.Operation), outcome).Inc()
-		activeTenant := r.label(metricspolicy.TenantID, string(rec.TenantID), "fuse_loop_active")
-		key := activeTenant + "\x00" + string(rec.Operation)
-		r.mu.Lock()
-		if r.active[key] > 0 {
-			r.active[key]--
-		}
-		n := r.active[key]
-		if n == 0 {
-			delete(r.active, key)
-		}
-		r.mu.Unlock()
-		r.loopActive.WithLabelValues(activeTenant, string(rec.Operation)).Set(float64(n))
-	}
-	if rec.EventName == string(event.KindModelCallEnd) {
-		tenant := r.label(metricspolicy.TenantID, string(rec.TenantID), "fuse_model_calls_total")
-		model := r.label(metricspolicy.Model, "", "fuse_model_calls_total")
-		r.modelTotal.WithLabelValues(tenant, model, outcome).Inc()
-	}
-	if rec.EventName == string(event.KindToolResult) {
-		tenant := r.label(metricspolicy.TenantID, string(rec.TenantID), "fuse_tool_calls_total")
-		tool := r.label(metricspolicy.Tool, "", "fuse_tool_calls_total")
-		r.toolTotal.WithLabelValues(tenant, tool, outcome).Inc()
-	}
-	if rec.EventName == string(event.KindSpawnDone) {
-		tenant := r.label(metricspolicy.TenantID, string(rec.TenantID), "fuse_spawn_operations_total")
-		r.spawnTotal.WithLabelValues(tenant, outcome).Inc()
-	}
 	return nil
 }
 
@@ -204,4 +159,90 @@ func (r *Recorder) ObserveTool(tenant, tool string, outcome observe.Outcome, d t
 	t = r.label(metricspolicy.TenantID, tenant, "fuse_tool_call_duration_seconds")
 	v = r.label(metricspolicy.Tool, tool, "fuse_tool_call_duration_seconds")
 	r.toolDuration.WithLabelValues(t, v, o).Observe(d.Seconds())
+}
+
+// ObserveOperation is the authoritative path for operation metrics. Event
+// projection intentionally records only projection health: durable events do
+// not retain an operation's duration, model/tool identity, or terminal result.
+func (r *Recorder) ObserveOperation(tenant string, d observe.Descriptor) observe.Handle {
+	operation := string(d.Kind)
+	mappedTenant := r.label(metricspolicy.TenantID, tenant, "fuse_loop_active")
+	key := mappedTenant + "\x00" + operation
+	r.mu.Lock()
+	r.active[key]++
+	active := r.active[key]
+	r.mu.Unlock()
+	r.loopActive.WithLabelValues(mappedTenant, operation).Set(float64(active))
+	return &operationHandle{recorder: r, tenant: tenant, descriptor: d, started: time.Now(), activeKey: key, activeTenant: mappedTenant}
+}
+
+type operationHandle struct {
+	recorder     *Recorder
+	tenant       string
+	descriptor   observe.Descriptor
+	started      time.Time
+	activeKey    string
+	activeTenant string
+	once         sync.Once
+}
+
+func (h *operationHandle) End(outcome observe.Outcome, _ ...observe.Field) {
+	if h == nil || h.recorder == nil {
+		return
+	}
+	h.once.Do(func() {
+		r := h.recorder
+		r.mu.Lock()
+		if r.active[h.activeKey] > 1 {
+			r.active[h.activeKey]--
+		} else {
+			delete(r.active, h.activeKey)
+		}
+		active := r.active[h.activeKey]
+		r.mu.Unlock()
+		r.loopActive.WithLabelValues(h.activeTenant, string(h.descriptor.Kind)).Set(float64(active))
+		o := normalizedOutcome(outcome)
+		if o == "" {
+			o = string(observe.OutcomeSuccess)
+		}
+		operation := string(h.descriptor.Kind)
+		tenant := r.label(metricspolicy.TenantID, h.tenant, "fuse_loop_operations_total")
+		r.loopTotal.WithLabelValues(tenant, operation, o).Inc()
+		tenant = r.label(metricspolicy.TenantID, h.tenant, "fuse_loop_operation_duration_seconds")
+		r.loopDuration.WithLabelValues(tenant, operation, o).Observe(time.Since(h.started).Seconds())
+
+		switch h.descriptor.Kind {
+		case observe.OperationModelAttempt:
+			r.ObserveModel(h.tenant, field(h.descriptor.Fields, "model"), observe.Outcome(o), time.Since(h.started), 1)
+		case observe.OperationTool:
+			r.ObserveTool(h.tenant, field(h.descriptor.Fields, "tool"), observe.Outcome(o), time.Since(h.started))
+		case observe.OperationSpawn:
+			tenant = r.label(metricspolicy.TenantID, h.tenant, "fuse_spawn_operations_total")
+			r.spawnTotal.WithLabelValues(tenant, o).Inc()
+			tenant = r.label(metricspolicy.TenantID, h.tenant, "fuse_spawn_operation_duration_seconds")
+			r.spawnDuration.WithLabelValues(tenant, o).Observe(time.Since(h.started).Seconds())
+		}
+	})
+}
+
+func field(fields []observe.Field, key string) string {
+	for _, f := range fields {
+		if f.Key == key {
+			return f.Value
+		}
+	}
+	return ""
+}
+
+// ObserveExportError and ObserveDrop expose bounded health signals from the
+// asynchronous projection path; neither operation is allowed to affect loops.
+func (r *Recorder) ObserveExportError(signal, reason string) {
+	r.exportErrors.WithLabelValues(signal, reason).Inc()
+}
+func (r *Recorder) ObserveDrop(signal, reason string) {
+	r.dropped.WithLabelValues(signal, reason).Inc()
+}
+func (r *Recorder) ObserveReopen(outcome string) { r.reopens.WithLabelValues(outcome).Inc() }
+func (r *Recorder) SetOverrides(scope string, value float64) {
+	r.overrides.WithLabelValues(scope).Set(value)
 }

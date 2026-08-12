@@ -48,6 +48,50 @@ type observabilityService struct {
 	closeErr        error
 }
 
+// metricsObserver is the sole source of operation metrics. It keeps the primary
+// observer (normally OTEL) authoritative for context propagation while recording
+// metrics from the same start/end boundary, where duration, terminal outcome,
+// and bounded model/tool identity are still available.
+type metricsObserver struct {
+	primary observe.Observer
+	metrics *observeprom.Recorder
+}
+
+type metricsTenantKey struct{}
+
+func (o metricsObserver) Start(ctx context.Context, d observe.Descriptor) (context.Context, observe.Handle) {
+	for _, f := range d.Fields {
+		if f.Key == "tenant" {
+			ctx = context.WithValue(ctx, metricsTenantKey{}, f.Value)
+			break
+		}
+	}
+	ctx, primary := o.primary.Start(ctx, d)
+	tenant, _ := ctx.Value(metricsTenantKey{}).(string)
+	return ctx, joinedHandle{primary: primary, metrics: o.metrics.ObserveOperation(tenant, d)}
+}
+
+func (o metricsObserver) TraceCarrier(ctx context.Context) *event.TraceCarrier {
+	return observe.TraceCarrier(o.primary, ctx)
+}
+
+func (o metricsObserver) StartFromCarrier(ctx context.Context, c *event.TraceCarrier, delayed bool, d observe.Descriptor) (context.Context, observe.Handle) {
+	ctx, primary := observe.StartFromCarrier(o.primary, ctx, c, delayed, d)
+	tenant, _ := ctx.Value(metricsTenantKey{}).(string)
+	return ctx, joinedHandle{primary: primary, metrics: o.metrics.ObserveOperation(tenant, d)}
+}
+
+type joinedHandle struct{ primary, metrics observe.Handle }
+
+func (h joinedHandle) End(outcome observe.Outcome, fields ...observe.Field) {
+	if h.primary != nil {
+		h.primary.End(outcome, fields...)
+	}
+	if h.metrics != nil {
+		h.metrics.End(outcome, fields...)
+	}
+}
+
 func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) (*observabilityService, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -110,9 +154,12 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 		s.provider = observeotel.NewProvider(exporter, batch, sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))))
 		s.observer = observeotel.New(s.provider)
 	}
+	if s.metrics != nil {
+		s.observer = metricsObserver{primary: s.observer, metrics: s.metrics}
+	}
 	if len(projectors) > 0 {
 		s.projector = projectors
-		s.projection = newProjectionDispatcher(projectors, 1024)
+		s.projection = newProjectionDispatcher(projectors, 1024, s.metrics)
 	}
 	return s, nil
 }
@@ -194,6 +241,9 @@ func (s *observabilityService) Reopen(ctx context.Context, actor string) error {
 	outcome := "success"
 	if err != nil {
 		outcome = "error"
+	}
+	if s.metrics != nil {
+		s.metrics.ObserveReopen(outcome)
 	}
 	_ = s.logger.Audit(ctx, observabilitylogging.Audit{Actor: actor, Action: "reopen", Scope: "logging", Outcome: outcome})
 	return err
@@ -350,8 +400,24 @@ func (s *observabilityService) adminHandler(verifier loopauth.Verifier) http.Han
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if err == nil {
+			s.updateOverrideMetrics()
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
+}
+
+func (s *observabilityService) updateOverrideMetrics() {
+	if s == nil || s.metrics == nil || s.levels == nil {
+		return
+	}
+	counts := map[string]float64{"tenant": 0, "loop": 0}
+	for _, override := range s.levels.Inspect().Overrides {
+		counts[string(override.Scope)]++
+	}
+	for scope, count := range counts {
+		s.metrics.SetOverrides(scope, count)
+	}
 }
 
 func (s *observabilityService) reloadHandler(verifier loopauth.Verifier) http.Handler {
@@ -418,6 +484,7 @@ type projectionStats struct {
 // than applying backpressure to the loop.
 type projectionDispatcher struct {
 	projector observe.Projector
+	metrics   *observeprom.Recorder
 	queue     chan observe.Record
 	done      chan struct{}
 	mu        sync.Mutex
@@ -426,11 +493,14 @@ type projectionDispatcher struct {
 	errors    atomic.Uint64
 }
 
-func newProjectionDispatcher(projector observe.Projector, capacity int) *projectionDispatcher {
+func newProjectionDispatcher(projector observe.Projector, capacity int, metrics ...*observeprom.Recorder) *projectionDispatcher {
 	if capacity < 1 {
 		capacity = 1
 	}
 	d := &projectionDispatcher{projector: projector, queue: make(chan observe.Record, capacity), done: make(chan struct{})}
+	if len(metrics) > 0 {
+		d.metrics = metrics[0]
+	}
 	go d.run()
 	return d
 }
@@ -443,12 +513,18 @@ func (d *projectionDispatcher) Enqueue(record observe.Record) {
 	defer d.mu.Unlock()
 	if d.closed {
 		d.dropped.Add(1)
+		if d.metrics != nil {
+			d.metrics.ObserveDrop("projection", "closed")
+		}
 		return
 	}
 	select {
 	case d.queue <- record:
 	default:
 		d.dropped.Add(1)
+		if d.metrics != nil {
+			d.metrics.ObserveDrop("projection", "queue_full")
+		}
 	}
 }
 
@@ -483,6 +559,9 @@ func (d *projectionDispatcher) run() {
 		if d.projector != nil {
 			if err := d.projector.Project(context.Background(), record); err != nil {
 				d.errors.Add(1)
+				if d.metrics != nil {
+					d.metrics.ObserveExportError("projection", "sink_error")
+				}
 			}
 		}
 	}

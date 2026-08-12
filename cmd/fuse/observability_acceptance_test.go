@@ -47,12 +47,16 @@ func TestObservabilityAcceptanceHermetic(t *testing.T) {
 	exporter := tracetest.NewInMemoryExporter()
 	provider := observeotel.NewProvider(exporter, observeotel.BatchConfig{BatchSize: 1, BatchTimeout: time.Millisecond})
 	service.provider = provider
-	service.observer = observeotel.New(provider)
+	service.observer = metricsObserver{primary: observeotel.New(provider), metrics: service.metrics}
 
 	ctx, root := service.observer.Start(context.Background(), observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "start"})
-	ctx, loop := service.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationLoop, Name: "run"})
-	_, model := service.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete"})
+	ctx, loop := service.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationLoop, Name: "run", Fields: []observe.Field{{Key: "tenant", Value: "tenant-a"}}})
+	_, model := service.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete", Fields: []observe.Field{{Key: "model", Value: "model-a"}}})
 	model.End(observe.OutcomeSuccess)
+	_, tool := service.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationTool, Name: "execute", Fields: []observe.Field{{Key: "tool", Value: "tool-a"}}})
+	tool.End(observe.OutcomeError)
+	_, spawn := service.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationSpawn, Name: "child"})
+	spawn.End(observe.OutcomeCanceled)
 	loop.End(observe.OutcomeSuccess)
 	root.End(observe.OutcomeSuccess)
 
@@ -75,7 +79,7 @@ func TestObservabilityAcceptanceHermetic(t *testing.T) {
 	api, apiOK := byName["fuse.api.request.start"]
 	loopSpan, loopOK := byName["fuse.loop.run"]
 	modelSpan, modelOK := byName["fuse.model.attempt.complete"]
-	if len(spans) != 3 || !apiOK || !loopOK || !modelOK || loopSpan.Parent.SpanID() != api.SpanContext.SpanID() || modelSpan.Parent.SpanID() != loopSpan.SpanContext.SpanID() {
+	if len(spans) != 5 || !apiOK || !loopOK || !modelOK || loopSpan.Parent.SpanID() != api.SpanContext.SpanID() || modelSpan.Parent.SpanID() != loopSpan.SpanContext.SpanID() {
 		t.Fatalf("unexpected nested spans: %#v", spans)
 	}
 	if strings.Contains(logs.String(), secret) {
@@ -88,7 +92,7 @@ func TestObservabilityAcceptanceHermetic(t *testing.T) {
 	w := httptest.NewRecorder()
 	service.metrics.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
 	body := w.Body.String()
-	for _, metric := range []string{"fuse_event_projection_total", "fuse_loop_operations_total", "fuse_tool_calls_total", "fuse_spawn_operations_total"} {
+	for _, metric := range []string{"fuse_event_projection_total", "fuse_loop_operations_total", "fuse_loop_operation_duration_seconds", "fuse_model_calls_total", "fuse_model_call_attempts", "fuse_tool_calls_total", "fuse_spawn_operations_total"} {
 		if !strings.Contains(body, metric) {
 			t.Errorf("metrics exposition missing %s", metric)
 		}

@@ -52,15 +52,11 @@ func TestCatalogLabelsAreExactAndSafe(t *testing.T) {
 func TestProjectionActiveCleanupOverflowAndExposition(t *testing.T) {
 	r := testRecorder(t)
 	ctx := context.Background()
-	start := observe.Record{Timestamp: time.Now(), EventName: string(event.KindTurnStart), TenantID: "unknown", Operation: observe.OperationLoop, Outcome: observe.OutcomeSuccess}
-	end := start
-	end.EventName = string(event.KindTurnEnd)
-	if err := r.Project(ctx, start); err != nil {
+	if err := r.Project(ctx, observe.Record{Timestamp: time.Now(), EventName: string(event.KindTurnStart)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Project(ctx, end); err != nil {
-		t.Fatal(err)
-	}
+	loop := r.ObserveOperation("unknown", observe.Descriptor{Kind: observe.OperationLoop})
+	loop.End(observe.OutcomeSuccess)
 	r.ObserveModel("admitted", "m", observe.OutcomeSuccess, 20*time.Millisecond, 2)
 	r.ObserveTool("admitted", "unknown-tool", observe.OutcomeError, time.Millisecond)
 	w := httptest.NewRecorder()
@@ -74,6 +70,28 @@ func TestProjectionActiveCleanupOverflowAndExposition(t *testing.T) {
 		`fuse_metrics_label_admitted_values{dimension="tenant_id"} 1`,
 		`fuse_metrics_label_budget{dimension="tenant_id"} 1`,
 		`fuse_tool_calls_total{outcome="error",tenant_id="admitted",tool="__overflow__"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}
+
+func TestOperationObservationUsesTerminalDataAndDescriptorIdentity(t *testing.T) {
+	r := testRecorder(t)
+	h := r.ObserveOperation("admitted", observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete", Fields: []observe.Field{{Key: "model", Value: "m"}}})
+	time.Sleep(time.Millisecond)
+	h.End(observe.OutcomeTimeout)
+
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`fuse_loop_operations_total{operation="model.attempt",outcome="timeout",tenant_id="admitted"} 1`,
+		`fuse_loop_operation_duration_seconds_count{operation="model.attempt",outcome="timeout",tenant_id="admitted"} 1`,
+		`fuse_model_calls_total{model="m",outcome="timeout",tenant_id="admitted"} 1`,
+		`fuse_model_call_duration_seconds_count{model="m",outcome="timeout",tenant_id="admitted"} 1`,
+		`fuse_model_call_attempts_count{model="m",outcome="timeout",tenant_id="admitted"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s\n%s", want, body)
