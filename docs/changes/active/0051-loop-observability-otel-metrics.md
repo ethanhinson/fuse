@@ -6,11 +6,11 @@ status: in-progress
 priority: medium
 type: feat
 created: 2026-08-10
-updated: 2026-08-11
+updated: 2026-08-12
 depends_on: [46]
 related: [43, 46, 47, 48]
 discovered_from: [46]
-adrs: []
+adrs: [39, 40]
 spec: docs/superpowers/specs/0051-loop-observability-otel-metrics.md
 plan: docs/superpowers/plans/2026-08-12-loop-observability-otel-metrics.md
 results:
@@ -30,6 +30,7 @@ claimed_at: 2026-08-12T04:07:55Z
 |---|---|
 | Spec | [0051-loop-observability-otel-metrics.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0051-loop-observability-otel-metrics.md) |
 | Plan | [2026-08-12-loop-observability-otel-metrics.md](https://github.com/ethanhinson/fuse/blob/feat/loop-observability-otel-metrics/docs/superpowers/plans/2026-08-12-loop-observability-otel-metrics.md) |
+| ADRs | [ADR-0039](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0039-committed-event-telemetry-dispatch-bounded-lossy.md), [ADR-0040](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0040-provider-neutral-composite-observer.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
