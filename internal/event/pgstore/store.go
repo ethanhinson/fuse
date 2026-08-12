@@ -178,6 +178,17 @@ func (s *PGStore) AppendCommitted(ctx context.Context, key event.StreamKey, e ev
 	if len(e.Payload) > 0 {
 		payload = []byte(e.Payload)
 	}
+	var trace []byte
+	if e.Trace != nil {
+		if err := e.Trace.Validate(); err != nil {
+			return event.Event{}, fmt.Errorf("pgstore: trace: %w", err)
+		}
+		encodedTrace, err := json.Marshal(e.Trace)
+		if err != nil {
+			return event.Event{}, fmt.Errorf("pgstore: marshal trace: %w", err)
+		}
+		trace = encodedTrace
+	}
 
 	var seq int64
 	tx, err := s.pool.Begin(ctx)
@@ -197,12 +208,12 @@ func (s *PGStore) AppendCommitted(ctx context.Context, key event.StreamKey, e ev
 	}
 
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO events (tenant_id, loop_id, seq, ts, kind, node_id, parent_id, depth, turn, payload)
+		`INSERT INTO events (tenant_id, loop_id, seq, ts, kind, node_id, parent_id, depth, turn, payload, trace)
 		 VALUES ($1, $2,
 		         (SELECT COALESCE(MAX(seq),0)+1 FROM events WHERE tenant_id=$1 AND loop_id=$2),
-		         $3, $4, $5, $6, $7, $8, $9)
+		         $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING seq`,
-		tenant, loop, e.TS, string(e.Kind), e.NodeID, e.ParentID, e.Depth, e.Turn, payload,
+		tenant, loop, e.TS, string(e.Kind), e.NodeID, e.ParentID, e.Depth, e.Turn, payload, trace,
 	).Scan(&seq); err != nil {
 		return event.Event{}, fmt.Errorf("pgstore: insert: %w", err)
 	}
@@ -232,7 +243,7 @@ func (s *PGStore) Replay(ctx context.Context, key event.StreamKey, from event.Se
 	}
 	nk := normalizeKey(key)
 	rows, err := s.pool.Query(ctx,
-		`SELECT seq, ts, kind, node_id, parent_id, depth, turn, payload
+		`SELECT seq, ts, kind, node_id, parent_id, depth, turn, payload, trace
 		 FROM events
 		 WHERE tenant_id=$1 AND loop_id=$2 AND seq>$3
 		 ORDER BY seq`,
@@ -260,7 +271,7 @@ func (s *PGStore) Replay(ctx context.Context, key event.StreamKey, from event.Se
 // fetchOne reads a single event row by (tenant, loop, seq) for the LISTEN worker.
 func (s *PGStore) fetchOne(ctx context.Context, tenant, loop string, seq event.Seq) (event.Event, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT seq, ts, kind, node_id, parent_id, depth, turn, payload
+		`SELECT seq, ts, kind, node_id, parent_id, depth, turn, payload, trace
 		 FROM events WHERE tenant_id=$1 AND loop_id=$2 AND seq=$3`,
 		tenant, loop, int64(seq),
 	)
@@ -282,8 +293,9 @@ func scanEvent(r rowScanner) (event.Event, error) {
 		depth    int
 		turn     int
 		payload  []byte
+		trace    []byte
 	)
-	if err := r.Scan(&seq, &ts, &kind, &nodeID, &parentID, &depth, &turn, &payload); err != nil {
+	if err := r.Scan(&seq, &ts, &kind, &nodeID, &parentID, &depth, &turn, &payload, &trace); err != nil {
 		return event.Event{}, err
 	}
 	ev := event.Event{
@@ -297,6 +309,13 @@ func scanEvent(r rowScanner) (event.Event, error) {
 	}
 	if len(payload) > 0 {
 		ev.Payload = json.RawMessage(payload)
+	}
+	if len(trace) > 0 {
+		var carrier event.TraceCarrier
+		if err := json.Unmarshal(trace, &carrier); err != nil {
+			return event.Event{}, fmt.Errorf("pgstore: decode trace: %w", err)
+		}
+		ev.Trace = &carrier
 	}
 	return ev, nil
 }

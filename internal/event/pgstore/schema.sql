@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS events (
     depth     int         NOT NULL DEFAULT 0,
     turn      int         NOT NULL DEFAULT 0,
     payload   jsonb,
+    trace     jsonb,
     PRIMARY KEY (tenant_id, loop_id, seq)
 );
 
@@ -41,3 +42,8 @@ CREATE TABLE IF NOT EXISTS loops (
 -- owner_node_id (the liveness/node id); lease_expiry NULL means no lease.
 ALTER TABLE loops ADD COLUMN IF NOT EXISTS owner        text NOT NULL DEFAULT '';
 ALTER TABLE loops ADD COLUMN IF NOT EXISTS lease_expiry timestamptz;
+
+-- Idempotent migration for change 0051 (observability): existing databases
+-- gain the validated W3C trace carrier alongside each event. NULL preserves the
+-- wire shape and semantics of historical events that predate trace context.
+ALTER TABLE events ADD COLUMN IF NOT EXISTS trace jsonb;
