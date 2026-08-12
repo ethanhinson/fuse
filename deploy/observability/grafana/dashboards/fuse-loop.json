@@ -1,0 +1,11 @@
+{"uid":"fuse-loop","title":"Fuse Loop Observability","schemaVersion":41,"version":1,"refresh":"30s","panels":[
+{"title":"Loop throughput","type":"timeseries","targets":[{"expr":"sum(rate(fuse_loop_operations_total[5m])) by (outcome)"}]},
+{"title":"Loop outcomes","type":"piechart","targets":[{"expr":"sum(increase(fuse_loop_operations_total[$__range])) by (outcome)"}]},
+{"title":"Loop p95 latency","type":"timeseries","targets":[{"expr":"histogram_quantile(0.95, sum(rate(fuse_loop_operation_duration_seconds_bucket[5m])) by (le, operation))"}]},
+{"title":"Active loops","type":"stat","targets":[{"expr":"sum(fuse_loop_active)"}]},
+{"title":"Model retries and timeouts","type":"timeseries","targets":[{"expr":"sum(rate(fuse_model_call_attempts_count[5m])) by (model, outcome)"},{"expr":"sum(rate(fuse_model_calls_total{outcome=\"timeout\"}[5m])) by (model)"}]},
+{"title":"Tool and spawn failures","type":"timeseries","targets":[{"expr":"sum(rate(fuse_tool_calls_total{outcome=\"error\"}[5m])) by (tool)"},{"expr":"sum(rate(fuse_spawn_operations_total{outcome=\"error\"}[5m]))"}]},
+{"title":"Projector and exporter failures","type":"timeseries","targets":[{"expr":"sum(rate(fuse_event_projection_total{outcome=\"error\"}[5m])) by (event_kind)"},{"expr":"sum(rate(fuse_observability_export_errors_total[5m])) by (signal, reason)"}]},
+{"title":"Observation drops","type":"timeseries","targets":[{"expr":"sum(rate(fuse_observability_dropped_total[5m])) by (signal, reason)"}]},
+{"title":"Active log overrides","type":"stat","targets":[{"expr":"sum(fuse_observability_log_overrides) by (scope)"}]},
+{"title":"Cardinality health","type":"timeseries","targets":[{"expr":"fuse_metrics_label_admitted_values"},{"expr":"fuse_metrics_label_budget"},{"expr":"sum(rate(fuse_metrics_label_overflow_total[5m])) by (dimension)"}]}]}

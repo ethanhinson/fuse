@@ -1,0 +1,18 @@
+groups:
+  - name: fuse-observability
+    rules:
+      - alert: FuseHighErrorRate
+        expr: sum(rate(fuse_loop_operations_total{tenant_id!="__overflow__",outcome="error"}[5m])) by (tenant_id) / clamp_min(sum(rate(fuse_loop_operations_total{tenant_id!="__overflow__"}[5m])) by (tenant_id), 0.001) > 0.05
+        for: 10m
+      - alert: FuseHighLatency
+        expr: histogram_quantile(0.95, sum(rate(fuse_loop_operation_duration_seconds_bucket{tenant_id!="__overflow__"}[5m])) by (le, tenant_id, operation)) > 10
+        for: 10m
+      - alert: FuseOverflowAttributionIncomplete
+        expr: increase(fuse_metrics_label_overflow_total[10m]) > 0
+        for: 5m
+      - alert: FuseExporterErrors
+        expr: increase(fuse_observability_export_errors_total[10m]) > 0
+        for: 5m
+      - alert: FuseDroppedObservations
+        expr: increase(fuse_observability_dropped_total[10m]) > 0
+        for: 5m
