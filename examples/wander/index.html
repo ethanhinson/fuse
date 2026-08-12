@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wander — vacation-rental concierge</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">🏝️ Wander</div>
+      <div class="conn" id="conn" data-state="idle">
+        <span class="dot"></span>
+        <span class="label" id="conn-label">idle</span>
+      </div>
+    </header>
+
+    <main class="chat" id="chat" aria-live="polite">
+      <div class="msg concierge">
+        <div class="who">Concierge</div>
+        <div class="text">
+          Hi! I'm your Wander concierge. Ask me about vacation rentals — try
+          "beachfront, sleeps 6, under $300/night".
+        </div>
+      </div>
+    </main>
+
+    <form class="composer" id="composer">
+      <input
+        id="input"
+        type="text"
+        autocomplete="off"
+        placeholder="Ask about rentals…"
+        aria-label="Message the concierge"
+      />
+      <button id="send" type="submit">Send</button>
+    </form>
+
+    <!--
+      app.js drives the concierge entirely through @fuse/sdk's PUBLIC API (createClient →
+      startLoop / send / observe / isCompletion), never the generated Connect stubs. The
+      SDK is bundled to ./vendor/fuse-sdk.js by build.sh (esbuild). The bundle points its
+      connect-web transport at the same origin — server.js reverse-proxies the Connect path
+      to `fuse loop-serve-net`, so the browser stays same-origin (no CORS) while the SDK
+      still speaks Connect DIRECTLY (no WS relay, no protocol re-implementation).
+    -->
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

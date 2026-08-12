@@ -1,0 +1,170 @@
+:root {
+  --bg: #0f1720;
+  --panel: #16212e;
+  --panel-2: #1d2b3a;
+  --text: #e6edf3;
+  --muted: #8aa0b4;
+  --accent: #34c3a0;
+  --user: #2b6cb0;
+  --live: #34c3a0;
+  --reconnecting: #d9a441;
+  --closed: #6b7785;
+  --error: #e0533d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  background: var(--panel);
+  border-bottom: 1px solid #0a1119;
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.conn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.conn .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--closed);
+}
+
+.conn[data-state="connecting"] .dot {
+  background: var(--reconnecting);
+  animation: pulse 1s infinite;
+}
+.conn[data-state="live"] .dot {
+  background: var(--live);
+}
+.conn[data-state="reconnecting"] .dot {
+  background: var(--reconnecting);
+  animation: pulse 0.8s infinite;
+}
+.conn[data-state="closed"] .dot,
+.conn[data-state="idle"] .dot {
+  background: var(--closed);
+}
+.conn[data-state="error"] .dot {
+  background: var(--error);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.chat {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.msg {
+  max-width: 70%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.msg .who {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.msg.concierge {
+  align-self: flex-start;
+  background: var(--panel-2);
+}
+
+.msg.user {
+  align-self: flex-end;
+  background: var(--user);
+}
+
+.msg.tool {
+  align-self: flex-start;
+  background: transparent;
+  color: var(--muted);
+  font-style: italic;
+  font-size: 0.85rem;
+  padding: 2px 14px;
+}
+
+.msg.error {
+  align-self: center;
+  background: transparent;
+  color: var(--error);
+  font-size: 0.85rem;
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  padding: 14px 18px;
+  background: var(--panel);
+  border-top: 1px solid #0a1119;
+}
+
+.composer input {
+  flex: 1;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid #24384a;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.composer button {
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: #06110d;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.composer button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
