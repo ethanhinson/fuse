@@ -6,6 +6,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -31,6 +32,7 @@ type Renderer interface {
 
 // Agent binds a model, a tool set, a renderer, and run limits.
 type Agent struct {
+	observer     observe.Observer
 	model        Completer
 	tools        ToolExecutor
 	renderer     Renderer
@@ -130,6 +132,14 @@ type Agent struct {
 	nodeID   string
 	parentID string
 	depth    int
+}
+
+// SetObserver installs provider-neutral timing observation. Nil selects a no-op.
+func (a *Agent) SetObserver(o observe.Observer) {
+	if o == nil {
+		o = observe.NoopObserver{}
+	}
+	a.observer = o
 }
 
 // ExpectsSink is the shared holder through which a child Agent's loop hands the
@@ -384,5 +394,6 @@ func New(m Completer, t ToolExecutor, r Renderer, modelID, systemPrompt string, 
 		// a.emit(...) call is a no-op until a real store is wired post-New (change
 		// 0043). Mirrors the segment sink's no-op default.
 		eventSink: event.NoopStore{},
+		observer:  observe.NoopObserver{},
 	}
 }

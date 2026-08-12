@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/observe"
 )
 
 // ErrMaxDepthExceeded is returned when a spawn would exceed MaxDepth.
@@ -261,6 +262,15 @@ func WithEventStore(s event.EventStore) Option {
 	}
 }
 
+func WithObserver(o observe.Observer) Option {
+	return func(s *Spawner) {
+		if o == nil {
+			o = observe.NoopObserver{}
+		}
+		s.observer = o
+	}
+}
+
 // Spawner provides the Spawn method for creating child agents.
 type Spawner struct {
 	tree       *AgentTree
@@ -274,11 +284,12 @@ type Spawner struct {
 	// an observer see child completion without holding the handle. Defaults to the
 	// inert NoopStore so a Spawner without WithEventStore never nil-panics.
 	eventStore event.EventStore
+	observer   observe.Observer
 }
 
 // NewSpawner creates a Spawner with the provided options.
 func NewSpawner(opts ...Option) *Spawner {
-	s := &Spawner{eventStore: event.NoopStore{}}
+	s := &Spawner{eventStore: event.NoopStore{}, observer: observe.NoopObserver{}}
 	for _, o := range opts {
 		o(s)
 	}
@@ -289,7 +300,23 @@ func NewSpawner(opts ...Option) *Spawner {
 }
 
 // Spawn creates a child agent running locally in a goroutine.
-func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (AgentHandle, error) {
+func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (h AgentHandle, err error) {
+	ctx, span := s.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationSpawn, Name: "child", Fields: []observe.Field{{Key: "worker", Value: opts.Worker}}})
+	async := false
+	defer func() {
+		if async {
+			return
+		}
+		out := observe.OutcomeSuccess
+		if errors.Is(err, context.Canceled) {
+			out = observe.OutcomeCanceled
+		} else if errors.Is(err, context.DeadlineExceeded) {
+			out = observe.OutcomeTimeout
+		} else if err != nil {
+			out = observe.OutcomeError
+		}
+		span.End(out)
+	}()
 	newDepth := s.depth + 1
 	if newDepth > MaxDepth {
 		return AgentHandle{}, fmt.Errorf("%w: depth %d > %d", ErrMaxDepthExceeded, newDepth, MaxDepth)
@@ -331,10 +358,12 @@ func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (AgentHandle, error
 			return AgentHandle{}, err
 		}
 	}
-	return s.spawnLocal(ctx, opts, newDepth)
+	h, err = s.spawnLocal(ctx, opts, newDepth, span)
+	async = err == nil
+	return h, err
 }
 
-func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (AgentHandle, error) {
+func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int, span observe.Handle) (AgentHandle, error) {
 	parentID := ""
 	if s.node != nil {
 		parentID = s.node.ID
@@ -425,6 +454,7 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 					s.tree.Emit(TreeUpdate{NodeID: node.ID})
 				}
 				doneCh <- SpawnDone{Err: childCtx.Err()}
+				span.End(observe.OutcomeCanceled)
 				return
 			}
 			defer sched.releaseSlot()
@@ -569,6 +599,15 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int) (Ag
 			eventErr = re
 		}
 		s.emitSpawnDone(node, result, eventErr, structured)
+		out := observe.OutcomeSuccess
+		if errors.Is(eventErr, context.Canceled) {
+			out = observe.OutcomeCanceled
+		} else if errors.Is(eventErr, context.DeadlineExceeded) {
+			out = observe.OutcomeTimeout
+		} else if eventErr != nil {
+			out = observe.OutcomeError
+		}
+		span.End(out)
 		doneCh <- SpawnDone{Result: result, Err: runErr, Structured: structured}
 	}()
 

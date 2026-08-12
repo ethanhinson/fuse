@@ -18,12 +18,15 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopauth"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
+	"github.com/ethanhinson/fuse/internal/observe"
+	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
 	"github.com/ethanhinson/fuse/internal/runtime"
 )
 
@@ -32,7 +35,8 @@ import (
 // string maps to event.TenantID and is threaded to the seam call, never dropped
 // (cache-over-tenant-scoped-source-reassert-key-on-hit).
 type Handler struct {
-	rt runtime.Runtime
+	rt       runtime.Runtime
+	observer observe.Observer
 
 	// registry is the OPTIONAL durable loop registry the edge reads (Resolve) to
 	// authorize per-loop access and writes (Register) to record Owner at StartLoop.
@@ -64,7 +68,14 @@ var _ loopv1connect.LoopServiceHandler = (*Handler)(nil)
 // NewHandler builds a Handler over rt. Loops launch under context.Background() unless
 // a lifetime context is supplied via WithBaseContext.
 func NewHandler(rt runtime.Runtime) *Handler {
-	return &Handler{rt: rt, baseCtx: context.Background()}
+	return &Handler{rt: rt, baseCtx: context.Background(), observer: observe.NoopObserver{}}
+}
+
+func (h *Handler) WithObserver(o observe.Observer) *Handler {
+	if o != nil {
+		h.observer = o
+	}
+	return h
 }
 
 // WithBaseContext sets the loop-lifetime context StartLoop launches loops under (the
@@ -136,15 +147,23 @@ func (h *Handler) authorizeLoop(ctx context.Context, tenant event.TenantID, loop
 // authoritative (a mismatching wire tenant is a spoof → CodePermissionDenied) and the
 // principal's subject is recorded as the loop's Owner right after creation.
 func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.StartLoopRequest]) (*connect.Response[loopv1.StartLoopResponse], error) {
+	ctx, apiSpan := h.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "start_loop"})
+	apiOutcome := observe.OutcomeSuccess
+	defer func() { apiSpan.End(apiOutcome) }()
 	m := req.Msg
 	tenant, p, havePrincipal, aerr := h.effectiveTenant(ctx, m.Tenant)
 	if aerr != nil {
+		apiOutcome = observe.OutcomeError
 		return nil, aerr
+	}
+	loopBase := h.baseCtx
+	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
+		loopBase = trace.ContextWithSpanContext(loopBase, sc)
 	}
 	// Launch under the LOOP-LIFETIME context, NOT the per-request ctx (which connect
 	// cancels the moment this unary RPC returns — that would kill the loop before its
 	// first turn). See Handler.baseCtx.
-	handle, err := h.rt.StartLoop(h.baseCtx, runtime.LoopConfig{
+	handle, err := h.rt.StartLoop(loopBase, runtime.LoopConfig{
 		Task:    m.Task,
 		ModelID: m.Model,
 		Tenant:  tenant,
@@ -158,6 +177,7 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		Interactive: m.Interactive,
 	})
 	if err != nil {
+		apiOutcome = observe.OutcomeError
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	// Record ownership. The seam's StartLoop already Registered the record (with
@@ -167,10 +187,15 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 	// auth-free: the runtime never learns the authorization subject.
 	if h.registry != nil && havePrincipal {
 		if aerr := h.recordOwner(h.baseCtx, tenant, handle.ID(), p.Subject); aerr != nil {
+			apiOutcome = observe.OutcomeError
 			return nil, aerr
 		}
 	}
-	return connect.NewResponse(&loopv1.StartLoopResponse{LoopId: handle.ID()}), nil
+	resp := connect.NewResponse(&loopv1.StartLoopResponse{LoopId: handle.ID()})
+	if id := observeotel.TraceID(ctx); id != "" {
+		resp.Header().Set("Fuse-Trace-Id", id)
+	}
+	return resp, nil
 }
 
 // recordOwner sets Owner = subject on the just-created loop's record via a Resolve-

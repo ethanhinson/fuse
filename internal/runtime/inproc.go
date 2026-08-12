@@ -11,6 +11,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/event/fsstore"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -27,6 +28,8 @@ var ErrLoopFinished = errors.New("runtime: loop finished")
 // Deps are the binding-supplied collaborators the Runtime composes. None are
 // renderer/TUI/gate types; a binding wires those around the Runtime, not into it.
 type Deps struct {
+	// Observer receives timing-only lifecycle signals. Nil is identical to a no-op.
+	Observer observe.Observer
 	// BuildAgent is the per-loop construction factory: for one loop it builds the
 	// root *agent.Agent AND the loop's child-builder, both bound to THIS loop's own
 	// event store and tree (the two per-loop values the Runtime opens/creates at
@@ -144,6 +147,9 @@ type loop struct {
 // deps.BaseDir/<rootID> at StartLoop time. It returns the Runtime interface so a
 // binding consumes the seam abstractly (the concrete *inProcRuntime is unexported).
 func New(deps Deps) Runtime {
+	if deps.Observer == nil {
+		deps.Observer = observe.NoopObserver{}
+	}
 	return &inProcRuntime{deps: deps, loops: map[string]*loop{}}
 }
 
@@ -212,6 +218,14 @@ func (r *inProcRuntime) startLeaseRenewer(ctx context.Context, key event.StreamK
 // SetNodeIdentity + Agent.Run; the run executes in a goroutine and the returned
 // handle awaits it.
 func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHandle, error) {
+	loopCtx, loopSpan := r.deps.Observer.Start(ctx, observe.Descriptor{Kind: observe.OperationLoop, Name: "run", Fields: []observe.Field{{Key: "tenant", Value: string(event.NormalizeTenant(cfg.Tenant))}}})
+	ended := false
+	end := func(out observe.Outcome) {
+		if !ended {
+			ended = true
+			loopSpan.End(out)
+		}
+	}
 	// Use a caller-supplied tree when the binding externally observes it
 	// (research-probe/shell keep their tree for probe.Summarize / rendering); else
 	// create one from cfg + MaxConcurrent.
@@ -240,6 +254,7 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	} else {
 		fs, err := fsstore.NewFSEventStore(r.deps.BaseDir, rootID)
 		if err != nil {
+			end(observe.OutcomeError)
 			return nil, fmt.Errorf("runtime: open event store: %w", err)
 		}
 		store = fs
@@ -256,6 +271,7 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		// lease on a still-live record as abandoned (see resolveDurable's reap/re-own).
 		leaseExpiry := r.now().Add(r.leaseTTL())
 		if err := r.deps.Registry.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: rootID, Live: true, LeaseExpiry: leaseExpiry}); err != nil {
+			end(observe.OutcomeError)
 			return nil, fmt.Errorf("runtime: register loop: %w", err)
 		}
 	}
@@ -284,8 +300,10 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		if r.deps.LoopTeardown != nil {
 			r.deps.LoopTeardown(toolReg)
 		}
+		end(observe.OutcomeError)
 		return nil, fmt.Errorf("runtime: build agent: %w", err)
 	}
+	a.SetObserver(r.deps.Observer)
 	a.SetEventSink(store)
 	a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
 
@@ -342,14 +360,23 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	// so the MCP egress mints per-principal, per-tenant tokens. Per-loop and applied
 	// once here, so it holds for every turn without per-turn re-plumbing; two concurrent
 	// loops derive independent contexts and never cross.
-	runCtx := ctx
+	runCtx := loopCtx
 	if r.deps.LoopContext != nil {
-		runCtx = r.deps.LoopContext(ctx, cfg)
+		runCtx = r.deps.LoopContext(loopCtx, cfg)
 	}
 
 	go func() {
 		defer close(h.done)
 		msgs, rerr := a.Run(runCtx, []model.Message{{Role: "user", Content: cfg.Task}})
+		out := observe.OutcomeSuccess
+		if errors.Is(rerr, context.DeadlineExceeded) {
+			out = observe.OutcomeTimeout
+		} else if errors.Is(rerr, context.Canceled) {
+			out = observe.OutcomeCanceled
+		} else if rerr != nil {
+			out = observe.OutcomeError
+		}
+		end(out)
 		h.msgs, h.err = msgs, rerr
 		// Stop the lease renewer FIRST so it can no longer race a Heartbeat past the
 		// SetLive(false) below (a stray post-completion Heartbeat would re-mark a stale
@@ -566,6 +593,7 @@ func (r *inProcRuntime) Spawn(ctx context.Context, loopID string, opts SpawnOpts
 		agent.WithEventStore(lp.store),        // spawn.start/spawn.done land on the same stream
 		agent.WithChildBuilder(lp.buildChild), // the binding's per-loop child policy
 		agent.WithHumanBus(lp.humanBus),       // bubble a child's undelivered messages up
+		agent.WithObserver(r.deps.Observer),
 	)
 	h, herr := spawner.Spawn(ctx, agent.SpawnOpts{
 		Label:        opts.Label,

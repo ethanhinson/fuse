@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
@@ -503,7 +504,17 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			Model:    a.modelID,
 			MsgCount: len(req.Messages),
 		})
-		resp, err := a.model.Complete(ctx, req)
+		modelCtx, modelSpan := a.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete", Fields: []observe.Field{{Key: "model", Value: a.modelID}}})
+		resp, err := a.model.Complete(modelCtx, req)
+		modelOutcome := observe.OutcomeSuccess
+		if errors.Is(err, context.DeadlineExceeded) {
+			modelOutcome = observe.OutcomeTimeout
+		} else if errors.Is(err, context.Canceled) {
+			modelOutcome = observe.OutcomeCanceled
+		} else if err != nil {
+			modelOutcome = observe.OutcomeError
+		}
+		modelSpan.End(modelOutcome)
 		if err != nil {
 			// The estimate said we fit but the provider disagreed: prune hard
 			// (deterministic — recovery must not depend on another LLM call)
@@ -808,7 +819,17 @@ func userTurns(msgs []model.Message) []model.Message {
 // context is cancelled (so a well-behaved tool unwinds) and an error Result is
 // returned to the model describing what happened; the underlying goroutine is
 // left to observe cancellation on its own rather than blocking the loop.
-func (a *Agent) executeToolBounded(ctx context.Context, call model.ToolCall) tools.Result {
+func (a *Agent) executeToolBounded(ctx context.Context, call model.ToolCall) (result tools.Result) {
+	ctx, span := a.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationTool, Name: "execute", Fields: []observe.Field{{Key: "tool", Value: call.Name}}})
+	out := observe.OutcomeSuccess
+	defer func() {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			out = observe.OutcomeCanceled
+		} else if result.IsError && out == observe.OutcomeSuccess {
+			out = observe.OutcomeError
+		}
+		span.End(out)
+	}()
 	if toolTimeoutExempt(call.Name) {
 		return a.tools.Execute(ctx, call.Name, call.Arguments)
 	}
@@ -831,12 +852,14 @@ func (a *Agent) executeToolBounded(ctx context.Context, call model.ToolCall) too
 		// Distinguish a per-tool timeout from overall cancellation so the model
 		// gets an actionable message rather than a bare context error.
 		if errors.Is(tctx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			out = observe.OutcomeTimeout
 			return tools.Result{
 				IsError: true,
 				Output: fmt.Sprintf("tool %q exceeded the %s per-call timeout and was abandoned; "+
 					"try a narrower or faster invocation", call.Name, timeout),
 			}
 		}
+		out = observe.OutcomeCanceled
 		return tools.Result{IsError: true, Output: fmt.Sprintf("tool %q cancelled: %v", call.Name, tctx.Err())}
 	}
 }

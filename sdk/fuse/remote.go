@@ -9,6 +9,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/event"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
+	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
 )
 
 // remoteBackend dials the fuse.loop.v1 Connect service over HTTP. It presents the
@@ -54,9 +55,14 @@ func (b bearerInterceptor) set(h http.Header) {
 	}
 }
 
+func (b bearerInterceptor) setContext(ctx context.Context, h http.Header) {
+	b.set(h)
+	observeotel.Inject(ctx, h)
+}
+
 func (b bearerInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		b.set(req.Header())
+		b.setContext(ctx, req.Header())
 		return next(ctx, req)
 	}
 }
@@ -64,7 +70,7 @@ func (b bearerInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 func (b bearerInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
 	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
 		conn := next(ctx, spec)
-		b.set(conn.RequestHeader())
+		b.setContext(ctx, conn.RequestHeader())
 		return conn
 	}
 }
