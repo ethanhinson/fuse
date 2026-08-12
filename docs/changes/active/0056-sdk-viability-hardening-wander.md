@@ -2,7 +2,7 @@
 id: 56
 slug: sdk-viability-hardening-wander
 title: SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-11
@@ -13,12 +13,12 @@ discovered_from: [50]
 adrs: [37]
 spec: docs/superpowers/specs/2026-08-11-sdk-viability-hardening-wander-design.md
 plan: docs/superpowers/plans/2026-08-11-sdk-viability-hardening-wander-plan.md
-results:
+results: docs/results/2026-08-11-sdk-viability-hardening-wander-results.md
 trivial: false
 auto_groomable:
 branch: feat/sdk-viability-hardening-wander
-claimed_at: 2026-08-12T00:34:00Z
-pr:
+claimed_at: 2026-08-12T00:42:19Z
+pr: https://github.com/ethanhinson/fuse/pull/57
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-11-sdk-viability-hardening-wander-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-sdk-viability-hardening-wander-design.md) |
 | Plan | [2026-08-11-sdk-viability-hardening-wander-plan.md](https://github.com/ethanhinson/fuse/blob/feat/sdk-viability-hardening-wander/docs/superpowers/plans/2026-08-11-sdk-viability-hardening-wander-plan.md) |
+| Results | [2026-08-11-sdk-viability-hardening-wander-results.md](https://github.com/ethanhinson/fuse/blob/feat/sdk-viability-hardening-wander/docs/results/2026-08-11-sdk-viability-hardening-wander-results.md) |
+| PR | [#57](https://github.com/ethanhinson/fuse/pull/57) |
 | ADRs | [ADR-0037](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0037-sdk-observe-terminal-vs-transient-by-connect-code.md) |
 <!-- docket:artifacts:end -->
 
