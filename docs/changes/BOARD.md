@@ -1,6 +1,6 @@
 # Backlog
 
-**60 changes** — 🟡 5 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 47 done · 🗑️ 6 killed
+**60 changes** — 🟡 5 proposed · ⚪ 1 deferred · ✅ 48 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
@@ -18,33 +18,26 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0056](active/0056-sdk-viability-hardening-wander.md) | SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app | `medium` | `feat` | [#57](https://github.com/ethanhinson/fuse/pull/57) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
   0046 --> 0051
   0053 --> 0054
-  0050 --> 0056
   0052 --> 0057
   0052 --> 0058
   0060
   0012:::done
   0046:::done
-  0050:::done
   0052:::done
   0053:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (53)</summary>
+<details><summary>✅🗑️ Archive — done + killed (54)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0056](archive/2026-08-12-0056-sdk-viability-hardening-wander.md) | SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app | 2026-08-12 |
 | [0059](archive/2026-08-11-0059-mcp-full-binding-wiring-e2e-tested.md) | Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths | 2026-08-11 |
 | [0055](archive/2026-08-11-0055-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4.md) | Connect/protobuf transport — IDL-defined loop.* wire, successor to #48 | 2026-08-11 |
 | [0053](archive/2026-08-11-0053-persistent-conversational-loop.md) | Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat | 2026-08-11 |
@@ -59,7 +52,6 @@ graph TD
 | [0043](archive/2026-08-10-0043-runtime-eventstore-seam.md) | Runtime EventStore seam — typed, pluggable, introspectable loop event stream | 2026-08-10 |
 | [0042](archive/2026-08-10-0042-return-result-structured-delegation.md) | Fix structured-delegation (expects) vs tool-calling collision via a return_result tool | 2026-08-10 |
 | [0041](archive/2026-08-09-0041-agents-panel-ux.md) | Agents split-panel UX — focus indicator, reliable scrolling, blackboard readability | 2026-08-09 |
-| [0040](archive/2026-08-09-0040-auto-mode-flow-parity.md) | Auto-mode flow parity — in-workspace edits auto-approve | 2026-08-09 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -71,6 +63,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 32 done |
+| [2026-08](archive/) | 33 done |
 
 </details>
