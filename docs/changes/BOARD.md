@@ -1,12 +1,17 @@
 # Backlog
 
-**60 changes** — 🟡 5 proposed · ⚪ 1 deferred · ✅ 48 done · 🗑️ 6 killed
+**60 changes** — 🟢 1 in progress · 🟡 4 proposed · ⚪ 1 deferred · ✅ 48 done · 🗑️ 6 killed
 
-## 🟡 Proposed (5)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs | `medium` | `feat` | [spec](../superpowers/specs/0051-loop-observability-otel-metrics.md) | `feat/loop-observability-otel-metrics` |
+
+## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs | `medium` | `feat` | build-ready |
 | [0054](active/0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | `medium` | `feat` | needs-brainstorm |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` | needs-brainstorm |
 | [0058](active/0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | `medium` | `feat` | needs-brainstorm |
