@@ -2,7 +2,7 @@
 slug: smoke-over-fake-backend-proves-wire-not-system
 hook: "A cross-language smoke test (real generated client stub → real server handler) run against a FAKE/scripted backend proves the WIRE serializes and round-trips, NOT that the system works end-to-end — and if it t.Skips silently when its toolchain is absent, a green suite hides that the path never ran. Keep the rigorous property test (no-loss/no-dup, real lifecycle) on the authoritative side, run the smoke against the real backend for at least one acceptance, and make the skip loud."
 topics: [testing, integration, streaming, cross-language, ci]
-changes: [55, 50, 49]
+changes: [55, 50, 49, 56]
 created: 2026-08-11
 updated: 2026-08-11
 promotion_state: candidate
@@ -67,3 +67,11 @@ explicit acceptance requirement, or it evaporates behind an optimistic build sum
 **within one change** (a `## Verify` checkbox) rather than as a hand-off to a downstream change (the
 #55→#50 case above). Both are valid discharges; the invariant is that the gap is written down where
 a human will act on it, never left implicit in a green suite.
+
+## War story — 2026-08-12 (#56, PR #57)
+
+The SDK dogfood change made the client-side proof permanent: Wander's browser lane drives the real
+`@fuse/sdk` against a real `connect-go` loop with a scripted gateway, cuts the live Observe stream,
+and asserts reconnect with strictly increasing sequence numbers and no duplicate events. Missing
+node, esbuild, Go, or Playwright tooling is a hard failure rather than a green skip, so the lane
+cannot quietly prove only a fake wire path.

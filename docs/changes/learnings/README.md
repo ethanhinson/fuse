@@ -63,6 +63,11 @@ One curated finding per file; this index is the hint surface. Load it, then read
 - [sanitize-untrusted-bytes-fixed-width-tui](sanitize-untrusted-bytes-fixed-width-tui.md) — Any bytes the model or a tool produced can shear a fixed-width TUI — strip ESC/C0/C1/CR, expand tabs (compositor counts \t as one cell, terminal expands it), NUL-sniff binaries before display, and hard-wrap so no line exceeds pane width · also: rendering, sanitization, bubbletea, terminal
 - [teatest-final-frame-via-finalmodel-view](teatest-final-frame-via-finalmodel-view.md) — teatest's FinalOutput returns the terminal teardown frame after a quit (nearly blank), so a TUI screenshot must render the final model's View() instead; and in a non-TTY test the default lipgloss profile is Ascii (no color), so force termenv.TrueColor around the View() call or the capture is monochrome · also: testing, teatest, bubbletea, lipgloss, screenshots ⟨needs promotion⟩
 
+## typescript
+
+- [abortable-client-stream-teardown](abortable-client-stream-teardown.md) — A browser SDK's long-lived observe stream needs an explicit, idempotent AbortSignal teardown — breaking an async iterator cannot be reached from page lifecycle hooks and leaks one stream per page load. · also: streaming, lifecycle, browser, sdk, resource-leak ⟨needs promotion⟩
+- [connect-stream-terminal-errors-stop-reconnect](connect-stream-terminal-errors-stop-reconnect.md) — A reconnecting Connect stream must classify terminal protocol codes before retrying — auth, permission, missing-loop, and finished-loop errors must close and surface a typed error; retrying them hot-loops forever, while other stream ends remain transient. · also: connect, streaming, error-handling, retries, sdk ⟨needs promotion⟩
+
 ## verification
 
 - [verify-tool-loop-at-gateway-seam](verify-tool-loop-at-gateway-seam.md) — when a change alters what the model sees or does per turn (tool schemas, budgets, strips, caps), verify with the real binary against a scripted LLM_GATEWAY_URL double that logs each request's tools[] — the TUI harness fakes the Completer seam and never exercises the cmd/fuse wiring · also: agents, tui, testing, mcp ⟨needs promotion⟩
