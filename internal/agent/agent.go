@@ -125,6 +125,9 @@ type Agent struct {
 	// EnableSummarization. Emission is best-effort — an Append error is logged and the
 	// turn continues, mirroring segmentSink.Archive.
 	eventSink event.EventStore
+	// eventTrace is captured from Run's active operation context. It is a portable,
+	// validated carrier rather than an OTel type so event emission stays vendor-free.
+	eventTrace *event.TraceCarrier
 	// node identity for emitted events (matches the AgentNode in the spawn tree).
 	// Set post-New via SetNodeIdentity from the site that knows the node (root at
 	// shell.go, children in the spawn closure). Empty/zero on probe/one-shot paths —
@@ -316,6 +319,10 @@ func (a *Agent) emit(kind event.Kind, turn int, payload any) {
 		Depth:    a.depth,
 		Turn:     turn,
 		Kind:     kind,
+	}
+	if a.eventTrace != nil {
+		trace := *a.eventTrace
+		ev.Trace = &trace
 	}
 	if payload != nil {
 		raw, err := event.MarshalPayload(payload)

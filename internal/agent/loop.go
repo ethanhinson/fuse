@@ -350,6 +350,10 @@ func isContextLengthErr(err error) bool {
 // injected as the first message but only for the transport, not persisted into
 // the returned history's head beyond the first run.
 func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Message, error) {
+	// Capture only the repository-owned durable subset once for this operation.
+	// Every emitted transition then carries the same causal context without pulling
+	// a telemetry vendor into the agent package.
+	a.eventTrace = observe.TraceCarrier(a.observer, ctx)
 	messages := history
 	detector := newLoopDetector(loopLimit)
 

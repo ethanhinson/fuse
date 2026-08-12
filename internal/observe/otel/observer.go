@@ -26,6 +26,11 @@ func New(provider trace.TracerProvider) *Observer {
 	return &Observer{tracer: provider.Tracer(instrumentationName)}
 }
 
+// TraceCarrier returns the portable, validated subset of the active span context.
+func (o *Observer) TraceCarrier(ctx context.Context) *event.TraceCarrier {
+	return CarrierFromContext(ctx)
+}
+
 // StartFromCarrier continues immediately-consumed work, while delayed/replayed
 // work receives a new root trace with a causal link to the durable producer.
 func (o *Observer) StartFromCarrier(ctx context.Context, c *event.TraceCarrier, delayed bool, d observe.Descriptor) (context.Context, observe.Handle) {

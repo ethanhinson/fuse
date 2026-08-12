@@ -4,7 +4,11 @@
 // loop packages.
 package observe
 
-import "context"
+import (
+	"context"
+
+	"github.com/ethanhinson/fuse/internal/event"
+)
 
 // OperationKind identifies the bounded class of work being observed. It is a
 // repository-owned vocabulary: adapters must not use it to pass provider names
@@ -53,6 +57,42 @@ type Descriptor struct {
 // for concurrent use by loop execution.
 type Observer interface {
 	Start(context.Context, Descriptor) (context.Context, Handle)
+}
+
+// TraceCarrierProvider exposes the validated, repository-owned trace context for
+// an active operation. It is optional so core callers remain vendor-free.
+type TraceCarrierProvider interface {
+	TraceCarrier(context.Context) *event.TraceCarrier
+}
+
+// CarrierStarter restores a durable carrier before beginning work. Implementers
+// continue immediate work as a child and link delayed/replayed work as a new root.
+type CarrierStarter interface {
+	StartFromCarrier(context.Context, *event.TraceCarrier, bool, Descriptor) (context.Context, Handle)
+}
+
+// TraceCarrier returns a defensive validated copy of the active operation's
+// durable context, or nil when the observer does not support propagation.
+func TraceCarrier(o Observer, ctx context.Context) *event.TraceCarrier {
+	p, ok := o.(TraceCarrierProvider)
+	if !ok || p == nil {
+		return nil
+	}
+	c := p.TraceCarrier(ctx)
+	if c == nil || c.Validate() != nil {
+		return nil
+	}
+	copy := *c
+	return &copy
+}
+
+// StartFromCarrier uses durable context when the installed observer supports it;
+// other providers retain normal observation behavior.
+func StartFromCarrier(o Observer, ctx context.Context, c *event.TraceCarrier, delayed bool, d Descriptor) (context.Context, Handle) {
+	if s, ok := o.(CarrierStarter); ok {
+		return s.StartFromCarrier(ctx, c, delayed, d)
+	}
+	return o.Start(ctx, d)
 }
 
 // Handle completes an operation. Extra fields are terminal safe attributes.

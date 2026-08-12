@@ -2,6 +2,7 @@ package observe
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/ethanhinson/fuse/internal/event"
@@ -31,6 +32,7 @@ type Runner struct {
 	key       event.StreamKey
 	projector Projector
 	report    FailureReporter
+	observer  Observer
 	capacity  int
 
 	mu        sync.Mutex
@@ -39,8 +41,12 @@ type Runner struct {
 	closeOnce sync.Once
 }
 
-func NewRunner(store event.DurableStore, key event.StreamKey, projector Projector, report FailureReporter) *Runner {
-	return &Runner{store: store, key: event.StreamKey{Tenant: event.NormalizeTenant(key.Tenant), Loop: key.Loop}, projector: projector, report: report, capacity: defaultDedupCapacity, closed: make(chan struct{})}
+func NewRunner(store event.DurableStore, key event.StreamKey, projector Projector, report FailureReporter, observers ...Observer) *Runner {
+	o := Observer(NoopObserver{})
+	if len(observers) > 0 && observers[0] != nil {
+		o = observers[0]
+	}
+	return &Runner{store: store, key: event.StreamKey{Tenant: event.NormalizeTenant(key.Tenant), Loop: key.Loop}, projector: projector, report: report, observer: o, capacity: defaultDedupCapacity, closed: make(chan struct{})}
 }
 
 // Close stops a live subscription and is safe to call repeatedly.
@@ -86,7 +92,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 	for _, e := range history {
-		r.project(ctx, e, dedup)
+		r.project(ctx, e, dedup, true)
 	}
 	for {
 		select {
@@ -98,19 +104,35 @@ func (r *Runner) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			r.project(ctx, e, dedup)
+			r.project(ctx, e, dedup, false)
 		}
 	}
 }
 
-func (r *Runner) project(ctx context.Context, e event.Event, dedup *deduper) {
+func (r *Runner) project(ctx context.Context, e event.Event, dedup *deduper, delayed bool) {
 	if !dedup.Add(r.key, e.Seq) || r.projector == nil {
 		return
 	}
 	record := ProjectEvent(r.key, e)
-	if err := r.projector.Project(ctx, record); err != nil && r.report != nil {
+	projectCtx, span := StartFromCarrier(r.observer, ctx, e.Trace, delayed, Descriptor{Kind: record.Operation, Name: "project"})
+	err := r.projector.Project(projectCtx, record)
+	span.End(OutcomeFromProjectionError(err))
+	if err != nil && r.report != nil {
 		r.report(ProjectionFailure{TenantID: record.TenantID, LoopID: record.LoopID, Sequence: record.Sequence, EventName: record.EventName, Category: ErrorCategoryProjection})
 	}
+}
+
+func OutcomeFromProjectionError(err error) Outcome {
+	if err == nil {
+		return OutcomeSuccess
+	}
+	if errors.Is(err, context.Canceled) {
+		return OutcomeCanceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return OutcomeTimeout
+	}
+	return OutcomeError
 }
 
 type dedupKey struct {

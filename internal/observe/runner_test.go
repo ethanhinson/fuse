@@ -130,6 +130,34 @@ func TestRunnerCloseStopsLiveWait(t *testing.T) {
 	}
 }
 
+type carrierStartRecorder struct{ delayed []bool }
+
+func (o *carrierStartRecorder) Start(ctx context.Context, _ Descriptor) (context.Context, Handle) {
+	return ctx, NoopHandle{}
+}
+
+func (o *carrierStartRecorder) StartFromCarrier(ctx context.Context, c *event.TraceCarrier, delayed bool, _ Descriptor) (context.Context, Handle) {
+	if c == nil || c.Validate() != nil {
+		panic("runner started from invalid carrier")
+	}
+	o.delayed = append(o.delayed, delayed)
+	return ctx, NoopHandle{}
+}
+
+// TestRunnerUsesImmediateAndDelayedCarrierStarts proves the durable consumer
+// preserves parentage for live work and uses a link-safe delayed start on replay.
+func TestRunnerUsesImmediateAndDelayedCarrierStarts(t *testing.T) {
+	carrier := &event.TraceCarrier{TraceParent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}
+	observer := &carrierStartRecorder{}
+	runner := NewRunner(nil, event.StreamKey{Tenant: "a", Loop: "l"}, ProjectorFunc(func(context.Context, Record) error { return nil }), nil, observer)
+	dedup := newDeduper(2)
+	runner.project(context.Background(), event.Event{Seq: 1, Kind: event.KindTurnStart, Trace: carrier}, dedup, true)
+	runner.project(context.Background(), event.Event{Seq: 2, Kind: event.KindTurnEnd, Trace: carrier}, dedup, false)
+	if got, want := len(observer.delayed), 2; got != want || !observer.delayed[0] || observer.delayed[1] {
+		t.Fatalf("delayed starts = %v, want [true false]", observer.delayed)
+	}
+}
+
 type interleavingStore struct {
 	history    map[event.StreamKey][]event.Event
 	live       map[event.StreamKey]chan event.Event
