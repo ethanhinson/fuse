@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/observe"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Identity struct {
@@ -76,9 +77,23 @@ func (l *Logger) Project(ctx context.Context, r observe.Record) error {
 	if r.Outcome != observe.OutcomeSuccess {
 		level = LevelError
 	}
-	return l.Log(ctx, Entry{Timestamp: r.Timestamp, Level: level, Name: r.EventName, TenantID: string(r.TenantID), LoopID: string(r.LoopID), NodeID: r.NodeID, Sequence: uint64(r.Sequence), Operation: string(r.Operation), Outcome: string(r.Outcome), ErrorCategory: string(r.ErrorCategory)})
+	return l.Log(ctx, Entry{Timestamp: r.Timestamp, Level: level, Name: r.EventName, TraceID: r.TraceID, SpanID: r.SpanID, TenantID: string(r.TenantID), LoopID: string(r.LoopID), NodeID: r.NodeID, Sequence: uint64(r.Sequence), Operation: string(r.Operation), Outcome: string(r.Outcome), ErrorCategory: string(r.ErrorCategory)})
 }
-func (l *Logger) Log(_ context.Context, e Entry) error {
+func (l *Logger) Log(ctx context.Context, e Entry) error {
+	// Projection dispatch is asynchronous and intentionally uses a detached
+	// context. Committed correlation IDs take precedence; direct logs can still
+	// correlate with an active validated OpenTelemetry span.
+	if ctx != nil && (e.TraceID == "" || e.SpanID == "") {
+		sc := trace.SpanContextFromContext(ctx)
+		if sc.IsValid() {
+			if e.TraceID == "" {
+				e.TraceID = sc.TraceID().String()
+			}
+			if e.SpanID == "" {
+				e.SpanID = sc.SpanID().String()
+			}
+		}
+	}
 	if l.levels != nil && e.Level < l.levels.Effective(e.TenantID, e.LoopID) {
 		return nil
 	}

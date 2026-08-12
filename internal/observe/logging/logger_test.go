@@ -90,6 +90,27 @@ func TestLoggerProjectsObserveRecord(t *testing.T) {
 	}
 }
 
+func TestLoggerProjectsDurableTraceCorrelation(t *testing.T) {
+	w := &recordingWriter{}
+	levels, _ := NewLevels(LevelDebug, time.Hour, time.Now)
+	defer levels.Close()
+	l := New(w, levels, Identity{})
+	err := l.Project(context.Background(), observe.Record{
+		Timestamp: time.Unix(1, 0), EventName: "turn.start", TenantID: event.TenantID("t"), LoopID: event.LoopID("l"),
+		TraceID: "4bf92f3577b34da6a3ce929d0e0e4736", SpanID: "00f067aa0ba902b7",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(w.writes[0]), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["trace_id"] != "4bf92f3577b34da6a3ce929d0e0e4736" || got["span_id"] != "00f067aa0ba902b7" {
+		t.Fatalf("trace correlation = %v", got)
+	}
+}
+
 func TestConcurrentReadMutateExpireReloadReopenShutdown(t *testing.T) {
 	path := t.TempDir() + "/fuse.log"
 	file, err := OpenFile(path)

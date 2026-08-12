@@ -208,7 +208,7 @@ func TestProjectionUsesCommittedDurableEnvelope(t *testing.T) {
 	dispatcher := newProjectionDispatcher(projector, 1)
 	store := projectingDurableStore{CommittedDurableStore: committedEnvelopeStore{}, projection: dispatcher}
 	key := event.StreamKey{Tenant: "tenant-a", Loop: "loop-a"}
-	if err := store.Append(context.Background(), key, event.Event{Kind: event.KindTurnStart}); err != nil {
+	if err := store.Append(context.Background(), key, event.Event{Kind: event.KindTurnStart, Trace: &event.TraceCarrier{TraceParent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", TraceState: "acme=tenant-sensitive-state"}}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -225,6 +225,9 @@ func TestProjectionUsesCommittedDurableEnvelope(t *testing.T) {
 	}
 	if record.TenantID != "tenant-a" || record.LoopID != "loop-a" {
 		t.Fatalf("projection lost stream identity: %#v", record)
+	}
+	if record.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" || record.SpanID != "00f067aa0ba902b7" {
+		t.Fatalf("projection lost committed trace correlation: %#v", record)
 	}
 }
 

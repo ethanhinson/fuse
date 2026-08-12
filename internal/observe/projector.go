@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/event"
@@ -31,14 +32,33 @@ type Record struct {
 	Operation     OperationKind  `json:"operation"`
 	Outcome       Outcome        `json:"outcome"`
 	ErrorCategory ErrorCategory  `json:"error_category"`
+	// TraceID and SpanID preserve only validated correlation identifiers from a
+	// committed envelope. The durable carrier (including tracestate) is never
+	// retained by the payload-free projection.
+	TraceID string `json:"-"`
+	SpanID  string `json:"-"`
 }
 
 // ProjectEvent extracts only envelope identity and bounded classifications. It
-// never retains Event.Payload or Event.Trace; tool results decode only their
-// error marker to choose a fixed category.
+// never retains Event.Payload or Event.Trace; it preserves only the validated
+// trace and span identifiers needed to correlate a projected JSON log with its
+// originating trace. Tool results decode only their error marker to choose a
+// fixed category.
 func ProjectEvent(key event.StreamKey, e event.Event) Record {
 	op, outcome, category := classify(e.Kind, e.Payload)
-	return Record{Timestamp: e.TS, EventName: string(e.Kind), TenantID: event.NormalizeTenant(key.Tenant), LoopID: key.Loop, NodeID: e.NodeID, Sequence: e.Seq, Operation: op, Outcome: outcome, ErrorCategory: category}
+	traceID, spanID := correlationIDs(e.Trace)
+	return Record{Timestamp: e.TS, EventName: string(e.Kind), TenantID: event.NormalizeTenant(key.Tenant), LoopID: key.Loop, NodeID: e.NodeID, Sequence: e.Seq, Operation: op, Outcome: outcome, ErrorCategory: category, TraceID: traceID, SpanID: spanID}
+}
+
+func correlationIDs(carrier *event.TraceCarrier) (string, string) {
+	if carrier == nil || carrier.Validate() != nil {
+		return "", ""
+	}
+	parts := strings.Split(carrier.TraceParent, "-")
+	if len(parts) != 4 {
+		return "", ""
+	}
+	return parts[1], parts[2]
 }
 
 func classify(kind event.Kind, payload []byte) (OperationKind, Outcome, ErrorCategory) {

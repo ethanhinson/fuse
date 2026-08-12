@@ -54,6 +54,27 @@ func TestProjectEventClassifiesToolFailureWithoutRawError(t *testing.T) {
 	}
 }
 
+func TestProjectEventCarriesOnlyValidatedTraceIDs(t *testing.T) {
+	key := event.StreamKey{Tenant: "acme", Loop: "same-loop"}
+	withTrace := ProjectEvent(key, event.Event{Trace: &event.TraceCarrier{
+		TraceParent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		TraceState:  "acme=tenant-sensitive-state",
+	}})
+	if withTrace.TraceID != "4bf92f3577b34da6a3ce929d0e0e4736" || withTrace.SpanID != "00f067aa0ba902b7" {
+		t.Fatalf("correlation IDs = %q, %q", withTrace.TraceID, withTrace.SpanID)
+	}
+	encoded, err := json.Marshal(withTrace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "tenant-sensitive-state") {
+		t.Fatalf("projection leaked tracestate: %s", encoded)
+	}
+	if got := ProjectEvent(key, event.Event{Trace: &event.TraceCarrier{TraceParent: "bad"}}); got.TraceID != "" || got.SpanID != "" {
+		t.Fatalf("invalid carrier propagated identifiers: %#v", got)
+	}
+}
+
 func TestFanoutReportsAllProjectorFailures(t *testing.T) {
 	var calls int
 	fanout := Fanout{ProjectorFunc(func(context.Context, Record) error { calls++; return nil }), ProjectorFunc(func(context.Context, Record) error { calls++; return assertError{} })}
