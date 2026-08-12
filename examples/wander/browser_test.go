@@ -1,0 +1,486 @@
+//go:build browser
+
+// Package wander_test — the PERMANENT headless-browser reconnect lane for @fuse/sdk
+// (change 0056, Task 5, D4). It converts the deferred manual real-browser proof (recorded
+// as a checkbox in sdk/ts/README.md "Verify (human)" at #50/#55) into an enforced CI lane.
+//
+// It drives the REAL Wander page (examples/wander) — which imports the REAL @fuse/sdk over
+// @connectrpc/connect-web — in headless chromium against a REAL `fuse loop-serve-net`
+// backend with a SCRIPTED LLM_GATEWAY_URL double (NEVER Claude/Anthropic; project policy),
+// then KILLS THE NETWORK mid-session (BrowserContext.SetOffline) and asserts the concierge
+// reply still completes after a transparent reconnect with NO LOSS / NO DUP.
+//
+// Run:  go test -tags browser ./...   (or `make browser-test`)
+//
+// LOUD ON TOOLCHAIN ABSENCE (smoke-over-fake-backend-proves-wire-not-system): missing node,
+// esbuild, the go toolchain, or a chromium that playwright cannot install/launch is a hard
+// t.Fatal, NEVER a green t.Skip — a passing suite can never hide an unexercised browser
+// path. All teardown uses t.Cleanup (not defer srv.Close), ordered client-before-server
+// (httptest-defer-close-before-tcleanup-deadlock).
+//
+// Network-kill approach (documented descope): rather than dropping a single frame mid-flight
+// (racy across the fast one-shot turn), the lane takes the plan's deterministic fallback —
+// it lets turn 1 park (the observe stream is then live+open), toggles the browser context
+// OFFLINE (a real network kill that drops the open stream, driving the SDK into
+// `reconnecting`), toggles it back ONLINE (the SDK transparently re-observes from the
+// watermark), then drives turn 2 to completion. It asserts the SDK saw reconnecting→live
+// again AND that the whole-session seq log is strictly increasing with no duplicates through
+// both parks — the exact no-loss/no-dup property, over a real browser, over a real drop.
+package wander_test
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/mxschmitt/playwright-go"
+)
+
+func TestWanderBrowserReconnectNoLossNoDup(t *testing.T) {
+	// --- toolchain gates: LOUD, never a green skip -------------------------------
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Fatalf("go toolchain not on PATH: the browser lane builds cmd/fuse (%v)", err)
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Fatalf("node not on PATH: the browser lane serves Wander via server.js (%v)", err)
+	}
+
+	repoRoot := repoRootFromTest(t)
+
+	// 1) Build the @fuse/sdk browser bundle (esbuild). A failure here is loud.
+	buildWanderBundle(t, repoRoot)
+
+	// 2) Scripted gateway double (NEVER a real provider): a fixed non-streamed reply so each
+	//    concierge turn is deterministic and model-free.
+	gwURL := newScriptedGateway(t)
+
+	// 3) Build + start the REAL fuse loop-serve-net backend on a fixed ephemeral port.
+	bin := buildFuseBinary(t, repoRoot)
+	backendPort := freePort(t)
+	backendAddr := net.JoinHostPort("127.0.0.1", backendPort)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, bin, "loop-serve-net", "--addr", backendAddr)
+	cmd.Dir = repoRoot
+	cmd.Env = append(cmd.Environ(),
+		"HOME="+t.TempDir(), // no user config → built-in dev token (tenant _default)
+		"LLM_GATEWAY_URL="+gwURL,
+		"LLM_GATEWAY_KEY=test-key",
+	)
+	var outBuf syncBuffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &outBuf
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start loop-serve-net: %v", err)
+	}
+	// Teardown ordering: the browser + static server stop first (registered later, so they
+	// run first — Cleanup is LIFO), then the backend. Never defer srv.Close.
+	t.Cleanup(func() {
+		cancel()
+		_ = cmd.Process.Kill()
+		waitBounded(cmd, 10*time.Second)
+	})
+	waitForListen(t, backendAddr, 30*time.Second, &outBuf)
+
+	// 4) Serve the Wander page via server.js, reverse-proxying the Connect path to the
+	//    backend (same-origin, no CORS). node is the static+proxy server.
+	staticPort := freePort(t)
+	serveWander(t, repoRoot, staticPort, backendAddr)
+	pageURL := fmt.Sprintf("http://127.0.0.1:%s/", staticPort)
+
+	// 5) Headless chromium via playwright-go. Install + launch are LOUD on failure.
+	if err := playwright.Install(&playwright.RunOptions{Browsers: []string{"chromium"}}); err != nil {
+		t.Fatalf("playwright install chromium failed (browser lane requires chromium): %v", err)
+	}
+	pw, err := playwright.Run()
+	if err != nil {
+		t.Fatalf("playwright run failed: %v", err)
+	}
+	t.Cleanup(func() { _ = pw.Stop() })
+
+	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{Headless: playwright.Bool(true)})
+	if err != nil {
+		t.Fatalf("chromium launch failed: %v", err)
+	}
+	t.Cleanup(func() { _ = browser.Close() })
+
+	bctx, err := browser.NewContext()
+	if err != nil {
+		t.Fatalf("new browser context: %v", err)
+	}
+	page, err := bctx.NewPage()
+	if err != nil {
+		t.Fatalf("new page: %v", err)
+	}
+
+	// Surface page console messages + page errors into the test log for diagnosis.
+	page.OnConsole(func(m playwright.ConsoleMessage) {
+		t.Logf("[browser console %s] %s", m.Type(), m.Text())
+	})
+	page.OnPageError(func(err error) {
+		t.Logf("[browser page error] %v", err)
+	})
+
+	if _, err := page.Goto(pageURL, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateNetworkidle,
+		Timeout:   playwright.Float(30000),
+	}); err != nil {
+		t.Fatalf("goto %s: %v\n--- server output ---\n%s", pageURL, err, outBuf.String())
+	}
+
+	// --- turn 1: send a message, wait for the loop to park -----------------------
+	sendConciergeMessage(t, page, "beachfront, sleeps 6, under $300/night")
+	defer func() {
+		if t.Failed() {
+			t.Logf("--- backend loop-serve-net output ---\n%s", outBuf.String())
+		}
+	}()
+	waitForParked(t, page, 1) // at least one loop.parked (kind seq) rendered
+
+	// The observe stream is now live + open (parked). Confirm the SDK reached `live`.
+	waitForState(t, page, "live")
+
+	// --- kill the network mid-session (a REAL drop of the open observe stream) ----
+	// server.js's /__cut control forcibly destroys every in-flight proxied Connect socket,
+	// severing the OPEN Observe stream — a deterministic mid-stream network kill. The SDK
+	// must classify this severed stream as TRANSIENT and enter `reconnecting` (not throw,
+	// not hot-loop); no-loss/no-dup depends on it resuming from the watermark.
+	cutStreams(t, staticPort)
+	waitForState(t, page, "reconnecting")
+
+	// The reverse proxy is healthy again immediately, so the SDK's next Observe succeeds and
+	// transparently re-observes from the watermark (the server replays history since the
+	// cursor — nothing new — and the SDK dedups any overlap).
+
+	// --- turn 2: prove the session still works after the reconnect ---------------
+	sendConciergeMessage(t, page, "actually, make it pet-friendly")
+	waitForParked(t, page, 2) // a SECOND loop.parked after the reconnect
+
+	// --- assertions: no-loss / no-dup over the whole session + reconnect states ---
+	seqs := readNumberArray(t, page, "window.__wanderSeqs")
+	if len(seqs) == 0 {
+		t.Fatalf("no events observed in the browser\n--- server output ---\n%s", outBuf.String())
+	}
+	assertStrictlyIncreasing(t, seqs) // strictly increasing ⇒ no loss AND no dup.
+
+	states := readStringArray(t, page, "window.__wanderStates")
+	assertReconnectedThenLive(t, states)
+
+	// A terminal error must NOT have fired — this was a transient drop.
+	if term := readString(t, page, "window.__wanderTerminal"); term != "" && term != "<nil>" {
+		t.Fatalf("a transient offline toggle surfaced a terminal error (%q); it must reconnect", term)
+	}
+}
+
+// --- browser helpers ------------------------------------------------------------
+
+// cutStreams hits the Wander static server's /__cut control to forcibly drop every
+// in-flight proxied Connect stream — the deterministic mid-stream network kill.
+func cutStreams(t *testing.T, staticPort string) {
+	t.Helper()
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%s/__cut", staticPort))
+	if err != nil {
+		t.Fatalf("cut streams: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	t.Logf("[__cut] %s", string(body))
+}
+
+func sendConciergeMessage(t *testing.T, page playwright.Page, msg string) {
+	t.Helper()
+	if err := page.Fill("#input", msg); err != nil {
+		t.Fatalf("fill input: %v", err)
+	}
+	if err := page.Click("#send"); err != nil {
+		t.Fatalf("click send: %v", err)
+	}
+}
+
+// waitForParked polls until at least `n` loop.parked completions have been rendered. Wander
+// pushes every observed seq to __wanderSeqs and the terminal answer to a .concierge bubble;
+// we count parked completions by watching the seq log grow past each turn's terminal event.
+// Simpler + robust: count how many times the composer re-enabled (parked ⇒ input enabled).
+func waitForParked(t *testing.T, page playwright.Page, n int) {
+	t.Helper()
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		if readInt(t, page, "window.__wanderParks") >= n {
+			return
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	seqs := readNumberArray(t, page, "window.__wanderSeqs")
+	rawSeqs := readString(t, page, "JSON.stringify(window.__wanderSeqs)")
+	bubbles := readInt(t, page, "document.querySelectorAll('.msg.concierge').length")
+	errs := readString(t, page, "JSON.stringify(Array.from(document.querySelectorAll('.msg.error')).map(e=>e.textContent))")
+	t.Fatalf("timed out waiting for %d parked concierge replies; seqs=%v rawSeqs=%s conciergeBubbles=%d errors=%s states=%v",
+		n, seqs, rawSeqs, bubbles, errs, readStringArray(t, page, "window.__wanderStates"))
+}
+
+func waitForState(t *testing.T, page playwright.Page, state string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		states := readStringArray(t, page, "window.__wanderStates")
+		for _, s := range states {
+			if s == state {
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for connection state %q; saw %v", state,
+		readStringArray(t, page, "window.__wanderStates"))
+}
+
+func assertStrictlyIncreasing(t *testing.T, seqs []int) {
+	t.Helper()
+	for i := 1; i < len(seqs); i++ {
+		if seqs[i] <= seqs[i-1] {
+			t.Fatalf("no-loss/no-dup violated: seq log not strictly increasing at %d: %v", i, seqs)
+		}
+	}
+}
+
+// assertReconnectedThenLive requires the state log to show a `reconnecting` that is followed
+// by a later `live` — proof the SDK resumed the stream after the offline drop rather than
+// throwing or stalling.
+func assertReconnectedThenLive(t *testing.T, states []string) {
+	t.Helper()
+	recon := -1
+	for i, s := range states {
+		if s == "reconnecting" {
+			recon = i
+			break
+		}
+	}
+	if recon < 0 {
+		t.Fatalf("no `reconnecting` state after the offline drop: %v", states)
+	}
+	for i := recon + 1; i < len(states); i++ {
+		if states[i] == "live" {
+			return
+		}
+	}
+	t.Fatalf("no `live` state after `reconnecting` (stream did not resume): %v", states)
+}
+
+// --- page-value readers ---------------------------------------------------------
+
+func readNumberArray(t *testing.T, page playwright.Page, expr string) []int {
+	t.Helper()
+	v, err := page.Evaluate(expr)
+	if err != nil {
+		t.Fatalf("evaluate %q: %v", expr, err)
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]int, 0, len(arr))
+	for _, e := range arr {
+		if n, ok := toInt(e); ok {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// toInt coerces a playwright-returned JSON number (which may arrive as int, int64, or
+// float64 depending on the value) into a Go int.
+func toInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	default:
+		return 0, false
+	}
+}
+
+func readStringArray(t *testing.T, page playwright.Page, expr string) []string {
+	t.Helper()
+	v, err := page.Evaluate(expr)
+	if err != nil {
+		t.Fatalf("evaluate %q: %v", expr, err)
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func readInt(t *testing.T, page playwright.Page, expr string) int {
+	t.Helper()
+	v, err := page.Evaluate(expr)
+	if err != nil {
+		t.Fatalf("evaluate %q: %v", expr, err)
+	}
+	if n, ok := toInt(v); ok {
+		return n
+	}
+	return 0
+}
+
+func readString(t *testing.T, page playwright.Page, expr string) string {
+	t.Helper()
+	v, err := page.Evaluate(expr)
+	if err != nil {
+		t.Fatalf("evaluate %q: %v", expr, err)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// --- process / infra helpers (mirrors sdk/fuse/acceptance_test.go) ---------------
+
+// buildWanderBundle runs examples/wander/build.sh (esbuild) to produce vendor/fuse-sdk.js.
+// A failure is loud: the browser lane cannot run without the bundled SDK.
+func buildWanderBundle(t *testing.T, repoRoot string) {
+	t.Helper()
+	build := exec.Command("bash", filepath.Join(repoRoot, "examples", "wander", "build.sh"))
+	build.Dir = repoRoot
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build @fuse/sdk browser bundle (examples/wander/build.sh): %v\n%s", err, out)
+	}
+}
+
+// serveWander starts `node server.js` for the Wander page on staticPort, proxying the
+// Connect path to backendAddr. It waits until the static port accepts, and tears the
+// process down via t.Cleanup.
+func serveWander(t *testing.T, repoRoot, staticPort, backendAddr string) {
+	t.Helper()
+	serverJS := filepath.Join(repoRoot, "examples", "wander", "server.js")
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, "node", serverJS)
+	cmd.Dir = filepath.Join(repoRoot, "examples", "wander")
+	cmd.Env = append(cmd.Environ(),
+		"PORT="+staticPort,
+		"FUSE_NET_ADDR="+backendAddr,
+	)
+	var out syncBuffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start wander server.js: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		_ = cmd.Process.Kill()
+		waitBounded(cmd, 10*time.Second)
+	})
+	waitForListen(t, net.JoinHostPort("127.0.0.1", staticPort), 15*time.Second, &out)
+}
+
+func buildFuseBinary(t *testing.T, repoRoot string) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "fuse-wander-browser")
+	build := exec.Command("go", "build", "-o", bin, "./cmd/fuse")
+	build.Dir = repoRoot
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build ./cmd/fuse: %v\n%s", err, out)
+	}
+	return bin
+}
+
+func waitBounded(cmd *exec.Cmd, d time.Duration) {
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(d):
+	}
+}
+
+// newScriptedGateway starts an httptest-style gateway returning a fixed non-streamed
+// assistant reply. NEVER a real provider (project policy). Torn down via t.Cleanup.
+func newScriptedGateway(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("gateway listen: %v", err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"Here are a few beachfront options that sleep 6 under $300/night."}}]}`)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return "http://" + ln.Addr().String()
+}
+
+func freePort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("freePort: %v", err)
+	}
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("freePort split: %v", err)
+	}
+	_ = ln.Close()
+	return port
+}
+
+func waitForListen(t *testing.T, addr string, timeout time.Duration, out *syncBuffer) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("nothing accepted on %s within %s\n--- output ---\n%s", addr, timeout, out.String())
+}
+
+func repoRootFromTest(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate test file")
+	}
+	// …/examples/wander/browser_test.go → repo root is two dirs up.
+	return filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
+}
+
+// syncBuffer is a thread-safe buffer for concurrent subprocess stdout/stderr writes.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf = append(b.buf, p...)
+	return len(p), nil
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.buf)
+}

@@ -32,8 +32,33 @@ const MIME = {
   ".ico": "image/x-icon",
 };
 
+// active tracks in-flight proxied Connect sockets (upstream request + client response) so
+// the /__cut test control can forcibly sever an OPEN server-stream (Observe) mid-session —
+// a deterministic "network kill" for the headless-browser reconnect CI lane. It has no
+// effect in normal use (nothing calls /__cut).
+const active = new Set();
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, "http://localhost");
+
+  // Test control: forcibly drop every in-flight proxied Connect stream (a deterministic
+  // mid-stream network kill). The SDK must classify this as TRANSIENT and reconnect.
+  if (url.pathname === "/__cut") {
+    let cut = 0;
+    for (const entry of active) {
+      try {
+        entry.up.destroy();
+      } catch {}
+      try {
+        entry.res.destroy();
+      } catch {}
+      cut++;
+    }
+    active.clear();
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ cut }));
+    return;
+  }
 
   // Reverse-proxy the Connect service path to the fuse backend (same-origin, no CORS).
   if (url.pathname.startsWith("/fuse.loop.v1.")) {
@@ -45,9 +70,19 @@ const server = http.createServer((req, res) => {
         ur.pipe(res); // un-buffered: server-streaming (Observe) frames flow through live.
       },
     );
+    const entry = { up, res };
+    active.add(entry);
+    const done = () => active.delete(entry);
+    res.on("close", done);
+    up.on("close", done);
     up.on("error", (e) => {
-      res.writeHead(502, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "upstream unreachable: " + e.message }));
+      done();
+      if (!res.headersSent) {
+        res.writeHead(502, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "upstream unreachable: " + e.message }));
+      } else {
+        res.destroy();
+      }
     });
     req.pipe(up); // stream the request body (unary POST) through.
     return;
