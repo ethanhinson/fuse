@@ -21,9 +21,13 @@ import (
 	"github.com/ethanhinson/fuse/internal/observe/metricspolicy"
 	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
 	observeprom "github.com/ethanhinson/fuse/internal/observe/prometheus"
+	"github.com/ethanhinson/fuse/internal/version"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
 )
 
 const (
@@ -147,7 +151,14 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 		if o.Traces.BatchTimeout != "" {
 			batch.BatchTimeout, _ = time.ParseDuration(o.Traces.BatchTimeout)
 		}
-		s.provider = observeotel.NewProvider(exporter, batch, sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(o.Traces.SampleRatio))))
+		resourceAttributes := []attribute.KeyValue{semconv.ServiceName("fuse"), semconv.ServiceVersion(version.Version)}
+		if o.InstanceID != "" {
+			resourceAttributes = append(resourceAttributes, semconv.ServiceInstanceID(o.InstanceID))
+		}
+		s.provider = observeotel.NewProvider(exporter, batch,
+			sdktrace.WithResource(resource.NewWithAttributes(semconv.SchemaURL, resourceAttributes...)),
+			sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(o.Traces.SampleRatio))),
+		)
 		s.observer = observeotel.New(s.provider)
 	}
 	if s.metrics != nil {

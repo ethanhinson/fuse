@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,10 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/loopauth"
+	"github.com/ethanhinson/fuse/internal/observe"
+	"github.com/ethanhinson/fuse/internal/version"
+	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func loggingConfig(output, path string) config.Config {
@@ -58,6 +63,66 @@ func TestObservabilityExplicitZeroTraceSampleRatioDropsRootSpans(t *testing.T) {
 	defer span.End()
 	if span.IsRecording() {
 		t.Fatal("explicit zero trace sample ratio recorded a root span")
+	}
+}
+
+func TestNewObservabilityExportsServiceResource(t *testing.T) {
+	requests := make(chan *collectortracepb.ExportTraceServiceRequest, 1)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/traces" {
+			t.Errorf("path=%q, want /v1/traces", r.URL.Path)
+		}
+		defer r.Body.Close()
+		request := &collectortracepb.ExportTraceServiceRequest{}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if err := proto.Unmarshal(body, request); err != nil {
+			t.Error(err)
+			return
+		}
+		requests <- request
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(collector.Close)
+
+	cfg := config.Config{Observability: config.ObservabilityConfig{
+		InstanceID: "resource-test-instance",
+		Traces: config.TracesObservabilityConfig{
+			Enabled: true, Endpoint: strings.TrimPrefix(collector.URL, "http://"), Protocol: "http/protobuf", Insecure: true,
+			BatchSize: 1, BatchTimeout: "1ms", SampleRatio: 1,
+		},
+	}}
+	s, err := newObservability(context.Background(), cfg, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close(context.Background()) })
+
+	_, span := s.observer.Start(context.Background(), observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "resource"})
+	span.End(observe.OutcomeSuccess)
+	if err := s.provider.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case request := <-requests:
+		if len(request.ResourceSpans) != 1 || len(request.ResourceSpans[0].ScopeSpans) == 0 || len(request.ResourceSpans[0].ScopeSpans[0].Spans) == 0 {
+			t.Fatalf("exported resource spans=%+v", request.ResourceSpans)
+		}
+		attributes := make(map[string]string)
+		for _, attribute := range request.ResourceSpans[0].Resource.Attributes {
+			attributes[attribute.Key] = attribute.Value.GetStringValue()
+		}
+		for key, want := range map[string]string{"service.name": "fuse", "service.version": version.Version, "service.instance.id": "resource-test-instance"} {
+			if got := attributes[key]; got != want {
+				t.Errorf("resource %s=%q, want %q", key, got, want)
+			}
+		}
+	case <-time.After(time.Second):
+		t.Fatal("OTLP collector did not receive an exported span")
 	}
 }
 
