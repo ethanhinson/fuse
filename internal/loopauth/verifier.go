@@ -32,6 +32,10 @@ type Principal struct {
 	// Subject is the authorization subject — the stable identity recorded as a
 	// loop's Owner and compared on subsequent Send/Observe.
 	Subject string
+	// ObservabilityOperator authorizes process-global observability control
+	// operations. Tenant principals do not receive it implicitly; trusted verifier
+	// configuration must grant it.
+	ObservabilityOperator bool
 }
 
 // Verifier resolves a bearer token to the Principal it names. It is the pluggable

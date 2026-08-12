@@ -53,13 +53,14 @@ func buildLoopVerifier(cfg config.Config) (loopauth.Verifier, bool) {
 			continue // an entry with no token is unusable; skip it
 		}
 		tokens[a.Token] = loopauth.Principal{
-			Tenant:  event.TenantID(a.Tenant), // "" normalizes to _default at the store
-			Subject: a.Subject,
+			Tenant:                event.TenantID(a.Tenant), // "" normalizes to _default at the store
+			Subject:               a.Subject,
+			ObservabilityOperator: a.ObservabilityOperator,
 		}
 	}
 	usedDefault := false
 	if len(tokens) == 0 {
-		tokens[devToken] = loopauth.Principal{Tenant: event.DefaultTenant, Subject: "dev"}
+		tokens[devToken] = loopauth.Principal{Tenant: event.DefaultTenant, Subject: "dev", ObservabilityOperator: true}
 		usedDefault = true
 	}
 	return loopauth.NewStaticVerifier(tokens), usedDefault
@@ -149,6 +150,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintln(stderr, "      - token: <bearer-token>  # required per request")
 		fmt.Fprintln(stderr, "        tenant: <tenant-id>    # isolation boundary; empty ⇒ _default")
 		fmt.Fprintln(stderr, "        subject: <subject>     # recorded as a loop's owner")
+		fmt.Fprintln(stderr, "        observability_operator: false # required for global logging reload/reopen")
 		fmt.Fprintln(stderr)
 		fmt.Fprintf(stderr, "With no loop_server.auth configured, a built-in dev token %q (tenant _default)\n", devToken)
 		fmt.Fprintln(stderr, "is used so local development works; a bearer token is still required on the wire.")

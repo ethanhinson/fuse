@@ -249,6 +249,7 @@ loop_server:
     - token: s3cr3t-alice     # the bearer credential a client presents
       tenant: acme            # isolation boundary; empty ⇒ the _default tenant
       subject: alice          # authorization subject, recorded as a loop's owner
+      observability_operator: true # grants global logging reload/reopen
     - token: s3cr3t-bob
       tenant: acme
       subject: bob

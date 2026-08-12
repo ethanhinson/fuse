@@ -422,12 +422,16 @@ func (s *observabilityService) updateOverrideMetrics() {
 
 func (s *observabilityService) reloadHandler(verifier loopauth.Verifier) http.Handler {
 	return authenticatedHTTP(verifier, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.Context().Value(principalContextKey{}).(loopauth.Principal)
+		if !p.ObservabilityOperator {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", "POST")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		p := r.Context().Value(principalContextKey{}).(loopauth.Principal)
 		var next config.LoggingObservabilityConfig
 		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&next); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
@@ -443,12 +447,16 @@ func (s *observabilityService) reloadHandler(verifier loopauth.Verifier) http.Ha
 
 func (s *observabilityService) reopenHandler(verifier loopauth.Verifier) http.Handler {
 	return authenticatedHTTP(verifier, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.Context().Value(principalContextKey{}).(loopauth.Principal)
+		if !p.ObservabilityOperator {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		if r.Method != http.MethodPost {
 			w.Header().Set("Allow", "POST")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		p := r.Context().Value(principalContextKey{}).(loopauth.Principal)
 		if err := s.Reopen(r.Context(), p.Subject); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

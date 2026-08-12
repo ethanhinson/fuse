@@ -22,8 +22,9 @@ func loggingConfig(output, path string) config.Config {
 
 func observabilityVerifier() loopauth.Verifier {
 	return loopauth.NewStaticVerifier(map[string]loopauth.Principal{
-		"acme":   {Tenant: "acme", Subject: "alice"},
-		"globex": {Tenant: "globex", Subject: "bob"},
+		"acme":     {Tenant: "acme", Subject: "alice"},
+		"globex":   {Tenant: "globex", Subject: "bob"},
+		"operator": {Tenant: "ops", Subject: "operator", ObservabilityOperator: true},
 	})
 }
 
@@ -135,6 +136,68 @@ func TestLoggingReloadAndReopenPreserveValidatedState(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("replacement file: %v", err)
+	}
+}
+
+func TestLoggingReloadAndReopenRequireOperator(t *testing.T) {
+	s, err := newObservability(context.Background(), loggingConfig("stdout", ""), &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close(context.Background()) })
+
+	request := func(handler http.Handler, token string, body string) int {
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w.Code
+	}
+	next := loggingConfig("stdout", "").Observability.Logging
+	next.Level = "debug"
+	body, err := json.Marshal(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := request(s.reloadHandler(observabilityVerifier()), "acme", string(body)); got != http.StatusForbidden {
+		t.Fatalf("tenant reload status=%d, want %d", got, http.StatusForbidden)
+	}
+	if got := s.levels.Inspect().Default.String(); got != "info" {
+		t.Fatalf("tenant reload mutated global level to %q", got)
+	}
+	if got := request(s.reopenHandler(observabilityVerifier()), "acme", ""); got != http.StatusForbidden {
+		t.Fatalf("tenant reopen status=%d, want %d", got, http.StatusForbidden)
+	}
+	if got := request(s.reloadHandler(observabilityVerifier()), "operator", string(body)); got != http.StatusNoContent {
+		t.Fatalf("operator reload status=%d, want %d", got, http.StatusNoContent)
+	}
+	if got := s.levels.Inspect().Default.String(); got != "debug" {
+		t.Fatalf("operator reload level=%q, want debug", got)
+	}
+}
+
+func TestBuildLoopVerifierPropagatesOperatorCapability(t *testing.T) {
+	v, usedDefault := buildLoopVerifier(config.Config{LoopServer: config.LoopServerConfig{Auth: []config.AuthTokenConfig{
+		{Token: "tenant", Tenant: "acme", Subject: "alice"},
+		{Token: "operator", Tenant: "ops", Subject: "olivia", ObservabilityOperator: true},
+	}}})
+	if usedDefault {
+		t.Fatal("configured verifier unexpectedly used default")
+	}
+	tenant, err := v.Verify(context.Background(), "tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := v.Verify(context.Background(), "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tenant.ObservabilityOperator {
+		t.Fatal("ordinary tenant received operator capability")
+	}
+	if !operator.ObservabilityOperator {
+		t.Fatal("configured operator capability was not propagated")
 	}
 }
 

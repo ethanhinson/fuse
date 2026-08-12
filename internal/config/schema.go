@@ -180,9 +180,10 @@ type PipelineConfig struct {
 // StaticVerifier surface — richer verifiers (OIDC/JWT, mTLS) slot in behind the
 // same loopauth.Verifier seam without a config re-cut.
 type AuthTokenConfig struct {
-	Token   string `yaml:"token"`
-	Tenant  string `yaml:"tenant"`
-	Subject string `yaml:"subject"`
+	Token                 string `yaml:"token"`
+	Tenant                string `yaml:"tenant"`
+	Subject               string `yaml:"subject"`
+	ObservabilityOperator bool   `yaml:"observability_operator"`
 }
 
 // LoopServerConfig configures the networked Connect/protobuf loop-control binding
