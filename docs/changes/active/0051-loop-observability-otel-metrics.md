@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/loop-observability-otel-metrics
 pr:
 blocked_by:
-reconciled: false
-claimed_at: 2026-08-12T03:35:43Z
+reconciled: true
+claimed_at: 2026-08-12T03:36:54Z
 ---
 
 ## Artifacts
@@ -75,3 +75,25 @@ change is a projection, not a retrofit.
 ## Open questions
 
 None. The linked spec records the settled boundaries, defaults, trade-offs, and assumptions.
+
+## Reconcile log
+
+### 2026-08-12 — reconcile against origin/main (164fbaf)
+
+Verified the change and linked spec against the current integration branch after changes 43, 46,
+47, 48, 49, 50, 52, 53, 56, and 59 landed. The design remains buildable and is neither obsolete nor
+fundamentally invalidated. Current code provides the durable, context-carrying
+`event.DurableStore` and `LoopRegistry` seams, consumer-readable `StreamKey{Tenant, Loop}` plus
+`Event.NodeID`, the policy-free multi-loop runtime, edge-authenticated tenant/owner identity, the
+Connect binding, and Go/TypeScript SDK surfaces the observability projection needs.
+
+The concrete implementation anchors are now `internal/event` (including fsstore/pgstore),
+`internal/runtime`, `internal/connectloop`, `cmd/fuse/loop_serve_net.go`, and `sdk/{go,ts}`. The
+event envelope does not yet persist W3C trace carrier fields and committed event delivery does not
+carry operation timing by itself; those remain intentional work in this change, using
+repository-owned carrier/observer types so core runtime and event packages stay vendor-neutral.
+The existing event payloads contain sensitive full-turn data, reinforcing the settled rule that
+routine logs and metrics must project metadata only rather than serializing `Event.Payload`.
+
+No adjacent follow-up was auto-captured: auto-capture is disabled, and no independently valuable
+work outside the settled scope was discovered during reconcile.
