@@ -40,6 +40,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0036](0036-tool-authz-delegated-downstream-rfc8693-egress-seam.md) — Tool/resource authz delegated to downstreams via per-call RFC 8693 delegation token exchange at a pluggable egress seam (Accepted) ← change #52 · relates to ADR-0030, ADR-0031, ADR-0034
 - [ADR-0037](0037-sdk-observe-terminal-vs-transient-by-connect-code.md) — Client SDK observe classifies terminal vs transient stream failures by Connect code (Accepted) ← change #56 · relates to ADR-0033, ADR-0034, ADR-0035
 - [ADR-0038](0038-committed-event-observability-projections.md) — Committed-event observability projections consume the exact store-assigned envelope (Accepted) ← change #51 · relates to ADR-0025, ADR-0031
+- [ADR-0039](0039-committed-event-telemetry-dispatch-bounded-lossy.md) — Committed-event telemetry dispatch is bounded, non-blocking, and lossy under saturation (Accepted) ← change #51 · relates to ADR-0025, ADR-0038
 
 ## Superseded / Reversed
 
