@@ -2,11 +2,11 @@
 id: 56
 slug: sdk-viability-hardening-wander
 title: SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-12
 depends_on: [50]
 related: [49, 54, 55]
 discovered_from: [50]
@@ -17,7 +17,7 @@ results: docs/results/2026-08-11-sdk-viability-hardening-wander-results.md
 trivial: false
 auto_groomable:
 branch: feat/sdk-viability-hardening-wander
-claimed_at: 2026-08-12T00:42:19Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/57
 blocked_by:
 reconciled: true
