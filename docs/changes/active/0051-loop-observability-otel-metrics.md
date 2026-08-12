@@ -12,7 +12,7 @@ related: [43, 46, 47, 48]
 discovered_from: [46]
 adrs: []
 spec: docs/superpowers/specs/0051-loop-observability-otel-metrics.md
-plan:
+plan: docs/superpowers/plans/2026-08-12-loop-observability-otel-metrics.md
 results:
 trivial: false
 auto_groomable:
@@ -20,7 +20,7 @@ branch: feat/loop-observability-otel-metrics
 pr:
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-12T03:36:54Z
+claimed_at: 2026-08-12T03:39:09Z
 ---
 
 ## Artifacts
@@ -29,6 +29,7 @@ claimed_at: 2026-08-12T03:36:54Z
 | Artifact | Link |
 |---|---|
 | Spec | [0051-loop-observability-otel-metrics.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0051-loop-observability-otel-metrics.md) |
+| Plan | [2026-08-12-loop-observability-otel-metrics.md](https://github.com/ethanhinson/fuse/blob/feat/loop-observability-otel-metrics/docs/superpowers/plans/2026-08-12-loop-observability-otel-metrics.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
