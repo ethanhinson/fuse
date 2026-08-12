@@ -1,0 +1,3 @@
+# Build artifact: the esbuild-bundled @fuse/sdk browser module. Regenerate with build.sh
+# (or run.sh / the browser CI lane). Not committed — it is derived from sdk/ts/src.
+vendor/

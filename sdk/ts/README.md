@@ -91,13 +91,56 @@ real-loop test (scripted `LLM_GATEWAY_URL`, never Claude — project policy).
 The CI lane `make sdk-ts-test` **fails loud** when node is absent in an environment that
 should have it (a `command -v node` guard, never a green skip).
 
-## Verify (human)
+## Connection state, terminal errors, teardown (change 0056)
 
-- [ ] **Browser reach (deferred, manual).** Run this SDK's `observe` server-streaming +
-      reconnect in a **real browser** against a live fuse host over `@connectrpc/connect-web`
-      (e.g. a Playwright script that drives `startLoop → send → observe`, kills the network
-      mid-stream, and asserts the transparent reconnect resumes with no loss/no dup). The
-      node test proves the wire from TS; a headless-browser CI is heavier than change 0050
-      should add, so the real-browser run is recorded here as an explicit acceptance
-      checkbox — not faked, not left implicit.
+`observe` has an additive options form alongside the positional `observe(loopId, fromSeq?)`:
+
+```ts
+import { createClient, FuseTerminalError, type ConnState } from "@fuse/sdk";
+
+const ac = new AbortController();
+try {
+  for await (const ev of client.observe(loopId, {
+    fromSeq: 0n,
+    signal: ac.signal, // idempotent teardown: ac.abort() stops observing + releases the stream
+    onState: (s: ConnState) => setIndicator(s), // "connecting" | "live" | "reconnecting" | "closed"
+  })) {
+    render(ev);
+  }
+} catch (err) {
+  if (err instanceof FuseTerminalError) {
+    // A TERMINAL Connect code (unauthenticated / permission_denied / not_found /
+    // failed_precondition) stops the reconnect loop instead of hot-looping. err.code carries
+    // the Connect code so the app can show the right affordance.
+    showTerminal(err.code);
+  }
+}
+```
+
+- **`onState`** surfaces the reconnect lifecycle so an app can render a connection indicator
+  without reaching into the transport.
+- **Terminal-error classification**: an abnormal mid-stream drop (network error, stream end)
+  is *transient* → the SDK reconnects from the watermark (no loss/no dup). A *terminal*
+  Connect code throws a typed `FuseTerminalError` out of the iterator and fires
+  `onState("closed")` — it does **not** hot-loop.
+- **`signal`** (an `AbortSignal`) is the page-unload / component-teardown primitive: aborting
+  stops the loop, tears the stream down, fires `closed` once, and is idempotent.
+
+These are dogfooded by the [`examples/wander`](../../examples/wander) concierge demo.
+
+## Verify (human) → now an enforced CI lane
+
+The real-browser reconnect proof deferred at #50/#55 is now a **permanent, loud headless-
+browser CI lane** — no longer a manual checkbox.
+
+- **What it does.** `go test -tags browser ./...` (target `make browser-test`; CI job
+  `browser-acceptance` in `.github/workflows/integration.yml`) drives the real
+  [`examples/wander`](../../examples/wander) app — which imports the real `@fuse/sdk` over
+  `@connectrpc/connect-web` — in headless chromium against a real `fuse loop-serve-net`
+  backend with a scripted `LLM_GATEWAY_URL` double (**never** Claude/Anthropic), **kills the
+  network mid-stream**, and asserts the concierge reply completes after a transparent
+  reconnect with **no loss / no dup** (a strictly-increasing seq log across the drop).
+- **Loud on toolchain absence.** Missing node / esbuild / go / a playwright-installable
+  chromium is a hard `t.Fatal`, never a green `t.Skip` — a passing suite can never hide an
+  unexercised browser path (`smoke-over-fake-backend-proves-wire-not-system`).
 ```

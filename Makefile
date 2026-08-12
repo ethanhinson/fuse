@@ -1,4 +1,4 @@
-.PHONY: build install test test-race lint test-integration proto sdk-ts-test
+.PHONY: build install test test-race lint test-integration proto sdk-ts-test browser-test
 
 # Version is stamped into the binary via -ldflags. It defaults to `git describe`
 # (tags + short SHA + dirty marker) and falls back to the source default when git
@@ -55,3 +55,21 @@ proto:
 sdk-ts-test:
 	@command -v node >/dev/null 2>&1 || { echo "node required for sdk-ts-test (TS SDK lane) but not found on PATH"; exit 1; }
 	cd sdk/ts && npm install && npm test
+
+# browser-test runs the PERMANENT headless-browser reconnect lane for @fuse/sdk (change
+# 0056, Task 5). It drives the REAL Wander example app (examples/wander) — importing the
+# REAL @fuse/sdk over @connectrpc/connect-web — in headless chromium (playwright-go) against
+# a REAL `fuse loop-serve-net` backend with a SCRIPTED LLM_GATEWAY_URL double (NEVER Claude),
+# KILLS THE NETWORK mid-stream, and asserts the reply completes after a transparent reconnect
+# with no-loss/no-dup. It is the enforced successor to the deferred manual real-browser proof
+# recorded in sdk/ts/README.md "Verify (human)". The lane is LOUD on toolchain absence: a
+# missing node/esbuild/go/chromium hard-fails (t.Fatal), never a green t.Skip, so a passing
+# suite can never hide an unexercised browser path.
+#
+# It rides the Go toolchain (a //go:build browser test), so it needs esbuild on PATH (the
+# repo npm workspace: run `npm install` first) and a playwright-installable chromium (CI's
+# mcp-integration job already installs it).
+browser-test:
+	@command -v node >/dev/null 2>&1 || { echo "node required for browser-test (headless-browser lane) but not found on PATH"; exit 1; }
+	npm install
+	go test -tags browser -timeout 300s ./examples/wander/...

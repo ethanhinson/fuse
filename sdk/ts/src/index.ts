@@ -16,6 +16,8 @@
 // resuming from the last-seen seq (no loss / no dup across the reconnect).
 
 import {
+  Code,
+  ConnectError,
   createClient as createConnectClient,
   type Interceptor,
   type Transport,
@@ -76,6 +78,79 @@ export interface Event {
   gap: boolean;
 }
 
+/**
+ * ConnState is the observed connection lifecycle of an {@link Client.observe} stream
+ * (change 0056, D1). It is surfaced via the `onState` callback so an app can render a
+ * connection indicator without reaching into the transport:
+ *
+ *   - `connecting`   — opening (or re-opening) the underlying Observe stream.
+ *   - `live`         — a stream is delivering frames (set on the first delivered frame).
+ *   - `reconnecting` — a stream ended/dropped (transient); backing off before a re-open.
+ *   - `closed`       — the observe is finished: consumer stopped, aborted, or a terminal
+ *                      error stopped the reconnect loop. No further states follow.
+ */
+export type ConnState = "connecting" | "live" | "reconnecting" | "closed";
+
+/**
+ * ObserveOptions is the options-object form of {@link Client.observe} (change 0056, D1/D3).
+ * It is ADDITIVE: the positional `observe(loopId, fromSeq?)` form still works, so the
+ * existing node test is untouched.
+ */
+export interface ObserveOptions {
+  /** Resume cursor: the highest seq already seen (default 0 = from the start). */
+  fromSeq?: bigint;
+  /** Lifecycle callback fired at each {@link ConnState} transition. */
+  onState?: (state: ConnState) => void;
+  /**
+   * AbortSignal for idempotent teardown (D3): aborting stops the reconnect loop, tears
+   * the underlying stream down, and fires `onState('closed')` exactly once. Abort-after-
+   * close / double-abort is a no-op.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * FuseTerminalError is thrown out of {@link Client.observe}'s async iterator when the
+ * stream fails with a TERMINAL Connect code (change 0056, D2) — one the reconnect loop
+ * must NOT retry: `unauthenticated` / `permission_denied` (auth rejected), `not_found`
+ * (unknown loop) or `failed_precondition` (finished loop). It carries the Connect `code`
+ * (a numeric `@connectrpc/connect` `Code`) so an app can render the right affordance
+ * instead of hot-looping on a raw Connect error.
+ */
+export class FuseTerminalError extends Error {
+  /** The terminal Connect `Code` that stopped the observe. */
+  readonly code: Code;
+  constructor(code: Code, message: string) {
+    super(message);
+    this.name = "FuseTerminalError";
+    this.code = code;
+  }
+}
+
+// TERMINAL_CODES is the D2 terminal set — the four Connect codes the loop handler
+// (internal/loopconnect) emits that a reconnect can never recover from:
+//   - Unauthenticated / PermissionDenied — auth rejected or tenant spoof / cross-owner;
+//   - NotFound                            — the loop does not exist for this tenant;
+//   - FailedPrecondition                  — the loop is finished (no longer accepts input).
+// Everything else (a mid-stream network drop, a clean stream end) is TRANSIENT →
+// reconnect, which ports websocket-read-errors-are-not-closeerror to the Connect-stream
+// shape (a post-handshake read/close is a resume signal, not a fault).
+const TERMINAL_CODES: ReadonlySet<Code> = new Set<Code>([
+  Code.Unauthenticated,
+  Code.PermissionDenied,
+  Code.NotFound,
+  Code.FailedPrecondition,
+]);
+
+// terminalCodeOf returns the terminal Connect Code if `err` is a ConnectError whose code
+// is in the terminal set, else undefined (transient → reconnect).
+function terminalCodeOf(err: unknown): Code | undefined {
+  if (err instanceof ConnectError && TERMINAL_CODES.has(err.code)) {
+    return err.code;
+  }
+  return undefined;
+}
+
 /** The completion event kind for an interactive loop (see D5 in the plan). */
 export const KIND_LOOP_PARKED = "loop.parked";
 
@@ -98,8 +173,14 @@ export interface Client {
    * observe streams domain events from `fromSeq` (default 0), skipping keepalives and
    * reconnecting transparently from the last-seen seq on stream end/error. Break the
    * `for await` loop to stop observing (which closes the underlying stream).
+   *
+   * Two additive forms (change 0056, D1):
+   *   - positional `observe(loopId, fromSeq?)` — the original #50 surface (back-compat);
+   *   - options `observe(loopId, { fromSeq?, onState?, signal? })` — surfaces the
+   *     {@link ConnState} lifecycle via `onState` and idempotent teardown via `signal`.
    */
   observe(loopId: string, fromSeq?: bigint): AsyncIterable<Event>;
+  observe(loopId: string, options: ObserveOptions): AsyncIterable<Event>;
 }
 
 function bearerInterceptor(token: string): Interceptor {
@@ -188,7 +269,26 @@ export function createClient(options: ClientOptions): Client {
       await wire.send({ loopId, input, tenant });
     },
 
-    observe(loopId: string, fromSeq: bigint = 0n): AsyncIterable<Event> {
+    observe(loopId: string, arg?: bigint | ObserveOptions): AsyncIterable<Event> {
+      // Normalize the two additive forms (D1): a bigint is the positional fromSeq; an
+      // object is ObserveOptions. Undefined = from the start with no callbacks.
+      const opts: ObserveOptions =
+        typeof arg === "bigint" ? { fromSeq: arg } : (arg ?? {});
+      const fromSeq = opts.fromSeq ?? 0n;
+      const onState = opts.onState;
+      const signal = opts.signal;
+
+      // emitState fires the lifecycle callback (D1), guarding against a throwing consumer
+      // callback taking down the reconnect loop.
+      const emitState = (s: ConnState) => {
+        if (!onState) return;
+        try {
+          onState(s);
+        } catch {
+          // A caller's onState must never break the stream: swallow its throw.
+        }
+      };
+
       return {
         async *[Symbol.asyncIterator](): AsyncGenerator<Event> {
           // last is the reconnect cursor: the highest seq delivered so far. On a stream
@@ -205,39 +305,87 @@ export function createClient(options: ClientOptions): Client {
           // Reconnect loop. Each pass opens one server-stream; when it ends we resume
           // from `last`. A hard error that is not a clean end still triggers a resume —
           // the browser analogue of a websocket read error being a reconnect, not a fault.
-          for (;;) {
-            let deliveredThisPass = false;
-            // The Connect stream returned by wire.observe() is an AsyncIterable; a
-            // `finally` on the for-await guarantees the underlying HTTP stream is torn
-            // down whether this pass ends by completion, a thrown error, OR the CONSUMER
-            // breaking out of the outer generator (which propagates return() to us).
-            const stream = wire.observe({ loopId, fromSeq: last, tenant });
-            try {
-              for await (const frame of stream) {
-                if (frame.keepalive || !frame.event) {
-                  continue; // idle heartbeat: no seq, ignore.
+          try {
+            // D3: an already-aborted signal closes immediately, delivering nothing. The
+            // `finally` fires `closed`.
+            if (signal?.aborted) {
+              return;
+            }
+            for (;;) {
+              let deliveredThisPass = false;
+              // `connecting` at the top of every pass (initial open AND every re-open).
+              emitState("connecting");
+              // The Connect stream returned by wire.observe() is an AsyncIterable; a
+              // `finally` on the for-await guarantees the underlying HTTP stream is torn
+              // down whether this pass ends by completion, a thrown error, OR the CONSUMER
+              // breaking out of the outer generator (which propagates return() to us).
+              // Threading D3's `signal` into wire.observe aborts the underlying HTTP
+              // stream at the transport when the caller tears down (page unload).
+              const stream = wire.observe({ loopId, fromSeq: last, tenant }, { signal });
+              try {
+                for await (const frame of stream) {
+                  if (frame.keepalive || !frame.event) {
+                    continue; // idle heartbeat: no seq, ignore.
+                  }
+                  const ev = frame.event;
+                  if (!deliveredThisPass) {
+                    deliveredThisPass = true;
+                    emitState("live"); // first frame of this pass: the stream is live.
+                  }
+                  if (ev.seq <= last) {
+                    continue; // defensive dedup-at-watermark: never re-yield a seen seq.
+                  }
+                  last = ev.seq;
+                  yield toDomainEvent(ev, frame.gap);
                 }
-                const ev = frame.event;
-                deliveredThisPass = true;
-                if (ev.seq <= last) {
-                  continue; // defensive dedup-at-watermark: never re-yield a seen seq.
+                // Clean stream end (server closed the tail): fall through to re-open.
+              } catch (err) {
+                // D3 first: an abort is a caller-initiated teardown, NOT a fault or a
+                // reconnect signal — the underlying stream throws an abort error, which we
+                // must swallow and exit on (the `finally` fires `closed`). Check the signal
+                // rather than the error shape so a transport-specific abort error still
+                // classifies correctly.
+                if (signal?.aborted) {
+                  return;
                 }
-                last = ev.seq;
-                yield toDomainEvent(ev, frame.gap);
+                // D2 classification. A TERMINAL Connect code (auth rejected, unknown or
+                // finished loop) can never be recovered by re-observing from `last`, so
+                // STOP the loop and surface a typed FuseTerminalError (the `finally` fires
+                // `closed`). Everything else is a transient post-handshake read/close — a
+                // clean reconnect signal, not a fault (ported from
+                // websocket-read-errors-are-not-closeerror) — so fall through to re-open.
+                // NOTE: a throw that is NOT a terminal ConnectError (a raw network error, or
+                // — less expected — a programming error like a TypeError) is intentionally
+                // treated as transient and retried, because a genuine transport drop does not
+                // always surface as a ConnectError. The trade-off is that a real defect in
+                // this generator would hide as an infinite (capped-backoff) reconnect rather
+                // than surfacing; if a diagnostic hook is ever added, log the swallowed error
+                // here.
+                const code = terminalCodeOf(err);
+                if (code !== undefined) {
+                  const detail = err instanceof ConnectError ? err.rawMessage : String(err);
+                  throw new FuseTerminalError(code, `fuse observe terminated: ${detail}`);
+                }
               }
-              // Clean stream end (server closed the tail): fall through to re-open.
-            } catch {
-              // A stream error (post-handshake read/close) is a clean reconnect signal,
-              // not a fault: fall through to re-open Observe(last).
+              // A clean stream end while aborted is also a teardown: exit, do not re-open.
+              if (signal?.aborted) {
+                return;
+              }
+              // Re-open from the last-seen seq. The server replays history since `last`
+              // then live-tails; the watermark dedup above drops any overlap frame.
+              if (deliveredThisPass) {
+                backoffMs = backoffBaseMs; // healthy stream: clear any accrued penalty.
+              } else {
+                await sleep(backoffMs);
+                backoffMs = Math.min(backoffMs * 2, backoffCapMs);
+              }
+              // About to re-open: signal the reconnecting transition.
+              emitState("reconnecting");
             }
-            // Re-open from the last-seen seq. The server replays history since `last`
-            // then live-tails; the watermark dedup above drops any overlap frame.
-            if (deliveredThisPass) {
-              backoffMs = backoffBaseMs; // healthy stream: clear any accrued penalty.
-            } else {
-              await sleep(backoffMs);
-              backoffMs = Math.min(backoffMs * 2, backoffCapMs);
-            }
+          } finally {
+            // The generator is done (consumer broke out, or a throw propagated): the
+            // observe is closed. Fire `closed` exactly once on the way out.
+            emitState("closed");
           }
         },
       };

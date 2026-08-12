@@ -19,6 +19,36 @@ jobs:
       - name: Run unit tests with race detector
         run: go test -race ./...
 
+  # Permanent headless-browser reconnect lane for @fuse/sdk (change 0056). Drives the REAL
+  # Wander example app in headless chromium against a REAL `fuse loop-serve-net` backend
+  # (scripted LLM_GATEWAY_URL double, never Claude), kills the network mid-stream, and
+  # asserts transparent resume with no-loss/no-dup. It is the enforced successor to the
+  # deferred manual real-browser proof at #50/#55. The lane hard-fails (never green-skips)
+  # when its toolchain is absent, so a green suite can never hide an unexercised browser path.
+  browser-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # esbuild (used by examples/wander/build.sh to bundle @fuse/sdk for the browser) lives
+      # in the repo npm workspace.
+      - name: Install npm workspace deps
+        run: npm install
+
+      - name: Install Playwright chromium
+        run: go run github.com/mxschmitt/playwright-go/cmd/playwright install --with-deps chromium
+
+      - name: Run headless-browser reconnect lane
+        run: go test -tags browser -timeout 300s ./examples/wander/...
+
   mcp-integration:
     runs-on: ubuntu-latest
     steps:
