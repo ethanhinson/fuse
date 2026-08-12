@@ -130,6 +130,35 @@ func TestRunnerCloseStopsLiveWait(t *testing.T) {
 	}
 }
 
+func TestRunnerCloseDuringSubscribeCancelsPublishedSubscription(t *testing.T) {
+	store := &closeDuringSubscribeStore{
+		subscribing: make(chan struct{}),
+		returnSub:   make(chan struct{}),
+		canceled:    make(chan struct{}),
+	}
+	runner := NewRunner(store, event.StreamKey{Tenant: "a", Loop: "l"}, nil, nil)
+	done := make(chan error, 1)
+	go func() { done <- runner.Run(context.Background()) }()
+
+	<-store.subscribing
+	runner.Close()
+	close(store.returnSub)
+
+	select {
+	case <-store.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("subscription published after Close was not canceled")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runner did not stop after Close raced with Subscribe")
+	}
+}
+
 type carrierStartRecorder struct{ delayed []bool }
 
 func (o *carrierStartRecorder) Start(ctx context.Context, _ Descriptor) (context.Context, Handle) {
@@ -163,6 +192,26 @@ type interleavingStore struct {
 	live       map[event.StreamKey]chan event.Event
 	subscribed chan struct{}
 	replayGate chan struct{}
+}
+
+type closeDuringSubscribeStore struct {
+	subscribing chan struct{}
+	returnSub   chan struct{}
+	canceled    chan struct{}
+}
+
+func (s *closeDuringSubscribeStore) Append(context.Context, event.StreamKey, event.Event) error {
+	return nil
+}
+
+func (s *closeDuringSubscribeStore) Subscribe(context.Context, event.StreamKey) (<-chan event.Event, func(), error) {
+	close(s.subscribing)
+	<-s.returnSub
+	return make(chan event.Event), func() { close(s.canceled) }, nil
+}
+
+func (s *closeDuringSubscribeStore) Replay(context.Context, event.StreamKey, event.Seq) ([]event.Event, error) {
+	return nil, nil
 }
 
 func newInterleavingStore() *interleavingStore {

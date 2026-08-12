@@ -51,8 +51,8 @@ func NewRunner(store event.DurableStore, key event.StreamKey, projector Projecto
 
 // Close stops a live subscription and is safe to call repeatedly.
 func (r *Runner) Close() {
-	r.closeOnce.Do(func() { close(r.closed) })
 	r.mu.Lock()
+	r.closeOnce.Do(func() { close(r.closed) })
 	cancel := r.cancel
 	r.cancel = nil
 	r.mu.Unlock()
@@ -76,15 +76,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
-	r.cancel = cancel
-	r.mu.Unlock()
-	defer r.Close()
-	select {
-	case <-r.closed:
+	if !r.installCancel(cancel) {
 		return nil
-	default:
 	}
+	defer r.Close()
 
 	dedup := newDeduper(r.capacity)
 	history, err := r.store.Replay(ctx, r.key, 0)
@@ -106,6 +101,25 @@ func (r *Runner) Run(ctx context.Context) error {
 			}
 			r.project(ctx, e, dedup, false)
 		}
+	}
+}
+
+// installCancel publishes a subscription only while the runner is open. The
+// closed-state check and publication share the same lock as Close's swap, so a
+// cancel function cannot be installed after the final close pass.
+func (r *Runner) installCancel(cancel func()) bool {
+	r.mu.Lock()
+	select {
+	case <-r.closed:
+		r.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		return false
+	default:
+		r.cancel = cancel
+		r.mu.Unlock()
+		return true
 	}
 }
 
