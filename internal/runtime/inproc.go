@@ -248,7 +248,7 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	var store event.EventStore
 	durable := r.deps.DurableStore != nil
 	if durable {
-		store = &durableSink{store: r.deps.DurableStore, key: key}
+		store = &durableSink{store: r.deps.DurableStore, key: key, ctx: loopCtx, observer: r.deps.Observer}
 	} else if r.deps.BaseDir == "" {
 		store = event.NoopStore{}
 	} else {
@@ -623,16 +623,23 @@ func (r *inProcRuntime) Spawn(ctx context.Context, loopID string, opts SpawnOpts
 // streams and the cross-instance tail). This is the counterpart to the legacy
 // fsstore's per-loop Close — durability + subscriber lifetime are the store's own.
 type durableSink struct {
-	store event.DurableStore
-	key   event.StreamKey
+	store    event.DurableStore
+	key      event.StreamKey
+	ctx      context.Context
+	observer observe.Observer
 }
 
 func (d *durableSink) Append(e event.Event) error {
-	return d.store.Append(context.Background(), d.key, e)
+	ctx, span := d.start(observe.OperationStore, "append")
+	err := d.store.Append(ctx, d.key, e)
+	span.End(observeOutcome(err))
+	return err
 }
 
 func (d *durableSink) Subscribe() (<-chan event.Event, func()) {
-	ch, cancel, err := d.store.Subscribe(context.Background(), d.key)
+	ctx, span := d.start(observe.OperationPubSub, "subscribe")
+	ch, cancel, err := d.store.Subscribe(ctx, d.key)
+	span.End(observeOutcome(err))
 	if err != nil {
 		// Degrade gracefully to a closed channel (a consumer range ends at once) rather
 		// than nil-panicking — mirrors NoopStore.Subscribe's contract.
@@ -644,7 +651,35 @@ func (d *durableSink) Subscribe() (<-chan event.Event, func()) {
 }
 
 func (d *durableSink) Replay(from event.Seq) ([]event.Event, error) {
-	return d.store.Replay(context.Background(), d.key, from)
+	ctx, span := d.start(observe.OperationStore, "replay")
+	events, err := d.store.Replay(ctx, d.key, from)
+	span.End(observeOutcome(err))
+	return events, err
+}
+
+func (d *durableSink) start(kind observe.OperationKind, name string) (context.Context, observe.Handle) {
+	ctx := d.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	o := d.observer
+	if o == nil {
+		o = observe.NoopObserver{}
+	}
+	return o.Start(ctx, observe.Descriptor{Kind: kind, Name: name})
+}
+
+func observeOutcome(err error) observe.Outcome {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return observe.OutcomeTimeout
+	case errors.Is(err, context.Canceled):
+		return observe.OutcomeCanceled
+	case err != nil:
+		return observe.OutcomeError
+	default:
+		return observe.OutcomeSuccess
+	}
 }
 
 // Close is intentionally a no-op (see the durableSink doc): the shared durable store

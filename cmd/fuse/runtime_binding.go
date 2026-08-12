@@ -13,6 +13,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/probe"
 	"github.com/ethanhinson/fuse/internal/runtime"
@@ -83,6 +84,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 	// Per-loop store holder (change 0046): BuildAgent sets it from the Runtime-owned
 	// store; the child-builder/spawner closures below read it instead of a global.
 	storeHolder := &eventStoreHolder{}
+	observer := observe.NoopObserver{}
 
 	// MCP attach on the one-shot path (change #59, Task 5): route through the SAME
 	// shared helper every binding uses, so one-shot can list + invoke MCP tools with
@@ -175,6 +177,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		// Event stream wiring (change 0043/0046): the child emits into the loop's own
 		// store, resolved from the per-loop holder (no process-global).
 		a.SetEventSink(storeHolder.get())
+		a.SetObserver(observer)
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044),
 		// the single choke point — no per-site emission here.
@@ -194,6 +197,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// Spawn lifecycle events (change 0044/0046): the Spawner is the single choke
 			// point that emits spawn.start/spawn.done onto the loop's own store.
 			agent.WithEventStore(storeHolder.get()),
+			agent.WithObserver(observer),
 			agent.WithChildBuilder(childBuilder),
 		)
 	}
@@ -297,6 +301,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 	// Per-loop store holder (change 0046): set by BuildAgent from the Runtime-owned
 	// store; read by the child-builder/spawner closures below.
 	storeHolder := &eventStoreHolder{}
+	observer := observe.NoopObserver{}
 
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
 	makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
@@ -384,6 +389,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		// Event stream wiring (change 0043/0046) — cloned child-builder site 3 of 3:
 		// the child emits onto the loop's own store via the per-loop holder.
 		a.SetEventSink(storeHolder.get())
+		a.SetObserver(observer)
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044).
 		msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
@@ -401,6 +407,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 			// Spawn lifecycle events (change 0044/0046): emitted by the Spawner choke
 			// point onto the loop's own store.
 			agent.WithEventStore(storeHolder.get()),
+			agent.WithObserver(observer),
 			agent.WithChildBuilder(childBuilder),
 		)
 	}
@@ -529,6 +536,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 	// it instead of the retired currentEventStore() global.
 	storeHolder := &eventStoreHolder{}
 	storeHolder.set(in.eventStore)
+	observer := observe.NoopObserver{}
 
 	var makeSpawner func(parentNode *agent.AgentNode, parentDepth int) *agent.Spawner
 	makeSpawnFunc := func(parentNode *agent.AgentNode, parentDepth int) tools.SpawnFunc {
@@ -606,6 +614,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		// into the session store (the shell's own store via the per-loop holder),
 		// tagged with its node identity.
 		a.SetEventSink(storeHolder.get())
+		a.SetObserver(observer)
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044), the
@@ -650,6 +659,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 			// Spawn lifecycle events (change 0044/0046): emitted by the Spawner choke
 			// point onto the shell's own store via the per-loop holder.
 			agent.WithEventStore(storeHolder.get()),
+			agent.WithObserver(observer),
 			agent.WithChildBuilder(childBuilder),
 		)
 	}

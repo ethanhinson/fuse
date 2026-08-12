@@ -177,9 +177,6 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	// REUSE the shared composition root — the exact deps wiring binding #2 uses. Do not
 	// re-wire it here. Thread the owner-liveness lease TTL (change 0049) into the deps so
 	// the runtime's heartbeat renewer + reap/re-own operate on the configured TTL.
-	deps := buildLoopServerRuntimeDeps(cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg))
-	deps.LeaseTTL = loopLeaseTTL(cfg)
-
 	// Identity + authorization live at the Connect edge (ADR-0030): build the bearer-
 	// token Verifier from config and hand the edge the durable registry (deps.Registry)
 	// so it can authorize per-loop ownership. The runtime seam never learns any of this.
@@ -202,7 +199,8 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		}
 	}
 	defer shutdownObservability()
-	deps.Observer = obs.observer
+	deps := buildLoopServerRuntimeDepsWithObserver(cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), obs.observer)
+	deps.LeaseTTL = loopLeaseTTL(cfg)
 	if obs.projector != nil && deps.DurableStore != nil {
 		deps.DurableStore = projectingDurableStore{DurableStore: deps.DurableStore, projector: obs.projector}
 	}
