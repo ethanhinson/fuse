@@ -145,6 +145,10 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 			return fail(fmt.Errorf("trace adapter: %w", err))
 		}
 		batch := observeotel.BatchConfig{QueueSize: o.Traces.QueueSize, BatchSize: o.Traces.BatchSize}
+		if s.metrics != nil {
+			batch.OnExportError = func() { s.metrics.ObserveExportError("traces", "export_failed") }
+			batch.OnDrop = func() { s.metrics.ObserveDrop("traces", "queue_full") }
+		}
 		if o.Traces.ExportTimeout != "" {
 			batch.ExportTimeout, _ = time.ParseDuration(o.Traces.ExportTimeout)
 		}

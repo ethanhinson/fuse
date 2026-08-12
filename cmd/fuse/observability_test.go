@@ -126,6 +126,58 @@ func TestNewObservabilityExportsServiceResource(t *testing.T) {
 	}
 }
 
+func TestNewObservabilityReportsTraceExporterOutageAndQueueDrops(t *testing.T) {
+	collector := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+	}))
+	t.Cleanup(collector.Close)
+	cfg := config.Config{Observability: config.ObservabilityConfig{
+		Metrics: config.MetricsObservabilityConfig{Enabled: true, Path: "/metrics", Access: "public"},
+		Traces: config.TracesObservabilityConfig{
+			Enabled: true, Endpoint: strings.TrimPrefix(collector.URL, "http://"), Protocol: "http/protobuf", Insecure: true,
+			QueueSize: 1, BatchSize: 1, ExportTimeout: "20ms", BatchTimeout: "1ms", SampleRatio: 1,
+		},
+		Cardinality: config.CardinalityObservabilityConfig{
+			HashVersion: "sha256-64-v1", Salt: "outage",
+			Tenant: config.CardinalityDimensionConfig{Budget: 1}, Model: config.CardinalityDimensionConfig{Budget: 1}, Tool: config.CardinalityDimensionConfig{Budget: 1},
+		},
+	}}
+	service, err := newObservability(context.Background(), cfg, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = service.Close(ctx)
+	})
+
+	start := time.Now()
+	for i := 0; i < 100; i++ {
+		_, handle := service.observer.Start(context.Background(), observe.Descriptor{Kind: observe.OperationLoop, Name: "run"})
+		handle.End(observe.OutcomeSuccess)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("operation completion blocked on OTLP outage for %s", elapsed)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		request := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+		response := httptest.NewRecorder()
+		service.metrics.Handler().ServeHTTP(response, request)
+		body := response.Body.String()
+		if strings.Contains(body, `fuse_observability_export_errors_total{reason="export_failed",signal="traces"} 1`) &&
+			strings.Contains(body, `fuse_observability_dropped_total{reason="queue_full",signal="traces"}`) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("trace outage health metrics not reported:\n%s", body)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestLoggingAdminRequiresAuthenticationAndTenant(t *testing.T) {
 	var out bytes.Buffer
 	s, err := newObservability(context.Background(), loggingConfig("stdout", ""), &out)

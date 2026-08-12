@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/event"
@@ -108,6 +109,7 @@ func OutcomeFromError(ctx context.Context, err error) observe.Outcome {
 type BatchConfig struct {
 	QueueSize, BatchSize        int
 	ExportTimeout, BatchTimeout time.Duration
+	OnExportError, OnDrop       func()
 }
 
 func NewProvider(exporter sdktrace.SpanExporter, cfg BatchConfig, opts ...sdktrace.TracerProviderOption) *sdktrace.TracerProvider {
@@ -123,6 +125,54 @@ func NewProvider(exporter sdktrace.SpanExporter, cfg BatchConfig, opts ...sdktra
 	if cfg.BatchTimeout <= 0 {
 		cfg.BatchTimeout = time.Second
 	}
-	bp := sdktrace.NewBatchSpanProcessor(exporter, sdktrace.WithMaxQueueSize(cfg.QueueSize), sdktrace.WithMaxExportBatchSize(cfg.BatchSize), sdktrace.WithExportTimeout(cfg.ExportTimeout), sdktrace.WithBatchTimeout(cfg.BatchTimeout))
+	processor := &healthBatchProcessor{maxQueue: int64(cfg.QueueSize), onDrop: cfg.OnDrop}
+	trackedExporter := healthExporter{SpanExporter: exporter, pending: &processor.pending, onError: cfg.OnExportError}
+	processor.delegate = sdktrace.NewBatchSpanProcessor(trackedExporter, sdktrace.WithMaxQueueSize(cfg.QueueSize), sdktrace.WithMaxExportBatchSize(cfg.BatchSize), sdktrace.WithExportTimeout(cfg.ExportTimeout), sdktrace.WithBatchTimeout(cfg.BatchTimeout))
+	bp := processor
 	return sdktrace.NewTracerProvider(append(opts, sdktrace.WithSpanProcessor(bp))...)
+}
+
+// healthBatchProcessor makes the SDK batcher's non-blocking queue admission
+// observable. The SDK deliberately drops on saturation without an error hook;
+// owning admission here preserves that behavior while accounting for the drop.
+type healthBatchProcessor struct {
+	delegate sdktrace.SpanProcessor
+	maxQueue int64
+	pending  atomic.Int64
+	onDrop   func()
+}
+
+func (p *healthBatchProcessor) OnStart(ctx context.Context, span sdktrace.ReadWriteSpan) {
+	p.delegate.OnStart(ctx, span)
+}
+
+func (p *healthBatchProcessor) OnEnd(span sdktrace.ReadOnlySpan) {
+	if p.pending.Add(1) > p.maxQueue {
+		p.pending.Add(-1)
+		if p.onDrop != nil {
+			p.onDrop()
+		}
+		return
+	}
+	p.delegate.OnEnd(span)
+}
+
+func (p *healthBatchProcessor) Shutdown(ctx context.Context) error { return p.delegate.Shutdown(ctx) }
+func (p *healthBatchProcessor) ForceFlush(ctx context.Context) error {
+	return p.delegate.ForceFlush(ctx)
+}
+
+type healthExporter struct {
+	sdktrace.SpanExporter
+	pending *atomic.Int64
+	onError func()
+}
+
+func (e healthExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
+	e.pending.Add(-int64(len(spans)))
+	err := e.SpanExporter.ExportSpans(ctx, spans)
+	if err != nil && e.onError != nil {
+		e.onError()
+	}
+	return err
 }
