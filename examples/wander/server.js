@@ -91,7 +91,10 @@ const server = http.createServer((req, res) => {
   // Static files.
   let p = url.pathname === "/" ? "/index.html" : url.pathname;
   const file = path.join(STATIC_DIR, path.normalize(p));
-  if (!file.startsWith(STATIC_DIR)) {
+  // Path-traversal guard. Require the resolved path to be STATIC_DIR itself or strictly
+  // BELOW it (prefix + separator) — a bare startsWith(STATIC_DIR) would also admit a sibling
+  // whose name is a prefix of STATIC_DIR (e.g. `/app/wander-evil` for STATIC_DIR `/app/wander`).
+  if (file !== STATIC_DIR && !file.startsWith(STATIC_DIR + path.sep)) {
     res.writeHead(403);
     res.end("forbidden");
     return;

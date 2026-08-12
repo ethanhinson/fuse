@@ -7,8 +7,9 @@
 // It drives the REAL Wander page (examples/wander) — which imports the REAL @fuse/sdk over
 // @connectrpc/connect-web — in headless chromium against a REAL `fuse loop-serve-net`
 // backend with a SCRIPTED LLM_GATEWAY_URL double (NEVER Claude/Anthropic; project policy),
-// then KILLS THE NETWORK mid-session (BrowserContext.SetOffline) and asserts the concierge
-// reply still completes after a transparent reconnect with NO LOSS / NO DUP.
+// then KILLS THE NETWORK mid-session (server.js's /__cut control destroys the open proxied
+// stream socket) and asserts the concierge reply still completes after a transparent
+// reconnect with NO LOSS / NO DUP.
 //
 // Run:  go test -tags browser ./...   (or `make browser-test`)
 //
@@ -18,14 +19,16 @@
 // path. All teardown uses t.Cleanup (not defer srv.Close), ordered client-before-server
 // (httptest-defer-close-before-tcleanup-deadlock).
 //
-// Network-kill approach (documented descope): rather than dropping a single frame mid-flight
-// (racy across the fast one-shot turn), the lane takes the plan's deterministic fallback —
-// it lets turn 1 park (the observe stream is then live+open), toggles the browser context
-// OFFLINE (a real network kill that drops the open stream, driving the SDK into
-// `reconnecting`), toggles it back ONLINE (the SDK transparently re-observes from the
-// watermark), then drives turn 2 to completion. It asserts the SDK saw reconnecting→live
-// again AND that the whole-session seq log is strictly increasing with no duplicates through
-// both parks — the exact no-loss/no-dup property, over a real browser, over a real drop.
+// Network-kill approach (documented descope): Playwright's BrowserContext.SetOffline did not
+// reliably sever an already-established, idle (parked) streaming socket, so the lane takes
+// the plan's deterministic fallback — it lets turn 1 park (the observe stream is then
+// live+open), then hits server.js's /__cut control, which forcibly DESTROYS every in-flight
+// proxied Connect socket (a real mid-stream network kill of the open Observe stream, driving
+// the SDK into `reconnecting`). The proxy is healthy again on the next request, so the SDK
+// transparently re-observes from the watermark; turn 2 is then driven to completion. It
+// asserts the SDK saw reconnecting→live again AND that the whole-session domain-event seq log
+// is CONTIGUOUS (+1 each) through both parks — the exact no-loss/no-dup property, over a real
+// browser, over a real drop.
 package wander_test
 
 import (
@@ -169,7 +172,7 @@ func TestWanderBrowserReconnectNoLossNoDup(t *testing.T) {
 	if len(seqs) == 0 {
 		t.Fatalf("no events observed in the browser\n--- server output ---\n%s", outBuf.String())
 	}
-	assertStrictlyIncreasing(t, seqs) // strictly increasing ⇒ no loss AND no dup.
+	assertContiguousNoLossNoDup(t, seqs) // contiguous (+1 each) ⇒ no dup AND no loss.
 
 	states := readStringArray(t, page, "window.__wanderStates")
 	assertReconnectedThenLive(t, states)
@@ -242,11 +245,22 @@ func waitForState(t *testing.T, page playwright.Page, state string) {
 		readStringArray(t, page, "window.__wanderStates"))
 }
 
-func assertStrictlyIncreasing(t *testing.T, seqs []int) {
+// assertContiguousNoLossNoDup proves the full no-loss/no-dup property, not merely
+// monotonicity. The loop emits domain events with a CONTIGUOUS per-loop `event.Seq`
+// counter (+1 each; keepalive frames carry no seq and are filtered by the SDK before they
+// reach __wanderSeqs), so the browser's observed seq log must increase by exactly 1 at
+// every step across BOTH parks and the mid-stream cut:
+//   - a DUPLICATE (a re-delivered overlap frame after the reconnect) would show a step of
+//     0 or a repeat — caught;
+//   - a LOSS (an event dropped in the subscribe→replay gap and never re-delivered) would
+//     show a step > 1 — caught. A plain strictly-increasing check would MISS this, so the
+//     contiguity check is what makes the browser lane actually assert no-loss.
+func assertContiguousNoLossNoDup(t *testing.T, seqs []int) {
 	t.Helper()
 	for i := 1; i < len(seqs); i++ {
-		if seqs[i] <= seqs[i-1] {
-			t.Fatalf("no-loss/no-dup violated: seq log not strictly increasing at %d: %v", i, seqs)
+		if seqs[i] != seqs[i-1]+1 {
+			t.Fatalf("no-loss/no-dup violated: seq log not contiguous at index %d (%d after %d): %v",
+				i, seqs[i], seqs[i-1], seqs)
 		}
 	}
 }

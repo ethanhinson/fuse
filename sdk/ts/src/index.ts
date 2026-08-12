@@ -354,6 +354,13 @@ export function createClient(options: ClientOptions): Client {
                 // `closed`). Everything else is a transient post-handshake read/close — a
                 // clean reconnect signal, not a fault (ported from
                 // websocket-read-errors-are-not-closeerror) — so fall through to re-open.
+                // NOTE: a throw that is NOT a terminal ConnectError (a raw network error, or
+                // — less expected — a programming error like a TypeError) is intentionally
+                // treated as transient and retried, because a genuine transport drop does not
+                // always surface as a ConnectError. The trade-off is that a real defect in
+                // this generator would hide as an infinite (capped-backoff) reconnect rather
+                // than surfacing; if a diagnostic hook is ever added, log the swallowed error
+                // here.
                 const code = terminalCodeOf(err);
                 if (code !== undefined) {
                   const detail = err instanceof ConnectError ? err.rawMessage : String(err);
