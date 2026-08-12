@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -35,6 +36,7 @@ type observabilityService struct {
 	cfg             config.ObservabilityConfig
 	observer        observe.Observer
 	projector       observe.Projector
+	projection      *projectionDispatcher
 	metrics         *observeprom.Recorder
 	levels          *observabilitylogging.Levels
 	logger          *observabilitylogging.Logger
@@ -110,6 +112,7 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 	}
 	if len(projectors) > 0 {
 		s.projector = projectors
+		s.projection = newProjectionDispatcher(projectors, 1024)
 	}
 	return s, nil
 }
@@ -137,13 +140,22 @@ func (s *observabilityService) Close(ctx context.Context) error {
 		s.reloadMu.Lock()
 		defer s.reloadMu.Unlock()
 		var errs []error
+		projectionStopped := true
+		if s.projection != nil {
+			if err := s.projection.Close(ctx); err != nil {
+				projectionStopped = false
+				errs = append(errs, err)
+			}
+		}
 		if s.metricsServer != nil {
 			errs = append(errs, s.metricsServer.Shutdown(ctx))
 		}
 		if s.provider != nil {
 			errs = append(errs, s.provider.Shutdown(ctx))
 		}
-		if s.logger != nil {
+		// A projector stuck inside the logger owns its locks. Do not turn a
+		// context-bounded dispatcher shutdown into an unbounded logger close.
+		if s.logger != nil && projectionStopped {
 			errs = append(errs, s.logger.Close())
 		}
 		if s.levels != nil {
@@ -382,7 +394,7 @@ func (s *observabilityService) reopenHandler(verifier loopauth.Verifier) http.Ha
 // projectingDurableStore observes the append only after durable acceptance.
 type projectingDurableStore struct {
 	event.CommittedDurableStore
-	projector observe.Projector
+	projection *projectionDispatcher
 }
 
 func (s projectingDurableStore) Append(ctx context.Context, key event.StreamKey, e event.Event) error {
@@ -390,8 +402,88 @@ func (s projectingDurableStore) Append(ctx context.Context, key event.StreamKey,
 	if err != nil {
 		return err
 	}
-	if s.projector != nil {
-		_ = s.projector.Project(ctx, observe.ProjectEvent(key, committed))
+	if s.projection != nil {
+		s.projection.Enqueue(observe.ProjectEvent(key, committed))
 	}
 	return nil
+}
+
+type projectionStats struct {
+	Dropped uint64
+	Errors  uint64
+}
+
+// projectionDispatcher keeps observability sinks outside the durable append
+// path. Its finite queue deliberately sheds telemetry during an outage rather
+// than applying backpressure to the loop.
+type projectionDispatcher struct {
+	projector observe.Projector
+	queue     chan observe.Record
+	done      chan struct{}
+	mu        sync.Mutex
+	closed    bool
+	dropped   atomic.Uint64
+	errors    atomic.Uint64
+}
+
+func newProjectionDispatcher(projector observe.Projector, capacity int) *projectionDispatcher {
+	if capacity < 1 {
+		capacity = 1
+	}
+	d := &projectionDispatcher{projector: projector, queue: make(chan observe.Record, capacity), done: make(chan struct{})}
+	go d.run()
+	return d
+}
+
+func (d *projectionDispatcher) Enqueue(record observe.Record) {
+	if d == nil {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed {
+		d.dropped.Add(1)
+		return
+	}
+	select {
+	case d.queue <- record:
+	default:
+		d.dropped.Add(1)
+	}
+}
+
+func (d *projectionDispatcher) Stats() projectionStats {
+	if d == nil {
+		return projectionStats{}
+	}
+	return projectionStats{Dropped: d.dropped.Load(), Errors: d.errors.Load()}
+}
+
+func (d *projectionDispatcher) Close(ctx context.Context) error {
+	if d == nil {
+		return nil
+	}
+	d.mu.Lock()
+	if !d.closed {
+		d.closed = true
+		close(d.queue)
+	}
+	d.mu.Unlock()
+	select {
+	case <-d.done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("projection shutdown: %w", ctx.Err())
+	}
+}
+
+func (d *projectionDispatcher) run() {
+	defer close(d.done)
+	for record := range d.queue {
+		if d.projector != nil {
+			if err := d.projector.Project(context.Background(), record); err != nil {
+				d.errors.Add(1)
+			}
+		}
+	}
 }

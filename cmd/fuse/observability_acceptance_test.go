@@ -100,13 +100,62 @@ type failingProjector struct{ err error }
 func (p failingProjector) Project(context.Context, observe.Record) error { return p.err }
 
 func TestObservationOutageIsBoundedAndDoesNotFailLoopAppend(t *testing.T) {
-	store := projectingDurableStore{CommittedDurableStore: outageDurableStore{}, projector: failingProjector{err: errors.New("projector unavailable")}}
+	dispatcher := newProjectionDispatcher(failingProjector{err: errors.New("projector unavailable")}, 1)
+	store := projectingDurableStore{CommittedDurableStore: outageDurableStore{}, projection: dispatcher}
 	start := time.Now()
 	if err := store.Append(context.Background(), event.StreamKey{Tenant: "tenant-a", Loop: "loop-a"}, event.Event{Kind: event.KindTurnStart}); err != nil {
 		t.Fatalf("telemetry outage reached loop: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
 		t.Fatalf("projection outage blocked append for %s", elapsed)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := dispatcher.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := dispatcher.Stats().Errors; got != 1 {
+		t.Fatalf("projection errors = %d, want 1", got)
+	}
+}
+
+type blockingProjector struct{ entered chan struct{} }
+
+func (p blockingProjector) Project(context.Context, observe.Record) error {
+	close(p.entered)
+	select {}
+}
+
+func TestBlockingProjectionCannotBlockLoopAppend(t *testing.T) {
+	projector := blockingProjector{entered: make(chan struct{})}
+	dispatcher := newProjectionDispatcher(projector, 1)
+	store := projectingDurableStore{CommittedDurableStore: outageDurableStore{}, projection: dispatcher}
+	key := event.StreamKey{Tenant: "tenant-a", Loop: "loop-a"}
+	if err := store.Append(context.Background(), key, event.Event{Kind: event.KindTurnStart}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-projector.entered:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("projector did not enter blocking sink")
+	}
+	start := time.Now()
+	if err := store.Append(context.Background(), key, event.Event{Kind: event.KindTurnEnd}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append(context.Background(), key, event.Event{Kind: event.KindError}); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("blocking projection blocked durable append for %s", elapsed)
+	}
+	if got := dispatcher.Stats().Dropped; got != 1 {
+		t.Fatalf("dropped projections = %d, want 1", got)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := dispatcher.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("blocked dispatcher Close error = %v, want deadline exceeded", err)
 	}
 }
 
@@ -152,9 +201,15 @@ func (committedEnvelopeStore) Replay(context.Context, event.StreamKey, event.Seq
 
 func TestProjectionUsesCommittedDurableEnvelope(t *testing.T) {
 	projector := &recordingProjector{}
-	store := projectingDurableStore{CommittedDurableStore: committedEnvelopeStore{}, projector: projector}
+	dispatcher := newProjectionDispatcher(projector, 1)
+	store := projectingDurableStore{CommittedDurableStore: committedEnvelopeStore{}, projection: dispatcher}
 	key := event.StreamKey{Tenant: "tenant-a", Loop: "loop-a"}
 	if err := store.Append(context.Background(), key, event.Event{Kind: event.KindTurnStart}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := dispatcher.Close(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if len(projector.records) != 1 {
