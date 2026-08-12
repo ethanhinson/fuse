@@ -11,6 +11,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/event/fsstore"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -27,6 +28,8 @@ var ErrLoopFinished = errors.New("runtime: loop finished")
 // Deps are the binding-supplied collaborators the Runtime composes. None are
 // renderer/TUI/gate types; a binding wires those around the Runtime, not into it.
 type Deps struct {
+	// Observer receives timing-only lifecycle signals. Nil is identical to a no-op.
+	Observer observe.Observer
 	// BuildAgent is the per-loop construction factory: for one loop it builds the
 	// root *agent.Agent AND the loop's child-builder, both bound to THIS loop's own
 	// event store and tree (the two per-loop values the Runtime opens/creates at
@@ -144,6 +147,9 @@ type loop struct {
 // deps.BaseDir/<rootID> at StartLoop time. It returns the Runtime interface so a
 // binding consumes the seam abstractly (the concrete *inProcRuntime is unexported).
 func New(deps Deps) Runtime {
+	if deps.Observer == nil {
+		deps.Observer = observe.NoopObserver{}
+	}
 	return &inProcRuntime{deps: deps, loops: map[string]*loop{}}
 }
 
@@ -212,6 +218,14 @@ func (r *inProcRuntime) startLeaseRenewer(ctx context.Context, key event.StreamK
 // SetNodeIdentity + Agent.Run; the run executes in a goroutine and the returned
 // handle awaits it.
 func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHandle, error) {
+	loopCtx, loopSpan := r.deps.Observer.Start(ctx, observe.Descriptor{Kind: observe.OperationLoop, Name: "run", Fields: []observe.Field{{Key: "tenant", Value: string(event.NormalizeTenant(cfg.Tenant))}}})
+	ended := false
+	end := func(out observe.Outcome) {
+		if !ended {
+			ended = true
+			loopSpan.End(out)
+		}
+	}
 	// Use a caller-supplied tree when the binding externally observes it
 	// (research-probe/shell keep their tree for probe.Summarize / rendering); else
 	// create one from cfg + MaxConcurrent.
@@ -234,12 +248,13 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	var store event.EventStore
 	durable := r.deps.DurableStore != nil
 	if durable {
-		store = &durableSink{store: r.deps.DurableStore, key: key}
+		store = &durableSink{store: r.deps.DurableStore, key: key, ctx: loopCtx, observer: r.deps.Observer}
 	} else if r.deps.BaseDir == "" {
 		store = event.NoopStore{}
 	} else {
 		fs, err := fsstore.NewFSEventStore(r.deps.BaseDir, rootID)
 		if err != nil {
+			end(observe.OutcomeError)
 			return nil, fmt.Errorf("runtime: open event store: %w", err)
 		}
 		store = fs
@@ -256,6 +271,7 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		// lease on a still-live record as abandoned (see resolveDurable's reap/re-own).
 		leaseExpiry := r.now().Add(r.leaseTTL())
 		if err := r.deps.Registry.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: rootID, Live: true, LeaseExpiry: leaseExpiry}); err != nil {
+			end(observe.OutcomeError)
 			return nil, fmt.Errorf("runtime: register loop: %w", err)
 		}
 	}
@@ -284,8 +300,10 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		if r.deps.LoopTeardown != nil {
 			r.deps.LoopTeardown(toolReg)
 		}
+		end(observe.OutcomeError)
 		return nil, fmt.Errorf("runtime: build agent: %w", err)
 	}
+	a.SetObserver(r.deps.Observer)
 	a.SetEventSink(store)
 	a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
 
@@ -342,14 +360,23 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	// so the MCP egress mints per-principal, per-tenant tokens. Per-loop and applied
 	// once here, so it holds for every turn without per-turn re-plumbing; two concurrent
 	// loops derive independent contexts and never cross.
-	runCtx := ctx
+	runCtx := loopCtx
 	if r.deps.LoopContext != nil {
-		runCtx = r.deps.LoopContext(ctx, cfg)
+		runCtx = r.deps.LoopContext(loopCtx, cfg)
 	}
 
 	go func() {
 		defer close(h.done)
 		msgs, rerr := a.Run(runCtx, []model.Message{{Role: "user", Content: cfg.Task}})
+		out := observe.OutcomeSuccess
+		if errors.Is(rerr, context.DeadlineExceeded) {
+			out = observe.OutcomeTimeout
+		} else if errors.Is(rerr, context.Canceled) {
+			out = observe.OutcomeCanceled
+		} else if rerr != nil {
+			out = observe.OutcomeError
+		}
+		end(out)
 		h.msgs, h.err = msgs, rerr
 		// Stop the lease renewer FIRST so it can no longer race a Heartbeat past the
 		// SetLive(false) below (a stray post-completion Heartbeat would re-mark a stale
@@ -566,6 +593,7 @@ func (r *inProcRuntime) Spawn(ctx context.Context, loopID string, opts SpawnOpts
 		agent.WithEventStore(lp.store),        // spawn.start/spawn.done land on the same stream
 		agent.WithChildBuilder(lp.buildChild), // the binding's per-loop child policy
 		agent.WithHumanBus(lp.humanBus),       // bubble a child's undelivered messages up
+		agent.WithObserver(r.deps.Observer),
 	)
 	h, herr := spawner.Spawn(ctx, agent.SpawnOpts{
 		Label:        opts.Label,
@@ -595,16 +623,23 @@ func (r *inProcRuntime) Spawn(ctx context.Context, loopID string, opts SpawnOpts
 // streams and the cross-instance tail). This is the counterpart to the legacy
 // fsstore's per-loop Close — durability + subscriber lifetime are the store's own.
 type durableSink struct {
-	store event.DurableStore
-	key   event.StreamKey
+	store    event.DurableStore
+	key      event.StreamKey
+	ctx      context.Context
+	observer observe.Observer
 }
 
 func (d *durableSink) Append(e event.Event) error {
-	return d.store.Append(context.Background(), d.key, e)
+	ctx, span := d.start(observe.OperationStore, "append")
+	err := d.store.Append(ctx, d.key, e)
+	span.End(observeOutcome(err))
+	return err
 }
 
 func (d *durableSink) Subscribe() (<-chan event.Event, func()) {
-	ch, cancel, err := d.store.Subscribe(context.Background(), d.key)
+	ctx, span := d.start(observe.OperationPubSub, "subscribe")
+	ch, cancel, err := d.store.Subscribe(ctx, d.key)
+	span.End(observeOutcome(err))
 	if err != nil {
 		// Degrade gracefully to a closed channel (a consumer range ends at once) rather
 		// than nil-panicking — mirrors NoopStore.Subscribe's contract.
@@ -616,7 +651,35 @@ func (d *durableSink) Subscribe() (<-chan event.Event, func()) {
 }
 
 func (d *durableSink) Replay(from event.Seq) ([]event.Event, error) {
-	return d.store.Replay(context.Background(), d.key, from)
+	ctx, span := d.start(observe.OperationStore, "replay")
+	events, err := d.store.Replay(ctx, d.key, from)
+	span.End(observeOutcome(err))
+	return events, err
+}
+
+func (d *durableSink) start(kind observe.OperationKind, name string) (context.Context, observe.Handle) {
+	ctx := d.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	o := d.observer
+	if o == nil {
+		o = observe.NoopObserver{}
+	}
+	return o.Start(ctx, observe.Descriptor{Kind: kind, Name: name})
+}
+
+func observeOutcome(err error) observe.Outcome {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return observe.OutcomeTimeout
+	case errors.Is(err, context.Canceled):
+		return observe.OutcomeCanceled
+	case err != nil:
+		return observe.OutcomeError
+	default:
+		return observe.OutcomeSuccess
+	}
 }
 
 // Close is intentionally a no-op (see the durableSink doc): the shared durable store

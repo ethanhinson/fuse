@@ -29,6 +29,42 @@ type dropCounter interface {
 func RunDurableStoreConformance(t *testing.T, newStore func(t *testing.T) (event.DurableStore, event.LoopRegistry)) {
 	t.Helper()
 
+	t.Run("AppendCommittedTraceCarrierRoundTrips", func(t *testing.T) {
+		store, _ := newStore(t)
+		committed, ok := store.(event.CommittedDurableStore)
+		if !ok {
+			t.Fatal("durable store does not implement CommittedDurableStore")
+		}
+		ctx := context.Background()
+		key := event.StreamKey{Tenant: "acme", Loop: "trace-carrier"}
+		want := &event.TraceCarrier{
+			TraceParent: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+			TraceState:  "acme=tenant",
+		}
+
+		appended, err := committed.AppendCommitted(ctx, key, event.Event{
+			Kind:  event.KindTurnStart,
+			Trace: want,
+		})
+		if err != nil {
+			t.Fatalf("AppendCommitted: %v", err)
+		}
+		if appended.Trace == nil || *appended.Trace != *want {
+			t.Fatalf("AppendCommitted Trace = %#v, want %#v", appended.Trace, want)
+		}
+
+		replayed, err := store.Replay(ctx, key, 0)
+		if err != nil {
+			t.Fatalf("Replay: %v", err)
+		}
+		if len(replayed) != 1 {
+			t.Fatalf("Replay len = %d, want 1", len(replayed))
+		}
+		if replayed[0].Trace == nil || *replayed[0].Trace != *want {
+			t.Fatalf("Replay Trace = %#v, want %#v", replayed[0].Trace, want)
+		}
+	})
+
 	t.Run("AppendAllocatesContiguousPerLoopSeqFrom1", func(t *testing.T) {
 		store, _ := newStore(t)
 		ctx := context.Background()

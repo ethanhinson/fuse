@@ -3,6 +3,24 @@ name: Integration
 on: [push, pull_request]
 
 jobs:
+  # Permanent, hermetic observability proof. External Compose remains an explicit
+  # operator smoke target; CI acceptance uses in-memory exporters and real HTTP
+  # handlers so a green result cannot depend on a monitoring backend.
+  observability-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run hermetic observability acceptance
+        run: make observability-acceptance
+
+      - name: Run focused observability race lane
+        run: make observability-race
+
   # Race-detector unit suite. The platform's core value is concurrent
   # multi-agent execution (scheduler, spawn tree, blackboard), so the full unit
   # suite must run under -race on every push/PR. This is deliberately Docker-free

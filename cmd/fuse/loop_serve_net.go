@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"connectrpc.com/connect"
@@ -52,13 +53,14 @@ func buildLoopVerifier(cfg config.Config) (loopauth.Verifier, bool) {
 			continue // an entry with no token is unusable; skip it
 		}
 		tokens[a.Token] = loopauth.Principal{
-			Tenant:  event.TenantID(a.Tenant), // "" normalizes to _default at the store
-			Subject: a.Subject,
+			Tenant:                event.TenantID(a.Tenant), // "" normalizes to _default at the store
+			Subject:               a.Subject,
+			ObservabilityOperator: a.ObservabilityOperator,
 		}
 	}
 	usedDefault := false
 	if len(tokens) == 0 {
-		tokens[devToken] = loopauth.Principal{Tenant: event.DefaultTenant, Subject: "dev"}
+		tokens[devToken] = loopauth.Principal{Tenant: event.DefaultTenant, Subject: "dev", ObservabilityOperator: true}
 		usedDefault = true
 	}
 	return loopauth.NewStaticVerifier(tokens), usedDefault
@@ -92,6 +94,11 @@ var netListen = net.Listen
 var serveNetContext = func() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt)
 }
+
+// newLoopServeNetObservability is the composition seam for the network command.
+// Production uses newObservability; acceptance tests replace it with an in-memory
+// trace exporter while still exercising the CLI's real configuration and wiring.
+var newLoopServeNetObservability = newObservability
 
 // runLoopServeNet implements the `fuse loop-serve-net` subcommand (binding #3): the
 // networked Connect/protobuf (fuse.loop.v1) loop-control server — successor to the
@@ -130,7 +137,7 @@ var serveNetContext = func() (context.Context, context.CancelFunc) {
 //	    - token: <bearer-token> # required per request
 //	      tenant: <tenant-id>   # isolation boundary; empty ⇒ _default
 //	      subject: <subject>    # recorded as a loop's owner
-func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io.Writer, stderr io.Writer) int {
+func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("loop-serve-net", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	addr := fs.String("addr", "127.0.0.1:8787", "TCP address to serve the Connect/protobuf loop-control endpoints on")
@@ -148,6 +155,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 		fmt.Fprintln(stderr, "      - token: <bearer-token>  # required per request")
 		fmt.Fprintln(stderr, "        tenant: <tenant-id>    # isolation boundary; empty ⇒ _default")
 		fmt.Fprintln(stderr, "        subject: <subject>     # recorded as a loop's owner")
+		fmt.Fprintln(stderr, "        observability_operator: false # required for global logging reload/reopen")
 		fmt.Fprintln(stderr)
 		fmt.Fprintf(stderr, "With no loop_server.auth configured, a built-in dev token %q (tenant _default)\n", devToken)
 		fmt.Fprintln(stderr, "is used so local development works; a bearer token is still required on the wire.")
@@ -176,10 +184,6 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 	// REUSE the shared composition root — the exact deps wiring binding #2 uses. Do not
 	// re-wire it here. Thread the owner-liveness lease TTL (change 0049) into the deps so
 	// the runtime's heartbeat renewer + reap/re-own operate on the configured TTL.
-	deps := buildLoopServerRuntimeDeps(cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg))
-	deps.LeaseTTL = loopLeaseTTL(cfg)
-	rt := runtime.New(deps)
-
 	// Identity + authorization live at the Connect edge (ADR-0030): build the bearer-
 	// token Verifier from config and hand the edge the durable registry (deps.Registry)
 	// so it can authorize per-loop ownership. The runtime seam never learns any of this.
@@ -189,6 +193,31 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 			devToken, event.DefaultTenant)
 	}
 
+	obs, err := newLoopServeNetObservability(context.Background(), cfg, stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "loop-serve-net: observability: %v\n", err)
+		return 1
+	}
+	shutdownObservability := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := obs.Close(ctx); err != nil {
+			fmt.Fprintf(stderr, "loop-serve-net: observability shutdown: %v\n", err)
+		}
+	}
+	defer shutdownObservability()
+	deps := buildLoopServerRuntimeDepsWithObserver(cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), obs.observer)
+	deps.LeaseTTL = loopLeaseTTL(cfg)
+	if obs.projection != nil && deps.DurableStore != nil {
+		store, ok := deps.DurableStore.(event.CommittedDurableStore)
+		if !ok {
+			fmt.Fprintln(stderr, "loop-serve-net: observability requires a durable store that returns committed event envelopes")
+			return 1
+		}
+		deps.DurableStore = projectingDurableStore{CommittedDurableStore: store, projection: obs.projection}
+	}
+	rt := runtime.New(deps)
+
 	ln, err := netListen("tcp", *addr)
 	if err != nil {
 		fmt.Fprintf(stderr, "loop-serve-net: listen %s: %v\n", *addr, err)
@@ -197,8 +226,26 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 
 	ctx, stop := serveNetContext()
 	defer stop()
+	if err := obs.startMetricsEndpoint(ctx, verifier); err != nil {
+		_ = ln.Close()
+		fmt.Fprintf(stderr, "loop-serve-net: %v\n", err)
+		return 1
+	}
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-hup:
+				obs.handleSIGHUP(ctx, cfg.Observability.Logging, stderr)
+			}
+		}
+	}()
 
-	if err := serveNet(ctx, ln, rt, verifier, deps.Registry); err != nil {
+	if err := serveNetObserved(ctx, ln, rt, verifier, deps.Registry, obs); err != nil {
 		fmt.Fprintf(stderr, "loop-serve-net: %v\n", err)
 		return 1
 	}
@@ -224,15 +271,36 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 // which the pure-transport E2E test relies on for a subset of its assertions; the
 // production runLoopServeNet always supplies both.
 func serveNet(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry) error {
+	return serveNetObserved(ctx, ln, rt, verifier, registry, nil)
+}
+
+func serveNetObserved(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry, obs *observabilityService) error {
 	mux := http.NewServeMux()
 
 	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx).WithRegistry(registry)
+	if obs != nil {
+		handler.WithObserver(obs.observer)
+	}
 	var opts []connect.HandlerOption
 	if verifier != nil {
 		opts = append(opts, connect.WithInterceptors(loopconnect.NewAuthInterceptor(verifier)))
 	}
 	path, connectHandler := loopv1connect.NewLoopServiceHandler(handler, opts...)
 	mux.Handle(path, connectHandler)
+	if obs != nil {
+		if obs.metrics != nil && obs.cfg.Metrics.Bind == "" {
+			metrics := obs.metrics.Handler()
+			if obs.cfg.Metrics.Access == "authenticated" {
+				metrics = authenticatedHTTP(verifier, metrics)
+			}
+			mux.Handle(obs.cfg.Metrics.Path, metrics)
+		}
+		if obs.levels != nil {
+			mux.Handle(observabilityAdminPath, obs.adminHandler(verifier))
+			mux.Handle(observabilityReloadPath, obs.reloadHandler(verifier))
+			mux.Handle(observabilityReopenPath, obs.reopenHandler(verifier))
+		}
+	}
 
 	srv := &http.Server{
 		// h2c lets gRPC / gRPC-Web / Connect clients negotiate HTTP/2 over cleartext on

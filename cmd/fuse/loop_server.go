@@ -14,6 +14,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/loopserver"
 	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/session"
@@ -90,6 +91,17 @@ func runLoopServer(_ []string, cfg config.Config, reg *model.Registry, _ io.Writ
 func buildLoopServerRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
 	rateGate model.RateGate) runtime.Deps {
+	return buildLoopServerRuntimeDepsWithObserver(cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observe.NoopObserver{})
+}
+
+// buildLoopServerRuntimeDepsWithObserver is the production composition variant
+// that keeps the configured provider-neutral observer in every child factory.
+func buildLoopServerRuntimeDepsWithObserver(cfg config.Config, reg *model.Registry, modelAlias string,
+	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
+	rateGate model.RateGate, observer observe.Observer) runtime.Deps {
+	if observer == nil {
+		observer = observe.NoopObserver{}
+	}
 
 	// Select the SHARED durable backend (change 0047): a process-wide durable event
 	// store + loop registry, threaded into Deps as VALUES so the loop-server resolves
@@ -121,6 +133,7 @@ func buildLoopServerRuntimeDeps(cfg config.Config, reg *model.Registry, modelAli
 	var loopManagers sync.Map // *tools.Registry -> *mcp.Manager
 
 	return runtime.Deps{
+		Observer: observer,
 		// DurableStore/Registry are the 0047 durable seam (shared, cross-process). When
 		// set, StartLoop emits into this shared store per StreamKey and registers the
 		// loop's liveness, so observe/attach resolve loops a prior process started. BaseDir
@@ -233,6 +246,7 @@ func buildLoopServerRuntimeDeps(cfg config.Config, reg *model.Registry, modelAli
 				// Event stream wiring (change 0043/0046): the child emits into THIS loop's
 				// own store (threaded in as a value, not read from a global).
 				a.SetEventSink(store)
+				a.SetObserver(observer)
 				a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 				// spawn.start / spawn.done are emitted by the Spawner choke point (change 0044).
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
@@ -249,6 +263,7 @@ func buildLoopServerRuntimeDeps(cfg config.Config, reg *model.Registry, modelAli
 					// Spawn lifecycle events (change 0044/0046): emitted by the Spawner choke
 					// point onto THIS loop's own store.
 					agent.WithEventStore(store),
+					agent.WithObserver(observer),
 					agent.WithChildBuilder(childBuilder),
 				)
 			}

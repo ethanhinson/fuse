@@ -15,7 +15,9 @@ import (
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
 	"github.com/ethanhinson/fuse/internal/model"
+	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
 	"github.com/ethanhinson/fuse/internal/runtime"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // bearerClientInterceptor is a connect.Interceptor that adds an
@@ -209,4 +211,86 @@ func TestLoopServeNetEndToEnd(t *testing.T) {
 		t.Fatalf("observed seqs = %v, want [1 2 3]", seqs)
 	}
 	_ = stream.Close()
+}
+
+// TestLoopServeNetObservedInstallsObserver proves the production network server
+// gives its configured observer to the Connect handler. Every RPC must start an API
+// span and return the trace ID the client can use to correlate the request.
+func TestLoopServeNetObservedInstallsObserver(t *testing.T) {
+	live := make(chan event.Event)
+	fr := &netFakeRuntime{
+		startID: "loop-observed",
+		hist:    []event.Event{{Seq: 1, Kind: event.KindTurnStart}},
+		live:    live,
+	}
+	exporter := tracetest.NewInMemoryExporter()
+	provider := observeotel.NewProvider(exporter, observeotel.BatchConfig{BatchSize: 1, BatchTimeout: time.Millisecond})
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	obs := &observabilityService{observer: observeotel.New(provider)}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	serveDone := make(chan error, 1)
+	served := false
+	go func() { serveDone <- serveNetObserved(ctx, ln, fr, nil, nil, obs) }()
+	t.Cleanup(func() {
+		cancel()
+		if served {
+			return
+		}
+		select {
+		case err := <-serveDone:
+			if err != nil {
+				t.Errorf("serveNetObserved: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("serveNetObserved did not return after cancel")
+		}
+	})
+
+	client := loopv1connect.NewLoopServiceClient(http.DefaultClient, "http://"+ln.Addr().String())
+	start, err := client.StartLoop(context.Background(), connect.NewRequest(&loopv1.StartLoopRequest{Task: "hi"}))
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	if start.Header().Get("Fuse-Trace-Id") == "" {
+		t.Fatal("StartLoop response lacks Fuse-Trace-Id")
+	}
+	sent, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{LoopId: "loop-observed", Input: "more"}))
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if sent.Header().Get("Fuse-Trace-Id") == "" {
+		t.Fatal("Send response lacks Fuse-Trace-Id")
+	}
+	stream, err := client.Observe(context.Background(), connect.NewRequest(&loopv1.ObserveRequest{LoopId: "loop-observed"}))
+	if err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	if !stream.Receive() {
+		t.Fatalf("Observe did not replay event: %v", stream.Err())
+	}
+	if stream.ResponseHeader().Get("Fuse-Trace-Id") == "" {
+		t.Fatal("Observe response lacks Fuse-Trace-Id")
+	}
+	cancel()
+	if err := <-serveDone; err != nil {
+		t.Fatalf("serveNetObserved: %v", err)
+	}
+	served = true
+	if err := provider.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, span := range exporter.GetSpans() {
+		seen[span.Name] = true
+	}
+	for _, name := range []string{"fuse.api.request.start_loop", "fuse.api.request.send", "fuse.api.request.observe"} {
+		if !seen[name] {
+			t.Errorf("missing API span %q in %#v", name, seen)
+		}
+	}
 }

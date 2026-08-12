@@ -1,4 +1,4 @@
-.PHONY: build install test test-race lint test-integration proto sdk-ts-test browser-test
+.PHONY: build install test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke
 
 # Version is stamped into the binary via -ldflags. It defaults to `git describe`
 # (tags + short SHA + dirty marker) and falls back to the source default when git
@@ -13,7 +13,7 @@ build:
 install:
 	go install -ldflags "$(LDFLAGS)" ./cmd/fuse
 
-test:
+test: observability-validate
 	go test ./...
 
 # test-race runs the suite under the race detector. The platform's core value is
@@ -73,3 +73,29 @@ browser-test:
 	@command -v node >/dev/null 2>&1 || { echo "node required for browser-test (headless-browser lane) but not found on PATH"; exit 1; }
 	npm install
 	go test -tags browser -timeout 300s ./examples/wander/...
+
+# Validates every reference-stack artifact and its routing/provisioning relationships
+# without Docker. This is part of `make test` and the observability CI acceptance gate.
+observability-validate:
+	go run ./deploy/observability/validate.go
+
+# Hermetic release gate for the loop observability stack. This never requires an
+# external collector: traces are exported in-memory and metrics are scraped through
+# the production handler while the Connect/runtime/SDK acceptance tests prove the
+# authenticated replay boundary.
+observability-acceptance: observability-validate
+	go test -count=1 ./cmd/fuse -run 'TestObservabilityAcceptanceHermetic|TestObservationOutageIsBoundedAndDoesNotFailLoopAppend|TestAuthPassAndDeny|TestAuthTenantSpoofRejected|TestReconnectNoLossNoDup'
+	go test -count=1 ./internal/observe -run 'TestRunnerNormalShutdownClosesSubscriptionExactlyOnce|TestFanoutOutageAttemptsEveryProjectorWithoutRetry'
+
+# Focused permanent race lane: fanout/runner lifecycle plus the logging live-control
+# mutation, expiry, reopen, and shutdown stress tests.
+observability-race:
+	go test -race ./internal/observe/... ./internal/runtime ./internal/agent ./internal/loopconnect ./cmd/fuse
+
+# Optional operator smoke. It is intentionally outside CI and reports loudly when
+# Docker Compose is unavailable instead of pretending the external stack was tested.
+observability-compose-smoke: observability-validate
+	@command -v docker >/dev/null 2>&1 || { echo "SKIP: observability Compose smoke requires docker"; exit 0; }
+	@docker compose version >/dev/null 2>&1 || { echo "SKIP: observability Compose smoke requires Docker Compose v2"; exit 0; }
+	docker compose -f deploy/observability/docker-compose.yml config
+	docker run --rm --entrypoint promtool -v "$(CURDIR)/deploy/observability/alerts.yml:/etc/prometheus/alerts.yml:ro" prom/prometheus:v3.5.0 check rules /etc/prometheus/alerts.yml

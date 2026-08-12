@@ -54,7 +54,10 @@ type FSDurableStore struct {
 
 // compile-time assertion (the LoopRegistry assertion lands with its methods in
 // registry.go).
-var _ event.DurableStore = (*FSDurableStore)(nil)
+var (
+	_ event.DurableStore          = (*FSDurableStore)(nil)
+	_ event.CommittedDurableStore = (*FSDurableStore)(nil)
+)
 
 // NewDurableFSStore creates a durable, tenant-partitioned event store rooted at
 // baseDir. Streams are opened lazily on first use at
@@ -115,17 +118,24 @@ func (s *FSDurableStore) getStream(k event.StreamKey) (*dstream, error) {
 // entry, writes durably (plaintext JSONL, flushed), then fans out non-blocking.
 // Never blocks on a subscriber (ADR-0016).
 func (s *FSDurableStore) Append(ctx context.Context, key event.StreamKey, e event.Event) error {
+	_, err := s.AppendCommitted(ctx, key, e)
+	return err
+}
+
+// AppendCommitted records an event and returns the exact envelope that was
+// durably accepted, including its store-assigned Seq and defaulted timestamp.
+func (s *FSDurableStore) AppendCommitted(ctx context.Context, key event.StreamKey, e event.Event) (event.Event, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return event.Event{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return os.ErrClosed
+		return event.Event{}, os.ErrClosed
 	}
 	st, err := s.getStream(key)
 	if err != nil {
-		return err
+		return event.Event{}, err
 	}
 
 	st.seq++
@@ -135,16 +145,16 @@ func (s *FSDurableStore) Append(ctx context.Context, key event.StreamKey, e even
 	}
 	line, err := e.MarshalJSONL()
 	if err != nil {
-		return err
+		return event.Event{}, err
 	}
 	if _, err := st.w.Write(line); err != nil {
-		return err
+		return event.Event{}, err
 	}
 	if err := st.w.WriteByte('\n'); err != nil {
-		return err
+		return event.Event{}, err
 	}
 	if err := st.w.Flush(); err != nil {
-		return err
+		return event.Event{}, err
 	}
 	// Non-blocking fan-out: a full buffer drops the newest event and bumps the gap
 	// counter — never back-pressures the loop (ADR-0016).
@@ -155,7 +165,7 @@ func (s *FSDurableStore) Append(ctx context.Context, key event.StreamKey, e even
 			st.dropped++
 		}
 	}
-	return nil
+	return e, nil
 }
 
 // Subscribe returns a live tail of the (tenant, loop) stream plus an idempotent

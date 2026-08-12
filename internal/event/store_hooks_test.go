@@ -77,12 +77,21 @@ func TestLabelingTripleConsumerReadable(t *testing.T) {
 // hooks-only — no exporter, no emission). The pgstore backend (which transitively
 // pulls OTEL via testcontainers in its TESTS) is a separate, build-tagged package
 // and is NOT part of internal/event's dependency closure here.
-func TestNoOTELDependency(t *testing.T) {
-	out, err := exec.Command("go", "list", "-deps", "./...").Output()
-	if err != nil {
-		t.Fatalf("go list -deps: %v", err)
-	}
-	if bytes.Contains(out, []byte("go.opentelemetry.io")) {
-		t.Fatal("internal/event must not import OTEL in 0047 (D5 is hooks-only)")
+func TestCorePackagesHaveNoObservabilityVendorDependency(t *testing.T) {
+	for _, pkg := range []string{
+		"github.com/ethanhinson/fuse/internal/event",
+		"github.com/ethanhinson/fuse/internal/observe",
+		"github.com/ethanhinson/fuse/internal/runtime",
+		"github.com/ethanhinson/fuse/internal/agent",
+	} {
+		out, err := exec.Command("go", "list", "-deps", pkg).Output()
+		if err != nil {
+			t.Fatalf("go list -deps %s: %v", pkg, err)
+		}
+		for _, forbidden := range [][]byte{[]byte("go.opentelemetry.io"), []byte("github.com/prometheus")} {
+			if bytes.Contains(out, forbidden) {
+				t.Fatalf("%s must not import observability vendor dependency %q", pkg, forbidden)
+			}
+		}
 	}
 }

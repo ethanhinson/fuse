@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"strings"
 	"time"
 )
 
@@ -73,5 +75,99 @@ func (c Config) Validate() error {
 		}
 	}
 
+	if err := validateObservability(c.Observability); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateObservability(o ObservabilityConfig) error {
+	if o.Metrics.Enabled {
+		if o.Metrics.Path == "" || !strings.HasPrefix(o.Metrics.Path, "/") {
+			return fmt.Errorf("config: observability.metrics.path must be an absolute HTTP path")
+		}
+		if o.Metrics.Access != "authenticated" && o.Metrics.Access != "public" {
+			return fmt.Errorf("config: observability.metrics.access must be authenticated or public")
+		}
+		if o.Metrics.Bind != "" {
+			if _, _, err := net.SplitHostPort(o.Metrics.Bind); err != nil {
+				return fmt.Errorf("config: observability.metrics.bind must be host:port: %w", err)
+			}
+		}
+		last := float64(0)
+		for _, bucket := range o.Metrics.HistogramBuckets {
+			if bucket <= last {
+				return fmt.Errorf("config: observability.metrics.histogram_buckets must be positive and strictly increasing")
+			}
+			last = bucket
+		}
+		declared := map[string][]string{
+			"fuse_loop_operations_total": {"tenant_id", "operation", "outcome"}, "fuse_loop_operation_duration_seconds": {"tenant_id", "operation", "outcome"}, "fuse_loop_active": {"tenant_id", "operation"},
+			"fuse_model_calls_total": {"tenant_id", "model", "outcome"}, "fuse_model_call_duration_seconds": {"tenant_id", "model", "outcome"}, "fuse_model_call_attempts": {"tenant_id", "model", "outcome"},
+			"fuse_tool_calls_total": {"tenant_id", "tool", "outcome"}, "fuse_tool_call_duration_seconds": {"tenant_id", "tool", "outcome"}, "fuse_spawn_operations_total": {"tenant_id", "outcome"}, "fuse_spawn_operation_duration_seconds": {"tenant_id", "outcome"},
+			"fuse_event_projection_total": {"event_kind", "outcome"}, "fuse_event_projection_duration_seconds": {"outcome"}, "fuse_observability_export_errors_total": {"signal", "reason"}, "fuse_observability_dropped_total": {"signal", "reason"}, "fuse_observability_log_reopens_total": {"outcome"}, "fuse_observability_log_overrides": {"scope"},
+			"fuse_metrics_label_overflow_total": {"dimension", "metric"}, "fuse_metrics_label_admitted_values": {"dimension"}, "fuse_metrics_label_budget": {"dimension"},
+		}
+		if len(o.Metrics.Labels) > 0 {
+			if len(o.Metrics.Labels) != len(declared) {
+				return fmt.Errorf("config: observability.metrics.labels must declare the exact metric catalog")
+			}
+			for metric, want := range declared {
+				got, ok := o.Metrics.Labels[metric]
+				if !ok || strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+					return fmt.Errorf("config: observability.metrics.labels for %s do not match the exact declaration", metric)
+				}
+			}
+		}
+		for name, d := range map[string]CardinalityDimensionConfig{"tenant": o.Cardinality.Tenant, "model": o.Cardinality.Model, "tool": o.Cardinality.Tool} {
+			if d.Budget < 1 {
+				return fmt.Errorf("config: observability.cardinality.%s.budget must be at least 1 to reserve __overflow__", name)
+			}
+			if len(d.Pinned) > d.Budget-1 {
+				return fmt.Errorf("config: observability.cardinality.%s pins exceed non-overflow capacity", name)
+			}
+		}
+	}
+	if o.Traces.Enabled {
+		if strings.TrimSpace(o.Traces.Endpoint) == "" {
+			return fmt.Errorf("config: enabled observability.traces requires endpoint")
+		}
+		if _, _, err := net.SplitHostPort(o.Traces.Endpoint); err != nil {
+			return fmt.Errorf("config: observability.traces.endpoint must be host:port: %w", err)
+		}
+		if o.Traces.Protocol != "grpc" && o.Traces.Protocol != "http/protobuf" {
+			return fmt.Errorf("config: observability.traces.protocol must be grpc or http/protobuf")
+		}
+		if o.Traces.QueueSize < 0 || o.Traces.BatchSize < 0 || (o.Traces.QueueSize > 0 && o.Traces.BatchSize > o.Traces.QueueSize) {
+			return fmt.Errorf("config: observability.traces batching and queue sizes are invalid")
+		}
+		for name, raw := range map[string]string{"export_timeout": o.Traces.ExportTimeout, "batch_timeout": o.Traces.BatchTimeout} {
+			if raw != "" {
+				d, err := time.ParseDuration(raw)
+				if err != nil || d <= 0 {
+					return fmt.Errorf("config: observability.traces.%s must be a positive duration", name)
+				}
+			}
+		}
+		if o.Traces.SampleRatio < 0 || o.Traces.SampleRatio > 1 {
+			return fmt.Errorf("config: observability.traces.sample_ratio must be in [0,1]")
+		}
+	}
+	if o.Logging.Enabled {
+		if o.Logging.Output != "stdout" && o.Logging.Output != "file" {
+			return fmt.Errorf("config: observability.logging.output must be stdout or file")
+		}
+		if o.Logging.Output == "file" && strings.TrimSpace(o.Logging.File) == "" {
+			return fmt.Errorf("config: file logging requires observability.logging.file")
+		}
+		if o.Logging.Level != "debug" && o.Logging.Level != "info" && o.Logging.Level != "warn" && o.Logging.Level != "error" {
+			return fmt.Errorf("config: observability.logging.level must be debug, info, warn, or error")
+		}
+		d, err := time.ParseDuration(o.Logging.MaxOverrideTTL)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("config: observability.logging.max_override_ttl must be a positive duration")
+		}
+	}
 	return nil
 }

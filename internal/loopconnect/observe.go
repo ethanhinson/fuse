@@ -8,6 +8,8 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/event"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
+	"github.com/ethanhinson/fuse/internal/observe"
+	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
 )
 
 // defaultKeepalive is the idle Observe heartbeat interval. It is BELOW a common
@@ -52,7 +54,18 @@ func (h *Handler) keepaliveInterval() time.Duration {
 // While idle (no live event within the keepalive interval), the stream emits a bare
 // keepalive:true frame (no event) so a parked loop's stream survives a gateway idle
 // timeout; the client ignores keepalives for dedup (they carry no Seq).
-func (h *Handler) Observe(ctx context.Context, req *connect.Request[loopv1.ObserveRequest], stream *connect.ServerStream[loopv1.ObserveEvent]) error {
+func (h *Handler) Observe(ctx context.Context, req *connect.Request[loopv1.ObserveRequest], stream *connect.ServerStream[loopv1.ObserveEvent]) (err error) {
+	ctx, apiSpan := h.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "observe"})
+	defer func() {
+		if err == nil && ctx.Err() != nil {
+			apiSpan.End(observeotel.OutcomeFromError(ctx, ctx.Err()))
+			return
+		}
+		apiSpan.End(observeotel.OutcomeFromError(ctx, err))
+	}()
+	if id := observeotel.TraceID(ctx); id != "" {
+		stream.ResponseHeader().Set("Fuse-Trace-Id", id)
+	}
 	m := req.Msg
 
 	// 0) Authorize at the edge BEFORE any subscribe/replay work. The principal was

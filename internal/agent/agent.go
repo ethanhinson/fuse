@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -31,6 +33,7 @@ type Renderer interface {
 
 // Agent binds a model, a tool set, a renderer, and run limits.
 type Agent struct {
+	observer     observe.Observer
 	model        Completer
 	tools        ToolExecutor
 	renderer     Renderer
@@ -123,6 +126,9 @@ type Agent struct {
 	// EnableSummarization. Emission is best-effort — an Append error is logged and the
 	// turn continues, mirroring segmentSink.Archive.
 	eventSink event.EventStore
+	// eventTrace is captured from Run's active operation context. It is a portable,
+	// validated carrier rather than an OTel type so event emission stays vendor-free.
+	eventTrace *event.TraceCarrier
 	// node identity for emitted events (matches the AgentNode in the spawn tree).
 	// Set post-New via SetNodeIdentity from the site that knows the node (root at
 	// shell.go, children in the spawn closure). Empty/zero on probe/one-shot paths —
@@ -130,6 +136,35 @@ type Agent struct {
 	nodeID   string
 	parentID string
 	depth    int
+}
+
+// SetObserver installs provider-neutral timing observation. Nil selects a no-op.
+func (a *Agent) SetObserver(o observe.Observer) {
+	if o == nil {
+		o = observe.NoopObserver{}
+	}
+	a.observer = o
+	if a.summarizer != nil {
+		a.summarizer.setObserver(o)
+	}
+	if scorer, ok := a.relevanceScorer.(*classifierScorer); ok {
+		scorer.setObserver(o)
+	}
+}
+
+// modelOutcome maps transport termination to the bounded model-observation
+// vocabulary. Every production model-call path uses this helper.
+func modelOutcome(err error) observe.Outcome {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return observe.OutcomeTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		return observe.OutcomeCanceled
+	}
+	if err != nil {
+		return observe.OutcomeError
+	}
+	return observe.OutcomeSuccess
 }
 
 // ExpectsSink is the shared holder through which a child Agent's loop hands the
@@ -248,6 +283,9 @@ const defaultRecencyFloorPct = 50
 // EnableSummarization.
 func (a *Agent) SetSummarizer(s *summarizer, sink SegmentSink) {
 	a.summarizer = s
+	if s != nil {
+		s.setObserver(a.observer)
+	}
 	if sink == nil {
 		sink = noopSegmentSink{}
 	}
@@ -307,6 +345,10 @@ func (a *Agent) emit(kind event.Kind, turn int, payload any) {
 		Turn:     turn,
 		Kind:     kind,
 	}
+	if a.eventTrace != nil {
+		trace := *a.eventTrace
+		ev.Trace = &trace
+	}
 	if payload != nil {
 		raw, err := event.MarshalPayload(payload)
 		if err != nil {
@@ -360,6 +402,7 @@ func (a *Agent) EnableRelevanceClassifier(c Completer, modelID string, batchSize
 		base = defaultHeuristicScorer()
 	}
 	a.relevanceScorer = newClassifierScorer(base, c, modelID, batchSize, lo, hi)
+	a.relevanceScorer.(*classifierScorer).setObserver(a.observer)
 }
 
 // New builds an Agent. modelID is the gateway model id; systemPrompt, when
@@ -384,5 +427,6 @@ func New(m Completer, t ToolExecutor, r Renderer, modelID, systemPrompt string, 
 		// a.emit(...) call is a no-op until a real store is wired post-New (change
 		// 0043). Mirrors the segment sink's no-op default.
 		eventSink: event.NoopStore{},
+		observer:  observe.NoopObserver{},
 	}
 }

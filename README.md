@@ -16,6 +16,10 @@ go test ./...   # run the test suite
 Configuration lives in `~/.fuse/config.yml` (with an optional per-repo
 `.fuse.local.yml` override). See `internal/config` for the full schema.
 
+## Loop observability
+
+`loop-serve-net` can independently expose Prometheus metrics, OpenTelemetry traces, and payload-free structured logs. The source-controlled [development-only reference stack](docs/observability.md) provisions Prometheus, Grafana, an OTEL Collector, and Tempo (intentionally not Loki). See [observability operations](docs/observability.md) for cardinality limits, rotation, authenticated replay, and the Grafana-to-Tempo workflow.
+
 ## Research
 
 `/research <query>` produces a cited research report. It diversifies the
@@ -245,6 +249,7 @@ loop_server:
     - token: s3cr3t-alice     # the bearer credential a client presents
       tenant: acme            # isolation boundary; empty ⇒ the _default tenant
       subject: alice          # authorization subject, recorded as a loop's owner
+      observability_operator: true # grants global logging reload/reopen
     - token: s3cr3t-bob
       tenant: acme
       subject: bob

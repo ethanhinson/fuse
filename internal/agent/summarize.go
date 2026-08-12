@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 )
 
 // summarizerInputBudgetTokens caps the estimated input the summarizer will send
@@ -83,6 +84,7 @@ type summarizer struct {
 	// shrinks the region to fit under it. Defaults to
 	// summarizerInputBudgetTokens; overridable in tests.
 	inputBudgetTokens int
+	observer          observe.Observer
 }
 
 // newSummarizer builds a summarizer over a bounded Completer, the resolved
@@ -93,7 +95,15 @@ func newSummarizer(c Completer, modelID string, maxOutput int) *summarizer {
 		modelID:           modelID,
 		maxOutput:         maxOutput,
 		inputBudgetTokens: summarizerInputBudgetTokens,
+		observer:          observe.NoopObserver{},
 	}
+}
+
+func (s *summarizer) setObserver(o observe.Observer) {
+	if o == nil {
+		o = observe.NoopObserver{}
+	}
+	s.observer = o
 }
 
 // summarize compacts region into a single ODSNF summary, folding previousSummary
@@ -121,7 +131,9 @@ func (s *summarizer) summarizeWithRung(ctx context.Context, region []model.Messa
 		ToolChoice: "none", // force a text-only reply — the summarizer wants no tools
 		MaxTokens:  s.maxOutput,
 	}
-	resp, err := s.completer.Complete(ctx, req)
+	callCtx, span := s.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete", Fields: []observe.Field{{Key: "model", Value: s.modelID}}})
+	resp, err := s.completer.Complete(callCtx, req)
+	span.End(modelOutcome(err))
 	if err != nil {
 		return "", false, rung
 	}

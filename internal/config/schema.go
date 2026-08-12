@@ -180,9 +180,10 @@ type PipelineConfig struct {
 // StaticVerifier surface — richer verifiers (OIDC/JWT, mTLS) slot in behind the
 // same loopauth.Verifier seam without a config re-cut.
 type AuthTokenConfig struct {
-	Token   string `yaml:"token"`
-	Tenant  string `yaml:"tenant"`
-	Subject string `yaml:"subject"`
+	Token                 string `yaml:"token"`
+	Tenant                string `yaml:"tenant"`
+	Subject               string `yaml:"subject"`
+	ObservabilityOperator bool   `yaml:"observability_operator"`
 }
 
 // LoopServerConfig configures the networked Connect/protobuf loop-control binding
@@ -203,6 +204,61 @@ type AuthTokenConfig struct {
 type LoopServerConfig struct {
 	Auth     []AuthTokenConfig `yaml:"auth"`
 	LeaseTTL string            `yaml:"lease_ttl"`
+}
+
+// ObservabilityConfig controls the optional telemetry adapters used by
+// loop-serve-net. Every signal is independently enabled; the zero value keeps
+// observability inert and requires no collector, metrics listener, or log file.
+type ObservabilityConfig struct {
+	Metrics     MetricsObservabilityConfig     `yaml:"metrics"`
+	Traces      TracesObservabilityConfig      `yaml:"traces"`
+	Logging     LoggingObservabilityConfig     `yaml:"logging"`
+	Cardinality CardinalityObservabilityConfig `yaml:"cardinality"`
+	InstanceID  string                         `yaml:"instance_id"`
+}
+
+type MetricsObservabilityConfig struct {
+	Enabled          bool                `yaml:"enabled"`
+	Path             string              `yaml:"path"`
+	Bind             string              `yaml:"bind"`
+	Access           string              `yaml:"access"` // authenticated | public
+	HistogramBuckets []float64           `yaml:"histogram_buckets"`
+	Labels           map[string][]string `yaml:"labels"`
+}
+
+type TracesObservabilityConfig struct {
+	Enabled       bool              `yaml:"enabled"`
+	Endpoint      string            `yaml:"endpoint"`
+	Protocol      string            `yaml:"protocol"` // grpc | http/protobuf
+	Insecure      bool              `yaml:"insecure"`
+	Headers       map[string]string `yaml:"headers"`
+	QueueSize     int               `yaml:"queue_size"`
+	BatchSize     int               `yaml:"batch_size"`
+	ExportTimeout string            `yaml:"export_timeout"`
+	BatchTimeout  string            `yaml:"batch_timeout"`
+	SampleRatio   float64           `yaml:"sample_ratio"`
+}
+
+type LoggingObservabilityConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	Output         string `yaml:"output"` // stdout | file
+	File           string `yaml:"file"`
+	Level          string `yaml:"level"`
+	MaxOverrideTTL string `yaml:"max_override_ttl"`
+}
+
+type CardinalityDimensionConfig struct {
+	Budget  int      `yaml:"budget"`
+	Pinned  []string `yaml:"pinned"`
+	Catalog []string `yaml:"catalog"`
+}
+
+type CardinalityObservabilityConfig struct {
+	HashVersion string                     `yaml:"hash_version"`
+	Salt        string                     `yaml:"salt"`
+	Tenant      CardinalityDimensionConfig `yaml:"tenant"`
+	Model       CardinalityDimensionConfig `yaml:"model"`
+	Tool        CardinalityDimensionConfig `yaml:"tool"`
 }
 
 // Config is the fully resolved fuse configuration.
@@ -249,7 +305,8 @@ type Config struct {
 	// bearer-credential surface (a token grants access), so it is honored ONLY
 	// from the trusted ~/.fuse/config.yml — a repo-plantable .fuse.local.yml must
 	// not be able to mint or widen credentials (ADR-0006 trust boundary).
-	LoopServer LoopServerConfig
+	LoopServer    LoopServerConfig
+	Observability ObservabilityConfig
 	// ToolIdentity configures the tool/resource identity-propagation egress
 	// (change #52): the built-in STS signing key(s) used to mint per-call,
 	// audience-bound delegation tokens for identity-propagating MCP servers, and
@@ -390,12 +447,54 @@ type rawConfig struct {
 	// LoopServer mirrors LoopServerConfig on-disk (change 0049): the bearer
 	// token→principal verifier map and the lease TTL for `loop-serve-net`. It is a
 	// credential surface honored ONLY from the trusted home file (see mergeFile).
-	LoopServer LoopServerConfig `yaml:"loop_server"`
+	LoopServer    LoopServerConfig       `yaml:"loop_server"`
+	Observability rawObservabilityConfig `yaml:"observability"`
 	// ToolIdentity mirrors ToolIdentityConfig on-disk (change #52): the built-in
 	// STS signing key + local subject for identity-propagation. A credential
 	// surface (the signing key mints downstream-trusted tokens) honored ONLY from
 	// the trusted home file (see mergeFile).
 	ToolIdentity ToolIdentityConfig `yaml:"tool_identity"`
+}
+
+// rawObservabilityConfig preserves YAML presence for trace sample_ratio so an
+// explicit zero can disable root-span sampling while an omitted value receives
+// the resolved default.
+type rawObservabilityConfig struct {
+	Metrics     MetricsObservabilityConfig     `yaml:"metrics"`
+	Traces      rawTracesObservabilityConfig   `yaml:"traces"`
+	Logging     LoggingObservabilityConfig     `yaml:"logging"`
+	Cardinality CardinalityObservabilityConfig `yaml:"cardinality"`
+	InstanceID  string                         `yaml:"instance_id"`
+}
+
+type rawTracesObservabilityConfig struct {
+	Enabled       bool              `yaml:"enabled"`
+	Endpoint      string            `yaml:"endpoint"`
+	Protocol      string            `yaml:"protocol"`
+	Insecure      bool              `yaml:"insecure"`
+	Headers       map[string]string `yaml:"headers"`
+	QueueSize     int               `yaml:"queue_size"`
+	BatchSize     int               `yaml:"batch_size"`
+	ExportTimeout string            `yaml:"export_timeout"`
+	BatchTimeout  string            `yaml:"batch_timeout"`
+	SampleRatio   *float64          `yaml:"sample_ratio"`
+}
+
+func (o rawObservabilityConfig) resolve() ObservabilityConfig {
+	ratio := 1.0
+	if o.Traces.SampleRatio != nil {
+		ratio = *o.Traces.SampleRatio
+	}
+	return ObservabilityConfig{
+		Metrics: o.Metrics,
+		Traces: TracesObservabilityConfig{
+			Enabled: o.Traces.Enabled, Endpoint: o.Traces.Endpoint, Protocol: o.Traces.Protocol,
+			Insecure: o.Traces.Insecure, Headers: o.Traces.Headers, QueueSize: o.Traces.QueueSize,
+			BatchSize: o.Traces.BatchSize, ExportTimeout: o.Traces.ExportTimeout,
+			BatchTimeout: o.Traces.BatchTimeout, SampleRatio: ratio,
+		},
+		Logging: o.Logging, Cardinality: o.Cardinality, InstanceID: o.InstanceID,
+	}
 }
 
 // rawPipelineConfig mirrors PipelineConfig on-disk (change 0026).
@@ -498,8 +597,9 @@ type rawResearchConfig struct {
 // Default returns the zero-config built-in configuration.
 func Default() Config {
 	return Config{
-		Gateway: Gateway{URL: "http://localhost:4000/v1", Key: "llm-gateway-local"},
-		Models:  ModelsConfig{Default: "deepseek-flash", Entries: map[string]ModelConfig{}},
+		Observability: ObservabilityConfig{Traces: TracesObservabilityConfig{SampleRatio: 1}},
+		Gateway:       Gateway{URL: "http://localhost:4000/v1", Key: "llm-gateway-local"},
+		Models:        ModelsConfig{Default: "deepseek-flash", Entries: map[string]ModelConfig{}},
 		// MaxTurns intentionally left nil (unset): the context-aware backstop is
 		// applied at the call site in cmd/fuse (unlimited shell / 100 headless),
 		// not baked into the config default. See change 0038.

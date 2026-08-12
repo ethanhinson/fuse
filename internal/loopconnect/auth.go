@@ -7,6 +7,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/ethanhinson/fuse/internal/loopauth"
+	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
 )
 
 // principalCtxKey is the private context key under which the auth interceptor
@@ -71,6 +72,7 @@ func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnauthenticated, err)
 		}
+		ctx, _ = observeotel.ExtractTrusted(ctx, req.Header())
 		return next(withPrincipal(ctx, p), req)
 	}
 }
@@ -91,6 +93,7 @@ func (i authInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc)
 		if err != nil {
 			return connect.NewError(connect.CodeUnauthenticated, err)
 		}
+		ctx, _ = observeotel.ExtractTrusted(ctx, conn.RequestHeader())
 		return next(withPrincipal(ctx, p), conn)
 	}
 }

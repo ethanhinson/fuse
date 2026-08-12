@@ -9,6 +9,8 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
+	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
+	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 // recordingStore is an in-memory EventStore that captures every appended event
@@ -108,6 +110,34 @@ func TestEmitPlainTurn(t *testing.T) {
 	// Node identity threaded onto every envelope.
 	if e.NodeID != "node-1" || e.ParentID != "root" || e.Depth != 1 {
 		t.Errorf("envelope identity = %q/%q/%d", e.NodeID, e.ParentID, e.Depth)
+	}
+}
+
+// TestEmitPersistsActiveTraceCarrier proves the durable event stream retains the
+// safe, repository-owned context required to causally reconnect later work.
+func TestEmitPersistsActiveTraceCarrier(t *testing.T) {
+	tp := trace.NewTracerProvider()
+	defer tp.Shutdown(context.Background())
+	ctx, span := tp.Tracer("test").Start(context.Background(), "loop")
+	defer span.End()
+
+	rec := &recordingStore{}
+	a := New(&scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}, &fakeExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.SetObserver(observeotel.New(tp))
+	a.SetEventSink(rec)
+	if _, err := a.Run(ctx, []model.Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.events) == 0 {
+		t.Fatal("no emitted events")
+	}
+	for _, e := range rec.events {
+		if e.Trace == nil || e.Trace.Validate() != nil {
+			t.Fatalf("event %q trace = %#v, want validated carrier", e.Kind, e.Trace)
+		}
 	}
 }
 

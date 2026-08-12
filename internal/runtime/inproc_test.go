@@ -2,14 +2,44 @@ package runtime
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/event/fsstore"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
+
+type observedOperation struct {
+	kind observe.OperationKind
+	name string
+}
+
+type recordingObserver struct {
+	mu  sync.Mutex
+	ops []observedOperation
+}
+
+func (o *recordingObserver) Start(ctx context.Context, d observe.Descriptor) (context.Context, observe.Handle) {
+	o.mu.Lock()
+	o.ops = append(o.ops, observedOperation{kind: d.Kind, name: d.Name})
+	o.mu.Unlock()
+	return ctx, observe.NoopHandle{}
+}
+
+func (o *recordingObserver) saw(kind observe.OperationKind, name string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, op := range o.ops {
+		if op.kind == kind && op.name == name {
+			return true
+		}
+	}
+	return false
+}
 
 // scriptedCompleter returns queued responses in order, then a default "done".
 type scriptedCompleter struct {
@@ -94,5 +124,35 @@ func TestStartLoopRunsAndEmits(t *testing.T) {
 	}
 	if !hasKind(evs, event.KindTurnEnd) {
 		t.Errorf("no turn.end in %v", evs)
+	}
+}
+
+func TestDurableSinkObservesStoreAndPubSubOperations(t *testing.T) {
+	store := fsstore.NewDurableFSStore(t.TempDir())
+	observer := &recordingObserver{}
+	sink := &durableSink{
+		store:    store,
+		key:      event.StreamKey{Tenant: "acme", Loop: "loop-a"},
+		observer: observer,
+	}
+	if err := sink.Append(event.Event{Kind: event.KindTurnStart}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	ch, cancel := sink.Subscribe()
+	cancel()
+	if ch == nil {
+		t.Fatal("Subscribe returned nil channel")
+	}
+	if _, err := sink.Replay(0); err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	for _, want := range []observedOperation{
+		{kind: observe.OperationStore, name: "append"},
+		{kind: observe.OperationPubSub, name: "subscribe"},
+		{kind: observe.OperationStore, name: "replay"},
+	} {
+		if !observer.saw(want.kind, want.name) {
+			t.Errorf("missing observation %s.%s", want.kind, want.name)
+		}
 	}
 }
