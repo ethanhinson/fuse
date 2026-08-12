@@ -20,7 +20,7 @@ branch: feat/loop-observability-otel-metrics
 pr:
 blocked_by:
 reconciled: true
-claimed_at: 2026-08-12T03:39:09Z
+claimed_at: 2026-08-12T04:02:08Z
 ---
 
 ## Artifacts
@@ -98,3 +98,13 @@ routine logs and metrics must project metadata only rather than serializing `Eve
 
 No adjacent follow-up was auto-captured: auto-capture is disabled, and no independently valuable
 work outside the settled scope was discovered during reconcile.
+
+## Run halted
+
+2026-08-12 — The profile-routed build stopped after Task 5 because its worker returned
+`COMPLETE` with commit `4d3b5ce83b0e358c15710931187309714ba0aaf8`, which does not resolve in this
+repository. The feature branch instead contains
+`4d3b5ce9fc2db5254bc1eb55d3c078c62c039923`. Under the docket-build contract, an
+unverifiable `COMPLETE` return is malformed and the task may not be re-dispatched or inferred
+complete from nearby git state. A human must inspect the preserved worktree and decide whether to
+accept the actual Task 5 commit before resuming the remaining plan tasks.
