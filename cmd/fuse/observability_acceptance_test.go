@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -186,15 +187,23 @@ func TestObservationOutageIsBoundedAndDoesNotFailLoopAppend(t *testing.T) {
 	}
 }
 
-type blockingProjector struct{ entered chan struct{} }
+type blockingProjector struct {
+	entered chan struct{}
+	exited  chan struct{}
+	calls   *atomic.Uint64
+}
 
-func (p blockingProjector) Project(context.Context, observe.Record) error {
+func (p blockingProjector) Project(ctx context.Context, _ observe.Record) error {
+	p.calls.Add(1)
 	close(p.entered)
-	select {}
+	<-ctx.Done()
+	close(p.exited)
+	return ctx.Err()
 }
 
 func TestBlockingProjectionCannotBlockLoopAppend(t *testing.T) {
-	projector := blockingProjector{entered: make(chan struct{})}
+	var projectionCalls atomic.Uint64
+	projector := blockingProjector{entered: make(chan struct{}), exited: make(chan struct{}), calls: &projectionCalls}
 	dispatcher := newProjectionDispatcher(projector, 1)
 	store := projectingDurableStore{CommittedDurableStore: outageDurableStore{}, projection: dispatcher}
 	key := event.StreamKey{Tenant: "tenant-a", Loop: "loop-a"}
@@ -219,10 +228,21 @@ func TestBlockingProjectionCannotBlockLoopAppend(t *testing.T) {
 	if got := dispatcher.Stats().Dropped; got != 1 {
 		t.Fatalf("dropped projections = %d, want 1", got)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := dispatcher.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("blocked dispatcher Close error = %v, want deadline exceeded", err)
+	if err := dispatcher.Close(ctx); err != nil {
+		t.Fatalf("blocked dispatcher Close error = %v", err)
+	}
+	select {
+	case <-projector.exited:
+	default:
+		t.Fatal("dispatcher returned before the blocking projector exited")
+	}
+	if err := dispatcher.Close(ctx); err != nil {
+		t.Fatalf("second dispatcher Close error = %v", err)
+	}
+	if got := projectionCalls.Load(); got != 1 {
+		t.Fatalf("blocking projector calls = %d, want 1", got)
 	}
 }
 

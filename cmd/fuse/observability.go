@@ -502,6 +502,8 @@ type projectionDispatcher struct {
 	metrics   *observeprom.Recorder
 	queue     chan observe.Record
 	done      chan struct{}
+	ctx       context.Context
+	cancel    context.CancelFunc
 	mu        sync.Mutex
 	closed    bool
 	dropped   atomic.Uint64
@@ -512,7 +514,8 @@ func newProjectionDispatcher(projector observe.Projector, capacity int, metrics 
 	if capacity < 1 {
 		capacity = 1
 	}
-	d := &projectionDispatcher{projector: projector, queue: make(chan observe.Record, capacity), done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	d := &projectionDispatcher{projector: projector, queue: make(chan observe.Record, capacity), done: make(chan struct{}), ctx: ctx, cancel: cancel}
 	if len(metrics) > 0 {
 		d.metrics = metrics[0]
 	}
@@ -557,6 +560,7 @@ func (d *projectionDispatcher) Close(ctx context.Context) error {
 	d.mu.Lock()
 	if !d.closed {
 		d.closed = true
+		d.cancel()
 		close(d.queue)
 	}
 	d.mu.Unlock()
@@ -572,12 +576,15 @@ func (d *projectionDispatcher) run() {
 	defer close(d.done)
 	for record := range d.queue {
 		if d.projector != nil {
-			if err := d.projector.Project(context.Background(), record); err != nil {
+			if err := d.projector.Project(d.ctx, record); err != nil && !errors.Is(err, context.Canceled) {
 				d.errors.Add(1)
 				if d.metrics != nil {
 					d.metrics.ObserveExportError("projection", "sink_error")
 				}
 			}
+		}
+		if d.ctx.Err() != nil {
+			return
 		}
 	}
 }
