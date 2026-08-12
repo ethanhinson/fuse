@@ -38,6 +38,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0034](0034-edge-enforced-auth-multi-tenancy-loop-ownership.md) — Token-authoritative tenancy + edge-enforced loop ownership over the policy-free runtime seam (Accepted) ← change #49 · relates to ADR-0030, ADR-0031, ADR-0033
 - [ADR-0035](0035-sdk-local-backend-takes-prebuilt-runtime.md) — Client SDK Go local backend takes a pre-built runtime.Runtime (not config-to-build) (Accepted) ← change #50 · relates to ADR-0026, ADR-0033
 - [ADR-0036](0036-tool-authz-delegated-downstream-rfc8693-egress-seam.md) — Tool/resource authz delegated to downstreams via per-call RFC 8693 delegation token exchange at a pluggable egress seam (Accepted) ← change #52 · relates to ADR-0030, ADR-0031, ADR-0034
+- [ADR-0037](0037-sdk-observe-terminal-vs-transient-by-connect-code.md) — Client SDK observe classifies terminal vs transient stream failures by Connect code (Accepted) ← change #56 · relates to ADR-0033, ADR-0034, ADR-0035
 
 ## Superseded / Reversed
 
