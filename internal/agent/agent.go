@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/event"
@@ -143,6 +144,27 @@ func (a *Agent) SetObserver(o observe.Observer) {
 		o = observe.NoopObserver{}
 	}
 	a.observer = o
+	if a.summarizer != nil {
+		a.summarizer.setObserver(o)
+	}
+	if scorer, ok := a.relevanceScorer.(*classifierScorer); ok {
+		scorer.setObserver(o)
+	}
+}
+
+// modelOutcome maps transport termination to the bounded model-observation
+// vocabulary. Every production model-call path uses this helper.
+func modelOutcome(err error) observe.Outcome {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return observe.OutcomeTimeout
+	}
+	if errors.Is(err, context.Canceled) {
+		return observe.OutcomeCanceled
+	}
+	if err != nil {
+		return observe.OutcomeError
+	}
+	return observe.OutcomeSuccess
 }
 
 // ExpectsSink is the shared holder through which a child Agent's loop hands the
@@ -261,6 +283,9 @@ const defaultRecencyFloorPct = 50
 // EnableSummarization.
 func (a *Agent) SetSummarizer(s *summarizer, sink SegmentSink) {
 	a.summarizer = s
+	if s != nil {
+		s.setObserver(a.observer)
+	}
 	if sink == nil {
 		sink = noopSegmentSink{}
 	}
@@ -377,6 +402,7 @@ func (a *Agent) EnableRelevanceClassifier(c Completer, modelID string, batchSize
 		base = defaultHeuristicScorer()
 	}
 	a.relevanceScorer = newClassifierScorer(base, c, modelID, batchSize, lo, hi)
+	a.relevanceScorer.(*classifierScorer).setObserver(a.observer)
 }
 
 // New builds an Agent. modelID is the gateway model id; systemPrompt, when

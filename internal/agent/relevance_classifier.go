@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 )
 
 // classifierResultPrefixBytes caps the tool-result body sent to the classifier
@@ -42,6 +43,7 @@ type classifierScorer struct {
 	// Score call skip the model and use the heuristic — so a persistently
 	// failing classifier cannot hot-loop across successive prunes in one run.
 	suppressed bool
+	observer   observe.Observer
 }
 
 // newClassifierScorer builds a hybrid scorer over a bounded Completer. batchSize
@@ -51,7 +53,14 @@ func newClassifierScorer(h *heuristicScorer, c Completer, modelID string, batchS
 	if batchSize <= 0 {
 		batchSize = 1
 	}
-	return &classifierScorer{heuristic: h, completer: c, modelID: modelID, batchSize: batchSize, lo: lo, hi: hi}
+	return &classifierScorer{heuristic: h, completer: c, modelID: modelID, batchSize: batchSize, lo: lo, hi: hi, observer: observe.NoopObserver{}}
+}
+
+func (cs *classifierScorer) setObserver(o observe.Observer) {
+	if o == nil {
+		o = observe.NoopObserver{}
+	}
+	cs.observer = o
 }
 
 // Score returns the heuristic score for a clear-cut result, or a classifier-
@@ -94,7 +103,9 @@ func (cs *classifierScorer) classify(ctx context.Context, batch []ToolResult, sc
 		ToolChoice: "none",
 		MaxTokens:  256,
 	}
-	resp, err := cs.completer.Complete(ctx, req)
+	callCtx, span := cs.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete", Fields: []observe.Field{{Key: "model", Value: cs.modelID}}})
+	resp, err := cs.completer.Complete(callCtx, req)
+	span.End(modelOutcome(err))
 	if err != nil {
 		return nil, false
 	}

@@ -510,15 +510,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		})
 		modelCtx, modelSpan := a.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete", Fields: []observe.Field{{Key: "model", Value: a.modelID}}})
 		resp, err := a.model.Complete(modelCtx, req)
-		modelOutcome := observe.OutcomeSuccess
-		if errors.Is(err, context.DeadlineExceeded) {
-			modelOutcome = observe.OutcomeTimeout
-		} else if errors.Is(err, context.Canceled) {
-			modelOutcome = observe.OutcomeCanceled
-		} else if err != nil {
-			modelOutcome = observe.OutcomeError
-		}
-		modelSpan.End(modelOutcome)
+		modelSpan.End(modelOutcome(err))
 		if err != nil {
 			// The estimate said we fit but the provider disagreed: prune hard
 			// (deterministic — recovery must not depend on another LLM call)
