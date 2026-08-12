@@ -381,16 +381,17 @@ func (s *observabilityService) reopenHandler(verifier loopauth.Verifier) http.Ha
 
 // projectingDurableStore observes the append only after durable acceptance.
 type projectingDurableStore struct {
-	event.DurableStore
+	event.CommittedDurableStore
 	projector observe.Projector
 }
 
 func (s projectingDurableStore) Append(ctx context.Context, key event.StreamKey, e event.Event) error {
-	if err := s.DurableStore.Append(ctx, key, e); err != nil {
+	committed, err := s.AppendCommitted(ctx, key, e)
+	if err != nil {
 		return err
 	}
 	if s.projector != nil {
-		_ = s.projector.Project(ctx, observe.ProjectEvent(key, e))
+		_ = s.projector.Project(ctx, observe.ProjectEvent(key, committed))
 	}
 	return nil
 }

@@ -202,7 +202,12 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	deps := buildLoopServerRuntimeDepsWithObserver(cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), obs.observer)
 	deps.LeaseTTL = loopLeaseTTL(cfg)
 	if obs.projector != nil && deps.DurableStore != nil {
-		deps.DurableStore = projectingDurableStore{DurableStore: deps.DurableStore, projector: obs.projector}
+		store, ok := deps.DurableStore.(event.CommittedDurableStore)
+		if !ok {
+			fmt.Fprintln(stderr, "loop-serve-net: observability requires a durable store that returns committed event envelopes")
+			return 1
+		}
+		deps.DurableStore = projectingDurableStore{CommittedDurableStore: store, projector: obs.projector}
 	}
 	rt := runtime.New(deps)
 

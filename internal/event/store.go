@@ -70,6 +70,16 @@ type DurableStore interface {
 	Replay(ctx context.Context, key StreamKey, from Seq) ([]Event, error)
 }
 
+// CommittedDurableStore exposes the exact envelope accepted by a durable store.
+// It is required by consumers that must observe store-assigned identity, such as
+// Seq and a defaulted timestamp, without racing a replay or lossy live tail.
+// Append remains available through DurableStore for callers that do not need the
+// committed envelope.
+type CommittedDurableStore interface {
+	DurableStore
+	AppendCommitted(ctx context.Context, key StreamKey, e Event) (Event, error)
+}
+
 // EventStore is the agent-free seam over the loop event stream. The loop Appends;
 // consumers (a TUI, an external binding, the session-log projection) Subscribe for
 // a live tail or Replay durable history from a cursor. All three implementations

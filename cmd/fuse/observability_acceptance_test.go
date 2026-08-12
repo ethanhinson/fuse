@@ -100,7 +100,7 @@ type failingProjector struct{ err error }
 func (p failingProjector) Project(context.Context, observe.Record) error { return p.err }
 
 func TestObservationOutageIsBoundedAndDoesNotFailLoopAppend(t *testing.T) {
-	store := projectingDurableStore{DurableStore: outageDurableStore{}, projector: failingProjector{err: errors.New("projector unavailable")}}
+	store := projectingDurableStore{CommittedDurableStore: outageDurableStore{}, projector: failingProjector{err: errors.New("projector unavailable")}}
 	start := time.Now()
 	if err := store.Append(context.Background(), event.StreamKey{Tenant: "tenant-a", Loop: "loop-a"}, event.Event{Kind: event.KindTurnStart}); err != nil {
 		t.Fatalf("telemetry outage reached loop: %v", err)
@@ -113,12 +113,60 @@ func TestObservationOutageIsBoundedAndDoesNotFailLoopAppend(t *testing.T) {
 type outageDurableStore struct{}
 
 func (outageDurableStore) Append(context.Context, event.StreamKey, event.Event) error { return nil }
+func (outageDurableStore) AppendCommitted(_ context.Context, _ event.StreamKey, e event.Event) (event.Event, error) {
+	return e, nil
+}
 func (outageDurableStore) Subscribe(context.Context, event.StreamKey) (<-chan event.Event, func(), error) {
 	ch := make(chan event.Event)
 	return ch, func() { close(ch) }, nil
 }
 func (outageDurableStore) Replay(context.Context, event.StreamKey, event.Seq) ([]event.Event, error) {
 	return nil, nil
+}
+
+type recordingProjector struct{ records []observe.Record }
+
+func (p *recordingProjector) Project(_ context.Context, record observe.Record) error {
+	p.records = append(p.records, record)
+	return nil
+}
+
+type committedEnvelopeStore struct{}
+
+func (committedEnvelopeStore) Append(ctx context.Context, key event.StreamKey, e event.Event) error {
+	_, err := (committedEnvelopeStore{}).AppendCommitted(ctx, key, e)
+	return err
+}
+func (committedEnvelopeStore) AppendCommitted(_ context.Context, _ event.StreamKey, e event.Event) (event.Event, error) {
+	e.Seq = 41
+	e.TS = time.Date(2026, 8, 12, 1, 2, 3, 0, time.UTC)
+	return e, nil
+}
+func (committedEnvelopeStore) Subscribe(context.Context, event.StreamKey) (<-chan event.Event, func(), error) {
+	ch := make(chan event.Event)
+	return ch, func() { close(ch) }, nil
+}
+func (committedEnvelopeStore) Replay(context.Context, event.StreamKey, event.Seq) ([]event.Event, error) {
+	return nil, nil
+}
+
+func TestProjectionUsesCommittedDurableEnvelope(t *testing.T) {
+	projector := &recordingProjector{}
+	store := projectingDurableStore{CommittedDurableStore: committedEnvelopeStore{}, projector: projector}
+	key := event.StreamKey{Tenant: "tenant-a", Loop: "loop-a"}
+	if err := store.Append(context.Background(), key, event.Event{Kind: event.KindTurnStart}); err != nil {
+		t.Fatal(err)
+	}
+	if len(projector.records) != 1 {
+		t.Fatalf("projected %d records, want exactly one", len(projector.records))
+	}
+	record := projector.records[0]
+	if record.Sequence != 41 || !record.Timestamp.Equal(time.Date(2026, 8, 12, 1, 2, 3, 0, time.UTC)) {
+		t.Fatalf("projection used uncommitted envelope: %#v", record)
+	}
+	if record.TenantID != "tenant-a" || record.LoopID != "loop-a" {
+		t.Fatalf("projection lost stream identity: %#v", record)
+	}
 }
 
 func TestObservabilityPermanentTargetsAndCI(t *testing.T) {

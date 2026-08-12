@@ -96,8 +96,9 @@ type subscriber struct {
 
 // compile-time assertions.
 var (
-	_ event.DurableStore = (*PGStore)(nil)
-	_ event.LoopRegistry = (*PGStore)(nil)
+	_ event.DurableStore          = (*PGStore)(nil)
+	_ event.CommittedDurableStore = (*PGStore)(nil)
+	_ event.LoopRegistry          = (*PGStore)(nil)
 )
 
 // Open connects to Postgres via a pgxpool, applies the embedded schema
@@ -156,8 +157,15 @@ func timeFromNullable(t *time.Time) time.Time {
 // drops the notify and records a gap). Append NEVER blocks on NOTIFY delivery or a
 // slow subscriber (ADR-0016).
 func (s *PGStore) Append(ctx context.Context, key event.StreamKey, e event.Event) error {
+	_, err := s.AppendCommitted(ctx, key, e)
+	return err
+}
+
+// AppendCommitted records an event and returns the exact envelope that the
+// committed row represents, including store-assigned Seq and defaulted timestamp.
+func (s *PGStore) AppendCommitted(ctx context.Context, key event.StreamKey, e event.Event) (event.Event, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return event.Event{}, err
 	}
 	nk := normalizeKey(key)
 	tenant := string(nk.Tenant)
@@ -174,7 +182,7 @@ func (s *PGStore) Append(ctx context.Context, key event.StreamKey, e event.Event
 	var seq int64
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("pgstore: begin: %w", err)
+		return event.Event{}, fmt.Errorf("pgstore: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -185,7 +193,7 @@ func (s *PGStore) Append(ctx context.Context, key event.StreamKey, e event.Event
 		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
 		tenant+"/"+loop,
 	); err != nil {
-		return fmt.Errorf("pgstore: advisory lock: %w", err)
+		return event.Event{}, fmt.Errorf("pgstore: advisory lock: %w", err)
 	}
 
 	if err := tx.QueryRow(ctx,
@@ -196,11 +204,12 @@ func (s *PGStore) Append(ctx context.Context, key event.StreamKey, e event.Event
 		 RETURNING seq`,
 		tenant, loop, e.TS, string(e.Kind), e.NodeID, e.ParentID, e.Depth, e.Turn, payload,
 	).Scan(&seq); err != nil {
-		return fmt.Errorf("pgstore: insert: %w", err)
+		return event.Event{}, fmt.Errorf("pgstore: insert: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("pgstore: commit: %w", err)
+		return event.Event{}, fmt.Errorf("pgstore: commit: %w", err)
 	}
+	e.Seq = event.Seq(seq)
 
 	// Hand the NOTIFY to the decoupled async publisher. Non-blocking: a full queue
 	// drops the notify and records a gap so Append never blocks on delivery.
@@ -212,7 +221,7 @@ func (s *PGStore) Append(ctx context.Context, key event.StreamKey, e event.Event
 		s.dropped++
 		s.mu.Unlock()
 	}
-	return nil
+	return e, nil
 }
 
 // Replay returns durable history for the (tenant, loop) stream with Seq > from
