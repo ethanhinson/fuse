@@ -95,6 +95,11 @@ var serveNetContext = func() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt)
 }
 
+// newLoopServeNetObservability is the composition seam for the network command.
+// Production uses newObservability; acceptance tests replace it with an in-memory
+// trace exporter while still exercising the CLI's real configuration and wiring.
+var newLoopServeNetObservability = newObservability
+
 // runLoopServeNet implements the `fuse loop-serve-net` subcommand (binding #3): the
 // networked Connect/protobuf (fuse.loop.v1) loop-control server — successor to the
 // JSON-over-WebSocket wire (#48, ADR-0032 superseded). It exposes the SAME policy-free
@@ -188,7 +193,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 			devToken, event.DefaultTenant)
 	}
 
-	obs, err := newObservability(context.Background(), cfg, stdout)
+	obs, err := newLoopServeNetObservability(context.Background(), cfg, stdout)
 	if err != nil {
 		fmt.Fprintf(stderr, "loop-serve-net: observability: %v\n", err)
 		return 1

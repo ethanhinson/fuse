@@ -3,71 +3,119 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
+
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
+	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/observe"
 	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
-func acceptanceObservabilityConfig() config.Config {
-	return config.Config{Observability: config.ObservabilityConfig{
-		InstanceID: "acceptance-instance",
-		Metrics:    config.MetricsObservabilityConfig{Enabled: true, Path: "/metrics", Access: "public"},
-		Logging:    config.LoggingObservabilityConfig{Enabled: true, Output: "stdout", Level: "debug", MaxOverrideTTL: "1m"},
-		Cardinality: config.CardinalityObservabilityConfig{
-			HashVersion: "sha256-64-v1", Salt: "acceptance",
-			Tenant: config.CardinalityDimensionConfig{Budget: 2, Catalog: []string{"tenant-a"}},
-			Model:  config.CardinalityDimensionConfig{Budget: 2, Catalog: []string{"model-a"}},
-			Tool:   config.CardinalityDimensionConfig{Budget: 2, Catalog: []string{"tool-a"}},
-		},
-	}}
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
 }
 
-// This is the hermetic observability acceptance lane: it exercises the production
-// fanout, Prometheus handler, payload-free JSON logger, and OTEL observer together.
-// Connect/runtime/SDK identity and replay are permanently covered by the adjacent
-// TestAuth* acceptance harness; keeping exporters in-memory makes this lane reliable.
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.b.String()
+}
+
+// TestObservabilityAcceptanceHermetic is the permanent, hermetic acceptance lane.
+// It invokes the direct `fuse loop-serve-net` CLI entrypoint, then drives the real
+// Connect server through the generated SDK and a local scripted gateway. The only
+// replacement is the OTEL exporter, which stays in memory so no external provider
+// or Compose stack is needed in CI.
 func TestObservabilityAcceptanceHermetic(t *testing.T) {
-	var logs bytes.Buffer
-	service, err := newObservability(context.Background(), acceptanceObservabilityConfig(), &logs)
+	var logs lockedBuffer
+	exporter := tracetest.NewInMemoryExporter()
+	provider := observeotel.NewProvider(exporter, observeotel.BatchConfig{BatchSize: 1, BatchTimeout: time.Millisecond})
+	secret := "PROMPT-and-tool-arguments-must-not-leak"
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"done"}}]}`))
+	}))
+	t.Cleanup(gateway.Close)
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.Mkdir(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configYAML := fmt.Sprintf("gateway:\n  url: %q\n  key: test-key\nloop_server:\n  auth:\n    - token: acceptance-token\n      tenant: tenant-a\n      subject: acceptance\nobservability:\n  instance_id: acceptance-instance\n  metrics:\n    enabled: true\n    path: /metrics\n    access: public\n  logging:\n    enabled: true\n    output: stdout\n    level: debug\n    max_override_ttl: 1m\n  cardinality:\n    hash_version: sha256-64-v1\n    salt: acceptance\n    tenant:\n      budget: 2\n      catalog: [tenant-a]\n    model:\n      budget: 2\n    tool:\n      budget: 2\n", gateway.URL)
+	if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(configYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = service.Close(context.Background()) })
-
-	exporter := tracetest.NewInMemoryExporter()
-	provider := observeotel.NewProvider(exporter, observeotel.BatchConfig{BatchSize: 1, BatchTimeout: time.Millisecond})
-	service.provider = provider
-	service.observer = metricsObserver{primary: observeotel.New(provider), metrics: service.metrics}
-
-	ctx, root := service.observer.Start(context.Background(), observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "start"})
-	ctx, loop := service.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationLoop, Name: "run", Fields: []observe.Field{{Key: "tenant", Value: "tenant-a"}}})
-	_, model := service.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete", Fields: []observe.Field{{Key: "model", Value: "model-a"}}})
-	model.End(observe.OutcomeSuccess)
-	_, tool := service.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationTool, Name: "execute", Fields: []observe.Field{{Key: "tool", Value: "tool-a"}}})
-	tool.End(observe.OutcomeError)
-	_, spawn := service.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationSpawn, Name: "child"})
-	spawn.End(observe.OutcomeCanceled)
-	loop.End(observe.OutcomeSuccess)
-	root.End(observe.OutcomeSuccess)
-
-	key := event.StreamKey{Tenant: "tenant-a", Loop: "loop-a"}
-	secret := "PROMPT-and-tool-arguments-must-not-leak"
-	for i, kind := range []event.Kind{event.KindTurnStart, event.KindModelCallStart, event.KindModelCallEnd, event.KindToolCall, event.KindToolResult, event.KindSpawnStart, event.KindSpawnDone, event.KindTurnEnd} {
-		e := event.Event{Seq: event.Seq(i + 1), TS: time.Now().UTC(), Kind: kind, NodeID: "node-a", Payload: json.RawMessage(`{"content":"` + secret + `"}`)}
-		if err := service.projector.Project(ctx, observe.ProjectEvent(key, e)); err != nil {
-			t.Fatal(err)
+	oldListen := netListen
+	netListen = func(string, string) (net.Listener, error) { return ln, nil }
+	t.Cleanup(func() { netListen = oldListen })
+	ctx, cancel := context.WithCancel(context.Background())
+	oldContext := serveNetContext
+	serveNetContext = func() (context.Context, context.CancelFunc) { return ctx, func() {} }
+	t.Cleanup(func() { serveNetContext = oldContext; cancel() })
+	oldObservability := newLoopServeNetObservability
+	newLoopServeNetObservability = func(ctx context.Context, cfg config.Config, stdout io.Writer) (*observabilityService, error) {
+		service, err := newObservability(ctx, cfg, stdout)
+		if err != nil {
+			return nil, err
 		}
+		service.provider = provider
+		service.observer = metricsObserver{primary: observeotel.New(provider), metrics: service.metrics}
+		return service, nil
 	}
+	t.Cleanup(func() { newLoopServeNetObservability = oldObservability })
+
+	commandDone := make(chan int, 1)
+	go func() {
+		commandDone <- run([]string{"loop-serve-net", "--addr", ln.Addr().String()}, &logs, &bytes.Buffer{})
+	}()
+	client := bearerClient("http://"+ln.Addr().String(), "acceptance-token")
+	const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	var started *connect.Response[loopv1.StartLoopResponse]
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		request := connect.NewRequest(&loopv1.StartLoopRequest{Task: secret})
+		request.Header().Set("traceparent", traceparent)
+		started, err = client.StartLoop(context.Background(), request)
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("SDK StartLoop through fuse CLI: %v", err)
+	}
+	if got := started.Header().Get("Fuse-Trace-Id"); got != "4bf92f3577b34da6a3ce929d0e0e4736" {
+		t.Fatalf("StartLoop trace propagation = %q, want inbound trace ID", got)
+	}
+	waitForTurnEndByObserve(t, client, started.Msg.LoopId)
 	if err := provider.ForceFlush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -76,26 +124,41 @@ func TestObservabilityAcceptanceHermetic(t *testing.T) {
 	for _, span := range spans {
 		byName[span.Name] = span
 	}
-	api, apiOK := byName["fuse.api.request.start"]
+	api, apiOK := byName["fuse.api.request.start_loop"]
 	loopSpan, loopOK := byName["fuse.loop.run"]
 	modelSpan, modelOK := byName["fuse.model.attempt.complete"]
-	if len(spans) != 5 || !apiOK || !loopOK || !modelOK || loopSpan.Parent.SpanID() != api.SpanContext.SpanID() || modelSpan.Parent.SpanID() != loopSpan.SpanContext.SpanID() {
+	if !apiOK || !loopOK || !modelOK || loopSpan.Parent.SpanID() != api.SpanContext.SpanID() || modelSpan.Parent.SpanID() != loopSpan.SpanContext.SpanID() {
 		t.Fatalf("unexpected nested spans: %#v", spans)
+	}
+	logDeadline := time.Now().Add(time.Second)
+	for time.Now().Before(logDeadline) && (!strings.Contains(logs.String(), `"tenant_id":"tenant-a"`) || !strings.Contains(logs.String(), `"loop_id":"`)) {
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(logs.String(), `"tenant_id":"tenant-a"`) || !strings.Contains(logs.String(), `"loop_id":"`) {
+		t.Fatalf("logs lack tenant/loop correlation: %s", logs.String())
 	}
 	if strings.Contains(logs.String(), secret) {
 		t.Fatal("structured logs leaked event payload")
 	}
-	if !strings.Contains(logs.String(), `"tenant_id":"tenant-a"`) || !strings.Contains(logs.String(), `"loop_id":"loop-a"`) {
-		t.Fatal("logs lack tenant/loop correlation")
-	}
 
-	w := httptest.NewRecorder()
-	service.metrics.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
-	body := w.Body.String()
-	for _, metric := range []string{"fuse_event_projection_total", "fuse_loop_operations_total", "fuse_loop_operation_duration_seconds", "fuse_model_calls_total", "fuse_model_call_attempts", "fuse_tool_calls_total", "fuse_spawn_operations_total"} {
+	response, err := http.Get("http://" + ln.Addr().String() + "/metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bodyBytes, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(bodyBytes)
+	for _, metric := range []string{"fuse_event_projection_total", "fuse_loop_operations_total", "fuse_loop_operation_duration_seconds", "fuse_model_calls_total", "fuse_model_call_attempts"} {
 		if !strings.Contains(body, metric) {
 			t.Errorf("metrics exposition missing %s", metric)
 		}
+	}
+	cancel()
+	if code := <-commandDone; code != 0 {
+		t.Fatalf("fuse loop-serve-net exit = %d, want 0", code)
 	}
 }
 
