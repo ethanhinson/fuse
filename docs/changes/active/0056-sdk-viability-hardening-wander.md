@@ -10,14 +10,14 @@ updated: 2026-08-11
 depends_on: [50]
 related: [49, 54, 55]
 discovered_from: [50]
-adrs: []
+adrs: [37]
 spec: docs/superpowers/specs/2026-08-11-sdk-viability-hardening-wander-design.md
 plan: docs/superpowers/plans/2026-08-11-sdk-viability-hardening-wander-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/sdk-viability-hardening-wander
-claimed_at: 2026-08-11T23:41:00Z
+claimed_at: 2026-08-12T00:34:00Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-11-sdk-viability-hardening-wander-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-sdk-viability-hardening-wander-design.md) |
 | Plan | [2026-08-11-sdk-viability-hardening-wander-plan.md](https://github.com/ethanhinson/fuse/blob/feat/sdk-viability-hardening-wander/docs/superpowers/plans/2026-08-11-sdk-viability-hardening-wander-plan.md) |
+| ADRs | [ADR-0037](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0037-sdk-observe-terminal-vs-transient-by-connect-code.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
