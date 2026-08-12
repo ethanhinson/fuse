@@ -205,6 +205,61 @@ type LoopServerConfig struct {
 	LeaseTTL string            `yaml:"lease_ttl"`
 }
 
+// ObservabilityConfig controls the optional telemetry adapters used by
+// loop-serve-net. Every signal is independently enabled; the zero value keeps
+// observability inert and requires no collector, metrics listener, or log file.
+type ObservabilityConfig struct {
+	Metrics     MetricsObservabilityConfig     `yaml:"metrics"`
+	Traces      TracesObservabilityConfig      `yaml:"traces"`
+	Logging     LoggingObservabilityConfig     `yaml:"logging"`
+	Cardinality CardinalityObservabilityConfig `yaml:"cardinality"`
+	InstanceID  string                         `yaml:"instance_id"`
+}
+
+type MetricsObservabilityConfig struct {
+	Enabled          bool                `yaml:"enabled"`
+	Path             string              `yaml:"path"`
+	Bind             string              `yaml:"bind"`
+	Access           string              `yaml:"access"` // authenticated | public
+	HistogramBuckets []float64           `yaml:"histogram_buckets"`
+	Labels           map[string][]string `yaml:"labels"`
+}
+
+type TracesObservabilityConfig struct {
+	Enabled       bool              `yaml:"enabled"`
+	Endpoint      string            `yaml:"endpoint"`
+	Protocol      string            `yaml:"protocol"` // grpc | http/protobuf
+	Insecure      bool              `yaml:"insecure"`
+	Headers       map[string]string `yaml:"headers"`
+	QueueSize     int               `yaml:"queue_size"`
+	BatchSize     int               `yaml:"batch_size"`
+	ExportTimeout string            `yaml:"export_timeout"`
+	BatchTimeout  string            `yaml:"batch_timeout"`
+	SampleRatio   float64           `yaml:"sample_ratio"`
+}
+
+type LoggingObservabilityConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	Output         string `yaml:"output"` // stdout | file
+	File           string `yaml:"file"`
+	Level          string `yaml:"level"`
+	MaxOverrideTTL string `yaml:"max_override_ttl"`
+}
+
+type CardinalityDimensionConfig struct {
+	Budget  int      `yaml:"budget"`
+	Pinned  []string `yaml:"pinned"`
+	Catalog []string `yaml:"catalog"`
+}
+
+type CardinalityObservabilityConfig struct {
+	HashVersion string                     `yaml:"hash_version"`
+	Salt        string                     `yaml:"salt"`
+	Tenant      CardinalityDimensionConfig `yaml:"tenant"`
+	Model       CardinalityDimensionConfig `yaml:"model"`
+	Tool        CardinalityDimensionConfig `yaml:"tool"`
+}
+
 // Config is the fully resolved fuse configuration.
 type Config struct {
 	Gateway    Gateway
@@ -249,7 +304,8 @@ type Config struct {
 	// bearer-credential surface (a token grants access), so it is honored ONLY
 	// from the trusted ~/.fuse/config.yml — a repo-plantable .fuse.local.yml must
 	// not be able to mint or widen credentials (ADR-0006 trust boundary).
-	LoopServer LoopServerConfig
+	LoopServer    LoopServerConfig
+	Observability ObservabilityConfig
 	// ToolIdentity configures the tool/resource identity-propagation egress
 	// (change #52): the built-in STS signing key(s) used to mint per-call,
 	// audience-bound delegation tokens for identity-propagating MCP servers, and
@@ -390,7 +446,8 @@ type rawConfig struct {
 	// LoopServer mirrors LoopServerConfig on-disk (change 0049): the bearer
 	// token→principal verifier map and the lease TTL for `loop-serve-net`. It is a
 	// credential surface honored ONLY from the trusted home file (see mergeFile).
-	LoopServer LoopServerConfig `yaml:"loop_server"`
+	LoopServer    LoopServerConfig    `yaml:"loop_server"`
+	Observability ObservabilityConfig `yaml:"observability"`
 	// ToolIdentity mirrors ToolIdentityConfig on-disk (change #52): the built-in
 	// STS signing key + local subject for identity-propagation. A credential
 	// surface (the signing key mints downstream-trusted tokens) honored ONLY from

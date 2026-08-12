@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	"connectrpc.com/connect"
@@ -130,7 +131,7 @@ var serveNetContext = func() (context.Context, context.CancelFunc) {
 //	    - token: <bearer-token> # required per request
 //	      tenant: <tenant-id>   # isolation boundary; empty ⇒ _default
 //	      subject: <subject>    # recorded as a loop's owner
-func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io.Writer, stderr io.Writer) int {
+func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("loop-serve-net", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	addr := fs.String("addr", "127.0.0.1:8787", "TCP address to serve the Connect/protobuf loop-control endpoints on")
@@ -178,7 +179,6 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 	// the runtime's heartbeat renewer + reap/re-own operate on the configured TTL.
 	deps := buildLoopServerRuntimeDeps(cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg))
 	deps.LeaseTTL = loopLeaseTTL(cfg)
-	rt := runtime.New(deps)
 
 	// Identity + authorization live at the Connect edge (ADR-0030): build the bearer-
 	// token Verifier from config and hand the edge the durable registry (deps.Registry)
@@ -189,6 +189,25 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 			devToken, event.DefaultTenant)
 	}
 
+	obs, err := newObservability(context.Background(), cfg, stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "loop-serve-net: observability: %v\n", err)
+		return 1
+	}
+	shutdownObservability := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := obs.Close(ctx); err != nil {
+			fmt.Fprintf(stderr, "loop-serve-net: observability shutdown: %v\n", err)
+		}
+	}
+	defer shutdownObservability()
+	deps.Observer = obs.observer
+	if obs.projector != nil && deps.DurableStore != nil {
+		deps.DurableStore = projectingDurableStore{DurableStore: deps.DurableStore, projector: obs.projector}
+	}
+	rt := runtime.New(deps)
+
 	ln, err := netListen("tcp", *addr)
 	if err != nil {
 		fmt.Fprintf(stderr, "loop-serve-net: listen %s: %v\n", *addr, err)
@@ -197,8 +216,26 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 
 	ctx, stop := serveNetContext()
 	defer stop()
+	if err := obs.startMetricsEndpoint(ctx, verifier); err != nil {
+		_ = ln.Close()
+		fmt.Fprintf(stderr, "loop-serve-net: %v\n", err)
+		return 1
+	}
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	defer signal.Stop(hup)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-hup:
+				obs.handleSIGHUP(ctx, cfg.Observability.Logging, stderr)
+			}
+		}
+	}()
 
-	if err := serveNet(ctx, ln, rt, verifier, deps.Registry); err != nil {
+	if err := serveNetObserved(ctx, ln, rt, verifier, deps.Registry, obs); err != nil {
 		fmt.Fprintf(stderr, "loop-serve-net: %v\n", err)
 		return 1
 	}
@@ -224,6 +261,10 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, _ io
 // which the pure-transport E2E test relies on for a subset of its assertions; the
 // production runLoopServeNet always supplies both.
 func serveNet(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry) error {
+	return serveNetObserved(ctx, ln, rt, verifier, registry, nil)
+}
+
+func serveNetObserved(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry, obs *observabilityService) error {
 	mux := http.NewServeMux()
 
 	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx).WithRegistry(registry)
@@ -233,6 +274,20 @@ func serveNet(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier
 	}
 	path, connectHandler := loopv1connect.NewLoopServiceHandler(handler, opts...)
 	mux.Handle(path, connectHandler)
+	if obs != nil {
+		if obs.metrics != nil && obs.cfg.Metrics.Bind == "" {
+			metrics := obs.metrics.Handler()
+			if obs.cfg.Metrics.Access == "authenticated" {
+				metrics = authenticatedHTTP(verifier, metrics)
+			}
+			mux.Handle(obs.cfg.Metrics.Path, metrics)
+		}
+		if obs.levels != nil {
+			mux.Handle(observabilityAdminPath, obs.adminHandler(verifier))
+			mux.Handle(observabilityReloadPath, obs.reloadHandler(verifier))
+			mux.Handle(observabilityReopenPath, obs.reopenHandler(verifier))
+		}
+	}
 
 	srv := &http.Server{
 		// h2c lets gRPC / gRPC-Web / Connect clients negotiate HTTP/2 over cleartext on
