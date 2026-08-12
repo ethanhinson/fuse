@@ -1,17 +1,17 @@
 ---
 id: 51
 slug: loop-observability-otel-metrics
-title: Observability for the loop — OTEL traces + Prometheus metrics + Grafana + Loki, as a projection over the event stream
+title: Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs
 status: proposed
 priority: medium
 type: feat
 created: 2026-08-10
-updated: 2026-08-10
+updated: 2026-08-11
 depends_on: [46]
 related: [43, 46, 47, 48]
 discovered_from: [46]
 adrs: []
-spec:
+spec: docs/superpowers/specs/0051-loop-observability-otel-metrics.md
 plan:
 results:
 trivial: false
@@ -25,14 +25,17 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [0051-loop-observability-otel-metrics.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0051-loop-observability-otel-metrics.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
 
 A hosted, multi-tenant agent-loop service is unobservable-by-feel: once N loops run per process
 across instances, you cannot reason about latency, cost, error rates, or fan-out without telemetry.
-The user is prioritizing observability — the full three-pillar stack: **OTEL traces (spans per
-turn/tool/spawn), Prometheus metrics, Grafana dashboards, and structured logs → Loki**.
+The user is prioritizing observability across metrics, deep traces, and structured logs while
+keeping production monitoring infrastructure outside Fuse's operational responsibility.
 
 The load-bearing architectural insight: fuse's **event stream (change 43)** is already a structured,
 per-loop, typed telemetry feed (turn.start / model.call.start-end / tool.call-result /
@@ -44,30 +47,30 @@ change is a projection, not a retrofit.
 
 ## What changes
 
-To be designed during grooming. At a sketch:
-- An observability consumer that subscribes to the event stream and emits an **OTEL span tree**
-  mirroring the loop (turn → model.call → tool.call → spawn as child spans; trace context across
-  spawn and across instances via the 47 hooks).
-- A **Prometheus `/metrics`** endpoint: loops active, turns, tokens in/out, tool calls, model
-  latency, errors, spawn depth/fan-out, queue depth — labeled by tenant / model.
-- **Grafana dashboards** (JSON) + a compose stack (Prometheus + Grafana + Loki + OTEL collector).
-- **Loki** shipping of the event stream as structured logs for correlation with traces/metrics.
-- **Hybrid sourcing:** event-stream projection for the loop-shaped spans, plus a little inline
-  instrumentation for internal timings the stream doesn't capture (e.g. 47 durable-store / pub-sub
-  latency).
+- An extensible in-process observability projection over committed loop events, with narrow
+  provider-neutral hooks for timings the stream cannot represent.
+- Prometheus `/metrics` with curated tenant/model/tool dimensions, deterministic cardinality
+  budgets, observable overflow, and per-tenant reliability, quota, and misuse alert examples.
+- OTEL nested spans and W3C trace-context propagation from SDK callers through API, loop, model,
+  tool, spawn, store, and pub/sub boundaries.
+- Structured JSON logs to stdout or an optional concurrency-safe file sink, including atomic
+  reopen for host/container-owned rotation and authenticated live debug-level controls.
+- Source-controlled Grafana dashboards and a local evaluation Compose stack containing
+  Prometheus, Grafana, OTEL Collector, and Tempo.
+- Complete documentation demonstrating Grafana metric → Tempo trace → correlated logs →
+  authenticated full-turn replay.
 
 ## Out of scope
 
 - The telemetry HOOKS themselves (trace-context threading, tenant/loop/node labeling) — those land
   in change 47's store + pub/sub seam so this change can consume them.
 - Any change to the `Runtime` seam — observability is a consumer/binding, not a seam change.
+- Production hosting or lifecycle management for Prometheus, Grafana, Tempo, Loki, or Collector.
+- Direct Loki shipping or a bundled Loki service; external collectors may consume stdout/files.
+- Jaeger-specific integration, which is a separate follow-up.
+- Routine telemetry capture of prompts, responses, or tool payloads; full turns remain in the
+  authenticated replay API/SDK.
 
 ## Open questions
 
-- Where the observability projection runs (in-process per loop-server vs a sidecar consumer of the
-  durable stream) and how it scales with multi-instance hosting.
-- OTEL exporter/collector wiring and the Go OTEL SDK dependency boundary (kept out of the leaf
-  `internal/event` package — introduced only at the consumer/binding layer).
-- Metric cardinality control for tenant/model/loop labels at scale.
-- Whether Loki log shipping is same-change or a fast-follow after traces + metrics land.
-- Sequencing: build after the networked binding (48) so there is a real hosted service to observe.
+None. The linked spec records the settled boundaries, defaults, trade-offs, and assumptions.
