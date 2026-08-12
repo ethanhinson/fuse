@@ -268,6 +268,9 @@ func serveNetObserved(ctx context.Context, ln net.Listener, rt runtime.Runtime, 
 	mux := http.NewServeMux()
 
 	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx).WithRegistry(registry)
+	if obs != nil {
+		handler.WithObserver(obs.observer)
+	}
 	var opts []connect.HandlerOption
 	if verifier != nil {
 		opts = append(opts, connect.WithInterceptors(loopconnect.NewAuthInterceptor(verifier)))

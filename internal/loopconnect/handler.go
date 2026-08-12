@@ -153,7 +153,7 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 	m := req.Msg
 	tenant, p, havePrincipal, aerr := h.effectiveTenant(ctx, m.Tenant)
 	if aerr != nil {
-		apiOutcome = observe.OutcomeError
+		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
 		return nil, aerr
 	}
 	loopBase := h.baseCtx
@@ -177,7 +177,7 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		Interactive: m.Interactive,
 	})
 	if err != nil {
-		apiOutcome = observe.OutcomeError
+		apiOutcome = observeotel.OutcomeFromError(ctx, err)
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	// Record ownership. The seam's StartLoop already Registered the record (with
@@ -187,7 +187,7 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 	// auth-free: the runtime never learns the authorization subject.
 	if h.registry != nil && havePrincipal {
 		if aerr := h.recordOwner(h.baseCtx, tenant, handle.ID(), p.Subject); aerr != nil {
-			apiOutcome = observe.OutcomeError
+			apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
 			return nil, aerr
 		}
 	}
@@ -220,15 +220,21 @@ func (h *Handler) recordOwner(ctx context.Context, tenant event.TenantID, loopID
 // CodeFailedPrecondition (the loop exists but no longer accepts input). Any other
 // error → CodeInternal.
 func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequest]) (*connect.Response[loopv1.SendResponse], error) {
+	ctx, apiSpan := h.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "send"})
+	apiOutcome := observe.OutcomeSuccess
+	defer func() { apiSpan.End(apiOutcome) }()
 	m := req.Msg
 	tenant, p, havePrincipal, aerr := h.effectiveTenant(ctx, m.Tenant)
 	if aerr != nil {
+		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
 		return nil, aerr
 	}
 	if aerr := h.authorizeLoop(ctx, tenant, m.LoopId, p, havePrincipal); aerr != nil {
+		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
 		return nil, aerr
 	}
 	if err := h.rt.Send(ctx, tenant, m.LoopId, m.Input); err != nil {
+		apiOutcome = observeotel.OutcomeFromError(ctx, err)
 		switch {
 		case errors.Is(err, runtime.ErrLoopNotFound):
 			return nil, connect.NewError(connect.CodeNotFound, err)
@@ -238,7 +244,11 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}
 	}
-	return connect.NewResponse(&loopv1.SendResponse{}), nil
+	resp := connect.NewResponse(&loopv1.SendResponse{})
+	if id := observeotel.TraceID(ctx); id != "" {
+		resp.Header().Set("Fuse-Trace-Id", id)
+	}
+	return resp, nil
 }
 
 // toProtoEvent maps an internal event.Event to its proto edge representation. It is
