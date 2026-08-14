@@ -2,7 +2,7 @@
 id: 61
 slug: observe-local-run-paths
 title: Wire observability into local run paths (fuse shell + one-shot + runtime bindings)
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-13
@@ -17,7 +17,7 @@ results: docs/results/2026-08-14-observe-local-run-paths-results.md
 trivial: false
 auto_groomable:
 branch: feat/observe-local-run-paths
-claimed_at: 2026-08-14T03:25:22Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/59
 blocked_by:
 reconciled: true
