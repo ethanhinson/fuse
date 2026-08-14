@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0061 — Wire observability into local run paths (fuse shell + one-shot + runtime bindings)](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0061-observe-local-run-paths.md)**
+> ↩ **[Change 0061 — Wire observability into local run paths (fuse shell + one-shot + runtime bindings)](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-14-0061-observe-local-run-paths.md)**
 <!-- docket:backlink:end -->
 
 # Wire observability into local run paths — design (change #0061)
