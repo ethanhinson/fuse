@@ -378,10 +378,20 @@ func setupLocalObservability(ctx context.Context, cfg config.Config, logSink, st
 		fmt.Fprintf(stderr, "%s: observability: %v\n", label, err)
 		return nil, 1, false
 	}
+	// Verifier is nil: operator auth for a local scrape endpoint is an explicit
+	// non-goal, so a local run that opts into metrics must use access: public.
+	// access: authenticated with a nil verifier would still BIND, and then 401
+	// every scrape forever (authenticatedHTTP rejects unconditionally without a
+	// verifier), so refuse to open an unserviceable listener and say why. Same
+	// warn-and-continue posture as a bind failure: observability never blocks a
+	// local run. Guarded on Bind so an unbound or disabled metrics config stays
+	// byte-identically silent.
+	if obs != nil && obs.metrics != nil && cfg.Observability.Metrics.Bind != "" && cfg.Observability.Metrics.Access == "authenticated" {
+		fmt.Fprintf(stderr, "%s: metrics endpoint disabled: local runs require access: public (continuing)\n", label)
+		return obs, 0, true
+	}
 	// startMetricsEndpoint already no-ops when metrics are disabled or no bind is
-	// configured, so there is no outer guard to duplicate here. Verifier is nil:
-	// operator auth for a local scrape endpoint is an explicit non-goal, so a local
-	// run that opts into metrics must use access: public.
+	// configured, so there is no outer guard to duplicate here.
 	if err := obs.startMetricsEndpoint(ctx, nil); err != nil {
 		fmt.Fprintf(stderr, "%s: metrics endpoint: %v (continuing)\n", label, err)
 	}
