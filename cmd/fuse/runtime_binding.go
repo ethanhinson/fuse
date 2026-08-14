@@ -75,7 +75,7 @@ func (h *eventStoreHolder) get() event.EventStore {
 func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, tree *agent.AgentTree, stdout io.Writer, verbose bool, traceW io.Writer,
 	rootApprove permissions.ApprovalFunc, oneShotSystemBlock string, oneShotBudget bool,
-	rateGate model.RateGate) (runtime.Deps, func()) {
+	rateGate model.RateGate, observer observe.Observer) (runtime.Deps, func()) {
 
 	sched := tree.Scheduler()
 	rootNode := tree.Node(tree.RootID())
@@ -84,7 +84,12 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 	// Per-loop store holder (change 0046): BuildAgent sets it from the Runtime-owned
 	// store; the child-builder/spawner closures below read it instead of a global.
 	storeHolder := &eventStoreHolder{}
-	observer := observe.NoopObserver{}
+	// Session observer (change 0061): supplied by the entry point so root and every
+	// child share ONE instance. Nil is the pre-0061 default — mirrors
+	// buildLoopServerRuntimeDepsWithObserver.
+	if observer == nil {
+		observer = observe.NoopObserver{}
+	}
 
 	// MCP attach on the one-shot path (change #59, Task 5): route through the SAME
 	// shared helper every binding uses, so one-shot can list + invoke MCP tools with
@@ -271,6 +276,9 @@ type researchProbeDepsInput struct {
 	logSink  *probe.Log
 	traceW   io.Writer
 	rateGate model.RateGate
+	// observer is the session-shared observe.Observer built once at the entry point
+	// (change 0061). Nil selects observe.NoopObserver{} — today's behavior.
+	observer observe.Observer
 }
 
 // buildResearchProbeRuntimeDeps assembles runtime.Deps for the research-probe entry
@@ -301,7 +309,11 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 	// Per-loop store holder (change 0046): set by BuildAgent from the Runtime-owned
 	// store; read by the child-builder/spawner closures below.
 	storeHolder := &eventStoreHolder{}
-	observer := observe.NoopObserver{}
+	// Session observer (change 0061): supplied by the caller; nil ⇒ pre-0061 default.
+	observer := in.observer
+	if observer == nil {
+		observer = observe.NoopObserver{}
+	}
 
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
 	makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
@@ -503,6 +515,9 @@ type shellDepsInput struct {
 	// wiring-assertion test both may be nil.
 	childApprove permissions.ApprovalFunc
 	rootApprove  permissions.ApprovalFunc
+	// observer is the session-shared observe.Observer built once in runShell
+	// (change 0061). Nil selects observe.NoopObserver{} — today's behavior.
+	observer observe.Observer
 }
 
 // buildShellRuntimeDeps assembles runtime.Deps for the interactive shell. It wires
@@ -536,7 +551,11 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 	// it instead of the retired currentEventStore() global.
 	storeHolder := &eventStoreHolder{}
 	storeHolder.set(in.eventStore)
-	observer := observe.NoopObserver{}
+	// Session observer (change 0061): supplied by the shell; nil ⇒ pre-0061 default.
+	observer := in.observer
+	if observer == nil {
+		observer = observe.NoopObserver{}
+	}
 
 	var makeSpawner func(parentNode *agent.AgentNode, parentDepth int) *agent.Spawner
 	makeSpawnFunc := func(parentNode *agent.AgentNode, parentDepth int) tools.SpawnFunc {

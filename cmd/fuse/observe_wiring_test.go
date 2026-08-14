@@ -13,6 +13,9 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/probe"
+	"github.com/ethanhinson/fuse/internal/runtime"
+	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tui"
 )
 
@@ -107,5 +110,148 @@ func TestBuildAgentWithRendererAndTraceForwardsObserver(t *testing.T) {
 	}
 	if rec.count() == 0 {
 		t.Fatal("observer was not forwarded through buildAgentWithRendererAndTrace")
+	}
+}
+
+// assertBindingObservesRootAndChild drives one root turn through Deps.BuildAgent
+// and one child spawn through the per-loop child-builder it returns, asserting the
+// recording observer saw work from BOTH. It is the task-2 shape shared by the three
+// local bindings.
+func assertBindingObservesRootAndChild(t *testing.T, deps runtime.Deps, rec *recordingObserver,
+	tree *agent.AgentTree, alias string, toolReg *tools.Registry) {
+	t.Helper()
+	a, childBuilder, _, err := deps.BuildAgent(nil, tree, alias, toolReg)
+	if err != nil {
+		t.Fatalf("BuildAgent: %v", err)
+	}
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatalf("root run: %v", err)
+	}
+	if rec.count() == 0 {
+		t.Fatal("root agent did not use the supplied observer")
+	}
+	afterRoot := rec.count()
+	if childBuilder == nil {
+		t.Fatal("BuildAgent returned nil child-builder")
+	}
+	node := tree.Node(tree.RootID())
+	if _, err := childBuilder(context.Background(), agent.SpawnOpts{Label: "child", Task: "hi"}, node, tree); err != nil {
+		t.Fatalf("child build: %v", err)
+	}
+	if rec.count() <= afterRoot {
+		t.Fatal("child agent did not use the supplied observer")
+	}
+}
+
+func TestOneShotBindingHonorsSuppliedObserver(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	scriptedGateway(t, "OBSERVED-REPLY")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config load: %v", err)
+	}
+	reg := registryFromConfig(cfg)
+	toolReg := defaultToolRegistry(cfg.Research, nil)
+	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
+	rec := &recordingObserver{}
+
+	deps, closeMCP := buildOneShotRuntimeDeps(cfg, reg, reg.Default, toolReg, tree, io.Discard, false, nil,
+		permissions.AlwaysApprove, "block", false, nil, rec)
+	defer closeMCP()
+	assertBindingObservesRootAndChild(t, deps, rec, tree, reg.Default, toolReg)
+}
+
+func TestResearchProbeBindingHonorsSuppliedObserver(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	scriptedGateway(t, "OBSERVED-REPLY")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config load: %v", err)
+	}
+	reg := registryFromConfig(cfg)
+	toolReg := defaultToolRegistry(cfg.Research, nil)
+	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
+	rec := &recordingObserver{}
+
+	deps := buildResearchProbeRuntimeDeps(researchProbeDepsInput{
+		cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
+		act: nil, rootID: tree.RootID(), logSink: probe.NewLog(), traceW: nil,
+		rateGate: nil, observer: rec,
+	})
+	assertBindingObservesRootAndChild(t, deps, rec, tree, reg.Default, toolReg)
+}
+
+func TestShellBindingHonorsSuppliedObserver(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	scriptedGateway(t, "OBSERVED-REPLY")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config load: %v", err)
+	}
+	reg := registryFromConfig(cfg)
+	toolReg := defaultToolRegistry(cfg.Research, nil)
+	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
+	rec := &recordingObserver{}
+
+	deps := buildShellRuntimeDeps(shellDepsInput{
+		cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
+		verbose: false, skillBlock: "block", childApprove: permissions.AlwaysApprove,
+		rootApprove: permissions.AlwaysApprove, observer: rec,
+	})
+	assertBindingObservesRootAndChild(t, deps, rec, tree, reg.Default, toolReg)
+}
+
+// TestBindingsDefaultToNoopObserver is the regression guard for the single most
+// important property of change 0061: a caller that supplies no observer (nil) gets
+// exactly today's behavior — the built agents keep the noop observer and nothing
+// else changes. The recorder is never handed in, so it must stay empty.
+func TestBindingsDefaultToNoopObserver(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	scriptedGateway(t, "OBSERVED-REPLY")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config load: %v", err)
+	}
+	reg := registryFromConfig(cfg)
+	for _, tc := range []struct {
+		name  string
+		build func(toolReg *tools.Registry, tree *agent.AgentTree) runtime.Deps
+	}{
+		{"one-shot", func(toolReg *tools.Registry, tree *agent.AgentTree) runtime.Deps {
+			deps, closeMCP := buildOneShotRuntimeDeps(cfg, reg, reg.Default, toolReg, tree, io.Discard, false, nil,
+				permissions.AlwaysApprove, "block", false, nil, nil)
+			t.Cleanup(closeMCP)
+			return deps
+		}},
+		{"research-probe", func(toolReg *tools.Registry, tree *agent.AgentTree) runtime.Deps {
+			return buildResearchProbeRuntimeDeps(researchProbeDepsInput{
+				cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
+				rootID: tree.RootID(), logSink: probe.NewLog(), observer: nil,
+			})
+		}},
+		{"shell", func(toolReg *tools.Registry, tree *agent.AgentTree) runtime.Deps {
+			return buildShellRuntimeDeps(shellDepsInput{
+				cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
+				skillBlock: "block", childApprove: permissions.AlwaysApprove,
+				rootApprove: permissions.AlwaysApprove, observer: nil,
+			})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			toolReg := defaultToolRegistry(cfg.Research, nil)
+			tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
+			deps := tc.build(toolReg, tree)
+			a, childBuilder, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg)
+			if err != nil {
+				t.Fatalf("BuildAgent: %v", err)
+			}
+			if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}}); err != nil {
+				t.Fatalf("root run: %v", err)
+			}
+			node := tree.Node(tree.RootID())
+			if _, err := childBuilder(context.Background(), agent.SpawnOpts{Label: "child", Task: "hi"}, node, tree); err != nil {
+				t.Fatalf("child build: %v", err)
+			}
+		})
 	}
 }

@@ -167,7 +167,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// in-process Runtime. buildOneShotRuntimeDeps holds the tree/scheduler/blackboard,
 	// spawn factory, and tool wiring exactly as before (behavior-preserving
 	// relocation); the renderer/gate stay in cmd/fuse via BuildAgent's closure.
-	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate)
+	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate, nil)
 	rt := runtime.New(deps)
 	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: task, ModelID: *modelAlias})
 	if err != nil {

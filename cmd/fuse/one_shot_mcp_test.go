@@ -45,7 +45,7 @@ func TestOneShot_AttachesMCPViaSharedHelper(t *testing.T) {
 	tree := agent.NewAgentTreeWithConcurrency("cloud/x", "cloud/x", 1)
 
 	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, "cloud/x", toolReg, tree, io.Discard, false, nil,
-		permissions.AlwaysApprove, spawnAgentBlock, false, nil)
+		permissions.AlwaysApprove, spawnAgentBlock, false, nil, nil)
 
 	if deps.LoopContext == nil {
 		t.Fatal("one-shot Deps must set LoopContext seeding localPrincipal")
