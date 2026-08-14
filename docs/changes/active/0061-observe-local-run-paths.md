@@ -12,12 +12,12 @@ related: [51]
 discovered_from: [51]
 adrs: [40]
 spec: docs/superpowers/specs/2026-08-13-observe-local-run-paths-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-14-observe-local-run-paths-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/observe-local-run-paths
-claimed_at: 2026-08-14T01:39:20Z
+claimed_at: 2026-08-14T01:40:47Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-13-observe-local-run-paths-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-13-observe-local-run-paths-design.md) |
+| Plan | [2026-08-14-observe-local-run-paths-plan.md](https://github.com/ethanhinson/fuse/blob/feat/observe-local-run-paths/docs/superpowers/plans/2026-08-14-observe-local-run-paths-plan.md) |
 | ADRs | [ADR-0040](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0040-provider-neutral-composite-observer.md) |
 <!-- docket:artifacts:end -->
 
