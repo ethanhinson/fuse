@@ -10,6 +10,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/observe"
+	observabilitylogging "github.com/ethanhinson/fuse/internal/observe/logging"
 )
 
 // enabledMetricsShellConfig is a minimal VALID observability config with the
@@ -99,5 +100,38 @@ func TestRunShellFailsFastOnInvalidObservabilityConfig(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "observability") {
 		t.Fatalf("validation error must reach stderr, got %q", errb.String())
+	}
+}
+
+// TestSetupShellObservabilityKeepsLogSinkOffTheTUIWriter guards the writer the
+// TUI owns. runShell passes stdout to tea.NewProgram(..., tea.WithOutput(stdout))
+// for the whole session, so the structured JSONL logger must never be pointed at
+// it -- otherwise `observability.logging.enabled: true` with a non-file output
+// streams log lines straight into the alt screen. Pure wiring assertion: no
+// model traffic.
+func TestSetupShellObservabilityKeepsLogSinkOffTheTUIWriter(t *testing.T) {
+	// "stdout" and "file" are the only outputs config.Validate accepts, and
+	// "file" opens its own sink that cannot reach the TUI writer.
+	for _, output := range []string{"stdout"} {
+		t.Run("output="+output, func(t *testing.T) {
+			var out, errb bytes.Buffer
+			obs, code, ok := setupShellObservability(context.Background(), loggingConfig(output, ""), &out, &errb)
+			if !ok {
+				t.Fatalf("setup failed with code %d: %s", code, errb.String())
+			}
+			t.Cleanup(func() { _ = obs.Close(context.Background()) })
+			if obs.logger == nil {
+				t.Fatal("logging enabled but no logger was constructed")
+			}
+			if err := obs.logger.Audit(context.Background(), observabilitylogging.Audit{Actor: "test", Action: "probe", Scope: "logging", Outcome: "success"}); err != nil {
+				t.Fatal(err)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("shell log sink wrote to the TUI writer (stdout): %q", out.String())
+			}
+			if !strings.Contains(errb.String(), "probe") {
+				t.Fatalf("shell log sink must write to stderr, got %q", errb.String())
+			}
+		})
 	}
 }

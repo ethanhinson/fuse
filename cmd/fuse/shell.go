@@ -364,11 +364,16 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 // starting. An INVALID observability config still fails startup fast
 // (decision 2) rather than silently degrading to a noop observer.
 //
+// logSink is where the structured (JSONL) logger writes when logging is enabled
+// and logging.output is not "file". It MUST NOT be a writer some other component
+// owns exclusively: the shell's TUI paints the alt screen on stdout, so the shell
+// passes stderr here while the non-TUI entry points pass stdout.
+//
 // label prefixes the diagnostics so the operator sees which entry point spoke.
 // The returned bool reports whether startup may proceed; when it is false the
 // caller must return the accompanying exit code. The caller owns Close.
-func setupLocalObservability(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, label string) (*observabilityService, int, bool) {
-	obs, err := newObservability(ctx, cfg, stdout)
+func setupLocalObservability(ctx context.Context, cfg config.Config, logSink, stderr io.Writer, label string) (*observabilityService, int, bool) {
+	obs, err := newObservability(ctx, cfg, logSink)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: observability: %v\n", label, err)
 		return nil, 1, false
@@ -383,7 +388,13 @@ func setupLocalObservability(ctx context.Context, cfg config.Config, stdout, std
 	return obs, 0, true
 }
 
-// setupShellObservability is setupLocalObservability under the shell's label.
+// setupShellObservability is setupLocalObservability under the shell's label,
+// with one shell-specific difference: the structured log sink is stderr, never
+// stdout. runShell hands stdout to bubbletea (tea.WithOutput) and the TUI owns
+// that writer for the whole session, so routing JSONL there would interleave log
+// lines into the alt screen and corrupt the display. The `stdout` parameter is
+// therefore accepted and deliberately not used as a sink.
 func setupShellObservability(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) (*observabilityService, int, bool) {
-	return setupLocalObservability(ctx, cfg, stdout, stderr, "shell")
+	_ = stdout
+	return setupLocalObservability(ctx, cfg, stderr, stderr, "shell")
 }
