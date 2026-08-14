@@ -5,8 +5,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync"
 	"testing"
+	"unsafe"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
@@ -57,6 +59,34 @@ func scriptedGateway(t *testing.T, reply string) {
 	t.Cleanup(srv.Close)
 	t.Setenv("LLM_GATEWAY_URL", srv.URL)
 	t.Setenv("LLM_GATEWAY_KEY", "tkn")
+}
+
+// observerOf reads the observer an agent actually carries. Agent.observer is
+// deliberately unexported and change 0061 keeps it that way — no production
+// getter exists purely so a test can look. A package-local export_test.go seam
+// in internal/agent cannot help here (it is visible only to that package's own
+// test binary, not to package main), so this wiring-only reader reaches the
+// field through reflect instead of widening the production API.
+func observerOf(t *testing.T, a *agent.Agent) observe.Observer {
+	t.Helper()
+	f := reflect.ValueOf(a).Elem().FieldByName("observer")
+	if !f.IsValid() {
+		t.Fatal("agent.Agent has no observer field; update observerOf")
+	}
+	o, ok := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem().Interface().(observe.Observer)
+	if !ok {
+		t.Fatalf("agent observer field is %s, not an observe.Observer", f.Type())
+	}
+	return o
+}
+
+// assertNoop fails unless o is exactly the hardcoded no-op observer.
+func assertNoop(t *testing.T, what string, o observe.Observer) {
+	t.Helper()
+	if _, ok := o.(observe.NoopObserver); !ok {
+		t.Fatalf("%s = %T, want observe.NoopObserver: an empty observability config "+
+			"must stay byte-identical to pre-0061 behavior and never install a live observer", what, o)
+	}
 }
 
 // TestBuildAgentCoreInstallsObserver is task 1's seam assertion: the observer
@@ -204,7 +234,15 @@ func TestShellBindingHonorsSuppliedObserver(t *testing.T) {
 // TestBindingsDefaultToNoopObserver is the regression guard for the single most
 // important property of change 0061: a caller that supplies no observer (nil) gets
 // exactly today's behavior — the built agents keep the noop observer and nothing
-// else changes. The recorder is never handed in, so it must stay empty.
+// else changes.
+//
+// It asserts both places a live observer could leak into a binding: Deps.Observer
+// (the load-bearing field, because runtime/inproc.go overwrites whatever
+// BuildAgent installed with it on the StartLoop path) and the root agent the
+// binding builds. Each binding's child-builder closes over the same substituted
+// observer value, and the constructors it calls are guarded directly by
+// TestChildConstructorsNilObserverStaysNoop below — a ChildBuilder returns only
+// the child's result string, so the child agent itself is not reachable here.
 func TestBindingsDefaultToNoopObserver(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	scriptedGateway(t, "OBSERVED-REPLY")
@@ -241,17 +279,51 @@ func TestBindingsDefaultToNoopObserver(t *testing.T) {
 			toolReg := defaultToolRegistry(cfg.Research, nil)
 			tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 			deps := tc.build(toolReg, tree)
+			assertNoop(t, "Deps.Observer", deps.Observer)
 			a, childBuilder, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg)
 			if err != nil {
 				t.Fatalf("BuildAgent: %v", err)
 			}
+			assertNoop(t, "root agent observer", observerOf(t, a))
 			if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}}); err != nil {
 				t.Fatalf("root run: %v", err)
 			}
+			// Running must not swap the observer out from under the agent either.
+			assertNoop(t, "root agent observer after Run", observerOf(t, a))
 			node := tree.Node(tree.RootID())
 			if _, err := childBuilder(context.Background(), agent.SpawnOpts{Label: "child", Task: "hi"}, node, tree); err != nil {
 				t.Fatalf("child build: %v", err)
 			}
 		})
 	}
+}
+
+// TestChildConstructorsNilObserverStaysNoop guards the child half of the same
+// property: every local binding's child-builder reaches an agent through one of
+// these two constructors, so a nil observer must leave the built child on the
+// no-op observer.
+func TestChildConstructorsNilObserverStaysNoop(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	scriptedGateway(t, "OBSERVED-REPLY")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config load: %v", err)
+	}
+	reg := registryFromConfig(cfg)
+	toolReg := defaultToolRegistry(cfg.Research, nil)
+	r := tui.NewRenderer(io.Discard, false)
+
+	core, _, err := buildAgentCore(cfg, reg, reg.Default, r, "", nil, "child",
+		toolReg, permissions.AlwaysApprove, nil, false, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("buildAgentCore: %v", err)
+	}
+	assertNoop(t, "buildAgentCore(nil observer) agent observer", observerOf(t, core))
+
+	wrapped, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, r, false, "",
+		toolReg, permissions.AlwaysApprove, nil, "child", nil, false, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("buildAgentWithRendererAndTrace: %v", err)
+	}
+	assertNoop(t, "buildAgentWithRendererAndTrace(nil observer) agent observer", observerOf(t, wrapped))
 }
