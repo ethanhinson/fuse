@@ -172,7 +172,10 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		if opts.SystemPrompt != "" {
 			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil)
 		} else {
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil, observer)
+			// Observer is installed by a.SetObserver(observer) below, not here —
+			// keeps this branch symmetric with the buildChildAgent branch above,
+			// which takes no observer at all.
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -392,7 +395,10 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		if opts.SystemPrompt != "" {
 			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false, rateGate, nil)
 		} else {
-			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, observer)
+			// Observer is installed by a.SetObserver(observer) below, not here —
+			// keeps this branch symmetric with the buildChildAgent branch above,
+			// which takes no observer at all.
+			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -625,7 +631,10 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		if opts.SystemPrompt != "" {
 			a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink)
 		} else {
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink, observer)
+			// Observer is installed by a.SetObserver(observer) below, not here —
+			// keeps this branch symmetric with the buildChildAgent branch above,
+			// which takes no observer at all.
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink, nil)
 		}
 		if aerr != nil {
 			return "", aerr

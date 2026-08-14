@@ -376,6 +376,11 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 // the ok check, which covers every later early return. It is always non-nil (a
 // no-op on the failure path), so deferring it is unconditionally safe.
 func setupLocalObservability(ctx context.Context, cfg config.Config, logSink, stderr io.Writer, label string) (*observabilityService, func(), int, bool) {
+	// newObservability opens with cfg.Validate(), but that is defense-in-depth
+	// here: main.go's run() already calls cfg.Validate() for every subcommand
+	// before dispatch (main.go:38), so in production an invalid config exits
+	// there and never reaches this call. This branch is live only for tests
+	// that call this helper directly with a hand-built config.
 	obs, err := newObservability(ctx, cfg, logSink)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: observability: %v\n", label, err)
