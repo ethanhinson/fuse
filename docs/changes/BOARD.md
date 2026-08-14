@@ -1,12 +1,6 @@
 # Backlog
 
-**61 changes** — 🟢 1 in progress · 🟡 4 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 48 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs | `medium` | `feat` | [spec](../superpowers/specs/0051-loop-observability-otel-metrics.md) | `feat/loop-observability-otel-metrics` |
+**61 changes** — 🟡 4 proposed · ⚪ 1 deferred · 🔵 2 implemented · ✅ 48 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (4)
 
@@ -23,10 +17,11 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
+## 🔵 Implemented — awaiting merge (2)
 
 | # | Title | Priority | Type | PR | Readiness |
 |---|-------|----------|------|----|-----------|
+| [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs | `medium` | `feat` | [#58](https://github.com/ethanhinson/fuse/pull/58) |  |
 | [0061](active/0061-observe-local-run-paths.md) | Wire observability into local run paths (fuse shell + one-shot + runtime bindings) | `medium` | `feat` | [#59](https://github.com/ethanhinson/fuse/pull/59) |  |
 
 ```mermaid
