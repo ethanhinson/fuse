@@ -2,7 +2,7 @@
 id: 51
 slug: loop-observability-otel-metrics
 title: Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-10
