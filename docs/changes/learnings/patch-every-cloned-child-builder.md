@@ -2,9 +2,9 @@
 slug: patch-every-cloned-child-builder
 hook: "cmd/fuse wires child-agent tool registries in three cloned builders (main.go one-shot run(), shell.go, research_probe.go) — a fix to child tool wiring must land in all three; enumerate sites by grep at fix time, never from a prior scoping list"
 topics: [go, refactoring, subagents, agents]
-changes: [34]
+changes: [34, 61]
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-14
 promotion_state: candidate
 ---
 
@@ -30,3 +30,10 @@ count re-checked by grep, in case a fourth has appeared).
   from a child on that path (spec Acceptance 3 violated). Caught in review; fixed by applying
   the same `childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(opts.Tools)` guard as
   the other two sites.
+- 2026-08-14 (#61, PR #59) — The same three-clone shape re-appeared for observability wiring:
+  the observer had to be constructed once and published into `runtime.Deps` at all three local
+  entry points (`shell`, one-shot `run()`, research probe), and the teardown block was
+  triplicated verbatim across them before review collapsed it into a shared
+  `setupLocalObservability` helper. Confirms the rule beyond child tool registration: *any*
+  cross-cutting collaborator in `cmd/fuse` must be enumerated by grep across the clones, and the
+  duplication is worth factoring out at the moment you touch all three.
