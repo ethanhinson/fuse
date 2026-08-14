@@ -136,7 +136,7 @@ func TestResearchProbeEntryPointObservesTheRootTurn(t *testing.T) {
 // default guard for the non-shell entry points.
 func TestSetupLocalObservabilityEmptyConfigIsNoop(t *testing.T) {
 	var out, errb bytes.Buffer
-	obs, code, ok := setupLocalObservability(context.Background(), config.Config{}, &out, &errb, "one-shot")
+	obs, _, code, ok := setupLocalObservability(context.Background(), config.Config{}, &out, &errb, "one-shot")
 	if !ok {
 		t.Fatalf("setup failed with code %d: %s", code, errb.String())
 	}
@@ -162,7 +162,7 @@ func TestSetupLocalObservabilitySkipsAuthenticatedMetrics(t *testing.T) {
 		cfg.Observability.Metrics.Access = "authenticated"
 
 		var out, errb bytes.Buffer
-		obs, code, ok := setupLocalObservability(context.Background(), cfg, &out, &errb, "one-shot")
+		obs, _, code, ok := setupLocalObservability(context.Background(), cfg, &out, &errb, "one-shot")
 		if !ok {
 			t.Fatalf("authenticated metrics must not fail startup: code=%d stderr=%s", code, errb.String())
 		}
@@ -178,7 +178,7 @@ func TestSetupLocalObservabilitySkipsAuthenticatedMetrics(t *testing.T) {
 
 	t.Run("public still serves /metrics", func(t *testing.T) {
 		var out, errb bytes.Buffer
-		obs, code, ok := setupLocalObservability(context.Background(), enabledMetricsShellConfig("127.0.0.1:0"), &out, &errb, "one-shot")
+		obs, _, code, ok := setupLocalObservability(context.Background(), enabledMetricsShellConfig("127.0.0.1:0"), &out, &errb, "one-shot")
 		if !ok {
 			t.Fatalf("setup failed with code %d: %s", code, errb.String())
 		}
@@ -204,7 +204,7 @@ func TestSetupLocalObservabilityFailsFastOnInvalidConfig(t *testing.T) {
 	cfg.Observability.Metrics.Path = "not-absolute"
 
 	var out, errb bytes.Buffer
-	_, code, ok := setupLocalObservability(context.Background(), cfg, &out, &errb, "one-shot")
+	_, _, code, ok := setupLocalObservability(context.Background(), cfg, &out, &errb, "one-shot")
 	if ok || code == 0 {
 		t.Fatal("invalid observability config must abort startup with a non-zero code")
 	}

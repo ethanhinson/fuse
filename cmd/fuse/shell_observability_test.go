@@ -32,7 +32,7 @@ func enabledMetricsShellConfig(bind string) config.Config {
 // the NoopObserver, opens no metrics listener, and prints nothing.
 func TestSetupShellObservabilityEmptyConfigIsNoop(t *testing.T) {
 	var out, errb bytes.Buffer
-	obs, code, ok := setupShellObservability(context.Background(), config.Config{}, &out, &errb)
+	obs, _, code, ok := setupShellObservability(context.Background(), config.Config{}, &out, &errb)
 	if !ok {
 		t.Fatalf("setup failed with code %d: %s", code, errb.String())
 	}
@@ -55,7 +55,7 @@ func TestSetupShellObservabilityFailsFastOnInvalidConfig(t *testing.T) {
 	cfg.Observability.Metrics.Path = "not-absolute"
 
 	var out, errb bytes.Buffer
-	_, code, ok := setupShellObservability(context.Background(), cfg, &out, &errb)
+	_, _, code, ok := setupShellObservability(context.Background(), cfg, &out, &errb)
 	if ok {
 		t.Fatal("invalid observability config must abort startup")
 	}
@@ -77,7 +77,7 @@ func TestSetupShellObservabilityWarnsOnMetricsBindFailure(t *testing.T) {
 	defer ln.Close()
 
 	var out, errb bytes.Buffer
-	obs, code, ok := setupShellObservability(context.Background(), enabledMetricsShellConfig(ln.Addr().String()), &out, &errb)
+	obs, _, code, ok := setupShellObservability(context.Background(), enabledMetricsShellConfig(ln.Addr().String()), &out, &errb)
 	if !ok {
 		t.Fatalf("a metrics bind failure must NOT abort the shell (code %d): %s", code, errb.String())
 	}
@@ -115,7 +115,7 @@ func TestSetupShellObservabilityKeepsLogSinkOffTheTUIWriter(t *testing.T) {
 	for _, output := range []string{"stdout"} {
 		t.Run("output="+output, func(t *testing.T) {
 			var out, errb bytes.Buffer
-			obs, code, ok := setupShellObservability(context.Background(), loggingConfig(output, ""), &out, &errb)
+			obs, _, code, ok := setupShellObservability(context.Background(), loggingConfig(output, ""), &out, &errb)
 			if !ok {
 				t.Fatalf("setup failed with code %d: %s", code, errb.String())
 			}

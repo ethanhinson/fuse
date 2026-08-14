@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/banner"
@@ -172,17 +171,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// agent the one-shot run builds — root and children alike. The deferred shutdown
 	// is registered BEFORE the StartLoop / h.Wait error returns below so a short-lived
 	// one-shot run tears the exporters down on every path out of run().
-	obs, obsCode, obsOK := setupLocalObservability(context.Background(), cfg, stdout, stderr, "one-shot")
+	obs, closeObs, obsCode, obsOK := setupLocalObservability(context.Background(), cfg, stdout, stderr, "one-shot")
 	if !obsOK {
 		return obsCode
 	}
-	defer func() {
-		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if cerr := obs.Close(sctx); cerr != nil {
-			fmt.Fprintf(stderr, "one-shot: observability shutdown: %v\n", cerr)
-		}
-	}()
+	defer closeObs()
 
 	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate, obs.observer)
 	rt := runtime.New(deps)

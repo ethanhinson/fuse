@@ -51,17 +51,13 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// children alike. Only the entry point may call newObservability; a binding that
 	// built its own would double-register the Prometheus collectors.
 	obsCtx := context.Background()
-	obs, obsCode, obsOK := setupShellObservability(obsCtx, cfg, stdout, stderr)
+	obs, closeObs, obsCode, obsOK := setupShellObservability(obsCtx, cfg, stdout, stderr)
 	if !obsOK {
 		return obsCode
 	}
-	defer func() {
-		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if cerr := obs.Close(sctx); cerr != nil {
-			fmt.Fprintf(stderr, "shell: observability shutdown: %v\n", cerr)
-		}
-	}()
+	// Teardown comes from the constructor (5s budget, labelled stderr warning), so
+	// every early return below is covered by this single defer.
+	defer closeObs()
 
 	skillDirs := skills.DefaultDirs()
 
@@ -371,12 +367,26 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 //
 // label prefixes the diagnostics so the operator sees which entry point spoke.
 // The returned bool reports whether startup may proceed; when it is false the
-// caller must return the accompanying exit code. The caller owns Close.
-func setupLocalObservability(ctx context.Context, cfg config.Config, logSink, stderr io.Writer, label string) (*observabilityService, int, bool) {
+// caller must return the accompanying exit code.
+//
+// The second return is the matching TEARDOWN (change 0061 review): the shutdown
+// budget, the stderr warning, and the label prefix live HERE, next to the
+// construction, instead of being copied into each entry point — so a fourth local
+// entry point gets teardown by construction. Callers `defer` it immediately after
+// the ok check, which covers every later early return. It is always non-nil (a
+// no-op on the failure path), so deferring it is unconditionally safe.
+func setupLocalObservability(ctx context.Context, cfg config.Config, logSink, stderr io.Writer, label string) (*observabilityService, func(), int, bool) {
 	obs, err := newObservability(ctx, cfg, logSink)
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: observability: %v\n", label, err)
-		return nil, 1, false
+		return nil, func() {}, 1, false
+	}
+	closeObs := func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if cerr := obs.Close(sctx); cerr != nil {
+			fmt.Fprintf(stderr, "%s: observability shutdown: %v\n", label, cerr)
+		}
 	}
 	// Verifier is nil: operator auth for a local scrape endpoint is an explicit
 	// non-goal, so a local run that opts into metrics must use access: public.
@@ -388,14 +398,14 @@ func setupLocalObservability(ctx context.Context, cfg config.Config, logSink, st
 	// byte-identically silent.
 	if obs != nil && obs.metrics != nil && cfg.Observability.Metrics.Bind != "" && cfg.Observability.Metrics.Access == "authenticated" {
 		fmt.Fprintf(stderr, "%s: metrics endpoint disabled: local runs require access: public (continuing)\n", label)
-		return obs, 0, true
+		return obs, closeObs, 0, true
 	}
 	// startMetricsEndpoint already no-ops when metrics are disabled or no bind is
 	// configured, so there is no outer guard to duplicate here.
 	if err := obs.startMetricsEndpoint(ctx, nil); err != nil {
 		fmt.Fprintf(stderr, "%s: metrics endpoint: %v (continuing)\n", label, err)
 	}
-	return obs, 0, true
+	return obs, closeObs, 0, true
 }
 
 // setupShellObservability is setupLocalObservability under the shell's label,
@@ -404,7 +414,7 @@ func setupLocalObservability(ctx context.Context, cfg config.Config, logSink, st
 // that writer for the whole session, so routing JSONL there would interleave log
 // lines into the alt screen and corrupt the display. The `stdout` parameter is
 // therefore accepted and deliberately not used as a sink.
-func setupShellObservability(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) (*observabilityService, int, bool) {
+func setupShellObservability(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) (*observabilityService, func(), int, bool) {
 	_ = stdout
 	return setupLocalObservability(ctx, cfg, stderr, stderr, "shell")
 }

@@ -43,6 +43,22 @@ func (o *recordingObserver) count() int {
 	return len(o.descs)
 }
 
+// sawKind reports whether the observer was asked to Start a span of kind k.
+// Kind matters where mere count does not: the runtime emits its own
+// OperationLoop span from Deps.Observer before any agent exists, so only an
+// agent-layer kind (OperationModelAttempt) proves the observer reached the
+// root agent.
+func (o *recordingObserver) sawKind(k observe.OperationKind) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, d := range o.descs {
+		if d.Kind == k {
+			return true
+		}
+	}
+	return false
+}
+
 type noopHandle struct{}
 
 func (noopHandle) End(observe.Outcome, ...observe.Field) {}
@@ -150,6 +166,18 @@ func TestBuildAgentWithRendererAndTraceForwardsObserver(t *testing.T) {
 func assertBindingObservesRootAndChild(t *testing.T, deps runtime.Deps, rec *recordingObserver,
 	tree *agent.AgentTree, alias string, toolReg *tools.Registry) {
 	t.Helper()
+	// Deps.Observer is load-bearing on its own, and calling BuildAgent directly
+	// cannot see it: internal/runtime/inproc.go OVERWRITES whatever BuildAgent
+	// installed with a.SetObserver(r.deps.Observer) on the StartLoop path. A
+	// binding that wires the observer only through its BuildAgent closure would
+	// satisfy every assertion below and still lose the observer in a real run, so
+	// assert the field identity explicitly. TestOneShotBindingObserverSurvivesStartLoop
+	// proves the same property end-to-end through the real path.
+	if deps.Observer != observe.Observer(rec) {
+		t.Fatalf("Deps.Observer = %#v, want the supplied observer: runtime/inproc.go overwrites the "+
+			"root agent's observer with Deps.Observer, so a binding that publishes it only via "+
+			"BuildAgent loses it on the StartLoop path", deps.Observer)
+	}
 	a, childBuilder, _, err := deps.BuildAgent(nil, tree, alias, toolReg)
 	if err != nil {
 		t.Fatalf("BuildAgent: %v", err)
@@ -189,6 +217,43 @@ func TestOneShotBindingHonorsSuppliedObserver(t *testing.T) {
 		permissions.AlwaysApprove, "block", false, nil, rec)
 	defer closeMCP()
 	assertBindingObservesRootAndChild(t, deps, rec, tree, reg.Default, toolReg)
+}
+
+// TestOneShotBindingObserverSurvivesStartLoop drives a local binding through the
+// REAL entry-point path — runtime.New(deps).StartLoop — rather than calling
+// deps.BuildAgent directly. This is the only test in this file that exercises
+// internal/runtime/inproc.go's a.SetObserver(r.deps.Observer), which discards the
+// observer BuildAgent installed and re-installs Deps.Observer. Asserting on the
+// agent-layer OperationModelAttempt span (not merely on span count) keeps the
+// runtime's own fuse.loop.run span from satisfying it.
+func TestOneShotBindingObserverSurvivesStartLoop(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	scriptedGateway(t, "OBSERVED-REPLY")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config load: %v", err)
+	}
+	reg := registryFromConfig(cfg)
+	toolReg := defaultToolRegistry(cfg.Research, nil)
+	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
+	rec := &recordingObserver{}
+
+	deps, closeMCP := buildOneShotRuntimeDeps(cfg, reg, reg.Default, toolReg, tree, io.Discard, false, nil,
+		permissions.AlwaysApprove, "block", false, nil, rec)
+	defer closeMCP()
+
+	h, err := runtime.New(deps).StartLoop(context.Background(), runtime.LoopConfig{Task: "hi", ModelID: reg.Default})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	if _, err := h.Wait(); err != nil {
+		t.Fatalf("loop wait: %v", err)
+	}
+	if !rec.sawKind(observe.OperationModelAttempt) {
+		t.Fatalf("no agent-layer %q span reached the supplied observer through StartLoop; "+
+			"runtime/inproc.go overwrote the root agent's observer with Deps.Observer",
+			observe.OperationModelAttempt)
+	}
 }
 
 func TestResearchProbeBindingHonorsSuppliedObserver(t *testing.T) {
