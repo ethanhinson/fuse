@@ -29,8 +29,8 @@ claimed_at:
 | Artifact | Link |
 |---|---|
 | Spec | [0051-loop-observability-otel-metrics.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0051-loop-observability-otel-metrics.md) |
-| Plan | [2026-08-12-loop-observability-otel-metrics.md](https://github.com/ethanhinson/fuse/blob/feat/loop-observability-otel-metrics/docs/superpowers/plans/2026-08-12-loop-observability-otel-metrics.md) |
-| Results | [2026-08-12-loop-observability-otel-metrics-results.md](https://github.com/ethanhinson/fuse/blob/feat/loop-observability-otel-metrics/docs/results/2026-08-12-loop-observability-otel-metrics-results.md) |
+| Plan | [2026-08-12-loop-observability-otel-metrics.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-12-loop-observability-otel-metrics.md) |
+| Results | [2026-08-12-loop-observability-otel-metrics-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-12-loop-observability-otel-metrics-results.md) |
 | PR | [#58](https://github.com/ethanhinson/fuse/pull/58) |
 | ADRs | [ADR-0038](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0038-committed-event-observability-projections.md), [ADR-0039](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0039-committed-event-telemetry-dispatch-bounded-lossy.md), [ADR-0040](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0040-provider-neutral-composite-observer.md), [ADR-0041](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0041-operator-capability-for-process-global-observability.md) |
 <!-- docket:artifacts:end -->
