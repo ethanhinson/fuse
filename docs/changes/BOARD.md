@@ -1,14 +1,15 @@
 # Backlog
 
-**61 changes** — 🟢 1 in progress · 🟡 5 proposed · ⚪ 1 deferred · ✅ 48 done · 🗑️ 6 killed
+**61 changes** — 🟢 2 in progress · 🟡 4 proposed · ⚪ 1 deferred · ✅ 48 done · 🗑️ 6 killed
 
-## 🟢 In progress (1)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch |
 |---|-------|----------|------|------|--------|
 | [0051](active/0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs | `medium` | `feat` | [spec](../superpowers/specs/0051-loop-observability-otel-metrics.md) | `feat/loop-observability-otel-metrics` |
+| [0061](active/0061-observe-local-run-paths.md) | Wire observability into local run paths (fuse shell + one-shot + runtime bindings) | `medium` | `feat` | [spec](../superpowers/specs/2026-08-13-observe-local-run-paths-design.md) | `feat/observe-local-run-paths` |
 
-## 🟡 Proposed (5)
+## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -16,7 +17,6 @@
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` | needs-brainstorm |
 | [0058](active/0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | `medium` | `feat` | needs-brainstorm |
 | [0060](active/0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md) | Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app | `medium` | `feat` | needs-brainstorm |
-| [0061](active/0061-observe-local-run-paths.md) | Wire observability into local run paths (fuse shell + one-shot + runtime bindings) | `medium` | `feat` | build-ready |
 
 ## ⚪ Deferred (1)
 
