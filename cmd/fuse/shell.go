@@ -17,7 +17,6 @@ import (
 	"github.com/ethanhinson/fuse/internal/event/fsstore"
 	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
-	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/segment"
@@ -46,6 +45,23 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			verbose = true
 		}
 	}
+
+	// Session observability (change 0061): construct the observe layer ONCE, here,
+	// and thread the resulting observer into every agent the shell builds — root and
+	// children alike. Only the entry point may call newObservability; a binding that
+	// built its own would double-register the Prometheus collectors.
+	obsCtx := context.Background()
+	obs, obsCode, obsOK := setupShellObservability(obsCtx, cfg, stdout, stderr)
+	if !obsOK {
+		return obsCode
+	}
+	defer func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if cerr := obs.Close(sctx); cerr != nil {
+			fmt.Fprintf(stderr, "shell: observability shutdown: %v\n", cerr)
+		}
+	}()
 
 	skillDirs := skills.DefaultDirs()
 
@@ -232,7 +248,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
 		// segmentSink is threaded per-loop (change 0046) rather than read from a global.
-		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true, rateGate, segmentSink, observe.NoopObserver{})
+		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true, rateGate, segmentSink, obs.observer)
 		if err != nil {
 			return nil, err
 		}
@@ -310,6 +326,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		traceW: traceW, rateGate: rateGate, logDir: logDir,
 		eventStore: eventStore, segmentSink: segmentSink,
 		childApprove: childBaseApprove, rootApprove: childBaseApprove,
+		observer: obs.observer,
 	}))
 
 	// ask_user: reaches the human through the same TUI channel as approvals, so
@@ -333,4 +350,30 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		return 1
 	}
 	return 0
+}
+
+// setupShellObservability builds the session-shared observe layer for `fuse shell`.
+//
+// It differs from loop-serve-net in exactly one deliberate way (change 0061,
+// settled decision 1): a metrics-endpoint bind failure warns on stderr and lets
+// the shell continue, because observability must never keep an interactive
+// session from starting. An INVALID observability config still fails startup
+// fast (decision 2) rather than silently degrading to a noop observer.
+//
+// The returned bool reports whether startup may proceed; when it is false the
+// caller must return the accompanying exit code. The caller owns Close.
+func setupShellObservability(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) (*observabilityService, int, bool) {
+	obs, err := newObservability(ctx, cfg, stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "shell: observability: %v\n", err)
+		return nil, 1, false
+	}
+	// startMetricsEndpoint already no-ops when metrics are disabled or no bind is
+	// configured, so there is no outer guard to duplicate here. Verifier is nil:
+	// operator auth for the shell's scrape endpoint is an explicit non-goal, so a
+	// shell that opts into metrics must use access: public.
+	if err := obs.startMetricsEndpoint(ctx, nil); err != nil {
+		fmt.Fprintf(stderr, "shell: metrics endpoint: %v (continuing)\n", err)
+	}
+	return obs, 0, true
 }
