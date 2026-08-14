@@ -35,30 +35,63 @@ for callers that don't opt in. Concretely:
 
 1. **`buildAgentCore` / `buildAgentWithRendererAndTrace` (`cmd/fuse/run.go`)** —
    add an `observer observe.Observer` parameter (last positional, or grouped with
-   the other session deps). Call `a.WithObserver(observer)` on the built agent on
-   both the gateway-adapter path and the `cli/` adapter path. A `nil`/omitted
-   observer resolves to `observe.NoopObserver{}` so existing one-shot behavior is
-   byte-unchanged.
+   the other session deps). Call **`a.SetObserver(observer)`** on the built agent
+   — reconcile re-map (2026-08-14): `agent.WithObserver` is a **Spawner `Option`**
+   (`internal/agent/spawn.go:265`), while the agent-side setter is
+   `(*Agent).SetObserver` (`internal/agent/agent.go:146`), which additionally fans
+   the observer out to the summarizer and relevance classifier. Because
+   `buildAgentCore` returns after both adapter branches converge on one `*Agent`,
+   a single `SetObserver` call covers the gateway-adapter path and the `cli/`
+   adapter path. A `nil`/omitted observer resolves to `observe.NoopObserver{}`
+   (SetObserver already does this) so existing behavior is byte-unchanged.
+
+   This parameter is what closes the **root-agent** gap. Reconcile found that the
+   three `runtime_binding.go` bindings already thread their local `observer` into
+   *children* and *spawners* (`:180/392/617`, `:200/410/662`) — but **no path
+   anywhere**, including the fully-wired `loop-serve-net`, ever sets an observer on
+   the ROOT agent. Threading the parameter therefore also updates
+   `loop_server.go:239/:282` (passing that binding's existing `observer`), which
+   incidentally observes the loop-server root. Mechanical consequence of the
+   signature change, not a redesign of the serve path.
 
 2. **`fuse shell` (`cmd/fuse/shell.go` `runShell`)** — construct the observe layer
    once via `newObservability(ctx, cfg, stderr)` (the same constructor
-   `loop-serve-net` uses). Thread `obs.observer` through the `build` closure
-   (shell.go:231) into `buildAgentWithRendererAndTrace`, so the root agent AND
+   `loop-serve-net` uses; signature `newObservability(ctx, cfg, stdout) (*observabilityService, error)`
+   at `observability.go:99`). `runShell` takes no `ctx` — use
+   `context.Background()` (`context` is already imported in `shell.go`) and the
+   existing `stderr`. Thread `obs.observer` through the `build` closure
+   (shell.go:231) into `buildAgentWithRendererAndTrace`, and into
+   `buildShellRuntimeDeps` via `shellDepsInput`, so the root agent AND
    every child agent it builds share the one observer. `defer obs.Close(ctx)`.
    If `metrics.bind` is set, start the scrape endpoint via
    `obs.startMetricsEndpoint(ctx, nil)` — nil verifier, since the shell has no
    bearer-token auth; `metrics.access: public` is acceptable for a local
    `127.0.0.1` bind.
 
-3. **`fuse <task>` one-shot** — same treatment as shell if it shares the build
-   path; wire the observer through the same `buildAgentCore` seam. (Confirm the
-   one-shot entry point during reconcile — it may already flow through the same
-   helper.)
+3. **`fuse <task>` one-shot** — **reconcile-confirmed (2026-08-14): it does share
+   the build path.** `main.go:170` → `buildOneShotRuntimeDeps` →
+   `Deps.BuildAgent` → `buildAgentCore` (`runtime_binding.go:245`). No separate
+   wiring site. Construct the observe layer in `run()` (`main.go`) and pass
+   `obs.observer` into `buildOneShotRuntimeDeps`.
 
-4. **`runtime_binding.go` NoopObserver hardcodes (~87, 304, 539)** — replace with
-   the observer constructed from config via `newObservability`, matching how
+4. **`runtime_binding.go` NoopObserver hardcodes (87, 304, 539)** — replace the
+   hardcoded value with an `observer observe.Observer` supplied by each binding's
+   entry point (a new parameter / input-struct field, `nil` → Noop), matching how
    `loop_serve_net.go` composes `obs.observer` into
-   `buildLoopServerRuntimeDepsWithObserver` and `handler.WithObserver`.
+   `buildLoopServerRuntimeDepsWithObserver`. The bindings' existing
+   `a.SetObserver(observer)` / `agent.WithObserver(observer)` calls then carry the
+   real observer for free. The three entry points — enumerated by grep at build
+   time per the `patch-every-cloned-child-builder` learning — are:
+
+   | Binding | Hardcode | Entry point |
+   |---|---|---|
+   | one-shot | `runtime_binding.go:87` | `main.go run()` (`:170`) |
+   | research-probe | `runtime_binding.go:304` | `research_probe.go:135` |
+   | shell | `runtime_binding.go:539` | `shell.go runShell()` (`:305`) |
+
+   The shell has **two** root build sites, both needing the observer: the TUI
+   `build` closure (`shell.go:234`) and `buildShellRuntimeDeps`'s `BuildAgent`
+   (`runtime_binding.go:696`).
 
 ### Behavioral decisions (settled with the human)
 
@@ -112,7 +145,16 @@ non-empty `metrics.bind`.
 
 ## Verification
 
-1. `go build ./...` and `go test ./cmd/fuse/... ./internal/observe/...`.
+> **Repo policy (reconcile 2026-08-14):** any live model traffic used in tests or
+> manual verification goes through the cheap gateway models (a scripted
+> `LLM_GATEWAY_URL` double where possible) — **never** Anthropic/Claude models.
+
+0. Automated coverage: assert `SetObserver` actually reaches the built agent on
+   each path with a recording `observe.Observer` double, and assert the empty-config
+   default is `observe.NoopObserver{}` (byte-unchanged behavior). Prefer the existing
+   `httptest`-backed gateway-double pattern in `cmd/fuse/runtime_binding_test.go`
+   over any live model call.
+1. `go build ./...` and `go test ./...`.
 2. With an observability-enabled config (`metrics.enabled: true`,
    `metrics.bind: 127.0.0.1:9464`, `metrics.access: public`, `traces.enabled`
    pointing at a local OTLP collector), run `fuse shell`, issue a turn with a
