@@ -46,6 +46,19 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		}
 	}
 
+	// Session observability (change 0061): construct the observe layer ONCE, here,
+	// and thread the resulting observer into every agent the shell builds — root and
+	// children alike. Only the entry point may call newObservability; a binding that
+	// built its own would double-register the Prometheus collectors.
+	obsCtx := context.Background()
+	obs, closeObs, obsCode, obsOK := setupShellObservability(obsCtx, cfg, stdout, stderr)
+	if !obsOK {
+		return obsCode
+	}
+	// Teardown comes from the constructor (5s budget, labelled stderr warning), so
+	// every early return below is covered by this single defer.
+	defer closeObs()
+
 	skillDirs := skills.DefaultDirs()
 
 	set, err := skills.LoadWithEmbedded(skillDirs)
@@ -231,7 +244,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
 		// segmentSink is threaded per-loop (change 0046) rather than read from a global.
-		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true, rateGate, segmentSink)
+		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true, rateGate, segmentSink, obs.observer)
 		if err != nil {
 			return nil, err
 		}
@@ -309,6 +322,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		traceW: traceW, rateGate: rateGate, logDir: logDir,
 		eventStore: eventStore, segmentSink: segmentSink,
 		childApprove: childBaseApprove, rootApprove: childBaseApprove,
+		observer: obs.observer,
 	}))
 
 	// ask_user: reaches the human through the same TUI channel as approvals, so
@@ -332,4 +346,80 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		return 1
 	}
 	return 0
+}
+
+// setupLocalObservability builds the session-shared observe layer for a LOCAL
+// entry point (`fuse shell`, one-shot `fuse <task>`, research-probe). It is the
+// ONLY place those entry points may call newObservability: a binding that built
+// its own would break the one-observer-per-session rule and double-register the
+// Prometheus collectors.
+//
+// It differs from loop-serve-net in exactly one deliberate way (change 0061,
+// settled decision 1): a metrics-endpoint bind failure warns on stderr and lets
+// the run continue, because observability must never keep a local run from
+// starting. An INVALID observability config still fails startup fast
+// (decision 2) rather than silently degrading to a noop observer.
+//
+// logSink is where the structured (JSONL) logger writes when logging is enabled
+// and logging.output is not "file". It MUST NOT be a writer some other component
+// owns exclusively: the shell's TUI paints the alt screen on stdout, so the shell
+// passes stderr here while the non-TUI entry points pass stdout.
+//
+// label prefixes the diagnostics so the operator sees which entry point spoke.
+// The returned bool reports whether startup may proceed; when it is false the
+// caller must return the accompanying exit code.
+//
+// The second return is the matching TEARDOWN (change 0061 review): the shutdown
+// budget, the stderr warning, and the label prefix live HERE, next to the
+// construction, instead of being copied into each entry point — so a fourth local
+// entry point gets teardown by construction. Callers `defer` it immediately after
+// the ok check, which covers every later early return. It is always non-nil (a
+// no-op on the failure path), so deferring it is unconditionally safe.
+func setupLocalObservability(ctx context.Context, cfg config.Config, logSink, stderr io.Writer, label string) (*observabilityService, func(), int, bool) {
+	// newObservability opens with cfg.Validate(), but that is defense-in-depth
+	// here: main.go's run() already calls cfg.Validate() for every subcommand
+	// before dispatch (main.go:38), so in production an invalid config exits
+	// there and never reaches this call. This branch is live only for tests
+	// that call this helper directly with a hand-built config.
+	obs, err := newObservability(ctx, cfg, logSink)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s: observability: %v\n", label, err)
+		return nil, func() {}, 1, false
+	}
+	closeObs := func() {
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if cerr := obs.Close(sctx); cerr != nil {
+			fmt.Fprintf(stderr, "%s: observability shutdown: %v\n", label, cerr)
+		}
+	}
+	// Verifier is nil: operator auth for a local scrape endpoint is an explicit
+	// non-goal, so a local run that opts into metrics must use access: public.
+	// access: authenticated with a nil verifier would still BIND, and then 401
+	// every scrape forever (authenticatedHTTP rejects unconditionally without a
+	// verifier), so refuse to open an unserviceable listener and say why. Same
+	// warn-and-continue posture as a bind failure: observability never blocks a
+	// local run. Guarded on Bind so an unbound or disabled metrics config stays
+	// byte-identically silent.
+	if obs != nil && obs.metrics != nil && cfg.Observability.Metrics.Bind != "" && cfg.Observability.Metrics.Access == "authenticated" {
+		fmt.Fprintf(stderr, "%s: metrics endpoint disabled: local runs require access: public (continuing)\n", label)
+		return obs, closeObs, 0, true
+	}
+	// startMetricsEndpoint already no-ops when metrics are disabled or no bind is
+	// configured, so there is no outer guard to duplicate here.
+	if err := obs.startMetricsEndpoint(ctx, nil); err != nil {
+		fmt.Fprintf(stderr, "%s: metrics endpoint: %v (continuing)\n", label, err)
+	}
+	return obs, closeObs, 0, true
+}
+
+// setupShellObservability is setupLocalObservability under the shell's label,
+// with one shell-specific difference: the structured log sink is stderr, never
+// stdout. runShell hands stdout to bubbletea (tea.WithOutput) and the TUI owns
+// that writer for the whole session, so routing JSONL there would interleave log
+// lines into the alt screen and corrupt the display. The `stdout` parameter is
+// therefore accepted and deliberately not used as a sink.
+func setupShellObservability(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) (*observabilityService, func(), int, bool) {
+	_ = stdout
+	return setupLocalObservability(ctx, cfg, stderr, stderr, "shell")
 }

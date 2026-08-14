@@ -132,9 +132,18 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// workflow tool wiring, and MultiRenderer construction exactly as before
 	// (behavior-preserving relocation); the tree is supplied via Deps.Tree so
 	// probe.Summarize still sees it after h.Wait().
+	// Session observability (change 0061): built ONCE here and threaded into the
+	// probe's root and children through the deps seam.
+	obs, closeObs, obsCode, obsOK := setupLocalObservability(context.Background(), cfg, stdout, stderr, "research-probe")
+	if !obsOK {
+		return obsCode
+	}
+	defer closeObs()
+
 	deps := buildResearchProbeRuntimeDeps(researchProbeDepsInput{
 		cfg: cfg, reg: reg, alias: alias, toolReg: toolReg, tree: tree,
 		act: act, rootID: rootID, logSink: logSink, traceW: traceW, rateGate: rateGate,
+		observer: obs.observer,
 	})
 	rt := runtime.New(deps)
 

@@ -167,7 +167,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// in-process Runtime. buildOneShotRuntimeDeps holds the tree/scheduler/blackboard,
 	// spawn factory, and tool wiring exactly as before (behavior-preserving
 	// relocation); the renderer/gate stay in cmd/fuse via BuildAgent's closure.
-	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate)
+	// Session observability (change 0061): built ONCE here and threaded into every
+	// agent the one-shot run builds — root and children alike. The deferred shutdown
+	// is registered BEFORE the StartLoop / h.Wait error returns below so a short-lived
+	// one-shot run tears the exporters down on every path out of run().
+	obs, closeObs, obsCode, obsOK := setupLocalObservability(context.Background(), cfg, stdout, stderr, "one-shot")
+	if !obsOK {
+		return obsCode
+	}
+	defer closeObs()
+
+	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate, obs.observer)
 	rt := runtime.New(deps)
 	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: task, ModelID: *modelAlias})
 	if err != nil {

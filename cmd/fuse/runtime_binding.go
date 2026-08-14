@@ -75,7 +75,7 @@ func (h *eventStoreHolder) get() event.EventStore {
 func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, tree *agent.AgentTree, stdout io.Writer, verbose bool, traceW io.Writer,
 	rootApprove permissions.ApprovalFunc, oneShotSystemBlock string, oneShotBudget bool,
-	rateGate model.RateGate) (runtime.Deps, func()) {
+	rateGate model.RateGate, observer observe.Observer) (runtime.Deps, func()) {
 
 	sched := tree.Scheduler()
 	rootNode := tree.Node(tree.RootID())
@@ -84,7 +84,12 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 	// Per-loop store holder (change 0046): BuildAgent sets it from the Runtime-owned
 	// store; the child-builder/spawner closures below read it instead of a global.
 	storeHolder := &eventStoreHolder{}
-	observer := observe.NoopObserver{}
+	// Session observer (change 0061): supplied by the entry point so root and every
+	// child share ONE instance. Nil is the pre-0061 default — mirrors
+	// buildLoopServerRuntimeDepsWithObserver.
+	if observer == nil {
+		observer = observe.NoopObserver{}
+	}
 
 	// MCP attach on the one-shot path (change #59, Task 5): route through the SAME
 	// shared helper every binding uses, so one-shot can list + invoke MCP tools with
@@ -167,7 +172,10 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		if opts.SystemPrompt != "" {
 			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil)
 		} else {
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil)
+			// Observer is installed by a.SetObserver(observer) below, not here —
+			// keeps this branch symmetric with the buildChildAgent branch above,
+			// which takes no observer at all.
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -214,6 +222,11 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		nil)
 
 	return runtime.Deps{
+		// The Runtime installs Deps.Observer on the root agent it builds and on the
+		// Spawner it wires (inproc.go), so the session observer MUST be published here
+		// too — BuildAgent's own SetObserver would otherwise be overwritten with the
+		// noop default on the StartLoop path (change 0061).
+		Observer:        observer,
 		Tree:            tree,
 		BaseDir:         "", // NoopStore: one-shot writes no event log (byte-identical).
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
@@ -242,7 +255,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// child-builder/spawner closures above emit onto THIS loop's store (change
 			// 0046). One-shot is single-loop-per-process; the holder is instance state.
 			storeHolder.set(store)
-			a, mid, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate, nil)
+			a, mid, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate, nil, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}
@@ -271,6 +284,9 @@ type researchProbeDepsInput struct {
 	logSink  *probe.Log
 	traceW   io.Writer
 	rateGate model.RateGate
+	// observer is the session-shared observe.Observer built once at the entry point
+	// (change 0061). Nil selects observe.NoopObserver{} — today's behavior.
+	observer observe.Observer
 }
 
 // buildResearchProbeRuntimeDeps assembles runtime.Deps for the research-probe entry
@@ -301,7 +317,11 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 	// Per-loop store holder (change 0046): set by BuildAgent from the Runtime-owned
 	// store; read by the child-builder/spawner closures below.
 	storeHolder := &eventStoreHolder{}
-	observer := observe.NoopObserver{}
+	// Session observer (change 0061): supplied by the caller; nil ⇒ pre-0061 default.
+	observer := in.observer
+	if observer == nil {
+		observer = observe.NoopObserver{}
+	}
 
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
 	makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
@@ -375,7 +395,10 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		if opts.SystemPrompt != "" {
 			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false, rateGate, nil)
 		} else {
-			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil)
+			// Observer is installed by a.SetObserver(observer) below, not here —
+			// keeps this branch symmetric with the buildChildAgent branch above,
+			// which takes no observer at all.
+			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -430,6 +453,11 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		nil)
 
 	return runtime.Deps{
+		// The Runtime installs Deps.Observer on the root agent it builds and on the
+		// Spawner it wires (inproc.go), so the session observer MUST be published here
+		// too — BuildAgent's own SetObserver would otherwise be overwritten with the
+		// noop default on the StartLoop path (change 0061).
+		Observer:        observer,
 		Tree:            tree,
 		BaseDir:         "", // NoopStore: research-probe writes no event log (byte-identical).
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
@@ -444,7 +472,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 				tui.NewNodeRenderer(rootNode, tree),
 				logSink.Recorder("root"),
 			)
-			a, mid, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate, nil)
+			a, mid, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate, nil, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}
@@ -503,6 +531,9 @@ type shellDepsInput struct {
 	// wiring-assertion test both may be nil.
 	childApprove permissions.ApprovalFunc
 	rootApprove  permissions.ApprovalFunc
+	// observer is the session-shared observe.Observer built once in runShell
+	// (change 0061). Nil selects observe.NoopObserver{} — today's behavior.
+	observer observe.Observer
 }
 
 // buildShellRuntimeDeps assembles runtime.Deps for the interactive shell. It wires
@@ -536,7 +567,11 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 	// it instead of the retired currentEventStore() global.
 	storeHolder := &eventStoreHolder{}
 	storeHolder.set(in.eventStore)
-	observer := observe.NoopObserver{}
+	// Session observer (change 0061): supplied by the shell; nil ⇒ pre-0061 default.
+	observer := in.observer
+	if observer == nil {
+		observer = observe.NoopObserver{}
+	}
 
 	var makeSpawner func(parentNode *agent.AgentNode, parentDepth int) *agent.Spawner
 	makeSpawnFunc := func(parentNode *agent.AgentNode, parentDepth int) tools.SpawnFunc {
@@ -596,7 +631,10 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		if opts.SystemPrompt != "" {
 			a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink)
 		} else {
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink)
+			// Observer is installed by a.SetObserver(observer) below, not here —
+			// keeps this branch symmetric with the buildChildAgent branch above,
+			// which takes no observer at all.
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -678,6 +716,11 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		nil)
 
 	return runtime.Deps{
+		// The Runtime installs Deps.Observer on the root agent it builds and on the
+		// Spawner it wires (inproc.go), so the session observer MUST be published here
+		// too — BuildAgent's own SetObserver would otherwise be overwritten with the
+		// noop default on the StartLoop path (change 0061).
+		Observer:        observer,
 		Tree:            tree,
 		BaseDir:         in.logDir, // present for seam symmetry; the shell's TUI drives turns, not StartLoop.
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
@@ -693,7 +736,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 			if store != nil {
 				storeHolder.set(store)
 			}
-			a, err := buildAgentWithRendererAndTrace(cfg, reg, alias, tui.NewRenderer(io.Discard, verbose), verbose, skillBlock, reg2, in.rootApprove, traceW, "root", sessionMode, true, rateGate, in.segmentSink)
+			a, err := buildAgentWithRendererAndTrace(cfg, reg, alias, tui.NewRenderer(io.Discard, verbose), verbose, skillBlock, reg2, in.rootApprove, traceW, "root", sessionMode, true, rateGate, in.segmentSink, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}

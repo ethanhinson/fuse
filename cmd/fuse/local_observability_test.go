@@ -1,0 +1,214 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/observe"
+	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	"google.golang.org/protobuf/proto"
+)
+
+// traceCollector installs an OTLP/HTTP collector double and returns the channel
+// of span names it observed. It is the end-to-end probe for change 0061: a span
+// can only arrive here if the entry point's observer actually reached the agent
+// that ran the turn.
+func traceCollector(t *testing.T) (endpoint string, names chan string) {
+	t.Helper()
+	names = make(chan string, 64)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		request := &collectortracepb.ExportTraceServiceRequest{}
+		if err := proto.Unmarshal(body, request); err == nil {
+			for _, rs := range request.ResourceSpans {
+				for _, ss := range rs.ScopeSpans {
+					for _, span := range ss.Spans {
+						select {
+						case names <- span.Name:
+						default:
+						}
+					}
+				}
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+	return strings.TrimPrefix(srv.URL, "http://"), names
+}
+
+// agentModelSpan is the span the AGENT layer emits around a model attempt
+// (internal/agent/loop.go: Descriptor{Kind: observe.OperationModelAttempt,
+// Name: "complete"}), rendered by the OTLP observer as fuse.<kind>.<name>.
+// Asserting on this name — and not merely on "some span" — is what makes these
+// entry-point tests bite: the runtime emits its own fuse.loop.run span from
+// Deps.Observer before any agent exists, so a test that accepts any span passes
+// even when the observer never reaches the root agent.
+var agentModelSpan = "fuse." + string(observe.OperationModelAttempt) + ".complete"
+
+// awaitSpan drains names until want arrives or the deadline passes. It waits for
+// the specific span rather than racing an exporter flush.
+func awaitSpan(t *testing.T, names chan string, want string, entryPoint string) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	var seen []string
+	for {
+		select {
+		case name := <-names:
+			if name == want {
+				return
+			}
+			seen = append(seen, name)
+		case <-deadline:
+			t.Fatalf("%s run exported no %q span; the entry-point observer never reached the root agent (saw %v)",
+				entryPoint, want, seen)
+		}
+	}
+}
+
+// writeTracingConfig plants a ~/.fuse/config.yml that enables OTLP tracing at
+// endpoint. HOME must already point at a temp dir.
+func writeTracingConfig(t *testing.T, endpoint string) {
+	t.Helper()
+	dir := filepath.Join(os.Getenv("HOME"), ".fuse")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "observability:\n" +
+		"  traces:\n" +
+		"    enabled: true\n" +
+		"    endpoint: " + endpoint + "\n" +
+		"    protocol: http/protobuf\n" +
+		"    insecure: true\n" +
+		"    batch_size: 1\n" +
+		"    batch_timeout: 1ms\n" +
+		"    sample_ratio: 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestOneShotEntryPointObservesTheRootTurn proves the one-shot path (main.go
+// run()) builds the observe layer and threads its observer all the way into the
+// root agent: with tracing enabled, the root turn's spans reach the collector.
+func TestOneShotEntryPointObservesTheRootTurn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	endpoint, names := traceCollector(t)
+	writeTracingConfig(t, endpoint)
+	scriptedGateway(t, "ONE-SHOT-REPLY")
+
+	var out, errb bytes.Buffer
+	if code := run([]string{"--model", "deepseek-flash", "say hi"}, &out, &errb); code != 0 {
+		t.Fatalf("run exit=%d stderr=%s", code, errb.String())
+	}
+	awaitSpan(t, names, agentModelSpan, "one-shot")
+}
+
+// TestResearchProbeEntryPointObservesTheRootTurn is the same proof for the
+// research-probe entry point.
+func TestResearchProbeEntryPointObservesTheRootTurn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	endpoint, names := traceCollector(t)
+	writeTracingConfig(t, endpoint)
+	scriptedGateway(t, "PROBE-REPLY")
+
+	var out, errb bytes.Buffer
+	if code := run([]string{"research-probe", "--model", "deepseek-flash", "--timeout", "30s", "what is fuse"}, &out, &errb); code != 0 {
+		t.Fatalf("run exit=%d stderr=%s", code, errb.String())
+	}
+	awaitSpan(t, names, agentModelSpan, "research-probe")
+}
+
+// TestSetupLocalObservabilityEmptyConfigIsNoop is the shared byte-identical
+// default guard for the non-shell entry points.
+func TestSetupLocalObservabilityEmptyConfigIsNoop(t *testing.T) {
+	var out, errb bytes.Buffer
+	obs, _, code, ok := setupLocalObservability(context.Background(), config.Config{}, &out, &errb, "one-shot")
+	if !ok {
+		t.Fatalf("setup failed with code %d: %s", code, errb.String())
+	}
+	t.Cleanup(func() { _ = obs.Close(context.Background()) })
+	if _, isNoop := obs.observer.(observe.NoopObserver); !isNoop {
+		t.Fatalf("empty config must yield NoopObserver, got %T", obs.observer)
+	}
+	if obs.metricsListener != nil || obs.metricsServer != nil {
+		t.Fatal("empty config must open no metrics listener")
+	}
+	if out.Len() != 0 || errb.Len() != 0 {
+		t.Fatalf("empty config must produce no output; stdout=%q stderr=%q", out.String(), errb.String())
+	}
+}
+
+// TestSetupLocalObservabilitySkipsAuthenticatedMetrics guards against binding an
+// unserviceable listener: local entry points pass a nil verifier, so
+// access: authenticated would 401 every scrape forever. The endpoint must be
+// skipped with a warning instead, while access: public still serves /metrics.
+func TestSetupLocalObservabilitySkipsAuthenticatedMetrics(t *testing.T) {
+	t.Run("authenticated opens no listener and warns", func(t *testing.T) {
+		cfg := enabledMetricsShellConfig("127.0.0.1:0")
+		cfg.Observability.Metrics.Access = "authenticated"
+
+		var out, errb bytes.Buffer
+		obs, _, code, ok := setupLocalObservability(context.Background(), cfg, &out, &errb, "one-shot")
+		if !ok {
+			t.Fatalf("authenticated metrics must not fail startup: code=%d stderr=%s", code, errb.String())
+		}
+		t.Cleanup(func() { _ = obs.Close(context.Background()) })
+		if obs.metricsListener != nil || obs.metricsServer != nil {
+			t.Fatal("authenticated metrics with a nil verifier must open no listener")
+		}
+		if !strings.Contains(errb.String(), "one-shot: metrics endpoint disabled") ||
+			!strings.Contains(errb.String(), "access: public") {
+			t.Fatalf("expected a labeled skip warning on stderr, got %q", errb.String())
+		}
+	})
+
+	t.Run("public still serves /metrics", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		obs, _, code, ok := setupLocalObservability(context.Background(), enabledMetricsShellConfig("127.0.0.1:0"), &out, &errb, "one-shot")
+		if !ok {
+			t.Fatalf("setup failed with code %d: %s", code, errb.String())
+		}
+		t.Cleanup(func() { _ = obs.Close(context.Background()) })
+		if obs.metricsListener == nil {
+			t.Fatal("public metrics must open a listener")
+		}
+		resp, err := http.Get("http://" + obs.metricsListener.Addr().String() + "/metrics")
+		if err != nil {
+			t.Fatalf("scrape: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("public /metrics scrape status=%d, want 200", resp.StatusCode)
+		}
+	})
+}
+
+// TestSetupLocalObservabilityFailsFastOnInvalidConfig covers settled decision 2
+// for the non-shell entry points, including the label they identify with.
+func TestSetupLocalObservabilityFailsFastOnInvalidConfig(t *testing.T) {
+	cfg := enabledMetricsShellConfig("")
+	cfg.Observability.Metrics.Path = "not-absolute"
+
+	var out, errb bytes.Buffer
+	_, _, code, ok := setupLocalObservability(context.Background(), cfg, &out, &errb, "one-shot")
+	if ok || code == 0 {
+		t.Fatal("invalid observability config must abort startup with a non-zero code")
+	}
+	if !strings.Contains(errb.String(), "one-shot: observability") {
+		t.Fatalf("labeled validation error must reach stderr, got %q", errb.String())
+	}
+}

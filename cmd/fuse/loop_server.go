@@ -236,7 +236,7 @@ func buildLoopServerRuntimeDepsWithObserver(cfg config.Config, reg *model.Regist
 				if opts.SystemPrompt != "" {
 					a, aerr = buildChildAgent(cfg, reg, childModelID, discardRenderer{}, opts.SystemPrompt, childToolReg, childApprove, nil, opts.Label, nil, false, rateGate, nil)
 				} else {
-					a, _, aerr = buildAgentCore(cfg, reg, childModelID, discardRenderer{}, systemBlock, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, nil)
+					a, _, aerr = buildAgentCore(cfg, reg, childModelID, discardRenderer{}, systemBlock, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, nil, observer)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -279,7 +279,7 @@ func buildLoopServerRuntimeDepsWithObserver(cfg config.Config, reg *model.Regist
 				makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, nil),
 				nil)
 
-			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, systemBlock, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, nil)
+			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, systemBlock, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, nil, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}
