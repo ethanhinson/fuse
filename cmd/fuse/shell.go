@@ -352,28 +352,38 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	return 0
 }
 
-// setupShellObservability builds the session-shared observe layer for `fuse shell`.
+// setupLocalObservability builds the session-shared observe layer for a LOCAL
+// entry point (`fuse shell`, one-shot `fuse <task>`, research-probe). It is the
+// ONLY place those entry points may call newObservability: a binding that built
+// its own would break the one-observer-per-session rule and double-register the
+// Prometheus collectors.
 //
 // It differs from loop-serve-net in exactly one deliberate way (change 0061,
 // settled decision 1): a metrics-endpoint bind failure warns on stderr and lets
-// the shell continue, because observability must never keep an interactive
-// session from starting. An INVALID observability config still fails startup
-// fast (decision 2) rather than silently degrading to a noop observer.
+// the run continue, because observability must never keep a local run from
+// starting. An INVALID observability config still fails startup fast
+// (decision 2) rather than silently degrading to a noop observer.
 //
+// label prefixes the diagnostics so the operator sees which entry point spoke.
 // The returned bool reports whether startup may proceed; when it is false the
 // caller must return the accompanying exit code. The caller owns Close.
-func setupShellObservability(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) (*observabilityService, int, bool) {
+func setupLocalObservability(ctx context.Context, cfg config.Config, stdout, stderr io.Writer, label string) (*observabilityService, int, bool) {
 	obs, err := newObservability(ctx, cfg, stdout)
 	if err != nil {
-		fmt.Fprintf(stderr, "shell: observability: %v\n", err)
+		fmt.Fprintf(stderr, "%s: observability: %v\n", label, err)
 		return nil, 1, false
 	}
 	// startMetricsEndpoint already no-ops when metrics are disabled or no bind is
 	// configured, so there is no outer guard to duplicate here. Verifier is nil:
-	// operator auth for the shell's scrape endpoint is an explicit non-goal, so a
-	// shell that opts into metrics must use access: public.
+	// operator auth for a local scrape endpoint is an explicit non-goal, so a local
+	// run that opts into metrics must use access: public.
 	if err := obs.startMetricsEndpoint(ctx, nil); err != nil {
-		fmt.Fprintf(stderr, "shell: metrics endpoint: %v (continuing)\n", err)
+		fmt.Fprintf(stderr, "%s: metrics endpoint: %v (continuing)\n", label, err)
 	}
 	return obs, 0, true
+}
+
+// setupShellObservability is setupLocalObservability under the shell's label.
+func setupShellObservability(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) (*observabilityService, int, bool) {
+	return setupLocalObservability(ctx, cfg, stdout, stderr, "shell")
 }

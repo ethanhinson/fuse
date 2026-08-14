@@ -219,6 +219,11 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		nil)
 
 	return runtime.Deps{
+		// The Runtime installs Deps.Observer on the root agent it builds and on the
+		// Spawner it wires (inproc.go), so the session observer MUST be published here
+		// too — BuildAgent's own SetObserver would otherwise be overwritten with the
+		// noop default on the StartLoop path (change 0061).
+		Observer:        observer,
 		Tree:            tree,
 		BaseDir:         "", // NoopStore: one-shot writes no event log (byte-identical).
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
@@ -442,6 +447,11 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		nil)
 
 	return runtime.Deps{
+		// The Runtime installs Deps.Observer on the root agent it builds and on the
+		// Spawner it wires (inproc.go), so the session observer MUST be published here
+		// too — BuildAgent's own SetObserver would otherwise be overwritten with the
+		// noop default on the StartLoop path (change 0061).
+		Observer:        observer,
 		Tree:            tree,
 		BaseDir:         "", // NoopStore: research-probe writes no event log (byte-identical).
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
@@ -697,6 +707,11 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		nil)
 
 	return runtime.Deps{
+		// The Runtime installs Deps.Observer on the root agent it builds and on the
+		// Spawner it wires (inproc.go), so the session observer MUST be published here
+		// too — BuildAgent's own SetObserver would otherwise be overwritten with the
+		// noop default on the StartLoop path (change 0061).
+		Observer:        observer,
 		Tree:            tree,
 		BaseDir:         in.logDir, // present for seam symmetry; the shell's TUI drives turns, not StartLoop.
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
