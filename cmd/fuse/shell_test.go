@@ -9,6 +9,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/tui"
 )
@@ -25,7 +26,7 @@ func TestBuildAgentWithRenderer(t *testing.T) {
 	toolReg := defaultToolRegistry(cfg.Research, nil)
 	r := tui.NewRenderer(discard{}, false)
 
-	a, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, r, false, "block", toolReg, permissions.AlwaysApprove, nil, "", nil, false, nil, nil)
+	a, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, r, false, "block", toolReg, permissions.AlwaysApprove, nil, "", nil, false, nil, nil, observe.NoopObserver{})
 	if err != nil {
 		t.Fatalf("buildAgentWithRenderer: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestBuildAgentLoopApprovalWiring(t *testing.T) {
 	toolReg := defaultToolRegistry(cfg.Research, nil)
 	r := tui.NewRenderer(discard{}, false)
 
-	interactive, _, err := buildAgentCore(cfg, reg, reg.Default, r, "", nil, "root", toolReg, permissions.AlwaysApprove, nil, true, nil, nil)
+	interactive, _, err := buildAgentCore(cfg, reg, reg.Default, r, "", nil, "root", toolReg, permissions.AlwaysApprove, nil, true, nil, nil, observe.NoopObserver{})
 	if err != nil {
 		t.Fatalf("interactive build: %v", err)
 	}
@@ -51,7 +52,7 @@ func TestBuildAgentLoopApprovalWiring(t *testing.T) {
 		t.Error("interactive agent should have LoopApproval wired")
 	}
 
-	headless, _, err := buildAgentCore(cfg, reg, reg.Default, r, "", nil, "root", toolReg, permissions.AlwaysApprove, nil, false, nil, nil)
+	headless, _, err := buildAgentCore(cfg, reg, reg.Default, r, "", nil, "root", toolReg, permissions.AlwaysApprove, nil, false, nil, nil, observe.NoopObserver{})
 	if err != nil {
 		t.Fatalf("headless build: %v", err)
 	}
@@ -65,7 +66,7 @@ func TestBuildAgentWithRendererUnknownAlias(t *testing.T) {
 	reg := model.DefaultRegistry()
 	toolReg := defaultToolRegistry(cfg.Research, nil)
 	r := tui.NewRenderer(discard{}, false)
-	if _, err := buildAgentWithRendererAndTrace(cfg, reg, "no-such-model", r, false, "", toolReg, permissions.AlwaysApprove, nil, "", nil, false, nil, nil); err == nil {
+	if _, err := buildAgentWithRendererAndTrace(cfg, reg, "no-such-model", r, false, "", toolReg, permissions.AlwaysApprove, nil, "", nil, false, nil, nil, observe.NoopObserver{}); err == nil {
 		t.Fatal("expected error for unknown alias")
 	}
 }
@@ -77,7 +78,7 @@ func TestShellModelBuilderWiring(t *testing.T) {
 	reg := model.DefaultRegistry()
 	toolReg := defaultToolRegistry(cfg.Research, nil)
 	var build tui.AgentBuilder = func(alias string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
-		return buildAgentWithRendererAndTrace(cfg, reg, alias, r, false, "", toolReg, approve, nil, "", nil, false, nil, nil)
+		return buildAgentWithRendererAndTrace(cfg, reg, alias, r, false, "", toolReg, approve, nil, "", nil, false, nil, nil, observe.NoopObserver{})
 	}
 	m := tui.NewShellModel(reg.Default, false, "dark", reg, nil, build, permissions.NewSessionMode(permissions.ModeSmart), true)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})

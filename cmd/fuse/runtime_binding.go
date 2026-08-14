@@ -167,7 +167,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		if opts.SystemPrompt != "" {
 			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil)
 		} else {
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil)
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil, observer)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -242,7 +242,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// child-builder/spawner closures above emit onto THIS loop's store (change
 			// 0046). One-shot is single-loop-per-process; the holder is instance state.
 			storeHolder.set(store)
-			a, mid, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate, nil)
+			a, mid, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate, nil, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}
@@ -375,7 +375,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		if opts.SystemPrompt != "" {
 			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false, rateGate, nil)
 		} else {
-			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil)
+			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, observer)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -444,7 +444,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 				tui.NewNodeRenderer(rootNode, tree),
 				logSink.Recorder("root"),
 			)
-			a, mid, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate, nil)
+			a, mid, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate, nil, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}
@@ -596,7 +596,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		if opts.SystemPrompt != "" {
 			a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink)
 		} else {
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink)
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink, observer)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -693,7 +693,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 			if store != nil {
 				storeHolder.set(store)
 			}
-			a, err := buildAgentWithRendererAndTrace(cfg, reg, alias, tui.NewRenderer(io.Discard, verbose), verbose, skillBlock, reg2, in.rootApprove, traceW, "root", sessionMode, true, rateGate, in.segmentSink)
+			a, err := buildAgentWithRendererAndTrace(cfg, reg, alias, tui.NewRenderer(io.Discard, verbose), verbose, skillBlock, reg2, in.rootApprove, traceW, "root", sessionMode, true, rateGate, in.segmentSink, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}

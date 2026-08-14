@@ -16,6 +16,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/pipeline"
 	"github.com/ethanhinson/fuse/internal/ratelimit"
@@ -331,12 +332,12 @@ func applyToolTimeout(a *agent.Agent, cfg config.Config) {
 // writes raw API request/response JSON to traceW (when non-nil), attributing
 // blocks to traceLabel. The caller owns traceW's lifecycle; share one
 // syncWriter across all agents of a session so concurrent blocks stay whole.
-func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink) (*agent.Agent, error) {
+func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
 	_ = verbose
-	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, traceLabel, toolReg, approve, sm, interactive, gate, segSink)
+	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, traceLabel, toolReg, approve, sm, interactive, gate, segSink, observer)
 	return a, err
 }
 
@@ -800,7 +801,7 @@ func contains(s []string, v string) bool {
 
 // buildAgentCore resolves alias and constructs an Agent bound to renderer r,
 // returning the resolved gateway model id.
-func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink) (*agent.Agent, string, error) {
+func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, string, error) {
 	mc, err := reg.Resolve(alias)
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
@@ -819,6 +820,9 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
 		// maxTokens is not forwarded to the CLI; Claude controls its own limits.
 		a := agent.New(cliAdapter, permGate, r, mc.ID, systemPrompt, maxTurns, 0)
+		// Session observer (change 0061). SetObserver maps nil to NoopObserver, so
+		// a caller that does not opt in keeps today's behavior exactly.
+		a.SetObserver(observer)
 		return a, mc.ID, nil
 	}
 
@@ -838,5 +842,9 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
 	installRelevance(a, cfg, traceW, gate)
 	applyToolTimeout(a, cfg)
+	// Session observer (change 0061). Installed AFTER installSummarizer /
+	// installRelevance so SetObserver can propagate it into the auxiliary
+	// model callers too. Nil maps to NoopObserver inside SetObserver.
+	a.SetObserver(observer)
 	return a, mc.ID, nil
 }
