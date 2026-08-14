@@ -50,6 +50,35 @@ func traceCollector(t *testing.T) (endpoint string, names chan string) {
 	return strings.TrimPrefix(srv.URL, "http://"), names
 }
 
+// agentModelSpan is the span the AGENT layer emits around a model attempt
+// (internal/agent/loop.go: Descriptor{Kind: observe.OperationModelAttempt,
+// Name: "complete"}), rendered by the OTLP observer as fuse.<kind>.<name>.
+// Asserting on this name — and not merely on "some span" — is what makes these
+// entry-point tests bite: the runtime emits its own fuse.loop.run span from
+// Deps.Observer before any agent exists, so a test that accepts any span passes
+// even when the observer never reaches the root agent.
+var agentModelSpan = "fuse." + string(observe.OperationModelAttempt) + ".complete"
+
+// awaitSpan drains names until want arrives or the deadline passes. It waits for
+// the specific span rather than racing an exporter flush.
+func awaitSpan(t *testing.T, names chan string, want string, entryPoint string) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	var seen []string
+	for {
+		select {
+		case name := <-names:
+			if name == want {
+				return
+			}
+			seen = append(seen, name)
+		case <-deadline:
+			t.Fatalf("%s run exported no %q span; the entry-point observer never reached the root agent (saw %v)",
+				entryPoint, want, seen)
+		}
+	}
+}
+
 // writeTracingConfig plants a ~/.fuse/config.yml that enables OTLP tracing at
 // endpoint. HOME must already point at a temp dir.
 func writeTracingConfig(t *testing.T, endpoint string) {
@@ -85,11 +114,7 @@ func TestOneShotEntryPointObservesTheRootTurn(t *testing.T) {
 	if code := run([]string{"--model", "deepseek-flash", "say hi"}, &out, &errb); code != 0 {
 		t.Fatalf("run exit=%d stderr=%s", code, errb.String())
 	}
-	select {
-	case <-names:
-	case <-time.After(2 * time.Second):
-		t.Fatal("one-shot run exported no spans; the entry-point observer never reached the root agent")
-	}
+	awaitSpan(t, names, agentModelSpan, "one-shot")
 }
 
 // TestResearchProbeEntryPointObservesTheRootTurn is the same proof for the
@@ -104,11 +129,7 @@ func TestResearchProbeEntryPointObservesTheRootTurn(t *testing.T) {
 	if code := run([]string{"research-probe", "--model", "deepseek-flash", "--timeout", "30s", "what is fuse"}, &out, &errb); code != 0 {
 		t.Fatalf("run exit=%d stderr=%s", code, errb.String())
 	}
-	select {
-	case <-names:
-	case <-time.After(2 * time.Second):
-		t.Fatal("research-probe run exported no spans; the entry-point observer never reached the root agent")
-	}
+	awaitSpan(t, names, agentModelSpan, "research-probe")
 }
 
 // TestSetupLocalObservabilityEmptyConfigIsNoop is the shared byte-identical
