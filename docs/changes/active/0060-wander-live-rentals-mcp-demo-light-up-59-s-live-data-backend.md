@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend
-claimed_at: 2026-08-15T19:46:01Z
+claimed_at: 2026-08-15T19:53:12Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -78,3 +78,52 @@ proposal-altitude summary:
   SDK/Connect base it needs.
 - **`web_fetch`/`web_search` egress identity** — #57 (deferred); unrelated to the rentals MCP path.
 - **A production rentals-provider abstraction** — the live `DataSource` is Tavily-backed for the demo.
+
+## Reconcile log
+
+### 2026-08-15 — reconcile at claim (implementer)
+
+Re-read the change + [spec](../../superpowers/specs/2026-08-15-wander-live-rentals-mcp-demo-design.md)
+against `origin/main` @ `8fdf2e8`, `related` (#52, #55, #62), the merged `depends_on` (#59), and
+ADRs 0011 / 0033 / 0036. **The design holds — no scope invalidation.** Every spec claim re-verified
+TRUE against the tree. Four refinements fold in:
+
+1. **D1 correction — the rentals server is `httptest`-shaped, not serve-shaped.** `rentals.go`
+   registers `/sse` and `/messages` on a real `http.ServeMux`, but `NewServer` then wraps it in
+   `httptest.NewServer` and exposes only `URL()`/`Close()`. So D1 is **not** "add an entrypoint that
+   `ListenAndServe`s the existing handler" — the mux must first be exposed through a
+   production-shaped constructor (e.g. a `Handler() http.Handler` accessor, or a `NewServer` variant
+   that does not self-host), with `httptest` retained for #59's acceptance lane. Slightly more
+   surgery than the spec assumed, still small and additive; the acceptance lane stays untouched.
+
+2. **D2 — the reusable Tavily client is `internal/research.TavilyProvider`**
+   (`NewTavilyProvider(apiKey string)`, `Search(ctx, query string, maxResults int) ([]SearchResult, error)`),
+   with `TAVILY_API_KEY` already resolved by `internal/research.Resolve()`. Its signature does **not**
+   match #59's `DataSource.Search(query string) []Listing` (no ctx, no error, different result type),
+   so the live source is an **adapter** over it — context and error are absorbed at the seam, a
+   failed lookup degrading to an empty result rather than breaking the one-method contract.
+
+3. **D1 transport literal.** #59's acceptance test declares the server as
+   `Transport: "sse"` with `Auth: {Type: "identity"}` and an `Audience:` — the demo config must match
+   that literal, not a `"streamable-http"` spelling. `config.MCPServerConfig` already carries
+   `Audience`/`Scopes` for the #52 identity tier.
+
+4. **D3/D5 config path.** Neither example app ships a fuse config today — both rely on
+   `~/.fuse/config.yml`/defaults. The consolidated demo therefore needs a **checked-in demo config**
+   to declare the rentals MCP server and the `loop_server.auth` user directory D5's picker reads.
+   Confirmed: `examples/wander` carries the only CI lane (`browser_test.go`, `//go:build browser`,
+   run by `make browser-test` and the `browser-acceptance` job in
+   `.github/workflows/integration.yml`); `examples/concierge-demo` has **no** lane, so
+   consolidation moves UI onto wander and retires concierge-demo's `server.js` WS proxy with no lane
+   loss.
+
+**Open questions settled at build time, per the spec's own deferral:** favorites durability backs
+onto the filesystem store family already in-tree (`internal/event/fsstore`) rather than standing up
+Postgres for a demo; the in-memory impl stays the test default. Consolidation lands **into
+`examples/wander`** (the path CI already references) with `examples/concierge-demo` deleted.
+
+**Auto-capture:** disabled for this repo (`AUTO_CAPTURE_ENABLED=false`) — one adjacent discovery
+noted in prose only, not minted: `internal/mcpdemo/rentals.NewServer` binding its own `httptest`
+listener is a test-shaped constructor in a package now consumed by production code paths; the
+production/test constructor split this change introduces is worth generalizing if other `mcpdemo`
+servers follow.
