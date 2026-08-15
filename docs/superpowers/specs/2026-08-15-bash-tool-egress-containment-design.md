@@ -59,58 +59,77 @@ The containment boundary reuses #52's *constraints* even though it cannot use it
 
 ## 3. The containment posture (settled)
 
-### 3.1 Always-contained — one code path
+### 3.1 One substrate everywhere — the container is the boundary
 
-The bash child **always** runs inside the containment boundary, in **every** deployment profile
-including local dev. There is **no uncontained code path** — no "powerful local bash" escape hatch
-that a hosted deploy could inherit by misconfiguration. This is a deliberate choice over
-"disabled-by-default in hosted": a single boundary that always runs is simpler to reason about and
-cannot be bypassed, and it eliminates the class of bug where a profile flag is forgotten and an
-uncontained shell ships.
+The bash child runs inside a **container** (OCI/Docker-shaped) in **every** deployment profile,
+local dev included. The container — not an in-process allowlist — is the containment boundary, and it
+is uniform across profiles: one substrate, one code path. This is a deliberate choice over the earlier
+"always-present boundary, policy varies" model: because the container contains a **real shell** (every
+subprocess the shell spawns — `curl`, `psql`, `git` — is inside the same namespace), the boundary
+holds no matter what the model runs, and the same mechanism serves local and hosted.
 
-### 3.2 Profile-parameterized policy
+The payoff is dogfooding confidence: because even a local `bash` call is boxed, fuse can give the
+model a **loose leash** inside the box (run what it needs, freely) without that freedom reaching the
+developer's host — a `rm -rf` or a runaway `curl` is bounded by the container, not by the laptop.
 
-The boundary is uniform; its **policy** varies by deployment profile so local dogfooding stays
-practical:
+### 3.2 The local off-switch — fail-safe, trusted-config only
 
-| Aspect            | Local profile (default)          | Hosted / multi-tenant profile        |
-|-------------------|----------------------------------|--------------------------------------|
-| Boundary present  | **yes** (always)                 | **yes** (always)                     |
-| Env scrub         | **on**                           | **on**                               |
-| Network egress    | allow-all (permissive default)   | **deny + operator allowlist**        |
-| Filesystem root   | wide (dogfooding-practical)      | **per-tenant workdir/FS scope**      |
+Containerizing every `bash` call has an **ergonomic and latency cost** (image/mount setup, per-call
+spawn, and the working tree must be mounted in for the model to see the repo it edits). So the one
+profile-dependent knob is a **local-only off-switch**: a developer not running in a deployed context
+may disable the container and run `bash` directly on the host. This is the performance valve as much
+as a convenience — expect it to be used routinely in local dev.
 
-Env-scrub is the one aspect that never varies — it is on in every profile, because inheriting fuse's
-ambient credentials is never correct, even locally.
+The invariant that keeps this safe (and the only "hard" rule in this section): the off-switch is
+**fail-safe, never fail-open**.
 
-### 3.3 Egress model — default-deny + allowlist
+- **Contained is the default.** Absent or unreadable config means contained, never uncontained.
+- **Disabling is opt-out from trusted local config only** — honored solely from the trusted-config
+  surface (ADR-0006/0019: plantable/untrusted config can never loosen the trust boundary), never from
+  model output and never from a wire field.
+- **Structurally inert in a deployed context.** When the hosted/loop-server posture is active
+  (ADR-0034), the off-switch cannot be asserted at all — a deployed context has no path to run
+  `bash` uncontained. "Forgot to configure it" therefore fails toward *contained*, closing the
+  original failure class without relying on a flag being set correctly.
 
-In the hosted profile the child has **no ambient network egress**. The only way out is an
-**operator-declared allowlist** (host / CIDR / port), sourced from **trusted config only** (the
-ADR-0006/0019 config trust boundary), **never from model output**. An allowlisted **declared target**
-MAY route through the #52 egress seam (so a bash call reaching a known service still carries delegated
-identity where a target is declarable); everything else is denied. In the local profile the allowlist
-defaults to allow-all so `curl localhost` and project tooling keep working.
+| Aspect          | Local profile                                  | Hosted / multi-tenant profile      |
+|-----------------|------------------------------------------------|------------------------------------|
+| Substrate       | container (default) · **off-switch available** | container (**off-switch inert**)   |
+| Env scrub       | on (in-container)                              | on (in-container)                  |
+| Network egress  | allow-all default                              | **deny + operator allowlist**      |
+| Filesystem      | working tree mounted in                        | **per-tenant workdir/FS scope**    |
+
+### 3.3 Egress model — the container's network
+
+Egress is the container's network configuration, not an in-process dialer allowlist. In the hosted
+profile the child has **no ambient network egress** (`--network none` as the floor); the only way out
+is an **operator-declared allowlist** (host / CIDR / port) from **trusted config only**, never from
+model output. An allowlisted **declared target** MAY route through the #52 egress seam, so a bash call
+reaching a known service still carries delegated identity where a target is declarable; everything
+else is denied. In the local profile the container defaults to allow-all egress so `curl localhost`
+and project tooling keep working.
 
 "What does 'bash reaches the internet' mean in a hosted deploy?" is answered: **nothing, unless an
 operator declared that egress.**
 
 ### 3.4 Ambient-credential scrubbing
 
-The child process environment MUST NOT inherit fuse's process/downstream credentials. Concretely,
-`cmd.Env` is set to a **scrubbed, explicitly-constructed** environment (an allowlist of benign vars
-like `PATH`, `HOME`, `LANG`, plus any operator-declared safe passthroughs) rather than left unset
-(which today means "inherit everything"). This applies the ADR-0036 no-passthrough / redaction
-constraint to the subprocess boundary. This is the smallest concrete fix and closes the ambient-
-credential-exfiltration hole directly.
+The child MUST NOT inherit fuse's process/downstream credentials. The container makes this
+**structural** rather than a code fix: it starts with an empty environment and receives exactly an
+explicitly-constructed allowlist of benign vars (`PATH`, `HOME`, `LANG`, plus any operator-declared
+safe passthroughs). This applies the ADR-0036 no-passthrough / redaction constraint to the subprocess
+boundary. (When the local off-switch runs `bash` directly on the host, env-scrub is still applied at
+the `exec.Command` boundary — `cmd.Env` set to the same allowlist rather than left unset — so
+"inherit everything" is never the behavior in either mode.)
 
 ### 3.5 Per-tenant filesystem isolation
 
-In the hosted profile the child's filesystem/workdir and any writable state are scoped
-per tenant/principal, consuming `Principal.Tenant` from ADR-0034 — consistent with #52's per-tenant
-isolation and #49's ownership model. `working_dir` (a model-supplied arg) is resolved **within** the
-tenant scope and cannot escape it (no `..` traversal past the tenant root). Local profile keeps a wide
-root.
+In the hosted profile the child's filesystem is the container's mounts: only the tenant's
+workdir/writable root is bind-mounted in, scoped per tenant/principal via `Principal.Tenant` from
+ADR-0034 — consistent with #52's per-tenant isolation and #49's ownership model. `working_dir` (a
+model-supplied arg) resolves **within** the mounted tenant root and cannot escape it (no `..`
+traversal past the mount). In the local profile the fuse working tree is mounted in so the model can
+edit the repo.
 
 ## 4. What this change ships
 
@@ -122,14 +141,16 @@ mirroring how #52 spun out #57/#58 rather than shipping one monolithic PR.
 
 These are named here for the human to file; this skill mints no ids.
 
-- **A — Containment scaffold + env-scrub + profile policy.** The boundary type in
-  `internal/tools` (or a subpackage), the profile-policy knob, and `cmd.Env` scrubbing. The floor —
-  closes the ambient-credential hole and establishes the single code path. Smallest, highest-value;
-  file first.
-- **B — Egress control.** Default-deny + operator allowlist (host/CIDR/port) from trusted config,
-  with optional #52-seam routing for allowlisted declared targets. `depends_on: [A]`.
-- **C — Per-tenant filesystem/workdir isolation.** Tenant-scoped root consuming ADR-0034
-  `Principal.Tenant`, with `working_dir` resolved within scope. `depends_on: [A]`; relates to #49.
+- **A — Container substrate + env-scrub + the off-switch.** The container-runner boundary for the
+  bash child, the trusted-config off-switch with its fail-safe/inert-when-deployed semantics, and
+  env-scrub (structural in-container, plus the `cmd.Env` allowlist on the host off-switch path). The
+  floor — establishes the single substrate and closes the ambient-credential hole. Carries the
+  substrate/runtime ADR (see §6). File first.
+- **B — Egress control.** The container network policy: `--network none` floor + operator allowlist
+  (host/CIDR/port) from trusted config, with optional #52-seam routing for allowlisted declared
+  targets. `depends_on: [A]`.
+- **C — Per-tenant filesystem/workdir isolation.** Tenant-scoped bind-mount consuming ADR-0034
+  `Principal.Tenant`, with `working_dir` resolved within the mount. `depends_on: [A]`; relates to #49.
 
 ## 5. Out of scope
 
@@ -144,9 +165,31 @@ These are named here for the human to file; this skill mints no ids.
 
 ## 6. Open questions carried to build time
 
-- **Enforcement substrate for egress deny** (per-child network namespace, a mandatory egress proxy,
-  or an in-process dialer allowlist) — the *policy* is settled (default-deny + allowlist); the
-  *mechanism* is a build-time decision for change B, and may itself warrant an ADR. The proxy option
-  from the stub is one candidate substrate, not a settled requirement.
-- **Where the profile is resolved** — whether "hosted vs local" is an existing config surface or a
-  new one, and how it composes with the loop-server auth posture (ADR-0034). Settle in change A.
+- **Container runtime tier (ADR-worthy, change A).** The substrate is settled (a container); the
+  *runtime* is not. Options, from a shared-kernel boundary to a hard one:
+
+  | Option | Contains a real shell | Deployable | Hard security boundary |
+  |---|---|---|---|
+  | Docker/OCI + runc (default) | yes | needs a container host | no — shared kernel |
+  | Docker/OCI + gVisor (runsc) or Kata (microVM) | yes | needs a capable host | yes |
+
+  For genuinely hostile multi-tenant workloads (our threat model — "another tenant's shell") the
+  hosted tier likely wants gVisor/Kata behind the same OCI interface; local dev can use plain runc.
+  This choice, and the **deploy-target coupling** it creates, is ADR-worthy — record it in change A.
+- **Considered and rejected: language-runtime sandbox (Deno).** Deno's permission flags
+  (`--allow-net`/`--allow-read`/`--allow-env`) map cleanly onto this policy, but a Deno sandbox does
+  **not** contain a shell: `--allow-run` subprocesses run as fresh OS processes that inherit none of
+  Deno's restrictions, so `bash`'s subprocesses escape it. Deno would fit a *separate* sandboxed
+  code-exec tool, not the containment of this shell tool. Not the substrate here.
+- **Deploy-target coupling (constraint, not just a question).** This posture requires a host that can
+  run containers. Container-less serverless targets (e.g. Lambda, some PaaS) cannot host it and the
+  posture does not degrade gracefully there — state this as an explicit deployment constraint in
+  change A rather than discovering it at build time. Docker-in-Docker / mounted-socket setups carry a
+  privilege-escalation tradeoff (socket access ≈ host root) that change A must address.
+- **Per-call vs. warm container lifecycle.** Per-call spawn is 100ms–seconds of cold start; a shell
+  the model calls dozens of times per loop makes that add up. A per-loop warm/pooled container is the
+  likely mitigation, and it interacts with ADR-0034's per-tenant ownership/lease lifecycle. Settle in
+  change A/B.
+- **Where the profile / off-switch is resolved** — how "hosted vs local" and the off-switch bind to
+  the existing config surface, and how the off-switch is made structurally inert when the loop-server
+  auth posture (ADR-0034) is active. Settle in change A.
