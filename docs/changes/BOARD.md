@@ -1,19 +1,13 @@
 # Backlog
 
-**62 changes** — 🟢 1 in progress · 🟡 2 proposed · ⚪ 2 deferred · ✅ 51 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0060](active/0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md) | Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app | `medium` | `feat` | [spec](../superpowers/specs/2026-08-15-wander-live-rentals-mcp-demo-design.md) | `feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend` |
+**62 changes** — 🟡 2 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 51 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0058](active/0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | `medium` | `feat` | build-ready |
-| [0062](active/0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md) | Wander refresh-to-restore — light up #54 durable resume in the browser demo | `medium` | `feat` | ⏳ waiting on #60 — not yet built |
+| [0062](active/0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md) | Wander refresh-to-restore — light up #54 durable resume in the browser demo | `medium` | `feat` | ⏳ waiting on #60 — needs your merge |
 
 ## ⚪ Deferred (2)
 
@@ -21,6 +15,12 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0060](active/0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md) | Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app | `medium` | `feat` | [#61](https://github.com/ethanhinson/fuse/pull/61) |  |
 
 ```mermaid
 graph TD
