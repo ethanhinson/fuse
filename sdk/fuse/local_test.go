@@ -53,6 +53,9 @@ func (f *fakeRuntime) Send(ctx context.Context, tenant event.TenantID, loopID, i
 func (f *fakeRuntime) Spawn(ctx context.Context, loopID string, opts runtime.SpawnOpts) (runtime.SpawnHandle, error) {
 	return nil, nil
 }
+func (f *fakeRuntime) Resume(ctx context.Context, tenant event.TenantID, loopID string) (runtime.LoopHandle, error) {
+	return fakeHandle{id: loopID}, nil
+}
 func (f *fakeRuntime) Observe(ctx context.Context, tenant event.TenantID, loopID string) (<-chan event.Event, func(), error) {
 	if f.observeGate != nil {
 		f.observeGate()
