@@ -2,11 +2,11 @@
 id: 57
 slug: egress-identity-builtin-http-tools
 title: "Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam"
-status: proposed
+status: deferred
 priority: medium
 type: feat
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-15
 depends_on: [52]
 related: [49, 55]
 discovered_from: [52]
@@ -21,6 +21,11 @@ pr:
 blocked_by:
 reconciled: false
 ---
+
+## Artifacts
+
+<!-- docket:artifacts:start (generated — do not hand-edit) -->
+<!-- docket:artifacts:end -->
 
 ## Why
 
@@ -51,6 +56,39 @@ Likely scope to settle in design:
 ## Note
 
 Filed 2026-08-11 while reviewing #52 (PR #55) before merge. #52's seam is sound and spec-complete for its declared scope (MCP was the priority gap — the standards-prohibited static-bearer pattern); this change extends the same seam to the built-in HTTP tools so the deployed identity posture is not silently MCP-only. Needs a brainstorm to settle non-MCP target declaration and the `web_search` tier before it is build-ready.
+
+## Why deferred
+
+Deferred 2026-08-15 after grooming. The brainstorm surfaced that the two halves of this
+change resolve very differently, and neither justifies building it now:
+
+- **`web_search` needs no downstream identity.** It searches the **public** internet with
+  fuse's own provider key (the existing BYO-search-key model). There is no per-end-user
+  identity at a search provider (Brave/Google API keys authenticate *fuse*, not the loop
+  initiator), so RFC 8693 delegation buys nothing here. Whether a given principal may call
+  `web_search` at all is a **tool-level access** question (the permission gate / tool
+  allowlist), NOT an egress-identity one — so it does not belong on the #52 seam at all.
+
+- **`web_fetch` per-principal identity is the real work, and it needs design.** Because the
+  URL is model-supplied but #52's hard rule is that a target's audience/scope NEVER comes
+  from model output, delivering delegated per-tenant identity for `web_fetch` requires a
+  design for deriving a fetch target's `Target` (audience/tier) from trusted config — e.g. a
+  per-host target map with an explicit anonymous/identity-free tier for undeclared hosts,
+  composed with the existing SSRF/host floor (`internal/permissions/fetchhost.go`), which is
+  invoke-time authz, not downstream authn. That is a real brainstorm, not a wiring task, and
+  is not a priority right now.
+
+What is NOT lost by deferring: #52's seam is intact and MCP egress is fully covered; the only
+gap is that `web_fetch`/`web_search` present the ambient process credential. `web_fetch` still
+has its SSRF/host floor, so this is an *identity-propagation* gap, not an open-egress hole.
+
+**Revive when** per-tenant identity to authenticated *fetch* targets becomes a real
+requirement (a deployed tenant hitting an authenticated HTTP endpoint via `web_fetch`). At
+that point, re-scope to `web_fetch` only: settle the config-declared per-host `Target` map +
+anonymous tier (the deferred hard part above), wire the `CredentialSource` into
+`internal/research/scraper.go` (the request is built at `scraper.go:102-109`), and carry #52's
+redaction/audit parity. Handle any `web_search` access-control need as a separate tool-level
+concern, not on this seam.
 
 ## Reconcile log
 
