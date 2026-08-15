@@ -46,6 +46,10 @@ func TestReconstructRoundTripEqualsLiveTranscript(t *testing.T) {
 		BaseDir:         baseDir,
 		MaxConcurrent:   1,
 		NewToolRegistry: func() *tools.Registry { return reg },
+		// Interactive loops survive request-ctx cancel (change 0054, D2), so a short
+		// idle TTL is the teardown path: after cancel() the loop goes idle and is reaped,
+		// letting h.Wait() return with the final transcript.
+		IdleTTL: 150 * time.Millisecond,
 		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, r *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			return agent.New(fake, execAll{r}, nopRenderer{}, modelID, "", 10, 0), nil, modelID, nil
 		},

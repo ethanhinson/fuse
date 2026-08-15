@@ -21,6 +21,11 @@ func newInteractiveRuntime(t *testing.T, fake agent.Completer) Runtime {
 	return New(Deps{
 		BaseDir:       t.TempDir(),
 		MaxConcurrent: 1,
+		// A short idle TTL so an interactive loop, once genuinely idle (no Send, no live
+		// Observe), is reaped promptly in tests (change 0054, D2). Interactive loops are
+		// detached from the request ctx, so a disconnect alone no longer ends them — the
+		// reaper is now the deterministic teardown path a test relies on.
+		IdleTTL: 150 * time.Millisecond,
 		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			return agent.New(fake, execAll{reg}, nopRenderer{}, modelID, "", 1, 0), nil, modelID, nil // finite cap; runtime must lift it
 		},
@@ -102,12 +107,17 @@ func TestInteractiveLoopParksAndResumes(t *testing.T) {
 	// loop_id and parked again after answering the follow-up.
 	waitForKind(t, evCh, event.KindLoopParked, 2*time.Second)
 
-	// Cancel ends the parked loop; the run must return cleanly.
+	// Cancelling the request ctx models a client disconnect. As of change 0054 an
+	// interactive loop is detached from the request ctx and SURVIVES the disconnect —
+	// so cancel alone must NOT end it. Teardown instead happens via the idle-TTL reaper
+	// (the runtime here uses a short test IdleTTL): once the loop is genuinely idle (the
+	// live Observe dropped with the ctx, no further Send), the reaper cancels the
+	// session and the run returns cleanly.
 	cancel()
 	select {
 	case <-doneOf(h):
 	case <-time.After(2 * time.Second):
-		t.Fatal("interactive loop did not exit after ctx cancel")
+		t.Fatal("interactive loop was not reaped after going idle post-disconnect")
 	}
 }
 

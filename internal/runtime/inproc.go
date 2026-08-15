@@ -113,10 +113,26 @@ type Deps struct {
 	// loops started by different principals derive independent identities and never
 	// cross. Nil ⇒ the run context is used verbatim (byte-identical to pre-#59).
 	LoopContext func(ctx context.Context, cfg LoopConfig) context.Context
+
+	// IdleTTL bounds an interactive (persistent conversational) session's lifetime
+	// after its connection drops (change 0054, D2). An interactive loop runs under a
+	// session-scoped context DETACHED from the request ctx, so a client disconnect no
+	// longer cancels the parked run — but the session must not live forever. When a
+	// loop goes IdleTTL with no Send and no live Observe, the reaper cancels its
+	// session ctx, the run finishes, and the registry flips to not-live. Each Send and
+	// each Observe "touches" the loop, resetting the idle timer. Zero ⇒ defaultIdleTTL.
+	// Ignored for non-interactive loops (they own their run to completion and are not
+	// connection-pinned in a way this changes).
+	IdleTTL time.Duration
 }
 
 // defaultLeaseTTL is the owner-liveness lease duration used when Deps.LeaseTTL is zero.
 const defaultLeaseTTL = 30 * time.Second
+
+// defaultIdleTTL bounds an interactive session's post-disconnect lifetime when
+// Deps.IdleTTL is zero (change 0054, D2). A single named constant for now; a
+// per-tenant / configurable policy is a follow-up (spec Out of scope).
+const defaultIdleTTL = 30 * time.Minute
 
 // inProcRuntime is the concrete in-process Runtime. It owns each loop's event
 // store as instance state (Decision Note D-1): it opens the *fsstore.FSEventStore
@@ -139,6 +155,12 @@ type loop struct {
 	humanBus   *agent.HumanBus
 	buildChild agent.ChildBuilder
 	handle     *loopHandle
+
+	// touch resets the interactive session's idle-reap timer (change 0054, D2). It is
+	// called on every Send and every Observe so an actively-used session is never
+	// reaped; nil for a non-interactive loop (which has no reaper). Safe to call
+	// concurrently.
+	touch func()
 }
 
 // New builds an in-process Runtime. deps carries the collaborators a binding
@@ -169,6 +191,15 @@ func (r *inProcRuntime) leaseTTL() time.Duration {
 		return r.deps.LeaseTTL
 	}
 	return defaultLeaseTTL
+}
+
+// idleTTL returns the interactive-session idle timeout, or defaultIdleTTL when unset
+// (or non-positive). See Deps.IdleTTL.
+func (r *inProcRuntime) idleTTL() time.Duration {
+	if r.deps.IdleTTL > 0 {
+		return r.deps.IdleTTL
+	}
+	return defaultIdleTTL
 }
 
 // heartbeatInterval returns the renewer's tick cadence: the explicit override when set,
@@ -213,6 +244,54 @@ func (r *inProcRuntime) startLeaseRenewer(ctx context.Context, key event.StreamK
 	}()
 }
 
+// startIdleReaper launches the per-loop idle-TTL reaper for an interactive session
+// (change 0054, D2). It cancels sessionCancel — ending the parked run — once idleTTL
+// elapses with no touch (no Send, no live Observe). It returns a touch func the
+// caller stores on the loop; each Send/Observe calls it to reset the window. The
+// reaper exits (without reaping) when stop is closed (run completion) or sessionCtx
+// is done (already ended some other way), so it never leaks and never races a
+// completed run. Touches after teardown are harmless no-ops.
+func (r *inProcRuntime) startIdleReaper(sessionCtx context.Context, sessionCancel context.CancelFunc, stop <-chan struct{}) func() {
+	ttl := r.idleTTL()
+	timer := time.NewTimer(ttl)
+	touches := make(chan struct{}, 1)
+	go func() {
+		defer timer.Stop()
+		for {
+			select {
+			case <-sessionCtx.Done():
+				return
+			case <-stop:
+				return
+			case <-touches:
+				// Reset the idle window on activity. Drain-then-reset is safe: only this
+				// goroutine reads the timer channel.
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(ttl)
+			case <-timer.C:
+				// Idle window elapsed with no activity: reap. Cancelling the session ctx
+				// unwinds the parked run, which flips the registry to not-live and tears
+				// down the store on the completion goroutine (below).
+				sessionCancel()
+				return
+			}
+		}
+	}()
+	return func() {
+		// Non-blocking: a full buffer already has a pending touch queued, which is
+		// enough to reset the window on the next loop iteration.
+		select {
+		case touches <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // StartLoop constructs and drives one agent loop from cfg (see the Runtime
 // interface). It wraps agent.New (via deps.BuildAgent) + SetEventSink/
 // SetNodeIdentity + Agent.Run; the run executes in a goroutine and the returned
@@ -225,6 +304,21 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 			ended = true
 			loopSpan.End(out)
 		}
+	}
+
+	// Session lifetime (change 0054, D2). A one-shot loop's run is governed by the
+	// request ctx (loopCtx) — byte-identical to before. An INTERACTIVE loop instead
+	// runs under a SESSION context detached from the request ctx: WithoutCancel keeps
+	// loopCtx's values (the durable trace carrier, and the LoopContext identity applied
+	// below) but drops its cancellation, so a client disconnect no longer unwinds the
+	// parked run. The session's own cancel is held by the run-completion path and the
+	// idle-TTL reaper (started after the loop is registered), which is the ONLY thing
+	// that ends a disconnected interactive session. sessionCtx also becomes the
+	// event-emission ctx (durableSink), so Appends survive the disconnect too.
+	sessionCtx := loopCtx
+	var sessionCancel context.CancelFunc
+	if cfg.Interactive {
+		sessionCtx, sessionCancel = context.WithCancel(context.WithoutCancel(loopCtx))
 	}
 	// Use a caller-supplied tree when the binding externally observes it
 	// (research-probe/shell keep their tree for probe.Summarize / rendering); else
@@ -248,7 +342,7 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	var store event.EventStore
 	durable := r.deps.DurableStore != nil
 	if durable {
-		store = &durableSink{store: r.deps.DurableStore, key: key, ctx: loopCtx, observer: r.deps.Observer}
+		store = &durableSink{store: r.deps.DurableStore, key: key, ctx: sessionCtx, observer: r.deps.Observer}
 	} else if r.deps.BaseDir == "" {
 		store = event.NoopStore{}
 	} else {
@@ -346,10 +440,23 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	// promptly even if ctx is not canceled; the renewer ALSO exits on ctx.Done, so it
 	// never leaks. Only when a durable Registry is present — nil-registry single-loop
 	// bindings run no renewer.
+	// The renewer follows the loop's OWN lifetime, not the request's: for an
+	// interactive loop it must keep heartbeating after the client disconnects (the
+	// session survives), so it is driven by sessionCtx (== loopCtx for a one-shot).
 	var stopRenew chan struct{}
 	if r.deps.Registry != nil {
 		stopRenew = make(chan struct{})
-		r.startLeaseRenewer(ctx, key, rootID, stopRenew)
+		r.startLeaseRenewer(sessionCtx, key, rootID, stopRenew)
+	}
+
+	// Idle-TTL reaper for an interactive session (change 0054, D2): once the loop is
+	// registered and live, arm the reaper so a disconnected-and-idle session is bounded.
+	// stopReap is closed at run completion so it exits promptly; it also exits on
+	// sessionCtx.Done, so it never leaks. touch is stored on the loop for Send/Observe.
+	var stopReap chan struct{}
+	if cfg.Interactive && sessionCancel != nil {
+		stopReap = make(chan struct{})
+		lp.touch = r.startIdleReaper(sessionCtx, sessionCancel, stopReap)
 	}
 
 	// Decorate the run context with the composition root's per-loop identity hook
@@ -359,10 +466,12 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	// reaches every tool Execute (via toolidentity.WithPrincipal, supplied by cmd/fuse),
 	// so the MCP egress mints per-principal, per-tenant tokens. Per-loop and applied
 	// once here, so it holds for every turn without per-turn re-plumbing; two concurrent
-	// loops derive independent contexts and never cross.
-	runCtx := loopCtx
+	// loops derive independent contexts and never cross. It decorates sessionCtx (the
+	// disconnect-detached run ctx for interactive loops; == loopCtx for one-shots), so
+	// identity survives a resume/re-park unchanged.
+	runCtx := sessionCtx
 	if r.deps.LoopContext != nil {
-		runCtx = r.deps.LoopContext(loopCtx, cfg)
+		runCtx = r.deps.LoopContext(sessionCtx, cfg)
 	}
 
 	go func() {
@@ -384,6 +493,16 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		// the shutdown deterministic and immediate.
 		if stopRenew != nil {
 			close(stopRenew)
+		}
+		// Stop the idle reaper too, and release the session context (change 0054): the
+		// run is over, so the reaper must not fire, and the WithoutCancel-derived session
+		// ctx should be canceled to free its resources. sessionCancel is idempotent, so
+		// a reaper-initiated completion (which already called it) is unaffected.
+		if stopReap != nil {
+			close(stopReap)
+		}
+		if sessionCancel != nil {
+			sessionCancel()
 		}
 		// Mark the loop finished in the durable registry so a cold instance resolves it
 		// as replay-only (Send ⇒ ErrLoopFinished). Use context.Background(): the run's
@@ -513,6 +632,11 @@ func (r *inProcRuntime) resolveDurable(ctx context.Context, tenant event.TenantI
 // cross-instance channel (so a loop a prior process started is observable here).
 func (r *inProcRuntime) Observe(ctx context.Context, tenant event.TenantID, loopID string) (<-chan event.Event, func(), error) {
 	if lp := r.loopCache(tenant, loopID); lp != nil {
+		// A live Observe is session activity: reset the idle-reap window (change 0054,
+		// D2) so a loop a client is actively tailing is never reaped out from under it.
+		if lp.touch != nil {
+			lp.touch()
+		}
 		ch, cancel := lp.store.Subscribe()
 		return ch, cancel, nil
 	}
@@ -573,6 +697,11 @@ func (r *inProcRuntime) Send(ctx context.Context, tenant event.TenantID, loopID 
 			return fmt.Errorf("%w: %q", ErrLoopFinished, loopID)
 		default:
 		}
+	}
+	// A Send is session activity: reset the idle-reap window (change 0054, D2) before
+	// enqueuing, so an actively-driven conversation is never reaped mid-exchange.
+	if lp.touch != nil {
+		lp.touch()
 	}
 	lp.humanBus.Enqueue(lp.node.ID, agent.ModeRespond, "@human", input)
 	return nil
