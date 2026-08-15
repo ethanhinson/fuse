@@ -55,6 +55,20 @@ type Runtime interface {
 	// (tenant, loopID) stream against the durable registry when present, so a cold
 	// instance can replay a loop a prior process finished.
 	Attach(ctx context.Context, tenant event.TenantID, loopID string, from event.Seq) ([]event.Event, error)
+
+	// Resume revives a persistent conversational session so a client can keep chatting
+	// after a disconnect that outlived even the idle-TTL reaper — or on a cold instance
+	// that never held the loop (change 0054, D4). It resolves the (tenant, loopID)
+	// record tenant-scoped (ADR-0034: a cross-tenant resume is ErrLoopNotFound, never a
+	// leak). If the loop is still live here it is a no-op returning the existing handle
+	// (resume then just means "re-open your Observe"). If it is finished/evicted, Resume
+	// replays the durable event stream, reconstructs the model-facing transcript
+	// (single source of truth, D1/D5), builds a fresh agent seeded with it, and re-parks
+	// it under a session-scoped context so a subsequent Send drives the next turn instead
+	// of returning ErrLoopFinished. It returns ErrLoopNotFound for an unknown loop, and
+	// requires the durable Registry + DurableStore (a nil-registry binding has no cross-
+	// process identity to resume). Interactive-only: a resumed loop always parks.
+	Resume(ctx context.Context, tenant event.TenantID, loopID string) (LoopHandle, error)
 }
 
 // LoopConfig is the policy-free description of one loop to start. It carries loop

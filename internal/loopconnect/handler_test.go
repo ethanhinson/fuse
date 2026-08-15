@@ -25,12 +25,22 @@ type fakeRuntime struct {
 
 	sendErr error
 
+	// Resume behavior (change 0054, D3). resumeErr is what Resume returns; resumed
+	// counts Resume calls. sendErrAfterResume, when set, is the error Send returns until
+	// a Resume has happened, after which Send returns nil — modeling a finished loop that
+	// a resume revives so the handler's resume-then-retry path can be asserted.
+	resumeErr          error
+	resumed            int
+	sendErrAfterResume error
+
 	// recorded call args for tenant/threading assertions.
 	sawStartCfg    runtime.LoopConfig
 	sawStartCtxErr error // ctx.Err() at StartLoop time (must be nil: loop-lifetime ctx)
 	sawSendTn      event.TenantID
 	sawSendLoop    string
 	sawSendIn      string
+	sawResumeTn    event.TenantID
+	sawResumeLoop  string
 
 	// Observe/Attach hooks (used by later tasks).
 	live      chan event.Event
@@ -49,7 +59,22 @@ func (f *fakeRuntime) StartLoop(ctx context.Context, cfg runtime.LoopConfig) (ru
 }
 func (f *fakeRuntime) Send(ctx context.Context, tenant event.TenantID, loopID, input string) error {
 	f.sawSendTn, f.sawSendLoop, f.sawSendIn = tenant, loopID, input
+	// Model a finished-then-resumed loop: Send fails until a Resume, then succeeds.
+	if f.sendErrAfterResume != nil {
+		if f.resumed == 0 {
+			return f.sendErrAfterResume
+		}
+		return nil
+	}
 	return f.sendErr
+}
+func (f *fakeRuntime) Resume(ctx context.Context, tenant event.TenantID, loopID string) (runtime.LoopHandle, error) {
+	f.sawResumeTn, f.sawResumeLoop = tenant, loopID
+	if f.resumeErr != nil {
+		return nil, f.resumeErr
+	}
+	f.resumed++
+	return fakeHandle{id: loopID}, nil
 }
 func (f *fakeRuntime) Spawn(ctx context.Context, loopID string, opts runtime.SpawnOpts) (runtime.SpawnHandle, error) {
 	return nil, nil
@@ -137,13 +162,38 @@ func TestSendErrorMapping(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			rt := &fakeRuntime{sendErr: tc.err}
+			// resumeErr set so the finished case exercises the pure fall-through: the
+			// handler attempts a resume (change 0054 D3), it fails, and the original
+			// finished error surfaces as CodeFailedPrecondition. The not-found/other
+			// cases never reach the resume path.
+			rt := &fakeRuntime{sendErr: tc.err, resumeErr: errors.New("not resumable")}
 			client := newTestServer(t, rt)
 			_, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{LoopId: "x", Input: "y"}))
 			if got := connect.CodeOf(err); got != tc.want {
 				t.Fatalf("Send err code = %v, want %v (err=%v)", got, tc.want, err)
 			}
 		})
+	}
+}
+
+// TestSendResumesFinishedLoop is the D3 unit-level acceptance: a Send against a
+// finished-but-resumable loop transparently resumes it and retries, returning success
+// (not CodeFailedPrecondition). It proves the handler routes resume on the Send path.
+func TestSendResumesFinishedLoop(t *testing.T) {
+	rt := &fakeRuntime{sendErrAfterResume: runtime.ErrLoopFinished}
+	client := newTestServer(t, rt)
+
+	_, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{
+		LoopId: "loop-1", Input: "and then?", Tenant: "acme",
+	}))
+	if err != nil {
+		t.Fatalf("Send to a finished-but-resumable loop should succeed after resume, got: %v", err)
+	}
+	if rt.resumed != 1 {
+		t.Fatalf("expected exactly one Resume call, got %d", rt.resumed)
+	}
+	if rt.sawResumeTn != event.TenantID("acme") || rt.sawResumeLoop != "loop-1" {
+		t.Fatalf("Resume args not threaded tenant-scoped: tn=%q loop=%q", rt.sawResumeTn, rt.sawResumeLoop)
 	}
 }
 

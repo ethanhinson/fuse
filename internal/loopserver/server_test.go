@@ -56,6 +56,10 @@ func (f *fakeRuntime) Spawn(ctx context.Context, loopID string, opts runtime.Spa
 	return nil, nil
 }
 
+func (f *fakeRuntime) Resume(ctx context.Context, tenant event.TenantID, loopID string) (runtime.LoopHandle, error) {
+	return runtimeHandle{id: loopID}, nil
+}
+
 func (f *fakeRuntime) Observe(ctx context.Context, tenant event.TenantID, loopID string) (<-chan event.Event, func(), error) {
 	f.observeTenant = tenant
 	if f.observeErr != nil {

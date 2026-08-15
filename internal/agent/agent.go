@@ -107,6 +107,16 @@ type Agent struct {
 	// Only meaningful with humanInjector set; a spawned child is never interactive.
 	interactive bool
 
+	// seeded, when true, marks that Run's seed history was reconstructed from a
+	// durable event stream that ALREADY contains those turns (change 0054 resume):
+	// the runtime folded events → transcript and handed it back as the seed. Run
+	// therefore SUPPRESSES the KindUserInput emission for the seed's user turns —
+	// re-emitting them would duplicate events the stream already holds. NEW user
+	// turns injected after resume (each Send) still emit KindUserInput normally.
+	// False (the default, a fresh StartLoop) emits the initial task's user turn, so
+	// a from-scratch run's stream is complete for a later fold.
+	seeded bool
+
 	// expectsSchema, when non-nil, is the JSON Schema the spawner declared for this
 	// child's structured result (change 0042). When set, Run offers a synthesized
 	// return_result tool (parameters = this schema) and treats a conforming
@@ -223,6 +233,14 @@ func (a *Agent) SetHumanInjector(inj *HumanInjector) { a.humanInjector = inj }
 // unless a HumanInjector with a bus is also wired. Default false preserves the
 // single-task run-to-completion contract for every existing binding.
 func (a *Agent) SetInteractive(v bool) { a.interactive = v }
+
+// SetSeeded marks that Run's seed history came from a durable-stream reconstruction
+// (change 0054 resume), so Run must NOT re-emit KindUserInput for the seed's user
+// turns — those events already exist in the stream. The runtime sets it before
+// re-parking a resumed loop; a fresh StartLoop leaves it false so the initial task
+// emits and the from-scratch stream stays complete for a later fold. Setting it has
+// no effect on new post-resume Send turns, which always emit.
+func (a *Agent) SetSeeded(v bool) { a.seeded = v }
 
 // SetMaxTurns overrides the per-run turn cap after construction. A value <= 0 means
 // unlimited. An interactive (persistent conversational) loop MUST be uncapped: each

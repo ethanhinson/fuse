@@ -48,6 +48,17 @@ const (
 	// the absence of further events) is unreliable. Emitted only in interactive mode
 	// just before the park; never in a one-shot run.
 	KindLoopParked Kind = "loop.parked"
+	// KindUserInput records a user/human turn entering the model-facing transcript:
+	// the initial task at StartLoop and each human message injected at a turn
+	// boundary (ADR-0022 self-pull). It exists because user input is otherwise NOT
+	// in the durable stream — the injector appends a Role:"user" message to the
+	// in-memory transcript but emits no event — so a transcript rebuilt purely from
+	// events (change 0054's resume fold) would drop every user turn. Emitting it
+	// keeps the event stream the single source of truth for reconstruction: Content
+	// is the exact message text appended to the transcript (the injector's batched,
+	// prefixed form for human turns; the raw task for the initial turn). Skipped for
+	// a resumed loop's seed history, whose user turns are already in the stream.
+	KindUserInput Kind = "user.input"
 )
 
 // Event is the stable envelope over every loop state transition. Payload is the
@@ -296,6 +307,17 @@ type ErrorPayload struct {
 // conversational client can render the reply directly from this one event instead of
 // reconstructing which model.call.end was terminal. Turn is the turn that produced it.
 type LoopParkedPayload struct {
+	Turn    int    `json:"turn"`
+	Content string `json:"content"`
+}
+
+// UserInputPayload accompanies KindUserInput. Content is the exact user-turn text
+// appended to the model-facing transcript for this turn — the raw initial task, or
+// the human injector's batched/prefixed form for a mid-conversation Send. The resume
+// fold (change 0054) maps this one-to-one to a {Role:"user", Content} message, so a
+// transcript rebuilt from the durable stream matches the live in-memory transcript
+// byte-for-byte.
+type UserInputPayload struct {
 	Turn    int    `json:"turn"`
 	Content string `json:"content"`
 }
