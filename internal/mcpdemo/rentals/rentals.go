@@ -109,9 +109,9 @@ type Config struct {
 	TenantKeys map[event.TenantID][]byte
 }
 
-// NewServer starts the rentals MCP server on an httptest.Server and returns it. The
-// favorites store starts empty (reset per call). Call Close() to stop it.
-func NewServer(cfg Config) *Server {
+// newServer builds a rentals Server with an empty favorites store and no listener of
+// any kind. Both constructors go through it.
+func newServer(cfg Config) *Server {
 	s := &Server{
 		data:       cfg.Data,
 		audience:   cfg.Audience,
@@ -126,18 +126,58 @@ func NewServer(cfg Config) *Server {
 		copy(kc, v)
 		s.tenantKeys[event.NormalizeTenant(k)] = kc
 	}
+	return s
+}
+
+// newMux builds the routed mux (the complete MCP surface: /sse + /messages) for this
+// Server. It is the single definition of the routing table, shared by the servable
+// constructor (NewHandler/Handler) and the test constructor (NewServer).
+func (s *Server) newMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sse", s.handleSSE)
 	mux.HandleFunc("/messages", s.handleMessages)
-	s.httptest = httptest.NewServer(mux)
+	return mux
+}
+
+// NewHandler is the SERVABLE constructor: it builds a rentals Server and returns its
+// routed http.Handler WITHOUT binding a listener, so a caller (cmd/rentals-mcp, or a
+// test that wants to own the listener) can serve it on a real address via
+// http.Server.ListenAndServe or httptest.NewServer. The returned *Server is the state
+// owner (favorites, captured wire headers); the returned Server has no listener, so
+// URL() and Close() are NOT valid on it — those belong to NewServer.
+func NewHandler(cfg Config) (*Server, http.Handler) {
+	s := newServer(cfg)
+	return s, s.newMux()
+}
+
+// Handler returns this Server's routed http.Handler. It binds no listener; serving it
+// is the caller's job. A Server from NewServer is already serving its own handler on
+// its httptest listener, so this is mainly the accessor for the NewHandler path.
+func (s *Server) Handler() http.Handler { return s.newMux() }
+
+// NewServer is the TEST constructor: it builds the rentals MCP server and self-hosts it
+// on an httptest.Server, exposing URL() / Close(). Use it from tests that want a dialable
+// server with no listener bookkeeping. For anything that must serve on a real port — the
+// runnable demo, cmd/rentals-mcp — use NewHandler (or Handler()), which returns the same
+// routed handler with no listener bound. The favorites store starts empty (reset per
+// call). Call Close() to stop it.
+//
+// Teardown note: handleSSE blocks on r.Context().Done(), so Close() does not return until
+// connected clients disconnect. Register Close and any MCP client's teardown with
+// t.Cleanup (server first, client second, so LIFO stops the client first); never
+// `defer srv.Close()` ahead of the client's stop.
+func NewServer(cfg Config) *Server {
+	s := newServer(cfg)
+	s.httptest = httptest.NewServer(s.newMux())
 	return s
 }
 
 // URL returns the base URL an MCP client dials (the /sse + /messages routes live
-// under it).
+// under it). Only valid on a Server from NewServer.
 func (s *Server) URL() string { return s.httptest.URL }
 
-// Close stops the server.
+// Close stops the server. Only valid on a Server from NewServer; a NewHandler Server
+// owns no listener and needs no close.
 func (s *Server) Close() { s.httptest.Close() }
 
 // CapturedAuths returns the Authorization header of every tools/call received, in
