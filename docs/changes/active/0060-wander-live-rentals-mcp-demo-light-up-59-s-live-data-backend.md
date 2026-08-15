@@ -2,7 +2,7 @@
 id: 60
 slug: wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend
 title: "Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app"
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-11
@@ -13,12 +13,12 @@ discovered_from: [59]
 adrs: [43]
 spec: docs/superpowers/specs/2026-08-15-wander-live-rentals-mcp-demo-design.md
 plan: docs/superpowers/plans/2026-08-15-wander-live-rentals-mcp-demo-plan.md
-results:
+results: docs/results/2026-08-15-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend-results.md
 trivial: false
 auto_groomable:
 branch: feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend
-claimed_at: 2026-08-15T21:58:33Z
-pr:
+claimed_at: 2026-08-15T22:00:54Z
+pr: https://github.com/ethanhinson/fuse/pull/61
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-15-wander-live-rentals-mcp-demo-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-wander-live-rentals-mcp-demo-design.md) |
 | Plan | [2026-08-15-wander-live-rentals-mcp-demo-plan.md](https://github.com/ethanhinson/fuse/blob/feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend/docs/superpowers/plans/2026-08-15-wander-live-rentals-mcp-demo-plan.md) |
+| Results | [2026-08-15-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend-results.md](https://github.com/ethanhinson/fuse/blob/feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend/docs/results/2026-08-15-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend-results.md) |
+| PR | [#61](https://github.com/ethanhinson/fuse/pull/61) |
 | ADRs | [ADR-0043](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0043-example-apps-never-publish-credentials-by-default.md) |
 <!-- docket:artifacts:end -->
 
