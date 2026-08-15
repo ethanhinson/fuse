@@ -165,17 +165,27 @@ These are named here for the human to file; this skill mints no ids.
 
 ## 6. Open questions carried to build time
 
-- **Container runtime tier (ADR-worthy, change A).** The substrate is settled (a container); the
-  *runtime* is not. Options, from a shared-kernel boundary to a hard one:
+- **Container runtime is a pluggable seam (settled shape; ADR-worthy, change A).** The substrate is
+  settled (a container); the *runtime that backs it* must be **pluggable**, not hardcoded — otherwise
+  the whole posture re-couples to one host's capabilities, the exact deploy-target rigidity this
+  design exists to avoid. A `ContainerRuntime` seam selects the runtime; implementations slot in
+  behind it unchanged. This is the **same seam shape** as ADR-0036's `TokenExchanger`/`CredentialSource`
+  and ADR-0034's `Verifier` — a pluggable interface with a zero-config default and richer
+  implementations behind it — and change A should inherit that pattern rather than reinvent it.
 
-  | Option | Contains a real shell | Deployable | Hard security boundary |
+  | Runtime (behind the seam) | Contains a real shell | Deployable | Hard security boundary |
   |---|---|---|---|
-  | Docker/OCI + runc (default) | yes | needs a container host | no — shared kernel |
-  | Docker/OCI + gVisor (runsc) or Kata (microVM) | yes | needs a capable host | yes |
+  | runc (OCI default) | yes | needs a container host | no — shared kernel |
+  | gVisor (`runsc`) / Kata (microVM) | yes | needs a capable host | yes |
+  | host (no container) | yes | anywhere | no — **the local off-switch** |
 
-  For genuinely hostile multi-tenant workloads (our threat model — "another tenant's shell") the
-  hosted tier likely wants gVisor/Kata behind the same OCI interface; local dev can use plain runc.
-  This choice, and the **deploy-target coupling** it creates, is ADR-worthy — record it in change A.
+  Because gVisor and Kata both present as **drop-in OCI runtimes**, the seam is thin — selecting the
+  OCI runtime handler, not a bespoke API per runtime. The **host / no-container** binding is not a
+  special case bolted onto §3.2 — it is just another implementation of the same seam, which is what
+  makes the local off-switch fall out of the design naturally. The zero-config default is runc
+  locally; the hardened multi-tenant tier selects gVisor/Kata; a constrained host selects whatever it
+  can run. Record the seam and the default in change A's ADR; the **deploy-target coupling** it bounds
+  is the reason the seam is load-bearing.
 - **Considered and rejected: language-runtime sandbox (Deno).** Deno's permission flags
   (`--allow-net`/`--allow-read`/`--allow-env`) map cleanly onto this policy, but a Deno sandbox does
   **not** contain a shell: `--allow-run` subprocesses run as fresh OS processes that inherit none of
