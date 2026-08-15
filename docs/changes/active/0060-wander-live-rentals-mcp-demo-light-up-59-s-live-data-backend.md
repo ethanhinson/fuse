@@ -10,14 +10,14 @@ updated: 2026-08-15
 depends_on: [59]
 related: [52, 55, 62]
 discovered_from: [59]
-adrs: []
+adrs: [43]
 spec: docs/superpowers/specs/2026-08-15-wander-live-rentals-mcp-demo-design.md
 plan: docs/superpowers/plans/2026-08-15-wander-live-rentals-mcp-demo-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend
-claimed_at: 2026-08-15T19:55:59Z
+claimed_at: 2026-08-15T21:58:33Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-15-wander-live-rentals-mcp-demo-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-wander-live-rentals-mcp-demo-design.md) |
 | Plan | [2026-08-15-wander-live-rentals-mcp-demo-plan.md](https://github.com/ethanhinson/fuse/blob/feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend/docs/superpowers/plans/2026-08-15-wander-live-rentals-mcp-demo-plan.md) |
+| ADRs | [ADR-0043](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0043-example-apps-never-publish-credentials-by-default.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
