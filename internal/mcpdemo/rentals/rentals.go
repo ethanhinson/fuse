@@ -53,6 +53,23 @@ type DataSource interface {
 	Search(query string) []Listing
 }
 
+// StatusDataSource is an OPTIONAL extension of DataSource for backends that can be
+// DEGRADED — that can fail to answer at all, as opposed to legitimately matching
+// nothing. It exists because the two are indistinguishable through DataSource's
+// error-free contract: a provider outage and an empty market both render as `[]`, and
+// a model shown `[]` will confidently tell the user "no rentals found" mid-outage.
+//
+// SearchStatus returns the listings Search would, plus the failure when the backend
+// could not be consulted. search_rentals prefers it when the configured source
+// implements it, and reports an outage to the model rather than an empty market.
+//
+// CannedData deliberately does NOT implement it: the hermetic default can never be
+// degraded, so its no-match stays an ordinary empty result.
+type StatusDataSource interface {
+	DataSource
+	SearchStatus(query string) ([]Listing, error)
+}
+
 // CannedData is the deterministic in-repo backend (the permanent CI lane default).
 type CannedData struct{}
 
@@ -410,6 +427,18 @@ func (s *Server) handleToolCall(r *http.Request, rawParams json.RawMessage) (any
 			Query string `json:"query"`
 		}
 		_ = json.Unmarshal(params.Arguments, &args)
+		// A DEGRADED backend must not be rendered as an empty market: `[]` reads to
+		// the model as "no rentals match", and it will confidently tell the user so
+		// mid-outage. Sources that can distinguish the two (StatusDataSource) get an
+		// explicit tool error instead; CannedData cannot be degraded and takes the
+		// plain path, so a genuine no-match stays an ordinary empty result.
+		if live, ok := s.data.(StatusDataSource); ok {
+			listings, err := live.SearchStatus(args.Query)
+			if err != nil {
+				return errResult("listing search is temporarily unavailable"), nil
+			}
+			return textResult(mustJSON(listings)), nil
+		}
 		listings := s.data.Search(args.Query)
 		return textResult(mustJSON(listings)), nil
 	case "favorite_listing":

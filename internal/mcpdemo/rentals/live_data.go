@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"regexp"
 	"strconv"
@@ -49,7 +50,9 @@ type LiveDataConfig struct {
 // adapts a context+error provider call onto DataSource's one-method, error-free
 // contract: Search NEVER panics and NEVER blocks past its timeout — a provider
 // error, a timeout, or a cancelled base context all degrade to an EMPTY slice, with
-// the failure logged rather than surfaced (the MCP tool has no error channel here).
+// the failure logged rather than surfaced. It ALSO implements StatusDataSource, so the
+// search_rentals tool can tell the model the backend is unavailable instead of handing
+// it an empty market during an outage.
 //
 // CannedData remains the default DataSource; LiveData is opt-in via Config.Data.
 //
@@ -90,11 +93,23 @@ func NewLiveData(cfg LiveDataConfig) *LiveData {
 }
 
 // Search implements DataSource. See the type doc for the absorb-and-degrade contract.
+// It is SearchStatus with the degradation dropped, for callers with no error channel.
 func (d *LiveData) Search(query string) []Listing {
+	out, _ := d.SearchStatus(query)
+	return out
+}
+
+// SearchStatus implements StatusDataSource: the same search as Search, but it also
+// REPORTS a degraded backend instead of absorbing it. The listings are always usable
+// (empty on failure, never nil), so a caller that ignores the error gets exactly
+// Search's behaviour. The error is non-nil only when the backend could not be
+// consulted at all — a healthy search that legitimately matches nothing returns
+// (empty, nil), never an outage.
+func (d *LiveData) SearchStatus(query string) ([]Listing, error) {
 	out := make([]Listing, 0, d.max)
 	if d.searcher == nil {
 		d.log.Warn("rentals: live data source has no searcher configured; returning no listings")
-		return out
+		return out, errors.New("live data source has no searcher configured")
 	}
 
 	ctx, cancel := context.WithTimeout(d.ctx, d.timeout)
@@ -104,12 +119,12 @@ func (d *LiveData) Search(query string) []Listing {
 	if err != nil {
 		d.log.Warn("rentals: live search failed; degrading to no listings",
 			"query", query, "error", err)
-		return out
+		return out, err
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		d.log.Warn("rentals: live search context ended; degrading to no listings",
 			"query", query, "error", ctxErr)
-		return out
+		return out, ctxErr
 	}
 
 	for _, r := range results {
@@ -123,7 +138,7 @@ func (d *LiveData) Search(query string) []Listing {
 			Price: extractPrice(r.Title + " " + r.Snippet),
 		})
 	}
-	return out
+	return out, nil
 }
 
 // listingIDForURL derives a DETERMINISTIC listing ID from the result URL, so
