@@ -1,14 +1,15 @@
 # Backlog
 
-**61 changes** — 🟡 3 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 50 done · 🗑️ 6 killed
+**62 changes** — 🟡 4 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 50 done · 🗑️ 6 killed
 
-## 🟡 Proposed (3)
+## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` | needs-brainstorm |
 | [0058](active/0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | `medium` | `feat` | needs-brainstorm |
 | [0060](active/0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md) | Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app | `medium` | `feat` | needs-brainstorm |
+| [0062](active/0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md) | Wander refresh-to-restore — light up #54 durable resume in the browser demo | `medium` | `feat` | ⏳ waiting on #54 — needs your merge |
 
 ## ⚪ Deferred (1)
 
@@ -29,6 +30,7 @@ graph TD
   0052 --> 0057
   0052 --> 0058
   0060
+  0054 --> 0062
   0012:::done
   0052:::done
   0053:::done
