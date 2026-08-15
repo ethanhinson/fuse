@@ -2,7 +2,7 @@
 id: 54
 slug: durable-resumable-sessions
 title: Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-11
@@ -12,15 +12,15 @@ related: [47, 48, 49, 50]
 discovered_from: [53]
 adrs: []
 spec: docs/superpowers/specs/2026-08-15-durable-resumable-sessions-design.md
-plan:
-results:
+plan: docs/superpowers/plans/2026-08-15-durable-resumable-sessions-plan.md
+results: docs/results/2026-08-15-durable-resumable-sessions-results.md
 trivial: false
 auto_groomable:
 branch: feat/durable-resumable-sessions
 claimed_at: 2026-08-15T05:09:50Z
-pr:
+pr: 60
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -29,6 +29,9 @@ reconciled: false
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-15-durable-resumable-sessions-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-durable-resumable-sessions-design.md) |
+| Plan | [2026-08-15-durable-resumable-sessions-plan.md](https://github.com/ethanhinson/fuse/blob/feat/durable-resumable-sessions/docs/superpowers/plans/2026-08-15-durable-resumable-sessions-plan.md) |
+| Results | [2026-08-15-durable-resumable-sessions-results.md](https://github.com/ethanhinson/fuse/blob/feat/durable-resumable-sessions/docs/results/2026-08-15-durable-resumable-sessions-results.md) |
+| PR | 60 |
 <!-- docket:artifacts:end -->
 
 ## Why
@@ -101,52 +104,27 @@ correct and non-leaking for the connected case; this change lifts the "survives 
 resume by refresh" requirement that 0053 deferred. Persistence model (rebuild from events) and
 resume surface (reuse Connect stream) settled in the spec.
 
-## Run halted
+## Reconcile log
 
-**2026-08-15** — `docket-implement-next` claimed this change and then halted before the build,
-at Step 3 (reconcile). The change itself is fine; the **harness could not dispatch subagents**.
+**2026-08-15** — An earlier `docket-implement-next` run recorded a `## Run halted` on the premise
+that subagent dispatch was broken (a control probe appeared to hang). That premise was **false**:
+the dispatched agents were completing asynchronously and returning results; a `PONG` control probe
+subsequently returned in ~2s, and the reconcile-verification agent returned a full report. The halt
+was cleared and the change built to completion.
 
-**What stopped the run.** Every subagent dispatch launched asynchronously and then never
-returned a result to the parent. Three attempts, all failed:
+**Reconcile against `origin/main` (`52f3276`) — all spec assumptions hold.** Verified: the
+`inproc.go` run-ctx derivation (`runCtx` descends from the request ctx), the `internal/event.Kind`
+constant list, the `model.Message` / tool-call / tool-result shapes, the `Attach`→`Replay` +
+Connect `Observe` primitives, and the durable registry/lease mechanics. Dependency `#53` and
+related `#47`/`#48`/`#49`/`#50`/`#55` are all `done` — genuinely unblocked. **One open question the
+spec flagged was resolved at build time:** user/human input was NOT in the durable event stream
+(only appended to the in-memory transcript), so the D5 fold would have dropped every user turn — a
+new `KindUserInput` event was added to make the stream a complete transcript source.
 
-1. The Step-0 `docket-status` sweep dispatch — transcript went idle for 20+ minutes with no
-   result record.
-2. A read-only reconcile exploration of `origin/main` — stopped writing after 104 transcript
-   lines, idle 8+ minutes, no result record.
-3. A deliberately trivial control probe (`Reply with exactly the word: PONG`, no tools) — 4
-   transcript lines, no result after 2 minutes.
+**Base-branch drift:** the feature branch is based on `e6e637f` (the merge-base); `origin/main` has
+since advanced with the observability work (0051/0061). Nothing in this change conflicts by intent;
+the finalize rebase-onto-base gate reconciles at merge time.
 
-The control probe is the decisive one: a no-tool, one-word reply cannot legitimately take
-minutes, so this is a dispatch-delivery failure in the harness, not slow subagent work. This
-satisfies the convention's *Dispatch-capability resolution* bar — a mechanism was resolved and
-attempted, and the attempts failed — rather than inferring absence from a missing tool name.
-
-**Why that halts rather than degrades.** The resolved build role is `skills.build: docket-build`
-(not the `auto` sentinel), and `docket-build` implements the build by routing each plan task to a
-profile subagent — precisely the capability that is broken. Under the convention's Tier C
-(*discipline*) posture, only an explicitly configured `auto` is the human's authorization to run
-the build inline; any other resolved value that cannot dispatch is abort-and-report. The same
-applies to `skills.review: docket-review`. So this run stopped rather than quietly building the
-change inline without that authorization.
-
-**State left behind.** `status: in-progress` with `claimed_at` refreshed; no feature branch was
-cut, no worktree created, no plan written, and no code touched. Reconcile did not complete
-(`reconciled: false`), so a later run re-reconciles from scratch. Nothing needs undoing.
-
-**What a human must decide.** One of:
-
-- Fix subagent dispatch in the harness and re-run `docket-implement-next` — the change re-claims
-  cleanly and this section is removed automatically by the Step-2 claim.
-- Or authorize inline execution by setting `skills.build: auto` (and `skills.review: auto`) — note
-  this is machine-scoped-able via `.docket.local.yml`, since neither is a coordination-fenced key
-  — which trades docket-build's per-task profile routing for a single inline builder.
-- Or clear the claim: `docket.sh reclaim-claims` self-heals it back to `proposed` once the
-  72-hour lease expires (no feature branch exists, so it is auto-reclaimable).
-
-**Reconcile findings gathered before the halt** (useful to whoever picks this up): dependency
-`#53` is `done`, and related `#47`, `#48`, `#49`, `#50`, `#55` are all `done`, so the change is
-genuinely unblocked; the spec at `docs/superpowers/specs/2026-08-15-durable-resumable-sessions-design.md`
-was authored 2026-08-15 against the post-ADR-0033 Connect wire and is current. The spec's
-code-level assumptions (`inproc.go` line references, the `internal/event.Kind` constant list, the
-live tool-call/tool-result message shape) were **not** re-verified against `origin/main`
-(`52f3276`) — that was the exploration that died — and remain open for the next reconcile.
+Built to open PR **#60**; `reconciled: true`. See the plan and results artifacts for the task
+breakdown and the full-suite outcome (including a pre-existing, change-independent flake in
+`cmd/fuse` `TestObservabilityAcceptanceHermetic`, reproduced on clean `main`).
