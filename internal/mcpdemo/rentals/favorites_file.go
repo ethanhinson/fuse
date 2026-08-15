@@ -97,6 +97,9 @@ func (f *fileFavorites) load(pk PrincipalKey) ([]string, error) {
 // store writes pk's record atomically: a temp file in the SAME directory (so the
 // rename cannot cross filesystems), fsynced, then renamed over the target. A reader
 // therefore sees either the previous complete set or the new one, never a torn write.
+// The containing directory entry is never fsynced after the rename, so this is
+// atomic but NOT crash-durable: a crash immediately after rename can still lose the
+// update on some filesystems.
 func (f *fileFavorites) store(pk PrincipalKey, listings []string) error {
 	rec := favoritesRecord{Tenant: pk.Tenant, Subject: pk.Subject, Listings: listings}
 	data, err := json.Marshal(rec)

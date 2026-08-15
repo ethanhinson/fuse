@@ -9,7 +9,7 @@ lands in the calling principal's set.
 ```sh
 go run ./cmd/rentals-mcp \
   --addr 127.0.0.1:8091 \
-  --audience https://rentals.example \
+  --audience https://rentals.demo.fuse.local \
   --signing-key "$FUSE_TOOL_IDENTITY_SIGNING_KEY" \
   --tenants acme,globex
 ```
