@@ -2,8 +2,12 @@
 // "rentals" server fuse's client talks to over the real MCP wire, with real
 // per-principal token adjudication and real per-principal mutable state. It exists to
 // ground change #59's acceptance lane in an actual service scenario (a concierge loop
-// querying a rentals server AS the authenticated user) and is importable by the Wander
-// demo (#60), which swaps only the read tool's data source behind the DataSource seam.
+// querying a rentals server AS the authenticated user), and change #60 shipped it as the
+// runnable Wander demo's backend: cmd/rentals-mcp serves this package's NewHandler on a
+// real port, and examples/wander drives it. The demo swaps only the read tool's data
+// source (LiveData behind the DataSource seam) and the favorites store (the durable
+// filesystem store behind the FavoritesStore seam) — the wire, the token adjudication,
+// and the per-principal isolation are the same code the CI lane runs.
 //
 // It is real on three axes: the MCP wire + handshake (initialize → tools/list →
 // tools/call over HTTP/SSE), per-principal token adjudication (it verifies the
@@ -11,7 +15,8 @@
 // wrong audience), and per-principal state isolation (favorite_listing writes into the
 // CALLING principal's favorites, keyed by the token identity — never a client-supplied
 // arg — so tenant A's writes are invisible to tenant B). Only the read tool's listing
-// DATA is canned (DataSource); the live Tavily backend is #60, out of scope here.
+// DATA is pluggable: CannedData is the hermetic default the CI lane runs on, and LiveData
+// (live_data.go) backs the demo with real web-search results.
 package rentals
 
 import (
@@ -39,8 +44,8 @@ type Listing struct {
 
 // DataSource is the read-tool backend seam. The default (CannedData) returns fixed,
 // deterministic in-repo listings — hermetic, no network, no key — so the acceptance
-// lane is green-able forever. The live Tavily-style backend (#60) implements this same
-// interface and is swapped in for the runnable Wander demo, not the CI lane.
+// lane is green-able forever. LiveData (live_data.go) implements this same interface with
+// real web-search results and is swapped in for the runnable Wander demo, not the CI lane.
 type DataSource interface {
 	Search(query string) []Listing
 }

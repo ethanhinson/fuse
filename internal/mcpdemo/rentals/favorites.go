@@ -20,8 +20,9 @@ type PrincipalKey struct {
 }
 
 // FavoritesStore is the favorites persistence seam. The default is NewMemoryFavorites
-// (the CI-lane default); #60's durable filesystem store implements the same interface
-// and is opted into by the runnable demo, never by the test lane.
+// (the CI-lane default); the durable filesystem store, NewFileFavorites
+// (favorites_file.go), implements the same interface and is opted into by the runnable
+// demo, never by the test lane.
 //
 // Implementations must be safe for concurrent use, must treat Add as idempotent per
 // (principal, listing), and must partition strictly by the full PrincipalKey.
