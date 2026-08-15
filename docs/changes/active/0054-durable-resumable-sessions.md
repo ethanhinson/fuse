@@ -17,7 +17,7 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/durable-resumable-sessions
-claimed_at: 2026-08-15T04:56:13Z
+claimed_at: 2026-08-15T05:09:50Z
 pr:
 blocked_by:
 reconciled: false
@@ -100,3 +100,53 @@ Filed 2026-08-11 while reconciling 0053 (PR #51); groomed 2026-08-15. 0053's par
 correct and non-leaking for the connected case; this change lifts the "survives disconnect /
 resume by refresh" requirement that 0053 deferred. Persistence model (rebuild from events) and
 resume surface (reuse Connect stream) settled in the spec.
+
+## Run halted
+
+**2026-08-15** — `docket-implement-next` claimed this change and then halted before the build,
+at Step 3 (reconcile). The change itself is fine; the **harness could not dispatch subagents**.
+
+**What stopped the run.** Every subagent dispatch launched asynchronously and then never
+returned a result to the parent. Three attempts, all failed:
+
+1. The Step-0 `docket-status` sweep dispatch — transcript went idle for 20+ minutes with no
+   result record.
+2. A read-only reconcile exploration of `origin/main` — stopped writing after 104 transcript
+   lines, idle 8+ minutes, no result record.
+3. A deliberately trivial control probe (`Reply with exactly the word: PONG`, no tools) — 4
+   transcript lines, no result after 2 minutes.
+
+The control probe is the decisive one: a no-tool, one-word reply cannot legitimately take
+minutes, so this is a dispatch-delivery failure in the harness, not slow subagent work. This
+satisfies the convention's *Dispatch-capability resolution* bar — a mechanism was resolved and
+attempted, and the attempts failed — rather than inferring absence from a missing tool name.
+
+**Why that halts rather than degrades.** The resolved build role is `skills.build: docket-build`
+(not the `auto` sentinel), and `docket-build` implements the build by routing each plan task to a
+profile subagent — precisely the capability that is broken. Under the convention's Tier C
+(*discipline*) posture, only an explicitly configured `auto` is the human's authorization to run
+the build inline; any other resolved value that cannot dispatch is abort-and-report. The same
+applies to `skills.review: docket-review`. So this run stopped rather than quietly building the
+change inline without that authorization.
+
+**State left behind.** `status: in-progress` with `claimed_at` refreshed; no feature branch was
+cut, no worktree created, no plan written, and no code touched. Reconcile did not complete
+(`reconciled: false`), so a later run re-reconciles from scratch. Nothing needs undoing.
+
+**What a human must decide.** One of:
+
+- Fix subagent dispatch in the harness and re-run `docket-implement-next` — the change re-claims
+  cleanly and this section is removed automatically by the Step-2 claim.
+- Or authorize inline execution by setting `skills.build: auto` (and `skills.review: auto`) — note
+  this is machine-scoped-able via `.docket.local.yml`, since neither is a coordination-fenced key
+  — which trades docket-build's per-task profile routing for a single inline builder.
+- Or clear the claim: `docket.sh reclaim-claims` self-heals it back to `proposed` once the
+  72-hour lease expires (no feature branch exists, so it is auto-reclaimable).
+
+**Reconcile findings gathered before the halt** (useful to whoever picks this up): dependency
+`#53` is `done`, and related `#47`, `#48`, `#49`, `#50`, `#55` are all `done`, so the change is
+genuinely unblocked; the spec at `docs/superpowers/specs/2026-08-15-durable-resumable-sessions-design.md`
+was authored 2026-08-15 against the post-ADR-0033 Connect wire and is current. The spec's
+code-level assumptions (`inproc.go` line references, the `internal/event.Kind` constant list, the
+live tool-call/tool-result message shape) were **not** re-verified against `origin/main`
+(`52f3276`) — that was the exploration that died — and remain open for the next reconcile.
