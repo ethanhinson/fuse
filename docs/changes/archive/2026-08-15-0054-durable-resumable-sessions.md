@@ -2,7 +2,7 @@
 id: 54
 slug: durable-resumable-sessions
 title: Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-11
@@ -17,7 +17,7 @@ results: docs/results/2026-08-15-durable-resumable-sessions-results.md
 trivial: false
 auto_groomable:
 branch: feat/durable-resumable-sessions
-claimed_at: 2026-08-15T05:09:50Z
+claimed_at: 
 pr: 60
 blocked_by:
 reconciled: true
