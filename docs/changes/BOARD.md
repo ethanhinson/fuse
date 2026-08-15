@@ -1,12 +1,6 @@
 # Backlog
 
-**61 changes** — 🟢 1 in progress · 🟡 3 proposed · ⚪ 1 deferred · ✅ 50 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0054](active/0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | `medium` | `feat` | [spec](../superpowers/specs/2026-08-15-durable-resumable-sessions-design.md) | `feat/durable-resumable-sessions` |
+**61 changes** — 🟡 3 proposed · ⚪ 1 deferred · 🔵 1 implemented · ✅ 50 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (3)
 
@@ -21,6 +15,12 @@
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0054](active/0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | `medium` | `feat` | [#60](https://github.com/ethanhinson/fuse/pull/60) |  |
 
 ```mermaid
 graph TD
