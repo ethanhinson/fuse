@@ -7,8 +7,8 @@ priority: medium
 type: feat
 created: 2026-08-15
 updated: 2026-08-15
-depends_on: []
-related: []
+depends_on: [54]
+related: [50, 56, 60]
 discovered_from: [54]
 adrs: []
 spec:
