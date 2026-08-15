@@ -12,12 +12,12 @@ related: [52, 55, 62]
 discovered_from: [59]
 adrs: []
 spec: docs/superpowers/specs/2026-08-15-wander-live-rentals-mcp-demo-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-15-wander-live-rentals-mcp-demo-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend
-claimed_at: 2026-08-15T19:53:12Z
+claimed_at: 2026-08-15T19:55:59Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-15-wander-live-rentals-mcp-demo-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-wander-live-rentals-mcp-demo-design.md) |
+| Plan | [2026-08-15-wander-live-rentals-mcp-demo-plan.md](https://github.com/ethanhinson/fuse/blob/feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend/docs/superpowers/plans/2026-08-15-wander-live-rentals-mcp-demo-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
