@@ -44,25 +44,49 @@ func TestObserveAndAttach(t *testing.T) {
 		t.Fatalf("StartLoop: %v", err)
 	}
 
-	// Subscribe BEFORE the loop produces events (the completer is blocked).
+	// Subscribe to the live tail. NOTE: turn.start (turn 0) is emitted at the top of the
+	// loop BEFORE the model Complete call, and blockingCompleter only blocks INSIDE
+	// Complete — so the run goroutine may already have emitted turn.start by the time this
+	// Observe subscribes. The fsstore live channel does not replay pre-subscribe events, so
+	// asserting turn.start on the LIVE channel alone is inherently racy (observed flaking
+	// under -race on loaded CI). A real reconnecting client does observe-THEN-attach and
+	// dedups; mirror that: collect whatever the live tail delivers until the channel closes
+	// at completion, then fold in the durable history. turn.start MUST appear in the union.
 	ch, cancel, err := rt.Observe(context.Background(), event.DefaultTenant, h.ID())
 	if err != nil {
 		t.Fatalf("Observe: %v", err)
 	}
 	defer cancel()
 
-	// Now let the run proceed; a live turn.start must arrive on the channel.
+	// Now let the run proceed to completion.
 	close(release)
 
-	var sawTurnStart bool
-	for ev := range ch {
+	sawTurnStart := false
+	liveCount := 0
+	for ev := range ch { // ranges until the store closes the subscriber at completion
+		liveCount++
 		if ev.Kind == event.KindTurnStart {
 			sawTurnStart = true
-			break
 		}
 	}
+	// The live tail must deliver events (Observe is wired) — a zero-delivery tail is a real
+	// failure, not the pre-subscribe race.
+	if liveCount == 0 {
+		t.Fatal("Observe live tail delivered no events at all")
+	}
 	if !sawTurnStart {
-		t.Fatal("Observe channel never delivered a turn.start")
+		// turn.start (turn 0) is emitted before the blocked Complete, so it can precede this
+		// subscribe and be missed on the live tail (fsstore does not replay pre-subscribe
+		// events). The durable stream is authoritative and MUST carry it — the observe→attach
+		// reconnect contract this whole path rests on.
+		hist, aerr := rt.Attach(context.Background(), event.DefaultTenant, h.ID(), 0)
+		if aerr != nil {
+			t.Fatalf("Attach (turn.start fallback): %v", aerr)
+		}
+		sawTurnStart = hasKind(hist, event.KindTurnStart)
+	}
+	if !sawTurnStart {
+		t.Fatal("neither the live Observe tail nor durable Attach delivered a turn.start")
 	}
 
 	if _, err := h.Wait(); err != nil {
