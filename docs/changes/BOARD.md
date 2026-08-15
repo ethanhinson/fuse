@@ -1,21 +1,21 @@
 # Backlog
 
-**62 changes** — 🟡 4 proposed · ⚪ 1 deferred · ✅ 51 done · 🗑️ 6 killed
+**62 changes** — 🟡 3 proposed · ⚪ 2 deferred · ✅ 51 done · 🗑️ 6 killed
 
-## 🟡 Proposed (4)
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` | needs-brainstorm |
 | [0058](active/0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | `medium` | `feat` | needs-brainstorm |
 | [0060](active/0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md) | Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app | `medium` | `feat` | needs-brainstorm |
 | [0062](active/0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md) | Wander refresh-to-restore — light up #54 durable resume in the browser demo | `medium` | `feat` | needs-brainstorm |
 
-## ⚪ Deferred (1)
+## ⚪ Deferred (2)
 
 | # | Title | Priority | Type |
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
+| [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 
 ```mermaid
 graph TD
