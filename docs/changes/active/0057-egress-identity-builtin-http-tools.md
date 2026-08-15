@@ -1,7 +1,7 @@
 ---
 id: 57
 slug: egress-identity-builtin-http-tools
-title: Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam
+title: "Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam"
 status: proposed
 priority: medium
 type: feat

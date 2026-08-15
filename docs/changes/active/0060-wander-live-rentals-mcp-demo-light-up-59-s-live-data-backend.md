@@ -1,7 +1,7 @@
 ---
 id: 60
 slug: wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend
-title: Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app
+title: "Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app"
 status: proposed
 priority: medium
 type: feat
