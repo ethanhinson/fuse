@@ -18,7 +18,7 @@
 #   RENTALS_ADDR=127.0.0.1:8091 \
 #   RENTALS_AUDIENCE=https://rentals.demo.fuse.local \
 #   RENTALS_SIGNING_KEY=demo-not-a-secret-wander-rentals-signing-key \
-#   RENTALS_TENANTS=acme,globex \
+#   RENTALS_TENANTS=_default,acme,globex \
 #   RENTALS_FAVORITES_DIR=/tmp/wander-favorites \
 #   RENTALS_DATA=auto \
 #   go run ./cmd/rentals-mcp
@@ -26,10 +26,20 @@
 #   mcp_servers[rentals].url      <-> RENTALS_ADDR
 #   mcp_servers[rentals].audience <-> RENTALS_AUDIENCE
 #   tool_identity.signing_key     <-> RENTALS_SIGNING_KEY
-# and every tenant appearing in loop_server.auth below must appear in
-# RENTALS_TENANTS — fuse mints under a per-tenant key derived from the signing
-# key, and the rentals server derives verification keys the same way, so a
-# tenant missing there makes that user's every call unauthorized.
+# and RENTALS_TENANTS must name every tenant that can reach the rentals server:
+# each tenant in loop_server.auth below, PLUS `_default`. fuse mints under a
+# per-tenant key derived from the signing key, and the rentals server derives
+# verification keys the same way, so a tenant missing there makes that user's
+# every call unauthorized.
+#
+# `_default` is the one exception to "derived", and both sides know it: fuse
+# signs `_default` tokens with the signing key VERBATIM (no derivation, so the
+# single-user CLI/shell paths are unchanged), and the rentals server keys
+# `_default` the same verbatim way. You do not configure anything extra for
+# that — just do not omit `_default` from RENTALS_TENANTS. It is NOT optional
+# here: the UI's token picker offers `fuse-dev-token` / `_default` as its first
+# and default option, and an entry under loop_server.auth that omits `tenant:`
+# also normalizes to `_default`.
 
 mcp_servers:
   # The rentals server as an identity-propagating (TierOAuth) target: fuse mints

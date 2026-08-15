@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/mcpdemo/rentals"
+	"github.com/ethanhinson/fuse/internal/toolidentity"
 )
 
 // envMap turns a fixed map into the env lookup func run takes. A key that is absent
@@ -195,5 +197,116 @@ func TestResolveDataSourceDefaultsToCanned(t *testing.T) {
 	}
 	if _, err := resolveDataSource(context.Background(), "bogus", 5, envMap(map[string]string{}), nil); err == nil {
 		t.Fatal("--data bogus = nil error, want a loud failure")
+	}
+}
+
+// fuseMintedToken mints a delegation token EXACTLY the way cmd/fuse does: through
+// the built-in STS keyed by the same map cmd/fuse's toolIdentityTenantKeys builds —
+// event.DefaultTenant keyed with the RAW signing key, every named tenant keyed with
+// the HMAC derivation. Reproducing fuse's KEYING (not just its derivation helper) is
+// the point: the two binaries' derivation function bodies are byte-identical, so only
+// a caller-side divergence can break interop, and only this shape catches it.
+func fuseMintedToken(t *testing.T, signingKey string, tenants []event.TenantID, mintFor event.TenantID, audience string) string {
+	t.Helper()
+	keys := map[event.TenantID][]byte{
+		// cmd/fuse/tool_identity.go: "DefaultTenant uses the raw signing key".
+		event.DefaultTenant: []byte(signingKey),
+	}
+	for _, tenant := range tenants {
+		tenant = event.NormalizeTenant(tenant)
+		if _, ok := keys[tenant]; ok {
+			continue
+		}
+		keys[tenant] = deriveTenantKey([]byte(signingKey), tenant)
+	}
+	sts, err := toolidentity.NewBuiltinSTS(toolidentity.BuiltinSTSConfig{
+		Issuer: "fuse", TTL: time.Minute, TenantKeys: keys,
+	})
+	if err != nil {
+		t.Fatalf("NewBuiltinSTS (fuse side): %v", err)
+	}
+	res, err := sts.Exchange(context.Background(), toolidentity.ExchangeRequest{
+		Tenant: mintFor, Subject: "demo-subject", Actor: "fuse", Audience: audience,
+	})
+	if err != nil {
+		t.Fatalf("Exchange for tenant %q: %v", mintFor, err)
+	}
+	return res.Token
+}
+
+// verifierFor builds the rentals server's verification STS from whatever
+// buildTenantKeys produced, so a test asserts against the SERVER's real keying.
+func verifierFor(t *testing.T, keys map[event.TenantID][]byte) *toolidentity.BuiltinSTS {
+	t.Helper()
+	sts, err := toolidentity.NewBuiltinSTS(toolidentity.BuiltinSTSConfig{
+		Issuer: "fuse", TTL: time.Minute, TenantKeys: keys,
+	})
+	if err != nil {
+		t.Fatalf("NewBuiltinSTS (rentals side): %v", err)
+	}
+	return sts
+}
+
+// TestBuildTenantKeysVerifiesFuseMintedDefaultTenantToken is the interop pin for the
+// `_default` principal — the demo's FIRST and DEFAULT token-picker option
+// (examples/wander/app.js DEV_USER is {token: "fuse-dev-token", tenant: "_default"}).
+// cmd/fuse mints `_default` tokens under the RAW signing key; if this server derives
+// for `_default` instead, every zero-config call is unauthorized.
+func TestBuildTenantKeysVerifiesFuseMintedDefaultTenantToken(t *testing.T) {
+	const signingKey = "demo-not-a-secret-wander-rentals-signing-key"
+	const audience = "https://rentals.demo.fuse.local"
+
+	keys, err := buildTenantKeys(signingKey, string(event.DefaultTenant)+",acme,globex", nil)
+	if err != nil {
+		t.Fatalf("buildTenantKeys: %v", err)
+	}
+	if _, ok := keys[event.DefaultTenant]; !ok {
+		t.Fatalf("buildTenantKeys produced no key for %q; keys = %v", event.DefaultTenant, keys)
+	}
+	verifier := verifierFor(t, keys)
+
+	token := fuseMintedToken(t, signingKey, []event.TenantID{"acme", "globex"}, event.DefaultTenant, audience)
+	if err := verifier.Verify(event.DefaultTenant, token); err != nil {
+		t.Fatalf("fuse-minted %q token does not verify against buildTenantKeys' key: %v", event.DefaultTenant, err)
+	}
+
+	// The raw signing key is the DefaultTenant key verbatim — the same invariant
+	// stated positively, so a fix that merely happens to work is still pinned.
+	if !bytes.Equal(keys[event.DefaultTenant], []byte(signingKey)) {
+		t.Fatalf("key for %q = %x, want the raw signing key verbatim", event.DefaultTenant, keys[event.DefaultTenant])
+	}
+}
+
+// TestBuildTenantKeysDerivesNamedTenants is the other half: the DefaultTenant special
+// case must NOT leak into named tenants. acme/globex keep their HMAC-derived keys, and
+// the raw signing key must not verify their tokens (per-tenant isolation, D4).
+func TestBuildTenantKeysDerivesNamedTenants(t *testing.T) {
+	const signingKey = "demo-not-a-secret-wander-rentals-signing-key"
+	const audience = "https://rentals.demo.fuse.local"
+
+	keys, err := buildTenantKeys(signingKey, "_default,acme,globex", nil)
+	if err != nil {
+		t.Fatalf("buildTenantKeys: %v", err)
+	}
+	for _, tenant := range []event.TenantID{"acme", "globex"} {
+		want := deriveTenantKey([]byte(signingKey), tenant)
+		if !bytes.Equal(keys[tenant], want) {
+			t.Fatalf("key for %q = %x, want the derived key %x", tenant, keys[tenant], want)
+		}
+		if bytes.Equal(keys[tenant], []byte(signingKey)) {
+			t.Fatalf("key for %q is the raw signing key; named tenants must derive", tenant)
+		}
+	}
+
+	verifier := verifierFor(t, keys)
+	for _, tenant := range []event.TenantID{"acme", "globex"} {
+		token := fuseMintedToken(t, signingKey, []event.TenantID{"acme", "globex"}, tenant, audience)
+		if err := verifier.Verify(tenant, token); err != nil {
+			t.Fatalf("fuse-minted %q token does not verify: %v", tenant, err)
+		}
+		// Cross-tenant: acme's token must not verify under _default's key.
+		if err := verifier.Verify(event.DefaultTenant, token); err == nil {
+			t.Fatalf("%q token verified under %q's key; tenant isolation broken", tenant, event.DefaultTenant)
+		}
 	}
 }

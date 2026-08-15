@@ -100,7 +100,7 @@ func runContext(ctx context.Context, o runOpts) error {
 	addr := fs.String("addr", envOr(env, envAddr, "127.0.0.1:8091"), "listen address (host:port); port 0 picks an ephemeral port")
 	audience := fs.String("audience", env(envAudience), "RFC 8707 resource id this server accepts (required)")
 	signingKey := fs.String("signing-key", env(envSigningKey), "fuse tool-identity signing key; per-tenant verification keys are derived from it")
-	tenants := fs.String("tenants", env(envTenants), "comma-separated tenant ids to derive keys for (requires --signing-key)")
+	tenants := fs.String("tenants", env(envTenants), "comma-separated tenant ids to key from the signing key (requires --signing-key); include _default for fuse's default tenant")
 	favoritesDir := fs.String("favorites-dir", env(envFavoritesDir), "directory for durable per-principal favorites; empty ⇒ in-memory (lost on restart)")
 	data := fs.String("data", envOr(env, envData, "auto"), `listing backend: "canned" (hermetic), "live" (web search, requires a credential), or "auto" (live if a credential is set, else canned)`)
 	maxResults := fs.Int("max-results", 5, "maximum listings returned by the live backend")
@@ -206,6 +206,10 @@ func envOr(env func(string) string, key, def string) string {
 // forms: derivation from fuse's tool-identity signing key for a list of tenants, and
 // explicit tenant=<hex> pairs (which win on collision). Every parse failure is loud and
 // names the offending value.
+//
+// The keying MUST match cmd/fuse's toolIdentityTenantKeys tenant for tenant, including
+// its event.DefaultTenant special case (raw signing key, no derivation) — see the loop
+// below. A mismatch is silent on both sides and surfaces only as an unauthorized call.
 func buildTenantKeys(signingKey, tenants string, explicit tenantKeyFlag) (map[event.TenantID][]byte, error) {
 	keys := map[event.TenantID][]byte{}
 
@@ -222,7 +226,19 @@ func buildTenantKeys(signingKey, tenants string, explicit tenantKeyFlag) (map[ev
 		return nil, errors.New("--tenants was given without --signing-key: the per-tenant keys are derived from the signing key")
 	}
 	for _, t := range names {
-		keys[event.NormalizeTenant(event.TenantID(t))] = deriveTenantKey([]byte(signingKey), event.TenantID(t))
+		tenant := event.NormalizeTenant(event.TenantID(t))
+		if tenant == event.DefaultTenant {
+			// MIRRORS cmd/fuse/tool_identity.go's toolIdentityTenantKeys, which seeds
+			// event.DefaultTenant with the RAW signing key and skips derivation for it
+			// (keeping the single-user shell/one-shot paths byte-identical to pre-#59).
+			// fuse therefore signs every `_default` token with the signing key VERBATIM,
+			// so deriving here would verify nothing — and the demo's zero-config token
+			// picker entry (examples/wander/app.js DEV_USER) is exactly this tenant.
+			// Duplicating the derivation function is not enough: the CALLERS must agree.
+			keys[tenant] = []byte(signingKey)
+			continue
+		}
+		keys[tenant] = deriveTenantKey([]byte(signingKey), tenant)
 	}
 
 	for _, pair := range explicit {

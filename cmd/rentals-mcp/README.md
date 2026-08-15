@@ -23,7 +23,7 @@ Every flag has an environment-variable fallback; the flag wins when both are set
 | `--addr` | `RENTALS_ADDR` | `127.0.0.1:8091` | Listen address. Port `0` binds an ephemeral port. |
 | `--audience` | `RENTALS_AUDIENCE` | — | **Required.** The RFC 8707 resource id this server accepts. A token bound to a different audience is rejected. |
 | `--signing-key` | `RENTALS_SIGNING_KEY` | — | fuse's tool-identity signing key. Per-tenant verification keys are derived from it exactly as fuse's built-in STS derives them, so it must match the `tool_identity.signing_key` of the fuse instance calling this server. |
-| `--tenants` | `RENTALS_TENANTS` | — | Comma-separated tenant ids to derive keys for. Required with (and requires) `--signing-key`. |
+| `--tenants` | `RENTALS_TENANTS` | — | Comma-separated tenant ids to key from `--signing-key`. Required with (and requires) `--signing-key`. Include `_default` if any caller uses fuse's default tenant. |
 | `--tenant-key` | — | — | An explicit verification key as `tenant=<hex>`. Repeatable, combinable with `--signing-key`, and wins on collision. |
 | `--favorites-dir` | `RENTALS_FAVORITES_DIR` | *(empty)* | Directory for durable per-principal favorites. Empty ⇒ in-memory, lost on restart. |
 | `--data` | `RENTALS_DATA` | `auto` | Listing backend: `canned`, `live`, or `auto`. |
@@ -36,6 +36,13 @@ the server refuses to start. Supply them either by derivation (`--signing-key` +
 `--tenants`, the normal path for a fuse-fronted demo) or explicitly (`--tenant-key`).
 A missing `--audience`, a malformed `--tenant-key`, or an unreadable favorites directory
 all fail loudly at startup rather than serving an unusable server.
+
+One tenant is keyed differently, and it must be: `_default` (fuse's `event.DefaultTenant`)
+takes the signing key **verbatim**, with no derivation — because fuse's own built-in STS
+signs `_default` tokens with the raw key, keeping its single-user CLI/shell paths
+unchanged. Every *named* tenant gets the HMAC-derived key. This server mirrors that split,
+so listing `_default` in `--tenants` is all that is needed for a default-tenant caller
+(such as a loop-server auth entry that omits `tenant:`) to verify.
 
 ## Data backends
 
