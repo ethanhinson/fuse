@@ -7,19 +7,19 @@
 //
 // MODEs:
 //
-//   reopen   — the FIRST Observe delivers seqs 1,2 then CLOSES its live channel (a clean
-//              stream end). The SDK must reconnect; the SECOND+ Observe replays [1,2] from
-//              history and delivers the terminal seq 3 (loop.parked) on the live tail. This
-//              drives the connection-state transitions connecting→live (first frame) then
-//              reconnecting→live (across the re-open), and completion.
+//	reopen   — the FIRST Observe delivers seqs 1,2 then CLOSES its live channel (a clean
+//	           stream end). The SDK must reconnect; the SECOND+ Observe replays [1,2] from
+//	           history and delivers the terminal seq 3 (loop.parked) on the live tail. This
+//	           drives the connection-state transitions connecting→live (first frame) then
+//	           reconnecting→live (across the re-open), and completion.
 //
-//   terminal — Observe returns a TERMINAL Connect error immediately. The code is taken from
-//              the TERMINAL_CODE env var (unauthenticated | permission_denied | not_found |
-//              failed_precondition). The SDK must STOP reconnecting and surface a typed
-//              terminal error (no hot-loop).
+//	terminal — Observe returns a TERMINAL Connect error immediately. The code is taken from
+//	           the TERMINAL_CODE env var (unauthenticated | permission_denied | not_found |
+//	           failed_precondition). The SDK must STOP reconnecting and surface a typed
+//	           terminal error (no hot-loop).
 //
-//   transient-then-done — like reopen, but proves a transient drop reconnects: the first
-//              Observe closes after seq 1; the second replays [1] and delivers 2,3 (parked).
+//	transient-then-done — like reopen, but proves a transient drop reconnects: the first
+//	           Observe closes after seq 1; the second replays [1] and delivers 2,3 (parked).
 package main
 
 import (
@@ -65,6 +65,12 @@ func (r *stateRuntime) Send(ctx context.Context, tenant event.TenantID, loopID, 
 
 func (r *stateRuntime) Spawn(ctx context.Context, loopID string, opts runtime.SpawnOpts) (runtime.SpawnHandle, error) {
 	return nil, nil
+}
+
+// Resume is a no-op stub for this scripted fake (change 0054): it returns a handle
+// for the same loop id so the handler's resume path can be exercised.
+func (r *stateRuntime) Resume(ctx context.Context, tenant event.TenantID, loopID string) (runtime.LoopHandle, error) {
+	return stateHandle{id: loopID}, nil
 }
 
 // Observe drives the scripted history/live behavior for the current mode. It hands back a

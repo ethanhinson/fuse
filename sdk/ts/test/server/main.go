@@ -70,6 +70,12 @@ func (f *fakeRuntime) Spawn(ctx context.Context, loopID string, opts runtime.Spa
 	return nil, nil
 }
 
+// Resume is a no-op stub for this fake: it returns a handle for the same loop id so
+// the handler's resume path (change 0054) can be exercised without a real runtime.
+func (f *fakeRuntime) Resume(ctx context.Context, tenant event.TenantID, loopID string) (runtime.LoopHandle, error) {
+	return fakeHandle{id: loopID}, nil
+}
+
 func (f *fakeRuntime) Observe(ctx context.Context, tenant event.TenantID, loopID string) (<-chan event.Event, func(), error) {
 	if f.observeGate != nil {
 		f.observeGate()

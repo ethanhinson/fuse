@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -292,11 +293,36 @@ func (r *inProcRuntime) startIdleReaper(sessionCtx context.Context, sessionCance
 	}
 }
 
+// launchOpts carries the few things that differ between a fresh StartLoop and a
+// Resume (change 0054, D4); everything else in the loop-launch is identical, so both
+// go through launchLoop.
+type launchOpts struct {
+	// seed is the initial transcript handed to Agent.Run: {user, task} for a fresh
+	// start, or the reconstructed conversation for a resume.
+	seed []model.Message
+	// seeded marks the seed as a durable-stream reconstruction, so Run suppresses the
+	// KindUserInput re-emit for the seed's user turns (they already exist). False for a
+	// fresh start (the initial task must emit).
+	seeded bool
+	// rootID pins the tree's root id — empty for a fresh start (mint one), the original
+	// loop_id for a resume (identity must survive the re-park).
+	rootID string
+	// resume marks a revival of an existing registry record: the loop is re-marked live
+	// via SetLive rather than Register'd afresh.
+	resume bool
+}
+
 // StartLoop constructs and drives one agent loop from cfg (see the Runtime
 // interface). It wraps agent.New (via deps.BuildAgent) + SetEventSink/
 // SetNodeIdentity + Agent.Run; the run executes in a goroutine and the returned
 // handle awaits it.
 func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHandle, error) {
+	return r.launchLoop(ctx, cfg, launchOpts{seed: []model.Message{{Role: "user", Content: cfg.Task}}})
+}
+
+// launchLoop is the shared construction + run-goroutine wiring behind StartLoop and
+// Resume. opts is the small delta between them (see launchOpts).
+func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts launchOpts) (LoopHandle, error) {
 	loopCtx, loopSpan := r.deps.Observer.Start(ctx, observe.Descriptor{Kind: observe.OperationLoop, Name: "run", Fields: []observe.Field{{Key: "tenant", Value: string(event.NormalizeTenant(cfg.Tenant))}}})
 	ended := false
 	end := func(out observe.Outcome) {
@@ -315,9 +341,12 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	// idle-TTL reaper (started after the loop is registered), which is the ONLY thing
 	// that ends a disconnected interactive session. sessionCtx also becomes the
 	// event-emission ctx (durableSink), so Appends survive the disconnect too.
+	// A resumed loop is always interactive (it re-parks to await the next Send), so the
+	// session-detach and reaper apply to it exactly as to a fresh interactive start.
+	interactive := cfg.Interactive || opts.resume
 	sessionCtx := loopCtx
 	var sessionCancel context.CancelFunc
-	if cfg.Interactive {
+	if interactive {
 		sessionCtx, sessionCancel = context.WithCancel(context.WithoutCancel(loopCtx))
 	}
 	// Use a caller-supplied tree when the binding externally observes it
@@ -325,7 +354,9 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	// create one from cfg + MaxConcurrent.
 	tree := r.deps.Tree
 	if tree == nil {
-		tree = agent.NewAgentTreeWithConcurrency(cfg.ModelID, cfg.ModelID, r.deps.MaxConcurrent)
+		// opts.rootID pins the id on a resume so the re-parked loop keeps its original
+		// loop_id (empty ⇒ a fresh id for a normal start).
+		tree = agent.NewAgentTreeWithRootID(cfg.ModelID, cfg.ModelID, r.deps.MaxConcurrent, opts.rootID)
 	}
 	rootID := tree.RootID()
 	rootNode := tree.Node(rootID)
@@ -364,7 +395,20 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 		// renewer below advances it every ~⅓ TTL, and a cold instance treats an expired
 		// lease on a still-live record as abandoned (see resolveDurable's reap/re-own).
 		leaseExpiry := r.now().Add(r.leaseTTL())
-		if err := r.deps.Registry.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: rootID, Live: true, LeaseExpiry: leaseExpiry}); err != nil {
+		if opts.resume {
+			// The record already exists (this is a revival of a finished/evicted loop,
+			// change 0054 D4): re-mark it live under this instance and refresh the lease,
+			// rather than Register'ing a duplicate. Heartbeat sets both LeaseExpiry and
+			// owner; SetLive flips Live back to true.
+			if err := r.deps.Registry.Heartbeat(ctx, key, rootID, leaseExpiry); err != nil {
+				end(observe.OutcomeError)
+				return nil, fmt.Errorf("runtime: resume heartbeat: %w", err)
+			}
+			if err := r.deps.Registry.SetLive(ctx, key, true, rootID); err != nil {
+				end(observe.OutcomeError)
+				return nil, fmt.Errorf("runtime: resume set-live: %w", err)
+			}
+		} else if err := r.deps.Registry.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: rootID, Live: true, LeaseExpiry: leaseExpiry}); err != nil {
 			end(observe.OutcomeError)
 			return nil, fmt.Errorf("runtime: register loop: %w", err)
 		}
@@ -426,9 +470,14 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	// interactive loop must run uncapped: each resumed exchange consumes real turns,
 	// so any finite per-run backstop the binding baked into the agent would end the
 	// whole conversation once total turns crossed it. Lift it here.
-	if cfg.Interactive {
+	if interactive {
 		a.SetInteractive(true)
 		a.SetMaxTurns(0)
+	}
+	// A resumed seed IS a durable-stream reconstruction, so suppress re-emitting
+	// KindUserInput for its user turns (change 0054): they already exist in the stream.
+	if opts.seeded {
+		a.SetSeeded(true)
 	}
 
 	h := &loopHandle{id: rootID, done: make(chan struct{})}
@@ -454,7 +503,7 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 	// stopReap is closed at run completion so it exits promptly; it also exits on
 	// sessionCtx.Done, so it never leaks. touch is stored on the loop for Send/Observe.
 	var stopReap chan struct{}
-	if cfg.Interactive && sessionCancel != nil {
+	if interactive && sessionCancel != nil {
 		stopReap = make(chan struct{})
 		lp.touch = r.startIdleReaper(sessionCtx, sessionCancel, stopReap)
 	}
@@ -476,7 +525,7 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 
 	go func() {
 		defer close(h.done)
-		msgs, rerr := a.Run(runCtx, []model.Message{{Role: "user", Content: cfg.Task}})
+		msgs, rerr := a.Run(runCtx, opts.seed)
 		out := observe.OutcomeSuccess
 		if errors.Is(rerr, context.DeadlineExceeded) {
 			out = observe.OutcomeTimeout
@@ -659,6 +708,85 @@ func (r *inProcRuntime) Attach(ctx context.Context, tenant event.TenantID, loopI
 		return nil, err
 	}
 	return r.deps.DurableStore.Replay(ctx, key, from)
+}
+
+// Resume revives a persistent conversational session (change 0054, D4). See the
+// Runtime interface for the contract. Three cases:
+//
+//  1. Live in THIS instance's cache (tenant-matched) → no-op: the loop is still
+//     parked, so resume is just "re-open your Observe". Return the live handle.
+//  2. Resolvable in the durable registry and NOT live (finished / idle-reaped /
+//     completed on a prior process) → rehydrate: replay the durable stream, fold it
+//     to the model-facing transcript, and re-launch a re-parked loop under the SAME
+//     loop_id seeded with that transcript (launchLoop with resume opts).
+//  3. Resolvable and live but owned by another instance → not resumable here (this
+//     instance holds no injector for it); report ErrLoopNotFound so the caller does
+//     not double-drive a loop another instance owns.
+//
+// Requires the durable Registry + DurableStore; without them there is no cross-
+// process identity to resume (a nil-registry single-loop binding never evicts a loop
+// it still holds, so case 1 covers it, and an unknown loop is ErrLoopNotFound).
+func (r *inProcRuntime) Resume(ctx context.Context, tenant event.TenantID, loopID string) (LoopHandle, error) {
+	// Case 1: still live locally under the requested tenant.
+	if lp := r.loopCache(tenant, loopID); lp != nil {
+		if lp.touch != nil {
+			lp.touch()
+		}
+		return lp.handle, nil
+	}
+
+	// Resolve tenant-scoped (ADR-0034): a cross-tenant or unknown loop is ErrLoopNotFound,
+	// never a leak (resolveDurable maps ErrLoopUnknown → ErrLoopNotFound).
+	rec, key, err := r.resolveDurable(ctx, tenant, loopID)
+	if err != nil {
+		return nil, err
+	}
+	if r.deps.DurableStore == nil {
+		// No shared store to replay from — nothing to rehydrate. (Only reachable with a
+		// Registry but no DurableStore, an unusual binding.)
+		return nil, fmt.Errorf("%w: %q (no durable store to resume from)", ErrLoopNotFound, loopID)
+	}
+
+	// Case 3: live but owned elsewhere (resolveDurable already re-owned an EXPIRED lease;
+	// a still-fresh live lease means another instance is actively driving it). This
+	// instance cannot inject into a loop it does not hold.
+	if rec.Live && !rec.LeaseExpiry.IsZero() && !r.now().After(rec.LeaseExpiry) {
+		return nil, fmt.Errorf("%w: %q (live on another instance)", ErrLoopNotFound, loopID)
+	}
+
+	// Case 2: rehydrate. Replay the durable stream from the beginning and fold it back
+	// into the model-facing transcript (D1/D5), then re-launch a re-parked loop under the
+	// same loop_id seeded with that transcript.
+	events, err := r.deps.DurableStore.Replay(ctx, key, 0)
+	if err != nil {
+		return nil, fmt.Errorf("runtime: resume replay: %w", err)
+	}
+	seed, err := reconstructMessages(events)
+	if err != nil {
+		return nil, fmt.Errorf("runtime: resume reconstruct: %w", err)
+	}
+
+	cfg := LoopConfig{
+		ModelID:     modelFromEvents(events),
+		Tenant:      event.NormalizeTenant(tenant),
+		Interactive: true,
+	}
+	return r.launchLoop(ctx, cfg, launchOpts{seed: seed, seeded: true, rootID: loopID, resume: true})
+}
+
+// modelFromEvents recovers the gateway model id a loop ran under from its durable
+// stream (the model.call.start payload carries it), so a resumed loop re-parks under
+// the same model. Falls back to "" (the binding resolves a default) when absent.
+func modelFromEvents(events []event.Event) string {
+	for _, e := range events {
+		if e.Kind == event.KindModelCallStart {
+			var p event.ModelCallStartPayload
+			if err := json.Unmarshal(e.Payload, &p); err == nil && p.Model != "" {
+				return p.Model
+			}
+		}
+	}
+	return ""
 }
 
 // Send injects human input at the loop's next turn boundary (ADR-0022 human-bus).

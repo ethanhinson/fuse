@@ -254,14 +254,27 @@ func NewAgentTree(rootLabel, rootModel string) *AgentTree {
 // falls back to MaxConcurrentSpawns. Yield/unyield mechanics are unaffected —
 // only the semaphore's capacity changes.
 func NewAgentTreeWithConcurrency(rootLabel, rootModel string, maxConcurrent int) *AgentTree {
+	return NewAgentTreeWithRootID(rootLabel, rootModel, maxConcurrent, "")
+}
+
+// NewAgentTreeWithRootID is NewAgentTreeWithConcurrency with the root node's ID
+// pinned to rootID (an empty rootID mints a fresh one, so the plain constructor is
+// just this with ""). It exists so a RESUMED session (change 0054, D4) rebuilds a
+// tree whose RootID equals the original loop_id — loop identity IS the tree RootID,
+// and a resumed loop must keep the same id so its durable stream, registry record,
+// and every client reference stay continuous across the re-park.
+func NewAgentTreeWithRootID(rootLabel, rootModel string, maxConcurrent int, rootID string) *AgentTree {
 	if maxConcurrent <= 0 {
 		maxConcurrent = MaxConcurrentSpawns
+	}
+	if rootID == "" {
+		rootID = newNodeID()
 	}
 	// StartedAt stays zero until the first BeginTurn(): the agents tab renders an
 	// idle root (no elapsed time) before the first prompt, rather than a timer
 	// counting time-since-launch.
 	root := &AgentNode{
-		ID:     newNodeID(),
+		ID:     rootID,
 		Label:  rootLabel,
 		Model:  rootModel,
 		Status: StatusRunning,
