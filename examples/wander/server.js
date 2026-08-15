@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // Tiny zero-dependency launcher for the Wander concierge demo (change 0056).
 //
-// Two jobs, NO WebSocket relay (unlike the older concierge-demo) — the SDK speaks Connect
-// DIRECTLY over connect-web; this server only keeps the browser same-origin:
+// Two jobs, NO WebSocket relay — the SDK speaks Connect DIRECTLY over connect-web; this
+// server only keeps the browser same-origin. (The retired concierge demo's
+// server.js hand-rolled an RFC 6455 relay plus a `GET /loops/{id}/events` replay proxy for
+// the pre-#55 wire; change 0060 folded that demo's UI into this one and deleted the relay.
+// Nothing here re-implements the protocol.):
 //
 //   1. Serves the static web app (index.html / app.js / styles.css / vendor/fuse-sdk.js).
 //   2. Reverse-proxies the Connect service path `/fuse.loop.v1.*` straight through to the
@@ -30,6 +33,7 @@ const MIME = {
   ".css": "text/css; charset=utf-8",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
+  ".png": "image/png",
 };
 
 // active tracks in-flight proxied Connect sockets (upstream request + client response) so

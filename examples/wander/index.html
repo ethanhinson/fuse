@@ -3,38 +3,109 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Wander — vacation-rental concierge</title>
+    <title>Wander · vacation-rental concierge</title>
+    <!--
+      NO remote font/CSS links. The retired concierge demo pulled Fraunces + Inter from
+      fonts.googleapis.com; the headless-browser CI lane navigates with
+      WaitUntil=networkidle against a hermetic backend, so a third-party fetch would make the
+      only browser acceptance lane depend on public network egress. styles.css names those
+      families first and falls back to the system serif/sans stack, so the look degrades
+      gracefully where the fonts are not installed and the lane stays hermetic.
+    -->
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">🏝️ Wander</div>
-      <div class="conn" id="conn" data-state="idle">
-        <span class="dot"></span>
-        <span class="label" id="conn-label">idle</span>
-      </div>
-    </header>
-
-    <main class="chat" id="chat" aria-live="polite">
-      <div class="msg concierge">
-        <div class="who">Concierge</div>
-        <div class="text">
-          Hi! I'm your Wander concierge. Ask me about vacation rentals — try
-          "beachfront, sleeps 6, under $300/night".
+    <div class="app">
+      <!-- ─────────────────────── Sidebar / live activity ─────────────────── -->
+      <aside class="rail">
+        <div class="brand">
+          <div class="mark">✷</div>
+          <div>
+            <div class="brand-name">Wander</div>
+            <div class="brand-sub">rental concierge</div>
+          </div>
         </div>
-      </div>
-    </main>
 
-    <form class="composer" id="composer">
-      <input
-        id="input"
-        type="text"
-        autocomplete="off"
-        placeholder="Ask about rentals…"
-        aria-label="Message the concierge"
-      />
-      <button id="send" type="submit">Send</button>
-    </form>
+        <!--
+          Connection pill. The state lives on `data-state` (not on a dot class) because the
+          value is written straight from the SDK's own onState vocabulary —
+          idle / connecting / live / reconnecting / closed / error — and the browser lane
+          asserts on exactly those strings via window.__wanderStates.
+        -->
+        <div class="conn" id="conn" data-state="idle">
+          <span class="dot"></span>
+          <span class="label" id="conn-label">idle</span>
+        </div>
+
+        <div class="rail-section-title">Live agent activity</div>
+        <div id="activity" class="activity">
+          <div class="activity-empty">
+            The concierge’s reasoning, rental searches, and tool calls will stream here.
+          </div>
+        </div>
+
+        <div class="rail-foot">
+          <div class="stat"><span id="stat-turns">0</span><label>turns</label></div>
+          <div class="stat"><span id="stat-searches">0</span><label>searches</label></div>
+          <div class="stat"><span id="stat-agents">0</span><label>agents</label></div>
+          <div class="stat"><span id="stat-events">0</span><label>events</label></div>
+        </div>
+        <div class="powered">
+          <code>@fuse/sdk</code> · Connect/protobuf · <code>loop-serve-net</code>
+        </div>
+      </aside>
+
+      <!-- ───────────────────────────── Chat ──────────────────────────────── -->
+      <main class="chat">
+        <header class="chat-head">
+          <div>
+            <h1>Your travel concierge</h1>
+            <p id="loop-label">
+              Ask about a destination and I’ll look up real stays that fit.
+            </p>
+          </div>
+          <button id="reset" class="ghost-btn" type="button" title="Start a fresh conversation">
+            ＋ New
+          </button>
+        </header>
+
+        <div id="thread" class="thread" aria-live="polite">
+          <div class="msg concierge">
+            <div class="avatar">✷</div>
+            <div class="bubble">
+              Hi! I’m your Wander concierge. Ask me about vacation rentals — try
+              “beachfront, sleeps 6, under $300/night”.
+            </div>
+          </div>
+        </div>
+
+        <form class="composer" id="composer" autocomplete="off">
+          <div class="chips" id="chips">
+            <button type="button" class="chip">Beachfront villas in Tulum under $250/night</button>
+            <button type="button" class="chip">Ski chalets near Niseko for a family of 5</button>
+            <button type="button" class="chip">Pet-friendly cabins in the Smoky Mountains</button>
+          </div>
+          <div class="composer-row">
+            <input
+              id="input"
+              type="text"
+              autocomplete="off"
+              placeholder="Where do you want to go?"
+              aria-label="Message the concierge"
+            />
+            <!--
+              Deliberately NOT `disabled` in markup (the original markup was). app.js
+              disables the composer only while a turn is in flight and re-enables it at each
+              loop.parked; a markup-level disabled would leave the button un-clickable until
+              some JS enabled it, which is a silent trap for both a real user and the lane.
+            -->
+            <button id="send" type="submit" class="send-btn">
+              <span class="send-label">Search</span>
+            </button>
+          </div>
+        </form>
+      </main>
+    </div>
 
     <!--
       app.js drives the concierge entirely through @fuse/sdk's PUBLIC API (createClient →
