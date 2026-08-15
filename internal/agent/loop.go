@@ -355,6 +355,19 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// a telemetry vendor into the agent package.
 	a.eventTrace = observe.TraceCarrier(a.observer, ctx)
 	messages := history
+	// Record the seed's user turn(s) into the durable stream (change 0054) so a
+	// transcript rebuilt purely from events includes them — user input is otherwise
+	// never emitted (the injector only appends to the in-memory transcript). Skipped
+	// when a.seeded: a resumed loop's seed IS a reconstruction of events that already
+	// exist, so re-emitting would duplicate them. Emitted at turn 0 (the seed precedes
+	// the first turn); new Send turns emit at their own turn boundary below.
+	if !a.seeded {
+		for _, m := range history {
+			if m.Role == "user" {
+				a.emit(event.KindUserInput, 0, event.UserInputPayload{Turn: 0, Content: m.Content})
+			}
+		}
+	}
 	detector := newLoopDetector(loopLimit)
 
 	window := a.ContextWindow
@@ -400,6 +413,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		// between model calls — so ADR-0016's run-to-completion contract holds.
 		if hm, ok := a.humanInjector.Poll(); ok {
 			messages = append(messages, hm)
+			// Record the injected human turn in the durable stream (change 0054): the
+			// exact batched/prefixed text that entered the transcript, so a later fold
+			// rebuilds this user turn identically. Emitted at THIS turn (unlike the seed,
+			// which is turn 0) so replay order matches conversation order.
+			a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content})
 		}
 
 		estimate := lastUsage + messagesSize(messages[accounted:])/bytesPerToken

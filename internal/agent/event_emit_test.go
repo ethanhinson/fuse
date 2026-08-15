@@ -89,7 +89,9 @@ func TestEmitPlainTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := rec.kinds()
-	want := []event.Kind{event.KindTurnStart, event.KindModelCallStart, event.KindModelCallEnd, event.KindTurnEnd}
+	// The seed user turn emits KindUserInput before the first turn (change 0054), so
+	// a transcript rebuilt from events includes it.
+	want := []event.Kind{event.KindUserInput, event.KindTurnStart, event.KindModelCallStart, event.KindModelCallEnd, event.KindTurnEnd}
 	if len(got) != len(want) {
 		t.Fatalf("kinds = %v, want %v", got, want)
 	}

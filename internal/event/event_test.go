@@ -24,6 +24,8 @@ func TestKindWireValues(t *testing.T) {
 		KindSummarize:      "context.summarize",
 		KindLoopTrip:       "loop.detector.trip",
 		KindError:          "error",
+		KindLoopParked:     "loop.parked",
+		KindUserInput:      "user.input",
 	}
 	for k, want := range cases {
 		if string(k) != want {
