@@ -23,32 +23,8 @@ const testAudience = "https://rentals.example"
 // keys the server verifies with (shared out of band, as a real resource server does).
 func harness(t *testing.T, tenantKeys map[event.TenantID][]byte) (*tools.Registry, *Server, func(subject string, tenant event.TenantID) context.Context) {
 	t.Helper()
-	srv := NewServer(Config{Audience: testAudience, TenantKeys: tenantKeys})
-	t.Cleanup(srv.Close)
-
-	sts, err := toolidentity.NewBuiltinSTS(toolidentity.BuiltinSTSConfig{Issuer: "fuse", TTL: time.Minute, TenantKeys: tenantKeys})
-	if err != nil {
-		t.Fatalf("NewBuiltinSTS: %v", err)
-	}
-	src := toolidentity.NewBroker(sts, nil, nil)
-
-	reg := tools.NewRegistry()
-	mgr, err := mcp.NewManager([]config.MCPServerConfig{{
-		Name:      "rentals",
-		Transport: "sse",
-		URL:       srv.URL(),
-		Audience:  testAudience,
-		Auth:      config.MCPAuthConfig{Type: "identity"},
-	}}, reg, mcp.WithCredentialSource(src))
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
-	t.Cleanup(mgr.Close)
-
-	ctxFor := func(subject string, tenant event.TenantID) context.Context {
-		return toolidentity.WithPrincipal(context.Background(), loopauth.Principal{Tenant: tenant, Subject: subject})
-	}
-	return reg, srv, ctxFor
+	// Config.Favorites unset ⇒ the in-memory store, the CI-lane default.
+	return harnessWithConfig(t, Config{Audience: testAudience, TenantKeys: tenantKeys})
 }
 
 // TestSearchRentalsReturnsCannedListings: an authorized principal gets canned listings.

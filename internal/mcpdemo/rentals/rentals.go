@@ -69,21 +69,17 @@ func (CannedData) Search(query string) []Listing {
 	return out
 }
 
-// principalKey is the per-principal favorites-store key: the token identity
-// (tenant + subject), NEVER a client-supplied argument. It is the confused-deputy
-// boundary — a write always lands in the CALLING principal's set.
-type principalKey struct {
-	tenant  event.TenantID
-	subject string
-}
-
 // Server is the rentals MCP HTTP/SSE server. It owns a per-principal favorites store
-// (reset per NewServer, i.e. per test run) and adjudicates every tools/call by the
-// delegated token's identity.
+// (by default in-memory, so reset per NewServer, i.e. per test run) and adjudicates
+// every tools/call by the delegated token's identity.
 type Server struct {
 	httptest *httptest.Server
 	data     DataSource
 	audience string // the audience this server accepts (RFC 8707 resource id)
+
+	// favorites is the per-principal favorites store, keyed by the compound
+	// PrincipalKey derived from the VERIFIED token. Never nil (see newServer).
+	favorites FavoritesStore
 
 	// tenantKeys is the per-tenant HS256 verification key map — the SAME keys fuse's
 	// built-in STS mints under, shared out of band (as a real resource server shares a
@@ -91,7 +87,6 @@ type Server struct {
 	tenantKeys map[event.TenantID][]byte
 
 	mu        sync.Mutex
-	favs      map[principalKey]map[string]bool // principal -> set of listing ids
 	sseConns  []chan string
 	authSeen  []string // Authorization header per tools/call, in arrival order
 	resources []string // MCP-Resource header per tools/call, in arrival order
@@ -107,19 +102,26 @@ type Config struct {
 	// TenantKeys are the per-tenant HS256 verification keys (the STS's per-tenant keys,
 	// shared out of band). A caller under a tenant with no key here is unauthorized.
 	TenantKeys map[event.TenantID][]byte
+	// Favorites is the per-principal favorites store; nil ⇒ NewMemoryFavorites() (the
+	// CI-lane default). Swapping in a durable store changes only WHERE a set lives,
+	// never WHOSE set a write lands in — the key stays the verified token identity.
+	Favorites FavoritesStore
 }
 
-// newServer builds a rentals Server with an empty favorites store and no listener of
-// any kind. Both constructors go through it.
+// newServer builds a rentals Server with no listener of any kind, defaulting the data
+// source and the favorites store. Both constructors go through it.
 func newServer(cfg Config) *Server {
 	s := &Server{
 		data:       cfg.Data,
 		audience:   cfg.Audience,
 		tenantKeys: map[event.TenantID][]byte{},
-		favs:       map[principalKey]map[string]bool{},
+		favorites:  cfg.Favorites,
 	}
 	if s.data == nil {
 		s.data = CannedData{}
+	}
+	if s.favorites == nil {
+		s.favorites = NewMemoryFavorites()
 	}
 	for k, v := range cfg.TenantKeys {
 		kc := make([]byte, len(v))
@@ -159,8 +161,9 @@ func (s *Server) Handler() http.Handler { return s.newMux() }
 // on an httptest.Server, exposing URL() / Close(). Use it from tests that want a dialable
 // server with no listener bookkeeping. For anything that must serve on a real port — the
 // runnable demo, cmd/rentals-mcp — use NewHandler (or Handler()), which returns the same
-// routed handler with no listener bound. The favorites store starts empty (reset per
-// call). Call Close() to stop it.
+// routed handler with no listener bound. With the default (in-memory) favorites store
+// the favorites start empty, reset per call; a Config.Favorites store keeps whatever it
+// already holds. Call Close() to stop it.
 //
 // Teardown note: handleSSE blocks on r.Context().Done(), so Close() does not return until
 // connected clients disconnect. Register Close and any MCP client's teardown with
@@ -322,10 +325,20 @@ func (s *Server) handleToolCall(r *http.Request, rawParams json.RawMessage) (any
 		if args.ListingID == "" {
 			return errResult("favorite_listing requires a listing_id"), nil
 		}
-		s.addFavorite(pk, args.ListingID)
+		// pk comes from the VERIFIED token (authorize), never from args.
+		if err := s.addFavorite(pk, args.ListingID); err != nil {
+			return errResult(fmt.Sprintf("favorite_listing failed: %v", err)), nil
+		}
 		return textResult(fmt.Sprintf("favorited %s", args.ListingID)), nil
 	case "list_favorites":
-		return textResult(mustJSON(s.listFavorites(pk))), nil
+		favs, err := s.listFavorites(pk)
+		if err != nil {
+			return errResult(fmt.Sprintf("list_favorites failed: %v", err)), nil
+		}
+		if favs == nil {
+			favs = []string{} // an empty set serialises as [], never null
+		}
+		return textResult(mustJSON(favs)), nil
 	default:
 		return errResult(fmt.Sprintf("unknown tool %q", params.Name)), nil
 	}
@@ -334,11 +347,11 @@ func (s *Server) handleToolCall(r *http.Request, rawParams json.RawMessage) (any
 // authorize verifies the delegated token and returns the CALLING principal's store
 // key (tenant + sub). It fails closed: missing/invalid token, unknown tenant, or a
 // wrong-audience binding are all authorization denials (CodeUnauthorized).
-func (s *Server) authorize(r *http.Request) (principalKey, *jsonrpcErr) {
+func (s *Server) authorize(r *http.Request) (PrincipalKey, *jsonrpcErr) {
 	auth := r.Header.Get("Authorization")
 	const pfx = "Bearer "
 	if len(auth) <= len(pfx) || !strings.EqualFold(auth[:len(pfx)], pfx) {
-		return principalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "missing bearer credential"}
+		return PrincipalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "missing bearer credential"}
 	}
 	token := strings.TrimSpace(auth[len(pfx):])
 
@@ -346,7 +359,7 @@ func (s *Server) authorize(r *http.Request) (principalKey, *jsonrpcErr) {
 	// MCP-Resource header; it must match this server's audience.
 	if s.audience != "" {
 		if res := r.Header.Get("MCP-Resource"); res != s.audience {
-			return principalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: fmt.Sprintf("wrong audience: token bound to %q, server is %q", res, s.audience)}
+			return PrincipalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: fmt.Sprintf("wrong audience: token bound to %q, server is %q", res, s.audience)}
 		}
 	}
 
@@ -354,16 +367,16 @@ func (s *Server) authorize(r *http.Request) (principalKey, *jsonrpcErr) {
 	// a token minted under tenant A never verifies under tenant B's key).
 	tenant, claims, ok := s.verify(token)
 	if !ok {
-		return principalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "token does not verify under any known tenant key"}
+		return PrincipalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "token does not verify under any known tenant key"}
 	}
 	if claims.Subject == "" {
-		return principalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "token carries no subject"}
+		return PrincipalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "token carries no subject"}
 	}
 	// Audience claim must also match (defense in depth alongside the header check).
 	if s.audience != "" && claims.Audience != s.audience {
-		return principalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: fmt.Sprintf("token aud %q != server audience %q", claims.Audience, s.audience)}
+		return PrincipalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: fmt.Sprintf("token aud %q != server audience %q", claims.Audience, s.audience)}
 	}
-	return principalKey{tenant: tenant, subject: claims.Subject}, nil
+	return PrincipalKey{Tenant: tenant, Subject: claims.Subject}, nil
 }
 
 // tokenClaims is the subset of the delegation token this server adjudicates on.
@@ -403,26 +416,14 @@ func (s *Server) verify(token string) (event.TenantID, tokenClaims, bool) {
 	return "", tokenClaims{}, false
 }
 
-func (s *Server) addFavorite(pk principalKey, id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	set := s.favs[pk]
-	if set == nil {
-		set = map[string]bool{}
-		s.favs[pk] = set
-	}
-	set[id] = true // idempotent per principal
+// addFavorite delegates to the configured store. pk is the CALLING token's identity.
+func (s *Server) addFavorite(pk PrincipalKey, id string) error {
+	return s.favorites.Add(pk, id)
 }
 
-func (s *Server) listFavorites(pk principalKey) []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	set := s.favs[pk]
-	out := make([]string, 0, len(set))
-	for id := range set {
-		out = append(out, id)
-	}
-	return out
+// listFavorites delegates to the configured store. pk is the CALLING token's identity.
+func (s *Server) listFavorites(pk PrincipalKey) ([]string, error) {
+	return s.favorites.List(pk)
 }
 
 // toolDefs is the advertised tool surface.
