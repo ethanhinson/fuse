@@ -14,14 +14,14 @@
 # server, the identity signing key, and the demo user directory). Keep your own
 # `gateway:`/`models:` blocks; without them the built-in defaults apply.
 #
-# Companion process — start the rentals MCP server with MATCHING values:
-#   RENTALS_ADDR=127.0.0.1:8091 \
-#   RENTALS_AUDIENCE=https://rentals.demo.fuse.local \
-#   RENTALS_SIGNING_KEY=demo-not-a-secret-wander-rentals-signing-key \
-#   RENTALS_TENANTS=_default,acme,globex \
-#   RENTALS_FAVORITES_DIR=/tmp/wander-favorites \
-#   RENTALS_DATA=auto \
-#   go run ./cmd/rentals-mcp
+# Companion process — the rentals MCP server (cmd/rentals-mcp), started for you:
+#   examples/wander/run.sh builds and starts it with values matching this file, and
+#   its trap tears it down on exit — so `./examples/wander/run.sh` is the whole demo
+#   and you never launch cmd/rentals-mcp by hand. run.sh's RENTALS_* defaults are the
+#   authoritative copy of that launch env; override them there, not here.
+#   internal/config's TestWanderRunScriptStartsRentalsServer asserts the launcher and
+#   this file have not drifted apart.
+#
 # The three values that MUST agree on both sides:
 #   mcp_servers[rentals].url      <-> RENTALS_ADDR
 #   mcp_servers[rentals].audience <-> RENTALS_AUDIENCE

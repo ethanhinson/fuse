@@ -87,20 +87,40 @@ network kill; nothing calls it in normal use.
 
 ```sh
 # from the repo root, once:
-npm install                 # installs esbuild (used by build.sh)
+npm install                                          # installs esbuild (used by build.sh)
+cp examples/wander/fuse.demo.yml ~/.fuse/config.yml  # or merge it into yours, by hand
 
 # then:
-./examples/wander/run.sh    # builds the SDK bundle, starts loop-serve-net + the page
+./examples/wander/run.sh    # SDK bundle + rentals MCP server + loop-serve-net + the page
 # open http://localhost:5173
 ```
+
+`run.sh` is the whole demo in one command: alongside the bundle and `loop-serve-net` it
+builds and starts **`cmd/rentals-mcp`** — the live rentals backend — on `127.0.0.1:8091`
+with env matching `fuse.demo.yml`, and its `trap` tears all three processes down on Ctrl-C.
+Without that server every rentals tool call fails to connect, so it is not optional.
+
+The one-time config copy is not optional either: `loop_server.auth` and `tool_identity` are
+credential surfaces honored **only** from the trusted `~/.fuse/config.yml` (ADR-0006), so a
+repo-relative file cannot supply them. Without it fuse has no rentals server declared, no
+signing key to mint delegation tokens with, and no demo user directory.
 
 `run.sh` points the loop server at whatever model gateway your `~/.fuse/config.yml`
 configures. To run **fully offline / deterministic** (no provider — the project policy for
 tests is to NEVER call Claude/Anthropic), set `LLM_GATEWAY_URL` to a scripted double before
 launching; the headless-browser CI lane does exactly this.
 
-Environment knobs: `PORT` (static server, default `5173`), `FUSE_NET_ADDR` (backend,
-default `127.0.0.1:8787`).
+The rentals server needs **no search credential**: it defaults to `RENTALS_DATA=auto`, which
+uses live web-search listings only if a credential (e.g. `TAVILY_API_KEY`) is already in the
+environment and otherwise serves canned listings. Set `RENTALS_DATA=canned` to force
+hermetic data.
+
+Environment knobs: `PORT` (static server, default `5173`), `FUSE_NET_ADDR` (backend, default
+`127.0.0.1:8787`), and the rentals overrides `RENTALS_ADDR`, `RENTALS_AUDIENCE`,
+`RENTALS_SIGNING_KEY`, `RENTALS_TENANTS`, `RENTALS_FAVORITES_DIR`, `RENTALS_DATA`. The
+rentals defaults are the values in `fuse.demo.yml`; overriding the first three means editing
+`fuse.demo.yml` to match, or fuse dials the wrong port or mints tokens the server rejects.
+`internal/config`'s `TestWanderRunScriptStartsRentalsServer` asserts the two sides agree.
 
 `fuse.demo.yml` in this directory is the checked-in demo config for the rentals MCP server
 and its demo user directory (change 0060). Its tokens are obviously fake and **demo-only**.
