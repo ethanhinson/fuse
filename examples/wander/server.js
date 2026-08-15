@@ -17,6 +17,11 @@
 //
 // The upstream fuse address is FUSE_NET_ADDR (default 127.0.0.1:8787); the static port is
 // PORT (default 5173). The Authorization bearer header the SDK sets is forwarded verbatim.
+//
+// Change 0060 (task 8) added a THIRD, demo-only job: `GET /demo-users.json` publishes the
+// `loop_server.auth` directory of a DEMO fuse config so the page's user picker can offer
+// those principals. See DEMO_CONFIG below — it publishes bearer tokens by design, and the
+// only file it is ever allowed to point at is a demo one.
 
 const http = require("http");
 const fs = require("fs");
@@ -25,6 +30,78 @@ const path = require("path");
 const PORT = Number(process.env.PORT || 5173);
 const UPSTREAM = process.env.FUSE_NET_ADDR || "127.0.0.1:8787";
 const [UP_HOST, UP_PORT] = UPSTREAM.split(":");
+
+// DEMO_CONFIG is the fuse config whose `loop_server.auth` directory the picker offers.
+//
+// ⚠ THIS ENDPOINT HANDS EVERY BEARER TOKEN IN THAT FILE TO ANY BROWSER THAT ASKS. That is
+// deliberate and safe for the default — examples/wander/fuse.demo.yml holds only
+// obviously-fake, checked-in demo tokens that grant access to nothing real. NEVER point
+// FUSE_DEMO_CONFIG at ~/.fuse/config.yml or any file with a credential you care about; the
+// override exists so a test (or a demo on ephemeral ports) can supply its own demo file.
+const DEMO_CONFIG = process.env.FUSE_DEMO_CONFIG || path.join(__dirname, "fuse.demo.yml");
+const DEMO_CONFIG_OVERRIDDEN = Boolean(process.env.FUSE_DEMO_CONFIG);
+
+// readDemoUsers extracts the `loop_server.auth` entries from a fuse config. It is a
+// deliberately tiny, indentation-aware reader for exactly that one block rather than a
+// YAML dependency (this launcher is zero-dependency by design). Anything it cannot parse
+// yields an empty directory — the picker then offers only the built-in dev credential.
+function readDemoUsers(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+  const users = [];
+  let inLoopServer = false;
+  let authIndent = -1;
+  let cur = null;
+  const flush = () => {
+    if (cur && cur.token) users.push(cur);
+    cur = null;
+  };
+  for (const raw of text.split(/\r?\n/)) {
+    if (!raw.trim() || /^\s*#/.test(raw)) continue; // blank + whole-line comments
+    const indent = raw.search(/\S/);
+    const line = raw.trim();
+    if (indent === 0) {
+      // A new top-level key ends any auth block we were inside.
+      flush();
+      inLoopServer = /^loop_server\s*:/.test(line);
+      authIndent = -1;
+      continue;
+    }
+    if (!inLoopServer) continue;
+    if (authIndent >= 0 && indent <= authIndent) {
+      // Dedented back to a sibling of `auth:` (e.g. `lease_ttl:`) — the list is over.
+      flush();
+      authIndent = -1;
+    }
+    if (authIndent < 0) {
+      if (/^auth\s*:/.test(line)) authIndent = indent;
+      continue;
+    }
+    if (line.startsWith("-")) {
+      flush();
+      cur = {};
+    }
+    const m = line.replace(/^-\s*/, "").match(/^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/);
+    if (m && cur) {
+      cur[m[1]] = m[2]
+        .replace(/\s+#.*$/, "") // trailing inline comment
+        .trim()
+        .replace(/^["']|["']$/g, "");
+    }
+  }
+  flush();
+  return users
+    .filter((u) => u.token)
+    .map((u) => ({
+      token: u.token,
+      tenant: u.tenant || "_default",
+      subject: u.subject || "user",
+    }));
+}
 
 const STATIC_DIR = __dirname;
 const MIME = {
@@ -61,6 +138,14 @@ const server = http.createServer((req, res) => {
     active.clear();
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ cut }));
+    return;
+  }
+
+  // Demo-only: the user picker's directory. Read per request so editing the demo config
+  // does not need a restart. See DEMO_CONFIG's warning — this publishes those tokens.
+  if (url.pathname === "/demo-users.json") {
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    res.end(JSON.stringify(readDemoUsers(DEMO_CONFIG)));
     return;
   }
 
@@ -116,5 +201,14 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`\n  Wander demo  ->  http://localhost:${PORT}`);
-  console.log(`  proxying Connect /fuse.loop.v1.* to  http://${UPSTREAM}  (no CORS, no WS relay)\n`);
+  console.log(`  proxying Connect /fuse.loop.v1.* to  http://${UPSTREAM}  (no CORS, no WS relay)`);
+  const demoUsers = readDemoUsers(DEMO_CONFIG);
+  console.log(`  demo user picker: ${demoUsers.length} principal(s) from ${DEMO_CONFIG}`);
+  if (DEMO_CONFIG_OVERRIDDEN) {
+    console.warn(
+      `  ⚠ FUSE_DEMO_CONFIG is set: GET /demo-users.json will publish every bearer token in\n` +
+        `    ${DEMO_CONFIG} to any browser that asks. Point it ONLY at a demo config.`,
+    );
+  }
+  console.log("");
 });

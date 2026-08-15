@@ -105,6 +105,33 @@ default `127.0.0.1:8787`).
 `fuse.demo.yml` in this directory is the checked-in demo config for the rentals MCP server
 and its demo user directory (change 0060). Its tokens are obviously fake and **demo-only**.
 
+## Switching users (change 0060)
+
+The rail's **Signed in as** picker chooses which bearer credential the SDK client presents.
+The first option is always the built-in `loop-serve-net` dev token (`fuse-dev-token` →
+`_default`), so a zero-config backend behaves exactly as it did before the picker existed;
+the demo principals are appended from `GET /demo-users.json`, which `server.js` reads out of
+`fuse.demo.yml` (override with `FUSE_DEMO_CONFIG`). You can also paste an arbitrary token.
+
+> ⚠ `/demo-users.json` **publishes every bearer token in that file** to any browser that
+> asks. That is safe for the checked-in demo tokens and for nothing else — never point
+> `FUSE_DEMO_CONFIG` at `~/.fuse/config.yml`.
+
+The client never asserts who it is beyond presenting the token: `loop_server.auth` resolves
+`{tenant, subject}` server-side, and the identity tier mints the audience-bound delegation
+token the rentals MCP server adjudicates. The **Saved stays** panel is filled *only* from a
+`list_favorites` tool result, so it shows exactly what that principal's delegated token was
+allowed to read — which is why switching users shows a different list.
+
+Switching users performs a **full client-side reset** before the new session starts: the
+live observe stream is aborted through the SDK's idempotent teardown *first*, then the
+transcript, activity rail, stats and saved panel are cleared and a new session generation
+begins (so any frame still draining on the old stream is inert). The `＋ New` button runs
+the same reset for the same principal.
+
+Note for anyone editing `fuse.demo.yml`: `mcp_servers[rentals].url` must be the **base**
+URL with no `/sse` suffix — the MCP HTTP transport appends `/sse` and `/messages` itself.
+
 ## Build the SDK bundle only
 
 ```sh
@@ -123,15 +150,26 @@ sessions (change #54). It is an example app, not a production deployment.
 
 ## Acceptance / test
 
-An example app has no unit test of its own; its acceptance is the permanent
-**headless-browser reconnect CI lane** — `browser_test.go` (`//go:build browser`), run as
-`make browser-test` / `go test -tags browser -timeout 300s ./examples/wander/...`, and
-enforced by the `browser-acceptance` job in `.github/workflows/integration.yml`. It serves
-this page, drives a concierge turn in headless chromium against a real `loop-serve-net` with
-a scripted gateway double, kills the network mid-stream via `/__cut`, and asserts the reply
-still completes with **no loss / no dup** and that the SDK went `reconnecting` → `live`.
+An example app has no unit test of its own; its acceptance is two permanent headless-browser
+CI lanes, both `//go:build browser`, both run by `make browser-test` /
+`go test -tags browser -timeout 300s ./examples/wander/...` and enforced by the
+`browser-acceptance` job in `.github/workflows/integration.yml`.
 
-This is the repo's **only** browser acceptance lane. Changing the markup here can silently
-break it: `browser_test.go` drives `#input` and `#send` and reads `.msg.concierge` /
-`.msg.error` plus the `window.__wander*` instrumentation `app.js` publishes. Keep those, and
-run the lane before and after any UI change.
+**`browser_test.go` — the reconnect lane.** It serves this page, drives a concierge turn in
+headless chromium against a real `loop-serve-net` with a scripted gateway double, kills the
+network mid-stream via `/__cut`, and asserts the reply still completes with **no loss / no
+dup** and that the SDK went `reconnecting` → `live`.
+
+**`browser_identity_test.go` — the per-principal isolation lane.** It stands up the real
+`cmd/rentals-mcp` server plus a `loop-serve-net` configured from **this directory's
+`fuse.demo.yml`** (only the rentals URL is rewritten to an ephemeral port), then drives the
+page as two different demo principals: user A favorites a listing, and after switching to
+user B the saved panel must NOT contain it (and switching back must show it again). It also
+asserts the switch left **exactly one** live observe stream — the previous principal's must
+have been torn down — and that the transcript was cleared. Because the checked-in demo
+config is used verbatim, config rot fails this lane instead of quietly demoing nothing.
+
+Changing the markup here can silently break both lanes: they drive `#input`, `#send`,
+`#user`, `#whoami` and `#saved .saved-item`, and read `.msg.concierge` / `.msg.error` plus
+the `window.__wander*` instrumentation `app.js` publishes. Keep those, and run the lanes
+before and after any UI change.

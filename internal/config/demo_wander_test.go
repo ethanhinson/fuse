@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +58,14 @@ func TestWanderDemoConfigDeclaresRentalsServer(t *testing.T) {
 	}
 	if srv.URL == "" {
 		t.Errorf("url is empty; the demo must point at the cmd/rentals-mcp listen address")
+	}
+	// BASE url only (change 0060, task 8). The MCP HTTP transport appends the SSE and
+	// message paths itself (internal/mcp/http_client.go: `{url}/sse`), so a url that
+	// already carries the suffix dials `/sse/sse` and every rentals call fails with a
+	// 404 on connect — which is exactly how the demo config shipped until the browser
+	// identity lane drove it end-to-end. Nothing else in the suite catches it, so pin it.
+	if strings.HasSuffix(strings.TrimRight(srv.URL, "/"), "/sse") {
+		t.Errorf("url = %q must be the BASE url with no /sse suffix; the MCP transport appends it (a suffixed url dials /sse/sse → 404)", srv.URL)
 	}
 	if srv.Audience == "" {
 		t.Errorf("audience is empty; an identity-tier server requires an RFC 8707 resource id")

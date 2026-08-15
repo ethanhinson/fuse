@@ -37,7 +37,11 @@ mcp_servers:
   # the rentals server adjudicates the favorite into that principal's own set.
   - name: rentals
     transport: sse
-    url: http://127.0.0.1:8091/sse
+    # BASE url only — no /sse suffix. The MCP HTTP transport appends the SSE and
+    # message paths itself (`{url}/sse`, `{url}/messages`), exactly as #59's
+    # acceptance lane configures it from the server's base URL. Spelling the
+    # suffix here yields `/sse/sse` and every call fails with a 404 on connect.
+    url: http://127.0.0.1:8091
     audience: https://rentals.demo.fuse.local
     auth:
       type: identity

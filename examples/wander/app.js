@@ -14,6 +14,13 @@
 // ONTO this file. Only the RENDERING moved. The transport did not: that demo drove a
 // hand-rolled loop.* JSON-RPC WebSocket relay, and that is exactly what this app must not
 // go back to. Every wire call below is still an @fuse/sdk public-API call.
+//
+// Change 0060 (task 8) added the identity UX: a picker over the demo bearer tokens, a
+// Saved-stays panel filled from `list_favorites` through the agent, and a full client-side
+// reset on every user switch. The reset is a SECURITY-VISIBLE property, not a cosmetic one:
+// the previous principal's observe stream is torn down (SDK-idempotent abort) BEFORE the
+// next principal's session starts, and a stale stream is additionally gated on a session
+// generation so it can never paint the new principal's UI.
 
 import {
   createClient,
@@ -21,21 +28,52 @@ import {
   FuseTerminalError,
 } from "./vendor/fuse-sdk.js";
 
-// The dev token → _default tenant is the built-in credential `fuse loop-serve-net` uses
-// when loop_server.auth is unset (local demo). Configure real tokens for a shared server.
-const client = createClient({
-  baseUrl: window.location.origin, // same-origin; server.js proxies the Connect path.
-  credentials: { token: "fuse-dev-token", tenant: "_default" },
+// ───────────────────────────── Identity (change 0060, D5) ───────────────────────────
+// The bearer credential is now CHOSEN, not hardcoded. DEV_USER is the built-in credential
+// `fuse loop-serve-net` synthesizes when loop_server.auth is unset, and it stays the
+// DEFAULT selection: a zero-config local backend — and the browser reconnect lane, which
+// runs exactly that — behaves byte-identically to before the picker existed. The demo
+// principals come from ./demo-users.json (server.js reads them out of the demo fuse
+// config, so the UI can never drift from the checked-in directory).
+//
+// Choosing a user re-creates the SDK client with THAT token. Everything downstream is the
+// server's: loop_server.auth resolves {tenant, subject}, and the identity tier mints the
+// audience-bound delegation token the rentals MCP server adjudicates. The browser never
+// asserts who it is beyond presenting its token.
+const DEV_USER = Object.freeze({
+  token: "fuse-dev-token",
+  tenant: "_default",
+  subject: "dev",
+  label: "dev@_default",
 });
 
-// Test instrumentation (harmless in normal use): the headless-browser reconnect CI lane
-// reads these to assert no-loss/no-dup across a mid-stream network kill and to watch the
-// connection-state transitions. They only ever record what the SDK's public API already
-// surfaces (seqs + onState) — no reach past the SDK.
+function makeClient(user) {
+  return createClient({
+    baseUrl: window.location.origin, // same-origin; server.js proxies the Connect path.
+    credentials: { token: user.token, tenant: user.tenant },
+  });
+}
+
+let currentUser = DEV_USER;
+// `client` is rebuilt on every user switch, so it is a binding, not a constant. Anything
+// long-lived that uses it (runObserve) captures the client it started with, so a switch
+// can never re-point an in-flight stream at a different principal's credential.
+let client = makeClient(currentUser);
+
+// Test instrumentation (harmless in normal use): the headless-browser CI lanes read these
+// to assert no-loss/no-dup across a mid-stream network kill, to watch the connection-state
+// transitions, and (0060) to assert a user switch really tears the previous principal's
+// stream down. They only ever record what the SDK's public API already surfaces (seqs +
+// onState) plus this app's own session bookkeeping — no reach past the SDK.
 window.__wanderSeqs = [];
 window.__wanderStates = [];
 window.__wanderTerminal = null;
 window.__wanderParks = 0; // count of loop.parked completions (turn boundaries) observed.
+// Live observe streams. It must settle back to exactly 1 after a user switch: a stale
+// stream from the previous principal showing up here is the leak this app must not have.
+window.__wanderOpenStreams = 0;
+window.__wanderResets = 0; // client-side session resets performed.
+window.__wanderSavedRefreshes = 0; // list_favorites results rendered SINCE the last reset.
 
 const threadEl = document.getElementById("thread");
 const activityEl = document.getElementById("activity");
@@ -47,6 +85,20 @@ const connEl = document.getElementById("conn");
 const connLabel = document.getElementById("conn-label");
 const loopLabel = document.getElementById("loop-label");
 const chipEls = Array.from(document.querySelectorAll(".chip"));
+const savedEl = document.getElementById("saved");
+const userSelect = document.getElementById("user");
+const whoamiEl = document.getElementById("whoami");
+const customRow = document.getElementById("custom-token-row");
+const customToken = document.getElementById("custom-token");
+const customTenant = document.getElementById("custom-tenant");
+const customApply = document.getElementById("custom-apply");
+
+// The pristine markup of the panels a session reset restores. Captured once, before any
+// event can mutate them, so the reset restores the ORIGINAL document rather than a
+// hand-rolled reconstruction that could drift from index.html.
+const initialThreadHTML = threadEl.innerHTML;
+const initialActivityHTML = activityEl.innerHTML;
+const initialLoopLabel = loopLabel ? loopLabel.textContent : "";
 
 // Session state. Wander is stateless across page loads (#54 boundary): a refresh starts a
 // fresh loop. `loopId` is created lazily on the first message (persistent interactive loop
@@ -59,9 +111,24 @@ let turnInFlight = false;
 // cursor is the highest seq observed so far (the SDK's own reconnect watermark is internal;
 // this mirrors it for diagnostics).
 let cursor = 0n;
-// One AbortController per page lifetime: aborting it on pagehide tears the live observe
-// stream down (D3) so a navigation never leaks a stream.
-const pageAbort = new AbortController();
+// EXACTLY ONE live AbortController at a time — the CURRENT session's. Aborting it is the
+// SDK's idempotent teardown (D3): it stops the reconnect loop, tears the underlying stream
+// down, and fires onState('closed') once; a double abort is a no-op. `pagehide` aborts it
+// so a navigation never leaks a stream, and a user switch aborts it (then installs a fresh
+// one) so the previous principal's stream never outlives their session. runObserve is
+// handed its controller, never this binding, so a reassignment cannot orphan the check a
+// running stream makes against its own abort.
+let sessionAbort = new AbortController();
+// sessionGeneration increments on every reset. A stream from an older generation is stale:
+// it may still be draining a frame or two while its abort propagates, and it must never
+// paint the new principal's UI. Every observe callback checks its generation first.
+let sessionGeneration = 0;
+// quietTurn suppresses transcript rendering for a turn the APP initiated (the Saved-panel
+// refresh), so a background list_favorites does not look like the user said something.
+let quietTurn = false;
+// pendingSavedRefresh is set when a favorite_listing call is seen; the refresh fires at the
+// next park, because a `send` is only accepted at a parked turn boundary.
+let pendingSavedRefresh = false;
 
 // ─────────────────────────── Connection indicator ───────────────────────────
 // The pill is keyed on the SDK's own onState vocabulary; styles.css selects on
@@ -180,20 +247,33 @@ function decodePayload(ev) {
 // event kind into the activity rail, and each turn's final answer (loop.parked) as the
 // rendered reply, re-enabling the composer on each park. Transparent reconnect +
 // no-loss/no-dup across a mid-stream drop is the SDK's job — this consumer just keeps
-// reading. It runs until the page aborts (D3) or a FuseTerminalError stops it (D2).
-async function runObserve() {
+// reading. It runs until the page aborts, a user switch aborts it (D3), or a
+// FuseTerminalError stops it (D2).
+//
+// It is handed its OWN generation, loop id, client and AbortController rather than reading
+// the module bindings, because those are all re-pointed by a user switch. A stream that
+// outlives its session must be inert: every write to shared UI or state is gated on
+// `generation === sessionGeneration`, so the previous principal's in-flight frames can
+// never paint the next principal's transcript, saved panel, or connection pill.
+async function runObserve(generation, myLoopId, myClient, abort) {
   // The in-progress reply bubble for the CURRENT turn; reset at each park.
   let replyText = "";
+  const current = () => generation === sessionGeneration;
 
+  window.__wanderOpenStreams++;
   try {
-    for await (const ev of client.observe(loopId, {
+    for await (const ev of myClient.observe(myLoopId, {
       fromSeq: 0n,
-      signal: pageAbort.signal,
+      signal: abort.signal,
       onState: (s) => {
-        setConn(s);
+        // Always record the transition (it is the SDK's own vocabulary, and the teardown
+        // of a stale stream is exactly what a lane wants to see); only paint it if this
+        // stream still owns the session.
         window.__wanderStates.push(s);
+        if (current()) setConn(s);
       },
     })) {
+      if (!current()) break; // superseded by a user switch: stop, render nothing.
       window.__wanderSeqs.push(Number(ev.seq));
       cursor = ev.seq;
       bumpStat("events");
@@ -209,7 +289,7 @@ async function runObserve() {
           break;
         }
         case "model.delta": {
-          if (p.text) {
+          if (p.text && !quietTurn) {
             if (!pendingBubble) pendingBubble = addPendingConcierge();
             replyText += p.text;
             pendingBubble.textContent = replyText; // drops the spinner on first token
@@ -218,7 +298,12 @@ async function runObserve() {
           break;
         }
         case "tool.call": {
-          const name = p.name || "tool";
+          const fullName = p.name || "tool";
+          // An MCP tool arrives fully qualified ("mcp:rentals/favorite_listing"); a
+          // built-in arrives bare. Match on the BASE name so the rail (and the saved-panel
+          // refresh below) work for both — matching the bare name alone silently stopped
+          // recognising every rentals tool the moment they came over MCP.
+          const name = toolBaseName(fullName);
           if (name === "search_rentals" || name === "web_search") {
             bumpStat("searches");
             const q = extractArg(p.args, ["query", "q", "search"]) || "the web";
@@ -231,6 +316,10 @@ async function runObserve() {
           } else if (name === "favorite_listing") {
             pushActivity("tool", "★", "Saving a listing",
               extractArg(p.args, ["listing_id", "id"]));
+            // The write lands in the CALLING principal's set downstream; re-read it at the
+            // next park rather than optimistically patching the panel here, so the panel
+            // only ever shows what that principal's token was allowed to read back.
+            pendingSavedRefresh = true;
           } else if (name === "list_favorites") {
             pushActivity("tool", "✦", "Reading your saved stays", "");
           } else if (name === "spawn_agent") {
@@ -239,7 +328,7 @@ async function runObserve() {
               truncate(extractArg(p.args, ["label", "task", "prompt"]) || "sub-agent", 90));
             setPhase(pendingBubble, "Coordinating research scouts…");
           } else {
-            pushActivity("tool", "⚙︎", "Tool call", name);
+            pushActivity("tool", "⚙︎", "Tool call", fullName);
           }
           break;
         }
@@ -247,6 +336,13 @@ async function runObserve() {
           // Harvest every URL the tool actually returned, so card links can be verified
           // against real results (link grounding — see harvestURLs).
           harvestURLs(p.result);
+          // The Saved panel is the rentals server's answer, verbatim: the favorites this
+          // principal's delegated token was allowed to read. An errored result leaves the
+          // panel alone — blanking it would misreport "you have nothing saved".
+          if (toolBaseName(p.name || "") === "list_favorites" && !p.is_error) {
+            renderSaved(parseFavorites(p.result));
+            window.__wanderSavedRefreshes++;
+          }
           setPhase(pendingBubble, "Pulling the results together…");
           break;
         }
@@ -272,7 +368,7 @@ async function runObserve() {
           // The terminal answer for this exchange. With a non-streamed gateway there is no
           // model.delta, so render the parked content directly; otherwise it matches.
           const answer = p.content || replyText;
-          if (answer) {
+          if (answer && !quietTurn) {
             if (!pendingBubble) pendingBubble = addPendingConcierge();
             renderAnswer(pendingBubble, answer);
           }
@@ -291,22 +387,35 @@ async function runObserve() {
         pendingBubble = null;
         replyText = "";
         turnInFlight = false;
+        const wasQuiet = quietTurn;
+        quietTurn = false;
         setComposerEnabled(true);
-        inputEl.focus();
+        if (!wasQuiet) inputEl.focus();
+        // A favorite landed this turn: re-read the set now that the loop is parked and
+        // will accept a `send` again. list_favorites never sets the flag, so this cannot
+        // chain into a refresh loop.
+        if (pendingSavedRefresh) {
+          pendingSavedRefresh = false;
+          refreshSaved();
+        }
       }
     }
   } catch (err) {
-    if (err instanceof FuseTerminalError) {
+    if (!current()) {
+      // A superseded stream's failure is nobody's business: this session is gone.
+    } else if (err instanceof FuseTerminalError) {
       // A terminal Connect code (auth rejected, loop gone/finished): stop, show the right
       // affordance — do NOT silently hot-loop.
       window.__wanderTerminal = err.code;
       setConn("error");
       pushActivity("error", "⚠︎", "Stream closed", String(err.code));
       addMessage("error", "", `Connection closed (${err.code}). Refresh to start a new session.`);
-    } else if (!pageAbort.signal.aborted) {
+    } else if (!abort.signal.aborted) {
       setConn("error");
       addMessage("error", "", `Unexpected error: ${String(err)}`);
     }
+  } finally {
+    window.__wanderOpenStreams--;
   }
 }
 
@@ -314,34 +423,49 @@ async function runObserve() {
 // scope so both the submit path and the observe loop can reach it).
 let pendingBubble = null;
 
-async function handleSubmit(text) {
-  addMessage("user", "you", text);
-  pendingBubble = addPendingConcierge();
+// handleSubmit drives one turn. `quiet` marks a turn the APP asked for rather than the
+// user (the Saved-panel refresh): it is a real agent turn on the real loop — same
+// credential, same tool path — it simply renders no transcript bubbles.
+async function handleSubmit(text, quiet = false) {
+  quietTurn = quiet;
+  if (!quiet) {
+    addMessage("user", "you", text);
+    pendingBubble = addPendingConcierge();
+  }
   turnInFlight = true;
   setComposerEnabled(false);
+  // Pin the session this turn belongs to: an await below can straddle a user switch, and
+  // a reply must never be started for (or attributed to) a principal who has been replaced.
+  const generation = sessionGeneration;
+  const myClient = client;
+  const myAbort = sessionAbort;
   try {
     if (!loopId) {
       // First message: start a persistent interactive loop so context holds across turns,
       // then open the ONE long-lived observe stream (kept open for the whole session).
-      const started = await client.startLoop({
+      const started = await myClient.startLoop({
         task: `You are Wander, a friendly vacation-rental concierge. First request: ${text}`,
         model: "cloud/x",
         interactive: true,
       });
+      if (generation !== sessionGeneration) return; // switched mid-start: drop this loop.
       loopId = started.loopId;
       if (loopLabel) {
         loopLabel.textContent = `Live loop ${String(loopId).slice(0, 12)}… — streaming over Connect`;
       }
-      runObserve(); // fire-and-forget; it re-enables the composer at each park.
+      // fire-and-forget; it re-enables the composer at each park.
+      runObserve(generation, loopId, myClient, myAbort);
     } else {
       // Subsequent turns: inject input at the parked loop's next turn boundary. The existing
       // long-lived observe stream carries the new turn's events (composer re-enables on park).
-      await client.send(loopId, text);
+      await myClient.send(loopId, text);
     }
   } catch (err) {
+    if (generation !== sessionGeneration) return; // superseded: not this session's problem.
     setConn("error");
     addMessage("error", "", `Failed to reach the concierge: ${String(err)}`);
     pendingBubble = null;
+    quietTurn = false;
     turnInFlight = false;
     setComposerEnabled(true);
   }
@@ -352,6 +476,162 @@ function submit(text) {
   if (!text || turnInFlight) return;
   inputEl.value = "";
   handleSubmit(text);
+}
+
+// ─────────────────────── Saved stays (change 0060, D5) ──────────────────────
+// The panel is the rentals MCP server's answer, not a client-side tally: it is filled ONLY
+// from a `list_favorites` tool result, which the server adjudicated against the calling
+// principal's own delegated token. That is why switching users shows a different list —
+// and why the app never merges, caches, or carries a list across principals.
+
+// SAVED_REFRESH_PROMPT is the quiet turn's ask. It is phrased for the model, which decides
+// to call list_favorites; the app cannot (and must not) invoke a tool itself.
+const SAVED_REFRESH_PROMPT = "Show me my saved stays.";
+
+function refreshSaved() {
+  if (turnInFlight) {
+    // The loop only accepts input at a parked boundary; re-arm for the next park instead
+    // of dropping the refresh.
+    pendingSavedRefresh = true;
+    return;
+  }
+  handleSubmit(SAVED_REFRESH_PROMPT, true);
+}
+
+// parseFavorites reads the listing ids out of a list_favorites result. The rentals server
+// returns a JSON array of ids; the model's tool plumbing may wrap it in surrounding text,
+// so fall back to the first bracketed array before giving up.
+function parseFavorites(result) {
+  if (!result) return [];
+  const s = String(result);
+  const asArray = (v) => (Array.isArray(v) ? v.map(String) : null);
+  try {
+    const direct = asArray(JSON.parse(s));
+    if (direct) return direct;
+  } catch {}
+  const m = s.match(/\[[^\]]*\]/);
+  if (m) {
+    try {
+      const nested = asArray(JSON.parse(m[0]));
+      if (nested) return nested;
+    } catch {}
+  }
+  return [];
+}
+
+function renderSaved(ids) {
+  savedEl.replaceChildren();
+  if (!ids.length) {
+    const empty = document.createElement("div");
+    empty.className = "saved-empty";
+    empty.textContent = "Nothing saved yet.";
+    savedEl.appendChild(empty);
+    return;
+  }
+  for (const id of ids) {
+    const el = document.createElement("div");
+    el.className = "saved-item";
+    el.dataset.listing = id;
+    el.textContent = id;
+    savedEl.appendChild(el);
+  }
+}
+
+// ──────────────────── Session reset + user switching (D5) ───────────────────
+// resetSession returns the page to its pristine, no-loop state. It is the ONLY way a
+// session ends short of a navigation, and it does the teardown FIRST: the live observe
+// stream is aborted through the SDK's idempotent teardown before any state is cleared, so
+// there is no window in which a torn-down session's frames could repaint the cleared UI.
+// Then the generation advances, which makes any frame still in flight on the old stream
+// inert (runObserve checks it), and a fresh AbortController takes over for the next
+// session — leaving, as before, exactly one live controller.
+function resetSession() {
+  sessionAbort.abort();
+  sessionAbort = new AbortController();
+  sessionGeneration++;
+
+  loopId = null;
+  cursor = 0n;
+  turnInFlight = false;
+  pendingBubble = null;
+  quietTurn = false;
+  pendingSavedRefresh = false;
+  realURLs.clear();
+
+  threadEl.innerHTML = initialThreadHTML;
+  activityEl.innerHTML = initialActivityHTML;
+  if (loopLabel) loopLabel.textContent = initialLoopLabel;
+  renderSaved([]);
+  setConn("idle");
+  for (const k of Object.keys(stats)) {
+    stats[k] = 0;
+    const el = document.getElementById("stat-" + k);
+    if (el) el.textContent = "0";
+  }
+  setComposerEnabled(true);
+
+  // Per-session instrumentation restarts with the session (the new loop's seqs begin at 1
+  // again); __wanderStates stays cumulative, so a lane can still see the teardown.
+  window.__wanderSeqs = [];
+  window.__wanderParks = 0;
+  window.__wanderTerminal = null;
+  window.__wanderSavedRefreshes = 0;
+  window.__wanderResets++;
+}
+
+// switchUser resets, re-credentials the SDK client, then asks the NEW principal's agent
+// for their saved stays. The order matters: nothing of the previous principal survives
+// into the request that follows.
+function switchUser(user) {
+  if (!user || !user.token) return;
+  resetSession();
+  currentUser = user;
+  client = makeClient(user);
+  whoamiEl.textContent = user.label;
+  refreshSaved();
+}
+
+// demoUsers[0] is always DEV_USER; the rest come from the demo directory.
+let demoUsers = [DEV_USER];
+
+function renderPicker() {
+  userSelect.replaceChildren();
+  demoUsers.forEach((u, i) => {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = u.label;
+    userSelect.appendChild(opt);
+  });
+  const custom = document.createElement("option");
+  custom.value = "custom";
+  custom.textContent = "paste a token…";
+  userSelect.appendChild(custom);
+  // Re-select whoever is current so populating the list never silently switches user.
+  const idx = demoUsers.indexOf(currentUser);
+  userSelect.value = String(idx >= 0 ? idx : 0);
+}
+
+// loadDemoUsers fetches the demo directory server.js publishes from the demo fuse config.
+// A missing/blank endpoint is normal (a plain static host, or no demo config): the picker
+// then offers only the built-in dev credential.
+async function loadDemoUsers() {
+  const users = [DEV_USER];
+  try {
+    const res = await fetch("./demo-users.json", { cache: "no-store" });
+    if (res.ok) {
+      const list = await res.json();
+      for (const u of Array.isArray(list) ? list : []) {
+        if (!u || !u.token) continue;
+        const tenant = String(u.tenant || "_default");
+        const subject = String(u.subject || "user");
+        users.push({ token: String(u.token), tenant, subject, label: `${subject}@${tenant}` });
+      }
+    }
+  } catch {
+    // Non-fatal by design: the picker degrades to the dev credential.
+  }
+  demoUsers = users;
+  renderPicker();
 }
 
 // ─────────────────────────────── Link grounding ─────────────────────────────
@@ -477,6 +757,14 @@ function extractCards(md) {
 }
 
 // ─────────────────────────────── Small helpers ──────────────────────────────
+// toolBaseName strips an MCP tool's server qualification: "mcp:rentals/list_favorites" →
+// "list_favorites". A built-in tool has no qualification and passes through unchanged.
+function toolBaseName(name) {
+  const s = String(name || "");
+  const slash = s.lastIndexOf("/");
+  return slash >= 0 ? s.slice(slash + 1) : s;
+}
+
 function extractArg(args, keys) {
   if (!args) return "";
   let obj = args;
@@ -514,14 +802,45 @@ for (const chip of chipEls) {
   chip.addEventListener("click", () => submit(chip.textContent));
 }
 
-// "＋ New" starts a fresh conversation by RELOADING the page. Wander is deliberately
-// stateless across page loads (#54 boundary), so a reload is the honest reset: it tears the
-// live observe stream down through the same pagehide abort path as any navigation rather
-// than hand-rolling a second teardown route that could leak the previous principal's stream.
-if (resetBtn) resetBtn.addEventListener("click", () => window.location.reload());
+// "＋ New" starts a fresh conversation with the SAME principal. It goes through the exact
+// teardown a user switch does (abort the live stream first, then clear) rather than
+// reloading the page — one reset path, exercised by both gestures, is what keeps the
+// switch path honest.
+if (resetBtn) resetBtn.addEventListener("click", () => resetSession());
 
-// Page-unload teardown (D3): abort the live observe stream so a navigation never leaks a
-// stream. Idempotent — a double abort is a no-op.
-window.addEventListener("pagehide", () => pageAbort.abort());
+// ─────────────────────────── Identity picker wiring ─────────────────────────
+userSelect.addEventListener("change", () => {
+  if (userSelect.value === "custom") {
+    customRow.hidden = false;
+    customToken.focus();
+    return; // nothing switches until a token is actually supplied.
+  }
+  customRow.hidden = true;
+  const next = demoUsers[Number(userSelect.value)];
+  if (!next || next === currentUser) return;
+  switchUser(next);
+});
+
+customApply.addEventListener("click", () => {
+  const token = customToken.value.trim();
+  if (!token) {
+    customToken.focus();
+    return;
+  }
+  const tenant = customTenant.value.trim() || "_default";
+  switchUser({ token, tenant, subject: "custom", label: `custom@${tenant}` });
+});
+
+whoamiEl.textContent = currentUser.label;
+renderPicker();
+// Fetch the demo directory in the background. Deliberately NOT followed by a saved-panel
+// refresh: the page must not start a loop before the user says something (#54's stateless
+// boundary), so the panel first fills on an explicit user switch or after a favorite lands.
+loadDemoUsers();
+
+// Page-unload teardown (D3): abort the CURRENT session's observe stream so a navigation
+// never leaks a stream. Idempotent — a double abort, or an abort after a switch already
+// tore that session down, is a no-op.
+window.addEventListener("pagehide", () => sessionAbort.abort());
 
 inputEl.focus();

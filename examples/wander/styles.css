@@ -165,6 +165,83 @@ body {
   margin: 4px 4px 10px;
 }
 
+/* ─────────────────────── Identity picker (change 0060) ─────────────────────── */
+.identity {
+  margin-bottom: 18px;
+}
+.identity .rail-section-title {
+  display: block;
+}
+.user-select {
+  width: 100%;
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.user-select:focus {
+  outline: none;
+  border-color: var(--brand);
+}
+.whoami {
+  margin: 7px 4px 0;
+  font-size: 12px;
+  color: var(--ink-dim);
+  letter-spacing: 0.3px;
+}
+.custom-token {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.custom-token input {
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+}
+.custom-token input:focus {
+  outline: none;
+  border-color: var(--brand);
+}
+
+/* ───────────────────────── Saved stays (change 0060) ───────────────────────── */
+.saved {
+  max-height: 132px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding-right: 4px;
+}
+.saved-empty {
+  color: var(--ink-faint);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 2px 4px;
+}
+.saved-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--brand);
+  border-radius: 10px;
+  padding: 7px 10px;
+  word-break: break-all;
+}
+
 .activity {
   flex: 1;
   min-height: 0;

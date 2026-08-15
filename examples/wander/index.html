@@ -37,11 +37,55 @@
           <span class="label" id="conn-label">idle</span>
         </div>
 
+        <!--
+          Identity picker (change 0060, D5). The FIRST option is always the built-in
+          `fuse loop-serve-net` dev credential, and it is the default selection — so a
+          zero-config local backend (and the browser reconnect lane, which runs exactly
+          that) behaves identically to before this picker existed. The demo principals are
+          fetched from ./demo-users.json (server.js reads them out of the demo fuse config)
+          and appended; choosing one re-creates the SDK client with THAT bearer token, so
+          `loop_server.auth` resolves a different {tenant, subject} and the rentals server
+          adjudicates that principal's own favorites.
+        -->
+        <div class="identity">
+          <label class="rail-section-title" for="user">Signed in as</label>
+          <select id="user" class="user-select" aria-label="Demo user"></select>
+          <div class="whoami" id="whoami">dev@_default</div>
+          <div class="custom-token" id="custom-token-row" hidden>
+            <input
+              id="custom-token"
+              type="text"
+              autocomplete="off"
+              placeholder="bearer token"
+              aria-label="Bearer token"
+            />
+            <input
+              id="custom-tenant"
+              type="text"
+              autocomplete="off"
+              placeholder="tenant"
+              aria-label="Tenant"
+            />
+            <button id="custom-apply" type="button" class="ghost-btn">Use token</button>
+          </div>
+        </div>
+
         <div class="rail-section-title">Live agent activity</div>
         <div id="activity" class="activity">
           <div class="activity-empty">
             The concierge’s reasoning, rental searches, and tool calls will stream here.
           </div>
+        </div>
+
+        <!--
+          Saved stays: the CALLING principal's favorites, as the rentals MCP server reports
+          them. It is never assembled client-side — app.js fills it from the `list_favorites`
+          tool RESULT in the event stream, so what you see is what that principal's delegated
+          token was actually allowed to read.
+        -->
+        <div class="rail-section-title">Saved stays</div>
+        <div id="saved" class="saved">
+          <div class="saved-empty">Nothing saved yet.</div>
         </div>
 
         <div class="rail-foot">
