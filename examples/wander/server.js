@@ -22,24 +22,58 @@
 // `loop_server.auth` directory of a DEMO fuse config so the page's user picker can offer
 // those principals. See DEMO_CONFIG below — it publishes bearer tokens by design, and the
 // only file it is ever allowed to point at is a demo one.
+//
+// ─── WHY THIS SERVER IS LOOPBACK-ONLY ────────────────────────────────────────────────
+// Both of the jobs above are safe ONLY on loopback, and they compound: /demo-users.json
+// hands out a valid bearer token, and the /fuse.loop.v1.* proxy will then carry that token
+// verbatim into the operator's local `fuse loop-serve-net`. A wildcard bind therefore lets
+// any peer on the LAN fetch a credential and drive the operator's backend with it. So HOST
+// is pinned to 127.0.0.1 with NO env knob — a demo on a remote box is reached by an SSH
+// tunnel (`ssh -L 5173:127.0.0.1:5173 box`), never by widening this listener. The token
+// endpoint additionally FAILS CLOSED on a config override; see DEMO_PUBLISH_ALLOWED.
+// examples/wander/server_exposure_test.go pins both halves.
 
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
 
 const PORT = Number(process.env.PORT || 5173);
+// Loopback only, deliberately not configurable — see the block comment above.
+const HOST = "127.0.0.1";
 const UPSTREAM = process.env.FUSE_NET_ADDR || "127.0.0.1:8787";
 const [UP_HOST, UP_PORT] = UPSTREAM.split(":");
 
 // DEMO_CONFIG is the fuse config whose `loop_server.auth` directory the picker offers.
 //
 // ⚠ THIS ENDPOINT HANDS EVERY BEARER TOKEN IN THAT FILE TO ANY BROWSER THAT ASKS. That is
-// deliberate and safe for the default — examples/wander/fuse.demo.yml holds only
-// obviously-fake, checked-in demo tokens that grant access to nothing real. NEVER point
-// FUSE_DEMO_CONFIG at ~/.fuse/config.yml or any file with a credential you care about; the
-// override exists so a test (or a demo on ephemeral ports) can supply its own demo file.
-const DEMO_CONFIG = process.env.FUSE_DEMO_CONFIG || path.join(__dirname, "fuse.demo.yml");
+// deliberate and safe for the DEFAULT — examples/wander/fuse.demo.yml holds only
+// obviously-fake, checked-in demo tokens that grant access to nothing real.
+//
+// So the override FAILS CLOSED rather than merely warning: if FUSE_DEMO_CONFIG resolves to
+// anything other than the checked-in fuse.demo.yml, /demo-users.json REFUSES to publish
+// unless the operator ALSO sets FUSE_DEMO_PUBLISH_TOKENS=1. Two independent, deliberate
+// acts are required before this process will read credentials out of a file it does not
+// ship — pointing it at ~/.fuse/config.yml by accident (or by a stale shell export) can no
+// longer leak every real `loop_server.auth` token in it. The opt-in exists because tests
+// and ephemeral-port demos legitimately supply their own DEMO config.
+const DEFAULT_DEMO_CONFIG = path.join(__dirname, "fuse.demo.yml");
+const DEMO_CONFIG = process.env.FUSE_DEMO_CONFIG || DEFAULT_DEMO_CONFIG;
 const DEMO_CONFIG_OVERRIDDEN = Boolean(process.env.FUSE_DEMO_CONFIG);
+
+// realOrAbs resolves symlinks and `..` so the default check compares real files, not
+// spellings of a path. A file that does not exist falls back to its absolute form (it can
+// only fail the comparison, never spuriously pass it).
+function realOrAbs(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+const DEMO_CONFIG_IS_DEFAULT = realOrAbs(DEMO_CONFIG) === realOrAbs(DEFAULT_DEMO_CONFIG);
+const DEMO_PUBLISH_OPT_IN = process.env.FUSE_DEMO_PUBLISH_TOKENS === "1";
+const DEMO_PUBLISH_ALLOWED = DEMO_CONFIG_IS_DEFAULT || DEMO_PUBLISH_OPT_IN;
 
 // readDemoUsers extracts the `loop_server.auth` entries from a fuse config. It is a
 // deliberately tiny, indentation-aware reader for exactly that one block rather than a
@@ -142,8 +176,23 @@ const server = http.createServer((req, res) => {
   }
 
   // Demo-only: the user picker's directory. Read per request so editing the demo config
-  // does not need a restart. See DEMO_CONFIG's warning — this publishes those tokens.
+  // does not need a restart. See DEMO_CONFIG's warning — this publishes those tokens, which
+  // is why an overridden config without the explicit opt-in is refused here WITHOUT the file
+  // ever being read. app.js treats a non-200 as "no directory" and degrades the picker to
+  // the built-in dev credential, so refusing is a safe default rather than a broken page.
   if (url.pathname === "/demo-users.json") {
+    if (!DEMO_PUBLISH_ALLOWED) {
+      res.writeHead(403, { "content-type": "application/json", "cache-control": "no-store" });
+      res.end(
+        JSON.stringify({
+          error:
+            "refusing to publish bearer tokens from an overridden FUSE_DEMO_CONFIG; " +
+            "set FUSE_DEMO_PUBLISH_TOKENS=1 only if that file is a DEMO config",
+          config: DEMO_CONFIG,
+        }),
+      );
+      return;
+    }
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify(readDemoUsers(DEMO_CONFIG)));
     return;
@@ -199,16 +248,24 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`\n  Wander demo  ->  http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`\n  Wander demo  ->  http://${HOST}:${PORT}   (loopback only, by design)`);
   console.log(`  proxying Connect /fuse.loop.v1.* to  http://${UPSTREAM}  (no CORS, no WS relay)`);
-  const demoUsers = readDemoUsers(DEMO_CONFIG);
-  console.log(`  demo user picker: ${demoUsers.length} principal(s) from ${DEMO_CONFIG}`);
-  if (DEMO_CONFIG_OVERRIDDEN) {
+  if (!DEMO_PUBLISH_ALLOWED) {
     console.warn(
-      `  ⚠ FUSE_DEMO_CONFIG is set: GET /demo-users.json will publish every bearer token in\n` +
-        `    ${DEMO_CONFIG} to any browser that asks. Point it ONLY at a demo config.`,
+      `  ⛔ FUSE_DEMO_CONFIG points at ${DEMO_CONFIG}, which is not the checked-in demo config.\n` +
+        `     GET /demo-users.json will REFUSE (403) and the picker falls back to the dev\n` +
+        `     credential. If that file really is a demo config, set FUSE_DEMO_PUBLISH_TOKENS=1.`,
     );
+  } else {
+    const demoUsers = readDemoUsers(DEMO_CONFIG);
+    console.log(`  demo user picker: ${demoUsers.length} principal(s) from ${DEMO_CONFIG}`);
+    if (DEMO_CONFIG_OVERRIDDEN) {
+      console.warn(
+        `  ⚠ FUSE_DEMO_CONFIG + FUSE_DEMO_PUBLISH_TOKENS=1: GET /demo-users.json publishes every\n` +
+          `    bearer token in ${DEMO_CONFIG} to any browser that asks. Demo configs ONLY.`,
+      );
+    }
   }
   console.log("");
 });

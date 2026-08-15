@@ -388,6 +388,12 @@ func startRentalsMCP(t *testing.T, repoRoot, addr, audience, signingKey string, 
 
 // serveWanderWithDemoConfig starts server.js with FUSE_DEMO_CONFIG pointed at the config
 // the backend authenticates against, so the page's picker offers those exact principals.
+//
+// FUSE_DEMO_PUBLISH_TOKENS=1 is the deliberate second opt-in server.js now demands before it
+// will publish tokens from a config other than the checked-in fuse.demo.yml (this lane's is a
+// temp-dir COPY of it with the rentals url rewritten, so it is an override). That the lane
+// must say so explicitly is the point of the fail-closed guard; server_exposure_test.go pins
+// the refusal in the no-opt-in case.
 func serveWanderWithDemoConfig(t *testing.T, repoRoot, staticPort, backendAddr, demoConfig string) {
 	t.Helper()
 	serverJS := filepath.Join(repoRoot, "examples", "wander", "server.js")
@@ -398,6 +404,7 @@ func serveWanderWithDemoConfig(t *testing.T, repoRoot, staticPort, backendAddr, 
 		"PORT="+staticPort,
 		"FUSE_NET_ADDR="+backendAddr,
 		"FUSE_DEMO_CONFIG="+demoConfig,
+		"FUSE_DEMO_PUBLISH_TOKENS=1",
 	)
 	var out syncBuffer
 	cmd.Stdout = &out

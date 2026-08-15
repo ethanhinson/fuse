@@ -77,7 +77,10 @@ fuse_pid=$!
 # Give the backends a moment to bind.
 sleep 1
 
-echo "[wander] serving the page on http://localhost:${PORT}…"
+# server.js binds 127.0.0.1 ONLY (it publishes demo bearer tokens and reverse-proxies them
+# into the loop backend, so it must never be LAN-reachable). To view the demo from another
+# machine, tunnel: ssh -L "${PORT}:127.0.0.1:${PORT}" this-box.
+echo "[wander] serving the page on http://127.0.0.1:${PORT}…"
 FUSE_NET_ADDR="$FUSE_NET_ADDR" PORT="$PORT" node "$here/server.js" &
 static_pid=$!
 

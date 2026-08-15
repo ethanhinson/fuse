@@ -83,6 +83,18 @@ It also exposes one test-only control, `/__cut`, which forcibly destroys every i
 proxied Connect socket. That is how the browser lane stages a deterministic mid-stream
 network kill; nothing calls it in normal use.
 
+**`server.js` binds `127.0.0.1` only, and that is not configurable.** It publishes demo
+bearer tokens at `/demo-users.json` and forwards `Authorization` verbatim through the proxy
+into your local `loop-serve-net`, so a LAN-reachable listener would let any peer fetch a
+credential and then drive your backend with it. View a remote demo through a tunnel
+(`ssh -L 5173:127.0.0.1:5173 box`), never by widening the bind.
+
+The token endpoint also **fails closed** on an override: point `FUSE_DEMO_CONFIG` at
+anything other than the checked-in `examples/wander/fuse.demo.yml` and `/demo-users.json`
+answers `403` (the picker degrades to the built-in dev credential) unless you *also* set
+`FUSE_DEMO_PUBLISH_TOKENS=1`. That second, explicit opt-in is what stops a stale
+`FUSE_DEMO_CONFIG=~/.fuse/config.yml` from handing out every real `loop_server.auth` token.
+
 ## Run it
 
 ```sh
@@ -92,7 +104,7 @@ cp examples/wander/fuse.demo.yml ~/.fuse/config.yml  # or merge it into yours, b
 
 # then:
 ./examples/wander/run.sh    # SDK bundle + rentals MCP server + loop-serve-net + the page
-# open http://localhost:5173
+# open http://127.0.0.1:5173   (loopback only — server.js does not bind the LAN)
 ```
 
 `run.sh` is the whole demo in one command: alongside the bundle and `loop-serve-net` it
