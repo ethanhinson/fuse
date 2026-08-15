@@ -21,13 +21,16 @@ package rentals
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -91,8 +94,17 @@ type Server struct {
 	// verification key). A token is authorized under the tenant whose key verifies it.
 	tenantKeys map[event.TenantID][]byte
 
-	mu        sync.Mutex
-	sseConns  []chan string
+	mu sync.Mutex
+	// sseConns maps a SESSION ID to that session's SSE delivery channel. A JSON-RPC
+	// response is routed to exactly one entry — the session whose POST carried the id —
+	// never fanned out. Broadcasting would put one principal's response frame on another
+	// principal's stream, and since fuse's MCP client numbers request ids PER CLIENT
+	// (internal/mcp/http_client.go), the two id spaces collide by construction, so a
+	// stray frame can resolve the OTHER principal's pending call. An entry is removed
+	// when its handleSSE returns, so a long-lived process does not accumulate dead
+	// streams. Never nil (see newServer).
+	sseConns  map[string]chan string
+	sseSeq    uint64   // monotonic fallback discriminator for session ids
 	authSeen  []string // Authorization header per tools/call, in arrival order
 	resources []string // MCP-Resource header per tools/call, in arrival order
 }
@@ -121,6 +133,7 @@ func newServer(cfg Config) *Server {
 		audience:   cfg.Audience,
 		tenantKeys: map[event.TenantID][]byte{},
 		favorites:  cfg.Favorites,
+		sseConns:   map[string]chan string{},
 	}
 	if s.data == nil {
 		s.data = CannedData{}
@@ -205,8 +218,84 @@ func (s *Server) CapturedResources() []string {
 	return append([]string(nil), s.resources...)
 }
 
+// sseConnCount reports how many SSE streams are currently registered. It exists so a
+// test can assert the registry is pruned when a client disconnects: a long-lived rentals
+// process (cmd/rentals-mcp, one MCP manager per loop) must not accumulate dead streams.
+func (s *Server) sseConnCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sseConns)
+}
+
+// sessionParam is the query parameter naming the SSE session a POST belongs to. The
+// server advertises it on the endpoint event; the client (per the MCP HTTP/SSE
+// transport) POSTs to the advertised URL verbatim, so the parameter comes back on every
+// message and the response can be routed to the stream that asked for it.
+const sessionParam = "sessionId"
+
+// newSessionID mints an unguessable session id. A session id is a routing capability —
+// holding it is what lets a POST address a stream — so it comes from crypto/rand, with a
+// monotonic counter suffix so ids stay distinct even if the entropy source ever repeats.
+func (s *Server) newSessionID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failing is not survivable for a capability, but this is a demo
+		// server: degrade to the counter rather than kill the stream. The counter alone
+		// still guarantees DISTINCTNESS (the isolation property); only unguessability
+		// is lost.
+		b = [16]byte{}
+	}
+	s.mu.Lock()
+	s.sseSeq++
+	n := s.sseSeq
+	s.mu.Unlock()
+	return fmt.Sprintf("%s-%d", hex.EncodeToString(b[:]), n)
+}
+
+// registerSSE installs ch under a fresh session id and returns that id.
+func (s *Server) registerSSE(ch chan string) string {
+	id := s.newSessionID()
+	s.mu.Lock()
+	s.sseConns[id] = ch
+	s.mu.Unlock()
+	return id
+}
+
+// unregisterSSE removes a session's channel. It is deliberately by ID, not by channel
+// value: identity is what crosses the lock boundary, never a live handle to state
+// another goroutine may be using. The channel is never closed — a departed session's
+// buffered channel is simply dropped, so no delivery can ever race a close.
+func (s *Server) unregisterSSE(id string) {
+	s.mu.Lock()
+	delete(s.sseConns, id)
+	s.mu.Unlock()
+}
+
+// deliver routes one frame to a single session. The membership lookup and the
+// non-blocking send happen under ONE lock hold, so a session that unregistered
+// concurrently simply receives nothing — there is no window in which delivery targets a
+// stream that has already gone away. An unknown or empty session id delivers nowhere:
+// this boundary fails closed, because guessing wrong means writing one principal's data
+// onto another principal's stream.
+func (s *Server) deliver(sessionID, frame string) {
+	if sessionID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.sseConns[sessionID]
+	if !ok {
+		return
+	}
+	select {
+	case ch <- frame:
+	default: // slow or wedged reader: drop rather than block the POST handler
+	}
+}
+
 // handleSSE holds one long-lived SSE stream per client, announcing the /messages
-// endpoint then relaying JSON-RPC responses.
+// endpoint — carrying THIS stream's session id — then relaying the JSON-RPC responses
+// addressed to that session.
 func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -216,10 +305,17 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.WriteHeader(http.StatusOK)
 	ch := make(chan string, 16)
-	s.mu.Lock()
-	s.sseConns = append(s.sseConns, ch)
-	s.mu.Unlock()
-	fmt.Fprintf(w, "event: endpoint\ndata: http://%s/messages\n\n", r.Host)
+	sessionID := s.registerSSE(ch)
+	// Pruned on EVERY exit path, so a long-lived server (cmd/rentals-mcp, one MCP
+	// manager per loop) does not accumulate the streams of loops that have gone away.
+	defer s.unregisterSSE(sessionID)
+	endpoint := url.URL{
+		Scheme:   "http",
+		Host:     r.Host,
+		Path:     "/messages",
+		RawQuery: url.Values{sessionParam: []string{sessionID}}.Encode(),
+	}
+	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", endpoint.String())
 	flusher.Flush()
 	for {
 		select {
@@ -288,15 +384,9 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		resp["result"] = result
 	}
 	b, _ := json.Marshal(resp)
-	s.mu.Lock()
-	conns := append([]chan string(nil), s.sseConns...)
-	s.mu.Unlock()
-	for _, c := range conns {
-		select {
-		case c <- string(b):
-		default:
-		}
-	}
+	// Route to the ONE session that asked, identified by the query parameter the
+	// endpoint event advertised on that session's stream.
+	s.deliver(r.URL.Query().Get(sessionParam), string(b))
 	w.WriteHeader(http.StatusAccepted)
 }
 

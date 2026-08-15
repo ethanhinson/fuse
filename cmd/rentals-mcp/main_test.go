@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -111,8 +112,18 @@ func TestRunServesSSEEndpointEvent(t *testing.T) {
 	if event != "endpoint" {
 		t.Fatalf("SSE event = %q, want %q", event, "endpoint")
 	}
-	if want := "http://" + addr + "/messages"; data != want {
-		t.Fatalf("endpoint data = %q, want %q", data, want)
+	// The advertised POST URL is this stream's own: /messages plus the session id the
+	// server routes responses by, so one loop's response frame is never written onto
+	// another loop's stream. Asserted structurally — the id itself is random per stream.
+	u, err := url.Parse(data)
+	if err != nil {
+		t.Fatalf("endpoint data %q is not a URL: %v", data, err)
+	}
+	if want := "http://" + addr; u.Scheme+"://"+u.Host != want || u.Path != "/messages" {
+		t.Fatalf("endpoint data = %q, want %s/messages with a session id", data, want)
+	}
+	if u.Query().Get("sessionId") == "" {
+		t.Fatalf("endpoint data = %q carries no sessionId; the server cannot route a POST back to its stream", data)
 	}
 }
 
