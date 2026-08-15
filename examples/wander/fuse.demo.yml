@@ -1,0 +1,69 @@
+# Wander demo fuse config (change #0060).
+#
+# DEMO ONLY. Every credential in this file is an obviously-fake, checked-in
+# placeholder. It grants access to nothing real and MUST NOT be reused, copied
+# into a deployed server, or treated as a secret.
+#
+# How to use it: merge this file into your TRUSTED ~/.fuse/config.yml.
+#   cp examples/wander/fuse.demo.yml ~/.fuse/config.yml   # or merge by hand
+# It cannot be loaded from a repo-plantable .fuse.local.yml: `loop_server.auth`
+# and `tool_identity` are credential surfaces honored only from the home file
+# (ADR-0006), so a checked-in file can never mint or widen credentials.
+#
+# It is an OVERLAY: it declares only the blocks the demo needs (the rentals MCP
+# server, the identity signing key, and the demo user directory). Keep your own
+# `gateway:`/`models:` blocks; without them the built-in defaults apply.
+#
+# Companion process — start the rentals MCP server with MATCHING values:
+#   RENTALS_ADDR=127.0.0.1:8091 \
+#   RENTALS_AUDIENCE=https://rentals.demo.fuse.local \
+#   RENTALS_SIGNING_KEY=demo-not-a-secret-wander-rentals-signing-key \
+#   RENTALS_TENANTS=acme,globex \
+#   RENTALS_FAVORITES_DIR=/tmp/wander-favorites \
+#   RENTALS_DATA=auto \
+#   go run ./cmd/rentals-mcp
+# The three values that MUST agree on both sides:
+#   mcp_servers[rentals].url      <-> RENTALS_ADDR
+#   mcp_servers[rentals].audience <-> RENTALS_AUDIENCE
+#   tool_identity.signing_key     <-> RENTALS_SIGNING_KEY
+# and every tenant appearing in loop_server.auth below must appear in
+# RENTALS_TENANTS — fuse mints under a per-tenant key derived from the signing
+# key, and the rentals server derives verification keys the same way, so a
+# tenant missing there makes that user's every call unauthorized.
+
+mcp_servers:
+  # The rentals server as an identity-propagating (TierOAuth) target: fuse mints
+  # a per-call, audience-bound delegation token from the CALLING principal, and
+  # the rentals server adjudicates the favorite into that principal's own set.
+  - name: rentals
+    transport: sse
+    url: http://127.0.0.1:8091/sse
+    audience: https://rentals.demo.fuse.local
+    auth:
+      type: identity
+
+tool_identity:
+  # DEMO KEY — fake, checked-in, not a secret. Must equal RENTALS_SIGNING_KEY.
+  signing_key: demo-not-a-secret-wander-rentals-signing-key
+  ttl: 5m
+  # Subject stamped on the non-networked (CLI/shell) paths, where there is no
+  # bearer token to resolve a principal from. The browser demo goes through
+  # loop-serve-net and uses the directory below instead.
+  local_subject: demo-local
+
+loop_server:
+  # D5's user directory: the demo bearer tokens the UI's token picker offers.
+  # Each maps to a DISTINCT {tenant, subject}, which is what makes switching
+  # users show a different favorites list.
+  #
+  # DEMO TOKENS — obviously fake, checked-in, and deliberately not
+  # secret-shaped. Anyone can read them; that is the point of a demo. Replace
+  # them (and the signing key above) before pointing anything real at this.
+  auth:
+    - token: demo-token-alice-not-a-secret
+      tenant: acme
+      subject: alice
+    - token: demo-token-bob-not-a-secret
+      tenant: globex
+      subject: bob
+  lease_ttl: 30s
