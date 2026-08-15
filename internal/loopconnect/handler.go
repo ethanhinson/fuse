@@ -233,7 +233,20 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
 		return nil, aerr
 	}
-	if err := h.rt.Send(ctx, tenant, m.LoopId, m.Input); err != nil {
+	err := h.rt.Send(ctx, tenant, m.LoopId, m.Input)
+	// A finished loop may be RESUMABLE (change 0054, D3): a persistent conversational
+	// session whose park was reaped after a disconnect can be revived. Rather than
+	// surfacing CodeFailedPrecondition, transparently resume it and retry the Send once,
+	// so a client that simply reconnects and sends keeps chatting without a bespoke
+	// resume call. Resume is tenant-scoped (ADR-0034); if it cannot revive the loop
+	// (genuinely unknown, or live on another instance), the retry's error falls through
+	// to the mapping below unchanged.
+	if errors.Is(err, runtime.ErrLoopFinished) {
+		if _, rerr := h.rt.Resume(ctx, tenant, m.LoopId); rerr == nil {
+			err = h.rt.Send(ctx, tenant, m.LoopId, m.Input)
+		}
+	}
+	if err != nil {
 		apiOutcome = observeotel.OutcomeFromError(ctx, err)
 		switch {
 		case errors.Is(err, runtime.ErrLoopNotFound):

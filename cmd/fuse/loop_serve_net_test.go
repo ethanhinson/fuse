@@ -120,6 +120,12 @@ func (f *netFakeRuntime) Send(ctx context.Context, tenant event.TenantID, loopID
 func (f *netFakeRuntime) Spawn(ctx context.Context, loopID string, opts runtime.SpawnOpts) (runtime.SpawnHandle, error) {
 	return nil, nil
 }
+
+// Resume is a no-op stub for this fake (change 0054): returns a handle for the same
+// loop id so the handler's resume path compiles/exercises without a real runtime.
+func (f *netFakeRuntime) Resume(ctx context.Context, tenant event.TenantID, loopID string) (runtime.LoopHandle, error) {
+	return netFakeHandle{id: loopID}, nil
+}
 func (f *netFakeRuntime) Observe(ctx context.Context, tenant event.TenantID, loopID string) (<-chan event.Event, func(), error) {
 	return f.live, func() {}, nil
 }
