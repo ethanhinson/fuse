@@ -24,11 +24,11 @@ That makes the deliverables split across two trees, which is normal docket mecha
 | Deliverable | Tree / branch | Owner |
 |---|---|---|
 | The spec | `docket` (already landed at groom time) | — already done |
-| **ADR-0044** — "bash is contained, not credentialed" | `docket` (`docs/adrs/`) | Task 1, via the `docket-adr` dispatch |
+| **ADR-0044** — "bash is contained, not credentialed" | `docket` (`docs/adrs/`) | Parent step, via the `docket-adr` dispatch |
 | **Design record** — what was decided, what is now unblocked | `feat/bash-tool-egress-containment` (`docs/results/`) | Task 2 |
-| `adrs: [44]` back-link on the change | `docket` | parent, after Task 1 returns |
+| `adrs: [44]` back-link on the change | `docket` | parent, after the parent step returns |
 
-## Task 1 — Mint ADR-0044: containment, not credentialing
+## Parent step — Mint ADR-0044: containment, not credentialing
 
 **Not a build-worker task.** ADRs are docket metadata; they land on the metadata branch through the
 `docket-adr` agent, which assigns the number, writes the file, updates the index, and commits on

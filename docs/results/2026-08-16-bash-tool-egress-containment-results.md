@@ -178,7 +178,10 @@ are the merge-gate items a human must do by reading.
 were minted**. File these three with `docket-new-change`; everything needed to file them is here.
 
 Dependency shape: **A is the floor; B and C both `depends_on: [A]` and are independent of each
-other**, so they may be built in either order or in parallel once A lands.
+other**, so they may be built in either order or in parallel once A lands. Since `depends_on` takes
+minted numeric change ids and none are minted yet: file A first, note the id `docket-new-change`
+mints for it, then file B and C with `depends_on: [<A's minted id>]` substituted for the literal
+`A`.
 
 ```
         A (container substrate + env-scrub + off-switch)
@@ -212,10 +215,10 @@ resolved strictly within the mount and unable to escape it. Local mounts the fus
 
 These are deliberately unsettled here and must be resolved when A is designed:
 
-1. **Container-runtime tier.** Which runtime backs the seam in which tier — runc (shared kernel, not
-   a hard security boundary) as the local/default, versus gVisor or Kata (real isolation, capable
-   host required) for the hardened multi-tenant tier. Record the seam and the chosen default in A's
-   ADR.
+1. **Container-runtime tier.** The seam shape and runc-as-zero-config-local-default are **settled**
+   (see "The settled posture" above); what is **open** is which runtime each hardened/multi-tenant
+   tier selects — gVisor or Kata (real isolation, capable host required) — to be confirmed and
+   recorded in A's ADR.
 2. **Deploy-target coupling.** The posture requires a container-capable host and does not degrade on
    container-less serverless targets — state this as an explicit deployment constraint in A rather
    than discovering it at build time. Docker-in-Docker and mounted-socket setups carry a
