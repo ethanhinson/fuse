@@ -592,6 +592,23 @@ func TestDetailNavigationMovesOverRowsIncludingHeaders(t *testing.T) {
 	}
 }
 
+// TestDetailFooterHintAdvertisesTurnToggle pins the detail-pane footer hint so it
+// keeps naming enter's toggle role on a turn header. The old "enter expand" wording
+// under-advertised collapse — enter is a collapse/expand toggle on a header, not
+// expand-only — and a user reading the hint could not discover collapse (change 0066).
+func TestDetailFooterHintAdvertisesTurnToggle(t *testing.T) {
+	m, _ := detailModelWithTurns(t)
+	// A wide pane so fitHelp renders the full (not the terse) hint.
+	m.width = 140
+	out := stripANSITurns(strings.Join(m.buildDetailLines(120), "\n"))
+	if strings.Contains(out, "enter expand ") {
+		t.Errorf("footer still uses the expand-only wording 'enter expand':\n%s", out)
+	}
+	if !strings.Contains(out, "enter toggle/inspect") {
+		t.Errorf("footer hint does not advertise enter's turn toggle:\n%s", out)
+	}
+}
+
 // TestEventCountStillCountsEventsNotRows — other code reads m.eventCount.
 func TestEventCountStillCountsEventsNotRows(t *testing.T) {
 	m, events := detailModelWithTurns(t)

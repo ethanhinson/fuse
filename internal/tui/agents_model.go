@@ -904,8 +904,12 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 			evtLines = all[m.detailScroll:endIdx]
 		}
 	}
+	// "enter" is context-sensitive in the detail pane: on a turn header it
+	// toggles the group collapsed/expanded (change 0066); on an event row it
+	// drills in. The hint names the toggle so collapse is discoverable — the
+	// old "enter expand" under-advertised it (expand-only).
 	help := fitHelp(
-		"j/k select  enter expand  s original  b board  g/G first/last  esc back",
+		"j/k select  enter toggle/inspect  s original  b board  g/G first/last  esc back",
 		"j/k · enter · s orig · b board · esc",
 		w,
 	)
