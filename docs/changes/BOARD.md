@@ -1,6 +1,6 @@
 # Backlog
 
-**66 changes** — 🟡 4 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 53 done · 🗑️ 6 killed
+**66 changes** — 🟡 4 proposed · ⚪ 2 deferred · ✅ 54 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (4)
 
@@ -18,12 +18,6 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0066](active/0066-agents-tab-multiturn-turn-groups.md) | Agents tab & blackboard — turn-aware multiturn UI (collapsible turn groups + per-turn timing) | `medium` | `fix` | [#63](https://github.com/ethanhinson/fuse/pull/63) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
@@ -33,7 +27,6 @@ graph TD
   0058 --> 0063
   0063 --> 0064
   0063 --> 0065
-  0066
   0012:::done
   0052:::done
   0054:::done
@@ -42,10 +35,11 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (59)</summary>
+<details><summary>✅🗑️ Archive — done + killed (60)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0066](archive/2026-08-16-0066-agents-tab-multiturn-turn-groups.md) | Agents tab & blackboard — turn-aware multiturn UI (collapsible turn groups + per-turn timing) | 2026-08-16 |
 | [0060](archive/2026-08-16-0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md) | Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app | 2026-08-16 |
 | [0058](archive/2026-08-16-0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | 2026-08-16 |
 | [0054](archive/2026-08-15-0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | 2026-08-15 |
@@ -60,7 +54,6 @@ graph TD
 | [0049](archive/2026-08-11-0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | 2026-08-11 |
 | [0048](archive/2026-08-11-0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | 2026-08-11 |
 | [0047](archive/2026-08-11-0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | 2026-08-11 |
-| [0046](archive/2026-08-10-0046-multi-loop-host-deglobalize-event-store.md) | De-globalize the event store + multi-loop host — one process hosts N loops keyed by loop_id | 2026-08-10 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -72,6 +65,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 38 done |
+| [2026-08](archive/) | 39 done |
 
 </details>
