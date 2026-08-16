@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-15-wander-live-rentals-mcp-demo-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-wander-live-rentals-mcp-demo-design.md) |
-| Plan | [2026-08-15-wander-live-rentals-mcp-demo-plan.md](https://github.com/ethanhinson/fuse/blob/feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend/docs/superpowers/plans/2026-08-15-wander-live-rentals-mcp-demo-plan.md) |
-| Results | [2026-08-15-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend-results.md](https://github.com/ethanhinson/fuse/blob/feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend/docs/results/2026-08-15-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend-results.md) |
+| Plan | [2026-08-15-wander-live-rentals-mcp-demo-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-15-wander-live-rentals-mcp-demo-plan.md) |
+| Results | [2026-08-15-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-15-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend-results.md) |
 | PR | [#61](https://github.com/ethanhinson/fuse/pull/61) |
 | ADRs | [ADR-0043](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0043-example-apps-never-publish-credentials-by-default.md) |
 <!-- docket:artifacts:end -->
