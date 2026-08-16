@@ -2,7 +2,7 @@
 id: 58
 slug: bash-tool-egress-containment
 title: bash tool egress containment — define the authz posture for a tool that can reach anything
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-11
@@ -13,12 +13,12 @@ discovered_from: [52]
 adrs: [44]
 spec: docs/superpowers/specs/2026-08-15-bash-tool-egress-containment-design.md
 plan: docs/superpowers/plans/2026-08-16-bash-tool-egress-containment-plan.md
-results:
+results: docs/results/2026-08-16-bash-tool-egress-containment-results.md
 trivial: false
 auto_groomable:
 branch: feat/bash-tool-egress-containment
-claimed_at: 2026-08-16T19:51:34Z
-pr:
+claimed_at: 2026-08-16T19:56:06Z
+pr: https://github.com/ethanhinson/fuse/pull/62
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-15-bash-tool-egress-containment-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-bash-tool-egress-containment-design.md) |
 | Plan | [2026-08-16-bash-tool-egress-containment-plan.md](https://github.com/ethanhinson/fuse/blob/feat/bash-tool-egress-containment/docs/superpowers/plans/2026-08-16-bash-tool-egress-containment-plan.md) |
+| Results | [2026-08-16-bash-tool-egress-containment-results.md](https://github.com/ethanhinson/fuse/blob/feat/bash-tool-egress-containment/docs/results/2026-08-16-bash-tool-egress-containment-results.md) |
+| PR | [#62](https://github.com/ethanhinson/fuse/pull/62) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
