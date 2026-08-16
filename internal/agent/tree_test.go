@@ -453,3 +453,71 @@ func TestTurnMarksRaceCleanUnderConcurrentSnapshot(t *testing.T) {
 		}
 	}
 }
+
+// --- change 0066: the prompt rides on the turn mark -----------------------
+
+// TestBeginTurnWithPromptStoresPromptOnItsOwnMark pins the source of the turn
+// group header's preview: the conversational prompt never enters the event
+// stream (there is no user-input EventKind), so the mark is the only carrier.
+func TestBeginTurnWithPromptStoresPromptOnItsOwnMark(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+
+	tree.BeginTurnWithPrompt("first prompt")
+	tree.EndTurn(false)
+	tree.BeginTurnWithPrompt("second prompt")
+
+	turns := tree.Node(tree.RootID()).Snapshot().Turns
+	if len(turns) != 2 {
+		t.Fatalf("len(Turns) = %d, want 2", len(turns))
+	}
+	if turns[0].Prompt != "first prompt" {
+		t.Errorf("Turns[0].Prompt = %q, want %q", turns[0].Prompt, "first prompt")
+	}
+	if turns[1].Prompt != "second prompt" {
+		t.Errorf("Turns[1].Prompt = %q, want %q", turns[1].Prompt, "second prompt")
+	}
+}
+
+// TestBeginTurnWithPromptLeavesEarlierMarksUntouched: opening a new turn must
+// not rewrite settled history, the same invariant EndTurn already honors.
+func TestBeginTurnWithPromptLeavesEarlierMarksUntouched(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	tree.BeginTurnWithPrompt("keep me")
+	before := tree.Node(tree.RootID()).Snapshot().Turns[0]
+
+	tree.BeginTurnWithPrompt("a much later prompt")
+	tree.BeginTurnWithPrompt("later still")
+
+	after := tree.Node(tree.RootID()).Snapshot().Turns[0]
+	if after.Prompt != before.Prompt || after.Turn != before.Turn || !after.StartedAt.Equal(before.StartedAt) {
+		t.Errorf("turn 1 mark changed: %+v -> %+v", before, after)
+	}
+}
+
+// TestBeginTurnYieldsEmptyPrompt: the no-argument wrapper stays valid for the
+// callers that have no prompt (research_probe), and records no preview.
+func TestBeginTurnYieldsEmptyPrompt(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	tree.BeginTurn()
+
+	turns := tree.Node(tree.RootID()).Snapshot().Turns
+	if len(turns) != 1 {
+		t.Fatalf("len(Turns) = %d, want 1", len(turns))
+	}
+	if turns[0].Prompt != "" {
+		t.Errorf("BeginTurn() Prompt = %q, want empty", turns[0].Prompt)
+	}
+}
+
+// TestBeginTurnWithPromptStoresRawUnsanitized: sanitization belongs to the
+// renderer (learning sanitize-untrusted-bytes-fixed-width-tui) — the model must
+// not store a pre-mangled prompt.
+func TestBeginTurnWithPromptStoresRawUnsanitized(t *testing.T) {
+	raw := "line1\n\x1b[31mred\x1b[0m\ttabbed\r"
+	tree := NewAgentTree("root", "m")
+	tree.BeginTurnWithPrompt(raw)
+
+	if got := tree.Node(tree.RootID()).Snapshot().Turns[0].Prompt; got != raw {
+		t.Errorf("stored Prompt = %q, want the raw bytes %q", got, raw)
+	}
+}

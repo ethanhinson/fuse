@@ -93,6 +93,14 @@ type TurnMark struct {
 	Turn      int
 	StartedAt time.Time
 	EndedAt   time.Time // zero while the turn is in flight
+	// Prompt is the RAW user prompt that opened this turn, stored unsanitized
+	// and untruncated: the conversational prompt never enters the node's event
+	// stream (there is no user-input EventKind), so the turn mark is the only
+	// place the agents tab can read it from. It is operator/model-adjacent text
+	// — every consumer MUST sanitize and width-fit it at render time (change
+	// 0066, learning sanitize-untrusted-bytes-fixed-width-tui). Empty when the
+	// turn was opened without one.
+	Prompt string
 }
 
 // AgentNode represents one agent in the spawn tree.
@@ -353,7 +361,15 @@ func (t *AgentTree) SnapshotAll() []NodeView {
 // offsets in the agents tab are computed against it — rewriting it made every
 // prior-turn event render a negative offset (change 0066). Per-turn elapsed
 // time is derived from the last TurnMark instead.
-func (t *AgentTree) BeginTurn() {
+// It takes no argument and delegates to BeginTurnWithPrompt("") so existing
+// callers that have no prompt to hand stay valid.
+func (t *AgentTree) BeginTurn() { t.BeginTurnWithPrompt("") }
+
+// BeginTurnWithPrompt is BeginTurn carrying the user prompt that opened the
+// turn, recorded RAW on the new TurnMark. The agents tab renders it as the
+// turn group's header preview; it is stored unsanitized on purpose so the
+// renderer owns sanitization and width-fitting (change 0066).
+func (t *AgentTree) BeginTurnWithPrompt(prompt string) {
 	root := t.Node(t.rootID)
 	if root == nil {
 		return
@@ -365,7 +381,7 @@ func (t *AgentTree) BeginTurn() {
 		root.StartedAt = now
 	}
 	root.EndedAt = time.Time{}
-	root.Turns = append(root.Turns, TurnMark{Turn: len(root.Turns) + 1, StartedAt: now})
+	root.Turns = append(root.Turns, TurnMark{Turn: len(root.Turns) + 1, StartedAt: now, Prompt: prompt})
 	root.mu.Unlock()
 	t.Emit(TreeUpdate{NodeID: t.rootID})
 }
