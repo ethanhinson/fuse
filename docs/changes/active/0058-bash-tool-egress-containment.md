@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/bash-tool-egress-containment
-claimed_at: 2026-08-16T19:43:52Z
+claimed_at: 2026-08-16T19:44:58Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -67,3 +67,27 @@ Filed 2026-08-11 while reviewing #52 (PR #55) before merge. #52 propagates ident
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-16 — reconcile at claim
+
+Verified every premise the spec rests on against `origin/main` @ `4333c41`; **nothing invalidated, no
+scope adjustment**. The change stays design-only.
+
+- **The hole is still open, verbatim.** `internal/tools/bash.go` is byte-unchanged from the spec's
+  §1 quote: `exec.CommandContext(runCtx, "/bin/sh", "-c", a.Command)` with `cmd.Env` never set, so
+  the child still inherits fuse's whole process environment. No containment, env-scrub, or egress
+  control has landed anywhere in the tree in the interim.
+- **Dependency satisfied.** #52 is archived `done` (ADR-0036 accepted), as are #49 (ADR-0034) and
+  #55. The §2 framing argument — that `bash` cannot use #52's declared-target/per-call-choke-point
+  seam — is therefore evaluated against the merged seam, not a proposal.
+- **`related` drift, non-blocking.** #57 (`egress-identity-builtin-http-tools`) is now `deferred`
+  rather than proposed. It is only ever cited by this change as an *out-of-scope* sibling ("those
+  CAN use the #52 seam"), so its deferral changes nothing here: the boundary between the two
+  changes is mechanism-based, not schedule-based.
+- **ADR numbering.** The ledger head is ADR-0043, so this change's ADR mints at 0044 — a sibling to
+  ADR-0036 as the spec intends.
+- **Intervening work reviewed for interaction** (#0051 observability, #0054 durable sessions, #0060
+  Wander demo): none touches the tool-execution boundary, so none constrains this posture.
+
+Follow-on changes A/B/C from spec §4 remain unfiled and are left to the human (`auto_capture` is
+disabled repo-wide, and the spec explicitly reserves the filing to a human).
