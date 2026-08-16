@@ -45,6 +45,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0041](0041-operator-capability-for-process-global-observability.md) — Process-global observability mutations require an explicit operator capability (Accepted) ← change #51 · relates to ADR-0034, ADR-0040
 - [ADR-0042](0042-local-run-paths-adapt-observability-io.md) — Local run paths adapt observability I/O to the terminal, not the server posture (Accepted) ← change #61 · relates to ADR-0040
 - [ADR-0043](0043-example-apps-never-publish-credentials-by-default.md) — Example/demo apps never publish credentials by default — loopback bind + fail-closed token endpoints (Accepted) ← change #60 · relates to ADR-0034, ADR-0036
+- [ADR-0044](0044-bash-tool-contained-not-credentialed.md) — The bash tool is contained, not credentialed — a container boundary in every profile behind a pluggable runtime seam (Accepted) ← change #58 · relates to ADR-0034, ADR-0036
 
 ## Superseded / Reversed
 
