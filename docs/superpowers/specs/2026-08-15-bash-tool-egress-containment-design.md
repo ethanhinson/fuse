@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0058 — bash tool egress containment — define the authz posture for a tool that can reach anything](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0058-bash-tool-egress-containment.md)**
+> ↩ **[Change 0058 — bash tool egress containment — define the authz posture for a tool that can reach anything](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-16-0058-bash-tool-egress-containment.md)**
 <!-- docket:backlink:end -->
 
 # bash tool egress containment — design
