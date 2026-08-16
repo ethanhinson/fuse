@@ -1,3 +1,7 @@
+<!-- docket:backlink:start (generated — do not hand-edit) -->
+> ↩ **[Change 0058 — bash tool egress containment — define the authz posture for a tool that can reach anything](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0058-bash-tool-egress-containment.md)**
+<!-- docket:backlink:end -->
+
 # bash tool egress containment — results
 Change: #58 · Branch: feat/bash-tool-egress-containment · PR: (pending) · Plan: docs/superpowers/plans/2026-08-16-bash-tool-egress-containment-plan.md · ADRs: 44
 
