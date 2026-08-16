@@ -86,6 +86,15 @@ type AgentEvent struct {
 	TS      time.Time
 }
 
+// TurnMark records one conversational turn on the root node. Turn is a
+// UI-local 1-based ordinal — it is deliberately NOT event.UserInputPayload.Turn,
+// which counts the agent's inner tool-loop iterations (see change 0066).
+type TurnMark struct {
+	Turn      int
+	StartedAt time.Time
+	EndedAt   time.Time // zero while the turn is in flight
+}
+
 // AgentNode represents one agent in the spawn tree.
 type AgentNode struct {
 	ID        string
@@ -104,10 +113,15 @@ type AgentNode struct {
 	// set once at node creation and never mutated, so it needs no lock. (0034)
 	WorkflowRoot string
 	Events       []AgentEvent
-	children     []string
-	cancel       func() // set by Spawner; called by CancelNode
-	yields       int    // concurrent spawn_agent waits currently yielding this node's slot
-	mu           sync.Mutex
+	// Turns records one TurnMark per conversational turn, append-ordered, and is
+	// written only by AgentTree.BeginTurn/EndTurn on the ROOT node — child nodes
+	// leave it empty. Guarded by mu like the rest of the mutable state; UI code
+	// reads it through Snapshot's defensive copy, never directly. (0066)
+	Turns    []TurnMark
+	children []string
+	cancel   func() // set by Spawner; called by CancelNode
+	yields   int    // concurrent spawn_agent waits currently yielding this node's slot
+	mu       sync.Mutex
 }
 
 // AddEvent appends an event to the node, thread-safe.
@@ -176,6 +190,11 @@ type NodeView struct {
 	TokensIn     int
 	TokensOut    int
 	WorkflowRoot string // the workflow this node roots, if any (0034)
+	// Turns is a defensive copy of the node's conversational turn marks, taken
+	// under the node lock: a consumer cannot mutate node state through it, and
+	// the slice header cannot race a concurrent BeginTurn append. Empty for every
+	// node but the root. (0066)
+	Turns []TurnMark
 }
 
 // Snapshot returns a consistent view of the node's mutable state.
@@ -194,6 +213,7 @@ func (n *AgentNode) Snapshot() NodeView {
 		TokensIn:     n.TokensIn,
 		TokensOut:    n.TokensOut,
 		WorkflowRoot: n.WorkflowRoot,
+		Turns:        append([]TurnMark(nil), n.Turns...),
 	}
 }
 
@@ -324,18 +344,28 @@ func (t *AgentTree) SnapshotAll() []NodeView {
 	return out
 }
 
-// BeginTurn marks the root node running with a fresh clock. Called when a
-// user prompt starts a turn: the root's elapsed time measures the turn, not
-// the session (without this the agents view counts up forever).
+// BeginTurn marks the root node running and opens a new conversational turn.
+// Called when a user prompt starts a turn.
+//
+// It records a TurnMark rather than restarting root.StartedAt on every turn.
+// StartedAt is the SESSION origin: it stays zero until the first BeginTurn (see
+// the constructor's contract) and is never rewritten afterward, because event
+// offsets in the agents tab are computed against it — rewriting it made every
+// prior-turn event render a negative offset (change 0066). Per-turn elapsed
+// time is derived from the last TurnMark instead.
 func (t *AgentTree) BeginTurn() {
 	root := t.Node(t.rootID)
 	if root == nil {
 		return
 	}
+	now := time.Now()
 	root.mu.Lock()
 	root.Status = StatusRunning
-	root.StartedAt = time.Now()
+	if root.StartedAt.IsZero() {
+		root.StartedAt = now
+	}
 	root.EndedAt = time.Time{}
+	root.Turns = append(root.Turns, TurnMark{Turn: len(root.Turns) + 1, StartedAt: now})
 	root.mu.Unlock()
 	t.Emit(TreeUpdate{NodeID: t.rootID})
 }
@@ -355,7 +385,10 @@ func (t *AgentTree) SetRootModel(model string) {
 	t.Emit(TreeUpdate{NodeID: t.rootID})
 }
 
-// EndTurn freezes the root node's clock when the agent loop finishes.
+// EndTurn freezes the root node's clock when the agent loop finishes, and
+// closes the in-flight TurnMark. Only the LAST mark is stamped, and only while
+// its EndedAt is still zero: earlier turns are settled history and a redundant
+// EndTurn must not rewrite them (change 0066).
 func (t *AgentTree) EndTurn(failed bool) {
 	root := t.Node(t.rootID)
 	if root == nil {
@@ -365,9 +398,15 @@ func (t *AgentTree) EndTurn(failed bool) {
 	if failed {
 		status = StatusError
 	}
+	now := time.Now()
 	root.mu.Lock()
 	root.Status = status
-	root.EndedAt = time.Now()
+	root.EndedAt = now
+	if len(root.Turns) > 0 {
+		if last := &root.Turns[len(root.Turns)-1]; last.EndedAt.IsZero() {
+			last.EndedAt = now
+		}
+	}
 	root.mu.Unlock()
 	t.Emit(TreeUpdate{NodeID: t.rootID})
 }
