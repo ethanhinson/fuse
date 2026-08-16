@@ -1,12 +1,17 @@
 # Backlog
 
-**62 changes** — 🟡 2 proposed · ⚪ 2 deferred · ✅ 52 done · 🗑️ 6 killed
+**62 changes** — 🟢 1 in progress · 🟡 1 proposed · ⚪ 2 deferred · ✅ 52 done · 🗑️ 6 killed
 
-## 🟡 Proposed (2)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0058](active/0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | `medium` | `feat` | [spec](../superpowers/specs/2026-08-15-bash-tool-egress-containment-design.md) | `feat/bash-tool-egress-containment` |
+
+## 🟡 Proposed (1)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0058](active/0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | `medium` | `feat` | build-ready |
 | [0062](active/0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md) | Wander refresh-to-restore — light up #54 durable resume in the browser demo | `medium` | `feat` | build-ready |
 
 ## ⚪ Deferred (2)
