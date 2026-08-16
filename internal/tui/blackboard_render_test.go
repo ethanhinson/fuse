@@ -426,8 +426,12 @@ func TestBlackboardEntryOffsetsAreTurnRelative(t *testing.T) {
 	}
 	// alice/two was written 12.3s into turn 2 — measured against the session start
 	// it would be far larger, so this pins turn-relative attribution.
-	want := "+" + eventOffset(root, snap["alice/two"].WrittenAt)
-	if want != "+012.3s" {
+	//
+	// The blackboard meta is inline PROSE, not a fixed column, so it uses the
+	// UNPADDED form: the detail pane's zero-padded "+012.3s" reads as a rendering
+	// fault sitting next to "written by alice" (change 0066 live verification).
+	want := "+" + turnOffsetLabel(root, snap["alice/two"].WrittenAt)
+	if want != "+12.3s" {
 		t.Fatalf("fixture offset drifted: %q", want)
 	}
 	i := indexOfLineContaining(lines, "alice/two")
@@ -436,8 +440,14 @@ func TestBlackboardEntryOffsetsAreTurnRelative(t *testing.T) {
 	}
 	// The pre-turn-1 entry clamps to zero rather than going negative.
 	j := indexOfLineContaining(lines, "alice/early")
-	if !strings.Contains(lines[j+1], "+000.0s") {
-		t.Errorf("pre-turn-1 entry meta = %q, want clamped +000.0s", lines[j+1])
+	if !strings.Contains(lines[j+1], "+0.0s") {
+		t.Errorf("pre-turn-1 entry meta = %q, want clamped +0.0s", lines[j+1])
+	}
+	// No zero-padded offset survives anywhere on the board.
+	for _, l := range lines {
+		if strings.Contains(l, "written by") && strings.Contains(l, "· +0") && !strings.Contains(l, "· +0.0s") {
+			t.Errorf("zero-padded offset on the board: %q", l)
+		}
 	}
 }
 

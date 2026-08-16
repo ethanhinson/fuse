@@ -1069,7 +1069,7 @@ func (m *AgentsModel) blackboardBody(snap map[string]agent.BlackboardEntry, w in
 				meta := "  ⟨written by " + sanitizeDisplay(e.WriterLabel) + "⟩"
 				if turnAware {
 					// Turn-relative, clamped by the shared helper: structurally never negative.
-					meta = "  ⟨written by " + sanitizeDisplay(e.WriterLabel) + " · +" + eventOffset(root, e.WrittenAt) + "⟩"
+					meta = "  ⟨written by " + sanitizeDisplay(e.WriterLabel) + " · +" + turnOffsetLabel(root, e.WrittenAt) + "⟩"
 				}
 				for _, mr := range wrapToWidth(meta, w) {
 					body = append(body, metaStyle.Render(mr))
@@ -1432,6 +1432,20 @@ func eventOffset(n agent.NodeView, ts time.Time) string {
 		d = 0
 	}
 	return fmt.Sprintf("%05.1fs", d.Seconds())
+}
+
+// turnOffsetLabel is eventOffset's INLINE form: the same clamped, turn-relative
+// duration, without the zero padding. eventOffset pads to a fixed width because
+// the detail pane renders it inside a "[…]" column that must stay aligned; the
+// blackboard's "⟨written by alice · +12.3s⟩" is prose, where a padded "+012.3s"
+// reads as a rendering fault rather than a duration (found at change 0066's live
+// verification). Both share turnStartFor, so attribution cannot diverge.
+func turnOffsetLabel(n agent.NodeView, ts time.Time) string {
+	d := ts.Sub(turnStartFor(n, ts))
+	if d < 0 {
+		d = 0
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
 // buildEventViewLines renders one event's COMPLETE content, word-wrapped and
