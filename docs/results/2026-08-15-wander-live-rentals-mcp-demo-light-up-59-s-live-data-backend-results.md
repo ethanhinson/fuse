@@ -36,6 +36,37 @@ and the browser lanes drive it headlessly with canned data.
       (loopback-only, and fail-closed for any other config — see ADR-0043). The posture is sound; the
       product question of shipping any token-shaped string in the repo is yours.
 
+### Interactive verification outcomes (2026-08-16, at finalize)
+
+Run by the maintainer before merge. `TAVILY_API_KEY` sourced from `~/dev/llm-research-agent/.env`;
+loop backend on the local LiteLLM gateway (`glm` / cloud/glm-5.2), never Claude.
+
+- [x] **Live backend returns real listings — CONFIRMED.** Ran the production path
+      (`research.Resolve` → `NewLiveData` → `Search`) against the real Tavily API for three rental
+      queries. All returned 5 results, mapped to `Listing` cards with clean relevant titles and stable
+      deterministic `live-<hash>` IDs. The Tavily→card mapping works. City/price extraction behaved
+      exactly as documented (best-effort): city often empty or a ragged trailing segment
+      (`"Austin, TX - 334 Rentals | Trulia"`), price usually `0`, with occasional over-eager hits
+      (a Lake Tahoe result mapped `$7000` — almost certainly a property value, not a nightly rate) and
+      one non-listing result (`"Instagram"`). None of this is a bug; it is the demo-grade contract.
+- [x] **Demo comes up end to end from the documented path — CONFIRMED.** `run.sh` built the SDK
+      bundle + both binaries and stood up all three processes (rentals-mcp, loop-serve-net, static
+      page); `data=*rentals.LiveData provider=tavily`, page HTTP 200, 2 principals in the picker,
+      SSE endpoint reachable. (Ran on port 5273 rather than the default 5173, which was occupied by an
+      unrelated process on this machine.)
+- [x] **Observability wired end to end — CONFIRMED.** Enabled the `observability:` block against the
+      already-running `deploy/observability` compose stack. Loop `/metrics` served `fuse_` metrics on
+      :9090; Prometheus target `fuse` = up; traces exported through the OTLP collector into Tempo
+      (20+ `fuse.*` traces, incl. `fuse.api.request.start_loop` roots, queryable via
+      `{resource.service.name="fuse"}`). Two Grafana-UI gotchas noted, neither a fuse defect: the
+      Traces-Drilldown "Span rate" view needs a Tempo metrics-generator this dev stack does not
+      configure (`empty ring`), and the visual Search builder emits unquoted TraceQL that this Tempo
+      rejects — type the quoted query in the TraceQL tab instead.
+
+Not separately re-verified here (asserted by the automated lanes and/or a pure judgement call left to
+the maintainer): the ported UI look, the browser user-switch Saved-panel payoff, and the
+ship-the-demo-user-directory product question.
+
 ## Findings
 
 The whole-branch review (deep rung) returned **8 findings — 1 blocker, 3 important, 4 minor**. All 8
