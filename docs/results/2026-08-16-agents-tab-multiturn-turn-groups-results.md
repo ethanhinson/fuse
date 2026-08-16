@@ -1,3 +1,7 @@
+<!-- docket:backlink:start (generated — do not hand-edit) -->
+> ↩ **[Change 0066 — Agents tab & blackboard — turn-aware multiturn UI (collapsible turn groups + per-turn timing)](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0066-agents-tab-multiturn-turn-groups.md)**
+<!-- docket:backlink:end -->
+
 # Agents tab & blackboard — turn-aware multiturn UI — results
 
 Change [#0066](../changes/active/0066-agents-tab-multiturn-turn-groups.md) ·
@@ -188,3 +192,52 @@ This change consumes the event stream; it must not alter it.
 - The live test's turn timings depend on a 400ms scripted gateway pause; it is not
   wall-clock sensitive beyond "turn 3 is shorter than the session", but it is the one
   assertion that could get flaky on a very loaded machine.
+
+## Whole-branch review and in-branch fixes (2026-08-16, post-verification)
+
+The branch was reviewed at the **deep** rung (selected by rule: the highest build profile any task
+routed to was `premium`, and the whole-branch diff exceeded the 1500-line bump threshold). The
+reviewer returned **8 findings: 0 blocker, 1 important, 7 minor**, and explicitly cleared the seven
+risks it was asked to scrutinize — single-rule turn attribution, the `len(Turns) <= 1` backward-compat
+guard, the exact-width invariant, selection/scroll bookkeeping, the `blackboardGroupStarts` line-number
+equality, and the `Turns` locking discipline.
+
+All 8 were fixed in-branch across three tasks, then the full suite was re-run green:
+
+| # | Sev | Finding | Fixed by |
+|---|---|---|---|
+| 1 | important | Turn-header prompt preview did not reserve a cell for the ellipsis, so an overflowing prompt pushed the header to `w+1` cells and `fitLine` silently clipped the **duration / event-count suffix** (`… · running` → `… · runnin`) | `2519d86` |
+| 3 | minor | Root cause of #1 — a cell-denominated budget was passed to a **byte**-denominated truncator, which also under-filled CJK/emoji previews by ~2/3 | `2519d86` |
+| 2 | minor | The test meant to catch #1 passed for the wrong reason (its fixture's multibyte prefix masked the byte/cell mismatch) | `2519d86` |
+| 5 | minor | Toggling the **current** turn was not symmetric: `followTail` stayed set, so expanding re-snapped the cursor onto an event and the next `enter` drilled in instead of collapsing back | `d7b495a` |
+| 6 | minor | On a turn-aware board, a writer group confined to one turn printed turn-relative offsets with **no turn label** | `d7b495a` |
+| 7 | minor | `renderEventLines` had become dead production code carrying a comment claiming it was still on the render path | `d7b495a` |
+| 8 | minor | The live e2e was wall-clock-coupled (fixed sleeps, a duration-ratio assertion) and flake-prone under load | `d7b495a` |
+| 4 | minor | `syncEventSel` took a `rows` parameter it never read, hiding its real dependency on `m.detRows` | `71a4d0e` |
+
+Finding 1 is the one worth a second look at the merge gate: it was invisible to
+`TestDetailRowsWidthInvariant` precisely because `fitLine` guarantees the width that test asserts —
+the row was always `w` cells, it was the *content* that was being eaten. The fix truncates in display
+cells via a new `truncateCells` helper and the regression test now asserts the header's suffix
+survives verbatim rather than just checking the row width.
+
+**Live verification still holds after the fixes.** `internal/tui/multiturn_live_e2e_test.go` runs as
+part of `make test` (it self-skips only under `-short`), so the post-fix green suite re-drove the full
+three-prompt session end to end. Finding 8's de-flaking also added a `-short` skip, so a maintainer
+can now isolate the slow live test.
+
+Build evidence at the final commit:
+
+```
+command:  make test
+result:   green
+head_sha: 71a4d0eec2f56a6f27d593487ef40599d7e16335
+ran_at:   2026-08-16T22:24:19Z
+```
+
+## Process note for the maintainer (not a code finding)
+
+This repo has **no `finalize.test_command` configured**, and docket's shipped suite auto-detection
+looks for `tests/test_*.sh`, which matches nothing in a Go repo. The build gate therefore ran the
+repo's own declared suite, `make test`. Setting `finalize.test_command: make test` in `.docket.yml`
+would make the gate unambiguous for every future change and is worth doing before the next run.
