@@ -1104,6 +1104,36 @@ func wrapToWidth(s string, w int) []string {
 	return strings.Split(wrapped, "\n")
 }
 
+// turnStartFor resolves the start of the turn an event belongs to. Attribution
+// is purely by timestamp: Turns is append-ordered, so the answer is the latest
+// mark that had started by ts. It must NOT consult any event turn field
+// (see change 0066 — that index counts tool-loop iterations, not conversational
+// turns).
+func turnStartFor(n agent.NodeView, ts time.Time) time.Time {
+	if len(n.Turns) == 0 {
+		return n.StartedAt
+	}
+	for i := len(n.Turns) - 1; i >= 0; i-- {
+		if !n.Turns[i].StartedAt.After(ts) {
+			return n.Turns[i].StartedAt
+		}
+	}
+	// The event predates turn 1; anchor it to the session's first turn so it
+	// still renders a non-negative offset.
+	return n.Turns[0].StartedAt
+}
+
+// eventOffset formats an event's turn-relative offset. It clamps at zero: the
+// defect this replaces was a negative number, so the renderer is structurally
+// unable to emit one.
+func eventOffset(n agent.NodeView, ts time.Time) string {
+	d := ts.Sub(turnStartFor(n, ts))
+	if d < 0 {
+		d = 0
+	}
+	return fmt.Sprintf("%05.1fs", d.Seconds())
+}
+
 // buildEventViewLines renders one event's COMPLETE content, word-wrapped and
 // scrollable — the drill-in for output that every list view truncates.
 func (m *AgentsModel) buildEventViewLines(n agent.NodeView, visible []agent.AgentEvent, w int) []string {
@@ -1117,7 +1147,7 @@ func (m *AgentsModel) buildEventViewLines(n agent.NodeView, visible []agent.Agen
 
 	ts := " 0.0s"
 	if !n.StartedAt.IsZero() {
-		ts = fmt.Sprintf("%05.1fs", evt.TS.Sub(n.StartedAt).Seconds())
+		ts = eventOffset(n, evt.TS)
 	}
 	title := fmt.Sprintf("event %d/%d  [%s]  %s  %s", m.eventSel+1, len(visible), ts,
 		strings.TrimSpace(detailKind(evt.Kind)), evt.Name)
@@ -1237,7 +1267,7 @@ func (m *AgentsModel) renderEventLines(n agent.NodeView, events []agent.AgentEve
 	for i, evt := range events {
 		ts := " 0.0s"
 		if !n.StartedAt.IsZero() {
-			ts = fmt.Sprintf("%05.1fs", evt.TS.Sub(n.StartedAt).Seconds())
+			ts = eventOffset(n, evt.TS)
 		}
 
 		arrow := detailArrow(evt.Kind)
