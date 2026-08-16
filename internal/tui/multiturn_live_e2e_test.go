@@ -198,16 +198,45 @@ func (ls *liveStream) waitFor(t *testing.T, want string, timeout time.Duration) 
 	t.Fatalf("timed out waiting for %q in rendered output; last frame:\n%s", want, tailLines(ls.text(), 40))
 }
 
+// size returns how many bytes the program has painted so far. Callers use it to
+// wait on OBSERVED output rather than on a fixed sleep.
+func (ls *liveStream) size() int {
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	return ls.buf.Len()
+}
+
+// waitForOutput blocks until the program has painted something new (or the
+// timeout elapses) — the poll-until-condition replacement for "sleep and hope".
+// It returns whether new output actually arrived.
+func (ls *liveStream) waitForOutput(since int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if ls.size() > since {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // forceRepaint makes the program emit a COMPLETE frame. bubbletea's renderer
 // normally writes only the lines that changed, so the most recent full frame in
 // the output stream can be many keystrokes stale — reading current UI state off
 // it silently lies (it made a working `enter` toggle look broken during this
 // change's verification). A window-size change forces a full repaint.
-func forceRepaint(tm *teatest.TestModel) {
-	tm.Send(tea.WindowSizeMsg{Width: 121, Height: 34})
-	time.Sleep(60 * time.Millisecond)
-	tm.Send(tea.WindowSizeMsg{Width: 120, Height: 34})
-	time.Sleep(60 * time.Millisecond)
+//
+// Each resize waits for the repaint it caused to actually land instead of
+// sleeping a fixed 60ms: on an idle machine that is a millisecond or two, and on
+// a loaded one it waits as long as it genuinely needs to.
+func (ls *liveStream) forceRepaint(tm *teatest.TestModel) {
+	for _, w := range []int{121, 120} {
+		before := ls.size()
+		tm.Send(tea.WindowSizeMsg{Width: w, Height: 34})
+		ls.waitForOutput(before, 2*time.Second)
+	}
 }
 
 // lastPaneFrame extracts the most recently painted overlay frame (from its
@@ -236,7 +265,7 @@ func (ls *liveStream) waitForFrame(t *testing.T, tm *teatest.TestModel, want str
 	deadline := time.Now().Add(timeout)
 	var last string
 	for time.Now().Before(deadline) {
-		forceRepaint(tm)
+		ls.forceRepaint(tm)
 		last = lastPaneFrame(ls.text())
 		if strings.Contains(last, want) {
 			return
@@ -259,6 +288,13 @@ func tailLines(s string, n int) string {
 // agent loop against a scripted gateway, then inspected through the real
 // /agents overlay.
 func TestLiveMultiTurn_TurnGroupsAndOffsets(t *testing.T) {
+	// SLOW: three real prompts through a real agent loop, each with a deliberate
+	// gateway pause, plus a full transcript scroll — seconds, not milliseconds.
+	// It is hermetic (httptest on localhost, no egress) but too heavy for -short.
+	if testing.Short() {
+		t.Skip("slow live multi-turn e2e; runs in the full suite, skipped under -short")
+	}
+
 	gw := newScriptedGateway(t, []scriptedGatewayTurn{
 		{toolName: "blackboard_write", toolArgs: `{"key":"plan/turn-one","value":"{\"step\":1}"}`, reply: "turn-one-complete"},
 		{toolName: "blackboard_write", toolArgs: `{"key":"plan/turn-two","value":"{\"step\":2}"}`, reply: "turn-two-complete"},
@@ -310,11 +346,9 @@ func TestLiveMultiTurn_TurnGroupsAndOffsets(t *testing.T) {
 		ls.waitFor(t, done, 30*time.Second)
 	}
 
-	sessionStart := time.Now()
 	prompt("record the first plan step on the board", "turn-one-complete")
 	prompt("now record the second plan step", "turn-two-complete")
 	prompt("summarize what you recorded", "turn-three-complete")
-	sessionElapsed := time.Since(sessionStart)
 
 	// The session must genuinely be three turns on ONE root node with real events.
 	rv := root.Snapshot()
@@ -365,9 +399,27 @@ func TestLiveMultiTurn_TurnGroupsAndOffsets(t *testing.T) {
 
 	// --- Observation 4: the headline timer tracks the CURRENT turn -----------
 	// Read it exactly as the overlay does, off the live snapshot.
+	//
+	// The property under test is SCOPE, not a ratio: turn 3's elapsed must span
+	// turn 3 only. Asserting it against a separately-measured wall-clock session
+	// duration would make the test a race against machine load, so it is asserted
+	// against the tree's own marks — one clock, no timing margin.
+	turn1 := rv.Turns[0].EndedAt.Sub(rv.Turns[0].StartedAt)
+	turn2 := rv.Turns[1].EndedAt.Sub(rv.Turns[1].StartedAt)
 	turn3 := rv.Turns[2].EndedAt.Sub(rv.Turns[2].StartedAt)
-	if turn3 <= 0 || turn3 >= sessionElapsed*3/4 {
-		t.Errorf("headline timer does not track the current turn: turn3=%v session=%v", turn3, sessionElapsed)
+	sessionSpan := rv.Turns[2].EndedAt.Sub(rv.Turns[0].StartedAt)
+	if turn1 <= 0 || turn2 <= 0 || turn3 <= 0 {
+		t.Errorf("a turn measured non-positive: %v / %v / %v", turn1, turn2, turn3)
+	}
+	if rv.Turns[2].StartedAt.Before(rv.Turns[1].EndedAt) {
+		t.Errorf("turn 3 starts at %v, before turn 2 ended at %v — the marks overlap",
+			rv.Turns[2].StartedAt, rv.Turns[1].EndedAt)
+	}
+	// Turn 3 cannot contain the earlier turns: whatever the machine's speed, the
+	// two earlier turns' time is outside turn 3's window.
+	if turn3 > sessionSpan-turn1-turn2 {
+		t.Errorf("turn 3's elapsed (%v) leaks into earlier turns: session span %v, turn1 %v, turn2 %v",
+			turn3, sessionSpan, turn1, turn2)
 	}
 	if headline := nodeElapsed(rv); headline != formatNodeElapsed(turn3) {
 		t.Errorf("nodeElapsed = %q, want turn 3's duration %q", headline, formatNodeElapsed(turn3))
@@ -422,15 +474,21 @@ func TestLiveMultiTurn_TurnGroupsAndOffsets(t *testing.T) {
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter}) // expand turn 2
 	ls.waitForFrame(t, tm, `▾ turn 2`, 5*time.Second)
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
-	forceRepaint(tm)
+	ls.forceRepaint(tm)
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
-	forceRepaint(tm)
+	ls.forceRepaint(tm)
 	topFrame := lastPaneFrame(ls.text())
+
+	// Scroll down through the whole transcript, one row at a time. Each keystroke
+	// waits for the repaint it actually caused instead of sleeping a fixed 15ms:
+	// on a loaded box that wait stretches, on an idle one it costs nothing, and
+	// either way the row is observed painted before the next key is sent.
 	for i := 0; i < 30; i++ {
+		before := ls.size()
 		tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-		time.Sleep(15 * time.Millisecond)
+		ls.waitForOutput(before, time.Second)
 	}
-	forceRepaint(tm)
+	ls.forceRepaint(tm)
 
 	// With all three turns expanded, every turn's events must have been painted.
 	all := ls.text()
@@ -452,7 +510,7 @@ func TestLiveMultiTurn_TurnGroupsAndOffsets(t *testing.T) {
 	ls.waitFor(t, "plan/turn-one", 10*time.Second)
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	forceRepaint(tm)
+	ls.forceRepaint(tm)
 	boardFrame := ls.text()
 	if !strings.Contains(boardFrame, "── turn 1 ──") || !strings.Contains(boardFrame, "── turn 2 ──") {
 		t.Errorf("blackboard is missing per-turn sub-dividers:\n%s", tailLines(boardFrame, 40))

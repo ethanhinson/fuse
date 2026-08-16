@@ -195,6 +195,20 @@ func TestDetailRowsChildNodeNoTurnsIsLegacy(t *testing.T) {
 	}
 }
 
+// legacyEventLinesGolden is the pre-0066 detail renderer, verbatim: one
+// selectable row per (pre-filtered) event, the row at m.eventSel highlighted.
+// It is NOT production code — renderDetailRows replaced it on every path — and
+// it lives here precisely so that stays true. It is the golden reference the
+// backward-compatibility guard below pins renderDetailRows' single-turn/child
+// output against; deleting it would delete the pin.
+func (m *AgentsModel) legacyEventLinesGolden(n agent.NodeView, events []agent.AgentEvent, w int) []string {
+	lines := make([]string, 0, len(events))
+	for i, evt := range events {
+		lines = append(lines, m.renderEventRow(n, evt, i == m.eventSel, w))
+	}
+	return lines
+}
+
 // TestRenderDetailRowsLegacyByteIdenticalToEventLines is the backward-compat
 // guard: for a single-turn root and for a child node, the row-model renderer
 // must emit exactly what the pre-change event renderer emits.
@@ -207,7 +221,7 @@ func TestRenderDetailRowsLegacyByteIdenticalToEventLines(t *testing.T) {
 	for name, n := range map[string]agent.NodeView{"single-turn root": single, "child": child} {
 		for _, sel := range []int{0, 3, len(events) - 1} {
 			m := &AgentsModel{eventSel: sel, rowSel: sel}
-			want := m.renderEventLines(n, events, 100)
+			want := m.legacyEventLinesGolden(n, events, 100)
 			got := m.renderDetailRows(n, events, m.detailRows(n, events), 100)
 			if len(got) != len(want) {
 				t.Fatalf("%s sel=%d: %d rows, want %d", name, sel, len(got), len(want))
@@ -462,6 +476,61 @@ func TestEnterOnHeaderTogglesGroupWithoutOpeningEventView(t *testing.T) {
 	}
 	if m.eventSel < 0 || m.eventSel >= len(events) {
 		t.Errorf("eventSel = %d, out of range [0,%d)", m.eventSel, len(events))
+	}
+}
+
+// TestEnterOnCurrentTurnHeaderIsSymmetric: the CURRENT turn is the one case
+// where the header can also be the LAST row (once collapsed), so followTail is
+// live on it. If the toggle leaves followTail set, the next render snaps the
+// cursor onto the newly-revealed tail event and the following `enter` drills
+// into an event instead of collapsing the group back — expand and collapse stop
+// being symmetric. The cursor must stay on the header across both toggles.
+func TestEnterOnCurrentTurnHeaderIsSymmetric(t *testing.T) {
+	m, _ := detailModelWithTurns(t)
+
+	// Park on turn 3's header (row 2) and collapse it, so it becomes the last row.
+	m.rowSel = 2
+	m.followTail = false
+	_ = m.View()
+	if !m.detRows[2].header || m.detRows[2].turn != 3 {
+		t.Fatalf("row 2 = %+v, want turn 3's header", m.detRows[2])
+	}
+	m.handleDetailKey(tea.KeyMsg{Type: tea.KeyEnter})
+	_ = m.View()
+	if len(m.detRows) != 3 {
+		t.Fatalf("after collapsing turn 3: %d rows, want 3 (headers only)", len(m.detRows))
+	}
+
+	// G is the natural way an operator reaches the bottom; it sets followTail.
+	m.handleDetailKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	_ = m.View()
+	if m.rowSel != 2 {
+		t.Fatalf("G rowSel = %d, want turn 3's header at 2", m.rowSel)
+	}
+
+	// Expand: the cursor must NOT follow the tail into the revealed event rows.
+	m.handleDetailKey(tea.KeyMsg{Type: tea.KeyEnter})
+	_ = m.View()
+	if got, want := len(m.detRows), 3+turnEventCounts[3]; got != want {
+		t.Fatalf("after expanding turn 3: %d rows, want %d", got, want)
+	}
+	if m.rowSel != 2 || !m.detRows[m.rowSel].header || m.detRows[m.rowSel].turn != 3 {
+		t.Fatalf("after expanding, rowSel=%d points at %+v, want turn 3's header at 2",
+			m.rowSel, m.detRows[m.rowSel])
+	}
+
+	// ...so the very next enter collapses it again rather than drilling in.
+	m.handleDetailKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.inEventView {
+		t.Fatal("the symmetric enter opened the event view instead of collapsing turn 3")
+	}
+	_ = m.View()
+	if len(m.detRows) != 3 {
+		t.Errorf("after re-collapsing turn 3: %d rows, want 3", len(m.detRows))
+	}
+	if m.rowSel != 2 || !m.detRows[2].header || m.detRows[2].turn != 3 {
+		t.Errorf("after re-collapse rowSel=%d points at %+v, want turn 3's header at 2",
+			m.rowSel, m.detRows[m.rowSel])
 	}
 }
 

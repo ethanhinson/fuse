@@ -451,6 +451,56 @@ func TestBlackboardEntryOffsetsAreTurnRelative(t *testing.T) {
 	}
 }
 
+// TestBlackboardSingleTurnGroupStillLabelsItsTurn: on a turn-aware board EVERY
+// writer group gets turn dividers, including one whose entries all landed in a
+// single turn. Its meta lines carry "· +12.3s" regardless (that is keyed on the
+// board being turn-aware), so without its own divider nothing on screen says
+// which turn that offset is relative to — while the group beside it is fully
+// labelled.
+func TestBlackboardSingleTurnGroupStillLabelsItsTurn(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m, snap, root := bbTurnFixture(t)
+	// bob wrote only during turn 2; alice spans turns 1 and 2.
+	t2 := root.Turns[1].StartedAt
+	snap["bob/only"] = agent.BlackboardEntry{
+		Value: "b", WriterID: "id-b", WriterLabel: "bob", WrittenAt: t2.Add(400 * time.Millisecond),
+	}
+
+	body, starts := m.blackboardBody(snap, 60)
+	lines := stripLines(body)
+	if len(starts) != 2 {
+		t.Fatalf("want 2 writer groups, got %v:\n%s", starts, strings.Join(lines, "\n"))
+	}
+
+	bobStart := indexOfLineContaining(lines, "▌ bob")
+	if bobStart < 0 {
+		t.Fatalf("bob's writer header is missing:\n%s", strings.Join(lines, "\n"))
+	}
+	// The group's own bucket must be labelled, and the label must come BEFORE
+	// bob's entry meta so the offset is never read unlabelled.
+	div := indexOfLineContaining(lines[bobStart:], "── turn 2 ──")
+	meta := indexOfLineContaining(lines[bobStart:], "written by bob")
+	if div < 0 {
+		t.Fatalf("bob's single-turn group has no turn divider:\n%s", strings.Join(lines[bobStart:], "\n"))
+	}
+	if meta < 0 || div > meta {
+		t.Errorf("bob's turn divider at +%d, want it before his entry meta at +%d", div, meta)
+	}
+	if !strings.Contains(lines[bobStart+meta], "· +") {
+		t.Errorf("bob's meta %q lost its turn-relative offset", lines[bobStart+meta])
+	}
+	// The returned group starts are still exactly the writer-header lines, with
+	// the extra divider counted in.
+	for _, s := range starts {
+		if !strings.HasPrefix(strings.TrimSpace(lines[s]), "▌") {
+			t.Errorf("group start %d is not a writer header: %q", s, lines[s])
+		}
+	}
+}
+
 func mustBody(m *AgentsModel, snap map[string]agent.BlackboardEntry, w int) []string {
 	body, _ := m.blackboardBody(snap, w)
 	return body

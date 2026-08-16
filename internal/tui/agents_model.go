@@ -508,6 +508,13 @@ func (m *AgentsModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// On a turn header, enter is the collapse toggle — NOT the drill-in.
 		if r, ok := m.selectedDetailRow(); ok && r.header {
 			m.toggleTurn(r.turn, m.isLastTurn(r.turn))
+			// Pin the cursor to the header being toggled. A toggle only ever adds or
+			// removes rows AFTER the header, so rowSel is already the right index —
+			// but followTail would override it on the next render and drag the cursor
+			// onto the newly-revealed tail event, making expand/collapse asymmetric
+			// for the CURRENT turn (whose collapsed header IS the last row).
+			m.followTail = false
+			m.detailManual = false
 			break
 		}
 		if m.eventCount > 0 {
@@ -990,10 +997,12 @@ func (m *AgentsModel) buildBlackboardLines(w int) []string {
 // model/tool-controlled field is sanitized and hard-wrapped to w so no line can
 // exceed the pane width or leak control bytes.
 //
-// Turn awareness (change 0066) lives strictly INSIDE a writer group: a group
-// whose entries span more than one turn interleaves "── turn N ──" sub-dividers
-// between its per-turn buckets, and every entry's meta line carries a
-// turn-relative offset. groupStarts still records only WRITER-group starts, so
+// Turn awareness (change 0066) lives strictly INSIDE a writer group: when the
+// root carries more than one turn mark, every group interleaves "── turn N ──"
+// sub-dividers between its per-turn buckets — including a group that only wrote
+// in a single turn, so its entries' turn-relative offsets are never unlabelled —
+// and every entry's meta line carries a turn-relative offset. groupStarts still
+// records only WRITER-group starts, so
 // n/p navigation absorbs the extra divider lines automatically. With at most one
 // turn mark on the root the output is byte-identical to the pre-0066 render.
 func (m *AgentsModel) blackboardBody(snap map[string]agent.BlackboardEntry, w int) (body []string, groupStarts []int) {
@@ -1053,10 +1062,14 @@ func (m *AgentsModel) blackboardBody(snap map[string]agent.BlackboardEntry, w in
 		// bucket is today's ordering; buckets themselves run turn-ascending.
 		buckets := blackboardTurnBuckets(root, snap, g.keys, turnAware)
 		for _, b := range buckets {
-			// Sub-divider before each bucket, only when the group genuinely spans
-			// more than one turn. A single-bucket group emits none, so its bytes are
-			// unchanged from before change 0066.
-			if len(buckets) > 1 {
+			// Sub-divider before each bucket whenever the board is turn-aware. It is
+			// keyed on turnAware, not on len(buckets), because the meta lines are:
+			// a group that wrote in exactly one turn still renders "· +12.3s", and
+			// without its own divider nothing on screen says which turn that offset
+			// is relative to — while the group next to it carries dividers. On a
+			// board with at most one turn mark turnAware is false and no divider is
+			// emitted, so the legacy bytes are unchanged.
+			if turnAware {
 				body = append(body, sepStyle.Render(fitLine(fmt.Sprintf("── turn %d ──", turnOrdinal(root, b.turnIdx)), w)))
 			}
 			for ki, k := range b.keys {
@@ -1603,7 +1616,10 @@ func (m *AgentsModel) renderDetailHeader(n agent.NodeView, w int) string {
 // renderDetailRows renders the detail pane's row model: one line per row,
 // headers included, with the row at m.rowSel highlighted. For a single-turn
 // root or a child node the row model is 1:1 with the events (see detailRows'
-// guard), so this emits exactly what renderEventLines does — byte for byte.
+// guard), so this emits exactly what the pre-0066 flat event renderer did —
+// byte for byte. That renderer is no longer on the render path; it survives as
+// legacyEventLinesGolden in turn_groups_test.go, whose only purpose is to pin
+// this equality.
 func (m *AgentsModel) renderDetailRows(n agent.NodeView, events []agent.AgentEvent, rows []detailRow, w int) []string {
 	// Per-turn event tallies for the collapsed headers' "N events" suffix. They
 	// count ALL of a turn's events, not just the rendered ones — a collapsed turn
@@ -1636,18 +1652,6 @@ func (m *AgentsModel) renderDetailRows(n agent.NodeView, events []agent.AgentEve
 			continue
 		}
 		lines = append(lines, m.renderEventRow(n, events[r.evtIdx], i == m.rowSel, w))
-	}
-	return lines
-}
-
-// renderEventLines renders one selectable row per (pre-filtered) event; the
-// row at m.eventSel is highlighted. This is the flat, row-model-free form: it
-// is what the pane emits for a single-turn root or a child node, and the
-// per-event rendering itself is shared with renderDetailRows.
-func (m *AgentsModel) renderEventLines(n agent.NodeView, events []agent.AgentEvent, w int) []string {
-	lines := make([]string, 0, len(events))
-	for i, evt := range events {
-		lines = append(lines, m.renderEventRow(n, evt, i == m.eventSel, w))
 	}
 	return lines
 }

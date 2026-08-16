@@ -44,7 +44,7 @@ func TestEventOffsetNeverNegativeAcrossTurns(t *testing.T) {
 	n, events := twoTurnRoot()
 	m := &AgentsModel{}
 
-	lines := m.renderEventLines(n, events, 100)
+	lines := m.legacyEventLinesGolden(n, events, 100)
 	if len(lines) != len(events) {
 		t.Fatalf("want %d rendered lines, got %d", len(events), len(lines))
 	}
@@ -84,7 +84,7 @@ func TestEventOffsetNegativeWhenStartedAtTracksLatestTurn(t *testing.T) {
 	n.StartedAt = n.Turns[1].StartedAt // the pre-fix clobbered value
 
 	m := &AgentsModel{}
-	for i, ln := range m.renderEventLines(n, events, 100) {
+	for i, ln := range m.legacyEventLinesGolden(n, events, 100) {
 		plain := stripANSITurns(ln)
 		if strings.Contains(plain, "[-") {
 			t.Errorf("line %d rendered a negative offset (the reported bug): %q", i, plain)
