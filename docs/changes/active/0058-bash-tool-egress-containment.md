@@ -12,12 +12,12 @@ related: [49, 55, 57]
 discovered_from: [52]
 adrs: []
 spec: docs/superpowers/specs/2026-08-15-bash-tool-egress-containment-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-16-bash-tool-egress-containment-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/bash-tool-egress-containment
-claimed_at: 2026-08-16T19:44:58Z
+claimed_at: 2026-08-16T19:46:42Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-15-bash-tool-egress-containment-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-bash-tool-egress-containment-design.md) |
+| Plan | [2026-08-16-bash-tool-egress-containment-plan.md](https://github.com/ethanhinson/fuse/blob/feat/bash-tool-egress-containment/docs/superpowers/plans/2026-08-16-bash-tool-egress-containment-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
