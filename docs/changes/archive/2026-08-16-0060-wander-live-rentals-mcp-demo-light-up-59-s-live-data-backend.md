@@ -2,11 +2,11 @@
 id: 60
 slug: wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend
 title: "Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app"
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-11
-updated: 2026-08-15
+updated: 2026-08-16
 depends_on: [59]
 related: [52, 55, 62]
 discovered_from: [59]
@@ -17,7 +17,7 @@ results: docs/results/2026-08-15-wander-live-rentals-mcp-demo-light-up-59-s-live
 trivial: false
 auto_groomable:
 branch: feat/wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend
-claimed_at: 2026-08-15T22:00:54Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/61
 blocked_by:
 reconciled: true
