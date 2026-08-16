@@ -2,7 +2,7 @@
 id: 58
 slug: bash-tool-egress-containment
 title: bash tool egress containment — define the authz posture for a tool that can reach anything
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-11
@@ -17,7 +17,7 @@ results: docs/results/2026-08-16-bash-tool-egress-containment-results.md
 trivial: false
 auto_groomable:
 branch: feat/bash-tool-egress-containment
-claimed_at: 2026-08-16T19:56:06Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/62
 blocked_by:
 reconciled: true
