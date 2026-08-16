@@ -1,8 +1,8 @@
 # Backlog
 
-**65 changes** — 🟡 4 proposed · ⚪ 2 deferred · ✅ 53 done · 🗑️ 6 killed
+**66 changes** — 🟡 5 proposed · ⚪ 2 deferred · ✅ 53 done · 🗑️ 6 killed
 
-## 🟡 Proposed (4)
+## 🟡 Proposed (5)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -10,6 +10,7 @@
 | [0063](active/0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | `high` | `feat` | needs-brainstorm |
 | [0064](active/0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | `medium` | `feat` | ⏳ waiting on #63 — not yet built |
 | [0065](active/0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | `medium` | `feat` | ⏳ waiting on #63 — not yet built |
+| [0066](active/0066-agents-tab-multiturn-turn-groups.md) | Agents tab & blackboard — turn-aware multiturn UI (collapsible turn groups + per-turn timing) | `medium` | `fix` | build-ready |
 
 ## ⚪ Deferred (2)
 
@@ -27,6 +28,7 @@ graph TD
   0058 --> 0063
   0063 --> 0064
   0063 --> 0065
+  0066
   0012:::done
   0052:::done
   0054:::done
