@@ -1360,8 +1360,10 @@ func (m *AgentsModel) selectedDetailRow() (detailRow, bool) {
 // buildEventViewLines depends on — in lockstep with the row cursor. On a header
 // row the previous event selection is kept, only clamped back into range.
 func (m *AgentsModel) syncEventSel(rows []detailRow, visibleLen int) {
-	if r, ok := m.selectedDetailRow(); ok && !r.header {
-		m.eventSel = r.evtIdx
+	if m.rowSel >= 0 && m.rowSel < len(rows) {
+		if r := rows[m.rowSel]; !r.header {
+			m.eventSel = r.evtIdx
+		}
 	}
 	if m.eventSel >= visibleLen {
 		m.eventSel = visibleLen - 1
