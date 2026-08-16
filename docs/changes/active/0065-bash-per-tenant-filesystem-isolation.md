@@ -37,6 +37,7 @@ ADR-0044 decided that **hosted filesystem access is a per-tenant bind-mount** sc
 ## What changes
 
 - **Per-tenant bind-mount**: hosted filesystem access is a bind-mount into the container scoped by ADR-0034 `Principal.Tenant`, so one tenant's shell cannot see another tenant's files.
+- **Extend the tenant-scoped, non-escaping mount to the microVM handler** (per ADR-0044's 2026-08-16 Update): the same `Principal.Tenant`-scoped isolation must hold when #63's seam selects a microVM handler, expressed as the VM-native equivalent of the container bind-mount — a per-tenant **virtio-fs share** OR a per-tenant **block image**. Same tenant-scoping rule, one backing per boundary mechanism.
 - **`working_dir` containment**: the **model-supplied** `working_dir` resolves **within** the mount and cannot escape it (no `..`/symlink/absolute-path escape). This honors ADR-0044's inherited ADR-0036 constraint — the root of trust (the tenant/principal scoping the mount) comes from the **authenticated loop-start context, never from model output** (not the `command`, not `working_dir`).
 
 ## Out of scope
@@ -45,12 +46,13 @@ ADR-0044 decided that **hosted filesystem access is a per-tenant bind-mount** sc
 - Egress / network policy — Change #64.
 - Local (single-tenant) filesystem posture beyond what the #63 substrate already mounts in — the per-tenant scoping is a hosted-profile concern.
 - Deriving the tenant/principal from anything the model supplies — explicitly forbidden.
+- **PaaS provider-volume work** — deferred to the future PaaS ADR (ADR-0044's 2026-08-16 Update). This change scopes the tenant mount for the container and microVM backings only; provider-managed volumes for a remote/PaaS backend are out-of-scope here.
 
 ## Open questions
 
 <!-- Groomed into a build-ready spec later; the design decisions themselves are recorded in ADR-0044. -->
 - Host-side layout of per-tenant directories and how the bind-mount source is resolved from `Principal.Tenant`.
-- Canonical mechanism for guaranteeing `working_dir` cannot escape the mount (resolve-and-verify vs. mount-namespace confinement) across the runtime handlers the #63 seam selects.
+- Canonical mechanism for guaranteeing `working_dir` cannot escape the mount (resolve-and-verify vs. mount-namespace confinement) across the isolation handlers the #63 seam selects — including the microVM backing (virtio-fs share vs. per-tenant block image).
 - Lifecycle/cleanup of per-tenant mounts relative to ADR-0034 ownership/lease.
 - How the working tree the model edits is presented within the per-tenant mount.
 
