@@ -1,0 +1,11 @@
+# docket configuration — committed on the repo's default branch (main); read by every docket skill at startup.
+# Only non-default and mode-pinning keys are set here; everything else inherits docket's built-in defaults.
+
+metadata_branch: docket      # PM/metadata commits land on the docket branch (this repo is docket-mode)
+integration_branch: main     # feature branches cut from origin/main; code lands on main
+
+finalize:
+  # This is a Go repo; docket's suite auto-detection only recognizes the tests/test_*.sh Bash shape,
+  # which does not exist here. Point the rebase-retest merge gate at the Makefile target
+  # (observability-validate + go test ./...) so finalize can validate before merging.
+  test_command: make test
