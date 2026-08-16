@@ -2,7 +2,7 @@
 id: 66
 slug: agents-tab-multiturn-turn-groups
 title: Agents tab & blackboard — turn-aware multiturn UI (collapsible turn groups + per-turn timing)
-status: in-progress
+status: implemented
 priority: medium
 type: fix
 created: 2026-08-16
@@ -13,12 +13,12 @@ discovered_from: [53]
 adrs: [45]
 spec: docs/superpowers/specs/2026-08-16-agents-tab-multiturn-turn-groups-design.md
 plan: docs/superpowers/plans/2026-08-16-agents-tab-multiturn-turn-groups-plan.md
-results:
+results: docs/results/2026-08-16-agents-tab-multiturn-turn-groups-results.md
 trivial: false
 auto_groomable:
 branch: feat/agents-tab-multiturn-turn-groups
-pr:
-claimed_at: 2026-08-16T22:26:01Z
+pr: https://github.com/ethanhinson/fuse/pull/63
+claimed_at: 2026-08-16T22:27:53Z
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-16-agents-tab-multiturn-turn-groups-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-16-agents-tab-multiturn-turn-groups-design.md) |
 | Plan | [2026-08-16-agents-tab-multiturn-turn-groups-plan.md](https://github.com/ethanhinson/fuse/blob/feat/agents-tab-multiturn-turn-groups/docs/superpowers/plans/2026-08-16-agents-tab-multiturn-turn-groups-plan.md) |
+| Results | [2026-08-16-agents-tab-multiturn-turn-groups-results.md](https://github.com/ethanhinson/fuse/blob/feat/agents-tab-multiturn-turn-groups/docs/results/2026-08-16-agents-tab-multiturn-turn-groups-results.md) |
+| PR | [#63](https://github.com/ethanhinson/fuse/pull/63) |
 | ADRs | [ADR-0045](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0045-conversational-turn-attribution-by-timestamp-bucketing.md) |
 <!-- docket:artifacts:end -->
 
