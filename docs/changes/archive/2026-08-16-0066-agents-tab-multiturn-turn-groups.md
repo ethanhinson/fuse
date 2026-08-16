@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-16-agents-tab-multiturn-turn-groups-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-16-agents-tab-multiturn-turn-groups-design.md) |
-| Plan | [2026-08-16-agents-tab-multiturn-turn-groups-plan.md](https://github.com/ethanhinson/fuse/blob/feat/agents-tab-multiturn-turn-groups/docs/superpowers/plans/2026-08-16-agents-tab-multiturn-turn-groups-plan.md) |
-| Results | [2026-08-16-agents-tab-multiturn-turn-groups-results.md](https://github.com/ethanhinson/fuse/blob/feat/agents-tab-multiturn-turn-groups/docs/results/2026-08-16-agents-tab-multiturn-turn-groups-results.md) |
+| Plan | [2026-08-16-agents-tab-multiturn-turn-groups-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-16-agents-tab-multiturn-turn-groups-plan.md) |
+| Results | [2026-08-16-agents-tab-multiturn-turn-groups-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-16-agents-tab-multiturn-turn-groups-results.md) |
 | PR | [#63](https://github.com/ethanhinson/fuse/pull/63) |
 | ADRs | [ADR-0045](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0045-conversational-turn-attribution-by-timestamp-bucketing.md) |
 <!-- docket:artifacts:end -->
