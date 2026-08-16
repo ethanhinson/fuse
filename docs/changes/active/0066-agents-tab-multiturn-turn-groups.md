@@ -12,13 +12,13 @@ related: [12, 53, 54]
 discovered_from: [53]
 adrs: []
 spec: docs/superpowers/specs/2026-08-16-agents-tab-multiturn-turn-groups-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-16-agents-tab-multiturn-turn-groups-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/agents-tab-multiturn-turn-groups
 pr:
-claimed_at: 2026-08-16T21:17:40Z
+claimed_at: 2026-08-16T21:20:48Z
 blocked_by:
 reconciled: true
 ---
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-16-agents-tab-multiturn-turn-groups-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-16-agents-tab-multiturn-turn-groups-design.md) |
+| Plan | [2026-08-16-agents-tab-multiturn-turn-groups-plan.md](https://github.com/ethanhinson/fuse/blob/feat/agents-tab-multiturn-turn-groups/docs/superpowers/plans/2026-08-16-agents-tab-multiturn-turn-groups-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
