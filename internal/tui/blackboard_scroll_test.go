@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -156,5 +157,68 @@ func TestBlackboardTabNilBoard(t *testing.T) {
 	v := m.View() // must not panic
 	if !strings.Contains(v, "No blackboard") && !strings.Contains(v, "Blackboard") {
 		t.Errorf("nil board should render a notice, not blank; got:\n%s", v)
+	}
+}
+
+// TestBlackboardGroupStartsExactWithTurnDividers is the scroll-correctness guard
+// for change 0066: turn sub-dividers add lines INSIDE a writer group, so n/p is
+// only exact if blackboardGroupStarts() is derived from the same render that
+// emits them. It asserts the returned starts are exactly the writer-header line
+// indices of the rendered body, and that dividers really do sit between them
+// (so a divider-blind line count would be wrong, not accidentally right).
+func TestBlackboardGroupStartsExactWithTurnDividers(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	tree := agent.NewAgentTree("root", "m")
+	bb := agent.NewBlackboard(tree)
+	tree.BeginTurnWithPrompt("first")
+	bb.Put("alice/a", "1", "id-a", "alice")
+	bb.Put("bob/a", "1", "id-b", "bob")
+	time.Sleep(20 * time.Millisecond)
+	tree.BeginTurnWithPrompt("second")
+	bb.Put("alice/b", "2", "id-a", "alice")
+	bb.Put("bob/b", "2", "id-b", "bob")
+
+	m := NewAgentsModel(tree, nil).WithBlackboard(bb)
+	m.width, m.height = 100, 40
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+
+	w := m.blackboardContentWidth()
+	body, _ := m.blackboardBody(bb.Snapshot(), w)
+	lines := stripLines(body)
+
+	var wantStarts, dividers []int
+	for i, l := range lines {
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(l), "▌"):
+			wantStarts = append(wantStarts, i)
+		case strings.Contains(l, "── turn "):
+			dividers = append(dividers, i)
+		}
+	}
+	if len(wantStarts) != 2 {
+		t.Fatalf("want 2 writer groups, got %d:\n%s", len(wantStarts), strings.Join(lines, "\n"))
+	}
+	if len(dividers) == 0 {
+		t.Fatalf("fixture produced no turn dividers; the guard would be vacuous")
+	}
+	// At least one divider must precede the second group's start, so a
+	// divider-blind numbering could not produce the same answer.
+	if dividers[0] >= wantStarts[1] {
+		t.Fatalf("no divider inside the first group (dividers=%v, starts=%v)", dividers, wantStarts)
+	}
+	got := m.blackboardGroupStarts()
+	if fmt.Sprint(got) != fmt.Sprint(wantStarts) {
+		t.Errorf("blackboardGroupStarts() = %v, want writer-header lines %v", got, wantStarts)
+	}
+	// And n/p actually lands on a writer header, dividers notwithstanding.
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.bbScroll != wantStarts[1] {
+		t.Errorf("after 'n' bbScroll = %d, want the second writer header at %d", m.bbScroll, wantStarts[1])
+	}
+	if !strings.HasPrefix(strings.TrimSpace(lines[m.bbScroll]), "▌") {
+		t.Errorf("'n' landed on %q, not a writer header", lines[m.bbScroll])
 	}
 }

@@ -280,3 +280,244 @@ func TestEventKind_String(t *testing.T) {
 		}
 	}
 }
+
+// --- change 0066: per-turn marks on the root node -------------------------
+
+func TestBeginTurnRecordsSequentialTurnMarks(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+
+	tree.BeginTurn()
+	time.Sleep(2 * time.Millisecond)
+	tree.BeginTurn()
+
+	turns := tree.Node(tree.RootID()).Snapshot().Turns
+	if len(turns) != 2 {
+		t.Fatalf("len(Turns) = %d, want 2", len(turns))
+	}
+	if turns[0].Turn != 1 || turns[1].Turn != 2 {
+		t.Errorf("turn ordinals = %d, %d; want 1, 2", turns[0].Turn, turns[1].Turn)
+	}
+	if !turns[1].StartedAt.After(turns[0].StartedAt) {
+		t.Errorf("turn 2 StartedAt %v is not after turn 1 %v", turns[1].StartedAt, turns[0].StartedAt)
+	}
+	if !turns[0].EndedAt.IsZero() || !turns[1].EndedAt.IsZero() {
+		t.Error("in-flight turn marks must have a zero EndedAt")
+	}
+}
+
+// TestBeginTurnDoesNotRewriteRootStartedAt is the regression guard for the
+// reported bug (change 0066): a second BeginTurn used to clobber
+// root.StartedAt, so every prior-turn event rendered a NEGATIVE offset
+// ("[-24013.7s]") because offsets are computed against root.StartedAt.
+// StartedAt is set once, by the first BeginTurn, and never rewritten.
+func TestBeginTurnDoesNotRewriteRootStartedAt(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	if !tree.Node(tree.RootID()).Snapshot().StartedAt.IsZero() {
+		t.Fatal("fresh root StartedAt must be zero (idle before the first prompt)")
+	}
+
+	tree.BeginTurn()
+	first := tree.Node(tree.RootID()).Snapshot().StartedAt
+	if first.IsZero() {
+		t.Fatal("first BeginTurn must set root StartedAt")
+	}
+
+	time.Sleep(2 * time.Millisecond)
+	tree.BeginTurn()
+
+	after := tree.Node(tree.RootID()).Snapshot().StartedAt
+	if !after.Equal(first) {
+		t.Errorf("root StartedAt = %v after second BeginTurn, want it unchanged at %v", after, first)
+	}
+}
+
+func TestEndTurnStampsOnlyTheLastTurnMark(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+
+	tree.BeginTurn()
+	tree.EndTurn(false)
+	firstEnded := tree.Node(tree.RootID()).Snapshot().Turns[0].EndedAt
+	if firstEnded.IsZero() {
+		t.Fatal("EndTurn must stamp EndedAt on the in-flight mark")
+	}
+
+	time.Sleep(2 * time.Millisecond)
+	tree.BeginTurn()
+	tree.EndTurn(true)
+
+	turns := tree.Node(tree.RootID()).Snapshot().Turns
+	if len(turns) != 2 {
+		t.Fatalf("len(Turns) = %d, want 2", len(turns))
+	}
+	if !turns[0].EndedAt.Equal(firstEnded) {
+		t.Errorf("turn 1 EndedAt = %v, want it untouched at %v", turns[0].EndedAt, firstEnded)
+	}
+	if turns[1].EndedAt.IsZero() {
+		t.Error("turn 2 EndedAt is zero, want it stamped by EndTurn")
+	}
+	if turns[1].EndedAt.Before(turns[1].StartedAt) {
+		t.Error("turn 2 EndedAt precedes its StartedAt")
+	}
+	// A second EndTurn with no intervening BeginTurn must not re-stamp.
+	stamped := turns[1].EndedAt
+	time.Sleep(2 * time.Millisecond)
+	tree.EndTurn(false)
+	if got := tree.Node(tree.RootID()).Snapshot().Turns[1].EndedAt; !got.Equal(stamped) {
+		t.Errorf("redundant EndTurn re-stamped EndedAt: %v, want %v", got, stamped)
+	}
+}
+
+func TestSnapshotTurnsIsDefensiveCopy(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	tree.BeginTurn()
+	root := tree.Node(tree.RootID())
+
+	view := root.Snapshot()
+	if len(view.Turns) != 1 {
+		t.Fatalf("len(Turns) = %d, want 1", len(view.Turns))
+	}
+	want := view.Turns[0]
+
+	view.Turns[0].Turn = 999
+	view.Turns[0].StartedAt = time.Unix(0, 0)
+	view.Turns[0].EndedAt = time.Unix(1, 0)
+	view.Turns = append(view.Turns, TurnMark{Turn: 42})
+
+	again := root.Snapshot()
+	if len(again.Turns) != 1 {
+		t.Fatalf("len(Turns) after consumer mutation = %d, want 1", len(again.Turns))
+	}
+	if again.Turns[0] != want {
+		t.Errorf("node state mutated through the snapshot: %+v, want %+v", again.Turns[0], want)
+	}
+}
+
+func TestNodeWithoutBeginTurnHasNoTurnMarks(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	if turns := tree.Node(tree.RootID()).Snapshot().Turns; len(turns) != 0 {
+		t.Errorf("fresh root Turns = %v, want empty", turns)
+	}
+
+	// Child nodes never call BeginTurn — they always take the legacy path.
+	child := &AgentNode{ID: newNodeID(), ParentID: tree.RootID(), Label: "child", Depth: 1, Status: StatusRunning}
+	tree.addNode(child)
+	tree.BeginTurn()
+	if turns := child.Snapshot().Turns; len(turns) != 0 {
+		t.Errorf("child Turns = %v, want empty", turns)
+	}
+}
+
+func TestTurnMarksRaceCleanUnderConcurrentSnapshot(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	root := tree.Node(tree.RootID())
+
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			tree.BeginTurn()
+			tree.EndTurn(i%2 == 0)
+		}
+		close(done)
+	}()
+
+	for r := 0; r < 4; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				v := root.Snapshot()
+				for _, tm := range v.Turns {
+					_ = tm.Turn
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	turns := root.Snapshot().Turns
+	if len(turns) != 200 {
+		t.Fatalf("len(Turns) = %d, want 200", len(turns))
+	}
+	for i, tm := range turns {
+		if tm.Turn != i+1 {
+			t.Fatalf("Turns[%d].Turn = %d, want %d", i, tm.Turn, i+1)
+		}
+	}
+}
+
+// --- change 0066: the prompt rides on the turn mark -----------------------
+
+// TestBeginTurnWithPromptStoresPromptOnItsOwnMark pins the source of the turn
+// group header's preview: the conversational prompt never enters the event
+// stream (there is no user-input EventKind), so the mark is the only carrier.
+func TestBeginTurnWithPromptStoresPromptOnItsOwnMark(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+
+	tree.BeginTurnWithPrompt("first prompt")
+	tree.EndTurn(false)
+	tree.BeginTurnWithPrompt("second prompt")
+
+	turns := tree.Node(tree.RootID()).Snapshot().Turns
+	if len(turns) != 2 {
+		t.Fatalf("len(Turns) = %d, want 2", len(turns))
+	}
+	if turns[0].Prompt != "first prompt" {
+		t.Errorf("Turns[0].Prompt = %q, want %q", turns[0].Prompt, "first prompt")
+	}
+	if turns[1].Prompt != "second prompt" {
+		t.Errorf("Turns[1].Prompt = %q, want %q", turns[1].Prompt, "second prompt")
+	}
+}
+
+// TestBeginTurnWithPromptLeavesEarlierMarksUntouched: opening a new turn must
+// not rewrite settled history, the same invariant EndTurn already honors.
+func TestBeginTurnWithPromptLeavesEarlierMarksUntouched(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	tree.BeginTurnWithPrompt("keep me")
+	before := tree.Node(tree.RootID()).Snapshot().Turns[0]
+
+	tree.BeginTurnWithPrompt("a much later prompt")
+	tree.BeginTurnWithPrompt("later still")
+
+	after := tree.Node(tree.RootID()).Snapshot().Turns[0]
+	if after.Prompt != before.Prompt || after.Turn != before.Turn || !after.StartedAt.Equal(before.StartedAt) {
+		t.Errorf("turn 1 mark changed: %+v -> %+v", before, after)
+	}
+}
+
+// TestBeginTurnYieldsEmptyPrompt: the no-argument wrapper stays valid for the
+// callers that have no prompt (research_probe), and records no preview.
+func TestBeginTurnYieldsEmptyPrompt(t *testing.T) {
+	tree := NewAgentTree("root", "m")
+	tree.BeginTurn()
+
+	turns := tree.Node(tree.RootID()).Snapshot().Turns
+	if len(turns) != 1 {
+		t.Fatalf("len(Turns) = %d, want 1", len(turns))
+	}
+	if turns[0].Prompt != "" {
+		t.Errorf("BeginTurn() Prompt = %q, want empty", turns[0].Prompt)
+	}
+}
+
+// TestBeginTurnWithPromptStoresRawUnsanitized: sanitization belongs to the
+// renderer (learning sanitize-untrusted-bytes-fixed-width-tui) — the model must
+// not store a pre-mangled prompt.
+func TestBeginTurnWithPromptStoresRawUnsanitized(t *testing.T) {
+	raw := "line1\n\x1b[31mred\x1b[0m\ttabbed\r"
+	tree := NewAgentTree("root", "m")
+	tree.BeginTurnWithPrompt(raw)
+
+	if got := tree.Node(tree.RootID()).Snapshot().Turns[0].Prompt; got != raw {
+		t.Errorf("stored Prompt = %q, want the raw bytes %q", got, raw)
+	}
+}

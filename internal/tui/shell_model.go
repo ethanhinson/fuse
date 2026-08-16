@@ -1071,9 +1071,11 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	// Reset per-turn inline tracking so the footer counter starts fresh.
 	m.inlineByLabel = make(map[string]*inlineAgentState)
 	m.inlineByNode = make(map[string]*inlineAgentState)
-	// Restart the root node's clock: its elapsed measures this turn.
+	// Restart the root node's clock: its elapsed measures this turn. The prompt
+	// rides along on the mark so the agents tab can label the turn group
+	// (change 0066) — stored raw, sanitized and width-fit at render.
 	if m.tree != nil {
-		m.tree.BeginTurn()
+		m.tree.BeginTurnWithPrompt(line)
 	}
 
 	ch := m.ch
