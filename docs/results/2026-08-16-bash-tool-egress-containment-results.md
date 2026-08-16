@@ -1,5 +1,5 @@
 # bash tool egress containment — results
-Change: #58 · Branch: feat/bash-tool-egress-containment · PR: (pending) · Plan: docs/superpowers/plans/2026-08-16-bash-tool-egress-containment-plan.md · ADRs: 44 (pending mint)
+Change: #58 · Branch: feat/bash-tool-egress-containment · PR: (pending) · Plan: docs/superpowers/plans/2026-08-16-bash-tool-egress-containment-plan.md · ADRs: 44
 
 **This is a design-only change. No production code changed on this branch** — no edit to
 `internal/tools/bash.go`, `internal/permissions`, the config surface, or any other Go source. The
@@ -148,9 +148,10 @@ are the merge-gate items a human must do by reading.
       forecloses those deploy targets for hosted `bash` unless a future change revisits it.
 - [ ] Confirm the branch changes **no production code** — `git diff --stat origin/main...HEAD` should
       show only files under `docs/`.
-- [ ] Confirm ADR-0044 (minted on the `docket` branch by the parent) records the framing, the
-      posture, and the consequences at decision altitude, and that the change's `adrs:` back-link
-      carries it.
+- [ ] Read ADR-0044 (`docs/adrs/0044-bash-tool-contained-not-credentialed.md` on the `docket`
+      branch) and confirm the recorded decision matches the posture you intend to ratify — the
+      framing, the posture, and the consequences at decision altitude — and that the change's
+      `adrs:` back-link carries it.
 
 ## Findings
 
@@ -160,8 +161,10 @@ are the merge-gate items a human must do by reading.
   is therefore evaluated against the *merged* #52 seam (ADR-0036 accepted, #52 archived done), not
   against a proposal.
 - **The decision became an ADR.** "bash is contained, not credentialed" is recorded as ADR-0044
-  (`relates_to: [34, 36]`, `change: 58`), a sibling to ADR-0036, so future tool-authz work does not
-  re-litigate the framing.
+  (`docs/adrs/0044-bash-tool-contained-not-credentialed.md`, `relates_to: [34, 36]`, `change: 58`), a
+  sibling to ADR-0036, so future tool-authz work does not re-litigate the framing. The ADR lives on
+  the `docket` metadata branch — this repo has `terminal_publish: false`, so the file does not appear
+  on `main`; a reader on `main` should look there rather than in this working tree.
 - **Deno was evaluated and rejected** as a substrate — it does not contain a shell (see above). Worth
   remembering so it is not re-proposed.
 - **The container substrate carries a hard deployment constraint**, not just a cost: container-less
