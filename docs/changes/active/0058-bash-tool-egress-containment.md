@@ -10,14 +10,14 @@ updated: 2026-08-16
 depends_on: [52]
 related: [49, 55, 57]
 discovered_from: [52]
-adrs: []
+adrs: [44]
 spec: docs/superpowers/specs/2026-08-15-bash-tool-egress-containment-design.md
 plan: docs/superpowers/plans/2026-08-16-bash-tool-egress-containment-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/bash-tool-egress-containment
-claimed_at: 2026-08-16T19:46:42Z
+claimed_at: 2026-08-16T19:51:34Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-15-bash-tool-egress-containment-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-bash-tool-egress-containment-design.md) |
 | Plan | [2026-08-16-bash-tool-egress-containment-plan.md](https://github.com/ethanhinson/fuse/blob/feat/bash-tool-egress-containment/docs/superpowers/plans/2026-08-16-bash-tool-egress-containment-plan.md) |
+| ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
