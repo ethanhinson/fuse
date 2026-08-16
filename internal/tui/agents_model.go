@@ -1437,6 +1437,14 @@ func glyphStyle(s agent.NodeStatus) lipgloss.Style {
 }
 
 func nodeElapsed(n agent.NodeView) string {
+	if len(n.Turns) > 0 {
+		last := n.Turns[len(n.Turns)-1]
+		d := time.Since(last.StartedAt)
+		if !last.EndedAt.IsZero() {
+			d = last.EndedAt.Sub(last.StartedAt)
+		}
+		return formatNodeElapsed(d)
+	}
 	if n.StartedAt.IsZero() {
 		return "–"
 	}
@@ -1444,6 +1452,11 @@ func nodeElapsed(n agent.NodeView) string {
 	if !n.EndedAt.IsZero() {
 		d = n.EndedAt.Sub(n.StartedAt)
 	}
+	return formatNodeElapsed(d)
+}
+
+// formatNodeElapsed renders a duration as seconds under a minute, else "%dm%.0fs".
+func formatNodeElapsed(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("%.0fs", d.Seconds())
 	}

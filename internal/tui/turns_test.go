@@ -156,6 +156,69 @@ func parseOffsetSeconds(t *testing.T, s string) float64 {
 	return v
 }
 
+func TestNodeElapsedUsesLastTurnNotWholeSession(t *testing.T) {
+	n, _ := twoTurnRoot()
+	n.EndedAt = n.Turns[1].StartedAt.Add(90 * time.Second)
+	n.Turns[1].EndedAt = n.EndedAt
+
+	got := nodeElapsed(n)
+	want := "1m30s"
+	if got != want {
+		t.Errorf("nodeElapsed = %q, want %q (turn 2's duration, not the whole session)", got, want)
+	}
+}
+
+func TestNodeElapsedInFlightLastTurnCountsFromCurrentMark(t *testing.T) {
+	n, _ := twoTurnRoot()
+	n.Turns[1].StartedAt = time.Now().Add(-5 * time.Second)
+	// EndedAt left zero: turn still in flight.
+
+	got := nodeElapsed(n)
+	if got == "" || got == "–" {
+		t.Fatalf("nodeElapsed = %q, want a live elapsed reading from the current mark", got)
+	}
+	v := parseOffsetSecondsSuffix(t, got, "s")
+	if v < 4 || v > 10 {
+		t.Fatalf("nodeElapsed = %q (%v s), want ~5s from the in-flight turn's StartedAt", got, v)
+	}
+}
+
+func TestNodeElapsedEmptyTurnsUnchanged(t *testing.T) {
+	n := agent.NodeView{
+		ID:        "child",
+		StartedAt: turnsBase,
+		EndedAt:   turnsBase.Add(12 * time.Second),
+	}
+	if got, want := nodeElapsed(n), "12s"; got != want {
+		t.Errorf("nodeElapsed = %q, want %q", got, want)
+	}
+}
+
+func TestNodeElapsedZeroStartedAtEmptyTurnsStillDash(t *testing.T) {
+	n := agent.NodeView{ID: "child"}
+	if got, want := nodeElapsed(n), "–"; got != want {
+		t.Errorf("nodeElapsed = %q, want %q", got, want)
+	}
+}
+
+func TestNodeElapsedTurnAwareMinuteCrossingFormat(t *testing.T) {
+	n, _ := twoTurnRoot()
+	n.Turns[1].EndedAt = n.Turns[1].StartedAt.Add(75 * time.Second)
+
+	if got, want := nodeElapsed(n), "1m15s"; got != want {
+		t.Errorf("nodeElapsed = %q, want %q", got, want)
+	}
+}
+
+func parseOffsetSecondsSuffix(t *testing.T, s, suffix string) float64 {
+	t.Helper()
+	var v float64
+	if _, err := fmt.Sscanf(strings.TrimSuffix(s, suffix), "%f", &v); err != nil {
+		t.Fatalf("unparseable elapsed %q: %v", s, err)
+	}
+	return v
+}
+
 // stripANSITurns removes SGR escape sequences so offsets can be read from a
 // styled row.
 func stripANSITurns(s string) string {
