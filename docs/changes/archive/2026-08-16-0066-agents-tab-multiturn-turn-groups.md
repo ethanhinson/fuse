@@ -2,7 +2,7 @@
 id: 66
 slug: agents-tab-multiturn-turn-groups
 title: Agents tab & blackboard — turn-aware multiturn UI (collapsible turn groups + per-turn timing)
-status: implemented
+status: done
 priority: medium
 type: fix
 created: 2026-08-16
@@ -18,7 +18,7 @@ trivial: false
 auto_groomable:
 branch: feat/agents-tab-multiturn-turn-groups
 pr: https://github.com/ethanhinson/fuse/pull/63
-claimed_at: 2026-08-16T22:27:53Z
+claimed_at: 
 blocked_by:
 reconciled: true
 ---
