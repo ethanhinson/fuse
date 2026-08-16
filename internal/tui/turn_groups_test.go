@@ -287,34 +287,63 @@ func TestTurnHeaderEmptyPromptReadsNoPrompt(t *testing.T) {
 func TestTurnHeaderSanitizesHostilePromptBytes(t *testing.T) {
 	hostile := "\x1b[31mred\x1b[0m\ttab\rcr\x01\x7f\nsecond line " + strings.Repeat("x", 400)
 
+	prompts := []struct{ name, prompt string }{
+		// The original fixture: control bytes plus enough filler to overflow.
+		{"hostile", hostile},
+		// Pure ASCII. The hostile fixture's leading ESC bytes become multi-byte
+		// "·" runes, so a BYTE-budgeted truncation cuts far short of the CELL
+		// budget and hides an off-by-one; ASCII exposes it exactly.
+		{"ascii", strings.Repeat("a", 400)},
+		// Wide runes: a cell-aware truncation must FILL the budget here rather
+		// than under-using two thirds of it, and still never exceed it.
+		{"cjk", strings.Repeat("漢字", 200)},
+	}
+
 	// The preview itself must be free of every terminal-altering byte, and must
-	// respect its budget. Asserted on the unstyled helper so the assertion cannot
-	// be masked by the row's own SGR sequences.
-	for _, budget := range []int{12, 40, 90} {
-		preview := turnPromptPreview(hostile, budget)
-		for _, r := range preview {
-			if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
-				t.Errorf("budget=%d: control byte %#x survived into the preview %q", budget, r, preview)
+	// respect its budget — quotes AND ellipsis included. Asserted on the unstyled
+	// helper so the assertion cannot be masked by the row's own SGR sequences.
+	for _, p := range prompts {
+		for _, budget := range []int{12, 40, 90} {
+			preview := turnPromptPreview(p.prompt, budget)
+			for _, r := range preview {
+				if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+					t.Errorf("%s budget=%d: control byte %#x survived into the preview %q", p.name, budget, r, preview)
+				}
 			}
-		}
-		if got := lipgloss.Width(preview); got > budget {
-			t.Errorf("budget=%d: preview width = %d (%q), want <= budget", budget, got, preview)
+			got := lipgloss.Width(preview)
+			if got > budget {
+				t.Errorf("%s budget=%d: preview width = %d (%q), want <= budget", p.name, budget, got, preview)
+			}
+			// And it must not waste the header either: a truncated preview should
+			// land within one (wide) cell of the budget it was given.
+			if got < budget-2 {
+				t.Errorf("%s budget=%d: preview width = %d (%q), want it to fill the budget", p.name, budget, got, preview)
+			}
 		}
 	}
 
 	n, events := threeTurnRoot()
-	n.Turns[0].Prompt = hostile
 	m := &AgentsModel{}
-	rows := m.detailRows(n, events)
-	for _, w := range []int{80, 100, 120} {
-		hdr := m.renderDetailRows(n, events, rows, w)[0]
-		// A surviving newline would silently split one row into two and desync
-		// the pane's line accounting.
-		if strings.ContainsAny(stripANSITurns(hdr), "\n\r\t") {
-			t.Errorf("w=%d: header row still carries a line/tab break: %q", w, stripANSITurns(hdr))
-		}
-		if lipgloss.Width(hdr) != w {
-			t.Errorf("w=%d: hostile-prompt header width = %d, want exactly %d", w, lipgloss.Width(hdr), w)
+	for _, p := range prompts {
+		n.Turns[0].Prompt = p.prompt
+		rows := m.detailRows(n, events)
+		for _, w := range []int{80, 100, 120} {
+			hdr := m.renderDetailRows(n, events, rows, w)[0]
+			// A surviving newline would silently split one row into two and desync
+			// the pane's line accounting.
+			if strings.ContainsAny(stripANSITurns(hdr), "\n\r\t") {
+				t.Errorf("%s w=%d: header row still carries a line/tab break: %q", p.name, w, stripANSITurns(hdr))
+			}
+			if lipgloss.Width(hdr) != w {
+				t.Errorf("%s w=%d: header width = %d, want exactly %d", p.name, w, lipgloss.Width(hdr), w)
+			}
+			// fitLine guarantees the width above, so width alone is blind: an
+			// oversized preview is absorbed by MaxWidth truncating from the RIGHT,
+			// silently eating the duration/event-count suffix. Assert the suffix
+			// survives verbatim.
+			if plain := stripANSITurns(hdr); !strings.Contains(plain, "· 2 events") {
+				t.Errorf("%s w=%d: header %q lost its event-count suffix to preview overflow", p.name, w, plain)
+			}
 		}
 	}
 }

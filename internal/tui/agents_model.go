@@ -1420,7 +1420,33 @@ func turnPromptPreview(raw string, budget int) string {
 	if s == "" {
 		return "(no prompt)"
 	}
-	return `"` + truncate(s, maxInt(1, budget-2)) + `"`
+	return `"` + truncateCells(s, maxInt(1, budget-2)) + `"`
+}
+
+// truncateCells caps s at n DISPLAY CELLS — the ellipsis included — where
+// renderer.go's truncate caps BYTES. Fixed-width panes budget in cells
+// (lipgloss.Width), so handing a cell budget to a byte truncator is wrong in
+// both directions: ASCII overflows by the unreserved ellipsis (and fitLine then
+// absorbs the excess by truncating from the RIGHT, eating the row's
+// duration/event-count suffix), while CJK/emoji under-fill by roughly two
+// thirds. Wide runes are never split, so the result may land one cell short.
+func truncateCells(s string, n int) string {
+	if lipgloss.Width(s) <= n {
+		return s
+	}
+	if n <= 1 {
+		return "…"
+	}
+	limit := n - 1 // reserve the ellipsis
+	w := 0
+	for i, r := range s {
+		rw := lipgloss.Width(string(r))
+		if w+rw > limit {
+			return s[:i] + "…"
+		}
+		w += rw
+	}
+	return s + "…"
 }
 
 // eventOffset formats an event's turn-relative offset. It clamps at zero: the
