@@ -2,8 +2,12 @@
 // "rentals" server fuse's client talks to over the real MCP wire, with real
 // per-principal token adjudication and real per-principal mutable state. It exists to
 // ground change #59's acceptance lane in an actual service scenario (a concierge loop
-// querying a rentals server AS the authenticated user) and is importable by the Wander
-// demo (#60), which swaps only the read tool's data source behind the DataSource seam.
+// querying a rentals server AS the authenticated user), and change #60 shipped it as the
+// runnable Wander demo's backend: cmd/rentals-mcp serves this package's NewHandler on a
+// real port, and examples/wander drives it. The demo swaps only the read tool's data
+// source (LiveData behind the DataSource seam) and the favorites store (the durable
+// filesystem store behind the FavoritesStore seam) — the wire, the token adjudication,
+// and the per-principal isolation are the same code the CI lane runs.
 //
 // It is real on three axes: the MCP wire + handshake (initialize → tools/list →
 // tools/call over HTTP/SSE), per-principal token adjudication (it verifies the
@@ -11,18 +15,22 @@
 // wrong audience), and per-principal state isolation (favorite_listing writes into the
 // CALLING principal's favorites, keyed by the token identity — never a client-supplied
 // arg — so tenant A's writes are invisible to tenant B). Only the read tool's listing
-// DATA is canned (DataSource); the live Tavily backend is #60, out of scope here.
+// DATA is pluggable: CannedData is the hermetic default the CI lane runs on, and LiveData
+// (live_data.go) backs the demo with real web-search results.
 package rentals
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -39,10 +47,27 @@ type Listing struct {
 
 // DataSource is the read-tool backend seam. The default (CannedData) returns fixed,
 // deterministic in-repo listings — hermetic, no network, no key — so the acceptance
-// lane is green-able forever. The live Tavily-style backend (#60) implements this same
-// interface and is swapped in for the runnable Wander demo, not the CI lane.
+// lane is green-able forever. LiveData (live_data.go) implements this same interface with
+// real web-search results and is swapped in for the runnable Wander demo, not the CI lane.
 type DataSource interface {
 	Search(query string) []Listing
+}
+
+// StatusDataSource is an OPTIONAL extension of DataSource for backends that can be
+// DEGRADED — that can fail to answer at all, as opposed to legitimately matching
+// nothing. It exists because the two are indistinguishable through DataSource's
+// error-free contract: a provider outage and an empty market both render as `[]`, and
+// a model shown `[]` will confidently tell the user "no rentals found" mid-outage.
+//
+// SearchStatus returns the listings Search would, plus the failure when the backend
+// could not be consulted. search_rentals prefers it when the configured source
+// implements it, and reports an outage to the model rather than an empty market.
+//
+// CannedData deliberately does NOT implement it: the hermetic default can never be
+// degraded, so its no-match stays an ordinary empty result.
+type StatusDataSource interface {
+	DataSource
+	SearchStatus(query string) ([]Listing, error)
 }
 
 // CannedData is the deterministic in-repo backend (the permanent CI lane default).
@@ -69,30 +94,34 @@ func (CannedData) Search(query string) []Listing {
 	return out
 }
 
-// principalKey is the per-principal favorites-store key: the token identity
-// (tenant + subject), NEVER a client-supplied argument. It is the confused-deputy
-// boundary — a write always lands in the CALLING principal's set.
-type principalKey struct {
-	tenant  event.TenantID
-	subject string
-}
-
 // Server is the rentals MCP HTTP/SSE server. It owns a per-principal favorites store
-// (reset per NewServer, i.e. per test run) and adjudicates every tools/call by the
-// delegated token's identity.
+// (by default in-memory, so reset per NewServer, i.e. per test run) and adjudicates
+// every tools/call by the delegated token's identity.
 type Server struct {
 	httptest *httptest.Server
 	data     DataSource
 	audience string // the audience this server accepts (RFC 8707 resource id)
+
+	// favorites is the per-principal favorites store, keyed by the compound
+	// PrincipalKey derived from the VERIFIED token. Never nil (see newServer).
+	favorites FavoritesStore
 
 	// tenantKeys is the per-tenant HS256 verification key map — the SAME keys fuse's
 	// built-in STS mints under, shared out of band (as a real resource server shares a
 	// verification key). A token is authorized under the tenant whose key verifies it.
 	tenantKeys map[event.TenantID][]byte
 
-	mu        sync.Mutex
-	favs      map[principalKey]map[string]bool // principal -> set of listing ids
-	sseConns  []chan string
+	mu sync.Mutex
+	// sseConns maps a SESSION ID to that session's SSE delivery channel. A JSON-RPC
+	// response is routed to exactly one entry — the session whose POST carried the id —
+	// never fanned out. Broadcasting would put one principal's response frame on another
+	// principal's stream, and since fuse's MCP client numbers request ids PER CLIENT
+	// (internal/mcp/http_client.go), the two id spaces collide by construction, so a
+	// stray frame can resolve the OTHER principal's pending call. An entry is removed
+	// when its handleSSE returns, so a long-lived process does not accumulate dead
+	// streams. Never nil (see newServer).
+	sseConns  map[string]chan string
+	sseSeq    uint64   // monotonic fallback discriminator for session ids
 	authSeen  []string // Authorization header per tools/call, in arrival order
 	resources []string // MCP-Resource header per tools/call, in arrival order
 }
@@ -107,37 +136,86 @@ type Config struct {
 	// TenantKeys are the per-tenant HS256 verification keys (the STS's per-tenant keys,
 	// shared out of band). A caller under a tenant with no key here is unauthorized.
 	TenantKeys map[event.TenantID][]byte
+	// Favorites is the per-principal favorites store; nil ⇒ NewMemoryFavorites() (the
+	// CI-lane default). Swapping in a durable store changes only WHERE a set lives,
+	// never WHOSE set a write lands in — the key stays the verified token identity.
+	Favorites FavoritesStore
 }
 
-// NewServer starts the rentals MCP server on an httptest.Server and returns it. The
-// favorites store starts empty (reset per call). Call Close() to stop it.
-func NewServer(cfg Config) *Server {
+// newServer builds a rentals Server with no listener of any kind, defaulting the data
+// source and the favorites store. Both constructors go through it.
+func newServer(cfg Config) *Server {
 	s := &Server{
 		data:       cfg.Data,
 		audience:   cfg.Audience,
 		tenantKeys: map[event.TenantID][]byte{},
-		favs:       map[principalKey]map[string]bool{},
+		favorites:  cfg.Favorites,
+		sseConns:   map[string]chan string{},
 	}
 	if s.data == nil {
 		s.data = CannedData{}
+	}
+	if s.favorites == nil {
+		s.favorites = NewMemoryFavorites()
 	}
 	for k, v := range cfg.TenantKeys {
 		kc := make([]byte, len(v))
 		copy(kc, v)
 		s.tenantKeys[event.NormalizeTenant(k)] = kc
 	}
+	return s
+}
+
+// newMux builds the routed mux (the complete MCP surface: /sse + /messages) for this
+// Server. It is the single definition of the routing table, shared by the servable
+// constructor (NewHandler/Handler) and the test constructor (NewServer).
+func (s *Server) newMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/sse", s.handleSSE)
 	mux.HandleFunc("/messages", s.handleMessages)
-	s.httptest = httptest.NewServer(mux)
+	return mux
+}
+
+// NewHandler is the SERVABLE constructor: it builds a rentals Server and returns its
+// routed http.Handler WITHOUT binding a listener, so a caller (cmd/rentals-mcp, or a
+// test that wants to own the listener) can serve it on a real address via
+// http.Server.ListenAndServe or httptest.NewServer. The returned *Server is the state
+// owner (favorites, captured wire headers); the returned Server has no listener, so
+// URL() and Close() are NOT valid on it — those belong to NewServer.
+func NewHandler(cfg Config) (*Server, http.Handler) {
+	s := newServer(cfg)
+	return s, s.newMux()
+}
+
+// Handler returns this Server's routed http.Handler. It binds no listener; serving it
+// is the caller's job. A Server from NewServer is already serving its own handler on
+// its httptest listener, so this is mainly the accessor for the NewHandler path.
+func (s *Server) Handler() http.Handler { return s.newMux() }
+
+// NewServer is the TEST constructor: it builds the rentals MCP server and self-hosts it
+// on an httptest.Server, exposing URL() / Close(). Use it from tests that want a dialable
+// server with no listener bookkeeping. For anything that must serve on a real port — the
+// runnable demo, cmd/rentals-mcp — use NewHandler (or Handler()), which returns the same
+// routed handler with no listener bound. With the default (in-memory) favorites store
+// the favorites start empty, reset per call; a Config.Favorites store keeps whatever it
+// already holds. Call Close() to stop it.
+//
+// Teardown note: handleSSE blocks on r.Context().Done(), so Close() does not return until
+// connected clients disconnect. Register Close and any MCP client's teardown with
+// t.Cleanup (server first, client second, so LIFO stops the client first); never
+// `defer srv.Close()` ahead of the client's stop.
+func NewServer(cfg Config) *Server {
+	s := newServer(cfg)
+	s.httptest = httptest.NewServer(s.newMux())
 	return s
 }
 
 // URL returns the base URL an MCP client dials (the /sse + /messages routes live
-// under it).
+// under it). Only valid on a Server from NewServer.
 func (s *Server) URL() string { return s.httptest.URL }
 
-// Close stops the server.
+// Close stops the server. Only valid on a Server from NewServer; a NewHandler Server
+// owns no listener and needs no close.
 func (s *Server) Close() { s.httptest.Close() }
 
 // CapturedAuths returns the Authorization header of every tools/call received, in
@@ -157,8 +235,84 @@ func (s *Server) CapturedResources() []string {
 	return append([]string(nil), s.resources...)
 }
 
+// sseConnCount reports how many SSE streams are currently registered. It exists so a
+// test can assert the registry is pruned when a client disconnects: a long-lived rentals
+// process (cmd/rentals-mcp, one MCP manager per loop) must not accumulate dead streams.
+func (s *Server) sseConnCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sseConns)
+}
+
+// sessionParam is the query parameter naming the SSE session a POST belongs to. The
+// server advertises it on the endpoint event; the client (per the MCP HTTP/SSE
+// transport) POSTs to the advertised URL verbatim, so the parameter comes back on every
+// message and the response can be routed to the stream that asked for it.
+const sessionParam = "sessionId"
+
+// newSessionID mints an unguessable session id. A session id is a routing capability —
+// holding it is what lets a POST address a stream — so it comes from crypto/rand, with a
+// monotonic counter suffix so ids stay distinct even if the entropy source ever repeats.
+func (s *Server) newSessionID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failing is not survivable for a capability, but this is a demo
+		// server: degrade to the counter rather than kill the stream. The counter alone
+		// still guarantees DISTINCTNESS (the isolation property); only unguessability
+		// is lost.
+		b = [16]byte{}
+	}
+	s.mu.Lock()
+	s.sseSeq++
+	n := s.sseSeq
+	s.mu.Unlock()
+	return fmt.Sprintf("%s-%d", hex.EncodeToString(b[:]), n)
+}
+
+// registerSSE installs ch under a fresh session id and returns that id.
+func (s *Server) registerSSE(ch chan string) string {
+	id := s.newSessionID()
+	s.mu.Lock()
+	s.sseConns[id] = ch
+	s.mu.Unlock()
+	return id
+}
+
+// unregisterSSE removes a session's channel. It is deliberately by ID, not by channel
+// value: identity is what crosses the lock boundary, never a live handle to state
+// another goroutine may be using. The channel is never closed — a departed session's
+// buffered channel is simply dropped, so no delivery can ever race a close.
+func (s *Server) unregisterSSE(id string) {
+	s.mu.Lock()
+	delete(s.sseConns, id)
+	s.mu.Unlock()
+}
+
+// deliver routes one frame to a single session. The membership lookup and the
+// non-blocking send happen under ONE lock hold, so a session that unregistered
+// concurrently simply receives nothing — there is no window in which delivery targets a
+// stream that has already gone away. An unknown or empty session id delivers nowhere:
+// this boundary fails closed, because guessing wrong means writing one principal's data
+// onto another principal's stream.
+func (s *Server) deliver(sessionID, frame string) {
+	if sessionID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.sseConns[sessionID]
+	if !ok {
+		return
+	}
+	select {
+	case ch <- frame:
+	default: // slow or wedged reader: drop rather than block the POST handler
+	}
+}
+
 // handleSSE holds one long-lived SSE stream per client, announcing the /messages
-// endpoint then relaying JSON-RPC responses.
+// endpoint — carrying THIS stream's session id — then relaying the JSON-RPC responses
+// addressed to that session.
 func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -168,10 +322,17 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.WriteHeader(http.StatusOK)
 	ch := make(chan string, 16)
-	s.mu.Lock()
-	s.sseConns = append(s.sseConns, ch)
-	s.mu.Unlock()
-	fmt.Fprintf(w, "event: endpoint\ndata: http://%s/messages\n\n", r.Host)
+	sessionID := s.registerSSE(ch)
+	// Pruned on EVERY exit path, so a long-lived server (cmd/rentals-mcp, one MCP
+	// manager per loop) does not accumulate the streams of loops that have gone away.
+	defer s.unregisterSSE(sessionID)
+	endpoint := url.URL{
+		Scheme:   "http",
+		Host:     r.Host,
+		Path:     "/messages",
+		RawQuery: url.Values{sessionParam: []string{sessionID}}.Encode(),
+	}
+	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", endpoint.String())
 	flusher.Flush()
 	for {
 		select {
@@ -240,15 +401,9 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 		resp["result"] = result
 	}
 	b, _ := json.Marshal(resp)
-	s.mu.Lock()
-	conns := append([]chan string(nil), s.sseConns...)
-	s.mu.Unlock()
-	for _, c := range conns {
-		select {
-		case c <- string(b):
-		default:
-		}
-	}
+	// Route to the ONE session that asked, identified by the query parameter the
+	// endpoint event advertised on that session's stream.
+	s.deliver(r.URL.Query().Get(sessionParam), string(b))
 	w.WriteHeader(http.StatusAccepted)
 }
 
@@ -272,6 +427,18 @@ func (s *Server) handleToolCall(r *http.Request, rawParams json.RawMessage) (any
 			Query string `json:"query"`
 		}
 		_ = json.Unmarshal(params.Arguments, &args)
+		// A DEGRADED backend must not be rendered as an empty market: `[]` reads to
+		// the model as "no rentals match", and it will confidently tell the user so
+		// mid-outage. Sources that can distinguish the two (StatusDataSource) get an
+		// explicit tool error instead; CannedData cannot be degraded and takes the
+		// plain path, so a genuine no-match stays an ordinary empty result.
+		if live, ok := s.data.(StatusDataSource); ok {
+			listings, err := live.SearchStatus(args.Query)
+			if err != nil {
+				return errResult("listing search is temporarily unavailable"), nil
+			}
+			return textResult(mustJSON(listings)), nil
+		}
 		listings := s.data.Search(args.Query)
 		return textResult(mustJSON(listings)), nil
 	case "favorite_listing":
@@ -282,10 +449,20 @@ func (s *Server) handleToolCall(r *http.Request, rawParams json.RawMessage) (any
 		if args.ListingID == "" {
 			return errResult("favorite_listing requires a listing_id"), nil
 		}
-		s.addFavorite(pk, args.ListingID)
+		// pk comes from the VERIFIED token (authorize), never from args.
+		if err := s.addFavorite(pk, args.ListingID); err != nil {
+			return errResult(fmt.Sprintf("favorite_listing failed: %v", err)), nil
+		}
 		return textResult(fmt.Sprintf("favorited %s", args.ListingID)), nil
 	case "list_favorites":
-		return textResult(mustJSON(s.listFavorites(pk))), nil
+		favs, err := s.listFavorites(pk)
+		if err != nil {
+			return errResult(fmt.Sprintf("list_favorites failed: %v", err)), nil
+		}
+		if favs == nil {
+			favs = []string{} // an empty set serialises as [], never null
+		}
+		return textResult(mustJSON(favs)), nil
 	default:
 		return errResult(fmt.Sprintf("unknown tool %q", params.Name)), nil
 	}
@@ -294,11 +471,11 @@ func (s *Server) handleToolCall(r *http.Request, rawParams json.RawMessage) (any
 // authorize verifies the delegated token and returns the CALLING principal's store
 // key (tenant + sub). It fails closed: missing/invalid token, unknown tenant, or a
 // wrong-audience binding are all authorization denials (CodeUnauthorized).
-func (s *Server) authorize(r *http.Request) (principalKey, *jsonrpcErr) {
+func (s *Server) authorize(r *http.Request) (PrincipalKey, *jsonrpcErr) {
 	auth := r.Header.Get("Authorization")
 	const pfx = "Bearer "
 	if len(auth) <= len(pfx) || !strings.EqualFold(auth[:len(pfx)], pfx) {
-		return principalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "missing bearer credential"}
+		return PrincipalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "missing bearer credential"}
 	}
 	token := strings.TrimSpace(auth[len(pfx):])
 
@@ -306,7 +483,7 @@ func (s *Server) authorize(r *http.Request) (principalKey, *jsonrpcErr) {
 	// MCP-Resource header; it must match this server's audience.
 	if s.audience != "" {
 		if res := r.Header.Get("MCP-Resource"); res != s.audience {
-			return principalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: fmt.Sprintf("wrong audience: token bound to %q, server is %q", res, s.audience)}
+			return PrincipalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: fmt.Sprintf("wrong audience: token bound to %q, server is %q", res, s.audience)}
 		}
 	}
 
@@ -314,16 +491,16 @@ func (s *Server) authorize(r *http.Request) (principalKey, *jsonrpcErr) {
 	// a token minted under tenant A never verifies under tenant B's key).
 	tenant, claims, ok := s.verify(token)
 	if !ok {
-		return principalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "token does not verify under any known tenant key"}
+		return PrincipalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "token does not verify under any known tenant key"}
 	}
 	if claims.Subject == "" {
-		return principalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "token carries no subject"}
+		return PrincipalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: "token carries no subject"}
 	}
 	// Audience claim must also match (defense in depth alongside the header check).
 	if s.audience != "" && claims.Audience != s.audience {
-		return principalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: fmt.Sprintf("token aud %q != server audience %q", claims.Audience, s.audience)}
+		return PrincipalKey{}, &jsonrpcErr{Code: CodeUnauthorized, Message: fmt.Sprintf("token aud %q != server audience %q", claims.Audience, s.audience)}
 	}
-	return principalKey{tenant: tenant, subject: claims.Subject}, nil
+	return PrincipalKey{Tenant: tenant, Subject: claims.Subject}, nil
 }
 
 // tokenClaims is the subset of the delegation token this server adjudicates on.
@@ -363,26 +540,14 @@ func (s *Server) verify(token string) (event.TenantID, tokenClaims, bool) {
 	return "", tokenClaims{}, false
 }
 
-func (s *Server) addFavorite(pk principalKey, id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	set := s.favs[pk]
-	if set == nil {
-		set = map[string]bool{}
-		s.favs[pk] = set
-	}
-	set[id] = true // idempotent per principal
+// addFavorite delegates to the configured store. pk is the CALLING token's identity.
+func (s *Server) addFavorite(pk PrincipalKey, id string) error {
+	return s.favorites.Add(pk, id)
 }
 
-func (s *Server) listFavorites(pk principalKey) []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	set := s.favs[pk]
-	out := make([]string, 0, len(set))
-	for id := range set {
-		out = append(out, id)
-	}
-	return out
+// listFavorites delegates to the configured store. pk is the CALLING token's identity.
+func (s *Server) listFavorites(pk PrincipalKey) ([]string, error) {
+	return s.favorites.List(pk)
 }
 
 // toolDefs is the advertised tool surface.

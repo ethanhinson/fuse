@@ -1,0 +1,83 @@
+# Wander demo fuse config (change #0060).
+#
+# DEMO ONLY. Every credential in this file is an obviously-fake, checked-in
+# placeholder. It grants access to nothing real and MUST NOT be reused, copied
+# into a deployed server, or treated as a secret.
+#
+# How to use it: merge this file into your TRUSTED ~/.fuse/config.yml.
+#   cp examples/wander/fuse.demo.yml ~/.fuse/config.yml   # or merge by hand
+# It cannot be loaded from a repo-plantable .fuse.local.yml: `loop_server.auth`
+# and `tool_identity` are credential surfaces honored only from the home file
+# (ADR-0006), so a checked-in file can never mint or widen credentials.
+#
+# It is an OVERLAY: it declares only the blocks the demo needs (the rentals MCP
+# server, the identity signing key, and the demo user directory). Keep your own
+# `gateway:`/`models:` blocks; without them the built-in defaults apply.
+#
+# Companion process — the rentals MCP server (cmd/rentals-mcp), started for you:
+#   examples/wander/run.sh builds and starts it with values matching this file, and
+#   its trap tears it down on exit — so `./examples/wander/run.sh` is the whole demo
+#   and you never launch cmd/rentals-mcp by hand. run.sh's RENTALS_* defaults are the
+#   authoritative copy of that launch env; override them there, not here.
+#   internal/config's TestWanderRunScriptStartsRentalsServer asserts the launcher and
+#   this file have not drifted apart.
+#
+# The three values that MUST agree on both sides:
+#   mcp_servers[rentals].url      <-> RENTALS_ADDR
+#   mcp_servers[rentals].audience <-> RENTALS_AUDIENCE
+#   tool_identity.signing_key     <-> RENTALS_SIGNING_KEY
+# and RENTALS_TENANTS must name every tenant that can reach the rentals server:
+# each tenant in loop_server.auth below, PLUS `_default`. fuse mints under a
+# per-tenant key derived from the signing key, and the rentals server derives
+# verification keys the same way, so a tenant missing there makes that user's
+# every call unauthorized.
+#
+# `_default` is the one exception to "derived", and both sides know it: fuse
+# signs `_default` tokens with the signing key VERBATIM (no derivation, so the
+# single-user CLI/shell paths are unchanged), and the rentals server keys
+# `_default` the same verbatim way. You do not configure anything extra for
+# that — just do not omit `_default` from RENTALS_TENANTS. It is NOT optional
+# here: the UI's token picker offers `fuse-dev-token` / `_default` as its first
+# and default option, and an entry under loop_server.auth that omits `tenant:`
+# also normalizes to `_default`.
+
+mcp_servers:
+  # The rentals server as an identity-propagating (TierOAuth) target: fuse mints
+  # a per-call, audience-bound delegation token from the CALLING principal, and
+  # the rentals server adjudicates the favorite into that principal's own set.
+  - name: rentals
+    transport: sse
+    # BASE url only — no /sse suffix. The MCP HTTP transport appends the SSE and
+    # message paths itself (`{url}/sse`, `{url}/messages`), exactly as #59's
+    # acceptance lane configures it from the server's base URL. Spelling the
+    # suffix here yields `/sse/sse` and every call fails with a 404 on connect.
+    url: http://127.0.0.1:8091
+    audience: https://rentals.demo.fuse.local
+    auth:
+      type: identity
+
+tool_identity:
+  # DEMO KEY — fake, checked-in, not a secret. Must equal RENTALS_SIGNING_KEY.
+  signing_key: demo-not-a-secret-wander-rentals-signing-key
+  ttl: 5m
+  # Subject stamped on the non-networked (CLI/shell) paths, where there is no
+  # bearer token to resolve a principal from. The browser demo goes through
+  # loop-serve-net and uses the directory below instead.
+  local_subject: demo-local
+
+loop_server:
+  # D5's user directory: the demo bearer tokens the UI's token picker offers.
+  # Each maps to a DISTINCT {tenant, subject}, which is what makes switching
+  # users show a different favorites list.
+  #
+  # DEMO TOKENS — obviously fake, checked-in, and deliberately not
+  # secret-shaped. Anyone can read them; that is the point of a demo. Replace
+  # them (and the signing key above) before pointing anything real at this.
+  auth:
+    - token: demo-token-alice-not-a-secret
+      tenant: acme
+      subject: alice
+    - token: demo-token-bob-not-a-secret
+      tenant: globex
+      subject: bob
+  lease_ttl: 30s
