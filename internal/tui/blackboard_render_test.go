@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -333,5 +334,171 @@ func TestBlackboardNextPrevGroupNav(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
 	if m.bbScroll != starts[0] {
 		t.Errorf("p at first group should clamp at starts[0]=%d, got %d", starts[0], m.bbScroll)
+	}
+}
+
+// ─── change 0066: turn awareness inside a writer group ────────────────────────
+
+// bbTurnFixture builds a two-turn root plus a hand-stamped snapshot so entry
+// timestamps sit deterministically on either side of the turn-2 boundary.
+func bbTurnFixture(t *testing.T) (*AgentsModel, map[string]agent.BlackboardEntry, agent.NodeView) {
+	t.Helper()
+	tree := agent.NewAgentTree("root", "m")
+	tree.BeginTurnWithPrompt("first")
+	time.Sleep(30 * time.Millisecond)
+	tree.BeginTurnWithPrompt("second")
+
+	root := tree.Node(tree.RootID()).Snapshot()
+	if len(root.Turns) != 2 {
+		t.Fatalf("fixture wants 2 turn marks, got %d", len(root.Turns))
+	}
+	t1, t2 := root.Turns[0].StartedAt, root.Turns[1].StartedAt
+	snap := map[string]agent.BlackboardEntry{
+		// turn 1 (both before the turn-2 boundary)
+		"alice/early": {Value: "e", WriterID: "id-a", WriterLabel: "alice", WrittenAt: t1.Add(-5 * time.Second)},
+		"alice/one":   {Value: "1", WriterID: "id-a", WriterLabel: "alice", WrittenAt: t1.Add(time.Millisecond)},
+		// turn 2
+		"alice/two": {Value: "2", WriterID: "id-a", WriterLabel: "alice", WrittenAt: t2.Add(12300 * time.Millisecond)},
+	}
+	m := NewAgentsModel(tree, nil)
+	m.width, m.height = 100, 40
+	return m, snap, root
+}
+
+// TestBlackboardTurnDividerSplitsGroup: a writer group spanning two turns gets a
+// "── turn N ──" sub-divider before each bucket, entries on the correct side.
+func TestBlackboardTurnDividerSplitsGroup(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m, snap, _ := bbTurnFixture(t)
+	body, starts := m.blackboardBody(snap, 60)
+	lines := stripLines(body)
+
+	d1 := indexOfLineContaining(lines, "── turn 1 ──")
+	d2 := indexOfLineContaining(lines, "── turn 2 ──")
+	if d1 < 0 || d2 < 0 {
+		t.Fatalf("want both turn dividers, got d1=%d d2=%d in:\n%s", d1, d2, strings.Join(lines, "\n"))
+	}
+	if d1 >= d2 {
+		t.Errorf("turn buckets out of ascending order: turn1 at %d, turn2 at %d", d1, d2)
+	}
+	// The single writer group's header still precedes everything.
+	if len(starts) != 1 || starts[0] != 0 {
+		t.Fatalf("writer-group starts = %v, want [0]", starts)
+	}
+	if h := indexOfLineContaining(lines, "▌ alice"); h != 0 || h > d1 {
+		t.Errorf("writer header at %d, want line 0 before the first divider (%d)", h, d1)
+	}
+	// Entries land on the correct side of the boundary.
+	for _, tc := range []struct {
+		key                   string
+		wantAfter, wantBefore int
+	}{
+		{"alice/early", d1, d2},
+		{"alice/one", d1, d2},
+	} {
+		i := indexOfLineContaining(lines, tc.key)
+		if i < tc.wantAfter || i > tc.wantBefore {
+			t.Errorf("%s at line %d, want inside the turn-1 bucket (%d,%d)", tc.key, i, tc.wantAfter, tc.wantBefore)
+		}
+	}
+	if i := indexOfLineContaining(lines, "alice/two"); i < d2 {
+		t.Errorf("alice/two at line %d, want after the turn-2 divider at %d", i, d2)
+	}
+}
+
+// TestBlackboardEntryOffsetsAreTurnRelative: per-entry offsets are non-negative
+// and measured from the entry's OWN turn start, not the session start.
+func TestBlackboardEntryOffsetsAreTurnRelative(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m, snap, root := bbTurnFixture(t)
+	lines := stripLines(mustBody(m, snap, 60))
+
+	for _, l := range lines {
+		if strings.Contains(l, "+-") || strings.Contains(l, "· -") {
+			t.Errorf("negative offset rendered: %q", l)
+		}
+	}
+	// alice/two was written 12.3s into turn 2 — measured against the session start
+	// it would be far larger, so this pins turn-relative attribution.
+	want := "+" + eventOffset(root, snap["alice/two"].WrittenAt)
+	if want != "+012.3s" {
+		t.Fatalf("fixture offset drifted: %q", want)
+	}
+	i := indexOfLineContaining(lines, "alice/two")
+	if i < 0 || !strings.Contains(lines[i+1], want) {
+		t.Errorf("alice/two meta = %q, want offset %q", lines[i+1], want)
+	}
+	// The pre-turn-1 entry clamps to zero rather than going negative.
+	j := indexOfLineContaining(lines, "alice/early")
+	if !strings.Contains(lines[j+1], "+000.0s") {
+		t.Errorf("pre-turn-1 entry meta = %q, want clamped +000.0s", lines[j+1])
+	}
+}
+
+func mustBody(m *AgentsModel, snap map[string]agent.BlackboardEntry, w int) []string {
+	body, _ := m.blackboardBody(snap, w)
+	return body
+}
+
+// TestBlackboardSingleTurnRendersUnchanged is the backward-compatibility guard:
+// with zero or one turn mark the body is byte-identical to the pre-0066 render —
+// no dividers, no offsets in the meta line.
+func TestBlackboardSingleTurnRendersUnchanged(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	_, snap, _ := bbTurnFixture(t)
+
+	noTurn := agent.NewAgentTree("root", "m")
+	mNo := NewAgentsModel(noTurn, nil)
+	mNo.width, mNo.height = 100, 40
+
+	oneTurn := agent.NewAgentTree("root", "m")
+	oneTurn.BeginTurnWithPrompt("only")
+	mOne := NewAgentsModel(oneTurn, nil)
+	mOne.width, mOne.height = 100, 40
+
+	legacy, ls := mNo.blackboardBody(snap, 60)
+	single, ss := mOne.blackboardBody(snap, 60)
+	if strings.Join(legacy, "\n") != strings.Join(single, "\n") {
+		t.Errorf("single-turn body diverged from the no-turn (legacy) body")
+	}
+	if fmt.Sprint(ls) != fmt.Sprint(ss) {
+		t.Errorf("group starts diverged: %v vs %v", ls, ss)
+	}
+	for _, l := range stripLines(legacy) {
+		if strings.Contains(l, "── turn ") {
+			t.Errorf("legacy path emitted a turn divider: %q", l)
+		}
+		if strings.Contains(l, "written by") && strings.Contains(l, "+0") {
+			t.Errorf("legacy path emitted a turn offset: %q", l)
+		}
+	}
+}
+
+// TestBlackboardRowsFitWidth: no rendered row exceeds the pane width, and the new
+// divider rows are exactly w cells, across several widths.
+func TestBlackboardRowsFitWidth(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m, snap, _ := bbTurnFixture(t)
+	for _, w := range []int{80, 100, 120} {
+		for _, l := range stripLines(mustBody(m, snap, w)) {
+			if got := lipgloss.Width(l); got > w {
+				t.Errorf("w=%d: row %q is %d cells", w, l, got)
+			}
+			if strings.Contains(l, "── turn ") && lipgloss.Width(l) != w {
+				t.Errorf("w=%d: divider %q is %d cells, want exactly w", w, l, lipgloss.Width(l))
+			}
+		}
 	}
 }

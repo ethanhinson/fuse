@@ -989,7 +989,20 @@ func (m *AgentsModel) buildBlackboardLines(w int) []string {
 // group's max WrittenAt; keys are sorted alphabetically within a group. Every
 // model/tool-controlled field is sanitized and hard-wrapped to w so no line can
 // exceed the pane width or leak control bytes.
+//
+// Turn awareness (change 0066) lives strictly INSIDE a writer group: a group
+// whose entries span more than one turn interleaves "── turn N ──" sub-dividers
+// between its per-turn buckets, and every entry's meta line carries a
+// turn-relative offset. groupStarts still records only WRITER-group starts, so
+// n/p navigation absorbs the extra divider lines automatically. With at most one
+// turn mark on the root the output is byte-identical to the pre-0066 render.
 func (m *AgentsModel) blackboardBody(snap map[string]agent.BlackboardEntry, w int) (body []string, groupStarts []int) {
+	// Read the root node's turn marks through the single accessor both the render
+	// path and blackboardGroupStarts reach (the latter calls this function), so
+	// their line counts cannot diverge — the equality blackboardContentWidth's
+	// comment protects.
+	root := m.blackboardRootView()
+	turnAware := len(root.Turns) > 1
 	type group struct {
 		name   string
 		latest time.Time
@@ -1034,29 +1047,99 @@ func (m *AgentsModel) blackboardBody(snap map[string]agent.BlackboardEntry, w in
 		for _, hr := range wrapToWidth(hdr, w) {
 			body = append(body, groupHeaderStyle.Render(hr))
 		}
-		for ki, k := range g.keys {
-			e := snap[k]
-			// Key line: accented key, muted "written by" meta.
-			keyRows := wrapToWidth(sanitizeDisplay(k), w)
-			for _, kr := range keyRows {
-				body = append(body, keyStyle.Render(kr))
+		// Bucket the group's keys by the turn each entry was written in, using THE
+		// shared attribution rule (turnIndexFor) — never a second one. g.keys is
+		// already alphabetical and the bucketing is stable, so ordering inside a
+		// bucket is today's ordering; buckets themselves run turn-ascending.
+		buckets := blackboardTurnBuckets(root, snap, g.keys, turnAware)
+		for _, b := range buckets {
+			// Sub-divider before each bucket, only when the group genuinely spans
+			// more than one turn. A single-bucket group emits none, so its bytes are
+			// unchanged from before change 0066.
+			if len(buckets) > 1 {
+				body = append(body, sepStyle.Render(fitLine(fmt.Sprintf("── turn %d ──", turnOrdinal(root, b.turnIdx)), w)))
 			}
-			for _, mr := range wrapToWidth("  ⟨written by "+sanitizeDisplay(e.WriterLabel)+"⟩", w) {
-				body = append(body, metaStyle.Render(mr))
-			}
-			// Value line(s): pretty JSON for objects/arrays (each already-indented
-			// line wrapped individually), inline for scalars; normal contrast.
-			for _, vl := range encodeBlackboardValueLines(e.Value, w) {
-				body = append(body, valStyle.Render(vl))
-			}
-			// Separator between entries within a group (muted rule).
-			if ki < len(g.keys)-1 {
-				body = append(body, sepStyle.Render(fitLine(strings.Repeat("─", maxInt(1, w/3)), w)))
+			for ki, k := range b.keys {
+				e := snap[k]
+				// Key line: accented key, muted "written by" meta.
+				keyRows := wrapToWidth(sanitizeDisplay(k), w)
+				for _, kr := range keyRows {
+					body = append(body, keyStyle.Render(kr))
+				}
+				meta := "  ⟨written by " + sanitizeDisplay(e.WriterLabel) + "⟩"
+				if turnAware {
+					// Turn-relative, clamped by the shared helper: structurally never negative.
+					meta = "  ⟨written by " + sanitizeDisplay(e.WriterLabel) + " · +" + eventOffset(root, e.WrittenAt) + "⟩"
+				}
+				for _, mr := range wrapToWidth(meta, w) {
+					body = append(body, metaStyle.Render(mr))
+				}
+				// Value line(s): pretty JSON for objects/arrays (each already-indented
+				// line wrapped individually), inline for scalars; normal contrast.
+				for _, vl := range encodeBlackboardValueLines(e.Value, w) {
+					body = append(body, valStyle.Render(vl))
+				}
+				// Separator between entries (muted rule) — suppressed before a
+				// sub-divider, which already separates the buckets.
+				if ki < len(b.keys)-1 {
+					body = append(body, sepStyle.Render(fitLine(strings.Repeat("─", maxInt(1, w/3)), w)))
+				}
 			}
 		}
 		body = append(body, "") // blank line between groups
 	}
 	return body, groupStarts
+}
+
+// blackboardRootView is THE accessor the blackboard render path uses to reach the
+// root node's turn marks. blackboardGroupStarts renders through blackboardBody,
+// so both see exactly this view and their line counts cannot diverge. Returns a
+// zero NodeView (no turns ⇒ legacy render) when there is no tree or no root.
+func (m *AgentsModel) blackboardRootView() agent.NodeView {
+	if m.tree == nil {
+		return agent.NodeView{}
+	}
+	rootID := m.tree.RootID()
+	if v, ok := m.nodeByID[rootID]; ok {
+		return v
+	}
+	if n := m.tree.Node(rootID); n != nil {
+		return n.Snapshot()
+	}
+	return agent.NodeView{}
+}
+
+// blackboardTurnBucket is one turn's slice of a writer group's keys.
+type blackboardTurnBucket struct {
+	turnIdx int // index into root.Turns; -1 on the legacy (turn-unaware) path
+	keys    []string
+}
+
+// blackboardTurnBuckets splits one writer group's (already alphabetically sorted)
+// keys into turn-ascending buckets. Attribution goes through turnIndexFor — the
+// same rule the event pane uses — so an entry can never sit under a divider that
+// disagrees with the offset printed on it. When the root is not multi-turn the
+// whole group is a single bucket, which suppresses dividers and keeps the render
+// byte-identical to the pre-0066 output.
+func blackboardTurnBuckets(root agent.NodeView, snap map[string]agent.BlackboardEntry, keys []string, turnAware bool) []blackboardTurnBucket {
+	if !turnAware {
+		return []blackboardTurnBucket{{turnIdx: -1, keys: keys}}
+	}
+	byTurn := map[int][]string{}
+	var order []int
+	for _, k := range keys {
+		ti := turnIndexFor(root, snap[k].WrittenAt)
+		if _, seen := byTurn[ti]; !seen {
+			order = append(order, ti)
+		}
+		byTurn[ti] = append(byTurn[ti], k)
+	}
+	sort.Ints(order)
+	out := make([]blackboardTurnBucket, 0, len(order))
+	for _, ti := range order {
+		out = append(out, blackboardTurnBucket{turnIdx: ti, keys: byTurn[ti]})
+	}
+	return out
 }
 
 // writerGroupName picks the display bucket for an entry: WriterLabel, then
