@@ -10,7 +10,7 @@ updated: 2026-08-16
 depends_on: []
 related: [12, 53, 54]
 discovered_from: [53]
-adrs: []
+adrs: [45]
 spec: docs/superpowers/specs/2026-08-16-agents-tab-multiturn-turn-groups-design.md
 plan: docs/superpowers/plans/2026-08-16-agents-tab-multiturn-turn-groups-plan.md
 results:
@@ -18,7 +18,7 @@ trivial: false
 auto_groomable:
 branch: feat/agents-tab-multiturn-turn-groups
 pr:
-claimed_at: 2026-08-16T21:20:48Z
+claimed_at: 2026-08-16T22:26:01Z
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-16-agents-tab-multiturn-turn-groups-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-16-agents-tab-multiturn-turn-groups-design.md) |
 | Plan | [2026-08-16-agents-tab-multiturn-turn-groups-plan.md](https://github.com/ethanhinson/fuse/blob/feat/agents-tab-multiturn-turn-groups/docs/superpowers/plans/2026-08-16-agents-tab-multiturn-turn-groups-plan.md) |
+| ADRs | [ADR-0045](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0045-conversational-turn-attribution-by-timestamp-bucketing.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
