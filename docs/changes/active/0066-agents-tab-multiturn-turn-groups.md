@@ -18,9 +18,9 @@ trivial: false
 auto_groomable:
 branch: feat/agents-tab-multiturn-turn-groups
 pr:
-claimed_at: 2026-08-16T21:13:14Z
+claimed_at: 2026-08-16T21:17:40Z
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -78,11 +78,54 @@ linked spec.
 
 ## Open questions
 
-- Confirm the turn index handed to `BeginTurn` is the same counter as
-  `UserInputPayload.Turn`, and pin the equality with a test (it's the UI join key).
-- Whether blackboard entries carry a per-entry timestamp usable for turn bucketing, or turn
-  attribution must be inferred from event-stream interleaving.
+All resolved at reconcile (2026-08-16) — see the spec's *Open questions* section:
+
+- ~~Is `BeginTurn`'s turn index the same counter as `UserInputPayload.Turn`?~~ **No.** They
+  are different counters; the join is unsound and has been removed from the design.
+- ~~Do blackboard entries carry a per-entry timestamp usable for turn bucketing?~~ **Yes** —
+  `BlackboardEntry.WrittenAt`.
+
+## Verification
+
+Beyond the automated suite, both defects are operator-visible, so this change is verified by
+**driving the real application** through a genuine multi-turn shell session and observing the
+UI and its telemetry directly — offsets never negative across a turn boundary, turn-group
+headers correct, `enter` collapse/expand stable, headline timer scoped to the current turn,
+blackboard turn separation and timing correct. Observations are recorded in the results file.
 
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-16
+
+Reconciled against `origin/main` at claim time. The change remains valid and in scope — both
+defects still reproduce in current code, and none of the work has been done elsewhere. Four
+corrections were folded into the spec:
+
+1. **The UI join key was wrong — design corrected.** The spec assumed `TurnMark.Turn` could
+   be joined to `event.UserInputPayload.Turn`. It cannot: `loop.go`'s `turn`
+   (`internal/agent/loop.go:402`) is the agent's **inner tool-loop iteration** counter — one
+   conversational turn spans many of them — while `BeginTurn`/`EndTurn` are **conversational**
+   boundaries driven from the TUI shell (`internal/tui/shell_model.go:1076`, `:681`). The
+   exact-join is removed; event→turn attribution is now **solely** timestamp bucketing
+   against the append-ordered `Turns` marks, and the "pin the equality with a test"
+   obligation is replaced by its inverse.
+2. **Receivers corrected.** `BeginTurn`/`EndTurn` are methods on **`*AgentTree`**
+   (`internal/agent/tree.go:330`, `:359`), not `AgentNode`, and `BeginTurn()` takes **no**
+   argument. Its signature stays unchanged so neither caller (`shell_model.go:1076`,
+   `cmd/fuse/research_probe.go:158`) needs touching; the ordinal is assigned internally.
+3. **`NodeView` snapshot note.** `NodeView` deliberately excludes `Events` (consumers use
+   `CopyEvents()`), so `Turns` must be added to `NodeView` explicitly, as a defensive copy
+   taken under the node lock.
+4. **Blackboard file layout corrected.** There are no standalone `blackboard_*.go`
+   renderers — those files are all tests. The render path lives entirely inside
+   `internal/tui/agents_model.go` (`blackboardGroupStarts:437`, `buildBlackboardLines:880`,
+   `blackboardBody:953`). `BlackboardEntry.WrittenAt` (`internal/agent/blackboard.go:21`)
+   confirmed present, so the same bucketing rule applies there.
+
+Also added an explicit **verification obligation**: drive the real app through a multi-turn
+session and observe the UI + telemetry, recording it in the results file.
+
+No adjacent follow-up work met the materiality bar. (`AUTO_CAPTURE_ENABLED` is `false` for
+this repo, so nothing would have been minted regardless.)
