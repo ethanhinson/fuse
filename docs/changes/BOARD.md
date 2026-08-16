@@ -1,12 +1,15 @@
 # Backlog
 
-**62 changes** — 🟡 1 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 52 done · 🗑️ 6 killed
+**65 changes** — 🟡 4 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 52 done · 🗑️ 6 killed
 
-## 🟡 Proposed (1)
+## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0062](active/0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md) | Wander refresh-to-restore — light up #54 durable resume in the browser demo | `medium` | `feat` | build-ready |
+| [0063](active/0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | `high` | `feat` | ⏳ waiting on #58 — needs your merge |
+| [0064](active/0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | `medium` | `feat` | ⏳ waiting on #63 — not yet built |
+| [0065](active/0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | `medium` | `feat` | ⏳ waiting on #63 — not yet built |
 
 ## ⚪ Deferred (2)
 
@@ -28,6 +31,9 @@ graph TD
   0052 --> 0058
   0054 --> 0062
   0060 --> 0062
+  0058 --> 0063
+  0063 --> 0064
+  0063 --> 0065
   0012:::done
   0052:::done
   0054:::done
