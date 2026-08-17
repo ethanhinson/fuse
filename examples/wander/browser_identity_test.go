@@ -229,6 +229,53 @@ func TestWanderBrowserUserSwitchIsolatesFavorites(t *testing.T) {
 		t.Fatalf("a user switch surfaced a terminal stream error (%q); both demo tokens are valid\n--- server output ---\n%s",
 			term, outBuf.String())
 	}
+
+	// --- change 0062: restore must work for a NON-DEV principal too --------------
+	// The reload-restore lane in browser_test.go only ever exercises the built-in dev
+	// credential, which is the credential the page LOADS with — so it cannot see the case
+	// where the stored session belongs to someone else. That case is the whole risk: the
+	// restore is gated on the stored {tenant, subject} matching the credential in hand (it
+	// must be — a mismatched restore is a cross-owner Observe the server rejects with
+	// PermissionDenied), so unless the page re-establishes the stored principal's credential
+	// BEFORE consulting the store, every non-dev session silently fails to restore.
+	//
+	// We are currently alice, on a loop her own credential minted (the saved-panel refresh
+	// turn the switch-back fired). Reopening the tab must come back as alice, on that same
+	// loop, with no terminal error — the last of which is what proves the Observe was issued
+	// under HER token and not the dev one the page boots with.
+	restoredLoopID := readString(t, page, "window.__wanderLoopId")
+	if restoredLoopID == "" || restoredLoopID == "<nil>" {
+		t.Fatalf("no window.__wanderLoopId for %s; the restore assertion below needs a persisted loop", alice.Label())
+	}
+	if err := page.Close(); err != nil {
+		t.Fatalf("close page: %v", err)
+	}
+	// SAME BrowserContext — contexts are storage-isolated, so a fresh one would start with an
+	// empty localStorage and take the fresh-session path while looking like it tested restore.
+	// See the long note on TestWanderBrowserReloadRestoresSession; do not "simplify" this.
+	page2, err := bctx.NewPage()
+	if err != nil {
+		t.Fatalf("new page in the same context: %v", err)
+	}
+	instrumentPage(t, page2)
+	// NOT `networkidle`: the restore holds its durable Observe stream open, so the network
+	// never goes idle. Every assertion below polls for its own condition.
+	if _, err := page2.Goto(pageURL, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateLoad,
+		Timeout:   playwright.Float(30000),
+	}); err != nil {
+		t.Fatalf("goto %s (reopened tab): %v\n--- server output ---\n%s", pageURL, err, outBuf.String())
+	}
+	waitForTrue(t, page2, "window.__wanderRestored === true",
+		fmt.Sprintf("the reopened tab did not restore %s's session — it took the fresh-session path, which is what happens when the page never re-selects the stored principal and evaluates the restore as the dev credential", alice.Label()))
+	waitForWhoami(t, page2, alice.Label())
+	if got := readString(t, page2, "window.__wanderLoopId"); got != restoredLoopID {
+		t.Fatalf("restored loop id mismatch for %s: reopened tab has %q, want %q", alice.Label(), got, restoredLoopID)
+	}
+	if term := readString(t, page2, "window.__wanderTerminal"); term != "" && term != "<nil>" {
+		t.Fatalf("restoring %s's session surfaced a terminal stream error (%q) — the Observe was issued under the wrong credential\n--- server output ---\n%s",
+			alice.Label(), term, outBuf.String())
+	}
 }
 
 // --- UI drivers -----------------------------------------------------------------

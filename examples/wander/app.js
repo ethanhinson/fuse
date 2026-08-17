@@ -177,9 +177,22 @@ let replaying = false;
 // Every storage access is try/catch-wrapped. Storage can throw outright (Safari private
 // mode, a hardened profile, disabled site data), and the demo must degrade to today's
 // stateless behavior rather than break.
+//
+// What is stored is the principal's NAME ({tenant, subject}) — never its token. On reload the
+// token is re-resolved from the demo directory the server publishes (see restoreSession), so
+// no bearer credential is ever written to localStorage. The corollary is a deliberate
+// limitation: a session opened under a PASTED custom token is not persisted at all (below).
 const SESSION_KEY = "wander.session.v1";
 
 function saveSession(id) {
+  // A pasted token is a credential we would have to store to restore, and localStorage is
+  // the wrong home for a bearer credential even in an example app. Worse, the {tenant,
+  // subject} the app attaches to a custom token is the app's GUESS (the tenant box plus the
+  // literal subject "custom"), not the server's resolution of that token — so a stored entry
+  // for it would be a claim the app cannot back. A custom-credential session is therefore
+  // deliberately not restorable. Nothing to clear here: switchUser() reset (and so cleared)
+  // the store before this credential was ever used.
+  if (currentUser.custom) return;
   try {
     localStorage.setItem(
       SESSION_KEY,
@@ -188,19 +201,35 @@ function saveSession(id) {
   } catch {}
 }
 
-function loadSession() {
+// readSession returns the stored entry VERBATIM (principal included) or null. It performs no
+// principal check — it is the raw read that restoreSession needs in order to find out WHOSE
+// session is stored. Everything that acts on a stored id goes through loadSession() below.
+function readSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY);
     if (!raw) return null;
     const saved = JSON.parse(raw);
     if (!saved || !saved.loopId) return null;
-    // The security-relevant check: BOTH halves of the principal must match.
-    if (saved.tenant !== currentUser.tenant) return null;
-    if (saved.subject !== currentUser.subject) return null;
-    return { loopId: String(saved.loopId) };
+    return {
+      loopId: String(saved.loopId),
+      tenant: String(saved.tenant),
+      subject: String(saved.subject),
+    };
   } catch {
     return null;
   }
+}
+
+// principalMatches is the security-relevant check, defined ONCE: BOTH halves of the principal
+// must equal the credential currently in hand.
+function principalMatches(entry) {
+  return !!entry && entry.tenant === currentUser.tenant && entry.subject === currentUser.subject;
+}
+
+function loadSession() {
+  const saved = readSession();
+  if (!principalMatches(saved)) return null;
+  return { loopId: saved.loopId };
 }
 
 function clearSession() {
@@ -754,15 +783,27 @@ function resetSession() {
   window.__wanderRestoreLost = false;
 }
 
+// adoptUser makes `user` the credential in hand: it re-points the SDK client and the UI's
+// identity affordances, and NOTHING else. It deliberately does no teardown and starts no
+// turn, because it has two callers with different needs — switchUser (which must reset the
+// previous principal's session FIRST) and the restore path (which must establish the stored
+// principal's credential BEFORE loadSession is consulted, with no session to tear down and
+// no model turn to spend). Keeping it credential-only is what lets both share one definition
+// of "who we are now" without the restore inheriting a switch's side effects.
+function adoptUser(user) {
+  currentUser = user;
+  client = makeClient(user);
+  whoamiEl.textContent = user.label;
+  syncPickerSelection();
+}
+
 // switchUser resets, re-credentials the SDK client, then asks the NEW principal's agent
 // for their saved stays. The order matters: nothing of the previous principal survives
 // into the request that follows.
 function switchUser(user) {
   if (!user || !user.token) return;
   resetSession();
-  currentUser = user;
-  client = makeClient(user);
-  whoamiEl.textContent = user.label;
+  adoptUser(user);
   refreshSaved();
 }
 
@@ -782,8 +823,16 @@ function renderPicker() {
   custom.textContent = "paste a token…";
   userSelect.appendChild(custom);
   // Re-select whoever is current so populating the list never silently switches user.
+  syncPickerSelection();
+}
+
+// syncPickerSelection points the picker at whoever `currentUser` is, WITHOUT rebuilding the
+// option list (so it is safe to call from inside the picker's own change handler). DEV_USER
+// is always demoUsers[0], so the only credential that is not in the list is a pasted one —
+// which belongs on the "paste a token…" option, not silently back on dev.
+function syncPickerSelection() {
   const idx = demoUsers.indexOf(currentUser);
-  userSelect.value = String(idx >= 0 ? idx : 0);
+  userSelect.value = idx >= 0 ? String(idx) : "custom";
 }
 
 // loadDemoUsers fetches the demo directory server.js publishes from the demo fuse config.
@@ -1003,7 +1052,10 @@ customApply.addEventListener("click", () => {
     return;
   }
   const tenant = customTenant.value.trim() || "_default";
-  switchUser({ token, tenant, subject: "custom", label: `custom@${tenant}` });
+  // `custom: true` marks a credential the app cannot name or re-resolve later: its token is
+  // pasted (never persisted — see saveSession) and its {tenant, subject} is a guess, not the
+  // server's resolution. Sessions started under it are deliberately not restorable.
+  switchUser({ token, tenant, subject: "custom", label: `custom@${tenant}`, custom: true });
 });
 
 whoamiEl.textContent = currentUser.label;
@@ -1011,19 +1063,55 @@ renderPicker();
 // Fetch the demo directory in the background. Deliberately NOT followed by a saved-panel
 // refresh: the page must not start a loop before the user says something (#54's stateless
 // boundary), so the panel first fills on an explicit user switch or after a favorite lands.
-loadDemoUsers();
+// The promise is kept: restoreSession awaits it — and ONLY it — when the stored session
+// belongs to a principal other than the one the page loads with.
+const demoUsersReady = loadDemoUsers();
 
-// Restore-on-load (change 0062, D1). Deliberately NOT awaited behind loadDemoUsers(): the
-// stored session belongs to the credential already in hand at this point, and loadSession's
-// principal match refuses anything else — waiting for the directory could only widen the
-// window in which the restored transcript is missing. Nothing stored (or an entry for a
-// different principal, which loadSession collapses to null) leaves the first-visit path
-// exactly as it was: no loop is started here, ever — a restore only re-observes an existing
-// durable stream from seq 0.
-function restoreSession() {
-  const stored = loadSession();
+// Restore-on-load (change 0062, D1).
+//
+// The page always loads as DEV_USER, but a session may have been minted under any demo
+// principal, so a restore has to re-establish that principal's credential BEFORE it can
+// decide anything. The order below is the whole point and must not be rearranged:
+//
+//   1. read the stored entry (raw — no principal filtering: we are asking WHOSE it is);
+//   2. if it names the credential already in hand (the common dev case), fall straight
+//      through with NO await, so that path is byte-identical to a synchronous restore;
+//   3. otherwise wait for the demo directory and look the stored principal up in it. The
+//      TOKEN comes from the directory, never from storage — we persist a principal's name,
+//      not its credential. A principal that is no longer in the directory (removed from the
+//      demo config, a failed fetch, or a pasted credential that was never persisted in the
+//      first place) is not a restorable session: forget it and stay a clean fresh session;
+//   4. adopt that credential, and only THEN consult loadSession().
+//
+// loadSession() stays the authoritative gate in every path: it is re-run after the adoption
+// and still refuses anything whose {tenant, subject} does not match the credential now in
+// hand. That is what keeps a restore from ever issuing a cross-owner Observe — which the
+// server would reject with PermissionDenied, a confusing failure where a fresh session is
+// the honest answer. Adopting a directory principal is not an escalation: those tokens are
+// published to this page already (server.js's opt-in demo directory) and the picker hands
+// any of them out on one click; storage can only name a principal, never mint a credential.
+async function restoreSession() {
+  const stored = readSession();
   if (!stored) return;
-  loopId = stored.loopId;
+  if (!principalMatches(stored)) {
+    const generation = sessionGeneration;
+    await demoUsersReady;
+    // The user can act during that await (the composer is live). If they did — started a
+    // turn, or switched/reset, which bumps the generation — their session wins outright:
+    // never re-credential or re-point a loop out from under a live one.
+    if (generation !== sessionGeneration || loopId !== null || turnInFlight) return;
+    const owner = demoUsers.find(
+      (u) => u.tenant === stored.tenant && u.subject === stored.subject,
+    );
+    if (!owner) {
+      clearSession();
+      return;
+    }
+    adoptUser(owner);
+  }
+  const restored = loadSession();
+  if (!restored) return;
+  loopId = restored.loopId;
   window.__wanderLoopId = loopId;
   // Everything the durable stream is about to replay is history, not live activity: the
   // flag stays true until the user's next submit (a parked loop emits nothing on its own).

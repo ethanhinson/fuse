@@ -160,7 +160,17 @@ Switching users performs a **full client-side reset** before the new session sta
 live observe stream is aborted through the SDK's idempotent teardown *first*, then the
 transcript, activity rail, stats and saved panel are cleared and a new session generation
 begins (so any frame still draining on the old stream is inert). The `＋ New` button runs
-the same reset for the same principal.
+the same reset for the same principal. Both gestures also **forget the stored session**, so
+either one is an explicit fresh start — only a *reload* restores (see *Scope*).
+
+A stored session belongs to the principal that minted it, and reloading re-selects that
+principal in the picker before restoring. What is persisted is the principal's **name**
+(`{tenant, subject}`) — never its token; the token is re-resolved from the demo directory
+the page already fetches. So a session minted under a **pasted** token is deliberately *not*
+restorable: the app will not put a bearer credential in `localStorage`, and the
+`{tenant, subject}` it shows for a pasted token is its own guess rather than the server's
+resolution of that token. Reloading after using a pasted token starts a fresh session, as
+does reloading when the stored principal is no longer in the directory.
 
 Note for anyone editing `fuse.demo.yml`: `mcp_servers[rentals].url` must be the **base**
 URL with no `/sse` suffix — the MCP HTTP transport appends `/sse` and `/messages` itself.
@@ -177,9 +187,13 @@ relative proto stubs.
 
 ## Scope
 
-Wander persists its `loopId` and, on reload, restores the conversation by replaying the
-loop's durable event stream from `seq` 0 — the browser-visible face of change #54's
-server-side durable resume. It is an example app, not a production deployment.
+Wander persists its `loopId` — together with the `{tenant, subject}` of the principal that
+minted it, never that principal's token — and, on reload, re-selects that principal and
+restores the conversation by replaying the loop's durable event stream from `seq` 0: the
+browser-visible face of change #54's server-side durable resume. The restore is refused
+unless the stored principal matches the credential in hand, so it can never issue a
+cross-owner `Observe`. Sessions started under a **pasted** token are not persisted at all
+(see *Switching users*). It is an example app, not a production deployment.
 
 The conversation is truly lost only when the durable stream itself is gone (a wiped or
 rebuilt store): that surfaces as a terminal `not_found` on the restore attempt, and Wander
@@ -211,6 +225,17 @@ user B the saved panel must NOT contain it (and switching back must show it agai
 asserts the switch left **exactly one** live observe stream — the previous principal's must
 have been torn down — and that the transcript was cleared. Because the checked-in demo
 config is used verbatim, config rot fails this lane instead of quietly demoing nothing.
+
+**Restore is asserted in both files**, because it is a property of the *credential* as much
+as of the transport. `browser_test.go` closes the tab and reopens one in the **same**
+browser context (contexts are storage-isolated, so a fresh one would silently test the
+fresh-session path) and asserts the same loop comes back with both its question and its
+answer — and, separately, that a stored session naming a principal who is not in the demo
+directory is *forgotten* and replaced by a working fresh session rather than retried under
+the wrong credential. `browser_identity_test.go` does the same reopen while a **non-dev**
+demo principal is selected, and asserts the page comes back as that principal, on that
+principal's loop, with no terminal error — which is what proves the `Observe` was issued
+under their token and not the one the page boots with.
 
 Changing the markup here can silently break both lanes: they drive `#input`, `#send`,
 `#user`, `#whoami` and `#saved .saved-item`, and read `.msg.concierge` / `.msg.error` plus

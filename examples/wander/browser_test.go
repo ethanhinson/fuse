@@ -329,6 +329,82 @@ func TestWanderBrowserReloadRestoresSession(t *testing.T) {
 	}
 }
 
+// TestWanderBrowserUnknownStoredPrincipalStartsFresh pins the degrade path of the
+// principal-aware restore (change 0062): the page re-selects the stored principal from the
+// demo directory before restoring, so a stored entry naming a principal that is NOT in that
+// directory (removed from the demo config, a failed directory fetch, or a pasted credential
+// that was deliberately never persisted) has no credential to restore under.
+//
+// That case must land on a CLEAN FRESH SESSION — the stored entry forgotten, no terminal
+// error, the composer usable — and must never fall through into an Observe issued under
+// whatever credential happens to be in hand, which is precisely the cross-owner call the
+// server answers with PermissionDenied.
+func TestWanderBrowserUnknownStoredPrincipalStartsFresh(t *testing.T) {
+	pageURL, bctx, backendOut := startWanderBrowserStack(t)
+
+	page1, err := bctx.NewPage()
+	if err != nil {
+		t.Fatalf("new page: %v", err)
+	}
+	instrumentPage(t, page1)
+	if _, err := page1.Goto(pageURL, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateNetworkidle,
+		Timeout:   playwright.Float(30000),
+	}); err != nil {
+		t.Fatalf("goto %s: %v\n--- server output ---\n%s", pageURL, err, backendOut.String())
+	}
+	defer func() {
+		if t.Failed() {
+			t.Logf("--- backend loop-serve-net output ---\n%s", backendOut.String())
+		}
+	}()
+
+	// Plant a stored session owned by a principal this deployment has never heard of. Writing
+	// the entry directly is the point: it is the shape left behind by a demo config that
+	// dropped a user, and no UI gesture can produce it on THIS page.
+	const ghostLoop = "ghost-loop-that-must-never-be-observed"
+	if _, err := page1.Evaluate(fmt.Sprintf(
+		`localStorage.setItem("wander.session.v1", JSON.stringify({loopId:%q,tenant:"ghost-tenant",subject:"ghost-subject"}))`,
+		ghostLoop)); err != nil {
+		t.Fatalf("plant stored session: %v", err)
+	}
+
+	if err := page1.Close(); err != nil {
+		t.Fatalf("close page1: %v", err)
+	}
+	page2, err := bctx.NewPage() // SAME BrowserContext ⇒ the planted entry survives.
+	if err != nil {
+		t.Fatalf("new page in the same context: %v", err)
+	}
+	instrumentPage(t, page2)
+	if _, err := page2.Goto(pageURL, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateLoad,
+		Timeout:   playwright.Float(30000),
+	}); err != nil {
+		t.Fatalf("goto %s (reopened tab): %v\n--- server output ---\n%s", pageURL, err, backendOut.String())
+	}
+
+	// The entry being dropped is the positive signal that the lookup ran and failed to find
+	// an owner — so waiting on it also settles the async directory fetch deterministically.
+	waitForTrue(t, page2, `localStorage.getItem("wander.session.v1") === null`,
+		"an unrestorable stored session was left in localStorage; it must be forgotten, not kept to fail again on every load")
+	if readBool(t, page2, "window.__wanderRestored === true") {
+		t.Fatalf("the page claimed a restore for a principal that is not in the demo directory")
+	}
+	if got := readString(t, page2, "window.__wanderLoopId"); got == ghostLoop {
+		t.Fatalf("the page adopted the stored loop %q despite having no credential for its owner", got)
+	}
+	assertNoTerminal(t, page2, "after declining to restore an unknown principal's session")
+
+	// …and the fresh session is a WORKING one, not a broken page.
+	sendConciergeMessage(t, page2, "beachfront, sleeps 6, under $300/night")
+	waitForParked(t, page2, 1)
+	waitForThreadText(t, page2, ".msg.concierge", "beachfront options")
+	if got := readString(t, page2, "window.__wanderLoopId"); got == "" || got == "<nil>" || got == ghostLoop {
+		t.Fatalf("the fresh session did not mint its own loop (window.__wanderLoopId=%q)", got)
+	}
+}
+
 // --- browser helpers ------------------------------------------------------------
 
 // startWanderBrowserStack stands up the whole lane's harness — scripted gateway double,
@@ -462,7 +538,6 @@ func readBool(t *testing.T, page playwright.Page, expr string) bool {
 	b, _ := v.(bool)
 	return b
 }
-
 
 // cutStreams hits the Wander static server's /__cut control to forcibly drop every
 // in-flight proxied Connect stream — the deterministic mid-stream network kill.
