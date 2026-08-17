@@ -423,6 +423,136 @@ func TestWanderBrowserUnknownStoredPrincipalStartsFresh(t *testing.T) {
 	}
 }
 
+// TestWanderBrowserLostStoredLoopStartsFresh is the POSITIVE lane for D3 — the disposition
+// the reload-restore lane can only assert did NOT fire. The stored entry here names the
+// principal the page loads with (dev@_default), so the restore is not declined by
+// loadSession: it really is taken, an Observe really is issued, and the server really does
+// answer it. The loop simply does not exist (a wiped/rebuilt store), which
+// internal/loopconnect's authorizeLoop resolves to CodeNotFound, so the SDK raises a
+// terminal FuseTerminalError with code 5 and the not_found branch of runObserve fires.
+//
+// That branch is the one genuinely unrecoverable case, and it must do FOUR things: forget
+// the stored entry, drop back to a clean fresh session, say so once — and NOT hot-loop
+// re-observing a loop that will never exist. Without this lane, swapping CODE_NOT_FOUND for
+// CODE_FAILED_PRECONDITION (which parks the page with a dead composer), dropping the
+// clearSession() call (which re-fails on every future load), or retrying the observe would
+// all still be green.
+//
+// It is deliberately NOT a sibling of TestWanderBrowserUnknownStoredPrincipalStartsFresh:
+// that lane's entry names a principal the directory does not have, so loadSession returns
+// null and no Observe is ever issued. Neither lane covers the other's path.
+func TestWanderBrowserLostStoredLoopStartsFresh(t *testing.T) {
+	pageURL, bctx, backendOut := startWanderBrowserStack(t)
+
+	page1, err := bctx.NewPage()
+	if err != nil {
+		t.Fatalf("new page: %v", err)
+	}
+	instrumentPage(t, page1)
+	if _, err := page1.Goto(pageURL, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateNetworkidle,
+		Timeout:   playwright.Float(30000),
+	}); err != nil {
+		t.Fatalf("goto %s: %v\n--- server output ---\n%s", pageURL, err, backendOut.String())
+	}
+	defer func() {
+		if t.Failed() {
+			t.Logf("--- backend loop-serve-net output ---\n%s", backendOut.String())
+		}
+	}()
+
+	// The planted entry's shape must match what saveSession() actually writes — {loopId,
+	// tenant, subject}, with the principal's NAME and deliberately no token — and its
+	// principal must be the one the page loads with (DEV_USER), or the restore would be
+	// declined before ever reaching the network and this lane would assert nothing.
+	const lostLoop = "loop-that-no-longer-exists-on-the-server"
+	if _, err := page1.Evaluate(fmt.Sprintf(
+		`localStorage.setItem("wander.session.v1", JSON.stringify({loopId:%q,tenant:"_default",subject:"dev"}))`,
+		lostLoop)); err != nil {
+		t.Fatalf("plant stored session: %v", err)
+	}
+
+	if err := page1.Close(); err != nil {
+		t.Fatalf("close page1: %v", err)
+	}
+	page2, err := bctx.NewPage() // SAME BrowserContext ⇒ the planted entry survives.
+	if err != nil {
+		t.Fatalf("new page in the same context: %v", err)
+	}
+	instrumentPage(t, page2)
+	if _, err := page2.Goto(pageURL, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateLoad,
+		Timeout:   playwright.Float(30000),
+	}); err != nil {
+		t.Fatalf("goto %s (reopened tab): %v\n--- server output ---\n%s", pageURL, err, backendOut.String())
+	}
+
+	// --- 1) the loss is DETECTED and named as a loss -------------------------------
+	waitForTrue(t, page2, "window.__wanderRestoreLost === true",
+		"a restore against a loop the server no longer has did not take the not_found disposition")
+	// The precise code matters: it is what selects this branch over the D2 pause. Read as a
+	// number so a stringly-typed regression cannot satisfy it.
+	if code := readInt(t, page2, "window.__wanderTerminal"); code != 5 {
+		t.Fatalf("__wanderTerminal is %d, want the Connect not_found code 5 (the branch that fired must be the one keyed on not_found)", code)
+	}
+	if readBool(t, page2, "!!window.__wanderPaused") {
+		t.Fatalf("__wanderPaused fired for a not_found: a vanished loop is a LOSS, not a pause — the D2/D3 codes are swapped")
+	}
+
+	// --- 2) …and the fallback is a CLEAN fresh session -----------------------------
+	if !readBool(t, page2, "window.__wanderLoopId === null") {
+		t.Fatalf("the page is still holding the lost loop (window.__wanderLoopId=%q); the not_found branch must reset to no-loop",
+			readString(t, page2, "window.__wanderLoopId"))
+	}
+	if !readBool(t, page2, `localStorage.getItem("wander.session.v1") === null`) {
+		t.Fatalf("the lost session was left in localStorage; it would be restored — and fail — on every future load")
+	}
+	if readBool(t, page2, "window.__wanderRestored === true") {
+		t.Fatalf("the page still claims a live restore after the restored loop turned out to be gone")
+	}
+	// The user is told once, in the transcript, rather than left guessing.
+	waitForThreadText(t, page2, ".msg.error", "no longer available")
+	// The composer must be USABLE: the restore locked it for its replay window, and the
+	// not_found path is one of the exits that has to release that lock.
+	waitForTrue(t, page2,
+		"!document.getElementById('input').disabled && !document.getElementById('send').disabled",
+		"the composer stayed locked after the lost restore; the not_found exit must release the replay lock")
+
+	// --- 3) NO HOT LOOP ------------------------------------------------------------
+	// A terminal not_found must STOP. The failure mode this guards is a client that keeps
+	// re-observing a loop that will never exist — invisible in the transcript, but plain in
+	// the stream bookkeeping. Both signals are already exposed by the app: the open-stream
+	// count must settle to zero, and the SDK's own connection-state log must stop growing.
+	// Sampled across a settle window (not once), because a single reading cannot tell a
+	// stopped client from one between retries.
+	waitForTrue(t, page2, "window.__wanderOpenStreams === 0",
+		"the lost restore's observe stream never closed")
+	statesBefore := len(readStringArray(t, page2, "window.__wanderStates"))
+	time.Sleep(3 * time.Second)
+	if n := readInt(t, page2, "window.__wanderOpenStreams"); n != 0 {
+		t.Fatalf("HOT LOOP: %d observe stream(s) open 3s after a terminal not_found; the client is retrying a loop that will never exist", n)
+	}
+	if statesAfter := len(readStringArray(t, page2, "window.__wanderStates")); statesAfter != statesBefore {
+		t.Fatalf("HOT LOOP: the connection-state log grew from %d to %d entries over a 3s idle window after a terminal not_found; states=%v",
+			statesBefore, statesAfter, readStringArray(t, page2, "window.__wanderStates"))
+	}
+
+	// --- 4) …and the fresh session actually works, end to end ----------------------
+	sendConciergeMessage(t, page2, "beachfront, sleeps 6, under $300/night")
+	waitForParked(t, page2, 1)
+	waitForThreadText(t, page2, ".msg.concierge", "beachfront options")
+	newLoop := readString(t, page2, "window.__wanderLoopId")
+	if newLoop == "" || newLoop == "<nil>" || newLoop == lostLoop {
+		t.Fatalf("the fresh session did not mint its own loop (window.__wanderLoopId=%q)", newLoop)
+	}
+	// The new loop is persisted, so the NEXT reload restores something real: the recovery is
+	// a working session, not a session with persistence quietly switched off.
+	if got := readString(t, page2,
+		`(JSON.parse(localStorage.getItem("wander.session.v1")||"{}").loopId)||""`); got != newLoop {
+		t.Fatalf("the recovered session stored %q, want the newly minted loop %q", got, newLoop)
+	}
+}
+
 // --- browser helpers ------------------------------------------------------------
 
 // startWanderBrowserStack stands up the whole lane's harness — scripted gateway double,
