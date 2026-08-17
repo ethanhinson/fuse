@@ -444,7 +444,7 @@ async function handleSubmit(text, quiet = false) {
       // First message: start a persistent interactive loop so context holds across turns,
       // then open the ONE long-lived observe stream (kept open for the whole session).
       const started = await myClient.startLoop({
-        task: `You are Wander, a friendly vacation-rental concierge. First request: ${text}`,
+        task: TASK_PREAMBLE + text,
         model: "cloud/x",
         interactive: true,
       });
@@ -483,6 +483,11 @@ function submit(text) {
 // from a `list_favorites` tool result, which the server adjudicated against the calling
 // principal's own delegated token. That is why switching users shows a different list —
 // and why the app never merges, caches, or carries a list across principals.
+
+// TASK_PREAMBLE is shared by the startLoop task builder (above) and, in a later task, the
+// restore-time strip of the turn-0 user.input event — kept as one constant so the two cannot
+// drift apart.
+const TASK_PREAMBLE = "You are Wander, a friendly vacation-rental concierge. First request: ";
 
 // SAVED_REFRESH_PROMPT is the quiet turn's ask. It is phrased for the model, which decides
 // to call list_favorites; the app cannot (and must not) invoke a tool itself.
