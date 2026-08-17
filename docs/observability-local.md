@@ -95,6 +95,16 @@ Open **http://localhost:3000**.
   └─ fuse.spawn ...
   ```
 
+- **Drilldown → Traces** (the Traces Drilldown app bundled with the Grafana image)
+  additionally runs TraceQL *metrics* queries (`{...} | rate()`) for its span-rate /
+  error / duration panels. Those are served by Tempo's metrics-generator
+  **local-blocks processor**, which `deploy/observability/tempo.yml` enables (the
+  `metrics_generator` block plus `overrides.defaults.metrics_generator.processors`).
+  Removing that block brings back "No data" + query errors in every Drilldown metric
+  panel while trace *search* keeps working — that asymmetry is the tell. Note
+  local-blocks only indexes spans ingested after Tempo starts, so metric panels are
+  empty until fresh traffic arrives.
+
 You can also query the raw APIs directly:
 
 ```bash

@@ -1,5 +1,6 @@
 server:
   http_listen_port: 3200
+stream_over_http_enabled: true
 distributor:
   receivers:
     otlp:
@@ -18,3 +19,19 @@ storage:
       path: /tmp/tempo/blocks
     wal:
       path: /tmp/tempo/wal
+# TraceQL metrics (rate/duration panels in Grafana Traces Drilldown) are served
+# by the local-blocks processor; without it those queries return errors.
+metrics_generator:
+  processor:
+    local_blocks:
+      filter_server_spans: false
+      flush_to_storage: true
+  storage:
+    path: /tmp/tempo/generator/wal
+    remote_write_flush_deadline: 1m
+  traces_storage:
+    path: /tmp/tempo/generator/traces
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [local-blocks]
