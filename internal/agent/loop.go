@@ -21,6 +21,12 @@ var ErrMaxTurns = errors.New("agent: max turns reached")
 // ErrLoopDetected is returned when identical tool calls repeat past the limit.
 var ErrLoopDetected = errors.New("agent: tool-call loop detected")
 
+// ErrAutoModePaused is returned by a headless run when the permission gate's
+// escalation valve trips (change 0067): one structured stop carrying the valve
+// summary, instead of a cascade of per-call denials ending in loop-death. The
+// spawner collapses it to a partial result like ErrMaxTurns/ErrLoopDetected.
+var ErrAutoModePaused = errors.New("agent: auto mode paused — escalation valve tripped")
+
 // ErrContextTooLarge is returned only as a last resort: when even pruning
 // old tool results cannot bring the conversation under the context budget.
 var ErrContextTooLarge = errors.New("agent: conversation context too large")
@@ -370,6 +376,14 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	}
 	detector := newLoopDetector(loopLimit)
 
+	// Policy-denial tracking (change 0067): repeats of a policy-DENIED call are
+	// handled by a nudge protocol instead of the generic doom-loop abort. After
+	// two identical denials a synthetic user message tells the model the call is
+	// policy-blocked; only repetition AFTER that nudge ends the run. Keyed by the
+	// same fingerprint as the detector; a non-denied outcome clears its entry.
+	deniedCount := map[string]int{}
+	nudgedFP := map[string]bool{}
+
 	window := a.ContextWindow
 	if window <= 0 {
 		window = defaultContextWindow
@@ -658,7 +672,48 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		for _, c := range resp.ToolCalls {
 			fps = append(fps, fingerprint(c.Name, c.Arguments))
 		}
-		if detector.seen(fps) {
+		// Change 0067: a turn whose calls are ALL repeats of policy-denied calls
+		// bypasses the generic detector — the denial nudge protocol owns it. Before
+		// the nudge, let the repeat through (it will be denied again, reaching the
+		// nudge threshold); after the nudge, a repeat is a real dead end: trip with
+		// a policy reason, then prompt (interactive) or abort (headless).
+		allDeniedRepeats := len(fps) > 0
+		anyNudged := false
+		for _, fp := range fps {
+			if deniedCount[fp] == 0 {
+				allDeniedRepeats = false
+			}
+			if nudgedFP[fp] {
+				anyNudged = true
+			}
+		}
+		if allDeniedRepeats && anyNudged {
+			a.emit(event.KindLoopTrip, turn, event.LoopTripPayload{Turn: turn, Reason: "policy-denied call repeated after nudge"})
+			repeated := repeatedCallNames(resp.ToolCalls)
+			if a.LoopApproval != nil {
+				preview := fmt.Sprintf("policy-blocked call (%s) repeated despite guidance — continue?", repeated)
+				approved, err := a.LoopApproval(ctx, preview)
+				if err != nil {
+					a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
+					return messages, err
+				}
+				if !approved {
+					a.renderer.Errorf("aborting: %s repeated after policy-denial nudge (not approved)", repeated)
+					lerr := fmt.Errorf("%w: %s repeated after policy-denial nudge", ErrLoopDetected, repeated)
+					a.emit(event.KindError, turn, event.ErrorPayload{Err: lerr.Error(), Turn: turn})
+					return messages, lerr
+				}
+				// Approved: a full fresh window before any re-prompt.
+				deniedCount = map[string]int{}
+				nudgedFP = map[string]bool{}
+				detector.reset()
+			} else {
+				a.renderer.Errorf("aborting: %s repeated after policy-denial nudge", repeated)
+				lerr := fmt.Errorf("%w: %s repeated after policy-denial nudge", ErrLoopDetected, repeated)
+				a.emit(event.KindError, turn, event.ErrorPayload{Err: lerr.Error(), Turn: turn})
+				return messages, lerr
+			}
+		} else if !allDeniedRepeats && detector.seen(fps) {
 			// loop.detector.trip (change 0043): emitted whenever the doom-loop
 			// detector fires, before the interactive/abort branch below.
 			a.emit(event.KindLoopTrip, turn, event.LoopTripPayload{Turn: turn})
@@ -690,8 +745,47 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			}
 		}
 
-		toolMsgs := a.executeTools(ctx, turn, messages, resp.ToolCalls)
+		toolMsgs, results := a.executeTools(ctx, turn, messages, resp.ToolCalls)
 		messages = append(messages, toolMsgs...)
+
+		// Policy-denial bookkeeping (change 0067). A valve-layer denial in a
+		// headless run ends it NOW with one structured stop — the valve stays
+		// tripped, so every later gray-area call would just cascade denials into
+		// loop-death. Tool-result messages are already appended, so provider
+		// call/result pairing stays valid on this early return.
+		var nudges []string
+		for _, r := range results {
+			fp := fingerprint(r.call.Name, r.call.Arguments)
+			if !r.res.Denied {
+				delete(deniedCount, fp)
+				delete(nudgedFP, fp)
+				continue
+			}
+			if r.res.DenyLayer == permissions.LayerValve && a.LoopApproval == nil {
+				perr := fmt.Errorf("%w: %s", ErrAutoModePaused, r.res.Output)
+				a.emit(event.KindError, turn, event.ErrorPayload{Err: perr.Error(), Turn: turn})
+				return messages, perr
+			}
+			deniedCount[fp]++
+			if deniedCount[fp] >= 2 && !nudgedFP[fp] {
+				nudgedFP[fp] = true
+				nudges = append(nudges, fmt.Sprintf(
+					"The call to %q was denied %d times by the %q policy layer. Repeating the identical call will keep failing — change approach or ask the user for direction.",
+					r.call.Name, deniedCount[fp], r.res.DenyLayer))
+			}
+		}
+		if len(nudges) > 0 {
+			// Inject the nudge as a synthetic user turn AND emit it as user.input:
+			// the resume fold (change 0054) rebuilds transcripts from events, so an
+			// unemitted injected message would make a resumed transcript diverge.
+			content := "[policy] " + strings.Join(nudges, "\n")
+			messages = append(messages, model.Message{Role: "user", Content: content})
+			a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: content})
+			// The nudge changes the conversation; give the model a fresh detector
+			// window to act on it.
+			detector.reset()
+		}
+
 		// turn.end (change 0043): the tool-dispatch path completed this turn.
 		a.emit(event.KindTurnEnd, turn, event.TurnEndPayload{Turn: turn})
 	}
@@ -735,8 +829,10 @@ type toolResult struct {
 
 // executeTools runs the tool calls from a single model response. When the
 // response contains 2+ spawn_agent calls they run concurrently; all other
-// combinations execute sequentially to avoid tool-state conflicts.
-func (a *Agent) executeTools(ctx context.Context, turn int, messages []model.Message, calls []model.ToolCall) []model.Message {
+// combinations execute sequentially to avoid tool-state conflicts. Alongside
+// the history messages it returns the raw per-call results so Run can inspect
+// policy-denial outcomes (change 0067) without re-parsing message content.
+func (a *Agent) executeTools(ctx context.Context, turn int, messages []model.Message, calls []model.ToolCall) ([]model.Message, []toolResult) {
 	results := make([]toolResult, len(calls))
 
 	// tool.call (change 0043): emit one event per requested call, with full args,
@@ -775,14 +871,14 @@ func (a *Agent) executeTools(ctx context.Context, turn int, messages []model.Mes
 			go func(i int, call model.ToolCall) {
 				defer wg.Done()
 				a.renderer.ToolCall(call.Name, call.Arguments)
-				results[i] = toolResult{call: call, res: a.executeToolBounded(tctx, call)}
+				results[i] = toolResult{call: call, res: a.executeToolBounded(tctx, turn, call)}
 			}(i, call)
 		}
 		wg.Wait()
 	} else {
 		for i, call := range calls {
 			a.renderer.ToolCall(call.Name, call.Arguments)
-			results[i] = toolResult{call: call, res: a.executeToolBounded(tctx, call)}
+			results[i] = toolResult{call: call, res: a.executeToolBounded(tctx, turn, call)}
 		}
 	}
 
@@ -805,7 +901,7 @@ func (a *Agent) executeTools(ctx context.Context, turn int, messages []model.Mes
 			Content:    r.res.Output,
 		})
 	}
-	return msgs
+	return msgs, results
 }
 
 // userTurns filters a running conversation down to the user-authored turns
@@ -833,7 +929,23 @@ func userTurns(msgs []model.Message) []model.Message {
 // context is cancelled (so a well-behaved tool unwinds) and an error Result is
 // returned to the model describing what happened; the underlying goroutine is
 // left to observe cancellation on its own rather than blocking the loop.
-func (a *Agent) executeToolBounded(ctx context.Context, call model.ToolCall) (result tools.Result) {
+func (a *Agent) executeToolBounded(ctx context.Context, turn int, call model.ToolCall) (result tools.Result) {
+	// Install the per-call permission decision sink (change 0067): the gate
+	// reports every resolution (allow/ask/deny + deciding layer) through it, and
+	// this closure — which alone knows the tool-call ID and turn — emits it as a
+	// permission.decision event. Installed per call, not per turn, so the ID is
+	// stamped correctly on the parallel spawn path too.
+	ctx = permissions.WithDecisionSink(ctx, func(d permissions.Decision) {
+		a.emit(event.KindPermissionDecision, turn, event.PermissionDecisionPayload{
+			ToolCallID: call.ID,
+			Tool:       d.Tool,
+			Verdict:    d.Verdict,
+			Layer:      d.Layer,
+			Reason:     d.Reason,
+			Mode:       d.Mode,
+			Command:    d.Command,
+		})
+	})
 	ctx, span := a.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationTool, Name: "execute", Fields: []observe.Field{{Key: "tool", Value: call.Name}}})
 	out := observe.OutcomeSuccess
 	defer func() {
@@ -955,7 +1067,8 @@ func (a *Agent) executeReturnResultTurn(ctx context.Context, turn int, messages 
 	}
 	sibResults := map[string]model.Message{}
 	if len(siblings) > 0 {
-		for _, m := range a.executeTools(ctx, turn, messages, siblings) {
+		msgs, _ := a.executeTools(ctx, turn, messages, siblings)
+		for _, m := range msgs {
 			sibResults[m.ToolCallID] = m
 		}
 	}
