@@ -428,6 +428,10 @@ func sessionGateMode(cfg config.Config, sm *permissions.SessionMode) permissions
 func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.ApprovalFunc, reg *model.Registry, traceW io.Writer, sm *permissions.SessionMode) *permissions.PermissionGate {
 	opts := autoModeOptions(cfg, reg, traceW)
 	opts = append(opts, permissions.WithMode(sessionGateMode(cfg, sm)))
+	// Extra write roots (change 0068): the per-session scratch dir + trusted
+	// config write_roots. Applied unconditionally (outside autoModeOptions) so
+	// degraded auto mode — no constructible classifier — still scopes them.
+	opts = append(opts, permissions.WithWriteRoots(gateWriteRoots(cfg)))
 	if sm != nil {
 		opts = append(opts, permissions.WithSessionMode(sm))
 	}
@@ -807,6 +811,10 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
 	}
 	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
+	// Advertise the auto-approved scratch directory (change 0068) on every
+	// binding's system prompt — buildAgentCore is the single chokepoint both
+	// gate construction and prompt composition flow through.
+	extra = appendScratchBlock(extra)
 
 	// Models with ID prefix "cli/" bypass the LiteLLM gateway and route through
 	// the CLIAdapter, which spawns claude --print with fuse mcp-server attached.
