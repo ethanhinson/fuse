@@ -178,3 +178,40 @@ func TestLeftTree_SingleTurnIsFlat(t *testing.T) {
 		}
 	}
 }
+
+// TestLeftTree_RefreshDoesNotSnapCursorOffTurnRows reproduces the reported bug:
+// on a fresh turn the down arrow "snapped back to the top" until responses
+// arrived. Cause: refreshSnapshot clamped m.selected against len(m.nodes), but
+// m.selected indexes the row model (headers + nodes), which is larger. A cursor
+// parked on a turn-header row (index >= len(nodes)) got yanked up on the next
+// refresh (fired by every tree update / 250ms tick).
+func TestLeftTree_RefreshDoesNotSnapCursorOffTurnRows(t *testing.T) {
+	_, m := twoTurnSpawnedTree(t)
+	// Expand turn 1, collapse turn 2: rows = [root, ▾turn1, child, child, ▸turn2]
+	// => 5 rows over 4 nodes, so the last row index (4) exceeds len(nodes).
+	m.toggleTurn(1, false)
+	m.toggleTurn(2, true)
+	_ = m.renderTreeRows(60)
+	if len(m.treeRows) <= len(m.nodes) {
+		t.Fatalf("test needs rows(%d) > nodes(%d)", len(m.treeRows), len(m.nodes))
+	}
+
+	// Park the cursor on the LAST row (turn 2's header), which is past len(nodes).
+	m.selected = len(m.treeRows) - 1
+	parked := m.selected
+
+	// A refresh fires constantly (tree updates, 250ms tick). It must NOT move the
+	// cursor when the row model is unchanged.
+	m.refreshSnapshot()
+	if m.selected != parked {
+		t.Errorf("refreshSnapshot snapped the cursor from row %d to %d (the reported bug)", parked, m.selected)
+	}
+
+	// And down-navigation from a valid row must actually move (not be clamped by a
+	// stale node-count bound).
+	m.selected = 2 // a child row
+	m.handleTreeKey(tea.KeyMsg{Type: tea.KeyDown})
+	if m.selected != 3 {
+		t.Errorf("down from row 2 = %d, want 3", m.selected)
+	}
+}
