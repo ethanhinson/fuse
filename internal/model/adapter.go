@@ -270,7 +270,15 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		for _, tc := range m.ToolCalls {
 			w := wireToolCall{ID: tc.ID, Type: "function"}
 			w.Function.Name = tc.Name
-			w.Function.Arguments = tc.Arguments
+			// The OpenAI wire format requires arguments to be a JSON string;
+			// some models emit an empty string, which strict backends (LM
+			// Studio chat templates) reject with a 500 when the conversation
+			// is replayed. Normalize to the empty object.
+			if strings.TrimSpace(tc.Arguments) == "" {
+				w.Function.Arguments = "{}"
+			} else {
+				w.Function.Arguments = tc.Arguments
+			}
 			wm.ToolCalls = append(wm.ToolCalls, w)
 		}
 		payload.Messages = append(payload.Messages, wm)
