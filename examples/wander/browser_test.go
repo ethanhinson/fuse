@@ -33,6 +33,7 @@ package wander_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -40,6 +41,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -219,10 +221,22 @@ func TestWanderBrowserReloadRestoresSession(t *testing.T) {
 		}
 	}()
 
+	// index.html ships a STATIC concierge greeting bubble, so every concierge count below is
+	// measured against this baseline rather than against zero. It is the same static markup
+	// on the reopened tab, which is why one reading serves both.
+	greeting := readInt(t, page1, "document.querySelectorAll('.msg.concierge').length")
+
 	// --- 1) turn 1 in the first tab, driven to a park -----------------------------
 	const turn1 = "beachfront, sleeps 6, under $300/night"
 	sendConciergeMessage(t, page1, turn1)
-	waitForParked(t, page1, 1)
+	// TWO parks: turn 1 itself, then the app's own QUIET Saved-panel refresh turn that the
+	// favorite_listing call armed. Both land in the durable stream, so the fixture the
+	// reopened tab replays contains a quiet turn — the case a replay can render wrong.
+	waitForParked(t, page1, 2)
+	if n := readInt(t, page1, "document.querySelectorAll('.msg.concierge').length"); n != greeting+1 {
+		t.Fatalf("the LIVE tab rendered %d concierge bubble(s) after one visible turn (want %d); the quiet refresh turn must not be rendered at all; thread was %s",
+			n, greeting+1, readString(t, page1, "JSON.stringify(Array.from(document.querySelectorAll('.msg')).map(e=>e.className+': '+e.textContent))"))
+	}
 	assertNoTerminal(t, page1, "after turn 1 in the first tab")
 
 	// --- 2) the minted loop id must have been persisted ---------------------------
@@ -265,11 +279,38 @@ func TestWanderBrowserReloadRestoresSession(t *testing.T) {
 	waitForThreadText(t, page2, ".msg.concierge", "beachfront options")
 	assertNoTerminal(t, page2, "after the restore")
 
-	// --- 6) the conversation genuinely continues on the restored loop -------------
-	// The restore replayed turn 1's park, so turn 2's park is the SECOND one this page saw.
-	waitForParked(t, page2, 1)
-	sendConciergeMessage(t, page2, "actually, make it pet-friendly")
+	// --- 5b) …and NOT the app's quiet turn, on either side of it ------------------
+	// The quiet Saved-panel refresh is a real turn on the real loop, so its user.input AND
+	// its answer are both in the replayed stream. Suppressing only the question leaves an
+	// orphan concierge bubble attached to nothing — the mirror image of the defect this
+	// change exists to fix. Wait for BOTH replayed parks first, so the quiet turn's answer
+	// has definitely been observed before we assert it was not rendered.
 	waitForParked(t, page2, 2)
+	if readBool(t, page2, fmt.Sprintf(
+		"Array.from(document.querySelectorAll('.msg.concierge')).some(e => e.textContent.includes(%q))",
+		savedStaysMarker)) {
+		t.Fatalf("ORPHAN BUBBLE: the replayed quiet Saved-panel turn rendered its answer (%q) with no question above it; thread was %s",
+			savedStaysMarker,
+			readString(t, page2, "JSON.stringify(Array.from(document.querySelectorAll('.msg')).map(e=>e.className+': '+e.textContent))"))
+	}
+	// A replayed `send` arrives wrapped in the runtime's "[human message]" injection
+	// envelope. That framing must never reach the transcript — and the quiet turn's
+	// suppression is an exact-match comparison that the envelope would otherwise defeat.
+	if readBool(t, page2, `Array.from(document.querySelectorAll('.msg')).some(e => e.textContent.includes("[human message]"))`) {
+		t.Fatalf("the restored transcript leaked the runtime's injection envelope; thread was %s",
+			readString(t, page2, "JSON.stringify(Array.from(document.querySelectorAll('.msg')).map(e=>e.className+': '+e.textContent))"))
+	}
+	if u, c := readInt(t, page2, "document.querySelectorAll('.msg.user').length"),
+		readInt(t, page2, "document.querySelectorAll('.msg.concierge').length"); u != 1 || c != greeting+1 {
+		t.Fatalf("restored transcript is unbalanced: %d user bubble(s), %d concierge bubble(s), want 1 and %d; thread was %s",
+			u, c, greeting+1, readString(t, page2, "JSON.stringify(Array.from(document.querySelectorAll('.msg')).map(e=>e.className+': '+e.textContent))"))
+	}
+
+	// --- 6) the conversation genuinely continues on the restored loop -------------
+	// The restore replayed TWO parks (turn 1 + the quiet refresh), so turn 2's park is the
+	// THIRD one this page saw.
+	sendConciergeMessage(t, page2, "actually, make it pet-friendly")
+	waitForParked(t, page2, 3)
 	waitForThreadText(t, page2, ".msg.user", "pet-friendly")
 	if got := readString(t, page2, "window.__wanderLoopId"); got != loopID {
 		t.Fatalf("turn 2 ran on a different loop: %q, want the restored %q", got, loopID)
@@ -306,7 +347,10 @@ func startWanderBrowserStack(t *testing.T) (string, playwright.BrowserContext, *
 
 	repoRoot := repoRootFromTest(t)
 	buildWanderBundle(t, repoRoot)
-	gwURL := newScriptedGateway(t)
+	// The restore lane's fixture MUST contain a favorited listing: favoriting is what arms
+	// the app's quiet Saved-panel refresh turn, and a quiet turn is the case a replay can
+	// get wrong (see newSavedRefreshGateway).
+	gwURL := newSavedRefreshGateway(t)
 	bin := buildFuseBinary(t, repoRoot)
 	backendPort := freePort(t)
 	backendAddr := net.JoinHostPort("127.0.0.1", backendPort)
@@ -671,6 +715,91 @@ func newScriptedGateway(t *testing.T) string {
 		_, _ = io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"Here are a few beachfront options that sleep 6 under $300/night."}}]}`)
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return "http://" + ln.Addr().String()
+}
+
+// savedStaysMarker is the quiet turn's answer text. It exists ONLY to be assertable: if it
+// is ever visible in the transcript, a quiet turn's answer was rendered without its
+// question — the orphan-bubble defect the restore lane guards.
+const savedStaysMarker = "Here are your saved stays."
+
+// newSavedRefreshGateway is the restore lane's scripted double (NEVER a real provider). It
+// scripts a conversation that ends in a QUIET turn, which is the fixture the restore lane
+// needs:
+//
+//	turn 1  user asks for beachfront  → call favorite_listing (arms pendingSavedRefresh)
+//	        tool result               → the beachfront answer, park
+//	quiet   app sends SAVED_REFRESH_PROMPT ("Show me my saved stays.")
+//	                                  → savedStaysMarker, park
+//
+// Both of those turns are real turns on the real loop, so BOTH are in the durable stream a
+// reopened tab replays — the quiet one included. Keying on the LAST message (not "does the
+// body contain a tool role") is what makes this work for a persistent interactive loop,
+// whose later turns still carry earlier turns' tool messages.
+//
+// favorite_listing is emitted MCP-qualified and is deliberately not registered in this lane
+// (no rentals server here): the runtime answers an unknown tool with an is_error tool
+// result and carries on, and the app arms its refresh off the `tool.call` event, which is
+// all this fixture needs. The identity lane owns the real-tool path.
+func newSavedRefreshGateway(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("gateway listen: %v", err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+
+		var req struct {
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.Unmarshal(body, &req)
+
+		reply := func(text string) {
+			b, _ := json.Marshal(map[string]any{"choices": []map[string]any{{
+				"message": map[string]any{"role": "assistant", "content": text},
+			}}})
+			_, _ = w.Write(b)
+		}
+		const beachfront = "Here are a few beachfront options that sleep 6 under $300/night."
+
+		if len(req.Messages) == 0 {
+			reply(beachfront)
+			return
+		}
+		last := req.Messages[len(req.Messages)-1]
+		if last.Role == "tool" {
+			reply(beachfront)
+			return
+		}
+		text := strings.ToLower(string(last.Content))
+		if strings.Contains(text, "saved stays") {
+			reply(savedStaysMarker)
+			return
+		}
+		if strings.Contains(text, "beachfront") {
+			// Tool-call arguments are PLAIN JSON — pre-escaping them double-escapes and
+			// hangs the loop with no failing assertion.
+			args, _ := json.Marshal(map[string]any{"listing_id": "L1"})
+			b, _ := json.Marshal(map[string]any{"choices": []map[string]any{{"message": map[string]any{
+				"role":    "assistant",
+				"content": "",
+				"tool_calls": []map[string]any{{
+					"id": "1", "type": "function",
+					"function": map[string]any{"name": "mcp:rentals/favorite_listing", "arguments": string(args)},
+				}},
+			}}}})
+			_, _ = w.Write(b)
+			return
+		}
+		reply(beachfront)
 	})}
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })

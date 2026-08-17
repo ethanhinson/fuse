@@ -344,6 +344,13 @@ function decodePayload(ev) {
 async function runObserve(generation, myLoopId, myClient, abort) {
   // The in-progress reply bubble for the CURRENT turn; reset at each park.
   let replyText = "";
+  // The replay-side twin of `quietTurn`. `quietTurn` is set by the LIVE submit path, so it
+  // is false for every event arriving from the durable stream — but an app-initiated
+  // Saved-panel refresh is a REAL turn, so its answer is in that stream too. Without this a
+  // restore suppresses the quiet QUESTION and still paints its ANSWER, leaving an orphan
+  // concierge bubble attached to nothing. Scoped per stream, set on the replayed quiet
+  // `user.input`, cleared at the park below so it cannot leak into the next replayed turn.
+  let replayQuiet = false;
   const current = () => generation === sessionGeneration;
 
   window.__wanderOpenStreams++;
@@ -378,8 +385,19 @@ async function runObserve(generation, myLoopId, myClient, abort) {
           if (text.startsWith("[policy] ")) break;
           // The turn-0 seed carries the whole task: preamble + the user's first message.
           if (text.startsWith(TASK_PREAMBLE)) text = text.slice(TASK_PREAMBLE.length);
+          // Every LATER turn arrives wrapped in the runtime's injection envelope
+          // ("[human message]\n…", internal/agent/humanmsg.go Poll) because `send` queues
+          // the text and the loop batches it in at the turn boundary. Strip it: it is
+          // runtime framing, not something a human typed — and leaving it on also defeats
+          // the SAVED_REFRESH_PROMPT comparison below, which is an exact match.
+          if (text.startsWith(HUMAN_ENVELOPE)) text = text.slice(HUMAN_ENVELOPE.length);
           // The Saved-panel refresh is a real `send`, but the APP asked it, not the user.
-          if (!text.trim() || text === SAVED_REFRESH_PROMPT) break;
+          if (text === SAVED_REFRESH_PROMPT) {
+            // Suppress the question AND the answer that follows it, for this turn only.
+            replayQuiet = true;
+            break;
+          }
+          if (!text.trim()) break;
           addMessage("user", "you", text);
           break;
         }
@@ -388,7 +406,7 @@ async function runObserve(generation, myLoopId, myClient, abort) {
           break;
         }
         case "model.delta": {
-          if (p.text && !quietTurn) {
+          if (p.text && !quietTurn && !replayQuiet) {
             if (!pendingBubble) pendingBubble = addPendingConcierge();
             replyText += p.text;
             pendingBubble.textContent = replyText; // drops the spinner on first token
@@ -467,7 +485,7 @@ async function runObserve(generation, myLoopId, myClient, abort) {
           // The terminal answer for this exchange. With a non-streamed gateway there is no
           // model.delta, so render the parked content directly; otherwise it matches.
           const answer = p.content || replyText;
-          if (answer && !quietTurn) {
+          if (answer && !quietTurn && !replayQuiet) {
             if (!pendingBubble) pendingBubble = addPendingConcierge();
             renderAnswer(pendingBubble, answer);
           }
@@ -486,8 +504,9 @@ async function runObserve(generation, myLoopId, myClient, abort) {
         pendingBubble = null;
         replyText = "";
         turnInFlight = false;
-        const wasQuiet = quietTurn;
+        const wasQuiet = quietTurn || replayQuiet;
         quietTurn = false;
+        replayQuiet = false;
         // The composer re-enables even during a replay — a restored session must be usable.
         setComposerEnabled(true);
         if (!wasQuiet && !replaying) inputEl.focus();
@@ -621,6 +640,12 @@ function submit(text) {
 // restore-time strip of the turn-0 user.input event — kept as one constant so the two cannot
 // drift apart.
 const TASK_PREAMBLE = "You are Wander, a friendly vacation-rental concierge. First request: ";
+
+// HUMAN_ENVELOPE is the runtime's injection framing for a `send`: the loop batches queued
+// human text into one user message prefixed with this marker (internal/agent/humanmsg.go,
+// HumanInjector.Poll). Only the replay path sees it — a live turn is echoed from the
+// composer, before the runtime wraps anything.
+const HUMAN_ENVELOPE = "[human message]\n";
 
 // SAVED_REFRESH_PROMPT is the quiet turn's ask. It is phrased for the model, which decides
 // to call list_favorites; the app cannot (and must not) invoke a tool itself.
