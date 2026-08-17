@@ -82,6 +82,23 @@ window.__wanderLoopId = null;
 // (change 0062). Initialized unconditionally so the lane can read it on the first-visit
 // path too, where it simply stays false.
 window.__wanderRestored = false;
+// True once the durable stream behind a stored session turned out to be gone (`not_found`)
+// and the app fell back to a clean fresh session (change 0062, D3).
+window.__wanderRestoreLost = false;
+// True once a terminal `failed_precondition` parked this page: the loop finished or was
+// reaped by the server's idle TTL, but the conversation is NOT lost — a reload resumes it
+// from the durable events (change 0062, D2).
+window.__wanderPaused = false;
+
+// The two terminal Connect codes this app treats differently. @fuse/sdk carries the raw
+// numeric `@connectrpc/connect` `Code` on FuseTerminalError.code but does NOT re-export the
+// `Code` enum (sdk/ts/src/index.ts exports createClient / isCompletion / FuseTerminalError
+// and the types — no enum), so the vendored bundle has nothing to import here. These are the
+// canonical Connect numbers (node_modules/@connectrpc/connect/dist/esm/code.d.ts:30 and :46)
+// for two members of ADR-0037's terminal set; the other two (PermissionDenied = 7,
+// Unauthenticated = 16) need no constant — they are the unchanged default branch.
+const CODE_NOT_FOUND = 5;
+const CODE_FAILED_PRECONDITION = 9;
 
 const threadEl = document.getElementById("thread");
 const activityEl = document.getElementById("activity");
@@ -489,12 +506,39 @@ async function runObserve(generation, myLoopId, myClient, abort) {
     if (!current()) {
       // A superseded stream's failure is nobody's business: this session is gone.
     } else if (err instanceof FuseTerminalError) {
-      // A terminal Connect code (auth rejected, loop gone/finished): stop, show the right
-      // affordance — do NOT silently hot-loop.
+      // A terminal Connect code: stop, show the RIGHT affordance for THIS code — do NOT
+      // silently hot-loop, and do not treat all four alike (change 0062, D2 + D3). The
+      // instrumentation is written FIRST in every branch, before anything that could
+      // reset it, because the reconnect lane asserts on it.
       window.__wanderTerminal = err.code;
-      setConn("error");
       pushActivity("error", "⚠︎", "Stream closed", String(err.code));
-      addMessage("error", "", `Connection closed (${err.code}). Refresh to start a new session.`);
+      if (err.code === CODE_NOT_FOUND) {
+        // D3 — the durable stream itself is gone (a wiped/rebuilt store). This is the one
+        // genuinely unrecoverable case: there are no events left to rebuild from, so the
+        // honest answer is a clean fresh session rather than a retry against nothing.
+        // resetSession() is safe to call from here: this stream is already ending, and its
+        // abort()+generation bump only make the (already dead) stream inert — the `finally`
+        // below still runs and still decrements __wanderOpenStreams.
+        clearSession();
+        resetSession();
+        // resetSession clears the per-session instrumentation (including __wanderTerminal),
+        // so re-assert the terminal code and the loss marker AFTER it.
+        window.__wanderTerminal = err.code;
+        window.__wanderRestoreLost = true;
+        addMessage("error", "", "Your previous session is no longer available — starting a new one.");
+      } else if (err.code === CODE_FAILED_PRECONDITION) {
+        // D2 — reap ≠ loss. The loop finished or the server's ~30-minute idle TTL reaped it,
+        // but the durable events are still there: change #54 rebuilds the transcript on the
+        // next observe. So KEEP the stored session; a reload resumes this conversation.
+        setConn("closed");
+        setComposerEnabled(false);
+        window.__wanderPaused = true;
+        addMessage("error", "", "Session paused — reload to resume this conversation.");
+      } else {
+        // unauthenticated / permission_denied — auth rejected. Unchanged behavior.
+        setConn("error");
+        addMessage("error", "", `Connection closed (${err.code}). Refresh to start a new session.`);
+      }
     } else if (!abort.signal.aborted) {
       setConn("error");
       addMessage("error", "", `Unexpected error: ${String(err)}`);
@@ -676,8 +720,13 @@ function resetSession() {
   window.__wanderTerminal = null;
   window.__wanderSavedRefreshes = 0;
   window.__wanderResets++;
-  // A reset is a fresh session by definition, never a restored one.
+  // A reset is a fresh session by definition, never a restored one — and never a paused or
+  // a lost one either. (The not_found path re-asserts __wanderRestoreLost right after the
+  // reset it triggers, so clearing it here is what makes the flag mean "the session I am
+  // looking at now replaced a lost one", not "some session was once lost".)
   window.__wanderRestored = false;
+  window.__wanderPaused = false;
+  window.__wanderRestoreLost = false;
 }
 
 // switchUser resets, re-credentials the SDK client, then asks the NEW principal's agent
