@@ -1,8 +1,8 @@
 # Backlog
 
-**66 changes** — 🟡 4 proposed · ⚪ 2 deferred · ✅ 54 done · 🗑️ 6 killed
+**70 changes** — 🟡 8 proposed · ⚪ 2 deferred · ✅ 54 done · 🗑️ 6 killed
 
-## 🟡 Proposed (4)
+## 🟡 Proposed (8)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -10,6 +10,10 @@
 | [0063](active/0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | `high` | `feat` | needs-brainstorm |
 | [0064](active/0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | `medium` | `feat` | ⏳ waiting on #63 — not yet built |
 | [0065](active/0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | `medium` | `feat` | ⏳ waiting on #63 — not yet built |
+| [0067](active/0067-auto-mode-permission-observability-deny-resilience.md) | Auto-mode permission observability + deny-resilience — measure every gate decision, stop dying on denials | `high` | `feat` | build-ready |
+| [0068](active/0068-auto-mode-deterministic-freedom.md) | Auto-mode deterministic freedom — scratchpad + write_roots + rules-layer shrink to catastrophic-only | `high` | `feat` | ⏳ waiting on #67 — not yet built |
+| [0069](active/0069-auto-mode-classifier-retune-webfetch.md) | Auto-mode classifier retune + web_fetch loosening — allow-bias for routine dev ops, seed becomes real auto-approve | `medium` | `feat` | ⏳ waiting on #68 — not yet built |
+| [0070](active/0070-auto-mode-shell-parse-widening.md) | Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args | `medium` | `feat` | ⏳ waiting on #69 — not yet built |
 
 ## ⚪ Deferred (2)
 
@@ -27,6 +31,10 @@ graph TD
   0058 --> 0063
   0063 --> 0064
   0063 --> 0065
+  0067
+  0067 --> 0068
+  0068 --> 0069
+  0069 --> 0070
   0012:::done
   0052:::done
   0054:::done
