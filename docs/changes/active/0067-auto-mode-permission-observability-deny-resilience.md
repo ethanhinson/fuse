@@ -2,7 +2,7 @@
 id: 67
 slug: auto-mode-permission-observability-deny-resilience
 title: Auto-mode permission observability + deny-resilience — measure every gate decision, stop dying on denials
-status: proposed
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-17
@@ -16,10 +16,11 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/auto-mode-permission-observability-deny-resilience
+claimed_at: 2026-08-17T20:30:00Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -53,4 +54,4 @@ Stage A of the auto-mode overhaul (product bar settled 2026-08-17: Claude Code /
 
 ## Reconcile log
 
-<!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+- 2026-08-17 — claimed same day the spec was authored; spec anchors were verified against the working tree during design (Plan-agent read of gate.go/loop.go/event.go/registry.go), so reconcile is satisfied with no drift. Building inline in the main session.
