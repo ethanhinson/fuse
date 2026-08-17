@@ -74,6 +74,10 @@ window.__wanderParks = 0; // count of loop.parked completions (turn boundaries) 
 window.__wanderOpenStreams = 0;
 window.__wanderResets = 0; // client-side session resets performed.
 window.__wanderSavedRefreshes = 0; // list_favorites results rendered SINCE the last reset.
+// The current session's loop id (null when there is no loop). The browser lane reads this
+// instead of reaching into localStorage, so the assertion is about the app's live session
+// rather than about the storage encoding.
+window.__wanderLoopId = null;
 
 const threadEl = document.getElementById("thread");
 const activityEl = document.getElementById("activity");
@@ -129,6 +133,51 @@ let quietTurn = false;
 // pendingSavedRefresh is set when a favorite_listing call is seen; the refresh fires at the
 // next park, because a `send` is only accepted at a parked turn boundary.
 let pendingSavedRefresh = false;
+
+// ─────────────────── Session persistence (change 0062, D-A) ──────────────────
+// localStorage["wander.session.v1"] = {"loopId": …, "tenant": …, "subject": …}.
+//
+// The principal is stored WITH the id, and a restore only ever fires when both fields match
+// the credential in hand. Wander is a multi-identity demo: a loop restored under a different
+// principal would be a cross-owner Observe, which the server rejects with PermissionDenied —
+// a confusing failure where a fresh session is the honest answer. So a mismatch is never
+// "try it and see"; it is treated exactly like nothing stored, as is a parse failure or an
+// entry with no loopId.
+//
+// Every storage access is try/catch-wrapped. Storage can throw outright (Safari private
+// mode, a hardened profile, disabled site data), and the demo must degrade to today's
+// stateless behavior rather than break.
+const SESSION_KEY = "wander.session.v1";
+
+function saveSession(id) {
+  try {
+    localStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({ loopId: id, tenant: currentUser.tenant, subject: currentUser.subject }),
+    );
+  } catch {}
+}
+
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw);
+    if (!saved || !saved.loopId) return null;
+    // The security-relevant check: BOTH halves of the principal must match.
+    if (saved.tenant !== currentUser.tenant) return null;
+    if (saved.subject !== currentUser.subject) return null;
+    return { loopId: String(saved.loopId) };
+  } catch {
+    return null;
+  }
+}
+
+function clearSession() {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {}
+}
 
 // ─────────────────────────── Connection indicator ───────────────────────────
 // The pill is keyed on the SDK's own onState vocabulary; styles.css selects on
@@ -450,6 +499,8 @@ async function handleSubmit(text, quiet = false) {
       });
       if (generation !== sessionGeneration) return; // switched mid-start: drop this loop.
       loopId = started.loopId;
+      window.__wanderLoopId = loopId;
+      saveSession(loopId);
       if (loopLabel) {
         loopLabel.textContent = `Live loop ${String(loopId).slice(0, 12)}… — streaming over Connect`;
       }
@@ -556,6 +607,10 @@ function resetSession() {
   sessionGeneration++;
 
   loopId = null;
+  window.__wanderLoopId = null;
+  // The two fresh-start gestures (+ New and switchUser) both funnel through here, so both
+  // also forget the stored session — no second teardown path.
+  clearSession();
   cursor = 0n;
   turnInFlight = false;
   pendingBubble = null;
