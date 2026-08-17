@@ -133,6 +133,12 @@ let quietTurn = false;
 // pendingSavedRefresh is set when a favorite_listing call is seen; the refresh fires at the
 // next park, because a `send` is only accepted at a parked turn boundary.
 let pendingSavedRefresh = false;
+// replaying is true only while a restored loop's durable stream is being replayed from seq 0
+// (change 0062, D-D). It changes two things: `user.input` events render the human turns (live
+// turns are echoed locally by handleSubmit instead), and the completion handler's side effects
+// — focus and the Saved-panel refresh turn — are suppressed so a replay cannot act on the
+// world. Nothing sets it true yet; the restore-on-load path does.
+let replaying = false;
 
 // ─────────────────── Session persistence (change 0062, D-A) ──────────────────
 // localStorage["wander.session.v1"] = {"loopId": …, "tenant": …, "subject": …}.
@@ -333,6 +339,19 @@ async function runObserve(generation, myLoopId, myClient, abort) {
           setPhase(pendingBubble, "Thinking through your request…");
           break;
         }
+        case "user.input": {
+          // Only a replay renders human turns; live ones were already echoed by handleSubmit.
+          if (!replaying) break;
+          let text = String(p.content || "");
+          // A deny nudge is a SYNTHETIC user turn the runtime injects — never a human said it.
+          if (text.startsWith("[policy] ")) break;
+          // The turn-0 seed carries the whole task: preamble + the user's first message.
+          if (text.startsWith(TASK_PREAMBLE)) text = text.slice(TASK_PREAMBLE.length);
+          // The Saved-panel refresh is a real `send`, but the APP asked it, not the user.
+          if (!text.trim() || text === SAVED_REFRESH_PROMPT) break;
+          addMessage("user", "you", text);
+          break;
+        }
         case "model.call.start": {
           setPhase(pendingBubble, "Consulting the model…");
           break;
@@ -438,14 +457,17 @@ async function runObserve(generation, myLoopId, myClient, abort) {
         turnInFlight = false;
         const wasQuiet = quietTurn;
         quietTurn = false;
+        // The composer re-enables even during a replay — a restored session must be usable.
         setComposerEnabled(true);
-        if (!wasQuiet) inputEl.focus();
+        if (!wasQuiet && !replaying) inputEl.focus();
         // A favorite landed this turn: re-read the set now that the loop is parked and
         // will accept a `send` again. list_favorites never sets the flag, so this cannot
-        // chain into a refresh loop.
+        // chain into a refresh loop. During a replay the flag is cleared WITHOUT firing:
+        // a replayed favorite is history, and re-running it would spend a real model turn
+        // in the middle of restoring the transcript.
         if (pendingSavedRefresh) {
           pendingSavedRefresh = false;
-          refreshSaved();
+          if (!replaying) refreshSaved();
         }
       }
     }
@@ -476,6 +498,10 @@ let pendingBubble = null;
 // user (the Saved-panel refresh): it is a real agent turn on the real loop — same
 // credential, same tool path — it simply renders no transcript bubbles.
 async function handleSubmit(text, quiet = false) {
+  // The user acting is the exact, timer-free end of a replay: a restored loop is parked and
+  // idle, so no further event can arrive on it until someone sends. Everything from here on
+  // is live.
+  replaying = false;
   quietTurn = quiet;
   if (!quiet) {
     addMessage("user", "you", text);
@@ -616,6 +642,7 @@ function resetSession() {
   pendingBubble = null;
   quietTurn = false;
   pendingSavedRefresh = false;
+  replaying = false;
   realURLs.clear();
 
   threadEl.innerHTML = initialThreadHTML;
