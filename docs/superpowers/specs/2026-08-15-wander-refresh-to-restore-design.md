@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0062 — Wander refresh-to-restore — light up #54 durable resume in the browser demo](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md)**
+> ↩ **[Change 0062 — Wander refresh-to-restore — light up #54 durable resume in the browser demo](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-17-0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md)**
 <!-- docket:backlink:end -->
 
 # Wander refresh-to-restore — design
