@@ -52,9 +52,10 @@ renders; the reconnect property is enforced by the headless-browser CI lane (see
   point, so this check is load-bearing, not decoration.
 - **Composer** — suggestion chips plus the input. The whole composer is disabled only while
   a turn is in flight and re-enabled at each park; it is never disabled in the markup.
-- **＋ New** reloads the page. Wander is stateless across page loads by design (see
-  *Scope*), so a reload is the honest reset — it tears the live observe stream down through
-  the same abort path as any navigation instead of hand-rolling a second teardown route.
+- **＋ New** is the explicit fresh-start gesture: it tears the live observe stream down and
+  also clears the stored session, through the same reset path a user switch uses — one
+  teardown route, not a second one hand-rolled per gesture. A page reload no longer resets
+  anything; it now *restores* the conversation (see *Scope*).
 
 The page loads **no remote assets** (no webfont CDN, no framework): the browser acceptance
 lane navigates with `networkidle` against a hermetic backend, and a third-party fetch would
@@ -176,9 +177,19 @@ relative proto stubs.
 
 ## Scope
 
-Wander is **stateless across page loads** — a refresh starts a fresh session. That is
-deliberate: it demonstrates a *live, reconnecting* session without needing durable/resumable
-sessions (change #54). It is an example app, not a production deployment.
+Wander persists its `loopId` and, on reload, restores the conversation by replaying the
+loop's durable event stream from `seq` 0 — the browser-visible face of change #54's
+server-side durable resume. It is an example app, not a production deployment.
+
+The conversation is truly lost only when the durable stream itself is gone (a wiped or
+rebuilt store): that surfaces as a terminal `not_found` on the restore attempt, and Wander
+falls back to starting a clean fresh session rather than pretending the old one is still
+there.
+
+After roughly 30 minutes idle, the server reaps the live session: the composer disables and
+the UI shows "Session paused — reload to resume this conversation." That is not the same as
+losing the conversation — the durable events are untouched, and reloading rebuilds the
+session from them same as any other restore.
 
 ## Acceptance / test
 
