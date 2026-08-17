@@ -12,12 +12,12 @@ related: [50, 56]
 discovered_from: [54]
 adrs: []
 spec: docs/superpowers/specs/2026-08-15-wander-refresh-to-restore-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-17-wander-refresh-to-restore-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/wander-refresh-to-restore-light-up-54-durable-resume-in-the
-claimed_at: 2026-08-17T19:29:54Z
+claimed_at: 2026-08-17T19:33:43Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-15-wander-refresh-to-restore-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-wander-refresh-to-restore-design.md) |
+| Plan | [2026-08-17-wander-refresh-to-restore-plan.md](https://github.com/ethanhinson/fuse/blob/feat/wander-refresh-to-restore-light-up-54-durable-resume-in-the/docs/superpowers/plans/2026-08-17-wander-refresh-to-restore-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
