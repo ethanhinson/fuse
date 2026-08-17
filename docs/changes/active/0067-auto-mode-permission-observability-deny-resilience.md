@@ -2,7 +2,7 @@
 id: 67
 slug: auto-mode-permission-observability-deny-resilience
 title: Auto-mode permission observability + deny-resilience — measure every gate decision, stop dying on denials
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-17
@@ -12,13 +12,13 @@ related: [40, 51, 68, 69, 70]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-17-auto-mode-permission-observability-deny-resilience-design.md
-plan:
-results:
+plan: docs/superpowers/plans/2026-08-17-auto-mode-permission-observability-deny-resilience-plan.md
+results: docs/results/2026-08-17-auto-mode-permission-observability-deny-resilience-results.md
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-permission-observability-deny-resilience
-claimed_at: 2026-08-17T20:30:00Z
-pr:
+claimed_at:
+pr: 71
 blocked_by:
 reconciled: true
 ---
@@ -29,6 +29,9 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-17-auto-mode-permission-observability-deny-resilience-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-17-auto-mode-permission-observability-deny-resilience-design.md) |
+| Plan | [2026-08-17-auto-mode-permission-observability-deny-resilience-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-permission-observability-deny-resilience/docs/superpowers/plans/2026-08-17-auto-mode-permission-observability-deny-resilience-plan.md) |
+| Results | [2026-08-17-auto-mode-permission-observability-deny-resilience-results.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-permission-observability-deny-resilience/docs/results/2026-08-17-auto-mode-permission-observability-deny-resilience-results.md) |
+| PR | 71 |
 <!-- docket:artifacts:end -->
 
 ## Why
