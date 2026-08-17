@@ -1771,8 +1771,19 @@ func (m *AgentsModel) refreshSnapshot() {
 			m.lastChildOf[n.ParentID] = n.ID
 		}
 	}
-	if m.selected >= len(m.nodes) && len(m.nodes) > 0 {
-		m.selected = len(m.nodes) - 1
+	// Rebuild the tree row model here too and clamp the cursor against ITS length,
+	// not len(m.nodes). m.selected indexes the row model (turn headers + nodes),
+	// which is larger than the node list whenever there are turn headers. Clamping
+	// to len(m.nodes)-1 — as this did before turns-in-left-tree — yanked the cursor
+	// back up on every refresh (each tree update / 250ms tick) once it moved past
+	// the node count, so on a fresh turn the down arrow "snapped to the top" until
+	// enough nodes appeared to grow len(m.nodes). Keeping treeRows fresh here also
+	// means handleTreeKey (which reads m.treeRowCount) sees the current count even
+	// before the next render.
+	m.treeRows = m.buildTreeRowModel()
+	m.treeRowCount = len(m.treeRows)
+	if m.selected >= m.treeRowCount && m.treeRowCount > 0 {
+		m.selected = m.treeRowCount - 1
 	}
 }
 
