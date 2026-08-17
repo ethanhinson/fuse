@@ -183,7 +183,242 @@ func TestWanderBrowserReconnectNoLossNoDup(t *testing.T) {
 	}
 }
 
+// TestWanderBrowserReloadRestoresSession is the change-0062 (D4) RELOAD-RESTORE lane: it
+// proves the browser face of #54 — the page persists its loopId, and reopening the tab
+// replays the durable event stream instead of minting a brand-new loop.
+//
+// It reuses the reconnect lane's harness verbatim (one real `fuse loop-serve-net`, one
+// `node server.js`, the SCRIPTED gateway double — NEVER Claude/Anthropic; project policy)
+// and leaves that lane's /__cut assertions untouched.
+//
+// *** DO NOT "SIMPLIFY" STEP 3 INTO browser.NewContext(). *** Playwright BrowserContexts
+// are STORAGE-ISOLATED: a fresh context starts with an EMPTY localStorage, so the page
+// would find no stored session, take the FRESH-SESSION path, and this test would go green
+// while asserting nothing about restore — a false green. The faithful "I closed the tab and
+// reopened it" gesture is page.Close() followed by a NEW Page in the SAME BrowserContext,
+// which is the only shape that carries the persisted `wander.session.v1` entry across.
+// (Copying StorageState() into a second context also works; it is strictly more machinery
+// for the same assertion.)
+func TestWanderBrowserReloadRestoresSession(t *testing.T) {
+	pageURL, bctx, backendOut := startWanderBrowserStack(t)
+
+	page1, err := bctx.NewPage()
+	if err != nil {
+		t.Fatalf("new page: %v", err)
+	}
+	instrumentPage(t, page1)
+	if _, err := page1.Goto(pageURL, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateNetworkidle,
+		Timeout:   playwright.Float(30000),
+	}); err != nil {
+		t.Fatalf("goto %s: %v\n--- server output ---\n%s", pageURL, err, backendOut.String())
+	}
+	defer func() {
+		if t.Failed() {
+			t.Logf("--- backend loop-serve-net output ---\n%s", backendOut.String())
+		}
+	}()
+
+	// --- 1) turn 1 in the first tab, driven to a park -----------------------------
+	const turn1 = "beachfront, sleeps 6, under $300/night"
+	sendConciergeMessage(t, page1, turn1)
+	waitForParked(t, page1, 1)
+	assertNoTerminal(t, page1, "after turn 1 in the first tab")
+
+	// --- 2) the minted loop id must have been persisted ---------------------------
+	loopID := readString(t, page1, "window.__wanderLoopId")
+	if loopID == "" || loopID == "<nil>" {
+		t.Fatalf("no window.__wanderLoopId after turn 1; the restore lane cannot assert anything without it")
+	}
+
+	// --- 3) close the TAB, reopen a tab in the SAME context (see the note above) ---
+	if err := page1.Close(); err != nil {
+		t.Fatalf("close page1: %v", err)
+	}
+	page2, err := bctx.NewPage() // SAME BrowserContext ⇒ localStorage survives.
+	if err != nil {
+		t.Fatalf("new page in the same context: %v", err)
+	}
+	instrumentPage(t, page2)
+
+	// --- 4) the reopened tab restores the SAME loop -------------------------------
+	// NOT `networkidle`: the restore opens its durable Observe stream during load and holds
+	// it open, so the network never goes idle and the navigation would time out. `load` is
+	// the honest wait here — every restore assertion below polls for its own condition.
+	if _, err := page2.Goto(pageURL, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateLoad,
+		Timeout:   playwright.Float(30000),
+	}); err != nil {
+		t.Fatalf("goto %s (reopened tab): %v\n--- server output ---\n%s", pageURL, err, backendOut.String())
+	}
+	waitForTrue(t, page2, "window.__wanderRestored === true",
+		"the reopened tab did not restore a stored session (it took the fresh-session path)")
+	if got := readString(t, page2, "window.__wanderLoopId"); got != loopID {
+		t.Fatalf("restored loop id mismatch: reopened tab has %q, first tab minted %q", got, loopID)
+	}
+
+	// --- 5) the replayed transcript carries BOTH the question and the answer ------
+	// The user-text assertion is the one that proves the `user.input` replay rendering:
+	// without it a transcript of answers with no questions would pass. It must not be
+	// dropped or weakened to a concierge-only check.
+	waitForThreadText(t, page2, ".msg.user", turn1)
+	waitForThreadText(t, page2, ".msg.concierge", "beachfront options")
+	assertNoTerminal(t, page2, "after the restore")
+
+	// --- 6) the conversation genuinely continues on the restored loop -------------
+	// The restore replayed turn 1's park, so turn 2's park is the SECOND one this page saw.
+	waitForParked(t, page2, 1)
+	sendConciergeMessage(t, page2, "actually, make it pet-friendly")
+	waitForParked(t, page2, 2)
+	waitForThreadText(t, page2, ".msg.user", "pet-friendly")
+	if got := readString(t, page2, "window.__wanderLoopId"); got != loopID {
+		t.Fatalf("turn 2 ran on a different loop: %q, want the restored %q", got, loopID)
+	}
+	if n := readInt(t, page2, "document.querySelectorAll('.msg.concierge').length"); n < 2 {
+		t.Fatalf("expected the restored answer plus turn 2's reply (>=2 concierge bubbles), got %d", n)
+	}
+
+	// --- 7) a restore is not a terminal condition ---------------------------------
+	assertNoTerminal(t, page2, "after turn 2 on the restored loop")
+	if readBool(t, page2, "!!window.__wanderRestoreLost") {
+		t.Fatalf("__wanderRestoreLost fired: the durable stream was reported gone on a live restore")
+	}
+	if readBool(t, page2, "!!window.__wanderPaused") {
+		t.Fatalf("__wanderPaused fired: the restored loop was reported paused while it was still usable")
+	}
+}
+
 // --- browser helpers ------------------------------------------------------------
+
+// startWanderBrowserStack stands up the whole lane's harness — scripted gateway double,
+// real `fuse loop-serve-net`, `node server.js`, headless chromium — and returns the page
+// URL, a BrowserContext to open pages in, and the backend's captured output. Toolchain
+// absence is LOUD (t.Fatal), never a green skip; all teardown is t.Cleanup, LIFO-ordered
+// browser-before-servers.
+func startWanderBrowserStack(t *testing.T) (string, playwright.BrowserContext, *syncBuffer) {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Fatalf("go toolchain not on PATH: the browser lane builds cmd/fuse (%v)", err)
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Fatalf("node not on PATH: the browser lane serves Wander via server.js (%v)", err)
+	}
+
+	repoRoot := repoRootFromTest(t)
+	buildWanderBundle(t, repoRoot)
+	gwURL := newScriptedGateway(t)
+	bin := buildFuseBinary(t, repoRoot)
+	backendPort := freePort(t)
+	backendAddr := net.JoinHostPort("127.0.0.1", backendPort)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, bin, "loop-serve-net", "--addr", backendAddr)
+	cmd.Dir = repoRoot
+	cmd.Env = append(cmd.Environ(),
+		"HOME="+t.TempDir(), // no user config → built-in dev token (tenant _default)
+		"LLM_GATEWAY_URL="+gwURL,
+		"LLM_GATEWAY_KEY=test-key",
+	)
+	out := &syncBuffer{}
+	cmd.Stdout = out
+	cmd.Stderr = out
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start loop-serve-net: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		_ = cmd.Process.Kill()
+		waitBounded(cmd, 10*time.Second)
+	})
+	waitForListen(t, backendAddr, 30*time.Second, out)
+
+	staticPort := freePort(t)
+	serveWander(t, repoRoot, staticPort, backendAddr)
+	pageURL := fmt.Sprintf("http://127.0.0.1:%s/", staticPort)
+
+	if err := playwright.Install(&playwright.RunOptions{Browsers: []string{"chromium"}}); err != nil {
+		t.Fatalf("playwright install chromium failed (browser lane requires chromium): %v", err)
+	}
+	pw, err := playwright.Run()
+	if err != nil {
+		t.Fatalf("playwright run failed: %v", err)
+	}
+	t.Cleanup(func() { _ = pw.Stop() })
+
+	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{Headless: playwright.Bool(true)})
+	if err != nil {
+		t.Fatalf("chromium launch failed: %v", err)
+	}
+	t.Cleanup(func() { _ = browser.Close() })
+
+	bctx, err := browser.NewContext()
+	if err != nil {
+		t.Fatalf("new browser context: %v", err)
+	}
+	return pageURL, bctx, out
+}
+
+// instrumentPage surfaces a page's console messages and uncaught errors into the test log.
+func instrumentPage(t *testing.T, page playwright.Page) {
+	t.Helper()
+	page.OnConsole(func(m playwright.ConsoleMessage) {
+		t.Logf("[browser console %s] %s", m.Type(), m.Text())
+	})
+	page.OnPageError(func(err error) {
+		t.Logf("[browser page error] %v", err)
+	})
+}
+
+// assertNoTerminal fails if the page recorded a terminal stream error. A restore (like a
+// transient drop) must never surface one.
+func assertNoTerminal(t *testing.T, page playwright.Page, when string) {
+	t.Helper()
+	if term := readString(t, page, "window.__wanderTerminal"); term != "" && term != "<nil>" {
+		t.Fatalf("terminal error %q surfaced %s; a restore is not a terminal condition", term, when)
+	}
+}
+
+// waitForTrue polls a boolean page expression until it holds, or fails with `msg`.
+func waitForTrue(t *testing.T, page playwright.Page, expr, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if readBool(t, page, expr) {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("%s (timed out waiting for %s; __wanderTerminal=%s errors=%s)", msg, expr,
+		readString(t, page, "window.__wanderTerminal"),
+		readString(t, page, "JSON.stringify(Array.from(document.querySelectorAll('.msg.error')).map(e=>e.textContent))"))
+}
+
+// waitForThreadText polls until some message bubble matching `sel` contains `want`.
+func waitForThreadText(t *testing.T, page playwright.Page, sel, want string) {
+	t.Helper()
+	expr := fmt.Sprintf("Array.from(document.querySelectorAll(%q)).some(e => e.textContent.includes(%q))",
+		sel, want)
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if readBool(t, page, expr) {
+			return
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	t.Fatalf("no %s bubble containing %q; thread was %s", sel, want,
+		readString(t, page, "JSON.stringify(Array.from(document.querySelectorAll('.msg')).map(e=>e.className+': '+e.textContent))"))
+}
+
+func readBool(t *testing.T, page playwright.Page, expr string) bool {
+	t.Helper()
+	v, err := page.Evaluate(expr)
+	if err != nil {
+		t.Fatalf("evaluate %q: %v", expr, err)
+	}
+	b, _ := v.(bool)
+	return b
+}
+
 
 // cutStreams hits the Wander static server's /__cut control to forcibly drop every
 // in-flight proxied Connect stream — the deterministic mid-stream network kill.
