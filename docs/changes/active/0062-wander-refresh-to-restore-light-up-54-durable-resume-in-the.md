@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/wander-refresh-to-restore-light-up-54-durable-resume-in-the
-claimed_at: 2026-08-17T19:24:08Z
+claimed_at: 2026-08-17T19:29:54Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -57,8 +57,9 @@ story — and dogfoods the resume path through the real browser SDK.
 ## What changes
 
 Design settled in [the spec](../../superpowers/specs/2026-08-15-wander-refresh-to-restore-design.md);
-proposal-altitude summary. **Builds on #60's consolidated demo** (the real `@fuse/sdk` + Connect base),
-not the soon-retired `examples/wander`. No runtime or SDK changes — the browser SDK already exposes
+proposal-altitude summary. **Builds on #60's consolidated demo** (the real `@fuse/sdk` + Connect base)
+— which, as the 2026-08-17 reconcile confirmed, *is* `examples/wander`: #60 retired
+`examples/concierge-demo` and ported its UI onto the Wander base. No runtime or SDK changes — the browser SDK already exposes
 everything (`observe(loopId, {fromSeq})`, ADR-0037 terminal `not_found`, `isCompletion`).
 
 - **Persist `loopId`** across page loads (localStorage); on load, **restore before resume** —
@@ -82,6 +83,49 @@ everything (`observe(loopId, {fromSeq})`, ADR-0037 terminal `not_found`, `isComp
 - **Durable-store event retention/TTL** — #54 did not add it; `not_found` in the demo means a
   wiped/rebuilt store.
 - **The live-rentals backend + demo consolidation** — that is #60 (a dependency), not this change.
+
+## Reconcile log
+
+### 2026-08-17 — reconciled against `origin/main` @ 2341f13
+
+Verified the spec's claims against `origin/main` (not the working tree), per the
+`reconcile-verify-claims-against-origin-not-working-tree` learning. **Design holds in full; scope
+adjusted on one naming point and both of the spec's open questions are now settled.**
+
+- **#60's consolidation went the other way than the spec's wording implies.** The spec says the work
+  builds on "the consolidated demo #60 produces, **not** the soon-retired `examples/wander`." In fact
+  #60 retired `examples/concierge-demo` and ported its UI *onto the Wander base*: `examples/wander` is
+  now the single consolidated demo on the real `@fuse/sdk` over Connect. So the target directory is
+  `examples/wander/` after all. A naming re-map, not a design change — every D1–D4 decision applies
+  unchanged to that directory.
+- **Open question 1 (which app dir / which files) — settled.** `examples/wander/app.js` (module-scope
+  `let loopId = null`, minted lazily in the first-message path, cleared on reset; the long-lived
+  `runObserve()` generator; the `FuseTerminalError` branch that today renders "Refresh to start a new
+  session"), plus `index.html` / `styles.css` for the paused affordance and `README.md` for D4. There
+  is **no** `localStorage`/`sessionStorage` usage today — the persisted key is greenfield.
+- **D1 is cheaper than the spec assumed.** `observe()` is already called with `fromSeq: 0n`, so the
+  replay-then-live behavior D1 wants is the *existing* code path. The delta is genuinely just:
+  persist the id, and on load with a stored id skip `startLoop` and observe that id instead.
+- **Open question 2 (reload CI harness) — settled: reuse the existing lane, one server lifecycle.**
+  The lane is `examples/wander/browser_test.go` under the `//go:build browser` tag, on Playwright-Go
+  with headless Chromium. It already holds a `browser` handle and creates one `BrowserContext`/`Page`;
+  a second `browser.NewContext()` + `NewPage()` against the same running server is the reload case, so
+  no second server lifecycle is needed. Its existing `/__cut` mid-stream kill and contiguous-seq
+  no-loss/no-dup assertions stay as-is alongside the new case.
+- **Server side confirmed present and unchanged by this work.** `not_found` for an unknown loop comes
+  from `internal/loopconnect/handler.go` (`ErrLoopUnknown` → `connect.CodeNotFound`), and the 30-minute
+  idle-TTL reaper is `defaultIdleTTL` in `internal/runtime/inproc.go`, touched by each Send/Observe —
+  exactly the D2 semantics ("reap ends the live session; the durable events survive"). No runtime or
+  SDK change is in scope, as the spec says.
+- **D4's README targets are concrete:** the "stateless across page loads … without needing
+  durable/resumable sessions (change #54)" scope paragraph, and the **+ New** button note that calls a
+  reload "the honest reset" *because* the demo is stateless — that second one now needs rewording too,
+  since a reload will restore rather than reset.
+- No related change (#50, #56) or ADR (0033, 0037) has drifted under the spec; ADR-0037's terminal set
+  still carries `NotFound`, which is what D3 keys on.
+
+Auto-capture is disabled for this repo (`AUTO_CAPTURE_ENABLED=false`); no adjacent work surfaced that
+would have been minted regardless.
 
 ## Note
 

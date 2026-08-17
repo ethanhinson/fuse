@@ -34,10 +34,16 @@ The browser SDK already has everything this needs — no runtime or SDK changes:
 
 ## Dependency on #60
 
-**Builds on the consolidated demo #60 produces**, not the soon-retired `examples/wander`. #60 merges
-the two example apps onto the real `@fuse/sdk` + Connect `fuse.loop.v1` base (dropping concierge-demo's
-pre-#55 WS proxy) and keeps the reconnect CI lane. #62's restore rides on that single consolidated
-base — sequencing after #60 avoids doing the work twice on a path that is about to change.
+**Builds on the consolidated demo #60 produced.** #60 merged the two example apps onto the real
+`@fuse/sdk` + Connect `fuse.loop.v1` base (dropping concierge-demo's pre-#55 WS proxy) and kept the
+reconnect CI lane. #62's restore rides on that single consolidated base — sequencing after #60 avoided
+doing the work twice on a path that was about to change.
+
+> **Reconcile note (2026-08-17):** the consolidation landed in the *opposite direction* from this
+> section's original wording. #60 retired `examples/concierge-demo` and ported its UI onto the Wander
+> base, so the consolidated demo **is** `examples/wander/` — that is the directory this change edits
+> (`app.js`, `index.html`, `styles.css`, `README.md`, `browser_test.go`). Every decision below is
+> unaffected.
 
 ## Decisions
 
@@ -110,10 +116,17 @@ demo's existing auth error, not a fresh session.
 - **The live-rentals MCP backend and demo consolidation** — that is #60; this depends on its
   consolidated base but does not do that work.
 
-## Open questions for the reconcile pass
+## Open questions — SETTLED by the 2026-08-17 reconcile
 
-- The exact persisted-state key/shape and where the paused/`not_found` UX lives in the consolidated
-  app's structure — settle against #60's final layout (which app dir, which files) at build time.
-- Whether the reload CI case can reuse the existing lane's harness (same server, new page context) or
-  needs a second server lifecycle — a harness detail, pinned only as "new page context, same persisted
-  loopId, transcript restored, Send continues."
+- **Persisted-state location and UX home.** `examples/wander/app.js` — `loopId` is a module-scope
+  variable minted lazily on the first message and cleared on reset, with no `localStorage` use today,
+  so the persisted key is greenfield. The paused and `not_found` affordances belong in the existing
+  `FuseTerminalError` branch of `runObserve()`'s catch (which today unconditionally renders
+  "Connection closed — Refresh to start a new session") plus the composer-disable path, with markup in
+  `index.html` / `styles.css`.
+- **Reload CI case — reuse the existing harness, one server lifecycle.** The lane
+  (`examples/wander/browser_test.go`, `//go:build browser`, Playwright-Go + headless Chromium) already
+  holds a `browser` handle; a second `browser.NewContext()` + `NewPage()` against the same running
+  server is exactly "new page context, same persisted loopId." No second server lifecycle.
+- **Bonus finding:** `observe()` is *already* called with `fromSeq: 0n`, so D1's replay-then-live
+  behavior is the existing code path — the delta is persisting the id and skipping `startLoop`.
