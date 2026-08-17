@@ -141,16 +141,18 @@ func (m *AgentsModel) SelectedNodeID() string {
 }
 
 // selectedNode resolves m.selected (a treeRows index) to the node under the
-// cursor. Returns ok=false when the cursor is on a turn HEADER row or out of
-// range. Falls back to the flat m.nodes index when the row model has not been
-// built yet (first frame), so callers work before the first render.
+// cursor. A turn HEADER row resolves to the ROOT node (its detail is the root's
+// turn-scoped transcript; see selectedTurnFilter). Falls back to the flat m.nodes
+// index when the row model has not been built yet (first frame).
 func (m *AgentsModel) selectedNode() (agent.NodeView, bool) {
 	if m == nil || m.selected < 0 {
 		return agent.NodeView{}, false
 	}
 	if m.selected < len(m.treeRows) {
 		tr := m.treeRows[m.selected]
-		if tr.header {
+		// A header carries the root node (tr.node) so it is inspectable as the
+		// root's turn slice; a node row carries its own node.
+		if tr.nodeIdx < 0 {
 			return agent.NodeView{}, false
 		}
 		return tr.node, true
@@ -160,6 +162,21 @@ func (m *AgentsModel) selectedNode() (agent.NodeView, bool) {
 		return m.nodes[m.selected], true
 	}
 	return agent.NodeView{}, false
+}
+
+// selectedTurnFilter returns the conversational turn ordinal the detail pane
+// should scope the selected node's events to, or 0 for "no filter" (show the
+// whole node). A turn HEADER row scopes the root's events to that turn; a node
+// row (a spawned agent, or a single-turn root) shows everything.
+func (m *AgentsModel) selectedTurnFilter() int {
+	if m == nil || m.selected < 0 || m.selected >= len(m.treeRows) {
+		return 0
+	}
+	tr := m.treeRows[m.selected]
+	if tr.header {
+		return tr.turn
+	}
+	return 0
 }
 
 // rightFocused reports whether the right column (detail/blackboard/event/segment)
@@ -741,21 +758,25 @@ type treeRow struct {
 }
 
 // buildTreeRowModel groups the flat node snapshot into per-turn sections when the
-// root is genuinely multi-turn. The root node itself is NOT nested under a turn —
-// it stays the implicit owner; each turn header collects the children spawned in
-// that turn (SpawnedInTurn), and a collapsed turn hides its children. A
-// single-turn (or turn-less) session returns the flat node list unchanged, so the
-// pre-change tree is byte-identical.
+// root is genuinely multi-turn. Turns are the TOP level: each turn is a
+// selectable, collapsible header whose detail is the ROOT's events for THAT turn
+// (the root does most work itself, so a turn is meaningless without its root
+// slice). Any agents spawned in that turn nest under it. There is NO standalone
+// root row — the root's activity lives inside its turns. A single-turn (or
+// turn-less) session returns the flat node list unchanged, so the pre-change tree
+// is byte-identical.
 func (m *AgentsModel) buildTreeRowModel() []treeRow {
-	// Find the root and its turn marks.
+	// Find the root node (index + view) and its turn marks.
+	rootIdx, rootFound := -1, false
 	var rootTurns []agent.TurnMark
-	for _, n := range m.nodes {
+	for i, n := range m.nodes {
 		if n.Depth == 0 {
+			rootIdx, rootFound = i, true
 			rootTurns = n.Turns
 			break
 		}
 	}
-	multiTurn := len(rootTurns) > 1
+	multiTurn := rootFound && len(rootTurns) > 1
 
 	if !multiTurn {
 		rows := make([]treeRow, len(m.nodes))
@@ -765,22 +786,19 @@ func (m *AgentsModel) buildTreeRowModel() []treeRow {
 		return rows
 	}
 
+	root := m.nodes[rootIdx]
 	rows := make([]treeRow, 0, len(m.nodes)+len(rootTurns))
-	// The root row first (it owns every turn; it is never nested).
-	for i, n := range m.nodes {
-		if n.Depth == 0 {
-			rows = append(rows, treeRow{turn: 0, nodeIdx: i, node: n})
-			break
-		}
-	}
-	// Then one section per turn, each header followed by that turn's children
-	// (any node with SpawnedInTurn == turn), unless the turn is collapsed.
+	// One section per turn: a header that IS the root's turn-N slice (selectable),
+	// followed by that turn's spawned children (unless collapsed).
 	for ti := range rootTurns {
 		turn := rootTurns[ti].Turn
 		if turn == 0 {
 			turn = ti + 1
 		}
-		rows = append(rows, treeRow{header: true, turn: turn, nodeIdx: -1})
+		// The header carries the root node + turn: selecting it inspects the root's
+		// events scoped to this turn (nodeIdx points at the root so cancel/other
+		// node ops still resolve).
+		rows = append(rows, treeRow{header: true, turn: turn, nodeIdx: rootIdx, node: root})
 		if !m.turnIsExpanded(turn, ti == len(rootTurns)-1) {
 			continue
 		}
@@ -964,8 +982,7 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 	}
 	n, ok := m.selectedNode()
 	if !ok {
-		// The cursor is on a turn HEADER row (no node to inspect).
-		return []string{lipgloss.NewStyle().Foreground(colMuted).Render("Turn group — select an agent under it to inspect.")}
+		return []string{lipgloss.NewStyle().Foreground(colMuted).Render("Select a node to inspect.")}
 	}
 	// Events aren't carried in the snapshot (they can be large); take a
 	// race-safe copy from the live node only for the selected one.
@@ -974,6 +991,18 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 		events = live.CopyEvents()
 	}
 	visible := displayEvents(events)
+	// A turn HEADER selection scopes the root's transcript to that turn (the root
+	// does most work itself, so a turn's meaning is its slice of the root stream).
+	// turnIndexFor is the same attribution rule the offsets use.
+	if tf := m.selectedTurnFilter(); tf > 0 && len(n.Turns) > 1 {
+		filtered := visible[:0:0]
+		for _, e := range visible {
+			if turnOrdinal(n, turnIndexFor(n, e.TS)) == tf {
+				filtered = append(filtered, e)
+			}
+		}
+		visible = filtered
+	}
 	m.eventCount = len(visible)
 
 	if m.inEventView && len(visible) > 0 {
@@ -1668,6 +1697,11 @@ func eventFullContent(evt agent.AgentEvent) string {
 
 func (m *AgentsModel) renderDetailHeader(n agent.NodeView, w int) string {
 	label := sanitizeDisplay(n.Label)
+	// When the selection is a turn header (the root scoped to a turn), name the
+	// turn so the operator knows the transcript below is that turn's slice.
+	if tf := m.selectedTurnFilter(); tf > 0 {
+		label += " · turn " + fmt.Sprintf("%d", tf)
+	}
 
 	glyph := glyphStyle(n.Status).Render(glyphForStatus(n.Status))
 	elapsed := nodeElapsed(n)
