@@ -82,6 +82,9 @@ permissions:
     classifier_model: deepseek-flash   # alias that judges gray-area commands; NEVER a chat alias
     deny: []            # extra always-deny per-segment patterns, e.g. "bash:npm publish*"
     ask: []             # extra always-ask per-segment patterns (override an allow)
+    allow_push: false   # true = `git push` auto-approves; false = it routes to the classifier
+    write_roots: []     # extra dirs scoped like the workspace (e.g. ["/tmp"]); the
+                        # per-session scratch dir under ~/.fuse/tmp/ is always included
 
 # Per-project overrides (user-owned ~/.fuse/config.yml ONLY — see below).
 # Absolute project path -> a permissions subtree that applies when the shell
