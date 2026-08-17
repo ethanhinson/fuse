@@ -28,14 +28,14 @@ func TestDecisionSink_TerminalOutcomes(t *testing.T) {
 		ctx, rec := recordDecisions()
 		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), AlwaysApprove,
 			WithWorkspaceRoot(root))
-		res := g.Execute(ctx, "bash", bashArgs("curl https://example.com"))
+		res := g.Execute(ctx, "bash", bashArgs("sudoedit /etc/hosts"))
 		if !res.IsError || !res.Denied || res.DenyLayer != LayerRules {
 			t.Fatalf("want typed rules denial, got %+v", res)
 		}
 		if len(*rec) != 1 || (*rec)[0].Verdict != "deny" || (*rec)[0].Layer != LayerRules {
 			t.Fatalf("want one deny/rules decision, got %+v", *rec)
 		}
-		if (*rec)[0].Mode != "auto" || (*rec)[0].Command != "curl https://example.com" {
+		if (*rec)[0].Mode != "auto" || (*rec)[0].Command != "sudoedit /etc/hosts" {
 			t.Errorf("decision should carry mode and command preview, got %+v", (*rec)[0])
 		}
 	})
@@ -163,9 +163,9 @@ func TestDecisionSink_ClassifierAndParseLayers(t *testing.T) {
 func TestDenyHint_AppendedToDenials(t *testing.T) {
 	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), AlwaysApprove,
 		WithWorkspaceRoot(t.TempDir()))
-	res := g.Execute(context.Background(), "bash", bashArgs("curl https://example.com"))
-	if !strings.Contains(res.Output, "web_fetch") {
-		t.Errorf("rules-layer denial should point at web_fetch/web_search, got %q", res.Output)
+	res := g.Execute(context.Background(), "bash", bashArgs("sudoedit /etc/hosts"))
+	if !strings.Contains(res.Output, "retrying the identical call will fail") {
+		t.Errorf("rules-layer denial should carry the no-retry hint, got %q", res.Output)
 	}
 	if !strings.Contains(res.Output, "denied by auto-mode rules layer") {
 		t.Errorf("denial must keep the layer-named reason, got %q", res.Output)

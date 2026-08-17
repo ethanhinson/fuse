@@ -30,7 +30,7 @@ func TestEvalRules_Precedence(t *testing.T) {
 		},
 		{
 			desc:        "whole-string allow never overrides a segment deny",
-			cmd:         "echo safe && rm file",
+			cmd:         "echo safe && sudoedit /etc/hosts",
 			autoApprove: []string{"bash:*"}, // would match the whole string
 			want:        VerdictDeny,
 		},
@@ -73,14 +73,53 @@ func TestEvalRules_Precedence(t *testing.T) {
 			want:        VerdictDeny,
 		},
 		{
-			desc: "git push is deny even without config (subcommand-qualified)",
+			desc: "git push without allow_push falls through to ask (egress/classifier routing, 0068)",
 			cmd:  "git push origin main",
+			want: VerdictAsk,
+		},
+		{
+			desc: "git push with allow_push opt-in is a deterministic allow (0068)",
+			cmd:  "git push origin main",
+			auto: AutoConfig{AllowPush: true},
+			want: VerdictAllow,
+		},
+		{
+			desc: "config deny still beats allow_push",
+			cmd:  "git push origin main",
+			auto: AutoConfig{AllowPush: true, Deny: []string{"bash:git push*"}},
 			want: VerdictDeny,
 		},
 		{
-			desc: "bare curl is a coarse deny (network egress)",
+			desc:         "always_prompt still beats allow_push",
+			cmd:          "git push origin main",
+			auto:         AutoConfig{AllowPush: true},
+			alwaysPrompt: []string{"bash:git push*"},
+			want:         VerdictAsk,
+		},
+		{
+			desc: "bare curl is no longer a rules deny — falls through to the heuristic/classifier (0068)",
 			cmd:  "curl http://example.com",
+			want: VerdictAsk,
+		},
+		{
+			desc: "mkfs variant is catastrophic (prefix match)",
+			cmd:  "mkfs.ext4 /dev/sda1",
 			want: VerdictDeny,
+		},
+		{
+			desc: "dd onto a raw device is catastrophic",
+			cmd:  "dd if=image.img of=/dev/disk0",
+			want: VerdictDeny,
+		},
+		{
+			desc: "rm -rf / is catastrophic",
+			cmd:  "rm -rf /",
+			want: VerdictDeny,
+		},
+		{
+			desc: "plain rm falls through to the heuristic layer (in-workspace scoping)",
+			cmd:  "rm build/output.txt",
+			want: VerdictAsk, // rules layer defers; heuristic allows in-workspace
 		},
 		{
 			desc:        "extra cfg.Deny pattern denies a segment",
@@ -100,7 +139,7 @@ func TestEvalRules_Precedence(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			segs := segsFor(t, tc.cmd)
-			got := evalRules(segs, tc.auto, tc.autoApprove, tc.alwaysPrompt)
+			got := evalRules(segs, tc.auto, tc.autoApprove, tc.alwaysPrompt, "")
 			if got != tc.want {
 				t.Errorf("evalRules(%q) = %v, want %v", tc.cmd, got, tc.want)
 			}
@@ -108,14 +147,14 @@ func TestEvalRules_Precedence(t *testing.T) {
 	}
 }
 
-// TestEvalRules_DenylistWrapping proves that sh -c "rm x" — whose inner rm
-// segment is surfaced by splitSegments — still denies, driven end-to-end from
-// the command string.
+// TestEvalRules_DenylistWrapping proves that sh -c "sudoedit x" — whose inner
+// dangerous segment is surfaced by splitSegments — still denies, driven
+// end-to-end from the command string.
 func TestEvalRules_DenylistWrapping(t *testing.T) {
-	segs := segsFor(t, `sh -c "rm x"`)
-	got := evalRules(segs, AutoConfig{}, []string{"bash:*"}, nil)
+	segs := segsFor(t, `sh -c "sudoedit x"`)
+	got := evalRules(segs, AutoConfig{}, []string{"bash:*"}, nil, "")
 	if got != VerdictDeny {
-		t.Fatalf("evalRules(sh -c \"rm x\") = %v, want VerdictDeny", got)
+		t.Fatalf("evalRules(sh -c \"sudoedit x\") = %v, want VerdictDeny", got)
 	}
 }
 

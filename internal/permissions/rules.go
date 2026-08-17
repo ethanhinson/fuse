@@ -1,7 +1,10 @@
 package permissions
 
 import (
+	"os"
 	"path"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -42,38 +45,24 @@ func (v Verdict) String() string {
 }
 
 // dangerousNames are argv[0] basenames that force a hard deny regardless of any
-// allow rule or session grant — they guard against over-broad grants. This is
-// the coarse floor; the network-egress and read-only refinements land in later
-// tasks. curl/wget are denied wholesale here as a coarse network-egress guard.
+// allow rule or session grant. Change 0068 shrank this to genuinely
+// CATASTROPHIC operations only (Claude Code / Cursor parity): machine-level
+// destruction and privilege escalation. Everything removed (rm, chmod, chown,
+// chgrp, kill, pkill, killall, dd, truncate, curl, wget) now flows to the
+// shape-based denies below, the workspace-scoping heuristic, or the
+// context-aware classifier — scoped-allow where provable, never a blind block.
 var dangerousNames = map[string]bool{
-	"rm":       true,
-	"chmod":    true,
-	"chown":    true,
-	"chgrp":    true,
-	"kill":     true,
-	"pkill":    true,
-	"killall":  true,
-	"dd":       true,
-	"mkfs":     true,
-	"truncate": true,
+	"mkfs":     true, // plus every mkfs.* variant via the prefix check in isDangerous
 	"shutdown": true,
 	"reboot":   true,
-	"curl":     true,
-	"wget":     true,
+	"halt":     true,
+	"poweroff": true,
 	// sudoedit (aka `sudo -e`) is a distinct executable from sudo that opens an
 	// editor with elevated privileges. sudo itself is caught by the wrapper
 	// guard, but sudoedit is a plain argv[0] and would otherwise be classified
 	// as a normal command — so it must be denied here alongside the other
 	// privilege/destruction vectors.
 	"sudoedit": true,
-}
-
-// dangerousGitSubcommands are git subcommands that are dangerous even though
-// bare git is not — matched on argv, never on basename alone.
-var dangerousGitSubcommands = map[string]bool{
-	"push":  true,
-	"reset": true,
-	"clean": true,
 }
 
 // evalRules resolves the deterministic verdict for the parsed segments of a
@@ -89,12 +78,12 @@ var dangerousGitSubcommands = map[string]bool{
 // Deny and ask patterns are matched against each segment's argv AND the whole
 // command string; allow is matched per-segment only, so a whole-string allow
 // can never rescue a dangerous segment.
-func evalRules(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []string) Verdict {
+func evalRules(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []string, workspaceRoot string) Verdict {
 	whole := wholeSubject(segments)
 
 	// 1. Deny wins globally.
 	for _, seg := range segments {
-		if isDangerous(seg) {
+		if isDangerous(seg, workspaceRoot) {
 			return VerdictDeny
 		}
 		if matchesSegment(cfg.Deny, seg) {
@@ -116,8 +105,10 @@ func evalRules(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []s
 		return VerdictAsk
 	}
 
-	// 3. Allow only when every segment independently matches an allow rule.
-	if len(segments) > 0 && allSegmentsAllowed(segments, autoApprove) {
+	// 3. Allow only when every segment independently matches an allow rule (or
+	// the config-opted git-push allowance, change 0068 — checked AFTER deny/ask
+	// so a config deny or always_prompt still beats allow_push).
+	if len(segments) > 0 && allSegmentsAllowed(segments, autoApprove, cfg.AllowPush) {
 		return VerdictAllow
 	}
 
@@ -125,27 +116,151 @@ func evalRules(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []s
 	return VerdictAsk
 }
 
-// allSegmentsAllowed reports whether every segment matches an allow pattern.
-// An empty segment set is not allowed by omission (the caller guards len>0).
-func allSegmentsAllowed(segments []Segment, autoApprove []string) bool {
+// allSegmentsAllowed reports whether every segment matches an allow pattern —
+// or is a git push under the trusted allow_push opt-in (change 0068). An empty
+// segment set is not allowed by omission (the caller guards len>0).
+func allSegmentsAllowed(segments []Segment, autoApprove []string, allowPush bool) bool {
 	for _, seg := range segments {
-		if !matchesSegment(autoApprove, seg) {
-			return false
+		if matchesSegment(autoApprove, seg) {
+			continue
 		}
+		if allowPush && isGitPush(seg) {
+			continue
+		}
+		return false
 	}
 	return true
 }
 
-// isDangerous reports whether a segment is on the built-in dangerous list,
-// including subcommand-qualified git forms.
-func isDangerous(seg Segment) bool {
+// isGitPush reports whether a segment is a git push invocation.
+func isGitPush(seg Segment) bool {
+	return seg.Name == "git" && len(seg.Args) > 0 && seg.Args[0] == "push"
+}
+
+// isDangerous reports whether a segment is catastrophic: on the built-in
+// dangerous list (with mkfs.* prefix coverage) or matching a shape-based
+// catastrophic pattern (rm -rf on /, $HOME, or a workspace ancestor; dd onto a
+// raw device). workspaceRoot is the canonicalized workspace for the rm check.
+func isDangerous(seg Segment, workspaceRoot string) bool {
 	if dangerousNames[seg.Name] {
 		return true
 	}
-	if seg.Name == "git" && len(seg.Args) > 0 && dangerousGitSubcommands[seg.Args[0]] {
+	if strings.HasPrefix(seg.Name, "mkfs.") {
+		return true
+	}
+	if isCatastrophicRm(seg, workspaceRoot) {
+		return true
+	}
+	if isDdToDevice(seg) {
 		return true
 	}
 	return false
+}
+
+// isCatastrophicRm reports whether an rm segment is machine-destroying: it
+// carries a recursive or force flag (short-grouped or long form) AND any
+// operand resolves to the filesystem root, the user's home directory, or an
+// ancestor of the workspace root. Plain rm (or rm -rf of anything else) falls
+// through to the workspace-scoping heuristic: in-workspace ⇒ allow, outside ⇒
+// classifier — consistent with every other in-workspace mutation.
+func isCatastrophicRm(seg Segment, workspaceRoot string) bool {
+	if seg.Name != "rm" {
+		return false
+	}
+	forceish := false
+	var operands []string
+	for _, a := range seg.Args {
+		switch {
+		case a == "--recursive" || a == "--force":
+			forceish = true
+		case strings.HasPrefix(a, "--"):
+			// other long flags: not force-ish, not operands
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			if strings.ContainsAny(a[1:], "rRf") {
+				forceish = true
+			}
+		case a != "":
+			operands = append(operands, a)
+		}
+	}
+	if !forceish {
+		return false
+	}
+	home, _ := os.UserHomeDir()
+	for _, op := range operands {
+		// The parser hands tilde through literally; bash expands it at execution
+		// (`rm -rf ~` destroys the home directory, not a cwd file named "~").
+		if home != "" && (op == "~" || strings.HasPrefix(op, "~/")) {
+			op = home + op[1:]
+		}
+		abs, err := filepath.Abs(op)
+		if err != nil {
+			continue
+		}
+		resolved, ok := resolveExisting(abs)
+		if !ok {
+			continue
+		}
+		if resolved == "/" {
+			return true
+		}
+		if home != "" && resolved == home {
+			return true
+		}
+		// An ancestor of the workspace (the workspace's parent chain): deleting
+		// it recursively takes the workspace with it.
+		if workspaceRoot != "" && resolved != workspaceRoot && isWithin(workspaceRoot, resolved) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDdToDevice reports whether a dd segment writes to a raw device
+// (of=/dev/...): destroying a disk is catastrophic regardless of scoping.
+// Other dd targets flow to the heuristic via pathArgs' of=/if= extraction.
+func isDdToDevice(seg Segment) bool {
+	if seg.Name != "dd" {
+		return false
+	}
+	for _, a := range seg.Args {
+		if strings.HasPrefix(a, "of=/dev/") {
+			return true
+		}
+	}
+	return false
+}
+
+// isProvablyBenignKill reports whether a kill segment provably targets specific
+// processes by numeric PID (never PID 1) with at most signal flags — the
+// dominant "restart my dev server" shape, deterministically allowable. Anything
+// else (pkill/killall name matching, %jobspec, flags it can't prove) is not
+// benign and routes to the classifier via the heuristic layer.
+func isProvablyBenignKill(seg Segment) bool {
+	if seg.Name != "kill" {
+		return false
+	}
+	sawPID := false
+	for i := 0; i < len(seg.Args); i++ {
+		a := seg.Args[i]
+		switch {
+		case a == "-s" || a == "--signal":
+			i++ // consume the signal name
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			// -9, -TERM, -SIGKILL … : a signal flag. Numeric-PID flags like -1
+			// (broadcast) are indistinguishable from signal -1 (SIGHUP); kill's
+			// own semantics make a leading -N a signal, so this stays a flag.
+		case a == "":
+			continue
+		default:
+			pid, err := strconv.Atoi(a)
+			if err != nil || pid <= 1 {
+				return false
+			}
+			sawPID = true
+		}
+	}
+	return sawPID
 }
 
 // readOnlyUtils are argv[0] basenames that are read-only with ANY arguments —

@@ -77,6 +77,10 @@ type PermissionGate struct {
 	// directory used by the auto-mode heuristic for path scoping. The gate
 	// canonicalizes once at construction and passes it to classifyHeuristic.
 	workspaceRoot string
+	// writeRoots are extra pre-canonicalized directories treated as
+	// workspace-equivalent by the path scoping (change 0068): the per-session
+	// scratch dir plus config permissions.auto.write_roots.
+	writeRoots []string
 
 	// interactive marks whether a human is reachable through g.approve. When the
 	// escalation valve trips, an interactive gate falls back to prompting; a
@@ -199,6 +203,21 @@ func WithClassifier(c *Classifier) Option {
 // passing it (the heuristic compares against the real, symlink-resolved path).
 func WithWorkspaceRoot(root string) Option {
 	return func(g *PermissionGate) { g.workspaceRoot = root }
+}
+
+// WithWriteRoots sets extra pre-canonicalized directories the auto-mode path
+// scoping treats as workspace-equivalent (change 0068): the per-session scratch
+// dir and any trusted permissions.auto.write_roots. The caller MUST canonicalize
+// each root with filepath.EvalSymlinks (macOS /tmp is a symlink to /private/tmp
+// — an uncanonicalized root never matches and the allowance is silently inert).
+func WithWriteRoots(roots []string) Option {
+	return func(g *PermissionGate) { g.writeRoots = roots }
+}
+
+// allowedRoots is the mutation-root set handed to the path scoping: the
+// workspace root first, then the extra write roots.
+func (g *PermissionGate) allowedRoots() []string {
+	return append([]string{g.workspaceRoot}, g.writeRoots...)
 }
 
 // WithInteractive marks the gate as interactive (a human is reachable through
@@ -514,16 +533,17 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 			return VerdictAllow, LayerSafelist, ""
 		}
 		// Edit tools carry a single "path" arg rather than a shell command: scope it
-		// against the workspace exactly as the bash heuristic scopes mutating path
-		// args. An in-workspace target auto-approves; anything the scope cannot prove
-		// in-workspace (an escape, a symlink whose target escapes, a missing/garbled
-		// path) fails toward the human — never toward the classifier.
+		// against the allowed roots (workspace + scratch/write_roots, change 0068)
+		// exactly as the bash heuristic scopes mutating path args. An in-root target
+		// auto-approves; anything the scope cannot prove in-root (an escape, a
+		// symlink whose target escapes, a missing/garbled path) fails toward the
+		// human — never toward the classifier.
 		if isEditTool(name) {
 			path, ok := editPath(args)
 			if !ok {
 				return VerdictAsk, LayerEditScope, ""
 			}
-			if withinWorkspace(path, g.workspaceRoot) {
+			if withinAnyRoot(path, g.allowedRoots()) {
 				return VerdictAllow, LayerEditScope, ""
 			}
 			return VerdictAsk, LayerEditScope, ""
@@ -558,7 +578,7 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 	}
 
 	// 2. Deterministic rules. Deny is terminal; allow is a positive auto-approve.
-	switch evalRules(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt) {
+	switch evalRules(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt, g.workspaceRoot) {
 	case VerdictDeny:
 		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + command
 	case VerdictAllow:
@@ -571,7 +591,7 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 	}
 
 	// 4. Heuristics: egress boundary / path scoping. Ask ⇒ continue to classifier.
-	switch classifyHeuristic(segments, g.workspaceRoot) {
+	switch classifyHeuristic(segments, g.allowedRoots()) {
 	case VerdictDeny:
 		return VerdictDeny, LayerHeuristic, "denied by auto-mode heuristic layer: " + command
 	case VerdictAllow:
@@ -788,6 +808,7 @@ func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
 		inner:            g.inner,
 		classifier:       g.classifier.cloneForChild(),
 		workspaceRoot:    g.workspaceRoot,
+		writeRoots:       g.writeRoots,
 		interactive:      g.interactive,
 		// The escalation valve is a per-session budget: unlike the snapshot-cloned
 		// approval/verdict caches, it is shared by reference so a child's classifier

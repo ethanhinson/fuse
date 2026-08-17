@@ -23,7 +23,7 @@ func TestClassifyHeuristic_ReadOnly(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			segs := segsFor(t, tc.cmd)
-			if got := classifyHeuristic(segs, root); got != tc.want {
+			if got := classifyHeuristic(segs, []string{root}); got != tc.want {
 				t.Errorf("classifyHeuristic(%q) = %v, want %v", tc.cmd, got, tc.want)
 			}
 		})
@@ -50,7 +50,7 @@ func TestClassifyHeuristic_Egress(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			segs := segsFor(t, tc.cmd)
-			if got := classifyHeuristic(segs, root); got != VerdictAsk {
+			if got := classifyHeuristic(segs, []string{root}); got != VerdictAsk {
 				t.Errorf("classifyHeuristic(%q) = %v, want VerdictAsk (egress)", tc.cmd, got)
 			}
 		})
@@ -165,5 +165,5 @@ func classifyHeuristicIn(t *testing.T, segs []Segment, root string) Verdict {
 	if err != nil {
 		t.Fatalf("evalsymlinks root: %v", err)
 	}
-	return classifyHeuristic(segs, canonRoot)
+	return classifyHeuristic(segs, []string{canonRoot})
 }
