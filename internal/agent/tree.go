@@ -125,11 +125,17 @@ type AgentNode struct {
 	// written only by AgentTree.BeginTurn/EndTurn on the ROOT node — child nodes
 	// leave it empty. Guarded by mu like the rest of the mutable state; UI code
 	// reads it through Snapshot's defensive copy, never directly. (0066)
-	Turns    []TurnMark
-	children []string
-	cancel   func() // set by Spawner; called by CancelNode
-	yields   int    // concurrent spawn_agent waits currently yielding this node's slot
-	mu       sync.Mutex
+	Turns []TurnMark
+	// SpawnedInTurn is the root's conversational turn ordinal (1-based) that was
+	// current when this node was spawned; 0 for the root itself and for any child
+	// spawned before the first BeginTurn. It is the provenance the /agents tree
+	// groups children by turn (change: turns-in-left-tree) — set once at creation,
+	// never mutated, so it needs no lock beyond the creating store.
+	SpawnedInTurn int
+	children      []string
+	cancel        func() // set by Spawner; called by CancelNode
+	yields        int    // concurrent spawn_agent waits currently yielding this node's slot
+	mu            sync.Mutex
 }
 
 // AddEvent appends an event to the node, thread-safe.
@@ -203,6 +209,9 @@ type NodeView struct {
 	// the slice header cannot race a concurrent BeginTurn append. Empty for every
 	// node but the root. (0066)
 	Turns []TurnMark
+	// SpawnedInTurn is the root turn ordinal this node was spawned in (0 = root or
+	// pre-first-turn). Drives the /agents tree's per-turn grouping.
+	SpawnedInTurn int
 }
 
 // Snapshot returns a consistent view of the node's mutable state.
@@ -210,18 +219,19 @@ func (n *AgentNode) Snapshot() NodeView {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return NodeView{
-		ID:           n.ID,
-		ParentID:     n.ParentID,
-		Label:        n.Label,
-		Model:        n.Model,
-		Status:       n.Status,
-		Depth:        n.Depth,
-		StartedAt:    n.StartedAt,
-		EndedAt:      n.EndedAt,
-		TokensIn:     n.TokensIn,
-		TokensOut:    n.TokensOut,
-		WorkflowRoot: n.WorkflowRoot,
-		Turns:        append([]TurnMark(nil), n.Turns...),
+		ID:            n.ID,
+		ParentID:      n.ParentID,
+		Label:         n.Label,
+		Model:         n.Model,
+		Status:        n.Status,
+		Depth:         n.Depth,
+		StartedAt:     n.StartedAt,
+		EndedAt:       n.EndedAt,
+		TokensIn:      n.TokensIn,
+		TokensOut:     n.TokensOut,
+		WorkflowRoot:  n.WorkflowRoot,
+		Turns:         append([]TurnMark(nil), n.Turns...),
+		SpawnedInTurn: n.SpawnedInTurn,
 	}
 }
 
@@ -384,6 +394,22 @@ func (t *AgentTree) BeginTurnWithPrompt(prompt string) {
 	root.Turns = append(root.Turns, TurnMark{Turn: len(root.Turns) + 1, StartedAt: now, Prompt: prompt})
 	root.mu.Unlock()
 	t.Emit(TreeUpdate{NodeID: t.rootID})
+}
+
+// CurrentTurn returns the root's current conversational turn ordinal (1-based:
+// the last TurnMark's Turn), or 0 before the first BeginTurn. A child spawned now
+// stamps this as its SpawnedInTurn so the /agents tree can group it under its turn.
+func (t *AgentTree) CurrentTurn() int {
+	root := t.Node(t.rootID)
+	if root == nil {
+		return 0
+	}
+	root.mu.Lock()
+	defer root.mu.Unlock()
+	if len(root.Turns) == 0 {
+		return 0
+	}
+	return root.Turns[len(root.Turns)-1].Turn
 }
 
 // SetRootModel updates the root node's rendered model and label to the given

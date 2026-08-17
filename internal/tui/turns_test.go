@@ -42,32 +42,19 @@ func twoTurnRoot() (agent.NodeView, []agent.AgentEvent) {
 
 func TestEventOffsetNeverNegativeAcrossTurns(t *testing.T) {
 	n, events := twoTurnRoot()
-	m := &AgentsModel{}
 
-	lines := m.legacyEventLinesGolden(n, events, 100)
-	if len(lines) != len(events) {
-		t.Fatalf("want %d rendered lines, got %d", len(events), len(lines))
-	}
-	for i, ln := range lines {
-		plain := stripANSITurns(ln)
-		open := strings.Index(plain, "[")
-		close := strings.Index(plain, "]")
-		if open < 0 || close < open {
-			t.Fatalf("line %d has no offset bracket: %q", i, plain)
-		}
-		off := strings.TrimSpace(plain[open+1 : close])
-		if strings.HasPrefix(off, "-") {
-			t.Errorf("line %d rendered a NEGATIVE offset %q (the reported bug): %q", i, off, plain)
-		}
-	}
-
-	// Each event's offset equals TS - its own turn's start, to 0.1s.
+	// The detail pane is flat (turn grouping moved to the left tree), but each
+	// event's offset is still turn-relative — never negative, and equal to
+	// TS - its own turn's start.
 	wantStarts := []time.Time{
 		n.Turns[0].StartedAt, n.Turns[0].StartedAt, n.Turns[0].StartedAt,
 		n.Turns[1].StartedAt, n.Turns[1].StartedAt,
 	}
 	for i, evt := range events {
 		got := eventOffset(n, evt.TS)
+		if strings.HasPrefix(got, "-") {
+			t.Errorf("event %d rendered a NEGATIVE offset %q (the reported bug)", i, got)
+		}
 		want := fmt.Sprintf("%05.1fs", evt.TS.Sub(wantStarts[i]).Seconds())
 		if got != want {
 			t.Errorf("event %d offset = %q, want %q", i, got, want)
@@ -83,11 +70,9 @@ func TestEventOffsetNegativeWhenStartedAtTracksLatestTurn(t *testing.T) {
 	n, events := twoTurnRoot()
 	n.StartedAt = n.Turns[1].StartedAt // the pre-fix clobbered value
 
-	m := &AgentsModel{}
-	for i, ln := range m.legacyEventLinesGolden(n, events, 100) {
-		plain := stripANSITurns(ln)
-		if strings.Contains(plain, "[-") {
-			t.Errorf("line %d rendered a negative offset (the reported bug): %q", i, plain)
+	for i, evt := range events {
+		if got := eventOffset(n, evt.TS); strings.HasPrefix(got, "-") {
+			t.Errorf("event %d rendered a negative offset %q (the reported bug)", i, got)
 		}
 	}
 	if got, want := eventOffset(n, events[0].TS), "000.0s"; got != want {

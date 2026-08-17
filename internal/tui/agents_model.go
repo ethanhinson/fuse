@@ -32,10 +32,14 @@ type treeUpdateMsg struct{ nodeID string }
 //	Detail: j/k scroll    g/G top/bottom  q/esc/tab back-to-tree
 //	Board:  j/k scroll    g top          b/q/esc/tab back-to-tree
 type AgentsModel struct {
-	tree         *agent.AgentTree
-	nodes        []agent.NodeView // depth-first snapshot, refreshed on tree update
-	nodeByID     map[string]agent.NodeView
-	lastChildOf  map[string]string // parentID → last child's ID
+	tree        *agent.AgentTree
+	nodes       []agent.NodeView // depth-first snapshot, refreshed on tree update
+	nodeByID    map[string]agent.NodeView
+	lastChildOf map[string]string // parentID → last child's ID
+	// treeRows is the left pane's row model (change turns-in-left-tree): turn
+	// headers + nodes. m.selected indexes THIS, not m.nodes. Rebuilt every render.
+	treeRows     []treeRow
+	treeRowCount int
 	selected     int
 	treeScroll   int  // first visible row of the tree pane
 	treeManual   bool // sticky: set by a wheel scroll, cleared by a selection key (j/k/g/G) or a pane enter/exit; while set, suppresses selection-follow scrolling
@@ -130,10 +134,32 @@ func (m *AgentsModel) ShowBlackboard() *AgentsModel {
 // when the snapshot is empty. Used by the human-messaging router to default
 // bare-prose targets to the node the human is looking at (ADR-0022).
 func (m *AgentsModel) SelectedNodeID() string {
-	if m == nil || m.selected < 0 || m.selected >= len(m.nodes) {
-		return ""
+	if n, ok := m.selectedNode(); ok {
+		return n.ID
 	}
-	return m.nodes[m.selected].ID
+	return ""
+}
+
+// selectedNode resolves m.selected (a treeRows index) to the node under the
+// cursor. Returns ok=false when the cursor is on a turn HEADER row or out of
+// range. Falls back to the flat m.nodes index when the row model has not been
+// built yet (first frame), so callers work before the first render.
+func (m *AgentsModel) selectedNode() (agent.NodeView, bool) {
+	if m == nil || m.selected < 0 {
+		return agent.NodeView{}, false
+	}
+	if m.selected < len(m.treeRows) {
+		tr := m.treeRows[m.selected]
+		if tr.header {
+			return agent.NodeView{}, false
+		}
+		return tr.node, true
+	}
+	// Pre-first-render fallback: m.treeRows is empty but m.nodes is populated.
+	if len(m.treeRows) == 0 && m.selected < len(m.nodes) {
+		return m.nodes[m.selected], true
+	}
+	return agent.NodeView{}, false
 }
 
 // rightFocused reports whether the right column (detail/blackboard/event/segment)
@@ -365,7 +391,13 @@ func fitBorderTop(title string, inner int) string {
 // ─── key handlers ─────────────────────────────────────────────────────────────
 
 func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	n := len(m.nodes)
+	// m.selected indexes the row model (turn headers + nodes). treeRowCount is the
+	// count from the last render; on the very first key before a render it is 0, so
+	// fall back to the node count.
+	n := m.treeRowCount
+	if n == 0 {
+		n = len(m.nodes)
+	}
 	switch msg.String() {
 	case "j", "down":
 		if m.selected < n-1 {
@@ -386,17 +418,24 @@ func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.treeManual = false
 	case "enter", "tab":
+		// On a turn HEADER row, enter/tab toggles the group collapsed/expanded
+		// (change turns-in-left-tree) — it does NOT drill into the detail pane.
+		if m.selected >= 0 && m.selected < len(m.treeRows) && m.treeRows[m.selected].header {
+			tr := m.treeRows[m.selected]
+			m.toggleTurn(tr.turn, m.isLastTreeTurn(tr.turn))
+			m.treeManual = false
+			break
+		}
 		m.inDetail = true
 		m.detailScroll = 0
 		m.eventSel = 0
 		m.detailManual = false // clear any stale wheel flag so followTail lands on tail
 		m.followTail = true    // land on the newest event of the chosen node
-		// The chosen node's rows are not rendered yet (change 0066).
 		m.rowSel = 0
 		m.detRows, m.rowCount = nil, 0
 	case "x":
-		if n > 0 && m.selected < n {
-			m.tree.CancelNode(m.nodes[m.selected].ID)
+		if node, ok := m.selectedNode(); ok {
+			m.tree.CancelNode(node.ID)
 		}
 	// "b" (enter Blackboard) is handled globally in Update, before sub-view
 	// dispatch, so it works from the detail view too — not repeated here.
@@ -505,18 +544,8 @@ func (m *AgentsModel) handleDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.followTail = true
 		m.detailManual = false
 	case "enter":
-		// On a turn header, enter is the collapse toggle — NOT the drill-in.
-		if r, ok := m.selectedDetailRow(); ok && r.header {
-			m.toggleTurn(r.turn, m.isLastTurn(r.turn))
-			// Pin the cursor to the header being toggled. A toggle only ever adds or
-			// removes rows AFTER the header, so rowSel is already the right index —
-			// but followTail would override it on the next render and drag the cursor
-			// onto the newly-revealed tail event, making expand/collapse asymmetric
-			// for the CURRENT turn (whose collapsed header IS the last row).
-			m.followTail = false
-			m.detailManual = false
-			break
-		}
+		// The detail pane is a flat per-node transcript (turn grouping lives in the
+		// left tree now), so enter always drills into the selected event.
 		if m.eventCount > 0 {
 			m.inEventView = true
 			m.eventScroll = 0
@@ -701,15 +730,142 @@ func (m *AgentsModel) schedulerHeaderLines(w int) []string {
 	return out
 }
 
+// treeRow is one row of the left pane's row model (change turns-in-left-tree):
+// either a collapsible TURN header or a node. m.selected indexes this model, not
+// m.nodes, so a header is a first-class, selectable row.
+type treeRow struct {
+	header  bool           // true = a "▾ turn N · prompt" header
+	turn    int            // the conversational ordinal (header row, or a node's group)
+	nodeIdx int            // index into m.nodes; -1 for a header row
+	node    agent.NodeView // the node for a node row (zero for a header)
+}
+
+// buildTreeRowModel groups the flat node snapshot into per-turn sections when the
+// root is genuinely multi-turn. The root node itself is NOT nested under a turn —
+// it stays the implicit owner; each turn header collects the children spawned in
+// that turn (SpawnedInTurn), and a collapsed turn hides its children. A
+// single-turn (or turn-less) session returns the flat node list unchanged, so the
+// pre-change tree is byte-identical.
+func (m *AgentsModel) buildTreeRowModel() []treeRow {
+	// Find the root and its turn marks.
+	var rootTurns []agent.TurnMark
+	for _, n := range m.nodes {
+		if n.Depth == 0 {
+			rootTurns = n.Turns
+			break
+		}
+	}
+	multiTurn := len(rootTurns) > 1
+
+	if !multiTurn {
+		rows := make([]treeRow, len(m.nodes))
+		for i, n := range m.nodes {
+			rows[i] = treeRow{turn: n.SpawnedInTurn, nodeIdx: i, node: n}
+		}
+		return rows
+	}
+
+	rows := make([]treeRow, 0, len(m.nodes)+len(rootTurns))
+	// The root row first (it owns every turn; it is never nested).
+	for i, n := range m.nodes {
+		if n.Depth == 0 {
+			rows = append(rows, treeRow{turn: 0, nodeIdx: i, node: n})
+			break
+		}
+	}
+	// Then one section per turn, each header followed by that turn's children
+	// (any node with SpawnedInTurn == turn), unless the turn is collapsed.
+	for ti := range rootTurns {
+		turn := rootTurns[ti].Turn
+		if turn == 0 {
+			turn = ti + 1
+		}
+		rows = append(rows, treeRow{header: true, turn: turn, nodeIdx: -1})
+		if !m.turnIsExpanded(turn, ti == len(rootTurns)-1) {
+			continue
+		}
+		for i, n := range m.nodes {
+			if n.Depth == 0 {
+				continue
+			}
+			if n.SpawnedInTurn == turn {
+				rows = append(rows, treeRow{turn: turn, nodeIdx: i, node: n})
+			}
+		}
+	}
+	return rows
+}
+
 func (m *AgentsModel) renderTreeRows(w int) []string {
 	if len(m.nodes) == 0 {
 		return []string{lipgloss.NewStyle().Foreground(colMuted).Render("No agents yet.")}
 	}
-	rows := make([]string, 0, len(m.nodes))
-	for i, n := range m.nodes {
-		rows = append(rows, m.renderNodeRow(n, i == m.selected, w))
+	m.treeRows = m.buildTreeRowModel()
+	m.treeRowCount = len(m.treeRows)
+	rows := make([]string, 0, len(m.treeRows))
+	for i, tr := range m.treeRows {
+		if tr.header {
+			rows = append(rows, m.renderTurnHeaderRow(tr, i == m.selected, w))
+			continue
+		}
+		rows = append(rows, m.renderNodeRow(tr.node, i == m.selected, w))
 	}
 	return rows
+}
+
+// renderTurnHeaderRow renders a "▾ turn N · \"prompt\"" collapsible header to w
+// cells, its caret reflecting the collapse state.
+func (m *AgentsModel) renderTurnHeaderRow(tr treeRow, selected bool, w int) string {
+	caret := "▾"
+	// The last turn is expanded by default; find whether THIS turn is the last.
+	isLast := m.isLastTreeTurn(tr.turn)
+	if !m.turnIsExpanded(tr.turn, isLast) {
+		caret = "▸"
+	}
+	prompt := m.turnPromptForOrdinal(tr.turn)
+	label := caret + " turn " + fmt.Sprintf("%d", tr.turn)
+	if prompt != "" {
+		label += " · " + prompt
+	}
+	plain := fitLine(label, w)
+	if selected {
+		return fitLine(lipgloss.NewStyle().Reverse(true).Render(fitLine(label, w)), w)
+	}
+	return lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render(plain)
+}
+
+// isLastTreeTurn reports whether `turn` is the highest turn ordinal on the root.
+func (m *AgentsModel) isLastTreeTurn(turn int) bool {
+	max := 0
+	for _, n := range m.nodes {
+		if n.Depth == 0 {
+			for _, tm := range n.Turns {
+				o := tm.Turn
+				if o > max {
+					max = o
+				}
+			}
+		}
+	}
+	return turn == max
+}
+
+// turnPromptForOrdinal returns the (sanitized, truncated) prompt for a turn.
+func (m *AgentsModel) turnPromptForOrdinal(turn int) string {
+	for _, n := range m.nodes {
+		if n.Depth == 0 {
+			for _, tm := range n.Turns {
+				o := tm.Turn
+				if o == 0 {
+					continue
+				}
+				if o == turn {
+					return turnPromptPreview(tm.Prompt, 48)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // renderNodeRow renders one tree row to exactly w cells.
@@ -803,11 +959,14 @@ func (m *AgentsModel) buildDetailLines(w int) []string {
 	if m.inBlackboard {
 		return m.buildBlackboardLines(w)
 	}
-	if len(m.nodes) == 0 || m.selected >= len(m.nodes) {
+	if len(m.nodes) == 0 {
 		return []string{lipgloss.NewStyle().Foreground(colMuted).Render("Select a node to inspect.")}
 	}
-
-	n := m.nodes[m.selected]
+	n, ok := m.selectedNode()
+	if !ok {
+		// The cursor is on a turn HEADER row (no node to inspect).
+		return []string{lipgloss.NewStyle().Foreground(colMuted).Render("Turn group — select an agent under it to inspect.")}
+	}
 	// Events aren't carried in the snapshot (they can be large); take a
 	// race-safe copy from the live node only for the selected one.
 	var events []agent.AgentEvent
@@ -1291,32 +1450,12 @@ type detailRow struct {
 // per event, in order, so every downstream behavior is byte-identical to the
 // pre-0066 pane. Only a genuinely multi-turn root takes the grouped path.
 func (m *AgentsModel) detailRows(n agent.NodeView, visible []agent.AgentEvent) []detailRow {
-	if len(n.Turns) <= 1 {
-		rows := make([]detailRow, len(visible))
-		for i := range visible {
-			rows[i] = detailRow{turn: 1, evtIdx: i}
-		}
-		return rows
-	}
-
-	// Bucket events by the SAME attribution rule the offsets use. Events that
-	// predate turn 1 land in bucket 0 and so render under turn 1's header.
-	buckets := make([][]int, len(n.Turns))
+	// Flat, one row per event — turn grouping now lives in the LEFT tree pane
+	// (change turns-in-left-tree), so the detail pane is the pre-0066 per-node
+	// transcript for every node, root included.
+	rows := make([]detailRow, len(visible))
 	for i := range visible {
-		ti := turnIndexFor(n, visible[i].TS)
-		buckets[ti] = append(buckets[ti], i)
-	}
-
-	rows := make([]detailRow, 0, len(visible)+len(n.Turns))
-	for ti := range n.Turns {
-		turn := turnOrdinal(n, ti)
-		rows = append(rows, detailRow{header: true, turn: turn, evtIdx: -1})
-		if !m.turnIsExpanded(turn, ti == len(n.Turns)-1) {
-			continue
-		}
-		for _, ei := range buckets[ti] {
-			rows = append(rows, detailRow{turn: turn, evtIdx: ei})
-		}
+		rows[i] = detailRow{turn: 1, evtIdx: i}
 	}
 	return rows
 }
@@ -1351,15 +1490,6 @@ func (m *AgentsModel) toggleTurn(turn int, isLast bool) {
 	m.turnExpanded[turn] = !m.turnIsExpanded(turn, isLast)
 }
 
-// selectedDetailRow returns the row under the cursor from the last render, or
-// false when nothing has been rendered yet (or the cursor is out of range).
-func (m *AgentsModel) selectedDetailRow() (detailRow, bool) {
-	if m.rowSel < 0 || m.rowSel >= len(m.detRows) {
-		return detailRow{}, false
-	}
-	return m.detRows[m.rowSel], true
-}
-
 // syncEventSel keeps eventSel — still an index into `visible`, which
 // buildEventViewLines depends on — in lockstep with the row cursor. On a header
 // row the previous event selection is kept, only clamped back into range.
@@ -1375,57 +1505,6 @@ func (m *AgentsModel) syncEventSel(rows []detailRow, visibleLen int) {
 	if m.eventSel < 0 {
 		m.eventSel = 0
 	}
-}
-
-// isLastTurn reports whether an ordinal names the CURRENT turn of the selected
-// node — the turn that is expanded by default.
-func (m *AgentsModel) isLastTurn(turn int) bool {
-	if m.selected < 0 || m.selected >= len(m.nodes) {
-		return false
-	}
-	n := m.nodes[m.selected]
-	if len(n.Turns) == 0 {
-		return false
-	}
-	return turnOrdinal(n, len(n.Turns)-1) == turn
-}
-
-// turnHeaderStyle renders a collapsed/expanded turn group header.
-var turnHeaderStyle = lipgloss.NewStyle().Foreground(colCyan).Bold(true)
-
-// renderTurnHeader renders one turn group header, exactly w cells wide:
-//
-//	▾ turn 3 · "write the report" · running
-//	▸ turn 1 · "list the files" · 30s · 24 events
-//
-// The prompt preview is raw operator text off the turn mark, so it is
-// sanitized, newline-flattened and budget-truncated here — never stored
-// pre-mangled (learning sanitize-untrusted-bytes-fixed-width-tui). fitLine has
-// the last word on width regardless (learning
-// border-inside-fixed-width-manual-join).
-func (m *AgentsModel) renderTurnHeader(mark agent.TurnMark, turn int, expanded bool, evtCount int, selected bool, w int) string {
-	glyph := "▸"
-	if expanded {
-		glyph = "▾"
-	}
-	dur := "running"
-	if !mark.EndedAt.IsZero() && !mark.StartedAt.IsZero() {
-		dur = formatNodeElapsed(mark.EndedAt.Sub(mark.StartedAt))
-	}
-	head := fmt.Sprintf("%s turn %d · ", glyph, turn)
-	tail := " · " + dur
-	if !expanded {
-		tail += fmt.Sprintf(" · %d events", evtCount)
-	}
-	budget := w - lipgloss.Width(head) - lipgloss.Width(tail)
-	if budget < 6 {
-		budget = 6
-	}
-	plain := head + turnPromptPreview(mark.Prompt, budget) + tail
-	if selected {
-		return fitLine(lipgloss.NewStyle().Reverse(true).Render(plain), w)
-	}
-	return fitLine(turnHeaderStyle.Render(plain), w)
 }
 
 // turnPromptPreview renders a turn's raw prompt as a single-line, quoted
@@ -1626,37 +1705,12 @@ func (m *AgentsModel) renderDetailHeader(n agent.NodeView, w int) string {
 // byte for byte. That renderer is no longer on the render path; it survives as
 // legacyEventLinesGolden in turn_groups_test.go, whose only purpose is to pin
 // this equality.
+// renderDetailRows renders the detail pane's flat row model: one line per event.
+// Turn grouping now lives in the LEFT tree (change turns-in-left-tree), so this
+// pane is the pre-0066 per-node transcript with per-turn-relative offsets.
 func (m *AgentsModel) renderDetailRows(n agent.NodeView, events []agent.AgentEvent, rows []detailRow, w int) []string {
-	// Per-turn event tallies for the collapsed headers' "N events" suffix. They
-	// count ALL of a turn's events, not just the rendered ones — a collapsed turn
-	// renders none.
-	counts := make(map[int]int, len(n.Turns))
-	if len(n.Turns) > 1 {
-		for i := range events {
-			counts[turnOrdinal(n, turnIndexFor(n, events[i].TS))]++
-		}
-	}
-
 	lines := make([]string, 0, len(rows))
 	for i, r := range rows {
-		if r.header {
-			ti := r.turn - 1
-			if ti < 0 || ti >= len(n.Turns) || turnOrdinal(n, ti) != r.turn {
-				ti = 0
-				for j := range n.Turns {
-					if turnOrdinal(n, j) == r.turn {
-						ti = j
-						break
-					}
-				}
-			}
-			lines = append(lines, m.renderTurnHeader(
-				n.Turns[ti], r.turn,
-				m.turnIsExpanded(r.turn, ti == len(n.Turns)-1),
-				counts[r.turn], i == m.rowSel, w,
-			))
-			continue
-		}
 		lines = append(lines, m.renderEventRow(n, events[r.evtIdx], i == m.rowSel, w))
 	}
 	return lines
