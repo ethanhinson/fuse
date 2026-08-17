@@ -2,7 +2,7 @@
 id: 67
 slug: auto-mode-permission-observability-deny-resilience
 title: Auto-mode permission observability + deny-resilience — measure every gate decision, stop dying on denials
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-17
@@ -17,7 +17,7 @@ results: docs/results/2026-08-17-auto-mode-permission-observability-deny-resilie
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-permission-observability-deny-resilience
-claimed_at:
+claimed_at: 
 pr: 71
 blocked_by:
 reconciled: true
