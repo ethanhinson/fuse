@@ -2,7 +2,7 @@
 id: 68
 slug: auto-mode-deterministic-freedom
 title: Auto-mode deterministic freedom — scratchpad + write_roots + rules-layer shrink to catastrophic-only
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-17
@@ -17,7 +17,7 @@ results: docs/results/2026-08-17-auto-mode-deterministic-freedom-results.md
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-deterministic-freedom
-claimed_at:
+claimed_at: 
 pr: 72
 blocked_by:
 reconciled: true
