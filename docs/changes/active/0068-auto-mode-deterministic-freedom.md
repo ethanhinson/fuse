@@ -2,7 +2,7 @@
 id: 68
 slug: auto-mode-deterministic-freedom
 title: Auto-mode deterministic freedom — scratchpad + write_roots + rules-layer shrink to catastrophic-only
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-17
@@ -12,13 +12,13 @@ related: [40, 57, 63, 64, 67, 69, 70]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-17-auto-mode-deterministic-freedom-design.md
-plan:
-results:
+plan: docs/superpowers/plans/2026-08-17-auto-mode-deterministic-freedom-plan.md
+results: docs/results/2026-08-17-auto-mode-deterministic-freedom-results.md
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-deterministic-freedom
-claimed_at: 2026-08-17T21:45:00Z
-pr:
+claimed_at:
+pr: 72
 blocked_by:
 reconciled: true
 ---
@@ -29,6 +29,9 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-17-auto-mode-deterministic-freedom-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-17-auto-mode-deterministic-freedom-design.md) |
+| Plan | [2026-08-17-auto-mode-deterministic-freedom-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-deterministic-freedom/docs/superpowers/plans/2026-08-17-auto-mode-deterministic-freedom-plan.md) |
+| Results | [2026-08-17-auto-mode-deterministic-freedom-results.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-deterministic-freedom/docs/results/2026-08-17-auto-mode-deterministic-freedom-results.md) |
+| PR | 72 |
 <!-- docket:artifacts:end -->
 
 ## Why
