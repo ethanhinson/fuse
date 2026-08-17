@@ -82,6 +82,11 @@ window.__wanderLoopId = null;
 // (change 0062). Initialized unconditionally so the lane can read it on the first-visit
 // path too, where it simply stays false.
 window.__wanderRestored = false;
+// True once a restore locked the composer for its replay window (change 0062). It records a
+// LOAD-TIME fact — "this page load disabled the composer before opening the replay stream" —
+// which is why it is not cleared by resetSession alongside the per-session counters, and why
+// a lane can assert it without racing the replay it describes.
+window.__wanderRestoreComposerLocked = false;
 // True once the durable stream behind a stored session turned out to be gone (`not_found`)
 // and the app fell back to a clean fresh session (change 0062, D3).
 window.__wanderRestoreLost = false;
@@ -161,11 +166,30 @@ let quietTurn = false;
 // pendingSavedRefresh is set when a favorite_listing call is seen; the refresh fires at the
 // next park, because a `send` is only accepted at a parked turn boundary.
 let pendingSavedRefresh = false;
-// replaying is true only while a restored loop's durable stream is being replayed from seq 0
+// replaying is set by the restore-on-load path and cleared by the user's first submit
 // (change 0062, D-D). It changes two things: `user.input` events render the human turns (live
 // turns are echoed locally by handleSubmit instead), and the completion handler's side effects
 // — focus and the Saved-panel refresh turn — are suppressed so a replay cannot act on the
-// world. Nothing sets it true yet; the restore-on-load path does.
+// world.
+//
+// Its scope, stated honestly: the flag is an OVER-approximation of "the durable stream is
+// still replaying history". There is no watermark on the wire — the SDK's observe surfaces no
+// caught-up-to-head signal (sdk/ts/src/index.ts ConnState is connecting/live/reconnecting/
+// closed, none of which mean "history exhausted") — so the app cannot know the exact instant
+// replay ends, and a timer would only guess. Two consequences follow, both deliberate:
+//
+//   * The replay must be inert with respect to the USER, not just the server: a restore
+//     therefore disables the composer (restoreSession) and the first replayed park re-enables
+//     it. Without that lock a submit landing mid-replay would clear this flag while historical
+//     `user.input` events were still arriving — silently dropping turns from the very
+//     transcript a restore exists to rebuild — echo the new message into a half-restored
+//     thread, and let the NEXT replayed park declare the live turn finished.
+//   * Reloading while a turn was still RUNNING leaves the flag true across that turn's live
+//     tail, until the user submits. The only effects are that the park does not steal focus
+//     and that a `favorite_listing` seen in that tail clears pendingSavedRefresh without
+//     re-reading the Saved panel. That is a limitation, not a regression: the panel is empty
+//     after EVERY restore (nothing repopulates it on load), so the suppressed refresh removes
+//     nothing the restored page had.
 let replaying = false;
 
 // ─────────────────── Session persistence (change 0062, D-A) ──────────────────
@@ -384,6 +408,10 @@ async function runObserve(generation, myLoopId, myClient, abort) {
   // concierge bubble attached to nothing. Scoped per stream, set on the replayed quiet
   // `user.input`, cleared at the park below so it cannot leak into the next replayed turn.
   let replayQuiet = false;
+  // Set by the one branch that disables the composer ON PURPOSE and wants it to STAY
+  // disabled (the D2 pause). It exists so the `finally` below can re-enable a composer that
+  // a restore locked, without undoing a deliberate lock.
+  let holdComposer = false;
   const current = () => generation === sessionGeneration;
 
   window.__wanderOpenStreams++;
@@ -592,6 +620,7 @@ async function runObserve(generation, myLoopId, myClient, abort) {
         // user a reload resumes it — instead of the generic auth-rejected message below.
         setConn("closed");
         setComposerEnabled(false);
+        holdComposer = true; // deliberate: reload, don't type.
         window.__wanderPaused = true;
         addMessage("error", "", "Session paused — reload to resume this conversation.");
       } else {
@@ -605,6 +634,13 @@ async function runObserve(generation, myLoopId, myClient, abort) {
     }
   } finally {
     window.__wanderOpenStreams--;
+    // Never leave the page with a dead composer. A restore locks it until the first park, so
+    // a stream that ends BEFORE ever parking — an empty durable stream, a clean server-side
+    // close, an auth rejection — would otherwise strand the user with nothing to type into.
+    // Gated on three things: this stream must still own the session (a reset or a switch has
+    // already re-enabled it and bumped the generation, and the not_found branch goes through
+    // exactly that), no live turn may be in flight, and the D2 pause's deliberate lock stands.
+    if (current() && !turnInFlight && !holdComposer) setComposerEnabled(true);
   }
 }
 
@@ -616,9 +652,10 @@ let pendingBubble = null;
 // user (the Saved-panel refresh): it is a real agent turn on the real loop — same
 // credential, same tool path — it simply renders no transcript bubbles.
 async function handleSubmit(text, quiet = false) {
-  // The user acting is the exact, timer-free end of a replay: a restored loop is parked and
-  // idle, so no further event can arrive on it until someone sends. Everything from here on
-  // is live.
+  // The user acting ends the replay. This is only sound because the user CANNOT act before
+  // the first replayed park — restoreSession disables the composer and the park re-enables it
+  // — so by the time this runs, the history that a submit would otherwise cut short has
+  // already been rendered. (See the `replaying` declaration for the full scope.)
   replaying = false;
   quietTurn = quiet;
   if (!quiet) {
@@ -1126,8 +1163,19 @@ async function restoreSession() {
   loopId = restored.loopId;
   window.__wanderLoopId = loopId;
   // Everything the durable stream is about to replay is history, not live activity: the
-  // flag stays true until the user's next submit (a parked loop emits nothing on its own).
+  // flag stays true until the user's next submit.
   replaying = true;
+  // …and the user must not be able to submit INTO that replay. A restored loop is idle from
+  // the server's side, but the composer is live from the moment the page paints, and submit()
+  // guards only on turnInFlight — which is false here even when the restored loop is mid-turn.
+  // Locking the composer until the first replayed park is what makes the flag above true:
+  // it costs no timer and no extra state, and the park's existing setComposerEnabled(true)
+  // is the release. Every other exit from a restore re-enables it too (the not_found branch
+  // via resetSession, and any stream that ends before parking via runObserve's `finally`).
+  setComposerEnabled(false);
+  // Records the OBSERVED composer state, not the intent: a lane asserting on it is asserting
+  // that the disable actually landed, so deleting the call above turns the lane red.
+  window.__wanderRestoreComposerLocked = inputEl.disabled === true;
   setLoopLabel(loopId);
   window.__wanderRestored = true;
   // fire-and-forget, exactly as on the mint path: it re-enables the composer at each park.

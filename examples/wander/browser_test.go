@@ -271,6 +271,24 @@ func TestWanderBrowserReloadRestoresSession(t *testing.T) {
 		t.Fatalf("restored loop id mismatch: reopened tab has %q, first tab minted %q", got, loopID)
 	}
 
+	// --- 4b) the replay window is closed to the USER, not just to the server -------
+	// A restore must disable the composer before it opens the replay stream. Otherwise the
+	// user can submit into the replay: that clears the `replaying` flag while historical
+	// user.input events are still arriving (silently dropping turns from the transcript this
+	// lane exists to check), echoes the new message into a half-restored thread, and lets the
+	// next REPLAYED park declare the live turn finished. Asserted through the load-time flag
+	// rather than by reading `disabled` right after Goto, because the replay is fast enough
+	// that a direct read would race the very park that legitimately re-enables it.
+	if !readBool(t, page2, "window.__wanderRestoreComposerLocked === true") {
+		t.Fatalf("the restore did not lock the composer for its replay window; a submit landing mid-replay drops the remaining history")
+	}
+	// …and the lock RELEASES on its own: the replay's first park re-enables the composer, so a
+	// restored session is usable without a reload. This is the half that makes the lock safe.
+	waitForParked(t, page2, 1)
+	waitForTrue(t, page2,
+		"!document.getElementById('input').disabled && !document.getElementById('send').disabled",
+		"the composer stayed disabled after the replay's first park; a restore must leave the page usable, not locked")
+
 	// --- 5) the replayed transcript carries BOTH the question and the answer ------
 	// The user-text assertion is the one that proves the `user.input` replay rendering:
 	// without it a transcript of answers with no questions would pass. It must not be
