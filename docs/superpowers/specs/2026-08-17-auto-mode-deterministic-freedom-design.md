@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0068 — Auto-mode deterministic freedom — scratchpad + write_roots + rules-layer shrink to catastrophic-only](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0068-auto-mode-deterministic-freedom.md)**
+> ↩ **[Change 0068 — Auto-mode deterministic freedom — scratchpad + write_roots + rules-layer shrink to catastrophic-only](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-17-0068-auto-mode-deterministic-freedom.md)**
 <!-- docket:backlink:end -->
 
 # Auto-mode deterministic freedom — config, scratchpad, rules-layer shrink — design
