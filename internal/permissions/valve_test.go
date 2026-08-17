@@ -45,14 +45,44 @@ func grayAreaCmd(i int) string {
 	return "touch /etc/escapes-workspace-" + string(rune('a'+i))
 }
 
-// TestValve_ThreeConsecutiveBlocks_FlipsInteractiveToPrompt proves that after 3
-// consecutive classifier blocks (deny verdicts) the interactive gate stops
-// auto-classifying and falls back to the human approval func.
-func TestValve_ThreeConsecutiveBlocks_FlipsInteractiveToPrompt(t *testing.T) {
+// valvePromptRecorder is an ApprovalFunc that records every request it sees and
+// answers the valve-recovery sentinel with valveAnswer and everything else with
+// perCallAnswer, so a test can drive the change-0067 recovery flow precisely.
+type valvePromptRecorder struct {
+	reqs          []ApprovalRequest
+	valveAnswer   bool
+	perCallAnswer bool
+}
+
+func (r *valvePromptRecorder) approve(_ context.Context, req ApprovalRequest) (bool, bool, error) {
+	r.reqs = append(r.reqs, req)
+	if req.ToolName == ValveApprovalToolName {
+		return r.valveAnswer, false, nil
+	}
+	return r.perCallAnswer, false, nil
+}
+
+func (r *valvePromptRecorder) valvePrompts() int {
+	n := 0
+	for _, req := range r.reqs {
+		if req.ToolName == ValveApprovalToolName {
+			n++
+		}
+	}
+	return n
+}
+
+// TestValve_TripInteractive_OneRecoveryPromptResetsAndContinues proves the
+// change-0067 recovery semantics: after 3 consecutive classifier blocks trip
+// the valve, the NEXT gray-area call issues exactly ONE valve-recovery prompt
+// (the sentinel ToolName, counts in the preview); approving it resets the valve
+// and the pending call proceeds to the classifier (the stub call count
+// advances) instead of auto mode staying paused forever.
+func TestValve_TripInteractive_OneRecoveryPromptResetsAndContinues(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
 	cls := newTestClassifier(t, stub)
-	approve, called := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+	rec := &valvePromptRecorder{valveAnswer: true, perCallAnswer: true}
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), rec.approve,
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true))
 
 	// First 3 gray-area calls each hit the classifier and get a deny (block).
@@ -61,7 +91,7 @@ func TestValve_ThreeConsecutiveBlocks_FlipsInteractiveToPrompt(t *testing.T) {
 		if !res.IsError {
 			t.Fatalf("block %d: classifier deny should surface as an error, got: %s", i, res.Output)
 		}
-		if *called {
+		if len(rec.reqs) != 0 {
 			t.Fatalf("block %d: classifier deny must not route to the human", i)
 		}
 	}
@@ -69,17 +99,68 @@ func TestValve_ThreeConsecutiveBlocks_FlipsInteractiveToPrompt(t *testing.T) {
 		t.Fatalf("expected 3 classifier calls before the valve trips, got %d", stub.calls)
 	}
 
-	// The 4th gray-area call must NOT reach the classifier: the valve has tripped
-	// and, being interactive, it routes to the human approval func instead.
+	// The 4th gray-area call finds the valve tripped: ONE recovery prompt is
+	// issued; approval resets the valve and the call proceeds to the classifier.
 	res := g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(3)))
-	if stub.calls != 3 {
-		t.Fatalf("valve tripped: classifier must not be consulted again, got %d calls", stub.calls)
+	if got := rec.valvePrompts(); got != 1 {
+		t.Fatalf("expected exactly 1 valve recovery prompt, got %d (reqs: %+v)", got, rec.reqs)
 	}
-	if !*called {
-		t.Fatal("valve tripped in interactive mode must fall back to the human approval func")
+	if !strings.Contains(rec.reqs[0].Preview, "auto mode has denied") {
+		t.Errorf("valve prompt preview should carry the counts; got %q", rec.reqs[0].Preview)
+	}
+	if stub.calls != 4 {
+		t.Fatalf("approved recovery must consult the classifier for the pending call, got %d calls", stub.calls)
+	}
+	// The stub still denies, so the pending call surfaces as a classifier deny.
+	if !res.IsError {
+		t.Fatalf("stub denies: expected a classifier deny after recovery, got: %s", res.Output)
+	}
+	// Recovery reset both counters: the deny above re-recorded only 1 consecutive
+	// block, so the next call goes straight to the classifier with NO new prompt.
+	g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(4)))
+	if got := rec.valvePrompts(); got != 1 {
+		t.Fatalf("valve must not re-prompt below thresholds after reset, got %d prompts", got)
+	}
+	if stub.calls != 5 {
+		t.Fatalf("post-recovery call must reach the classifier, got %d calls", stub.calls)
+	}
+}
+
+// TestValve_TripInteractive_RejectionFallsBackToPerCallAsks proves the rejection
+// arm: declining the one recovery prompt leaves the valve tripped, so gray-area
+// calls fall back to per-call human asks — and the valve question itself is
+// never re-asked (promptedOnce holds until reset).
+func TestValve_TripInteractive_RejectionFallsBackToPerCallAsks(t *testing.T) {
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
+	cls := newTestClassifier(t, stub)
+	rec := &valvePromptRecorder{valveAnswer: false, perCallAnswer: true}
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), rec.approve,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true))
+
+	for i := 0; i < 3; i++ {
+		g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(i)))
+	}
+
+	// 4th call: valve prompt rejected ⇒ per-call human ask for the actual tool
+	// call (approved by the recorder), classifier NOT consulted.
+	res := g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(3)))
+	if got := rec.valvePrompts(); got != 1 {
+		t.Fatalf("expected 1 valve prompt, got %d", got)
+	}
+	if stub.calls != 3 {
+		t.Fatalf("rejected recovery must not consult the classifier, got %d calls", stub.calls)
 	}
 	if res.IsError {
-		t.Fatalf("interactive fallback with approve=true should succeed, got: %s", res.Output)
+		t.Fatalf("per-call ask approved should execute, got: %s", res.Output)
+	}
+
+	// 5th call: NO second valve prompt — straight to the per-call ask.
+	g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(4)))
+	if got := rec.valvePrompts(); got != 1 {
+		t.Fatalf("valve question must not be re-asked after rejection, got %d prompts", got)
+	}
+	if stub.calls != 3 {
+		t.Fatalf("classifier must stay paused after rejection, got %d calls", stub.calls)
 	}
 }
 

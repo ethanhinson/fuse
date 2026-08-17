@@ -18,6 +18,13 @@ import (
 // session" option, whose bool is meaningless for a loop trip. See change 0038.
 const LoopApprovalToolName = "possible loop"
 
+// ValveApprovalToolName is the sentinel ToolName carried by the escalation
+// valve's one-time recovery ApprovalRequest (change 0067): when the valve trips
+// in an interactive gate, ONE prompt asks the human whether to continue in auto
+// mode; approval resets the valve, rejection leaves per-call asks. The TUI keys
+// on it like LoopApprovalToolName (no "allow for session" option).
+const ValveApprovalToolName = "auto-mode escalation"
+
 // ApprovalRequest describes a tool call awaiting user approval.
 type ApprovalRequest struct {
 	ToolName string
@@ -98,6 +105,12 @@ type escalationValve struct {
 	mu          sync.Mutex
 	consecutive int
 	total       int
+	// promptedOnce marks that the one-time interactive recovery prompt (change
+	// 0067) has been issued for the current trip. It prevents re-prompting after
+	// a rejection (subsequent gray-area calls go straight to per-call asks) and
+	// double-prompting from parallel children (the valve is shared by reference
+	// across CloneForChild). reset() clears it so a future trip can prompt again.
+	promptedOnce bool
 }
 
 // valveConsecutiveLimit and valveTotalLimit are the escalation thresholds: 3
@@ -154,6 +167,20 @@ func (v *escalationValve) reset() {
 	defer v.mu.Unlock()
 	v.consecutive = 0
 	v.total = 0
+	v.promptedOnce = false
+}
+
+// claimPrompt atomically claims the one-time recovery prompt for the current
+// trip: the first caller gets true (and issues the prompt), every later caller
+// gets false until reset() clears the claim.
+func (v *escalationValve) claimPrompt() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.promptedOnce {
+		return false
+	}
+	v.promptedOnce = true
+	return true
 }
 
 // Option configures optional auto-mode dependencies on a PermissionGate. The
@@ -313,20 +340,61 @@ func (g *PermissionGate) Execute(ctx context.Context, name, args string) tools.R
 		return tools.Result{IsError: true, Output: fmt.Sprintf("approval cancelled: %v", err)}
 	}
 	if !policy.Enabled {
-		return tools.Result{IsError: true, Output: fmt.Sprintf("tool %q is disabled", name)}
+		return tools.Result{
+			IsError:   true,
+			Output:    fmt.Sprintf("tool %q is disabled", name),
+			Denied:    true,
+			DenyLayer: LayerDisabled,
+		}
 	}
 	if !policy.AutoApprove {
 		msg := "tool call denied by user"
 		if policy.DenyReason != "" {
 			msg = policy.DenyReason
 		}
-		return tools.Result{IsError: true, Output: msg}
+		layer := policy.DenyLayer
+		if layer == "" {
+			layer = LayerHuman
+		}
+		// Append actionable guidance (change 0067): models retry denied calls
+		// verbatim, so the denial itself says why that will keep failing.
+		return tools.Result{
+			IsError:   true,
+			Output:    msg + "; " + denyHint(layer),
+			Denied:    true,
+			DenyLayer: layer,
+		}
 	}
 	return g.inner.Execute(ctx, name, args)
 }
 
+// emitDecision reports one gate resolution through the ctx-carried
+// DecisionSink (change 0067). No-op when no sink is installed (gates outside
+// an agent loop: mcp-server, probes, tests without wiring).
+func (g *PermissionGate) emitDecision(ctx context.Context, mode PermissionMode, name, args, verdict, layer, reason string) {
+	sink := decisionSinkFrom(ctx)
+	if sink == nil {
+		return
+	}
+	sink(Decision{
+		Tool:    name,
+		Verdict: verdict,
+		Layer:   layer,
+		Reason:  reason,
+		Mode:    mode.String(),
+		Command: commandPreview(name, args),
+	})
+}
+
 // resolve applies the 3-source policy merge and returns the final ToolPolicy.
+// Every terminal outcome — and the pre-approval ask — is reported through the
+// ctx-carried DecisionSink so gate behaviour is measurable (change 0067).
 func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPolicy, error) {
+	// Read the live mode once so a concurrent SetMode cannot flip it mid-resolve.
+	// (Read before mediation only so decision events carry the mode; mediation
+	// itself remains mode-independent and terminal.)
+	mode := g.currentMode()
+
 	// Complete mediation (change #52 D5) runs FIRST and is terminal: a tool that
 	// reaches a downstream target not on the principal's allowlist — or requesting
 	// scope beyond the ceiling — is denied regardless of mode or approval, because
@@ -337,45 +405,54 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 			if reason == "" {
 				reason = "tool target denied by policy (not on the caller's allowlist)"
 			}
-			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason}, nil
+			g.emitDecision(ctx, mode, name, args, "deny", LayerMediation, reason)
+			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerMediation}, nil
 		}
 	}
 
 	// Disabled list overrides everything.
 	for _, d := range g.cfg.Disabled {
 		if d == name {
+			g.emitDecision(ctx, mode, name, args, "deny", LayerDisabled, "tool disabled")
 			return ToolPolicy{Enabled: false}, nil
 		}
 	}
 
 	policy := ToolPolicy{Enabled: true}
 
-	// Read the live mode once so a concurrent SetMode cannot flip it mid-resolve.
-	mode := g.currentMode()
-
 	if mode == ModeOff {
+		g.emitDecision(ctx, mode, name, args, "allow", LayerModeOff, "")
 		policy.AutoApprove = true
 		return policy, nil
 	}
 
 	// Session cache — highest precedence, covers both smart and prompt-all.
 	if g.cache.Check(name, args) {
+		g.emitDecision(ctx, mode, name, args, "allow", LayerCache, "")
 		policy.AutoApprove = true
 		return policy, nil
 	}
 
+	// askLayer names the pipeline stage that routed this call to the human, so
+	// the pre-approval ask event says WHY a prompt appeared. Defaults to human
+	// (prompt-all, smart fallthrough) and is refined by the auto pipeline.
+	askLayer := LayerHuman
+
 	if mode == ModeAuto {
-		verdict, reason := g.resolveAuto(ctx, name, args)
+		verdict, layer, reason := g.resolveAuto(ctx, name, args)
 		switch verdict {
 		case VerdictAllow:
+			g.emitDecision(ctx, mode, name, args, "allow", layer, "")
 			policy.AutoApprove = true
 			return policy, nil
 		case VerdictDeny:
 			// A deny is not an error: return a non-auto-approve policy carrying
 			// the layer-named reason so the model can retry with a different call.
-			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason}, nil
+			g.emitDecision(ctx, mode, name, args, "deny", layer, reason)
+			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: layer}, nil
 		default:
 			// VerdictAsk ⇒ fall through to the shared human-approval block below.
+			askLayer = layer
 		}
 	}
 
@@ -384,13 +461,17 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		if !matchesAny(g.cfg.AlwaysPrompt, name, args) {
 			// auto_approve config patterns promote beyond the safe list.
 			if matchesAny(g.cfg.AutoApprove, name, args) || onSafeList(name) {
+				g.emitDecision(ctx, mode, name, args, "allow", LayerSmartConfig, "")
 				policy.AutoApprove = true
 				return policy, nil
 			}
 		}
 	}
 
-	// Human approval required.
+	// Human approval required. The ask is emitted BEFORE g.approve runs so asks
+	// are countable regardless of the approval binding — an AlwaysApprove
+	// (headless) gate shows as back-to-back ask→allow events.
+	g.emitDecision(ctx, mode, name, args, "ask", askLayer, "")
 	req := ApprovalRequest{
 		ToolName: name,
 		Args:     args,
@@ -401,11 +482,13 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		return ToolPolicy{Enabled: true}, err
 	}
 	if !approved {
-		return ToolPolicy{Enabled: true, AutoApprove: false}, nil
+		g.emitDecision(ctx, mode, name, args, "deny", LayerHuman, "tool call denied by user")
+		return ToolPolicy{Enabled: true, AutoApprove: false, DenyLayer: LayerHuman}, nil
 	}
 	if allowSession {
 		g.cache.Allow(name, args)
 	}
+	g.emitDecision(ctx, mode, name, args, "allow", LayerHuman, "")
 	policy.AutoApprove = true
 	return policy, nil
 }
@@ -422,10 +505,13 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 //
 // Non-bash tools carry no shell command: an onSafeList tool ⇒ allow; otherwise
 // route to the classifier with the raw args as the command (or ask if none).
-func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (Verdict, string) {
+//
+// The returned layer names the deciding pipeline stage (Layer* constants) for
+// the permission.decision event and the typed denial (change 0067).
+func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (verdict Verdict, layer, reason string) {
 	if name != "bash" {
 		if onSafeList(name) {
-			return VerdictAllow, ""
+			return VerdictAllow, LayerSafelist, ""
 		}
 		// Edit tools carry a single "path" arg rather than a shell command: scope it
 		// against the workspace exactly as the bash heuristic scopes mutating path
@@ -435,12 +521,12 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (Ve
 		if isEditTool(name) {
 			path, ok := editPath(args)
 			if !ok {
-				return VerdictAsk, ""
+				return VerdictAsk, LayerEditScope, ""
 			}
 			if withinWorkspace(path, g.workspaceRoot) {
-				return VerdictAllow, ""
+				return VerdictAllow, LayerEditScope, ""
 			}
-			return VerdictAsk, ""
+			return VerdictAsk, LayerEditScope, ""
 		}
 		// web_fetch carries a URL rather than a shell command: apply the static host
 		// floor first (SSRF / config deny/ask / blocklist), and only a fallthrough
@@ -450,9 +536,9 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (Ve
 			r := classifyFetchHost(fetchURL(args), g.cfg.Auto.FetchDeny, g.cfg.Auto.FetchAsk)
 			switch r.Verdict {
 			case VerdictDeny:
-				return VerdictDeny, "denied by auto-mode web_fetch host floor (" + r.DecidedBy + "): " + r.Host
+				return VerdictDeny, LayerFetchFloor, "denied by auto-mode web_fetch host floor (" + r.DecidedBy + "): " + r.Host
 			case VerdictAsk:
-				return VerdictAsk, ""
+				return VerdictAsk, LayerFetchFloor, ""
 			default:
 				// Fallthrough host ⇒ reputation-aware classifier (valve-enforced).
 				return g.classifyWebFetch(ctx, args, r)
@@ -464,30 +550,32 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (Ve
 	command := bashCommand(args)
 
 	// 1. Static floor: parse into segments. Unparseable fails toward the human.
+	// LayerParse makes these asks countable — they are the shapes change 0070
+	// (shell-parse widening) targets.
 	segments, err := splitSegments(command)
 	if err != nil {
-		return VerdictAsk, ""
+		return VerdictAsk, LayerParse, ""
 	}
 
 	// 2. Deterministic rules. Deny is terminal; allow is a positive auto-approve.
 	switch evalRules(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt) {
 	case VerdictDeny:
-		return VerdictDeny, "denied by auto-mode rules layer: " + command
+		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + command
 	case VerdictAllow:
-		return VerdictAllow, ""
+		return VerdictAllow, LayerRules, ""
 	}
 
 	// 3. Read-only safe list short-circuit.
 	if allSegmentsReadOnlySafe(segments) {
-		return VerdictAllow, ""
+		return VerdictAllow, LayerSafelist, ""
 	}
 
 	// 4. Heuristics: egress boundary / path scoping. Ask ⇒ continue to classifier.
 	switch classifyHeuristic(segments, g.workspaceRoot) {
 	case VerdictDeny:
-		return VerdictDeny, "denied by auto-mode heuristic layer: " + command
+		return VerdictDeny, LayerHeuristic, "denied by auto-mode heuristic layer: " + command
 	case VerdictAllow:
-		return VerdictAllow, ""
+		return VerdictAllow, LayerHeuristic, ""
 	}
 
 	// 5. Classifier (final) or fail-closed ask.
@@ -506,14 +594,16 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (Ve
 // the trip and the counts. Otherwise the classifier's verdict is recorded — a
 // deny is a block (advancing/tripping the valve), an allow or ask resets the
 // consecutive counter.
-func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string) (Verdict, string) {
+func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string) (verdict Verdict, layer, reason string) {
 	if g.classifier == nil {
-		return VerdictAsk, ""
+		return VerdictAsk, LayerClassifier, ""
 	}
 
-	// Valve already tripped ⇒ pause auto mode without consulting the classifier.
-	if g.valve.tripped() {
-		return g.valveTripped()
+	// Valve already tripped ⇒ recover (one interactive prompt, change 0067) or
+	// pause auto mode without consulting the classifier.
+	if g.valve.tripped() && !g.valveRecover(ctx) {
+		v, r := g.valvePaused()
+		return v, LayerValve, r
 	}
 
 	// The user's conversation turns are carried on ctx by the agent loop via
@@ -525,17 +615,17 @@ func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string
 	switch g.classifier.Classify(ctx, userMessagesFrom(ctx), name, command) {
 	case VerdictAllow:
 		g.valve.recordNonBlock()
-		return VerdictAllow, ""
+		return VerdictAllow, LayerClassifier, ""
 	case VerdictDeny:
 		// A classifier deny is a "block": advance the valve. This deny is still
 		// enforced as a real verdict; the trip only pauses auto mode from the NEXT
 		// classifier call on (checked via g.valve.tripped() at entry above), so the
 		// block that reaches a threshold is itself surfaced normally.
 		g.valve.recordBlock()
-		return VerdictDeny, "denied by auto-mode classifier: " + command
+		return VerdictDeny, LayerClassifier, "denied by auto-mode classifier: " + command
 	default:
 		g.valve.recordNonBlock()
-		return VerdictAsk, ""
+		return VerdictAsk, LayerClassifier, ""
 	}
 }
 
@@ -547,14 +637,16 @@ func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string
 // otherwise), a deny is recorded as a block (advancing/tripping the valve) and an
 // allow/ask resets the consecutive counter. r carries the static floor's host and
 // AllowNudge, threaded to the classifier as a reputation bias hint.
-func (g *PermissionGate) classifyWebFetch(ctx context.Context, args string, r fetchFloorResult) (Verdict, string) {
+func (g *PermissionGate) classifyWebFetch(ctx context.Context, args string, r fetchFloorResult) (verdict Verdict, layer, reason string) {
 	if g.classifier == nil {
-		return VerdictAsk, ""
+		return VerdictAsk, LayerClassifier, ""
 	}
 
-	// Valve already tripped ⇒ pause auto mode without consulting the classifier.
-	if g.valve.tripped() {
-		return g.valveTripped()
+	// Valve already tripped ⇒ recover (one interactive prompt, change 0067) or
+	// pause auto mode without consulting the classifier.
+	if g.valve.tripped() && !g.valveRecover(ctx) {
+		v, rr := g.valvePaused()
+		return v, LayerValve, rr
 	}
 
 	// The user's conversation turns are carried on ctx (parity with
@@ -563,20 +655,52 @@ func (g *PermissionGate) classifyWebFetch(ctx context.Context, args string, r fe
 	switch g.classifier.ClassifyWebFetch(ctx, userMessagesFrom(ctx), r.Host, r.AllowNudge, args) {
 	case VerdictAllow:
 		g.valve.recordNonBlock()
-		return VerdictAllow, ""
+		return VerdictAllow, LayerClassifier, ""
 	case VerdictDeny:
 		g.valve.recordBlock()
-		return VerdictDeny, "denied by auto-mode web_fetch classifier: " + r.Host
+		return VerdictDeny, LayerClassifier, "denied by auto-mode web_fetch classifier: " + r.Host
 	default:
 		g.valve.recordNonBlock()
-		return VerdictAsk, ""
+		return VerdictAsk, LayerClassifier, ""
 	}
 }
 
-// valveTripped returns the verdict for a tripped escalation valve: VerdictAsk in
-// an interactive gate (fall back to the human), or VerdictDeny carrying a
-// structured summary error in a non-interactive gate (abort the run).
-func (g *PermissionGate) valveTripped() (Verdict, string) {
+// valveRecover attempts the one-time interactive recovery from a tripped valve
+// (change 0067): the first caller after a trip prompts the human ONCE — "auto
+// mode has denied N commands, continue?" — and an approval resets the valve
+// (both counters and the prompt claim), letting the pending call proceed to
+// the classifier. It returns true only on that approved recovery. A rejection,
+// a non-interactive gate, an approval error, or a prompt already claimed (by a
+// rejection earlier or a parallel child mid-prompt) all return false: the
+// caller falls back to valvePaused.
+func (g *PermissionGate) valveRecover(ctx context.Context) bool {
+	if !g.interactive {
+		return false
+	}
+	if !g.valve.claimPrompt() {
+		return false
+	}
+	consecutive, total := g.valve.counts()
+	req := ApprovalRequest{
+		ToolName: ValveApprovalToolName,
+		Preview: fmt.Sprintf("auto mode has denied %d commands (%d in a row) — continue in auto mode?",
+			total, consecutive),
+	}
+	approved, _, err := g.approve(ctx, req)
+	if err != nil || !approved {
+		// The claim stays set: no re-prompt this trip; gray-area calls fall back
+		// to per-call human asks until the valve resets (mode transition or a
+		// future approved recovery after reset).
+		return false
+	}
+	g.valve.reset()
+	return true
+}
+
+// valvePaused returns the verdict for a tripped (and unrecovered) escalation
+// valve: VerdictAsk in an interactive gate (fall back to per-call human asks),
+// or VerdictDeny carrying a structured summary error in a non-interactive gate.
+func (g *PermissionGate) valvePaused() (Verdict, string) {
 	if g.interactive {
 		return VerdictAsk, ""
 	}
@@ -692,6 +816,22 @@ func prefixedApprove(label string, fn ApprovalFunc) ApprovalFunc {
 		req.Preview = "[" + label + "] " + req.Preview
 		return fn(ctx, req)
 	}
+}
+
+// commandPreview builds the bounded command field for a permission.decision
+// event: the bash command truncated to 200 chars, or a truncated raw-args
+// preview for other tools. Never full args — tool.call already carries them,
+// and the decision stream must stay small (event-stream hygiene, change 0067).
+func commandPreview(name, args string) string {
+	s := args
+	if name == "bash" {
+		s = bashCommand(args)
+	}
+	s = strings.TrimSpace(s)
+	if len(s) > 200 {
+		s = s[:200] + "…"
+	}
+	return s
 }
 
 // makePreview builds the human-readable one-liner for the approval block.
