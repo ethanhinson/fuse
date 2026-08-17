@@ -189,9 +189,9 @@ func TestWanderBrowserReconnectNoLossNoDup(t *testing.T) {
 // proves the browser face of #54 — the page persists its loopId, and reopening the tab
 // replays the durable event stream instead of minting a brand-new loop.
 //
-// It reuses the reconnect lane's harness verbatim (one real `fuse loop-serve-net`, one
+// It mirrors the reconnect lane's harness (one real `fuse loop-serve-net`, one
 // `node server.js`, the SCRIPTED gateway double — NEVER Claude/Anthropic; project policy)
-// and leaves that lane's /__cut assertions untouched.
+// via startWanderBrowserStack, and leaves that lane's /__cut assertions untouched.
 //
 // *** DO NOT "SIMPLIFY" STEP 3 INTO browser.NewContext(). *** Playwright BrowserContexts
 // are STORAGE-ISOLATED: a fresh context starts with an EMPTY localStorage, so the page

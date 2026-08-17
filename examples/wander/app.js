@@ -109,6 +109,10 @@ window.__wanderPaused = false;
 const CODE_NOT_FOUND = 5;
 const CODE_FAILED_PRECONDITION = 9;
 
+// TASK_PREAMBLE is shared by the startLoop task builder and the restore-time strip of the
+// turn-0 user.input event — kept as one constant so the two cannot drift apart.
+const TASK_PREAMBLE = "You are Wander, a friendly vacation-rental concierge. First request: ";
+
 const threadEl = document.getElementById("thread");
 const activityEl = document.getElementById("activity");
 const formEl = document.getElementById("composer");
@@ -453,6 +457,9 @@ async function runObserve(generation, myLoopId, myClient, abort) {
           // the SAVED_REFRESH_PROMPT comparison below, which is an exact match.
           if (text.startsWith(HUMAN_ENVELOPE)) text = text.slice(HUMAN_ENVELOPE.length);
           // The Saved-panel refresh is a real `send`, but the APP asked it, not the user.
+          // This is a content match, not a provenance flag — the `quiet` bit isn't carried
+          // in the user.input payload, so a user who genuinely types this exact sentence
+          // will also have that turn suppressed on replay. Known, accepted false positive.
           if (text === SAVED_REFRESH_PROMPT) {
             // Suppress the question AND the answer that follows it, for this turn only.
             replayQuiet = true;
@@ -588,8 +595,10 @@ async function runObserve(generation, myLoopId, myClient, abort) {
     } else if (err instanceof FuseTerminalError) {
       // A terminal Connect code: stop, show the RIGHT affordance for THIS code — do NOT
       // silently hot-loop, and do not treat all four alike (change 0062, D2 + D3). The
-      // instrumentation is written FIRST in every branch, before anything that could
-      // reset it, because the reconnect lane asserts on it.
+      // window.__wanderTerminal instrumentation is written FIRST in every branch, before
+      // anything that could reset it, because the reconnect lane asserts on it. (On the
+      // not_found path below, pushActivity's rail entry is NOT similarly protected — it is
+      // wiped by resetSession() and not re-added; only the window.* markers are re-asserted.)
       window.__wanderTerminal = err.code;
       pushActivity("error", "⚠︎", "Stream closed", String(err.code));
       if (err.code === CODE_NOT_FOUND) {
@@ -713,11 +722,6 @@ function submit(text) {
 // from a `list_favorites` tool result, which the server adjudicated against the calling
 // principal's own delegated token. That is why switching users shows a different list —
 // and why the app never merges, caches, or carries a list across principals.
-
-// TASK_PREAMBLE is shared by the startLoop task builder (above) and, in a later task, the
-// restore-time strip of the turn-0 user.input event — kept as one constant so the two cannot
-// drift apart.
-const TASK_PREAMBLE = "You are Wander, a friendly vacation-rental concierge. First request: ";
 
 // HUMAN_ENVELOPE is the runtime's injection framing for a `send`: the loop batches queued
 // human text into one user message prefixed with this marker (internal/agent/humanmsg.go,
