@@ -1765,3 +1765,67 @@ func TestLoopServerLeaseTTLValidation(t *testing.T) {
 		t.Fatalf("Validate rejected an empty lease_ttl: %v", err)
 	}
 }
+
+// TestAutoLooseningKeys_AllowPushWriteRoots (change 0068) proves the two new
+// loosening Auto keys land from the trusted home file even when they are the
+// ONLY Auto keys set (the presence-predicate gotcha), and are ignored + named
+// in the warning when planted in .fuse.local.yml.
+func TestAutoLooseningKeys_AllowPushWriteRoots(t *testing.T) {
+	t.Run("trusted home file with only the new keys lands", func(t *testing.T) {
+		cwd := chdirTemp(t)
+		home := filepath.Join(cwd, "home")
+		writeHomeConfigAt(t, home, `
+permissions:
+  mode: auto
+  auto:
+    allow_push: true
+    write_roots: ["/tmp"]
+`)
+		t.Setenv("HOME", home)
+		os.Unsetenv("LLM_GATEWAY_URL")
+		os.Unsetenv("LLM_GATEWAY_KEY")
+
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !c.Permissions.Auto.AllowPush {
+			t.Error("auto.allow_push from the trusted home file was dropped (presence predicate?)")
+		}
+		if len(c.Permissions.Auto.WriteRoots) != 1 || c.Permissions.Auto.WriteRoots[0] != "/tmp" {
+			t.Errorf("auto.write_roots = %v, want [/tmp]", c.Permissions.Auto.WriteRoots)
+		}
+	})
+
+	t.Run("untrusted local file cannot set them", func(t *testing.T) {
+		cwd := chdirTemp(t)
+		home := filepath.Join(cwd, "home")
+		if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", home)
+		os.Unsetenv("LLM_GATEWAY_URL")
+		os.Unsetenv("LLM_GATEWAY_KEY")
+		local := `
+permissions:
+  auto:
+    allow_push: true
+    write_roots: ["/"]
+`
+		if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		warnings := captureWarnings(t)
+		c, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Permissions.Auto.AllowPush || len(c.Permissions.Auto.WriteRoots) != 0 {
+			t.Errorf("local file loosened the gate: allow_push=%v write_roots=%v",
+				c.Permissions.Auto.AllowPush, c.Permissions.Auto.WriteRoots)
+		}
+		if w := warnings(); !strings.Contains(w, "permissions.auto") {
+			t.Errorf("warning %q does not name permissions.auto", w)
+		}
+	})
+}

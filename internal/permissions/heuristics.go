@@ -1,6 +1,9 @@
 package permissions
 
 import (
+	"net"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -21,16 +24,21 @@ import (
 //     in-scope mutation ⇒ VerdictAllow. Anything the heuristic cannot prove
 //     in-scope fails toward the human (VerdictAsk), never toward allow.
 //
-// workspaceRoot must already be canonicalized (filepath.EvalSymlinks) by the
-// caller so containment comparisons are made against the real path.
-func classifyHeuristic(segments []Segment, workspaceRoot string) Verdict {
+// roots is the allowed mutation-root set: the canonicalized workspace root
+// first, then any extra write roots (the per-session scratch dir, config
+// write_roots — change 0068). Every root must already be canonicalized
+// (filepath.EvalSymlinks) by the caller so containment comparisons are made
+// against real paths.
+func classifyHeuristic(segments []Segment, roots []string) Verdict {
 	if len(segments) == 0 {
 		return VerdictAsk
 	}
 
-	// 1. Egress boundary wins first — never a silent allow.
+	// 1. Egress boundary wins first — never a silent allow. A curl/wget whose
+	// every URL is provably loopback (and whose outputs land in-roots) is the
+	// dev-server health-check shape, not egress (change 0068).
 	for _, seg := range segments {
-		if isEgress(seg) {
+		if isEgress(seg) && !isLoopbackFetch(seg, roots) {
 			return VerdictAsk
 		}
 	}
@@ -40,18 +48,45 @@ func classifyHeuristic(segments []Segment, workspaceRoot string) Verdict {
 		return VerdictAllow
 	}
 
-	// 3. Mutating: every path argument must stay inside the workspace.
+	// 3. Mutating: every path argument must stay inside the allowed roots.
 	for _, seg := range segments {
 		if isReadOnlySafe(seg) {
 			continue // a read-only segment mutates nothing to scope.
 		}
+		// The kill family's operands are PIDs or process names, not paths —
+		// path-scoping them against the cwd would prove nothing (change 0068).
+		// A provably benign kill (numeric PIDs, signal flags only) allows;
+		// everything else in the family routes to the classifier.
+		switch seg.Name {
+		case "kill":
+			if isProvablyBenignKill(seg) {
+				continue
+			}
+			return VerdictAsk
+		case "pkill", "killall":
+			return VerdictAsk
+		}
+		if isLoopbackFetch(seg, roots) {
+			continue // URL operands are not paths; outputs were scoped inside.
+		}
 		for _, arg := range pathArgs(seg) {
-			if !withinWorkspace(arg, workspaceRoot) {
+			if !withinAnyRoot(arg, roots) {
 				return VerdictAsk
 			}
 		}
 	}
 	return VerdictAllow
+}
+
+// withinAnyRoot reports whether arg, resolved symlink-aware, stays within any
+// of the allowed roots (change 0068). The empty-roots case is never within.
+func withinAnyRoot(arg string, roots []string) bool {
+	for _, root := range roots {
+		if root != "" && withinWorkspace(arg, root) {
+			return true
+		}
+	}
+	return false
 }
 
 // egressNames are argv[0] basenames that open a network connection to an
@@ -77,9 +112,17 @@ var gitEgressSubcommands = map[string]bool{
 }
 
 // isEgress reports whether a segment performs network egress: a known egress
-// tool, or a git remote operation given a host-qualified URL.
+// tool, or a git remote operation given a host-qualified URL. `git push` is
+// egress UNCONDITIONALLY (change 0068): its usual operands (`origin`, a branch
+// name) resolve under the cwd and would otherwise slip through the mutating
+// path scope as in-workspace, silently allowing a publish. clone/fetch/pull
+// keep the host-qualified requirement (a bare `git pull` against a configured
+// remote is routine sync, and its worst case pulls INTO the workspace).
 func isEgress(seg Segment) bool {
 	if egressNames[seg.Name] {
+		return true
+	}
+	if isGitPush(seg) {
 		return true
 	}
 	if seg.Name == "git" && len(seg.Args) > 0 && gitEgressSubcommands[seg.Args[0]] {
@@ -90,6 +133,143 @@ func isEgress(seg Segment) bool {
 		}
 	}
 	return false
+}
+
+// isLoopbackHost reports whether host is the loopback interface: the literal
+// "localhost" or an IP with IsLoopback. Deliberately narrower than the
+// web_fetch SSRF check (no RFC-1918/link-local): only the machine's own
+// services qualify for the deterministic curl allow (change 0068).
+func isLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// curl/wget flag tables for isLoopbackFetch. A flag outside these tables makes
+// the segment unprovable (⇒ not a loopback fetch ⇒ egress ask ⇒ classifier):
+// curl has many flags that write files (-c, -D, --trace, -K …) and enumerating
+// the benign set is the only fail-closed posture.
+var (
+	curlFlagsNoValue = map[string]bool{
+		"-s": true, "--silent": true, "-S": true, "--show-error": true,
+		"-f": true, "--fail": true, "-L": true, "--location": true,
+		"-v": true, "--verbose": true, "-i": true, "--include": true,
+		"-I": true, "--head": true, "-k": true, "--insecure": true,
+		"-4": true, "-6": true, "-N": true, "--no-buffer": true,
+		"-g": true, "--globoff": true, "--compressed": true,
+		"-O": true, "--remote-name": true, // writes basename into the cwd (the workspace)
+	}
+	curlFlagsWithValue = map[string]bool{
+		"-X": true, "--request": true, "-H": true, "--header": true,
+		"-d": true, "--data": true, "--data-raw": true, "--data-binary": true,
+		"-m": true, "--max-time": true, "--connect-timeout": true,
+		"-w": true, "--write-out": true, "-u": true, "--user": true,
+		"--retry": true, "-A": true, "--user-agent": true,
+	}
+	curlFlagsWithScopedValue = map[string]bool{
+		"-o": true, "--output": true,
+	}
+	wgetFlagsNoValue = map[string]bool{
+		"-q": true, "--quiet": true, "-nv": true, "--no-verbose": true,
+		"-4": true, "-6": true, "--no-check-certificate": true,
+	}
+	wgetFlagsWithValue = map[string]bool{
+		"-T": true, "--timeout": true, "-t": true, "--tries": true,
+		"-U": true, "--user-agent": true, "--header": true,
+		"--post-data": true, "--method": true,
+	}
+	wgetFlagsWithScopedValue = map[string]bool{
+		"-O": true, "--output-document": true, "-P": true, "--directory-prefix": true,
+	}
+)
+
+// isLoopbackFetch reports whether a curl/wget segment is provably a loopback
+// fetch (change 0068): every URL-shaped operand's host is loopback, every
+// output-writing flag's target stays within the allowed roots, and every flag
+// is on the known-benign table. Anything unprovable — a non-loopback or
+// non-literal URL, an unknown flag, a missing flag value — returns false and
+// the segment keeps its egress-ask ⇒ classifier routing.
+func isLoopbackFetch(seg Segment, roots []string) bool {
+	var noVal, withVal, scopedVal map[string]bool
+	switch seg.Name {
+	case "curl":
+		noVal, withVal, scopedVal = curlFlagsNoValue, curlFlagsWithValue, curlFlagsWithScopedValue
+	case "wget":
+		noVal, withVal, scopedVal = wgetFlagsNoValue, wgetFlagsWithValue, wgetFlagsWithScopedValue
+	default:
+		return false
+	}
+	sawURL := false
+	for i := 0; i < len(seg.Args); i++ {
+		a := seg.Args[i]
+		switch {
+		case a == "":
+			continue
+		case noVal[a]:
+			continue
+		case withVal[a]:
+			i++ // consume the value
+			if i >= len(seg.Args) {
+				return false
+			}
+		case scopedVal[a]:
+			i++
+			if i >= len(seg.Args) || !withinAnyRoot(seg.Args[i], roots) {
+				return false
+			}
+		case strings.HasPrefix(a, "--"):
+			return false // unknown long flag ⇒ unprovable
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			// A grouped short form (curl -sL): provable only when every letter is
+			// itself a known no-value short flag.
+			if !allShortFlagsNoValue(a[1:], noVal) {
+				return false
+			}
+		case strings.HasPrefix(a, "-"):
+			return false // bare "-" ⇒ unprovable
+		default:
+			host, ok := urlHost(a)
+			if !ok || !isLoopbackHost(host) {
+				return false
+			}
+			sawURL = true
+		}
+	}
+	return sawURL
+}
+
+// allShortFlagsNoValue reports whether every letter of a grouped short flag is
+// individually a known no-value flag ("-sL" ⇒ "-s" and "-L").
+func allShortFlagsNoValue(letters string, noVal map[string]bool) bool {
+	for _, r := range letters {
+		if !noVal["-"+string(r)] {
+			return false
+		}
+	}
+	return true
+}
+
+// urlHost extracts the hostname from a URL-shaped operand, accepting both
+// scheme URLs (http://localhost:4000/x) and the schemeless host[:port][/path]
+// form curl accepts (localhost:4000/v1/models). ok is false for anything that
+// does not parse to a non-empty host.
+func urlHost(arg string) (string, bool) {
+	s := arg
+	if !strings.Contains(s, "://") {
+		s = "http://" + s
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Hostname() == "" {
+		return "", false
+	}
+	// Only http(s) shapes qualify; anything else (file://, ftp://, gopher://)
+	// is not the loopback health-check shape.
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", false
+	}
+	return u.Hostname(), true
 }
 
 // isHostQualified reports whether a git remote argument names a host rather than
@@ -130,6 +310,19 @@ func pathArgs(seg Segment) []string {
 		if strings.HasPrefix(a, "-") {
 			continue // an option flag, not a path operand.
 		}
+		// dd's operands are key=value (of=/tmp/x, if=in.img): scope the value's
+		// path, not the literal "of=/tmp/x" token — which would resolve as a
+		// weird cwd-relative filename and wrongly prove containment (0068).
+		if seg.Name == "dd" {
+			if v, ok := strings.CutPrefix(a, "of="); ok {
+				out = append(out, v)
+				continue
+			}
+			if v, ok := strings.CutPrefix(a, "if="); ok {
+				out = append(out, v)
+				continue
+			}
+		}
 		out = append(out, a)
 	}
 	return out
@@ -145,6 +338,19 @@ func pathArgs(seg Segment) []string {
 // resolved (dirent-isdir-skips-symlinks). A relative arg resolves against the
 // current working directory (the caller's process cwd == the workspace).
 func withinWorkspace(arg, workspaceRoot string) bool {
+	// Tilde reaches us as a literal (the parser does not expand it) but bash
+	// WILL expand it at execution: ~/x is a home-anchored path, not a cwd file
+	// named "~". Expand our own home; a ~user form for another user is
+	// unprovable ⇒ fail toward the human (change 0068).
+	if arg == "~" || strings.HasPrefix(arg, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false
+		}
+		arg = home + arg[1:]
+	} else if strings.HasPrefix(arg, "~") {
+		return false
+	}
 	abs, err := filepath.Abs(arg)
 	if err != nil {
 		return false // cannot resolve ⇒ fail toward the human.

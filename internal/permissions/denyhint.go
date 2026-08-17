@@ -7,7 +7,7 @@ package permissions
 func denyHint(layer string) string {
 	switch layer {
 	case LayerRules:
-		return "this command is blocked by auto-mode policy; retrying the identical call will fail — for network reads use the web_fetch or web_search tool, otherwise change the command or ask the user"
+		return "this command is blocked by auto-mode policy as catastrophic; retrying the identical call will fail — change the command or ask the user"
 	case LayerHeuristic:
 		return "the command touches paths or network targets outside the allowed scope; write inside the workspace root, or use web_fetch/web_search for network reads"
 	case LayerEditScope:

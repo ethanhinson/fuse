@@ -126,7 +126,11 @@ func mergePermissions(c *Config, raw rawPermissionsConfig, trusted bool) (ignore
 	// fetch_* assignment below then re-lands them from an untrusted file too. On the
 	// trusted path the fetch_* re-assignment is a harmless idempotent copy of what
 	// the whole-struct assignment already set.
-	if raw.Auto.ClassifierModel != "" || len(raw.Auto.Deny) > 0 || len(raw.Auto.Ask) > 0 {
+	// The presence predicate must name EVERY loosening Auto key: a trusted file
+	// setting only allow_push/write_roots (change 0068) still takes the
+	// whole-struct branch — omitting a key here silently drops it.
+	if raw.Auto.ClassifierModel != "" || len(raw.Auto.Deny) > 0 || len(raw.Auto.Ask) > 0 ||
+		raw.Auto.AllowPush || len(raw.Auto.WriteRoots) > 0 {
 		if trusted {
 			c.Permissions.Auto = raw.Auto
 		} else {
