@@ -200,10 +200,17 @@ rebuilt store): that surfaces as a terminal `not_found` on the restore attempt, 
 falls back to starting a clean fresh session rather than pretending the old one is still
 there.
 
-After roughly 30 minutes idle, the server reaps the live session: the composer disables and
-the UI shows "Session paused — reload to resume this conversation." That is not the same as
-losing the conversation — the durable events are untouched, and reloading rebuilds the
-session from them same as any other restore.
+After roughly 30 minutes idle, the server reaps the live run behind the session — and you
+will not notice. The reap cancels the run, which ends the observe stream *cleanly*; a clean
+end is transient by the SDK's own classification, so the SDK simply re-opens the stream from
+its watermark. The loop's registry record and its durable events are untouched, so the
+re-observe succeeds, and the next message you send revives the loop transparently (the
+server resumes a reaped-but-resumable loop and retries the send — see
+`internal/loopconnect/handler.go`). There is deliberately **no** "session paused" state in
+the UI, because from the browser's point of view nothing happened: the transcript stays on
+screen, the composer stays usable, and a reload restores the same conversation the same way
+any other reload does. "Reap ≠ loss" holds by the reap being invisible, not by a visible
+paused affordance.
 
 ## Acceptance / test
 

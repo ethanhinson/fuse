@@ -85,9 +85,13 @@ window.__wanderRestored = false;
 // True once the durable stream behind a stored session turned out to be gone (`not_found`)
 // and the app fell back to a clean fresh session (change 0062, D3).
 window.__wanderRestoreLost = false;
-// True once a terminal `failed_precondition` parked this page: the loop finished or was
-// reaped by the server's idle TTL, but the conversation is NOT lost — a reload resumes it
-// from the durable events (change 0062, D2).
+// True once a terminal `failed_precondition` parked this page. DEFENSIVE: not reachable
+// against today's server. Observe (internal/loopconnect/observe.go) never returns
+// FailedPrecondition, and an idle reap ends the observe stream CLEANLY — which the SDK
+// classifies as transient and re-opens from the watermark. So this flag stays false in
+// practice, and the browser lane asserts exactly that. Kept because ADR-0037's terminal
+// set (sdk/ts/src/index.ts TERMINAL_CODES) includes FailedPrecondition, so a future
+// server change could start emitting it on the stream (change 0062, D2).
 window.__wanderPaused = false;
 
 // The two terminal Connect codes this app treats differently. @fuse/sdk carries the raw
@@ -575,9 +579,17 @@ async function runObserve(generation, myLoopId, myClient, abort) {
         window.__wanderRestoreLost = true;
         addMessage("error", "", "Your previous session is no longer available — starting a new one.");
       } else if (err.code === CODE_FAILED_PRECONDITION) {
-        // D2 — reap ≠ loss. The loop finished or the server's ~30-minute idle TTL reaped it,
-        // but the durable events are still there: change #54 rebuilds the transcript on the
-        // next observe. So KEEP the stored session; a reload resumes this conversation.
+        // D2 — reap ≠ loss. DEFENSIVE BRANCH, unreachable against today's server: Observe
+        // (internal/loopconnect/observe.go) returns only PermissionDenied/NotFound from
+        // authorization and Internal from rt.Observe/rt.Attach — never FailedPrecondition —
+        // and an idle reap merely closes the subscription channel, which the handler treats
+        // as a clean stream end and the SDK re-opens from the watermark. (The one place the
+        // server DOES emit FailedPrecondition is the unary Send, and even there it first
+        // tries a transparent Resume.) It is kept, rather than deleted, because ADR-0037's
+        // terminal set in the SDK (TERMINAL_CODES) lists FailedPrecondition: if a future
+        // server change starts surfacing it on the stream, the SDK will throw it here, and
+        // this branch is the honest affordance — stop, KEEP the stored session, tell the
+        // user a reload resumes it — instead of the generic auth-rejected message below.
         setConn("closed");
         setComposerEnabled(false);
         window.__wanderPaused = true;
