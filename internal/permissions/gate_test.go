@@ -239,7 +239,7 @@ func TestResolveAuto_EditToolsPathScoped(t *testing.T) {
 			if g.classifier != nil {
 				t.Fatal("test precondition: classifier must be nil")
 			}
-			got, _ := g.resolveAuto(context.Background(), tc.name, tc.args)
+			got, _, _ := g.resolveAuto(context.Background(), tc.name, tc.args)
 			if got != tc.want {
 				t.Errorf("resolveAuto(%q, %s) = %v, want %v", tc.name, tc.args, got, tc.want)
 			}
@@ -306,7 +306,7 @@ func TestResolveAuto_WebFetchStaticFloor(t *testing.T) {
 	// SSRF: loopback host denies without consulting the classifier.
 	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), AlwaysApprove,
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
-	v, reason := g.resolveAuto(context.Background(), "web_fetch", `{"url":"http://127.0.0.1/x"}`)
+	v, _, reason := g.resolveAuto(context.Background(), "web_fetch", `{"url":"http://127.0.0.1/x"}`)
 	if v != VerdictDeny {
 		t.Fatalf("SSRF host must deny, got %v", v)
 	}
@@ -320,7 +320,7 @@ func TestResolveAuto_WebFetchStaticFloor(t *testing.T) {
 	// fetch_deny glob match denies with the config-deny reason.
 	g2 := New(autoCfg(config.AutoConfig{FetchDeny: []string{"*.evil.com"}}, nil, nil),
 		newTestRegistry("web_fetch"), AlwaysApprove, WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
-	v2, reason2 := g2.resolveAuto(context.Background(), "web_fetch", `{"url":"https://sub.evil.com/x"}`)
+	v2, _, reason2 := g2.resolveAuto(context.Background(), "web_fetch", `{"url":"https://sub.evil.com/x"}`)
 	if v2 != VerdictDeny {
 		t.Fatalf("fetch_deny match must deny, got %v", v2)
 	}

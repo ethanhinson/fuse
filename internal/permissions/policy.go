@@ -61,6 +61,10 @@ type ToolPolicy struct {
 	// fixed "tool call denied by user" message. Execute prefers DenyReason when
 	// set. A deny is not an error: the model may retry with a different call.
 	DenyReason string
+	// DenyLayer, set on every deny path (Layer* constants), names the pipeline
+	// layer that denied. Execute copies it onto the tools.Result so the agent
+	// loop can treat policy denials specially (change 0067).
+	DenyLayer string
 }
 
 // safeList is the baseline set of built-in tools that always auto-approve in

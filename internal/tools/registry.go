@@ -15,6 +15,15 @@ import (
 type Result struct {
 	Output  string
 	IsError bool
+	// Denied marks a permission-gate policy denial (change 0067). Only the
+	// permission gate sets it — gate denial results return directly to the agent
+	// loop, never through the registry wrappers — so the loop can distinguish a
+	// policy denial from an ordinary tool error without string matching, and
+	// stop counting denied retries toward the generic doom-loop abort.
+	Denied bool
+	// DenyLayer, set only when Denied, names the gate pipeline layer that denied
+	// (permissions.Layer* constants, e.g. "rules", "classifier", "valve").
+	DenyLayer string
 }
 
 // Tool is a single named, schema-described, executable capability.

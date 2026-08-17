@@ -12,20 +12,21 @@ import (
 // every consumer, so the values are asserted literally.
 func TestKindWireValues(t *testing.T) {
 	cases := map[Kind]string{
-		KindTurnStart:      "turn.start",
-		KindTurnEnd:        "turn.end",
-		KindModelCallStart: "model.call.start",
-		KindModelDelta:     "model.delta",
-		KindModelCallEnd:   "model.call.end",
-		KindToolCall:       "tool.call",
-		KindToolResult:     "tool.result",
-		KindSpawnStart:     "spawn.start",
-		KindSpawnDone:      "spawn.done",
-		KindSummarize:      "context.summarize",
-		KindLoopTrip:       "loop.detector.trip",
-		KindError:          "error",
-		KindLoopParked:     "loop.parked",
-		KindUserInput:      "user.input",
+		KindTurnStart:          "turn.start",
+		KindTurnEnd:            "turn.end",
+		KindModelCallStart:     "model.call.start",
+		KindModelDelta:         "model.delta",
+		KindModelCallEnd:       "model.call.end",
+		KindToolCall:           "tool.call",
+		KindToolResult:         "tool.result",
+		KindSpawnStart:         "spawn.start",
+		KindSpawnDone:          "spawn.done",
+		KindSummarize:          "context.summarize",
+		KindLoopTrip:           "loop.detector.trip",
+		KindError:              "error",
+		KindLoopParked:         "loop.parked",
+		KindUserInput:          "user.input",
+		KindPermissionDecision: "permission.decision",
 	}
 	for k, want := range cases {
 		if string(k) != want {
@@ -127,7 +128,9 @@ func TestPayloadKindsRoundTrip(t *testing.T) {
 		SpawnDonePayload{ChildNodeID: "n2", ParentID: "n1", Label: "researcher", Depth: 1, Result: "done", Err: ""},
 		SummarizePayload{TurnStart: 0, TurnEnd: 3, ToolNames: []string{"bash"}, TokensBefore: 100, TokensAfter: 20, Pointer: "/p"},
 		LoopTripPayload{Turn: 9},
+		LoopTripPayload{Turn: 9, Reason: "policy-denied call repeated after nudge"},
 		ErrorPayload{Err: "boom", Turn: 2},
+		PermissionDecisionPayload{ToolCallID: "c1", Tool: "bash", Verdict: "deny", Layer: "rules", Reason: "denied by auto-mode rules layer: curl x", Mode: "auto", Command: "curl x"},
 	}
 	for i, p := range payloads {
 		raw, err := MarshalPayload(p)

@@ -121,7 +121,7 @@ func TestToolTimeoutClosesSpanWithTimeoutOutcome(t *testing.T) {
 	a := New(&scriptedCompleter{}, &blockingExec{started: make(chan struct{}), canceled: make(chan struct{})}, nopRenderer{}, "m", "", 1, 1)
 	a.SetObserver(observeotel.New(tp))
 	a.SetToolTimeout(time.Millisecond)
-	res := a.executeToolBounded(context.Background(), model.ToolCall{Name: "bash"})
+	res := a.executeToolBounded(context.Background(), 0, model.ToolCall{Name: "bash"})
 	if !res.IsError {
 		t.Fatal("timeout did not return a tool error")
 	}

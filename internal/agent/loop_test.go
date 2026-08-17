@@ -70,7 +70,7 @@ func TestPerToolCallTimeout(t *testing.T) {
 	a.SetToolTimeout(50 * time.Millisecond)
 
 	start := time.Now()
-	res := a.executeToolBounded(context.Background(), model.ToolCall{ID: "1", Name: "bash", Arguments: `{}`})
+	res := a.executeToolBounded(context.Background(), 0, model.ToolCall{ID: "1", Name: "bash", Arguments: `{}`})
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("executeToolBounded blocked for %v — timeout did not fire", elapsed)
 	}
@@ -91,7 +91,7 @@ func TestExemptToolsNotTimedOut(t *testing.T) {
 	a := New(&scriptedCompleter{}, slow, nopRenderer{}, "m", "", 10, 100)
 	a.SetToolTimeout(10 * time.Millisecond) // far shorter than the tool's work
 
-	res := a.executeToolBounded(context.Background(), model.ToolCall{ID: "1", Name: "spawn_agent", Arguments: `{}`})
+	res := a.executeToolBounded(context.Background(), 0, model.ToolCall{ID: "1", Name: "spawn_agent", Arguments: `{}`})
 	if res.IsError {
 		t.Fatalf("exempt tool was timed out: %+v", res)
 	}

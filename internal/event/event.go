@@ -59,6 +59,15 @@ const (
 	// prefixed form for human turns; the raw task for the initial turn). Skipped for
 	// a resumed loop's seed history, whose user turns are already in the stream.
 	KindUserInput Kind = "user.input"
+	// KindPermissionDecision records one permission-gate resolution: the verdict
+	// (allow/ask/deny), the pipeline layer that decided it, and a bounded command
+	// preview. It exists because gate behaviour was otherwise invisible in the
+	// durable stream — denials only surfaced as tool-result strings and asks
+	// (human prompts) not at all, so prompt frequency, the core auto-mode UX
+	// metric, could not be measured (change 0067). An ask is emitted BEFORE the
+	// approval func runs and the human outcome after it as a second layer=human
+	// event, so a headless AlwaysApprove binding shows as back-to-back ask→allow.
+	KindPermissionDecision Kind = "permission.decision"
 )
 
 // Event is the stable envelope over every loop state transition. Payload is the
@@ -295,6 +304,11 @@ type SummarizePayload struct {
 
 type LoopTripPayload struct {
 	Turn int `json:"turn"`
+	// Reason, when non-empty, distinguishes a policy-denial repeat trip (change
+	// 0067: the model kept re-issuing a policy-blocked call after the injected
+	// nudge) from the generic identical-call doom loop. Additive: absent on
+	// generic trips, so pre-0067 streams replay unchanged.
+	Reason string `json:"reason,omitempty"`
 }
 
 type ErrorPayload struct {
@@ -309,6 +323,21 @@ type ErrorPayload struct {
 type LoopParkedPayload struct {
 	Turn    int    `json:"turn"`
 	Content string `json:"content"`
+}
+
+// PermissionDecisionPayload accompanies KindPermissionDecision. Command is a
+// bounded preview (the bash command truncated to ~200 chars, or a truncated
+// args preview for other tools) — never full args, which tool.call already
+// carries. Layer names the deciding pipeline stage (permissions.Layer*
+// constants); Verdict is "allow" | "ask" | "deny".
+type PermissionDecisionPayload struct {
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Tool       string `json:"tool"`
+	Verdict    string `json:"verdict"`
+	Layer      string `json:"layer"`
+	Reason     string `json:"reason,omitempty"`
+	Mode       string `json:"mode"`
+	Command    string `json:"command,omitempty"`
 }
 
 // UserInputPayload accompanies KindUserInput. Content is the exact user-turn text
