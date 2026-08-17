@@ -78,6 +78,10 @@ window.__wanderSavedRefreshes = 0; // list_favorites results rendered SINCE the 
 // instead of reaching into localStorage, so the assertion is about the app's live session
 // rather than about the storage encoding.
 window.__wanderLoopId = null;
+// True when this page load resumed a stored loop instead of starting a fresh session
+// (change 0062). Initialized unconditionally so the lane can read it on the first-visit
+// path too, where it simply stays false.
+window.__wanderRestored = false;
 
 const threadEl = document.getElementById("thread");
 const activityEl = document.getElementById("activity");
@@ -104,9 +108,12 @@ const initialThreadHTML = threadEl.innerHTML;
 const initialActivityHTML = activityEl.innerHTML;
 const initialLoopLabel = loopLabel ? loopLabel.textContent : "";
 
-// Session state. Wander is stateless across page loads (#54 boundary): a refresh starts a
-// fresh loop. `loopId` is created lazily on the first message (persistent interactive loop
-// so the concierge holds context across turns, #53).
+// Session state. `loopId` is created lazily on the first message (persistent interactive
+// loop so the concierge holds context across turns, #53) and is PERSISTED (change 0062):
+// a reload restores the conversation by re-observing that loop's durable event stream from
+// seq 0, which is exactly what change #54 made possible on the server. So a refresh resumes
+// rather than starting a fresh loop; + New and a user switch are the gestures that
+// deliberately forget the stored session.
 let loopId = null;
 // turnInFlight guards against a second submit while the current turn is still being answered
 // (composer disabled). It is distinct from "is the observe stream open" — the persistent
@@ -183,6 +190,13 @@ function clearSession() {
   try {
     localStorage.removeItem(SESSION_KEY);
   } catch {}
+}
+
+// One writer for the loop-label text, so the mint path and the restore path cannot drift
+// into two different renderings of the same fact.
+function setLoopLabel(id) {
+  if (!loopLabel) return;
+  loopLabel.textContent = `Live loop ${String(id).slice(0, 12)}… — streaming over Connect`;
 }
 
 // ─────────────────────────── Connection indicator ───────────────────────────
@@ -527,9 +541,7 @@ async function handleSubmit(text, quiet = false) {
       loopId = started.loopId;
       window.__wanderLoopId = loopId;
       saveSession(loopId);
-      if (loopLabel) {
-        loopLabel.textContent = `Live loop ${String(loopId).slice(0, 12)}… — streaming over Connect`;
-      }
+      setLoopLabel(loopId);
       // fire-and-forget; it re-enables the composer at each park.
       runObserve(generation, loopId, myClient, myAbort);
     } else {
@@ -664,6 +676,8 @@ function resetSession() {
   window.__wanderTerminal = null;
   window.__wanderSavedRefreshes = 0;
   window.__wanderResets++;
+  // A reset is a fresh session by definition, never a restored one.
+  window.__wanderRestored = false;
 }
 
 // switchUser resets, re-credentials the SDK client, then asks the NEW principal's agent
@@ -924,6 +938,29 @@ renderPicker();
 // refresh: the page must not start a loop before the user says something (#54's stateless
 // boundary), so the panel first fills on an explicit user switch or after a favorite lands.
 loadDemoUsers();
+
+// Restore-on-load (change 0062, D1). Deliberately NOT awaited behind loadDemoUsers(): the
+// stored session belongs to the credential already in hand at this point, and loadSession's
+// principal match refuses anything else — waiting for the directory could only widen the
+// window in which the restored transcript is missing. Nothing stored (or an entry for a
+// different principal, which loadSession collapses to null) leaves the first-visit path
+// exactly as it was: no loop is started here, ever — a restore only re-observes an existing
+// durable stream from seq 0.
+function restoreSession() {
+  const stored = loadSession();
+  if (!stored) return;
+  loopId = stored.loopId;
+  window.__wanderLoopId = loopId;
+  // Everything the durable stream is about to replay is history, not live activity: the
+  // flag stays true until the user's next submit (a parked loop emits nothing on its own).
+  replaying = true;
+  setLoopLabel(loopId);
+  window.__wanderRestored = true;
+  // fire-and-forget, exactly as on the mint path: it re-enables the composer at each park.
+  runObserve(sessionGeneration, loopId, client, sessionAbort);
+}
+
+restoreSession();
 
 // Page-unload teardown (D3): abort the CURRENT session's observe stream so a navigation
 // never leaks a stream. Idempotent — a double abort, or an abort after a switch already
