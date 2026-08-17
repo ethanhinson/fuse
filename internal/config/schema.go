@@ -54,6 +54,15 @@ type AutoConfig struct {
 	// a checked-in file can only add host denials/asks, never weaken the gate.
 	FetchDeny []string `yaml:"fetch_deny"`
 	FetchAsk  []string `yaml:"fetch_ask"`
+	// AllowPush deterministically allows `git push` in auto mode (change 0068).
+	// LOOSENING: honored only from the trusted ~/.fuse/config.yml. Without it,
+	// push routes to the context-aware classifier (never a terminal deny).
+	AllowPush bool `yaml:"allow_push"`
+	// WriteRoots are extra directories treated as workspace-equivalent by the
+	// auto-mode path scoping (e.g. /tmp) — mutations and edit-tool writes inside
+	// any of them auto-approve. LOOSENING: trusted-source-only. Each root is
+	// canonicalized (EvalSymlinks) at gate wiring, not here.
+	WriteRoots []string `yaml:"write_roots"`
 }
 
 // CustomProviderConfig describes a user-supplied JSON search endpoint,
