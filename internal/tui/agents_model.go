@@ -435,13 +435,19 @@ func (m *AgentsModel) handleTreeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.treeManual = false
 	case "enter", "tab":
-		// On a turn HEADER row, enter/tab toggles the group collapsed/expanded
-		// (change turns-in-left-tree) — it does NOT drill into the detail pane.
+		// On a turn HEADER row: if the turn has spawned agents, enter/tab toggles
+		// the group (reveal/hide them). If it has NONE (the root worked directly),
+		// there is nothing to toggle — so enter/tab drills into the detail pane
+		// instead, focusing the root's turn-scoped transcript so its events can be
+		// scrolled and expanded (change: header-enter-drills-when-childless).
 		if m.selected >= 0 && m.selected < len(m.treeRows) && m.treeRows[m.selected].header {
 			tr := m.treeRows[m.selected]
-			m.toggleTurn(tr.turn, m.isLastTreeTurn(tr.turn))
-			m.treeManual = false
-			break
+			if m.turnHasChildren(tr.turn) {
+				m.toggleTurn(tr.turn, m.isLastTreeTurn(tr.turn))
+				m.treeManual = false
+				break
+			}
+			// fall through to the detail-pane drill-in below
 		}
 		m.inDetail = true
 		m.detailScroll = 0
