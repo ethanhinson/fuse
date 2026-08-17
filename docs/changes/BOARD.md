@@ -1,12 +1,6 @@
 # Backlog
 
-**70 changes** — 🟢 1 in progress · 🟡 5 proposed · ⚪ 2 deferred · ✅ 56 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0062](active/0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md) | Wander refresh-to-restore — light up #54 durable resume in the browser demo | `medium` | `feat` | [spec](../superpowers/specs/2026-08-15-wander-refresh-to-restore-design.md) | `feat/wander-refresh-to-restore-light-up-54-durable-resume-in-the` |
+**70 changes** — 🟡 5 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 56 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
@@ -24,6 +18,12 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0062](active/0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md) | Wander refresh-to-restore — light up #54 durable resume in the browser demo | `medium` | `feat` | [#73](https://github.com/ethanhinson/fuse/pull/73) |  |
 
 ```mermaid
 graph TD
