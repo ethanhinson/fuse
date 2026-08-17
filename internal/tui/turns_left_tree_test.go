@@ -327,3 +327,66 @@ func TestLeftTree_ChildlessTurnHasNoCaret(t *testing.T) {
 		t.Errorf("turns with spawned agents must show a caret:\n%s", spawned)
 	}
 }
+
+// TestLeftTree_ChildlessTurnEnterDrillsIntoDetail guards the reported bug: on a
+// turn where the root worked directly (no spawned agents), the RIGHT detail pane
+// would not open to show the full main-agent response. Because such a turn has
+// nothing to toggle, enter on its header must focus the detail pane (then a
+// second enter drills into the selected event's full content).
+func TestLeftTree_ChildlessTurnEnterDrillsIntoDetail(t *testing.T) {
+	tree := agent.NewAgentTree("minimax", "minimax")
+	root := tree.Node(tree.RootID())
+	tree.BeginTurnWithPrompt("do analysis")
+	root.AddEvent(agent.AgentEvent{Kind: agent.KindAssistant, Name: "a1", TS: time.Now()})
+	tree.EndTurn(false)
+	tree.BeginTurnWithPrompt("what is the biggest issue")
+	time.Sleep(2 * time.Millisecond)
+	long := strings.Repeat("gap between what fuse is and aspires to be. ", 20)
+	root.AddEvent(agent.AgentEvent{Kind: agent.KindAssistant, Name: "assistant", Payload: map[string]any{"text": long}, TS: time.Now()})
+
+	m := NewAgentsModel(tree, nil)
+	m.width, m.height = 120, 20
+	m.refreshSnapshot()
+	_ = m.renderTreeRows(50)
+	for i, tr := range m.treeRows {
+		if tr.header && tr.turn == 2 {
+			m.selected = i
+		}
+	}
+	// enter on the childless header focuses the detail pane (no toggle to do).
+	m.handleTreeKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.inDetail {
+		t.Fatal("enter on a childless turn header did not focus the detail pane")
+	}
+	_ = m.buildDetailLines(100)
+	// enter again drills into the event, revealing the full response.
+	m.handleDetailKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.inEventView {
+		t.Fatal("enter in the detail pane did not drill into the event")
+	}
+	full := stripANSITurns(strings.Join(m.buildDetailLines(100), "\n"))
+	if !strings.Contains(full, "aspires to be") {
+		t.Errorf("event drill-in did not show the full response:\n%s", full)
+	}
+	// esc backs out of the event view.
+	m.handleEventViewKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.inEventView {
+		t.Error("esc did not leave the event view")
+	}
+}
+
+// TestLeftTree_TurnWithChildrenEnterToggles confirms enter still TOGGLES (not
+// drills) on a header that has spawned agents.
+func TestLeftTree_TurnWithChildrenEnterToggles(t *testing.T) {
+	_, m := twoTurnSpawnedTree(t)
+	_ = m.renderTreeRows(60)
+	m.selected = 0 // turn 1 header, has children
+	m.handleTreeKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.inDetail {
+		t.Fatal("enter on a turn header WITH children wrongly focused the detail pane")
+	}
+	rows := stripANSITurns(strings.Join(m.renderTreeRows(60), "\n"))
+	if !strings.Contains(rows, "Kimi Strategist") {
+		t.Errorf("enter did not expand turn 1's children:\n%s", rows)
+	}
+}
