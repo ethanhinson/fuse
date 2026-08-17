@@ -62,6 +62,16 @@ func TestObservabilityAcceptanceHermetic(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// Pin the loop to THIS test's scripted gateway. config.Load applies
+	// LLM_GATEWAY_URL / LLM_GATEWAY_KEY as overrides ON TOP of config.yml
+	// (loader.go), so a developer machine that exports them (e.g. a local LiteLLM
+	// gateway) would otherwise redirect the loop to a REAL provider — producing a
+	// real model turn with real tool calls whose extra spans fail this test's
+	// exact-span assertion. Point the env overrides at the scripted gateway so the
+	// test is hermetic regardless of the ambient shell (project policy: tests never
+	// hit a real provider).
+	t.Setenv("LLM_GATEWAY_URL", gateway.URL)
+	t.Setenv("LLM_GATEWAY_KEY", "test-key")
 	if err := os.Mkdir(filepath.Join(home, ".fuse"), 0o755); err != nil {
 		t.Fatal(err)
 	}
