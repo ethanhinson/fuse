@@ -14,6 +14,10 @@ One curated finding per file; this index is the hint surface. Load it, then read
 - [race-invisible-to-race-detector-without-concurrent-test](race-invisible-to-race-detector-without-concurrent-test.md) — Adding a live-reload that mutates a shared type read on a request path? The data race is invisible to -race until a test drives a request concurrently with the reload. · also: race, mcp, live-reload, testing ⟨needs promotion⟩
 - [slot-cap-yield-while-blocked-on-children](slot-cap-yield-while-blocked-on-children.md) — Bounded-concurrency caps must not charge a holder that is blocked waiting on other holders — release (yield) the slot while waiting, reacquire after, or nested work deadlocks the pool · also: deadlock, semaphores, goroutines, subagents ⟨needs promotion⟩
 
+## durable-resume
+
+- [durable-replay-carries-injection-envelope](durable-replay-carries-injection-envelope.md) — A durable-transcript replay delivers user turns WRAPPED in the runtime's injection envelope ("[human message]\n…", internal/agent/humanmsg.go) — not the raw text the client originally sent. Any client-side filter or matcher doing exact-match against its own sent text (quiet prompts, dedup, ownership checks) silently never fires on replay; strip the envelope before matching, and test the filter against a REPLAYED stream, not just the live one. · also: replay, streaming, client-sdk, wander, envelope ⟨needs promotion⟩
+
 ## go
 
 - [break-import-cycle-with-agent-free-subpackage](break-import-cycle-with-agent-free-subpackage.md) — When a tool reader and its concrete writer both need a shared domain package but the writer imports the caller (tools → x → agent → tools), keep the schema + reader agent-free in the base package and put the agent-dependent writer in a leaf subpackage imported only by the composition root (cmd/*) · also: architecture, subagents, packages ⟨needs promotion⟩
@@ -54,6 +58,10 @@ One curated finding per file; this index is the hint surface. Load it, then read
 ## security
 
 - [containment-proof-needs-a-real-resolved-path](containment-proof-needs-a-real-resolved-path.md) — A path-containment proof is only sound over an operand that IS a filesystem path, resolved the way the shell will resolve it — an unexpanded `~` or a non-path operand (a process name) both resolve against the cwd and silently prove in-workspace. · also: permissions, shell, parsing, go ⟨needs promotion⟩
+
+## spec-drift
+
+- [spec-asserted-error-code-verify-emitter-first](spec-asserted-error-code-verify-emitter-first.md) — When a spec keys client/UI behavior on a SPECIFIC error code or terminal condition ("on failed_precondition show paused"), verify the emitting code actually produces it BEFORE building the affordance — enumerate the emitter's real error returns. If the code turns out to be unemitted-but-documented (an ADR lists it as possible), keep the handling branch and relabel it defensive rather than deleting it: deletion silently reroutes a future emission into the wrong arm. · also: error-handling, review, defensive-code, build-loop
 
 ## testing
 
