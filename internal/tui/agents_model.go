@@ -1260,13 +1260,34 @@ func turnStartFor(n agent.NodeView, ts time.Time) time.Time {
 // n.Turns (-1 when the node has no marks — the legacy/child path). Both the
 // offset formatter (via turnStartFor) and the detail pane's row grouping go
 // through it, so a row can never disagree with the offset printed on it.
+//
+// A turn's mark is stamped by the shell at prompt-submit (BeginTurnWithPrompt),
+// while that turn's events are emitted by the async run goroutine — two
+// independent time.Now() calls. Observed live (change 0067): a turn's FIRST
+// event can carry a TS a few ms EARLIER than its own mark's StartedAt, so a
+// StartedAt-only rule mis-buckets that event into the PREVIOUS (settled,
+// collapsed) turn and it vanishes from the running turn's group — the reported
+// "turn 2 is empty" defect. The real boundary between turn i-1 and turn i is
+// turn i-1's EndedAt (the turn is provably over then): any event after a
+// settled turn's EndedAt belongs to a LATER turn, whatever the StartedAt skew.
 func turnIndexFor(n agent.NodeView, ts time.Time) int {
 	if len(n.Turns) == 0 {
 		return -1
 	}
 	for i := len(n.Turns) - 1; i >= 0; i-- {
+		// Own the event if it is at/after this turn's start (the normal case)...
 		if !n.Turns[i].StartedAt.After(ts) {
 			return i
+		}
+		// ...or if it falls after the PREVIOUS turn closed (this turn's real
+		// lower bound), which catches a first event stamped just before its own
+		// mark. i == 0 has no previous turn, so turn 1 keeps its predates-anchor
+		// below.
+		if i > 0 {
+			prevEnd := n.Turns[i-1].EndedAt
+			if !prevEnd.IsZero() && ts.After(prevEnd) {
+				return i
+			}
 		}
 	}
 	// The event predates turn 1; anchor it to the session's first turn so it
