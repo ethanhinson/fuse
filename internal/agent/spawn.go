@@ -405,13 +405,25 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int, spa
 		}
 	}()
 
+	// Turn provenance for the /agents tree grouping: a top-level child (parent is
+	// the root) takes the root's current conversational turn; a deeper descendant
+	// INHERITS its parent's turn, so a whole spawned subtree groups under the one
+	// turn its depth-1 ancestor belongs to — even if a long-lived child spawns a
+	// grandchild in a later turn.
+	spawnedInTurn := 0
+	if s.node != nil && s.node.SpawnedInTurn > 0 {
+		spawnedInTurn = s.node.SpawnedInTurn
+	} else if s.tree != nil {
+		spawnedInTurn = s.tree.CurrentTurn()
+	}
 	node := &AgentNode{
-		ID:       newNodeID(),
-		ParentID: parentID,
-		Label:    opts.Label,
-		Model:    opts.ModelID,
-		Status:   StatusPending,
-		Depth:    depth,
+		ID:            newNodeID(),
+		ParentID:      parentID,
+		Label:         opts.Label,
+		Model:         opts.ModelID,
+		Status:        StatusPending,
+		Depth:         depth,
+		SpawnedInTurn: spawnedInTurn,
 	}
 	doneCh := make(chan SpawnDone, 1)
 	childCtx, cancel := context.WithCancel(ctx)
