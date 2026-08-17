@@ -74,6 +74,44 @@ window.__wanderParks = 0; // count of loop.parked completions (turn boundaries) 
 window.__wanderOpenStreams = 0;
 window.__wanderResets = 0; // client-side session resets performed.
 window.__wanderSavedRefreshes = 0; // list_favorites results rendered SINCE the last reset.
+// The current session's loop id (null when there is no loop). The browser lane reads this
+// instead of reaching into localStorage, so the assertion is about the app's live session
+// rather than about the storage encoding.
+window.__wanderLoopId = null;
+// True when this page load resumed a stored loop instead of starting a fresh session
+// (change 0062). Initialized unconditionally so the lane can read it on the first-visit
+// path too, where it simply stays false.
+window.__wanderRestored = false;
+// True once a restore locked the composer for its replay window (change 0062). It records a
+// LOAD-TIME fact — "this page load disabled the composer before opening the replay stream" —
+// which is why it is not cleared by resetSession alongside the per-session counters, and why
+// a lane can assert it without racing the replay it describes.
+window.__wanderRestoreComposerLocked = false;
+// True once the durable stream behind a stored session turned out to be gone (`not_found`)
+// and the app fell back to a clean fresh session (change 0062, D3).
+window.__wanderRestoreLost = false;
+// True once a terminal `failed_precondition` parked this page. DEFENSIVE: not reachable
+// against today's server. Observe (internal/loopconnect/observe.go) never returns
+// FailedPrecondition, and an idle reap ends the observe stream CLEANLY — which the SDK
+// classifies as transient and re-opens from the watermark. So this flag stays false in
+// practice, and the browser lane asserts exactly that. Kept because ADR-0037's terminal
+// set (sdk/ts/src/index.ts TERMINAL_CODES) includes FailedPrecondition, so a future
+// server change could start emitting it on the stream (change 0062, D2).
+window.__wanderPaused = false;
+
+// The two terminal Connect codes this app treats differently. @fuse/sdk carries the raw
+// numeric `@connectrpc/connect` `Code` on FuseTerminalError.code but does NOT re-export the
+// `Code` enum (sdk/ts/src/index.ts exports createClient / isCompletion / FuseTerminalError
+// and the types — no enum), so the vendored bundle has nothing to import here. These are the
+// canonical Connect numbers (node_modules/@connectrpc/connect/dist/esm/code.d.ts:30 and :46)
+// for two members of ADR-0037's terminal set; the other two (PermissionDenied = 7,
+// Unauthenticated = 16) need no constant — they are the unchanged default branch.
+const CODE_NOT_FOUND = 5;
+const CODE_FAILED_PRECONDITION = 9;
+
+// TASK_PREAMBLE is shared by the startLoop task builder and the restore-time strip of the
+// turn-0 user.input event — kept as one constant so the two cannot drift apart.
+const TASK_PREAMBLE = "You are Wander, a friendly vacation-rental concierge. First request: ";
 
 const threadEl = document.getElementById("thread");
 const activityEl = document.getElementById("activity");
@@ -100,9 +138,12 @@ const initialThreadHTML = threadEl.innerHTML;
 const initialActivityHTML = activityEl.innerHTML;
 const initialLoopLabel = loopLabel ? loopLabel.textContent : "";
 
-// Session state. Wander is stateless across page loads (#54 boundary): a refresh starts a
-// fresh loop. `loopId` is created lazily on the first message (persistent interactive loop
-// so the concierge holds context across turns, #53).
+// Session state. `loopId` is created lazily on the first message (persistent interactive
+// loop so the concierge holds context across turns, #53) and is PERSISTED (change 0062):
+// a reload restores the conversation by re-observing that loop's durable event stream from
+// seq 0, which is exactly what change #54 made possible on the server. So a refresh resumes
+// rather than starting a fresh loop; + New and a user switch are the gestures that
+// deliberately forget the stored session.
 let loopId = null;
 // turnInFlight guards against a second submit while the current turn is still being answered
 // (composer disabled). It is distinct from "is the observe stream open" — the persistent
@@ -129,6 +170,112 @@ let quietTurn = false;
 // pendingSavedRefresh is set when a favorite_listing call is seen; the refresh fires at the
 // next park, because a `send` is only accepted at a parked turn boundary.
 let pendingSavedRefresh = false;
+// replaying is set by the restore-on-load path and cleared by the user's first submit
+// (change 0062, D-D). It changes two things: `user.input` events render the human turns (live
+// turns are echoed locally by handleSubmit instead), and the completion handler's side effects
+// — focus and the Saved-panel refresh turn — are suppressed so a replay cannot act on the
+// world.
+//
+// Its scope, stated honestly: the flag is an OVER-approximation of "the durable stream is
+// still replaying history". There is no watermark on the wire — the SDK's observe surfaces no
+// caught-up-to-head signal (sdk/ts/src/index.ts ConnState is connecting/live/reconnecting/
+// closed, none of which mean "history exhausted") — so the app cannot know the exact instant
+// replay ends, and a timer would only guess. Two consequences follow, both deliberate:
+//
+//   * The replay must be inert with respect to the USER, not just the server: a restore
+//     therefore disables the composer (restoreSession) and the first replayed park re-enables
+//     it. Without that lock a submit landing mid-replay would clear this flag while historical
+//     `user.input` events were still arriving — silently dropping turns from the very
+//     transcript a restore exists to rebuild — echo the new message into a half-restored
+//     thread, and let the NEXT replayed park declare the live turn finished.
+//   * Reloading while a turn was still RUNNING leaves the flag true across that turn's live
+//     tail, until the user submits. The only effects are that the park does not steal focus
+//     and that a `favorite_listing` seen in that tail clears pendingSavedRefresh without
+//     re-reading the Saved panel. That is a limitation, not a regression: the panel is empty
+//     after EVERY restore (nothing repopulates it on load), so the suppressed refresh removes
+//     nothing the restored page had.
+let replaying = false;
+
+// ─────────────────── Session persistence (change 0062, D-A) ──────────────────
+// localStorage["wander.session.v1"] = {"loopId": …, "tenant": …, "subject": …}.
+//
+// The principal is stored WITH the id, and a restore only ever fires when both fields match
+// the credential in hand. Wander is a multi-identity demo: a loop restored under a different
+// principal would be a cross-owner Observe, which the server rejects with PermissionDenied —
+// a confusing failure where a fresh session is the honest answer. So a mismatch is never
+// "try it and see"; it is treated exactly like nothing stored, as is a parse failure or an
+// entry with no loopId.
+//
+// Every storage access is try/catch-wrapped. Storage can throw outright (Safari private
+// mode, a hardened profile, disabled site data), and the demo must degrade to today's
+// stateless behavior rather than break.
+//
+// What is stored is the principal's NAME ({tenant, subject}) — never its token. On reload the
+// token is re-resolved from the demo directory the server publishes (see restoreSession), so
+// no bearer credential is ever written to localStorage. The corollary is a deliberate
+// limitation: a session opened under a PASTED custom token is not persisted at all (below).
+const SESSION_KEY = "wander.session.v1";
+
+function saveSession(id) {
+  // A pasted token is a credential we would have to store to restore, and localStorage is
+  // the wrong home for a bearer credential even in an example app. Worse, the {tenant,
+  // subject} the app attaches to a custom token is the app's GUESS (the tenant box plus the
+  // literal subject "custom"), not the server's resolution of that token — so a stored entry
+  // for it would be a claim the app cannot back. A custom-credential session is therefore
+  // deliberately not restorable. Nothing to clear here: switchUser() reset (and so cleared)
+  // the store before this credential was ever used.
+  if (currentUser.custom) return;
+  try {
+    localStorage.setItem(
+      SESSION_KEY,
+      JSON.stringify({ loopId: id, tenant: currentUser.tenant, subject: currentUser.subject }),
+    );
+  } catch {}
+}
+
+// readSession returns the stored entry VERBATIM (principal included) or null. It performs no
+// principal check — it is the raw read that restoreSession needs in order to find out WHOSE
+// session is stored. Everything that acts on a stored id goes through loadSession() below.
+function readSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw);
+    if (!saved || !saved.loopId) return null;
+    return {
+      loopId: String(saved.loopId),
+      tenant: String(saved.tenant),
+      subject: String(saved.subject),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// principalMatches is the security-relevant check, defined ONCE: BOTH halves of the principal
+// must equal the credential currently in hand.
+function principalMatches(entry) {
+  return !!entry && entry.tenant === currentUser.tenant && entry.subject === currentUser.subject;
+}
+
+function loadSession() {
+  const saved = readSession();
+  if (!principalMatches(saved)) return null;
+  return { loopId: saved.loopId };
+}
+
+function clearSession() {
+  try {
+    localStorage.removeItem(SESSION_KEY);
+  } catch {}
+}
+
+// One writer for the loop-label text, so the mint path and the restore path cannot drift
+// into two different renderings of the same fact.
+function setLoopLabel(id) {
+  if (!loopLabel) return;
+  loopLabel.textContent = `Live loop ${String(id).slice(0, 12)}… — streaming over Connect`;
+}
 
 // ─────────────────────────── Connection indicator ───────────────────────────
 // The pill is keyed on the SDK's own onState vocabulary; styles.css selects on
@@ -258,6 +405,17 @@ function decodePayload(ev) {
 async function runObserve(generation, myLoopId, myClient, abort) {
   // The in-progress reply bubble for the CURRENT turn; reset at each park.
   let replyText = "";
+  // The replay-side twin of `quietTurn`. `quietTurn` is set by the LIVE submit path, so it
+  // is false for every event arriving from the durable stream — but an app-initiated
+  // Saved-panel refresh is a REAL turn, so its answer is in that stream too. Without this a
+  // restore suppresses the quiet QUESTION and still paints its ANSWER, leaving an orphan
+  // concierge bubble attached to nothing. Scoped per stream, set on the replayed quiet
+  // `user.input`, cleared at the park below so it cannot leak into the next replayed turn.
+  let replayQuiet = false;
+  // Set by the one branch that disables the composer ON PURPOSE and wants it to STAY
+  // disabled (the D2 pause). It exists so the `finally` below can re-enable a composer that
+  // a restore locked, without undoing a deliberate lock.
+  let holdComposer = false;
   const current = () => generation === sessionGeneration;
 
   window.__wanderOpenStreams++;
@@ -284,12 +442,39 @@ async function runObserve(generation, myLoopId, myClient, abort) {
           setPhase(pendingBubble, "Thinking through your request…");
           break;
         }
+        case "user.input": {
+          // Only a replay renders human turns; live ones were already echoed by handleSubmit.
+          if (!replaying) break;
+          let text = String(p.content || "");
+          // A deny nudge is a SYNTHETIC user turn the runtime injects — never a human said it.
+          if (text.startsWith("[policy] ")) break;
+          // The turn-0 seed carries the whole task: preamble + the user's first message.
+          if (text.startsWith(TASK_PREAMBLE)) text = text.slice(TASK_PREAMBLE.length);
+          // Every LATER turn arrives wrapped in the runtime's injection envelope
+          // ("[human message]\n…", internal/agent/humanmsg.go Poll) because `send` queues
+          // the text and the loop batches it in at the turn boundary. Strip it: it is
+          // runtime framing, not something a human typed — and leaving it on also defeats
+          // the SAVED_REFRESH_PROMPT comparison below, which is an exact match.
+          if (text.startsWith(HUMAN_ENVELOPE)) text = text.slice(HUMAN_ENVELOPE.length);
+          // The Saved-panel refresh is a real `send`, but the APP asked it, not the user.
+          // This is a content match, not a provenance flag — the `quiet` bit isn't carried
+          // in the user.input payload, so a user who genuinely types this exact sentence
+          // will also have that turn suppressed on replay. Known, accepted false positive.
+          if (text === SAVED_REFRESH_PROMPT) {
+            // Suppress the question AND the answer that follows it, for this turn only.
+            replayQuiet = true;
+            break;
+          }
+          if (!text.trim()) break;
+          addMessage("user", "you", text);
+          break;
+        }
         case "model.call.start": {
           setPhase(pendingBubble, "Consulting the model…");
           break;
         }
         case "model.delta": {
-          if (p.text && !quietTurn) {
+          if (p.text && !quietTurn && !replayQuiet) {
             if (!pendingBubble) pendingBubble = addPendingConcierge();
             replyText += p.text;
             pendingBubble.textContent = replyText; // drops the spinner on first token
@@ -368,7 +553,7 @@ async function runObserve(generation, myLoopId, myClient, abort) {
           // The terminal answer for this exchange. With a non-streamed gateway there is no
           // model.delta, so render the parked content directly; otherwise it matches.
           const answer = p.content || replyText;
-          if (answer && !quietTurn) {
+          if (answer && !quietTurn && !replayQuiet) {
             if (!pendingBubble) pendingBubble = addPendingConcierge();
             renderAnswer(pendingBubble, answer);
           }
@@ -387,16 +572,20 @@ async function runObserve(generation, myLoopId, myClient, abort) {
         pendingBubble = null;
         replyText = "";
         turnInFlight = false;
-        const wasQuiet = quietTurn;
+        const wasQuiet = quietTurn || replayQuiet;
         quietTurn = false;
+        replayQuiet = false;
+        // The composer re-enables even during a replay — a restored session must be usable.
         setComposerEnabled(true);
-        if (!wasQuiet) inputEl.focus();
+        if (!wasQuiet && !replaying) inputEl.focus();
         // A favorite landed this turn: re-read the set now that the loop is parked and
         // will accept a `send` again. list_favorites never sets the flag, so this cannot
-        // chain into a refresh loop.
+        // chain into a refresh loop. During a replay the flag is cleared WITHOUT firing:
+        // a replayed favorite is history, and re-running it would spend a real model turn
+        // in the middle of restoring the transcript.
         if (pendingSavedRefresh) {
           pendingSavedRefresh = false;
-          refreshSaved();
+          if (!replaying) refreshSaved();
         }
       }
     }
@@ -404,18 +593,63 @@ async function runObserve(generation, myLoopId, myClient, abort) {
     if (!current()) {
       // A superseded stream's failure is nobody's business: this session is gone.
     } else if (err instanceof FuseTerminalError) {
-      // A terminal Connect code (auth rejected, loop gone/finished): stop, show the right
-      // affordance — do NOT silently hot-loop.
+      // A terminal Connect code: stop, show the RIGHT affordance for THIS code — do NOT
+      // silently hot-loop, and do not treat all four alike (change 0062, D2 + D3). The
+      // window.__wanderTerminal instrumentation is written FIRST in every branch, before
+      // anything that could reset it, because the reconnect lane asserts on it. (On the
+      // not_found path below, pushActivity's rail entry is NOT similarly protected — it is
+      // wiped by resetSession() and not re-added; only the window.* markers are re-asserted.)
       window.__wanderTerminal = err.code;
-      setConn("error");
       pushActivity("error", "⚠︎", "Stream closed", String(err.code));
-      addMessage("error", "", `Connection closed (${err.code}). Refresh to start a new session.`);
+      if (err.code === CODE_NOT_FOUND) {
+        // D3 — the durable stream itself is gone (a wiped/rebuilt store). This is the one
+        // genuinely unrecoverable case: there are no events left to rebuild from, so the
+        // honest answer is a clean fresh session rather than a retry against nothing.
+        // resetSession() is safe to call from here: this stream is already ending, and its
+        // abort()+generation bump only make the (already dead) stream inert — the `finally`
+        // below still runs and still decrements __wanderOpenStreams.
+        clearSession();
+        resetSession();
+        // resetSession clears the per-session instrumentation (including __wanderTerminal),
+        // so re-assert the terminal code and the loss marker AFTER it.
+        window.__wanderTerminal = err.code;
+        window.__wanderRestoreLost = true;
+        addMessage("error", "", "Your previous session is no longer available — starting a new one.");
+      } else if (err.code === CODE_FAILED_PRECONDITION) {
+        // D2 — reap ≠ loss. DEFENSIVE BRANCH, unreachable against today's server: Observe
+        // (internal/loopconnect/observe.go) returns only PermissionDenied/NotFound from
+        // authorization and Internal from rt.Observe/rt.Attach — never FailedPrecondition —
+        // and an idle reap merely closes the subscription channel, which the handler treats
+        // as a clean stream end and the SDK re-opens from the watermark. (The one place the
+        // server DOES emit FailedPrecondition is the unary Send, and even there it first
+        // tries a transparent Resume.) It is kept, rather than deleted, because ADR-0037's
+        // terminal set in the SDK (TERMINAL_CODES) lists FailedPrecondition: if a future
+        // server change starts surfacing it on the stream, the SDK will throw it here, and
+        // this branch is the honest affordance — stop, KEEP the stored session, tell the
+        // user a reload resumes it — instead of the generic auth-rejected message below.
+        setConn("closed");
+        setComposerEnabled(false);
+        holdComposer = true; // deliberate: reload, don't type.
+        window.__wanderPaused = true;
+        addMessage("error", "", "Session paused — reload to resume this conversation.");
+      } else {
+        // unauthenticated / permission_denied — auth rejected. Unchanged behavior.
+        setConn("error");
+        addMessage("error", "", `Connection closed (${err.code}). Refresh to start a new session.`);
+      }
     } else if (!abort.signal.aborted) {
       setConn("error");
       addMessage("error", "", `Unexpected error: ${String(err)}`);
     }
   } finally {
     window.__wanderOpenStreams--;
+    // Never leave the page with a dead composer. A restore locks it until the first park, so
+    // a stream that ends BEFORE ever parking — an empty durable stream, a clean server-side
+    // close, an auth rejection — would otherwise strand the user with nothing to type into.
+    // Gated on three things: this stream must still own the session (a reset or a switch has
+    // already re-enabled it and bumped the generation, and the not_found branch goes through
+    // exactly that), no live turn may be in flight, and the D2 pause's deliberate lock stands.
+    if (current() && !turnInFlight && !holdComposer) setComposerEnabled(true);
   }
 }
 
@@ -427,6 +661,11 @@ let pendingBubble = null;
 // user (the Saved-panel refresh): it is a real agent turn on the real loop — same
 // credential, same tool path — it simply renders no transcript bubbles.
 async function handleSubmit(text, quiet = false) {
+  // The user acting ends the replay. This is only sound because the user CANNOT act before
+  // the first replayed park — restoreSession disables the composer and the park re-enables it
+  // — so by the time this runs, the history that a submit would otherwise cut short has
+  // already been rendered. (See the `replaying` declaration for the full scope.)
+  replaying = false;
   quietTurn = quiet;
   if (!quiet) {
     addMessage("user", "you", text);
@@ -444,15 +683,15 @@ async function handleSubmit(text, quiet = false) {
       // First message: start a persistent interactive loop so context holds across turns,
       // then open the ONE long-lived observe stream (kept open for the whole session).
       const started = await myClient.startLoop({
-        task: `You are Wander, a friendly vacation-rental concierge. First request: ${text}`,
+        task: TASK_PREAMBLE + text,
         model: "cloud/x",
         interactive: true,
       });
       if (generation !== sessionGeneration) return; // switched mid-start: drop this loop.
       loopId = started.loopId;
-      if (loopLabel) {
-        loopLabel.textContent = `Live loop ${String(loopId).slice(0, 12)}… — streaming over Connect`;
-      }
+      window.__wanderLoopId = loopId;
+      saveSession(loopId);
+      setLoopLabel(loopId);
       // fire-and-forget; it re-enables the composer at each park.
       runObserve(generation, loopId, myClient, myAbort);
     } else {
@@ -483,6 +722,12 @@ function submit(text) {
 // from a `list_favorites` tool result, which the server adjudicated against the calling
 // principal's own delegated token. That is why switching users shows a different list —
 // and why the app never merges, caches, or carries a list across principals.
+
+// HUMAN_ENVELOPE is the runtime's injection framing for a `send`: the loop batches queued
+// human text into one user message prefixed with this marker (internal/agent/humanmsg.go,
+// HumanInjector.Poll). Only the replay path sees it — a live turn is echoed from the
+// composer, before the runtime wraps anything.
+const HUMAN_ENVELOPE = "[human message]\n";
 
 // SAVED_REFRESH_PROMPT is the quiet turn's ask. It is phrased for the model, which decides
 // to call list_favorites; the app cannot (and must not) invoke a tool itself.
@@ -551,11 +796,16 @@ function resetSession() {
   sessionGeneration++;
 
   loopId = null;
+  window.__wanderLoopId = null;
+  // The two fresh-start gestures (+ New and switchUser) both funnel through here, so both
+  // also forget the stored session — no second teardown path.
+  clearSession();
   cursor = 0n;
   turnInFlight = false;
   pendingBubble = null;
   quietTurn = false;
   pendingSavedRefresh = false;
+  replaying = false;
   realURLs.clear();
 
   threadEl.innerHTML = initialThreadHTML;
@@ -577,6 +827,27 @@ function resetSession() {
   window.__wanderTerminal = null;
   window.__wanderSavedRefreshes = 0;
   window.__wanderResets++;
+  // A reset is a fresh session by definition, never a restored one — and never a paused or
+  // a lost one either. (The not_found path re-asserts __wanderRestoreLost right after the
+  // reset it triggers, so clearing it here is what makes the flag mean "the session I am
+  // looking at now replaced a lost one", not "some session was once lost".)
+  window.__wanderRestored = false;
+  window.__wanderPaused = false;
+  window.__wanderRestoreLost = false;
+}
+
+// adoptUser makes `user` the credential in hand: it re-points the SDK client and the UI's
+// identity affordances, and NOTHING else. It deliberately does no teardown and starts no
+// turn, because it has two callers with different needs — switchUser (which must reset the
+// previous principal's session FIRST) and the restore path (which must establish the stored
+// principal's credential BEFORE loadSession is consulted, with no session to tear down and
+// no model turn to spend). Keeping it credential-only is what lets both share one definition
+// of "who we are now" without the restore inheriting a switch's side effects.
+function adoptUser(user) {
+  currentUser = user;
+  client = makeClient(user);
+  whoamiEl.textContent = user.label;
+  syncPickerSelection();
 }
 
 // switchUser resets, re-credentials the SDK client, then asks the NEW principal's agent
@@ -585,9 +856,7 @@ function resetSession() {
 function switchUser(user) {
   if (!user || !user.token) return;
   resetSession();
-  currentUser = user;
-  client = makeClient(user);
-  whoamiEl.textContent = user.label;
+  adoptUser(user);
   refreshSaved();
 }
 
@@ -607,8 +876,16 @@ function renderPicker() {
   custom.textContent = "paste a token…";
   userSelect.appendChild(custom);
   // Re-select whoever is current so populating the list never silently switches user.
+  syncPickerSelection();
+}
+
+// syncPickerSelection points the picker at whoever `currentUser` is, WITHOUT rebuilding the
+// option list (so it is safe to call from inside the picker's own change handler). DEV_USER
+// is always demoUsers[0], so the only credential that is not in the list is a pasted one —
+// which belongs on the "paste a token…" option, not silently back on dev.
+function syncPickerSelection() {
   const idx = demoUsers.indexOf(currentUser);
-  userSelect.value = String(idx >= 0 ? idx : 0);
+  userSelect.value = idx >= 0 ? String(idx) : "custom";
 }
 
 // loadDemoUsers fetches the demo directory server.js publishes from the demo fuse config.
@@ -828,7 +1105,10 @@ customApply.addEventListener("click", () => {
     return;
   }
   const tenant = customTenant.value.trim() || "_default";
-  switchUser({ token, tenant, subject: "custom", label: `custom@${tenant}` });
+  // `custom: true` marks a credential the app cannot name or re-resolve later: its token is
+  // pasted (never persisted — see saveSession) and its {tenant, subject} is a guess, not the
+  // server's resolution. Sessions started under it are deliberately not restorable.
+  switchUser({ token, tenant, subject: "custom", label: `custom@${tenant}`, custom: true });
 });
 
 whoamiEl.textContent = currentUser.label;
@@ -836,7 +1116,77 @@ renderPicker();
 // Fetch the demo directory in the background. Deliberately NOT followed by a saved-panel
 // refresh: the page must not start a loop before the user says something (#54's stateless
 // boundary), so the panel first fills on an explicit user switch or after a favorite lands.
-loadDemoUsers();
+// The promise is kept: restoreSession awaits it — and ONLY it — when the stored session
+// belongs to a principal other than the one the page loads with.
+const demoUsersReady = loadDemoUsers();
+
+// Restore-on-load (change 0062, D1).
+//
+// The page always loads as DEV_USER, but a session may have been minted under any demo
+// principal, so a restore has to re-establish that principal's credential BEFORE it can
+// decide anything. The order below is the whole point and must not be rearranged:
+//
+//   1. read the stored entry (raw — no principal filtering: we are asking WHOSE it is);
+//   2. if it names the credential already in hand (the common dev case), fall straight
+//      through with NO await, so that path is byte-identical to a synchronous restore;
+//   3. otherwise wait for the demo directory and look the stored principal up in it. The
+//      TOKEN comes from the directory, never from storage — we persist a principal's name,
+//      not its credential. A principal that is no longer in the directory (removed from the
+//      demo config, a failed fetch, or a pasted credential that was never persisted in the
+//      first place) is not a restorable session: forget it and stay a clean fresh session;
+//   4. adopt that credential, and only THEN consult loadSession().
+//
+// loadSession() stays the authoritative gate in every path: it is re-run after the adoption
+// and still refuses anything whose {tenant, subject} does not match the credential now in
+// hand. That is what keeps a restore from ever issuing a cross-owner Observe — which the
+// server would reject with PermissionDenied, a confusing failure where a fresh session is
+// the honest answer. Adopting a directory principal is not an escalation: those tokens are
+// published to this page already (server.js's opt-in demo directory) and the picker hands
+// any of them out on one click; storage can only name a principal, never mint a credential.
+async function restoreSession() {
+  const stored = readSession();
+  if (!stored) return;
+  if (!principalMatches(stored)) {
+    const generation = sessionGeneration;
+    await demoUsersReady;
+    // The user can act during that await (the composer is live). If they did — started a
+    // turn, or switched/reset, which bumps the generation — their session wins outright:
+    // never re-credential or re-point a loop out from under a live one.
+    if (generation !== sessionGeneration || loopId !== null || turnInFlight) return;
+    const owner = demoUsers.find(
+      (u) => u.tenant === stored.tenant && u.subject === stored.subject,
+    );
+    if (!owner) {
+      clearSession();
+      return;
+    }
+    adoptUser(owner);
+  }
+  const restored = loadSession();
+  if (!restored) return;
+  loopId = restored.loopId;
+  window.__wanderLoopId = loopId;
+  // Everything the durable stream is about to replay is history, not live activity: the
+  // flag stays true until the user's next submit.
+  replaying = true;
+  // …and the user must not be able to submit INTO that replay. A restored loop is idle from
+  // the server's side, but the composer is live from the moment the page paints, and submit()
+  // guards only on turnInFlight — which is false here even when the restored loop is mid-turn.
+  // Locking the composer until the first replayed park is what makes the flag above true:
+  // it costs no timer and no extra state, and the park's existing setComposerEnabled(true)
+  // is the release. Every other exit from a restore re-enables it too (the not_found branch
+  // via resetSession, and any stream that ends before parking via runObserve's `finally`).
+  setComposerEnabled(false);
+  // Records the OBSERVED composer state, not the intent: a lane asserting on it is asserting
+  // that the disable actually landed, so deleting the call above turns the lane red.
+  window.__wanderRestoreComposerLocked = inputEl.disabled === true;
+  setLoopLabel(loopId);
+  window.__wanderRestored = true;
+  // fire-and-forget, exactly as on the mint path: it re-enables the composer at each park.
+  runObserve(sessionGeneration, loopId, client, sessionAbort);
+}
+
+restoreSession();
 
 // Page-unload teardown (D3): abort the CURRENT session's observe stream so a navigation
 // never leaks a stream. Idempotent — a double abort, or an abort after a switch already
