@@ -2,7 +2,7 @@
 id: 68
 slug: auto-mode-deterministic-freedom
 title: Auto-mode deterministic freedom — scratchpad + write_roots + rules-layer shrink to catastrophic-only
-status: proposed
+status: in-progress
 priority: high
 type: feat
 created: 2026-08-17
@@ -16,10 +16,11 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/auto-mode-deterministic-freedom
+claimed_at: 2026-08-17T21:45:00Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -52,4 +53,4 @@ Stage B of the auto-mode overhaul — the biggest observed-pain win. The rules l
 
 ## Reconcile log
 
-<!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+- 2026-08-17 — claimed same day the spec was authored; dependency #0067 merged to main (PR #71, 4fca89b) so the depends_on gate is satisfied. Spec anchors verified during design against the tree #0067 branched from; #0067 touched gate.go/heuristics-adjacent code, so the build re-verifies line anchors against current main before editing. Building inline in the main session; human authorized full merge+finalize ("merge and finalize").
