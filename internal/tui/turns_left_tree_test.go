@@ -293,3 +293,37 @@ func TestLeftTree_RootWorksDirectlyTurnsShowSlices(t *testing.T) {
 		t.Errorf("turn 2 detail leaked turn 1's events:\n%s", d2)
 	}
 }
+
+// TestLeftTree_ChildlessTurnHasNoCaret guards the reported confusion: a turn
+// where the root worked directly (no spawned agents) must NOT show an
+// expand/collapse caret — there is nothing under it to reveal, so an operator
+// isn't invited to "expand" a group with no children. Turns WITH spawned agents
+// still get a caret.
+func TestLeftTree_ChildlessTurnHasNoCaret(t *testing.T) {
+	tree := agent.NewAgentTree("minimax", "minimax")
+	root := tree.Node(tree.RootID())
+	tree.BeginTurnWithPrompt("do analysis of the current repo")
+	root.AddEvent(agent.AgentEvent{Kind: agent.KindAssistant, Name: "a1", TS: time.Now()})
+	tree.EndTurn(false)
+	tree.BeginTurnWithPrompt("what do you think the biggest issue is")
+	time.Sleep(2 * time.Millisecond)
+	root.AddEvent(agent.AgentEvent{Kind: agent.KindAssistant, Name: "a2", TS: time.Now()})
+
+	m := NewAgentsModel(tree, nil)
+	m.width, m.height = 100, 20
+	m.refreshSnapshot()
+	got := stripANSITurns(strings.Join(m.renderTreeRows(70), "\n"))
+	if strings.ContainsAny(got, "▾▸") {
+		t.Errorf("childless turns must not show an expand caret:\n%s", got)
+	}
+	if !strings.Contains(got, "· turn 1") || !strings.Contains(got, "· turn 2") {
+		t.Errorf("childless turns should render as plain bullet rows:\n%s", got)
+	}
+
+	// A turn WITH spawned agents still gets a caret.
+	_, ms := twoTurnSpawnedTree(t)
+	spawned := stripANSITurns(strings.Join(ms.renderTreeRows(70), "\n"))
+	if !strings.ContainsAny(spawned, "▾▸") {
+		t.Errorf("turns with spawned agents must show a caret:\n%s", spawned)
+	}
+}

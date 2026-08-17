@@ -831,17 +831,21 @@ func (m *AgentsModel) renderTreeRows(w int) []string {
 	return rows
 }
 
-// renderTurnHeaderRow renders a "▾ turn N · \"prompt\"" collapsible header to w
-// cells, its caret reflecting the collapse state.
+// renderTurnHeaderRow renders a turn header to w cells. A caret (▾/▸) is shown
+// ONLY when the turn has spawned agents to reveal; a turn where the root worked
+// directly (no children) shows a plain bullet, so the operator is not invited to
+// "expand" a group that has nothing under it.
 func (m *AgentsModel) renderTurnHeaderRow(tr treeRow, selected bool, w int) string {
-	caret := "▾"
-	// The last turn is expanded by default; find whether THIS turn is the last.
-	isLast := m.isLastTreeTurn(tr.turn)
-	if !m.turnIsExpanded(tr.turn, isLast) {
-		caret = "▸"
+	glyph := "·" // no children: nothing to expand, just a selectable turn row
+	if m.turnHasChildren(tr.turn) {
+		glyph = "▾"
+		isLast := m.isLastTreeTurn(tr.turn)
+		if !m.turnIsExpanded(tr.turn, isLast) {
+			glyph = "▸"
+		}
 	}
 	prompt := m.turnPromptForOrdinal(tr.turn)
-	label := caret + " turn " + fmt.Sprintf("%d", tr.turn)
+	label := glyph + " turn " + fmt.Sprintf("%d", tr.turn)
 	if prompt != "" {
 		label += " · " + prompt
 	}
@@ -850,6 +854,17 @@ func (m *AgentsModel) renderTurnHeaderRow(tr treeRow, selected bool, w int) stri
 		return fitLine(lipgloss.NewStyle().Reverse(true).Render(fitLine(label, w)), w)
 	}
 	return lipgloss.NewStyle().Foreground(colCyan).Bold(true).Render(plain)
+}
+
+// turnHasChildren reports whether any spawned agent belongs to this turn (a node
+// with SpawnedInTurn == turn). Only such turns get an expand/collapse caret.
+func (m *AgentsModel) turnHasChildren(turn int) bool {
+	for _, n := range m.nodes {
+		if n.Depth != 0 && n.SpawnedInTurn == turn {
+			return true
+		}
+	}
+	return false
 }
 
 // isLastTreeTurn reports whether `turn` is the highest turn ordinal on the root.
