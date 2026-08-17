@@ -2,7 +2,7 @@
 id: 62
 slug: wander-refresh-to-restore-light-up-54-durable-resume-in-the
 title: 'Wander refresh-to-restore — light up #54 durable resume in the browser demo'
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-15
@@ -17,7 +17,7 @@ results: docs/results/2026-08-17-wander-refresh-to-restore-light-up-54-durable-r
 trivial: false
 auto_groomable:
 branch: feat/wander-refresh-to-restore-light-up-54-durable-resume-in-the
-claimed_at: 2026-08-17T21:00:12Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/73
 blocked_by:
 reconciled: true
