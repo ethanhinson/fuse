@@ -515,14 +515,14 @@ func lastAssistantText(msgs []model.Message) string {
 }
 
 // childResult converts a child run outcome into the spawn_agent result.
-// Budget exhaustion (max turns / loop detection) returns the partial
-// transcript with a stop-reason marker instead of discarding all the work the
-// child completed before running out of budget.
+// Budget exhaustion (max turns / loop detection / a valve-paused auto mode)
+// returns the partial transcript with a stop-reason marker instead of
+// discarding all the work the child completed before running out of budget.
 func childResult(msgs []model.Message, rerr error) (string, error) {
 	if rerr == nil {
 		return lastAssistantText(msgs), nil
 	}
-	if errors.Is(rerr, agent.ErrMaxTurns) || errors.Is(rerr, agent.ErrLoopDetected) {
+	if errors.Is(rerr, agent.ErrMaxTurns) || errors.Is(rerr, agent.ErrLoopDetected) || errors.Is(rerr, agent.ErrAutoModePaused) {
 		if partial := lastAssistantText(msgs); partial != "" {
 			return "[stopped: " + rerr.Error() + " — result may be incomplete]\n\n" + partial, nil
 		}

@@ -887,9 +887,10 @@ func (m ShellModel) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y":
 		m.answerApproval(approvalResponse{Approved: true, AllowForSession: false})
 	case "s":
-		// "allow for session" is meaningless for a loop check (the session bool
-		// is discarded), and the popup does not offer it there — ignore the key.
-		if len(m.approvals) > 0 && isLoopApproval(m.approvals[0].req) {
+		// "allow for session" is meaningless for a loop check or valve recovery
+		// (the session bool is discarded), and the popup does not offer it there
+		// — ignore the key.
+		if len(m.approvals) > 0 && isSentinelApproval(m.approvals[0].req) {
 			return m, nil
 		}
 		m.answerApproval(approvalResponse{Approved: true, AllowForSession: true})
@@ -1440,6 +1441,20 @@ func isLoopApproval(req PermissionRequestMsg) bool {
 	return req.Request.ToolName == permissions.LoopApprovalToolName
 }
 
+// isValveApproval reports whether an approval request is the escalation
+// valve's one-time recovery prompt (change 0067) — like a loop check, it is
+// not a real tool call and drops the "allow for session" option.
+func isValveApproval(req PermissionRequestMsg) bool {
+	return req.Request.ToolName == permissions.ValveApprovalToolName
+}
+
+// isSentinelApproval reports whether a request carries any permissions
+// sentinel ToolName (loop check or valve recovery) rather than a real tool
+// call, for the shared session-option suppression.
+func isSentinelApproval(req PermissionRequestMsg) bool {
+	return isLoopApproval(req) || isValveApproval(req)
+}
+
 // overlayApprovalOnView paints the approval popup over the bottom rows of a
 // full-screen view (the agents overlay). The queue is owned by ShellModel, so
 // the popup follows the user across view switches instead of being dropped.
@@ -1448,16 +1463,23 @@ func overlayApprovalOnView(base string, req PermissionRequestMsg, queued, width 
 		return base
 	}
 	loop := isLoopApproval(req)
-	// A loop check is not a real tool call: its ToolName is the sentinel and its
-	// preview already reads "possible loop: … — continue?", so show it as a loop
-	// check and drop the "allow for session" option (its bool is discarded).
+	valve := isValveApproval(req)
+	// A loop check or valve recovery is not a real tool call: its ToolName is a
+	// sentinel and its preview already reads as a question, so render it as such
+	// and drop the "allow for session" option (its bool is discarded).
 	header, field, keys := "⚠  Permission required", "  Tool:  ", "  [y] allow once   [s] allow for session   [n] deny"
 	if loop {
 		header, field, keys = "⚠  Possible loop", "  Loop:  ", "  [y] continue once   [n] abort"
 	}
+	if valve {
+		header, field, keys = "⚠  Auto mode paused", "  Valve: ", "  [y] continue in auto mode   [n] switch to per-call asks"
+	}
 	label := req.Request.ToolName
 	if loop {
 		label = "detected"
+	}
+	if valve {
+		label = "escalation tripped"
 	}
 	if queued > 1 {
 		label = fmt.Sprintf("%s   (1 of %d pending)", label, queued)
