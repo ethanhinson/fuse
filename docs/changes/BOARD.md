@@ -1,6 +1,6 @@
 # Backlog
 
-**70 changes** — 🟡 7 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 54 done · 🗑️ 6 killed
+**70 changes** — 🟡 7 proposed · ⚪ 2 deferred · ✅ 55 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (7)
 
@@ -10,7 +10,7 @@
 | [0063](active/0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | `high` | `feat` | needs-brainstorm |
 | [0064](active/0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | `medium` | `feat` | ⏳ waiting on #63 — not yet built |
 | [0065](active/0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | `medium` | `feat` | ⏳ waiting on #63 — not yet built |
-| [0068](active/0068-auto-mode-deterministic-freedom.md) | Auto-mode deterministic freedom — scratchpad + write_roots + rules-layer shrink to catastrophic-only | `high` | `feat` | ⏳ waiting on #67 — needs your merge |
+| [0068](active/0068-auto-mode-deterministic-freedom.md) | Auto-mode deterministic freedom — scratchpad + write_roots + rules-layer shrink to catastrophic-only | `high` | `feat` | build-ready |
 | [0069](active/0069-auto-mode-classifier-retune-webfetch.md) | Auto-mode classifier retune + web_fetch loosening — allow-bias for routine dev ops, seed becomes real auto-approve | `medium` | `feat` | ⏳ waiting on #68 — not yet built |
 | [0070](active/0070-auto-mode-shell-parse-widening.md) | Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args | `medium` | `feat` | ⏳ waiting on #69 — not yet built |
 
@@ -21,12 +21,6 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0067](active/0067-auto-mode-permission-observability-deny-resilience.md) | Auto-mode permission observability + deny-resilience — measure every gate decision, stop dying on denials | `high` | `feat` | [#71](https://github.com/ethanhinson/fuse/pull/71) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
@@ -36,7 +30,6 @@ graph TD
   0058 --> 0063
   0063 --> 0064
   0063 --> 0065
-  0067
   0067 --> 0068
   0068 --> 0069
   0069 --> 0070
@@ -45,13 +38,15 @@ graph TD
   0054:::done
   0058:::done
   0060:::done
+  0067:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (60)</summary>
+<details><summary>✅🗑️ Archive — done + killed (61)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0067](archive/2026-08-17-0067-auto-mode-permission-observability-deny-resilience.md) | Auto-mode permission observability + deny-resilience — measure every gate decision, stop dying on denials | 2026-08-17 |
 | [0066](archive/2026-08-16-0066-agents-tab-multiturn-turn-groups.md) | Agents tab & blackboard — turn-aware multiturn UI (collapsible turn groups + per-turn timing) | 2026-08-16 |
 | [0060](archive/2026-08-16-0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md) | Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app | 2026-08-16 |
 | [0058](archive/2026-08-16-0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | 2026-08-16 |
@@ -66,7 +61,6 @@ graph TD
 | [0050](archive/2026-08-11-0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | 2026-08-11 |
 | [0049](archive/2026-08-11-0049-auth-multi-tenancy.md) | Auth / multi-tenancy — loop_id ownership and per-tenant isolation for the deployed service | 2026-08-11 |
 | [0048](archive/2026-08-11-0048-networked-runtime-binding.md) | Networked binding over the Runtime seam — WS live observe + HTTP start/send/replay | 2026-08-11 |
-| [0047](archive/2026-08-11-0047-durable-distributed-event-store.md) | Durable / distributed event store — survives restart and is shared across instances | 2026-08-11 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -78,6 +72,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 39 done |
+| [2026-08](archive/) | 40 done |
 
 </details>
