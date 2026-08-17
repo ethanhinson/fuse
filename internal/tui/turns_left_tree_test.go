@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ethanhinson/fuse/internal/agent"
@@ -68,15 +69,20 @@ func TestTurnsInLeftTree_Visual(t *testing.T) {
 	got := stripANSITurns(strings.Join(rows, "\n"))
 	t.Logf("LEFT TREE (turn 1 collapsed by default):\n%s", got)
 
-	// Default: root + both turn headers + turn 2's child (current turn expanded);
-	// turn 1 is a settled turn, collapsed by default, so its children are hidden.
-	for _, want := range []string{"kimi", "▸ turn 1", "▾ turn 2", "Kimi Advocate"} {
+	// Turns are the top level (no standalone root row): both turn headers +
+	// turn 2's child (current turn expanded); turn 1 is settled, collapsed by
+	// default, so its children are hidden.
+	for _, want := range []string{"▸ turn 1", "▾ turn 2", "Kimi Advocate"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("left tree missing %q:\n%s", want, got)
 		}
 	}
 	if strings.Contains(got, "Kimi Strategist") {
 		t.Errorf("turn 1 is collapsed; its children must be hidden:\n%s", got)
+	}
+	// There is NO standalone root row — the root's activity lives inside its turns.
+	if strings.HasPrefix(strings.TrimSpace(got), "kimi") {
+		t.Errorf("unexpected standalone root row; turns should be the top level:\n%s", got)
 	}
 
 	// Toggle turn 1 open: its children appear.
@@ -103,15 +109,15 @@ func TestTurnsInLeftTree_Visual(t *testing.T) {
 }
 
 // TestLeftTree_EnterOnHeaderToggles drives the real key handler: enter on a turn
-// header toggles its group, never drilling into the detail pane.
+// header toggles its group, never drilling into the detail pane. Turns are the
+// top level, so turn 1's header is ROW 0.
 func TestLeftTree_EnterOnHeaderToggles(t *testing.T) {
 	_, m := twoTurnSpawnedTree(t)
 	_ = m.renderTreeRows(60) // build the row model
 
-	// Row 0 is the root; row 1 is turn 1's header (collapsed by default).
-	m.selected = 1
+	m.selected = 0
 	if !m.treeRows[m.selected].header || m.treeRows[m.selected].turn != 1 {
-		t.Fatalf("row 1 is not turn 1's header: %+v", m.treeRows[m.selected])
+		t.Fatalf("row 0 is not turn 1's header: %+v", m.treeRows[m.selected])
 	}
 	// Enter on the header must toggle, NOT enter detail.
 	m.handleTreeKey(tea.KeyMsg{Type: tea.KeyEnter})
@@ -130,21 +136,37 @@ func TestLeftTree_EnterOnHeaderToggles(t *testing.T) {
 	}
 }
 
-// TestLeftTree_SelectedNodeSkipsHeaders confirms selectedNode returns a node for
-// a node row and nothing for a header row (so the detail pane shows the guard).
-func TestLeftTree_SelectedNodeSkipsHeaders(t *testing.T) {
+// TestLeftTree_HeaderInspectsRootTurnSlice confirms a turn HEADER resolves to the
+// ROOT node with that turn's filter, so its detail is the root's turn-scoped
+// transcript (the fix for empty-turns-when-root-works-directly).
+func TestLeftTree_HeaderInspectsRootTurnSlice(t *testing.T) {
 	_, m := twoTurnSpawnedTree(t)
 	_ = m.renderTreeRows(60)
 
-	// Root row -> a node.
+	// Row 0 is turn 1's header -> resolves to the root node, turn filter 1.
 	m.selected = 0
-	if n, ok := m.selectedNode(); !ok || n.Depth != 0 {
-		t.Errorf("row 0 should resolve to the root node; ok=%v", ok)
+	n, ok := m.selectedNode()
+	if !ok || n.Depth != 0 {
+		t.Fatalf("turn-1 header should resolve to the root node; ok=%v depth=%d", ok, n.Depth)
 	}
-	// Turn header row -> no node.
-	m.selected = 1
-	if _, ok := m.selectedNode(); ok {
-		t.Error("a turn header row must not resolve to a node")
+	if tf := m.selectedTurnFilter(); tf != 1 {
+		t.Errorf("turn-1 header turn filter = %d, want 1", tf)
+	}
+	// A spawned-agent (node) row resolves to that node with no turn filter.
+	m.toggleTurn(1, false) // expand turn 1 so its children are rows
+	_ = m.renderTreeRows(60)
+	var childRow int
+	for i, tr := range m.treeRows {
+		if !tr.header && tr.node.Label == "Kimi Strategist" {
+			childRow = i
+		}
+	}
+	m.selected = childRow
+	if cn, ok := m.selectedNode(); !ok || cn.Label != "Kimi Strategist" {
+		t.Errorf("child row should resolve to its own node; got ok=%v label=%q", ok, cn.Label)
+	}
+	if tf := m.selectedTurnFilter(); tf != 0 {
+		t.Errorf("child row turn filter = %d, want 0 (no filter)", tf)
 	}
 }
 
@@ -187,10 +209,10 @@ func TestLeftTree_SingleTurnIsFlat(t *testing.T) {
 // refresh (fired by every tree update / 250ms tick).
 func TestLeftTree_RefreshDoesNotSnapCursorOffTurnRows(t *testing.T) {
 	_, m := twoTurnSpawnedTree(t)
-	// Expand turn 1, collapse turn 2: rows = [root, ▾turn1, child, child, ▸turn2]
-	// => 5 rows over 4 nodes, so the last row index (4) exceeds len(nodes).
+	// Both turns expanded: rows = [▾turn1, child, child, ▾turn2, child] = 5 rows
+	// over 4 nodes (root + 3 children), so the header rows push indices past
+	// len(nodes). (Turns are the top level; there is no standalone root row.)
 	m.toggleTurn(1, false)
-	m.toggleTurn(2, true)
 	_ = m.renderTreeRows(60)
 	if len(m.treeRows) <= len(m.nodes) {
 		t.Fatalf("test needs rows(%d) > nodes(%d)", len(m.treeRows), len(m.nodes))
@@ -213,5 +235,61 @@ func TestLeftTree_RefreshDoesNotSnapCursorOffTurnRows(t *testing.T) {
 	m.handleTreeKey(tea.KeyMsg{Type: tea.KeyDown})
 	if m.selected != 3 {
 		t.Errorf("down from row 2 = %d, want 3", m.selected)
+	}
+}
+
+// TestLeftTree_RootWorksDirectlyTurnsShowSlices is the reported case: a root that
+// does all the work ITSELF (no spawns) across turns. Turns must not be empty —
+// selecting each turn header shows the root's events for THAT turn only.
+func TestLeftTree_RootWorksDirectlyTurnsShowSlices(t *testing.T) {
+	tree := agent.NewAgentTree("glm", "glm")
+	root := tree.Node(tree.RootID())
+
+	tree.BeginTurnWithPrompt("do analysis of this repo")
+	root.AddEvent(agent.AgentEvent{Kind: agent.KindToolCall, Name: "bash", TS: time.Now()})
+	root.AddEvent(agent.AgentEvent{Kind: agent.KindAssistant, Name: "t1-assistant", TS: time.Now()})
+	tree.EndTurn(false)
+
+	tree.BeginTurnWithPrompt("whats next")
+	time.Sleep(2 * time.Millisecond)
+	root.AddEvent(agent.AgentEvent{Kind: agent.KindAssistant, Name: "t2-assistant", TS: time.Now()})
+
+	m := NewAgentsModel(tree, nil)
+	m.width, m.height = 120, 34
+	m.refreshSnapshot()
+	_ = m.renderTreeRows(60)
+
+	// No standalone root row; both turns are headers.
+	got := stripANSITurns(strings.Join(m.renderTreeRows(60), "\n"))
+	if strings.HasPrefix(strings.TrimSpace(got), "glm") {
+		t.Errorf("unexpected standalone root row:\n%s", got)
+	}
+
+	// Select turn 1 header -> exactly turn 1's two root events.
+	for i, tr := range m.treeRows {
+		if tr.header && tr.turn == 1 {
+			m.selected = i
+		}
+	}
+	_ = m.buildDetailLines(100)
+	if m.eventCount != 2 {
+		t.Errorf("turn 1 detail eventCount = %d, want 2 (bash + t1-assistant)", m.eventCount)
+	}
+
+	// Select turn 2 header -> exactly turn 2's one root event, NOT empty.
+	for i, tr := range m.treeRows {
+		if tr.header && tr.turn == 2 {
+			m.selected = i
+		}
+	}
+	d2 := stripANSITurns(strings.Join(m.buildDetailLines(100), "\n"))
+	if m.eventCount != 1 {
+		t.Errorf("turn 2 detail eventCount = %d, want 1 (t2-assistant) — turns must not be empty", m.eventCount)
+	}
+	if !strings.Contains(d2, "t2-assistant") {
+		t.Errorf("turn 2 detail missing its event:\n%s", d2)
+	}
+	if strings.Contains(d2, "t1-assistant") {
+		t.Errorf("turn 2 detail leaked turn 1's events:\n%s", d2)
 	}
 }
