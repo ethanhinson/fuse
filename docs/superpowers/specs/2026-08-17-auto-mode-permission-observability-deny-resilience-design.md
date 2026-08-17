@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0067 — Auto-mode permission observability + deny-resilience — measure every gate decision, stop dying on denials](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0067-auto-mode-permission-observability-deny-resilience.md)**
+> ↩ **[Change 0067 — Auto-mode permission observability + deny-resilience — measure every gate decision, stop dying on denials](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-17-0067-auto-mode-permission-observability-deny-resilience.md)**
 <!-- docket:backlink:end -->
 
 # Auto-mode permission observability + deny-resilience — design
