@@ -12,12 +12,12 @@ related: [51, 54, 62]
 discovered_from: [62]
 adrs: [40, 45]
 spec: docs/superpowers/specs/2026-08-18-turn-scoped-trace-roots-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-18-turn-scoped-trace-roots-interactive-loops-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/turn-scoped-trace-roots-interactive-loops
-claimed_at: 2026-08-18T01:40:43Z
+claimed_at: 2026-08-18T01:43:21Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-18-turn-scoped-trace-roots-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-18-turn-scoped-trace-roots-design.md) |
+| Plan | [2026-08-18-turn-scoped-trace-roots-interactive-loops-plan.md](https://github.com/ethanhinson/fuse/blob/feat/turn-scoped-trace-roots-interactive-loops/docs/superpowers/plans/2026-08-18-turn-scoped-trace-roots-interactive-loops-plan.md) |
 | ADRs | [ADR-0040](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0040-provider-neutral-composite-observer.md), [ADR-0045](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0045-conversational-turn-attribution-by-timestamp-bucketing.md) |
 <!-- docket:artifacts:end -->
 
