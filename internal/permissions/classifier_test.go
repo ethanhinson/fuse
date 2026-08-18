@@ -136,6 +136,68 @@ func TestClassifyInputHygiene(t *testing.T) {
 	}
 }
 
+// TestClassifierSystemPrompt_AllowBiased pins the #0069 retune of the shared
+// classifier system instruction: routine developer work is named as expected and
+// allowable, the genuinely dangerous shapes are named as the deny set, the old
+// block-bias sentence is gone, and the JSON verdict contract survives verbatim.
+// Assertions are on lowercased substrings for concepts — never whole sentences —
+// so the wording can breathe without breaking the test.
+func TestClassifierSystemPrompt_AllowBiased(t *testing.T) {
+	lower := strings.ToLower(classifierSystemPrompt)
+
+	// Allow-shapes the gate must explicitly recognize as routine dev work.
+	allowShapes := map[string][]string{
+		"network reads":                 {"curl", "wget", "api call"},
+		"package installs":              {"npm", "pip", "cargo", "go "},
+		"managing own dev processes":    {"kill", "pkill", "dev server"},
+		"temp/scratch directory use":    {"temp", "scratch"},
+		"an explicit allow disposition": {"allow"},
+	}
+	for shape, needles := range allowShapes {
+		for _, n := range needles {
+			if !strings.Contains(lower, n) {
+				t.Errorf("system prompt must name the allow-shape %q (missing %q); got:\n%s", shape, n, classifierSystemPrompt)
+			}
+		}
+	}
+
+	// Deny-shapes: the only things the retuned prompt should refuse outright.
+	denyShapes := map[string][]string{
+		"secret/workspace-data exfiltration": {"exfiltrat", "secret"},
+		"piping remote content into a shell": {"into a shell"},
+		"privilege escalation":               {"privilege escalation"},
+		"destruction outside the workspace":  {"outside the workspace"},
+		"credential harvesting":              {"credential harvesting"},
+	}
+	for shape, needles := range denyShapes {
+		for _, n := range needles {
+			if !strings.Contains(lower, n) {
+				t.Errorf("system prompt must name the deny-shape %q (missing %q); got:\n%s", shape, n, classifierSystemPrompt)
+			}
+		}
+	}
+
+	// The old block-bias instruction must be gone: it is what produced the
+	// routine-dev-op denials #0069 exists to fix.
+	if strings.Contains(lower, "be block-biased") {
+		t.Errorf("system prompt must no longer instruct block bias; got:\n%s", classifierSystemPrompt)
+	}
+
+	// "ask" must be reserved for genuine ambiguity, not the default posture.
+	if !strings.Contains(lower, "ambigu") {
+		t.Errorf("system prompt must reserve \"ask\" for genuinely ambiguous calls; got:\n%s", classifierSystemPrompt)
+	}
+
+	// The machine contract is load-bearing and survives the retune verbatim:
+	// parseVerdict only maps allow/deny/ask out of a single JSON object.
+	if !strings.Contains(classifierSystemPrompt, `{"verdict":"allow|deny|ask"`) {
+		t.Errorf("system prompt must keep the JSON verdict contract verbatim; got:\n%s", classifierSystemPrompt)
+	}
+	if !strings.Contains(lower, "exactly one json object") {
+		t.Errorf("system prompt must keep the one-object reply instruction; got:\n%s", classifierSystemPrompt)
+	}
+}
+
 // TestClassifyWebFetch_PromptNamesHostAndReputation proves the web_fetch verdict
 // call names the target host, instructs the model to weigh domain reputation, and
 // carries the known-good hint — while preserving input hygiene: only the system

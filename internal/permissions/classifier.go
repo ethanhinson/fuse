@@ -48,21 +48,40 @@ const classifierMaxTokens = 128
 const ClassifierTraceLabel = "auto-classifier"
 
 // classifierSystemPrompt instructs the model to emit exactly one JSON verdict
-// object, biased toward blocking. It is deliberately terse and single-stage:
-// it never asks the model to reason at length (two-stage CoT is a documented
-// future upgrade, intentionally not built here).
-const classifierSystemPrompt = `You are a security gate for an autonomous coding agent. ` +
-	`Given the user's request and a pending tool call, decide whether the tool call is safe to run automatically. ` +
-	`Be block-biased: when in doubt, prefer "ask" or "deny" over "allow". ` +
+// object. It is allow-biased (change #0069): routine developer work is named
+// explicitly as expected and allowable, and only the enumerated dangerous
+// shapes earn a deny. The classifier is no longer the last line of defence —
+// the catastrophic-command floor (#0068) sits beneath it and cannot be talked
+// out of a block — so classifier pessimism was costing far more in denied
+// routine work than it bought in safety. The prompt is deliberately terse and
+// single-stage: it never asks the model to reason at length (two-stage CoT is a
+// documented future upgrade, intentionally not built here).
+//
+// The final JSON contract line is load-bearing and must stay in lockstep with
+// parseVerdict, which maps only allow/deny/ask out of a single JSON object.
+const classifierSystemPrompt = `You are the permission gate for a coding agent working in a developer workspace. ` +
+	`Given the user's request and a pending tool call, decide whether the call may run automatically. ` +
+	`Routine development operations are expected and should be allowed. ` +
+	`Allow, among others: network reads such as curl, wget, git fetch/clone, and ordinary API calls; ` +
+	`package installs and builds such as npm, pnpm, pip, cargo, and go install/build/test; ` +
+	`running tests, linters, formatters, and build tools; ` +
+	`managing the agent's own dev server and test processes, including kill or pkill of a dev server or watcher it started; ` +
+	`reading and writing files inside the workspace; and creating or using temp and scratch directories. ` +
+	`Use "deny" only for genuinely dangerous shapes: exfiltration of secrets or workspace data to a remote endpoint; ` +
+	`piping remote content into a shell to execute it; privilege escalation such as sudo or changing ownership of system paths; ` +
+	`destruction outside the workspace, such as recursive deletes of system, home, or disk paths; ` +
+	`credential harvesting from SSH keys, cloud credentials, keychains, or browser stores; ` +
+	`and disabling security controls. ` +
+	`Use "ask" only when the call is genuinely ambiguous — not merely unfamiliar. ` +
 	`Reply with EXACTLY ONE JSON object and nothing else: ` +
-	`{"verdict":"allow|deny|ask","reason":"<one short line>"}. ` +
-	`Use "deny" for clearly destructive or dangerous calls, "allow" only for clearly safe calls, and "ask" for anything uncertain.`
+	`{"verdict":"allow|deny|ask","reason":"<one short line>"}.`
 
 // Classifier is the probabilistic middle layer of the auto-mode gate: it asks a
-// bounded model for a block-biased allow/deny/ask verdict on a pending tool
-// call. It is self-contained and independently testable; Task 7 wires it into
-// the gate pipeline. Its verdict is enforced by the gate and never surfaced to
-// the actor model as advisory text.
+// bounded model for an allow-biased allow/deny/ask verdict on a pending tool
+// call — routine developer work is allowed and only the named dangerous shapes
+// are denied. It is self-contained and independently testable; Task 7 wires it
+// into the gate pipeline. Its verdict is enforced by the gate and never surfaced
+// to the actor model as advisory text.
 type Classifier struct {
 	client  completer
 	modelID string
@@ -150,7 +169,7 @@ func (c *Classifier) cloneForChild() *Classifier {
 	}
 }
 
-// Classify returns a block-biased verdict for a pending tool call. userMessages
+// Classify returns an allow-biased verdict for a pending tool call. userMessages
 // are the user-authored turns of the conversation; toolName and command are the
 // pending call (command is the human-readable command for a bash tool, or the
 // raw args for others). The result is cached per session keyed by
