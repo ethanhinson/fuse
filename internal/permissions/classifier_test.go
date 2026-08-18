@@ -302,6 +302,54 @@ func TestClassifierSystemPrompt_BoundsKillFamily(t *testing.T) {
 	}
 }
 
+// TestClassifierSystemPrompt_AsksForOutOfWorkspaceWrites pins the clause that
+// closes the non-destructive half of the out-of-root gap. classifyHeuristic
+// (internal/permissions/heuristics.go, step 3) routes EVERY mutating command
+// whose path argument resolves outside the allowed roots here as VerdictAsk, so
+// `cp .env ~/Library/x`, an append into ~/.zshrc, or a write into a LaunchAgent
+// all land on this prompt. Naming only *destruction* outside the workspace as a
+// deny leaves those in a gap an allow-biased model resolves to allow.
+//
+// The clause must therefore (a) name write/move/delete targets outside the
+// workspace as "ask", (b) do so by reference to the NAMED workspace and scratch
+// paths — which is what makes the D1b context line load-bearing — and (c) leave
+// the stronger deny on destruction outside the workspace intact. Assertions are
+// lowercased concept substrings, never whole sentences.
+func TestClassifierSystemPrompt_AsksForOutOfWorkspaceWrites(t *testing.T) {
+	lower := strings.ToLower(classifierSystemPrompt)
+
+	// (b) The clause must point at the context line it is given, so the model
+	// resolves "outside" against the actual session geography rather than a guess.
+	const anchor = "outside the named workspace and scratch paths"
+	idx := strings.Index(lower, anchor)
+	if idx < 0 {
+		t.Fatalf("system prompt must scope out-of-root mutations against the named workspace/scratch context line (missing %q); got:\n%s", anchor, classifierSystemPrompt)
+	}
+
+	// (a) The clause covers non-destructive mutations too — a write or a move,
+	// not merely a delete — and resolves them to "ask".
+	start := idx - 400
+	if start < 0 {
+		start = 0
+	}
+	end := idx + 400
+	if end > len(lower) {
+		end = len(lower)
+	}
+	clause := lower[start:end]
+	for _, n := range []string{"ask", "writ", "mov", "delet"} {
+		if !strings.Contains(clause, n) {
+			t.Errorf("out-of-workspace clause must send writes, moves, and deletes outside the workspace to \"ask\" (missing %q near %q); got:\n%s", n, anchor, classifierSystemPrompt)
+		}
+	}
+
+	// (c) The stronger posture on destruction outside the workspace survives: the
+	// new ask must not have demoted the existing deny.
+	if !strings.Contains(lower, "destruction outside the workspace") {
+		t.Errorf("system prompt must keep destruction outside the workspace as a deny shape; got:\n%s", classifierSystemPrompt)
+	}
+}
+
 // TestClassifyWebFetch_PromptNamesHostAndReputation proves the web_fetch verdict
 // call names the target host and, since #0069, frames the fetch allow-biased
 // (a read-only GET returning page text; fetching public pages is routine) while

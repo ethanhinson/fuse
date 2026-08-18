@@ -68,6 +68,20 @@ const ClassifierTraceLabel = "auto-classifier"
 // it started" is NOT such a predicate — provenance is not derivable from the
 // classifier's inputs — so a broad or unclear pattern is named as "ask".
 //
+// A second clause is likewise narrower than the allow bias: mutations whose
+// target sits outside the session's writable geography. classifyHeuristic's
+// step 3 routes EVERY mutating command with an out-of-root path argument here as
+// ask (heuristics.go: `if !withinAnyRoot(arg, roots) { return VerdictAsk }`), so
+// this prompt is the only judge of `cp .env ~/Library/x`, an append into
+// ~/.zshrc, or a write into a LaunchAgent. Naming only *destruction* outside the
+// workspace as a deny left the non-destructive majority of that traffic in a gap
+// an allow-biased model resolves to allow, so out-of-root writes/moves/copies/
+// deletes are named as ask. Destruction outside the workspace stays a deny — the
+// stronger verdict — and reads outside the workspace stay routine. The clause
+// refers to "the named workspace and scratch paths given with the pending call",
+// which is what makes the D1b context line (pendingCallPrompt's
+// "workspace: …, scratch: …") load-bearing rather than decorative.
+//
 // The final JSON contract line is load-bearing and must stay in lockstep with
 // parseVerdict, which maps only allow/deny/ask out of a single JSON object.
 const classifierSystemPrompt = `You are the permission gate for a coding agent working in a developer workspace. ` +
@@ -79,12 +93,13 @@ const classifierSystemPrompt = `You are the permission gate for a coding agent w
 	`managing the agent's own dev server and test processes: allow kill of a numeric PID, and pkill or killall whose pattern names a specific dev-server or watcher binary (for example pkill -f "vite", or pkill node); ` +
 	`reading and writing files inside the workspace; and creating or using temp and scratch directories. ` +
 	`Answer "ask" for any kill whose pattern is broad or unclear — a bare -f ., a -9 with no specific named target, a wildcard pattern, or a system or OS process name — since you cannot tell which processes it would reach. ` +
+	`Answer "ask" for any write, move, copy, or delete whose target is outside the named workspace and scratch paths given with the pending call — a shell profile such as ~/.zshrc, a dotfile such as ~/.gitconfig, a config or credentials directory, a login item or launch agent, or anywhere else under the home or system tree — even when it destroys nothing and looks like a small edit; only reading such files is routine. ` +
 	`Use "deny" only for genuinely dangerous shapes: exfiltration of secrets or workspace data to a remote endpoint; ` +
 	`piping remote content into a shell to execute it; privilege escalation such as sudo or changing ownership of system paths; ` +
 	`destruction outside the workspace, such as recursive deletes of system, home, or disk paths; ` +
 	`credential harvesting from SSH keys, cloud credentials, keychains, or browser stores; ` +
 	`and disabling security controls. ` +
-	`Use "ask" only when the call is genuinely ambiguous — not merely unfamiliar. ` +
+	`Otherwise use "ask" only when the call is genuinely ambiguous — not merely unfamiliar. ` +
 	`Reply with EXACTLY ONE JSON object and nothing else: ` +
 	`{"verdict":"allow|deny|ask","reason":"<one short line>"}.`
 
