@@ -355,6 +355,60 @@ func TestResolveAuto_WebFetchStaticFloor(t *testing.T) {
 	}
 }
 
+// TestResolveAuto_WebFetchCredentialedURLAsks proves a credential-bearing URL to
+// a strong-seed host does NOT resolve VerdictAllow at the fetch floor. The floor
+// is the only layer that can see userinfo — the web_fetch classifier prompt
+// renders the HOST alone — so the ask is decided there, and the classifier is
+// never consulted for a shape it could not adjudicate.
+func TestResolveAuto_WebFetchCredentialedURLAsks(t *testing.T) {
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow","reason":"x"}`}}
+	cls := newTestClassifier(t, stub)
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), AlwaysApprove,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+
+	// Distinctive credential values so the leak assertion below cannot be
+	// satisfied (or tripped) by ordinary prose in the reason string.
+	for _, raw := range []string{
+		`{"url":"https://ghp-s3cr3tt0ken@github.com/foo/bar"}`,
+		`{"url":"https://alice:hunter2xyz@github.com/foo/bar"}`,
+	} {
+		v, layer, reason := g.resolveAuto(context.Background(), "web_fetch", raw)
+		if v == VerdictAllow {
+			t.Errorf("%s: resolved VerdictAllow — a credentialed URL must not auto-approve", raw)
+		}
+		if v != VerdictAsk {
+			t.Errorf("%s: Verdict = %v, want VerdictAsk", raw, v)
+		}
+		if layer != LayerFetchFloor {
+			t.Errorf("%s: layer = %q, want %q", raw, layer, LayerFetchFloor)
+		}
+		if !strings.Contains(reason, "credential") {
+			t.Errorf("%s: ask reason should name the credentialed-URL shape; got %q", raw, reason)
+		}
+		// The reason must not leak the secret it is describing.
+		if strings.Contains(reason, "s3cr3tt0ken") || strings.Contains(reason, "hunter2xyz") {
+			t.Errorf("%s: ask reason must not echo the credential; got %q", raw, reason)
+		}
+	}
+	if stub.calls != 0 {
+		t.Fatalf("credentialed-URL ask must not consult the classifier, got %d calls", stub.calls)
+	}
+
+	// The ask reaches the human via a decision event that names the shape, so an
+	// operator reading the stream can tell a credentialed URL from a garbled one.
+	ctx, rec := recordDecisions()
+	g.Execute(ctx, "web_fetch", `{"url":"https://ghp-s3cr3tt0ken@github.com/foo/bar"}`)
+	if len(*rec) == 0 || (*rec)[0].Verdict != "ask" || (*rec)[0].Layer != LayerFetchFloor {
+		t.Fatalf("want a fetch-floor ask decision first, got %+v", *rec)
+	}
+	if !strings.Contains((*rec)[0].Reason, "credentials") {
+		t.Errorf("ask decision should carry the credentialed-URL reason, got %q", (*rec)[0].Reason)
+	}
+	if strings.Contains((*rec)[0].Reason, "s3cr3tt0ken") {
+		t.Errorf("ask decision must not echo the credential, got %q", (*rec)[0].Reason)
+	}
+}
+
 func TestPromptAll_PromptsEvenSafeTools(t *testing.T) {
 	prompted := false
 	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {

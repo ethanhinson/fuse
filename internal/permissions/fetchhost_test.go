@@ -109,6 +109,73 @@ func TestClassifyFetchHost_UserContentNamespacesDoNotAutoApprove(t *testing.T) {
 	}
 }
 
+// (a2c) a credential-bearing URL never auto-approves, however strong the host.
+// Userinfo ("https://<token>@github.com/x") is an exfiltration / credential-leak
+// shape that lives in the URL, not the host — and the floor is the ONLY layer
+// that can see it: the web_fetch classifier prompt is shown the host alone, so
+// falling through would hand the decision to a judge that is blind to the very
+// property that triggered it. The floor therefore decides: VerdictAsk with
+// DecidedBy "credentialed-url", and no AllowNudge.
+func TestClassifyFetchHost_CredentialedURLDoesNotAutoApprove(t *testing.T) {
+	cases := []string{
+		// token-only userinfo on a strong-seed host.
+		"https://sometoken@github.com/x",
+		// user:password form on a strong-seed host.
+		"https://user:password@github.com/x",
+		// dot-boundary subdomain of an operator-minted seed namespace.
+		"https://tok@en.wikipedia.org/wiki/X",
+		// a reputation.KnownGood top-site that is not in the hardcoded seed.
+		"https://tok@google.com/search",
+		"https://user:pw@archive.org/details/x",
+	}
+	for _, raw := range cases {
+		got := classifyFetchHost(raw, nil, nil)
+		if got.DecidedBy == "known-good" {
+			t.Errorf("%s: DecidedBy = %q — a credential-bearing URL must never auto-approve", raw, got.DecidedBy)
+		}
+		if got.Verdict != VerdictAsk || got.DecidedBy != "credentialed-url" {
+			t.Errorf("%s: Verdict=%v DecidedBy=%q, want VerdictAsk/credentialed-url",
+				raw, got.Verdict, got.DecidedBy)
+		}
+		if got.AllowNudge {
+			t.Errorf("%s: AllowNudge = true — a reputable host name says nothing about a URL carrying a secret", raw)
+		}
+	}
+
+	// No regression: the same hosts, credential-free, still auto-approve.
+	for _, raw := range []string{
+		"https://github.com/x",
+		"https://en.wikipedia.org/wiki/X",
+		"https://google.com/search",
+		"https://archive.org/details/x",
+	} {
+		got := classifyFetchHost(raw, nil, nil)
+		if got.Verdict != VerdictAllow || got.DecidedBy != "known-good" || !got.AllowNudge {
+			t.Errorf("%s: Verdict=%v DecidedBy=%q AllowNudge=%v, want VerdictAllow/known-good/true",
+				raw, got.Verdict, got.DecidedBy, got.AllowNudge)
+		}
+	}
+}
+
+// (a2d) the credentialed-URL ask is an ASK, not a new top layer: every denying
+// layer above it still decides first, and the canonical host is still reported.
+func TestClassifyFetchHost_CredentialedURLDoesNotOutrankDenies(t *testing.T) {
+	if got := classifyFetchHost("http://tok@127.0.0.1/x", nil, nil); got.DecidedBy != "ssrf" || got.Verdict != VerdictDeny {
+		t.Errorf("credentialed SSRF: Verdict=%v DecidedBy=%q, want VerdictDeny/ssrf", got.Verdict, got.DecidedBy)
+	}
+	if got := classifyFetchHost("https://tok@github.com/x", []string{"github.com"}, nil); got.DecidedBy != "config-deny" {
+		t.Errorf("credentialed fetch_deny host: DecidedBy = %q, want config-deny", got.DecidedBy)
+	}
+	if got := classifyFetchHost("https://tok@GitHub.com./x", nil, nil); got.Host != "github.com" {
+		t.Errorf("credentialed ask should still carry the canonical host, got %q", got.Host)
+	}
+	// A credentialed URL to an otherwise-unremarkable host asks too: the shape is
+	// host-independent, so it cannot be a property of the known-good set alone.
+	if got := classifyFetchHost("https://tok@unknown-blog.example/post", nil, nil); got.Verdict != VerdictAsk || got.DecidedBy != "credentialed-url" {
+		t.Errorf("credentialed unknown host: Verdict=%v DecidedBy=%q, want VerdictAsk/credentialed-url", got.Verdict, got.DecidedBy)
+	}
+}
+
 // (a3) an unrecognized host is neither seeded nor a top-site: it still falls
 // through to the classifier with no nudge.
 func TestClassifyFetchHost_UnknownFallthrough(t *testing.T) {

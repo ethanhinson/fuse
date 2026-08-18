@@ -12,7 +12,7 @@ import (
 // fetchFloorResult is the deciding-layer + verdict of the web_fetch host floor.
 type fetchFloorResult struct {
 	Verdict    Verdict // VerdictDeny, VerdictAsk, or a fallthrough sentinel (VerdictAllow == "fall through to classifier")
-	DecidedBy  string  // "ssrf" | "config-deny" | "config-ask" | "blocklist" | "known-good" | "malformed-url" | "fallthrough"
+	DecidedBy  string  // "ssrf" | "config-deny" | "config-ask" | "blocklist" | "credentialed-url" | "known-good" | "malformed-url" | "fallthrough"
 	Host       string
 	AllowNudge bool // true when host is known-good (hardcoded seed OR reputation.KnownGood). On a "fallthrough" result this is only a classifier allow-bias hint, NOT a bypass; a "known-good" result is the floor's own auto-approve.
 }
@@ -320,6 +320,7 @@ func matchesAnyGlob(host string, patterns []string) bool {
 //	fetchDeny glob match                  => Deny, "config-deny"  (deny beats ask)
 //	fetchAsk glob match                   => Ask,  "config-ask"
 //	reputation.Blocked(host)              => Deny, "blocklist"
+//	URL carries userinfo (u.User != nil)  => Ask,  "credentialed-url"
 //	strong seed / reputation.KnownGood    => Allow, "known-good"  (a real auto-approve),
 //	                                        unless exfilShapeMatch withholds it
 //	otherwise                             => VerdictAllow sentinel, "fallthrough"
@@ -332,9 +333,17 @@ func matchesAnyGlob(host string, patterns []string) bool {
 // promotion — it withholds an auto-approve but never creates a decision, so it
 // cannot reorder anything above it.
 //
-// Only the strong half of the hardcoded seed — the entries whose named
-// operator controls the whole hostname namespace the pattern spans — and the
-// Only the strong half of the hardcoded seed and the exact
+// The credentialed-URL layer sits between the denying layers and the promotion
+// for the same reason: it is an ASK, so every Deny above it still decides
+// first, and it never reorders them. It is decided HERE rather than delegated
+// downward because userinfo is the one deny shape in this file that lives in
+// the URL instead of the host — and the classifier is shown the host alone (see
+// webFetchPendingPrompt), so falling through would hand the judgement to a
+// layer structurally blind to the property that triggered it. The floor already
+// holds the parsed URL, so it is the only place the shape is decidable at all.
+//
+// Only the strong half of the hardcoded seed — the entries whose named operator
+// controls the whole hostname namespace the pattern spans — and the exact
 // reputation.KnownGood top-site set can auto-approve, and only when the host is
 // not an exfil shape (see exfilShapeDenylist) — the popularity list is a
 // refreshable data file, so that subtraction is what stops a routine refresh
@@ -377,6 +386,26 @@ func classifyFetchHost(rawURL string, fetchDeny, fetchAsk []string) fetchFloorRe
 	}
 	if reputation.Blocked(host) {
 		return fetchFloorResult{Verdict: VerdictDeny, DecidedBy: "blocklist", Host: host}
+	}
+
+	// Credential-bearing URL. "https://<token>@github.com/x" has
+	// Hostname() == "github.com", so without this layer a leaked token rides a
+	// strong-seed host straight through the promotion below with zero review.
+	// Userinfo is a deterministic, host-independent, credential-leak shape the
+	// floor already holds in hand — and the ONLY layer that can see it: the
+	// web_fetch classifier is shown the canonical HOST and nothing else, so
+	// falling through here would be close to a no-op. So the floor decides, and
+	// it decides Ask rather than Deny: a credentialed URL is sometimes a
+	// legitimate private-registry or basic-auth fetch, and the human is the
+	// judge with the context the classifier lacks.
+	//
+	// This also settles the AllowNudge question for the shape: the result below
+	// is never reached for a credentialed URL, so no nudge is ever emitted for
+	// one. That is deliberate and must stay true — a reputable host name says
+	// nothing about a URL carrying a secret, so anyone converting this Ask into
+	// a fallthrough has to withhold AllowNudge explicitly.
+	if u.User != nil {
+		return fetchFloorResult{Verdict: VerdictAsk, DecidedBy: "credentialed-url", Host: host}
 	}
 
 	// Exfil-shape subtraction. Checked BEFORE the promotion below, and it

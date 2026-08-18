@@ -461,7 +461,11 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	// askLayer names the pipeline stage that routed this call to the human, so
 	// the pre-approval ask event says WHY a prompt appeared. Defaults to human
 	// (prompt-all, smart fallthrough) and is refined by the auto pipeline.
+	// askReason carries the layer's own explanation when it has one (today only
+	// the web_fetch floor does — see fetchFloorAskReason); "" everywhere else
+	// leaves the event exactly as it was.
 	askLayer := LayerHuman
+	askReason := ""
 
 	if mode == ModeAuto {
 		verdict, layer, reason := g.resolveAuto(ctx, name, args)
@@ -478,6 +482,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		default:
 			// VerdictAsk ⇒ fall through to the shared human-approval block below.
 			askLayer = layer
+			askReason = reason
 		}
 	}
 
@@ -496,7 +501,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	// Human approval required. The ask is emitted BEFORE g.approve runs so asks
 	// are countable regardless of the approval binding — an AlwaysApprove
 	// (headless) gate shows as back-to-back ask→allow events.
-	g.emitDecision(ctx, mode, name, args, "ask", askLayer, "")
+	g.emitDecision(ctx, mode, name, args, "ask", askLayer, askReason)
 	req := ApprovalRequest{
 		ToolName: name,
 		Args:     args,
@@ -564,7 +569,12 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 			case VerdictDeny:
 				return VerdictDeny, LayerFetchFloor, "denied by auto-mode web_fetch host floor (" + r.DecidedBy + "): " + r.Host
 			case VerdictAsk:
-				return VerdictAsk, LayerFetchFloor, ""
+				// Ask reasons are threaded too, so the prompt-side decision event
+				// says WHY the floor stopped a call it did not deny — a
+				// credentialed-URL ask is otherwise indistinguishable from a
+				// garbled-URL one. The reason names the shape and the canonical
+				// host only; it never echoes the URL, which is where the secret is.
+				return VerdictAsk, LayerFetchFloor, fetchFloorAskReason(r)
 			default:
 				// A known-good host is a positive floor decision (change 0069):
 				// allow without consulting the classifier at all. This
@@ -615,6 +625,23 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 
 	// 5. Classifier (final) or fail-closed ask.
 	return g.classifyOrAsk(ctx, name, command)
+}
+
+// fetchFloorAskReason renders the human-facing reason for a web_fetch floor ASK.
+// It is deliberately built from the floor's DecidedBy and canonical host alone —
+// never from the raw URL — because the credentialed-URL shape it explains is a
+// secret sitting in that URL, and a decision event is a logged, exported record.
+func fetchFloorAskReason(r fetchFloorResult) string {
+	switch r.DecidedBy {
+	case "credentialed-url":
+		return "web_fetch URL embeds credentials in its userinfo (user[:password]@host), which no auto-approve covers however reputable the host: " + r.Host
+	case "config-ask":
+		return "host requires approval per auto-mode fetch_ask: " + r.Host
+	case "malformed-url":
+		return "web_fetch call carries no usable URL host"
+	default:
+		return ""
+	}
 }
 
 // classifyOrAsk consults the injected classifier for a final verdict, or fails

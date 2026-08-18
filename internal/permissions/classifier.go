@@ -310,6 +310,14 @@ func (c *Classifier) buildWebFetchMessages(userMessages []model.Message, host st
 // host-visible, while credential-bearing and workspace-data-encoding URLs are
 // judged from the user's own turns.
 //
+// The credential-bearing half of that is no longer left to this prompt: the
+// static floor now decides it deterministically, ahead of any classifier call
+// (classifyFetchHost's "credentialed-url" ask). Userinfo is machine-checkable
+// and the floor holds the parsed URL, so a URL whose credentials sit in its
+// userinfo never reaches a judge that cannot see them. The shape stays in the
+// deny list anyway — the model can still infer an intended credential leak from
+// the user's turns, for credentials the URL itself does not carry.
+//
 // The known-good hint stays a bias and never a bypass — a compromised subdomain
 // of an otherwise good host, or a good host standing in for one of the deny
 // shapes, must remain deniable. The trailing JSON instruction is load-bearing and
