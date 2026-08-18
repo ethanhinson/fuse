@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/turn-scoped-trace-roots-interactive-loops
-claimed_at: 2026-08-18T01:36:58Z
+claimed_at: 2026-08-18T01:40:43Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -61,3 +61,53 @@ One-shot trace shape stays byte-identical.
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-18 — reconcile at claim
+
+Verdict: **scope-adjustable, no invalidation.** All four spec decisions (D1–D4) hold
+against current `origin/main`. Verified against `origin/main` via `git show`, not the
+local working tree (learnings: `reconcile-verify-claims-against-origin-not-working-tree`).
+
+What was checked and what changed:
+
+- **`related` are all closed.** 0051 (loop observability OTEL metrics), 0054 (durable
+  resumable sessions), and 0062 (wander refresh-to-restore) are archived `done`. None of
+  them built any part of this change. Change 0066 (agents-tab multiturn turn groups,
+  2026-08-16) landed ADR-0045's TUI attribution — which **confirms** D4's out-of-scope
+  call rather than invalidating it: the heuristic is now concrete at
+  `internal/tui/agents_model.go:1468` (`turnIndexFor`), and migrating it onto the new
+  turn span stays a separate follow-up.
+- **The problem still exists exactly as described.** `launchLoop`
+  (`internal/runtime/inproc.go:325`) starts `fuse.loop.run` at line 326 and ends it only
+  from the run goroutine's completion path — so a parked interactive session's root span
+  still does not export until the session dies.
+- **The idiom D2 depends on is intact.** `Observer.StartFromCarrier(ctx, carrier,
+  delayed=true, …)` (`internal/observe/otel/observer.go:37`) does precisely
+  `trace.WithNewRoot()` + `trace.WithLinks(...)` at line 46, reached through the
+  capability-probe helper `observe.StartFromCarrier` (`internal/observe/contracts.go:91`)
+  which degrades to plain `Start` for observers that lack it. No new Observer surface is
+  needed; ADR-0040 provider-neutrality is preserved.
+- **No prior art to drop.** There is no `fuse.loop.turn` span, `turn.index` attribute, or
+  turn-index concept anywhere in `internal/` today; the only `turnIndex*` matches are
+  ADR-0045's TUI attribution, which is out of scope.
+- **Spec detail corrected (added constraint).** The spec says the `loop.run` handle "is
+  already idempotent via `sync.Once`". It is not: `launchLoop` guards the end with a
+  plain `ended bool` captured in the `end(out)` closure (`inproc.go:327–334`), which is
+  single-goroutine-safe only because today exactly one goroutine calls it. D1 adds a
+  second caller (the park path) racing the run goroutine's completion, so the build MUST
+  harden that guard (`sync.Once` or a mutex) rather than assume the existing
+  idempotence. This is a mechanism correction, not a decision change.
+- **D3's park/wake seam made concrete.** The park boundary is already announced inside
+  the agent at `internal/agent/loop.go:598` — `event.KindLoopParked` on the interactive
+  no-tool-calls terminal path, immediately before `humanInjector.Wait(ctx)`. The wake is
+  the runtime's own `Send` (and `Resume`, which carries its message). Both points are
+  visible to `internal/runtime` without adding a callback into `internal/agent`, so D3's
+  "owned by the runtime/agent park-wake seam" resolves to those two seams; the plan picks
+  between observing the parked event and adding an explicit runtime-side park hook, and
+  must confirm the Send-side wake covers the resume path (learnings:
+  `persistent-loop-needs-explicit-completion-event`).
+
+Scope, acceptance criteria, and non-goals are otherwise unchanged. Auto-capture is
+disabled for this repo, so no follow-up stubs were minted; the only adjacent work this
+pass surfaced is the already-noted ADR-0045 migration, which the change body records as
+out of scope.

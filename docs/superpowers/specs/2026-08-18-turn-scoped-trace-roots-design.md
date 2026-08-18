@@ -38,7 +38,14 @@ For an interactive loop, the `loop.run` span ends (outcome `success`) when the s
 **first parks** — it thereby covers startup plus the first turn and exports promptly.
 One-shot loops are **byte-identical to today**: `loop.run` spans the whole run and ends
 at completion. The reaper and every session-teardown path must defensively `End()` any
-still-open span (the `handle` is already idempotent via `sync.Once`).
+still-open span, and the end must be idempotent.
+
+> Reconciled 2026-08-18: this paragraph originally asserted the handle "is already
+> idempotent via `sync.Once`". It is not. `launchLoop` guards the end with a plain
+> `ended bool` captured in its `end(out)` closure (`internal/runtime/inproc.go:327–334`),
+> safe today only because exactly one goroutine calls it. D1 introduces a second caller
+> (the park path) racing the run goroutine's completion, so the implementation must
+> harden that guard — `sync.Once` or a mutex — rather than rely on existing behavior.
 
 ### D2 — Each subsequent turn is a new root: `fuse.loop.turn`
 
@@ -64,6 +71,15 @@ A turn starts when the parked interactive loop wakes on an injected human messag
 resume that carries one) and ends at the next park. The boundary is owned by the
 runtime/agent park-wake seam (`launchLoop` + the park path), NOT inferred from stream
 shape — the same principle as the SDK's `isCompletion` contract.
+
+> Reconciled 2026-08-18: the two concrete seam points are (a) the **park**, already
+> announced inside the agent at `internal/agent/loop.go:598` as `event.KindLoopParked`
+> on the interactive no-tool-calls terminal path, immediately before
+> `humanInjector.Wait(ctx)`; and (b) the **wake**, the runtime's own `Send` (and
+> `Resume`, which carries its message). Both are observable from `internal/runtime`
+> without adding a callback into `internal/agent`. The plan chooses between observing
+> the parked event and adding an explicit runtime-side park hook, and must confirm the
+> Send-side wake also covers the resume path.
 
 ### D4 — Tracing only; ADR-0045 untouched
 
