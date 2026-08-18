@@ -255,8 +255,10 @@ func TestClassifierSystemPrompt_AllowBiased(t *testing.T) {
 }
 
 // TestClassifyWebFetch_PromptNamesHostAndReputation proves the web_fetch verdict
-// call names the target host, instructs the model to weigh domain reputation, and
-// carries the known-good hint — while preserving input hygiene: only the system
+// call names the target host and, since #0069, frames the fetch allow-biased
+// (a read-only GET returning page text; fetching public pages is routine) while
+// naming the concrete deny shapes that replaced the old vague "weigh domain
+// reputation" instruction. Input hygiene is asserted alongside: only the system
 // instruction, the user's own turns, and the pending prompt reach the model (no
 // tool-result or assistant-reasoning messages).
 func TestClassifyWebFetch_PromptNamesHostAndReputation(t *testing.T) {
@@ -307,17 +309,38 @@ func TestClassifyWebFetch_PromptNamesHostAndReputation(t *testing.T) {
 	if !strings.Contains(blob, "unknown-blog.example") {
 		t.Errorf("web_fetch prompt must name the target host; got:\n%s", blob)
 	}
-	// The pending prompt must instruct reputation weighting.
 	lower := strings.ToLower(blob)
-	if !strings.Contains(lower, "reputation") {
-		t.Errorf("web_fetch prompt must instruct domain-reputation weighting; got:\n%s", blob)
+
+	// Allow framing: the fetch is a read-only GET returning page text, and doing
+	// it is routine work that defaults to allow.
+	for _, want := range []string{"read-only get", "page text", "routine", "allow"} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("web_fetch prompt must carry the allow framing %q; got:\n%s", want, blob)
+		}
+	}
+
+	// Deny shapes the spec fixes, in place of the old vague "reputation" nudge.
+	denyShapes := map[string][]string{
+		"credential-bearing URLs":      {"credential", "token", "secret"},
+		"webhook endpoints":            {"webhook", "hooks.slack.com", "discord.com/api/webhooks"},
+		"paste/upload services":        {"paste", "upload", "exfiltrat"},
+		"raw-IP URLs":                  {"raw-ip"},
+		"URLs encoding workspace data": {"workspace data"},
+	}
+	for shape, wants := range denyShapes {
+		for _, want := range wants {
+			if !strings.Contains(lower, want) {
+				t.Errorf("web_fetch prompt must name the deny shape %s (missing %q); got:\n%s", shape, want, blob)
+			}
+		}
 	}
 }
 
 // TestClassifyWebFetch_KnownGoodHintNotABypass proves the known-good hint is
-// surfaced to the model as a bias, not an absolute bypass: the prompt must still
-// carry the reputation instruction AND state that a compromised subdomain of a
-// good host stays deniable.
+// surfaced to the model as a bias, not an absolute bypass: the prompt names the
+// host AND states that a compromised subdomain of an otherwise good host stays
+// deniable. The allow-biased rewrite (#0069) must not have softened this into a
+// blanket permit.
 func TestClassifyWebFetch_KnownGoodHintNotABypass(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow","reason":"docs"}`}}
 	c := newTestClassifier(t, stub)
@@ -335,6 +358,19 @@ func TestClassifyWebFetch_KnownGoodHintNotABypass(t *testing.T) {
 	// The known-good hint must be communicated as non-absolute (deniable).
 	if !strings.Contains(lower, "not") || !strings.Contains(lower, "deniab") {
 		t.Errorf("prompt must state the known-good hint is not an absolute bypass (still deniable); got:\n%s", blob)
+	}
+	// ...and specifically that a compromised subdomain of a good host is the
+	// case the hint does not cover, and that the hint is not a bypass.
+	for _, want := range []string{"subdomain", "bypass"} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("prompt must state the hint is a bias not a bypass (missing %q); got:\n%s", want, blob)
+		}
+	}
+	// The deny shapes stay in force for a known-good host too.
+	for _, want := range []string{"credential", "webhook", "raw-ip", "workspace data"} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("deny shapes must be named even when the known-good hint is true (missing %q); got:\n%s", want, blob)
+		}
 	}
 }
 

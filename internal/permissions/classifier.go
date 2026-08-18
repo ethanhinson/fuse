@@ -230,16 +230,28 @@ func (c *Classifier) classifyUncached(ctx context.Context, userMessages []model.
 	return parseVerdict(resp.Content)
 }
 
-// ClassifyWebFetch returns a block-biased verdict for a pending web_fetch call
+// ClassifyWebFetch returns an allow-biased verdict for a pending web_fetch call
 // that survived the static host floor (a "fallthrough" host). It reuses the
-// hygienic prompt discipline (system + the user's own turns + one pending prompt),
-// but the pending prompt is web_fetch-aware: it names the target host and
-// instructs the model to weigh domain reputation, biasing an unrecognized/
-// low-reputation host toward ask/deny and a well-known documentation/reference
-// host toward allow. knownGood carries the static floor's AllowNudge as a bias
-// hint that is explicitly NOT an absolute bypass — a compromised subdomain of a
-// good host must still be deniable. Verdicts are cached per session keyed by
-// (toolName, rawArgs), so an identical pending fetch is classified at most once.
+// hygienic prompt discipline (system + the user's own turns + one pending
+// prompt), but the pending prompt is web_fetch-aware: it names the target host,
+// frames the call as the read-only GET it actually is, and enumerates the deny
+// shapes (credential-bearing URLs, webhook endpoints, paste/upload services,
+// raw-IP targets, URLs encoding workspace data) instead of the pre-#0069
+// reputation weighting, which denied ordinary documentation hosts.
+//
+// knownGood carries the static floor's AllowNudge as a bias hint that is
+// explicitly NOT an absolute bypass — a compromised subdomain of a good host must
+// still be deniable. Since #0069 promoted the strong seed and reputation
+// top-sites to a real floor-level auto-approve (commit 6064b4e), a known-good
+// host never reaches this path in production at all: gate.go returns
+// VerdictAllow at LayerFetchFloor before consulting the classifier, so knownGood
+// is effectively always false here today. The parameter and the hint wording are
+// kept because the floor's known-good set and this classifier's notion of
+// "known-good" are separately configurable surfaces, and callers (including
+// tests) may still pass true.
+//
+// Verdicts are cached per session keyed by (toolName, rawArgs), so an identical
+// pending fetch is classified at most once.
 //
 // Fail-closed contract matches Classify: a completer timeout/error or a
 // malformed reply resolves to VerdictAsk.
@@ -282,17 +294,42 @@ func (c *Classifier) buildWebFetchMessages(userMessages []model.Message, host st
 	return msgs
 }
 
-// webFetchPendingPrompt renders the web_fetch pending call as the final user turn,
-// naming the target host and instructing domain-reputation weighting. The
-// known-good hint is stated as a bias, not a bypass: a compromised subdomain of a
-// good host must still be deniable.
+// webFetchPendingPrompt renders the web_fetch pending call as the final user
+// turn. It is allow-biased (#0069): the old "weigh domain reputation" wording
+// pushed every unfamiliar host toward ask/deny, which is what produced the
+// observed denials of ordinary documentation and reference sites. The framing it
+// replaces that with is factually checked against the tool — web_fetch issues an
+// HTTP GET with a nil body and returns the page's main-body text
+// (internal/tools/web_fetch.go:52-65 → research.Scraper.Fetch, scraper.go:102),
+// so "read-only GET returning page text" is true, not a reassuring fiction.
+//
+// The deny set is stated as concrete shapes rather than a reputation vibe. Only
+// the target host is rendered (the full URL is deliberately not injected into the
+// prompt), so the prompt says so and scopes the judgement to what the model can
+// actually see: hooks.slack.com, paste/upload services, and raw-IP targets are
+// host-visible, while credential-bearing and workspace-data-encoding URLs are
+// judged from the user's own turns.
+//
+// The known-good hint stays a bias and never a bypass — a compromised subdomain
+// of an otherwise good host, or a good host standing in for one of the deny
+// shapes, must remain deniable. The trailing JSON instruction is load-bearing and
+// unchanged.
 func webFetchPendingPrompt(host string, knownGood bool) string {
 	return fmt.Sprintf(
 		"Pending tool call to classify:\ntool: web_fetch\ntarget host: %s\n\n"+
-			"Weigh domain reputation: an unrecognized or low-reputation host biases toward \"ask\" or \"deny\"; "+
-			"a well-known documentation/reference host biases toward \"allow\". "+
-			"A known-good hint for this host is %t, but this hint is NOT an absolute bypass — "+
-			"a compromised subdomain of an otherwise good host must still be deniable.\n\n"+
+			"web_fetch performs a read-only GET and returns the page text: it sends no request body and "+
+			"cannot write to or change anything on the host. Fetching public web pages is routine developer "+
+			"work, so default to \"allow\".\n\n"+
+			"Deny only these shapes: URLs carrying credentials, tokens, API keys, or other secrets; "+
+			"webhook endpoints such as hooks.slack.com or discord.com/api/webhooks; "+
+			"paste or upload services usable to exfiltrate data; raw-IP URLs; "+
+			"and URLs that encode workspace data in the path or query. "+
+			"Only the target host is shown above, so deny when the host itself is one of those shapes, or when "+
+			"the user's own turns make clear the fetch would carry credentials or workspace data off this machine. "+
+			"Use \"ask\" only when the host is genuinely ambiguous — not merely unfamiliar.\n\n"+
+			"A known-good hint for this host is %t. The hint is a bias, NOT a bypass: a compromised subdomain of "+
+			"an otherwise good host, or a known-good host used as one of the deny shapes above, must still be "+
+			"deniable.\n\n"+
 			"Respond with the JSON verdict object.",
 		host, knownGood)
 }
