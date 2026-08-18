@@ -113,6 +113,53 @@ func TestClassifyFetchHost_SpoofNoNudge(t *testing.T) {
 	}
 }
 
+// strongSeedMatch covers only the exact/suffix host entries — never the broad
+// TLD wildcards, which must stay nudge-only and can never auto-approve.
+func TestStrongSeedMatch(t *testing.T) {
+	tests := []struct {
+		host string
+		want bool
+	}{
+		{"github.com", true},
+		{"docs.python.org", true},
+		{"user.github.io", true},
+		{"agency.gov", false},
+		{"mit.edu", false},
+		{"foo.dev", false},
+		// dot-boundary spoofs match nothing.
+		{"notgithub.com", false},
+		{"github.com.evil.example", false},
+	}
+	for _, tt := range tests {
+		if got := strongSeedMatch(tt.host); got != tt.want {
+			t.Errorf("strongSeedMatch(%q) = %v, want %v", tt.host, got, tt.want)
+		}
+	}
+}
+
+// knownGoodSeedMatch stays the union of both sets, so the AllowNudge surface
+// is unchanged by the split.
+func TestKnownGoodSeedMatch_UnionUnchanged(t *testing.T) {
+	tests := []struct {
+		host string
+		want bool
+	}{
+		{"github.com", true},
+		{"docs.python.org", true},
+		{"agency.gov", true},
+		{"mit.edu", true},
+		{"foo.dev", true},
+		{"notgithub.com", false},
+		{"github.com.evil.example", false},
+		{"evil.gov.attacker.com", false},
+	}
+	for _, tt := range tests {
+		if got := knownGoodSeedMatch(tt.host); got != tt.want {
+			t.Errorf("knownGoodSeedMatch(%q) = %v, want %v", tt.host, got, tt.want)
+		}
+	}
+}
+
 // hostMatchesSuffix enforces real dot-boundary suffix semantics.
 func TestHostMatchesSuffix(t *testing.T) {
 	tests := []struct {

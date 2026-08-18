@@ -17,13 +17,15 @@ type fetchFloorResult struct {
 	AllowNudge bool // true when host is known-good (hardcoded seed OR reputation.KnownGood) — a classifier allow-bias hint, NOT a bypass
 }
 
-// knownGoodSeed is a hardcoded suffix/exact set of code/dev, official-docs, and
-// reference hosts plus mild positive TLD signals. Each entry is matched via
-// hostMatchesSuffix so a plain "x" requires an exact host and a "*.x" requires a
-// real dot-boundary suffix — "notgithub.com" does NOT match "github.com" and
-// "evil.gov.attacker.com" does NOT match "*.gov". Membership only sets
-// AllowNudge; it never changes the Verdict.
-var knownGoodSeed = []string{
+// The hardcoded known-good seed is split into two sets. Every entry in both is
+// matched via hostMatchesSuffix, so a plain "x" requires an exact host and a
+// "*.x" requires a real dot-boundary suffix — "notgithub.com" does NOT match
+// "github.com" and "evil.gov.attacker.com" does NOT match "*.gov".
+//
+// strongKnownGoodSeed is the named exact/suffix set of code/dev hosting and
+// official docs/reference hosts. Each entry identifies a specific known
+// operator, so membership is strong enough to carry a real auto-approve.
+var strongKnownGoodSeed = []string{
 	// code / dev hosting
 	"github.com",
 	"*.github.io",
@@ -53,7 +55,16 @@ var knownGoodSeed = []string{
 	"w3.org",
 	"ietf.org",
 	"rfc-editor.org",
-	// mild positive TLD signals
+}
+
+// nudgeOnlyKnownGoodSeed holds mild positive TLD signals. These are broad
+// wildcards over entire top-level domains, not named operators: anyone can
+// register a .dev domain, .edu and .gov cover thousands of independently run
+// sites, and none of them vouch for the content of an arbitrary page. Treating
+// them as a real auto-approve would silently widen the fetch surface to whole
+// TLDs, so they must only ever set AllowNudge — a bias hint for the classifier,
+// never a bypass. Deliberately excluded from strongKnownGoodSeed.
+var nudgeOnlyKnownGoodSeed = []string{
 	"*.gov",
 	"*.edu",
 	"*.dev",
@@ -72,9 +83,24 @@ func hostMatchesSuffix(host, pattern string) bool {
 	return host == pattern
 }
 
-// knownGoodSeedMatch reports whether host is in the hardcoded known-good seed.
+// strongSeedMatch reports whether host is in the strong (named-operator) part
+// of the hardcoded known-good seed. This is the only half eligible to back a
+// real auto-approve; the broad TLD wildcards are excluded by construction.
+func strongSeedMatch(host string) bool {
+	return seedMatch(host, strongKnownGoodSeed)
+}
+
+// knownGoodSeedMatch reports whether host is in the hardcoded known-good seed,
+// i.e. the union of the strong and nudge-only sets. Membership only sets
+// AllowNudge; it never changes the Verdict.
 func knownGoodSeedMatch(host string) bool {
-	for _, pat := range knownGoodSeed {
+	return strongSeedMatch(host) || seedMatch(host, nudgeOnlyKnownGoodSeed)
+}
+
+// seedMatch reports whether host matches any pattern in seed under
+// hostMatchesSuffix's dot-boundary semantics.
+func seedMatch(host string, seed []string) bool {
+	for _, pat := range seed {
 		if hostMatchesSuffix(host, pat) {
 			return true
 		}
