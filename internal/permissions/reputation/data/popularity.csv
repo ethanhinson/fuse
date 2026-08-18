@@ -16,3 +16,4 @@ GlobalRank,TldRank,Domain,TLD,RefSubNets,RefIPs,IDN_Domain,IDN_TLD,PrevGlobalRan
 15,3,archive.org,org,160000,900000,archive.org,org,15,3,159000,890000
 16,1,bit.ly,ly,150000,850000,bit.ly,ly,16,1,149000,840000
 17,13,pastebin.com,com,140000,800000,pastebin.com,com,17,13,139000,790000
+18,14,ads-and-popular.example,example,130000,750000,ads-and-popular.example,example,18,14,129000,740000

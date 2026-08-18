@@ -320,6 +320,16 @@ func (g *PermissionGate) Mode() PermissionMode { return g.currentMode() }
 // present (constructible-and-wired) versus the nil fail-closed-ask posture.
 func (g *PermissionGate) HasClassifier() bool { return g.classifier != nil }
 
+// ClassifierWorkspaceContextLine returns the workspace-context line the wired
+// classifier prefixes onto its pending-call prompt, or "" when no classifier is
+// wired or no context was set. It is the companion seam to HasClassifier: a
+// construction site can assert not merely that a classifier exists but that it
+// was actually handed the session's writable geography, which is otherwise
+// invisible from outside the package.
+func (g *PermissionGate) ClassifierWorkspaceContextLine() string {
+	return g.classifier.WorkspaceContextLine()
+}
+
 // SetMode switches the live gate's mode under modeMu, so an in-flight resolve
 // never races the write and the very next resolve observes the new mode. It is
 // the root-gate half of the session-mode surface for HOLDERLESS gates (the

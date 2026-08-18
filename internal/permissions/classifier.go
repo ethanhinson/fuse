@@ -78,9 +78,11 @@ const ClassifierTraceLabel = "auto-classifier"
 // an allow-biased model resolves to allow, so out-of-root writes/moves/copies/
 // deletes are named as ask. Destruction outside the workspace stays a deny — the
 // stronger verdict — and reads outside the workspace stay routine. The clause
-// refers to "the named workspace and scratch paths given with the pending call",
-// which is what makes the D1b context line (pendingCallPrompt's
-// "workspace: …, scratch: …") load-bearing rather than decorative.
+// refers to "the named workspace and writable paths given with the pending
+// call", which is what makes the D1b context line (pendingCallPrompt's
+// "workspace: …, writable: …") load-bearing rather than decorative. That line
+// names the gate's own allowedRoots(), so the paths the prompt calls in-bounds
+// and the paths the gate scopes to are the same set by construction.
 //
 // The final JSON contract line is load-bearing and must stay in lockstep with
 // parseVerdict, which maps only allow/deny/ask out of a single JSON object.
@@ -93,7 +95,7 @@ const classifierSystemPrompt = `You are the permission gate for a coding agent w
 	`managing the agent's own dev server and test processes: allow kill of a numeric PID, and pkill or killall whose pattern names a specific dev-server or watcher binary (for example pkill -f "vite", or pkill node); ` +
 	`reading and writing files inside the workspace; and creating or using temp and scratch directories. ` +
 	`Answer "ask" for any kill whose pattern is broad or unclear — a bare -f ., a -9 with no specific named target, a wildcard pattern, or a system or OS process name — since you cannot tell which processes it would reach. ` +
-	`Answer "ask" for any write, move, copy, or delete whose target is outside the named workspace and scratch paths given with the pending call — a shell profile such as ~/.zshrc, a dotfile such as ~/.gitconfig, a config or credentials directory, a login item or launch agent, or anywhere else under the home or system tree — even when it destroys nothing and looks like a small edit; only reading such files is routine. ` +
+	`Answer "ask" for any write, move, copy, or delete whose target is outside the named workspace and writable paths given with the pending call — a shell profile such as ~/.zshrc, a dotfile such as ~/.gitconfig, a config or credentials directory, a login item or launch agent, or anywhere else under the home or system tree — even when it destroys nothing and looks like a small edit; only reading such files is routine. ` +
 	`Use "deny" only for genuinely dangerous shapes: exfiltration of secrets or workspace data to a remote endpoint; ` +
 	`piping remote content into a shell to execute it; privilege escalation such as sudo or changing ownership of system paths; ` +
 	`destruction outside the workspace, such as recursive deletes of system, home, or disk paths; ` +
@@ -114,27 +116,37 @@ type Classifier struct {
 	modelID string
 	cache   *verdictCache
 
-	// workspaceRoot and scratchDir describe the session's writable geography.
+	// workspaceRoot and writeRoots describe the session's writable geography.
 	// They are rendered as a context line in the pending-call prompt (#0069)
 	// so the model can tell "inside the workspace" from "outside" — the
 	// distinction the allow-biased system prompt leans on when it names
-	// destruction outside the workspace as a deny shape. Both are optional;
-	// when both are empty no context line is emitted at all.
+	// destruction outside the workspace as a deny shape.
+	//
+	// This pair MUST mirror what the gate actually enforces, which is
+	// allowedRoots() == workspaceRoot + writeRoots (gate.go). writeRoots is
+	// therefore the whole additional-root slice — the session scratch dir AND
+	// every configured permissions.auto.write_roots entry — not just scratch:
+	// a configured write root the gate treats as in-bounds must not be a place
+	// the classifier has never heard of. Both are optional; when the root and
+	// every write root are empty no context line is emitted at all.
 	workspaceRoot string
-	scratchDir    string
+	writeRoots    []string
 }
 
-// WithWorkspaceContext sets the workspace root and scratch directory rendered in
-// the pending-call prompt's context line, returning the receiver so it chains
-// off NewClassifier at a wiring site. Either argument may be empty; when both
-// are, the context line is suppressed. Nil-safe: a nil receiver returns nil, so
-// callers need not guard an optional classifier.
-func (c *Classifier) WithWorkspaceContext(workspaceRoot, scratchDir string) *Classifier {
+// WithWorkspaceContext sets the workspace root and the additional write roots
+// rendered in the pending-call prompt's context line, returning the receiver so
+// it chains off NewClassifier at a wiring site. Pass the SAME roots the gate is
+// given (cmd/fuse: workspaceRoot() and gateWriteRoots(cfg)) so the prompt's
+// geography and the gate's allowedRoots() cannot drift apart. Either argument
+// may be empty; when both are, the context line is suppressed. The slice is
+// copied, so a later mutation by the caller cannot rewrite the prompt. Nil-safe:
+// a nil receiver returns nil, so callers need not guard an optional classifier.
+func (c *Classifier) WithWorkspaceContext(workspaceRoot string, writeRoots []string) *Classifier {
 	if c == nil {
 		return nil
 	}
 	c.workspaceRoot = workspaceRoot
-	c.scratchDir = scratchDir
+	c.writeRoots = append([]string(nil), writeRoots...)
 	return c
 }
 
@@ -218,7 +230,7 @@ func (c *Classifier) cloneForChild() *Classifier {
 		modelID:       c.modelID,
 		cache:         c.cache.Clone(),
 		workspaceRoot: c.workspaceRoot,
-		scratchDir:    c.scratchDir,
+		writeRoots:    append([]string(nil), c.writeRoots...),
 	}
 }
 
@@ -393,11 +405,11 @@ func (c *Classifier) buildMessages(userMessages []model.Message, toolName, comma
 
 // pendingCallPrompt renders the pending tool call as the final user turn the
 // classifier judges, optionally prefixed by a workspace-context line naming the
-// session's workspace root and scratch dir. The context line is emitted only
-// when at least one of the two is set: a zero-value Classifier must never emit a
-// degenerate "workspace: , scratch: " line, which would be worse than no context
-// at all. The pending-call shape and the trailing JSON instruction are the
-// load-bearing parts and are unchanged.
+// session's workspace root and its additional write roots. The context line is
+// emitted only when at least one of them is set: a zero-value Classifier must
+// never emit a degenerate "workspace: , writable: " line, which would be worse
+// than no context at all. The pending-call shape and the trailing JSON
+// instruction are the load-bearing parts and are unchanged.
 func (c *Classifier) pendingCallPrompt(toolName, command string) string {
 	var b strings.Builder
 	if line := c.workspaceContextLine(); line != "" {
@@ -410,6 +422,13 @@ func (c *Classifier) pendingCallPrompt(toolName, command string) string {
 
 // workspaceContextLine renders the session's writable geography as a single
 // line, omitting whichever half is unset and returning "" when both are.
+//
+// The set named here is exactly the gate's allowedRoots() — the workspace root
+// followed by every additional write root (the session scratch dir and any
+// configured permissions.auto.write_roots entry) — so the prompt describes the
+// same geography the gate enforces. The "writable:" label, rather than the
+// narrower "scratch:", is what the system prompt's out-of-root ASK clause refers
+// to when it says "outside the named workspace and writable paths".
 func (c *Classifier) workspaceContextLine() string {
 	if c == nil {
 		return ""
@@ -418,14 +437,26 @@ func (c *Classifier) workspaceContextLine() string {
 	if c.workspaceRoot != "" {
 		parts = append(parts, "workspace: "+c.workspaceRoot)
 	}
-	if c.scratchDir != "" {
-		parts = append(parts, "scratch: "+c.scratchDir)
+	var roots []string
+	for _, r := range c.writeRoots {
+		if r != "" {
+			roots = append(roots, r)
+		}
+	}
+	if len(roots) > 0 {
+		parts = append(parts, "writable: "+strings.Join(roots, ", "))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
 	return strings.Join(parts, ", ")
 }
+
+// WorkspaceContextLine exposes the rendered workspace-context line for tests at
+// wiring sites (cmd/fuse), which must be able to assert that the production
+// construction path actually calls WithWorkspaceContext. It is a read-only
+// accessor over the same string pendingCallPrompt prefixes, and is nil-safe.
+func (c *Classifier) WorkspaceContextLine() string { return c.workspaceContextLine() }
 
 // verdictReply is the structured JSON shape the classifier asks the model to
 // produce. Only "verdict" is load-bearing; reason is advisory and never shown

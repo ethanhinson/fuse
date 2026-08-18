@@ -205,3 +205,34 @@ func TestExfilShapeMatch_DotBoundary(t *testing.T) {
 		}
 	}
 }
+
+// TestBlocklistBeatsKnownGoodPromotion pins the single most refresh-sensitive
+// ordering in fetchhost.go: the reputation blocklist is consulted BEFORE the
+// known-good promotion, so a host that is in both the popularity list and the
+// blocklist is DENIED rather than auto-approved.
+//
+// This overlap is not hypothetical. Real refreshed data overlaps routinely —
+// doubleclick.net sits in the Majestic top-100 and in essentially every
+// blocklist — so the bundled fixtures carry a synthetic host,
+// ads-and-popular.example, present in BOTH data/popularity.csv and
+// data/blocklist-domains.txt purely to keep this precedence under test. It is
+// correctly absent from knownGoodPromotedFromPopularity above: the blocklist
+// declines it before the promotion is reached.
+func TestBlocklistBeatsKnownGoodPromotion(t *testing.T) {
+	const host = "ads-and-popular.example"
+
+	if !reputation.KnownGood(host) {
+		t.Fatalf("fixture broken: %q must be in data/popularity.csv for this test to prove anything", host)
+	}
+	if !reputation.Blocked(host) {
+		t.Fatalf("fixture broken: %q must be in data/blocklist-domains.txt for this test to prove anything", host)
+	}
+
+	got := classifyFetchHost("https://"+host+"/x", nil, nil)
+	if got.DecidedBy != "blocklist" || got.Verdict != VerdictDeny {
+		t.Fatalf("blocklist must decide above the known-good promotion: classifyFetchHost(%q) = %+v, want Deny/blocklist", host, got)
+	}
+	if got.AllowNudge {
+		t.Errorf("a blocklisted host must never carry an allow nudge; got %+v", got)
+	}
+}

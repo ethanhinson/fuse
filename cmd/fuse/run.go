@@ -398,10 +398,14 @@ func autoModeOptions(cfg config.Config, reg *model.Registry, traceW io.Writer) [
 	cls := permissions.NewClassifier(clsAdapter, reg, cfg.Permissions.Auto, nil)
 	// Give the classifier the session's writable geography so its pending-call
 	// prompt can distinguish "inside the workspace" from "outside" (#0069).
-	// Scratch is resolved one level up in buildGate via gateWriteRoots, but
-	// sessionScratchDir() yields the same value and is directly callable here,
-	// so no new parameter is threaded through buildGate for it.
-	cls = cls.WithWorkspaceContext(workspaceRoot(), sessionScratchDir())
+	// These are deliberately the SAME inputs the gate is scoped with —
+	// WithWorkspaceRoot(workspaceRoot()) just below and WithWriteRoots(
+	// gateWriteRoots(cfg)) in buildGate — which together form the gate's
+	// allowedRoots(). Naming only workspace+scratch here would tell the
+	// classifier a narrower geography than the gate enforces, so a configured
+	// permissions.auto.write_roots entry would look out-of-bounds to the model
+	// the moment a path arg escapes pathArgs' recognition.
+	cls = cls.WithWorkspaceContext(workspaceRoot(), gateWriteRoots(cfg))
 	return []permissions.Option{
 		permissions.WithClassifier(cls),
 		permissions.WithWorkspaceRoot(workspaceRoot()),

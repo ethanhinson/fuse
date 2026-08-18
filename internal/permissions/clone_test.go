@@ -37,7 +37,7 @@ func TestApprovalCacheClone(t *testing.T) {
 // silently drop it.
 func TestClassifierCloneForChildPropagatesWorkspaceContext(t *testing.T) {
 	stub := &stubCompleter{}
-	parent := newTestClassifier(t, stub).WithWorkspaceContext("/ws", "/ws/.scratch")
+	parent := newTestClassifier(t, stub).WithWorkspaceContext("/ws", []string{"/ws/.scratch"})
 
 	child := parent.cloneForChild()
 	if child == nil {
@@ -46,8 +46,8 @@ func TestClassifierCloneForChildPropagatesWorkspaceContext(t *testing.T) {
 	if child.workspaceRoot != "/ws" {
 		t.Errorf("child workspaceRoot = %q, want %q", child.workspaceRoot, "/ws")
 	}
-	if child.scratchDir != "/ws/.scratch" {
-		t.Errorf("child scratchDir = %q, want %q", child.scratchDir, "/ws/.scratch")
+	if len(child.writeRoots) != 1 || child.writeRoots[0] != "/ws/.scratch" {
+		t.Errorf("child writeRoots = %v, want %v", child.writeRoots, []string{"/ws/.scratch"})
 	}
 }
 

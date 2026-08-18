@@ -14,3 +14,9 @@ popup-ads.example
 sketchy-redirect.example
 scam-offer.example
 data-broker.example
+
+# Also present in data/popularity.csv, deliberately: a host that is both
+# "popular" and blocked (as doubleclick.net is in real data). Keeps the
+# "blocklist beats the known-good promotion" ordering under test — see
+# TestBlocklistBeatsKnownGoodPromotion. Do not remove either row.
+ads-and-popular.example

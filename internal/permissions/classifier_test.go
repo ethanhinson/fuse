@@ -137,20 +137,26 @@ func TestClassifyInputHygiene(t *testing.T) {
 }
 
 // TestPendingCallPrompt_WorkspaceContext pins the #0069 D1b context line: when a
-// workspace root and/or scratch dir are set the pending-call prompt names them,
-// and when both are empty the line is suppressed entirely — a zero-value
-// Classifier must never emit a degenerate "workspace: , scratch: " line. The
-// existing pending-call shape and the trailing JSON instruction survive either
-// way.
+// workspace root and/or additional write roots are set the pending-call prompt
+// names them, and when all are empty the line is suppressed entirely — a
+// zero-value Classifier must never emit a degenerate "workspace: , writable: "
+// line. The existing pending-call shape and the trailing JSON instruction
+// survive either way.
+//
+// The roots named here must be the SAME set the gate enforces in allowedRoots()
+// (workspace root + write roots), which is why the setter takes the whole slice
+// rather than just the scratch dir: a configured permissions.auto.write_roots
+// entry is writable to the gate and must not be invisible to the classifier.
 func TestPendingCallPrompt_WorkspaceContext(t *testing.T) {
 	const (
 		root    = "/tmp/ws-root"
 		scratch = "/tmp/ws-root/.fuse/scratch"
+		extra   = "/tmp/shared-data"
 	)
 
 	t.Run("present when set", func(t *testing.T) {
 		stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow"}`}}
-		c := newTestClassifier(t, stub).WithWorkspaceContext(root, scratch)
+		c := newTestClassifier(t, stub).WithWorkspaceContext(root, []string{scratch, extra})
 
 		c.Classify(context.Background(), nil, "bash", "ls -la")
 
@@ -158,8 +164,11 @@ func TestPendingCallPrompt_WorkspaceContext(t *testing.T) {
 		if !strings.Contains(last, "workspace: "+root) {
 			t.Errorf("pending prompt must name the workspace root; got:\n%s", last)
 		}
-		if !strings.Contains(last, "scratch: "+scratch) {
+		if !strings.Contains(last, scratch) {
 			t.Errorf("pending prompt must name the scratch dir; got:\n%s", last)
+		}
+		if !strings.Contains(last, extra) {
+			t.Errorf("pending prompt must name every configured write root, not just scratch; got:\n%s", last)
 		}
 		if !strings.Contains(last, "Pending tool call to classify:\ntool: bash\ncommand: ls -la") {
 			t.Errorf("pending prompt lost its pending-call shape; got:\n%s", last)
@@ -169,14 +178,14 @@ func TestPendingCallPrompt_WorkspaceContext(t *testing.T) {
 		}
 	})
 
-	t.Run("omitted when both empty", func(t *testing.T) {
+	t.Run("omitted when all empty", func(t *testing.T) {
 		stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow"}`}}
 		c := newTestClassifier(t, stub) // zero workspace context
 
 		c.Classify(context.Background(), nil, "bash", "ls -la")
 
 		last := stub.lastReq.Messages[len(stub.lastReq.Messages)-1].Content
-		if strings.Contains(last, "workspace:") || strings.Contains(last, "scratch:") {
+		if strings.Contains(last, "workspace:") || strings.Contains(last, "writable:") {
 			t.Errorf("pending prompt must omit the context line when unset; got:\n%s", last)
 		}
 		if !strings.Contains(last, "Respond with the JSON verdict object.") {
@@ -186,7 +195,7 @@ func TestPendingCallPrompt_WorkspaceContext(t *testing.T) {
 
 	t.Run("nil receiver is safe", func(t *testing.T) {
 		var c *Classifier
-		if got := c.WithWorkspaceContext(root, scratch); got != nil {
+		if got := c.WithWorkspaceContext(root, []string{scratch}); got != nil {
 			t.Fatalf("WithWorkspaceContext on a nil receiver must return nil, got %v", got)
 		}
 	})
@@ -320,10 +329,10 @@ func TestClassifierSystemPrompt_AsksForOutOfWorkspaceWrites(t *testing.T) {
 
 	// (b) The clause must point at the context line it is given, so the model
 	// resolves "outside" against the actual session geography rather than a guess.
-	const anchor = "outside the named workspace and scratch paths"
+	const anchor = "outside the named workspace and writable paths"
 	idx := strings.Index(lower, anchor)
 	if idx < 0 {
-		t.Fatalf("system prompt must scope out-of-root mutations against the named workspace/scratch context line (missing %q); got:\n%s", anchor, classifierSystemPrompt)
+		t.Fatalf("system prompt must scope out-of-root mutations against the named workspace/writable-roots context line (missing %q); got:\n%s", anchor, classifierSystemPrompt)
 	}
 
 	// (a) The clause covers non-destructive mutations too — a write or a move,

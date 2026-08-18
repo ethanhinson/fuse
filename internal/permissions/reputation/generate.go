@@ -61,6 +61,15 @@ package reputation
 // real exfil shapes, and they exist here so the denylist's subtraction stays
 // under test.
 //
+// ads-and-popular.example is likewise deliberate, and is the one SYNTHETIC row
+// in popularity.csv: it also appears in data/blocklist-domains.txt, so it is a
+// host that is simultaneously "popular" and blocked. Real refreshed data
+// overlaps that way routinely (doubleclick.net is a Majestic top-100 domain and
+// sits in essentially every blocklist), and that overlap is what pins
+// "blocklist beats the known-good promotion" in classifyFetchHost. Do not drop
+// either row on a refresh — TestBlocklistBeatsKnownGoodPromotion fails loudly if
+// you do.
+//
 // The blocklist files carry no such hazard: they only ever DENY, so a wider
 // snapshot narrows what is reachable rather than widening it.
 //
