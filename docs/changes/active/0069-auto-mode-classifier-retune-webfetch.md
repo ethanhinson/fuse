@@ -12,12 +12,12 @@ related: [40, 45, 67, 68, 70]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-17-auto-mode-classifier-retune-webfetch-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-18-auto-mode-classifier-retune-webfetch-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-classifier-retune-webfetch
-claimed_at: 2026-08-18T03:56:00Z
+claimed_at: 2026-08-18T04:05:00Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-17-auto-mode-classifier-retune-webfetch-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-17-auto-mode-classifier-retune-webfetch-design.md) |
+| Plan | [2026-08-18-auto-mode-classifier-retune-webfetch-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-classifier-retune-webfetch/docs/superpowers/plans/2026-08-18-auto-mode-classifier-retune-webfetch-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
