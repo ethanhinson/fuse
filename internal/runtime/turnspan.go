@@ -256,19 +256,39 @@ func carrierFromEvents(events []event.Event) *event.TraceCarrier {
 	return nil
 }
 
-// completedTurns counts the turns a loop already finished, so a resume continues
-// fuse.turn.index rather than restarting it and colliding with the pre-reap
-// turns of the same loop_id. Every completed interactive turn ends in exactly one
-// loop.parked event, which makes the durable stream the seed. A stream with no
-// park (nothing completed, or an untraced/foreign stream) yields 0, and
-// newTurnTracer floors that to 1 — so the first resumed turn is index 2, the same
+// consumedTurns reports the highest fuse.turn.index the loop has already SPENT, so
+// a resume continues the sequence rather than restarting it and colliding with the
+// pre-reap turns of the same loop_id.
+//
+// Spent, not completed — that distinction is the whole point (review finding m2).
+// Every COMPLETED interactive exchange ends in exactly one loop.parked event, but a
+// session reaped MID-exchange opened (and teardown-ended) a turn span that never
+// parked. Counting parks alone would hand that index straight back to the resumed
+// session, producing two distinct fuse.loop.turn spans for one loop_id carrying the
+// same fuse.turn.index — precisely the collision this seed exists to prevent, just
+// reached down the mid-reap path instead of the parked one.
+//
+// So: count the parks, and add one more when the stream carries ANY event after the
+// last park. The loop emits nothing at completion or teardown (see the run
+// goroutine in launchLoop), so a trailing event can only be an exchange that started
+// and never finished — the interrupted turn. An empty stream yields 0 and
+// newTurnTracer floors that to 1, so the first resumed turn is index 2, the same
 // index a first post-park turn would have taken.
-func completedTurns(events []event.Event) int {
+func consumedTurns(events []event.Event) int {
 	n := 0
+	trailing := false
 	for _, e := range events {
 		if e.Kind == event.KindLoopParked {
 			n++
+			trailing = false
+			continue
 		}
+		trailing = true
+	}
+	if trailing {
+		// An exchange began after the last park and never reached one: its index is
+		// spent even though nothing recorded its completion.
+		n++
 	}
 	return n
 }

@@ -333,9 +333,10 @@ type launchOpts struct {
 	// it instead of minting a second session root. Nil for a fresh start (which links
 	// to its own fuse.loop.run instead).
 	carrier *event.TraceCarrier
-	// turnIndex is the number of turns the loop already COMPLETED before this launch,
-	// used to continue fuse.turn.index across a resume rather than restarting it and
-	// colliding with the pre-reap turns of the same loop_id. Zero for a fresh start.
+	// turnIndex is the highest fuse.turn.index the loop already SPENT before this
+	// launch (completed exchanges plus an exchange interrupted mid-flight), used to
+	// continue the sequence across a resume rather than restarting it and colliding
+	// with the pre-reap turns of the same loop_id. Zero for a fresh start.
 	turnIndex int
 }
 
@@ -370,6 +371,26 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	var loopSpan observe.Handle = observe.NoopHandle{}
 	if opts.resume {
 		loopCtx = observe.DecorateScope(r.deps.Observer, ctx, loopDesc)
+		// ...but the LAUNCH itself must still be observable (review finding m4). Every
+		// early return below reports failure through `end`, and with a NoopHandle there a
+		// failed revival produced nothing at all — no span, no fuse_loop_* metric — on
+		// exactly the path this change rewires. So open a short-lived fuse.loop.resume
+		// span covering the launch: it is NOT a second session root (spec D4 forbids
+		// restarting fuse.loop.run on resume), it is a distinct, bounded operation that
+		// ends the moment the launch is wired (success, just below the last early return)
+		// or the moment it fails. delayed=true links it to the ORIGINAL session's restored
+		// carrier via the existing capability helper — never a type assertion (ADR-0040) —
+		// and with no carrier it is an honest unlinked root, the same posture turn roots
+		// take.
+		//
+		// The returned ctx is deliberately DROPPED: this span ends early, and letting it
+		// become the session context's active span would leave every later store/turn
+		// lookup pointing at a dead parent. Nothing nests under it.
+		_, loopSpan = observe.StartFromCarrier(r.deps.Observer, loopCtx, opts.carrier, true, observe.Descriptor{
+			Kind:   observe.OperationLoop,
+			Name:   "resume",
+			Fields: loopDesc.Fields,
+		})
 	} else {
 		loopCtx, loopSpan = r.deps.Observer.Start(ctx, loopDesc)
 	}
@@ -539,6 +560,13 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// than at the first wake) is also what gives Agent.Run — and the loop's durable
 	// sink — an active turn to attach to for the resumed session's first exchange.
 	if turns != nil && opts.resume {
+		// The launch succeeded: close the short-lived fuse.loop.resume span here (review
+		// finding m4) rather than letting it live to run completion, so its duration
+		// measures the revival and it exports promptly — the same reason fuse.loop.run
+		// ends at the first park. end is endOnce-guarded and first-writer-wins, so the run
+		// goroutine's later end(out) is a no-op for a resumed loop, whose per-exchange work
+		// is covered by turn roots instead.
+		end(observe.OutcomeSuccess)
 		turns.wake()
 	}
 	a.SetObserver(obs)
@@ -895,14 +923,15 @@ func (r *inProcRuntime) Resume(ctx context.Context, tenant event.TenantID, loopI
 	// (change 0071): every event carries the durable carrier of the session that emitted
 	// it, and every completed exchange left exactly one loop.parked behind — so the
 	// stream supplies both the link target for the resumed turn roots and the turn index
-	// to continue from.
+	// to continue from (parks plus any interrupted trailing exchange — see
+	// consumedTurns).
 	return r.launchLoop(ctx, cfg, launchOpts{
 		seed:      seed,
 		seeded:    true,
 		rootID:    loopID,
 		resume:    true,
 		carrier:   carrierFromEvents(events),
-		turnIndex: completedTurns(events),
+		turnIndex: consumedTurns(events),
 	})
 }
 
