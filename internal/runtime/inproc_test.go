@@ -20,6 +20,10 @@ type observedOperation struct {
 	viaCarrier bool
 	hadCarrier bool
 	delayed    bool
+	// carrier is the traceparent of the carrier the operation was started from, so a
+	// test can tell WHICH durable context an operation linked to — not merely that one
+	// was present.
+	carrier string
 }
 
 // recordedEnd captures a single Handle.End call against a started operation.
@@ -62,6 +66,10 @@ func (o *recordingObserver) Start(ctx context.Context, d observe.Descriptor) (co
 // exercises the carrier/delayed branch of observe.StartFromCarrier instead of
 // silently falling back to Start.
 func (o *recordingObserver) StartFromCarrier(ctx context.Context, c *event.TraceCarrier, delayed bool, d observe.Descriptor) (context.Context, observe.Handle) {
+	traceParent := ""
+	if c != nil {
+		traceParent = c.TraceParent
+	}
 	o.mu.Lock()
 	o.ops = append(o.ops, observedOperation{
 		kind:       d.Kind,
@@ -70,9 +78,24 @@ func (o *recordingObserver) StartFromCarrier(ctx context.Context, c *event.Trace
 		viaCarrier: true,
 		hadCarrier: c != nil,
 		delayed:    delayed,
+		carrier:    traceParent,
 	})
 	o.mu.Unlock()
 	return ctx, recordingHandle{owner: o, name: d.Name}
+}
+
+// testCarrier is the fixed, W3C-valid durable trace context recordingObserver
+// hands out. A real (otel) observer derives one per active span; the recorder only
+// needs it present and valid, so turn spans exercise the carrier branch and emitted
+// events round-trip through the durable store's carrier validation.
+var testCarrier = event.TraceCarrier{TraceParent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}
+
+// TraceCarrier satisfies observe.TraceCarrierProvider so the runtime's capability
+// probe (observe.TraceCarrier) yields a non-nil durable carrier, as the otel
+// observer does in production.
+func (o *recordingObserver) TraceCarrier(context.Context) *event.TraceCarrier {
+	c := testCarrier
+	return &c
 }
 
 func (o *recordingObserver) saw(kind observe.OperationKind, name string) bool {
