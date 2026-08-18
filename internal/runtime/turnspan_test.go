@@ -646,3 +646,113 @@ func TestChildSpansParentToTheOpenTurn(t *testing.T) {
 		t.Errorf("second exchange's model attempt parent = %q, want the open turn root %q", completeParents[1], turnIDs[0])
 	}
 }
+
+// principalTool records, per Execute, the Deps.LoopContext-stamped value it was
+// invoked with. It is the production-path stand-in for toolidentity's principal
+// (change #59): the MCP egress mints delegation tokens from exactly this value, so
+// losing it at a turn boundary is a silent authorization failure, not a trace defect.
+type principalTool struct {
+	mu   *sync.Mutex
+	seen *[]string
+}
+
+func (principalTool) Name() string               { return "capture" }
+func (principalTool) Description() string        { return "" }
+func (principalTool) Parameters() map[string]any { return map[string]any{} }
+func (p principalTool) Execute(ctx context.Context, _ string) tools.Result {
+	v, _ := ctx.Value(principalKey{}).(string)
+	p.mu.Lock()
+	*p.seen = append(*p.seen, v)
+	p.mu.Unlock()
+	return tools.Result{Output: "ok"}
+}
+
+// TestTurnScopedObserverIsInstalledOnTheStartLoopPath is the production-reach guard
+// for the whole parenting seam (learnings: runtime-deps-field-overwrites-builder-injection).
+//
+// The runtime is the LATER writer of the agent's observer — it calls a.SetObserver
+// AFTER Deps.BuildAgent returns — so a test that constructs turnScopedObserver
+// directly (TestReparentedSpanKeepsCallerContext) proves the wrapper's behavior but
+// says nothing about whether the agent ever holds it. This drives the real
+// StartLoop/Send path and asserts both halves of that wrapper's contract on the
+// observer the agent ACTUALLY ends up with:
+//
+//   - the re-parent happens: post-wake work nests under the open fuse.loop.turn root,
+//     which can only be true if the wrapper is the installed observer;
+//   - the re-parent costs nothing: the context that reaches a tool's Execute in that
+//     same turn still carries the per-loop principal Deps.LoopContext stamped.
+func TestTurnScopedObserverIsInstalledOnTheStartLoopPath(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	reg := tools.NewRegistry()
+	reg.Register(principalTool{mu: &mu, seen: &seen})
+
+	observer := newMarkingObserver()
+	// Exchange 1 answers outright; exchange 2 (after the wake) calls the tool first,
+	// so the turn's tool Execute is on the post-wake side of the boundary.
+	fake := newGatedCompleter(
+		model.CompletionResp{Content: "first answer"},
+		model.CompletionResp{ToolCalls: []model.ToolCall{{ID: "1", Name: "capture", Arguments: "{}"}}},
+		model.CompletionResp{Content: "second answer"},
+	)
+	rt := New(Deps{
+		BaseDir:         t.TempDir(),
+		MaxConcurrent:   1,
+		Observer:        observer,
+		IdleTTL:         time.Hour,
+		NewToolRegistry: func() *tools.Registry { return reg },
+		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, r *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+			return agent.New(fake, execAll{r}, nopRenderer{}, modelID, "", 1, 0), nil, modelID, nil
+		},
+		LoopContext: func(ctx context.Context, cfg LoopConfig) context.Context {
+			return context.WithValue(ctx, principalKey{}, cfg.Subject)
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h, err := rt.StartLoop(ctx, LoopConfig{Task: "hi", ModelID: "cloud/x", Subject: "alice", Interactive: true})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	evCh, unsub, err := rt.Observe(ctx, event.DefaultTenant, h.ID())
+	if err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+	defer unsub()
+
+	fake.admit(0)
+	waitForKind(t, evCh, event.KindLoopParked, 2*time.Second)
+
+	fake.admit(1)
+	fake.admit(2)
+	if err := rt.Send(ctx, event.DefaultTenant, h.ID(), "and then?"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForKind(t, evCh, event.KindLoopParked, 2*time.Second)
+
+	// Half one: the agent's observer re-parents post-wake work onto the turn root.
+	waitFor(t, 2*time.Second, "the woken exchange's model attempt", func() bool {
+		_, parents := observer.snapshot("complete")
+		return len(parents) >= 2
+	})
+	turnIDs, _ := observer.snapshot("turn")
+	if len(turnIDs) != 1 {
+		t.Fatalf("want exactly 1 fuse.loop.turn root, got %d", len(turnIDs))
+	}
+	_, completeParents := observer.snapshot("complete")
+	if completeParents[1] != turnIDs[0] {
+		t.Errorf("post-wake model attempt parent = %q, want the open turn root %q — "+
+			"the agent is not observing through turnScopedObserver on the StartLoop path",
+			completeParents[1], turnIDs[0])
+	}
+
+	// Half two: and the turn-scoped context still carries the per-loop principal.
+	mu.Lock()
+	got := append([]string(nil), seen...)
+	mu.Unlock()
+	if len(got) != 1 || got[0] != "alice" {
+		t.Errorf("post-wake tool Execute saw principal %v, want [alice] — the turn "+
+			"re-parent must not replace the caller's context", got)
+	}
+}
