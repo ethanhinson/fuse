@@ -1,6 +1,6 @@
 # Backlog
 
-**71 changes** — 🟡 5 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 57 done · 🗑️ 6 killed
+**71 changes** — 🟡 5 proposed · ⚪ 2 deferred · ✅ 58 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
@@ -19,12 +19,6 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0071](active/0071-turn-scoped-trace-roots-interactive-loops.md) | Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans | `high` | `fix` | [#74](https://github.com/ethanhinson/fuse/pull/74) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
@@ -34,7 +28,6 @@ graph TD
   0063 --> 0065
   0068 --> 0069
   0069 --> 0070
-  0071
   0012:::done
   0052:::done
   0058:::done
@@ -42,10 +35,11 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (63)</summary>
+<details><summary>✅🗑️ Archive — done + killed (64)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0071](archive/2026-08-18-0071-turn-scoped-trace-roots-interactive-loops.md) | Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans | 2026-08-18 |
 | [0068](archive/2026-08-17-0068-auto-mode-deterministic-freedom.md) | Auto-mode deterministic freedom — scratchpad + write_roots + rules-layer shrink to catastrophic-only | 2026-08-17 |
 | [0067](archive/2026-08-17-0067-auto-mode-permission-observability-deny-resilience.md) | Auto-mode permission observability + deny-resilience — measure every gate decision, stop dying on denials | 2026-08-17 |
 | [0062](archive/2026-08-17-0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md) | Wander refresh-to-restore — light up #54 durable resume in the browser demo | 2026-08-17 |
@@ -60,7 +54,6 @@ graph TD
 | [0055](archive/2026-08-11-0055-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4.md) | Connect/protobuf transport — IDL-defined loop.* wire, successor to #48 | 2026-08-11 |
 | [0053](archive/2026-08-11-0053-persistent-conversational-loop.md) | Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat | 2026-08-11 |
 | [0052](archive/2026-08-11-0052-tool-identity-propagation.md) | Tool/resource identity propagation — per-call RFC 8693 token exchange to downstream MCP/APIs | 2026-08-11 |
-| [0050](archive/2026-08-11-0050-client-sdk.md) | Client SDK — Runtime-parity Go + TS/JS libraries, same API local-or-remote | 2026-08-11 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -72,6 +65,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 42 done |
+| [2026-08](archive/) | 43 done |
 
 </details>
