@@ -2,23 +2,90 @@ package permissions
 
 import "testing"
 
-// (a) well-known hardcoded-seed hosts fall through with an allow nudge.
-func TestClassifyFetchHost_WellKnownFallthroughNudge(t *testing.T) {
+// (a) strong-seed hosts and reputation top-sites are a real auto-approve:
+// VerdictAllow decided by the "known-good" layer, never reaching the classifier.
+func TestClassifyFetchHost_KnownGoodAutoApprove(t *testing.T) {
 	cases := []string{
+		// strongKnownGoodSeed entries (exact and dot-boundary suffix).
 		"https://github.com/foo/bar",
 		"https://docs.python.org/3/",
+		"https://user.github.io/page",
+		// reputation.KnownGood top-sites that are NOT in the hardcoded strong
+		// seed (data/popularity.csv).
+		"https://google.com/search",
+		"https://archive.org/details/x",
 	}
 	for _, raw := range cases {
 		got := classifyFetchHost(raw, nil, nil)
 		if got.Verdict != VerdictAllow {
-			t.Errorf("%s: Verdict = %v, want VerdictAllow (fallthrough)", raw, got.Verdict)
+			t.Errorf("%s: Verdict = %v, want VerdictAllow", raw, got.Verdict)
 		}
-		if got.DecidedBy != "fallthrough" {
-			t.Errorf("%s: DecidedBy = %q, want %q", raw, got.DecidedBy, "fallthrough")
+		if got.DecidedBy != "known-good" {
+			t.Errorf("%s: DecidedBy = %q, want %q", raw, got.DecidedBy, "known-good")
 		}
 		if !got.AllowNudge {
 			t.Errorf("%s: AllowNudge = false, want true", raw)
 		}
+	}
+}
+
+// (a2) the broad TLD wildcards stay nudge-only: they must fall through to the
+// classifier, never auto-approve.
+func TestClassifyFetchHost_NudgeOnlyTLDsDoNotAutoApprove(t *testing.T) {
+	cases := []string{
+		"https://agency.gov/x",
+		"https://mit.edu/x",
+		"https://someproject.dev/x",
+	}
+	for _, raw := range cases {
+		got := classifyFetchHost(raw, nil, nil)
+		if got.Verdict != VerdictAllow {
+			t.Errorf("%s: Verdict = %v, want VerdictAllow (fallthrough sentinel)", raw, got.Verdict)
+		}
+		if got.DecidedBy != "fallthrough" {
+			t.Errorf("%s: DecidedBy = %q, want %q (TLD wildcards must not auto-approve)", raw, got.DecidedBy, "fallthrough")
+		}
+		if !got.AllowNudge {
+			t.Errorf("%s: AllowNudge = false, want true (still a bias hint)", raw)
+		}
+	}
+}
+
+// (a3) an unrecognized host is neither seeded nor a top-site: it still falls
+// through to the classifier with no nudge.
+func TestClassifyFetchHost_UnknownFallthrough(t *testing.T) {
+	got := classifyFetchHost("https://unknown-blog.example/post", nil, nil)
+	if got.Verdict != VerdictAllow {
+		t.Errorf("Verdict = %v, want VerdictAllow (fallthrough sentinel)", got.Verdict)
+	}
+	if got.DecidedBy != "fallthrough" {
+		t.Errorf("DecidedBy = %q, want %q", got.DecidedBy, "fallthrough")
+	}
+	if got.AllowNudge {
+		t.Error("AllowNudge = true, want false")
+	}
+}
+
+// (a4) config always beats the known-good promotion: a configured fetch_deny or
+// fetch_ask of a strong-seed host still decides.
+func TestClassifyFetchHost_ConfigBeatsKnownGood(t *testing.T) {
+	deny := classifyFetchHost("https://github.com/x", []string{"github.com"}, nil)
+	if deny.Verdict != VerdictDeny || deny.DecidedBy != "config-deny" {
+		t.Errorf("fetch_deny of a seeded host: Verdict=%v DecidedBy=%q, want VerdictDeny/config-deny",
+			deny.Verdict, deny.DecidedBy)
+	}
+
+	ask := classifyFetchHost("https://github.com/x", nil, []string{"github.com"})
+	if ask.Verdict != VerdictAsk || ask.DecidedBy != "config-ask" {
+		t.Errorf("fetch_ask of a seeded host: Verdict=%v DecidedBy=%q, want VerdictAsk/config-ask",
+			ask.Verdict, ask.DecidedBy)
+	}
+
+	// Same for a reputation top-site that is not in the hardcoded seed.
+	repDeny := classifyFetchHost("https://google.com/x", []string{"google.com"}, nil)
+	if repDeny.Verdict != VerdictDeny || repDeny.DecidedBy != "config-deny" {
+		t.Errorf("fetch_deny of a top-site: Verdict=%v DecidedBy=%q, want VerdictDeny/config-deny",
+			repDeny.Verdict, repDeny.DecidedBy)
 	}
 }
 

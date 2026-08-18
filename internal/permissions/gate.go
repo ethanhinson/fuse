@@ -549,8 +549,8 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 			return VerdictAsk, LayerEditScope, ""
 		}
 		// web_fetch carries a URL rather than a shell command: apply the static host
-		// floor first (SSRF / config deny/ask / blocklist), and only a fallthrough
-		// host reaches the reputation-aware classifier. A missing/garbled url makes
+		// floor first (SSRF / config deny/ask / blocklist / known-good), and only a
+		// fallthrough host reaches the reputation-aware classifier. A missing/garbled url makes
 		// classifyFetchHost return Ask("malformed-url"), so it fails toward the human.
 		if name == "web_fetch" {
 			r := classifyFetchHost(fetchURL(args), g.cfg.Auto.FetchDeny, g.cfg.Auto.FetchAsk)
@@ -560,6 +560,15 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 			case VerdictAsk:
 				return VerdictAsk, LayerFetchFloor, ""
 			default:
+				// A known-good host is a positive floor decision (change 0069):
+				// allow without consulting the classifier at all. This
+				// deliberately does NOT touch the escalation valve — the valve
+				// only tracks classifier outcomes, and a floor allow is not a
+				// classifier non-block, so it must neither reset the
+				// consecutive counter nor otherwise move the counts.
+				if r.DecidedBy == "known-good" {
+					return VerdictAllow, LayerFetchFloor, ""
+				}
 				// Fallthrough host ⇒ reputation-aware classifier (valve-enforced).
 				return g.classifyWebFetch(ctx, args, r)
 			}

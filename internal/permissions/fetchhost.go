@@ -12,9 +12,9 @@ import (
 // fetchFloorResult is the deciding-layer + verdict of the web_fetch host floor.
 type fetchFloorResult struct {
 	Verdict    Verdict // VerdictDeny, VerdictAsk, or a fallthrough sentinel (VerdictAllow == "fall through to classifier")
-	DecidedBy  string  // "ssrf" | "config-deny" | "config-ask" | "blocklist" | "malformed-url" | "fallthrough"
+	DecidedBy  string  // "ssrf" | "config-deny" | "config-ask" | "blocklist" | "known-good" | "malformed-url" | "fallthrough"
 	Host       string
-	AllowNudge bool // true when host is known-good (hardcoded seed OR reputation.KnownGood) — a classifier allow-bias hint, NOT a bypass
+	AllowNudge bool // true when host is known-good (hardcoded seed OR reputation.KnownGood). On a "fallthrough" result this is only a classifier allow-bias hint, NOT a bypass; a "known-good" result is the floor's own auto-approve.
 }
 
 // The hardcoded known-good seed is split into two sets. Every entry in both is
@@ -148,11 +148,20 @@ func matchesAnyGlob(host string, patterns []string) bool {
 //	fetchDeny glob match                  => Deny, "config-deny"  (deny beats ask)
 //	fetchAsk glob match                   => Ask,  "config-ask"
 //	reputation.Blocked(host)              => Deny, "blocklist"
+//	strong seed / reputation.KnownGood    => Allow, "known-good"  (a real auto-approve)
 //	otherwise                             => VerdictAllow sentinel, "fallthrough"
 //
-// SSRF is checked before config/blocklist so a private IP always denies.
-// AllowNudge is set on the fallthrough result from the hardcoded seed OR
-// reputation.KnownGood; it never changes the Verdict.
+// The order is load-bearing. SSRF is checked first so a private IP always
+// denies. The known-good promotion (change 0069) sits strictly last among the
+// deciding layers, so a configured fetch_deny/fetch_ask and the reputation
+// blocklist all beat it: config always wins over the seed.
+//
+// Only the strong (named-operator) half of the hardcoded seed and the exact
+// reputation.KnownGood top-site set can auto-approve. The broad TLD wildcards
+// (*.gov, *.edu, *.dev) are deliberately excluded — they still fall through
+// with AllowNudge set, which is a classifier bias hint and never a bypass.
+// AllowNudge on a "fallthrough" result comes from the full seed union OR
+// reputation.KnownGood and never changes that Verdict.
 func classifyFetchHost(rawURL string, fetchDeny, fetchAsk []string) fetchFloorResult {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -174,6 +183,14 @@ func classifyFetchHost(rawURL string, fetchDeny, fetchAsk []string) fetchFloorRe
 	}
 	if reputation.Blocked(host) {
 		return fetchFloorResult{Verdict: VerdictDeny, DecidedBy: "blocklist", Host: host}
+	}
+
+	// Known-good auto-approve. Both membership tests are exact/dot-boundary:
+	// strongSeedMatch uses hostMatchesSuffix, and reputation.KnownGood is an
+	// exact lookup in the bundled popularity set with no subdomain widening.
+	// This runs only after every denying layer above has declined.
+	if strongSeedMatch(host) || reputation.KnownGood(host) {
+		return fetchFloorResult{Verdict: VerdictAllow, DecidedBy: "known-good", Host: host, AllowNudge: true}
 	}
 
 	return fetchFloorResult{

@@ -327,6 +327,32 @@ func TestResolveAuto_WebFetchStaticFloor(t *testing.T) {
 	if !strings.Contains(reason2, "config-deny") {
 		t.Errorf("fetch_deny reason should name the layer; got %q", reason2)
 	}
+
+	// A known-good host auto-approves at the floor: the classifier is never
+	// consulted (change 0069 — the seed is a real auto-approve, not a hint).
+	g3 := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), AlwaysApprove,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+	v3, layer3, _ := g3.resolveAuto(context.Background(), "web_fetch", `{"url":"https://github.com/foo/bar"}`)
+	if v3 != VerdictAllow {
+		t.Fatalf("known-good host must allow, got %v", v3)
+	}
+	if layer3 != LayerFetchFloor {
+		t.Errorf("known-good allow should be decided by the fetch floor, got layer %q", layer3)
+	}
+	if stub.calls != 0 {
+		t.Fatalf("known-good allow must not consult the classifier, got %d calls", stub.calls)
+	}
+
+	// A configured fetch_deny still beats the known-good seed.
+	g4 := New(autoCfg(config.AutoConfig{FetchDeny: []string{"github.com"}}, nil, nil),
+		newTestRegistry("web_fetch"), AlwaysApprove, WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+	v4, _, reason4 := g4.resolveAuto(context.Background(), "web_fetch", `{"url":"https://github.com/foo/bar"}`)
+	if v4 != VerdictDeny {
+		t.Fatalf("config fetch_deny must beat the known-good seed, got %v", v4)
+	}
+	if !strings.Contains(reason4, "config-deny") {
+		t.Errorf("config-deny reason should name the layer; got %q", reason4)
+	}
 }
 
 func TestPromptAll_PromptsEvenSafeTools(t *testing.T) {
