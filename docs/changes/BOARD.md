@@ -1,8 +1,14 @@
 # Backlog
 
-**71 changes** — 🟡 6 proposed · ⚪ 2 deferred · ✅ 57 done · 🗑️ 6 killed
+**71 changes** — 🟢 1 in progress · 🟡 5 proposed · ⚪ 2 deferred · ✅ 57 done · 🗑️ 6 killed
 
-## 🟡 Proposed (6)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0071](active/0071-turn-scoped-trace-roots-interactive-loops.md) | Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans | `high` | `fix` | [spec](../superpowers/specs/2026-08-18-turn-scoped-trace-roots-design.md) | `feat/turn-scoped-trace-roots-interactive-loops` |
+
+## 🟡 Proposed (5)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -11,7 +17,6 @@
 | [0065](active/0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | `medium` | `feat` | ⏳ waiting on #63 — not yet built |
 | [0069](active/0069-auto-mode-classifier-retune-webfetch.md) | Auto-mode classifier retune + web_fetch loosening — allow-bias for routine dev ops, seed becomes real auto-approve | `medium` | `feat` | build-ready |
 | [0070](active/0070-auto-mode-shell-parse-widening.md) | Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args | `medium` | `feat` | ⏳ waiting on #69 — not yet built |
-| [0071](active/0071-turn-scoped-trace-roots-interactive-loops.md) | Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans | `high` | `fix` | build-ready |
 
 ## ⚪ Deferred (2)
 
