@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0071 — Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0071-turn-scoped-trace-roots-interactive-loops.md)**
+> ↩ **[Change 0071 — Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-18-0071-turn-scoped-trace-roots-interactive-loops.md)**
 <!-- docket:backlink:end -->
 
 # Turn-scoped trace roots for interactive loops — design
