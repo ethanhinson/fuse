@@ -2,11 +2,11 @@
 id: 69
 slug: auto-mode-classifier-retune-webfetch
 title: Auto-mode classifier retune + web_fetch loosening — allow-bias for routine dev ops, seed becomes real auto-approve
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-17
-updated: 2026-08-17
+updated: 2026-08-18
 depends_on: [68]
 related: [40, 45, 67, 68, 70]
 discovered_from: []
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/auto-mode-classifier-retune-webfetch
+claimed_at: 2026-08-18T03:50:20Z
 pr:
 blocked_by:
 reconciled: false
