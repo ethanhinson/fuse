@@ -140,8 +140,9 @@ func matchesAnyGlob(host string, patterns []string) bool {
 	return false
 }
 
-// classifyFetchHost extracts the host from rawURL and applies the static
-// web_fetch floor. The layers, in order:
+// classifyFetchHost extracts the host from rawURL, canonicalizes it with
+// reputation.CanonicalHost, and applies the static web_fetch floor to that one
+// canonical value. The layers, in order:
 //
 //	malformed/opaque URL (no host)        => Ask,  "malformed-url"
 //	SSRF (loopback/RFC-1918/link-local/…) => Deny, "ssrf"
@@ -167,7 +168,17 @@ func classifyFetchHost(rawURL string, fetchDeny, fetchAsk []string) fetchFloorRe
 	if err != nil {
 		return fetchFloorResult{Verdict: VerdictAsk, DecidedBy: "malformed-url"}
 	}
-	host := strings.ToLower(u.Hostname())
+	// Canonicalize ONCE, before every layer, and derive all of them from this
+	// single value. url.Hostname preserves the root dot, so the raw host of
+	// "https://google.com./q" is "google.com." — which path.Match and
+	// hostMatchesSuffix both miss while reputation.Blocked/KnownGood match it
+	// anyway (they canonicalize internally). Matching on the raw host would
+	// therefore let the FQDN spelling skip config-deny/config-ask and land on
+	// the known-good auto-approve, breaking "config always beats the seed" with
+	// a one-character mutation; it would likewise walk "localhost." past the
+	// SSRF check. Using reputation.CanonicalHost — the very function those
+	// lookups normalize with — is what keeps the layers in agreement.
+	host := reputation.CanonicalHost(u.Hostname())
 	if host == "" {
 		return fetchFloorResult{Verdict: VerdictAsk, DecidedBy: "malformed-url"}
 	}

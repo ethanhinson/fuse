@@ -48,13 +48,28 @@ var (
 	goodSet  map[string]struct{}
 )
 
-// normalize lowercases the host and strips a single trailing dot so that
-// "GitHub.Com." and "github.com" compare equal.
-func normalize(host string) string {
+// CanonicalHost lowercases the host and strips a single trailing root dot so
+// that "GitHub.Com." and "github.com" compare equal. It is the canonical host
+// spelling used by every lookup in this package (Blocked, KnownGood, and the
+// data loaders).
+//
+// It is exported because callers that gate on a host — notably the permissions
+// web_fetch floor — MUST canonicalize with exactly this function before their
+// own deny/ask matching. If a gate matches on a raw url.Hostname() while these
+// lookups normalize, the two disagree on the FQDN spelling ("google.com.") and
+// a denying layer can be skipped while KnownGood still answers true. Sharing
+// one function makes that drift impossible; do not reimplement it.
+//
+// Note the empty result for "." (and for ""): callers must treat an empty
+// canonical host as "no host", not as a host that matched nothing.
+func CanonicalHost(host string) string {
 	h := strings.ToLower(strings.TrimSpace(host))
 	h = strings.TrimSuffix(h, ".")
 	return h
 }
+
+// normalize is the internal alias for CanonicalHost.
+func normalize(host string) string { return CanonicalHost(host) }
 
 // loadBlocklist parses the union of both blocklist files into blockSet.
 //

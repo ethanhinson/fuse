@@ -1,6 +1,10 @@
 package permissions
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ethanhinson/fuse/internal/permissions/reputation"
+)
 
 // (a) strong-seed hosts and reputation top-sites are a real auto-approve:
 // VerdictAllow decided by the "known-good" layer, never reaching the classifier.
@@ -176,6 +180,91 @@ func TestClassifyFetchHost_SpoofNoNudge(t *testing.T) {
 		}
 		if got.AllowNudge {
 			t.Errorf("%s: AllowNudge = true, want false (spoof must not be nudged)", raw)
+		}
+	}
+}
+
+// (g) the FQDN (trailing-dot) spelling of a host must be canonicalized before
+// every layer. url.Hostname preserves the root dot, so "google.com." would
+// otherwise miss path.Match/strongSeedMatch in the denying layers while still
+// matching reputation.KnownGood (which normalizes) — turning a one-character
+// mutation into a zero-classifier auto-approve past a configured fetch_deny.
+func TestClassifyFetchHost_TrailingDotCanonicalized(t *testing.T) {
+	// config-deny still decides for the FQDN spelling.
+	deny := classifyFetchHost("https://google.com./?q=secret", []string{"google.com"}, nil)
+	if deny.Verdict != VerdictDeny || deny.DecidedBy != "config-deny" {
+		t.Errorf("fetch_deny vs FQDN spelling: Verdict=%v DecidedBy=%q, want VerdictDeny/config-deny",
+			deny.Verdict, deny.DecidedBy)
+	}
+	if deny.Host != "google.com" {
+		t.Errorf("deny.Host = %q, want canonical %q", deny.Host, "google.com")
+	}
+
+	// same for a strong-seed host under fetch_deny.
+	seedDeny := classifyFetchHost("https://github.com./x", []string{"github.com"}, nil)
+	if seedDeny.Verdict != VerdictDeny || seedDeny.DecidedBy != "config-deny" {
+		t.Errorf("fetch_deny vs seeded FQDN: Verdict=%v DecidedBy=%q, want VerdictDeny/config-deny",
+			seedDeny.Verdict, seedDeny.DecidedBy)
+	}
+
+	// config-ask still decides for the FQDN spelling.
+	ask := classifyFetchHost("https://google.com./x", nil, []string{"google.com"})
+	if ask.Verdict != VerdictAsk || ask.DecidedBy != "config-ask" {
+		t.Errorf("fetch_ask vs FQDN spelling: Verdict=%v DecidedBy=%q, want VerdictAsk/config-ask",
+			ask.Verdict, ask.DecidedBy)
+	}
+
+	// SSRF sees through the root dot too.
+	ssrf := []string{"http://localhost./admin", "http://127.0.0.1./x"}
+	for _, raw := range ssrf {
+		got := classifyFetchHost(raw, nil, nil)
+		if got.Verdict != VerdictDeny || got.DecidedBy != "ssrf" {
+			t.Errorf("%s: Verdict=%v DecidedBy=%q, want VerdictDeny/ssrf", raw, got.Verdict, got.DecidedBy)
+		}
+	}
+
+	// blocklist sees through the root dot.
+	blocked := classifyFetchHost("https://malware-test.example./payload", nil, nil)
+	if blocked.Verdict != VerdictDeny || blocked.DecidedBy != "blocklist" {
+		t.Errorf("blocklist vs FQDN spelling: Verdict=%v DecidedBy=%q, want VerdictDeny/blocklist",
+			blocked.Verdict, blocked.DecidedBy)
+	}
+
+	// canonicalization must not break the happy path: an unconfigured
+	// known-good host still auto-approves in its FQDN spelling.
+	for _, raw := range []string{"https://github.com./foo", "https://google.com./search"} {
+		good := classifyFetchHost(raw, nil, nil)
+		if good.Verdict != VerdictAllow || good.DecidedBy != "known-good" || !good.AllowNudge {
+			t.Errorf("%s: Verdict=%v DecidedBy=%q AllowNudge=%v, want VerdictAllow/known-good/true",
+				raw, good.Verdict, good.DecidedBy, good.AllowNudge)
+		}
+	}
+
+	// a host that is nothing but the root dot canonicalizes to empty and must
+	// be treated as hostless, not as a non-empty host.
+	dot := classifyFetchHost("https://./x", nil, nil)
+	if dot.Verdict != VerdictAsk || dot.DecidedBy != "malformed-url" {
+		t.Errorf("bare-dot host: Verdict=%v DecidedBy=%q, want VerdictAsk/malformed-url", dot.Verdict, dot.DecidedBy)
+	}
+	if dot.Host != "" {
+		t.Errorf("bare-dot host: Host = %q, want empty", dot.Host)
+	}
+}
+
+// the floor's canonicalization is reputation.CanonicalHost itself — the same
+// function reputation.Blocked/KnownGood normalize with — so the deciding layers
+// and the reputation lookups cannot drift apart again.
+func TestFetchFloorUsesReputationCanonicalHost(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"GitHub.Com.", "github.com"},
+		{"github.com", "github.com"},
+		{"LOCALHOST.", "localhost"},
+		{".", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := reputation.CanonicalHost(tt.in); got != tt.want {
+			t.Errorf("reputation.CanonicalHost(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
 }
