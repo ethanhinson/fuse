@@ -56,3 +56,26 @@ shows the stronger outcome — per-turn child parenting works end to end.
 
 Acceptance criterion 1 is **verified live**. Focused suite
 `go test -race -count=1 ./internal/observe/... ./internal/runtime/...` green.
+
+## Merge-gate addendum — verified against the real Tempo stack (2026-08-18)
+
+Appended at finalize, closing the recorded deviation above (in-memory exporter, Tempo
+unreachable). At the merge gate the branch tip (`99e80b9`) was run as `loop-serve-net`
+against the live dev observability stack (`deploy/observability`), driving a 3-turn
+interactive session (tenant `acme`, model `glm`) over the real Connect wire:
+
+- `fuse.loop.run` exported to **Tempo** ~6s after start (first park), duration 1.8s,
+  ended, nested under `fuse.api.request.start_loop` with the first turn's model attempt
+  and 6 `fuse.store.append` children.
+- Two `fuse.loop.turn` **root** spans (turns 2 and 3; 1.8s / 2.3s) landed in Tempo
+  while the session was still parked and alive, each carrying
+  `loop_id=001a012df4fadea27ba537b95`, `tenant=acme`, `fuse.turn.index=2|3`,
+  `fuse.outcome=success`.
+- Both turn roots carry a span link resolving to `loop.run`'s exact span context
+  (spanId `ffcU4mHRtJ0=`, traceId `SAxBk7fvlzFN5vk6D6CfLw==`) — verified by fetching
+  the traces from Tempo's API, not inferred from the UI.
+- Each turn's `fuse.model.attempt.complete` and all 6 `fuse.store.append`s parent
+  under the turn root — the durable-sink path is turn-scoped in live traffic.
+
+Acceptance criterion 1 therefore holds against the real stack, not only the in-memory
+exporter.
