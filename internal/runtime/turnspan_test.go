@@ -647,6 +647,153 @@ func TestChildSpansParentToTheOpenTurn(t *testing.T) {
 	}
 }
 
+// ctxCaptureTool records the loop-identity value it was executed under, then BLOCKS
+// on its own context until that context is canceled. Blocking inside Execute is what
+// makes the cancellation assertion honest: the agent gives each tool call a
+// timeout-scoped context it cancels the moment Execute returns, so a context captured
+// and inspected afterwards would report a cancellation that proves nothing.
+type ctxCaptureTool struct {
+	mu       *sync.Mutex
+	subject  *string
+	entered  chan struct{}
+	canceled chan struct{}
+}
+
+func (ctxCaptureTool) Name() string               { return "capture" }
+func (ctxCaptureTool) Description() string        { return "" }
+func (ctxCaptureTool) Parameters() map[string]any { return map[string]any{} }
+func (c ctxCaptureTool) Execute(ctx context.Context, _ string) tools.Result {
+	c.mu.Lock()
+	if v, ok := ctx.Value(ctxKey{}).(string); ok {
+		*c.subject = v
+	}
+	c.mu.Unlock()
+	close(c.entered)
+	select {
+	case <-ctx.Done():
+		close(c.canceled)
+	case <-time.After(5 * time.Second):
+	}
+	return tools.Result{Output: "ok"}
+}
+
+// TestTurnScopedObserverReachesProductionToolExecution is the wiring guard for the
+// whole change: it pins that the turn-scoped wrapper is what the SHIPPED agent
+// observes through, reached only via StartLoop/Send (learnings:
+// runtime-deps-field-overwrites-builder-injection — the runtime is the later writer
+// of the agent's observer, so a wrapper asserted at the seam proves nothing about
+// what production gets; and a future SetObserver added downstream of inproc.go's
+// install would silently restore the raw Deps.Observer).
+//
+// It is the production-path counterpart of TestReparentedSpanKeepsCallerContext,
+// which asserts the same three properties directly against the wrapper. The deepest
+// span the agent starts — a TOOL execute inside the second exchange — must:
+//
+//   - nest under the OPEN TURN ROOT, not the long-ended fuse.loop.run (the wrapper
+//     was installed and never overwritten);
+//   - still carry Deps.LoopContext's per-loop identity value (change #59: MCP egress
+//     mints delegation tokens from it, so re-parenting must not swap in a stored
+//     turn context and strip caller values);
+//   - still inherit the session's CANCELLATION, proven by the idle reaper actually
+//     canceling the captured context.
+func TestTurnScopedObserverReachesProductionToolExecution(t *testing.T) {
+	observer := newMarkingObserver()
+	var mu sync.Mutex
+	var gotSubject string
+	tool := ctxCaptureTool{mu: &mu, subject: &gotSubject, entered: make(chan struct{}), canceled: make(chan struct{})}
+	reg := tools.NewRegistry()
+	reg.Register(tool)
+
+	fake := newGatedCompleter(
+		model.CompletionResp{Content: "first answer"},
+		model.CompletionResp{ToolCalls: []model.ToolCall{{ID: "1", Name: "capture", Arguments: "{}"}}},
+		model.CompletionResp{Content: "second answer"},
+	)
+	// The idle TTL has to outlast the two scripted exchanges but still fire promptly
+	// once the test goes idle, since the reap is how the cancellation half is proven.
+	rt := New(Deps{
+		BaseDir:         t.TempDir(),
+		MaxConcurrent:   1,
+		Observer:        observer,
+		IdleTTL:         300 * time.Millisecond,
+		NewToolRegistry: func() *tools.Registry { return reg },
+		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, r *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+			// The binding installs its own observer here; the runtime must be the later
+			// writer and replace it with the turn-scoped wrapper.
+			a := agent.New(fake, execAll{r}, nopRenderer{}, modelID, "", 0, 0)
+			a.SetObserver(observe.NoopObserver{})
+			return a, nil, modelID, nil
+		},
+		LoopContext: func(ctx context.Context, cfg LoopConfig) context.Context {
+			return context.WithValue(ctx, ctxKey{}, cfg.Subject)
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h, err := rt.StartLoop(ctx, LoopConfig{Task: "hi", ModelID: "cloud/x", Subject: "alice", Interactive: true})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	evCh, unsub, err := rt.Observe(ctx, event.DefaultTenant, h.ID())
+	if err != nil {
+		t.Fatalf("Observe: %v", err)
+	}
+
+	fake.admit(0)
+	waitForKind(t, evCh, event.KindLoopParked, 2*time.Second)
+	if ids, _ := observer.snapshot("execute"); len(ids) != 0 {
+		t.Fatalf("the first exchange ran no tool, but %d tool spans exist", len(ids))
+	}
+
+	// Go idle BEFORE the second exchange so the reaper is armed while the tool blocks:
+	// the reap is how the cancellation half is proven.
+	unsub()
+	fake.admit(1)
+	fake.admit(2)
+	if err := rt.Send(ctx, event.DefaultTenant, h.ID(), "use the tool"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	select {
+	case <-tool.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the second exchange's tool never executed")
+	}
+
+	turnIDs, _ := observer.snapshot("turn")
+	if len(turnIDs) != 1 {
+		t.Fatalf("want exactly 1 loop.turn, got %d", len(turnIDs))
+	}
+	execIDs, execParents := observer.snapshot("execute")
+	if len(execIDs) != 1 {
+		t.Fatalf("want exactly 1 tool span, got %d", len(execIDs))
+	}
+	if execParents[0] != turnIDs[0] {
+		t.Errorf("production tool span parent = %q, want the open turn root %q — the agent is not observing through turnScopedObserver",
+			execParents[0], turnIDs[0])
+	}
+
+	mu.Lock()
+	subject := gotSubject
+	mu.Unlock()
+	if subject != "alice" {
+		t.Errorf("tool executed with LoopContext subject %q, want %q: re-parenting must not drop caller values", subject, "alice")
+	}
+
+	// The reaper cancels the session while the tool is still inside Execute, so the
+	// re-parented context really is downstream of the session's cancellation.
+	select {
+	case <-tool.canceled:
+	case <-time.After(4 * time.Second):
+		t.Fatal("the reaped session never canceled the tool's context — re-parenting dropped the caller's cancellation")
+	}
+	select {
+	case <-doneOf(h):
+	case <-time.After(3 * time.Second):
+		t.Fatal("interactive loop was not reaped within the timeout")
+	}
+}
+
 // principalTool records, per Execute, the Deps.LoopContext-stamped value it was
 // invoked with. It is the production-path stand-in for toolidentity's principal
 // (change #59): the MCP egress mints delegation tokens from exactly this value, so
