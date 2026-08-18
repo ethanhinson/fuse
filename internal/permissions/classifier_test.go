@@ -136,6 +136,62 @@ func TestClassifyInputHygiene(t *testing.T) {
 	}
 }
 
+// TestPendingCallPrompt_WorkspaceContext pins the #0069 D1b context line: when a
+// workspace root and/or scratch dir are set the pending-call prompt names them,
+// and when both are empty the line is suppressed entirely — a zero-value
+// Classifier must never emit a degenerate "workspace: , scratch: " line. The
+// existing pending-call shape and the trailing JSON instruction survive either
+// way.
+func TestPendingCallPrompt_WorkspaceContext(t *testing.T) {
+	const (
+		root    = "/tmp/ws-root"
+		scratch = "/tmp/ws-root/.fuse/scratch"
+	)
+
+	t.Run("present when set", func(t *testing.T) {
+		stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow"}`}}
+		c := newTestClassifier(t, stub).WithWorkspaceContext(root, scratch)
+
+		c.Classify(context.Background(), nil, "bash", "ls -la")
+
+		last := stub.lastReq.Messages[len(stub.lastReq.Messages)-1].Content
+		if !strings.Contains(last, "workspace: "+root) {
+			t.Errorf("pending prompt must name the workspace root; got:\n%s", last)
+		}
+		if !strings.Contains(last, "scratch: "+scratch) {
+			t.Errorf("pending prompt must name the scratch dir; got:\n%s", last)
+		}
+		if !strings.Contains(last, "Pending tool call to classify:\ntool: bash\ncommand: ls -la") {
+			t.Errorf("pending prompt lost its pending-call shape; got:\n%s", last)
+		}
+		if !strings.Contains(last, "Respond with the JSON verdict object.") {
+			t.Errorf("pending prompt lost the JSON verdict instruction; got:\n%s", last)
+		}
+	})
+
+	t.Run("omitted when both empty", func(t *testing.T) {
+		stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow"}`}}
+		c := newTestClassifier(t, stub) // zero workspace context
+
+		c.Classify(context.Background(), nil, "bash", "ls -la")
+
+		last := stub.lastReq.Messages[len(stub.lastReq.Messages)-1].Content
+		if strings.Contains(last, "workspace:") || strings.Contains(last, "scratch:") {
+			t.Errorf("pending prompt must omit the context line when unset; got:\n%s", last)
+		}
+		if !strings.Contains(last, "Respond with the JSON verdict object.") {
+			t.Errorf("pending prompt lost the JSON verdict instruction; got:\n%s", last)
+		}
+	})
+
+	t.Run("nil receiver is safe", func(t *testing.T) {
+		var c *Classifier
+		if got := c.WithWorkspaceContext(root, scratch); got != nil {
+			t.Fatalf("WithWorkspaceContext on a nil receiver must return nil, got %v", got)
+		}
+	})
+}
+
 // TestClassifierSystemPrompt_AllowBiased pins the #0069 retune of the shared
 // classifier system instruction: routine developer work is named as expected and
 // allowable, the genuinely dangerous shapes are named as the deny set, the old

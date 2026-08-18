@@ -396,6 +396,12 @@ func autoModeOptions(cfg config.Config, reg *model.Registry, traceW io.Writer) [
 	// constructor is nil-safe, so pass nil rather than plumb a new parameter
 	// through several signatures just for the one-time startup fallback warning.
 	cls := permissions.NewClassifier(clsAdapter, reg, cfg.Permissions.Auto, nil)
+	// Give the classifier the session's writable geography so its pending-call
+	// prompt can distinguish "inside the workspace" from "outside" (#0069).
+	// Scratch is resolved one level up in buildGate via gateWriteRoots, but
+	// sessionScratchDir() yields the same value and is directly callable here,
+	// so no new parameter is threaded through buildGate for it.
+	cls = cls.WithWorkspaceContext(workspaceRoot(), sessionScratchDir())
 	return []permissions.Option{
 		permissions.WithClassifier(cls),
 		permissions.WithWorkspaceRoot(workspaceRoot()),

@@ -31,6 +31,26 @@ func TestApprovalCacheClone(t *testing.T) {
 	}
 }
 
+// TestClassifierCloneForChildPropagatesWorkspaceContext pins that a child gate's
+// classifier inherits the parent's workspace context (#0069 D1b): the context
+// line is per-session configuration, not per-verdict state, so a child must not
+// silently drop it.
+func TestClassifierCloneForChildPropagatesWorkspaceContext(t *testing.T) {
+	stub := &stubCompleter{}
+	parent := newTestClassifier(t, stub).WithWorkspaceContext("/ws", "/ws/.scratch")
+
+	child := parent.cloneForChild()
+	if child == nil {
+		t.Fatal("cloneForChild must return a non-nil classifier")
+	}
+	if child.workspaceRoot != "/ws" {
+		t.Errorf("child workspaceRoot = %q, want %q", child.workspaceRoot, "/ws")
+	}
+	if child.scratchDir != "/ws/.scratch" {
+		t.Errorf("child scratchDir = %q, want %q", child.scratchDir, "/ws/.scratch")
+	}
+}
+
 func TestPermissionGateCloneForChild(t *testing.T) {
 	reg := newTestRegistry("bash")
 	cfg := config.PermissionsConfig{Mode: "off"}

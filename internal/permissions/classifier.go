@@ -86,6 +86,29 @@ type Classifier struct {
 	client  completer
 	modelID string
 	cache   *verdictCache
+
+	// workspaceRoot and scratchDir describe the session's writable geography.
+	// They are rendered as a context line in the pending-call prompt (#0069)
+	// so the model can tell "inside the workspace" from "outside" — the
+	// distinction the allow-biased system prompt leans on when it names
+	// destruction outside the workspace as a deny shape. Both are optional;
+	// when both are empty no context line is emitted at all.
+	workspaceRoot string
+	scratchDir    string
+}
+
+// WithWorkspaceContext sets the workspace root and scratch directory rendered in
+// the pending-call prompt's context line, returning the receiver so it chains
+// off NewClassifier at a wiring site. Either argument may be empty; when both
+// are, the context line is suppressed. Nil-safe: a nil receiver returns nil, so
+// callers need not guard an optional classifier.
+func (c *Classifier) WithWorkspaceContext(workspaceRoot, scratchDir string) *Classifier {
+	if c == nil {
+		return nil
+	}
+	c.workspaceRoot = workspaceRoot
+	c.scratchDir = scratchDir
+	return c
 }
 
 // NewClassifier builds an auto-mode Classifier over a real *model.Adapter and
@@ -154,7 +177,8 @@ func warnf(w io.Writer, format string, args ...any) {
 }
 
 // cloneForChild returns a copy of the classifier for a child gate: it shares the
-// completer client and resolved modelID but gets an independent snapshot of the
+// completer client, resolved modelID, and workspace context but gets an
+// independent snapshot of the
 // verdict cache (via cache.Clone), so child verdicts do not propagate back to
 // the parent. It is nil-safe — a nil classifier clones to nil — so CloneForChild
 // can call it unconditionally.
@@ -163,9 +187,11 @@ func (c *Classifier) cloneForChild() *Classifier {
 		return nil
 	}
 	return &Classifier{
-		client:  c.client,
-		modelID: c.modelID,
-		cache:   c.cache.Clone(),
+		client:        c.client,
+		modelID:       c.modelID,
+		cache:         c.cache.Clone(),
+		workspaceRoot: c.workspaceRoot,
+		scratchDir:    c.scratchDir,
 	}
 }
 
@@ -289,14 +315,44 @@ func (c *Classifier) buildMessages(userMessages []model.Message, toolName, comma
 		}
 		msgs = append(msgs, model.Message{Role: "user", Content: m.Content})
 	}
-	msgs = append(msgs, model.Message{Role: "user", Content: pendingCallPrompt(toolName, command)})
+	msgs = append(msgs, model.Message{Role: "user", Content: c.pendingCallPrompt(toolName, command)})
 	return msgs
 }
 
 // pendingCallPrompt renders the pending tool call as the final user turn the
-// classifier judges.
-func pendingCallPrompt(toolName, command string) string {
-	return fmt.Sprintf("Pending tool call to classify:\ntool: %s\ncommand: %s\n\nRespond with the JSON verdict object.", toolName, command)
+// classifier judges, optionally prefixed by a workspace-context line naming the
+// session's workspace root and scratch dir. The context line is emitted only
+// when at least one of the two is set: a zero-value Classifier must never emit a
+// degenerate "workspace: , scratch: " line, which would be worse than no context
+// at all. The pending-call shape and the trailing JSON instruction are the
+// load-bearing parts and are unchanged.
+func (c *Classifier) pendingCallPrompt(toolName, command string) string {
+	var b strings.Builder
+	if line := c.workspaceContextLine(); line != "" {
+		b.WriteString(line)
+		b.WriteString("\n\n")
+	}
+	fmt.Fprintf(&b, "Pending tool call to classify:\ntool: %s\ncommand: %s\n\nRespond with the JSON verdict object.", toolName, command)
+	return b.String()
+}
+
+// workspaceContextLine renders the session's writable geography as a single
+// line, omitting whichever half is unset and returning "" when both are.
+func (c *Classifier) workspaceContextLine() string {
+	if c == nil {
+		return ""
+	}
+	var parts []string
+	if c.workspaceRoot != "" {
+		parts = append(parts, "workspace: "+c.workspaceRoot)
+	}
+	if c.scratchDir != "" {
+		parts = append(parts, "scratch: "+c.scratchDir)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
 }
 
 // verdictReply is the structured JSON shape the classifier asks the model to
