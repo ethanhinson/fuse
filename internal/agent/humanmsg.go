@@ -425,6 +425,24 @@ func (b *HumanBus) OnNodeComplete(nodeID string) []HumanMsg {
 type HumanInjector struct {
 	nodeID string
 	bus    *HumanBus
+	onPark func()
+	onWake func()
+}
+
+// SetTurnBoundary registers optional park/wake callbacks. onPark fires just before the
+// injector blocks awaiting a human message; onWake fires only when Wait returns nil (a
+// message is ready). Neither fires when there is no bus to park on. Both are nil by
+// default, making this additive for every existing binding. Set once at build time,
+// before Run.
+//
+// Both callbacks are invoked SYNCHRONOUSLY on the run goroutine, inline with the turn
+// boundary: implementations (e.g. starting and ending a turn span) must not block.
+func (h *HumanInjector) SetTurnBoundary(onPark, onWake func()) {
+	if h == nil {
+		return
+	}
+	h.onPark = onPark
+	h.onWake = onWake
 }
 
 // NewHumanInjector binds an injector to a node. A nil bus yields a no-op injector
@@ -445,7 +463,14 @@ func (h *HumanInjector) Wait(ctx context.Context) error {
 	if h == nil || h.bus == nil {
 		return errNoBus
 	}
-	return h.bus.WaitForMessage(ctx, h.nodeID)
+	if h.onPark != nil {
+		h.onPark()
+	}
+	err := h.bus.WaitForMessage(ctx, h.nodeID)
+	if err == nil && h.onWake != nil {
+		h.onWake()
+	}
+	return err
 }
 
 // errNoBus signals HumanInjector.Wait was called without a bus (interactive mode is
