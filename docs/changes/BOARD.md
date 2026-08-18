@@ -1,12 +1,6 @@
 # Backlog
 
-**71 changes** — 🟢 1 in progress · 🟡 5 proposed · ⚪ 2 deferred · ✅ 57 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0071](active/0071-turn-scoped-trace-roots-interactive-loops.md) | Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans | `high` | `fix` | [spec](../superpowers/specs/2026-08-18-turn-scoped-trace-roots-design.md) | `feat/turn-scoped-trace-roots-interactive-loops` |
+**71 changes** — 🟡 5 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 57 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
@@ -24,6 +18,12 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0071](active/0071-turn-scoped-trace-roots-interactive-loops.md) | Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans | `high` | `fix` | [#74](https://github.com/ethanhinson/fuse/pull/74) |  |
 
 ```mermaid
 graph TD
