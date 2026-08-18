@@ -94,7 +94,11 @@ func (t *turnTracer) wake() {
 	fields = append(fields, observe.Field{Key: "fuse.turn.index", Value: strconv.Itoa(t.index)})
 	// delayed=true is the repository's existing "new root, causally linked to the
 	// durable producer" idiom: the turn is genuinely a new unit of work, not a
-	// child of a span that has already ended.
+	// child of a span that has already ended. With a nil link (an untraced original
+	// session, or a provider without propagation) the turn is an UNLINKED root — not
+	// a child of t.ctx's span, which would silently stop it being a root at all and
+	// defeat the whole change. That guarantee lives in the adapter: delayed work with
+	// no recoverable carrier starts a new root (observe/otel.Observer.StartFromCarrier).
 	ctx, h := observe.StartFromCarrier(t.observer, t.ctx, t.link, true, observe.Descriptor{
 		Kind:   observe.OperationLoop,
 		Name:   "turn",
@@ -199,6 +203,12 @@ func (o turnScopedObserver) Start(ctx context.Context, d observe.Descriptor) (co
 // expressing a parentage this wrapper must not second-guess.
 func (o turnScopedObserver) StartFromCarrier(ctx context.Context, c *event.TraceCarrier, delayed bool, d observe.Descriptor) (context.Context, observe.Handle) {
 	return observe.StartFromCarrier(o.inner, ctx, c, delayed, d)
+}
+
+// DecorateScope forwards verbatim: scope decoration is the inner observer's own
+// vocabulary (a tenant, say) and is independent of which turn is open.
+func (o turnScopedObserver) DecorateScope(ctx context.Context, d observe.Descriptor) context.Context {
+	return observe.DecorateScope(o.inner, ctx, d)
 }
 
 // TraceCarrier reports the open turn's carrier as the active durable context, so

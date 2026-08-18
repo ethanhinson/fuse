@@ -476,13 +476,42 @@ type markingObserver struct {
 	n       int
 	parents map[string][]string // op name -> parent id per start, in order
 	ids     map[string][]string // op name -> own id per start, in order
+	// scopes records, per start, the loop-scope tenant the INCOMING context carried.
+	// It models cmd/fuse's metricsObserver, which stamps the tenant into the context
+	// once at loop start and reads it back out of the context on every later start —
+	// so an operation that observes "" is one whose metrics would be mis-attributed.
+	scopes map[string][]string
 	// byParent maps a minted traceparent back to the span id it identifies, so a
 	// carrier-based parent resolves to a readable name.
 	byParent map[string]string
 }
 
 func newMarkingObserver() *markingObserver {
-	return &markingObserver{parents: map[string][]string{}, ids: map[string][]string{}, byParent: map[string]string{}}
+	return &markingObserver{parents: map[string][]string{}, ids: map[string][]string{}, scopes: map[string][]string{}, byParent: map[string]string{}}
+}
+
+// scopeTenantKey is the marking observer's private loop-scope context key, the
+// stand-in for cmd/fuse's metricsTenantKey.
+type scopeTenantKey struct{}
+
+// DecorateScope stamps an operation's tenant onto the context WITHOUT starting a
+// span, exactly as the composition root's metrics observer does — the capability the
+// resume path needs, since a resume must not mint a second fuse.loop.run.
+func (o *markingObserver) DecorateScope(ctx context.Context, d observe.Descriptor) context.Context {
+	for _, f := range d.Fields {
+		if f.Key == "tenant" {
+			return context.WithValue(ctx, scopeTenantKey{}, f.Value)
+		}
+	}
+	return ctx
+}
+
+// scopesOf returns the loop-scope tenant observed at each start of the named
+// operation, in order.
+func (o *markingObserver) scopesOf(name string) []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.scopes[name]...)
 }
 
 // start records one span under the given parent id and returns a context carrying
@@ -490,6 +519,7 @@ func newMarkingObserver() *markingObserver {
 // re-parented span joins its new parent's trace (which is what makes
 // turnScopedObserver's "already inside this trace?" check meaningful).
 func (o *markingObserver) start(ctx context.Context, d observe.Descriptor, parent, traceHex string) (context.Context, observe.Handle) {
+	scope, _ := ctx.Value(scopeTenantKey{}).(string)
 	o.mu.Lock()
 	o.n++
 	id := fmt.Sprintf("%s#%d", d.Name, o.n)
@@ -499,9 +529,10 @@ func (o *markingObserver) start(ctx context.Context, d observe.Descriptor, paren
 	tp := fmt.Sprintf("00-%s-%016x-01", traceHex, o.n)
 	o.parents[d.Name] = append(o.parents[d.Name], parent)
 	o.ids[d.Name] = append(o.ids[d.Name], id)
+	o.scopes[d.Name] = append(o.scopes[d.Name], scope)
 	o.byParent[tp] = id
 	o.mu.Unlock()
-	return context.WithValue(ctx, markKey{}, tp), observe.NoopHandle{}
+	return context.WithValue(o.DecorateScope(ctx, d), markKey{}, tp), observe.NoopHandle{}
 }
 
 // parentOf resolves the span a context is currently inside, plus its trace id.
@@ -525,11 +556,14 @@ func (o *markingObserver) Start(ctx context.Context, d observe.Descriptor) (cont
 }
 
 func (o *markingObserver) StartFromCarrier(ctx context.Context, c *event.TraceCarrier, delayed bool, d observe.Descriptor) (context.Context, observe.Handle) {
+	if delayed {
+		// Delayed work is a NEW ROOT whether or not a producer carrier survived: with
+		// one it is merely also linked. This mirrors the otel adapter — a nil carrier
+		// must never silently demote a root to a child of the caller's span.
+		return o.start(ctx, d, "", "")
+	}
 	if c == nil {
 		return o.Start(ctx, d)
-	}
-	if delayed {
-		return o.start(ctx, d, "", "") // a NEW root, merely linked to the carrier
 	}
 	parent, traceHex := o.resolve(c.TraceParent)
 	return o.start(ctx, d, parent, traceHex) // a real child of the carrier's span

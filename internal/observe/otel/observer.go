@@ -34,10 +34,25 @@ func (o *Observer) TraceCarrier(ctx context.Context) *event.TraceCarrier {
 
 // StartFromCarrier continues immediately-consumed work, while delayed/replayed
 // work receives a new root trace with a causal link to the durable producer.
+//
+// Delayed work is a NEW ROOT whether or not a producer carrier survives: with one it
+// is additionally linked, without one it is simply unlinked. An unrecoverable carrier
+// must never demote delayed work to a CHILD of whatever span the caller happens to sit
+// in — that would attach a long-lived unit of work (an interactive loop's turn, whose
+// whole purpose is to be independently exportable) to a transient request span:
+// authoritative-looking, unrelated, and different on every call. Immediate work is
+// unaffected — with nothing to restore it continues the caller's context as before.
 func (o *Observer) StartFromCarrier(ctx context.Context, c *event.TraceCarrier, delayed bool, d observe.Descriptor) (context.Context, observe.Handle) {
 	parent, ok := ContextFromCarrier(ctx, c, false)
 	if !ok {
-		return o.Start(ctx, d)
+		if !delayed {
+			return o.Start(ctx, d)
+		}
+		if o == nil || o.tracer == nil {
+			return ctx, observe.NoopHandle{}
+		}
+		ctx, span := o.tracer.Start(ctx, "fuse."+string(d.Kind)+"."+d.Name, trace.WithNewRoot(), trace.WithAttributes(fields(d.Fields)...))
+		return ctx, &handle{span: span}
 	}
 	if !delayed {
 		return o.Start(parent, d)

@@ -71,6 +71,33 @@ type CarrierStarter interface {
 	StartFromCarrier(context.Context, *event.TraceCarrier, bool, Descriptor) (context.Context, Handle)
 }
 
+// ScopeDecorator stamps an operation's bounded scope onto a context WITHOUT
+// starting that operation. It is optional, like the two capabilities above, so
+// core callers stay vendor-free.
+//
+// It exists because an adapter may derive per-operation state from a descriptor
+// and carry it in the context for every nested operation to read back — the
+// metrics adapter resolves an operation's tenant that way. Work that legitimately
+// starts no enclosing span (a RESUMED session continues a loop whose root span
+// already ended and exported, and must not mint a second one) would otherwise
+// lose that scope for its entire life.
+type ScopeDecorator interface {
+	DecorateScope(context.Context, Descriptor) context.Context
+}
+
+// DecorateScope applies the observer's scope decoration for d when it supports
+// one, and returns ctx unchanged otherwise. It starts nothing and ends nothing.
+func DecorateScope(o Observer, ctx context.Context, d Descriptor) context.Context {
+	s, ok := o.(ScopeDecorator)
+	if !ok || s == nil {
+		return ctx
+	}
+	if out := s.DecorateScope(ctx, d); out != nil {
+		return out
+	}
+	return ctx
+}
+
 // TraceCarrier returns a defensive validated copy of the active operation's
 // durable context, or nil when the observer does not support propagation.
 func TraceCarrier(o Observer, ctx context.Context) *event.TraceCarrier {

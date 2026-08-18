@@ -63,13 +63,25 @@ type metricsObserver struct {
 
 type metricsTenantKey struct{}
 
-func (o metricsObserver) Start(ctx context.Context, d observe.Descriptor) (context.Context, observe.Handle) {
+// DecorateScope resolves an operation's tenant into the context WITHOUT starting the
+// operation (observe.ScopeDecorator). Start establishes the same scope, but only work
+// that actually starts a span can: a RESUMED interactive session deliberately starts
+// no second fuse.loop.run (its session root already ended and exported), so without
+// this every model, tool, store and turn metric for the rest of that session's life
+// would record tenant="" and silently mis-attribute change 0051's per-tenant series.
+func (o metricsObserver) DecorateScope(ctx context.Context, d observe.Descriptor) context.Context {
 	for _, f := range d.Fields {
 		if f.Key == "tenant" {
 			ctx = context.WithValue(ctx, metricsTenantKey{}, f.Value)
 			break
 		}
 	}
+	// This wrapper contributes only the tenant; a wrapped observer may carry its own.
+	return observe.DecorateScope(o.primary, ctx, d)
+}
+
+func (o metricsObserver) Start(ctx context.Context, d observe.Descriptor) (context.Context, observe.Handle) {
+	ctx = o.DecorateScope(ctx, d)
 	ctx, primary := o.primary.Start(ctx, d)
 	tenant, _ := ctx.Value(metricsTenantKey{}).(string)
 	return ctx, joinedHandle{primary: primary, metrics: o.metrics.ObserveOperation(tenant, d)}

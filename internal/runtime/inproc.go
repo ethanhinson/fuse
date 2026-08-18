@@ -362,10 +362,22 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// another would give one conversation two competing roots. The revived session's
 	// work is covered by turn roots instead, linked back to the restored carrier. A
 	// fresh start (one-shot or interactive) is byte-identical to before.
+	//
+	// It must still inherit the loop's SCOPE, though. An observer may resolve
+	// per-operation state from the loop descriptor and carry it in the context for
+	// every nested operation to read back — the composition root's metrics observer
+	// resolves the tenant that way (change 0051), and every model/tool/store/turn
+	// metric of the session reads it out of the context it was stamped into. Skipping
+	// the descriptor entirely on resume therefore recorded tenant="" for the whole life
+	// of every resumed session. observe.DecorateScope applies exactly that decoration
+	// and starts nothing (ADR-0040: an optional capability, not a new Observer method).
+	loopDesc := observe.Descriptor{Kind: observe.OperationLoop, Name: "run", Fields: []observe.Field{{Key: "tenant", Value: string(event.NormalizeTenant(cfg.Tenant))}}}
 	loopCtx := ctx
 	var loopSpan observe.Handle = observe.NoopHandle{}
-	if !opts.resume {
-		loopCtx, loopSpan = r.deps.Observer.Start(ctx, observe.Descriptor{Kind: observe.OperationLoop, Name: "run", Fields: []observe.Field{{Key: "tenant", Value: string(event.NormalizeTenant(cfg.Tenant))}}})
+	if opts.resume {
+		loopCtx = observe.DecorateScope(r.deps.Observer, ctx, loopDesc)
+	} else {
+		loopCtx, loopSpan = r.deps.Observer.Start(ctx, loopDesc)
 	}
 	end := endOnce(loopSpan)
 
@@ -401,6 +413,49 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	tenant := event.NormalizeTenant(cfg.Tenant)
 	key := event.StreamKey{Tenant: tenant, Loop: event.LoopID(rootID)}
 
+	// Turn-scoped tracing (change 0071), INTERACTIVE ONLY: a one-shot loop never builds
+	// a turnTracer, keeps Deps.Observer verbatim as `obs`, and therefore emits exactly
+	// the span shape it emitted before this change — for the agent AND for the durable
+	// sink below.
+	//
+	// Built HERE, before the loop's event sink, because the sink is a span-starting
+	// collaborator too: a durableSink holding the RAW observer would keep emitting
+	// fuse.store.append / fuse.pubsub.subscribe under the session root, which now ends
+	// at the first park — the same "children under an already-exported root" defect this
+	// change removes from agent spans, merely displaced onto store spans. Constructing
+	// the tracer starts NO span (only wake does, below), so the early returns between
+	// here and there have nothing to tear down.
+	var turns *turnTracer
+	obs := r.deps.Observer
+	if interactive {
+		// The link source for every turn root: this launch's own session root for a fresh
+		// interactive start, or the ORIGINAL session's restored context for a resume.
+		// Taken through the capability helper — never a type assertion to the otel
+		// observer (ADR-0040).
+		//
+		// The fallback is deliberately NOT available on resume. loopCtx is then the
+		// CALLER's context, which in the loop server sits inside a fuse.api.request span:
+		// linking a revived session's turn roots to it would be authoritative-looking,
+		// session-unrelated, and different on every Resume of the same loop_id. When the
+		// replayed stream carries no recoverable context (an untraced or pre-tracing
+		// original session), UNLINKED roots are the honest outcome — and they are still
+		// roots, because delayed work without a carrier starts a new root (see
+		// observe/otel.Observer.StartFromCarrier).
+		traceLink := opts.carrier
+		if traceLink == nil && !opts.resume {
+			// Read here, once, so it survives every park: the loop context it comes from
+			// outlives the request.
+			traceLink = observe.TraceCarrier(r.deps.Observer, loopCtx)
+		}
+		turns = newTurnTracer(r.deps.Observer, sessionCtx, traceLink,
+			[]observe.Field{{Key: "loop_id", Value: rootID}, {Key: "tenant", Value: string(tenant)}},
+			opts.turnIndex)
+		// The agent and the loop's event sink both observe through the turn-scoped
+		// wrapper, so their per-turn work nests under the open turn root instead of the
+		// long-ended session root.
+		obs = turnScopedObserver{inner: r.deps.Observer, turns: turns}
+	}
+
 	// Store selection (change 0047):
 	//   - DurableStore present ⇒ the loop emits into the SHARED, cross-process store
 	//     via a per-loop StreamKey adapter (durableSink), and its existence/liveness is
@@ -410,7 +465,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	var store event.EventStore
 	durable := r.deps.DurableStore != nil
 	if durable {
-		store = &durableSink{store: r.deps.DurableStore, key: key, ctx: sessionCtx, observer: r.deps.Observer}
+		store = &durableSink{store: r.deps.DurableStore, key: key, ctx: sessionCtx, observer: obs}
 	} else if r.deps.BaseDir == "" {
 		store = event.NoopStore{}
 	} else {
@@ -478,40 +533,19 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		end(observe.OutcomeError)
 		return nil, fmt.Errorf("runtime: build agent: %w", err)
 	}
-	// Turn-scoped tracing (change 0071), INTERACTIVE ONLY: a one-shot loop never builds
-	// a turnTracer, keeps Deps.Observer verbatim, and therefore emits exactly the span
-	// shape it emitted before this change. Constructed here, after the last early
-	// return in this function (learnings:
+	// The FIRST turn span of a resumed session opens here, after the last early return
+	// in this function (learnings:
 	// per-instance-resource-needs-teardown-on-every-early-return) — everything below is
 	// unconditional, so the run goroutine's completion path is the only teardown site
 	// the tracer needs. Keep it that way: a new early return added after this point
 	// MUST call turns.teardown before returning.
-	var turns *turnTracer
-	obs := r.deps.Observer
-	if interactive {
-		// The link source for every turn root: this launch's own session root for a fresh
-		// interactive start, or the ORIGINAL session's restored context for a resume.
-		// Taken through the capability helper — never a type assertion to the otel
-		// observer (ADR-0040) — so a provider without propagation simply yields nil and
-		// turn roots are unlinked rather than absent. Read here, once, so it survives
-		// every park: the loop context it comes from outlives the request.
-		traceLink := opts.carrier
-		if traceLink == nil {
-			traceLink = observe.TraceCarrier(r.deps.Observer, loopCtx)
-		}
-		turns = newTurnTracer(r.deps.Observer, sessionCtx, traceLink,
-			[]observe.Field{{Key: "loop_id", Value: rootID}, {Key: "tenant", Value: string(tenant)}},
-			opts.turnIndex)
-		// The agent observes through the turn-scoped wrapper so its per-turn work nests
-		// under the open turn root instead of the long-ended session root.
-		obs = turnScopedObserver{inner: r.deps.Observer, turns: turns}
-		if opts.resume {
-			// A resume IS a turn boundary: the revived loop re-runs its transcript and
-			// answers immediately, before any park/wake pair can fire. Opening the turn
-			// here (rather than at the first wake) is also what gives Agent.Run an active
-			// durable carrier to stamp on the resumed session's events.
-			turns.wake()
-		}
+	//
+	// A resume IS a turn boundary: the revived loop re-runs its transcript and answers
+	// immediately, before any park/wake pair can fire. Opening the turn here (rather
+	// than at the first wake) is also what gives Agent.Run — and the loop's durable
+	// sink — an active turn to attach to for the resumed session's first exchange.
+	if turns != nil && opts.resume {
+		turns.wake()
 	}
 	a.SetObserver(obs)
 	a.SetEventSink(store)
@@ -985,9 +1019,13 @@ func (r *inProcRuntime) Spawn(ctx context.Context, loopID string, opts SpawnOpts
 // streams and the cross-instance tail). This is the counterpart to the legacy
 // fsstore's per-loop Close — durability + subscriber lifetime are the store's own.
 type durableSink struct {
-	store    event.DurableStore
-	key      event.StreamKey
-	ctx      context.Context
+	store event.DurableStore
+	key   event.StreamKey
+	ctx   context.Context
+	// observer is the loop's own observer, which for an INTERACTIVE loop is the
+	// turn-scoped wrapper (change 0071) — store spans follow the open turn root and
+	// fall back to ctx's session root only when no turn is open. A one-shot loop gets
+	// Deps.Observer verbatim, so its store spans are unchanged.
 	observer observe.Observer
 }
 
