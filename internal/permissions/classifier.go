@@ -57,6 +57,17 @@ const ClassifierTraceLabel = "auto-classifier"
 // single-stage: it never asks the model to reason at length (two-stage CoT is a
 // documented future upgrade, intentionally not built here).
 //
+// One family is deliberately narrower than the rest of the allow bias: kill /
+// pkill / killall. classifyHeuristic routes that whole family here
+// unconditionally (pkill and killall always, kill unless provably benign), so
+// this clause is the only gate in front of `pkill -9 -f node`, and its blast
+// radius is the user's entire process table — outside the workspace scoping the
+// rest of the gate enforces. The allow is therefore bounded to predicates the
+// model can actually check in the one command string it is handed: a numeric
+// PID, or a pattern naming a specific dev-server/watcher binary. "A dev server
+// it started" is NOT such a predicate — provenance is not derivable from the
+// classifier's inputs — so a broad or unclear pattern is named as "ask".
+//
 // The final JSON contract line is load-bearing and must stay in lockstep with
 // parseVerdict, which maps only allow/deny/ask out of a single JSON object.
 const classifierSystemPrompt = `You are the permission gate for a coding agent working in a developer workspace. ` +
@@ -65,8 +76,9 @@ const classifierSystemPrompt = `You are the permission gate for a coding agent w
 	`Allow, among others: network reads such as curl, wget, git fetch/clone, and ordinary API calls; ` +
 	`package installs and builds such as npm, pnpm, pip, cargo, and go install/build/test; ` +
 	`running tests, linters, formatters, and build tools; ` +
-	`managing the agent's own dev server and test processes, including kill or pkill of a dev server or watcher it started; ` +
+	`managing the agent's own dev server and test processes: allow kill of a numeric PID, and pkill or killall whose pattern names a specific dev-server or watcher binary (for example pkill -f "vite", or pkill node); ` +
 	`reading and writing files inside the workspace; and creating or using temp and scratch directories. ` +
+	`Answer "ask" for any kill whose pattern is broad or unclear — a bare -f ., a -9 with no specific named target, a wildcard pattern, or a system or OS process name — since you cannot tell which processes it would reach. ` +
 	`Use "deny" only for genuinely dangerous shapes: exfiltration of secrets or workspace data to a remote endpoint; ` +
 	`piping remote content into a shell to execute it; privilege escalation such as sudo or changing ownership of system paths; ` +
 	`destruction outside the workspace, such as recursive deletes of system, home, or disk paths; ` +

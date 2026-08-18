@@ -254,6 +254,54 @@ func TestClassifierSystemPrompt_AllowBiased(t *testing.T) {
 	}
 }
 
+// TestClassifierSystemPrompt_BoundsKillFamily pins the kill-family clause of the
+// #0069 allow bias. internal/permissions/heuristics.go routes the whole family to
+// the classifier unconditionally (`case "pkill", "killall": return VerdictAsk`,
+// and any kill that is not provably benign), so this prompt clause is the ONLY
+// gate in front of `pkill -9 -f node`. The allow must therefore be bounded to
+// what the model can actually check in the command text it receives — a numeric
+// PID, or a pattern naming a specific dev-server/watcher binary — and a broad or
+// unclear pattern must be named as "ask". Assertions are lowercased concept
+// substrings, never whole sentences.
+func TestClassifierSystemPrompt_BoundsKillFamily(t *testing.T) {
+	lower := strings.ToLower(classifierSystemPrompt)
+
+	// The old wording authorized the family on "a dev server or watcher it
+	// started" — a predicate the classifier's inputs (system prompt + user turns
+	// + one pending command) cannot evaluate. It must be gone.
+	if strings.Contains(lower, "it started") {
+		t.Errorf("system prompt must not gate the kill family on an uncheckable \"it started\" predicate; got:\n%s", classifierSystemPrompt)
+	}
+
+	// The bounded allow: a specific numeric PID, or a specifically-named binary.
+	for _, n := range []string{"numeric pid", "specific"} {
+		if !strings.Contains(lower, n) {
+			t.Errorf("system prompt must bound the kill allow to a checkable target (missing %q); got:\n%s", n, classifierSystemPrompt)
+		}
+	}
+
+	// The bounded ask must sit with the kill clause, not merely somewhere in the
+	// prompt: a broad/unclear pattern, a bare -9 with no specific target, a
+	// wildcard, or a system process name.
+	idx := strings.Index(lower, "pkill")
+	if idx < 0 {
+		t.Fatalf("system prompt must still name pkill/killall as the routed family; got:\n%s", classifierSystemPrompt)
+	}
+	end := idx + 600
+	if end > len(lower) {
+		end = len(lower)
+	}
+	clause := lower[idx:end]
+	if !strings.Contains(clause, "killall") {
+		t.Errorf("kill clause must cover killall alongside pkill; got:\n%s", classifierSystemPrompt)
+	}
+	for _, n := range []string{"ask", "broad", "wildcard", "-9", "system"} {
+		if !strings.Contains(clause, n) {
+			t.Errorf("kill clause must send a broad/unclear pattern to \"ask\" (missing %q near the kill wording); got:\n%s", n, classifierSystemPrompt)
+		}
+	}
+}
+
 // TestClassifyWebFetch_PromptNamesHostAndReputation proves the web_fetch verdict
 // call names the target host and, since #0069, frames the fetch allow-biased
 // (a read-only GET returning page text; fetching public pages is routine) while
