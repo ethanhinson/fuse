@@ -10,14 +10,14 @@ updated: 2026-08-18
 depends_on: [68]
 related: [40, 45, 67, 68, 70]
 discovered_from: []
-adrs: []
+adrs: [48]
 spec: docs/superpowers/specs/2026-08-17-auto-mode-classifier-retune-webfetch-design.md
 plan: docs/superpowers/plans/2026-08-18-auto-mode-classifier-retune-webfetch-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-classifier-retune-webfetch
-claimed_at: 2026-08-18T04:05:00Z
+claimed_at: 2026-08-18T05:24:00Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-17-auto-mode-classifier-retune-webfetch-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-17-auto-mode-classifier-retune-webfetch-design.md) |
 | Plan | [2026-08-18-auto-mode-classifier-retune-webfetch-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-classifier-retune-webfetch/docs/superpowers/plans/2026-08-18-auto-mode-classifier-retune-webfetch-plan.md) |
+| ADRs | [ADR-0048](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0048-web-fetch-host-floor-as-authorization-boundary.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
