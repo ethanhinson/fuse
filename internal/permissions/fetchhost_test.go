@@ -13,7 +13,9 @@ func TestClassifyFetchHost_KnownGoodAutoApprove(t *testing.T) {
 		// strongKnownGoodSeed entries (exact and dot-boundary suffix).
 		"https://github.com/foo/bar",
 		"https://docs.python.org/3/",
-		"https://user.github.io/page",
+		// operator-minted subdomain namespaces (see a2b for the contrast with
+		// open-registration ones like *.github.io).
+		"https://en.wikipedia.org/wiki/X",
 		// reputation.KnownGood top-sites that are NOT in the hardcoded strong
 		// seed (data/popularity.csv).
 		"https://google.com/search",
@@ -51,6 +53,58 @@ func TestClassifyFetchHost_NudgeOnlyTLDsDoNotAutoApprove(t *testing.T) {
 		}
 		if !got.AllowNudge {
 			t.Errorf("%s: AllowNudge = false, want true (still a bias hint)", raw)
+		}
+	}
+}
+
+// (a2b) open-registration user-content namespaces stay nudge-only. Anyone can
+// claim attacker.github.io or attacker.readthedocs.io in under a minute, so the
+// named operator (GitHub, Read the Docs) controls the HOSTING, not the hostname
+// namespace — and the floor decides on the host alone, which would make
+// https://attacker.github.io/x?d=<data> a zero-review GET whose query string
+// lands in an attacker's log. They must fall through to the classifier.
+func TestClassifyFetchHost_UserContentNamespacesDoNotAutoApprove(t *testing.T) {
+	cases := []string{
+		"https://attacker.github.io/x",
+		"https://attacker.readthedocs.io/en/latest/",
+	}
+	for _, raw := range cases {
+		got := classifyFetchHost(raw, nil, nil)
+		if got.Verdict != VerdictAllow {
+			t.Errorf("%s: Verdict = %v, want VerdictAllow (fallthrough sentinel)", raw, got.Verdict)
+		}
+		if got.DecidedBy != "fallthrough" {
+			t.Errorf("%s: DecidedBy = %q, want %q (open-registration user content must not auto-approve)",
+				raw, got.DecidedBy, "fallthrough")
+		}
+		if !got.AllowNudge {
+			t.Errorf("%s: AllowNudge = false, want true (still a bias hint)", raw)
+		}
+	}
+
+	// they are out of the strong seed entirely, but stay in the union.
+	for _, host := range []string{"attacker.github.io", "attacker.readthedocs.io"} {
+		if strongSeedMatch(host) {
+			t.Errorf("strongSeedMatch(%q) = true, want false", host)
+		}
+		if !knownGoodSeedMatch(host) {
+			t.Errorf("knownGoodSeedMatch(%q) = false, want true (nudge preserved)", host)
+		}
+	}
+
+	// operator-run hosts — the apex GitHub site, official docs, and the
+	// operator-controlled subdomain namespaces of Wikipedia and Stack Exchange —
+	// keep their real auto-approve.
+	for _, raw := range []string{
+		"https://github.com/foo/bar",
+		"https://docs.python.org/3/",
+		"https://en.wikipedia.org/wiki/X",
+		"https://math.stackexchange.com/questions/1",
+	} {
+		got := classifyFetchHost(raw, nil, nil)
+		if got.Verdict != VerdictAllow || got.DecidedBy != "known-good" || !got.AllowNudge {
+			t.Errorf("%s: Verdict=%v DecidedBy=%q AllowNudge=%v, want VerdictAllow/known-good/true",
+				raw, got.Verdict, got.DecidedBy, got.AllowNudge)
 		}
 	}
 }
@@ -269,8 +323,10 @@ func TestFetchFloorUsesReputationCanonicalHost(t *testing.T) {
 	}
 }
 
-// strongSeedMatch covers only the exact/suffix host entries — never the broad
-// TLD wildcards, which must stay nudge-only and can never auto-approve.
+// strongSeedMatch covers only entries whose named operator controls the whole
+// hostname namespace the pattern spans — never the broad TLD wildcards, and
+// never the open-registration user-content namespaces. Both stay nudge-only and
+// can never auto-approve.
 func TestStrongSeedMatch(t *testing.T) {
 	tests := []struct {
 		host string
@@ -278,10 +334,14 @@ func TestStrongSeedMatch(t *testing.T) {
 	}{
 		{"github.com", true},
 		{"docs.python.org", true},
-		{"user.github.io", true},
+		{"en.wikipedia.org", true},
+		{"math.stackexchange.com", true},
 		{"agency.gov", false},
 		{"mit.edu", false},
 		{"foo.dev", false},
+		// open-registration user-content namespaces are nudge-only, not strong.
+		{"user.github.io", false},
+		{"someproject.readthedocs.io", false},
 		// dot-boundary spoofs match nothing.
 		{"notgithub.com", false},
 		{"github.com.evil.example", false},
@@ -305,6 +365,8 @@ func TestKnownGoodSeedMatch_UnionUnchanged(t *testing.T) {
 		{"agency.gov", true},
 		{"mit.edu", true},
 		{"foo.dev", true},
+		{"user.github.io", true},
+		{"someproject.readthedocs.io", true},
 		{"notgithub.com", false},
 		{"github.com.evil.example", false},
 		{"evil.gov.attacker.com", false},

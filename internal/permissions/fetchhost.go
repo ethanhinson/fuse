@@ -22,13 +22,28 @@ type fetchFloorResult struct {
 // "*.x" requires a real dot-boundary suffix — "notgithub.com" does NOT match
 // "github.com" and "evil.gov.attacker.com" does NOT match "*.gov".
 //
-// strongKnownGoodSeed is the named exact/suffix set of code/dev hosting and
-// official docs/reference hosts. Each entry identifies a specific known
-// operator, so membership is strong enough to carry a real auto-approve.
+// strongKnownGoodSeed is the set eligible for a real auto-approve. The bar is
+// not "the operator is known" — it is that THE NAMED OPERATOR CONTROLS THE
+// HOSTNAME NAMESPACE the pattern spans: every host a pattern here matches must
+// be one only that operator can bring into existence. A plain entry trivially
+// qualifies (it names one host). A "*.x" entry qualifies only when x's operator
+// alone creates the subdomains under it — "*.wikipedia.org" and
+// "*.stackexchange.com" do, because Wikimedia and Stack Exchange mint their
+// language/site subdomains themselves and no outsider can claim one.
+//
+// This is deliberately a question about the hostname, not about the prose. Who
+// AUTHORED the page is a separate matter: Wikipedia articles and Stack Exchange
+// answers are user-written, yet the host is still operator-run and moderated,
+// which is the property the floor leans on. What disqualifies a pattern is an
+// open-registration namespace, where an attacker picks the hostname — those
+// live in nudgeOnlyKnownGoodSeed instead.
+//
+// The floor decides on the host alone, so anything listed here is a zero-review
+// GET of any path and query string under it. Add an entry only if that is
+// acceptable for every host the pattern can ever match.
 var strongKnownGoodSeed = []string{
 	// code / dev hosting
 	"github.com",
-	"*.github.io",
 	"raw.githubusercontent.com",
 	"gitlab.com",
 	"pkg.go.dev",
@@ -36,7 +51,6 @@ var strongKnownGoodSeed = []string{
 	"crates.io",
 	"docs.rs",
 	"pypi.org",
-	"*.readthedocs.io",
 	"stackoverflow.com",
 	"*.stackexchange.com",
 	// official docs / references
@@ -57,17 +71,29 @@ var strongKnownGoodSeed = []string{
 	"rfc-editor.org",
 }
 
-// nudgeOnlyKnownGoodSeed holds mild positive TLD signals. These are broad
-// wildcards over entire top-level domains, not named operators: anyone can
-// register a .dev domain, .edu and .gov cover thousands of independently run
-// sites, and none of them vouch for the content of an arbitrary page. Treating
-// them as a real auto-approve would silently widen the fetch surface to whole
-// TLDs, so they must only ever set AllowNudge — a bias hint for the classifier,
-// never a bypass. Deliberately excluded from strongKnownGoodSeed.
+// nudgeOnlyKnownGoodSeed holds mild positive signals that fail the
+// hostname-namespace test above. Two kinds land here, for the same reason —
+// somebody other than a vouching operator chooses the hostname:
+//
+//   - Broad TLD wildcards. "*.gov"/"*.edu"/"*.dev" span whole top-level
+//     domains rather than one operator: anyone can register a .dev domain, and
+//     .edu/.gov cover thousands of independently run sites.
+//   - Open-registration user-content namespaces. "*.github.io" and
+//     "*.readthedocs.io" name GitHub and Read the Docs as the HOSTING operator,
+//     not as the party controlling the namespace — anyone can claim
+//     attacker.github.io in under a minute. (Contrast "*.wikipedia.org" and
+//     "*.stackexchange.com", where only the operator mints subdomains.)
+//
+// Because the floor decides on the host alone, promoting either kind would make
+// https://attacker.github.io/x?d=<exfil> a zero-review GET. They must only ever
+// set AllowNudge — a bias hint for the classifier, never a bypass.
+// Deliberately excluded from strongKnownGoodSeed.
 var nudgeOnlyKnownGoodSeed = []string{
 	"*.gov",
 	"*.edu",
 	"*.dev",
+	"*.github.io",
+	"*.readthedocs.io",
 }
 
 // hostMatchesSuffix reports whether host matches pattern with real
@@ -83,9 +109,11 @@ func hostMatchesSuffix(host, pattern string) bool {
 	return host == pattern
 }
 
-// strongSeedMatch reports whether host is in the strong (named-operator) part
-// of the hardcoded known-good seed. This is the only half eligible to back a
-// real auto-approve; the broad TLD wildcards are excluded by construction.
+// strongSeedMatch reports whether host is in the strong
+// (operator-controlled-namespace) part of the hardcoded known-good seed. This
+// is the only half eligible to back a real auto-approve; the broad TLD
+// wildcards and the open-registration user-content namespaces are excluded by
+// construction.
 func strongSeedMatch(host string) bool {
 	return seedMatch(host, strongKnownGoodSeed)
 }
@@ -157,10 +185,13 @@ func matchesAnyGlob(host string, patterns []string) bool {
 // deciding layers, so a configured fetch_deny/fetch_ask and the reputation
 // blocklist all beat it: config always wins over the seed.
 //
-// Only the strong (named-operator) half of the hardcoded seed and the exact
-// reputation.KnownGood top-site set can auto-approve. The broad TLD wildcards
-// (*.gov, *.edu, *.dev) are deliberately excluded — they still fall through
-// with AllowNudge set, which is a classifier bias hint and never a bypass.
+// Only the strong half of the hardcoded seed — the entries whose named
+// operator controls the whole hostname namespace the pattern spans — and the
+// exact reputation.KnownGood top-site set can auto-approve. The broad TLD
+// wildcards (*.gov, *.edu, *.dev) and the open-registration user-content
+// namespaces (*.github.io, *.readthedocs.io) are deliberately excluded — they
+// still fall through with AllowNudge set, which is a classifier bias hint and
+// never a bypass.
 // AllowNudge on a "fallthrough" result comes from the full seed union OR
 // reputation.KnownGood and never changes that Verdict.
 func classifyFetchHost(rawURL string, fetchDeny, fetchAsk []string) fetchFloorResult {
