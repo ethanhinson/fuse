@@ -72,3 +72,51 @@ func TestDelayedCarrierStartsNewTraceWithLink(t *testing.T) {
 		t.Fatal("replay link missing")
 	}
 }
+
+// TestDelayedStartWithoutCarrierIsStillANewRoot pins the half of the delayed contract
+// that has no producer to link to. Delayed work is work whose logical parent has
+// already ended and been exported; when no carrier survives to link it, the honest
+// result is an UNLINKED ROOT — never a child of whatever span the caller happened to be
+// inside, which would silently attach a long-lived unit of work to a transient request
+// and defeat the reason for starting it delayed at all.
+func TestDelayedStartWithoutCarrierIsStillANewRoot(t *testing.T) {
+	ex := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(ex))
+	o := New(tp)
+	reqCtx, req := o.Start(context.Background(), observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "resume"})
+
+	_, delayed := o.StartFromCarrier(reqCtx, nil, true, observe.Descriptor{Kind: observe.OperationLoop, Name: "turn"})
+	delayed.End(observe.OutcomeSuccess)
+	// The immediate (delayed=false) path is unchanged: with no carrier to restore it
+	// still continues the caller's trace as a child.
+	_, immediate := o.StartFromCarrier(reqCtx, nil, false, observe.Descriptor{Kind: observe.OperationStore, Name: "append"})
+	immediate.End(observe.OutcomeSuccess)
+	req.End(observe.OutcomeSuccess)
+
+	var turn, appended, request tracetest.SpanStub
+	for _, s := range ex.GetSpans() {
+		switch s.Name {
+		case "fuse.loop.turn":
+			turn = s
+		case "fuse.store.append":
+			appended = s
+		case "fuse.api.request.resume":
+			request = s
+		}
+	}
+	if turn.Name == "" || request.Name == "" || appended.Name == "" {
+		t.Fatalf("missing spans: %#v", ex.GetSpans())
+	}
+	if turn.Parent.IsValid() {
+		t.Errorf("delayed span without a carrier is not a root: parent = %v", turn.Parent)
+	}
+	if turn.SpanContext.TraceID() == request.SpanContext.TraceID() {
+		t.Error("delayed span without a carrier joined the caller's trace")
+	}
+	if len(turn.Links) != 0 {
+		t.Errorf("delayed span without a carrier carries links %v, want none", turn.Links)
+	}
+	if appended.Parent.SpanID() != request.SpanContext.SpanID() {
+		t.Errorf("immediate span parent = %v, want the caller's span %v (unchanged behavior)", appended.Parent, request.SpanContext)
+	}
+}

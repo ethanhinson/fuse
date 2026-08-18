@@ -14,20 +14,88 @@ import (
 )
 
 type observedOperation struct {
-	kind observe.OperationKind
-	name string
+	kind       observe.OperationKind
+	name       string
+	fields     []observe.Field
+	viaCarrier bool
+	hadCarrier bool
+	delayed    bool
+	// carrier is the traceparent of the carrier the operation was started from, so a
+	// test can tell WHICH durable context an operation linked to — not merely that one
+	// was present.
+	carrier string
+}
+
+// recordedEnd captures a single Handle.End call against a started operation.
+type recordedEnd struct {
+	name    string
+	outcome observe.Outcome
+	fields  []observe.Field
+}
+
+// recordingHandle is a recording Handle returned to callers of
+// recordingObserver.Start / StartFromCarrier. Ends are recorded back onto the
+// owning recordingObserver under its mutex, since the handle is shared with
+// the run goroutine (learnings: mutex-test-double-concurrent-provider — lock
+// both sides).
+type recordingHandle struct {
+	owner *recordingObserver
+	name  string
+}
+
+func (h recordingHandle) End(outcome observe.Outcome, fields ...observe.Field) {
+	h.owner.mu.Lock()
+	h.owner.ends = append(h.owner.ends, recordedEnd{name: h.name, outcome: outcome, fields: fields})
+	h.owner.mu.Unlock()
 }
 
 type recordingObserver struct {
-	mu  sync.Mutex
-	ops []observedOperation
+	mu   sync.Mutex
+	ops  []observedOperation
+	ends []recordedEnd
 }
 
 func (o *recordingObserver) Start(ctx context.Context, d observe.Descriptor) (context.Context, observe.Handle) {
 	o.mu.Lock()
-	o.ops = append(o.ops, observedOperation{kind: d.Kind, name: d.Name})
+	o.ops = append(o.ops, observedOperation{kind: d.Kind, name: d.Name, fields: d.Fields})
 	o.mu.Unlock()
-	return ctx, observe.NoopHandle{}
+	return ctx, recordingHandle{owner: o, name: d.Name}
+}
+
+// StartFromCarrier satisfies observe.CarrierStarter so recordingObserver
+// exercises the carrier/delayed branch of observe.StartFromCarrier instead of
+// silently falling back to Start.
+func (o *recordingObserver) StartFromCarrier(ctx context.Context, c *event.TraceCarrier, delayed bool, d observe.Descriptor) (context.Context, observe.Handle) {
+	traceParent := ""
+	if c != nil {
+		traceParent = c.TraceParent
+	}
+	o.mu.Lock()
+	o.ops = append(o.ops, observedOperation{
+		kind:       d.Kind,
+		name:       d.Name,
+		fields:     d.Fields,
+		viaCarrier: true,
+		hadCarrier: c != nil,
+		delayed:    delayed,
+		carrier:    traceParent,
+	})
+	o.mu.Unlock()
+	return ctx, recordingHandle{owner: o, name: d.Name}
+}
+
+// testCarrier is the fixed, W3C-valid durable trace context recordingObserver
+// hands out. A real (otel) observer derives one per active span; the recorder only
+// needs it present and valid, so turn spans exercise the carrier branch and emitted
+// events round-trip through the durable store's carrier validation.
+var testCarrier = event.TraceCarrier{TraceParent: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}
+
+// TraceCarrier satisfies observe.TraceCarrierProvider so the runtime's capability
+// probe (observe.TraceCarrier) yields a non-nil durable carrier, as the otel
+// observer does in production.
+func (o *recordingObserver) TraceCarrier(context.Context) *event.TraceCarrier {
+	c := testCarrier
+	return &c
 }
 
 func (o *recordingObserver) saw(kind observe.OperationKind, name string) bool {
@@ -39,6 +107,45 @@ func (o *recordingObserver) saw(kind observe.OperationKind, name string) bool {
 		}
 	}
 	return false
+}
+
+// opsNamed returns every recorded operation (via Start or StartFromCarrier)
+// with the given name, in recorded order.
+func (o *recordingObserver) opsNamed(name string) []observedOperation {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var out []observedOperation
+	for _, op := range o.ops {
+		if op.name == name {
+			out = append(out, op)
+		}
+	}
+	return out
+}
+
+// fieldValue returns the value of key on the given operation and whether it
+// was present.
+func fieldValue(op observedOperation, key string) (string, bool) {
+	for _, f := range op.fields {
+		if f.Key == key {
+			return f.Value, true
+		}
+	}
+	return "", false
+}
+
+// endsFor returns every recorded End call for operations started with the
+// given name, in recorded order.
+func (o *recordingObserver) endsFor(name string) []recordedEnd {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var out []recordedEnd
+	for _, e := range o.ends {
+		if e.name == name {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // scriptedCompleter returns queued responses in order, then a default "done".

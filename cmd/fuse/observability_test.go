@@ -16,6 +16,8 @@ import (
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/loopauth"
 	"github.com/ethanhinson/fuse/internal/observe"
+	"github.com/ethanhinson/fuse/internal/observe/metricspolicy"
+	observeprom "github.com/ethanhinson/fuse/internal/observe/prometheus"
 	"github.com/ethanhinson/fuse/internal/version"
 	collectortracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/proto"
@@ -384,5 +386,46 @@ func TestSeparateMetricsBindEnforcesAccessAndCloses(t *testing.T) {
 	}
 	if err := s.Close(shutdown); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestMetricsObserverDecoratesLoopScopeWithoutStartingASpan pins the capability the
+// RESUME path depends on (change 0071). metricsObserver stamps the tenant into the
+// context once, from fuse.loop.run's descriptor, and every later Start /
+// StartFromCarrier reads it back OUT of the context — so a launch that legitimately
+// starts no loop.run span (a resumed session continues one whose root already ended
+// and exported) must still be able to establish that scope, or every model, tool,
+// store and turn metric for the whole life of that session records tenant="".
+func TestMetricsObserverDecoratesLoopScopeWithoutStartingASpan(t *testing.T) {
+	policy, err := metricspolicy.New(metricspolicy.Config{HashVersion: "sha256-64-v1", Salt: "test", Dimensions: map[metricspolicy.Dimension]metricspolicy.DimensionConfig{
+		metricspolicy.TenantID: {Budget: 4, Catalog: []string{"acme"}},
+		metricspolicy.Model:    {Budget: 2},
+		metricspolicy.Tool:     {Budget: 2},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder, err := observeprom.New(observeprom.Config{Policy: policy})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := metricsObserver{primary: observe.NoopObserver{}, metrics: recorder}
+
+	loopScope := observe.Descriptor{Kind: observe.OperationLoop, Name: "run", Fields: []observe.Field{{Key: "tenant", Value: "acme"}}}
+	ctx := observe.DecorateScope(o, context.Background(), loopScope)
+	if got, _ := ctx.Value(metricsTenantKey{}).(string); got != "acme" {
+		t.Fatalf("decorated loop scope tenant = %q, want %q", got, "acme")
+	}
+
+	// A later operation of that session — here the carrier-started shape a resumed
+	// turn and its store spans use — must inherit the tenant from the context.
+	_, handle := o.StartFromCarrier(ctx, nil, true, observe.Descriptor{Kind: observe.OperationStore, Name: "append"})
+	handle.End(observe.OutcomeSuccess)
+
+	rec := httptest.NewRecorder()
+	recorder.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	const want = `fuse_loop_operations_total{operation="store",outcome="success",tenant_id="acme"}`
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("scraped metrics do not contain %s\n%s", want, rec.Body.String())
 	}
 }
