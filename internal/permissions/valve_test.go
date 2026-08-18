@@ -240,13 +240,15 @@ func TestValve_NonBlockVerdictResetsConsecutive(t *testing.T) {
 	}
 }
 
-// TestValve_TwentyTotalBlocks_TripsIndependentOfConsecutive proves the total
+// TestValve_TotalBlocks_TripsIndependentOfConsecutive proves the total
 // threshold trips even when the consecutive counter is repeatedly reset.
-func TestValve_TwentyTotalBlocks_TripsIndependentOfConsecutive(t *testing.T) {
-	// Alternate deny, allow so the consecutive counter never reaches 3, but the
-	// total block count climbs to 20 over 40 classified calls.
+func TestValve_TotalBlocks_TripsIndependentOfConsecutive(t *testing.T) {
+	// Alternate deny, allow so the consecutive counter never reaches
+	// valveConsecutiveLimit, but the total block count climbs to
+	// valveTotalLimit over 2*valveTotalLimit classified calls.
+	const totalCalls = 2 * valveTotalLimit
 	var seq []string
-	for i := 0; i < 40; i++ {
+	for i := 0; i < totalCalls; i++ {
 		if i%2 == 0 {
 			seq = append(seq, `{"verdict":"deny","reason":"x"}`)
 		} else {
@@ -259,14 +261,16 @@ func TestValve_TwentyTotalBlocks_TripsIndependentOfConsecutive(t *testing.T) {
 	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 
-	// After 40 alternating verdicts there are 20 blocks total. The 39th
-	// classified call is the 20th block (indices 0,2,...,38). After that block the
-	// valve is tripped, so the 40th call (index 39) must NOT reach the classifier.
-	for i := 0; i < 40; i++ {
+	// After totalCalls alternating verdicts there are valveTotalLimit blocks
+	// total. Call index (totalCalls-2) is the valveTotalLimit-th block
+	// (indices 0,2,...,totalCalls-2). After that block the valve is tripped,
+	// so the final call (index totalCalls-1) must NOT reach the classifier.
+	for i := 0; i < totalCalls; i++ {
 		g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(i)))
 	}
-	if stub.calls != 39 {
-		t.Fatalf("total-20 valve should trip after the 20th block (39 classified calls); got %d", stub.calls)
+	if stub.calls != totalCalls-1 {
+		t.Fatalf("total valve should trip after the %dth block (%d classified calls); got %d",
+			valveTotalLimit, totalCalls-1, stub.calls)
 	}
 }
 
@@ -319,8 +323,8 @@ func TestValve_InWorkspaceEditsDoNotAdvanceValve(t *testing.T) {
 		newTestRegistry("write_file", "edit_file"), approve,
 		WithWorkspaceRoot(root), WithClassifier(cls))
 
-	// Far more in-workspace edits than either valve threshold (3 consecutive / 20
-	// total). If any advanced the valve, it would trip well before the end.
+	// Far more in-workspace edits than the consecutive valve threshold (3). If
+	// any advanced the valve, it would trip well before the end.
 	for i := 0; i < 25; i++ {
 		toolName := "write_file"
 		if i%2 == 1 {

@@ -102,9 +102,10 @@ type PermissionGate struct {
 }
 
 // escalationValve tracks classifier-layer block verdicts across a session and
-// trips (pausing auto mode) at 3 consecutive OR 20 total blocks. It is shared by
-// reference across CloneForChild so parent and child blocks accrue to the same
-// session budget, unlike the snapshot-cloned approval/verdict caches.
+// trips (pausing auto mode) at valveConsecutiveLimit consecutive OR
+// valveTotalLimit total blocks. It is shared by reference across CloneForChild
+// so parent and child blocks accrue to the same session budget, unlike the
+// snapshot-cloned approval/verdict caches.
 type escalationValve struct {
 	mu          sync.Mutex
 	consecutive int
@@ -117,12 +118,17 @@ type escalationValve struct {
 	promptedOnce bool
 }
 
-// valveConsecutiveLimit and valveTotalLimit are the escalation thresholds: 3
-// consecutive OR 20 total classifier blocks pause auto mode (Claude Code's
-// thresholds, per the auto-mode design D8).
+// valveConsecutiveLimit and valveTotalLimit are the escalation thresholds:
+// valveConsecutiveLimit consecutive OR valveTotalLimit total classifier
+// blocks pause auto mode. valveConsecutiveLimit stays at Claude Code's
+// original 3, per the auto-mode design D8. valveTotalLimit was raised from 20
+// to 50 (docket 2026-08-18 D3): with the rules-layer denies gone (change
+// #0068) and the classifier now allow-biased (#0069), an honest long session
+// must not trip the valve on volume alone; 50 still holds a hard headless
+// abort budget against a persistently probing model.
 const (
 	valveConsecutiveLimit = 3
-	valveTotalLimit       = 20
+	valveTotalLimit       = 50
 )
 
 // recordBlock counts a classifier-layer block (a deny from the classifier). The
