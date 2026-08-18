@@ -9,6 +9,10 @@ One curated finding per file; this index is the hint surface. Load it, then read
 - [replay-live-handoff-dedup-at-watermark](replay-live-handoff-dedup-at-watermark.md) — An observe seam that subscribes-to-live AND replays history double-delivers any event that lands between the two steps — subscribe first (drop nothing), then dedup at the replay watermark (drop live events with Seq <= last replayed); a plain sequential test cannot see it. · also: eventstore, concurrency, streaming ⟨needs promotion⟩
 - [structured-return-via-synthesized-tool](structured-return-via-synthesized-tool.md) — to get a structured value back from a subagent that also uses tools, synthesize a dedicated return_result tool (schema = the expected shape) offered only to Expects children — do NOT instruct the model to emit the structure in its final message; a final-message directive collides with tool-calling (the child crams the structured object into an unrelated tool's args, e.g. write_file.content with no path) · also: agents, subagents, tool-use, structured-output ⟨needs promotion⟩
 
+## build-loop
+
+- [shared-worktree-red-suite-verify-detached](shared-worktree-red-suite-verify-detached.md) — A red (or green) suite run in a SHARED feature worktree may reflect another writer's uncommitted files, not any committed state — during 0071 two full-suite runs came back red solely because a concurrent worker's uncommitted RED tests sat in the tree. Before acting on a suite verdict from a worktree other agents may touch, re-verify the branch TIP in a clean detached worktree (git worktree add --detach <tmp> <sha>); trust only verdicts bound to a sha, never to a directory. · also: worktree, concurrency, test-evidence, dispatch ⟨needs promotion⟩
+
 ## concurrency
 
 - [race-invisible-to-race-detector-without-concurrent-test](race-invisible-to-race-detector-without-concurrent-test.md) — Adding a live-reload that mutates a shared type read on a request path? The data race is invisible to -race until a test drives a request concurrently with the reload. · also: race, mcp, live-reload, testing ⟨needs promotion⟩
