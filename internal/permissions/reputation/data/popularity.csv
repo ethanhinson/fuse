@@ -14,3 +14,5 @@ GlobalRank,TldRank,Domain,TLD,RefSubNets,RefIPs,IDN_Domain,IDN_TLD,PrevGlobalRan
 13,2,mozilla.org,org,200000,1200000,mozilla.org,org,13,2,199000,1190000
 14,12,reddit.com,com,180000,1000000,reddit.com,com,14,12,179000,990000
 15,3,archive.org,org,160000,900000,archive.org,org,15,3,159000,890000
+16,1,bit.ly,ly,150000,850000,bit.ly,ly,16,1,149000,840000
+17,13,pastebin.com,com,140000,800000,pastebin.com,com,17,13,139000,790000

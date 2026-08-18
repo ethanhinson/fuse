@@ -96,6 +96,149 @@ var nudgeOnlyKnownGoodSeed = []string{
 	"*.readthedocs.io",
 }
 
+// exfilShapeDenylist names host shapes that must NEVER receive the known-good
+// auto-approve, however good their reputation is.
+//
+// Why this list exists. The known-good promotion decides on the host alone, so
+// promoting a host authorizes a zero-review GET of any path and query string
+// under it. That is safe for a documentation site and unsafe for a host whose
+// whole purpose is to accept attacker-chosen content or to receive data in the
+// URL. Two of the promotion's inputs can grow: the hardcoded seed above (which
+// at least arrives as a reviewed code diff) and reputation.KnownGood, which is
+// backed by internal/permissions/reputation/data/popularity.csv — a data file
+// refreshed by hand from an upstream top-sites list. Paste services, link
+// shorteners and webhook endpoints are genuinely popular, so a faithful refresh
+// WILL surface them. This list is the code-side floor that keeps such a refresh
+// from converting popularity into authorization.
+//
+// The four shapes, and what each one buys an attacker who can steer a fetch:
+//
+//   - Paste services — attacker-authored content served from a reputable host,
+//     i.e. prompt injection with a trusted-looking origin.
+//   - File upload / transfer hosts — the same, plus a drop point.
+//   - Link shorteners — the fetched host is not the host that was approved;
+//     the real destination is chosen after the decision.
+//   - Webhook / request-capture endpoints — the request itself is the payload:
+//     everything in the path and query is delivered to the attacker's log.
+//
+// This is a FLOOR, NOT AN EXHAUSTIVE LIST. New paste and tunnel services appear
+// constantly and no static list can keep up. It is a backstop for the promotion
+// path, not the system's only defense: a host that is missing here still faces
+// the classifier, the deny shapes, and the configured fetch_deny/fetch_ask.
+// Add to it freely — a false positive here costs one prompt, since a declined
+// host falls through to the classifier rather than being denied.
+//
+// Entries are registrable domains or specific hosts; matching covers the entry
+// and its subdomains at real dot boundaries (see exfilShapeMatch). List the
+// narrowest thing that is actually the exfil shape: "hooks.slack.com", not
+// "slack.com".
+var exfilShapeDenylist = []string{
+	// paste / snippet services
+	"pastebin.com",
+	"gist.github.com",
+	"paste.ee",
+	"hastebin.com",
+	"dpaste.com",
+	"dpaste.org",
+	"ghostbin.com",
+	"rentry.co",
+	"controlc.com",
+	"termbin.com",
+	"ix.io",
+	"sprunge.us",
+	"0x0.st",
+	"privatebin.net",
+	"justpaste.it",
+	"pastes.io",
+	"codepad.org",
+	"paste.rs",
+
+	// file upload / transfer drops
+	"transfer.sh",
+	"file.io",
+	"anonfiles.com",
+	"gofile.io",
+	"bashupload.com",
+	"catbox.moe",
+	"uguu.se",
+	"oshi.at",
+	"pixeldrain.com",
+	"filebin.net",
+	"wetransfer.com",
+	"temp.sh",
+	"tmpfiles.org",
+
+	// link shorteners — the approved host is not the fetched destination
+	"bit.ly",
+	"t.co",
+	"tinyurl.com",
+	"goo.gl",
+	"ow.ly",
+	"is.gd",
+	"v.gd",
+	"buff.ly",
+	"cutt.ly",
+	"rebrand.ly",
+	"shorturl.at",
+	"rb.gy",
+	"t.ly",
+	"s.id",
+	"lnkd.in",
+	"tiny.cc",
+	"shorte.st",
+
+	// webhook / request-capture / tunnel endpoints — the request IS the payload
+	"hooks.slack.com",
+	"discord.com",
+	"discordapp.com",
+	"webhook.site",
+	"hookbin.com",
+	"requestbin.com",
+	"requestcatcher.com",
+	"beeceptor.com",
+	"pipedream.net",
+	"api.telegram.org",
+	"hooks.zapier.com",
+	"maker.ifttt.com",
+	"ngrok.io",
+	"ngrok-free.app",
+	"ngrok.app",
+	"trycloudflare.com",
+	"localtunnel.me",
+	"loca.lt",
+	"serveo.net",
+	"interact.sh",
+	"oast.fun",
+	"oast.pro",
+	"oast.live",
+	"burpcollaborator.net",
+	"dnslog.cn",
+	"canarytokens.com",
+}
+
+// exfilShapeMatch reports whether host is an exfil shape per
+// exfilShapeDenylist. An entry matches the host itself and any subdomain of it,
+// both at real dot boundaries via hostMatchesSuffix — so "pastebin.com" covers
+// "www.pastebin.com" but not "notpastebin.com" and not
+// "pastebin.com.evil.example". Substring matching is deliberately not used: it
+// would both over-match unrelated hosts and be trivially evaded.
+//
+// The caller must pass an already-canonicalized host (reputation.CanonicalHost),
+// as classifyFetchHost does; the entries are lowercase and dot-free of the root
+// dot.
+func exfilShapeMatch(host string) bool {
+	for _, entry := range exfilShapeDenylist {
+		// Tolerate an entry written in the seed's "*.x" style by reducing it to
+		// its bare domain first; both forms are then checked below, so a
+		// wildcard entry can never end up narrower than a plain one.
+		bare := strings.TrimPrefix(entry, "*.")
+		if hostMatchesSuffix(host, bare) || hostMatchesSuffix(host, "*."+bare) {
+			return true
+		}
+	}
+	return false
+}
+
 // hostMatchesSuffix reports whether host matches pattern with real
 // dot-boundary semantics. A "*.x" pattern matches a host that ends in ".x"
 // (a genuine label boundary) but not the bare apex "x". A plain "x" pattern
@@ -177,17 +320,26 @@ func matchesAnyGlob(host string, patterns []string) bool {
 //	fetchDeny glob match                  => Deny, "config-deny"  (deny beats ask)
 //	fetchAsk glob match                   => Ask,  "config-ask"
 //	reputation.Blocked(host)              => Deny, "blocklist"
-//	strong seed / reputation.KnownGood    => Allow, "known-good"  (a real auto-approve)
+//	strong seed / reputation.KnownGood    => Allow, "known-good"  (a real auto-approve),
+//	                                        unless exfilShapeMatch withholds it
 //	otherwise                             => VerdictAllow sentinel, "fallthrough"
 //
 // The order is load-bearing. SSRF is checked first so a private IP always
 // denies. The known-good promotion (change 0069) sits strictly last among the
 // deciding layers, so a configured fetch_deny/fetch_ask and the reputation
-// blocklist all beat it: config always wins over the seed.
+// blocklist all beat it: config always wins over the seed. The exfil-shape
+// subtraction is evaluated after all of those and immediately before the
+// promotion — it withholds an auto-approve but never creates a decision, so it
+// cannot reorder anything above it.
 //
 // Only the strong half of the hardcoded seed — the entries whose named
 // operator controls the whole hostname namespace the pattern spans — and the
-// exact reputation.KnownGood top-site set can auto-approve. The broad TLD
+// Only the strong half of the hardcoded seed and the exact
+// reputation.KnownGood top-site set can auto-approve, and only when the host is
+// not an exfil shape (see exfilShapeDenylist) — the popularity list is a
+// refreshable data file, so that subtraction is what stops a routine refresh
+// from silently authorizing a paste host or a link shortener.
+// The broad TLD
 // wildcards (*.gov, *.edu, *.dev) and the open-registration user-content
 // namespaces (*.github.io, *.readthedocs.io) are deliberately excluded — they
 // still fall through with AllowNudge set, which is a classifier bias hint and
@@ -227,18 +379,28 @@ func classifyFetchHost(rawURL string, fetchDeny, fetchAsk []string) fetchFloorRe
 		return fetchFloorResult{Verdict: VerdictDeny, DecidedBy: "blocklist", Host: host}
 	}
 
+	// Exfil-shape subtraction. Checked BEFORE the promotion below, and it
+	// subtracts from every input to that promotion — the hardcoded seed as well
+	// as the refreshable popularity list — so the two can never disagree about
+	// a host. A match here is not a decision: it only withholds the promotion
+	// (and the allow-bias nudge), leaving the host to the classifier.
+	exfilShape := exfilShapeMatch(host)
+
 	// Known-good auto-approve. Both membership tests are exact/dot-boundary:
 	// strongSeedMatch uses hostMatchesSuffix, and reputation.KnownGood is an
 	// exact lookup in the bundled popularity set with no subdomain widening.
 	// This runs only after every denying layer above has declined.
-	if strongSeedMatch(host) || reputation.KnownGood(host) {
+	if !exfilShape && (strongSeedMatch(host) || reputation.KnownGood(host)) {
 		return fetchFloorResult{Verdict: VerdictAllow, DecidedBy: "known-good", Host: host, AllowNudge: true}
 	}
 
 	return fetchFloorResult{
-		Verdict:    VerdictAllow,
-		DecidedBy:  "fallthrough",
-		Host:       host,
-		AllowNudge: knownGoodSeedMatch(host) || reputation.KnownGood(host),
+		Verdict:   VerdictAllow,
+		DecidedBy: "fallthrough",
+		Host:      host,
+		// An exfil shape gets no nudge either. The nudge biases the classifier
+		// toward allow, and these are precisely the hosts where a reputable
+		// name says nothing about the attacker-chosen URL under it.
+		AllowNudge: !exfilShape && (knownGoodSeedMatch(host) || reputation.KnownGood(host)),
 	}
 }

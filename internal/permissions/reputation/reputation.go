@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"embed"
 	"encoding/csv"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -182,4 +183,21 @@ func KnownGood(host string) bool {
 	}
 	_, ok := goodSet[h]
 	return ok
+}
+
+// KnownGoodHosts returns every canonical host in the popularity allowlist,
+// sorted. It exists so that callers which turn KnownGood into an AUTHORIZATION
+// decision can enumerate — and therefore pin in a test — the exact set of hosts
+// that decision covers. Without enumeration, a refresh of data/popularity.csv
+// would silently widen authorization with nothing to review against.
+//
+// The returned slice is a fresh copy; mutating it does not affect the set.
+func KnownGoodHosts() []string {
+	goodOnce.Do(loadPopularity)
+	out := make([]string, 0, len(goodSet))
+	for h := range goodSet {
+		out = append(out, h)
+	}
+	sort.Strings(out)
+	return out
 }
