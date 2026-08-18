@@ -1,3 +1,7 @@
+<!-- docket:backlink:start (generated — do not hand-edit) -->
+> ↩ **[Change 0071 — Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0071-turn-scoped-trace-roots-interactive-loops.md)**
+<!-- docket:backlink:end -->
+
 # Change 0071 — live verification of acceptance criterion 1
 
 Plan Task 6. Evidence record for the change results file.
