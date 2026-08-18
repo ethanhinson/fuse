@@ -293,6 +293,24 @@ func (r *inProcRuntime) startIdleReaper(sessionCtx context.Context, sessionCance
 	}
 }
 
+// endOnce wraps a span handle in an end function that forwards AT MOST ONE End to
+// the handle, safely under concurrent callers (change 0071 Task 1). The loop-span
+// end path used to be guarded by a plain bool, which was sound only while a single
+// goroutine could ever reach it; turn-scoped tracing adds a park/teardown caller
+// that can race the run goroutine's completion, so the guard is a sync.Once.
+//
+// FIRST-WRITER-WINS: the first outcome handed to end is the one that lands on the
+// span, and every later call is dropped — outcome included. That is deliberate, not
+// incidental: the park path ends fuse.loop.run with OutcomeSuccess at the first turn
+// boundary, and a later session cancellation (idle reap, disconnect, teardown) must
+// NOT rewrite that already-exported span as canceled.
+func endOnce(h observe.Handle) func(observe.Outcome) {
+	var once sync.Once
+	return func(out observe.Outcome) {
+		once.Do(func() { h.End(out) })
+	}
+}
+
 // launchOpts carries the few things that differ between a fresh StartLoop and a
 // Resume (change 0054, D4); everything else in the loop-launch is identical, so both
 // go through launchLoop.
@@ -324,13 +342,7 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 // Resume. opts is the small delta between them (see launchOpts).
 func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts launchOpts) (LoopHandle, error) {
 	loopCtx, loopSpan := r.deps.Observer.Start(ctx, observe.Descriptor{Kind: observe.OperationLoop, Name: "run", Fields: []observe.Field{{Key: "tenant", Value: string(event.NormalizeTenant(cfg.Tenant))}}})
-	ended := false
-	end := func(out observe.Outcome) {
-		if !ended {
-			ended = true
-			loopSpan.End(out)
-		}
-	}
+	end := endOnce(loopSpan)
 
 	// Session lifetime (change 0054, D2). A one-shot loop's run is governed by the
 	// request ctx (loopCtx) — byte-identical to before. An INTERACTIVE loop instead
