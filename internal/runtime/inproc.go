@@ -157,12 +157,6 @@ type loop struct {
 	buildChild agent.ChildBuilder
 	handle     *loopHandle
 
-	// turns owns the loop's turn-scoped span topology (change 0071). It is held on the
-	// loop — not just in launchLoop's frame — because it must survive every park and
-	// outlive the request that started the session. Nil for a one-shot loop, which has
-	// no turn boundaries.
-	turns *turnTracer
-
 	// touch resets the interactive session's idle-reap timer (change 0054, D2). It is
 	// called on every Send and every Observe so an actively-used session is never
 	// reaped; nil for a non-interactive loop (which has no reaper). Safe to call
@@ -559,7 +553,6 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		store:      store,
 		humanBus:   agent.NewHumanBus(tree),
 		buildChild: buildChild,
-		turns:      turns,
 	}
 	r.mu.Lock()
 	if r.loops == nil {
