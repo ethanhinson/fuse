@@ -82,6 +82,10 @@ permissions:
     classifier_model: deepseek-flash   # alias that judges gray-area commands; NEVER a chat alias
     deny: []            # extra always-deny per-segment patterns, e.g. "bash:npm publish*"
     ask: []             # extra always-ask per-segment patterns (override an allow)
+    fetch_deny: []      # host-glob floor: matched web_fetch hosts are denied before
+                        # the classifier is ever consulted, e.g. ["*.internal.example"]
+    fetch_ask: []       # host-glob floor: matched web_fetch hosts are forced to a
+                        # human ask before the classifier is ever consulted
     allow_push: false   # true = `git push` auto-approves; false = it routes to the classifier
     write_roots: []     # extra dirs scoped like the workspace (e.g. ["/tmp"]); the
                         # per-session scratch dir under ~/.fuse/tmp/ is always included
@@ -104,6 +108,15 @@ It is layered: a bash command is split into its simple-command **segments**
 the read-only safe list, then path/egress heuristics, and only genuinely
 ambiguous segments reach the `classifier_model`. Deny beats ask beats allow; a
 command that cannot be parsed fails closed.
+
+**`web_fetch` known-good hosts auto-approve with no prompt and no classifier
+call.** A hardcoded seed of reputable hosts (docs sites, code hosting, etc.)
+plus the bundled top-sites popularity set auto-approve `web_fetch` at the
+floor, before the classifier is ever consulted — this is a zero-review GET of
+any path/query under that host. `auto.fetch_deny` and `auto.fetch_ask` sit
+ahead of that floor and override it: a host matching `fetch_deny` is always
+denied and a host matching `fetch_ask` always forces a human prompt,
+regardless of the seed or popularity list.
 
 **`auto_approve` (and `auto.deny`/`auto.ask`) are per-segment, not first-token
 prefixes.** A pattern only approves the segment it matches, so `git status &&

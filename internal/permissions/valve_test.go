@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,7 +43,7 @@ func newTestClassifierFrom(t *testing.T, c completer) *Classifier {
 // escalation valve counts. Each distinct index yields a fresh command so the
 // per-command verdict cache never short-circuits the classifier call.
 func grayAreaCmd(i int) string {
-	return "touch /etc/escapes-workspace-" + string(rune('a'+i))
+	return fmt.Sprintf("touch /etc/escapes-workspace-%d", i)
 }
 
 // valvePromptRecorder is an ApprovalFunc that records every request it sees and
@@ -323,9 +324,10 @@ func TestValve_InWorkspaceEditsDoNotAdvanceValve(t *testing.T) {
 		newTestRegistry("write_file", "edit_file"), approve,
 		WithWorkspaceRoot(root), WithClassifier(cls))
 
-	// Far more in-workspace edits than the consecutive valve threshold (3). If
-	// any advanced the valve, it would trip well before the end.
-	for i := 0; i < 25; i++ {
+	// Far more in-workspace edits than both the consecutive valve threshold (3)
+	// and the total budget (valveTotalLimit). If any advanced the valve, it
+	// would trip well before the end on either threshold.
+	for i := 0; i < valveTotalLimit+5; i++ {
 		toolName := "write_file"
 		if i%2 == 1 {
 			toolName = "edit_file"

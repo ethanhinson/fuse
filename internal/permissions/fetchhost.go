@@ -440,6 +440,13 @@ func classifyFetchHost(rawURL string, fetchDeny, fetchAsk []string) fetchFloorRe
 		// An exfil shape gets no nudge either. The nudge biases the classifier
 		// toward allow, and these are precisely the hosts where a reputable
 		// name says nothing about the attacker-chosen URL under it.
-		AllowNudge: !exfilShape && (knownGoodSeedMatch(host) || reputation.KnownGood(host)),
+		//
+		// Only the nudge-only seed can still be true here: reaching this line
+		// means the promotion above did NOT fire, so strongSeedMatch(host) and
+		// reputation.KnownGood(host) are already both false (or exfilShape is
+		// true, in which case the leading !exfilShape makes this false anyway).
+		// Writing knownGoodSeedMatch(host) || reputation.KnownGood(host) here
+		// would misleadingly suggest either can still be true.
+		AllowNudge: !exfilShape && seedMatch(host, nudgeOnlyKnownGoodSeed),
 	}
 }
