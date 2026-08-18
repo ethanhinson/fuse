@@ -355,6 +355,16 @@ func matchesAnyGlob(host string, patterns []string) bool {
 // never a bypass.
 // AllowNudge on a "fallthrough" result comes from the full seed union OR
 // reputation.KnownGood and never changes that Verdict.
+//
+// LIMITATION — this floor authorizes the REQUESTED host only, not the host
+// actually contacted. The HTTP client used downstream (internal/research)
+// follows redirects with no CheckRedirect hook set anywhere in this tree, so
+// a known-good host that 302s elsewhere (e.g. to a private/link-local address
+// or an attacker-controlled endpoint) is fetched without this floor
+// re-deciding on the redirect target. Callers must not read a "known-good" or
+// "fallthrough" verdict here as a guarantee about the host the request
+// ultimately lands on. A per-hop re-check belongs in internal/research, where
+// the actual HTTP client lives, not in this classifier.
 func classifyFetchHost(rawURL string, fetchDeny, fetchAsk []string) fetchFloorResult {
 	u, err := url.Parse(rawURL)
 	if err != nil {
