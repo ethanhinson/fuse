@@ -2,7 +2,7 @@
 id: 69
 slug: auto-mode-classifier-retune-webfetch
 title: Auto-mode classifier retune + web_fetch loosening — allow-bias for routine dev ops, seed becomes real auto-approve
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-17
@@ -13,12 +13,12 @@ discovered_from: []
 adrs: [48]
 spec: docs/superpowers/specs/2026-08-17-auto-mode-classifier-retune-webfetch-design.md
 plan: docs/superpowers/plans/2026-08-18-auto-mode-classifier-retune-webfetch-plan.md
-results:
+results: docs/results/2026-08-18-auto-mode-classifier-retune-webfetch-results.md
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-classifier-retune-webfetch
-claimed_at: 2026-08-18T05:24:00Z
-pr:
+claimed_at: 2026-08-18T05:32:00Z
+pr: https://github.com/ethanhinson/fuse/pull/75
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-17-auto-mode-classifier-retune-webfetch-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-17-auto-mode-classifier-retune-webfetch-design.md) |
 | Plan | [2026-08-18-auto-mode-classifier-retune-webfetch-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-classifier-retune-webfetch/docs/superpowers/plans/2026-08-18-auto-mode-classifier-retune-webfetch-plan.md) |
+| Results | [2026-08-18-auto-mode-classifier-retune-webfetch-results.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-classifier-retune-webfetch/docs/results/2026-08-18-auto-mode-classifier-retune-webfetch-results.md) |
+| PR | [#75](https://github.com/ethanhinson/fuse/pull/75) |
 | ADRs | [ADR-0048](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0048-web-fetch-host-floor-as-authorization-boundary.md) |
 <!-- docket:artifacts:end -->
 
