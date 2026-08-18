@@ -2,7 +2,7 @@
 id: 71
 slug: turn-scoped-trace-roots-interactive-loops
 title: Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans
-status: implemented
+status: done
 priority: high
 type: fix
 created: 2026-08-18
@@ -17,7 +17,7 @@ results: docs/results/2026-08-18-turn-scoped-trace-roots-live-verification.md
 trivial: false
 auto_groomable:
 branch: feat/turn-scoped-trace-roots-interactive-loops
-claimed_at: 2026-08-18T02:46:29Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/74
 blocked_by:
 reconciled: true
