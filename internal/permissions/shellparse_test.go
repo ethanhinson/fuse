@@ -1282,6 +1282,39 @@ func TestSplitSegments_OpaqueArgs(t *testing.T) {
 			cmd:  "CI=1 curl $URL",
 			want: []opaqueSeg{{name: "curl", args: []string{"$URL"}, opaque: []bool{true}}},
 		},
+		// An ANSI-C quoted word ($'…') carries an UNDECODED value in the AST:
+		// syntax.SglQuoted{Dollar: true, Value: `\x2f`}, which the shell resolves
+		// to `/`. Taking that value as a literal would hand every downstream
+		// containment proof a string the shell will never see. The word is
+		// therefore opaque and named by its raw source, exactly like $VAR.
+		{
+			desc: "an ANSI-C quoted word is opaque (its value is undecoded escape text)",
+			cmd:  `rm -rf $'\x2f'`,
+			want: []opaqueSeg{{name: "rm", args: []string{"-rf", `$'\x2f'`}, opaque: []bool{false, true}}},
+		},
+		{
+			desc: "an ANSI-C quoted path is opaque",
+			cmd:  `cat $'\x2fetc\x2fpasswd'`,
+			want: []opaqueSeg{{name: "cat", args: []string{`$'\x2fetc\x2fpasswd'`}, opaque: []bool{true}}},
+		},
+		{
+			desc: "an ANSI-C quoted word makes the whole mixed word opaque",
+			cmd:  `rm -rf ./$'\x2e\x2e'`,
+			want: []opaqueSeg{{name: "rm", args: []string{"-rf", `./$'\x2e\x2e'`}, opaque: []bool{false, true}}},
+		},
+		// The distinction is the leading `$`, and it is the whole point of
+		// consulting SglQuoted.Dollar: an ORDINARY single-quoted word decodes to
+		// nothing at all, so its value IS its text and it stays literal.
+		{
+			desc: "an ordinary single-quoted word is still literal",
+			cmd:  `rm -rf 'lit eral'`,
+			want: []opaqueSeg{{name: "rm", args: []string{"-rf", "lit eral"}, opaque: []bool{false, false}}},
+		},
+		{
+			desc: "an ordinary single-quoted word carrying backslashes is still literal",
+			cmd:  `cat './a\x2fb'`,
+			want: []opaqueSeg{{name: "cat", args: []string{`./a\x2fb`}, opaque: []bool{false}}},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
@@ -1450,6 +1483,20 @@ func TestSplitSegments_OpaqueFailClosed(t *testing.T) {
 		// no layer can scope).
 		{"redirect to an opaque target", "ls > $F"},
 		{"redirect to a substituted target", "ls > $(echo x)"},
+
+		// An ANSI-C quoted word is not a literal, so the three literalWord
+		// positions lose it too — and each must land FAIL-CLOSED rather than
+		// treating the undecoded escape text as the value. `$'/dev/null'` is the
+		// benign case that shows the direction (it costs one prompt);
+		// `$'\x2f\x64\x65\x76\x2f\x6e\x75\x6c\x6c'`-shaped targets are why.
+		{"redirect to an ANSI-C quoted /dev/null", `ls > $'/dev/null'`},
+		{"fd-dup to an ANSI-C quoted number", `ls 2>&$'1'`},
+		{"here-doc with an ANSI-C quoted delimiter", "cat <<$'EOF'\nx\nEOF"},
+		{"env assignment value in ANSI-C quotes", `CI=$'\x31' rm -rf x`},
+		// argv[0] is never opaque, and an ANSI-C quoted name is no exception:
+		// `$'\x6c\x73'` executes `ls` while every name-keyed table downstream
+		// would be consulted with the escape text.
+		{"argv0 in ANSI-C quotes", `$'\x6c\x73' foo`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {

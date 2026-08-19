@@ -274,6 +274,15 @@ func TestClassifyHeuristic_OpaqueArgsNeverProveContainment(t *testing.T) {
 		{"a variable path joined onto a literal prefix", "rm ./$SUB"},
 		{"dd output to a variable", "dd if=/dev/zero of=$OUT"},
 		{"a mutating segment beside a clean read-only one", "ls -la && rm $VAR"},
+		// Review finding "important 5": an ANSI-C quoted word carries UNDECODED
+		// escape text in the AST, so reading it as a literal value proves
+		// containment over a string the shell never resolves to. `rm -rf $'\x2f'`
+		// used to resolve as <cwd>/\x2f — a leaf under the workspace — prove
+		// containment, and auto-approve while bash ran `rm -rf /`.
+		{"rm of an ANSI-C quoted root", `rm -rf $'\x2f'`},
+		{"rm of an ANSI-C quoted home", `rm -rf $'\x7e'`},
+		{"rm of an ANSI-C quoted parent escape", `rm -rf $'\x2e\x2e\x2f\x2e\x2e'`},
+		{"a literal prefix joined to an ANSI-C quoted tail", `rm -rf ./$'\x2e\x2e'`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {

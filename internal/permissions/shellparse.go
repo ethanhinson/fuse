@@ -970,8 +970,9 @@ peel:
 //   - LITERAL: every part resolves statically. The text IS the value, and a
 //     downstream layer may resolve it as a path, read it as a flag, or parse it
 //     as a PID.
-//   - OPAQUE: the word contains a parameter expansion ($VAR, ${VAR}) or a
-//     read-only command substitution. The text is the word's RAW SOURCE, kept
+//   - OPAQUE: the word contains a parameter expansion ($VAR, ${VAR}), a
+//     read-only command substitution, or ANSI-C quoting ($'…', whose AST value
+//     is left undecoded). The text is the word's RAW SOURCE, kept
 //     so a deny pattern and a human-facing reason can still name it — it is not
 //     a value and must never be resolved as one. Before D5 this whole class
 //     fell into fail-closed, which cost a human prompt on `wc -l $f`.
@@ -1005,7 +1006,35 @@ func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment) (str
 		case *syntax.Lit:
 			b.WriteString(p.Value)
 		case *syntax.SglQuoted:
-			b.WriteString(p.Value)
+			// Plain '…' is the one quoting form bash performs NO processing
+			// inside: the value IS the text, so it stays literal.
+			//
+			// ANSI-C quoting ($'…') is a different node wearing the same type.
+			// mvdan.cc/sh records it as Dollar=true and leaves Value UNDECODED —
+			// `$'\x2f'` arrives as the four characters `\x2f`, and the package
+			// decodes separately. Writing that value out as a literal hands every
+			// downstream layer a string the shell will never resolve to: the
+			// containment proof for `rm -rf $'\x2f'` would run over
+			// <cwd>/\x2f — a leaf inside the workspace — prove containment, and
+			// auto-approve while bash runs `rm -rf /`. Same for isCatastrophicRm,
+			// which would compare that path against / and $HOME and find nothing.
+			//
+			// So it is OPAQUE, on exactly the terms a $VAR is: named by its raw
+			// source so a deny pattern and a human-facing reason can still quote
+			// it, never resolved as a value. Decoding it would also be correct,
+			// but the fail-safe direction needs no decoder — this is the third
+			// member of the containment-proof-needs-a-real-resolved-path family,
+			// and an over-refusal costs one prompt.
+			if p.Dollar {
+				text, ok := nodeText(src, p)
+				if !ok {
+					return "", false, false
+				}
+				opaque = true
+				b.WriteString(text)
+			} else {
+				b.WriteString(p.Value)
+			}
 		case *syntax.DblQuoted:
 			// A double-quoted run can itself carry expansions; classify its
 			// parts on exactly the same terms so `"pre$VAR"` is opaque rather
@@ -1197,7 +1226,8 @@ func nodeText(src string, n syntax.Node) (string, bool) {
 
 // literalWord returns the fully-literal string value of a word, or ok=false if
 // the word contains ANY expansion — a substitution, a parameter expansion,
-// arithmetic, an extended glob. Quoting resolves to the quoted text.
+// arithmetic, an extended glob, or ANSI-C quoting ($'…', which the shell
+// decodes and we do not). Plain '…' and "…" quoting resolves to the quoted text.
 //
 // Since change 0070 D5 this is the STRICT half of a pair, and it is
 // deliberately not the one collectCall uses. Command ARGUMENTS go through
@@ -1221,6 +1251,17 @@ func literalWord(w *syntax.Word) (string, bool) {
 		case *syntax.Lit:
 			b.WriteString(p.Value)
 		case *syntax.SglQuoted:
+			// ANSI-C quoting ($'…') carries an UNDECODED Value (see the matching
+			// arm in classifyWordParts), so it is not a literal value and there is
+			// no ok=true answer to give: `> $'/dev/null'` is a write target whose
+			// real path we have not resolved, and `<<$'EOF'` a here-doc we cannot
+			// read. Each of this function's three callers wants exactly the
+			// fail-closed answer, so hand it to them — a benign `$'/dev/null'`
+			// costs one human prompt. Plain '…' is unprocessed by the shell and
+			// stays literal.
+			if p.Dollar {
+				return "", false
+			}
 			b.WriteString(p.Value)
 		case *syntax.DblQuoted:
 			inner := &syntax.Word{Parts: p.Parts}
