@@ -30,7 +30,7 @@ func TestNewClassifierExportedSeam(t *testing.T) {
 	}
 
 	got := cls.Classify(context.Background(), nil, "bash", "rm -rf /")
-	if got != VerdictAsk {
+	if got.Verdict != VerdictAsk {
 		t.Fatalf("unreachable gateway must fail closed to VerdictAsk, got %v", got)
 	}
 }

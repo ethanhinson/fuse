@@ -43,7 +43,7 @@ func TestClassifyDenyVerdict(t *testing.T) {
 	c := newTestClassifier(t, stub)
 
 	got := c.Classify(context.Background(), nil, "bash", "rm -rf /")
-	if got != VerdictDeny {
+	if got.Verdict != VerdictDeny {
 		t.Fatalf("expected VerdictDeny, got %v", got)
 	}
 }
@@ -53,7 +53,7 @@ func TestClassifyAllowVerdict(t *testing.T) {
 	c := newTestClassifier(t, stub)
 
 	got := c.Classify(context.Background(), nil, "bash", "ls -la")
-	if got != VerdictAllow {
+	if got.Verdict != VerdictAllow {
 		t.Fatalf("expected VerdictAllow, got %v", got)
 	}
 }
@@ -63,7 +63,7 @@ func TestClassifyTimeoutFailsClosed(t *testing.T) {
 	c := newTestClassifier(t, stub)
 
 	got := c.Classify(context.Background(), nil, "bash", "rm -rf /")
-	if got != VerdictAsk {
+	if got.Verdict != VerdictAsk {
 		t.Fatalf("timeout/error must fail closed to VerdictAsk, got %v", got)
 	}
 }
@@ -79,7 +79,7 @@ func TestClassifyMalformedReplyFailsClosed(t *testing.T) {
 		stub := &stubCompleter{resp: model.CompletionResp{Content: content}}
 		c := newTestClassifier(t, stub)
 		got := c.Classify(context.Background(), nil, "bash", "echo hi")
-		if got != VerdictAsk {
+		if got.Verdict != VerdictAsk {
 			t.Fatalf("malformed reply %q must fail closed to VerdictAsk, got %v", content, got)
 		}
 	}
@@ -378,7 +378,7 @@ func TestClassifyWebFetch_PromptNamesHostAndReputation(t *testing.T) {
 	}
 
 	got := c.ClassifyWebFetch(context.Background(), userMessages, "unknown-blog.example", false, `{"url":"https://unknown-blog.example/x"}`)
-	if got != VerdictAsk {
+	if got.Verdict != VerdictAsk {
 		t.Fatalf("expected VerdictAsk from the stub, got %v", got)
 	}
 	if stub.calls != 1 {
@@ -486,7 +486,7 @@ func TestClassifyCachesByToolAndNormalizedCommand(t *testing.T) {
 	first := c.Classify(context.Background(), nil, "bash", "rm -rf /")
 	second := c.Classify(context.Background(), nil, "bash", "rm -rf /")
 
-	if first != VerdictDeny || second != VerdictDeny {
+	if first.Verdict != VerdictDeny || second.Verdict != VerdictDeny {
 		t.Fatalf("expected both verdicts VerdictDeny, got %v and %v", first, second)
 	}
 	if stub.calls != 1 {
@@ -496,22 +496,22 @@ func TestClassifyCachesByToolAndNormalizedCommand(t *testing.T) {
 
 func TestVerdictCacheClone(t *testing.T) {
 	parent := newVerdictCache()
-	parent.Store("bash", "rm -rf /", VerdictDeny)
+	parent.Store("bash", "rm -rf /", ClassifierOutcome{Verdict: VerdictDeny})
 
 	clone := parent.Clone()
 
-	if v, ok := clone.Lookup("bash", "rm -rf /"); !ok || v != VerdictDeny {
+	if v, ok := clone.Lookup("bash", "rm -rf /"); !ok || v.Verdict != VerdictDeny {
 		t.Error("clone must contain the entry that existed in parent before clone")
 	}
 
 	// Post-clone parent addition must not propagate to the clone.
-	parent.Store("bash", "echo hi", VerdictAllow)
+	parent.Store("bash", "echo hi", ClassifierOutcome{Verdict: VerdictAllow})
 	if _, ok := clone.Lookup("bash", "echo hi"); ok {
 		t.Error("post-clone parent addition must not propagate to clone")
 	}
 
 	// Clone addition must not propagate back to parent.
-	clone.Store("read_file", "{}", VerdictAllow)
+	clone.Store("read_file", "{}", ClassifierOutcome{Verdict: VerdictAllow})
 	if _, ok := parent.Lookup("read_file", "{}"); ok {
 		t.Error("clone addition must not propagate back to parent")
 	}

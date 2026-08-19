@@ -32,6 +32,15 @@ type Record struct {
 	Operation     OperationKind  `json:"operation"`
 	Outcome       Outcome        `json:"outcome"`
 	ErrorCategory ErrorCategory  `json:"error_category"`
+	// Verdict, DecisionLayer, and ClassifierOutcome are the bounded decision
+	// classifications projected from permission.decision events (audit
+	// completeness, change 0069 follow-up). They are closed enums — verdict
+	// allow|ask|deny, layer a permissions.Layer* constant, classifier outcome
+	// ok|truncated|parse_error|cached — never reason text or command previews,
+	// so the payload-free contract holds. Empty on every other event kind.
+	Verdict           string `json:"verdict,omitempty"`
+	DecisionLayer     string `json:"decision_layer,omitempty"`
+	ClassifierOutcome string `json:"classifier_outcome,omitempty"`
 	// TraceID and SpanID preserve only validated correlation identifiers from a
 	// committed envelope. The durable carrier (including tracestate) is never
 	// retained by the payload-free projection.
@@ -47,7 +56,44 @@ type Record struct {
 func ProjectEvent(key event.StreamKey, e event.Event) Record {
 	op, outcome, category := classify(e.Kind, e.Payload)
 	traceID, spanID := correlationIDs(e.Trace)
-	return Record{Timestamp: e.TS, EventName: string(e.Kind), TenantID: event.NormalizeTenant(key.Tenant), LoopID: key.Loop, NodeID: e.NodeID, Sequence: e.Seq, Operation: op, Outcome: outcome, ErrorCategory: category, TraceID: traceID, SpanID: spanID}
+	rec := Record{Timestamp: e.TS, EventName: string(e.Kind), TenantID: event.NormalizeTenant(key.Tenant), LoopID: key.Loop, NodeID: e.NodeID, Sequence: e.Seq, Operation: op, Outcome: outcome, ErrorCategory: category, TraceID: traceID, SpanID: spanID}
+	if e.Kind == event.KindPermissionDecision {
+		decoratePermission(&rec, e.Payload)
+	}
+	return rec
+}
+
+// decoratePermission extracts ONLY the bounded enum classifications from a
+// permission.decision payload — verdict, deciding layer, and the classifier
+// reply's health — mirroring the tool.result error-marker exception. Reason
+// text, command previews, and model identity stay excluded from the projection.
+func decoratePermission(rec *Record, payload []byte) {
+	var marker struct {
+		Verdict    string `json:"verdict"`
+		Layer      string `json:"layer"`
+		Classifier *struct {
+			Truncated bool `json:"truncated"`
+			ParseOK   bool `json:"parse_ok"`
+			Cached    bool `json:"cached"`
+		} `json:"classifier"`
+	}
+	if err := json.Unmarshal(payload, &marker); err != nil {
+		return
+	}
+	rec.Verdict = marker.Verdict
+	rec.DecisionLayer = marker.Layer
+	if c := marker.Classifier; c != nil {
+		switch {
+		case c.Cached:
+			rec.ClassifierOutcome = "cached"
+		case c.Truncated && !c.ParseOK:
+			rec.ClassifierOutcome = "truncated"
+		case !c.ParseOK:
+			rec.ClassifierOutcome = "parse_error"
+		default:
+			rec.ClassifierOutcome = "ok"
+		}
+	}
 }
 
 func correlationIDs(carrier *event.TraceCarrier) (string, string) {
@@ -80,6 +126,10 @@ func classify(kind event.Kind, payload []byte) (OperationKind, Outcome, ErrorCat
 		return OperationTool, OutcomeSuccess, ErrorCategoryNone
 	case event.KindSpawnStart, event.KindSpawnDone:
 		return OperationSpawn, OutcomeSuccess, ErrorCategoryNone
+	case event.KindPermissionDecision:
+		// A deny is a decision, not an operational failure: always success.
+		// The verdict/layer enums are added by decoratePermission.
+		return OperationPermission, OutcomeSuccess, ErrorCategoryNone
 	case event.KindError, event.KindLoopTrip:
 		return OperationLoop, OutcomeError, ErrorCategoryLoop
 	default:

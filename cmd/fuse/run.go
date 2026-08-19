@@ -438,6 +438,9 @@ func sessionGateMode(cfg config.Config, sm *permissions.SessionMode) permissions
 func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.ApprovalFunc, reg *model.Registry, traceW io.Writer, sm *permissions.SessionMode) *permissions.PermissionGate {
 	opts := autoModeOptions(cfg, reg, traceW)
 	opts = append(opts, permissions.WithMode(sessionGateMode(cfg, sm)))
+	// Audit provenance (0069 follow-up): label who answers this binding's
+	// approval prompts on LayerHuman decision events.
+	opts = append(opts, permissions.WithApprovalProvenance(gateApprovalProvenance))
 	// Extra write roots (change 0068): the per-session scratch dir + trusted
 	// config write_roots. Applied unconditionally (outside autoModeOptions) so
 	// degraded auto mode — no constructible classifier — still scopes them.

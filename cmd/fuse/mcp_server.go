@@ -42,12 +42,15 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 
 	var approve permissions.ApprovalFunc
 	if socketPath := os.Getenv("FUSE_HITL_SOCKET"); socketPath != "" {
+		// The HITL relay forwards prompts to a human in the parent TUI.
 		approve = hitl.ClientApprovalFunc(socketPath)
 	} else {
 		approve = permissions.AlwaysApprove
+		markPolicyApproval()
 	}
 
-	gate := permissions.New(cfg.Permissions, toolReg, approve)
+	gate := permissions.New(cfg.Permissions, toolReg, approve,
+		permissions.WithApprovalProvenance(gateApprovalProvenance))
 	srv := mcp.NewServer(os.Stdin, os.Stdout, toolReg, gate)
 
 	// Live-reload the tool catalog on config change and push fuse://tools updates

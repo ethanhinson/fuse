@@ -51,6 +51,7 @@ func runLoopServer(_ []string, cfg config.Config, reg *model.Registry, _ io.Writ
 	// Auto-approve is THIS binding's policy (documented): headless loop control has
 	// no human on a TTY. It is not a property of the Runtime seam.
 	approve := permissions.AlwaysApprove
+	markPolicyApproval()
 
 	skillSet, serr := skills.LoadWithEmbedded(skills.DefaultDirs())
 	if serr != nil {

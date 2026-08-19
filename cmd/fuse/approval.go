@@ -20,6 +20,18 @@ func stdinIsTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
+// gateApprovalProvenance is the process-wide answer to "who answers approval
+// prompts in this binding" stamped on LayerHuman permission.decision events
+// (audit provenance). A fuse process is exactly one binding, so this is static
+// per process: each entry point that wires a policy stand-in (loop-serve's
+// AlwaysApprove, --approve-all, piped-stdin deny fallback, headless mcp-server)
+// downgrades it from the human default before gates are built.
+var gateApprovalProvenance = permissions.DecidedByHuman
+
+// markPolicyApproval records that this binding answers approvals by policy,
+// not by a reachable human.
+func markPolicyApproval() { gateApprovalProvenance = permissions.DecidedByPolicy }
+
 // oneShotApprovalFunc builds the approval fallback for the non-TUI entry points
 // (one-shot `fuse "<task>"` and its children). It replaces the removed
 // blanket-auto-approve bypass so a configured `ask`/prompt verdict is honored at

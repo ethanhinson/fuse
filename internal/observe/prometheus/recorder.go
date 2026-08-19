@@ -25,6 +25,7 @@ var catalog = []Descriptor{
 	{"fuse_tool_calls_total", "counter", []string{"tenant_id", "tool", "outcome"}}, {"fuse_tool_call_duration_seconds", "histogram", []string{"tenant_id", "tool", "outcome"}}, {"fuse_spawn_operations_total", "counter", []string{"tenant_id", "outcome"}}, {"fuse_spawn_operation_duration_seconds", "histogram", []string{"tenant_id", "outcome"}},
 	{"fuse_event_projection_total", "counter", []string{"event_kind", "outcome"}}, {"fuse_event_projection_duration_seconds", "histogram", []string{"outcome"}}, {"fuse_observability_export_errors_total", "counter", []string{"signal", "reason"}}, {"fuse_observability_dropped_total", "counter", []string{"signal", "reason"}}, {"fuse_observability_log_reopens_total", "counter", []string{"outcome"}}, {"fuse_observability_log_overrides", "gauge", []string{"scope"}},
 	{"fuse_metrics_label_overflow_total", "counter", []string{"dimension", "metric"}}, {"fuse_metrics_label_admitted_values", "gauge", []string{"dimension"}}, {"fuse_metrics_label_budget", "gauge", []string{"dimension"}},
+	{"fuse_permission_decisions_total", "counter", []string{"tenant_id", "verdict", "layer"}}, {"fuse_permission_classifier_replies_total", "counter", []string{"tenant_id", "outcome"}},
 }
 
 func Catalog() []Descriptor { out := make([]Descriptor, len(catalog)); copy(out, catalog); return out }
@@ -59,6 +60,7 @@ type Recorder struct {
 	policy                                                                                                  *metricspolicy.Policy
 	gatherer                                                                                                client.Gatherer
 	loopTotal, modelTotal, toolTotal, spawnTotal, projectionTotal, exportErrors, dropped, reopens, overflow *client.CounterVec
+	decisions, classifierReplies                                                                            *client.CounterVec
 	loopActive, overrides, admitted, budget                                                                 *client.GaugeVec
 	loopDuration, modelDuration, attempts, toolDuration, spawnDuration, projectionDuration                  *client.HistogramVec
 	mu                                                                                                      sync.Mutex
@@ -101,10 +103,12 @@ func New(cfg Config) (*Recorder, error) {
 	r.dropped = client.NewCounterVec(client.CounterOpts{Name: "fuse_observability_dropped_total", Help: "Dropped observations."}, []string{"signal", "reason"})
 	r.reopens = client.NewCounterVec(client.CounterOpts{Name: "fuse_observability_log_reopens_total", Help: "Log reopens."}, []string{"outcome"})
 	r.overrides = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_observability_log_overrides", Help: "Active log overrides."}, []string{"scope"})
+	r.decisions = client.NewCounterVec(client.CounterOpts{Name: "fuse_permission_decisions_total", Help: "Permission-gate decisions by verdict and deciding layer."}, []string{"tenant_id", "verdict", "layer"})
+	r.classifierReplies = client.NewCounterVec(client.CounterOpts{Name: "fuse_permission_classifier_replies_total", Help: "Auto-mode classifier replies by health outcome (ok, truncated, parse_error, cached)."}, []string{"tenant_id", "outcome"})
 	r.overflow = client.NewCounterVec(client.CounterOpts{Name: "fuse_metrics_label_overflow_total", Help: "Collapsed label observations."}, []string{"dimension", "metric"})
 	r.admitted = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_metrics_label_admitted_values", Help: "Admitted non-overflow label values."}, []string{"dimension"})
 	r.budget = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_metrics_label_budget", Help: "Configured label cardinality limit, including __overflow__."}, []string{"dimension"})
-	collectors := []client.Collector{r.loopTotal, r.loopDuration, r.loopActive, r.modelTotal, r.modelDuration, r.attempts, r.toolTotal, r.toolDuration, r.spawnTotal, r.spawnDuration, r.projectionTotal, r.projectionDuration, r.exportErrors, r.dropped, r.reopens, r.overrides, r.overflow, r.admitted, r.budget}
+	collectors := []client.Collector{r.loopTotal, r.loopDuration, r.loopActive, r.modelTotal, r.modelDuration, r.attempts, r.toolTotal, r.toolDuration, r.spawnTotal, r.spawnDuration, r.projectionTotal, r.projectionDuration, r.exportErrors, r.dropped, r.reopens, r.overrides, r.overflow, r.admitted, r.budget, r.decisions, r.classifierReplies}
 	for _, c := range collectors {
 		if err := cfg.Registerer.Register(c); err != nil {
 			return nil, err
@@ -129,6 +133,19 @@ func (r *Recorder) label(d metricspolicy.Dimension, v, metric string) string {
 func (r *Recorder) Project(_ context.Context, rec observe.Record) error {
 	started := time.Now()
 	r.projectionTotal.WithLabelValues(rec.EventName, "success").Inc()
+	// Permission decisions are counted from the projection rather than the
+	// Observe* path deliberately: verdict and layer are bounded enums the event
+	// payload faithfully carries, and counters (unlike durations) lose nothing
+	// by being event-derived — so every binding that projects its event stream
+	// gets decision metrics with no extra loop instrumentation.
+	if rec.Verdict != "" && rec.DecisionLayer != "" {
+		t := r.label(metricspolicy.TenantID, string(rec.TenantID), "fuse_permission_decisions_total")
+		r.decisions.WithLabelValues(t, rec.Verdict, rec.DecisionLayer).Inc()
+	}
+	if rec.ClassifierOutcome != "" {
+		t := r.label(metricspolicy.TenantID, string(rec.TenantID), "fuse_permission_classifier_replies_total")
+		r.classifierReplies.WithLabelValues(t, rec.ClassifierOutcome).Inc()
+	}
 	r.projectionDuration.WithLabelValues("success").Observe(time.Since(started).Seconds())
 	return nil
 }

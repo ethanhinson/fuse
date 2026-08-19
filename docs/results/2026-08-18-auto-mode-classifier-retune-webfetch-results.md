@@ -80,6 +80,38 @@ model.**
   path scoping at all. The new prompt clause covers it *once the classifier sees it*; the
   deterministic layer's redirect handling is a separate question and was out of scope here.
 
+## Addendum — decision audit completeness (2026-08-19, in-branch)
+
+Live verification surfaced that `permission.decision` events were not audit-complete: the
+classifier's rationale was discarded at parse time, the classifier call itself had no record
+(the 128-token truncation shipped precisely because a truncation-ask was indistinguishable from a
+considered ask), human-layer events could not tell a real approval from loop-serve's
+`AlwaysApprove` stand-in, and nothing in metrics or logs could filter by verdict/layer. Fixed
+in-branch:
+
+- **Events** (full-fidelity tier): decisions now retain the classifier's bounded reason on every
+  verdict, carry a `classifier` block (`model`, `latency_ms`, token counts, `truncated`,
+  `parse_ok`, `cached`), and stamp `decided_by: human|policy` on human-layer outcomes. Previews
+  are scrubbed of URL userinfo (results follow-up #2). All additions are append-only payload
+  fields.
+- **Metrics**: `fuse_permission_decisions_total{tenant_id, verdict, layer}` and
+  `fuse_permission_classifier_replies_total{tenant_id, outcome}` (outcome: ok | truncated |
+  parse_error | cached), derived from the event projection — bounded enums only, inside the
+  0051 payload-free/cardinality contract.
+- **Logs**: projection log lines for decisions carry `verdict`, `decision_layer`, and
+  `classifier_outcome` beside the existing `trace_id`/`loop_id`/`sequence`, so incident triage
+  pivots metric spike → filtered log line → `(loop_id, sequence)` in the event store →
+  `trace_id` in Tempo.
+
+Verified live against the hosted binding (`loop-serve-net`, glm driver + deepseek-flash
+classifier, dev observability stack): one loop produced the full verdict×layer spread
+(classifier allow ×2 with reply-health `ok`, fetch_floor allow, parse ask, human/policy allow,
+rules deny), visible end-to-end in `docs/results/screenshots/grafana-permission-decisions-table.png`,
+`…-series.png`, and `grafana-tempo-decision-trace.png` (the trace a decision log line's
+`trace_id` resolves to). Note the shell/one-shot bindings serve only Observer-path metrics —
+event projection (and thus these counters and log fields) runs where the durable store is wired,
+i.e. the hosted runtime; the event-store payloads themselves are identical in every binding.
+
 ## Follow-ups
 
 Auto-capture is disabled for this repo, so none of these were minted as stubs — they are recorded

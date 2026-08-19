@@ -338,6 +338,30 @@ type PermissionDecisionPayload struct {
 	Reason     string `json:"reason,omitempty"`
 	Mode       string `json:"mode"`
 	Command    string `json:"command,omitempty"`
+	// DecidedBy disambiguates human-layer outcomes: "human" (a person answered
+	// the prompt) or "policy" (a binding stand-in such as loop-serve's
+	// AlwaysApprove answered with no human present). Empty on other layers.
+	DecidedBy string `json:"decided_by,omitempty"`
+	// Classifier is present when the auto-mode classifier was consulted for
+	// this resolution: the audit record of which model judged and whether its
+	// reply was usable. Bounded fields only; never prompt or reply text.
+	Classifier *ClassifierCallPayload `json:"classifier,omitempty"`
+}
+
+// ClassifierCallPayload is the classifier-consultation slice of a
+// PermissionDecisionPayload (audit completeness, change 0069 follow-up).
+// Truncated marks a reply that hit the classifier token cap; ParseOK is false
+// when no verdict could be parsed and the outcome fell closed to ask; Cached
+// means the verdict came from the per-session cache (token/latency fields then
+// describe the original call).
+type ClassifierCallPayload struct {
+	Model        string `json:"model"`
+	LatencyMS    int64  `json:"latency_ms"`
+	InputTokens  int    `json:"input_tokens"`
+	OutputTokens int    `json:"output_tokens"`
+	Truncated    bool   `json:"truncated,omitempty"`
+	ParseOK      bool   `json:"parse_ok"`
+	Cached       bool   `json:"cached,omitempty"`
 }
 
 // UserInputPayload accompanies KindUserInput. Content is the exact user-turn text

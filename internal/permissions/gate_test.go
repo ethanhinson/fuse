@@ -239,7 +239,7 @@ func TestResolveAuto_EditToolsPathScoped(t *testing.T) {
 			if g.classifier != nil {
 				t.Fatal("test precondition: classifier must be nil")
 			}
-			got, _, _ := g.resolveAuto(context.Background(), tc.name, tc.args)
+			got, _, _, _ := g.resolveAuto(context.Background(), tc.name, tc.args)
 			if got != tc.want {
 				t.Errorf("resolveAuto(%q, %s) = %v, want %v", tc.name, tc.args, got, tc.want)
 			}
@@ -306,7 +306,7 @@ func TestResolveAuto_WebFetchStaticFloor(t *testing.T) {
 	// SSRF: loopback host denies without consulting the classifier.
 	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), AlwaysApprove,
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
-	v, _, reason := g.resolveAuto(context.Background(), "web_fetch", `{"url":"http://127.0.0.1/x"}`)
+	v, _, reason, _ := g.resolveAuto(context.Background(), "web_fetch", `{"url":"http://127.0.0.1/x"}`)
 	if v != VerdictDeny {
 		t.Fatalf("SSRF host must deny, got %v", v)
 	}
@@ -320,7 +320,7 @@ func TestResolveAuto_WebFetchStaticFloor(t *testing.T) {
 	// fetch_deny glob match denies with the config-deny reason.
 	g2 := New(autoCfg(config.AutoConfig{FetchDeny: []string{"*.evil.com"}}, nil, nil),
 		newTestRegistry("web_fetch"), AlwaysApprove, WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
-	v2, _, reason2 := g2.resolveAuto(context.Background(), "web_fetch", `{"url":"https://sub.evil.com/x"}`)
+	v2, _, reason2, _ := g2.resolveAuto(context.Background(), "web_fetch", `{"url":"https://sub.evil.com/x"}`)
 	if v2 != VerdictDeny {
 		t.Fatalf("fetch_deny match must deny, got %v", v2)
 	}
@@ -332,7 +332,7 @@ func TestResolveAuto_WebFetchStaticFloor(t *testing.T) {
 	// consulted (change 0069 — the seed is a real auto-approve, not a hint).
 	g3 := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), AlwaysApprove,
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
-	v3, layer3, _ := g3.resolveAuto(context.Background(), "web_fetch", `{"url":"https://github.com/foo/bar"}`)
+	v3, layer3, _, _ := g3.resolveAuto(context.Background(), "web_fetch", `{"url":"https://github.com/foo/bar"}`)
 	if v3 != VerdictAllow {
 		t.Fatalf("known-good host must allow, got %v", v3)
 	}
@@ -346,7 +346,7 @@ func TestResolveAuto_WebFetchStaticFloor(t *testing.T) {
 	// A configured fetch_deny still beats the known-good seed.
 	g4 := New(autoCfg(config.AutoConfig{FetchDeny: []string{"github.com"}}, nil, nil),
 		newTestRegistry("web_fetch"), AlwaysApprove, WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
-	v4, _, reason4 := g4.resolveAuto(context.Background(), "web_fetch", `{"url":"https://github.com/foo/bar"}`)
+	v4, _, reason4, _ := g4.resolveAuto(context.Background(), "web_fetch", `{"url":"https://github.com/foo/bar"}`)
 	if v4 != VerdictDeny {
 		t.Fatalf("config fetch_deny must beat the known-good seed, got %v", v4)
 	}
@@ -372,7 +372,7 @@ func TestResolveAuto_WebFetchCredentialedURLAsks(t *testing.T) {
 		`{"url":"https://ghp-s3cr3tt0ken@github.com/foo/bar"}`,
 		`{"url":"https://alice:hunter2xyz@github.com/foo/bar"}`,
 	} {
-		v, layer, reason := g.resolveAuto(context.Background(), "web_fetch", raw)
+		v, layer, reason, _ := g.resolveAuto(context.Background(), "web_fetch", raw)
 		if v == VerdictAllow {
 			t.Errorf("%s: resolved VerdictAllow — a credentialed URL must not auto-approve", raw)
 		}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/model"
 )
@@ -239,18 +240,52 @@ func (c *Classifier) cloneForChild() *Classifier {
 	}
 }
 
+// ClassifierCall is the audit-facing record of one classifier consultation:
+// which model judged, how long it took, what it cost, and whether its reply
+// was usable. It rides on the permission.decision event (change 0069 merge-gate
+// follow-up) so an incident review can distinguish a considered verdict from a
+// degraded one — the 128-token truncation bug shipped precisely because a
+// truncation-ask and a considered-ask were indistinguishable in telemetry.
+// All fields are bounded (enums, counts, a model ID); no prompt or reply text.
+type ClassifierCall struct {
+	Model        string
+	LatencyMS    int64
+	InputTokens  int
+	OutputTokens int
+	// Truncated marks a reply that hit classifierMaxTokens — on a reasoning
+	// model this usually means chain-of-thought consumed the budget before any
+	// verdict content appeared.
+	Truncated bool
+	// ParseOK is false when the reply carried no parseable verdict object and
+	// the outcome fell closed to ask.
+	ParseOK bool
+	// Cached marks a verdict served from the per-session cache: no model call
+	// was made, and LatencyMS/token counts describe the ORIGINAL call.
+	Cached bool
+}
+
+// ClassifierOutcome is the classifier's full answer for one pending call: the
+// enforced verdict, the model's own one-line rationale (retained for the audit
+// trail; never shown to the actor model), and the call metadata.
+type ClassifierOutcome struct {
+	Verdict Verdict
+	Reason  string
+	Call    ClassifierCall
+}
+
 // Classify returns an allow-biased verdict for a pending tool call. userMessages
 // are the user-authored turns of the conversation; toolName and command are the
 // pending call (command is the human-readable command for a bash tool, or the
 // raw args for others). The result is cached per session keyed by
 // (toolName, normalized command), so an identical pending call is classified at
-// most once.
+// most once; a cache hit is returned with Call.Cached set.
 //
 // Fail-closed contract: a completer timeout or error, or a malformed/
 // unparseable reply, resolves to VerdictAsk (never allow). Any verdict other
 // than a clean allow/deny is treated as ask.
-func (c *Classifier) Classify(ctx context.Context, userMessages []model.Message, toolName, command string) Verdict {
+func (c *Classifier) Classify(ctx context.Context, userMessages []model.Message, toolName, command string) ClassifierOutcome {
 	if v, ok := c.cache.Lookup(toolName, command); ok {
+		v.Call.Cached = true
 		return v
 	}
 	v := c.classifyUncached(ctx, userMessages, toolName, command)
@@ -260,18 +295,43 @@ func (c *Classifier) Classify(ctx context.Context, userMessages []model.Message,
 
 // classifyUncached performs the single bounded verdict call and parses the
 // reply, without consulting or updating the cache.
-func (c *Classifier) classifyUncached(ctx context.Context, userMessages []model.Message, toolName, command string) Verdict {
+func (c *Classifier) classifyUncached(ctx context.Context, userMessages []model.Message, toolName, command string) ClassifierOutcome {
 	req := model.CompletionReq{
 		Model:     c.modelID,
 		Messages:  c.buildMessages(userMessages, toolName, command),
 		MaxTokens: classifierMaxTokens,
 	}
+	started := time.Now()
 	resp, err := c.client.Complete(ctx, req)
+	out := ClassifierOutcome{Call: ClassifierCall{Model: c.modelID, LatencyMS: time.Since(started).Milliseconds()}}
 	if err != nil {
 		// Timeout/error ⇒ fail closed to the fallback surface.
-		return VerdictAsk
+		out.Verdict = VerdictAsk
+		out.Reason = "classifier call failed; fail-closed to ask"
+		return out
 	}
-	return parseVerdict(resp.Content)
+	fillOutcome(&out, resp)
+	return out
+}
+
+// fillOutcome parses a completed classifier reply into out: verdict, retained
+// rationale, token accounting, and the truncation/parse health bits the audit
+// trail needs to tell a considered ask from a degraded one.
+func fillOutcome(out *ClassifierOutcome, resp model.CompletionResp) {
+	out.Call.InputTokens = resp.InputTokens
+	out.Call.OutputTokens = resp.OutputTokens
+	out.Call.Truncated = resp.OutputTokens >= classifierMaxTokens
+	verdict, reason, ok := parseVerdictReason(resp.Content)
+	out.Verdict = verdict
+	out.Reason = reason
+	out.Call.ParseOK = ok
+	if !ok {
+		if out.Call.Truncated {
+			out.Reason = "classifier reply truncated at the token cap; fail-closed to ask"
+		} else {
+			out.Reason = "classifier reply carried no parseable verdict; fail-closed to ask"
+		}
+	}
 }
 
 // ClassifyWebFetch returns an allow-biased verdict for a pending web_fetch call
@@ -299,8 +359,9 @@ func (c *Classifier) classifyUncached(ctx context.Context, userMessages []model.
 //
 // Fail-closed contract matches Classify: a completer timeout/error or a
 // malformed reply resolves to VerdictAsk.
-func (c *Classifier) ClassifyWebFetch(ctx context.Context, userMessages []model.Message, host string, knownGood bool, rawArgs string) Verdict {
+func (c *Classifier) ClassifyWebFetch(ctx context.Context, userMessages []model.Message, host string, knownGood bool, rawArgs string) ClassifierOutcome {
 	if v, ok := c.cache.Lookup("web_fetch", rawArgs); ok {
+		v.Call.Cached = true
 		return v
 	}
 	req := model.CompletionReq{
@@ -308,15 +369,17 @@ func (c *Classifier) ClassifyWebFetch(ctx context.Context, userMessages []model.
 		Messages:  c.buildWebFetchMessages(userMessages, host, knownGood),
 		MaxTokens: classifierMaxTokens,
 	}
+	started := time.Now()
 	resp, err := c.client.Complete(ctx, req)
-	var v Verdict
+	out := ClassifierOutcome{Call: ClassifierCall{Model: c.modelID, LatencyMS: time.Since(started).Milliseconds()}}
 	if err != nil {
-		v = VerdictAsk
+		out.Verdict = VerdictAsk
+		out.Reason = "classifier call failed; fail-closed to ask"
 	} else {
-		v = parseVerdict(resp.Content)
+		fillOutcome(&out, resp)
 	}
-	c.cache.Store("web_fetch", rawArgs, v)
-	return v
+	c.cache.Store("web_fetch", rawArgs, out)
+	return out
 }
 
 // buildWebFetchMessages assembles the web_fetch classifier prompt with the same
@@ -464,38 +527,48 @@ func (c *Classifier) workspaceContextLine() string {
 func (c *Classifier) WorkspaceContextLine() string { return c.workspaceContextLine() }
 
 // verdictReply is the structured JSON shape the classifier asks the model to
-// produce. Only "verdict" is load-bearing; reason is advisory and never shown
-// to the actor.
+// produce. "verdict" is load-bearing; "reason" is retained on the decision
+// event for the audit trail but never shown to the actor model.
 type verdictReply struct {
 	Verdict string `json:"verdict"`
 	Reason  string `json:"reason"`
 }
 
-// parseVerdict defensively parses the model's reply into a Verdict. It accepts a
-// single JSON object with a "verdict" field of allow/deny/ask (case-insensitive,
-// whitespace-tolerant), tolerating surrounding prose by extracting the first
-// balanced {...} object. Anything it cannot map to a clean allow or deny
-// resolves to ask (block-biased): a missing object, a missing/unknown verdict,
-// or a parse failure all fail closed.
-func parseVerdict(content string) Verdict {
-	obj, ok := firstJSONObject(content)
-	if !ok {
-		return VerdictAsk
+// maxReasonLen bounds the retained rationale: the decision event is a logged,
+// exported record, so a runaway reply must not bloat it.
+const maxReasonLen = 300
+
+// parseVerdictReason defensively parses the model's reply into a Verdict plus
+// the model's own bounded rationale. It accepts a single JSON object with a
+// "verdict" field of allow/deny/ask (case-insensitive, whitespace-tolerant),
+// tolerating surrounding prose by extracting the first balanced {...} object.
+// Anything it cannot map to a clean allow or deny resolves to ask
+// (block-biased): a missing object, a missing/unknown verdict, or a parse
+// failure all fail closed with ok=false. The reason is returned even for an
+// unrecognized verdict so the audit trail keeps whatever the model said.
+func parseVerdictReason(content string) (verdict Verdict, reason string, ok bool) {
+	obj, found := firstJSONObject(content)
+	if !found {
+		return VerdictAsk, "", false
 	}
 	var reply verdictReply
 	if err := json.Unmarshal([]byte(obj), &reply); err != nil {
-		return VerdictAsk
+		return VerdictAsk, "", false
+	}
+	reason = strings.TrimSpace(reply.Reason)
+	if len(reason) > maxReasonLen {
+		reason = reason[:maxReasonLen] + "…"
 	}
 	switch strings.ToLower(strings.TrimSpace(reply.Verdict)) {
 	case "allow":
-		return VerdictAllow
+		return VerdictAllow, reason, true
 	case "deny":
-		return VerdictDeny
+		return VerdictDeny, reason, true
 	case "ask":
-		return VerdictAsk
+		return VerdictAsk, reason, true
 	default:
 		// Missing or unrecognized verdict ⇒ fail closed.
-		return VerdictAsk
+		return VerdictAsk, reason, false
 	}
 }
 
@@ -544,25 +617,26 @@ func firstJSONObject(s string) (string, bool) {
 // persisted.
 type verdictCache struct {
 	mu       sync.RWMutex
-	verdicts map[string]Verdict
+	verdicts map[string]ClassifierOutcome
 }
 
 // newVerdictCache builds an empty verdict cache.
 func newVerdictCache() *verdictCache {
-	return &verdictCache{verdicts: map[string]Verdict{}}
+	return &verdictCache{verdicts: map[string]ClassifierOutcome{}}
 }
 
-// Lookup returns the cached verdict for (toolName, command), keyed on the
-// normalized command, and whether one was present.
-func (c *verdictCache) Lookup(toolName, command string) (Verdict, bool) {
+// Lookup returns the cached outcome for (toolName, command), keyed on the
+// normalized command, and whether one was present. Call metadata describes the
+// original model call; Classify marks the returned copy Cached.
+func (c *verdictCache) Lookup(toolName, command string) (ClassifierOutcome, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	v, ok := c.verdicts[cacheKey(toolName, command)]
 	return v, ok
 }
 
-// Store records a verdict for (toolName, command) under the normalized key.
-func (c *verdictCache) Store(toolName, command string, v Verdict) {
+// Store records an outcome for (toolName, command) under the normalized key.
+func (c *verdictCache) Store(toolName, command string, v ClassifierOutcome) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.verdicts[cacheKey(toolName, command)] = v
