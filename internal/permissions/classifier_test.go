@@ -43,7 +43,7 @@ func TestClassifyDenyVerdict(t *testing.T) {
 	c := newTestClassifier(t, stub)
 
 	got := c.Classify(context.Background(), nil, "bash", "rm -rf /")
-	if got != VerdictDeny {
+	if got.Verdict != VerdictDeny {
 		t.Fatalf("expected VerdictDeny, got %v", got)
 	}
 }
@@ -53,7 +53,7 @@ func TestClassifyAllowVerdict(t *testing.T) {
 	c := newTestClassifier(t, stub)
 
 	got := c.Classify(context.Background(), nil, "bash", "ls -la")
-	if got != VerdictAllow {
+	if got.Verdict != VerdictAllow {
 		t.Fatalf("expected VerdictAllow, got %v", got)
 	}
 }
@@ -63,7 +63,7 @@ func TestClassifyTimeoutFailsClosed(t *testing.T) {
 	c := newTestClassifier(t, stub)
 
 	got := c.Classify(context.Background(), nil, "bash", "rm -rf /")
-	if got != VerdictAsk {
+	if got.Verdict != VerdictAsk {
 		t.Fatalf("timeout/error must fail closed to VerdictAsk, got %v", got)
 	}
 }
@@ -79,7 +79,7 @@ func TestClassifyMalformedReplyFailsClosed(t *testing.T) {
 		stub := &stubCompleter{resp: model.CompletionResp{Content: content}}
 		c := newTestClassifier(t, stub)
 		got := c.Classify(context.Background(), nil, "bash", "echo hi")
-		if got != VerdictAsk {
+		if got.Verdict != VerdictAsk {
 			t.Fatalf("malformed reply %q must fail closed to VerdictAsk, got %v", content, got)
 		}
 	}
@@ -136,9 +136,234 @@ func TestClassifyInputHygiene(t *testing.T) {
 	}
 }
 
+// TestPendingCallPrompt_WorkspaceContext pins the #0069 D1b context line: when a
+// workspace root and/or additional write roots are set the pending-call prompt
+// names them, and when all are empty the line is suppressed entirely — a
+// zero-value Classifier must never emit a degenerate "workspace: , writable: "
+// line. The existing pending-call shape and the trailing JSON instruction
+// survive either way.
+//
+// The roots named here must be the SAME set the gate enforces in allowedRoots()
+// (workspace root + write roots), which is why the setter takes the whole slice
+// rather than just the scratch dir: a configured permissions.auto.write_roots
+// entry is writable to the gate and must not be invisible to the classifier.
+func TestPendingCallPrompt_WorkspaceContext(t *testing.T) {
+	const (
+		root    = "/tmp/ws-root"
+		scratch = "/tmp/ws-root/.fuse/scratch"
+		extra   = "/tmp/shared-data"
+	)
+
+	t.Run("present when set", func(t *testing.T) {
+		stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow"}`}}
+		c := newTestClassifier(t, stub).WithWorkspaceContext(root, []string{scratch, extra})
+
+		c.Classify(context.Background(), nil, "bash", "ls -la")
+
+		last := stub.lastReq.Messages[len(stub.lastReq.Messages)-1].Content
+		if !strings.Contains(last, "workspace: "+root) {
+			t.Errorf("pending prompt must name the workspace root; got:\n%s", last)
+		}
+		if !strings.Contains(last, scratch) {
+			t.Errorf("pending prompt must name the scratch dir; got:\n%s", last)
+		}
+		if !strings.Contains(last, extra) {
+			t.Errorf("pending prompt must name every configured write root, not just scratch; got:\n%s", last)
+		}
+		if !strings.Contains(last, "Pending tool call to classify:\ntool: bash\ncommand: ls -la") {
+			t.Errorf("pending prompt lost its pending-call shape; got:\n%s", last)
+		}
+		if !strings.Contains(last, "Respond with the JSON verdict object.") {
+			t.Errorf("pending prompt lost the JSON verdict instruction; got:\n%s", last)
+		}
+	})
+
+	t.Run("omitted when all empty", func(t *testing.T) {
+		stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow"}`}}
+		c := newTestClassifier(t, stub) // zero workspace context
+
+		c.Classify(context.Background(), nil, "bash", "ls -la")
+
+		last := stub.lastReq.Messages[len(stub.lastReq.Messages)-1].Content
+		if strings.Contains(last, "workspace:") || strings.Contains(last, "writable:") {
+			t.Errorf("pending prompt must omit the context line when unset; got:\n%s", last)
+		}
+		if !strings.Contains(last, "Respond with the JSON verdict object.") {
+			t.Errorf("pending prompt lost the JSON verdict instruction; got:\n%s", last)
+		}
+	})
+
+	t.Run("nil receiver is safe", func(t *testing.T) {
+		var c *Classifier
+		if got := c.WithWorkspaceContext(root, []string{scratch}); got != nil {
+			t.Fatalf("WithWorkspaceContext on a nil receiver must return nil, got %v", got)
+		}
+	})
+}
+
+// TestClassifierSystemPrompt_AllowBiased pins the #0069 retune of the shared
+// classifier system instruction: routine developer work is named as expected and
+// allowable, the genuinely dangerous shapes are named as the deny set, the old
+// block-bias sentence is gone, and the JSON verdict contract survives verbatim.
+// Assertions are on lowercased substrings for concepts — never whole sentences —
+// so the wording can breathe without breaking the test.
+func TestClassifierSystemPrompt_AllowBiased(t *testing.T) {
+	lower := strings.ToLower(classifierSystemPrompt)
+
+	// Allow-shapes the gate must explicitly recognize as routine dev work.
+	allowShapes := map[string][]string{
+		"network reads":                 {"curl", "wget", "api call"},
+		"package installs":              {"npm", "pip", "cargo", "go "},
+		"managing own dev processes":    {"kill", "pkill", "dev server"},
+		"temp/scratch directory use":    {"temp", "scratch"},
+		"an explicit allow disposition": {"allow"},
+	}
+	for shape, needles := range allowShapes {
+		for _, n := range needles {
+			if !strings.Contains(lower, n) {
+				t.Errorf("system prompt must name the allow-shape %q (missing %q); got:\n%s", shape, n, classifierSystemPrompt)
+			}
+		}
+	}
+
+	// Deny-shapes: the only things the retuned prompt should refuse outright.
+	denyShapes := map[string][]string{
+		"secret/workspace-data exfiltration": {"exfiltrat", "secret"},
+		"piping remote content into a shell": {"into a shell"},
+		"privilege escalation":               {"privilege escalation"},
+		"destruction outside the workspace":  {"outside the workspace"},
+		"credential harvesting":              {"credential harvesting"},
+	}
+	for shape, needles := range denyShapes {
+		for _, n := range needles {
+			if !strings.Contains(lower, n) {
+				t.Errorf("system prompt must name the deny-shape %q (missing %q); got:\n%s", shape, n, classifierSystemPrompt)
+			}
+		}
+	}
+
+	// The old block-bias instruction must be gone: it is what produced the
+	// routine-dev-op denials #0069 exists to fix.
+	if strings.Contains(lower, "be block-biased") {
+		t.Errorf("system prompt must no longer instruct block bias; got:\n%s", classifierSystemPrompt)
+	}
+
+	// "ask" must be reserved for genuine ambiguity, not the default posture.
+	if !strings.Contains(lower, "ambigu") {
+		t.Errorf("system prompt must reserve \"ask\" for genuinely ambiguous calls; got:\n%s", classifierSystemPrompt)
+	}
+
+	// The machine contract is load-bearing and survives the retune verbatim:
+	// parseVerdict only maps allow/deny/ask out of a single JSON object.
+	if !strings.Contains(classifierSystemPrompt, `{"verdict":"allow|deny|ask"`) {
+		t.Errorf("system prompt must keep the JSON verdict contract verbatim; got:\n%s", classifierSystemPrompt)
+	}
+	if !strings.Contains(lower, "exactly one json object") {
+		t.Errorf("system prompt must keep the one-object reply instruction; got:\n%s", classifierSystemPrompt)
+	}
+}
+
+// TestClassifierSystemPrompt_BoundsKillFamily pins the kill-family clause of the
+// #0069 allow bias. internal/permissions/heuristics.go routes the whole family to
+// the classifier unconditionally (`case "pkill", "killall": return VerdictAsk`,
+// and any kill that is not provably benign), so this prompt clause is the ONLY
+// gate in front of `pkill -9 -f node`. The allow must therefore be bounded to
+// what the model can actually check in the command text it receives — a numeric
+// PID, or a pattern naming a specific dev-server/watcher binary — and a broad or
+// unclear pattern must be named as "ask". Assertions are lowercased concept
+// substrings, never whole sentences.
+func TestClassifierSystemPrompt_BoundsKillFamily(t *testing.T) {
+	lower := strings.ToLower(classifierSystemPrompt)
+
+	// The old wording authorized the family on "a dev server or watcher it
+	// started" — a predicate the classifier's inputs (system prompt + user turns
+	// + one pending command) cannot evaluate. It must be gone.
+	if strings.Contains(lower, "it started") {
+		t.Errorf("system prompt must not gate the kill family on an uncheckable \"it started\" predicate; got:\n%s", classifierSystemPrompt)
+	}
+
+	// The bounded allow: a specific numeric PID, or a specifically-named binary.
+	for _, n := range []string{"numeric pid", "specific"} {
+		if !strings.Contains(lower, n) {
+			t.Errorf("system prompt must bound the kill allow to a checkable target (missing %q); got:\n%s", n, classifierSystemPrompt)
+		}
+	}
+
+	// The bounded ask must sit with the kill clause, not merely somewhere in the
+	// prompt: a broad/unclear pattern, a bare -9 with no specific target, a
+	// wildcard, or a system process name.
+	idx := strings.Index(lower, "pkill")
+	if idx < 0 {
+		t.Fatalf("system prompt must still name pkill/killall as the routed family; got:\n%s", classifierSystemPrompt)
+	}
+	end := idx + 600
+	if end > len(lower) {
+		end = len(lower)
+	}
+	clause := lower[idx:end]
+	if !strings.Contains(clause, "killall") {
+		t.Errorf("kill clause must cover killall alongside pkill; got:\n%s", classifierSystemPrompt)
+	}
+	for _, n := range []string{"ask", "broad", "wildcard", "-9", "system"} {
+		if !strings.Contains(clause, n) {
+			t.Errorf("kill clause must send a broad/unclear pattern to \"ask\" (missing %q near the kill wording); got:\n%s", n, classifierSystemPrompt)
+		}
+	}
+}
+
+// TestClassifierSystemPrompt_AsksForOutOfWorkspaceWrites pins the clause that
+// closes the non-destructive half of the out-of-root gap. classifyHeuristic
+// (internal/permissions/heuristics.go, step 3) routes EVERY mutating command
+// whose path argument resolves outside the allowed roots here as VerdictAsk, so
+// `cp .env ~/Library/x`, an append into ~/.zshrc, or a write into a LaunchAgent
+// all land on this prompt. Naming only *destruction* outside the workspace as a
+// deny leaves those in a gap an allow-biased model resolves to allow.
+//
+// The clause must therefore (a) name write/move/delete targets outside the
+// workspace as "ask", (b) do so by reference to the NAMED workspace and scratch
+// paths — which is what makes the D1b context line load-bearing — and (c) leave
+// the stronger deny on destruction outside the workspace intact. Assertions are
+// lowercased concept substrings, never whole sentences.
+func TestClassifierSystemPrompt_AsksForOutOfWorkspaceWrites(t *testing.T) {
+	lower := strings.ToLower(classifierSystemPrompt)
+
+	// (b) The clause must point at the context line it is given, so the model
+	// resolves "outside" against the actual session geography rather than a guess.
+	const anchor = "outside the named workspace and writable paths"
+	idx := strings.Index(lower, anchor)
+	if idx < 0 {
+		t.Fatalf("system prompt must scope out-of-root mutations against the named workspace/writable-roots context line (missing %q); got:\n%s", anchor, classifierSystemPrompt)
+	}
+
+	// (a) The clause covers non-destructive mutations too — a write or a move,
+	// not merely a delete — and resolves them to "ask".
+	start := idx - 400
+	if start < 0 {
+		start = 0
+	}
+	end := idx + 400
+	if end > len(lower) {
+		end = len(lower)
+	}
+	clause := lower[start:end]
+	for _, n := range []string{"ask", "writ", "mov", "delet"} {
+		if !strings.Contains(clause, n) {
+			t.Errorf("out-of-workspace clause must send writes, moves, and deletes outside the workspace to \"ask\" (missing %q near %q); got:\n%s", n, anchor, classifierSystemPrompt)
+		}
+	}
+
+	// (c) The stronger posture on destruction outside the workspace survives: the
+	// new ask must not have demoted the existing deny.
+	if !strings.Contains(lower, "destruction outside the workspace") {
+		t.Errorf("system prompt must keep destruction outside the workspace as a deny shape; got:\n%s", classifierSystemPrompt)
+	}
+}
+
 // TestClassifyWebFetch_PromptNamesHostAndReputation proves the web_fetch verdict
-// call names the target host, instructs the model to weigh domain reputation, and
-// carries the known-good hint — while preserving input hygiene: only the system
+// call names the target host and, since #0069, frames the fetch allow-biased
+// (a read-only GET returning page text; fetching public pages is routine) while
+// naming the concrete deny shapes that replaced the old vague "weigh domain
+// reputation" instruction. Input hygiene is asserted alongside: only the system
 // instruction, the user's own turns, and the pending prompt reach the model (no
 // tool-result or assistant-reasoning messages).
 func TestClassifyWebFetch_PromptNamesHostAndReputation(t *testing.T) {
@@ -153,7 +378,7 @@ func TestClassifyWebFetch_PromptNamesHostAndReputation(t *testing.T) {
 	}
 
 	got := c.ClassifyWebFetch(context.Background(), userMessages, "unknown-blog.example", false, `{"url":"https://unknown-blog.example/x"}`)
-	if got != VerdictAsk {
+	if got.Verdict != VerdictAsk {
 		t.Fatalf("expected VerdictAsk from the stub, got %v", got)
 	}
 	if stub.calls != 1 {
@@ -189,17 +414,38 @@ func TestClassifyWebFetch_PromptNamesHostAndReputation(t *testing.T) {
 	if !strings.Contains(blob, "unknown-blog.example") {
 		t.Errorf("web_fetch prompt must name the target host; got:\n%s", blob)
 	}
-	// The pending prompt must instruct reputation weighting.
 	lower := strings.ToLower(blob)
-	if !strings.Contains(lower, "reputation") {
-		t.Errorf("web_fetch prompt must instruct domain-reputation weighting; got:\n%s", blob)
+
+	// Allow framing: the fetch is a read-only GET returning page text, and doing
+	// it is routine work that defaults to allow.
+	for _, want := range []string{"read-only get", "page text", "routine", "allow"} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("web_fetch prompt must carry the allow framing %q; got:\n%s", want, blob)
+		}
+	}
+
+	// Deny shapes the spec fixes, in place of the old vague "reputation" nudge.
+	denyShapes := map[string][]string{
+		"credential-bearing URLs":      {"credential", "token", "secret"},
+		"webhook endpoints":            {"webhook", "hooks.slack.com", "discord.com/api/webhooks"},
+		"paste/upload services":        {"paste", "upload", "exfiltrat"},
+		"raw-IP URLs":                  {"raw-ip"},
+		"URLs encoding workspace data": {"workspace data"},
+	}
+	for shape, wants := range denyShapes {
+		for _, want := range wants {
+			if !strings.Contains(lower, want) {
+				t.Errorf("web_fetch prompt must name the deny shape %s (missing %q); got:\n%s", shape, want, blob)
+			}
+		}
 	}
 }
 
 // TestClassifyWebFetch_KnownGoodHintNotABypass proves the known-good hint is
-// surfaced to the model as a bias, not an absolute bypass: the prompt must still
-// carry the reputation instruction AND state that a compromised subdomain of a
-// good host stays deniable.
+// surfaced to the model as a bias, not an absolute bypass: the prompt names the
+// host AND states that a compromised subdomain of an otherwise good host stays
+// deniable. The allow-biased rewrite (#0069) must not have softened this into a
+// blanket permit.
 func TestClassifyWebFetch_KnownGoodHintNotABypass(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow","reason":"docs"}`}}
 	c := newTestClassifier(t, stub)
@@ -218,6 +464,19 @@ func TestClassifyWebFetch_KnownGoodHintNotABypass(t *testing.T) {
 	if !strings.Contains(lower, "not") || !strings.Contains(lower, "deniab") {
 		t.Errorf("prompt must state the known-good hint is not an absolute bypass (still deniable); got:\n%s", blob)
 	}
+	// ...and specifically that a compromised subdomain of a good host is the
+	// case the hint does not cover, and that the hint is not a bypass.
+	for _, want := range []string{"subdomain", "bypass"} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("prompt must state the hint is a bias not a bypass (missing %q); got:\n%s", want, blob)
+		}
+	}
+	// The deny shapes stay in force for a known-good host too.
+	for _, want := range []string{"credential", "webhook", "raw-ip", "workspace data"} {
+		if !strings.Contains(lower, want) {
+			t.Errorf("deny shapes must be named even when the known-good hint is true (missing %q); got:\n%s", want, blob)
+		}
+	}
 }
 
 func TestClassifyCachesByToolAndNormalizedCommand(t *testing.T) {
@@ -227,7 +486,7 @@ func TestClassifyCachesByToolAndNormalizedCommand(t *testing.T) {
 	first := c.Classify(context.Background(), nil, "bash", "rm -rf /")
 	second := c.Classify(context.Background(), nil, "bash", "rm -rf /")
 
-	if first != VerdictDeny || second != VerdictDeny {
+	if first.Verdict != VerdictDeny || second.Verdict != VerdictDeny {
 		t.Fatalf("expected both verdicts VerdictDeny, got %v and %v", first, second)
 	}
 	if stub.calls != 1 {
@@ -237,22 +496,22 @@ func TestClassifyCachesByToolAndNormalizedCommand(t *testing.T) {
 
 func TestVerdictCacheClone(t *testing.T) {
 	parent := newVerdictCache()
-	parent.Store("bash", "rm -rf /", VerdictDeny)
+	parent.Store("bash", "rm -rf /", ClassifierOutcome{Verdict: VerdictDeny})
 
 	clone := parent.Clone()
 
-	if v, ok := clone.Lookup("bash", "rm -rf /"); !ok || v != VerdictDeny {
+	if v, ok := clone.Lookup("bash", "rm -rf /"); !ok || v.Verdict != VerdictDeny {
 		t.Error("clone must contain the entry that existed in parent before clone")
 	}
 
 	// Post-clone parent addition must not propagate to the clone.
-	parent.Store("bash", "echo hi", VerdictAllow)
+	parent.Store("bash", "echo hi", ClassifierOutcome{Verdict: VerdictAllow})
 	if _, ok := clone.Lookup("bash", "echo hi"); ok {
 		t.Error("post-clone parent addition must not propagate to clone")
 	}
 
 	// Clone addition must not propagate back to parent.
-	clone.Store("read_file", "{}", VerdictAllow)
+	clone.Store("read_file", "{}", ClassifierOutcome{Verdict: VerdictAllow})
 	if _, ok := parent.Lookup("read_file", "{}"); ok {
 		t.Error("clone addition must not propagate back to parent")
 	}

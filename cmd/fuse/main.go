@@ -124,6 +124,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// One-shot interactivity: a human is reachable only on a real TTY. This
 	// drives the approval channel (y/N/a prompt) — --approve-all layers on top.
 	oneShotInteractive := stdinIsTerminal()
+	if *approveAll || !oneShotInteractive {
+		// --approve-all and the piped-stdin deny fallback both answer without a
+		// human: label their LayerHuman decision events as policy-decided.
+		markPolicyApproval()
+	}
 	rootApprove := oneShotApprovalFunc(*approveAll, oneShotInteractive, os.Stdin, stderr)
 
 	// The turn/loop BUDGET posture is distinct from the approval channel:

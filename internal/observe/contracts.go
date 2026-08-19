@@ -23,6 +23,11 @@ const (
 	OperationTool         OperationKind = "tool"
 	OperationSpawn        OperationKind = "spawn"
 	OperationPubSub       OperationKind = "pubsub"
+	// OperationPermission classifies permission.decision events: one gate
+	// resolution (allow/ask/deny at a named pipeline layer). A deny is a
+	// decision, not an operational failure, so these always project
+	// OutcomeSuccess; the verdict rides in the Record's bounded decision fields.
+	OperationPermission OperationKind = "permission"
 )
 
 // Outcome is the bounded terminal result of an operation.

@@ -33,6 +33,16 @@ type Decision struct {
 	Reason  string
 	Mode    string
 	Command string
+	// DecidedBy disambiguates LayerHuman outcomes for the audit trail: "human"
+	// when a real person answered the prompt, "policy" when a binding-level
+	// stand-in (AlwaysApprove, the non-interactive deny fallback) answered with
+	// no human present. Empty on non-human layers.
+	DecidedBy string
+	// Classifier carries the call metadata when the classifier was consulted
+	// for this resolution (including an ask that then fell to the human), so a
+	// degraded verdict — truncation, parse failure — is distinguishable from a
+	// considered one. Nil when no classifier ran.
+	Classifier *ClassifierCall
 }
 
 // DecisionSink receives every gate decision. Installed per tool call by the

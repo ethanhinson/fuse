@@ -31,6 +31,13 @@ type Entry struct {
 	Operation     string    `json:"operation,omitempty"`
 	Outcome       string    `json:"outcome,omitempty"`
 	ErrorCategory string    `json:"error_category,omitempty"`
+	// Bounded permission-decision enums (verdict allow|ask|deny, layer a
+	// permissions.Layer* constant, classifier outcome ok|truncated|parse_error|
+	// cached). Set only on permission.decision entries so incident triage can
+	// filter denials/asks in the log stream without touching the event store.
+	Verdict           string `json:"verdict,omitempty"`
+	DecisionLayer     string `json:"decision_layer,omitempty"`
+	ClassifierOutcome string `json:"classifier_outcome,omitempty"`
 }
 type Audit struct {
 	Timestamp     time.Time `json:"timestamp"`
@@ -77,7 +84,7 @@ func (l *Logger) Project(ctx context.Context, r observe.Record) error {
 	if r.Outcome != observe.OutcomeSuccess {
 		level = LevelError
 	}
-	return l.Log(ctx, Entry{Timestamp: r.Timestamp, Level: level, Name: r.EventName, TraceID: r.TraceID, SpanID: r.SpanID, TenantID: string(r.TenantID), LoopID: string(r.LoopID), NodeID: r.NodeID, Sequence: uint64(r.Sequence), Operation: string(r.Operation), Outcome: string(r.Outcome), ErrorCategory: string(r.ErrorCategory)})
+	return l.Log(ctx, Entry{Timestamp: r.Timestamp, Level: level, Name: r.EventName, TraceID: r.TraceID, SpanID: r.SpanID, TenantID: string(r.TenantID), LoopID: string(r.LoopID), NodeID: r.NodeID, Sequence: uint64(r.Sequence), Operation: string(r.Operation), Outcome: string(r.Outcome), ErrorCategory: string(r.ErrorCategory), Verdict: r.Verdict, DecisionLayer: r.DecisionLayer, ClassifierOutcome: r.ClassifierOutcome})
 }
 func (l *Logger) Log(ctx context.Context, e Entry) error {
 	// Projection dispatch is asynchronous and intentionally uses a detached
@@ -134,7 +141,12 @@ func (l *Logger) write(v any, kind string) error {
 			Operation     string    `json:"operation,omitempty"`
 			Outcome       string    `json:"outcome,omitempty"`
 			ErrorCategory string    `json:"error_category,omitempty"`
-		}{kind, x.Level.String(), l.identity.Service, l.identity.Instance, x.Timestamp, x.Name, x.Message, x.TraceID, x.SpanID, x.TenantID, x.LoopID, x.NodeID, x.Sequence, x.Operation, x.Outcome, x.ErrorCategory}
+			// Bounded permission-decision enums (0069 audit follow-up); empty
+			// and omitted on every other event kind.
+			Verdict           string `json:"verdict,omitempty"`
+			DecisionLayer     string `json:"decision_layer,omitempty"`
+			ClassifierOutcome string `json:"classifier_outcome,omitempty"`
+		}{kind, x.Level.String(), l.identity.Service, l.identity.Instance, x.Timestamp, x.Name, x.Message, x.TraceID, x.SpanID, x.TenantID, x.LoopID, x.NodeID, x.Sequence, x.Operation, x.Outcome, x.ErrorCategory, x.Verdict, x.DecisionLayer, x.ClassifierOutcome}
 	case Audit:
 		body = struct {
 			Kind          string    `json:"kind"`

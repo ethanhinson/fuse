@@ -69,7 +69,7 @@ func TestFreedom_Bash(t *testing.T) {
 			defer restore()
 			g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), AlwaysApprove,
 				WithWorkspaceRoot(canon))
-			got, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs(tc.cmd))
+			got, _, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs(tc.cmd))
 			if got != tc.want {
 				t.Errorf("resolveAuto(%q) = %v, want %v", tc.cmd, got, tc.want)
 			}
@@ -82,7 +82,7 @@ func TestFreedom_Bash(t *testing.T) {
 func TestFreedom_AllowPushEndToEnd(t *testing.T) {
 	g := New(autoCfg(config.AutoConfig{AllowPush: true}, nil, nil), newTestRegistry("bash"), AlwaysApprove,
 		WithWorkspaceRoot(t.TempDir()))
-	got, layer, _ := g.resolveAuto(context.Background(), "bash", bashArgs("git push origin feat/x"))
+	got, layer, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs("git push origin feat/x"))
 	if got != VerdictAllow {
 		t.Fatalf("allow_push git push = %v (layer %s), want VerdictAllow", got, layer)
 	}
@@ -102,13 +102,13 @@ func TestFreedom_WriteRoots(t *testing.T) {
 	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash", "write_file"), AlwaysApprove,
 		WithWorkspaceRoot(canonRoot), WithWriteRoots([]string{canonScratch}))
 
-	if got, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs("mkdir -p "+canonScratch+"/sub")); got != VerdictAllow {
+	if got, _, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs("mkdir -p "+canonScratch+"/sub")); got != VerdictAllow {
 		t.Errorf("mkdir in scratch root = %v, want VerdictAllow", got)
 	}
-	if got, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs("mkdir -p /tmp/not-a-root/x")); got != VerdictAsk {
+	if got, _, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs("mkdir -p /tmp/not-a-root/x")); got != VerdictAsk {
 		t.Errorf("mkdir outside all roots = %v, want VerdictAsk", got)
 	}
-	if got, layer, _ := g.resolveAuto(context.Background(), "write_file", `{"path":"`+canonScratch+`/notes.md"}`); got != VerdictAllow || layer != LayerEditScope {
+	if got, layer, _, _ := g.resolveAuto(context.Background(), "write_file", `{"path":"`+canonScratch+`/notes.md"}`); got != VerdictAllow || layer != LayerEditScope {
 		t.Errorf("write_file into scratch = %v/%s, want allow/edit_scope", got, layer)
 	}
 
@@ -119,13 +119,13 @@ func TestFreedom_WriteRoots(t *testing.T) {
 	if err := os.Symlink(outside, link); err != nil {
 		t.Fatal(err)
 	}
-	if got, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs("touch "+link+"/f")); got != VerdictAsk {
+	if got, _, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs("touch "+link+"/f")); got != VerdictAsk {
 		t.Errorf("write through scratch symlink escape = %v, want VerdictAsk", got)
 	}
 
 	// Children inherit the write roots.
 	child := g.CloneForChild("c")
-	if got, _, _ := child.resolveAuto(context.Background(), "bash", bashArgs("touch "+canonScratch+"/child.txt")); got != VerdictAllow {
+	if got, _, _, _ := child.resolveAuto(context.Background(), "bash", bashArgs("touch "+canonScratch+"/child.txt")); got != VerdictAllow {
 		t.Errorf("child mutation in scratch root = %v, want VerdictAllow", got)
 	}
 }

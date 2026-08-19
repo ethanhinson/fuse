@@ -170,6 +170,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	// Auto-approve is THIS binding's policy (documented, ADR-0028): headless networked
 	// loop control has no human on a TTY. It is not a property of the Runtime seam.
 	approve := permissions.AlwaysApprove
+	markPolicyApproval()
 
 	// Load skills + tools EXACTLY as runLoopServer does so the two bindings serve an
 	// identically-wired Runtime.

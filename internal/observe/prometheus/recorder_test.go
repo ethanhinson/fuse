@@ -44,7 +44,7 @@ func TestCatalogLabelsAreExactAndSafe(t *testing.T) {
 			t.Fatalf("%q not forbidden", bad)
 		}
 	}
-	if len(Catalog()) != 19 {
+	if len(Catalog()) != 21 {
 		t.Fatalf("catalog size=%d", len(Catalog()))
 	}
 }
@@ -96,5 +96,44 @@ func TestOperationObservationUsesTerminalDataAndDescriptorIdentity(t *testing.T)
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s\n%s", want, body)
 		}
+	}
+}
+
+// TestProjectPermissionDecisionMetrics covers the decision counters (audit
+// completeness, 0069 follow-up): a projected permission.decision Record
+// increments fuse_permission_decisions_total by verdict and layer, and the
+// classifier-health counter when a classifier reply was involved.
+func TestProjectPermissionDecisionMetrics(t *testing.T) {
+	r := testRecorder(t)
+	ctx := context.Background()
+	records := []observe.Record{
+		{Timestamp: time.Now(), EventName: "permission.decision", TenantID: "admitted", Verdict: "deny", DecisionLayer: "classifier", ClassifierOutcome: "ok"},
+		{Timestamp: time.Now(), EventName: "permission.decision", TenantID: "admitted", Verdict: "ask", DecisionLayer: "classifier", ClassifierOutcome: "truncated"},
+		{Timestamp: time.Now(), EventName: "permission.decision", TenantID: "admitted", Verdict: "allow", DecisionLayer: "rules"},
+		// A non-decision record with no enums: must not touch the counters.
+		{Timestamp: time.Now(), EventName: "tool.call", TenantID: "admitted"},
+	}
+	for _, rec := range records {
+		if err := r.Project(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`fuse_permission_decisions_total{layer="classifier",tenant_id="admitted",verdict="deny"} 1`,
+		`fuse_permission_decisions_total{layer="classifier",tenant_id="admitted",verdict="ask"} 1`,
+		`fuse_permission_decisions_total{layer="rules",tenant_id="admitted",verdict="allow"} 1`,
+		`fuse_permission_classifier_replies_total{outcome="ok",tenant_id="admitted"} 1`,
+		`fuse_permission_classifier_replies_total{outcome="truncated",tenant_id="admitted"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, `fuse_permission_decisions_total{layer="",`) {
+		t.Error("empty-layer decision must not be counted")
 	}
 }

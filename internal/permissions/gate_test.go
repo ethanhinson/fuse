@@ -239,7 +239,7 @@ func TestResolveAuto_EditToolsPathScoped(t *testing.T) {
 			if g.classifier != nil {
 				t.Fatal("test precondition: classifier must be nil")
 			}
-			got, _, _ := g.resolveAuto(context.Background(), tc.name, tc.args)
+			got, _, _, _ := g.resolveAuto(context.Background(), tc.name, tc.args)
 			if got != tc.want {
 				t.Errorf("resolveAuto(%q, %s) = %v, want %v", tc.name, tc.args, got, tc.want)
 			}
@@ -306,7 +306,7 @@ func TestResolveAuto_WebFetchStaticFloor(t *testing.T) {
 	// SSRF: loopback host denies without consulting the classifier.
 	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), AlwaysApprove,
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
-	v, _, reason := g.resolveAuto(context.Background(), "web_fetch", `{"url":"http://127.0.0.1/x"}`)
+	v, _, reason, _ := g.resolveAuto(context.Background(), "web_fetch", `{"url":"http://127.0.0.1/x"}`)
 	if v != VerdictDeny {
 		t.Fatalf("SSRF host must deny, got %v", v)
 	}
@@ -320,12 +320,92 @@ func TestResolveAuto_WebFetchStaticFloor(t *testing.T) {
 	// fetch_deny glob match denies with the config-deny reason.
 	g2 := New(autoCfg(config.AutoConfig{FetchDeny: []string{"*.evil.com"}}, nil, nil),
 		newTestRegistry("web_fetch"), AlwaysApprove, WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
-	v2, _, reason2 := g2.resolveAuto(context.Background(), "web_fetch", `{"url":"https://sub.evil.com/x"}`)
+	v2, _, reason2, _ := g2.resolveAuto(context.Background(), "web_fetch", `{"url":"https://sub.evil.com/x"}`)
 	if v2 != VerdictDeny {
 		t.Fatalf("fetch_deny match must deny, got %v", v2)
 	}
 	if !strings.Contains(reason2, "config-deny") {
 		t.Errorf("fetch_deny reason should name the layer; got %q", reason2)
+	}
+
+	// A known-good host auto-approves at the floor: the classifier is never
+	// consulted (change 0069 — the seed is a real auto-approve, not a hint).
+	g3 := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), AlwaysApprove,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+	v3, layer3, _, _ := g3.resolveAuto(context.Background(), "web_fetch", `{"url":"https://github.com/foo/bar"}`)
+	if v3 != VerdictAllow {
+		t.Fatalf("known-good host must allow, got %v", v3)
+	}
+	if layer3 != LayerFetchFloor {
+		t.Errorf("known-good allow should be decided by the fetch floor, got layer %q", layer3)
+	}
+	if stub.calls != 0 {
+		t.Fatalf("known-good allow must not consult the classifier, got %d calls", stub.calls)
+	}
+
+	// A configured fetch_deny still beats the known-good seed.
+	g4 := New(autoCfg(config.AutoConfig{FetchDeny: []string{"github.com"}}, nil, nil),
+		newTestRegistry("web_fetch"), AlwaysApprove, WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+	v4, _, reason4, _ := g4.resolveAuto(context.Background(), "web_fetch", `{"url":"https://github.com/foo/bar"}`)
+	if v4 != VerdictDeny {
+		t.Fatalf("config fetch_deny must beat the known-good seed, got %v", v4)
+	}
+	if !strings.Contains(reason4, "config-deny") {
+		t.Errorf("config-deny reason should name the layer; got %q", reason4)
+	}
+}
+
+// TestResolveAuto_WebFetchCredentialedURLAsks proves a credential-bearing URL to
+// a strong-seed host does NOT resolve VerdictAllow at the fetch floor. The floor
+// is the only layer that can see userinfo — the web_fetch classifier prompt
+// renders the HOST alone — so the ask is decided there, and the classifier is
+// never consulted for a shape it could not adjudicate.
+func TestResolveAuto_WebFetchCredentialedURLAsks(t *testing.T) {
+	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow","reason":"x"}`}}
+	cls := newTestClassifier(t, stub)
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), AlwaysApprove,
+		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+
+	// Distinctive credential values so the leak assertion below cannot be
+	// satisfied (or tripped) by ordinary prose in the reason string.
+	for _, raw := range []string{
+		`{"url":"https://ghp-s3cr3tt0ken@github.com/foo/bar"}`,
+		`{"url":"https://alice:hunter2xyz@github.com/foo/bar"}`,
+	} {
+		v, layer, reason, _ := g.resolveAuto(context.Background(), "web_fetch", raw)
+		if v == VerdictAllow {
+			t.Errorf("%s: resolved VerdictAllow — a credentialed URL must not auto-approve", raw)
+		}
+		if v != VerdictAsk {
+			t.Errorf("%s: Verdict = %v, want VerdictAsk", raw, v)
+		}
+		if layer != LayerFetchFloor {
+			t.Errorf("%s: layer = %q, want %q", raw, layer, LayerFetchFloor)
+		}
+		if !strings.Contains(reason, "credential") {
+			t.Errorf("%s: ask reason should name the credentialed-URL shape; got %q", raw, reason)
+		}
+		// The reason must not leak the secret it is describing.
+		if strings.Contains(reason, "s3cr3tt0ken") || strings.Contains(reason, "hunter2xyz") {
+			t.Errorf("%s: ask reason must not echo the credential; got %q", raw, reason)
+		}
+	}
+	if stub.calls != 0 {
+		t.Fatalf("credentialed-URL ask must not consult the classifier, got %d calls", stub.calls)
+	}
+
+	// The ask reaches the human via a decision event that names the shape, so an
+	// operator reading the stream can tell a credentialed URL from a garbled one.
+	ctx, rec := recordDecisions()
+	g.Execute(ctx, "web_fetch", `{"url":"https://ghp-s3cr3tt0ken@github.com/foo/bar"}`)
+	if len(*rec) == 0 || (*rec)[0].Verdict != "ask" || (*rec)[0].Layer != LayerFetchFloor {
+		t.Fatalf("want a fetch-floor ask decision first, got %+v", *rec)
+	}
+	if !strings.Contains((*rec)[0].Reason, "credentials") {
+		t.Errorf("ask decision should carry the credentialed-URL reason, got %q", (*rec)[0].Reason)
+	}
+	if strings.Contains((*rec)[0].Reason, "s3cr3tt0ken") {
+		t.Errorf("ask decision must not echo the credential, got %q", (*rec)[0].Reason)
 	}
 }
 

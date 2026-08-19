@@ -396,6 +396,16 @@ func autoModeOptions(cfg config.Config, reg *model.Registry, traceW io.Writer) [
 	// constructor is nil-safe, so pass nil rather than plumb a new parameter
 	// through several signatures just for the one-time startup fallback warning.
 	cls := permissions.NewClassifier(clsAdapter, reg, cfg.Permissions.Auto, nil)
+	// Give the classifier the session's writable geography so its pending-call
+	// prompt can distinguish "inside the workspace" from "outside" (#0069).
+	// These are deliberately the SAME inputs the gate is scoped with —
+	// WithWorkspaceRoot(workspaceRoot()) just below and WithWriteRoots(
+	// gateWriteRoots(cfg)) in buildGate — which together form the gate's
+	// allowedRoots(). Naming only workspace+scratch here would tell the
+	// classifier a narrower geography than the gate enforces, so a configured
+	// permissions.auto.write_roots entry would look out-of-bounds to the model
+	// the moment a path arg escapes pathArgs' recognition.
+	cls = cls.WithWorkspaceContext(workspaceRoot(), gateWriteRoots(cfg))
 	return []permissions.Option{
 		permissions.WithClassifier(cls),
 		permissions.WithWorkspaceRoot(workspaceRoot()),
@@ -428,6 +438,9 @@ func sessionGateMode(cfg config.Config, sm *permissions.SessionMode) permissions
 func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.ApprovalFunc, reg *model.Registry, traceW io.Writer, sm *permissions.SessionMode) *permissions.PermissionGate {
 	opts := autoModeOptions(cfg, reg, traceW)
 	opts = append(opts, permissions.WithMode(sessionGateMode(cfg, sm)))
+	// Audit provenance (0069 follow-up): label who answers this binding's
+	// approval prompts on LayerHuman decision events.
+	opts = append(opts, permissions.WithApprovalProvenance(gateApprovalProvenance))
 	// Extra write roots (change 0068): the per-session scratch dir + trusted
 	// config write_roots. Applied unconditionally (outside autoModeOptions) so
 	// degraded auto mode — no constructible classifier — still scopes them.

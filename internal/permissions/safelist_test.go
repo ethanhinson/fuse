@@ -49,10 +49,10 @@ func TestResolveAuto_D2_WebSearchAllowedWebFetchNot(t *testing.T) {
 		t.Fatal("test precondition: classifier must be nil")
 	}
 
-	if got, _, _ := g.resolveAuto(context.Background(), "web_search", `{"query":"golang"}`); got != VerdictAllow {
+	if got, _, _, _ := g.resolveAuto(context.Background(), "web_search", `{"query":"golang"}`); got != VerdictAllow {
 		t.Errorf("resolveAuto(web_search) = %v, want %v (safe-listed)", got, VerdictAllow)
 	}
-	if got, _, _ := g.resolveAuto(context.Background(), "web_fetch", `{"url":"https://example.com"}`); got == VerdictAllow {
+	if got, _, _, _ := g.resolveAuto(context.Background(), "web_fetch", `{"url":"https://example.com"}`); got == VerdictAllow {
 		t.Errorf("resolveAuto(web_fetch) = %v, want NOT VerdictAllow (arbitrary egress must not auto-approve)", got)
 	}
 }

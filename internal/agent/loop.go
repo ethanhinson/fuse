@@ -936,7 +936,7 @@ func (a *Agent) executeToolBounded(ctx context.Context, turn int, call model.Too
 	// permission.decision event. Installed per call, not per turn, so the ID is
 	// stamped correctly on the parallel spawn path too.
 	ctx = permissions.WithDecisionSink(ctx, func(d permissions.Decision) {
-		a.emit(event.KindPermissionDecision, turn, event.PermissionDecisionPayload{
+		payload := event.PermissionDecisionPayload{
 			ToolCallID: call.ID,
 			Tool:       d.Tool,
 			Verdict:    d.Verdict,
@@ -944,7 +944,20 @@ func (a *Agent) executeToolBounded(ctx context.Context, turn int, call model.Too
 			Reason:     d.Reason,
 			Mode:       d.Mode,
 			Command:    d.Command,
-		})
+			DecidedBy:  d.DecidedBy,
+		}
+		if d.Classifier != nil {
+			payload.Classifier = &event.ClassifierCallPayload{
+				Model:        d.Classifier.Model,
+				LatencyMS:    d.Classifier.LatencyMS,
+				InputTokens:  d.Classifier.InputTokens,
+				OutputTokens: d.Classifier.OutputTokens,
+				Truncated:    d.Classifier.Truncated,
+				ParseOK:      d.Classifier.ParseOK,
+				Cached:       d.Classifier.Cached,
+			}
+		}
+		a.emit(event.KindPermissionDecision, turn, payload)
 	})
 	ctx, span := a.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationTool, Name: "execute", Fields: []observe.Field{{Key: "tool", Value: call.Name}}})
 	out := observe.OutcomeSuccess

@@ -8,6 +8,9 @@ jobs:
   # handlers so a green result cannot depend on a monitoring backend.
   observability-acceptance:
     runs-on: ubuntu-latest
+    # Cap runaway jobs: normal runtime is 2-12 minutes; the 360-minute default
+    # let a transient apt-mirror hang burn ~6h per job (2026-08-19 incident).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +30,9 @@ jobs:
   # and fast, separate from the heavier MCP integration job below.
   unit-race:
     runs-on: ubuntu-latest
+    # Cap runaway jobs: normal runtime is 2-12 minutes; the 360-minute default
+    # let a transient apt-mirror hang burn ~6h per job (2026-08-19 incident).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -45,6 +51,9 @@ jobs:
   # when its toolchain is absent, so a green suite can never hide an unexercised browser path.
   browser-acceptance:
     runs-on: ubuntu-latest
+    # Cap runaway jobs: normal runtime is 2-12 minutes; the 360-minute default
+    # let a transient apt-mirror hang burn ~6h per job (2026-08-19 incident).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -69,6 +78,9 @@ jobs:
 
   mcp-integration:
     runs-on: ubuntu-latest
+    # Cap runaway jobs: normal runtime is 2-12 minutes; the 360-minute default
+    # let a transient apt-mirror hang burn ~6h per job (2026-08-19 incident).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 

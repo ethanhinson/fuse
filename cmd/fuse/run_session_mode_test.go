@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -197,5 +199,48 @@ func TestAutoModeOptionsNoneWhenGatewayUnconfigured(t *testing.T) {
 	opts := autoModeOptions(cfg, reg, nil)
 	if opts != nil {
 		t.Fatalf("gateway unconfigured: expected nil options, got %d", len(opts))
+	}
+}
+
+// TestAutoModeOptionsWiresWorkspaceContext is the production-wiring proof for
+// the #0069 D1b context line: autoModeOptions must hand the classifier the same
+// writable geography the gate is scoped to. Without this, deleting the
+// WithWorkspaceContext call in autoModeOptions leaves the whole suite green
+// while the feature silently stops shipping — the classifier-side tests only
+// prove the line renders once someone sets it.
+//
+// The configured write root is asserted specifically, not just the workspace
+// root: gateWriteRoots(cfg) feeds the gate's allowedRoots(), so a configured
+// permissions.auto.write_roots entry that the prompt never names is a geography
+// the gate allows and the classifier has never heard of.
+func TestAutoModeOptionsWiresWorkspaceContext(t *testing.T) {
+	extra := t.TempDir()
+	canonExtra, err := filepath.EvalSymlinks(extra)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", extra, err)
+	}
+
+	cfg := gatewayConfig("auto")
+	cfg.Permissions.Auto.WriteRoots = []string{extra}
+	reg := testRegistry()
+
+	opts := autoModeOptions(cfg, reg, nil)
+	if len(opts) == 0 {
+		t.Fatal("gateway configured: expected auto-mode options")
+	}
+	g := permissions.New(config.PermissionsConfig{Mode: "auto"}, safeToolRegistry(t), permissions.AlwaysApprove, opts...)
+
+	line := g.ClassifierWorkspaceContextLine()
+	if line == "" {
+		t.Fatal("autoModeOptions must give the classifier a workspace context line (WithWorkspaceContext is not wired)")
+	}
+	if root := workspaceRoot(); root != "" && !strings.Contains(line, root) {
+		t.Errorf("context line must name the workspace root %q; got %q", root, line)
+	}
+	if s := sessionScratchDir(); s != "" && !strings.Contains(line, s) {
+		t.Errorf("context line must name the session scratch dir %q; got %q", s, line)
+	}
+	if !strings.Contains(line, canonExtra) {
+		t.Errorf("context line must name every configured write root (%q), matching the gate's allowedRoots(); got %q", canonExtra, line)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -88,6 +89,14 @@ type PermissionGate struct {
 	// false by default (the non-interactive posture) and set via WithInteractive.
 	interactive bool
 
+	// approvalProvenance labels WHO answers g.approve for the audit trail on
+	// LayerHuman decision events: "human" when a person is at the prompt (TUI,
+	// one-shot on a TTY), "policy" when a binding-level stand-in answers with no
+	// human present (loop-serve AlwaysApprove, --approve-all, the non-interactive
+	// deny fallback). Defaults to "human" (the pre-existing implicit reading);
+	// set via WithApprovalProvenance at the binding that knows.
+	approvalProvenance string
+
 	// valve is the per-session escalation counter shared across CloneForChild: a
 	// child's classifier blocks count toward the same session valve. It is nil
 	// outside auto mode wiring only if never constructed; New always allocates it.
@@ -102,9 +111,10 @@ type PermissionGate struct {
 }
 
 // escalationValve tracks classifier-layer block verdicts across a session and
-// trips (pausing auto mode) at 3 consecutive OR 20 total blocks. It is shared by
-// reference across CloneForChild so parent and child blocks accrue to the same
-// session budget, unlike the snapshot-cloned approval/verdict caches.
+// trips (pausing auto mode) at valveConsecutiveLimit consecutive OR
+// valveTotalLimit total blocks. It is shared by reference across CloneForChild
+// so parent and child blocks accrue to the same session budget, unlike the
+// snapshot-cloned approval/verdict caches.
 type escalationValve struct {
 	mu          sync.Mutex
 	consecutive int
@@ -117,12 +127,17 @@ type escalationValve struct {
 	promptedOnce bool
 }
 
-// valveConsecutiveLimit and valveTotalLimit are the escalation thresholds: 3
-// consecutive OR 20 total classifier blocks pause auto mode (Claude Code's
-// thresholds, per the auto-mode design D8).
+// valveConsecutiveLimit and valveTotalLimit are the escalation thresholds:
+// valveConsecutiveLimit consecutive OR valveTotalLimit total classifier
+// blocks pause auto mode. valveConsecutiveLimit stays at Claude Code's
+// original 3, per the auto-mode design D8. valveTotalLimit was raised from 20
+// to 50 (docket 2026-08-18 D3): with the rules-layer denies gone (change
+// #0068) and the classifier now allow-biased (#0069), an honest long session
+// must not trip the valve on volume alone; 50 still holds a hard headless
+// abort budget against a persistently probing model.
 const (
 	valveConsecutiveLimit = 3
-	valveTotalLimit       = 20
+	valveTotalLimit       = 50
 )
 
 // recordBlock counts a classifier-layer block (a deny from the classifier). The
@@ -228,6 +243,22 @@ func WithInteractive(interactive bool) Option {
 	return func(g *PermissionGate) { g.interactive = interactive }
 }
 
+// DecidedBy values for Decision.DecidedBy / WithApprovalProvenance: who
+// answers the gate's human-approval prompts in this binding.
+const (
+	DecidedByHuman  = "human"
+	DecidedByPolicy = "policy"
+)
+
+// WithApprovalProvenance labels who answers this gate's approval prompts —
+// DecidedByHuman for a real person at a prompt, DecidedByPolicy for a
+// binding-level stand-in (AlwaysApprove, --approve-all, the non-interactive
+// deny fallback). It is stamped on LayerHuman decision events so an audit can
+// tell "a human approved this" from "the binding's policy approved this".
+func WithApprovalProvenance(p string) Option {
+	return func(g *PermissionGate) { g.approvalProvenance = p }
+}
+
 // WithMode overrides the gate's starting mode after it is seeded from cfg.Mode.
 // It is the per-turn-construction seam for the session-mode surface: a fresh
 // gate is built at the session's current mode (SessionMode.Get()) rather than
@@ -255,12 +286,13 @@ func WithSessionMode(sm *SessionMode) Option {
 // opts so existing three-argument callers compile and behave unchanged.
 func New(cfg config.PermissionsConfig, inner *tools.Registry, approve ApprovalFunc, opts ...Option) *PermissionGate {
 	g := &PermissionGate{
-		mode:    ParseMode(cfg.Mode),
-		cfg:     cfg,
-		cache:   newApprovalCache(),
-		approve: approve,
-		inner:   inner,
-		valve:   &escalationValve{},
+		mode:               ParseMode(cfg.Mode),
+		cfg:                cfg,
+		cache:              newApprovalCache(),
+		approve:            approve,
+		inner:              inner,
+		valve:              &escalationValve{},
+		approvalProvenance: DecidedByHuman,
 	}
 	for _, opt := range opts {
 		opt(g)
@@ -313,6 +345,16 @@ func (g *PermissionGate) Mode() PermissionMode { return g.currentMode() }
 // It is the exported seam construction sites use to verify the classifier is
 // present (constructible-and-wired) versus the nil fail-closed-ask posture.
 func (g *PermissionGate) HasClassifier() bool { return g.classifier != nil }
+
+// ClassifierWorkspaceContextLine returns the workspace-context line the wired
+// classifier prefixes onto its pending-call prompt, or "" when no classifier is
+// wired or no context was set. It is the companion seam to HasClassifier: a
+// construction site can assert not merely that a classifier exists but that it
+// was actually handed the session's writable geography, which is otherwise
+// invisible from outside the package.
+func (g *PermissionGate) ClassifierWorkspaceContextLine() string {
+	return g.classifier.WorkspaceContextLine()
+}
 
 // SetMode switches the live gate's mode under modeMu, so an in-flight resolve
 // never races the write and the very next resolve observes the new mode. It is
@@ -389,19 +431,24 @@ func (g *PermissionGate) Execute(ctx context.Context, name, args string) tools.R
 
 // emitDecision reports one gate resolution through the ctx-carried
 // DecisionSink (change 0067). No-op when no sink is installed (gates outside
-// an agent loop: mcp-server, probes, tests without wiring).
-func (g *PermissionGate) emitDecision(ctx context.Context, mode PermissionMode, name, args, verdict, layer, reason string) {
+// an agent loop: mcp-server, probes, tests without wiring). decidedBy and cls
+// are the audit-trail extras: decidedBy is set only on LayerHuman outcomes
+// ("human" | "policy"), cls only when the classifier was consulted for this
+// resolution.
+func (g *PermissionGate) emitDecision(ctx context.Context, mode PermissionMode, name, args, verdict, layer, reason, decidedBy string, cls *ClassifierCall) {
 	sink := decisionSinkFrom(ctx)
 	if sink == nil {
 		return
 	}
 	sink(Decision{
-		Tool:    name,
-		Verdict: verdict,
-		Layer:   layer,
-		Reason:  reason,
-		Mode:    mode.String(),
-		Command: commandPreview(name, args),
+		Tool:       name,
+		Verdict:    verdict,
+		Layer:      layer,
+		Reason:     reason,
+		Mode:       mode.String(),
+		Command:    commandPreview(name, args),
+		DecidedBy:  decidedBy,
+		Classifier: cls,
 	})
 }
 
@@ -424,7 +471,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 			if reason == "" {
 				reason = "tool target denied by policy (not on the caller's allowlist)"
 			}
-			g.emitDecision(ctx, mode, name, args, "deny", LayerMediation, reason)
+			g.emitDecision(ctx, mode, name, args, "deny", LayerMediation, reason, "", nil)
 			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerMediation}, nil
 		}
 	}
@@ -432,7 +479,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	// Disabled list overrides everything.
 	for _, d := range g.cfg.Disabled {
 		if d == name {
-			g.emitDecision(ctx, mode, name, args, "deny", LayerDisabled, "tool disabled")
+			g.emitDecision(ctx, mode, name, args, "deny", LayerDisabled, "tool disabled", "", nil)
 			return ToolPolicy{Enabled: false}, nil
 		}
 	}
@@ -440,14 +487,14 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	policy := ToolPolicy{Enabled: true}
 
 	if mode == ModeOff {
-		g.emitDecision(ctx, mode, name, args, "allow", LayerModeOff, "")
+		g.emitDecision(ctx, mode, name, args, "allow", LayerModeOff, "", "", nil)
 		policy.AutoApprove = true
 		return policy, nil
 	}
 
 	// Session cache — highest precedence, covers both smart and prompt-all.
 	if g.cache.Check(name, args) {
-		g.emitDecision(ctx, mode, name, args, "allow", LayerCache, "")
+		g.emitDecision(ctx, mode, name, args, "allow", LayerCache, "", "", nil)
 		policy.AutoApprove = true
 		return policy, nil
 	}
@@ -455,23 +502,33 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	// askLayer names the pipeline stage that routed this call to the human, so
 	// the pre-approval ask event says WHY a prompt appeared. Defaults to human
 	// (prompt-all, smart fallthrough) and is refined by the auto pipeline.
+	// askReason carries the layer's own explanation when it has one (today only
+	// the web_fetch floor does — see fetchFloorAskReason); "" everywhere else
+	// leaves the event exactly as it was.
 	askLayer := LayerHuman
+	askReason := ""
+	// askClassifier carries the classifier call metadata into the ask (and any
+	// subsequent human-layer) decision events, so a degraded classifier reply
+	// that fell to the human stays attributable in the audit trail.
+	var askClassifier *ClassifierCall
 
 	if mode == ModeAuto {
-		verdict, layer, reason := g.resolveAuto(ctx, name, args)
+		verdict, layer, reason, cls := g.resolveAuto(ctx, name, args)
 		switch verdict {
 		case VerdictAllow:
-			g.emitDecision(ctx, mode, name, args, "allow", layer, "")
+			g.emitDecision(ctx, mode, name, args, "allow", layer, reason, "", cls)
 			policy.AutoApprove = true
 			return policy, nil
 		case VerdictDeny:
 			// A deny is not an error: return a non-auto-approve policy carrying
 			// the layer-named reason so the model can retry with a different call.
-			g.emitDecision(ctx, mode, name, args, "deny", layer, reason)
+			g.emitDecision(ctx, mode, name, args, "deny", layer, reason, "", cls)
 			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: layer}, nil
 		default:
 			// VerdictAsk ⇒ fall through to the shared human-approval block below.
 			askLayer = layer
+			askReason = reason
+			askClassifier = cls
 		}
 	}
 
@@ -480,7 +537,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		if !matchesAny(g.cfg.AlwaysPrompt, name, args) {
 			// auto_approve config patterns promote beyond the safe list.
 			if matchesAny(g.cfg.AutoApprove, name, args) || onSafeList(name) {
-				g.emitDecision(ctx, mode, name, args, "allow", LayerSmartConfig, "")
+				g.emitDecision(ctx, mode, name, args, "allow", LayerSmartConfig, "", "", nil)
 				policy.AutoApprove = true
 				return policy, nil
 			}
@@ -490,7 +547,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	// Human approval required. The ask is emitted BEFORE g.approve runs so asks
 	// are countable regardless of the approval binding — an AlwaysApprove
 	// (headless) gate shows as back-to-back ask→allow events.
-	g.emitDecision(ctx, mode, name, args, "ask", askLayer, "")
+	g.emitDecision(ctx, mode, name, args, "ask", askLayer, askReason, "", askClassifier)
 	req := ApprovalRequest{
 		ToolName: name,
 		Args:     args,
@@ -501,13 +558,13 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		return ToolPolicy{Enabled: true}, err
 	}
 	if !approved {
-		g.emitDecision(ctx, mode, name, args, "deny", LayerHuman, "tool call denied by user")
+		g.emitDecision(ctx, mode, name, args, "deny", LayerHuman, "tool call denied by user", g.approvalProvenance, askClassifier)
 		return ToolPolicy{Enabled: true, AutoApprove: false, DenyLayer: LayerHuman}, nil
 	}
 	if allowSession {
 		g.cache.Allow(name, args)
 	}
-	g.emitDecision(ctx, mode, name, args, "allow", LayerHuman, "")
+	g.emitDecision(ctx, mode, name, args, "allow", LayerHuman, "", g.approvalProvenance, askClassifier)
 	policy.AutoApprove = true
 	return policy, nil
 }
@@ -527,10 +584,10 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 //
 // The returned layer names the deciding pipeline stage (Layer* constants) for
 // the permission.decision event and the typed denial (change 0067).
-func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (verdict Verdict, layer, reason string) {
+func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (verdict Verdict, layer, reason string, cls *ClassifierCall) {
 	if name != "bash" {
 		if onSafeList(name) {
-			return VerdictAllow, LayerSafelist, ""
+			return VerdictAllow, LayerSafelist, "", nil
 		}
 		// Edit tools carry a single "path" arg rather than a shell command: scope it
 		// against the allowed roots (workspace + scratch/write_roots, change 0068)
@@ -541,25 +598,39 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 		if isEditTool(name) {
 			path, ok := editPath(args)
 			if !ok {
-				return VerdictAsk, LayerEditScope, ""
+				return VerdictAsk, LayerEditScope, "", nil
 			}
 			if withinAnyRoot(path, g.allowedRoots()) {
-				return VerdictAllow, LayerEditScope, ""
+				return VerdictAllow, LayerEditScope, "", nil
 			}
-			return VerdictAsk, LayerEditScope, ""
+			return VerdictAsk, LayerEditScope, "", nil
 		}
 		// web_fetch carries a URL rather than a shell command: apply the static host
-		// floor first (SSRF / config deny/ask / blocklist), and only a fallthrough
-		// host reaches the reputation-aware classifier. A missing/garbled url makes
+		// floor first (SSRF / config deny/ask / blocklist / known-good), and only a
+		// fallthrough host reaches the reputation-aware classifier. A missing/garbled url makes
 		// classifyFetchHost return Ask("malformed-url"), so it fails toward the human.
 		if name == "web_fetch" {
 			r := classifyFetchHost(fetchURL(args), g.cfg.Auto.FetchDeny, g.cfg.Auto.FetchAsk)
 			switch r.Verdict {
 			case VerdictDeny:
-				return VerdictDeny, LayerFetchFloor, "denied by auto-mode web_fetch host floor (" + r.DecidedBy + "): " + r.Host
+				return VerdictDeny, LayerFetchFloor, "denied by auto-mode web_fetch host floor (" + r.DecidedBy + "): " + r.Host, nil
 			case VerdictAsk:
-				return VerdictAsk, LayerFetchFloor, ""
+				// Ask reasons are threaded too, so the prompt-side decision event
+				// says WHY the floor stopped a call it did not deny — a
+				// credentialed-URL ask is otherwise indistinguishable from a
+				// garbled-URL one. The reason names the shape and the canonical
+				// host only; it never echoes the URL, which is where the secret is.
+				return VerdictAsk, LayerFetchFloor, fetchFloorAskReason(r), nil
 			default:
+				// A known-good host is a positive floor decision (change 0069):
+				// allow without consulting the classifier at all. This
+				// deliberately does NOT touch the escalation valve — the valve
+				// only tracks classifier outcomes, and a floor allow is not a
+				// classifier non-block, so it must neither reset the
+				// consecutive counter nor otherwise move the counts.
+				if r.DecidedBy == "known-good" {
+					return VerdictAllow, LayerFetchFloor, "", nil
+				}
 				// Fallthrough host ⇒ reputation-aware classifier (valve-enforced).
 				return g.classifyWebFetch(ctx, args, r)
 			}
@@ -574,32 +645,49 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 	// (shell-parse widening) targets.
 	segments, err := splitSegments(command)
 	if err != nil {
-		return VerdictAsk, LayerParse, ""
+		return VerdictAsk, LayerParse, "", nil
 	}
 
 	// 2. Deterministic rules. Deny is terminal; allow is a positive auto-approve.
 	switch evalRules(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt, g.workspaceRoot) {
 	case VerdictDeny:
-		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + command
+		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + command, nil
 	case VerdictAllow:
-		return VerdictAllow, LayerRules, ""
+		return VerdictAllow, LayerRules, "", nil
 	}
 
 	// 3. Read-only safe list short-circuit.
 	if allSegmentsReadOnlySafe(segments) {
-		return VerdictAllow, LayerSafelist, ""
+		return VerdictAllow, LayerSafelist, "", nil
 	}
 
 	// 4. Heuristics: egress boundary / path scoping. Ask ⇒ continue to classifier.
 	switch classifyHeuristic(segments, g.allowedRoots()) {
 	case VerdictDeny:
-		return VerdictDeny, LayerHeuristic, "denied by auto-mode heuristic layer: " + command
+		return VerdictDeny, LayerHeuristic, "denied by auto-mode heuristic layer: " + command, nil
 	case VerdictAllow:
-		return VerdictAllow, LayerHeuristic, ""
+		return VerdictAllow, LayerHeuristic, "", nil
 	}
 
 	// 5. Classifier (final) or fail-closed ask.
 	return g.classifyOrAsk(ctx, name, command)
+}
+
+// fetchFloorAskReason renders the human-facing reason for a web_fetch floor ASK.
+// It is deliberately built from the floor's DecidedBy and canonical host alone —
+// never from the raw URL — because the credentialed-URL shape it explains is a
+// secret sitting in that URL, and a decision event is a logged, exported record.
+func fetchFloorAskReason(r fetchFloorResult) string {
+	switch r.DecidedBy {
+	case "credentialed-url":
+		return "web_fetch URL embeds credentials in its userinfo (user[:password]@host), which no auto-approve covers however reputable the host: " + r.Host
+	case "config-ask":
+		return "host requires approval per auto-mode fetch_ask: " + r.Host
+	case "malformed-url":
+		return "web_fetch call carries no usable URL host"
+	default:
+		return ""
+	}
 }
 
 // classifyOrAsk consults the injected classifier for a final verdict, or fails
@@ -614,16 +702,16 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 // the trip and the counts. Otherwise the classifier's verdict is recorded — a
 // deny is a block (advancing/tripping the valve), an allow or ask resets the
 // consecutive counter.
-func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string) (verdict Verdict, layer, reason string) {
+func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string) (verdict Verdict, layer, reason string, cls *ClassifierCall) {
 	if g.classifier == nil {
-		return VerdictAsk, LayerClassifier, ""
+		return VerdictAsk, LayerClassifier, "", nil
 	}
 
 	// Valve already tripped ⇒ recover (one interactive prompt, change 0067) or
 	// pause auto mode without consulting the classifier.
 	if g.valve.tripped() && !g.valveRecover(ctx) {
 		v, r := g.valvePaused()
-		return v, LayerValve, r
+		return v, LayerValve, r, nil
 	}
 
 	// The user's conversation turns are carried on ctx by the agent loop via
@@ -632,20 +720,22 @@ func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string
 	// wired them, this is nil and the classifier functions from the pending-call
 	// turn alone. The classifier itself re-filters to user turns as defense in
 	// depth (buildMessages drops non-user roles).
-	switch g.classifier.Classify(ctx, userMessagesFrom(ctx), name, command) {
+	out := g.classifier.Classify(ctx, userMessagesFrom(ctx), name, command)
+	call := out.Call
+	switch out.Verdict {
 	case VerdictAllow:
 		g.valve.recordNonBlock()
-		return VerdictAllow, LayerClassifier, ""
+		return VerdictAllow, LayerClassifier, out.Reason, &call
 	case VerdictDeny:
 		// A classifier deny is a "block": advance the valve. This deny is still
 		// enforced as a real verdict; the trip only pauses auto mode from the NEXT
 		// classifier call on (checked via g.valve.tripped() at entry above), so the
 		// block that reaches a threshold is itself surfaced normally.
 		g.valve.recordBlock()
-		return VerdictDeny, LayerClassifier, "denied by auto-mode classifier: " + command
+		return VerdictDeny, LayerClassifier, classifierDenyReason(command, out.Reason), &call
 	default:
 		g.valve.recordNonBlock()
-		return VerdictAsk, LayerClassifier, ""
+		return VerdictAsk, LayerClassifier, out.Reason, &call
 	}
 }
 
@@ -657,31 +747,37 @@ func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string
 // otherwise), a deny is recorded as a block (advancing/tripping the valve) and an
 // allow/ask resets the consecutive counter. r carries the static floor's host and
 // AllowNudge, threaded to the classifier as a reputation bias hint.
-func (g *PermissionGate) classifyWebFetch(ctx context.Context, args string, r fetchFloorResult) (verdict Verdict, layer, reason string) {
+func (g *PermissionGate) classifyWebFetch(ctx context.Context, args string, r fetchFloorResult) (verdict Verdict, layer, reason string, cls *ClassifierCall) {
 	if g.classifier == nil {
-		return VerdictAsk, LayerClassifier, ""
+		return VerdictAsk, LayerClassifier, "", nil
 	}
 
 	// Valve already tripped ⇒ recover (one interactive prompt, change 0067) or
 	// pause auto mode without consulting the classifier.
 	if g.valve.tripped() && !g.valveRecover(ctx) {
 		v, rr := g.valvePaused()
-		return v, LayerValve, rr
+		return v, LayerValve, rr, nil
 	}
 
 	// The user's conversation turns are carried on ctx (parity with
 	// classifyOrAsk); userMessagesFrom is nil-safe, so a context that never
 	// passed through WithUserMessages preserves the pending-call-only behavior.
-	switch g.classifier.ClassifyWebFetch(ctx, userMessagesFrom(ctx), r.Host, r.AllowNudge, args) {
+	out := g.classifier.ClassifyWebFetch(ctx, userMessagesFrom(ctx), r.Host, r.AllowNudge, args)
+	call := out.Call
+	switch out.Verdict {
 	case VerdictAllow:
 		g.valve.recordNonBlock()
-		return VerdictAllow, LayerClassifier, ""
+		return VerdictAllow, LayerClassifier, out.Reason, &call
 	case VerdictDeny:
 		g.valve.recordBlock()
-		return VerdictDeny, LayerClassifier, "denied by auto-mode web_fetch classifier: " + r.Host
+		reason = "denied by auto-mode web_fetch classifier: " + r.Host
+		if out.Reason != "" {
+			reason += " (" + out.Reason + ")"
+		}
+		return VerdictDeny, LayerClassifier, reason, &call
 	default:
 		g.valve.recordNonBlock()
-		return VerdictAsk, LayerClassifier, ""
+		return VerdictAsk, LayerClassifier, out.Reason, &call
 	}
 }
 
@@ -807,9 +903,10 @@ func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
 		approve:          prefixedApprove(label, g.approve),
 		inner:            g.inner,
 		classifier:       g.classifier.cloneForChild(),
-		workspaceRoot:    g.workspaceRoot,
-		writeRoots:       g.writeRoots,
-		interactive:      g.interactive,
+		workspaceRoot:      g.workspaceRoot,
+		writeRoots:         g.writeRoots,
+		interactive:        g.interactive,
+		approvalProvenance: g.approvalProvenance,
 		// The escalation valve is a per-session budget: unlike the snapshot-cloned
 		// approval/verdict caches, it is shared by reference so a child's classifier
 		// blocks count toward the same session valve as the parent.
@@ -839,20 +936,45 @@ func prefixedApprove(label string, fn ApprovalFunc) ApprovalFunc {
 	}
 }
 
+// classifierDenyReason composes the enforced denial reason: the stable
+// layer-named prefix (pinned by tests and the model-facing denial message)
+// plus the classifier's own rationale when it gave one, retained for the
+// audit trail.
+func classifierDenyReason(operand, modelReason string) string {
+	r := "denied by auto-mode classifier: " + operand
+	if modelReason != "" {
+		r += " (" + modelReason + ")"
+	}
+	return r
+}
+
 // commandPreview builds the bounded command field for a permission.decision
 // event: the bash command truncated to 200 chars, or a truncated raw-args
 // preview for other tools. Never full args — tool.call already carries them,
 // and the decision stream must stay small (event-stream hygiene, change 0067).
+// The preview is additionally scrubbed of URL userinfo (user:password@host):
+// decision events are a logged, exported audit record, and a credential-bearing
+// web_fetch URL must not put the secret on that record (results follow-up #2).
 func commandPreview(name, args string) string {
 	s := args
 	if name == "bash" {
 		s = bashCommand(args)
 	}
-	s = strings.TrimSpace(s)
+	s = strings.TrimSpace(redactURLUserinfo(s))
 	if len(s) > 200 {
 		s = s[:200] + "…"
 	}
 	return s
+}
+
+// urlUserinfoRE matches the userinfo section of a URL (scheme://user[:pass]@)
+// so previews can redact embedded credentials without disturbing the host.
+var urlUserinfoRE = regexp.MustCompile(`(\b[a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@`)
+
+// redactURLUserinfo replaces any URL userinfo in s with "***@", preserving
+// scheme and host: https://token@example.com/x → https://***@example.com/x.
+func redactURLUserinfo(s string) string {
+	return urlUserinfoRE.ReplaceAllString(s, "${1}***@")
 }
 
 // makePreview builds the human-readable one-liner for the approval block.
