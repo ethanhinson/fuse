@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-17-auto-mode-classifier-retune-webfetch-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-17-auto-mode-classifier-retune-webfetch-design.md) |
-| Plan | [2026-08-18-auto-mode-classifier-retune-webfetch-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-classifier-retune-webfetch/docs/superpowers/plans/2026-08-18-auto-mode-classifier-retune-webfetch-plan.md) |
-| Results | [2026-08-18-auto-mode-classifier-retune-webfetch-results.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-classifier-retune-webfetch/docs/results/2026-08-18-auto-mode-classifier-retune-webfetch-results.md) |
+| Plan | [2026-08-18-auto-mode-classifier-retune-webfetch-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-18-auto-mode-classifier-retune-webfetch-plan.md) |
+| Results | [2026-08-18-auto-mode-classifier-retune-webfetch-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-18-auto-mode-classifier-retune-webfetch-results.md) |
 | PR | [#75](https://github.com/ethanhinson/fuse/pull/75) |
 | ADRs | [ADR-0048](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0048-web-fetch-host-floor-as-authorization-boundary.md) |
 <!-- docket:artifacts:end -->

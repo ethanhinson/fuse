@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0069 — Auto-mode classifier retune + web_fetch loosening — allow-bias for routine dev ops, seed becomes real auto-approve](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0069-auto-mode-classifier-retune-webfetch.md)**
+> ↩ **[Change 0069 — Auto-mode classifier retune + web_fetch loosening — allow-bias for routine dev ops, seed becomes real auto-approve](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-19-0069-auto-mode-classifier-retune-webfetch.md)**
 <!-- docket:backlink:end -->
 
 # Auto-mode classifier retune + web_fetch loosening — design
