@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-shell-parse-widening
-claimed_at: 2026-08-19T21:18:58Z
+claimed_at: 2026-08-19T21:20:26Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -54,3 +54,13 @@ Stage D (final, riskiest) of the auto-mode overhaul. The shell parser fails clos
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-19
+
+Reconciled against `origin/main` at 009de3c (#0069, the `depends_on` dependency, is merged and archived `done` — the dependency is satisfied).
+
+- **Scope unchanged.** All five sub-items (D1 env-prefixes, D2 wrapper peeling, D3 control-flow descent, D4 redirect capture, D5 opaque args) remain unbuilt and still describe real gaps: `internal/permissions/shellparse.go` still returns `ErrUnparseable` unconditionally on `call.Assigns`; `timeout`/`env`/`nohup` are still in `arbitraryArgWrappers`; `collectStmt`'s `default` case still fails closed on all control flow; `redirIsBenign` still admits only `/dev/null` and fd-dups; `literalWord` still returns `ok=false` for `ParamExp`/`CmdSubst`, and `Segment` still has only `Name`/`Args`/`Raw`.
+- **Line references refreshed** in the spec against 009de3c. The one material drift: the safelist short-circuit D4 must route around moved from `gate.go:481` to **`gate.go:660`**.
+- **New constraint folded in from #0069.** The gate now canonicalizes the allowed-root set once at construction (`gate.go:79`) and passes it to `classifyHeuristic`. D4's `WriteTargets` scoping and D5's opaque handling consume an already-canonical `roots` slice — they must not re-canonicalize, and the D5 invariant now has a concrete failure mode to defend: an opaque arg must never reach `resolveExisting` (`heuristics.go:370`), which would resolve raw `$(…)` text up to cwd and wrongly prove containment.
+- **Parser version confirmed** — `mvdan.cc/sh/v3 v3.13.1` in `go.mod`; the D3 `syntax` node cases must be verified against that version.
+- No work was dropped as done elsewhere; no new blockers surfaced.

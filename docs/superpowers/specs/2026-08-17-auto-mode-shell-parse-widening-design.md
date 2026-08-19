@@ -14,11 +14,11 @@
 
 All in `internal/permissions/shellparse.go` + consumers (`heuristics.go`, `rules.go`). Land after #0068 so `Segment` field additions happen once against the new rules layer.
 
-### D1. Benign env-prefix assignments (shellparse.go:201-204)
+### D1. Benign env-prefix assignments (shellparse.go:199-203 as of 009de3c)
 
 Replace the unconditional `ErrUnparseable` on `call.Assigns`: proceed when every assignment's name is NOT in a `dangerousEnvVars` denylist — `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `DYLD_*` (prefix), `PATH`, `IFS`, `BASH_ENV`, `ENV`, `SHELL`, `PS4`, `PROMPT_COMMAND`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `SSH_ASKPASS`, `PYTHONSTARTUP`, `NODE_OPTIONS`, `PERL5LIB`, `RUBYOPT` — AND every value is a `literalWord`. Otherwise fail closed. Assignment-only statements with benign vars produce no segment.
 
-### D2. Wrapper peeling (shellparse.go:35-52, 56-60)
+### D2. Wrapper peeling (shellparse.go:35-52, 56-60 as of 009de3c)
 
 Remove `timeout`, `env`, `nohup` from `arbitraryArgWrappers`:
 - `nohup` → plain `peelWrappers` entry.
@@ -26,13 +26,13 @@ Remove `timeout`, `env`, `nohup` from `arbitraryArgWrappers`:
 - `env` → dedicated peel: **any** flag fails closed (`-i`, `-S`, `-u`, `--` tricks); leading `NAME=val` words pass through the D1 denylist; remainder is the inner command.
 - Do NOT reuse the blind `peelWrapperArgs` (shellparse.go:328-334, drops `-` words) for env/timeout.
 
-### D3. Control-flow descent (shellparse.go:123-137 default case)
+### D3. Control-flow descent (shellparse.go:123-137 default case, as of 009de3c)
 
 Add cases for `*syntax.IfClause`, `*syntax.ForClause`, `*syntax.WhileClause`, `*syntax.CaseClause`, `*syntax.Block`, `*syntax.Subshell` — descend every stmt list (cond, body, else, case branches; for-loop word lists via literal-or-opaque discipline). Loop variables in bodies become opaque args (D5). Background statements (`Stmt.Background`) descend too — background-ness doesn't change what runs; document. `CaseClause` patterns need the same literal-or-opaque discipline.
 
-### D4. Redirect capture (shellparse.go:118-121, 153-180)
+### D4. Redirect capture (shellparse.go:118-121, 153-180 as of 009de3c)
 
-Move the decision out of the parser: literal out-target redirects (`RdrOut`, `AppOut`, `RdrAll`, `AppAll`) captured into new `Segment.WriteTargets []string`. `RdrIn` with literal target and plain here-docs become benign (input is a read; body is data). Non-literal targets, `RdrInOut`, dup-to-path still fail closed. Consumers: `classifyHeuristic` scopes `WriteTargets` through `withinAnyRoot` like `pathArgs`; `allSegmentsReadOnlySafe` returns false for any segment with WriteTargets (the safelist short-circuit at gate.go:481 has no root context — redirected commands must reach the heuristic layer, which allows in-root targets deterministically). `echo x > /etc/passwd` ⇒ ask ⇒ classifier.
+Move the decision out of the parser: literal out-target redirects (`RdrOut`, `AppOut`, `RdrAll`, `AppAll`) captured into new `Segment.WriteTargets []string`. `RdrIn` with literal target and plain here-docs become benign (input is a read; body is data). Non-literal targets, `RdrInOut`, dup-to-path still fail closed. Consumers: `classifyHeuristic` scopes `WriteTargets` through `withinAnyRoot` like `pathArgs`; `allSegmentsReadOnlySafe` returns false for any segment with WriteTargets (the safelist short-circuit at gate.go:660 as of 009de3c has no root context — redirected commands must reach the heuristic layer, which allows in-root targets deterministically). `echo x > /etc/passwd` ⇒ ask ⇒ classifier.
 
 ### D5. Opaque args (the load-bearing change)
 
@@ -50,5 +50,6 @@ Extend `Segment` with `Opaque []bool` parallel to `Args`:
 ## Risks / notes
 
 - Highest-risk change of the arc — every widening is an attack-surface decision. Sequence D1→D2→D3→D4→D5 as separate commits, riskiest (opaque/substitution) last, each with corpus tests.
-- mvdan.cc/sh node coverage: verify each new `syntax` case against the parser version in go.mod.
+- mvdan.cc/sh node coverage: verify each new `syntax` case against the parser version in go.mod (confirmed at reconcile: `mvdan.cc/sh/v3 v3.13.1`).
+- Reconcile note: #0069 landed as 009de3c and canonicalizes the root set once at gate construction (`gate.go:79`) before passing it to `classifyHeuristic`. D4/D5 consumers therefore receive an already-canonical `roots` slice — do not re-canonicalize, and do not let an opaque arg reach `resolveExisting`.
 - Adversarial review of the opaque-arg invariant is the review focus for this change.
