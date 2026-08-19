@@ -26,6 +26,20 @@ type Segment struct {
 	Name string
 	Args []string
 	Raw  string
+	// WriteTargets are the literal file targets of the redirects attached to the
+	// statement that produced this segment (`> out.log`, `2>> err.log`, `&>
+	// build.log`). They are NOT arguments — no downstream deny matcher or
+	// read-only check should see them as argv — but they ARE writes, and every
+	// layer that decides whether a command mutates outside its roots must scope
+	// them exactly as it scopes pathArgs (change 0070 D4).
+	//
+	// The parser records rather than decides here because it has no root set: a
+	// target is only judgeable at classifyHeuristic, which holds the roots. Empty
+	// means the statement wrote no file we could name — either it had no
+	// redirect at all, or only benign ones (/dev/null, an fd-dup, an input
+	// redirect, a here-doc). A target we could NOT name (`> $F`, `<>`, a
+	// dup-to-path) never reaches here: it still fails the whole command closed.
+	WriteTargets []string
 }
 
 // arbitraryArgWrappers are argv[0] names that run an arbitrary inner command
@@ -190,13 +204,18 @@ func assignsAreBenign(assigns []*syntax.Assign) bool {
 // the script bodies of `bash -c "…"` / `sh -c "…"` and the statement lists of
 // if/for/while/until/case/blocks/subshells (change 0070 D3).
 //
+// A redirect no longer sinks the command when its target is a literal path: the
+// target is recorded on the segment(s) the redirected statement produces
+// (Segment.WriteTargets) for the scoping layer to judge against the allowed
+// roots, which the parser does not have (change 0070 D4).
+//
 // It fails closed with ErrUnparseable on: a size-cap violation; a parse error;
 // command substitution ($(…) or backticks) or process substitution anywhere;
-// any redirection whose file target the read-only classifier never sees —
-// EXCEPT the two benign shapes a redirect to literal /dev/null and a pure
-// fd-duplication (2>&1, >&2), which carry no writable target (see
-// redirIsBenign, change 0037); an env-var assignment prefix that is not benign
-// under assignsAreBenign (change 0070); an argv[0] containing a path separator
+// a redirection whose target cannot be named — `> $F`, `> $(…)`, `<>`, a
+// dup-to-a-path, an expanded here-doc body — or one that writes a named file
+// while producing no segment to carry it (`> out.txt`); an env-var assignment
+// prefix that is not benign under assignsAreBenign (change 0070); an argv[0]
+// containing a path separator
 // (the basename-collapse bug); an arbitrary-arg wrapper as argv[0] (bash/sh
 // without a parseable -c, xargs, npx, sudo, …); a `timeout`/`env` invocation
 // whose own operands cannot be modelled well enough to name the inner command
@@ -232,25 +251,70 @@ func collectStmts(src string, stmts []*syntax.Stmt, out *[]Segment) error {
 }
 
 func collectStmt(src string, st *syntax.Stmt, out *[]Segment) error {
-	if st == nil || st.Cmd == nil {
+	if st == nil {
 		return nil
 	}
-	// A redirect (>, >>, 2>, <, here-doc, …) points a command's fd at a file
-	// whose target the read-only classifier never sees: collectCall only
-	// inspects CallExpr.Args, so `echo x > /etc/passwd` would classify as the
-	// read-only `echo` and reach VerdictAllow. We therefore fail closed on any
-	// redirect EXCEPT the two benign shapes (change 0037): a redirect to the
-	// literal /dev/null sink and a pure fd-duplication (2>&1, >&2). Those two
-	// carry no writable file target the classifier could miss, so silencing
-	// stderr on a read-only pipeline (`wc -l x.go 2>/dev/null | tail`) no longer
-	// stalls. Any redirect naming a real path, a variable, or a substitution —
-	// or a here-doc / <> — still fails closed. The conservative posture costs a
-	// human prompt, never a silent bypass.
+	// A nil Cmd is a redirect-only statement (`> out.txt`), which names no
+	// command but still truncates its target. It is NOT short-circuited here: the
+	// redirect capture below runs first and refuses it, because a write with no
+	// segment to hang it on is a write no layer would ever see.
+	//
+	// A redirect (>, >>, 2>, <, here-doc, …) points a command's fd at a file the
+	// argv-based classifier never sees: collectCall only inspects CallExpr.Args,
+	// so `echo x > /etc/passwd` reads as the read-only `echo`. Until change 0070
+	// D4 the whole statement therefore failed closed (bar the 0037 benign
+	// shapes). It no longer has to: a target we can NAME is recorded on the
+	// segments this statement produces (Segment.WriteTargets) and scoped by
+	// classifyHeuristic, which — unlike the parser — holds the allowed-root set
+	// and can allow an in-root target deterministically.
+	//
+	// What we cannot name, we still refuse: `> $F`, `> $(…)`, `<>`, a
+	// dup-to-a-path, an unquoted here-doc body carrying a substitution. Recording
+	// a target is only a widening because the recording is honest — a target that
+	// silently failed to be recorded would be a write no layer ever scopes.
+	var writeTargets []string
 	for _, r := range st.Redirs {
-		if !redirIsBenign(r) {
+		target, ok := redirWriteTarget(r)
+		if !ok {
 			return ErrUnparseable
 		}
+		if target != "" {
+			writeTargets = append(writeTargets, target)
+		}
 	}
+	// The redirect hangs off the STATEMENT, but segments are produced further
+	// down (collectCall, possibly several levels deep through a block, a loop
+	// body or a `bash -c` script). Remember where this statement's segments start
+	// so the targets can be attached to every one of them afterwards: a compound
+	// statement's redirect applies to every command inside it, so attaching to
+	// only the first would leave the rest looking like pure readers.
+	start := len(*out)
+	if st.Cmd != nil {
+		if err := collectStmtCmd(src, st, out); err != nil {
+			return err
+		}
+	}
+	if len(writeTargets) == 0 {
+		return nil
+	}
+	if len(*out) == start {
+		// The statement wrote a file but named no command we can classify
+		// (`> out.txt`, `FOO=1 > out.txt`, `env FOO=1 > out.txt` — all of which
+		// truncate the target). There is no segment to carry the target, so the
+		// write would be invisible to every downstream layer. Fail closed.
+		return ErrUnparseable
+	}
+	for i := start; i < len(*out); i++ {
+		(*out)[i].WriteTargets = append((*out)[i].WriteTargets, writeTargets...)
+	}
+	return nil
+}
+
+// collectStmtCmd dispatches on a statement's command node. It is split out of
+// collectStmt so the redirect capture there can bracket the whole descent — see
+// the WriteTargets plumbing above — rather than being threaded through every
+// arm of this switch.
+func collectStmtCmd(src string, st *syntax.Stmt, out *[]Segment) error {
 	// st.Background (`cmd &`) is deliberately not consulted: backgrounding
 	// changes WHEN a command runs, not WHAT runs, so the segments are identical
 	// and the classifier's decision must be too. Same for st.Negated (`! cmd`).
@@ -384,6 +448,70 @@ func collectLoopHeader(loop syntax.Loop) error {
 		}
 	}
 	return nil
+}
+
+// redirWriteTarget classifies one redirect for change 0070 D4.
+//
+//	ok=false        ⇒ the redirect cannot be modelled; the whole command fails closed.
+//	ok, target==""  ⇒ benign: no file is written that any layer needs to scope.
+//	ok, target!=""  ⇒ the literal path this redirect writes, to be recorded on
+//	                  the statement's segments and scoped against the roots.
+//
+// redirIsBenign (change 0037) stays the fast path, so /dev/null and fd-dups keep
+// their existing "nothing to see here" answer with no change in behaviour; only
+// what IT rejects is examined further here.
+//
+// Benign beyond that fast path:
+//
+//   - RdrIn from a literal file (`cat < in.txt`). Reading a file is not a
+//     mutation, and nothing downstream needs to prove containment over a read.
+//   - A here-doc (`<<EOF` / `<<-EOF`) whose delimiter and body are statically
+//     literal. The body is data fed on stdin, not a file target. The literal
+//     requirement is NOT ceremony: an unquoted here-doc body is expanded by the
+//     shell before it is fed in, so `<<EOF` with a `$(rm -rf /)` in the body
+//     genuinely runs that command — invisibly to an argv classifier.
+//
+// Fail-closed, deliberately: a non-literal target (`> $F`, `> $(…)`) names a
+// file we cannot scope; RdrInOut (`<>`) opens for writing; a dup-to-a-path
+// (`>&file`) and a fd-close (`2>&-`) are neither a plain write nor a plain dup;
+// and a here-string (`<<<`) falls through to the default arm.
+func redirWriteTarget(r *syntax.Redirect) (string, bool) {
+	if redirIsBenign(r) {
+		return "", true
+	}
+	if r == nil || r.Word == nil {
+		return "", false
+	}
+	switch r.Op {
+	case syntax.Hdoc, syntax.DashHdoc:
+		if _, ok := literalWord(r.Word); !ok {
+			return "", false // a non-literal delimiter is a body we cannot read.
+		}
+		if r.Hdoc != nil {
+			if _, ok := literalWord(r.Hdoc); !ok {
+				return "", false
+			}
+		}
+		return "", true
+	case syntax.RdrIn:
+		if _, ok := literalWord(r.Word); !ok {
+			return "", false
+		}
+		return "", true
+	case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll:
+		// A here-doc body can only hang off a here-doc op, but this helper is
+		// shared: a write op carrying one is a shape we did not model.
+		if r.Hdoc != nil {
+			return "", false
+		}
+		target, ok := literalWord(r.Word)
+		if !ok || target == "" {
+			return "", false
+		}
+		return target, true
+	default:
+		return "", false
+	}
 }
 
 // redirIsBenign reports whether a single redirect is safe to allow past the

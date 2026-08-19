@@ -121,6 +121,16 @@ func evalRules(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []s
 // segment set is not allowed by omission (the caller guards len>0).
 func allSegmentsAllowed(segments []Segment, autoApprove []string, allowPush bool) bool {
 	for _, seg := range segments {
+		// A redirect write target is not in the subject an allow pattern matches
+		// against (segmentSubject reconstructs argv only), and this layer — like
+		// the safelist below it — runs with no root set, so it could not scope the
+		// target even if it saw it. Consenting to `echo x` is not consenting to
+		// `echo x > /etc/passwd`, so a redirected segment declines the pattern
+		// allow and falls through to the scoping layer, which allows the in-root
+		// case on its own evidence (change 0070 D4).
+		if len(seg.WriteTargets) > 0 {
+			return false
+		}
 		if matchesSegment(autoApprove, seg) {
 			continue
 		}
@@ -318,11 +328,23 @@ var findMutatingActions = map[string]bool{
 // built-in read-only safe list. An empty segment set is not safe (nothing to
 // prove safe). This is the per-segment AND that lets Task 7's gate short-circuit
 // a wholly read-only command to allow; a single unsafe segment sinks the whole.
+//
+// A segment carrying a redirect write target (change 0070 D4) is never wholly
+// read-only here, however read-only its command is. The reason is specifically
+// about WHERE this function is consulted: the safelist short-circuit at
+// gate.go:660 runs with NO root context, so it cannot scope `> /etc/passwd`
+// against anything — calling `echo x > /etc/passwd` read-only safe would
+// auto-approve the write right there and it would never reach a layer that
+// could catch it. Redirected commands must fall through to the heuristic layer,
+// which holds `roots` and allows an in-root target deterministically.
 func allSegmentsReadOnlySafe(segments []Segment) bool {
 	if len(segments) == 0 {
 		return false
 	}
 	for _, seg := range segments {
+		if len(seg.WriteTargets) > 0 {
+			return false
+		}
 		if !isReadOnlySafe(seg) {
 			return false
 		}

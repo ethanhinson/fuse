@@ -456,6 +456,221 @@ func TestSplitSegments_BenignRedirects(t *testing.T) {
 				if !equalArgs(got[i].Args, w.args) {
 					t.Errorf("segment %d Args = %#v, want %#v", i, got[i].Args, w.args)
 				}
+				// Change 0070 D4: the benign shapes carry NO write target. If
+				// /dev/null or an fd-dup started being recorded, every one of
+				// these would stop being read-only safe and would need root
+				// scoping to auto-approve — the 0037 stall, reintroduced.
+				if len(got[i].WriteTargets) != 0 {
+					t.Errorf("segment %d WriteTargets = %#v, want none (benign redirect)", i, got[i].WriteTargets)
+				}
+			}
+		})
+	}
+}
+
+// TestSplitSegments_RedirectWriteTargets pins change 0070 D4: a redirect to a
+// LITERAL out-target no longer fails the command closed at the parse floor.
+// The parser has no root set and therefore cannot decide whether a target is
+// acceptable; it records the target on the segment(s) the redirected statement
+// produces and lets the scoping layer — which does have the roots — decide.
+//
+// The rows here assert the PARSE only. That `echo x > /etc/passwd` must not
+// auto-approve is asserted at the layers that decide it:
+// TestAllSegmentsReadOnlySafe_WriteTargetIsNotReadOnly (the no-root safelist
+// short-circuit), TestClassifyHeuristic_RedirectWriteTargets (the scoping), and
+// TestAutoMode_RedirectOutsideWorkspace_DoesNotAutoApprove (end to end).
+func TestSplitSegments_RedirectWriteTargets(t *testing.T) {
+	cases := []struct {
+		desc    string
+		cmd     string
+		want    []seg
+		targets [][]string // parallel to want
+	}{
+		{
+			desc:    "stdout redirect to a system path is recorded, not refused",
+			cmd:     "echo x > /etc/passwd",
+			want:    []seg{{name: "echo", args: []string{"x"}}},
+			targets: [][]string{{"/etc/passwd"}},
+		},
+		{
+			desc:    "stdout redirect to a relative file",
+			cmd:     "go build > out.log",
+			want:    []seg{{name: "go", args: []string{"build"}}},
+			targets: [][]string{{"out.log"}},
+		},
+		{
+			desc:    "append redirect",
+			cmd:     "grep foo bar >> ~/.zshrc",
+			want:    []seg{{name: "grep", args: []string{"foo", "bar"}}},
+			targets: [][]string{{"~/.zshrc"}},
+		},
+		{
+			desc:    "numbered fd redirect (2>)",
+			cmd:     "ls 2> err.log",
+			want:    []seg{{name: "ls", args: nil}},
+			targets: [][]string{{"err.log"}},
+		},
+		{
+			desc:    "&> records the target",
+			cmd:     "make &> build.log",
+			want:    []seg{{name: "make", args: nil}},
+			targets: [][]string{{"build.log"}},
+		},
+		{
+			desc:    "&>> records the target",
+			cmd:     "make &>> build.log",
+			want:    []seg{{name: "make", args: nil}},
+			targets: [][]string{{"build.log"}},
+		},
+		{
+			desc:    "a /dev/null lookalike is a real target, no longer a refusal",
+			cmd:     "ls > /dev/null.txt",
+			want:    []seg{{name: "ls", args: nil}},
+			targets: [][]string{{"/dev/null.txt"}},
+		},
+		{
+			desc:    "a /dev/null typo is a real target",
+			cmd:     "ls 2>/dev/nul",
+			want:    []seg{{name: "ls", args: nil}},
+			targets: [][]string{{"/dev/nul"}},
+		},
+		{
+			desc:    "several redirects on one statement record every target",
+			cmd:     "ls > out.txt 2> err.txt",
+			want:    []seg{{name: "ls", args: nil}},
+			targets: [][]string{{"out.txt", "err.txt"}},
+		},
+		{
+			desc:    "a benign /dev/null alongside a real target records only the real one",
+			cmd:     "ls 2>/dev/null > /etc/x",
+			want:    []seg{{name: "ls", args: nil}},
+			targets: [][]string{{"/etc/x"}},
+		},
+		{
+			// Input is a read: the file is not a write target, so the segment
+			// stays wholly read-only and needs no scoping.
+			desc:    "input redirect from a real file is benign",
+			cmd:     "cat < config.yaml",
+			want:    []seg{{name: "cat", args: nil}},
+			targets: [][]string{nil},
+		},
+		{
+			desc:    "here-doc body is stdin data, not a file target",
+			cmd:     "cat <<EOF\nhi\nEOF",
+			want:    []seg{{name: "cat", args: nil}},
+			targets: [][]string{nil},
+		},
+		{
+			desc:    "quoted here-doc body is not expanded and stays benign",
+			cmd:     "cat <<'EOF'\n$(id)\nEOF",
+			want:    []seg{{name: "cat", args: nil}},
+			targets: [][]string{nil},
+		},
+		{
+			desc:    "tab-stripping here-doc (<<-)",
+			cmd:     "cat <<-EOF\n\thi\n\tEOF",
+			want:    []seg{{name: "cat", args: nil}},
+			targets: [][]string{nil},
+		},
+		{
+			// THE PLUMBING ROW. The redirect hangs off the RIGHT operand of &&,
+			// so it belongs to `wc` alone. Attaching a statement's targets to the
+			// first segment of the command — or to all of them — would make `ls`
+			// look like a writer and misroute the whole command.
+			desc: "a && b > f attaches the target to b only",
+			cmd:  "ls && wc -l x > out.txt",
+			want: []seg{
+				{name: "ls", args: nil},
+				{name: "wc", args: []string{"-l", "x"}},
+			},
+			targets: [][]string{nil, {"out.txt"}},
+		},
+		{
+			desc: "a pipeline's redirect attaches to the redirected stage",
+			cmd:  "ls | tee out.log > /dev/null",
+			want: []seg{
+				{name: "ls", args: nil},
+				{name: "tee", args: []string{"out.log"}},
+			},
+			targets: [][]string{nil, nil},
+		},
+		{
+			// A compound statement's redirect applies to EVERY command it
+			// contains, so every segment the descent produced carries it.
+			desc: "a block's redirect reaches every segment inside it",
+			cmd:  "{ ls; wc -l x; } > out.txt",
+			want: []seg{
+				{name: "ls", args: nil},
+				{name: "wc", args: []string{"-l", "x"}},
+			},
+			targets: [][]string{{"out.txt"}, {"out.txt"}},
+		},
+		{
+			desc:    "a for loop's redirect reaches the body segment",
+			cmd:     "for f in a b; do ls; done > out.txt",
+			want:    []seg{{name: "ls", args: nil}},
+			targets: [][]string{{"out.txt"}},
+		},
+		{
+			desc:    "a redirect inside an if branch reaches that branch's segment",
+			cmd:     "if true; then echo x > /etc/passwd; fi",
+			want:    []seg{{name: "true", args: nil}, {name: "echo", args: []string{"x"}}},
+			targets: [][]string{nil, {"/etc/passwd"}},
+		},
+		{
+			desc:    "a redirect inside a subshell reaches that segment",
+			cmd:     "(echo x > /etc/passwd)",
+			want:    []seg{{name: "echo", args: []string{"x"}}},
+			targets: [][]string{{"/etc/passwd"}},
+		},
+		{
+			desc:    "a redirect inside a for body reaches that segment",
+			cmd:     "for f in a b; do echo x > /etc/passwd; done",
+			want:    []seg{{name: "echo", args: []string{"x"}}},
+			targets: [][]string{{"/etc/passwd"}},
+		},
+		{
+			// Both the inner statement's own target and the enclosing block's
+			// target land on the one segment: each is a real write.
+			desc:    "nested redirects accumulate on the inner segment",
+			cmd:     "{ ls > inner.txt; } > outer.txt",
+			want:    []seg{{name: "ls", args: nil}},
+			targets: [][]string{{"inner.txt", "outer.txt"}},
+		},
+		{
+			desc:    "a redirect survives wrapper peeling",
+			cmd:     "timeout 30 go build > out.log",
+			want:    []seg{{name: "go", args: []string{"build"}}},
+			targets: [][]string{{"out.log"}},
+		},
+		{
+			desc:    "a redirect inside a bash -c script reaches the inner segment",
+			cmd:     `bash -c "echo x > /etc/passwd"`,
+			want:    []seg{{name: "echo", args: []string{"x"}}},
+			targets: [][]string{{"/etc/passwd"}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			got, err := splitSegments(tc.cmd)
+			if err != nil {
+				t.Fatalf("splitSegments(%q) unexpected error: %v", tc.cmd, err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("splitSegments(%q) got %d segments, want %d: %+v", tc.cmd, len(got), len(tc.want), got)
+			}
+			for i, w := range tc.want {
+				if got[i].Name != w.name {
+					t.Errorf("segment %d Name = %q, want %q", i, got[i].Name, w.name)
+				}
+				if !equalArgs(got[i].Args, w.args) {
+					t.Errorf("segment %d Args = %#v, want %#v", i, got[i].Args, w.args)
+				}
+				if !equalArgs(got[i].WriteTargets, tc.targets[i]) {
+					t.Errorf("segment %d (%s) WriteTargets = %#v, want %#v",
+						i, got[i].Name, got[i].WriteTargets, tc.targets[i])
+				}
 			}
 		})
 	}
@@ -569,18 +784,33 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"path-qualified timeout is not peeled", "/usr/bin/timeout 30 ls"},
 		{"nohup does not launder a wrapper", "nohup sudo rm -rf /"},
 		{"nohup with no inner command", "nohup"},
-		{"redirect to file with >", "echo x > /etc/passwd"},
-		{"append redirect >>", "grep foo bar >> ~/.zshrc"},
-		{"redirect inside workspace", "ls > out.txt"},
-		{"stderr and file redirect", "ls 2>/dev/null > /etc/x"},
-		{"dev-null lookalike file", "ls > /dev/null.txt"},
-		{"dev-null typo", "ls 2>/dev/nul"},
+		// Change 0070 D4 moved the write-target DECISION out of the parser: a
+		// redirect to a LITERAL out-target now parses and records the target on
+		// the segment (TestSplitSegments_RedirectWriteTargets), so the scoping
+		// layer — which has the root set the parser does not — can decide. What
+		// stays shut here is every shape whose target we cannot name.
 		{"redirect to variable target", "cat a > $F"},
-		{"here-doc", "cat <<EOF\nhi\nEOF"},
-		{"input redirect from real file", "cat < config.yaml"},
+		{"redirect to a command-substitution target", "cat a > $(echo x)"},
+		{"append redirect to a variable target", "ls >> $LOG"},
+		{"redirect to a target with an embedded expansion", `ls > "out-$N.txt"`},
 		{"dup-op to a real file, not an fd", "ls >&file"},
 		{"fd-close is not a bare fd number", "ls 2>&-"},
 		{"read-write redirect <>", "cat <> scratch"},
+		{"input redirect from a variable target", "cat < $F"},
+		{"here-string", "cat <<< hi"},
+		// An UNQUOTED here-doc body is expanded by the shell before it is fed to
+		// stdin, so a substitution in the body genuinely runs. It is data only
+		// when it is statically literal.
+		{"here-doc body with a command substitution", "cat <<EOF\n$(rm -rf /)\nEOF"},
+		{"here-doc body with a parameter expansion", "cat <<EOF\n$HOME\nEOF"},
+		{"here-doc delimiter is not literal", "cat <<$D\nhi\nEOF"},
+		// A statement that names no command still truncates its target, and a
+		// recorded target with no segment to carry it is invisible to every
+		// downstream layer. Fail closed rather than lose the write.
+		{"redirect-only statement", "> out.txt"},
+		{"redirect-only statement to a system path", "> /etc/passwd"},
+		{"assignment-only statement with a redirect", "FOO=1 > out.txt"},
+		{"env-prints-environment with a redirect", "env FOO=1 > out.txt"},
 
 		// Change 0070 D3: control flow now descends (see TestSplitSegments), but
 		// descent must not become a laundering channel.
@@ -596,12 +826,16 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"function keyword form", "function f { rm -rf /; }"},
 
 		// The per-statement redirect guard runs BEFORE the type switch, so it
-		// applies to each descended statement, not just the outermost one.
-		{"redirect inside an if branch", "if true; then echo x > /etc/passwd; fi"},
-		{"redirect inside a for body", "for f in a b; do echo x > /etc/passwd; done"},
-		{"redirect inside a block", "{ echo x > /etc/passwd; }"},
-		{"redirect inside a subshell", "(echo x > /etc/passwd)"},
-		{"redirect on the compound statement itself", "for f in a b; do ls; done > out.txt"},
+		// applies to each descended statement, not just the outermost one. Since
+		// D4 a literal target is recorded rather than refused (see
+		// TestSplitSegments_RedirectWriteTargets for the descended shapes); an
+		// unnameable target inside a descended statement still fails the whole
+		// command closed.
+		{"unnameable redirect inside an if branch", "if true; then echo x > $F; fi"},
+		{"unnameable redirect inside a for body", "for f in a b; do echo x > $F; done"},
+		{"unnameable redirect inside a block", "{ echo x > $F; }"},
+		{"unnameable redirect inside a subshell", "(echo x > $F)"},
+		{"unnameable redirect on the compound statement itself", "for f in a b; do ls; done > $F"},
 
 		// Descent does not launder a wrapper, a path-qualified argv[0], or a
 		// dangerous env prefix — the descended statement faces every check a

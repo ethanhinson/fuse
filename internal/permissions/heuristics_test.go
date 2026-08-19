@@ -167,3 +167,56 @@ func classifyHeuristicIn(t *testing.T, segs []Segment, root string) Verdict {
 	}
 	return classifyHeuristic(segs, []string{canonRoot})
 }
+
+// TestClassifyHeuristic_RedirectWriteTargets is where change 0070 D4's widening
+// is actually made safe. The parser now records a redirect's literal target on
+// the segment instead of refusing the command; this layer is the one holding the
+// root set, so it is the only layer that can decide whether that target is
+// acceptable. A target inside the roots is a deterministic allow; a target
+// outside them is an ask, routed on to the classifier.
+//
+// Two ordering properties are load-bearing and each has a row below: the target
+// scoping must run BEFORE the read-only fast path (a read-only command with a
+// write target is a mutation — `echo x > /etc/passwd` is the whole point of the
+// task), and before the kill / loopback-fetch `continue`s, which would otherwise
+// carry a write target past the scoping untouched.
+func TestClassifyHeuristic_RedirectWriteTargets(t *testing.T) {
+	cases := []struct {
+		desc string
+		cmd  string
+		want Verdict
+	}{
+		{"read-only echo with an out-of-root target is a mutation ⇒ ask", "echo x > /etc/passwd", VerdictAsk},
+		{"append to a home dotfile ⇒ ask", "grep foo bar >> ~/.zshrc", VerdictAsk},
+		{"relative escape target ⇒ ask", "ls > ../escaped.txt", VerdictAsk},
+		{"build output inside the roots ⇒ allow", "go build > out.log", VerdictAllow},
+		{"read-only command with an in-root target ⇒ allow", "ls > out.txt", VerdictAllow},
+		{"in-root target on a compound statement ⇒ allow", "{ ls; wc -l x; } > out.txt", VerdictAllow},
+		{"one out-of-root target among several ⇒ ask", "ls > out.txt 2> /etc/err.log", VerdictAsk},
+		{"benign /dev/null carries no target ⇒ allow", "wc -l x 2>/dev/null", VerdictAllow},
+		{"fd-dup carries no target ⇒ allow", "ls 2>&1", VerdictAllow},
+		{"input redirect is a read ⇒ allow", "cat < config.yaml", VerdictAllow},
+		{"here-doc is stdin data ⇒ allow", "cat <<EOF\nhi\nEOF", VerdictAllow},
+		// The kill family short-circuits path scoping because its operands are
+		// PIDs, not paths (change 0068) — but its REDIRECT is still a file write.
+		{"a benign kill with an out-of-root target ⇒ ask", "kill 123 > /etc/passwd", VerdictAsk},
+		{"a benign kill with an in-root target ⇒ allow", "kill 123 > kill.log", VerdictAllow},
+		// Likewise the loopback-fetch allowance (change 0068): it exempts URL
+		// operands from scoping, never a redirect target.
+		{"a loopback fetch with an out-of-root target ⇒ ask", "curl -s http://localhost:8080/x > /etc/passwd", VerdictAsk},
+		{"a loopback fetch with an in-root target ⇒ allow", "curl -s http://localhost:8080/x > body.json", VerdictAllow},
+		// Unaffected shapes: `tee` names its output as an ARGUMENT, which the
+		// pre-existing pathArgs scoping already covers.
+		{"tee to an in-root file is unaffected", "ls | tee out.log", VerdictAllow},
+		{"tee to an out-of-root file is unaffected", "ls | tee /etc/out.log", VerdictAsk},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			root := t.TempDir()
+			segs := segsFor(t, tc.cmd)
+			if got := classifyHeuristicIn(t, segs, root); got != tc.want {
+				t.Errorf("classifyHeuristic(%q) = %v, want %v", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}

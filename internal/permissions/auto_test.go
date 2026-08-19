@@ -3,6 +3,7 @@ package permissions
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -385,5 +386,59 @@ func TestAutoMode_CloneForChild_PreservesModeAndClassifier(t *testing.T) {
 	parent.Execute(context.Background(), "bash", bashArgs("touch /etc/escapes"))
 	if stub.calls == childCalls {
 		t.Fatal("parent verdict cache must be independent from child (expected a fresh classifier call)")
+	}
+}
+
+// TestAutoMode_RedirectWriteTargets_EndToEnd is change 0070 D4's payoff and its
+// safety proof in one table, driven through resolveAuto with no classifier
+// wired. Before D4 every one of these rows failed closed at LayerParse.
+//
+// The LAYER assertion is as load-bearing as the verdict: `echo x > /etc/passwd`
+// allowing at LayerSafelist is precisely the fail-open this task exists to
+// prevent — a read-only `echo` waved through with a write to a system file
+// hanging off it, at a layer that has no root set to catch it. Requiring the
+// allows to come from LayerHeuristic proves the redirected commands really do
+// fall through to the layer that can scope them.
+func TestAutoMode_RedirectWriteTargets_EndToEnd(t *testing.T) {
+	cases := []struct {
+		desc      string
+		cmd       string
+		want      Verdict
+		wantLayer string
+	}{
+		{"build output into the workspace allows at the scoping layer", "go build > out.log", VerdictAllow, LayerHeuristic},
+		{"read-only command with an in-root target allows at the scoping layer", "ls -la > listing.txt", VerdictAllow, LayerHeuristic},
+		{"append inside the workspace allows", "git log >> history.txt", VerdictAllow, LayerHeuristic},
+		{"echo into /etc/passwd never auto-approves", "echo pwned > /etc/passwd", VerdictAsk, LayerClassifier},
+		{"echo into a home dotfile never auto-approves", "echo x >> ~/.zshrc", VerdictAsk, LayerClassifier},
+		{"a redirect out of the workspace inside an if branch never auto-approves", "if true; then echo x > /etc/passwd; fi", VerdictAsk, LayerClassifier},
+		{"a redirect out of the workspace inside a bash -c never auto-approves", `bash -c "echo x > /etc/passwd"`, VerdictAsk, LayerClassifier},
+		// The 0037 benign shapes keep their safelist short-circuit: they carry no
+		// write target at all, so nothing needs scoping.
+		{"a /dev/null sink still short-circuits on the safelist", "wc -l x 2>/dev/null | tail -5", VerdictAllow, LayerSafelist},
+		{"an fd-dup still short-circuits on the safelist", "git status 2>&1", VerdictAllow, LayerSafelist},
+		// A target we cannot name is still refused at the parse floor.
+		{"a variable target still fails closed at the parse floor", "echo x > $F", VerdictAsk, LayerParse},
+		{"a read-write redirect still fails closed at the parse floor", "cat <> scratch", VerdictAsk, LayerParse},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			root := t.TempDir()
+			canon, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restore := chdir(t, canon)
+			defer restore()
+			g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), AlwaysApprove,
+				WithWorkspaceRoot(canon))
+			got, layer, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs(tc.cmd))
+			if got != tc.want {
+				t.Errorf("resolveAuto(%q) = %v, want %v", tc.cmd, got, tc.want)
+			}
+			if layer != tc.wantLayer {
+				t.Errorf("resolveAuto(%q) layer = %q, want %q", tc.cmd, layer, tc.wantLayer)
+			}
+		})
 	}
 }

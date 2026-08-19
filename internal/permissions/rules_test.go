@@ -1,6 +1,10 @@
 package permissions
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/ethanhinson/fuse/internal/config"
+)
 
 // segsFor drives the real splitSegments so rule tests exercise the same
 // parser the gate will use, rather than hand-fabricating segments.
@@ -171,5 +175,74 @@ func TestVerdictString(t *testing.T) {
 		if got := tc.v.String(); got != tc.want {
 			t.Errorf("Verdict(%d).String() = %q, want %q", tc.v, got, tc.want)
 		}
+	}
+}
+
+// TestAllSegmentsReadOnlySafe_WriteTargetIsNotReadOnly pins the second half of
+// change 0070 D4's safety argument. The safelist short-circuit (gate.go:660)
+// runs with NO root context, so it cannot judge a redirect target: if it kept
+// calling `echo x > /etc/passwd` read-only safe, the command would auto-approve
+// there and never reach the heuristic layer that holds the roots.
+//
+// A segment carrying a write target is therefore never wholly read-only, and
+// falls through to scoping — which allows the in-root case deterministically.
+func TestAllSegmentsReadOnlySafe_WriteTargetIsNotReadOnly(t *testing.T) {
+	cases := []struct {
+		desc string
+		cmd  string
+		want bool
+	}{
+		{"read-only echo with a write target is not read-only", "echo x > /etc/passwd", false},
+		{"an in-root target is equally not read-only here (no roots to check it against)", "ls > out.txt", false},
+		{"one redirected segment sinks the whole command", "ls && wc -l x > out.txt", false},
+		{"a compound statement's target sinks every segment", "{ ls; wc -l x; } > out.txt", false},
+		// The 0037 benign shapes record no target and keep short-circuiting.
+		{"a /dev/null sink stays read-only safe", "wc -l x 2>/dev/null", true},
+		{"an fd-dup stays read-only safe", "ls 2>&1", true},
+		{"an input redirect stays read-only safe", "cat < config.yaml", true},
+		{"a here-doc stays read-only safe", "cat <<EOF\nhi\nEOF", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got := allSegmentsReadOnlySafe(segsFor(t, tc.cmd)); got != tc.want {
+				t.Errorf("allSegmentsReadOnlySafe(%q) = %v, want %v", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEvalRules_ConfigAllowDoesNotLaunderARedirect closes the second no-root
+// laundering path opened by change 0070 D4's widening. The rules layer runs
+// BEFORE the safelist and, like it, has no root set: a config auto_approve
+// pattern matches the reconstructed argv ("bash:echo x"), which does not and
+// cannot mention the redirect. Consenting to `echo x` is not consenting to
+// `echo x > /etc/passwd`.
+//
+// A redirected command therefore declines the rules-layer allow and falls
+// through to path scoping, which allows the in-root case anyway — so a user's
+// pattern still buys them `make > build.log` inside the workspace, just not a
+// write to anywhere on the disk. Deny and ask precedence are untouched.
+func TestEvalRules_ConfigAllowDoesNotLaunderARedirect(t *testing.T) {
+	cases := []struct {
+		desc        string
+		cmd         string
+		autoApprove []string
+		want        Verdict
+	}{
+		{"an allowed command with a write target is not allowed here", "echo x > /etc/passwd", []string{"bash:*"}, VerdictAsk},
+		{"an in-root target is equally deferred (no roots to check it against)", "make > build.log", []string{"bash:make*"}, VerdictAsk},
+		{"the same command without a redirect still allows", "echo x", []string{"bash:*"}, VerdictAllow},
+		{"a benign /dev/null sink records no target and still allows", "make > /dev/null", []string{"bash:make*"}, VerdictAllow},
+		{"an input redirect records no target and still allows", "make < in.txt", []string{"bash:make*"}, VerdictAllow},
+		// Deny still beats everything, redirect or not.
+		{"deny still wins over the allow pattern", "rm -rf / > out.txt", []string{"bash:*"}, VerdictDeny},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			got := evalRules(segsFor(t, tc.cmd), config.AutoConfig{}, tc.autoApprove, nil, t.TempDir())
+			if got != tc.want {
+				t.Errorf("evalRules(%q) = %v, want %v", tc.cmd, got, tc.want)
+			}
+		})
 	}
 }

@@ -50,8 +50,20 @@ func classifyHeuristic(segments []Segment, roots []string) Verdict {
 
 	// 3. Mutating: every path argument must stay inside the allowed roots.
 	for _, seg := range segments {
+		// A redirect target is a write no matter how read-only the command in
+		// front of it is (`echo x > /etc/passwd`) and no matter which of the
+		// exemptions below the segment qualifies for — the kill family's operands
+		// are PIDs, and a loopback fetch's operands are URLs, but neither makes
+		// their `> file` anything other than a file write. Scoping the targets
+		// FIRST is therefore load-bearing: every `continue` after this point
+		// would carry them past unscoped (change 0070 D4).
+		for _, target := range seg.WriteTargets {
+			if !withinAnyRoot(target, roots) {
+				return VerdictAsk
+			}
+		}
 		if isReadOnlySafe(seg) {
-			continue // a read-only segment mutates nothing to scope.
+			continue // a read-only segment mutates nothing else to scope.
 		}
 		// The kill family's operands are PIDs or process names, not paths —
 		// path-scoping them against the cwd would prove nothing (change 0068).
