@@ -344,3 +344,87 @@ func TestIsCatastrophicRm_OpaqueOperandIsNotResolved(t *testing.T) {
 		}
 	}
 }
+
+// TestEvalRules_RedirectTargetsReachTighteningPatterns covers the review's
+// minor 6 for change 0070: a human who writes a deny (or always_prompt) pattern
+// against a path expects it to cover the redirect FORM of writing to that path.
+// Before the subject carried the targets, `echo secrets > .git/hooks/pre-commit`
+// produced the subject "bash:echo secrets" and no path-shaped pattern could
+// ever reach it.
+//
+// The second half of the table is the fail-open guard: widening the subject
+// text must never make an auto_approve pattern match something it did not match
+// before. It cannot, because allSegmentsAllowed declines any segment carrying a
+// write target BEFORE the pattern is consulted — these rows pin that.
+func TestEvalRules_RedirectTargetsReachTighteningPatterns(t *testing.T) {
+	cases := []struct {
+		desc         string
+		cmd          string
+		auto         config.AutoConfig
+		autoApprove  []string
+		alwaysPrompt []string
+		want         Verdict
+	}{
+		{
+			desc: "a path-shaped deny reaches the redirect target",
+			cmd:  "echo secrets > .git/hooks/pre-commit",
+			auto: config.AutoConfig{Deny: []string{"bash:* >*.git/hooks/*"}},
+			want: VerdictDeny,
+		},
+		{
+			// Shape pin, not a discriminator: a redirect-bearing segment can never
+			// reach allow anyway, so this row is green either way. It records that
+			// always_prompt sees the same widened subject the deny rows prove.
+			desc:         "a path-shaped always_prompt reaches the redirect target",
+			cmd:          "echo secrets > .git/hooks/pre-commit",
+			autoApprove:  []string{"bash:*"},
+			alwaysPrompt: []string{"bash:* >*.git/hooks/*"},
+			want:         VerdictAsk,
+		},
+		{
+			desc: "an append redirect is reachable too",
+			cmd:  "echo secrets >> .git/hooks/pre-commit",
+			auto: config.AutoConfig{Deny: []string{"bash:* >*.git/hooks/*"}},
+			want: VerdictDeny,
+		},
+		{
+			desc: "a deny naming only the argv still matches a redirected segment",
+			cmd:  "echo secrets > out.txt",
+			auto: config.AutoConfig{Deny: []string{"bash:echo secrets*"}},
+			want: VerdictDeny,
+		},
+		{
+			desc: "an unrelated path deny does not match",
+			cmd:  "echo hi > out.txt",
+			auto: config.AutoConfig{Deny: []string{"bash:* >*.git/hooks/*"}},
+			want: VerdictAsk,
+		},
+		// Fail-open guard: the allow consumer's match set is unchanged.
+		{
+			desc:        "a broad allow still does not approve a redirect-bearing command",
+			cmd:         "echo x > out.txt",
+			autoApprove: []string{"bash:*"},
+			want:        VerdictAsk,
+		},
+		{
+			desc:        "an allow pattern spelled with the target form does not approve either",
+			cmd:         "echo x > out.txt",
+			autoApprove: []string{"bash:echo x >out.txt"},
+			want:        VerdictAsk,
+		},
+		{
+			desc:        "an unredirected command's allow is untouched",
+			cmd:         "echo x",
+			autoApprove: []string{"bash:echo *"},
+			want:        VerdictAllow,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			got := evalRules(segsFor(t, tc.cmd), tc.auto, tc.autoApprove, tc.alwaysPrompt, t.TempDir())
+			if got != tc.want {
+				t.Errorf("evalRules(%q) = %v, want %v", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}

@@ -121,10 +121,12 @@ func evalRules(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []s
 // segment set is not allowed by omission (the caller guards len>0).
 func allSegmentsAllowed(segments []Segment, autoApprove []string, allowPush bool) bool {
 	for _, seg := range segments {
-		// A redirect write target is not in the subject an allow pattern matches
-		// against (segmentSubject reconstructs argv only), and this layer — like
-		// the safelist below it — runs with no root set, so it could not scope the
-		// target even if it saw it. Consenting to `echo x` is not consenting to
+		// This layer — like the safelist below it — runs with no root set, so it
+		// cannot scope a redirect write target. (The target IS in the subject, for
+		// the tightening consumers' benefit; review minor 6. This check runs first
+		// precisely so that widening never reaches an allow pattern: no
+		// auto_approve pattern is ever matched against a target-bearing subject.)
+		// Consenting to `echo x` is not consenting to
 		// `echo x > /etc/passwd`, so a redirected segment declines the pattern
 		// allow and falls through to the scoping layer, which allows the in-root
 		// case on its own evidence (change 0070 D4).
@@ -579,10 +581,26 @@ func matchesSegment(patterns []string, seg Segment) bool {
 // (auto_approve is empty by default and is a trust-boundary key local config
 // cannot loosen). It is emphatically NOT a value — nothing may read it back out
 // of this string and treat it as a path.
+//
+// A segment's redirect WRITE TARGETS are appended in a distinguishable
+// " >"-prefixed form ("bash:echo secrets >.git/hooks/pre-commit"), so a
+// tightening pattern a human authored against a path can reach the redirect
+// FORM of writing to that path — `deny: ["bash:* >*.git/hooks/*"]` (review
+// minor 6). Without them the subject was "bash:echo secrets" and no path-shaped
+// deny or always_prompt could ever fire on the target.
+//
+// Appending is unconditional rather than gated to the tightening consumers,
+// because it cannot widen the ALLOW consumer: allSegmentsAllowed returns false
+// for any segment with a non-empty WriteTargets before it ever consults a
+// pattern (change 0070 D4), so an auto_approve pattern is never matched against
+// a subject this clause has altered. The allow match set is exactly what it was.
 func segmentSubject(seg Segment) string {
 	line := seg.Name
 	if len(seg.Args) > 0 {
 		line += " " + strings.Join(seg.Args, " ")
+	}
+	for _, target := range seg.WriteTargets {
+		line += " >" + target
 	}
 	return "bash:" + line
 }
