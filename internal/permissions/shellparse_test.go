@@ -91,44 +91,46 @@ func TestSplitSegments(t *testing.T) {
 			want: []seg{{name: "ls", args: nil}},
 		},
 		{
-			// Change 0070 D1: a benign env-var prefix no longer fails closed.
-			// The assignment is dropped, and the inner command is the segment.
-			desc: "benign env prefix parses to the inner command",
-			cmd:  "FOO=1 make",
+			// Change 0070 D1: an env-var prefix whose name is on the proven-inert
+			// allowlist no longer fails closed. The assignment is dropped, and the
+			// inner command is the segment. (The allowlist replaced a denylist in
+			// review blocker 2, so the names here are specific ones we vouch for —
+			// an arbitrary `FOO=1` is unproven and lives in the FailClosed table.)
+			desc: "inert env prefix parses to the inner command",
+			cmd:  "CI=1 make",
 			want: []seg{{name: "make", args: nil}},
 		},
 		{
-			desc: "multiple benign env prefixes",
-			cmd:  "FOO=1 BAR=2 go test",
+			desc: "multiple inert env prefixes",
+			cmd:  "CI=1 NO_COLOR=1 go test",
 			want: []seg{{name: "go", args: []string{"test"}}},
 		},
 		{
-			desc: "benign env prefix with an empty value",
-			cmd:  "FOO= make",
+			desc: "inert env prefix with an empty value",
+			cmd:  "NO_COLOR= make",
 			want: []seg{{name: "make", args: nil}},
 		},
 		{
-			desc: "benign env prefix with a quoted literal value",
-			cmd:  `CGO_ENABLED=0 GOFLAGS="-mod=mod" go build ./...`,
+			desc: "inert env prefix with a quoted literal value",
+			cmd:  `CGO_ENABLED=0 GOOS="linux" go build ./...`,
 			want: []seg{{name: "go", args: []string{"build", "./..."}}},
 		},
 		{
+			// The LC_ family is admitted by prefix: every member names a locale.
+			desc: "inert prefix rule admits the LC_ family",
+			cmd:  "LC_ALL=C LANG=C sort f",
+			want: []seg{{name: "sort", args: []string{"f"}}},
+		},
+		{
 			// Assignment-only statement: nothing runs, so nothing to classify.
-			desc: "bare assignment produces no segment",
-			cmd:  "FOO=1",
+			desc: "bare inert assignment produces no segment",
+			cmd:  "CI=1",
 			want: nil,
 		},
 		{
-			desc: "bare assignment then a command",
-			cmd:  "FOO=1; ls",
+			desc: "bare inert assignment then a command",
+			cmd:  "CI=1; ls",
 			want: []seg{{name: "ls", args: nil}},
-		},
-		{
-			// A name off the denylist parses whatever its case; the denylisted
-			// names themselves are matched case-insensitively (FailClosed table).
-			desc: "benign lowercase name still parses",
-			cmd:  "foo=1 make",
-			want: []seg{{name: "make", args: nil}},
 		},
 
 		// Change 0070 D2: timeout/env/nohup are peeled to their inner command
@@ -179,8 +181,8 @@ func TestSplitSegments(t *testing.T) {
 			},
 		},
 		{
-			desc: "env with a benign assignment peels to the inner command",
-			cmd:  "env FOO=1 make",
+			desc: "env with an inert assignment peels to the inner command",
+			cmd:  "env CI=1 make",
 			want: []seg{{name: "make", args: nil}},
 		},
 		{
@@ -192,7 +194,7 @@ func TestSplitSegments(t *testing.T) {
 			// The dangerous command is no longer hidden behind an unparseable
 			// wrapper: it reaches the rules layer, which denies it outright.
 			desc: "env assignment does not launder the inner command",
-			cmd:  "env FOO=bar rm -rf /",
+			cmd:  "env CI=1 rm -rf /",
 			want: []seg{{name: "rm", args: []string{"-rf", "/"}}},
 		},
 		{
@@ -203,8 +205,8 @@ func TestSplitSegments(t *testing.T) {
 			want: nil,
 		},
 		{
-			desc: "env with only assignments produces no segment",
-			cmd:  "env FOO=1 BAR=2",
+			desc: "env with only inert assignments produces no segment",
+			cmd:  "env CI=1 NO_COLOR=1",
 			want: nil,
 		},
 		{
@@ -214,7 +216,7 @@ func TestSplitSegments(t *testing.T) {
 		},
 		{
 			desc: "wrappers nest and peel down to the real command",
-			cmd:  "nohup env FOO=1 timeout 30 go build ./...",
+			cmd:  "nohup env CI=1 timeout 30 go build ./...",
 			want: []seg{{name: "go", args: []string{"build", "./..."}}},
 		},
 
@@ -683,16 +685,18 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"backtick command substitution", "echo `id`"},
 		{"comment then substitution", "git status# $(id)"},
 		{"process substitution", `diff <(ls) <(ls)`},
-		// `URL=evil curl $URL` used to live here. Change 0070 D5 gives `$URL` an
+		// `CI=1 curl $URL` used to live here. Change 0070 D5 gives `$URL` an
 		// OPAQUE representation, so it now parses — and is refused one layer
 		// down instead (TestSplitSegments_OpaqueArgs +
 		// TestAutoMode_OpaqueArgs_EndToEnd). The substitution rows above stay
 		// shut because a substitution RUNS its contents; only a wholly
 		// read-only inner script earns the opaque treatment.
 
-		// Change 0070 D1: benign env prefixes were widened, but a name that can
-		// change what code the inner command loads or runs stays fail-closed,
-		// and so does any value we cannot statically resolve.
+		// Change 0070 D1: env prefixes were widened, but only for names PROVEN
+		// inert. A name that can change what code the inner command loads or
+		// runs stays fail-closed — and so, since review blocker 2 inverted the
+		// rule to an allowlist, does every name nobody has vouched for, and any
+		// value we cannot statically resolve.
 		{"LD_PRELOAD prefix", "LD_PRELOAD=evil.so make"},
 		{"LD_LIBRARY_PATH prefix", "LD_LIBRARY_PATH=/tmp make"},
 		{"DYLD_ prefix rule", "DYLD_INSERT_LIBRARIES=evil.dylib make"},
@@ -728,22 +732,47 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"BASH_ prefix rule", "BASH_SOMETHING=x make"},
 		{"SHELLOPTS prefix", "SHELLOPTS=xtrace make"},
 		{"CDPATH prefix", "CDPATH=/tmp make"},
-		{"denylist is case-insensitive", "ld_preload=evil.so make"},
-		{"denylist prefix rule is case-insensitive", "dyld_insert_libraries=x make"},
-		{"command-substitution assignment value", "FOO=$(id) make"},
-		{"parameter-expansion assignment value", "FOO=$BAR make"},
-		{"assignment value with an embedded expansion", `FOO="pre$BAR" make`},
-		{"assignment-only with a dangerous name", "LD_PRELOAD=evil.so"},
-		{"assignment-only with a substituted value", "FOO=$(curl http://evil)"},
-		{"append assignment", "FOO+=1 make"},
+
+		// Review blocker 2: the rule is an ALLOWLIST, so the build-toolchain exec
+		// hooks a denylist forgot fail closed, and so does any name nobody has
+		// proven inert. `make` and `go build` reach allow at the heuristic layer,
+		// so each of these was a silent exec of an out-of-workspace binary.
+		{"CC names the C compiler make runs", "CC=/tmp/evil make"},
+		{"CXX names the C++ compiler", "CXX=/tmp/evil make"},
+		{"LD names the linker", "LD=/tmp/evil make"},
+		{"AR names the archiver", "AR=/tmp/evil make"},
+		{"RANLIB names an archive tool", "RANLIB=/tmp/evil make"},
+		{"GOFLAGS carries -toolexec", "GOFLAGS=-toolexec=/tmp/evil go build ./..."},
+		{"GOENV names a config file of more flags", "GOENV=/tmp/evil.env go build ./..."},
+		{"GOROOT relocates the whole toolchain", "GOROOT=/tmp/evil go build ./..."},
+		{"CGO_CFLAGS carries compiler flags", "CGO_CFLAGS=-fplugin=/tmp/evil.so go build ./..."},
+		{"CGO_LDFLAGS carries linker flags", "CGO_LDFLAGS=-fuse-ld=/tmp/evil go build ./..."},
+		{"CGO_ is not an inert prefix wholesale", "CGO_CXXFLAGS=-fplugin=/tmp/evil.so go build"},
+		{"MAKEFLAGS names a makefile", "MAKEFLAGS=-f/tmp/evil.mk make"},
+		{"an unrecognised name is unproven, not inert", "SOME_UNKNOWN_HOOK=/tmp/evil make"},
+		{"a bare unknown name is unproven", "FOO=1 make"},
+		{"an assignment-only unknown name is unproven", "FOO=1"},
+		// The allowlist is matched exactly: a name we do not recognise letter for
+		// letter is unproven, and fail-closed on the tie now points the other way
+		// from the old case-insensitive denylist.
+		{"allowlist match is case-sensitive", "ci=1 make"},
+		{"allowlist match is case-sensitive for LC_", "lc_all=C make"},
+		{"denylisted name is still not inert", "ld_preload=evil.so make"},
+		{"denylisted prefix name is still not inert", "dyld_insert_libraries=x make"},
+		{"command-substitution assignment value", "CI=$(id) make"},
+		{"parameter-expansion assignment value", "CI=$BAR make"},
+		{"assignment value with an embedded expansion", `CI="pre$BAR" make`},
+		{"assignment-only with a name that is not inert", "LD_PRELOAD=evil.so"},
+		{"assignment-only with a substituted value", "CI=$(curl http://evil)"},
+		{"append assignment", "CI+=1 make"},
 		// The array/subscript inline forms are rejected by the bash parser
 		// itself ("inline variables cannot be arrays"), so these rows pin the
 		// parse-error path rather than assignsAreBenign's shape check. They stay
 		// as regression rows in case a future parser bump starts accepting them.
-		{"array assignment", "FOO=(a b) make"},
-		{"indexed assignment", "FOO[0]=1 make"},
-		{"benign prefix does not launder a wrapper", "FOO=1 sudo rm -rf /"},
-		{"benign prefix does not launder a path-qualified argv0", "FOO=1 ./evil"},
+		{"array assignment", "CI=(a b) make"},
+		{"indexed assignment", "CI[0]=1 make"},
+		{"inert prefix does not launder a wrapper", "CI=1 sudo rm -rf /"},
+		{"inert prefix does not launder a path-qualified argv0", "CI=1 ./evil"},
 		{"path-qualified argv0 relative", "./sed -n 1p file"},
 		{"path-qualified argv0 absolute", "/tmp/git status"},
 		{"bare bash without -c", "bash"},
@@ -757,21 +786,21 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		// every shape where the peel cannot prove what actually runs stays shut.
 		// env is deliberately blunt about flags: -i clears the environment and
 		// -S re-splits its operand into a whole new command, neither of which
-		// the assignment denylist can see.
+		// the assignment allowlist can see.
 		{"env -i clears the environment", "env -i make"},
 		{"env -u unsets a variable", "env -u PATH make"},
 		{"env -S re-splits into a new command", "env -S 'foo bar'"},
 		{"env with a long flag", "env --ignore-environment make"},
 		{"env -0", "env -0"},
 		{"env with a bare -- separator", "env -- make"},
-		{"env assignment reuses the D1 denylist", "env LD_PRELOAD=x make"},
-		{"env assignment reuses the D1 prefix rule", "env DYLD_INSERT_LIBRARIES=x make"},
+		{"env assignment reuses the D1 allowlist", "env LD_PRELOAD=x make"},
+		{"env assignment reuses the D1 prefix rules", "env DYLD_INSERT_LIBRARIES=x make"},
 		{"env PATH assignment", "env PATH=/tmp make"},
-		{"env assignment with a substituted value", "env FOO=$(id) make"},
-		{"env assignment with a parameter expansion", "env FOO=$BAR make"},
-		{"env assignment with a non-name left side", "env foo-bar=1 make"},
+		{"env assignment with a substituted value", "env CI=$(id) make"},
+		{"env assignment with a parameter expansion", "env CI=$BAR make"},
+		{"env assignment with a non-name left side", "env ci-x=1 make"},
 		{"env assignment with an empty name", "env =evil make"},
-		{"env does not launder a path-qualified argv0", "env FOO=1 ./evil"},
+		{"env does not launder a path-qualified argv0", "env CI=1 ./evil"},
 		{"env does not launder an arbitrary-arg wrapper", "env xargs rm"},
 		{"timeout with no duration", "timeout go test"},
 		{"timeout with no inner command", "timeout 30"},
@@ -812,8 +841,8 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		// downstream layer. Fail closed rather than lose the write.
 		{"redirect-only statement", "> out.txt"},
 		{"redirect-only statement to a system path", "> /etc/passwd"},
-		{"assignment-only statement with a redirect", "FOO=1 > out.txt"},
-		{"env-prints-environment with a redirect", "env FOO=1 > out.txt"},
+		{"assignment-only statement with a redirect", "CI=1 > out.txt"},
+		{"env-prints-environment with a redirect", "env CI=1 > out.txt"},
 
 		// Change 0070 D3: control flow now descends (see TestSplitSegments), but
 		// descent must not become a laundering channel.
@@ -884,12 +913,12 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 	}
 }
 
-// TestSplitSegments_BenignAssignsAreDropped asserts that a benign env prefix is
-// *dropped*, not smuggled into the segment as an argument. If "FOO=1" landed in
+// TestSplitSegments_InertAssignsAreDropped asserts that an inert env prefix is
+// *dropped*, not smuggled into the segment as an argument. If "CI=1" landed in
 // Args, every downstream classifier — path scoping, the read-only safe-list,
 // deny-rule matching — would inspect a word that is not an argument at all.
-func TestSplitSegments_BenignAssignsAreDropped(t *testing.T) {
-	got, err := splitSegments("FOO=1 BAR=2 go test ./...")
+func TestSplitSegments_InertAssignsAreDropped(t *testing.T) {
+	got, err := splitSegments("CI=1 NO_COLOR=1 go test ./...")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -903,7 +932,7 @@ func TestSplitSegments_BenignAssignsAreDropped(t *testing.T) {
 		t.Fatalf("Args = %#v, want [test ./...]", got[0].Args)
 	}
 	for _, a := range got[0].Args {
-		if strings.Contains(a, "=") && (strings.HasPrefix(a, "FOO") || strings.HasPrefix(a, "BAR")) {
+		if strings.Contains(a, "=") && (strings.HasPrefix(a, "CI") || strings.HasPrefix(a, "NO_COLOR")) {
 			t.Errorf("assignment %q leaked into Args: %#v", a, got[0].Args)
 		}
 	}
@@ -914,7 +943,7 @@ func TestSplitSegments_BenignAssignsAreDropped(t *testing.T) {
 // command's own argv, with the assignment words dropped rather than smuggled in
 // as arguments.
 func TestSplitSegments_EnvPeelDropsAssignments(t *testing.T) {
-	got, err := splitSegments("env FOO=1 BAR=2 go test ./...")
+	got, err := splitSegments("env CI=1 NO_COLOR=1 go test ./...")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -929,36 +958,54 @@ func TestSplitSegments_EnvPeelDropsAssignments(t *testing.T) {
 	}
 }
 
-// TestDangerousEnvVarName pins the denylist itself, independent of the parser,
-// so change 0070 D2 (env NAME=val peeling) can reuse it with the same coverage.
-func TestDangerousEnvVarName(t *testing.T) {
-	dangerous := []string{
+// TestEnvAssignNameIsInert pins the inert-name ALLOWLIST itself, independent of
+// the parser, so change 0070 D2 (env NAME=val peeling) reuses it with the same
+// coverage as the D1 inline-prefix path.
+//
+// The two halves are not symmetric in cost. A name wrongly called inert is a
+// silent auto-approve of whatever it hooks; a name wrongly called unproven is
+// one human prompt. The notInert half therefore carries the names the previous
+// denylist enumerated (they must stay shut) AND the toolchain hooks it forgot
+// (review blocker 2) AND names nobody has classified at all — the last group is
+// the whole reason the rule is an allowlist.
+func TestEnvAssignNameIsInert(t *testing.T) {
+	inert := []string{
+		"CGO_ENABLED", "GOCACHE", "GOMAXPROCS", "GOOS", "GOARCH",
+		"NO_COLOR", "FORCE_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "TERM",
+		"COLUMNS", "LINES", "TZ", "LANG", "LANGUAGE",
+		"CI", "DEBUG", "VERBOSE", "RUST_BACKTRACE", "RUST_LOG",
+		// LC_ prefix rule: every POSIX locale category.
+		"LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_NUMERIC", "LC_TIME",
+	}
+	for _, n := range inert {
+		if !envAssignNameIsInert(n) {
+			t.Errorf("envAssignNameIsInert(%q) = false, want true", n)
+		}
+	}
+	notInert := []string{
+		// The exec hooks the previous denylist enumerated.
 		"LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "PATH", "IFS", "BASH_ENV",
 		"ENV", "SHELL", "PS4", "PROMPT_COMMAND", "GIT_SSH_COMMAND", "GIT_ASKPASS",
 		"SSH_ASKPASS", "PYTHONSTARTUP", "NODE_OPTIONS", "PERL5LIB", "RUBYOPT",
 		"PAGER", "EDITOR", "VISUAL", "LESSOPEN", "LESSCLOSE", "SHELLOPTS",
-		"BASHOPTS", "CDPATH",
-		// prefix rules
-		"DYLD_INSERT_LIBRARIES", "DYLD_FRAMEWORK_PATH", "LD_ANYTHING_AT_ALL",
-		"GIT_EXTERNAL_DIFF", "GIT_PAGER", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0",
-		"GIT_PROXY_COMMAND", "GIT_SEQUENCE_EDITOR", "BASH_ENV", "BASH_FUNC_x",
-		// case-insensitive
-		"ld_preload", "Path", "dyld_insert_libraries", "git_external_diff",
-	}
-	for _, n := range dangerous {
-		if !dangerousEnvVarName(n) {
-			t.Errorf("dangerousEnvVarName(%q) = false, want true", n)
-		}
-	}
-	benign := []string{
-		"FOO", "BAR", "CGO_ENABLED", "GOFLAGS", "GOOS", "RUST_LOG", "DEBUG",
-		"NODE_ENV", "LDFLAGS", "OLDPATH", "MY_PATH", "PATHOLOGICAL",
-		// The GIT_/BASH_/LD_ prefix rules must not over-fire on these.
+		"BASHOPTS", "CDPATH", "DYLD_INSERT_LIBRARIES", "GIT_EXTERNAL_DIFF",
+		"GIT_CONFIG_COUNT", "BASH_FUNC_x",
+		// The build-toolchain hooks it FORGOT — the fail-open the inversion
+		// closes. `make` and `go build` auto-approve, so each of these was an
+		// arbitrary exec.
+		"CC", "CXX", "LD", "AR", "RANLIB", "GOFLAGS", "GOENV", "GOROOT",
+		"GOTOOLCHAIN", "CGO_CFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS", "MAKEFLAGS",
+		"LDFLAGS", "CFLAGS", "MAKE", "TERMINFO", "LOCPATH",
+		// Names nobody has classified. Unproven is not benign.
+		"FOO", "BAR", "NODE_ENV", "OLDPATH", "MY_PATH", "PATHOLOGICAL",
 		"GITHUB_TOKEN", "GITOPS", "BASHRC_PATH", "LDAP_URL",
+		// The allowlist is matched exactly and case-sensitively: a spelling we
+		// do not recognise letter for letter is unproven.
+		"ci", "Ci", "no_color", "lc_all", "Lang", "CGO_ENABLED_",
 	}
-	for _, n := range benign {
-		if dangerousEnvVarName(n) {
-			t.Errorf("dangerousEnvVarName(%q) = true, want false", n)
+	for _, n := range notInert {
+		if envAssignNameIsInert(n) {
+			t.Errorf("envAssignNameIsInert(%q) = true, want false", n)
 		}
 	}
 }
@@ -1136,8 +1183,8 @@ func TestSplitSegments_OpaqueArgs(t *testing.T) {
 			want: []opaqueSeg{{name: "curl", args: []string{"$URL"}, opaque: []bool{true}}},
 		},
 		{
-			desc: "a benign assignment prefix with an opaque arg parses",
-			cmd:  "URL=evil curl $URL",
+			desc: "an inert assignment prefix with an opaque arg parses",
+			cmd:  "CI=1 curl $URL",
 			want: []opaqueSeg{{name: "curl", args: []string{"$URL"}, opaque: []bool{true}}},
 		},
 	}
@@ -1177,7 +1224,7 @@ func TestSplitSegments_OpaqueArgs(t *testing.T) {
 func TestSegmentOpaque_ParallelSliceInvariant(t *testing.T) {
 	corpus := []string{
 		"rm $VAR", "mv $SRC /tmp/x", "ls -la", "git diff $(git rev-parse --show-toplevel)",
-		"FOO=1 timeout 30 go test ./...", "env FOO=1 make $TARGET", "nohup go build",
+		"CI=1 timeout 30 go test ./...", "env CI=1 make $TARGET", "nohup go build",
 		"for f in $(ls); do wc -l $f; done", "cat a | grep $PAT", "go build > out.log",
 		`bash -c 'rm $VAR'`, "cp --out=$DIR/x y", "echo `ls`",
 	}
@@ -1234,7 +1281,7 @@ func TestSplitSegments_OpaqueFailClosed(t *testing.T) {
 		{"argv0 command substitution", "$(which ls) foo"},
 		{"argv0 backtick substitution", "`which ls` foo"},
 		{"argv0 mixed literal and expansion", "$DIR/ls foo"},
-		{"argv0 opaque after a benign assignment prefix", "FOO=1 $CMD"},
+		{"argv0 opaque after an inert assignment prefix", "CI=1 $CMD"},
 
 		// A command substitution is only opaque-able when its INNER script is
 		// wholly read-only. A substitution runs its contents.

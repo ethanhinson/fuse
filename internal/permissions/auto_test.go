@@ -54,20 +54,22 @@ func TestAutoMode_SafeReadOnlyBash_AutoApproves(t *testing.T) {
 	}
 }
 
-// TestAutoMode_BenignEnvPrefix_AutoApproves is the end-to-end payoff of change
-// 0070 D1: a benign env prefix no longer stalls an otherwise auto-approvable
-// read-only command on the human.
-func TestAutoMode_BenignEnvPrefix_AutoApproves(t *testing.T) {
-	for _, cmd := range []string{"FOO=1 ls -la", "CGO_ENABLED=0 GOCACHE=/tmp/gc git log"} {
+// TestAutoMode_InertEnvPrefix_AutoApproves is the end-to-end payoff of change
+// 0070 D1: an env prefix whose name is on the proven-inert allowlist no longer
+// stalls an otherwise auto-approvable read-only command on the human. (Review
+// blocker 2 narrowed this from "any name not denylisted" to "a name we vouch
+// for", so these are allowlisted names rather than an arbitrary FOO=1.)
+func TestAutoMode_InertEnvPrefix_AutoApproves(t *testing.T) {
+	for _, cmd := range []string{"CI=1 ls -la", "CGO_ENABLED=0 GOCACHE=/tmp/gc git log", "LC_ALL=C NO_COLOR=1 git log"} {
 		approve, called := newApproveRecorder(false)
 		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
 			WithWorkspaceRoot(t.TempDir()))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if res.IsError {
-			t.Fatalf("benign env prefix %q should auto-approve, got error: %s", cmd, res.Output)
+			t.Fatalf("inert env prefix %q should auto-approve, got error: %s", cmd, res.Output)
 		}
 		if *called {
-			t.Fatalf("benign env prefix %q must not invoke the approval func", cmd)
+			t.Fatalf("inert env prefix %q must not invoke the approval func", cmd)
 		}
 	}
 }
@@ -79,7 +81,7 @@ func TestAutoMode_PeeledWrappers_AutoApprove(t *testing.T) {
 	for _, cmd := range []string{
 		"timeout 30 git log",
 		"timeout -k 5 1.5s ls -la",
-		"env FOO=1 ls -la",
+		"env CI=1 ls -la",
 		"nohup git status",
 		"env CGO_ENABLED=0 timeout 10m git diff",
 	} {
@@ -98,8 +100,8 @@ func TestAutoMode_PeeledWrappers_AutoApprove(t *testing.T) {
 
 // TestAutoMode_WrapperPeelDoesNotLaunder is the fail-closed half of D2. Each
 // command below wraps an auto-approved read (`git log`) in a form the peel must
-// refuse: -i clears the environment the denylist was reasoning about, -S
-// re-splits its operand into a different command, a denylisted assignment is a
+// refuse: -i clears the environment the name rule was reasoning about, -S
+// re-splits its operand into a different command, a non-allowlisted assignment is a
 // straight exec hook, and sudo behind a timeout must not inherit the inner
 // command's decision. None may reach a verdict without a human.
 func TestAutoMode_WrapperPeelDoesNotLaunder(t *testing.T) {
@@ -109,7 +111,7 @@ func TestAutoMode_WrapperPeelDoesNotLaunder(t *testing.T) {
 		"env LD_PRELOAD=/tmp/evil.so git log",
 		"env GIT_PAGER=/tmp/evil git log",
 		"timeout 30 sudo git log",
-		"env FOO=1 ./evil",
+		"env CI=1 ./evil",
 	} {
 		// approve=true so a routed-to-human ask succeeds and is distinguishable
 		// from a silent auto-approve by the recorder flag.
@@ -124,14 +126,14 @@ func TestAutoMode_WrapperPeelDoesNotLaunder(t *testing.T) {
 }
 
 // TestAutoMode_EnvExecHook_DoesNotAutoApprove is the fail-closed half of D1, and
-// the reason the denylist carries GIT_/BASH_ prefix rules and PAGER/EDITOR.
+// the reason GIT_*, PAGER and EDITOR are nowhere near the inert allowlist.
 //
 // `git log` and `git diff` auto-approve via isSafeGit (rules.go) with no human
 // in the loop. Each command below therefore turns an auto-approved read into an
 // arbitrary exec of /tmp/evil purely through the assignment prefix — invisible
-// to every argv-based layer downstream. Each was verified to auto-approve when
-// the corresponding denylist entry is removed; the parse floor is the only
-// place this can be caught.
+// to every argv-based layer downstream. Each was verified to auto-approve if its
+// name is treated as inert; the parse floor is the only place this can be
+// caught.
 func TestAutoMode_EnvExecHook_DoesNotAutoApprove(t *testing.T) {
 	for _, cmd := range []string{
 		"GIT_EXTERNAL_DIFF=/tmp/evil git diff",
@@ -148,6 +150,43 @@ func TestAutoMode_EnvExecHook_DoesNotAutoApprove(t *testing.T) {
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if !res.IsError && !*called {
 			t.Fatalf("%q auto-approved with no human: an env exec hook must never bypass approval", cmd)
+		}
+	}
+}
+
+// TestAutoMode_ToolchainEnvHook_DoesNotAutoApprove is why D1's env-name rule is
+// an ALLOWLIST rather than a denylist (review blocker 2).
+//
+// `make` and `go build ./...` both reach an allow verdict at the heuristic layer
+// with no human in the loop. Every command below therefore turns one of those
+// into an exec of an out-of-workspace binary purely through an assignment
+// prefix — a build-toolchain hook that an enumerated denylist of "names that
+// change what code runs" simply forgot. Each of these auto-approved while the
+// rule was a denylist; under the allowlist an unrecognised name costs one
+// prompt, which is the whole point of the inversion.
+func TestAutoMode_ToolchainEnvHook_DoesNotAutoApprove(t *testing.T) {
+	for _, cmd := range []string{
+		"CC=/tmp/evil make",
+		"CXX=/tmp/evil make",
+		"GOFLAGS=-toolexec=/tmp/evil go build ./...",
+		"GOROOT=/tmp/evil go build ./...",
+		"CGO_LDFLAGS=-fuse-ld=/tmp/evil go build ./...",
+		"MAKEFLAGS=-f/tmp/evil.mk make",
+		// The same hole reached through D2's `env NAME=val` peel: both consumers
+		// go through the one shared rule, so neither may drift open.
+		"env CC=/tmp/evil make",
+		"env GOFLAGS=-toolexec=/tmp/evil go build ./...",
+		// An unrecognised name is unproven, not benign.
+		"SOME_UNKNOWN_HOOK=/tmp/evil make",
+	} {
+		// approve=true so a routed-to-human ask succeeds and is distinguishable
+		// from a silent auto-approve by the recorder flag.
+		approve, called := newApproveRecorder(true)
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+			WithWorkspaceRoot(t.TempDir()))
+		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
+		if !res.IsError && !*called {
+			t.Fatalf("%q auto-approved with no human: an unproven env name must never bypass approval", cmd)
 		}
 	}
 }

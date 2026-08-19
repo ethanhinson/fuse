@@ -194,85 +194,98 @@ var peelWrappers = map[string]bool{
 	"nohup":  true,
 }
 
-// dangerousEnvVars are environment-variable names that change *what code runs*
-// rather than merely how it behaves: dynamic-loader hooks, command lookup, word
-// splitting, shell startup files, and the "run this helper for me" hooks of git,
-// ssh, python, node, perl and ruby. An assignment prefix naming one of these can
-// turn an otherwise-innocent command into arbitrary code execution
-// (`LD_PRELOAD=evil.so make`), which the argv-based classifier downstream can
-// never see. Names here fail the whole command closed (change 0070 D1).
+// inertEnvVars is an ALLOWLIST of environment-variable names proven not to
+// change *what code runs* — the only question an assignment prefix has to
+// answer before the command it decorates may be judged on its argv alone
+// (change 0070 D1; inverted from a denylist by review blocker 2).
 //
-// Keys are upper-cased; lookup goes through dangerousEnvVarName.
-var dangerousEnvVars = map[string]bool{
-	"LD_PRELOAD":      true,
-	"LD_LIBRARY_PATH": true,
-	"LD_AUDIT":        true,
-	"PATH":            true,
-	"IFS":             true,
-	"BASH_ENV":        true,
-	"ENV":             true,
-	"SHELL":           true,
-	"PS4":             true,
-	"PROMPT_COMMAND":  true,
-	"GIT_SSH_COMMAND": true,
-	"GIT_ASKPASS":     true,
-	"SSH_ASKPASS":     true,
-	"PYTHONSTARTUP":   true,
-	"NODE_OPTIONS":    true,
-	"PERL5LIB":        true,
-	"RUBYOPT":         true,
+// This started as a denylist of names that DO change what runs: loader hooks,
+// command lookup, word splitting, shell startup files, pager/editor hooks, and
+// the "run this helper for me" families of git, ssh, python, node, perl and
+// ruby. That list cannot be completed. It omitted the entire C/Go build
+// toolchain — CC, CXX, LD, AR, RANLIB, GOFLAGS (which carries -toolexec),
+// GOENV, GOROOT, CGO_CFLAGS/CGO_LDFLAGS, MAKEFLAGS — and because `make` and
+// `go build ./...` both reach an allow verdict at the heuristic layer, a
+// forgotten name was not a missing prompt but a silent exec of an
+// out-of-workspace binary with no human in the loop (`CC=/tmp/evil make`).
+// Every future name someone forgets fails OPEN under a denylist. Under an
+// allowlist an unrecognised name fails CLOSED and costs exactly one prompt,
+// which is the correct price for a prefix we cannot vouch for.
+//
+// The bar for an entry is not "usually harmless" but "cannot select a program,
+// a library, a config file of further flags, or a flag string, for anything on
+// the auto-approve path". Anything that names a path something will LOAD or
+// EXEC stays off. Note the asymmetry inside one family: CGO_ENABLED is a 0/1
+// toggle and is here, while CGO_CFLAGS/CGO_LDFLAGS hand arbitrary flags
+// (-fplugin=, -fuse-ld=) to the compiler and are not — hence no `CGO_` prefix
+// rule.
+//
+// Matching is exact and case-SENSITIVE (see envAssignNameIsInert).
+var inertEnvVars = map[string]bool{
+	// Go toolchain knobs that select behaviour, never a program.
+	"CGO_ENABLED": true, // 0/1 toggle for cgo
+	"GOMAXPROCS":  true, // scheduler thread count
+	"GOOS":        true, // target OS selection within the installed toolchain
+	"GOARCH":      true, // target arch selection, likewise
+	// GOCACHE names a directory the toolchain WRITES compiled artifacts into and
+	// reads back by content hash; it names no program and changes no flag, and
+	// the default already lives outside the workspace. It is on the list because
+	// redirecting a cache is ordinary agent work; note it is the loosest entry
+	// here, and the reason GOROOT/GOENV/GOFLAGS/GOTOOLCHAIN are not.
+	"GOCACHE": true,
 
-	// Pager/editor hooks: names whose value a tool will happily exec. git
-	// consults PAGER for `log`/`diff`, and LESSOPEN is an arbitrary input
-	// filter program. `git log` and `git diff` are on the auto-approve
-	// safelist (readOnlyUtils/isSafeGit in rules.go), so `PAGER=/tmp/evil git
-	// log` would otherwise auto-approve an exec with no human present.
-	"PAGER":     true,
-	"EDITOR":    true,
-	"VISUAL":    true,
-	"LESSOPEN":  true,
-	"LESSCLOSE": true,
+	// Output formatting: booleans and integers consumed by renderers.
+	"NO_COLOR":       true,
+	"FORCE_COLOR":    true,
+	"CLICOLOR":       true,
+	"CLICOLOR_FORCE": true,
+	"COLUMNS":        true,
+	"LINES":          true,
+	// TERM names an entry in the standard terminfo database. TERMINFO — which
+	// names the DATABASE DIRECTORY — is deliberately absent.
+	"TERM": true,
 
-	// Shell option state: SHELLOPTS/BASHOPTS are honoured by a child bash and
-	// can enable xtrace/other behaviour the argv classifier never sees.
-	"SHELLOPTS": true,
-	"BASHOPTS":  true,
-	"CDPATH":    true,
+	// Locale and time: names of locale/zone data that libc reads for
+	// formatting. LOCPATH, which redirects the locale database, is absent.
+	"TZ":       true,
+	"LANG":     true,
+	"LANGUAGE": true,
+
+	// Verbosity conventions. Each is read as a boolean or a log-filter string by
+	// the program that already ran; none selects a program or a library.
+	"CI":             true,
+	"DEBUG":          true,
+	"VERBOSE":        true,
+	"RUST_BACKTRACE": true,
+	"RUST_LOG":       true,
 }
 
-// dangerousEnvVarPrefixes catch whole hook families without enumerating them —
-// enumeration is exactly how this denylist would silently rot.
+// inertEnvVarPrefixes admit whole families whose every member is inert by
+// construction.
 //
-//   - LD_ / DYLD_: dynamic-loader hooks (LD_PRELOAD, DYLD_INSERT_LIBRARIES,
-//     DYLD_FRAMEWORK_PATH, and any future member). The enumerated LD_* entries
-//     above are redundant with this rule and kept only so the list reads as the
-//     documented denylist.
-//   - GIT_: git is the one auto-approvable command with a large family of
-//     "exec this program for me" env vars — GIT_EXTERNAL_DIFF, GIT_PAGER,
-//     GIT_EDITOR, GIT_SEQUENCE_EDITOR, GIT_PROXY_COMMAND, GIT_SSH,
-//     GIT_TEXTCONV_*, and GIT_CONFIG_COUNT/KEY_n/VALUE_n, which injects
-//     arbitrary config (core.pager, core.sshCommand) with no file on disk.
-//     `git log`/`git diff`/`git status` auto-approve (isSafeGit, rules.go), so
-//     a missed GIT_* name is a silent exec with no human in the loop. Denying
-//     the whole prefix costs a prompt on benign forms like GIT_AUTHOR_NAME —
-//     which accompany `git commit`, itself never auto-approved anyway.
-//   - BASH_: BASH_ENV runs a startup file for non-interactive bash, and the
-//     BASH_FUNC_* family is the shellshock-style exported-function vector.
-var dangerousEnvVarPrefixes = []string{"LD_", "DYLD_", "GIT_", "BASH_"}
+//   - LC_: the POSIX locale categories (LC_ALL, LC_CTYPE, LC_MESSAGES, …). Each
+//     value is a locale name looked up in the system locale database; no member
+//     of the family names a program, a library or a flag string.
+var inertEnvVarPrefixes = []string{"LC_"}
 
-// dangerousEnvVarName reports whether an env-var name is on the denylist or
-// caught by a prefix rule. Matching is case-insensitive: a lowercase `ld_preload`
-// is a different (inert) shell variable, but denying it too costs at most a human
-// prompt, whereas a missed case costs a silent bypass. Fail closed on the tie.
+// envAssignNameIsInert reports whether an assignment prefix's NAME is one we
+// have proven cannot change what code the decorated command runs.
 //
-// Shared with change 0070 D2's `env NAME=val` peeling — do not inline this.
-func dangerousEnvVarName(name string) bool {
-	upper := strings.ToUpper(name)
-	if dangerousEnvVars[upper] {
+// Matching is EXACT and case-sensitive, which is the fail-closed direction for
+// an allowlist: `ci=1` and `lc_all=C` are not names any consumer of this
+// allowlist reads, and treating an unfamiliar spelling as unproven costs a
+// prompt, whereas admitting one on a guess could admit a name whose real
+// (differently-cased) sibling is an exec hook. The old denylist matched
+// case-INsensitively for the mirror-image reason.
+//
+// Shared with change 0070 D2's `env NAME=val` peeling — do not inline this, and
+// do not let the two paths grow separate rules.
+func envAssignNameIsInert(name string) bool {
+	if inertEnvVars[name] {
 		return true
 	}
-	for _, p := range dangerousEnvVarPrefixes {
-		if strings.HasPrefix(upper, p) {
+	for _, p := range inertEnvVarPrefixes {
+		if strings.HasPrefix(name, p) {
 			return true
 		}
 	}
@@ -290,10 +303,12 @@ func dangerousEnvVarName(name string) bool {
 //     reason about. Only `+=` is reachable through an inline prefix today (the
 //     parser rejects the array/subscript forms outright); the rest are guarded
 //     because this helper is shared and must be safe on any Assign node;
-//   - NAME is not caught by dangerousEnvVarName;
-//   - the value is statically literal. `FOO=$(id)` and `FOO=$BAR` fail closed:
-//     we cannot know what we would be setting, and therefore cannot know that
-//     the name being benign is enough. A nil/absent value (bare `FOO=`) is
+//   - NAME is on the inert allowlist (envAssignNameIsInert). A name we have not
+//     proven inert fails the whole command closed, whatever its value;
+//   - the value is statically literal. `CI=$(id) make` and `CI=$BAR make` fail
+//     closed even though CI is inert: a substitution in the value RUNS, and an
+//     expansion leaves us unable to say what we would be setting. An inert NAME
+//     is a claim about the name only. A nil/absent value (bare `NO_COLOR=`) is
 //     benign whenever the name is.
 //
 // Shared with change 0070 D2's `env NAME=val` peeling — do not inline this.
@@ -305,7 +320,7 @@ func assignsAreBenign(assigns []*syntax.Assign) bool {
 		if a.Append || a.Naked || a.Index != nil || a.Array != nil {
 			return false
 		}
-		if dangerousEnvVarName(a.Name.Value) {
+		if !envAssignNameIsInert(a.Name.Value) {
 			return false
 		}
 		if a.Value == nil {
@@ -465,7 +480,7 @@ func collectStmtCmd(src string, st *syntax.Stmt, out *[]Segment) error {
 	// themselves. Descending EVERY list they carry — not just the obvious body
 	// — is what makes this safe: each descended statement faces the same
 	// redirect guard, wrapper check, path-qualified-argv[0] check and env-prefix
-	// denylist as a top-level statement, so the classifier sees every command
+	// allowlist as a top-level statement, so the classifier sees every command
 	// that could run. Missing one list would hide a command from every
 	// downstream layer, which is strictly worse than the old blanket
 	// fail-closed (change 0070 D3).
@@ -717,16 +732,17 @@ func isAllDigits(s string) bool {
 // `-c` script body, or fails closed on a wrapper / substitution / path-
 // qualified argv[0].
 func collectCall(src string, call *syntax.CallExpr, out *[]Segment) error {
-	// Env-var assignment prefixes (FOO=bar cmd). A prefix that cannot change
-	// what code runs is dropped and the inner command is classified on its own
-	// merits (change 0070 D1); anything else fails closed at the parse floor.
+	// Env-var assignment prefixes (CI=1 cmd). A prefix whose NAME is on the
+	// proven-inert allowlist is dropped and the inner command is classified on
+	// its own merits (change 0070 D1); anything else — including any name we
+	// simply do not recognise — fails closed at the parse floor.
 	// The assignments are DROPPED, never appended to Args: they are not
 	// arguments, and a downstream path-scoper or deny matcher must not see them.
 	if !assignsAreBenign(call.Assigns) {
 		return ErrUnparseable
 	}
 	if len(call.Args) == 0 {
-		// An assignment-only statement (`FOO=1`) runs no command, so there is
+		// An assignment-only statement (`CI=1`) runs no command, so there is
 		// nothing for any layer to classify; likewise an empty call.
 		return nil
 	}
@@ -1257,12 +1273,13 @@ func peelTimeout(words argWords) (argWords, bool) {
 // classifier downstream, and neither is common enough to be worth the risk of
 // modelling.
 //
-// The assignment words are validated by the same rules as an inline `FOO=1 cmd`
-// prefix: the D1 name denylist (dangerousEnvVarName — shared, never duplicated)
-// plus a literal value. The literal half needs no check here because the caller
-// already required every word to be a literalWord, so `env FOO=$(id) make` has
-// failed closed before we are reached. Validated assignments are DROPPED, not
-// passed on as arguments.
+// The assignment words are validated by the same rules as an inline `CI=1 cmd`
+// prefix: the D1 inert-name allowlist (envAssignNameIsInert — shared, never
+// duplicated, so `env CC=/tmp/evil make` cannot drift open while `CC=/tmp/evil
+// make` stays shut) plus a literal value. The literal half needs no check here
+// because the caller already required every word to be a literalWord, so
+// `env CI=$(id) make` has failed closed before we are reached. Validated
+// assignments are DROPPED, not passed on as arguments.
 // An OPAQUE word in the region env's own operands occupy fails closed (change
 // 0070 D5). This is stricter than the opaque-argv[0] check alone, and
 // deliberately so: `env $X make` gives us no way to tell whether `$X` is an
@@ -1285,7 +1302,7 @@ func peelEnv(words argWords) (argWords, bool) {
 			break
 		}
 		name := w[:eq]
-		if !isEnvVarName(name) || dangerousEnvVarName(name) {
+		if !isEnvVarName(name) || !envAssignNameIsInert(name) {
 			return argWords{}, false
 		}
 		rest = rest.drop(1)
