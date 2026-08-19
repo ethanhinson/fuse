@@ -217,6 +217,136 @@ func TestSplitSegments(t *testing.T) {
 			cmd:  "nohup env FOO=1 timeout 30 go build ./...",
 			want: []seg{{name: "go", args: []string{"build", "./..."}}},
 		},
+
+		// Change 0070 D3: control-flow constructs decompose into their
+		// constituent simple commands instead of hitting the default:
+		// fail-closed arm. Every statement list each node carries is descended,
+		// so a dangerous command can never hide inside a branch that the
+		// classifier does not look at.
+		//
+		// INTERIM POSTURE: the bodies below use only literal words. A `$VAR`
+		// anywhere — a loop body (`do wc -l $f`), a for-loop header word
+		// (`in $LIST`), a case discriminant (`case $x`) — still fails closed
+		// here, because literalWord has no opaque-argument concept yet. Those
+		// shapes live in the _FailClosed table below and D5 flips them. Writing
+		// a `$VAR` row here and bending the parser to pass it would be exactly
+		// the fail-open D5 exists to prevent.
+		{
+			desc: "if/then descends both Cond and Then",
+			cmd:  "if [ -f x ]; then cat x; fi",
+			want: []seg{
+				{name: "[", args: []string{"-f", "x", "]"}},
+				{name: "cat", args: []string{"x"}},
+			},
+		},
+		{
+			desc: "if/else descends the else branch",
+			cmd:  "if true; then ls; else pwd; fi",
+			want: []seg{
+				{name: "true", args: nil},
+				{name: "ls", args: nil},
+				{name: "pwd", args: nil},
+			},
+		},
+		{
+			// The v3 AST nests each elif/else as another *IfClause hanging off
+			// .Else. Stopping at the first level would leave `rm -rf /` in a
+			// trailing else invisible to every downstream layer.
+			desc: "elif/else chain is followed to the end",
+			cmd:  "if true; then ls; elif false; then pwd; else wc -l x; fi",
+			want: []seg{
+				{name: "true", args: nil},
+				{name: "ls", args: nil},
+				{name: "false", args: nil},
+				{name: "pwd", args: nil},
+				{name: "wc", args: []string{"-l", "x"}},
+			},
+		},
+		{
+			desc: "for loop with literal header words descends its body",
+			cmd:  "for f in a b; do ls; done",
+			want: []seg{{name: "ls", args: nil}},
+		},
+		{
+			// `for f; do …` iterates the positional parameters: no header word
+			// list at all, so there is nothing unresolvable to fail on.
+			desc: "for loop over positional params descends its body",
+			cmd:  "for f; do ls; done",
+			want: []seg{{name: "ls", args: nil}},
+		},
+		{
+			desc: "nested if inside for",
+			cmd:  "for f in a b; do if true; then ls; fi; done",
+			want: []seg{
+				{name: "true", args: nil},
+				{name: "ls", args: nil},
+			},
+		},
+		{
+			desc: "while descends Cond and Do",
+			cmd:  "while true; do ls; done",
+			want: []seg{
+				{name: "true", args: nil},
+				{name: "ls", args: nil},
+			},
+		},
+		{
+			// `until` is a WhileClause with Until: true — same node, same descent.
+			desc: "until descends Cond and Do",
+			cmd:  "until false; do ls; done",
+			want: []seg{
+				{name: "false", args: nil},
+				{name: "ls", args: nil},
+			},
+		},
+		{
+			desc: "case with a literal discriminant descends its branches",
+			cmd:  "case foo in a) ls ;; esac",
+			want: []seg{{name: "ls", args: nil}},
+		},
+		{
+			desc: "case descends every branch, not just the first",
+			cmd:  "case foo in a) ls ;; b) pwd ;; *) wc -l x ;; esac",
+			want: []seg{
+				{name: "ls", args: nil},
+				{name: "pwd", args: nil},
+				{name: "wc", args: []string{"-l", "x"}},
+			},
+		},
+		{
+			desc: "block descends its statements",
+			cmd:  "{ ls; wc -l x; }",
+			want: []seg{
+				{name: "ls", args: nil},
+				{name: "wc", args: []string{"-l", "x"}},
+			},
+		},
+		{
+			desc: "subshell descends its statements",
+			cmd:  "(cd /tmp && ls)",
+			want: []seg{
+				{name: "cd", args: []string{"/tmp"}},
+				{name: "ls", args: nil},
+			},
+		},
+		{
+			// Background-ness changes WHEN a command runs, not WHAT runs, so a
+			// backgrounded statement yields the same segments as a foreground one.
+			desc: "backgrounded statement yields the same segments",
+			cmd:  "ls & wc -l x",
+			want: []seg{
+				{name: "ls", args: nil},
+				{name: "wc", args: []string{"-l", "x"}},
+			},
+		},
+		{
+			desc: "backgrounded statement inside a block",
+			cmd:  "{ ls & wc -l x; }",
+			want: []seg{
+				{name: "ls", args: nil},
+				{name: "wc", args: []string{"-l", "x"}},
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -451,6 +581,63 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"dup-op to a real file, not an fd", "ls >&file"},
 		{"fd-close is not a bare fd number", "ls 2>&-"},
 		{"read-write redirect <>", "cat <> scratch"},
+
+		// Change 0070 D3: control flow now descends (see TestSplitSegments), but
+		// descent must not become a laundering channel.
+		//
+		// A FUNCTION DECLARATION IS DELIBERATELY NOT DESCENDED. collectStmt has
+		// no *syntax.FuncDecl case and must never grow one: a declaration's body
+		// does not run at declaration time, its call sites are invisible to an
+		// argv classifier, and it is the recursion vehicle for the fork bomb
+		// below. If a future "just add the remaining node types" edit adds the
+		// case, this row goes red. That is the point of it.
+		{"fork bomb function declaration", ":(){ :|:& };:"},
+		{"plain function declaration", "f() { rm -rf /; }"},
+		{"function keyword form", "function f { rm -rf /; }"},
+
+		// The per-statement redirect guard runs BEFORE the type switch, so it
+		// applies to each descended statement, not just the outermost one.
+		{"redirect inside an if branch", "if true; then echo x > /etc/passwd; fi"},
+		{"redirect inside a for body", "for f in a b; do echo x > /etc/passwd; done"},
+		{"redirect inside a block", "{ echo x > /etc/passwd; }"},
+		{"redirect inside a subshell", "(echo x > /etc/passwd)"},
+		{"redirect on the compound statement itself", "for f in a b; do ls; done > out.txt"},
+
+		// Descent does not launder a wrapper, a path-qualified argv[0], or a
+		// dangerous env prefix — the descended statement faces every check a
+		// top-level statement faces.
+		{"subshell does not launder a wrapper", "(sudo rm -rf /)"},
+		{"block does not launder a wrapper", "{ xargs rm; }"},
+		{"if branch does not launder a wrapper", "if true; then sudo rm -rf /; fi"},
+		{"else branch does not launder a wrapper", "if true; then ls; else sudo rm -rf /; fi"},
+		{"elif chain does not launder a wrapper", "if true; then ls; elif false; then sudo rm -rf /; fi"},
+		{"case branch does not launder a wrapper", "case foo in a) sudo rm -rf / ;; esac"},
+		{"while body does not launder a wrapper", "while true; do sudo rm -rf /; done"},
+		{"for body does not launder a path-qualified argv0", "for f in a b; do ./evil; done"},
+		{"block does not launder a dangerous env prefix", "{ LD_PRELOAD=evil.so make; }"},
+
+		// INTERIM POSTURE (D3, pre-D5). A non-literal word is unresolvable, and
+		// until D5 gives the parser an opaque-argument representation the honest
+		// answer is to fail the whole command closed. Every row below is expected
+		// to FLIP to parsing when D5 lands; they are pinned here so the interim
+		// behaviour is deliberate rather than accidental.
+		{"for header word is a parameter expansion", "for f in $LIST; do ls; done"},
+		{"for header word is a command substitution", "for f in $(ls); do ls; done"},
+		{"for body arg is a parameter expansion", "for f in a b; do wc -l $f; done"},
+		{"case discriminant is a parameter expansion", "case $x in a) ls ;; esac"},
+		{"case pattern is a parameter expansion", "case foo in $p) ls ;; esac"},
+
+		// A C-style for header is arithmetic, not a word list. It carries no
+		// statement list we could descend and no words we could resolve, so it
+		// stays on the fail-closed arm rather than being descended body-only.
+		{"c-style for loop", "for ((i=0;i<10;i++)); do ls; done"},
+
+		// Node types with no case are still fail-closed. Listed so that the
+		// widening's boundary is visible.
+		{"[[ ]] test clause", "[[ -f x ]]"},
+		{"arithmetic command", "((1+1))"},
+		{"let clause", "let x=1"},
+		{"time clause", "time ls"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {

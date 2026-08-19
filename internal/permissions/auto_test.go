@@ -151,6 +151,73 @@ func TestAutoMode_EnvExecHook_DoesNotAutoApprove(t *testing.T) {
 	}
 }
 
+// TestAutoMode_ControlFlowDescent_SurfacesHiddenPayload is the end-to-end
+// security half of change 0070 D3.
+//
+// Before D3, a dangerous command wrapped in control flow was protected only by
+// accident: the whole statement hit collectStmt's default: arm, and
+// "unparseable ⇒ ask" put a human in front of it. D3 removes that accident for
+// if/for/while/case/block/subshell, so the protection must now come from the
+// segments themselves reaching the rules layer. If the descent ever dropped a
+// branch — descending `Then` but not `Else`, the loop body but not a nested
+// clause, the first case item but not the rest — the payload would vanish and
+// the residual read-only segments would AUTO-APPROVE with no human at all.
+// That is a silent fail-open, strictly worse than the fail-closed it replaced.
+//
+// Asserting a terminal deny (IsError && !called) rather than merely "not
+// auto-approved" is what makes this test load-bearing: an ask would also
+// satisfy "not auto-approved" while telling us nothing about whether the
+// segment was seen. Each row therefore proves the hidden `rm -rf ~` was
+// actually enumerated out of that branch.
+func TestAutoMode_ControlFlowDescent_SurfacesHiddenPayload(t *testing.T) {
+	for _, cmd := range []string{
+		"if true; then rm -rf ~; fi",
+		"if false; then ls; else rm -rf ~; fi",
+		"if false; then ls; elif true; then rm -rf ~; fi",
+		"for f in a b; do rm -rf ~; done",
+		"while true; do rm -rf ~; done",
+		"until false; do rm -rf ~; done",
+		"case foo in a) ls ;; b) rm -rf ~ ;; esac",
+		"{ ls; rm -rf ~; }",
+		"(cd /tmp && rm -rf ~)",
+		"ls & rm -rf ~",
+		"if true; then for f in a b; do rm -rf ~; done; fi",
+	} {
+		// approve=true so an ask would look like success — only a genuine
+		// terminal deny distinguishes "the payload was seen and refused".
+		approve, called := newApproveRecorder(true)
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+			WithWorkspaceRoot(t.TempDir()))
+		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
+		if !res.IsError {
+			t.Fatalf("%q: control-flow descent must surface the hidden rm -rf to the rules layer, got: %s", cmd, res.Output)
+		}
+		if *called {
+			t.Fatalf("%q: a rules-layer deny must not route to the human approval func", cmd)
+		}
+	}
+}
+
+// TestAutoMode_FunctionDeclaration_StaysClosed pins the one node D3
+// deliberately did NOT descend. A function body does not run where it is
+// declared, so enumerating its segments would misreport what executes; the fork
+// bomb is the canonical case. These must reach a human, never auto-approve.
+func TestAutoMode_FunctionDeclaration_StaysClosed(t *testing.T) {
+	for _, cmd := range []string{
+		":(){ :|:& };:",
+		"f() { rm -rf /; }",
+		"function f { ls; }",
+	} {
+		approve, called := newApproveRecorder(true)
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+			WithWorkspaceRoot(t.TempDir()))
+		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
+		if !res.IsError && !*called {
+			t.Fatalf("%q auto-approved with no human: a function declaration must stay fail-closed", cmd)
+		}
+	}
+}
+
 func TestAutoMode_DenySegment_DeniesWithLayerNamedReason(t *testing.T) {
 	approve, called := newApproveRecorder(true)
 	// An allow rule for bash:git * means rules would allow git status, but the

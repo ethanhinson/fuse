@@ -186,8 +186,9 @@ func assignsAreBenign(assigns []*syntax.Assign) bool {
 }
 
 // splitSegments parses cmd as a bash program and enumerates every
-// simple-command segment across &&, ||, ;, |, |&, and newlines, including the
-// script bodies of `bash -c "…"` / `sh -c "…"`.
+// simple-command segment across &&, ||, ;, |, |&, `&`, and newlines, including
+// the script bodies of `bash -c "…"` / `sh -c "…"` and the statement lists of
+// if/for/while/until/case/blocks/subshells (change 0070 D3).
 //
 // It fails closed with ErrUnparseable on: a size-cap violation; a parse error;
 // command substitution ($(…) or backticks) or process substitution anywhere;
@@ -197,9 +198,11 @@ func assignsAreBenign(assigns []*syntax.Assign) bool {
 // redirIsBenign, change 0037); an env-var assignment prefix that is not benign
 // under assignsAreBenign (change 0070); an argv[0] containing a path separator
 // (the basename-collapse bug); an arbitrary-arg wrapper as argv[0] (bash/sh
-// without a parseable -c, xargs, npx, sudo, …); or a `timeout`/`env` invocation
+// without a parseable -c, xargs, npx, sudo, …); a `timeout`/`env` invocation
 // whose own operands cannot be modelled well enough to name the inner command
-// (change 0070 D2 — see peelTimeout and peelEnv).
+// (change 0070 D2 — see peelTimeout and peelEnv); a for-loop header or case
+// discriminant/pattern that is not statically literal; or any command node with
+// no case in collectStmt — a function declaration above all (change 0070 D3).
 func splitSegments(cmd string) ([]Segment, error) {
 	if len(cmd) > maxCommandBytes {
 		return nil, ErrUnparseable
@@ -248,6 +251,9 @@ func collectStmt(src string, st *syntax.Stmt, out *[]Segment) error {
 			return ErrUnparseable
 		}
 	}
+	// st.Background (`cmd &`) is deliberately not consulted: backgrounding
+	// changes WHEN a command runs, not WHAT runs, so the segments are identical
+	// and the classifier's decision must be too. Same for st.Negated (`! cmd`).
 	switch cmd := st.Cmd.(type) {
 	case *syntax.BinaryCmd:
 		// &&, ||, | and |& all decompose into their operands.
@@ -257,11 +263,127 @@ func collectStmt(src string, st *syntax.Stmt, out *[]Segment) error {
 		return collectStmt(src, cmd.Y, out)
 	case *syntax.CallExpr:
 		return collectCall(src, cmd, out)
+
+	// Control-flow constructs carry statement lists rather than being commands
+	// themselves. Descending EVERY list they carry — not just the obvious body
+	// — is what makes this safe: each descended statement faces the same
+	// redirect guard, wrapper check, path-qualified-argv[0] check and env-prefix
+	// denylist as a top-level statement, so the classifier sees every command
+	// that could run. Missing one list would hide a command from every
+	// downstream layer, which is strictly worse than the old blanket
+	// fail-closed (change 0070 D3).
+	case *syntax.IfClause:
+		return collectIf(src, cmd, out)
+	case *syntax.ForClause:
+		if err := collectLoopHeader(cmd.Loop); err != nil {
+			return err
+		}
+		return collectStmts(src, cmd.Do, out)
+	case *syntax.WhileClause:
+		// `until` is this same node with Until: true; the statement lists are
+		// identical, so the descent is too.
+		if err := collectStmts(src, cmd.Cond, out); err != nil {
+			return err
+		}
+		return collectStmts(src, cmd.Do, out)
+	case *syntax.CaseClause:
+		return collectCase(src, cmd, out)
+	case *syntax.Block:
+		return collectStmts(src, cmd.Stmts, out)
+	case *syntax.Subshell:
+		// A subshell isolates state (cd, exported vars), not effects: the
+		// commands inside still touch the same filesystem.
+		return collectStmts(src, cmd.Stmts, out)
+
 	default:
-		// Control-flow constructs, subshells, blocks, function decls, etc.
-		// are not simple commands we can decompose safely: fail closed.
+		// Everything with no case above — *syntax.FuncDecl above all, plus
+		// TestClause ([[ ]]), ArithmCmd, LetClause, TimeClause, CoprocClause —
+		// is not something we can decompose safely: fail closed.
+		//
+		// FuncDecl MUST STAY HERE. A declaration's body does not run when it is
+		// declared, its call sites are invisible to an argv-based classifier,
+		// and it is the recursion vehicle for the fork bomb `:(){ :|:& };:`.
+		// Descending it would report the body's segments as if they were what
+		// runs, which is a lie in both directions. Do not "finish the job" by
+		// adding a FuncDecl case — TestSplitSegments_FailClosed pins this.
 		return ErrUnparseable
 	}
+}
+
+// collectIf descends an if statement's condition, its then-branch, and its
+// entire else chain. In the v3 AST an `elif`/`else` is itself an *IfClause
+// hanging off .Else (an `else` being the degenerate one with an empty Cond), so
+// the chain is followed to its end — stopping at the first level would leave a
+// trailing `else rm -rf /` invisible.
+func collectIf(src string, cmd *syntax.IfClause, out *[]Segment) error {
+	for c := cmd; c != nil; c = c.Else {
+		if err := collectStmts(src, c.Cond, out); err != nil {
+			return err
+		}
+		if err := collectStmts(src, c.Then, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collectCase descends a case statement's discriminant, every branch's
+// patterns, and every branch's statement list. Discriminant and patterns are
+// words, not commands, so they produce no segment — but they must still be
+// statically resolvable, on the same literal-or-fail-closed discipline as any
+// other word (change 0070 D5 will widen that to literal-or-opaque).
+func collectCase(src string, cmd *syntax.CaseClause, out *[]Segment) error {
+	if cmd.Word == nil {
+		return ErrUnparseable
+	}
+	if _, ok := literalWord(cmd.Word); !ok {
+		return ErrUnparseable
+	}
+	for _, item := range cmd.Items {
+		if item == nil {
+			return ErrUnparseable
+		}
+		for _, pat := range item.Patterns {
+			if pat == nil {
+				return ErrUnparseable
+			}
+			if _, ok := literalWord(pat); !ok {
+				return ErrUnparseable
+			}
+		}
+		if err := collectStmts(src, item.Stmts, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collectLoopHeader validates a for-clause header. It emits no segment — the
+// header names no command — but an unresolvable header is still unresolvable,
+// so it takes the same literal-or-fail-closed discipline as any other word.
+//
+//   - *syntax.WordIter is the `for f in a b` form. Each item word must be
+//     literal; `for f in $LIST` and `for f in $(ls)` fail closed until D5 gives
+//     them an opaque representation. An absent `in` list (`for f; do …`, which
+//     iterates the positional parameters) has no items and nothing to resolve.
+//   - *syntax.CStyleLoop is `for ((i=0;i<10;i++))`. It carries arithmetic
+//     expressions, not words: nothing here can be resolved statically, and the
+//     body-only descent that would otherwise apply is not worth the risk of
+//     silently ignoring a header we did not model. Fail closed.
+func collectLoopHeader(loop syntax.Loop) error {
+	iter, ok := loop.(*syntax.WordIter)
+	if !ok {
+		return ErrUnparseable
+	}
+	for _, item := range iter.Items {
+		if item == nil {
+			return ErrUnparseable
+		}
+		if _, ok := literalWord(item); !ok {
+			return ErrUnparseable
+		}
+	}
+	return nil
 }
 
 // redirIsBenign reports whether a single redirect is safe to allow past the
