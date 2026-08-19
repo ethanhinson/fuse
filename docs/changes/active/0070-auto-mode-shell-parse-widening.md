@@ -12,12 +12,12 @@ related: [37, 40, 67, 68, 69]
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-17-auto-mode-shell-parse-widening-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-19-auto-mode-shell-parse-widening-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-shell-parse-widening
-claimed_at: 2026-08-19T21:20:26Z
+claimed_at: 2026-08-19T21:22:58Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-17-auto-mode-shell-parse-widening-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-17-auto-mode-shell-parse-widening-design.md) |
+| Plan | [2026-08-19-auto-mode-shell-parse-widening-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-shell-parse-widening/docs/superpowers/plans/2026-08-19-auto-mode-shell-parse-widening-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
