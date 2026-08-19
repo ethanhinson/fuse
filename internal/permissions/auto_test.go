@@ -71,6 +71,57 @@ func TestAutoMode_BenignEnvPrefix_AutoApproves(t *testing.T) {
 	}
 }
 
+// TestAutoMode_PeeledWrappers_AutoApprove is the end-to-end payoff of change
+// 0070 D2: a read-only command wrapped in timeout/env/nohup is classified on
+// the inner command's own merits instead of stalling on the human.
+func TestAutoMode_PeeledWrappers_AutoApprove(t *testing.T) {
+	for _, cmd := range []string{
+		"timeout 30 git log",
+		"timeout -k 5 1.5s ls -la",
+		"env FOO=1 ls -la",
+		"nohup git status",
+		"env CGO_ENABLED=0 timeout 10m git diff",
+	} {
+		approve, called := newApproveRecorder(false)
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+			WithWorkspaceRoot(t.TempDir()))
+		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
+		if res.IsError {
+			t.Fatalf("peeled wrapper %q should auto-approve, got error: %s", cmd, res.Output)
+		}
+		if *called {
+			t.Fatalf("peeled wrapper %q must not invoke the approval func", cmd)
+		}
+	}
+}
+
+// TestAutoMode_WrapperPeelDoesNotLaunder is the fail-closed half of D2. Each
+// command below wraps an auto-approved read (`git log`) in a form the peel must
+// refuse: -i clears the environment the denylist was reasoning about, -S
+// re-splits its operand into a different command, a denylisted assignment is a
+// straight exec hook, and sudo behind a timeout must not inherit the inner
+// command's decision. None may reach a verdict without a human.
+func TestAutoMode_WrapperPeelDoesNotLaunder(t *testing.T) {
+	for _, cmd := range []string{
+		"env -i git log",
+		"env -S 'git log'",
+		"env LD_PRELOAD=/tmp/evil.so git log",
+		"env GIT_PAGER=/tmp/evil git log",
+		"timeout 30 sudo git log",
+		"env FOO=1 ./evil",
+	} {
+		// approve=true so a routed-to-human ask succeeds and is distinguishable
+		// from a silent auto-approve by the recorder flag.
+		approve, called := newApproveRecorder(true)
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+			WithWorkspaceRoot(t.TempDir()))
+		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
+		if !res.IsError && !*called {
+			t.Fatalf("%q auto-approved with no human: the wrapper peel must never launder it", cmd)
+		}
+	}
+}
+
 // TestAutoMode_EnvExecHook_DoesNotAutoApprove is the fail-closed half of D1, and
 // the reason the denylist carries GIT_/BASH_ prefix rules and PAGER/EDITOR.
 //

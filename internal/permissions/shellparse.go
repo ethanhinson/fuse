@@ -3,6 +3,7 @@ package permissions
 import (
 	"errors"
 	"path"
+	"regexp"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -34,29 +35,30 @@ type Segment struct {
 // other form fails closed).
 var arbitraryArgWrappers = map[string]bool{
 	"xargs":  true,
-	"env":    true,
 	"npx":    true,
 	"sudo":   true,
 	"watch":  true,
-	"nohup":  true,
 	"docker": true,
 	"eval":   true,
 	"exec":   true,
-	// timeout takes a duration then an arbitrary inner command. The read-only
-	// safe-list classifier (isReadOnlySafe in rules.go) now exists, so a future
-	// task MAY peel timeout — but that requires stripping timeout's own flags
-	// AND its mandatory duration argument here in shellparse.go, plus new corpus
-	// rows. Kept fail-closed for now ("timeout-then-unknown"): the conservative
-	// posture costs a human prompt, never a bypass.
-	"timeout": true,
 }
 
 // peelWrappers are side-effect-free prefixes stripped before the argv[0]
-// check. Their first non-flag argument becomes the effective command.
+// check. Their first non-flag argument becomes the effective command, because
+// every option they take is either valueless or attached (`nice -n5`); a
+// leading `-` word is therefore never the inner command.
+//
+// timeout and env are NOT here: both carry operands that are not flags
+// (timeout's mandatory duration, env's NAME=val prefixes) and both have flags
+// that change what actually runs. They get dedicated peels — peelTimeout and
+// peelEnv — precisely because peelWrapperArgs drops every leading `-` word
+// blindly, which on `env -i cmd` would silently discard the fact that the
+// environment was cleared (change 0070 D2).
 var peelWrappers = map[string]bool{
 	"time":   true,
 	"nice":   true,
 	"stdbuf": true,
+	"nohup":  true,
 }
 
 // dangerousEnvVars are environment-variable names that change *what code runs*
@@ -194,8 +196,10 @@ func assignsAreBenign(assigns []*syntax.Assign) bool {
 // fd-duplication (2>&1, >&2), which carry no writable target (see
 // redirIsBenign, change 0037); an env-var assignment prefix that is not benign
 // under assignsAreBenign (change 0070); an argv[0] containing a path separator
-// (the basename-collapse bug); or an arbitrary-arg wrapper as argv[0] (bash/sh
-// without a parseable -c, xargs, env, npx, timeout-then-unknown, sudo, …).
+// (the basename-collapse bug); an arbitrary-arg wrapper as argv[0] (bash/sh
+// without a parseable -c, xargs, npx, sudo, …); or a `timeout`/`env` invocation
+// whose own operands cannot be modelled well enough to name the inner command
+// (change 0070 D2 — see peelTimeout and peelEnv).
 func splitSegments(cmd string) ([]Segment, error) {
 	if len(cmd) > maxCommandBytes {
 		return nil, ErrUnparseable
@@ -347,10 +351,42 @@ func collectCall(src string, call *syntax.CallExpr, out *[]Segment) error {
 
 	argv0 := words[0]
 
-	// Peel side-effect-free wrappers (timeout/time/nice/stdbuf); the peeled
-	// remainder must itself be a bare, non-path-qualified command.
-	for peelWrappers[basename(argv0)] && !strings.ContainsRune(argv0, '/') {
-		words = peelWrapperArgs(words)
+	// Peel side-effect-free wrappers; the peeled remainder must itself be a
+	// bare, non-path-qualified command. Peeling repeats so nested wrappers
+	// (`nohup env FOO=1 timeout 30 go build`) reduce to the real command, and a
+	// path-qualified wrapper (`/usr/bin/timeout …`) is never peeled — it falls
+	// through to the path-qualified check below and fails closed.
+	//
+	// Everything the loop leaves behind still faces the post-peel checks: a
+	// path-qualified argv[0] fails closed, bash/sh re-enters the `-c` path, and
+	// an inner command that is itself an arbitrary-arg wrapper
+	// (`timeout 30 sudo rm -rf /`) fails closed on arbitraryArgWrappers.
+peel:
+	for !strings.ContainsRune(argv0, '/') {
+		switch base := basename(argv0); {
+		case peelWrappers[base]:
+			words = peelWrapperArgs(words)
+		case base == "timeout":
+			peeled, ok := peelTimeout(words)
+			if !ok {
+				return ErrUnparseable
+			}
+			words = peeled
+		case base == "env":
+			peeled, ok := peelEnv(words)
+			if !ok {
+				return ErrUnparseable
+			}
+			if len(peeled) == 0 {
+				// `env` alone, or `env FOO=1`, prints the environment and runs
+				// no command: benign, and there is nothing to classify. Produce
+				// no segment rather than failing closed.
+				return nil
+			}
+			words = peeled
+		default:
+			break peel
+		}
 		if len(words) == 0 {
 			return ErrUnparseable
 		}
@@ -458,6 +494,118 @@ func peelWrapperArgs(words []string) []string {
 		rest = rest[1:]
 	}
 	return rest
+}
+
+// timeoutDuration matches timeout's mandatory DURATION operand: a decimal
+// number with an optional s/m/h/d unit suffix (`30`, `1.5s`, `10m`). Anything
+// else in that position is not a duration we modelled, and the whole command
+// fails closed rather than guess which word is the inner command.
+var timeoutDuration = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?[smhd]?$`)
+
+// peelTimeout strips `timeout`'s own flags and its mandatory duration operand,
+// returning the inner command's words. words[0] is the timeout invocation
+// itself (change 0070 D2).
+//
+// This is deliberately NOT peelWrapperArgs. timeout's `-s`/`-k` take a value as
+// a SEPARATE word, so blindly dropping leading `-` words would leave that value
+// sitting where the duration belongs (`timeout -s 30 make` would peel to
+// `make`, having silently eaten the signal name and mistaken the duration for
+// it). We therefore model each flag's arity explicitly and fail closed on any
+// flag we did not model — an unknown flag might take a separate value too.
+//
+// After the flags, exactly one duration-shaped word must appear. Zero (`timeout
+// go test`) fails closed; so does a second duration-shaped word, since no real
+// command is named like a duration and that shape means we misread the flags.
+func peelTimeout(words []string) ([]string, bool) {
+	rest := words[1:]
+	for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
+		flag := rest[0]
+		switch {
+		case flag == "--preserve-status" || flag == "--foreground":
+			rest = rest[1:]
+		case flag == "-s" || flag == "-k" || flag == "--signal" || flag == "--kill-after":
+			// Value in a separate word: drop both.
+			if len(rest) < 2 {
+				return nil, false
+			}
+			rest = rest[2:]
+		case strings.HasPrefix(flag, "--signal=") || strings.HasPrefix(flag, "--kill-after="):
+			rest = rest[1:]
+		case len(flag) > 2 && (strings.HasPrefix(flag, "-s") || strings.HasPrefix(flag, "-k")):
+			// Attached short-option value: -sKILL, -k5s.
+			rest = rest[1:]
+		default:
+			return nil, false
+		}
+	}
+	if len(rest) == 0 || !timeoutDuration.MatchString(rest[0]) {
+		return nil, false
+	}
+	rest = rest[1:]
+	if len(rest) > 0 && timeoutDuration.MatchString(rest[0]) {
+		return nil, false
+	}
+	return rest, true
+}
+
+// peelEnv strips an `env` invocation's leading NAME=val assignments, returning
+// the inner command's words. words[0] is the env invocation itself. An empty
+// remainder with ok=true means `env` printed the environment and ran no command
+// (change 0070 D2).
+//
+// ANY flag fails closed — `-i`, `-u`, `-S`, `-0`, a bare `--`, and every long
+// form. This is deliberately blunt rather than an arity model like peelTimeout's:
+// `env -i cmd` clears the environment (so the absence of a dangerous assignment
+// proves nothing about what cmd will load) and `env -S 'foo bar'` re-splits its
+// operand into an entirely different command. Neither is visible to the argv
+// classifier downstream, and neither is common enough to be worth the risk of
+// modelling.
+//
+// The assignment words are validated by the same rules as an inline `FOO=1 cmd`
+// prefix: the D1 name denylist (dangerousEnvVarName — shared, never duplicated)
+// plus a literal value. The literal half needs no check here because the caller
+// already required every word to be a literalWord, so `env FOO=$(id) make` has
+// failed closed before we are reached. Validated assignments are DROPPED, not
+// passed on as arguments.
+func peelEnv(words []string) ([]string, bool) {
+	rest := words[1:]
+	for len(rest) > 0 {
+		w := rest[0]
+		if strings.HasPrefix(w, "-") {
+			return nil, false
+		}
+		eq := strings.IndexByte(w, '=')
+		if eq < 0 {
+			// First non-assignment word: the inner command starts here, and its
+			// own flags are none of env's business.
+			break
+		}
+		name := w[:eq]
+		if !isEnvVarName(name) || dangerousEnvVarName(name) {
+			return nil, false
+		}
+		rest = rest[1:]
+	}
+	return rest, true
+}
+
+// isEnvVarName reports whether s has the shape of a shell variable name. env
+// itself is laxer (it accepts any word containing '='), but a word we cannot
+// read as a name is one we cannot reason about, so it fails closed.
+func isEnvVarName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r == '_':
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9' && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // basename returns the final path element of argv0. For a bare name (no

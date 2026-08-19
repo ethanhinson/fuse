@@ -130,6 +130,93 @@ func TestSplitSegments(t *testing.T) {
 			cmd:  "foo=1 make",
 			want: []seg{{name: "make", args: nil}},
 		},
+
+		// Change 0070 D2: timeout/env/nohup are peeled to their inner command
+		// instead of failing closed as arbitrary-arg wrappers. The peel is
+		// dedicated for timeout and env — see the FailClosed table for the
+		// shapes that stay shut.
+		{
+			desc: "timeout with a bare-seconds duration peels to the inner command",
+			cmd:  "timeout 30 go test ./...",
+			want: []seg{{name: "go", args: []string{"test", "./..."}}},
+		},
+		{
+			desc: "timeout with a fractional suffixed duration",
+			cmd:  "timeout 1.5s wc -l x",
+			want: []seg{{name: "wc", args: []string{"-l", "x"}}},
+		},
+		{
+			desc: "timeout with -k DUR before the duration",
+			cmd:  "timeout -k 5 30 make",
+			want: []seg{{name: "make", args: nil}},
+		},
+		{
+			desc: "timeout with a modelled long flag taking a value",
+			cmd:  "timeout --kill-after=5s 10m make",
+			want: []seg{{name: "make", args: nil}},
+		},
+		{
+			desc: "timeout with --signal=SIG and --preserve-status",
+			cmd:  "timeout --preserve-status --signal=KILL 10 go build",
+			want: []seg{{name: "go", args: []string{"build"}}},
+		},
+		{
+			desc: "timeout with a combined short flag value",
+			cmd:  "timeout -sKILL 10 go build",
+			want: []seg{{name: "go", args: []string{"build"}}},
+		},
+		{
+			desc: "timeout then unknown binary is now evaluable, not unparseable",
+			cmd:  "timeout 5 somebinary",
+			want: []seg{{name: "somebinary", args: nil}},
+		},
+		{
+			desc: "timeout peels into the bash -c script path",
+			cmd:  `timeout 30 bash -c "ls && wc -l x"`,
+			want: []seg{
+				{name: "ls", args: nil},
+				{name: "wc", args: []string{"-l", "x"}},
+			},
+		},
+		{
+			desc: "env with a benign assignment peels to the inner command",
+			cmd:  "env FOO=1 make",
+			want: []seg{{name: "make", args: nil}},
+		},
+		{
+			desc: "env with no assignments peels to the inner command",
+			cmd:  "env rm x",
+			want: []seg{{name: "rm", args: []string{"x"}}},
+		},
+		{
+			// The dangerous command is no longer hidden behind an unparseable
+			// wrapper: it reaches the rules layer, which denies it outright.
+			desc: "env assignment does not launder the inner command",
+			cmd:  "env FOO=bar rm -rf /",
+			want: []seg{{name: "rm", args: []string{"-rf", "/"}}},
+		},
+		{
+			// `env` with no remainder prints the environment. Benign, and no
+			// command runs, so there is nothing to classify.
+			desc: "bare env produces no segment",
+			cmd:  "env",
+			want: nil,
+		},
+		{
+			desc: "env with only assignments produces no segment",
+			cmd:  "env FOO=1 BAR=2",
+			want: nil,
+		},
+		{
+			desc: "nohup peels to the inner command",
+			cmd:  "nohup go build",
+			want: []seg{{name: "go", args: []string{"build"}}},
+		},
+		{
+			desc: "wrappers nest and peel down to the real command",
+			cmd:  "nohup env FOO=1 timeout 30 go build ./...",
+			want: []seg{{name: "go", args: []string{"build", "./..."}}},
+		},
 	}
 
 	for _, tc := range cases {
@@ -315,11 +402,43 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"bash with script file (no -c)", "bash script.sh"},
 		{"sh -c with no script word", "sh -c"},
 		{"xargs wrapper", "xargs rm"},
-		{"env wrapper with assignment", "env FOO=bar rm -rf /"},
-		{"env wrapper bare inner", "env rm x"},
 		{"npx wrapper", "npx cowsay hi"},
 		{"sudo wrapper", "sudo rm -rf /"},
-		{"timeout then unknown", "timeout 5 somebinary"},
+
+		// Change 0070 D2: timeout/env/nohup peel (see TestSplitSegments), but
+		// every shape where the peel cannot prove what actually runs stays shut.
+		// env is deliberately blunt about flags: -i clears the environment and
+		// -S re-splits its operand into a whole new command, neither of which
+		// the assignment denylist can see.
+		{"env -i clears the environment", "env -i make"},
+		{"env -u unsets a variable", "env -u PATH make"},
+		{"env -S re-splits into a new command", "env -S 'foo bar'"},
+		{"env with a long flag", "env --ignore-environment make"},
+		{"env -0", "env -0"},
+		{"env with a bare -- separator", "env -- make"},
+		{"env assignment reuses the D1 denylist", "env LD_PRELOAD=x make"},
+		{"env assignment reuses the D1 prefix rule", "env DYLD_INSERT_LIBRARIES=x make"},
+		{"env PATH assignment", "env PATH=/tmp make"},
+		{"env assignment with a substituted value", "env FOO=$(id) make"},
+		{"env assignment with a parameter expansion", "env FOO=$BAR make"},
+		{"env assignment with a non-name left side", "env foo-bar=1 make"},
+		{"env assignment with an empty name", "env =evil make"},
+		{"env does not launder a path-qualified argv0", "env FOO=1 ./evil"},
+		{"env does not launder an arbitrary-arg wrapper", "env xargs rm"},
+		{"timeout with no duration", "timeout go test"},
+		{"timeout with no inner command", "timeout 30"},
+		{"bare timeout", "timeout"},
+		{"timeout with a non-duration word", "timeout 30x make"},
+		{"timeout with an unmodelled flag", "timeout --unmodelled 30 make"},
+		{"timeout flag swallows the duration", "timeout -s 30 make"},
+		{"timeout -k with no value", "timeout -k"},
+		{"timeout with two duration words", "timeout 30 30 make"},
+		{"timeout does not launder a wrapper", "timeout 30 sudo rm -rf /"},
+		{"timeout does not launder xargs", "timeout 30 xargs rm"},
+		{"timeout does not launder a path-qualified argv0", "timeout 30 ./evil"},
+		{"path-qualified timeout is not peeled", "/usr/bin/timeout 30 ls"},
+		{"nohup does not launder a wrapper", "nohup sudo rm -rf /"},
+		{"nohup with no inner command", "nohup"},
 		{"redirect to file with >", "echo x > /etc/passwd"},
 		{"append redirect >>", "grep foo bar >> ~/.zshrc"},
 		{"redirect inside workspace", "ls > out.txt"},
@@ -365,6 +484,26 @@ func TestSplitSegments_BenignAssignsAreDropped(t *testing.T) {
 		if strings.Contains(a, "=") && (strings.HasPrefix(a, "FOO") || strings.HasPrefix(a, "BAR")) {
 			t.Errorf("assignment %q leaked into Args: %#v", a, got[0].Args)
 		}
+	}
+}
+
+// TestSplitSegments_EnvPeelDropsAssignments is the D2 mirror of the D1
+// assertion above: `env NAME=val cmd` must hand the classifier the inner
+// command's own argv, with the assignment words dropped rather than smuggled in
+// as arguments.
+func TestSplitSegments_EnvPeelDropsAssignments(t *testing.T) {
+	got, err := splitSegments("env FOO=1 BAR=2 go test ./...")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 segment, got %d: %+v", len(got), got)
+	}
+	if got[0].Name != "go" {
+		t.Errorf("Name = %q, want %q", got[0].Name, "go")
+	}
+	if !equalArgs(got[0].Args, []string{"test", "./..."}) {
+		t.Fatalf("Args = %#v, want [test ./...]", got[0].Args)
 	}
 }
 

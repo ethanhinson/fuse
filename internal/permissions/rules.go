@@ -264,9 +264,12 @@ func isProvablyBenignKill(seg Segment) bool {
 }
 
 // readOnlyUtils are argv[0] basenames that are read-only with ANY arguments —
-// they have no mutating mode worth flag-inspecting. env is deliberately absent:
-// it is already fail-closed by the parser as an arbitrary-arg wrapper, so it
-// never reaches here.
+// they have no mutating mode worth flag-inspecting. env is deliberately absent
+// because it can never reach here as a segment Name: the parser either peels it
+// away — emitting the inner command as the segment, or no segment at all for a
+// bare `env` that merely prints the environment — or fails the whole command
+// closed (change 0070 D2, peelEnv in shellparse.go). Listing it would not make
+// `env <cmd>` read-only safe; it would only add a name no segment can carry.
 var readOnlyUtils = map[string]bool{
 	"ls":       true,
 	"cat":      true,
