@@ -104,6 +104,23 @@ func (s Segment) hasOpaqueArg() bool {
 	return false
 }
 
+// rawArgsForPrefixMatch returns Args unfiltered — including OPAQUE entries by
+// their raw source text — for the narrow set of callers that only ever
+// prefix/glob-match against argv and only in the DENY direction, never
+// resolve a match as a filesystem path. It is the single sanctioned way to
+// read Segment.Args without going through isOpaque/hasOpaqueArg first.
+//
+// Every other consumer must consult Opaque (see the Opaque field doc and the
+// #0070 D5 invariant): resolving an opaque value as a path lets an
+// unresolvable operand prove containment it never earned. This accessor is
+// safe specifically because prefix-matching an opaque word's raw text toward
+// a DENY can only make the verdict MORE restrictive, never less — the same
+// erring-toward-deny reasoning documented on isDdToDevice, its sole caller.
+// Do NOT reach for this to add path resolution; that step needs isOpaque.
+func (s Segment) rawArgsForPrefixMatch() []string {
+	return s.Args
+}
+
 // argWords is a command's words carried alongside their opaqueness, so the two
 // can never drift apart while the wrapper peels slice a prefix off the front.
 // Keeping them in one value rather than two locals is the whole point: a peel

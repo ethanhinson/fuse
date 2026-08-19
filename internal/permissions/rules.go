@@ -276,11 +276,17 @@ func isCatastrophicRm(seg Segment, workspaceRoot string) bool {
 // denies — the unresolvable half is the device NAME, and every value it could
 // take is a raw device. Erring toward the deny is right for a disk-destroying
 // shape; a fully opaque `of=$OUT` matches nothing here and asks one layer down.
+//
+// This is the package's one sanctioned reader of raw Args via
+// rawArgsForPrefixMatch instead of isOpaque/hasOpaqueArg — see that
+// accessor's doc for why: deny-direction prefix match only, never a path
+// resolution. A future edit that resolves `of=` as a path must go through
+// isOpaque first, not extend this loop.
 func isDdToDevice(seg Segment) bool {
 	if seg.Name != "dd" {
 		return false
 	}
-	for _, a := range seg.Args {
+	for _, a := range seg.rawArgsForPrefixMatch() {
 		if strings.HasPrefix(a, "of=/dev/") {
 			return true
 		}
