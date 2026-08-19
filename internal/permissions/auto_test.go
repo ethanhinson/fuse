@@ -53,6 +53,53 @@ func TestAutoMode_SafeReadOnlyBash_AutoApproves(t *testing.T) {
 	}
 }
 
+// TestAutoMode_BenignEnvPrefix_AutoApproves is the end-to-end payoff of change
+// 0070 D1: a benign env prefix no longer stalls an otherwise auto-approvable
+// read-only command on the human.
+func TestAutoMode_BenignEnvPrefix_AutoApproves(t *testing.T) {
+	for _, cmd := range []string{"FOO=1 ls -la", "CGO_ENABLED=0 GOCACHE=/tmp/gc git log"} {
+		approve, called := newApproveRecorder(false)
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+			WithWorkspaceRoot(t.TempDir()))
+		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
+		if res.IsError {
+			t.Fatalf("benign env prefix %q should auto-approve, got error: %s", cmd, res.Output)
+		}
+		if *called {
+			t.Fatalf("benign env prefix %q must not invoke the approval func", cmd)
+		}
+	}
+}
+
+// TestAutoMode_EnvExecHook_DoesNotAutoApprove is the fail-closed half of D1, and
+// the reason the denylist carries GIT_/BASH_ prefix rules and PAGER/EDITOR.
+//
+// `git log` and `git diff` auto-approve via isSafeGit (rules.go) with no human
+// in the loop. Each command below therefore turns an auto-approved read into an
+// arbitrary exec of /tmp/evil purely through the assignment prefix — invisible
+// to every argv-based layer downstream. Each was verified to auto-approve when
+// the corresponding denylist entry is removed; the parse floor is the only
+// place this can be caught.
+func TestAutoMode_EnvExecHook_DoesNotAutoApprove(t *testing.T) {
+	for _, cmd := range []string{
+		"GIT_EXTERNAL_DIFF=/tmp/evil git diff",
+		"GIT_PAGER=/tmp/evil git log",
+		"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0=/tmp/evil git log",
+		"PAGER=/tmp/evil git log",
+		"LD_PRELOAD=/tmp/evil.so git log",
+	} {
+		// approve=true so a routed-to-human ask succeeds and is distinguishable
+		// from a silent auto-approve by the recorder flag.
+		approve, called := newApproveRecorder(true)
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+			WithWorkspaceRoot(t.TempDir()))
+		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
+		if !res.IsError && !*called {
+			t.Fatalf("%q auto-approved with no human: an env exec hook must never bypass approval", cmd)
+		}
+	}
+}
+
 func TestAutoMode_DenySegment_DeniesWithLayerNamedReason(t *testing.T) {
 	approve, called := newApproveRecorder(true)
 	// An allow rule for bash:git * means rules would allow git status, but the

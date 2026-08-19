@@ -59,6 +59,130 @@ var peelWrappers = map[string]bool{
 	"stdbuf": true,
 }
 
+// dangerousEnvVars are environment-variable names that change *what code runs*
+// rather than merely how it behaves: dynamic-loader hooks, command lookup, word
+// splitting, shell startup files, and the "run this helper for me" hooks of git,
+// ssh, python, node, perl and ruby. An assignment prefix naming one of these can
+// turn an otherwise-innocent command into arbitrary code execution
+// (`LD_PRELOAD=evil.so make`), which the argv-based classifier downstream can
+// never see. Names here fail the whole command closed (change 0070 D1).
+//
+// Keys are upper-cased; lookup goes through dangerousEnvVarName.
+var dangerousEnvVars = map[string]bool{
+	"LD_PRELOAD":      true,
+	"LD_LIBRARY_PATH": true,
+	"LD_AUDIT":        true,
+	"PATH":            true,
+	"IFS":             true,
+	"BASH_ENV":        true,
+	"ENV":             true,
+	"SHELL":           true,
+	"PS4":             true,
+	"PROMPT_COMMAND":  true,
+	"GIT_SSH_COMMAND": true,
+	"GIT_ASKPASS":     true,
+	"SSH_ASKPASS":     true,
+	"PYTHONSTARTUP":   true,
+	"NODE_OPTIONS":    true,
+	"PERL5LIB":        true,
+	"RUBYOPT":         true,
+
+	// Pager/editor hooks: names whose value a tool will happily exec. git
+	// consults PAGER for `log`/`diff`, and LESSOPEN is an arbitrary input
+	// filter program. `git log` and `git diff` are on the auto-approve
+	// safelist (readOnlyUtils/isSafeGit in rules.go), so `PAGER=/tmp/evil git
+	// log` would otherwise auto-approve an exec with no human present.
+	"PAGER":     true,
+	"EDITOR":    true,
+	"VISUAL":    true,
+	"LESSOPEN":  true,
+	"LESSCLOSE": true,
+
+	// Shell option state: SHELLOPTS/BASHOPTS are honoured by a child bash and
+	// can enable xtrace/other behaviour the argv classifier never sees.
+	"SHELLOPTS": true,
+	"BASHOPTS":  true,
+	"CDPATH":    true,
+}
+
+// dangerousEnvVarPrefixes catch whole hook families without enumerating them —
+// enumeration is exactly how this denylist would silently rot.
+//
+//   - LD_ / DYLD_: dynamic-loader hooks (LD_PRELOAD, DYLD_INSERT_LIBRARIES,
+//     DYLD_FRAMEWORK_PATH, and any future member). The enumerated LD_* entries
+//     above are redundant with this rule and kept only so the list reads as the
+//     documented denylist.
+//   - GIT_: git is the one auto-approvable command with a large family of
+//     "exec this program for me" env vars — GIT_EXTERNAL_DIFF, GIT_PAGER,
+//     GIT_EDITOR, GIT_SEQUENCE_EDITOR, GIT_PROXY_COMMAND, GIT_SSH,
+//     GIT_TEXTCONV_*, and GIT_CONFIG_COUNT/KEY_n/VALUE_n, which injects
+//     arbitrary config (core.pager, core.sshCommand) with no file on disk.
+//     `git log`/`git diff`/`git status` auto-approve (isSafeGit, rules.go), so
+//     a missed GIT_* name is a silent exec with no human in the loop. Denying
+//     the whole prefix costs a prompt on benign forms like GIT_AUTHOR_NAME —
+//     which accompany `git commit`, itself never auto-approved anyway.
+//   - BASH_: BASH_ENV runs a startup file for non-interactive bash, and the
+//     BASH_FUNC_* family is the shellshock-style exported-function vector.
+var dangerousEnvVarPrefixes = []string{"LD_", "DYLD_", "GIT_", "BASH_"}
+
+// dangerousEnvVarName reports whether an env-var name is on the denylist or
+// caught by a prefix rule. Matching is case-insensitive: a lowercase `ld_preload`
+// is a different (inert) shell variable, but denying it too costs at most a human
+// prompt, whereas a missed case costs a silent bypass. Fail closed on the tie.
+//
+// Shared with change 0070 D2's `env NAME=val` peeling — do not inline this.
+func dangerousEnvVarName(name string) bool {
+	upper := strings.ToUpper(name)
+	if dangerousEnvVars[upper] {
+		return true
+	}
+	for _, p := range dangerousEnvVarPrefixes {
+		if strings.HasPrefix(upper, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// assignsAreBenign reports whether every assignment prefix on a simple command
+// is safe to drop and evaluate the remaining command on its own merits.
+//
+// An assignment is benign only when all of the following hold:
+//
+//   - it is the plain `NAME=value` shape — no `+=` append, no `NAME[i]=`
+//     subscript, no `NAME=(array)`, and no naked `NAME` (declare/export forms).
+//     Those are not needed to run a command and are cheaper to refuse than to
+//     reason about. Only `+=` is reachable through an inline prefix today (the
+//     parser rejects the array/subscript forms outright); the rest are guarded
+//     because this helper is shared and must be safe on any Assign node;
+//   - NAME is not caught by dangerousEnvVarName;
+//   - the value is statically literal. `FOO=$(id)` and `FOO=$BAR` fail closed:
+//     we cannot know what we would be setting, and therefore cannot know that
+//     the name being benign is enough. A nil/absent value (bare `FOO=`) is
+//     benign whenever the name is.
+//
+// Shared with change 0070 D2's `env NAME=val` peeling — do not inline this.
+func assignsAreBenign(assigns []*syntax.Assign) bool {
+	for _, a := range assigns {
+		if a == nil || a.Name == nil {
+			return false
+		}
+		if a.Append || a.Naked || a.Index != nil || a.Array != nil {
+			return false
+		}
+		if dangerousEnvVarName(a.Name.Value) {
+			return false
+		}
+		if a.Value == nil {
+			continue
+		}
+		if _, ok := literalWord(a.Value); !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // splitSegments parses cmd as a bash program and enumerates every
 // simple-command segment across &&, ||, ;, |, |&, and newlines, including the
 // script bodies of `bash -c "…"` / `sh -c "…"`.
@@ -68,10 +192,10 @@ var peelWrappers = map[string]bool{
 // any redirection whose file target the read-only classifier never sees —
 // EXCEPT the two benign shapes a redirect to literal /dev/null and a pure
 // fd-duplication (2>&1, >&2), which carry no writable target (see
-// redirIsBenign, change 0037); an argv[0] containing a path separator (the
-// basename-collapse bug); or an arbitrary-arg wrapper as argv[0] (bash/sh
-// without a parseable -c, xargs, env with assignments, npx,
-// timeout-then-unknown, sudo, …).
+// redirIsBenign, change 0037); an env-var assignment prefix that is not benign
+// under assignsAreBenign (change 0070); an argv[0] containing a path separator
+// (the basename-collapse bug); or an arbitrary-arg wrapper as argv[0] (bash/sh
+// without a parseable -c, xargs, env, npx, timeout-then-unknown, sudo, …).
 func splitSegments(cmd string) ([]Segment, error) {
 	if len(cmd) > maxCommandBytes {
 		return nil, ErrUnparseable
@@ -196,14 +320,17 @@ func isAllDigits(s string) bool {
 // `-c` script body, or fails closed on a wrapper / substitution / path-
 // qualified argv[0].
 func collectCall(src string, call *syntax.CallExpr, out *[]Segment) error {
-	// Env-var assignment prefixes (FOO=bar cmd) fail closed at the parse
-	// floor; higher layers decide whether the stripped form is allowable.
-	if len(call.Assigns) > 0 {
+	// Env-var assignment prefixes (FOO=bar cmd). A prefix that cannot change
+	// what code runs is dropped and the inner command is classified on its own
+	// merits (change 0070 D1); anything else fails closed at the parse floor.
+	// The assignments are DROPPED, never appended to Args: they are not
+	// arguments, and a downstream path-scoper or deny matcher must not see them.
+	if !assignsAreBenign(call.Assigns) {
 		return ErrUnparseable
 	}
 	if len(call.Args) == 0 {
-		// Assignment-only statement with no command (already handled above)
-		// or an empty call; nothing to enumerate.
+		// An assignment-only statement (`FOO=1`) runs no command, so there is
+		// nothing for any layer to classify; likewise an empty call.
 		return nil
 	}
 
