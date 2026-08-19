@@ -10,7 +10,7 @@ updated: 2026-08-19
 depends_on: [69]
 related: [37, 40, 67, 68, 69]
 discovered_from: []
-adrs: []
+adrs: [49]
 spec: docs/superpowers/specs/2026-08-17-auto-mode-shell-parse-widening-design.md
 plan: docs/superpowers/plans/2026-08-19-auto-mode-shell-parse-widening-plan.md
 results:
@@ -30,6 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-17-auto-mode-shell-parse-widening-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-17-auto-mode-shell-parse-widening-design.md) |
 | Plan | [2026-08-19-auto-mode-shell-parse-widening-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-shell-parse-widening/docs/superpowers/plans/2026-08-19-auto-mode-shell-parse-widening-plan.md) |
+| ADRs | [ADR-0049](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0049-allowlist-admission-on-deterministic-allow-paths.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
