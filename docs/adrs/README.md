@@ -50,6 +50,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0046](0046-restorable-session-persists-principal-name-not-credential.md) — A restorable browser session persists the principal's name, never its credential (Accepted) ← change #62 · relates to ADR-0034, ADR-0043
 - [ADR-0047](0047-optional-observer-capabilities.md) — Optional observer capabilities extend observability behavior without widening the Observer interface (Accepted) ← change #71 · relates to ADR-0040
 - [ADR-0048](0048-web-fetch-host-floor-as-authorization-boundary.md) — The web_fetch host floor is an authorization boundary, and the bounds that make it safe (Accepted) ← change #69
+- [ADR-0049](0049-allowlist-admission-on-deterministic-allow-paths.md) — Admission sets on a no-human deterministic-allow path are allowlists, not denylists (Accepted) ← change #70 · relates to ADR-0044, ADR-0048
 
 ## Superseded / Reversed
 
