@@ -40,6 +40,125 @@ type Segment struct {
 	// redirect, a here-doc). A target we could NOT name (`> $F`, `<>`, a
 	// dup-to-path) never reaches here: it still fails the whole command closed.
 	WriteTargets []string
+	// Opaque is index-aligned with Args: Opaque[i] reports that Args[i] is an
+	// OPAQUE argument — a word whose value is not statically known ($VAR,
+	// ${VAR}, a read-only $(…), or any word mixing a literal with one of those).
+	// The stored Args value is then the raw SOURCE TEXT of the word, kept so
+	// deny/ask patterns and human-facing reasons can still name it. It is not,
+	// and can never become, a value (change 0070 D5).
+	//
+	// THE INVARIANT this field exists to carry: an opaque argument must NEVER be
+	// resolved as a filesystem path for a containment proof. Opaque is
+	// *unprovable ⇒ ask*, never *resolves-under-cwd ⇒ allow*. Concretely it must
+	// never reach withinWorkspace/resolveExisting (heuristics.go), which walk up
+	// to the deepest existing ancestor and would happily let `rm $(echo /)`
+	// prove containment against the cwd — the same failure family as the #0068
+	// finding `containment-proof-needs-a-real-resolved-path`, where an
+	// unexpanded `~` and a process-name operand did exactly that.
+	//
+	// REPRESENTATION: Opaque is either EMPTY (no argument is opaque — the shape
+	// every pre-D5 construction site and hand-built test fixture produces) or
+	// exactly len(Args) long. Never index it directly; go through isOpaque /
+	// hasOpaqueArg, which fail TOWARD opaque on a length skew or an
+	// out-of-range index. A raw index would silently read false on a skew, and
+	// false is the fail-open direction.
+	Opaque []bool
+}
+
+// isOpaque reports whether Args[i] is an opaque argument — a value the parser
+// could name but never resolve. Every consumer that treats an argument as a
+// path, a flag, a PID, or a URL must consult this first.
+//
+// It fails TOWARD opaque: an out-of-range index, or a Opaque/Args length skew,
+// answers true. "I cannot tell" and "not opaque" must never be the same answer,
+// because only one of them is safe.
+func (s Segment) isOpaque(i int) bool {
+	if len(s.Opaque) == 0 {
+		return false // no opaque arguments were recorded for this segment.
+	}
+	if len(s.Opaque) != len(s.Args) {
+		return true // parallel-slice skew: nothing here is provable.
+	}
+	if i < 0 || i >= len(s.Opaque) {
+		return true
+	}
+	return s.Opaque[i]
+}
+
+// hasOpaqueArg reports whether any argument of the segment is opaque. It is the
+// predicate classifyHeuristic turns into VerdictAsk for a mutating segment:
+// there is nothing to prove containment OVER, and "no path args to check" must
+// not read as "nothing to check".
+func (s Segment) hasOpaqueArg() bool {
+	if len(s.Opaque) == 0 {
+		return false
+	}
+	if len(s.Opaque) != len(s.Args) {
+		return true
+	}
+	for _, o := range s.Opaque {
+		if o {
+			return true
+		}
+	}
+	return false
+}
+
+// argWords is a command's words carried alongside their opaqueness, so the two
+// can never drift apart while the wrapper peels slice a prefix off the front.
+// Keeping them in one value rather than two locals is the whole point: a peel
+// that dropped a word from one slice and not the other would produce a segment
+// whose Opaque flags describe the WRONG arguments — silently, and in the
+// fail-open direction for every position that shifted from opaque to literal.
+//
+// Its invariant (established at construction, preserved by drop): len(text) ==
+// len(opaque).
+type argWords struct {
+	text   []string
+	opaque []bool
+}
+
+func (w argWords) len() int { return len(w.text) }
+
+func (w argWords) at(i int) string { return w.text[i] }
+
+// opaqueAt fails toward opaque on anything it cannot answer, exactly like
+// Segment.isOpaque.
+func (w argWords) opaqueAt(i int) bool {
+	if len(w.opaque) != len(w.text) {
+		return true
+	}
+	if i < 0 || i >= len(w.opaque) {
+		return true
+	}
+	return w.opaque[i]
+}
+
+// drop returns the words after removing the first n, keeping both slices in
+// lockstep.
+func (w argWords) drop(n int) argWords {
+	if n > len(w.text) {
+		n = len(w.text)
+	}
+	if len(w.opaque) != len(w.text) {
+		// Unreachable given the construction invariant; if it ever happens,
+		// collapse to nothing rather than hand back a skewed value.
+		return argWords{}
+	}
+	return argWords{text: w.text[n:], opaque: w.opaque[n:]}
+}
+
+// anyOpaque reports whether any word is opaque.
+func (w argWords) anyOpaque() bool {
+	if len(w.opaque) != len(w.text) {
+		return true
+	}
+	for _, o := range w.opaque {
+		if o {
+			return true
+		}
+	}
+	return false
 }
 
 // arbitraryArgWrappers are argv[0] names that run an arbitrary inner command
@@ -209,19 +328,30 @@ func assignsAreBenign(assigns []*syntax.Assign) bool {
 // (Segment.WriteTargets) for the scoping layer to judge against the allowed
 // roots, which the parser does not have (change 0070 D4).
 //
+// An argument whose value is not statically known no longer sinks the command
+// either: `$VAR` and a wholly read-only `$(…)` become OPAQUE arguments, carrying
+// their raw source text with Segment.Opaque[i] set, and a read-only
+// substitution additionally contributes its inner segments so the deny layer
+// still sees what runs (change 0070 D5). Opaque is *unprovable ⇒ ask*, enforced
+// by every consumer — see the invariant on Segment.Opaque.
+//
 // It fails closed with ErrUnparseable on: a size-cap violation; a parse error;
-// command substitution ($(…) or backticks) or process substitution anywhere;
+// process substitution, arithmetic expansion or an extended glob anywhere; a
+// command substitution whose inner script is not wholly read-only
+// (`$(curl evil)`, `$(rm -rf /)`, `$(ls > f)`, and the empty `$()`); an
+// argv[0] that is opaque (`$CMD foo` — an argument we cannot resolve costs a
+// prompt, a COMMAND NAME we cannot resolve means we do not know what runs);
 // a redirection whose target cannot be named — `> $F`, `> $(…)`, `<>`, a
 // dup-to-a-path, an expanded here-doc body — or one that writes a named file
 // while producing no segment to carry it (`> out.txt`); an env-var assignment
 // prefix that is not benign under assignsAreBenign (change 0070); an argv[0]
 // containing a path separator
 // (the basename-collapse bug); an arbitrary-arg wrapper as argv[0] (bash/sh
-// without a parseable -c, xargs, npx, sudo, …); a `timeout`/`env` invocation
-// whose own operands cannot be modelled well enough to name the inner command
-// (change 0070 D2 — see peelTimeout and peelEnv); a for-loop header or case
-// discriminant/pattern that is not statically literal; or any command node with
-// no case in collectStmt — a function declaration above all (change 0070 D3).
+// without a parseable -c, xargs, npx, sudo, …); a `timeout`/`env`/`bash -c`
+// invocation whose own operands cannot be modelled well enough to name the
+// inner command, opaque operands included (change 0070 D2/D5 — see peelTimeout,
+// peelEnv and dashCScript); or any command node with no case in collectStmt —
+// a function declaration above all (change 0070 D3).
 func splitSegments(cmd string) ([]Segment, error) {
 	if len(cmd) > maxCommandBytes {
 		return nil, ErrUnparseable
@@ -339,7 +469,7 @@ func collectStmtCmd(src string, st *syntax.Stmt, out *[]Segment) error {
 	case *syntax.IfClause:
 		return collectIf(src, cmd, out)
 	case *syntax.ForClause:
-		if err := collectLoopHeader(cmd.Loop); err != nil {
+		if err := collectLoopHeader(src, cmd.Loop, out); err != nil {
 			return err
 		}
 		return collectStmts(src, cmd.Do, out)
@@ -393,14 +523,19 @@ func collectIf(src string, cmd *syntax.IfClause, out *[]Segment) error {
 
 // collectCase descends a case statement's discriminant, every branch's
 // patterns, and every branch's statement list. Discriminant and patterns are
-// words, not commands, so they produce no segment — but they must still be
-// statically resolvable, on the same literal-or-fail-closed discipline as any
-// other word (change 0070 D5 will widen that to literal-or-opaque).
+// words, not commands, so they produce no segment themselves — but they take
+// exactly the same literal-or-opaque discipline as any argument (change 0070
+// D5, lifting D3's interim literal-only posture). `case $x in a) …` is now
+// resolvable-enough: the discriminant selects a branch, and every command in
+// every branch is enumerated regardless of which one it selects. A pattern or
+// discriminant carrying a command substitution still surfaces that
+// substitution's segments into out, so `case $(curl evil) in …` reaches the
+// deny layer as a curl.
 func collectCase(src string, cmd *syntax.CaseClause, out *[]Segment) error {
 	if cmd.Word == nil {
 		return ErrUnparseable
 	}
-	if _, ok := literalWord(cmd.Word); !ok {
+	if _, _, ok := classifyWord(src, cmd.Word, out); !ok {
 		return ErrUnparseable
 	}
 	for _, item := range cmd.Items {
@@ -411,7 +546,7 @@ func collectCase(src string, cmd *syntax.CaseClause, out *[]Segment) error {
 			if pat == nil {
 				return ErrUnparseable
 			}
-			if _, ok := literalWord(pat); !ok {
+			if _, _, ok := classifyWord(src, pat, out); !ok {
 				return ErrUnparseable
 			}
 		}
@@ -422,19 +557,24 @@ func collectCase(src string, cmd *syntax.CaseClause, out *[]Segment) error {
 	return nil
 }
 
-// collectLoopHeader validates a for-clause header. It emits no segment — the
-// header names no command — but an unresolvable header is still unresolvable,
-// so it takes the same literal-or-fail-closed discipline as any other word.
+// collectLoopHeader validates a for-clause header. The header itself names no
+// command, but its words take the same literal-or-opaque discipline as any
+// argument (change 0070 D5, lifting D3's interim literal-only posture).
 //
-//   - *syntax.WordIter is the `for f in a b` form. Each item word must be
-//     literal; `for f in $LIST` and `for f in $(ls)` fail closed until D5 gives
-//     them an opaque representation. An absent `in` list (`for f; do …`, which
-//     iterates the positional parameters) has no items and nothing to resolve.
+//   - *syntax.WordIter is the `for f in a b` form. An item word may be literal
+//     or opaque: `for f in $LIST` no longer sinks the command, because the loop
+//     VARIABLE is itself opaque wherever the body uses it (`rm $f` carries an
+//     opaque arg and asks), so nothing is proven by resolving the header. An
+//     item carrying a command substitution surfaces that substitution's
+//     segments into out — `for f in $(ls)` contributes an `ls` segment — and a
+//     substitution that is not read-only still fails the whole command closed.
+//     An absent `in` list (`for f; do …`, which iterates the positional
+//     parameters) has no items and nothing to resolve.
 //   - *syntax.CStyleLoop is `for ((i=0;i<10;i++))`. It carries arithmetic
 //     expressions, not words: nothing here can be resolved statically, and the
 //     body-only descent that would otherwise apply is not worth the risk of
 //     silently ignoring a header we did not model. Fail closed.
-func collectLoopHeader(loop syntax.Loop) error {
+func collectLoopHeader(src string, loop syntax.Loop, out *[]Segment) error {
 	iter, ok := loop.(*syntax.WordIter)
 	if !ok {
 		return ErrUnparseable
@@ -443,7 +583,7 @@ func collectLoopHeader(loop syntax.Loop) error {
 		if item == nil {
 			return ErrUnparseable
 		}
-		if _, ok := literalWord(item); !ok {
+		if _, _, ok := classifyWord(src, item, out); !ok {
 			return ErrUnparseable
 		}
 	}
@@ -588,18 +728,22 @@ func collectCall(src string, call *syntax.CallExpr, out *[]Segment) error {
 		return nil
 	}
 
-	// Extract every word as a plain literal, failing closed on any expansion
-	// we cannot statically resolve (command/process substitution).
-	words := make([]string, 0, len(call.Args))
+	// Classify every word as literal or OPAQUE, failing closed on any expansion
+	// with no honest opaque representation (process substitution, arithmetic,
+	// extended globs) and on a command substitution whose inner script is not
+	// wholly read-only (change 0070 D5).
+	words := argWords{
+		text:   make([]string, 0, len(call.Args)),
+		opaque: make([]bool, 0, len(call.Args)),
+	}
 	for _, w := range call.Args {
-		lit, ok := literalWord(w)
+		text, opaque, ok := classifyWord(src, w, out)
 		if !ok {
 			return ErrUnparseable
 		}
-		words = append(words, lit)
+		words.text = append(words.text, text)
+		words.opaque = append(words.opaque, opaque)
 	}
-
-	argv0 := words[0]
 
 	// Peel side-effect-free wrappers; the peeled remainder must itself be a
 	// bare, non-path-qualified command. Peeling repeats so nested wrappers
@@ -611,11 +755,32 @@ func collectCall(src string, call *syntax.CallExpr, out *[]Segment) error {
 	// path-qualified argv[0] fails closed, bash/sh re-enters the `-c` path, and
 	// an inner command that is itself an arbitrary-arg wrapper
 	// (`timeout 30 sudo rm -rf /`) fails closed on arbitraryArgWrappers.
+	//
+	// argv[0] is re-checked for opaqueness on EVERY iteration, not just the
+	// first: `nohup $CMD` and `env FOO=1 $CMD` only expose their opaque command
+	// name after a peel. An opaque argument costs a human prompt; an opaque
+	// COMMAND NAME means we do not know what runs at all, and every name-keyed
+	// table below (arbitraryArgWrappers, and downstream the deny names,
+	// readOnlyUtils, the egress list) would be consulted with a name that is
+	// not the one bash will execute.
 peel:
-	for !strings.ContainsRune(argv0, '/') {
-		switch base := basename(argv0); {
+	for {
+		if words.len() == 0 {
+			return ErrUnparseable
+		}
+		if words.opaqueAt(0) {
+			return ErrUnparseable
+		}
+		if strings.ContainsRune(words.at(0), '/') {
+			break peel
+		}
+		switch base := basename(words.at(0)); {
 		case peelWrappers[base]:
-			words = peelWrapperArgs(words)
+			peeled, ok := peelWrapperArgs(words)
+			if !ok {
+				return ErrUnparseable
+			}
+			words = peeled
 		case base == "timeout":
 			peeled, ok := peelTimeout(words)
 			if !ok {
@@ -627,7 +792,7 @@ peel:
 			if !ok {
 				return ErrUnparseable
 			}
-			if len(peeled) == 0 {
+			if peeled.len() == 0 {
 				// `env` alone, or `env FOO=1`, prints the environment and runs
 				// no command: benign, and there is nothing to classify. Produce
 				// no segment rather than failing closed.
@@ -637,11 +802,9 @@ peel:
 		default:
 			break peel
 		}
-		if len(words) == 0 {
-			return ErrUnparseable
-		}
-		argv0 = words[0]
 	}
+
+	argv0 := words.at(0)
 
 	// Path-qualified argv[0] (./sed, /tmp/git) fails closed: basename
 	// matching must never collapse a path to a bare name.
@@ -655,7 +818,7 @@ peel:
 	// segments; every other form (bare, a script file, no script word) fails
 	// closed.
 	if name == "bash" || name == "sh" {
-		script, ok := dashCScript(words[1:])
+		script, ok := dashCScript(words.drop(1))
 		if !ok {
 			return ErrUnparseable
 		}
@@ -672,23 +835,165 @@ peel:
 		return ErrUnparseable
 	}
 
+	args := words.drop(1)
 	seg := Segment{
 		Name: name,
-		Args: append([]string(nil), words[1:]...),
+		Args: append([]string(nil), args.text...),
 		Raw:  rawSegment(src, call),
+	}
+	// Opaque stays EMPTY when nothing is opaque, so a segment that carries no
+	// unresolvable word is byte-for-byte the pre-D5 shape and every hand-built
+	// Segment keeps reading as fully literal (see Segment.isOpaque).
+	if args.anyOpaque() {
+		seg.Opaque = append([]bool(nil), args.opaque...)
 	}
 	if len(seg.Args) == 0 {
 		seg.Args = nil
+		seg.Opaque = nil
 	}
 	*out = append(*out, seg)
 	return nil
 }
 
+// classifyWord resolves one word into either a literal value or an OPAQUE one
+// (change 0070 D5). It returns the word's text, whether that text is opaque,
+// and ok=false when the word has no honest representation at all and the whole
+// command must fail closed.
+//
+// The three answers, and why they are three rather than two:
+//
+//   - LITERAL: every part resolves statically. The text IS the value, and a
+//     downstream layer may resolve it as a path, read it as a flag, or parse it
+//     as a PID.
+//   - OPAQUE: the word contains a parameter expansion ($VAR, ${VAR}) or a
+//     read-only command substitution. The text is the word's RAW SOURCE, kept
+//     so a deny pattern and a human-facing reason can still name it — it is not
+//     a value and must never be resolved as one. Before D5 this whole class
+//     fell into fail-closed, which cost a human prompt on `wc -l $f`.
+//   - FAIL CLOSED: a process substitution, an arithmetic expansion, an extended
+//     glob, a substitution running something that is not read-only, or a word
+//     whose source text we cannot even quote back. None of these can be
+//     represented as "a value we cannot resolve" — a ProcSubst names a
+//     filesystem object, and a non-read-only substitution RUNS.
+//
+// A word that MIXES a literal with an expansion (`--out=$DIR/x`, `"pre$VAR"`)
+// is opaque as a whole. It is never partially resolved: a half-resolved path is
+// the containment bypass in miniature — `$(echo ~)/x` would otherwise present a
+// resolvable-looking `/x` tail hanging off an unknown root.
+//
+// A command substitution's inner statements are APPENDED to out, so the deny
+// layer still sees `$(curl evil)` as a curl segment rather than as a string.
+// They are the same AST the outer parse produced, so their positions index the
+// same src; there is no re-parse.
+func classifyWord(src string, w *syntax.Word, out *[]Segment) (string, bool, bool) {
+	if w == nil {
+		return "", false, false
+	}
+	return classifyWordParts(src, w.Parts, out)
+}
+
+func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment) (string, bool, bool) {
+	var b strings.Builder
+	opaque := false
+	for _, part := range parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+			b.WriteString(p.Value)
+		case *syntax.SglQuoted:
+			b.WriteString(p.Value)
+		case *syntax.DblQuoted:
+			// A double-quoted run can itself carry expansions; classify its
+			// parts on exactly the same terms so `"pre$VAR"` is opaque rather
+			// than fail-closed, and `"literal"` stays literal.
+			s, innerOpaque, ok := classifyWordParts(src, p.Parts, out)
+			if !ok {
+				return "", false, false
+			}
+			opaque = opaque || innerOpaque
+			b.WriteString(s)
+		case *syntax.ParamExp:
+			text, ok := nodeText(src, p)
+			if !ok {
+				return "", false, false
+			}
+			opaque = true
+			b.WriteString(text)
+		case *syntax.CmdSubst:
+			// mksh's ${ …;} / ${| …;} value-substitution forms are shapes we did
+			// not model; they should not reach us under LangBash, and if they
+			// ever do they are not the plain $(…) this arm reasons about.
+			if p.TempFile || p.ReplyVar {
+				return "", false, false
+			}
+			var inner []Segment
+			if err := collectStmts(src, p.Stmts, &inner); err != nil {
+				return "", false, false
+			}
+			// A substitution RUNS its contents, so it earns the opaque
+			// treatment only when everything inside it is wholly read-only —
+			// which also rejects an inner statement carrying a redirect write
+			// target, and rejects an EMPTY substitution (nothing was proven
+			// read-only, so nothing is). `$(git rev-parse --show-toplevel)`
+			// qualifies; `$(curl evil)` and `$(rm -rf /)` do not and sink the
+			// whole command as they did before D5.
+			if !allSegmentsReadOnlySafe(inner) {
+				return "", false, false
+			}
+			text, ok := nodeText(src, p)
+			if !ok {
+				return "", false, false
+			}
+			// Surface the inner command to the deny/ask layers. It is appended
+			// BEFORE the outer segment, so `git diff $(git rev-parse …)` reads
+			// as [git rev-parse, git diff].
+			*out = append(*out, inner...)
+			opaque = true
+			b.WriteString(text)
+		case *syntax.ProcSubst, *syntax.ArithmExp, *syntax.ExtGlob:
+			// Unchanged from before D5: a process substitution names a
+			// filesystem object we would have to model, and arithmetic /
+			// extended globs are neither a value nor a command.
+			return "", false, false
+		default:
+			return "", false, false
+		}
+	}
+	return b.String(), opaque, true
+}
+
+// nodeText returns the original source text spanning a node, used to give an
+// opaque word a name a human and a deny pattern can read. ok=false when the
+// offsets do not lie inside src — in which case the caller fails closed rather
+// than invent a token, because every downstream layer would then be matching
+// against text that is not what the shell will see.
+func nodeText(src string, n syntax.Node) (string, bool) {
+	start := int(n.Pos().Offset())
+	end := int(n.End().Offset())
+	if start < 0 || end > len(src) || start >= end {
+		return "", false
+	}
+	return src[start:end], true
+}
+
 // literalWord returns the fully-literal string value of a word, or ok=false if
-// the word contains a command or process substitution (unresolvable
-// statically). Parameter expansions and quoting resolve to their literal text
-// where possible; a bare $VAR yields ok=false so command bodies like
-// `curl $URL` fail closed rather than silently drop the argument.
+// the word contains ANY expansion — a substitution, a parameter expansion,
+// arithmetic, an extended glob. Quoting resolves to the quoted text.
+//
+// Since change 0070 D5 this is the STRICT half of a pair, and it is
+// deliberately not the one collectCall uses. Command ARGUMENTS go through
+// classifyWord, which can answer "opaque" — a value we can name but not
+// resolve. literalWord serves the three positions where opaque has no honest
+// meaning and there is nothing to widen:
+//
+//   - a redirect target (redirWriteTarget/redirIsBenign): an unnameable write
+//     is a write no layer can scope, so it must sink the command;
+//   - a here-doc delimiter and body: an unquoted body is EXPANDED before it is
+//     fed to stdin, so a substitution in it genuinely runs;
+//   - an env-assignment value (assignsAreBenign): a benign NAME proves nothing
+//     when we cannot know what we would be setting it to.
+//
+// Do not "unify" these onto classifyWord. The three callers above need
+// ok=false, not an opaque token.
 func literalWord(w *syntax.Word) (string, bool) {
 	var b strings.Builder
 	for _, part := range w.Parts {
@@ -716,14 +1021,20 @@ func literalWord(w *syntax.Word) (string, bool) {
 // dashCScript returns the script argument of a `-c "<script>"` invocation.
 // args are the words after argv[0]. It accepts `-c script [name [arg...]]` and
 // requires a script word to be present.
-func dashCScript(args []string) (string, bool) {
-	for i := 0; i < len(args); i++ {
-		a := args[i]
+// An opaque word anywhere it inspects fails closed: `bash -c $SCRIPT` runs a
+// script we cannot read, so there is nothing to decompose and nothing to
+// classify (change 0070 D5).
+func dashCScript(args argWords) (string, bool) {
+	for i := 0; i < args.len(); i++ {
+		if args.opaqueAt(i) {
+			return "", false
+		}
+		a := args.at(i)
 		if a == "-c" {
-			if i+1 >= len(args) {
+			if i+1 >= args.len() || args.opaqueAt(i+1) {
 				return "", false
 			}
-			return args[i+1], true
+			return args.at(i + 1), true
 		}
 		// A combined `-c<script>` form.
 		if strings.HasPrefix(a, "-c") && len(a) > 2 {
@@ -738,12 +1049,21 @@ func dashCScript(args []string) (string, bool) {
 
 // peelWrapperArgs drops the wrapper argv[0] and any of its own leading flags,
 // returning the inner command's words.
-func peelWrapperArgs(words []string) []string {
-	rest := words[1:]
-	for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
-		rest = rest[1:]
+//
+// An OPAQUE word in the flag position fails closed (change 0070 D5): a word
+// like `-$X` looks like a flag but we cannot know that it is one, and dropping
+// it would silently discard something that may have been the command. An
+// opaque word that does NOT look like a flag ends the loop and becomes argv[0],
+// where collectCall's opaque-argv[0] check refuses it.
+func peelWrapperArgs(words argWords) (argWords, bool) {
+	rest := words.drop(1)
+	for rest.len() > 0 && strings.HasPrefix(rest.at(0), "-") {
+		if rest.opaqueAt(0) {
+			return argWords{}, false
+		}
+		rest = rest.drop(1)
 	}
-	return rest
+	return rest, true
 }
 
 // timeoutDuration matches timeout's mandatory DURATION operand: a decimal
@@ -766,34 +1086,42 @@ var timeoutDuration = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?[smhd]?$`)
 // After the flags, exactly one duration-shaped word must appear. Zero (`timeout
 // go test`) fails closed; so does a second duration-shaped word, since no real
 // command is named like a duration and that shape means we misread the flags.
-func peelTimeout(words []string) ([]string, bool) {
-	rest := words[1:]
-	for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
-		flag := rest[0]
+// An OPAQUE flag or duration fails closed (change 0070 D5): `timeout $T make`
+// gives us no way to tell the duration operand from the command, and a flag we
+// cannot read is a flag whose arity we cannot model. A flag's separate VALUE
+// may be opaque — `timeout -s $SIG make` names a signal, not a command, and
+// dropping it is correct either way.
+func peelTimeout(words argWords) (argWords, bool) {
+	rest := words.drop(1)
+	for rest.len() > 0 && strings.HasPrefix(rest.at(0), "-") {
+		if rest.opaqueAt(0) {
+			return argWords{}, false
+		}
+		flag := rest.at(0)
 		switch {
 		case flag == "--preserve-status" || flag == "--foreground":
-			rest = rest[1:]
+			rest = rest.drop(1)
 		case flag == "-s" || flag == "-k" || flag == "--signal" || flag == "--kill-after":
 			// Value in a separate word: drop both.
-			if len(rest) < 2 {
-				return nil, false
+			if rest.len() < 2 {
+				return argWords{}, false
 			}
-			rest = rest[2:]
+			rest = rest.drop(2)
 		case strings.HasPrefix(flag, "--signal=") || strings.HasPrefix(flag, "--kill-after="):
-			rest = rest[1:]
+			rest = rest.drop(1)
 		case len(flag) > 2 && (strings.HasPrefix(flag, "-s") || strings.HasPrefix(flag, "-k")):
 			// Attached short-option value: -sKILL, -k5s.
-			rest = rest[1:]
+			rest = rest.drop(1)
 		default:
-			return nil, false
+			return argWords{}, false
 		}
 	}
-	if len(rest) == 0 || !timeoutDuration.MatchString(rest[0]) {
-		return nil, false
+	if rest.len() == 0 || rest.opaqueAt(0) || !timeoutDuration.MatchString(rest.at(0)) {
+		return argWords{}, false
 	}
-	rest = rest[1:]
-	if len(rest) > 0 && timeoutDuration.MatchString(rest[0]) {
-		return nil, false
+	rest = rest.drop(1)
+	if rest.len() > 0 && !rest.opaqueAt(0) && timeoutDuration.MatchString(rest.at(0)) {
+		return argWords{}, false
 	}
 	return rest, true
 }
@@ -817,12 +1145,20 @@ func peelTimeout(words []string) ([]string, bool) {
 // already required every word to be a literalWord, so `env FOO=$(id) make` has
 // failed closed before we are reached. Validated assignments are DROPPED, not
 // passed on as arguments.
-func peelEnv(words []string) ([]string, bool) {
-	rest := words[1:]
-	for len(rest) > 0 {
-		w := rest[0]
+// An OPAQUE word in the region env's own operands occupy fails closed (change
+// 0070 D5). This is stricter than the opaque-argv[0] check alone, and
+// deliberately so: `env $X make` gives us no way to tell whether `$X` is an
+// assignment prefix (leaving `make` as the command) or the command itself, and
+// the two readings put different names in front of every downstream table.
+func peelEnv(words argWords) (argWords, bool) {
+	rest := words.drop(1)
+	for rest.len() > 0 {
+		if rest.opaqueAt(0) {
+			return argWords{}, false
+		}
+		w := rest.at(0)
 		if strings.HasPrefix(w, "-") {
-			return nil, false
+			return argWords{}, false
 		}
 		eq := strings.IndexByte(w, '=')
 		if eq < 0 {
@@ -832,9 +1168,9 @@ func peelEnv(words []string) ([]string, bool) {
 		}
 		name := w[:eq]
 		if !isEnvVarName(name) || dangerousEnvVarName(name) {
-			return nil, false
+			return argWords{}, false
 		}
-		rest = rest[1:]
+		rest = rest.drop(1)
 	}
 	return rest, true
 }

@@ -143,6 +143,12 @@ func allSegmentsAllowed(segments []Segment, autoApprove []string, allowPush bool
 }
 
 // isGitPush reports whether a segment is a git push invocation.
+//
+// No opaque guard is needed (change 0070 D5): an opaque arg's stored text is
+// the word's raw SOURCE ("$SUB", "pu$X"), which can never equal the literal
+// "push", so `git $SUB` is not a git push here. Both consumers get the answer
+// they want from that — isEgress falls through to the mutating scope where the
+// opaque arg asks, and allSegmentsAllowed declines the allow_push allowance.
 func isGitPush(seg Segment) bool {
 	return seg.Name == "git" && len(seg.Args) > 0 && seg.Args[0] == "push"
 }
@@ -179,7 +185,20 @@ func isCatastrophicRm(seg Segment, workspaceRoot string) bool {
 	}
 	forceish := false
 	var operands []string
-	for _, a := range seg.Args {
+	for i, a := range seg.Args {
+		// An OPAQUE word is neither a provable flag nor a provable operand
+		// (change 0070 D5), and it must not become one. This function calls
+		// resolveExisting on every operand — the exact
+		// walk-up-to-the-deepest-existing-ancestor the D5 invariant forbids over
+		// a word that is not a path. Feeding it "$VAR" would resolve to
+		// <cwd>/$VAR and answer the "is this / or $HOME or a workspace
+		// ancestor?" question about a path that does not exist and was never
+		// asked about. Skipping keeps the DENY honest: `rm -rf $VAR` is not
+		// provably catastrophic, so it is not denied here — it is unprovable,
+		// and classifyHeuristic asks.
+		if seg.isOpaque(i) {
+			continue
+		}
 		switch {
 		case a == "--recursive" || a == "--force":
 			forceish = true
@@ -229,6 +248,14 @@ func isCatastrophicRm(seg Segment, workspaceRoot string) bool {
 // isDdToDevice reports whether a dd segment writes to a raw device
 // (of=/dev/...): destroying a disk is catastrophic regardless of scoping.
 // Other dd targets flow to the heuristic via pathArgs' of=/if= extraction.
+//
+// OPAQUE operands are deliberately NOT skipped here, unlike in isCatastrophicRm
+// (change 0070 D5). The difference is what the two functions do with the text:
+// this one only pattern-matches a prefix and never resolves a path, so the D5
+// invariant is not in play. A mixed word like `of=/dev/$DISK` therefore still
+// denies — the unresolvable half is the device NAME, and every value it could
+// take is a raw device. Erring toward the deny is right for a disk-destroying
+// shape; a fully opaque `of=$OUT` matches nothing here and asks one layer down.
 func isDdToDevice(seg Segment) bool {
 	if seg.Name != "dd" {
 		return false
@@ -248,6 +275,15 @@ func isDdToDevice(seg Segment) bool {
 // benign and routes to the classifier via the heuristic layer.
 func isProvablyBenignKill(seg Segment) bool {
 	if seg.Name != "kill" {
+		return false
+	}
+	// An OPAQUE operand is not a provable numeric PID (change 0070 D5): `kill
+	// $PID` could be any process on the machine, and `kill -$SIG 1` could be
+	// any signal. strconv.Atoi("$PID") already fails, but relying on that would
+	// leave the guard resting on an accident of the token's text — an opaque
+	// word whose raw source begins with "-" would be silently swallowed by the
+	// signal-flag arm below.
+	if seg.hasOpaqueArg() {
 		return false
 	}
 	sawPID := false
@@ -360,8 +396,24 @@ func allSegmentsReadOnlySafe(segments []Segment) bool {
 // The parser (splitSegments) guarantees seg.Name is a bare basename and that no
 // path-qualified argv[0] (./sed) or arbitrary-arg wrapper ever reaches here.
 func isReadOnlySafe(seg Segment) bool {
+	// A readOnlyUtils name is read-only with ANY arguments — there is no
+	// mutating mode to flag-inspect — so an OPAQUE argument changes nothing.
+	// `cat $F` reads unknown data, and reading is not a mutation (change 0070
+	// D5). This is the widening D5 buys: before it, the whole command failed
+	// closed and a human was asked about `wc -l $f`.
 	if readOnlyUtils[seg.Name] {
 		return true
+	}
+	// The FLAG-INSPECTING names are the opposite case, and the line matters.
+	// isSafeFind, isSafeGit and isSafeSed all decide by READING the argument
+	// words: they look for -exec/-delete, for a mutating subcommand, for -i.
+	// An opaque word could BE any of those — `sed $F x` is `sed -i x` if $F
+	// happens to be "-i" — so the inspection is no longer a proof and the
+	// segment fails toward unsafe. It then reaches classifyHeuristic, where the
+	// opaque arg asks. A single blanket check rather than three, so a future
+	// flag-inspecting name added to the switch inherits it by default.
+	if seg.hasOpaqueArg() {
+		return false
 	}
 	switch seg.Name {
 	case "find":
@@ -498,6 +550,17 @@ func matchesSegment(patterns []string, seg Segment) bool {
 // segmentSubject reconstructs the "bash:<argv joined>" subject for a segment,
 // mirroring the legacy "bash:<firstToken>" shape used by auto_approve /
 // always_prompt patterns but carrying the full argv so "bash:git *" matches.
+//
+// An OPAQUE argument contributes its RAW SOURCE TEXT ("$VAR", "$(git
+// rev-parse)") — that is the whole reason the parser keeps the text at all
+// (change 0070 D5). Deny and always_prompt patterns should see the word a human
+// wrote, and a decision reason naming `rm $VAR` is readable where a blank would
+// not be. This is safe because the subject is only ever glob-MATCHED, never
+// resolved: the deny/ask uses tighten, and the allow use requires a
+// human-authored auto_approve pattern that already names the command
+// (auto_approve is empty by default and is a trust-boundary key local config
+// cannot loosen). It is emphatically NOT a value — nothing may read it back out
+// of this string and treat it as a path.
 func segmentSubject(seg Segment) string {
 	line := seg.Name
 	if len(seg.Args) > 0 {

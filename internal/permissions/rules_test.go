@@ -1,6 +1,7 @@
 package permissions
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -244,5 +245,102 @@ func TestEvalRules_ConfigAllowDoesNotLaunderARedirect(t *testing.T) {
 				t.Errorf("evalRules(%q) = %v, want %v", tc.cmd, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestIsReadOnlySafe_OpaqueArgs draws change 0070 D5's line through the
+// read-only safe list.
+//
+// A readOnlyUtils name is read-only with ANY arguments, so an opaque one
+// changes nothing: `cat $F` reads unknown data, and reading is not a mutation.
+//
+// The FLAG-INSPECTING names are the opposite case. isSafeSed, isSafeFind and
+// isSafeGit decide by reading the argument words — `-i`, `-exec`, `push`. An
+// opaque word could BE one of those, so the inspection is no longer a proof and
+// the segment fails toward unsafe.
+func TestIsReadOnlySafe_OpaqueArgs(t *testing.T) {
+	cases := []struct {
+		desc string
+		cmd  string
+		want bool
+	}{
+		{"cat of an opaque file is read-only", "cat $F", true},
+		{"grep with an opaque pattern is read-only", "grep $PAT file", true},
+		{"wc of an opaque file is read-only", "wc -l $f", true},
+		{"echo of a substitution is read-only", "echo $(git rev-parse --show-toplevel)", true},
+		{"sed with an opaque word could carry -i", "sed -n $F", false},
+		{"sed with an opaque script operand", "sed $F x", false},
+		{"find with an opaque word could carry -exec", "find . -name $PAT", false},
+		{"git with an opaque word could carry push", "git $SUB", false},
+		{"git log with an opaque revision", "git log $REV", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			segs := segsFor(t, tc.cmd)
+			last := segs[len(segs)-1]
+			if got := isReadOnlySafe(last); got != tc.want {
+				t.Errorf("isReadOnlySafe(%q) = %v, want %v", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsProvablyBenignKill_OpaqueOperand: the kill allow rests on every operand
+// being a provable numeric PID. An opaque operand is not a number we read — it
+// is a token we could not resolve — so the proof fails.
+// `kill -$SIG 4242` is the row that makes this test load-bearing rather than
+// decorative. Without the opaque guard the loop reads "-$SIG" as a signal FLAG
+// (it begins with '-', so the flag arm swallows it), sees the literal 4242 as a
+// provable PID, and returns TRUE — auto-approving `kill -9 4242`,
+// `kill -SIGSTOP 4242`, or whatever $SIG expands to, with no human in the loop.
+// The other rows would pass on an accident of the text: strconv.Atoi("$PID")
+// happens to fail, so they never exercise the guard at all.
+func TestIsProvablyBenignKill_OpaqueOperand(t *testing.T) {
+	for _, cmd := range []string{"kill $PID", "kill -9 $PID", "kill 4242 $PID", "kill -$SIG 4242"} {
+		segs := segsFor(t, cmd)
+		if isProvablyBenignKill(segs[0]) {
+			t.Errorf("isProvablyBenignKill(%q) = true — an opaque operand is not a provable PID", cmd)
+		}
+		if got := classifyHeuristic(segs, []string{t.TempDir()}); got != VerdictAsk {
+			t.Errorf("classifyHeuristic(%q) = %v, want VerdictAsk", cmd, got)
+		}
+	}
+}
+
+// TestIsCatastrophicRm_OpaqueOperandIsNotResolved pins the invariant inside the
+// DENY path too: isCatastrophicRm calls resolveExisting, which is exactly the
+// walk-up-to-the-deepest-existing-ancestor the invariant forbids over an opaque
+// operand. The verdict for `rm -rf $VAR` is the heuristic layer's ask, not a
+// containment proof made over a token that is not a path.
+func TestIsCatastrophicRm_OpaqueOperandIsNotResolved(t *testing.T) {
+	root := t.TempDir()
+	canon, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := chdir(t, canon)
+	defer restore()
+	// `rm -rf $X/../..` is the row with teeth. filepath.Abs CLEANS the literal
+	// token into a real path — <cwd>/$X/../.. collapses to the workspace's
+	// GRANDPARENT — which resolveExisting then resolves happily, and the
+	// workspace-ancestor test fires: without the skip this hard-DENIES. The
+	// answer is bogus in both directions, because it is an answer about a path
+	// built from a word that is not one: if $X were "a/b" the real target is the
+	// workspace itself, and if $X were "/etc" it is "/". It also does NOT fire
+	// on `rm -rf $X` where $X is literally "/", which is the genuinely
+	// catastrophic case — so it is noise, not a security control.
+	//
+	// Removing it costs nothing in safety: every opaque rm still fails toward
+	// the human at classifyHeuristic (asserted below), so nothing here can
+	// auto-approve. What it buys is the invariant, literally — resolveExisting
+	// is never handed a word that is not a path.
+	for _, cmd := range []string{"rm -rf $VAR", "rm -rf $(echo /)", "rm -rf $X/../.."} {
+		segs := segsFor(t, cmd)
+		if isCatastrophicRm(segs[len(segs)-1], canon) {
+			t.Errorf("isCatastrophicRm(%q) = true — an opaque operand must not be path-resolved", cmd)
+		}
+		if got := classifyHeuristic(segs, []string{canon}); got == VerdictAllow {
+			t.Errorf("classifyHeuristic(%q) = VerdictAllow, want not-allow", cmd)
+		}
 	}
 }

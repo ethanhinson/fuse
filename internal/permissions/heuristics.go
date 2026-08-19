@@ -65,6 +65,27 @@ func classifyHeuristic(segments []Segment, roots []string) Verdict {
 		if isReadOnlySafe(seg) {
 			continue // a read-only segment mutates nothing else to scope.
 		}
+
+		// THE INVARIANT of change 0070 D5, and the single most important line in
+		// it. This segment MUTATES and carries at least one opaque argument — a
+		// word whose value is not statically known ($VAR, $(…)). There is
+		// nothing to prove containment over, so the answer is the human.
+		//
+		// Read this together with pathArgs, which drops opaque positions so an
+		// opaque token can never reach withinWorkspace/resolveExisting. THAT
+		// GUARD ALONE IS A WORSE BYPASS THAN NEITHER: with the token dropped,
+		// `rm $(echo /)` arrives here with ZERO path args, the scoping loop
+		// below finds nothing to fail on, and the function returns
+		// VerdictAllow — auto-approving `rm /`. The drop removes the false
+		// PROOF; this line supplies the missing verdict.
+		//
+		// It sits ahead of the kill and loopback-fetch exemptions on purpose:
+		// both of those are proofs about operands ("these are numeric PIDs",
+		// "these are loopback URLs"), and an operand we could not resolve is not
+		// an operand either of them may claim to have inspected.
+		if seg.hasOpaqueArg() {
+			return VerdictAsk
+		}
 		// The kill family's operands are PIDs or process names, not paths —
 		// path-scoping them against the cwd would prove nothing (change 0068).
 		// A provably benign kill (numeric PIDs, signal flags only) allows;
@@ -137,9 +158,14 @@ func isEgress(seg Segment) bool {
 	if isGitPush(seg) {
 		return true
 	}
-	if seg.Name == "git" && len(seg.Args) > 0 && gitEgressSubcommands[seg.Args[0]] {
-		for _, a := range seg.Args[1:] {
-			if isHostQualified(a) {
+	if seg.Name == "git" && len(seg.Args) > 0 && !seg.isOpaque(0) && gitEgressSubcommands[seg.Args[0]] {
+		for i, a := range seg.Args[1:] {
+			// An OPAQUE remote argument counts as host-qualified (change 0070
+			// D5): isHostQualified inspects the text for "://", "@" and ":"
+			// markers, and "$REMOTE" carries none of them — so `git clone $URL`
+			// would read as a LOCAL remote name and skip the egress boundary
+			// entirely. Unprovable means we take the stricter reading.
+			if seg.isOpaque(i+1) || isHostQualified(a) {
 				return true
 			}
 		}
@@ -204,6 +230,17 @@ var (
 // non-literal URL, an unknown flag, a missing flag value — returns false and
 // the segment keeps its egress-ask ⇒ classifier routing.
 func isLoopbackFetch(seg Segment, roots []string) bool {
+	// An OPAQUE operand anywhere sinks the proof (change 0070 D5). This whole
+	// function is an argument-by-argument PROOF, and every arm of the loop below
+	// reads a word's text as a value — as a known flag, as a flag's scoped
+	// output path, or as a URL whose host must be loopback. An opaque word is
+	// none of those: `curl $URL` fetches an arbitrary host, `curl -o $OUT …`
+	// writes an arbitrary file, and urlHost would cheerfully parse a "hostname"
+	// out of a token that is not a URL at all. `curl $URL` must not inherit the
+	// loopback allow.
+	if seg.hasOpaqueArg() {
+		return false
+	}
 	var noVal, withVal, scopedVal map[string]bool
 	switch seg.Name {
 	case "curl":
@@ -313,11 +350,32 @@ func isHostQualified(arg string) bool {
 // not inspected individually; instead every non-flag word is conservatively
 // scoped — a word that is not actually a path but happens to resolve outside the
 // workspace only costs a human prompt, never a bypass.
+//
+// OPAQUE POSITIONS ARE SKIPPED (change 0070 D5), which is the enforcement point
+// of this change's invariant. An opaque arg's stored text is the raw source of
+// the word ("$VAR", "$(echo /)"), not a path, and every caller of this function
+// hands its result to withinWorkspace — which resolves a relative operand
+// against the cwd and walks up to the deepest EXISTING ancestor. Emitting
+// "$(echo /)" would therefore resolve it to <cwd>/$(echo /), whose parent IS the
+// workspace, and PROVE containment for a command that deletes the filesystem
+// root. Same failure family as #0068's unexpanded `~` and process-name
+// operands: a containment proof is sound only over an operand that is a path.
+//
+// It iterates by INDEX rather than `range seg.Args` by value precisely so the
+// opaqueness flag — which lives in a parallel slice — is still reachable.
+//
+// Skipping here is only half the answer: dropping an operand also removes the
+// thing the caller would have failed on. classifyHeuristic supplies the other
+// half by asking outright on any mutating segment with an opaque arg. Neither
+// guard is safe without the other.
 func pathArgs(seg Segment) []string {
 	var out []string
-	for _, a := range seg.Args {
+	for i, a := range seg.Args {
 		if a == "" {
 			continue
+		}
+		if seg.isOpaque(i) {
+			continue // unprovable ⇒ never resolved as a path. See above.
 		}
 		if strings.HasPrefix(a, "-") {
 			continue // an option flag, not a path operand.

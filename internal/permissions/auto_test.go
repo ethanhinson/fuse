@@ -442,3 +442,50 @@ func TestAutoMode_RedirectWriteTargets_EndToEnd(t *testing.T) {
 		})
 	}
 }
+
+// TestAutoMode_OpaqueArgs_EndToEnd is change 0070 D5 seen from the gate: the
+// widening it buys, and the ask it must never trade away for it.
+//
+// The workspace root is the cwd for every row, so any layer that resolved an
+// opaque token as a relative path would prove containment against this very
+// root and ALLOW. A row asserting VerdictAsk here is therefore asserting that
+// nothing did.
+func TestAutoMode_OpaqueArgs_EndToEnd(t *testing.T) {
+	cases := []struct {
+		desc string
+		cmd  string
+		want Verdict
+	}{
+		// The widening: opaque args in read-only commands stop stalling.
+		{"read-only command with an opaque file allows", "cat $F", VerdictAllow},
+		{"control flow with a literal body allows", "if [ -f x ]; then cat x; fi", VerdictAllow},
+		{"a loop reading its opaque loop variable allows", "for f in a.txt b.txt; do wc -l $f; done", VerdictAllow},
+		{"a read-only substitution allows", "echo $(git rev-parse --show-toplevel)", VerdictAllow},
+
+		// The invariant: a mutating segment with an opaque arg is unprovable.
+		{"rm of a substituted root never auto-approves", "rm $(echo /)", VerdictAsk},
+		{"rm of a variable never auto-approves", "rm $VAR", VerdictAsk},
+		{"touch under a substituted home never auto-approves", "touch $(echo ~)/x", VerdictAsk},
+		{"a loop deleting its opaque loop variable never auto-approves", "for f in *; do rm $f; done", VerdictAsk},
+		{"a flag-inspected sed with an opaque word never auto-approves", "sed $F x", VerdictAsk},
+		{"an opaque URL does not inherit the loopback allow", "curl $URL", VerdictAsk},
+		{"an opaque kill operand is not a provable PID", "kill $PID", VerdictAsk},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			root := t.TempDir()
+			canon, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			restore := chdir(t, canon)
+			defer restore()
+			g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), AlwaysApprove,
+				WithWorkspaceRoot(canon))
+			got, layer, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs(tc.cmd))
+			if got != tc.want {
+				t.Errorf("resolveAuto(%q) = %v (layer %q), want %v", tc.cmd, got, layer, tc.want)
+			}
+		})
+	}
+}

