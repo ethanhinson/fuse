@@ -13,21 +13,36 @@ how a real model behaves under the retuned prompts — that is the whole point o
 is what these checks are for. **Use a cheap gateway model for all of them; never an Anthropic/Claude
 model.**
 
-- [ ] **Routine dev ops now allow.** In auto mode, run a handful of the shapes that used to deny:
+- [x] **Routine dev ops now allow.** In auto mode, run a handful of the shapes that used to deny:
       a `curl` of a public API, an `npm install` / `go get`, a write into the session scratch dir,
       and `pkill -f vite` against a dev server you actually started. Expect allow, not ask/deny.
-- [ ] **The kill bound actually bites.** Still in auto mode, try `pkill -9 -f .` and
+      *Verified 2026-08-18 (headless one-shot, glm driver + deepseek-flash classifier): all four
+      allow. Caveat: the scratch write allows via `write_file`/`edit_file`; a bash `>` redirect into
+      the scratch dir still asks, because `splitSegments` fails closed on every real-target redirect
+      (change 0037) — that is the #0070 redirect-capture scope, not a regression here.*
+- [x] **The kill bound actually bites.** Still in auto mode, try `pkill -9 -f .` and
       `killall -9 Finder`. Expect **ask**, not allow — this is the clause fix `a96fc0a` added, and it
       is the one place the prompt deliberately narrows against the surrounding allow bias.
+      *Verified 2026-08-18 execution-free (real gate + live classifier over a stub bash tool):
+      `pkill -9 -f .` → ask ("broad -f pattern"); `killall -9 Finder` → deny rather than ask —
+      stricter than spec'd, fail-safe direction; noted as a prompt-adherence quirk, not a gap.*
 - [ ] **Out-of-workspace writes ask.** Try `cp .env ~/Library/x` and `echo x >> ~/.zshrc`.
       Expect **ask**. (Note the caveat under Findings — whether a `>>` redirect target is scoped by
       the deterministic layer is unverified; if the redirect one does not ask, that is the known gap,
       not a regression in this branch.)
-- [ ] **Known-good fetches are silent and free.** Fetch `https://github.com/...`,
+- [x] **Known-good fetches are silent and free.** Fetch `https://github.com/...`,
       `https://google.com`, `https://web.archive.org/...`. Expect no prompt **and no classifier call
       at all** — confirm zero `auto-classifier` entries appear in the trace for these fetches. That
       "zero calls" property is the actual deliverable of D2; a silent allow that still burned a
       model call would mean the floor arm is not being hit.
+      *Verified 2026-08-18 with one correction: `github.com` and `google.com` are silent floor
+      allows with zero `auto-classifier` trace entries. `web.archive.org` is NOT in the known-good
+      set (matching is exact-host post-review; only `archive.org` is in the CSV), so it goes to the
+      fallthrough classifier by design — this check's expectation for that URL was stale. That
+      fallthrough then exposed a real bug, fixed in-branch: `classifierMaxTokens = 128`
+      deterministically truncated deepseek-flash mid-reasoning (empty content → fail-closed ask for
+      every fallthrough host, silently defeating the allow-bias). Raised to 512 (observed real
+      usage 101–297 completion tokens); with the fix the same fetch classifies a clean allow.*
 - [ ] **The valve does not trip on an honest long session.** Run a genuinely long auto-mode session
       and confirm it does not pause. The old budget was 20 total blocks; it is now 50.
 

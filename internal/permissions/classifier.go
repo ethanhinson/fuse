@@ -37,9 +37,14 @@ type resolver interface {
 }
 
 // classifierMaxTokens bounds the verdict reply. The classifier asks for a
-// one-object JSON verdict, so a tight cap keeps the call cheap and fast; a
-// truncated reply simply fails to parse and falls closed to ask.
-const classifierMaxTokens = 128
+// one-object JSON verdict, but on a reasoning model the completion budget also
+// funds chain-of-thought before any content appears: at 128, deepseek-flash
+// deterministically truncated mid-reasoning on the web_fetch fallthrough
+// prompt (empty content → fail-closed ask), silently defeating the allow-bias
+// for every fallthrough host. Observed real usage is 101–213 completion
+// tokens; 512 leaves ~2.4x headroom while a truncated reply still fails to
+// parse and falls closed to ask.
+const classifierMaxTokens = 512
 
 // ClassifierTraceLabel labels the classifier's gateway calls in a shared trace
 // file so its verdict calls stay attributable alongside actor-model calls.
