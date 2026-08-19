@@ -44,6 +44,7 @@ One curated finding per file; this index is the hint surface. Load it, then read
 ## llm
 
 - [bound-every-model-call](bound-every-model-call.md) — Every model call needs a per-attempt timeout, a response-header timeout, bounded retries, and a labeled trace entry — http.DefaultClient hangs are silent multi-minute stalls, and untraced child agents make them invisible · also: http, timeouts, retries, observability, tracing ⟨needs promotion⟩
+- [truncated-model-reply-is-not-a-verdict](truncated-model-reply-is-not-a-verdict.md) — A fail-closed parse makes a truncated model reply indistinguishable from a considered refusal — bound max_tokens against observed usage, and emit reply-health (truncated / parse_ok / tokens) so the two are separable in telemetry. · also: permissions, observability, fail-closed, classifier ⟨needs promotion⟩
 
 ## mcp
 
@@ -53,6 +54,7 @@ One curated finding per file; this index is the hint surface. Load it, then read
 ## permissions
 
 - [auto-approve-task-implied-edits-classifier-context](auto-approve-task-implied-edits-classifier-context.md) — In an unattended mode there is no human to ask — structurally auto-approve task-implied in-workspace edits behind a trust boundary you already own, and feed the classifier the user's request instead of running it blind. · also: security, agents, ux ⟨needs promotion⟩
+- [canonicalize-once-before-every-matching-layer](canonicalize-once-before-every-matching-layer.md) — When two layers match the same operand with different normalizations, promoting either one to an authorization decision turns the mismatch into a bypass — canonicalize once, before every layer. · also: security, authorization, normalization, go ⟨needs promotion⟩
 
 ## reconcile
 
