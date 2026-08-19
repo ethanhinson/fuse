@@ -1,15 +1,20 @@
 # Backlog
 
-**71 changes** — 🟡 4 proposed · ⚪ 2 deferred · ✅ 59 done · 🗑️ 6 killed
+**71 changes** — 🟢 1 in progress · 🟡 3 proposed · ⚪ 2 deferred · ✅ 59 done · 🗑️ 6 killed
 
-## 🟡 Proposed (4)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0070](active/0070-auto-mode-shell-parse-widening.md) | Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args | `medium` | `feat` | [spec](../superpowers/specs/2026-08-17-auto-mode-shell-parse-widening-design.md) | `feat/auto-mode-shell-parse-widening` |
+
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0063](active/0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | `high` | `feat` | needs-brainstorm |
 | [0064](active/0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | `medium` | `feat` | ⏳ waiting on #63 — not yet built |
 | [0065](active/0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | `medium` | `feat` | ⏳ waiting on #63 — not yet built |
-| [0070](active/0070-auto-mode-shell-parse-widening.md) | Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args | `medium` | `feat` | build-ready |
 
 ## ⚪ Deferred (2)
 
