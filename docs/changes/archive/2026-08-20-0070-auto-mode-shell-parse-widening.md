@@ -2,7 +2,7 @@
 id: 70
 slug: auto-mode-shell-parse-widening
 title: Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-17
@@ -17,7 +17,7 @@ results: docs/results/2026-08-19-auto-mode-shell-parse-widening-results.md
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-shell-parse-widening
-claimed_at: 2026-08-20T00:05:35Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/76
 blocked_by:
 reconciled: true
