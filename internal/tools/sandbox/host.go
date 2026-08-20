@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os/exec"
 	"sort"
+	"sync"
 
 	"github.com/ethanhinson/fuse/internal/loopauth"
 )
@@ -47,12 +48,48 @@ func (*hostHandler) Acquire(_ context.Context, p loopauth.Principal, env Env) (R
 
 // hostRunner is one principal's host execution context.
 type hostRunner struct {
+	// principal is fixed at Acquire and never reassigned: a Runner belongs to
+	// exactly one principal for its whole life, which is what lets the warm
+	// pool re-assert ownership on checkout (see acquiredFor).
 	principal loopauth.Principal
+
+	// mu guards env. A pooled Runner is re-environed on checkout (ResetEnv)
+	// while a previous Exec may still be unwinding, so the environment is not
+	// write-once even though it is set-once per checkout.
+	mu sync.Mutex
 	// env is the COMPLETE environment every command run through this Runner
 	// observes, rendered as os/exec's K=V form. It is non-nil by construction
 	// (see renderEnv) because a nil exec.Cmd.Env means "inherit the parent
 	// process environment".
 	env []string
+}
+
+// acquiredFor reports the principal this Runner was acquired for, so a pool can
+// verify — against the Runner itself, not only against its own bookkeeping —
+// that it is about to hand the right context to the right principal.
+func (r *hostRunner) acquiredFor() loopauth.Principal { return r.principal }
+
+// ResetEnv re-applies a freshly resolved environment to a warm Runner.
+//
+// It exists for the pool's reset-on-checkout: a Runner that outlives one
+// checkout must observe the CURRENT allowlist on the next, not a snapshot taken
+// when it was first acquired, or a rotated credential would linger in a warm
+// shell. The non-nil guarantee is preserved here exactly as at Acquire.
+func (r *hostRunner) ResetEnv(env Env) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.env = renderEnv(env)
+	return nil
+}
+
+// currentEnv snapshots the rendered environment. It never returns nil.
+func (r *hostRunner) currentEnv() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.env == nil {
+		return []string{}
+	}
+	return append([]string(nil), r.env...)
 }
 
 // command builds the exec.Cmd for one Exec. It is separated from Exec so the
@@ -69,12 +106,12 @@ func (r *hostRunner) command(ctx context.Context, cmd string, workingDir string)
 	// ambient-inheritance hole is the entire reason this package exists
 	// (ADR-0044). Assigning r.env unconditionally is what closes it.
 	//
-	// r.env is non-nil even when the allowlist resolved to nothing, so the
+	// currentEnv is non-nil even when the allowlist resolved to nothing, so the
 	// empty-allowlist case means "no variables at all", never "inherit". The
 	// belt-and-braces re-check below makes that guarantee local to this
 	// function: if a future edit to the renderer ever lets a nil through, the
 	// process environment still does not leak.
-	c.Env = r.env
+	c.Env = r.currentEnv()
 	if c.Env == nil {
 		c.Env = []string{}
 	}

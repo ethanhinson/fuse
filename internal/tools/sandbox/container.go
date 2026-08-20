@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/ethanhinson/fuse/internal/loopauth"
 )
@@ -151,11 +152,46 @@ func (h *containerHandler) Acquire(_ context.Context, p loopauth.Principal, env 
 
 // containerRunner is one principal's container execution context.
 type containerRunner struct {
-	handler   *containerHandler
+	handler *containerHandler
+	// principal is fixed at Acquire and never reassigned: a Runner belongs to
+	// exactly one principal for its whole life, which is what lets the warm
+	// pool re-assert ownership on checkout (see acquiredFor).
 	principal loopauth.Principal
+
+	// mu guards env. A pooled Runner is re-environed on checkout (ResetEnv)
+	// while a previous Exec may still be unwinding, so the environment is not
+	// write-once even though it is set-once per checkout.
+	mu sync.Mutex
 	// env is the COMPLETE environment, pre-rendered as sorted K=V strings by
 	// renderEnv. Sorting is what makes argv deterministic and golden-testable.
 	env []string
+}
+
+// acquiredFor reports the principal this Runner was acquired for, so a pool can
+// verify — against the Runner itself, not only against its own bookkeeping —
+// that it is about to hand the right context to the right principal.
+func (r *containerRunner) acquiredFor() loopauth.Principal { return r.principal }
+
+// ResetEnv re-applies a freshly resolved environment to a warm Runner.
+//
+// It exists for the pool's reset-on-checkout: a Runner that outlives one
+// checkout must observe the CURRENT allowlist on the next, not a snapshot taken
+// when it was first acquired, or a rotated credential would linger in argv.
+func (r *containerRunner) ResetEnv(env Env) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.env = renderEnv(env)
+	return nil
+}
+
+// currentEnv snapshots the rendered environment. It never returns nil.
+func (r *containerRunner) currentEnv() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.env == nil {
+		return []string{}
+	}
+	return append([]string(nil), r.env...)
 }
 
 // argv builds the exact command line for one Exec.
@@ -165,7 +201,9 @@ type containerRunner struct {
 // workdir) is expressed here and nowhere else, so it must be assertable without
 // running anything.
 func (r *containerRunner) argv(cmd string, workingDir string) []string {
-	args := make([]string, 0, 12+2*len(r.env))
+	env := r.currentEnv()
+
+	args := make([]string, 0, 12+2*len(env))
 	args = append(args,
 		"run",
 		// --rm: the container is torn down when the command exits, so no
@@ -180,7 +218,7 @@ func (r *containerRunner) argv(cmd string, workingDir string) []string {
 
 	// TODO(#0064): egress control owns this flag (--network none floor + allowlist)
 
-	for _, kv := range r.env {
+	for _, kv := range env {
 		// ALWAYS the `--env K=V` pair form, NEVER a bare `--env K`.
 		//
 		// A bare `--env K` tells docker/nerdctl/podman to copy the HOST's
