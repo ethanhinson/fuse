@@ -94,6 +94,15 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// probe is an operator-local diagnostic run, exactly like one-shot.
 	sb := newSandboxService(false, stderr)
 	toolReg := defaultToolRegistry(sb, cfg.Research, set.Lookup)
+	// The bash tool's warm sandbox pool — its Runners and its reaper goroutine — is a
+	// SESSION resource here, not a per-loop one: buildResearchProbeRuntimeDeps hands
+	// every loop this ONE registry, and Registry.Clone shares TOOL POINTERS, so
+	// releasing it from Deps.LoopTeardown would let one loop close a pool another live
+	// loop is still using. The binding therefore carries no LoopTeardown and the
+	// release happens exactly once, here, covering every early return below —
+	// including a failed StartLoop, where the loop's completion goroutine never runs
+	// (learning per-instance-resource-needs-teardown-on-every-early-return).
+	defer func() { _ = tools.ReleaseSandboxes(context.Background(), toolReg) }()
 
 	// The recorder Log: one shared sink; each agent gets its own Recorder.
 	logSink := probe.NewLog()
