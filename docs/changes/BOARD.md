@@ -1,12 +1,6 @@
 # Backlog
 
-**71 changes** — 🟢 1 in progress · 🟡 3 proposed · ⚪ 2 deferred · ✅ 59 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0070](active/0070-auto-mode-shell-parse-widening.md) | Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args | `medium` | `feat` | [spec](../superpowers/specs/2026-08-17-auto-mode-shell-parse-widening-design.md) | `feat/auto-mode-shell-parse-widening` |
+**71 changes** — 🟡 3 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 59 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (3)
 
@@ -22,6 +16,12 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0070](active/0070-auto-mode-shell-parse-widening.md) | Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args | `medium` | `feat` | [#76](https://github.com/ethanhinson/fuse/pull/76) |  |
 
 ```mermaid
 graph TD
