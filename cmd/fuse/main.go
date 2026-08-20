@@ -101,6 +101,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	task := rest[0]
 
+	// An empty --model means "config default", as the flag help promises and as
+	// the other entry points already implement (runShell seeds its alias from
+	// reg.Default; research-probe defaults explicitly). One-shot used to pass
+	// the raw flag straight into runtime.LoopConfig, so an unflagged run
+	// reached BuildAgent as model "" and died with `unknown model ""` even
+	// with models.default set (change 0073).
+	if *modelAlias == "" {
+		*modelAlias = reg.Default
+	}
+
 	var traceW io.Writer
 	switch *traceFile {
 	case "":
