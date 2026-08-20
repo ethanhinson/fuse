@@ -1507,3 +1507,34 @@ func TestSplitSegments_OpaqueFailClosed(t *testing.T) {
 		})
 	}
 }
+
+// TestSplitSegments_DockerParses pins the parse-floor half of change 0072:
+// docker left arbitraryArgWrappers, so docker commands now parse into ordinary
+// segments (and thereby become reachable by deny/always_prompt/auto_approve
+// patterns and the classifier). The host-execution wrappers stay fail-closed —
+// pinned here so the removal is provably scoped to docker alone.
+func TestSplitSegments_DockerParses(t *testing.T) {
+	got, err := splitSegments("docker compose config --quiet")
+	if err != nil {
+		t.Fatalf("splitSegments(docker compose config --quiet) err = %v, want nil", err)
+	}
+	if len(got) != 1 || got[0].Name != "docker" {
+		t.Fatalf("segments = %+v, want one docker segment", got)
+	}
+	wantArgs := []string{"compose", "config", "--quiet"}
+	if len(got[0].Args) != len(wantArgs) {
+		t.Fatalf("args = %v, want %v", got[0].Args, wantArgs)
+	}
+	for i, a := range wantArgs {
+		if got[0].Args[i] != a {
+			t.Fatalf("args = %v, want %v", got[0].Args, wantArgs)
+		}
+	}
+	// The remaining arbitrary-arg wrappers run their payload on the HOST and
+	// must keep failing closed at the parse floor.
+	for _, cmd := range []string{"sudo ls", "xargs rm", "npx cowsay hi", "eval ls", "watch date"} {
+		if _, err := splitSegments(cmd); err == nil {
+			t.Errorf("splitSegments(%q) parsed; host-execution wrappers must stay fail-closed", cmd)
+		}
+	}
+}

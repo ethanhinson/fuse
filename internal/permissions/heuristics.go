@@ -98,6 +98,17 @@ func classifyHeuristic(segments []Segment, roots []string) Verdict {
 			return VerdictAsk
 		case "pkill", "killall":
 			return VerdictAsk
+		case "docker":
+			// The read-only docker forms were admitted by the isReadOnlySafe
+			// continue above; everything else docker reaches here. Its operands
+			// are images, containers, services, and volumes — NAMES, not paths
+			// (change 0072, same lesson as the kill family). Path-scoping them
+			// would resolve "compose"/"up"/"data" as cwd-relative words that
+			// trivially prove in-workspace, deterministically allowing
+			// `docker volume rm data` or `docker system prune -f` with no
+			// human. Nothing mutating may pass this layer; the classifier owns
+			// docker's gray area.
+			return VerdictAsk
 		}
 		if isLoopbackFetch(seg, roots) {
 			continue // URL operands are not paths; outputs were scoped inside.
