@@ -26,6 +26,10 @@ Ship, behind one mechanism-agnostic isolation seam:
 5. A **paper-validated microVM handler design** — the seam is proven against a second
    mechanism in this spec (interface + binding conditions) but **not built** here, so the
    later microVM change is a drop-in, not a re-widening.
+6. **Full sandbox observability** — lifecycle + health emitted as bounded events on the
+   existing change-0051 event stream, projected to OTEL/Prometheus/Loki and surfaced as
+   Grafana dashboards + alert rules, so an operator can see unhealthy containers and map
+   every running loop to the container/host it runs on.
 
 Out of scope is unchanged from the stub: egress/network policy (#0064), per-tenant
 filesystem isolation (#0065), a built microVM handler, a separate Deno code-exec tool, and
@@ -189,6 +193,119 @@ later. It satisfies the *same* `Handler`/`Runner` interface:
   Runner is released. This change wires the *release-on-loop-end* hook; it does not modify
   the lease mechanism itself.
 
+### Observability — sandbox lifecycle + health as event-stream projection
+
+**Design rule: ride the existing seam, never build a parallel one.** fuse's observability
+(change 0051) is a **projection over the durable event stream** — `internal/observe`'s
+`ProjectEvent` folds tenant-scoped, payload-free `event.Event`s (keyed by `TenantID` +
+`LoopID` + `NodeID`) into OTEL traces, Prometheus metrics, and Loki logs. The sandbox does
+**not** register its own meters or open its own OTEL spans; it **emits events**, and the
+existing projector turns them into telemetry. This is the same choice `KindPermissionDecision`
+made (change 0067) — gate behaviour was "invisible in the durable stream," so it became an
+event, not a bespoke counter. Sandbox health is the identical gap and gets the identical
+treatment. The payoff is correlation for free: every sandbox event carries the loop/tenant/node
+envelope, so "which loop is running where" is a join the projection already knows how to do.
+
+This section satisfies the operator's two distinct needs:
+
+1. **"Understand what loop is running where"** — *correlation*. Emit sandbox **identity** on
+   the stream so the projection can join a loop to its container/VM.
+2. **"See unhealthy containers"** — *health*. Emit sandbox **failure/health** signal the event
+   stream does not carry today (OOM, acquire/pull failures, leak/reap), projected to metrics
+   and alert rules.
+
+#### New event kinds (bounded, payload-free-safe)
+
+Added to `internal/event/event.go` and pinned in `event_test.go` (the wire format is
+replayed, so every new kind is contract-tested), each carrying only bounded identity and
+closed-enum classification — never the command, never env values, never output:
+
+```go
+KindSandboxAcquire Kind = "sandbox.acquire" // a Runner was minted or checked out of the pool
+KindSandboxRelease Kind = "sandbox.release" // a Runner was returned (reset) or torn down
+KindSandboxReap    Kind = "sandbox.reap"    // the idle-TTL reaper tore down an abandoned Runner
+KindSandboxHealth  Kind = "sandbox.health"  // a health transition (unhealthy/OOM/exit/pull-fail)
+```
+
+```go
+// SandboxAcquirePayload is emitted on every Acquire. Correlation identity only.
+type SandboxAcquirePayload struct {
+    Handler     string `json:"handler"`      // "container" | "host" | "microvm"
+    Runtime     string `json:"runtime"`      // detected CLI: "docker" | "nerdctl" | "podman" | "" (host)
+    ContainerID string `json:"container_id"` // short id, or "" for the host handler
+    Reused      bool   `json:"reused"`       // true = warm-pool checkout, false = cold spawn
+    ColdStartMS int64  `json:"cold_start_ms,omitempty"` // spawn latency when Reused=false
+}
+
+// SandboxHealthPayload is emitted on any health transition. Bounded reason enum only —
+// never a raw error string (the payload-free contract).
+type SandboxHealthPayload struct {
+    Handler     string `json:"handler"`
+    ContainerID string `json:"container_id"`
+    Healthy     bool   `json:"healthy"`
+    Reason      string `json:"reason"` // closed enum: "oom" | "runtime_exit" | "pull_failed" |
+                                       // "acquire_failed" | "unresponsive" | "recovered"
+}
+```
+
+`Release`/`Reap` reuse a small payload carrying `Handler` + `ContainerID` + a bounded
+`cause` enum (`released` | `loop_end` | `early_return` | `idle_ttl`). The `(Tenant, Loop,
+Node)` envelope on every event supplies the correlation — it is never duplicated into the
+payload.
+
+**Bounded-classification discipline.** These payloads honour `ProjectEvent`'s payload-free
+contract exactly like the permission-decision projection: closed enums (`handler`, `runtime`,
+`reason`, `cause`), a short container id, and a latency number — no free text, no command, no
+env, no output. `container_id` is treated as an opaque correlation token, not a secret.
+
+#### Projection additions (`internal/observe`)
+
+- Extend `classify()` / `ProjectEvent` with cases for the four new kinds, mapping each to an
+  `OperationKind` (`sandbox`) and an `Outcome` (`ok` on acquire/release/recovered; `error` on
+  an unhealthy transition), and surface `handler`/`runtime`/`reason` as bounded projected
+  fields (the same shape as the `Verdict`/`DecisionLayer` additions on `Record`).
+- **Metrics** (Prometheus recorder + OTEL observer), all labelled by
+  `tenant`, `handler`, `runtime` — and `loop`/`node` only where cardinality is safe
+  (gauges/counters, not high-cardinality histogram labels):
+  - `fuse_sandbox_active` (UpDownCounter/gauge) — live Runners; **this is "what is running
+    where"**: labelled by `handler` + `runtime`, and joinable to loop via the acquire/release
+    event pair the projection tracks.
+  - `fuse_sandbox_acquire_total{reused}` and `fuse_sandbox_cold_start_seconds` (histogram) —
+    pool effectiveness and cold-start cost (the ADR-0044 latency concern the pool exists to
+    mitigate, now measured).
+  - `fuse_sandbox_unhealthy_total{reason}` — **this is "see unhealthy containers"**: OOMs,
+    runtime exits, pull failures, acquire failures.
+  - `fuse_sandbox_reaped_total{cause}` — leaked-and-reaped Runners; a nonzero rate means loops
+    are not releasing cleanly (the teardown-on-early-return invariant is regressing).
+- **Logs (Loki):** the projected JSON `Record` already flows to the logging sink; the new
+  bounded fields ride it, so an operator can `LogQL`-filter unhealthy sandboxes by tenant/loop.
+- **Traces (OTEL):** the existing turn/tool spans already wrap a `bash` call; the acquire/exec
+  are child operations under that span via the existing trace-correlation IDs on the envelope
+  (`TraceID`/`SpanID`) — **no new tracer is opened in the sandbox package**. Header-based
+  correlation only (`Fuse-Trace-Id`), consistent with the 0051 review note that correlation is
+  header-based, not a wire carrier field.
+
+#### Dashboards + alerting (`deploy/observability`)
+
+- A **Sandbox** Grafana panel set: active sandboxes by handler/runtime (the "where" view), a
+  loop→container table (tenant, loop, node, container id, handler — driven by the acquire/release
+  projection), cold-start latency heatmap, unhealthy-by-reason, and reap rate.
+- **Alert rules:** `fuse_sandbox_unhealthy_total` rate > 0 over a window (paged: containers are
+  dying); `fuse_sandbox_reaped_total{cause="idle_ttl"}` rate elevated (leak: loops not
+  releasing); `fuse_sandbox_active` climbing without matching loop count (pool not draining).
+  Rules live beside the existing 0051 rules and are validated by `deploy/observability/validate.go`.
+
+#### Health detection — where the signal comes from
+
+The container handler learns health from the runtime it already drives: a non-zero **runtime**
+exit (distinct from the command's exit code — an OOM-killed container reports code 137 /
+`OOMKilled` in `docker inspect`), an image-pull failure at `Acquire`, and an unresponsive
+container on a pool health-check before checkout. Each maps to a `SandboxHealthPayload.Reason`
+enum. The host handler has no container to be unhealthy, so it emits health events only on the
+`acquire_failed` path (e.g. `/bin/sh` missing). The **microVM handler's** health mapping
+(guest-boot failure, `/dev/kvm`-absent fail-closed as an `acquire_failed` health event) is
+specified alongside its interface sketch so its telemetry is a drop-in too.
+
 ### Off-switch config (file-only, fail-safe)
 
 - **Location:** a dedicated local file, `.fuse/sandbox.local.yml` (repo-local, **gitignored**
@@ -237,6 +354,12 @@ environment.
   per-loop) at the composition root, config resolved there, principal threaded via the
   existing `toolidentity.WithPrincipal(ctx, …)` seam already seeded in `runtime_binding.go`
   and `shell.go`.
+- **Event emission** is threaded through the same event emitter the loop already holds (the
+  one that writes `tool.call`/`tool.result`), so sandbox events land on the durable stream
+  with the correct `(Tenant, Loop, Node)` envelope. The `sandbox.Service`/`Pool` take an
+  emitter dependency; they do **not** import `internal/observe` or open OTEL spans directly —
+  emit events, let the projector observe. This keeps the sandbox package free of a telemetry
+  backend dependency and keeps all projection logic in one place (`internal/observe`).
 
 ---
 
@@ -280,6 +403,26 @@ plain Go tests that need no model at all.
     call through the container handler runs `echo hi`, sees `/workspace`, and cannot see a
     parent secret. Skipped with a clear message when no CLI is detected (so CI without Docker
     still passes).
+11. **Event contract (unit):** the four new `Kind`s round-trip through the events.jsonl
+    encoder and are pinned in `event_test.go` (the wire format is replayed). Assert the
+    payloads carry only bounded fields — no command, env, or output leaks into a
+    `SandboxAcquirePayload`/`SandboxHealthPayload`.
+12. **Projection (unit):** `ProjectEvent` on each new kind produces the expected
+    `OperationKind`/`Outcome` and bounded projected fields, and — the payload-free guard —
+    the resulting `Record` retains no raw payload. Mirror the existing permission-decision
+    projection tests.
+13. **Correlation (unit):** an acquire event and its later tool.call/result for the same loop
+    share `(Tenant, Loop, Node)`, so the loop→container join the "where is loop X" dashboard
+    depends on actually resolves. A pooled reuse emits `Reused=true`; a cold spawn emits
+    `Reused=false` + a `ColdStartMS`.
+14. **Health signal (unit):** an OOM-killed / non-zero-runtime-exit container produces a
+    `sandbox.health` event with the right `Reason` enum and `Healthy=false`, and increments
+    `fuse_sandbox_unhealthy_total{reason}`; a pull failure at `Acquire` and a host-path
+    `acquire_failed` likewise. Drive via a mock runtime so no real OOM is needed.
+15. **Leak metric (unit):** a Runner reaped by idle-TTL emits `sandbox.reap{cause="idle_ttl"}`
+    and increments `fuse_sandbox_reaped_total` — the regression signal for the
+    teardown-on-early-return invariant.
+16. **Alert-rule validation:** the new Grafana/alert rules pass `deploy/observability/validate.go`.
 
 ---
 
