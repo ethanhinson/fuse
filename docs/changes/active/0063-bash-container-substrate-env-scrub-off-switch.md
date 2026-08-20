@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/bash-container-substrate-env-scrub-off-switch
-claimed_at: 2026-08-20T18:24:14Z
+claimed_at: 2026-08-20T18:26:56Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -78,3 +78,96 @@ All five open questions were resolved during grooming (2026-08-20) into the link
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-20 — reconciled against `origin/main` @ `b764733`
+
+Verified against `origin/main` (not a stale working tree — learning
+`reconcile-verify-claims-against-origin-not-working-tree`; the local checkout was
+confirmed equal to `origin/main` before any on-disk read was trusted).
+
+**Verdict: scope-ADJUSTABLE, not invalidated.** Every design decision in ADR-0044 and the
+linked spec still holds on current code. Two mechanics are re-mapped, per learning
+`reconcile-transport-swapped-under-spec-remap-not-halt`.
+
+**The premise is still live.** `internal/tools/bash.go:59` is unchanged:
+`exec.CommandContext(runCtx, "/bin/sh", "-c", a.Command)` with `cmd.Env` never set. The
+ambient-credential inheritance hole this change exists to close is present at HEAD, so the
+change is not obsolete.
+
+**Confirmed present and shaped as the spec assumes:**
+
+- `internal/toolidentity` — `WithPrincipal(ctx, loopauth.Principal)` (`context.go:26`) and
+  `PrincipalFrom(ctx)` (`context.go:36`); `loopauth.Principal` at `verifier.go:28`. The
+  pool's principal key comes from this seam exactly as specified.
+- `internal/event` — agent-free leaf package; `Kind` constants at `event.go:32-70`;
+  `KindPermissionDecision` + `PermissionDecisionPayload` (`event.go:333`) are the precedent
+  to mirror for the four new sandbox kinds.
+- `internal/observe` — `ProjectEvent(key event.StreamKey, e event.Event) Record`
+  (`projector.go:56`), `classify(kind, payload)` (`projector.go:110`), `Record`
+  (`projector.go:25`) with the bounded `Verdict`/`DecisionLayer`/`ClassifierOutcome` fields
+  the permission projection added; `OperationKind`/`Outcome` in `contracts.go`.
+- `gopkg.in/yaml.v3` is already a direct dependency — the off-switch config loader needs no
+  new module.
+- Neither `internal/tools/sandbox` nor `.fuse/` exists yet; both are net-new, as the spec
+  assumes.
+
+**Re-map 1 — the wiring choke point moved up one level.** The spec's *Wiring* bullet says to
+patch `DefaultTools()` plus "the cloned child builders in `cmd/fuse` (`main.go` one-shot
+`run()`, `shell.go`, `research_probe.go`)". Grepping at build time (as learning
+`patch-every-cloned-child-builder` instructs — never trust a prior scoping list) shows that
+enumeration is now stale: `NewBash(` has exactly **one** non-test call site,
+`internal/tools/registry.go:185`, inside `DefaultTools()`. The clone hazard has migrated to
+`defaultToolRegistry` (`cmd/fuse/run.go:231`), which has **seven** call sites —
+`main.go:166`, `loop_server.go:62`, `loop_serve_net.go:183`, `research_probe.go:93`,
+`mcp_server.go:41` and `mcp_server.go:74`, and `shell.go:71` via
+`buildSessionRegistryNoMCP` (`run.go:249`). The invariant the learning protects is
+unchanged; the set of files it applies to is different, and the build must re-grep rather
+than use either list.
+
+**Re-map 2 — the correlation envelope is split, not a set of `Event` fields.** The spec
+describes sandbox events as "keyed by `TenantID` + `LoopID` + `NodeID`". On current code
+`event.Event` carries only `NodeID` (`event.go:79`); tenant and loop live in
+`event.StreamKey{Tenant, Loop}` (`store.go:24`), passed *alongside* the event into
+`ProjectEvent(key, e)`. The spec's correlation guarantee holds unchanged — the join keys are
+all available at projection time — and its instruction that the payloads must **not**
+duplicate the envelope is reinforced by this shape rather than weakened. No design change;
+the implementation reads the envelope from `StreamKey` + `Event.NodeID`, not from a
+tenant/loop field on the payload.
+
+**Re-map 3 — tools cannot reach the event emitter today; the emitter rides the Service, not
+the tool signature.** The spec's *Wiring* bullet says sandbox events are "threaded through the
+same event emitter the loop already holds". On current code the emitter is
+`event.EventStore`, held privately by the agent (`internal/agent/agent.go:138`, set via
+`SetEventSink`, `agent.go:336`) and reachable only through the agent's own
+`emit(kind, turn, payload)` (`agent.go:355`). The `Tool` interface is
+`Execute(ctx, args string) Result` — tools receive **no** emitter and cannot emit events at
+all. This does not invalidate the design: the spec already puts the emitter dependency on
+`sandbox.Service`/`Pool` rather than on the tool, so the Service is constructed with the
+store at the composition root and emits directly. The consequence to respect is that
+sandbox events carry no agent-local `Turn`/`Depth`/`ParentID` — the `(tenant, loop)`
+envelope comes from the stream the store is already bound to, which is exactly the
+correlation the projection needs and all the spec claims.
+
+**Re-map 4 — the teardown hook the warm pool needs already exists.** The spec asks for
+release-on-loop-end wired into the ADR-0034 lease lifecycle. `internal/runtime/inproc.go`
+already has that seam: the run goroutine's teardown sequence (lines ~682-725) stops the
+lease renewer and the idle reaper, marks the registry not-live, closes the event store, and
+finally calls `r.deps.LoopTeardown(toolReg)` — the binding's per-loop resource-release hook
+added by change #59. The pool releases through `LoopTeardown` rather than a new lifecycle
+mechanism, which keeps this change's promise that it *hooks into* the lease lifecycle and
+does not re-implement it. Learning
+`per-instance-resource-needs-teardown-on-every-early-return` applies to the early-return
+paths *before* that goroutine is reached, and is a required test.
+
+**Scope confirmed as-groomed.** The full-sandbox-observability scope added by the 2026-08-20
+groom (four event kinds, projection, four metric families, Grafana panels, alert rules) is
+retained in full — it is the most recent human decision on this change and reconcile does not
+re-litigate it.
+
+**Dependency check.** `depends_on: [58]` is satisfied (`done`). Sibling changes #0064
+(egress) and #0065 (per-tenant FS) remain unbuilt and out of scope; the `--network` flag and
+`working_dir` containment stay deliberately un-owned here, marked with `TODO(#0064)` /
+`TODO(#0065)` as the spec directs.
+
+**Auto-capture:** disabled for this repo (`AUTO_CAPTURE_ENABLED=false`), so no stubs were
+minted; no adjacent follow-up work surfaced beyond the already-filed #0064/#0065.
