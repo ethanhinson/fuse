@@ -23,7 +23,7 @@ func (discard) Write(p []byte) (int, error) { return len(p), nil }
 func TestBuildAgentWithRenderer(t *testing.T) {
 	cfg := config.Default()
 	reg := model.DefaultRegistry()
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	r := tui.NewRenderer(discard{}, false)
 
 	a, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, r, false, "block", toolReg, permissions.AlwaysApprove, nil, "", nil, false, nil, nil, observe.NoopObserver{})
@@ -41,7 +41,7 @@ func TestBuildAgentWithRenderer(t *testing.T) {
 func TestBuildAgentLoopApprovalWiring(t *testing.T) {
 	cfg := config.Default()
 	reg := model.DefaultRegistry()
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	r := tui.NewRenderer(discard{}, false)
 
 	interactive, _, err := buildAgentCore(cfg, reg, reg.Default, r, "", nil, "root", toolReg, permissions.AlwaysApprove, nil, true, nil, nil, observe.NoopObserver{})
@@ -64,7 +64,7 @@ func TestBuildAgentLoopApprovalWiring(t *testing.T) {
 func TestBuildAgentWithRendererUnknownAlias(t *testing.T) {
 	cfg := config.Default()
 	reg := model.DefaultRegistry()
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	r := tui.NewRenderer(discard{}, false)
 	if _, err := buildAgentWithRendererAndTrace(cfg, reg, "no-such-model", r, false, "", toolReg, permissions.AlwaysApprove, nil, "", nil, false, nil, nil, observe.NoopObserver{}); err == nil {
 		t.Fatal("expected error for unknown alias")
@@ -76,7 +76,7 @@ func TestBuildAgentWithRendererUnknownAlias(t *testing.T) {
 func TestShellModelBuilderWiring(t *testing.T) {
 	cfg := config.Default()
 	reg := model.DefaultRegistry()
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	var build tui.AgentBuilder = func(alias string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		return buildAgentWithRendererAndTrace(cfg, reg, alias, r, false, "", toolReg, approve, nil, "", nil, false, nil, nil, observe.NoopObserver{})
 	}

@@ -121,7 +121,7 @@ func TestBuildShellRuntimeDeps(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := config.Default()
 	reg := model.DefaultRegistry()
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 
 	deps := buildShellRuntimeDeps(shellDepsInput{

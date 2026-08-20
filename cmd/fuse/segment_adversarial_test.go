@@ -168,7 +168,7 @@ func driveNeedleRecovery(t *testing.T, segDir string) string {
 	t.Cleanup(func() { tools.SetSegmentsDir("") })
 
 	reg := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
 	}
 

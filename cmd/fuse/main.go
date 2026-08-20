@@ -163,7 +163,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	oneShotSystemBlock := skillSet.SystemPromptBlock() + spawnAgentBlock
 
 	// Build a tool registry with spawn_agent AND the skill tool wired up.
-	toolReg := defaultToolRegistry(cfg.Research, skillSet.Lookup)
+	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE here, before any
+	// model has run, against this process's working directory. hosted=false — a
+	// one-shot run executes the operator's OWN work on the operator's machine, so
+	// their file-only off-switch applies.
+	sb := newSandboxService(false, stderr)
+	toolReg := defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
 	tree := agent.NewAgentTreeWithConcurrency(*modelAlias, *modelAlias, cfg.Agents.MaxConcurrent)
 	// The Scheduler is the single admission/slot/budget authority (change 0036):
 	// set the lifetime budget on it and route slot yield/unyield through it.

@@ -15,6 +15,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/tools"
+	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
 
 // mcpServerConfigDebounce mirrors the TUI provider's debounce so a burst of
@@ -38,7 +39,13 @@ const mcpServerConfigDebounce = 200 * time.Millisecond
 // Note: MCP servers configured in ~/.fuse/config.yml are NOT spawned here to
 // avoid recursive server chains. Only Fuse's native tools are exposed.
 func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) int {
-	toolReg := defaultToolRegistry(cfg.Research, nil) // native tools only; no skill tool in MCP server mode
+	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE at startup and
+	// threaded into the reload path too, so a config live-reload can never
+	// re-resolve containment. hosted=false — `fuse mcp-server` is launched by the
+	// operator on their own machine over stdio (the same trust model as the
+	// shell), so their file-only off-switch applies.
+	sb := newSandboxService(false, stderr)
+	toolReg := defaultToolRegistry(sb, cfg.Research, nil) // native tools only; no skill tool in MCP server mode
 
 	var approve permissions.ApprovalFunc
 	if socketPath := os.Getenv("FUSE_HITL_SOCKET"); socketPath != "" {
@@ -56,7 +63,7 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 	// Live-reload the tool catalog on config change and push fuse://tools updates
 	// to subscribed clients (change 0021). Best-effort: a watcher failure leaves
 	// the server serving the initial catalog. The watch stops when Serve returns.
-	stopWatch := watchMCPToolRegistry(config.Path(), toolReg, srv, stderr)
+	stopWatch := watchMCPToolRegistry(sb, config.Path(), toolReg, srv, stderr)
 	defer stopWatch()
 
 	if err := srv.Serve(context.Background()); err != nil {
@@ -70,8 +77,8 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 // config. Kept as one function so the initial registry (defaultToolRegistry) and
 // the reload reconcile draw from the SAME source of truth — a divergence would
 // make a reload silently add or drop tools relative to startup.
-func mcpServerToolSet(cfg config.Config) []tools.Tool {
-	return defaultToolRegistry(cfg.Research, nil).Tools()
+func mcpServerToolSet(sb *sandbox.Service, cfg config.Config) []tools.Tool {
+	return defaultToolRegistry(sb, cfg.Research, nil).Tools()
 }
 
 // reconcileMCPToolRegistry diffs the desired tool set against the live registry,
@@ -114,7 +121,7 @@ func reconcileMCPToolRegistry(reg *tools.Registry, desired []tools.Tool, push fu
 // to subscribed connections when the catalog changed. It returns a stop func;
 // call it (deferred) when the server exits. A watcher-construction failure logs
 // and returns a no-op stop — the server keeps serving the initial catalog.
-func watchMCPToolRegistry(configPath string, reg *tools.Registry, srv *mcp.Server, stderr io.Writer) func() {
+func watchMCPToolRegistry(sb *sandbox.Service, configPath string, reg *tools.Registry, srv *mcp.Server, stderr io.Writer) func() {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		fmt.Fprintf(stderr, "mcp-server: config watch disabled: %v\n", err)
@@ -149,7 +156,7 @@ func watchMCPToolRegistry(configPath string, reg *tools.Registry, srv *mcp.Serve
 					log.Printf("[mcp-server] reload config: %v", err)
 					continue
 				}
-				reconcileMCPToolRegistry(reg, mcpServerToolSet(cfg), func() {
+				reconcileMCPToolRegistry(reg, mcpServerToolSet(sb, cfg), func() {
 					srv.PushResourceUpdated(mcp.ToolsResourceURI)
 				})
 			case <-done:

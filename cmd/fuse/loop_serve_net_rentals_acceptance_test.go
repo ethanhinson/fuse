@@ -105,7 +105,7 @@ func rentalsAcceptanceHarness(t *testing.T, gateway http.HandlerFunc) (base stri
 	dir := t.TempDir()
 	store = fsstore.NewDurableFSStore(dir)
 
-	deps := buildLoopServerRuntimeDeps(cfg, reg, alias, defaultToolRegistry(cfg.Research, nil),
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, alias, defaultToolRegistry(nil, cfg.Research, nil),
 		spawnAgentBlock, permissions.AlwaysApprove, sessionRateGate(cfg))
 	deps.DurableStore = store
 	deps.Registry = store
@@ -375,7 +375,7 @@ func TestAcceptance_UnauthorizedThroughLoopServer(t *testing.T) {
 	reg := registryFromConfig(cfg)
 	dir := t.TempDir()
 	store := fsstore.NewDurableFSStore(dir)
-	deps := buildLoopServerRuntimeDeps(cfg, reg, reg.Default, defaultToolRegistry(cfg.Research, nil),
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil),
 		spawnAgentBlock, permissions.AlwaysApprove, sessionRateGate(cfg))
 	deps.DurableStore, deps.Registry, deps.BaseDir = store, store, ""
 	rt := runtime.New(deps)
@@ -437,7 +437,7 @@ func TestAcceptance_WrongAudienceThroughLoopServer(t *testing.T) {
 	reg := registryFromConfig(cfg)
 	dir := t.TempDir()
 	store := fsstore.NewDurableFSStore(dir)
-	deps := buildLoopServerRuntimeDeps(cfg, reg, reg.Default, defaultToolRegistry(cfg.Research, nil),
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil),
 		spawnAgentBlock, permissions.AlwaysApprove, sessionRateGate(cfg))
 	deps.DurableStore, deps.Registry, deps.BaseDir = store, store, ""
 	rt := runtime.New(deps)

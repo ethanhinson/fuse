@@ -54,8 +54,8 @@ func TestBuildLoopServerDepsWiresDurableSeam(t *testing.T) {
 		t.Fatalf("config load: %v", err)
 	}
 	reg := registryFromConfig(cfg)
-	deps := buildLoopServerRuntimeDeps(cfg, reg, reg.Default,
-		defaultToolRegistry(cfg.Research, nil), spawnAgentBlock, nil, sessionRateGate(cfg))
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, reg.Default,
+		defaultToolRegistry(nil, cfg.Research, nil), spawnAgentBlock, nil, sessionRateGate(cfg))
 	if deps.DurableStore == nil {
 		t.Fatal("buildLoopServerRuntimeDeps left Deps.DurableStore nil (durable seam not wired)")
 	}

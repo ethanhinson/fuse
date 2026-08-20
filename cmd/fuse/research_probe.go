@@ -90,7 +90,10 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// Real tool registry: web_search/web_fetch backed by the configured
 	// provider (lazy — a missing key surfaces the first time a tool runs), plus
 	// the skill tool and codeindex tools.
-	toolReg := defaultToolRegistry(cfg.Research, set.Lookup)
+	// Sandbox substrate (ADR-0044, change 0063), resolved ONCE. hosted=false: the
+	// probe is an operator-local diagnostic run, exactly like one-shot.
+	sb := newSandboxService(false, stderr)
+	toolReg := defaultToolRegistry(sb, cfg.Research, set.Lookup)
 
 	// The recorder Log: one shared sink; each agent gets its own Recorder.
 	logSink := probe.NewLog()

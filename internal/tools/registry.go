@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
 
 // Result is the outcome of a tool execution.
@@ -179,10 +180,50 @@ func (r *Registry) Clone() *Registry {
 	return out
 }
 
+// SandboxReleaser is implemented by tools holding a sandbox substrate whose
+// lifetime is the LOOP's, not the process's — today, the bash tool's warm pool.
+type SandboxReleaser interface {
+	// CloseSandbox releases every execution context the tool holds. It must be
+	// idempotent: teardown can run on an early-return path and again on the
+	// loop's completion goroutine.
+	CloseSandbox(ctx context.Context) error
+}
+
+// ReleaseSandboxes releases the sandbox substrate held by every tool in r.
+//
+// It is what a binding's runtime.Deps.LoopTeardown calls: without it, a loop's
+// warm containers — and the pool's reaper goroutine — outlive the loop that
+// created them, including on the early-return path where the loop never ran at
+// all (learning per-instance-resource-needs-teardown-on-every-early-return).
+//
+// It returns the first teardown error but always attempts every tool: one
+// substrate refusing to die must not strand the others.
+func ReleaseSandboxes(ctx context.Context, r *Registry) error {
+	if r == nil {
+		return nil
+	}
+	var firstErr error
+	for _, t := range r.Tools() {
+		sr, ok := t.(SandboxReleaser)
+		if !ok {
+			continue
+		}
+		if err := sr.CloseSandbox(ctx); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
 // DefaultTools returns the Phase 1 built-in tool set.
-func DefaultTools() []Tool {
+//
+// sb is the process's sandbox substrate selection (ADR-0044), resolved ONCE at
+// the composition root: the bash tool runs every command through it. A nil sb
+// yields a bash tool that REFUSES — never one that runs commands on the host
+// with an inherited environment.
+func DefaultTools(sb *sandbox.Service) []Tool {
 	return []Tool{
-		NewBash(),
+		NewBash(sb),
 		NewReadFile(),
 		NewWriteFile(),
 		NewEditFile(),

@@ -11,6 +11,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/tools"
+	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
 
 // approveAllFunc is a test ApprovalFunc that records whether it was consulted.
@@ -35,13 +36,30 @@ func testRegistry() *model.Registry {
 }
 
 // safeToolRegistry registers a single tool so the gate has an inner registry.
+//
+// The substrate is the hand-built HOST (off-switch) Config: these tests assert
+// that the GATE approves a read-only bash call, so the call has to actually
+// run, and a unit test may not require a container daemon. The environment is
+// still scrubbed — uncontained never means unscrubbed.
 func safeToolRegistry(t *testing.T) *tools.Registry {
 	t.Helper()
 	r := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(testHostSandbox(t)) {
 		r.Register(tl)
 	}
 	return r
+}
+
+// testHostSandbox is the host-substrate sandbox Service for tests that must run
+// a real command. Production never builds a Config by hand: it goes through
+// newSandboxService → sandbox.LoadConfig, which is contained by default.
+func testHostSandbox(t *testing.T) *sandbox.Service {
+	t.Helper()
+	svc, err := sandbox.NewService(sandbox.Config{Contained: false, Handler: sandbox.HandlerHost})
+	if err != nil {
+		t.Fatalf("sandbox.NewService: %v", err)
+	}
+	return svc
 }
 
 // TestBuildGateReadsSessionModeAtConstruction proves a gate built from a session

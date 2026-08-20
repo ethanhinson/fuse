@@ -56,7 +56,7 @@ func TestColdResumeAcceptance(t *testing.T) {
 	store := fsstore.NewDurableFSStore(dir)
 
 	buildDeps := func(idleTTL time.Duration) runtime.Deps {
-		d := buildLoopServerRuntimeDeps(cfg, reg, alias, defaultToolRegistry(cfg.Research, nil),
+		d := buildLoopServerRuntimeDeps(nil, cfg, reg, alias, defaultToolRegistry(nil, cfg.Research, nil),
 			spawnAgentBlock, permissions.AlwaysApprove, sessionRateGate(cfg))
 		d.DurableStore = store
 		d.Registry = store

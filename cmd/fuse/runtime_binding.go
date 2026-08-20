@@ -245,10 +245,17 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		// it runs on the normal completion goroutine AND may be invoked once more on a
 		// StartLoop error return (change #59 review S2), so a failure after the manager
 		// dialed still releases it. A double Close would otherwise re-walk an emptied
-		// server map — harmless — but Once makes the intent explicit and the arg is
-		// ignored (one-shot is single-loop, one manager).
-		LoopTeardown: func(_ *tools.Registry) {
+		// server map — harmless — but Once makes the intent explicit. The MCP half
+		// ignores the registry argument (one-shot is single-loop, one manager); the
+		// sandbox half below uses it, since the pool lives on the registry's tools.
+		LoopTeardown: func(loopReg *tools.Registry) {
 			oneShotMCPClose()
+			// Release the bash tool's warm sandbox pool (change 0063): its Runners
+			// and its reaper goroutine belong to the LOOP, not the process. This
+			// also runs on the StartLoop early-return path, where the completion
+			// goroutine never launches — the one path a leak is invisible on
+			// (learning per-instance-resource-needs-teardown-on-every-early-return).
+			_ = tools.ReleaseSandboxes(context.Background(), loopReg)
 		},
 		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			// Publish the Runtime-owned store to the per-loop holder so the eagerly-wired
@@ -462,6 +469,16 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		BaseDir:         "", // NoopStore: research-probe writes no event log (byte-identical).
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
 		NewToolRegistry: func() *tools.Registry { return toolReg },
+		// Release the bash tool's warm sandbox pool at loop end (change 0063), on
+		// the completion path AND on the StartLoop early return — the path a
+		// leaked container is invisible on (learning
+		// per-instance-resource-needs-teardown-on-every-early-return). The pool
+		// re-opens lazily over the SAME frozen Service if a later loop runs bash
+		// again, so a session that drives several loops through one registry is
+		// unaffected; containment cannot change, it was resolved once at startup.
+		LoopTeardown: func(loopReg *tools.Registry) {
+			_ = tools.ReleaseSandboxes(context.Background(), loopReg)
+		},
 		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			// Publish the Runtime-owned store so the eagerly-wired child-builder/spawner
 			// closures emit onto THIS loop's store (change 0046). Research-probe is
@@ -725,6 +742,16 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		BaseDir:         in.logDir, // present for seam symmetry; the shell's TUI drives turns, not StartLoop.
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
 		NewToolRegistry: func() *tools.Registry { return toolReg },
+		// Release the bash tool's warm sandbox pool at loop end (change 0063), on
+		// the completion path AND on the StartLoop early return — the path a
+		// leaked container is invisible on (learning
+		// per-instance-resource-needs-teardown-on-every-early-return). The pool
+		// re-opens lazily over the SAME frozen Service if a later loop runs bash
+		// again, so a session that drives several loops through one registry is
+		// unaffected; containment cannot change, it was resolved once at startup.
+		LoopTeardown: func(loopReg *tools.Registry) {
+			_ = tools.ReleaseSandboxes(context.Background(), loopReg)
+		},
 		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			// The TUI's own AgentBuilder seam builds the per-turn root with the live
 			// renderer; BuildAgent here builds a root with a discarding renderer for

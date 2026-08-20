@@ -180,7 +180,11 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		return 1
 	}
 	systemBlock := skillSet.SystemPromptBlock() + spawnAgentBlock
-	toolReg := defaultToolRegistry(cfg.Research, skillSet.Lookup)
+	// Sandbox substrate (ADR-0044, change 0063), resolved ONCE. hosted=TRUE: this
+	// binding serves remote principals over the network, so no local file may
+	// authorize running their commands uncontained on this host.
+	sb := newSandboxService(true, stderr)
+	toolReg := defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
 
 	// REUSE the shared composition root — the exact deps wiring binding #2 uses. Do not
 	// re-wire it here. Thread the owner-liveness lease TTL (change 0049) into the deps so
@@ -207,7 +211,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		}
 	}
 	defer shutdownObservability()
-	deps := buildLoopServerRuntimeDepsWithObserver(cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), obs.observer)
+	deps := buildLoopServerRuntimeDepsWithObserver(sb, cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), obs.observer)
 	deps.LeaseTTL = loopLeaseTTL(cfg)
 	if obs.projection != nil && deps.DurableStore != nil {
 		store, ok := deps.DurableStore.(event.CommittedDurableStore)

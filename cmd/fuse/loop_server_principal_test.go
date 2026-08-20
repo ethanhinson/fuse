@@ -20,7 +20,7 @@ import (
 func TestLoopServerDeps_StampsRealPrincipal(t *testing.T) {
 	cfg := config.Config{}
 	reg := newTestModelRegistry()
-	deps := buildLoopServerRuntimeDeps(cfg, reg, "cloud/x", defaultToolRegistry(cfg.Research, nil),
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, "cloud/x", defaultToolRegistry(nil, cfg.Research, nil),
 		spawnAgentBlock, permissions.AlwaysApprove, nil)
 
 	if deps.LoopContext == nil {
@@ -55,7 +55,7 @@ func TestLoopServerDeps_StampsRealPrincipal(t *testing.T) {
 func TestLoopServerDeps_FallsBackToTenantLocalPrincipal(t *testing.T) {
 	cfg := config.Config{}
 	reg := newTestModelRegistry()
-	deps := buildLoopServerRuntimeDeps(cfg, reg, "cloud/x", defaultToolRegistry(cfg.Research, nil),
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, "cloud/x", defaultToolRegistry(nil, cfg.Research, nil),
 		spawnAgentBlock, permissions.AlwaysApprove, nil)
 
 	ctx := deps.LoopContext(context.Background(), runtime.LoopConfig{Tenant: event.DefaultTenant, Subject: ""})

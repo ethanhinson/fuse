@@ -68,7 +68,11 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 	skillBlock := set.SystemPromptBlock()
 
-	toolReg, err := buildSessionRegistryNoMCP(cfg, set.Lookup)
+	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE per shell session,
+	// before the first turn. hosted=false — the shell runs the operator's own work
+	// on their own machine, so their off-switch file applies.
+	sb := newSandboxService(false, stderr)
+	toolReg, err := buildSessionRegistryNoMCP(sb, cfg, set.Lookup)
 	if err != nil {
 		fmt.Fprintf(stderr, "session registry error: %v\n", err)
 		return 1

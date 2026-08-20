@@ -70,7 +70,7 @@ func TestGatewaySeamOffersBlackboardTools(t *testing.T) {
 	bb := agent.NewBlackboard(tree)
 
 	reg := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
 	}
 	for _, tl := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {
