@@ -2,7 +2,7 @@
 id: 63
 slug: bash-container-substrate-env-scrub-off-switch
 title: bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam
-status: in-progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-16
@@ -13,12 +13,12 @@ discovered_from: [58]
 adrs: [44]
 spec: docs/superpowers/specs/2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md
 plan: docs/superpowers/plans/2026-08-20-bash-container-substrate-env-scrub-off-switch-plan.md
-results:
+results: docs/results/2026-08-20-bash-container-substrate-env-scrub-off-switch-results.md
 trivial: false
 auto_groomable:
 branch: feat/bash-container-substrate-env-scrub-off-switch
-claimed_at: 2026-08-20T18:30:12Z
-pr:
+claimed_at: 2026-08-20T20:29:19Z
+pr: https://github.com/ethanhinson/fuse/pull/79
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md) |
 | Plan | [2026-08-20-bash-container-substrate-env-scrub-off-switch-plan.md](https://github.com/ethanhinson/fuse/blob/feat/bash-container-substrate-env-scrub-off-switch/docs/superpowers/plans/2026-08-20-bash-container-substrate-env-scrub-off-switch-plan.md) |
+| Results | [2026-08-20-bash-container-substrate-env-scrub-off-switch-results.md](https://github.com/ethanhinson/fuse/blob/feat/bash-container-substrate-env-scrub-off-switch/docs/results/2026-08-20-bash-container-substrate-env-scrub-off-switch-results.md) |
+| PR | [#79](https://github.com/ethanhinson/fuse/pull/79) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
