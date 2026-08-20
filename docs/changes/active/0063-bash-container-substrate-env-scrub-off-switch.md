@@ -6,12 +6,12 @@ status: proposed
 priority: high
 type: feat
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-20
 depends_on: [58]
 related: [64, 65]
 discovered_from: [58]
 adrs: [44]
-spec:
+spec: docs/superpowers/specs/2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md
 plan:
 results:
 trivial: false
@@ -27,6 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
@@ -45,24 +46,32 @@ This is the **load-bearing first slice** of ADR-0044's deferred implementation: 
 - **A host / no-container binding that IS the seam's local off-switch** — a host binding is itself an implementation of the seam, so the off-switch falls out of the design rather than being bolted on. It is **fail-safe, never fail-open**: contained by default; absent or unreadable config ⇒ contained; disabling is **opt-out from trusted local config only** — never from model output, never from a wire field; and it is **structurally inert when the ADR-0034 hosted/loop-server posture is active** (a deployed context has no path to run `bash` uncontained).
 - **Structural ambient-credential scrubbing** — the child starts from an **empty environment** and receives exactly an explicit allowlist of benign vars (`PATH`, `HOME`, `LANG`, plus operator-declared safe passthroughs). On the **host off-switch path**, `cmd.Env` is **SET to that same allowlist** rather than left unset — "inherit everything" is never the behavior in either mode. This closes the ambient-credential inheritance hole **by construction**, honoring ADR-0036's constraint (no ambient-credential passthrough) applied at the subprocess boundary.
 
+**Grooming decisions (2026-08-20; detail in the linked spec):**
+
+- **Default substrate is the container tier, driven by an auto-detected container CLI** (docker → nerdctl → podman), not raw `runc` and not microVM-first — microVM needs `/dev/kvm` (absent on macOS/many CI runners), where ADR-0044 mandates fail-closed, which would make local `bash` refuse to run. The container CLI keeps local dogfooding working on the dev Mac.
+- **The microVM handler is validated in-spec but NOT built here** — an interface-conformance sketch proves `Handler`/`Runner`/`Env` accommodate a hardware-VM mechanism without re-widening the seam, so the later microVM change is a drop-in.
+- **A basic per-loop warm pool IS in scope** — keyed strictly by principal, reset-and-re-scrubbed on every checkout, torn down on every loop early-return plus an idle-TTL reaper. The principal comes from the authenticated loop context via `toolidentity.PrincipalFrom(ctx)` (the existing identity seam), never from model output.
+- **The off-switch config is a dedicated, gitignored, file-only local config** (`.fuse/sandbox.local.yml`) — no env-var opt-out; absent/unreadable/malformed ⇒ contained.
+
 ## Out of scope
 
 - **Egress / network policy** — `--network none` floor and the operator-declared allowlist are Change #64.
 - **Per-tenant filesystem isolation** — the ADR-0034 `Principal.Tenant` bind-mount and `working_dir` containment are Change #65.
 - Any attempt to extend ADR-0036's delegation *mechanism* to the shell (ADR-0044 rules this out).
 - A separate sandboxed code-exec tool (Deno was considered and rejected as the substrate for *this* tool in ADR-0044).
-- Warm/pooled-container performance mitigation is a likely follow-on, not required for this first slice — but if built, it inherits the per-principal-reset rule above.
+- A full lease-manager rewrite — the warm pool (now in scope, see grooming decisions) *hooks into* the ADR-0034 lease lifecycle for release-on-loop-end; it does not re-implement the lease mechanism.
 - **Actually implementing a microVM handler** is a later change — this slice ships the container tier behind the mechanism-agnostic seam so the microVM handler can drop in later without re-widening it.
 - **PaaS / remote-backend isolation** is out-of-scope and gets its own future ADR (ADR-0044's 2026-08-16 Update); the seam here must not foreclose it, but no PaaS work lands in this change.
 
 ## Open questions
 
-<!-- Groomed into a build-ready spec later; the design decisions themselves are recorded in ADR-0044. -->
-- Container-image / rootfs shape for the default `runc` handler, and how the working tree is mounted in so the model sees the repo it edits.
-- Where the trusted local off-switch config lives and how it is read fail-safe (absent/unreadable ⇒ contained).
-- Exact operator-declared safe-passthrough env var mechanism and its config surface.
-- Interaction with ADR-0034 ownership/lease lifecycle for a per-loop warm/pooled container (deferred, but shapes the interface).
-- Docker-in-Docker / mounted-socket privilege-escalation tradeoff (socket ≈ host root) that any container-capable implementation must address.
+All five open questions were resolved during grooming (2026-08-20) into the linked spec:
+
+- **Container-image / rootfs & workdir mount** → configurable `image` with a pinned minimal default; working tree bind-mounted read-write at a fixed in-container path (`/workspace`). Resolved.
+- **Off-switch config location & fail-safe read** → dedicated, gitignored, file-only `.fuse/sandbox.local.yml`; absent/unreadable/malformed ⇒ contained. Resolved.
+- **Operator-declared safe-passthrough env mechanism** → an `env_passthrough` list in that config, resolved to host values and merged into the allowlist alongside `PATH`/`HOME`/`LANG`. Resolved.
+- **ADR-0034 lease lifecycle interaction** → the per-loop warm pool releases its per-principal Runner on loop-end/reclaim via a release hook; the lease mechanism itself is untouched. Resolved.
+- **Docker-in-Docker / mounted-socket privilege escalation** → this change never mounts the docker socket into the container; socket access (≈ host root) is an explicit non-goal. Resolved.
 
 ## Reconcile log
 
