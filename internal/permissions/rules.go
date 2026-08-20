@@ -448,6 +448,8 @@ func isReadOnlySafe(seg Segment) bool {
 		return isSafeGit(seg.Args)
 	case "sed":
 		return isSafeSed(seg.Args)
+	case "docker":
+		return isSafeDocker(seg.Args)
 	default:
 		return false
 	}
@@ -629,6 +631,63 @@ func matchesSubjects(patterns []string, subject string) bool {
 		if ok, _ := path.Match(pat, subject); ok {
 			return true
 		}
+	}
+	return false
+}
+
+// readOnlyDockerSubcommands are docker subcommands with no mutating flag form:
+// their operands name containers/images to READ, and reading is not a
+// mutation, so they are safe with any trailing arguments (the
+// readOnlyGitSubcommands shape). pull is absent on purpose (it mutates the
+// local image store and is egress); stats is absent because its default form
+// is an unbounded live stream.
+var readOnlyDockerSubcommands = map[string]bool{
+	"ps":      true,
+	"images":  true,
+	"version": true,
+	"info":    true,
+	"inspect": true,
+	"logs":    true,
+	"diff":    true,
+	"history": true,
+	"port":    true,
+	"top":     true,
+}
+
+// readOnlyComposeSubcommands are `docker compose` subcommands proven
+// read-only: they render or list, never create/start/stop/remove.
+var readOnlyComposeSubcommands = map[string]bool{
+	"config":  true,
+	"ps":      true,
+	"ls":      true,
+	"logs":    true,
+	"images":  true,
+	"top":     true,
+	"port":    true,
+	"version": true,
+}
+
+// isSafeDocker reports whether a docker invocation is a read-only subcommand
+// form (change 0072). Like isSafeGit it fails toward the human/classifier:
+// only enumerated bare-subcommand forms are admitted.
+//
+// ANY flag before the subcommand defeats the proof — global flags (`-H`,
+// `--context`, `compose -f`) retarget which daemon or compose file the
+// command reads and take their value as a SEPARATE word, and modelling that
+// arity blindly is exactly the mis-peel that relabeled argv[0] in change 0070
+// (`nice -n 5` → segment named "5"). Refusing costs one classifier call;
+// guessing wrong silently proves the wrong thing.
+func isSafeDocker(args []string) bool {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return false
+	}
+	sub := args[0]
+	if readOnlyDockerSubcommands[sub] {
+		return true
+	}
+	if sub == "compose" {
+		rest := args[1:]
+		return len(rest) > 0 && !strings.HasPrefix(rest[0], "-") && readOnlyComposeSubcommands[rest[0]]
 	}
 	return false
 }

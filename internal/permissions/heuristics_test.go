@@ -436,3 +436,61 @@ func TestClassifyHeuristic_OpaqueGitRemote(t *testing.T) {
 		}
 	}
 }
+
+// TestClassifyHeuristic_DockerNeverPathScoped proves the docker split (change
+// 0072): read-only docker forms pass (isReadOnlySafe admits them), and every
+// other docker form asks — its operands are images, containers, services, and
+// volumes, i.e. NAMES, not paths. Path-scoping them would resolve words like
+// "compose" and "up" as cwd-relative paths that trivially prove in-workspace,
+// deterministically allowing `docker volume rm` / `docker system prune -f`
+// with no human. The ask routes the segment to the classifier.
+func TestClassifyHeuristic_DockerNeverPathScoped(t *testing.T) {
+	root := t.TempDir()
+	allows := []string{
+		"docker compose config --quiet",
+		"docker ps -a",
+		"docker compose logs api",
+	}
+	for _, cmd := range allows {
+		if got := classifyHeuristic(segsFor(t, cmd), []string{root}); got != VerdictAllow {
+			t.Errorf("classifyHeuristic(%q) = %v, want VerdictAllow (read-only docker)", cmd, got)
+		}
+	}
+	asks := []string{
+		"docker compose up -d",
+		"docker run alpine sh",
+		"docker system prune -f",
+		"docker volume rm data",
+		"docker compose down -v",
+		// A pre-subcommand flag defeats the read-only proof.
+		"docker compose -f other.yml config",
+		// An opaque operand can never prove anything (D5 invariant).
+		"docker inspect $C",
+	}
+	for _, cmd := range asks {
+		// classifyHeuristicIn chdirs INTO the workspace root — the setup under
+		// which path-scoping docker's name operands ("compose", "up", "data")
+		// as cwd-relative words WOULD prove in-workspace and silently allow.
+		// Running the asks from an unrelated cwd would pass even without the
+		// docker case, on the accident that the words resolve out-of-root.
+		if got := classifyHeuristicIn(t, segsFor(t, cmd), root); got != VerdictAsk {
+			t.Errorf("classifyHeuristic(%q) = %v, want VerdictAsk (docker operands are names, not paths)", cmd, got)
+		}
+	}
+}
+
+// TestClassifyHeuristic_DockerRedirectTargetStillScoped pins the D4 ordering
+// for the new docker case: a redirect write target is scoped BEFORE the docker
+// switch, so even a read-only docker command cannot write out-of-root, while
+// the in-root form stays a deterministic allow.
+func TestClassifyHeuristic_DockerRedirectTargetStillScoped(t *testing.T) {
+	root := t.TempDir()
+	segs := segsFor(t, "docker compose config > compose-resolved.yml")
+	if got := classifyHeuristicIn(t, segs, root); got != VerdictAllow {
+		t.Errorf("in-root redirect from read-only docker = %v, want VerdictAllow", got)
+	}
+	segs = segsFor(t, "docker compose config > /etc/compose.yml")
+	if got := classifyHeuristicIn(t, segs, root); got != VerdictAsk {
+		t.Errorf("out-of-root redirect from read-only docker = %v, want VerdictAsk", got)
+	}
+}

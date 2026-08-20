@@ -183,14 +183,20 @@ func (w argWords) anyOpaque() bool {
 // command's allow decision, so their presence as a bare command fails closed.
 // bash/sh are handled specially (a parseable `-c "<script>"` is peeled; any
 // other form fails closed).
+//
+// The membership criterion is HOST execution: each of these runs its payload
+// in the caller's own environment. docker is deliberately absent (change
+// 0072) — its payload runs inside a container boundary, so it parses as an
+// ordinary subcommand-shaped CLI: isSafeDocker admits the read-only forms and
+// classifyHeuristic routes every other docker form to the classifier, never
+// to a path-scoped deterministic allow.
 var arbitraryArgWrappers = map[string]bool{
-	"xargs":  true,
-	"npx":    true,
-	"sudo":   true,
-	"watch":  true,
-	"docker": true,
-	"eval":   true,
-	"exec":   true,
+	"xargs": true,
+	"npx":   true,
+	"sudo":  true,
+	"watch": true,
+	"eval":  true,
+	"exec":  true,
 }
 
 // wrapperSpec models ONE peelable wrapper's own option grammar, so the peel can

