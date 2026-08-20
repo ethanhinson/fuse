@@ -8,7 +8,7 @@ type: feat
 created: 2026-08-16
 updated: 2026-08-16
 depends_on: [63]
-related: [63, 64]
+related: [63, 64, 74]
 discovered_from: [58]
 adrs: [44]
 spec:

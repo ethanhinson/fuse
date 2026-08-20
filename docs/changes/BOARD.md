@@ -1,13 +1,14 @@
 # Backlog
 
-**73 changes** — 🟡 2 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 62 done · 🗑️ 6 killed
+**74 changes** — 🟡 3 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 62 done · 🗑️ 6 killed
 
-## 🟡 Proposed (2)
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0064](active/0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | `medium` | `feat` | ⏳ waiting on #63 — needs your merge |
 | [0065](active/0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | `medium` | `feat` | ⏳ waiting on #63 — needs your merge |
+| [0074](active/0074-sandbox-health-emitter.md) | sandbox health emitter — feed KindSandboxHealth so fuse_sandbox_unhealthy_total stops being defined-but-unfed | `medium` | `feat` | 🧠 needs brainstorm |
 
 ## ⚪ Deferred (2)
 
@@ -29,6 +30,7 @@ graph TD
   0058 --> 0063
   0063 --> 0064
   0063 --> 0065
+  0063 --> 0074
   0012:::done
   0052:::done
   0058:::done
