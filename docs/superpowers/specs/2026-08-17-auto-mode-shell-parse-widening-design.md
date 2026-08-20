@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0070 — Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0070-auto-mode-shell-parse-widening.md)**
+> ↩ **[Change 0070 — Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-20-0070-auto-mode-shell-parse-widening.md)**
 <!-- docket:backlink:end -->
 
 # Auto-mode shell-parse widening — design
