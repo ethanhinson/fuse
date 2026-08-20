@@ -2,7 +2,7 @@
 id: 73
 slug: one-shot-default-model
 title: One-shot honors models.default when --model is unset
-status: implemented
+status: done
 priority: medium
 type: fix
 created: 2026-08-20
@@ -17,7 +17,7 @@ results:
 trivial: true
 auto_groomable: false
 branch: feat/one-shot-default-model
-claimed_at: 2026-08-20T02:35:00Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/78
 blocked_by:
 reconciled: true
