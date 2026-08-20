@@ -104,3 +104,28 @@ neither was minted as a new decision of record. Flagging the judgment for the me
 `make test` green at `4b8222d`. T13's end-to-end smoke test **ran against real Docker** (not skipped)
 and passed, proving containment and env-scrub against a live runtime. No live model traffic was needed;
 where any is ever required this project uses cheap gateway models, never Anthropic.
+
+### Observability verified end-to-end against real containers (follow-up)
+
+The build left an observability gap: the emitter side (`TestBashPoolEmitsSandboxLifecycleEvents`)
+stopped at the event stream, and the projection side (`prometheus/sandbox_metrics_test.go`) started
+from hand-built `observe.Record`s. Neither ran a real container and then confirmed its lifecycle moved
+real `fuse_sandbox_*` series on a live `/metrics` scrape — so the emitter→projector→recorder plumbing
+was only ever proven in halves.
+
+`TestContainerLifecycleFeedsSandboxMetricsEndToEnd` (`internal/tools/sandbox_metrics_e2e_test.go`) closes
+it. Gated on a real container CLI like T13, it drives the **production chain end-to-end with nothing
+rebuilt**: a real container cold-acquire → exec → release (warm) → warm-reuse → `Close` reap through the
+production `sandbox.Pool` hooks → `SandboxEventHooks` → a real `FSEventStore`, then `Replay` → production
+`observe.ProjectEvent` → production `prometheus.Recorder` → the real `/metrics` handler. It asserts the
+scrape shows `fuse_sandbox_acquire_total` for both a cold spawn and a warm reuse, a single
+`fuse_sandbox_cold_start_seconds_count`, a `fuse_sandbox_reaped_total{cause="loop_end"}`, and — the leak
+guard — `fuse_sandbox_active … 0` after teardown, all with the **real** handler/runtime labels read back
+off the scrape. A negative-control flip of the reap cause was confirmed to fail the test, so it is not
+vacuous. Ran against real Docker (29.4.0), passed, not skipped.
+
+This confirms three of the four sandbox families are fed and correct end-to-end from a live container.
+The fourth, `fuse_sandbox_unhealthy_total`, remains **unfed by construction**: `KindSandboxHealth` still
+has no production emitter (see the known gap above). The E2E test pins this — it asserts the family gains
+no series from a real run, so the day an emitter is added the guard fails and forces the E2E coverage to
+be extended to drive and assert a real unhealthy transition rather than leaving the family unproven.
