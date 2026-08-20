@@ -2,9 +2,9 @@
 slug: containment-proof-needs-a-real-resolved-path
 hook: "A path-containment proof is only sound over an operand that IS a filesystem path, resolved the way the shell will resolve it — an unexpanded `~` or a non-path operand (a process name) both resolve against the cwd and silently prove in-workspace."
 topics: [security, permissions, shell, parsing, go]
-changes: [68]
+changes: [68, 70]
 created: 2026-08-17
-updated: 2026-08-17
+updated: 2026-08-20
 promotion_state: candidate
 promoted_to:
 ---
@@ -42,3 +42,12 @@ as behavior-table rows alongside the ordinary in-root and out-of-root cases.
   signal flags and numeric PIDs (≠ 1) is deterministically allowed, while `pkill`/`killall` route
   to the classifier because their operands are names, not paths. The spec had missed the second
   hole entirely; it was found by asking what each operand *is* before asking where it points.
+- 2026-08-19 (#70, PR #76) — The third member of the family: ANSI-C quoting. `syntax.SglQuoted`
+  carries `Dollar bool` and an **undecoded** `Value`, and neither `classifyWordParts` nor
+  `literalWord` consulted `Dollar` — so `rm -rf $'\x2f'` yielded the literal arg `\x2f`, which
+  `filepath.Abs` joined onto the cwd and proved in-workspace, while bash decodes it to `/` and
+  executes `rm -rf /`. A containment proof ran over a string the shell would never resolve to.
+  Fixed fail-safe: `Dollar == true` is opaque/non-literal in both functions (decoding would also be
+  correct but is more machinery than the fail-closed direction needs). The change's own invariant —
+  opaque operands are never path-resolved — is now ADR-0050; this bug was new code copying a
+  pre-existing clause into the one function whose whole job is deciding which words may be resolved.

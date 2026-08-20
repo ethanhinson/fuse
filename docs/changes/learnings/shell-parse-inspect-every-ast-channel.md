@@ -2,9 +2,9 @@
 name: shell-parse-inspect-every-ast-channel
 title: Shell-safety classifiers must inspect every AST channel that names a target — argv extraction alone drops redirects
 promotion_state: candidate
-changes: [17]
+changes: [17, 70]
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-20
 topics: [security, shell, parsing, go, permissions]
 ---
 
@@ -12,4 +12,8 @@ When classifying parsed shell for safety (allowlists, read-only detection), enum
 
 **Why:** Whole-branch review of change 0017 (PR #15) found the auto-approve pipeline's parser collected only call arguments; the spec explicitly listed "redirection to a file" as fail-closed, every layer downstream trusted the segment list, and four read-only-listed commands (`echo`, `grep`, `cat`, `ls`) each yielded arbitrary-path writes. Same class as the Codex basename-collapse bug: the parse floor silently narrowing what upper layers see.
 
-**How to apply:** When touching any shell-classification parser, audit the AST node docs for every field that can carry a word naming a target (`Redirs`, here-docs, process substitutions, assignments) and either classify or fail closed on each. Add adversarial corpus rows per channel asserting the *layer* that catches them.
+**How to apply:** When touching any shell-classification parser, audit the AST node docs for every field that can carry a word naming a target (`Redirs`, here-docs, process substitutions, assignments) and either classify or fail closed on each. Add adversarial corpus rows per channel asserting the *layer* that catches them. Channels nest: a word-part node can itself carry words (`ParamExp.Exp.Word`, `Repl.Orig/.With`) — recurse or fail closed on every contained word, not just top-level parts. And the AST is not the shell: verify what the parser *mis-lexes* against what bash actually runs — where real syntax arrives as literal text, an inertness test over literal content (reject `$`, backticks, `<(`, `>(`) beats enumerating node types.
+
+## War story
+
+- 2026-08-19 (#70, PR #76) — The shell-parse widening's deep review found the `ParamExp` arm took `nodeText` and stopped: a command substitution nested one level inside `${…}` was neither surfaced nor fail-closed, so `echo ${X:-$(rm -rf /)}` auto-approved at the safelist layer with zero prompts (the corpus had no `${…}` rows at all, which is why the green suite never saw it). The fix recursed into every contained word — and then found a second, deeper bug: mvdan.cc/sh v3.13.1 does not lex a process substitution inside an expansion word, so `${X:-<(cmd)}` arrives as a single `*syntax.Lit` that pure AST descent would classify inert while bash 5.3 demonstrably runs it (verified live with a marker file). Closed by `litPartsInert`, which requires literals inside expansion words to carry none of `$`/backtick/`<(`/`>(` — inverting the test rather than trusting the lexer's node taxonomy.

