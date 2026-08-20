@@ -119,6 +119,27 @@ func (r *hostRunner) command(ctx context.Context, cmd string, workingDir string)
 	// An empty workingDir means "the process default"; os/exec rejects an
 	// empty-but-set Dir differently than an unset one, so only set it when
 	// there is a real path.
+	//
+	// DELIBERATELY UNCONSTRAINED, unlike the container handler's working_dir.
+	//
+	// The container path must resolve a model-supplied working_dir WITHIN its
+	// mount and refuse anything that escapes (see containerHandler.workspace),
+	// because there the path selects what the command can reach: an unchecked
+	// value would choose the bind-mount source and hand the model a host
+	// subtree it named itself.
+	//
+	// Here there is no boundary for it to escape. The host substrate is reached
+	// only when an operator's trusted-local, file-only off-switch explicitly
+	// authorized uncontained execution on this machine and the hosted posture
+	// is inactive (see selectHandler / hostAuthorized). The command STRING
+	// already runs with this process's filesystem access — `cat ~/.aws/
+	// credentials` needs no working_dir at all — so constraining Dir would
+	// remove no capability the model does not already have through the very
+	// argument it is being run from. It would only break the legitimate local
+	// use ("run this in that other checkout") the off-switch exists to permit.
+	//
+	// What the host path does NOT relax is the env scrub above: uncontained
+	// means unisolated, never uncredentialed.
 	if workingDir != "" {
 		c.Dir = workingDir
 	}

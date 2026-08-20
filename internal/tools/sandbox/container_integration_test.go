@@ -39,7 +39,12 @@ func TestContainerSmokeAgainstRealCLI(t *testing.T) {
 		t.Skipf("skipping: none of %s found on PATH", strings.Join(containerCLIs[:], ", "))
 	}
 
-	h, err := newContainerHandler(Config{Image: DefaultContainerImage})
+	// The trusted root is declared at CONSTRUCTION, the way a composition root
+	// declares it at startup — not per Exec, and never from the arguments of
+	// the command being run.
+	workdir := trustedTestRoot(t)
+
+	h, err := newContainerHandler(Config{Image: DefaultContainerImage}, withTrustedRoot(workdir))
 	if err != nil {
 		t.Skipf("skipping: newContainerHandler: %v", err)
 	}
@@ -70,14 +75,16 @@ func TestContainerSmokeAgainstRealCLI(t *testing.T) {
 		}
 	}()
 
-	workdir := t.TempDir()
 	const marker = "smoke-marker-file"
 	if err := os.WriteFile(filepath.Join(workdir, marker), []byte("present"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
+	// Every Exec below passes an EMPTY working_dir — the default, and what the
+	// bash tool sends when a model leaves the optional argument alone. The
+	// trusted root must be mounted anyway.
 	// 1. Basic exec: `echo hi` succeeds and the output contains "hi".
-	out, err := r.Exec(ctx, "echo hi", workdir)
+	out, err := r.Exec(ctx, "echo hi", "")
 	if err != nil {
 		t.Fatalf("Exec(echo hi): %v (output: %s)", err, out.Combined)
 	}
@@ -91,7 +98,7 @@ func TestContainerSmokeAgainstRealCLI(t *testing.T) {
 	// 2. Working directory is /workspace, and the mounted tree is visible
 	// there: `pwd` reports it, and the marker file created on the host before
 	// the call is listable from inside.
-	out, err = r.Exec(ctx, "pwd && ls", workdir)
+	out, err = r.Exec(ctx, "pwd && ls", "")
 	if err != nil {
 		t.Fatalf("Exec(pwd && ls): %v (output: %s)", err, out.Combined)
 	}
@@ -108,7 +115,7 @@ func TestContainerSmokeAgainstRealCLI(t *testing.T) {
 
 	// 3. THE point of the change: a parent FUSE_TEST_SECRET is not visible
 	// inside the container.
-	out, err = r.Exec(ctx, "env", workdir)
+	out, err = r.Exec(ctx, "env", "")
 	if err != nil {
 		t.Fatalf("Exec(env): %v (output: %s)", err, out.Combined)
 	}
@@ -135,5 +142,34 @@ func TestContainerSmokeAgainstRealCLI(t *testing.T) {
 		if _, ok := env.Allow[key]; !ok {
 			t.Fatalf("non-allowlisted variable %q leaked into the container:\n%s", key, envOut)
 		}
+	}
+
+	// 4. A working_dir INSIDE the trusted root moves the container's cwd — and
+	// only the cwd. The tree the model can see is still the one the trusted
+	// root declared.
+	if err := os.MkdirAll(filepath.Join(workdir, "sub", "deeper"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	out, err = r.Exec(ctx, "pwd && ls ..", filepath.Join(workdir, "sub", "deeper"))
+	if err != nil {
+		t.Fatalf("Exec(pwd, subpath): %v (output: %s)", err, out.Combined)
+	}
+	if want := containerWorkspace + "/sub/deeper"; !strings.Contains(string(out.Combined), want) {
+		t.Fatalf("Combined = %q, want cwd %q", out.Combined, want)
+	}
+
+	// 5. The containment property, against the real runtime: a working_dir
+	// outside the trusted root is REFUSED, and no container is created for it.
+	// Before the fix this mounted the named host subtree read-write at
+	// /workspace, as root, for a path the MODEL chose.
+	out, err = r.Exec(ctx, "ls -la /workspace", "/")
+	if err == nil {
+		t.Fatalf("working_dir %q was accepted (output: %s)", "/", out.Combined)
+	}
+	if out.ExitCode != -1 {
+		t.Fatalf("ExitCode = %d, want -1", out.ExitCode)
+	}
+	if len(out.Combined) != 0 {
+		t.Fatalf("a refused command produced output (%q); it must never have run", out.Combined)
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -53,6 +55,30 @@ var containerClientPassthrough = [...]string{
 // the command somewhere less safe.
 var ErrNoContainerRuntime = errors.New("no container runtime available")
 
+// ErrWorkingDirRefused reports that a model-supplied working_dir did not
+// resolve to a directory INSIDE the trusted mount.
+//
+// ADR-0044 requires that "the model-supplied `working_dir` resolves *within*
+// the mount and cannot escape it", and that the root of trust "comes from the
+// authenticated loop-start context, never from model output (not the `command`,
+// not `working_dir`)". Letting working_dir choose the bind-mount SOURCE would
+// invert that: a model naming "/" or an operator's home directory would mount
+// that subtree into a container it controls, recovering by filesystem exactly
+// the credential access the env-scrub closed. So working_dir is a SUBPATH
+// request against a mount it cannot influence, and a request that does not
+// resolve inside the mount is refused before anything is executed.
+var ErrWorkingDirRefused = errors.New("working_dir must resolve inside the sandbox workspace")
+
+// ErrNoTrustedRoot reports that no trusted mount root was supplied, so there is
+// no workspace for a working_dir to be relative TO.
+//
+// This is the degraded state a composition root reaches only when it could not
+// resolve a repo root at all (see cmd/fuse's os.Getwd fallback, which also
+// makes LoadConfig warn). The safe answer is to mount nothing and refuse the
+// working_dir — never to promote the model's path to a mount source because no
+// trusted one was available.
+var ErrNoTrustedRoot = errors.New("no trusted workspace root is mounted")
+
 // execRunner runs one command to completion and reports its combined output.
 //
 // It is injected so that argv construction — the part of this handler that
@@ -87,6 +113,17 @@ func withExecRunner(fn execRunner) containerOption {
 	}
 }
 
+// withTrustedRoot sets the host directory this handler bind-mounts.
+//
+// SECURITY-CRITICAL: the value comes from the COMPOSITION ROOT — the repo root
+// resolved at startup, before any model has run (see Service.root and
+// NewServiceFromRoot). It must never be derived from a tool argument, a wire
+// field, or model output. It is applied once, at construction; there is no
+// method that can change it afterwards.
+func withTrustedRoot(root string) containerOption {
+	return func(h *containerHandler) { h.root = root }
+}
+
 // containerHandler runs commands inside a throwaway OCI container.
 //
 // It is the DEFAULT substrate. Detection happens once, at construction, so that
@@ -99,6 +136,14 @@ type containerHandler struct {
 	runtime string
 	// image is the resolved image reference (config, or the pinned default).
 	image string
+
+	// root is the TRUSTED bind-mount source: the one host directory any
+	// command run through this handler can see, mounted at containerWorkspace.
+	// It is resolved once at construction from the composition root's repo root
+	// and is never model-derived. "" means no trusted root was supplied, which
+	// is the degraded-but-safe state: nothing is mounted and any model-supplied
+	// working_dir is refused rather than becoming a mount source itself.
+	root string
 
 	lookPath func(string) (string, error)
 	run      execRunner
@@ -120,6 +165,11 @@ func newContainerHandler(cfg Config, opts ...containerOption) (*containerHandler
 	for _, opt := range opts {
 		opt(h)
 	}
+	// Resolved ONCE, here, at construction — before any model has run — so that
+	// the mount source is a settled fact for the life of the handler rather
+	// than something re-derived per Exec from whatever the filesystem looks
+	// like by then.
+	h.root = resolveMountRoot(h.root)
 
 	for _, cli := range containerCLIs {
 		if _, err := h.lookPath(cli); err == nil {
@@ -128,6 +178,36 @@ func newContainerHandler(cfg Config, opts ...containerOption) (*containerHandler
 		}
 	}
 	return nil, fmt.Errorf("%w: looked for %s on PATH", ErrNoContainerRuntime, strings.Join(containerCLIs[:], ", "))
+}
+
+// resolveMountRoot canonicalises the trusted mount source.
+//
+// It returns "" — meaning "mount nothing" — for anything it cannot prove is an
+// existing directory, because a bind-mount source the daemon has to invent is
+// not a working tree; docker would silently create it (as root), and the model
+// would get an empty workspace that LOOKS mounted. Symlinks are resolved here
+// so that the later working_dir containment check compares two canonical paths:
+// a root reached through a symlink would make an in-tree path look like an
+// escape, and — worse — a root and a candidate canonicalised differently could
+// make an escape look in-tree.
+func resolveMountRoot(root string) string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return ""
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	return resolved
 }
 
 // Name reports the bounded handler identifier.
@@ -194,13 +274,103 @@ func (r *containerRunner) currentEnv() []string {
 	return append([]string(nil), r.env...)
 }
 
+// workspace resolves the bind-mount SOURCE and the in-container working
+// directory for one Exec.
+//
+// This is where ADR-0044's containment constraint is enforced, and the split it
+// makes is the whole point:
+//
+//   - The mount source is ALWAYS the handler's trusted root. It is not a
+//     function of workingDir, and there is no branch on which model output can
+//     reach it. This is what makes "mount my home directory" unwritable.
+//   - The model-supplied workingDir is a SUBPATH REQUEST resolved against that
+//     root. It moves -w and nothing else, so the worst a hostile value can do
+//     is name a directory the container was already going to be able to see.
+//   - Anything that does not resolve inside the root is REFUSED, not clamped.
+//     Silently rewriting an escape to the root would run a command somewhere
+//     the caller did not ask for, which is how "cd /etc && rm -rf ." becomes a
+//     surprise in the repo.
+//
+// Note that the returned workdir is a CONTAINER path. The runtime resolves it
+// inside the container's own namespace, so a symlink the model plants in the
+// tree after this check can only redirect -w to another path inside the mount —
+// there is no TOCTOU window between here and the mount that reaches the host.
+// The host-side canonicalisation below is what closes the window that DOES
+// exist: a symlink already in the tree pointing out of it.
+//
+// Per-tenant subdivision of the root is #0065's job; this function only settles
+// which root is mounted and that workingDir cannot escape it.
+func (h *containerHandler) workspace(workingDir string) (mount string, workdir string, err error) {
+	workingDir = strings.TrimSpace(workingDir)
+
+	if h.root == "" {
+		if workingDir != "" {
+			// The one thing we must not do here is fall back to mounting the
+			// model's path because we have no trusted one.
+			return "", "", fmt.Errorf("%w: cannot place working_dir %q", ErrNoTrustedRoot, workingDir)
+		}
+		return "", containerWorkspace, nil
+	}
+
+	// THE DEFAULT, and the common case: no working_dir at all still mounts the
+	// working tree. An unmounted container is an empty box the agent cannot
+	// work in (ADR-0044: "The working tree must be mounted in for the model to
+	// see the repo it edits").
+	if workingDir == "" {
+		return h.root, containerWorkspace, nil
+	}
+
+	// A relative working_dir is relative to the workspace — the only root the
+	// model has any business naming a path against.
+	candidate := workingDir
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(h.root, candidate)
+	}
+
+	// Canonicalise before comparing. A prefix test against an uncanonicalised
+	// path is defeated by "..", by a doubled separator, and by a symlink; both
+	// sides here are fully resolved, so the comparison is between real paths.
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		// Includes "does not exist", which is a refusal rather than a silent
+		// fallback to the root: the caller asked to run somewhere specific.
+		// The host path is deliberately NOT echoed back — the container never
+		// discloses this host's directory layout (see containerWorkspace).
+		return "", "", fmt.Errorf("%w: %q could not be resolved", ErrWorkingDirRefused, workingDir)
+	}
+
+	rel, err := filepath.Rel(h.root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("%w: %q escapes it", ErrWorkingDirRefused, workingDir)
+	}
+	if info, err := os.Stat(resolved); err != nil || !info.IsDir() {
+		// In-tree but not a directory. Refused here so the caller gets the
+		// reason, rather than at the daemon, where it surfaces as an opaque
+		// runtime failure of a container that was already created.
+		return "", "", fmt.Errorf("%w: %q is not a directory", ErrWorkingDirRefused, workingDir)
+	}
+	if rel == "." {
+		return h.root, containerWorkspace, nil
+	}
+	return h.root, containerWorkspace + "/" + filepath.ToSlash(rel), nil
+}
+
 // argv builds the exact command line for one Exec.
 //
 // It is separated from Exec because argv IS the security boundary of this
 // handler: every containment property (the scrubbed environment, the mount, the
 // workdir) is expressed here and nowhere else, so it must be assertable without
 // running anything.
-func (r *containerRunner) argv(cmd string, workingDir string) []string {
+//
+// It returns an error rather than a best-effort command line: a working_dir
+// that cannot be contained is a REFUSAL, and a refusal must be unable to
+// produce argv at all, so there is nothing for Exec to accidentally run.
+func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) {
+	mount, workdir, err := r.handler.workspace(workingDir)
+	if err != nil {
+		return nil, err
+	}
+
 	env := r.currentEnv()
 
 	args := make([]string, 0, 12+2*len(env))
@@ -229,14 +399,19 @@ func (r *containerRunner) argv(cmd string, workingDir string) []string {
 		args = append(args, "--env", kv)
 	}
 
-	// TODO(#0065): per-tenant bind-mount + working_dir escape containment
-	if workingDir != "" {
-		args = append(args, "-v", workingDir+":"+containerWorkspace)
+	// TODO(#0065): per-TENANT subdivision of this mount (Principal.Tenant).
+	//
+	// What is NOT deferred, and must stay here: the source is the trusted root
+	// and only ever the trusted root. mount is "" only when no trusted root was
+	// resolved at all, in which case nothing is mounted — never a substitute
+	// derived from the command's arguments.
+	if mount != "" {
+		args = append(args, "-v", mount+":"+containerWorkspace)
 	}
-	args = append(args, "-w", containerWorkspace)
+	args = append(args, "-w", workdir)
 
 	args = append(args, r.handler.image, "/bin/sh", "-c", cmd)
-	return args
+	return args, nil
 }
 
 // Exec runs cmd inside a fresh container.
@@ -248,7 +423,17 @@ func (r *containerRunner) argv(cmd string, workingDir string) []string {
 // all, and ExitCode is -1 on that path so a caller that reads only ExitCode
 // still fails closed. ExitCode is never left 0 on any failure path.
 func (r *containerRunner) Exec(ctx context.Context, cmd string, workingDir string) (Output, error) {
-	combined, code, err := r.handler.run(ctx, r.handler.runtime, r.argv(cmd, workingDir)...)
+	args, err := r.argv(cmd, workingDir)
+	if err != nil {
+		// A containment refusal, decided BEFORE the CLI is touched: no
+		// container is created, no mount is established, nothing runs. It is
+		// reported as a substrate failure (ExitCode -1, non-nil error) because
+		// that is exactly what it is — the command could not be started — and
+		// because an ExitCode-only caller must fail closed on it.
+		return Output{ExitCode: -1}, err
+	}
+
+	combined, code, err := r.handler.run(ctx, r.handler.runtime, args...)
 
 	out := Output{
 		Combined: combined,

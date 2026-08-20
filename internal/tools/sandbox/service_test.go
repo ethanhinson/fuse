@@ -497,3 +497,60 @@ func TestNewServiceInconsistentConfigIsContained(t *testing.T) {
 		})
 	}
 }
+
+// The trusted root the composition root supplied must actually reach the
+// substrate, or the whole containment argument is theory: NewServiceFromRoot
+// resolves a root, and the container handler is what mounts it. Nothing between
+// them may drop it, and no caller-supplied option may substitute another.
+func TestServiceThreadsTrustedRootToTheContainerMount(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	cli := &recordingExec{}
+
+	svc, _, err := NewServiceFromRoot(root,
+		withContainerLookPath(fakeLookPath("docker")),
+		withContainerExec(cli.run),
+		// Supplied BEFORE the root NewServiceFromRoot was trusted with, and it
+		// must lose: an option cannot redirect the mount.
+		WithTrustedRoot("/"),
+	)
+	if err != nil {
+		t.Fatalf("NewServiceFromRoot: %v", err)
+	}
+	if got := svc.TrustedRoot(); got != root {
+		t.Fatalf("TrustedRoot() = %q, want %q", got, root)
+	}
+
+	runner, err := svc.Acquire(context.Background(), testPrincipal())
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	// working_dir unset: the default the bash tool sends when a model leaves
+	// the optional argument alone.
+	if _, err := runner.Exec(context.Background(), "true", ""); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	if cli.count() != 1 {
+		t.Fatalf("CLI invocations = %d, want 1", cli.count())
+	}
+	cli.mu.Lock()
+	argv := cli.calls[0]
+	cli.mu.Unlock()
+
+	want := root + ":" + containerWorkspace
+	found := false
+	for i, a := range argv {
+		if a == "-v" && i+1 < len(argv) {
+			if argv[i+1] != want {
+				t.Fatalf("-v = %q, want %q (argv: %#v)", argv[i+1], want, argv)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("argv mounts nothing; the trusted root never reached the substrate: %#v", argv)
+	}
+}

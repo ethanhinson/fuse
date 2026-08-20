@@ -3,7 +3,9 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -90,16 +92,241 @@ func (r *recordingRun) run(_ context.Context, name string, args ...string) ([]by
 	return r.out, r.code, r.err
 }
 
+// trustedTestRoot returns a real, existing directory with symlinks already
+// resolved, standing in for the repo root a composition root resolves at
+// startup. Resolving here (rather than trusting t.TempDir's raw value) matters
+// on macOS, where TempDir hands back a /var → /private/var symlink: the
+// handler canonicalises its root, so a golden built from the raw path would
+// compare two spellings of the same directory.
+func trustedTestRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks(t.TempDir()): %v", err)
+	}
+	return root
+}
+
 func newTestHandler(t *testing.T, cfg Config, rec *recordingRun, present ...string) *containerHandler {
 	t.Helper()
 	if len(present) == 0 {
 		present = []string{"docker"}
 	}
-	h, err := newContainerHandler(cfg, withLookPath(fakeLookPath(present...)), withExecRunner(rec.run))
+	h, err := newContainerHandler(cfg,
+		withLookPath(fakeLookPath(present...)),
+		withExecRunner(rec.run),
+		// Every handler under test has a trusted root, because in production
+		// every handler does: it is what the composition root mounts.
+		withTrustedRoot(trustedTestRoot(t)),
+	)
 	if err != nil {
 		t.Fatalf("newContainerHandler: %v", err)
 	}
 	return h
+}
+
+// argValue returns the argument following the first occurrence of flag.
+func argValue(args []string, flag string) (string, bool) {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+func wantFlag(t *testing.T, args []string, flag, want string) {
+	t.Helper()
+	got, ok := argValue(args, flag)
+	if !ok {
+		t.Fatalf("argv carries no %s flag: %#v", flag, args)
+	}
+	if got != want {
+		t.Fatalf("%s = %q, want %q (argv: %#v)", flag, got, want, args)
+	}
+}
+
+// FINDING A. With working_dir unset — the default, and what a model that never
+// sets the optional argument produces — the working tree must STILL be
+// mounted. ADR-0044: "The working tree must be mounted in for the model to see
+// the repo it edits." A container with no -v at all is an empty alpine box in
+// which nothing the agent was asked to do is possible.
+func TestContainerArgvMountsTrustedRootWhenWorkingDirUnset(t *testing.T) {
+	rec := &recordingRun{}
+	h := newTestHandler(t, DefaultConfig(), rec)
+
+	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+	if _, err := r.Exec(context.Background(), "true", ""); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+
+	wantFlag(t, rec.args, "-v", h.root+":"+containerWorkspace)
+	wantFlag(t, rec.args, "-w", containerWorkspace)
+}
+
+// FINDING B, the security one. A model-authored working_dir must never be the
+// bind-mount SOURCE. If it were, {"command":"cat /workspace/.aws/credentials",
+// "working_dir":"/Users/<op>"} would mount that subtree read-write, as root,
+// into a container the model drives — recovering by filesystem exactly the
+// credential access the env-scrub closed. ADR-0044 puts the root of trust in
+// the loop-start context, "never from model output (not the `command`, not
+// `working_dir`)".
+func TestContainerRefusesWorkingDirOutsideTrustedRoot(t *testing.T) {
+	cases := map[string]func(root string) string{
+		"the whole host":            func(string) string { return "/" },
+		"an operator home":          func(string) string { return "/Users/someone" },
+		"one level above the mount": filepath.Dir,
+		"a real dir that is not ours": func(string) string {
+			return os.TempDir()
+		},
+		"absolute traversal out": func(root string) string { return root + "/../.." },
+		"relative traversal out": func(string) string { return "../.." },
+		"the parent, relatively": func(string) string { return ".." },
+	}
+
+	for name, pick := range cases {
+		t.Run(name, func(t *testing.T) {
+			rec := &recordingRun{}
+			h := newTestHandler(t, DefaultConfig(), rec)
+			target := pick(h.root)
+
+			r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+			out, err := r.Exec(context.Background(), "cat /workspace/.aws/credentials", target)
+
+			if err == nil {
+				t.Fatalf("working_dir %q was accepted; argv: %#v", target, rec.args)
+			}
+			if !errors.Is(err, ErrWorkingDirRefused) {
+				t.Fatalf("error = %v, want it to wrap ErrWorkingDirRefused", err)
+			}
+			if out.ExitCode != -1 {
+				t.Fatalf("ExitCode = %d, want -1 so an ExitCode-only caller fails closed", out.ExitCode)
+			}
+			// The load-bearing assertion: nothing ran. A refusal that still
+			// invoked the CLI would have already created the mount.
+			if rec.name != "" || rec.args != nil {
+				t.Fatalf("the refusal still invoked %q with %#v", rec.name, rec.args)
+			}
+		})
+	}
+}
+
+// A legitimate subdirectory of the trusted root is honoured — but as a
+// SUBPATH: the mount source is unchanged, and only the in-container -w moves.
+func TestContainerWorkingDirSubpathMovesWorkdirNotMount(t *testing.T) {
+	rec := &recordingRun{}
+	h := newTestHandler(t, DefaultConfig(), rec)
+
+	sub := filepath.Join(h.root, "internal", "tools")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	for _, given := range []string{sub, filepath.Join("internal", "tools")} {
+		t.Run(given, func(t *testing.T) {
+			rec.name, rec.args = "", nil
+			r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+			if _, err := r.Exec(context.Background(), "true", given); err != nil {
+				t.Fatalf("Exec: %v", err)
+			}
+			wantFlag(t, rec.args, "-v", h.root+":"+containerWorkspace)
+			wantFlag(t, rec.args, "-w", containerWorkspace+"/internal/tools")
+		})
+	}
+}
+
+// An in-tree path that is not a directory is refused here rather than at the
+// daemon, where it would surface as an opaque failure of a container that had
+// already been created.
+func TestContainerRefusesWorkingDirThatIsNotADirectory(t *testing.T) {
+	rec := &recordingRun{}
+	h := newTestHandler(t, DefaultConfig(), rec)
+
+	file := filepath.Join(h.root, "README.md")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+	out, err := r.Exec(context.Background(), "true", file)
+
+	if !errors.Is(err, ErrWorkingDirRefused) {
+		t.Fatalf("error = %v, want it to wrap ErrWorkingDirRefused", err)
+	}
+	if out.ExitCode != -1 {
+		t.Fatalf("ExitCode = %d, want -1", out.ExitCode)
+	}
+	if rec.name != "" || rec.args != nil {
+		t.Fatalf("the refusal still invoked %q with %#v", rec.name, rec.args)
+	}
+}
+
+// A symlink inside the tree pointing OUT of it is the traversal attempt that
+// string-prefix checks miss, so the containment check canonicalises before it
+// compares.
+func TestContainerRefusesSymlinkedWorkingDirEscape(t *testing.T) {
+	rec := &recordingRun{}
+	h := newTestHandler(t, DefaultConfig(), rec)
+
+	link := filepath.Join(h.root, "escape")
+	if err := os.Symlink("/", link); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+	out, err := r.Exec(context.Background(), "true", link)
+
+	if err == nil {
+		t.Fatalf("symlinked escape was accepted; argv: %#v", rec.args)
+	}
+	if !errors.Is(err, ErrWorkingDirRefused) {
+		t.Fatalf("error = %v, want it to wrap ErrWorkingDirRefused", err)
+	}
+	if out.ExitCode != -1 {
+		t.Fatalf("ExitCode = %d, want -1", out.ExitCode)
+	}
+	if rec.name != "" || rec.args != nil {
+		t.Fatalf("the refusal still invoked %q with %#v", rec.name, rec.args)
+	}
+}
+
+// With no trusted root at all (the composition root could not resolve one) the
+// safe answer is an unmounted workspace — never promoting the model's path to
+// a mount source because no trusted one was available.
+func TestContainerWithoutTrustedRootMountsNothingAndRefusesWorkingDir(t *testing.T) {
+	rec := &recordingRun{}
+	h, err := newContainerHandler(DefaultConfig(),
+		withLookPath(fakeLookPath("docker")),
+		withExecRunner(rec.run),
+		withTrustedRoot(""),
+	)
+	if err != nil {
+		t.Fatalf("newContainerHandler: %v", err)
+	}
+
+	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
+	if _, err := r.Exec(context.Background(), "true", ""); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if got, ok := argValue(rec.args, "-v"); ok {
+		t.Fatalf("argv mounts %q with no trusted root: %#v", got, rec.args)
+	}
+	wantFlag(t, rec.args, "-w", containerWorkspace)
+
+	rec.name, rec.args = "", nil
+	out, err := r.Exec(context.Background(), "true", "/Users/someone")
+	if err == nil {
+		t.Fatalf("working_dir was accepted with no trusted root; argv: %#v", rec.args)
+	}
+	if !errors.Is(err, ErrNoTrustedRoot) {
+		t.Fatalf("error = %v, want it to wrap ErrNoTrustedRoot", err)
+	}
+	if out.ExitCode != -1 {
+		t.Fatalf("ExitCode = %d, want -1", out.ExitCode)
+	}
+	if rec.name != "" || rec.args != nil {
+		t.Fatalf("the refusal still invoked %q with %#v", rec.name, rec.args)
+	}
 }
 
 func TestContainerExecArgvGolden(t *testing.T) {
@@ -114,7 +341,9 @@ func TestContainerExecArgvGolden(t *testing.T) {
 		t.Fatalf("Acquire: %v", err)
 	}
 
-	if _, err := r.Exec(context.Background(), "echo hi", "/work/tree"); err != nil {
+	// working_dir unset: the default case, and the one a model produces when it
+	// leaves the optional argument alone.
+	if _, err := r.Exec(context.Background(), "echo hi", ""); err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
 
@@ -127,7 +356,9 @@ func TestContainerExecArgvGolden(t *testing.T) {
 		"--env", "HOME=/root",
 		"--env", "LANG=C",
 		"--env", "PATH=/usr/bin",
-		"-v", "/work/tree:/workspace",
+		// The mount source is the TRUSTED root the composition root declared,
+		// never anything the model said.
+		"-v", h.root + ":/workspace",
 		"-w", "/workspace",
 		"example.invalid/img:1.2.3",
 		"/bin/sh", "-c", "echo hi",
@@ -145,7 +376,7 @@ func TestContainerExecNeverUsesBareEnvFlag(t *testing.T) {
 	h := newTestHandler(t, DefaultConfig(), rec)
 
 	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{Allow: map[string]string{"PATH": "/usr/bin"}})
-	if _, err := r.Exec(context.Background(), "true", "/w"); err != nil {
+	if _, err := r.Exec(context.Background(), "true", ""); err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
 
@@ -177,7 +408,7 @@ func TestContainerExecNoHostVarLeaksIntoArgv(t *testing.T) {
 		return "", false
 	})
 	r, _ := h.Acquire(context.Background(), loopauth.Principal{}, env)
-	if _, err := r.Exec(context.Background(), "true", "/w"); err != nil {
+	if _, err := r.Exec(context.Background(), "true", ""); err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
 
@@ -194,7 +425,7 @@ func TestContainerImageSelection(t *testing.T) {
 		rec := &recordingRun{}
 		h := newTestHandler(t, DefaultConfig(), rec)
 		r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
-		if _, err := r.Exec(context.Background(), "true", "/w"); err != nil {
+		if _, err := r.Exec(context.Background(), "true", ""); err != nil {
 			t.Fatalf("Exec: %v", err)
 		}
 		if !containsArg(rec.args, DefaultContainerImage) {
@@ -208,7 +439,7 @@ func TestContainerImageSelection(t *testing.T) {
 		cfg.Image = "ghcr.io/example/custom:v9"
 		h := newTestHandler(t, cfg, rec)
 		r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
-		if _, err := r.Exec(context.Background(), "true", "/w"); err != nil {
+		if _, err := r.Exec(context.Background(), "true", ""); err != nil {
 			t.Fatalf("Exec: %v", err)
 		}
 		if !containsArg(rec.args, "ghcr.io/example/custom:v9") {
@@ -239,7 +470,7 @@ func TestContainerExecErrorSemantics(t *testing.T) {
 		h := newTestHandler(t, DefaultConfig(), rec)
 		r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
 
-		out, err := r.Exec(context.Background(), "exit 42", "/w")
+		out, err := r.Exec(context.Background(), "exit 42", "")
 		if err != nil {
 			t.Fatalf("want nil error for a command that ran, got %v", err)
 		}
@@ -259,7 +490,7 @@ func TestContainerExecErrorSemantics(t *testing.T) {
 		h := newTestHandler(t, DefaultConfig(), rec)
 		r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
 
-		out, err := r.Exec(context.Background(), "true", "/w")
+		out, err := r.Exec(context.Background(), "true", "")
 		if err == nil {
 			t.Fatal("want a non-nil error when the substrate cannot start the command")
 		}
@@ -276,7 +507,7 @@ func TestContainerExecErrorSemantics(t *testing.T) {
 		h := newTestHandler(t, DefaultConfig(), rec)
 		r, _ := h.Acquire(context.Background(), loopauth.Principal{}, Env{})
 
-		out, err := r.Exec(ctx, "sleep 100", "/w")
+		out, err := r.Exec(ctx, "sleep 100", "")
 		if err != nil {
 			t.Fatalf("want nil error on a deadline kill, got %v", err)
 		}

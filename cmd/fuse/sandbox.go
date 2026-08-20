@@ -25,6 +25,13 @@ import (
 // at startup, rather than at Exec time — a tool's working_dir argument never
 // reaches this decision.
 //
+// It settles TWO things, and the second is equally security-bearing: it is
+// where the off-switch config is read from, AND it is the working tree the
+// container substrate bind-mounts at /workspace. A model's working_dir selects
+// a subdirectory of it and can never replace it (sandbox.WithTrustedRoot).
+// When os.Getwd fails there is no trusted root, so nothing is mounted and any
+// working_dir is refused — degraded, but never a mount the model chose.
+//
 // hosted declares the ADR-0034 posture: true when this binary executes
 // workloads on behalf of REMOTE principals (the loop servers), false for the
 // operator's own local CLI. It comes from how the binary was launched and from

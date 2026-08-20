@@ -55,6 +55,15 @@ type Service struct {
 	// exactly when handler is nil.
 	refusal error
 
+	// root is the TRUSTED filesystem root the composition root resolved: the
+	// working tree a contained command is allowed to see, and the only
+	// bind-mount source the container substrate will ever use. It is retained
+	// here — rather than consumed and dropped by the config load — because the
+	// substrate needs it at Exec time, and because the alternative (deriving a
+	// mount from the model's working_dir) inverts ADR-0044's containment
+	// constraint. Frozen at construction like everything else on this type.
+	root string
+
 	// hosted records the posture the composition root declared, for
 	// diagnostics only; selection already consumed it.
 	hosted bool
@@ -73,6 +82,7 @@ type Service struct {
 // from Service so that nothing an option touches is reachable — or mutable —
 // after construction returns.
 type serviceOptions struct {
+	root          string
 	hosted        bool
 	lookup        func(string) (string, bool)
 	containerOpts []containerOption
@@ -95,6 +105,23 @@ type ServiceOption func(*serviceOptions)
 // uncontained.
 func WithHostedPosture(hosted bool) ServiceOption {
 	return func(o *serviceOptions) { o.hosted = hosted }
+}
+
+// WithTrustedRoot declares the working tree a contained command may see.
+//
+// SECURITY-CRITICAL: this is the bind-mount SOURCE. Like WithHostedPosture it
+// is supplied by the COMPOSITION ROOT, from a root it resolved and trusts at
+// startup — never from a tool argument, a wire field, or model output. The
+// model's `working_dir` is resolved as a subpath WITHIN this root (ADR-0044:
+// it "resolves within the mount and cannot escape it"); it can never widen,
+// replace, or escape what this option declares.
+//
+// NewServiceFromRoot applies it for you from the root it was given, so the
+// ordinary composition path never calls this directly. It exists for the
+// NewService form, which takes an already-loaded Config and therefore has no
+// other way to say which tree the config was trusted from.
+func WithTrustedRoot(root string) ServiceOption {
+	return func(o *serviceOptions) { o.root = root }
 }
 
 // WithEnvLookup overrides how allowlisted environment values are resolved.
@@ -157,6 +184,9 @@ func NewService(cfg Config, opts ...ServiceOption) (*Service, error) {
 	if o.hostHandler == nil {
 		o.hostHandler = newHostHandler()
 	}
+	// Appended LAST so it is the trusted root that wins: no test option and no
+	// caller-supplied containerOption can substitute a different mount source.
+	o.containerOpts = append(o.containerOpts, withTrustedRoot(o.root))
 
 	if cfg.IdleTTL <= 0 {
 		// A hand-built Config (or the zero value) would otherwise mean "reap on
@@ -168,6 +198,7 @@ func NewService(cfg Config, opts ...ServiceOption) (*Service, error) {
 
 	s := &Service{
 		cfg:    cfg,
+		root:   o.root,
 		hosted: o.hosted,
 		lookup: o.lookup,
 	}
@@ -182,13 +213,26 @@ func NewService(cfg Config, opts ...ServiceOption) (*Service, error) {
 // derived from a tool argument, a wire field, or model output, and never the
 // process working directory of an agent that is free to chdir.
 //
+// It is used for TWO things, and the second is why it is retained rather than
+// consumed: it locates the off-switch config, and it is the working tree the
+// contained substrate bind-mounts (WithTrustedRoot). A model's `working_dir`
+// selects a subdirectory of it and can never replace it.
+//
 // The returned Warnings are the operator's only signal that their config file
 // did not do what they thought. The caller MUST log them; they are returned
 // (rather than only stashed) so that ignoring them takes a deliberate `_`.
 func NewServiceFromRoot(root string, opts ...ServiceOption) (*Service, []Warning, error) {
 	cfg, warns := LoadConfig(root)
 
-	svc, err := NewService(cfg, opts...)
+	// WithTrustedRoot goes LAST — after the caller's options — so the root this
+	// function was trusted with is the one the substrate mounts, whatever else
+	// was passed. Copied rather than appended in place: opts belongs to the
+	// caller.
+	withRoot := make([]ServiceOption, 0, len(opts)+1)
+	withRoot = append(withRoot, opts...)
+	withRoot = append(withRoot, WithTrustedRoot(root))
+
+	svc, err := NewService(cfg, withRoot...)
 	if err != nil {
 		return nil, warns, err
 	}
@@ -301,6 +345,11 @@ func (s *Service) HandlerName() string {
 func (s *Service) Contained() bool {
 	return s.handler != nil && s.handler.Name() != HandlerHost
 }
+
+// TrustedRoot reports the working tree the composition root declared, which is
+// the only host directory a contained command can be given. It is diagnostic:
+// it reports the frozen decision, and nothing can be re-decided from it.
+func (s *Service) TrustedRoot() string { return s.root }
 
 // Hosted reports the posture the composition root declared. It is diagnostic
 // only: selection has already consumed it, and no caller may re-derive
