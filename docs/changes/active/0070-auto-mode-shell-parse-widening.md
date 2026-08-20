@@ -2,23 +2,23 @@
 id: 70
 slug: auto-mode-shell-parse-widening
 title: Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-17
-updated: 2026-08-19
+updated: 2026-08-20
 depends_on: [69]
 related: [37, 40, 67, 68, 69]
 discovered_from: []
 adrs: [49, 50]
 spec: docs/superpowers/specs/2026-08-17-auto-mode-shell-parse-widening-design.md
 plan: docs/superpowers/plans/2026-08-19-auto-mode-shell-parse-widening-plan.md
-results:
+results: docs/results/2026-08-19-auto-mode-shell-parse-widening-results.md
 trivial: false
 auto_groomable:
 branch: feat/auto-mode-shell-parse-widening
-claimed_at: 2026-08-20T00:03:33Z
-pr:
+claimed_at: 2026-08-20T00:05:35Z
+pr: https://github.com/ethanhinson/fuse/pull/76
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-17-auto-mode-shell-parse-widening-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-17-auto-mode-shell-parse-widening-design.md) |
 | Plan | [2026-08-19-auto-mode-shell-parse-widening-plan.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-shell-parse-widening/docs/superpowers/plans/2026-08-19-auto-mode-shell-parse-widening-plan.md) |
+| Results | [2026-08-19-auto-mode-shell-parse-widening-results.md](https://github.com/ethanhinson/fuse/blob/feat/auto-mode-shell-parse-widening/docs/results/2026-08-19-auto-mode-shell-parse-widening-results.md) |
+| PR | [#76](https://github.com/ethanhinson/fuse/pull/76) |
 | ADRs | [ADR-0049](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0049-allowlist-admission-on-deterministic-allow-paths.md), [ADR-0050](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0050-opaque-operands-are-never-path-resolved.md) |
 <!-- docket:artifacts:end -->
 
