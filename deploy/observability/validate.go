@@ -7,10 +7,47 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
+	fusemetrics "github.com/ethanhinson/fuse/internal/observe/prometheus"
 	"gopkg.in/yaml.v3"
 )
+
+// metricRef matches any Fuse metric identifier appearing in a PromQL
+// expression, including label matchers such as {metric="fuse_sandbox_active"}.
+var metricRef = regexp.MustCompile(`fuse_[a-z0-9_]+`)
+
+// registeredMetrics is the set of series names the Prometheus recorder actually
+// registers, taken from the recorder's own catalog rather than restated here so
+// the two cannot drift. Histogram families additionally expose the derived
+// _bucket/_sum/_count series.
+func registeredMetrics() map[string]bool {
+	set := make(map[string]bool)
+	for _, d := range fusemetrics.Catalog() {
+		set[d.Name] = true
+		if d.Type == "histogram" {
+			for _, suffix := range []string{"_bucket", "_sum", "_count"} {
+				set[d.Name+suffix] = true
+			}
+		}
+	}
+	return set
+}
+
+// requireRegisteredMetrics is the falsifiable half of expression validation: a
+// balanced-bracket check proves only that a query parses, not that it can ever
+// return data. Every Fuse identifier a query names must be a series the
+// recorder registers, so a dashboard or alert pointed at a nonexistent series
+// fails this gate instead of silently rendering empty forever.
+func requireRegisteredMetrics(owner, expr string, registered map[string]bool) error {
+	for _, name := range metricRef.FindAllString(expr, -1) {
+		if !registered[name] {
+			return fmt.Errorf("%s queries %q, which the Prometheus recorder never registers", owner, name)
+		}
+	}
+	return nil
+}
 
 type composeConfig struct {
 	Services map[string]composeService `yaml:"services"`
@@ -88,14 +125,21 @@ type alertConfig struct {
 	} `yaml:"groups"`
 }
 
+type panelDatasource struct {
+	Type string `json:"type"`
+	UID  string `json:"uid"`
+}
+
 type dashboard struct {
 	UID    string `json:"uid"`
 	Panels []struct {
-		Title   string `json:"title"`
-		Type    string `json:"type"`
-		Targets []struct {
-			Expr  string `json:"expr"`
-			Query string `json:"query"`
+		Title      string           `json:"title"`
+		Type       string           `json:"type"`
+		Datasource *panelDatasource `json:"datasource"`
+		Targets    []struct {
+			Expr       string           `json:"expr"`
+			Query      string           `json:"query"`
+			Datasource *panelDatasource `json:"datasource"`
 		} `json:"targets"`
 	} `json:"panels"`
 }
@@ -198,6 +242,12 @@ func validate(root string) error {
 		return fmt.Errorf("grafana must provision dashboards from /var/lib/grafana/dashboards")
 	}
 
+	registered := registeredMetrics()
+	provisioned := make(map[string]string, len(datasources.Datasources))
+	for _, ds := range datasources.Datasources {
+		provisioned[ds.UID] = ds.Type
+	}
+
 	var board dashboard
 	if err := readJSON(filepath.Join(root, "grafana/dashboards/fuse-loop.json"), &board); err != nil {
 		return err
@@ -205,7 +255,7 @@ func validate(root string) error {
 	if board.UID != "fuse-loop" {
 		return fmt.Errorf("dashboard UID must be fuse-loop")
 	}
-	if err := validateDashboard(board, loopDashboardPanels); err != nil {
+	if err := validateDashboard(board, loopDashboardPanels, registered, provisioned); err != nil {
 		return err
 	}
 
@@ -216,10 +266,7 @@ func validate(root string) error {
 	if sandboxBoard.UID != "fuse-sandbox" {
 		return fmt.Errorf("dashboard UID must be fuse-sandbox")
 	}
-	if err := validateDashboard(sandboxBoard, sandboxDashboardPanels); err != nil {
-		return err
-	}
-	if err := validateLoopContainerTablePanel(sandboxBoard); err != nil {
+	if err := validateDashboard(sandboxBoard, sandboxDashboardPanels, registered, provisioned); err != nil {
 		return err
 	}
 
@@ -227,7 +274,7 @@ func validate(root string) error {
 	if err := readYAML(filepath.Join(root, "alerts.yml"), &alerts); err != nil {
 		return err
 	}
-	return validateAlerts(alerts)
+	return validateAlerts(alerts, registered)
 }
 
 func requireOTLPReceiver(protocols map[string]endpointConfig, owner string) error {
@@ -274,11 +321,18 @@ var loopDashboardPanels = map[string]string{
 	"Model retries and timeouts": "fuse_model_", "Tool and spawn failures": "fuse_tool_calls_total", "Projector and exporter failures": "fuse_observability_export_errors_total", "Observation drops": "fuse_observability_dropped_total", "Active log overrides": "fuse_observability_log_overrides", "Cardinality health": "fuse_metrics_label_",
 }
 
-// sandboxDashboardPanels covers every PromQL-backed sandbox panel. "Loop to
-// container" is deliberately excluded here: it is driven by the trace
-// projection (Tempo), not a Prometheus series — container id, loop id, and
-// node id never reach a metric label (change 0063) — and is validated
-// separately by validateLoopContainerTablePanel.
+// sandboxDashboardPanels covers every sandbox panel, and validateDashboard
+// requires the coverage to be exhaustive in both directions.
+//
+// There is deliberately no loop->container panel. Mapping a running loop to its
+// container needs container_id, which is a correlation token rather than a
+// metric dimension and is excluded from the recorder catalog on purpose. The
+// projected Record does carry it, but that projection reaches only the JSON log
+// sink: this stack provisions Prometheus and Tempo and no logs datasource, and
+// no fuse.sandbox.* span exists either — span names are minted solely from an
+// observe.Descriptor in internal/observe/otel, which the sandbox package must
+// not import. Restore the panel once one of those series genuinely exists, and
+// teach this validator to check it then.
 var sandboxDashboardPanels = map[string]string{
 	"Active sandboxes by handler/runtime": "fuse_sandbox_active",
 	"Cold-start latency heatmap":          "fuse_sandbox_cold_start_seconds_bucket",
@@ -286,21 +340,36 @@ var sandboxDashboardPanels = map[string]string{
 	"Reap rate by cause":                  "fuse_sandbox_reaped_total",
 }
 
-func validateDashboard(board dashboard, expected map[string]string) error {
+func validateDashboard(board dashboard, expected map[string]string, registered map[string]bool, provisioned map[string]string) error {
 	seen := make(map[string]bool)
 	for _, panel := range board.Panels {
 		metric, required := expected[panel.Title]
 		if !required {
-			continue
+			// Exhaustive in this direction too: an unrecognised panel is an
+			// unvalidated panel, and an unvalidated panel is how a query
+			// against a series nothing produces gets shipped.
+			return fmt.Errorf("dashboard %s panel %q has no declared expectation; add it to the panel map", board.UID, panel.Title)
 		}
 		seen[panel.Title] = true
+		if err := requirePrometheusDatasource(panel.Title, panel.Datasource, provisioned); err != nil {
+			return err
+		}
 		if len(panel.Targets) == 0 {
 			return fmt.Errorf("dashboard panel %q has no PromQL targets", panel.Title)
 		}
 		matched := false
 		for _, target := range panel.Targets {
+			if err := requirePrometheusDatasource(panel.Title, target.Datasource, provisioned); err != nil {
+				return err
+			}
+			if strings.TrimSpace(target.Query) != "" {
+				return fmt.Errorf("dashboard panel %q uses a non-PromQL query; only Prometheus-backed panels can be validated today", panel.Title)
+			}
 			if !validPromQL(target.Expr) {
 				return fmt.Errorf("dashboard panel %q has invalid PromQL structure", panel.Title)
+			}
+			if err := requireRegisteredMetrics(fmt.Sprintf("dashboard panel %q", panel.Title), target.Expr, registered); err != nil {
+				return err
 			}
 			if strings.Contains(target.Expr, metric) {
 				matched = true
@@ -318,28 +387,33 @@ func validateDashboard(board dashboard, expected map[string]string) error {
 	return nil
 }
 
-// validateLoopContainerTablePanel checks the loop->container table separately
-// from the PromQL panels: it is a Tempo table backed by a traceQL query, not
-// an "expr", so it needs its own datasource/query shape check.
-func validateLoopContainerTablePanel(board dashboard) error {
-	for _, panel := range board.Panels {
-		if panel.Title != "Loop to container" {
-			continue
-		}
-		if panel.Type != "table" {
-			return fmt.Errorf("panel %q must be a table panel", panel.Title)
-		}
-		for _, target := range panel.Targets {
-			if strings.TrimSpace(target.Query) != "" {
-				return nil
-			}
-		}
-		return fmt.Errorf("panel %q has no traceQL query", panel.Title)
+// requirePrometheusDatasource rejects any datasource this validator cannot hold
+// to a real series. An explicit UID must be one Grafana actually provisions and
+// must match that datasource's type; beyond that, only Prometheus panels are
+// permitted, because Prometheus is the sole signal whose series names can be
+// checked against the emitting code (see registeredMetrics). A trace- or
+// logs-backed panel is accepted only once this function learns to verify the
+// spans or streams it names actually exist.
+func requirePrometheusDatasource(title string, ds *panelDatasource, provisioned map[string]string) error {
+	if ds == nil || (ds.UID == "" && ds.Type == "") {
+		return nil // inherits the provisioned default, which is Prometheus.
 	}
-	return fmt.Errorf("dashboard missing required panel %q", "Loop to container")
+	if ds.UID != "" {
+		kind, ok := provisioned[ds.UID]
+		if !ok {
+			return fmt.Errorf("dashboard panel %q references datasource %q, which Grafana never provisions", title, ds.UID)
+		}
+		if ds.Type != "" && ds.Type != kind {
+			return fmt.Errorf("dashboard panel %q declares datasource %q as type %q, but it is provisioned as %q", title, ds.UID, ds.Type, kind)
+		}
+	}
+	if ds.Type != "" && ds.Type != "prometheus" {
+		return fmt.Errorf("dashboard panel %q uses the %q datasource; only Prometheus panels can be validated against an emitted series today", title, ds.Type)
+	}
+	return nil
 }
 
-func validateAlerts(config alertConfig) error {
+func validateAlerts(config alertConfig, registered map[string]bool) error {
 	expected := map[string]string{
 		"FuseHighErrorRate": "fuse_loop_operations_total", "FuseHighLatency": "fuse_loop_operation_duration_seconds_bucket", "FuseOverflowAttributionIncomplete": "fuse_metrics_label_overflow_total", "FuseExporterErrors": "fuse_observability_export_errors_total", "FuseDroppedObservations": "fuse_observability_dropped_total",
 		"FuseSandboxUnhealthy": "fuse_sandbox_unhealthy_total", "FuseSandboxIdleTTLLeak": "fuse_sandbox_reaped_total", "FuseSandboxPoolNotDraining": "fuse_sandbox_active", "FuseSandboxStaleCheckout": "fuse_sandbox_reaped_total",
@@ -347,6 +421,12 @@ func validateAlerts(config alertConfig) error {
 	seen := make(map[string]bool)
 	for _, group := range config.Groups {
 		for _, rule := range group.Rules {
+			// Every rule is held to the registered-series check, declared or
+			// not: an undeclared alert firing on a metric nothing emits is the
+			// same silent failure as an undeclared panel.
+			if err := requireRegisteredMetrics("alert "+rule.Alert, rule.Expr, registered); err != nil {
+				return err
+			}
 			metric, required := expected[rule.Alert]
 			if !required {
 				continue

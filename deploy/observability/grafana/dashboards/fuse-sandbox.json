@@ -1,6 +1,5 @@
 {"uid":"fuse-sandbox","title":"Fuse Sandbox Observability","schemaVersion":41,"version":1,"refresh":"30s","panels":[
 {"title":"Active sandboxes by handler/runtime","type":"timeseries","targets":[{"expr":"sum(fuse_sandbox_active) by (handler, runtime)"}]},
-{"title":"Loop to container","type":"table","datasource":{"type":"tempo","uid":"tempo"},"targets":[{"datasource":{"type":"tempo","uid":"tempo"},"queryType":"traceql","query":"{name=~\"fuse.sandbox.(acquire|release|reap)\"}"}]},
 {"title":"Cold-start latency heatmap","type":"heatmap","targets":[{"expr":"sum(rate(fuse_sandbox_cold_start_seconds_bucket[5m])) by (le, handler, runtime)"}]},
 {"title":"Unhealthy by reason","type":"timeseries","targets":[{"expr":"sum(rate(fuse_sandbox_unhealthy_total[5m])) by (handler, reason)"}]},
 {"title":"Reap rate by cause","type":"timeseries","targets":[{"expr":"sum(rate(fuse_sandbox_reaped_total[5m])) by (handler, cause)"}]}]}
