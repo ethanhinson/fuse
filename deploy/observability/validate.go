@@ -92,8 +92,10 @@ type dashboard struct {
 	UID    string `json:"uid"`
 	Panels []struct {
 		Title   string `json:"title"`
+		Type    string `json:"type"`
 		Targets []struct {
-			Expr string `json:"expr"`
+			Expr  string `json:"expr"`
+			Query string `json:"query"`
 		} `json:"targets"`
 	} `json:"panels"`
 }
@@ -203,7 +205,21 @@ func validate(root string) error {
 	if board.UID != "fuse-loop" {
 		return fmt.Errorf("dashboard UID must be fuse-loop")
 	}
-	if err := validateDashboard(board); err != nil {
+	if err := validateDashboard(board, loopDashboardPanels); err != nil {
+		return err
+	}
+
+	var sandboxBoard dashboard
+	if err := readJSON(filepath.Join(root, "grafana/dashboards/fuse-sandbox.json"), &sandboxBoard); err != nil {
+		return err
+	}
+	if sandboxBoard.UID != "fuse-sandbox" {
+		return fmt.Errorf("dashboard UID must be fuse-sandbox")
+	}
+	if err := validateDashboard(sandboxBoard, sandboxDashboardPanels); err != nil {
+		return err
+	}
+	if err := validateLoopContainerTablePanel(sandboxBoard); err != nil {
 		return err
 	}
 
@@ -253,11 +269,24 @@ func hasDashboardProvider(config dashboardProvisioning) bool {
 	return false
 }
 
-func validateDashboard(board dashboard) error {
-	expected := map[string]string{
-		"Loop throughput": "fuse_loop_operations_total", "Loop outcomes": "fuse_loop_operations_total", "Loop p95 latency": "fuse_loop_operation_duration_seconds_bucket", "Active loops": "fuse_loop_active",
-		"Model retries and timeouts": "fuse_model_", "Tool and spawn failures": "fuse_tool_calls_total", "Projector and exporter failures": "fuse_observability_export_errors_total", "Observation drops": "fuse_observability_dropped_total", "Active log overrides": "fuse_observability_log_overrides", "Cardinality health": "fuse_metrics_label_",
-	}
+var loopDashboardPanels = map[string]string{
+	"Loop throughput": "fuse_loop_operations_total", "Loop outcomes": "fuse_loop_operations_total", "Loop p95 latency": "fuse_loop_operation_duration_seconds_bucket", "Active loops": "fuse_loop_active",
+	"Model retries and timeouts": "fuse_model_", "Tool and spawn failures": "fuse_tool_calls_total", "Projector and exporter failures": "fuse_observability_export_errors_total", "Observation drops": "fuse_observability_dropped_total", "Active log overrides": "fuse_observability_log_overrides", "Cardinality health": "fuse_metrics_label_",
+}
+
+// sandboxDashboardPanels covers every PromQL-backed sandbox panel. "Loop to
+// container" is deliberately excluded here: it is driven by the trace
+// projection (Tempo), not a Prometheus series — container id, loop id, and
+// node id never reach a metric label (change 0063) — and is validated
+// separately by validateLoopContainerTablePanel.
+var sandboxDashboardPanels = map[string]string{
+	"Active sandboxes by handler/runtime": "fuse_sandbox_active",
+	"Cold-start latency heatmap":          "fuse_sandbox_cold_start_seconds_bucket",
+	"Unhealthy by reason":                 "fuse_sandbox_unhealthy_total",
+	"Reap rate by cause":                  "fuse_sandbox_reaped_total",
+}
+
+func validateDashboard(board dashboard, expected map[string]string) error {
 	seen := make(map[string]bool)
 	for _, panel := range board.Panels {
 		metric, required := expected[panel.Title]
@@ -289,8 +318,32 @@ func validateDashboard(board dashboard) error {
 	return nil
 }
 
+// validateLoopContainerTablePanel checks the loop->container table separately
+// from the PromQL panels: it is a Tempo table backed by a traceQL query, not
+// an "expr", so it needs its own datasource/query shape check.
+func validateLoopContainerTablePanel(board dashboard) error {
+	for _, panel := range board.Panels {
+		if panel.Title != "Loop to container" {
+			continue
+		}
+		if panel.Type != "table" {
+			return fmt.Errorf("panel %q must be a table panel", panel.Title)
+		}
+		for _, target := range panel.Targets {
+			if strings.TrimSpace(target.Query) != "" {
+				return nil
+			}
+		}
+		return fmt.Errorf("panel %q has no traceQL query", panel.Title)
+	}
+	return fmt.Errorf("dashboard missing required panel %q", "Loop to container")
+}
+
 func validateAlerts(config alertConfig) error {
-	expected := map[string]string{"FuseHighErrorRate": "fuse_loop_operations_total", "FuseHighLatency": "fuse_loop_operation_duration_seconds_bucket", "FuseOverflowAttributionIncomplete": "fuse_metrics_label_overflow_total", "FuseExporterErrors": "fuse_observability_export_errors_total", "FuseDroppedObservations": "fuse_observability_dropped_total"}
+	expected := map[string]string{
+		"FuseHighErrorRate": "fuse_loop_operations_total", "FuseHighLatency": "fuse_loop_operation_duration_seconds_bucket", "FuseOverflowAttributionIncomplete": "fuse_metrics_label_overflow_total", "FuseExporterErrors": "fuse_observability_export_errors_total", "FuseDroppedObservations": "fuse_observability_dropped_total",
+		"FuseSandboxUnhealthy": "fuse_sandbox_unhealthy_total", "FuseSandboxIdleTTLLeak": "fuse_sandbox_reaped_total", "FuseSandboxPoolNotDraining": "fuse_sandbox_active", "FuseSandboxStaleCheckout": "fuse_sandbox_reaped_total",
+	}
 	seen := make(map[string]bool)
 	for _, group := range config.Groups {
 		for _, rule := range group.Rules {

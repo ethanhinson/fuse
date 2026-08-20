@@ -16,3 +16,21 @@ groups:
       - alert: FuseDroppedObservations
         expr: increase(fuse_observability_dropped_total[10m]) > 0
         for: 5m
+  - name: fuse-sandbox
+    rules:
+      - alert: FuseSandboxUnhealthy
+        expr: sum(rate(fuse_sandbox_unhealthy_total[5m])) by (handler, reason) > 0
+        for: 5m
+      - alert: FuseSandboxIdleTTLLeak
+        expr: sum(rate(fuse_sandbox_reaped_total{cause="idle_ttl"}[15m])) by (handler) > 0.1
+        for: 15m
+      - alert: FuseSandboxPoolNotDraining
+        # fuse_sandbox_active can also undercount after a process restart (a
+        # release/reap for a checkout the recorder never saw acquired leaves
+        # the gauge untouched rather than going negative), so this only fires
+        # on the gauge climbing ABOVE the loop count, never below it.
+        expr: sum(fuse_sandbox_active) - sum(fuse_loop_active) > 5
+        for: 15m
+      - alert: FuseSandboxStaleCheckout
+        expr: increase(fuse_sandbox_reaped_total{cause="stale_checkout"}[5m]) > 0
+        for: 0m
