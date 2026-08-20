@@ -8,10 +8,10 @@ type: feat
 created: 2026-08-20
 updated: 2026-08-20
 depends_on: [63]
-related: [63, 64, 75, 76]
+related: [63, 64, 74, 75, 76]
 discovered_from: [63]
 adrs: [44]
-spec:
+spec: docs/superpowers/specs/2026-08-20-sandbox-resource-limits-concurrency-ceiling-design.md
 plan:
 results:
 trivial: false
@@ -27,6 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-20-sandbox-resource-limits-concurrency-ceiling-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-20-sandbox-resource-limits-concurrency-ceiling-design.md) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
@@ -42,10 +43,12 @@ This is the resource-management layer every orchestration target depends on: it 
 
 ## What changes
 
-- **Per-container cgroup caps** on the local container substrate: `--memory`, `--cpus`, `--pids-limit`, and a disk/`--ulimit` bound, sourced from **trusted operator config only** (never model output, never a wire field — same trust boundary as the off-switch and env-allowlist), with fail-safe defaults so an unconfigured hosted profile is still bounded.
-- **A concurrency ceiling on in-flight `Exec`s**, enforced at the pool (or a sibling admission gate): a global cap and/or a per-`Principal.Tenant` cap, with a bounded queue and a clear refusal (or wait-with-deadline) when the ceiling is hit — so one tenant cannot starve others and the host cannot be swamped. Coordinate with ADR-0007's Scheduler as the existing admission authority rather than inventing a second one.
-- **Bounded image acquisition**: a pull timeout / pre-pull path so a cold image cannot hang an `Exec` indefinitely.
-- **New bounded observability**, consistent with #63's families: a refused/queued-for-limit signal (candidate: extend `fuse_sandbox_*` with a rejection counter, or reuse the `KindSandboxHealth` `acquire_failed` reason once #74 lands an emitter — cross-reference #74).
+Four axes, settled in grooming (design detail in the linked spec):
+
+- **Per-container cgroup caps** on the container substrate: `--memory` (with `--memory-swap` pinned equal), `--cpus`, `--pids-limit`, and a `--ulimit` bound, added to the run argv, sourced from **trusted operator config only** (never model output, never a wire field — same trust boundary as the off-switch and env-allowlist). **Fail-safe posture split:** caps default *off* locally (matching #63's allow-all-locally stance) and *on* when hosted, so an unconfigured hosted profile is still bounded. An unset limit emits no flag.
+- **A soft, high-bounded concurrency queue on in-flight `Exec`s** — "the queue is the queue." Execs *wait* for a slot up to their own context deadline and the queue drains naturally; the bound is a **runaway backstop**, refusing only in genuinely pathological cases, never under normal load. Scoped as a **per-`Principal.Tenant` soft share under a high global backstop** (a tenant's burst queues within its own share; others keep flowing). Admission lives in a **dedicated sandbox-layer gate owned by the process-scoped `Service`** — *not* `agent.Scheduler` (spawn-tree-scoped and agent-coupled; the sandbox is deliberately agent-free) and *not* the per-loop `Pool` (which would bound nothing host-wide).
+- **A loop- and operator-facing backpressure signal.** When an `Exec` waited past a threshold, a **bounded, closed-form note** is appended to its `Output` the model can read and adapt to; queue depth/wait also emit a sandbox lifecycle event projected to Prometheus (`fuse_sandbox_exec_queued_total`, a wait histogram), and capacity refusals land on a **dedicated `fuse_sandbox_rejected_total`** — deliberately *not* reusing #74's `acquire_failed` health reason, so #77 carries no hard dependency on #74 and a load event never pages an operator watching for a broken substrate.
+- **Bounded image acquisition**: a single-flight pre-pull under its own timeout, with `--pull=never` on the run, so a cold image cannot hang an `Exec` on the command's own deadline.
 
 ## Out of scope
 
@@ -56,12 +59,9 @@ This is the resource-management layer every orchestration target depends on: it 
 
 ## Open questions
 
-<!-- Groomed into a build-ready spec later. -->
-- Default caps for the hosted profile (memory/cpu/pids/disk) that are safe without being uselessly small — and whether locally the default is "unlimited" (matching allow-all-locally) or a generous cap.
-- Where the concurrency ceiling lives: a new semaphore in `sandbox.Pool`, or admission through the existing ADR-0007 Scheduler (which already owns subagent admission/throughput) so there is one admission authority, not two.
-- Refuse-vs-queue-with-deadline when the ceiling is hit, and how that surfaces to the model (a tool error the model can react to vs. transparent backpressure).
-- Whether the per-tenant cap keys on `Principal.Tenant` (consistent with #65/#34) and how it interacts with the single-warm-per-principal pool rule.
-- The right bounded metric for limit-driven refusals, and whether it reuses #74's `acquire_failed` health reason or a dedicated `fuse_sandbox_rejected_total` family.
+<!-- All grooming-time questions were resolved into the linked spec (2026-08-20). Remaining unknowns are build-time details the implementer's reconcile pass settles against merged reality: -->
+- Concrete default values (the hosted-profile cap numbers, the global/per-tenant queue bounds, the `max_queued` refusal bound, the pull timeout) — invented in the spec as starting points, to be tuned at build time.
+- Exactly which run stage the pre-pull hooks (handler `Acquire` vs. first `Exec`), pending the merged #63 substrate's final shape.
 
 ## Reconcile log
 
