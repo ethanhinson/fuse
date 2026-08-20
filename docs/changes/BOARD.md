@@ -1,6 +1,6 @@
 # Backlog
 
-**71 changes** — 🟡 3 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 59 done · 🗑️ 6 killed
+**71 changes** — 🟡 3 proposed · ⚪ 2 deferred · ✅ 60 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (3)
 
@@ -17,12 +17,6 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0070](active/0070-auto-mode-shell-parse-widening.md) | Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args | `medium` | `feat` | [#76](https://github.com/ethanhinson/fuse/pull/76) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
@@ -30,18 +24,17 @@ graph TD
   0058 --> 0063
   0063 --> 0064
   0063 --> 0065
-  0069 --> 0070
   0012:::done
   0052:::done
   0058:::done
-  0069:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (65)</summary>
+<details><summary>✅🗑️ Archive — done + killed (66)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0070](archive/2026-08-20-0070-auto-mode-shell-parse-widening.md) | Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args | 2026-08-20 |
 | [0069](archive/2026-08-19-0069-auto-mode-classifier-retune-webfetch.md) | Auto-mode classifier retune + web_fetch loosening — allow-bias for routine dev ops, seed becomes real auto-approve | 2026-08-19 |
 | [0071](archive/2026-08-18-0071-turn-scoped-trace-roots-interactive-loops.md) | Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans | 2026-08-18 |
 | [0068](archive/2026-08-17-0068-auto-mode-deterministic-freedom.md) | Auto-mode deterministic freedom — scratchpad + write_roots + rules-layer shrink to catastrophic-only | 2026-08-17 |
@@ -56,7 +49,6 @@ graph TD
 | [0051](archive/2026-08-12-0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs | 2026-08-12 |
 | [0059](archive/2026-08-11-0059-mcp-full-binding-wiring-e2e-tested.md) | Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths | 2026-08-11 |
 | [0055](archive/2026-08-11-0055-grpc-protobuf-transport-idl-defined-loop-wire-successor-to-4.md) | Connect/protobuf transport — IDL-defined loop.* wire, successor to #48 | 2026-08-11 |
-| [0053](archive/2026-08-11-0053-persistent-conversational-loop.md) | Persistent conversational loop — interactive mode so one loop_id carries a multi-turn chat | 2026-08-11 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -68,6 +60,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 44 done |
+| [2026-08](archive/) | 45 done |
 
 </details>
