@@ -12,12 +12,12 @@ related: [64, 65]
 discovered_from: [58]
 adrs: [44]
 spec: docs/superpowers/specs/2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-20-bash-container-substrate-env-scrub-off-switch-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/bash-container-substrate-env-scrub-off-switch
-claimed_at: 2026-08-20T18:26:56Z
+claimed_at: 2026-08-20T18:30:12Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md) |
+| Plan | [2026-08-20-bash-container-substrate-env-scrub-off-switch-plan.md](https://github.com/ethanhinson/fuse/blob/feat/bash-container-substrate-env-scrub-off-switch/docs/superpowers/plans/2026-08-20-bash-container-substrate-env-scrub-off-switch-plan.md) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
