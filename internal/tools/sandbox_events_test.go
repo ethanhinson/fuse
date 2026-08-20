@@ -1,0 +1,178 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/tools/sandbox"
+)
+
+// keyedRecorder stands in for the loop's OWN event sink: the runtime hands
+// BuildAgent an EventStore already bound to one StreamKey (durableSink), so a
+// component that merely Appends lands on exactly that loop's stream. Recording
+// the key alongside every event is how the test proves that, rather than
+// asserting on a key the emitter never sees.
+type keyedRecorder struct {
+	key event.StreamKey
+
+	mu     sync.Mutex
+	events []event.Event
+	keys   []event.StreamKey
+}
+
+func (r *keyedRecorder) Append(e event.Event) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, e)
+	r.keys = append(r.keys, r.key)
+	return nil
+}
+
+func (r *keyedRecorder) Subscribe() (<-chan event.Event, func()) {
+	ch := make(chan event.Event)
+	close(ch)
+	return ch, func() {}
+}
+
+func (r *keyedRecorder) Replay(event.Seq) ([]event.Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]event.Event, len(r.events))
+	copy(out, r.events)
+	return out, nil
+}
+
+func (r *keyedRecorder) snapshot() ([]event.Event, []event.StreamKey) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	evs := make([]event.Event, len(r.events))
+	copy(evs, r.events)
+	ks := make([]event.StreamKey, len(r.keys))
+	copy(ks, r.keys)
+	return evs, ks
+}
+
+// TestBashPoolEmitsSandboxLifecycleEvents is the wiring crux for change 0063
+// T8–T11: the four sandbox event kinds, the fuse_sandbox_* metric families, the
+// dashboard, and the alert rules are all fed by ONE thing — the pool's hooks
+// actually reaching an event stream. Before this wiring existed the projection
+// could never observe data, because nothing ever emitted.
+//
+// It drives a REAL bash execution on the host substrate (the operator off-switch
+// config, the only shape under which a unit test may run a command here) so the
+// acquire and the hand-back are the pool's own, not a hand-called hook.
+func TestBashPoolEmitsSandboxLifecycleEvents(t *testing.T) {
+	t.Setenv("FUSE_TEST_SECRET", "s3cret")
+
+	svc, err := sandbox.NewService(hostAuthorizedConfig())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	store := &keyedRecorder{key: event.StreamKey{Tenant: "acme", Loop: "loop-7"}}
+
+	b := NewBash(svc, sandbox.WithPoolHooks(SandboxEventHooks(store, "node-root")))
+	if res := b.Execute(context.Background(), `{"command":"echo hi"}`); res.IsError {
+		t.Fatalf("bash: %s", res.Output)
+	}
+	if err := ReleaseSandboxes(context.Background(), registryWith(b)); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+
+	evs, keys := store.snapshot()
+	if len(evs) == 0 {
+		t.Fatal("no sandbox events reached the loop's event stream — the pool's hooks are not wired to an emitter")
+	}
+
+	var acquire, release *event.Event
+	for i := range evs {
+		switch evs[i].Kind {
+		case event.KindSandboxAcquire:
+			if acquire == nil {
+				acquire = &evs[i]
+			}
+		case event.KindSandboxRelease:
+			if release == nil {
+				release = &evs[i]
+			}
+		}
+	}
+	if acquire == nil {
+		t.Fatalf("no %s event; got kinds %v", event.KindSandboxAcquire, kindsOf(evs))
+	}
+	if release == nil {
+		t.Fatalf("no %s event; got kinds %v", event.KindSandboxRelease, kindsOf(evs))
+	}
+
+	// The envelope: every event lands under the loop's OWN StreamKey and carries
+	// the loop's node id. Correlation lives here and nowhere else.
+	for i, k := range keys {
+		if k != (event.StreamKey{Tenant: "acme", Loop: "loop-7"}) {
+			t.Fatalf("event %d landed under StreamKey %+v, want the loop's own key", i, k)
+		}
+		if evs[i].NodeID != "node-root" {
+			t.Fatalf("event %d NodeID = %q, want the loop's node id", i, evs[i].NodeID)
+		}
+	}
+
+	var ap event.SandboxAcquirePayload
+	if err := json.Unmarshal(acquire.Payload, &ap); err != nil {
+		t.Fatalf("acquire payload: %v", err)
+	}
+	if ap.Handler != "host" {
+		t.Fatalf("acquire handler = %q, want %q", ap.Handler, "host")
+	}
+	if ap.Reused {
+		t.Fatal("first acquire must not report reuse")
+	}
+
+	var rp event.SandboxReleasePayload
+	if err := json.Unmarshal(release.Payload, &rp); err != nil {
+		t.Fatalf("release payload: %v", err)
+	}
+	if rp.Cause != event.SandboxCauseReleased {
+		t.Fatalf("release cause = %q, want %q", rp.Cause, event.SandboxCauseReleased)
+	}
+	if rp.Handler != "host" {
+		t.Fatalf("release handler = %q, want %q", rp.Handler, "host")
+	}
+
+	// Payload-free discipline: bounded identity and closed enums only. Never the
+	// command, an environment value, output, or a raw error string — events.jsonl
+	// is durable and replayed.
+	for i, e := range evs {
+		raw := string(e.Payload)
+		for _, banned := range []string{"echo hi", "s3cret", "FUSE_TEST_SECRET", "hi\n"} {
+			if strings.Contains(raw, banned) {
+				t.Fatalf("event %d (%s) payload leaked %q: %s", i, e.Kind, banned, raw)
+			}
+		}
+		// The (tenant, loop) envelope must not be duplicated into a payload.
+		for _, dup := range []string{"acme", "loop-7", "node-root"} {
+			if strings.Contains(raw, dup) {
+				t.Fatalf("event %d (%s) duplicated envelope identity %q into its payload: %s", i, e.Kind, dup, raw)
+			}
+		}
+	}
+}
+
+// TestSandboxEventHooksNilStoreIsInert: a binding with no per-loop event store
+// (one-shot, shell, research-probe, mcp-server) passes nothing, and the pool
+// must not panic on a half-built hook set.
+func TestSandboxEventHooksNilStoreIsInert(t *testing.T) {
+	h := SandboxEventHooks(nil, "node")
+	if h.Acquired != nil || h.Released != nil || h.Reaped != nil {
+		t.Fatal("hooks over a nil store must be entirely inert")
+	}
+}
+
+func kindsOf(evs []event.Event) []event.Kind {
+	out := make([]event.Kind, 0, len(evs))
+	for _, e := range evs {
+		out = append(out, e.Kind)
+	}
+	return out
+}

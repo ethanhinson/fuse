@@ -214,6 +214,29 @@ func buildLoopServerRuntimeDepsWithObserver(sb *sandbox.Service, cfg config.Conf
 			sched.SetQueueBound(cfg.Agents.QueueBound)
 			sched.SetSessionTokens(cfg.Throughput.SessionTokens)
 			rootNode := tree.Node(tree.RootID())
+			// Rebind THIS loop's bash tool with the sandbox emission hooks (change
+			// 0063 T8–T11). NewToolRegistry above already gave the loop its own
+			// hook-less bash so a StartLoop failure before this point still tears
+			// down a per-loop pool; here — the first place that holds BOTH the
+			// loop's frozen Service and the loop's event store — it is replaced by
+			// one that emits. Register overwrites by name, and no command can have
+			// run yet (the agent does not exist until this factory returns), so no
+			// pool has been created and nothing is stranded.
+			//
+			// `store` is already bound to this loop's StreamKey by the runtime, so
+			// appending to it lands on the right (tenant, loop) stream with no key
+			// plumbing; the root node id completes the envelope. This is the ONLY
+			// production emitter of the four sandbox kinds — without it the whole
+			// sandbox projection (fuse_sandbox_* metrics, the fuse-sandbox
+			// dashboard, its alert rules) can never observe data.
+			//
+			// The loop-server is the binding that has a per-loop event store. The
+			// one-shot, shell, research-probe, and mcp-server bindings do not, and
+			// deliberately pass no hooks rather than emitting into a NoopStore.
+			if loopToolReg != nil {
+				loopToolReg.Register(tools.NewBash(sb, sandbox.WithPoolHooks(
+					tools.SandboxEventHooks(store, tree.RootID()))))
+			}
 			// One blackboard per loop, shared by every agent in that loop's tree (change 0023).
 			bb := agent.NewBlackboard(tree)
 

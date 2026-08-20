@@ -49,6 +49,16 @@ type bashTool struct {
 	// Nil means no substrate: every Execute refuses (see errNoSubstrate).
 	svc *sandbox.Service
 
+	// poolOpts configure the lazily-created pool. They are what carries the
+	// emission seam (sandbox.WithPoolHooks) down to a pool this tool owns: the
+	// composition root holds the loop's event store, the tool holds the frozen
+	// Service, and neither can construct the pool alone. They are re-applied on
+	// every (re-)open, so a pool rebuilt after a teardown keeps emitting.
+	//
+	// They cannot widen containment: PoolOption reaches only the pool's own
+	// lifecycle knobs, never the Service that decides where a command runs.
+	poolOpts []sandbox.PoolOption
+
 	mu   sync.Mutex
 	pool bashSubstrate
 }
@@ -58,7 +68,17 @@ type bashTool struct {
 // sb is the SELECTION, already made: container by default, host only where an
 // operator's file-only off-switch authorized it and the hosted posture is not
 // active. A nil sb is a fail-CLOSED tool, never a host fallback.
-func NewBash(sb *sandbox.Service) Tool { return &bashTool{svc: sb} }
+//
+// opts configure the warm pool the tool creates on first use. A composition
+// root that owns the loop's event store passes
+// sandbox.WithPoolHooks(SandboxEventHooks(store, nodeID)) here, which is the
+// ONLY path by which the pool's lifecycle reaches the durable stream the
+// sandbox projection reads — without it the four sandbox event kinds are never
+// emitted and every fuse_sandbox_* metric stays empty. A binding with no
+// per-loop event store passes none.
+func NewBash(sb *sandbox.Service, opts ...sandbox.PoolOption) Tool {
+	return &bashTool{svc: sb, poolOpts: opts}
+}
 
 // NewBashWithPool returns the bash tool over a pool the CALLER owns.
 //
@@ -116,7 +136,7 @@ func (b *bashTool) substrate() (bashSubstrate, error) {
 	if b.svc == nil {
 		return nil, errNoSubstrate
 	}
-	b.pool = sandbox.NewPool(b.svc)
+	b.pool = sandbox.NewPool(b.svc, b.poolOpts...)
 	return b.pool, nil
 }
 
