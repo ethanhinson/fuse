@@ -247,7 +247,7 @@ func (r *Recorder) recordSandbox(rec observe.Record) {
 		// Release AND reap both end a checkout. A reap that did not decrement
 		// would leak the gauge upward forever, which is exactly the leak this
 		// family exists to expose.
-		r.sandboxRelease(rec.ContainerID, handler)
+		r.sandboxRelease(rec.ContainerID, tenant, handler)
 	case "sandbox.health":
 		// Only a transition INTO unhealthy counts. The projector already decided
 		// that (a healthy or recovered transition projects success), so reading
@@ -259,14 +259,19 @@ func (r *Recorder) recordSandbox(rec observe.Record) {
 }
 
 // sandboxKey identifies a checkout for carry-forward. The container id is used
-// ONLY as this internal correlation key and never reaches a label. The handler
-// is folded in so the host handler — which has no container id at all — groups
-// its checkouts under its own refcount instead of colliding with anything else
-// that reports an empty id.
-func sandboxKey(containerID, handler string) string { return handler + "\x00" + containerID }
+// ONLY as this internal correlation key and never reaches a label. The tenant and
+// handler are folded in so a handler that reports no container id — the host
+// handler always, and the container handler until sandbox.containerIdentified is
+// implemented — refcounts per tenant instead of collapsing every tenant in the
+// process onto one entry. Sharing that entry would decrement the FIRST holder's
+// series for a later tenant's release, draining one tenant's gauge twice while
+// another's climbs forever.
+func sandboxKey(containerID, tenant, handler string) string {
+	return tenant + "\x00" + handler + "\x00" + containerID
+}
 
 func (r *Recorder) sandboxHold(containerID, tenant, handler, runtime string) {
-	key := sandboxKey(containerID, handler)
+	key := sandboxKey(containerID, tenant, handler)
 	series := tenant + "\x00" + handler + "\x00" + runtime
 	r.mu.Lock()
 	held, ok := r.sandboxHeld[key]
@@ -281,8 +286,8 @@ func (r *Recorder) sandboxHold(containerID, tenant, handler, runtime string) {
 	r.sandboxActive.WithLabelValues(tenant, handler, runtime).Set(float64(live))
 }
 
-func (r *Recorder) sandboxRelease(containerID, handler string) {
-	key := sandboxKey(containerID, handler)
+func (r *Recorder) sandboxRelease(containerID, tenant, handler string) {
+	key := sandboxKey(containerID, tenant, handler)
 	r.mu.Lock()
 	held, ok := r.sandboxHeld[key]
 	if !ok {

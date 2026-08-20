@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/observe"
+	"github.com/ethanhinson/fuse/internal/observe/metricspolicy"
+	client "github.com/prometheus/client_golang/prometheus"
 )
 
 func sandboxRecord(name string) observe.Record {
@@ -133,6 +136,73 @@ func TestSandboxActiveGaugeReturnsToZeroOnReleaseAndReap(t *testing.T) {
 	// The host handler has no container runtime; that is a bounded fact labelled
 	// "none", never an empty string that would read as "unknown".
 	wantAll(t, body, `fuse_sandbox_active{handler="host",runtime="none",tenant_id="admitted"} 0`)
+}
+
+// twoTenantRecorder admits two real tenant labels so a cross-tenant gauge leak
+// shows up as itself rather than as label-policy overflow.
+func twoTenantRecorder(t *testing.T) *Recorder {
+	t.Helper()
+	p, err := metricspolicy.New(metricspolicy.Config{HashVersion: metricspolicy.HashV1, Dimensions: map[metricspolicy.Dimension]metricspolicy.DimensionConfig{
+		metricspolicy.TenantID: {Budget: 4, Catalog: []string{"admitted", "other"}},
+		metricspolicy.Model:    {Budget: 2, Catalog: []string{"m"}}, metricspolicy.Tool: {Budget: 2, Catalog: []string{"tool"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := New(Config{Registerer: client.NewRegistry(), Policy: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// TestSandboxActiveGaugePerTenantWithEmptyContainerID is the production shape.
+// Nothing implements sandbox.containerIdentified yet, so every checkout arrives
+// with an EMPTY ContainerID: a carry-forward key that omits the tenant folds
+// every tenant in the process onto one entry, so one tenant's gauge is
+// decremented twice to zero while another's climbs forever — exactly what
+// FuseSandboxPoolNotDraining fires on.
+func TestSandboxActiveGaugePerTenantWithEmptyContainerID(t *testing.T) {
+	r := twoTenantRecorder(t)
+
+	ev := func(tenant, name, cause string) observe.Record {
+		rec := sandboxRecord(name)
+		rec.TenantID = event.TenantID(tenant)
+		rec.Handler, rec.Runtime, rec.ContainerID, rec.Cause = "container", "docker", "", cause
+		if name != "sandbox.acquire" {
+			rec.Runtime = ""
+		}
+		return rec
+	}
+
+	body := projectAll(t, r, ev("admitted", "sandbox.acquire", ""), ev("other", "sandbox.acquire", ""))
+	wantAll(t, body,
+		`fuse_sandbox_active{handler="container",runtime="docker",tenant_id="admitted"} 1`,
+		`fuse_sandbox_active{handler="container",runtime="docker",tenant_id="other"} 1`,
+	)
+
+	body = projectAll(t, r,
+		ev("admitted", "sandbox.release", "released"),
+		ev("other", "sandbox.release", "released"),
+	)
+	wantAll(t, body,
+		`fuse_sandbox_active{handler="container",runtime="docker",tenant_id="admitted"} 0`,
+		`fuse_sandbox_active{handler="container",runtime="docker",tenant_id="other"} 0`,
+	)
+
+	// And it must stay drained across repeated rounds rather than ratcheting up
+	// on whichever tenant last won the shared key.
+	for i := 0; i < 3; i++ {
+		projectAll(t, r, ev("admitted", "sandbox.acquire", ""), ev("other", "sandbox.acquire", ""))
+		body = projectAll(t, r,
+			ev("other", "sandbox.release", "released"),
+			ev("admitted", "sandbox.release", "released"),
+		)
+	}
+	wantAll(t, body,
+		`fuse_sandbox_active{handler="container",runtime="docker",tenant_id="admitted"} 0`,
+		`fuse_sandbox_active{handler="container",runtime="docker",tenant_id="other"} 0`,
+	)
 }
 
 // TestSandboxColdStartObservesOnlyColdSpawns keeps the histogram honest: a warm
