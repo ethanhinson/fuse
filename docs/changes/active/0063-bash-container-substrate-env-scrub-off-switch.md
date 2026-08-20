@@ -8,7 +8,7 @@ type: feat
 created: 2026-08-16
 updated: 2026-08-20
 depends_on: [58]
-related: [64, 65]
+related: [64, 65, 74, 75, 76, 77]
 discovered_from: [58]
 adrs: [44]
 spec: docs/superpowers/specs/2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md
