@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0072 — Docker subcommand classification — read-only forms auto-approve; the rest reach the classifier instead of dying at the parse floor](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0072-docker-subcommand-classification.md)**
+> ↩ **[Change 0072 — Docker subcommand classification — read-only forms auto-approve; the rest reach the classifier instead of dying at the parse floor](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-20-0072-docker-subcommand-classification.md)**
 <!-- docket:backlink:end -->
 
 # Docker subcommand classification — design
