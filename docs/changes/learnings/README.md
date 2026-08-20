@@ -55,6 +55,7 @@ One curated finding per file; this index is the hint surface. Load it, then read
 
 - [auto-approve-task-implied-edits-classifier-context](auto-approve-task-implied-edits-classifier-context.md) — In an unattended mode there is no human to ask — structurally auto-approve task-implied in-workspace edits behind a trust boundary you already own, and feed the classifier the user's request instead of running it blind. · also: security, agents, ux ⟨needs promotion⟩
 - [canonicalize-once-before-every-matching-layer](canonicalize-once-before-every-matching-layer.md) — When two layers match the same operand with different normalizations, promoting either one to an authorization decision turns the mismatch into a bypass — canonicalize once, before every layer. · also: security, authorization, normalization, go ⟨needs promotion⟩
+- [parse-floor-refusal-is-unconfigurable](parse-floor-refusal-is-unconfigurable.md) — A refusal at the parse floor is invisible to EVERY later layer — user deny/allow patterns and the classifier all consume segments that never exist — so a parse-floor fail-closed is an unconfigurable hard ask; refuse at the lowest layer config can still reach. · also: security, shell, architecture ⟨needs promotion⟩
 
 ## reconcile
 
