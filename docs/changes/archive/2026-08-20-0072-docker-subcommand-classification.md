@@ -2,7 +2,7 @@
 id: 72
 slug: docker-subcommand-classification
 title: Docker subcommand classification — read-only forms auto-approve; the rest reach the classifier instead of dying at the parse floor
-status: implemented
+status: done
 priority: high
 type: fix
 created: 2026-08-20
@@ -17,7 +17,7 @@ results:
 trivial: false
 auto_groomable: false
 branch: feat/docker-subcommand-classification
-claimed_at: 2026-08-20T01:46:25Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/77
 blocked_by:
 reconciled: true
