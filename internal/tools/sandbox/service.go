@@ -187,6 +187,12 @@ func NewService(cfg Config, opts ...ServiceOption) (*Service, error) {
 	// Appended LAST so it is the trusted root that wins: no test option and no
 	// caller-supplied containerOption can substitute a different mount source.
 	o.containerOpts = append(o.containerOpts, withTrustedRoot(o.root))
+	// Plumbs the SAME lookup seam WithEnvLookup governs for the sandboxed
+	// command's environment into the container CLI client's own passthrough
+	// resolution (see runClientCommand), so one seam governs both halves.
+	if o.lookup != nil {
+		o.containerOpts = append(o.containerOpts, withContainerEnvLookup(o.lookup))
+	}
 
 	if cfg.IdleTTL <= 0 {
 		// A hand-built Config (or the zero value) would otherwise mean "reap on
@@ -311,7 +317,10 @@ func hostAuthorized(cfg Config, hosted bool) bool {
 // exactly what the trusted config declared.
 func (s *Service) Acquire(ctx context.Context, p loopauth.Principal) (Runner, error) {
 	if s.handler == nil {
-		return nil, s.refusal
+		if s.refusal != nil {
+			return nil, s.refusal
+		}
+		return nil, ErrRefusedUncontained
 	}
 	return s.handler.Acquire(ctx, p, s.resolveEnv())
 }

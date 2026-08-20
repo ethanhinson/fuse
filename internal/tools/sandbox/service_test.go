@@ -253,6 +253,26 @@ func TestServiceFailsClosedWithoutContainerRuntime(t *testing.T) {
 	}
 }
 
+// A hand-built zero-value Service (constructible as &Service{} since the type
+// is exported with unexported fields) has both handler and refusal nil.
+// Acquire must still refuse rather than returning (nil, nil) — a nil Runner
+// with a nil error, which a caller like Pool.acquireFresh would store and
+// later nil-deref on Exec.
+func TestServiceZeroValueAcquireRefusesRatherThanNilNil(t *testing.T) {
+	svc := &Service{}
+
+	runner, err := svc.Acquire(context.Background(), testPrincipal())
+	if err == nil {
+		t.Fatalf("Acquire on a zero-value Service returned a nil error (runner=%v), want a refusal", runner)
+	}
+	if runner != nil {
+		t.Errorf("Acquire on a zero-value Service returned a non-nil Runner (%T) alongside an error", runner)
+	}
+	if !errors.Is(err, ErrRefusedUncontained) {
+		t.Errorf("Acquire error = %v, want it to wrap ErrRefusedUncontained", err)
+	}
+}
+
 // A missing container CLI is only a refusal when the host was NOT authorized.
 // The host substrate needs no CLI, so a local operator who explicitly asked for
 // it still gets it. This is the companion that keeps the refusal specific.

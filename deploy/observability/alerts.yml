@@ -29,7 +29,7 @@ groups:
         # release/reap for a checkout the recorder never saw acquired leaves
         # the gauge untouched rather than going negative), so this only fires
         # on the gauge climbing ABOVE the loop count, never below it.
-        expr: sum(fuse_sandbox_active) - sum(fuse_loop_active) > 5
+        expr: sum(fuse_sandbox_active) - sum(fuse_loop_active{operation="loop"}) > 5
         for: 15m
       - alert: FuseSandboxStaleCheckout
         expr: increase(fuse_sandbox_reaped_total{cause="stale_checkout"}[5m]) > 0

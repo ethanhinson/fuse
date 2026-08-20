@@ -124,7 +124,7 @@ func TestContainerSmokeAgainstRealCLI(t *testing.T) {
 		t.Fatalf("ambient secret VALUE leaked into the container:\n%s", envOut)
 	}
 	for _, line := range strings.Split(envOut, "\n") {
-		key, _, ok := strings.Cut(line, "=")
+		key, value, ok := strings.Cut(line, "=")
 		if !ok {
 			continue
 		}
@@ -139,8 +139,12 @@ func TestContainerSmokeAgainstRealCLI(t *testing.T) {
 			// SHLVL/_.
 			continue
 		}
-		if _, ok := env.Allow[key]; !ok {
+		want, ok := env.Allow[key]
+		if !ok {
 			t.Fatalf("non-allowlisted variable %q leaked into the container:\n%s", key, envOut)
+		}
+		if want != value {
+			t.Fatalf("variable %q = %q inside container, want the resolved value %q:\n%s", key, value, want, envOut)
 		}
 	}
 

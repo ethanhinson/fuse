@@ -113,6 +113,20 @@ func withExecRunner(fn execRunner) containerOption {
 	}
 }
 
+// withContainerEnvLookup overrides how the container CLI CLIENT's own
+// passthrough variables (containerClientPassthrough) are resolved. It is the
+// same seam Service.WithEnvLookup governs for the sandboxed command's
+// environment, plumbed through so ONE lookup governs both halves rather than
+// the client half silently re-reading the real process environment on every
+// Exec.
+func withContainerEnvLookup(fn func(string) (string, bool)) containerOption {
+	return func(h *containerHandler) {
+		if fn != nil {
+			h.envLookup = fn
+		}
+	}
+}
+
 // withTrustedRoot sets the host directory this handler bind-mounts.
 //
 // SECURITY-CRITICAL: the value comes from the COMPOSITION ROOT — the repo root
@@ -145,6 +159,13 @@ type containerHandler struct {
 	// working_dir is refused rather than becoming a mount source itself.
 	root string
 
+	// envLookup resolves the CLI client's own passthrough variables
+	// (containerClientPassthrough). Nil means the real process environment.
+	// This governs the SAME seam as the sandboxed command's environment
+	// (Service.lookup / WithEnvLookup) — see withContainerEnvLookup — so one
+	// seam controls both halves of what "the environment is frozen" claims.
+	envLookup func(string) (string, bool)
+
 	lookPath func(string) (string, error)
 	run      execRunner
 }
@@ -157,7 +178,6 @@ func newContainerHandler(cfg Config, opts ...containerOption) (*containerHandler
 	h := &containerHandler{
 		image:    strings.TrimSpace(cfg.Image),
 		lookPath: exec.LookPath,
-		run:      runCommand,
 	}
 	if h.image == "" {
 		h.image = DefaultContainerImage
@@ -170,6 +190,12 @@ func newContainerHandler(cfg Config, opts ...containerOption) (*containerHandler
 	// than something re-derived per Exec from whatever the filesystem looks
 	// like by then.
 	h.root = resolveMountRoot(h.root)
+	// Applied only if no test injected its own execRunner (withExecRunner sets
+	// h.run directly), so the client-env lookup wiring never overrides an
+	// explicit test double.
+	if h.run == nil {
+		h.run = h.runClientCommand
+	}
 
 	for _, cli := range containerCLIs {
 		if _, err := h.lookPath(cli); err == nil {
@@ -380,8 +406,7 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 		// state — including anything the command wrote outside the mount —
 		// survives into the next principal's execution.
 		"--rm",
-		// -i: stdin stays attached, which the bash tool relies on for
-		// commands that read input. No -t: there is no terminal here, and
+		// -i: keeps stdin open. No -t: there is no terminal here, and
 		// allocating one would corrupt the combined-output capture.
 		"-i",
 	)
@@ -464,12 +489,21 @@ func (r *containerRunner) Exec(ctx context.Context, cmd string, workingDir strin
 // path without branching on which substrate they hold.
 func (*containerRunner) Release(context.Context) error { return nil }
 
-// runCommand is the default execRunner: a real subprocess.
+// runClientCommand is the default execRunner, bound to h so that the CLI
+// client's own environment is resolved through the SAME lookup seam
+// (h.envLookup) that governs the sandboxed command's environment, rather than
+// re-reading the real process environment on every Exec regardless of what
+// WithEnvLookup / withContainerEnvLookup declared.
+func (h *containerHandler) runClientCommand(ctx context.Context, name string, args ...string) ([]byte, int, error) {
+	return runCommand(ctx, name, h.envLookup, args...)
+}
+
+// runCommand is the default execRunner implementation: a real subprocess.
 //
 // It maps os/exec's error model onto the execRunner contract — an ExitError is
 // a RESULT (the CLI ran and reported a status), anything else is a start
 // failure — and it never returns a zero exit code alongside a failure.
-func runCommand(ctx context.Context, name string, args ...string) ([]byte, int, error) {
+func runCommand(ctx context.Context, name string, lookup func(string) (string, bool), args ...string) ([]byte, int, error) {
 	c := exec.CommandContext(ctx, name, args...)
 
 	// SECURITY-CRITICAL: a nil exec.Cmd.Env means "inherit the parent process
@@ -482,7 +516,14 @@ func runCommand(ctx context.Context, name string, args ...string) ([]byte, int, 
 	// --env K=V. Inheriting here would still hand this process's API keys to
 	// the CLI binary, so it is scrubbed to the same discipline, with the small
 	// set of daemon-addressing variables the CLIs genuinely require added.
-	c.Env = renderEnv(ResolveEnvFromOS(containerClientPassthrough[:]))
+	//
+	// lookup is the SAME seam (Service.lookup / WithEnvLookup) that governs the
+	// sandboxed command's environment; nil means the real process environment.
+	if lookup != nil {
+		c.Env = renderEnv(ResolveEnv(containerClientPassthrough[:], lookup))
+	} else {
+		c.Env = renderEnv(ResolveEnvFromOS(containerClientPassthrough[:]))
+	}
 
 	combined, err := c.CombinedOutput()
 	if err == nil {

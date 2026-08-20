@@ -536,3 +536,71 @@ func TestContainerReleaseIsIdempotentNoOp(t *testing.T) {
 		t.Fatalf("Release invoked the CLI (%q %#v); it must not", rec.name, rec.args)
 	}
 }
+
+// runCommand resolves the container CLI CLIENT's own environment (the daemon-
+// addressing passthrough, e.g. DOCKER_HOST) through an injected lookup rather
+// than always re-reading the real process environment, so the same seam
+// WithEnvLookup governs for the sandboxed command's environment also governs
+// this half.
+func TestRunCommandResolvesClientEnvThroughInjectedLookup(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "unix:///real-daemon.sock")
+
+	lookup := func(key string) (string, bool) {
+		if key == "DOCKER_HOST" {
+			return "unix:///fake-daemon.sock", true
+		}
+		return "", false
+	}
+
+	out, code, err := runCommand(context.Background(), "env", lookup)
+	if err != nil {
+		t.Fatalf("runCommand: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (output: %s)", code, out)
+	}
+	got := string(out)
+	if !strings.Contains(got, "DOCKER_HOST=unix:///fake-daemon.sock") {
+		t.Fatalf("client env = %q, want it to carry the injected lookup's value", got)
+	}
+	if strings.Contains(got, "real-daemon.sock") {
+		t.Fatalf("client env = %q, leaked the real process environment despite an injected lookup", got)
+	}
+}
+
+// newContainerHandler wires its default execRunner to resolve the client env
+// through h.envLookup, so a Service-level WithEnvLookup reaches the CLI
+// client's own environment and not only the sandboxed command's.
+func TestNewContainerHandlerDefaultRunUsesEnvLookup(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "unix:///real-daemon.sock")
+
+	lookup := func(key string) (string, bool) {
+		if key == "DOCKER_HOST" {
+			return "unix:///fake-daemon.sock", true
+		}
+		return "", false
+	}
+
+	h, err := newContainerHandler(DefaultConfig(),
+		withLookPath(fakeLookPath("docker")),
+		withContainerEnvLookup(lookup),
+	)
+	if err != nil {
+		t.Fatalf("newContainerHandler: %v", err)
+	}
+
+	out, code, err := h.run(context.Background(), "env")
+	if err != nil {
+		t.Fatalf("h.run: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (output: %s)", code, out)
+	}
+	got := string(out)
+	if !strings.Contains(got, "DOCKER_HOST=unix:///fake-daemon.sock") {
+		t.Fatalf("client env = %q, want it to carry the injected lookup's value", got)
+	}
+	if strings.Contains(got, "real-daemon.sock") {
+		t.Fatalf("client env = %q, leaked the real process environment despite an injected lookup", got)
+	}
+}
