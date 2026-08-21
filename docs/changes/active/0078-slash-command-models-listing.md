@@ -2,7 +2,7 @@
 id: 78
 slug: slash-command-models-listing
 title: /models slash command + slash-menu column alignment
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-20
@@ -13,12 +13,12 @@ discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-20-slash-command-models-listing-design.md
 plan: docs/superpowers/plans/2026-08-21-slash-command-models-listing.md
-results:
+results: docs/results/2026-08-21-slash-command-models-listing-results.md
 trivial: false
 auto_groomable:
 branch: feat/slash-command-models-listing
-claimed_at: 2026-08-21T05:22:04Z
-pr:
+claimed_at: 2026-08-21T05:47:36Z
+pr: https://github.com/ethanhinson/fuse/pull/82
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-20-slash-command-models-listing-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-20-slash-command-models-listing-design.md) |
 | Plan | [2026-08-21-slash-command-models-listing.md](https://github.com/ethanhinson/fuse/blob/feat/slash-command-models-listing/docs/superpowers/plans/2026-08-21-slash-command-models-listing.md) |
+| Results | [2026-08-21-slash-command-models-listing-results.md](https://github.com/ethanhinson/fuse/blob/feat/slash-command-models-listing/docs/results/2026-08-21-slash-command-models-listing-results.md) |
+| PR | [#82](https://github.com/ethanhinson/fuse/pull/82) |
 <!-- docket:artifacts:end -->
 
 ## Why
