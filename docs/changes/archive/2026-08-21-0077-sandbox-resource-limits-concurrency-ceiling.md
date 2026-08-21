@@ -2,7 +2,7 @@
 id: 77
 slug: sandbox-resource-limits-concurrency-ceiling
 title: sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-20
