@@ -10,6 +10,9 @@ import (
 const (
 	completerMaxRows = 8
 	kindTagWidth     = 18
+	// completerMinDescCells is the description budget reserved when clamping
+	// the registry-wide command column against the terminal width.
+	completerMinDescCells = 8
 )
 
 var (
@@ -124,6 +127,19 @@ func (c *slashCompleter) View(width int) string {
 	if c.reg != nil {
 		maxCmd = c.reg.MaxCommandWidth()
 	}
+	// Clamp the registry-wide max against the terminal width ONCE, before the
+	// loop. The registry includes MCP tool names ("/mcp:server/tool") that are
+	// routinely wider than the whole row; without this every row would be
+	// 2+maxCmd+2+kindTagWidth+2 cells regardless of its own command, and the
+	// shell composites this overlay through wordwrap — which breaks at the last
+	// space before the limit, i.e. inside the pad run, spilling the kind tag and
+	// description onto a second line for every entry.
+	if capCmd := width - (2 + 2 + kindTagWidth + 2 + completerMinDescCells); maxCmd > capCmd {
+		maxCmd = capCmd
+		if maxCmd < 0 {
+			maxCmd = 0
+		}
+	}
 
 	var b strings.Builder
 	for i := c.offset; i < end; i++ {
@@ -133,26 +149,40 @@ func (c *slashCompleter) View(width int) string {
 			cursor = "▸ "
 		}
 
-		// Measure the plain command portion, then style it. Never measure a
-		// styled string: the escape sequences are not display cells.
-		plain := e.Command
-		if e.Syntax != "" {
-			plain += " " + e.Syntax
-		}
-		pad := maxCmd - lipgloss.Width(plain)
-		if pad < 0 {
-			pad = 0
+		// Measure the plain command portion through commandWidth, the same
+		// function MaxCommandWidth uses, so the per-row pad can never drift
+		// from the registry max. Never measure a styled string: the escape
+		// sequences are not display cells.
+		var label string
+		cmdCells := commandWidth(e)
+		if cmdCells > maxCmd {
+			// Over the clamped budget: truncate the composed plain text. This
+			// loses the syntax highlight, but a row that overflows the width
+			// wraps and destroys the alignment for every other row.
+			plain := truncateCells(commandText(e), maxCmd)
+			cmdCells = lipgloss.Width(plain)
+			label = cursor + plain
+			if i == c.cursor {
+				label = completerSelectedStyle.Render(label)
+			}
+		} else {
+			head := cursor + e.Command
+			if i == c.cursor {
+				head = completerSelectedStyle.Render(head)
+			}
+			label = head
+			if e.Syntax != "" {
+				label += " " + completerSyntaxStyle.Render(e.Syntax)
+			}
 		}
 
-		// One label construction for both the selected and normal rows, so the
-		// pad can never be applied to only one of them.
-		head := cursor + e.Command
-		if i == c.cursor {
-			head = completerSelectedStyle.Render(head)
-		}
-		label := head
-		if e.Syntax != "" {
-			label += " " + completerSyntaxStyle.Render(e.Syntax)
+		// One pad computation for both the selected and normal rows, so it can
+		// never be applied to only one of them. truncateCells may land a cell
+		// short of the budget next to a double-width rune, so pad to the target
+		// rather than assuming the truncated text fills it.
+		pad := maxCmd - cmdCells
+		if pad < 0 {
+			pad = 0
 		}
 		label += strings.Repeat(" ", pad)
 
@@ -187,13 +217,20 @@ func (c *slashCompleter) View(width int) string {
 	return b.String()
 }
 
+// commandText composes an entry's command portion as plain, unstyled text.
+// Single source of truth for the string itself: both commandWidth (and through
+// it the registry max) and View's per-row pad go through this, so a change to
+// the separator cannot desynchronize the two.
+func commandText(e SlashEntry) string {
+	if e.Syntax != "" {
+		return e.Command + " " + e.Syntax
+	}
+	return e.Command
+}
+
 // commandWidth is the display-cell width of an entry's command portion,
 // measured UNSTYLED. Single source of truth for both the registry max and
 // the per-row pad.
 func commandWidth(e SlashEntry) int {
-	s := e.Command
-	if e.Syntax != "" {
-		s += " " + e.Syntax
-	}
-	return lipgloss.Width(s)
+	return lipgloss.Width(commandText(e))
 }

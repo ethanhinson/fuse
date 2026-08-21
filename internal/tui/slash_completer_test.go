@@ -467,3 +467,53 @@ func TestSlashCompleterPrefixCoexistenceModelAndModels(t *testing.T) {
 		t.Errorf("typing /model should list both /model and /models; visible = %v", c.visible)
 	}
 }
+
+// TestSlashCompleterViewRowFitsWidthDespiteWideRegistryEntry pins the
+// registry-wide `maxCmd` clamp. A single very wide command (an MCP tool name,
+// say) must not push EVERY row past the terminal width — ShellModel composites
+// the overlay through wordwrap, and an over-wide row breaks inside the pad run,
+// spilling the kind tag and description onto a second line for every entry.
+//
+// Per the `fitline-width-invariant-hides-truncated-suffix` learning, a width
+// assertion alone is not a sufficient guard: also assert the kind tag survives
+// verbatim and that the tag column is identical on every row.
+func TestSlashCompleterViewRowFitsWidthDespiteWideRegistryEntry(t *testing.T) {
+	entries := []SlashEntry{
+		{Command: "/a", Kind: KindBuiltin, Description: "alpha"},
+		{Command: "/exit", Kind: KindBuiltin, Description: "quit the shell"},
+		{Command: "/model", Syntax: "NAME", Kind: KindBuiltin, Description: "switch model"},
+		// Far wider than any terminal width under test.
+		{
+			Command:     "/mcp:some-very-long-server-name/an-even-longer-tool-name",
+			Kind:        KindBuiltin,
+			Description: "an mcp tool",
+		},
+	}
+	reg := completerReg(entries...)
+	defer reg.Close()
+
+	for _, width := range []int{40, 80} {
+		c := newSlashCompleter(reg)
+		c.activate("/")
+		rows := viewRows(t, c, width)
+		if len(rows) != len(entries) {
+			t.Fatalf("width %d: want %d rows, got %d: %q", width, len(entries), len(rows), rows)
+		}
+		want := tagOffset(t, rows[0], "[builtin]")
+		if want < 0 {
+			t.Fatalf("width %d: row 0 has no kind tag: %q", width, stripANSIString(rows[0]))
+		}
+		for i, r := range rows {
+			plain := stripANSIString(r)
+			if got := lipgloss.Width(plain); got > width {
+				t.Errorf("width %d: row %d width = %d, want <= %d (%q)", width, i, got, width, plain)
+			}
+			if !strings.Contains(plain, "[builtin]") {
+				t.Errorf("width %d: row %d lost its kind tag: %q", width, i, plain)
+			}
+			if got := tagOffset(t, r, "[builtin]"); got != want {
+				t.Errorf("width %d: row %d tag offset = %d, want %d (%q)", width, i, got, want, plain)
+			}
+		}
+	}
+}
