@@ -100,6 +100,18 @@ func (r *SlashRegistry) All() []SlashEntry {
 	return out
 }
 
+// MaxCommandWidth returns the display-cell width of the widest command portion
+// (Command plus " "+Syntax when present) across every entry. 0 when empty.
+func (r *SlashRegistry) MaxCommandWidth() int {
+	max := 0
+	for _, e := range r.All() {
+		if w := commandWidth(e); w > max {
+			max = w
+		}
+	}
+	return max
+}
+
 // Filter returns entries whose Command or Description contains f (case-insensitive).
 // Empty f returns All().
 func (r *SlashRegistry) Filter(f string) []SlashEntry {

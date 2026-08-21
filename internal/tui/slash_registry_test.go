@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // fakeProvider is a CommandProvider whose entries can be updated at runtime.
@@ -51,6 +53,68 @@ func TestSlashRegistryAll(t *testing.T) {
 	all := reg.All()
 	if len(all) != 2 {
 		t.Fatalf("want 2 entries, got %d", len(all))
+	}
+}
+
+func TestSlashRegistryMaxCommandWidth(t *testing.T) {
+	// "/cc NAME" is 8 cells and must beat "/bbbb" (5) — the " "+Syntax counts.
+	p := &staticProvider{entries: []SlashEntry{
+		{Command: "/a", Kind: KindBuiltin},
+		{Command: "/bbbb", Kind: KindBuiltin},
+		{Command: "/cc", Syntax: "NAME", Kind: KindBuiltin},
+	}}
+	reg := NewSlashRegistry(p)
+	defer reg.Close()
+
+	if got := reg.MaxCommandWidth(); got != 8 {
+		t.Errorf("MaxCommandWidth() = %d, want 8", got)
+	}
+}
+
+func TestSlashRegistryMaxCommandWidthEmpty(t *testing.T) {
+	reg := NewSlashRegistry(&staticProvider{})
+	defer reg.Close()
+
+	if got := reg.MaxCommandWidth(); got != 0 {
+		t.Errorf("empty registry MaxCommandWidth() = %d, want 0", got)
+	}
+}
+
+func TestSlashRegistryMaxCommandWidthDisplayCells(t *testing.T) {
+	// "世界" is 6 bytes but 4 display cells: "/x 世界" is 7 cells, not 9.
+	syntax := "世界"
+	p := &staticProvider{entries: []SlashEntry{
+		{Command: "/x", Syntax: syntax, Kind: KindBuiltin},
+	}}
+	reg := NewSlashRegistry(p)
+	defer reg.Close()
+
+	got := reg.MaxCommandWidth()
+	if byteLen := len("/x " + syntax); got == byteLen {
+		t.Fatalf("MaxCommandWidth() = %d, over-counted by byte length", got)
+	}
+	if want := lipgloss.Width("/x " + syntax); got != want {
+		t.Errorf("MaxCommandWidth() = %d, want %d display cells", got, want)
+	}
+}
+
+func TestSlashRegistryMaxCommandWidthSpansAllEntries(t *testing.T) {
+	// The widest entry lives in the second provider and matches no common
+	// filter; the result must still reflect All(), not any subset.
+	p1 := &staticProvider{entries: []SlashEntry{
+		{Command: "/zz", Description: "match", Kind: KindBuiltin},
+	}}
+	p2 := &staticProvider{entries: []SlashEntry{
+		{Command: "/a-very-long-command", Description: "unrelated", Kind: KindSkill},
+	}}
+	reg := NewSlashRegistry(p1, p2)
+	defer reg.Close()
+
+	if n := len(reg.Filter("match")); n != 1 {
+		t.Fatalf("precondition: Filter should narrow to 1 entry, got %d", n)
+	}
+	if got, want := reg.MaxCommandWidth(), len("/a-very-long-command"); got != want {
+		t.Errorf("MaxCommandWidth() = %d, want %d (widest across All())", got, want)
 	}
 }
 
