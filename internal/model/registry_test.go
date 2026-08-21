@@ -57,6 +57,26 @@ func TestResolveUnknownIsError(t *testing.T) {
 	}
 }
 
+func TestDefaultAlias(t *testing.T) {
+	r := NewRegistry("glm", map[string]ModelConfig{"glm": {ID: "cloud/glm-5.2", MaxTokens: 1}})
+	if got := r.DefaultAlias(); got != "glm" {
+		t.Errorf("DefaultAlias() = %q, want %q", got, "glm")
+	}
+
+	dr := DefaultRegistry()
+	if got := dr.DefaultAlias(); got != "deepseek-flash" {
+		t.Errorf("DefaultRegistry().DefaultAlias() = %q, want %q", got, "deepseek-flash")
+	}
+	if dr.DefaultAlias() != dr.Default {
+		t.Errorf("DefaultAlias() = %q, want equal to Default field %q", dr.DefaultAlias(), dr.Default)
+	}
+
+	var zero Registry
+	if got := zero.DefaultAlias(); got != "" {
+		t.Errorf("zero-value Registry.DefaultAlias() = %q, want empty", got)
+	}
+}
+
 func TestNamesSorted(t *testing.T) {
 	r := NewRegistry("b", map[string]ModelConfig{
 		"c": {ID: "x", MaxTokens: 1},
