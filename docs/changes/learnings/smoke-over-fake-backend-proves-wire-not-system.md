@@ -2,9 +2,9 @@
 slug: smoke-over-fake-backend-proves-wire-not-system
 hook: "A cross-language smoke test (real generated client stub → real server handler) run against a FAKE/scripted backend proves the WIRE serializes and round-trips, NOT that the system works end-to-end — and if it t.Skips silently when its toolchain is absent, a green suite hides that the path never ran. Keep the rigorous property test (no-loss/no-dup, real lifecycle) on the authoritative side, run the smoke against the real backend for at least one acceptance, and make the skip loud."
 topics: [testing, integration, streaming, cross-language, ci]
-changes: [55, 50, 49, 56]
+changes: [55, 50, 49, 56, 63]
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-21
 promotion_state: candidate
 promoted_to:
 ---
@@ -75,3 +75,25 @@ The SDK dogfood change made the client-side proof permanent: Wander's browser la
 and asserts reconnect with strictly increasing sequence numbers and no duplicate events. Missing
 node, esbuild, Go, or Playwright tooling is a hard failure rather than a green skip, so the lane
 cannot quietly prove only a fake wire path.
+
+## War story — 2026-08-21 (#63, PR #79)
+
+The **proven-in-halves** variant, and the one most likely to recur on any emit→project→export
+pipeline. The sandbox observability work shipped two green tests that together *looked* like
+end-to-end coverage and were not: the emitter-side test drove a real pool but stopped at the **event
+stream**, and the projection-side test started from **hand-built `observe.Record`s**. Every
+individual hop was tested; the *join* between them — that a real container's lifecycle actually
+moves real `fuse_sandbox_*` series on a live `/metrics` scrape — was never executed. Two green
+halves are not a green whole, and nothing in the suite reports the seam as uncovered.
+
+Closed by `TestContainerLifecycleFeedsSandboxMetricsEndToEnd`, which drives the **production chain
+with nothing rebuilt**: real container cold-acquire → exec → release → warm-reuse → reap through the
+production pool hooks → a real `FSEventStore` → `Replay` → production `ProjectEvent` → production
+Prometheus recorder → the real `/metrics` handler, asserting the scrape's real handler/runtime
+labels and — the leak guard — `fuse_sandbox_active … 0` after teardown. Two practices worth copying:
+a **negative control** (flipping the reap cause was confirmed to fail the test, so it is not
+vacuous), and pinning a **known-unfed** metric family as an assertion — `fuse_sandbox_unhealthy_total`
+has no production emitter yet, so the test asserts it gains *no* series, which means the day an
+emitter is added the guard fails and forces the coverage to be extended rather than leaving the
+family quietly unproven. Same skip discipline as the rest of this finding: gated on a real container
+CLI, and it ran against real Docker rather than skipping.

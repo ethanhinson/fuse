@@ -2,9 +2,9 @@
 slug: per-instance-resource-needs-teardown-on-every-early-return
 hook: "When a per-instance/per-loop factory attaches a resource that owns goroutines (an mcp.Manager with a read-pump, a client, a store), EVERY early-return path in the setup — not just the happy-path completion — must release it, symmetric with the store's Close. A `StartLoop` that fails AFTER attaching the manager but before the completion goroutine that would close it leaks the goroutines and its tracking-map entry. Add a teardown hook the runtime invokes on the early-return path, and regression-test the failure path explicitly."
 topics: [go, concurrency, resource-leak, lifecycle, multi-tenancy, mcp]
-changes: [59]
+changes: [59, 63]
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-21
 promotion_state: candidate
 promoted_to:
 ---
@@ -34,3 +34,13 @@ resource was released; a leak is invisible to a happy-path test and to `-race`.
   completion goroutine, so a `StartLoop` error return leaked it — fixed by returning an idempotent
   (`sync.Once`) close func that `main.go` also calls on the error return. Both were found in
   whole-branch review, not by the suite, precisely because only the failure paths leak.
+- 2026-08-21 (#63, PR #79) — the next turn of the same screw: **the teardown seam existed and was
+  simply never reached on one binding.** The bash sandbox's warm pool releases through the
+  `Deps.LoopTeardown(toolReg)` hook this finding's #59 story added — correct for the loop-server and
+  one-shot paths. But the **shell/TUI binding leaked its sandbox pool for the entire session**,
+  because there the TUI drives turns itself and the `runtime.New(...)` result is *discarded*, so the
+  hook was dead code on that path: containers stayed alive for as long as the shell ran. Generalizes
+  the rule — auditing that a teardown seam *exists* is not the audit. Enumerate every **construction
+  site** of the runtime/registry and confirm each one actually reaches the seam; a binding that
+  discards the runtime handle has silently opted out of every lifecycle guarantee attached to it.
+  Same review-not-suite detection as #59, for the same reason: a leak that never fails a turn.
