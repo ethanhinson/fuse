@@ -59,6 +59,14 @@ type bashTool struct {
 	// lifecycle knobs, never the Service that decides where a command runs.
 	poolOpts []sandbox.PoolOption
 
+	// noteThreshold is the queue wait at or above which a bounded backpressure
+	// note is appended to the model-visible Result (change 0077). It is resolved
+	// once from the Service's frozen config; zero (its value when there is no
+	// Service, e.g. the pool-only and test constructors) means the default
+	// applies. It cannot widen containment — it governs only whether a note is
+	// rendered on output the model already sees.
+	noteThreshold time.Duration
+
 	mu   sync.Mutex
 	pool bashSubstrate
 }
@@ -77,7 +85,11 @@ type bashTool struct {
 // emitted and every fuse_sandbox_* metric stays empty. A binding with no
 // per-loop event store passes none.
 func NewBash(sb *sandbox.Service, opts ...sandbox.PoolOption) Tool {
-	return &bashTool{svc: sb, poolOpts: opts}
+	b := &bashTool{svc: sb, poolOpts: opts}
+	if sb != nil {
+		b.noteThreshold = sb.NoteThreshold()
+	}
+	return b
 }
 
 // NewBashWithPool returns the bash tool over a pool the CALLER owns.
@@ -221,6 +233,15 @@ func (b *bashTool) Execute(ctx context.Context, args string) Result {
 	out, execErr := runner.Exec(runCtx, a.Command, a.WorkingDir)
 
 	switch {
+	case errors.Is(execErr, sandbox.ErrSandboxAtCapacity):
+		// The admission gate refused: the host is saturated and the command never
+		// ran (change 0077). Surfaced as a tool error that NAMES a recoverable
+		// condition and suggests the recovery, so a model retries or serialises
+		// rather than treating bash as broken. It is not a timeout and not a
+		// substrate failure.
+		release(sandbox.CauseEarlyReturn)
+		return Result{IsError: true, Output: "sandbox at capacity: no execution slot available; retry shortly or run fewer commands in parallel"}
+
 	case out.TimedOut || errors.Is(runCtx.Err(), context.DeadlineExceeded):
 		release(sandbox.CauseEarlyReturn)
 		return Result{IsError: true, Output: fmt.Sprintf("command timed out after %s\n%s", timeout, out.Combined)}
@@ -235,10 +256,31 @@ func (b *bashTool) Execute(ctx context.Context, args string) Result {
 		// The command RAN and exited non-zero: an ordinary result, so the
 		// checkout is an ordinary release and stays warm.
 		release(sandbox.CauseReleased)
-		return Result{IsError: true, Output: fmt.Sprintf("%s\nerror: exit status %d", out.Combined, out.ExitCode)}
+		return Result{IsError: true, Output: b.withBackpressureNote(fmt.Sprintf("%s\nerror: exit status %d", out.Combined, out.ExitCode), out.Waited)}
 
 	default:
 		release(sandbox.CauseReleased)
-		return Result{Output: string(out.Combined)}
+		return Result{Output: b.withBackpressureNote(string(out.Combined), out.Waited)}
 	}
+}
+
+// withBackpressureNote appends a bounded, closed-form note to output when this
+// Exec waited past the note threshold for a free execution slot (change 0077).
+//
+// The note is a fixed template plus one duration rounded to a coarse unit, so it
+// is bounded by construction and cannot become a channel for arbitrary text. It
+// is appended AFTER the command's output so a model (or a test) parsing the head
+// of the output is unaffected, and it is rendered here — never in
+// sandbox.Output.Combined and never in an event payload — so it reaches only the
+// model-facing Result. Below the threshold nothing is appended and the output is
+// byte-identical to the uncontended case.
+func (b *bashTool) withBackpressureNote(output string, waited time.Duration) string {
+	threshold := b.noteThreshold
+	if threshold <= 0 {
+		threshold = sandbox.DefaultNoteThreshold
+	}
+	if waited < threshold {
+		return output
+	}
+	return output + fmt.Sprintf("\n[sandbox: waited %s for a free execution slot; consider fewer parallel commands]", waited.Round(time.Second))
 }

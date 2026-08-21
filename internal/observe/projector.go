@@ -64,6 +64,14 @@ type Record struct {
 	Cause       string `json:"cause,omitempty"`
 	Reused      bool   `json:"reused,omitempty"`
 	ColdStartMS int64  `json:"cold_start_ms,omitempty"`
+	// AdmissionOutcome, AdmissionScope, and WaitMS come only from
+	// sandbox.admission (change 0077): the bounded outcome (queued|refused), the
+	// bound that bound it (global|tenant), and the queue wait in milliseconds.
+	// They follow the Verdict/DecisionLayer precedent — bounded classifications on
+	// the Record, never raw payload. WaitMS is absent on an immediate refusal.
+	AdmissionOutcome string `json:"admission_outcome,omitempty"`
+	AdmissionScope   string `json:"admission_scope,omitempty"`
+	WaitMS           int64  `json:"wait_ms,omitempty"`
 	// TraceID and SpanID preserve only validated correlation identifiers from a
 	// committed envelope. The durable carrier (including tracestate) is never
 	// retained by the payload-free projection.
@@ -83,7 +91,7 @@ func ProjectEvent(key event.StreamKey, e event.Event) Record {
 	switch e.Kind {
 	case event.KindPermissionDecision:
 		decoratePermission(&rec, e.Payload)
-	case event.KindSandboxAcquire, event.KindSandboxRelease, event.KindSandboxReap, event.KindSandboxHealth:
+	case event.KindSandboxAcquire, event.KindSandboxRelease, event.KindSandboxReap, event.KindSandboxHealth, event.KindSandboxAdmission:
 		decorateSandbox(&rec, e.Kind, e.Payload)
 	}
 	return rec
@@ -135,6 +143,10 @@ type sandboxMarker struct {
 	Cause       string `json:"cause"`
 	Healthy     bool   `json:"healthy"`
 	Reason      string `json:"reason"`
+	// Admission fields (change 0077).
+	Outcome string `json:"outcome"`
+	Scope   string `json:"scope"`
+	WaitMS  int64  `json:"wait_ms"`
 }
 
 // healthReasonRecovered is the one health reason that denotes a return to
@@ -164,6 +176,14 @@ func decorateSandbox(rec *Record, kind event.Kind, payload []byte) {
 		rec.Cause = marker.Cause
 	case event.KindSandboxHealth:
 		rec.Reason = marker.Reason
+	case event.KindSandboxAdmission:
+		// The bounded admission classification (change 0077). ContainerID is not a
+		// fact about an admission (the gate counts executions, not containers), so
+		// it is cleared to avoid projecting a stray empty field as meaningful.
+		rec.ContainerID = ""
+		rec.AdmissionOutcome = marker.Outcome
+		rec.AdmissionScope = marker.Scope
+		rec.WaitMS = marker.WaitMS
 	}
 }
 
@@ -222,6 +242,20 @@ func classify(kind event.Kind, payload []byte) (OperationKind, Outcome, ErrorCat
 			return OperationSandbox, OutcomeSuccess, ErrorCategoryNone
 		}
 		return OperationSandbox, OutcomeError, ErrorCategoryTool
+	case event.KindSandboxAdmission:
+		// A queued admission ran (success); a refused admission did not (error).
+		// The outcome/scope enums are added by decorateSandbox and are NOT folded
+		// into the ErrorCategory: a capacity refusal is a load condition, not a
+		// substrate fault, so the rejected_total metric — not the unhealthy alert —
+		// is what an operator watches (change 0077).
+		var marker struct {
+			Outcome string `json:"outcome"`
+		}
+		_ = json.Unmarshal(payload, &marker)
+		if marker.Outcome == event.SandboxAdmissionRefused {
+			return OperationSandbox, OutcomeError, ErrorCategoryTool
+		}
+		return OperationSandbox, OutcomeSuccess, ErrorCategoryNone
 	case event.KindError, event.KindLoopTrip:
 		return OperationLoop, OutcomeError, ErrorCategoryLoop
 	default:

@@ -96,6 +96,15 @@ const (
 	// rather than surfacing only as an opaque failed tool result, which is how
 	// such failures otherwise present and get misdiagnosed as model error.
 	KindSandboxHealth Kind = "sandbox.health"
+	// KindSandboxAdmission records an admission decision worth an operator's
+	// attention: an Exec that waited past the note threshold for a free execution
+	// slot, or an Exec refused because the host was at capacity (change 0077).
+	// Fast-path admissions emit NOTHING — one event per bash call would double the
+	// sandbox stream's volume to record that nothing happened. The queued rate and
+	// the refusal rate are the backpressure and runaway signals respectively; a
+	// refusal is deliberately separate from sandbox.health{acquire_failed} so a
+	// load event never pages an operator watching for a broken substrate.
+	KindSandboxAdmission Kind = "sandbox.admission"
 )
 
 // Event is the stable envelope over every loop state transition. Payload is the
@@ -446,6 +455,33 @@ type SandboxReleasePayload struct {
 	ContainerID string       `json:"container_id"`
 	Cause       SandboxCause `json:"cause"`
 }
+
+// SandboxAdmissionPayload accompanies KindSandboxAdmission (change 0077). It is
+// payload-free in the same discipline as the four #0063 sandbox payloads: three
+// closed enums and a latency number, and NEVER the command, the environment, or
+// the output. Tenant, loop, and node come from the envelope and are never
+// duplicated here.
+type SandboxAdmissionPayload struct {
+	Handler string `json:"handler"`           // closed enum: container | host | microvm
+	Outcome string `json:"outcome"`           // closed enum: queued | refused
+	Scope   string `json:"scope"`             // closed enum: global | tenant (which bound bound it)
+	WaitMS  int64  `json:"wait_ms,omitempty"` // queue time; absent on an immediate refusal
+}
+
+// SandboxAdmissionOutcome is the closed enum of SandboxAdmissionPayload.Outcome.
+// The values are the wire form of sandbox.AdmissionInfo's disposition; the
+// sandbox package imports this one, so they are kept in lockstep by the
+// translator in internal/tools and pinned in event_test.go.
+type SandboxAdmissionOutcome = string
+
+const (
+	// SandboxAdmissionQueued is an Exec that waited past the note threshold and
+	// then ran — the "backpressure is happening" signal.
+	SandboxAdmissionQueued SandboxAdmissionOutcome = "queued"
+	// SandboxAdmissionRefused is an Exec refused because the host was at capacity
+	// — the runaway signal, and the alert target.
+	SandboxAdmissionRefused SandboxAdmissionOutcome = "refused"
+)
 
 // SandboxHealthPayload accompanies KindSandboxHealth. Reason is a closed enum —
 // oom | runtime_exit | pull_failed | acquire_failed | unresponsive | recovered —

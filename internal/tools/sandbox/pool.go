@@ -133,6 +133,11 @@ type PoolSource interface {
 	// Unexported: sealing the interface here is what guarantees the environment
 	// the pool re-applies came from the trusted, load-once config.
 	resolveEnv() Env
+	// gateFor is the PROCESS-SCOPED admission gate (change 0077). Unexported so
+	// only *Service can supply it: a per-loop Pool must admit through the one
+	// host-wide gate, not a gate it could construct for itself (which would bound
+	// nothing). Never nil.
+	gateFor() *Gate
 }
 
 // EnvResetter is the optional reset-on-checkout seam.
@@ -233,6 +238,12 @@ type Pool struct {
 	src   PoolSource
 	hooks PoolHooks
 
+	// gate is the process-scoped admission gate, captured from src at
+	// construction (change 0077). Every Exec on a checkout from this pool passes
+	// through it, so the host-wide concurrency ceiling holds across every loop
+	// even though the Pool itself is per-loop.
+	gate *Gate
+
 	idleTTL  time.Duration
 	interval time.Duration
 	now      func() time.Time
@@ -302,6 +313,7 @@ const (
 func NewPool(src PoolSource, opts ...PoolOption) *Pool {
 	p := &Pool{
 		src:     src,
+		gate:    src.gateFor(),
 		now:     time.Now,
 		entries: make(map[loopauth.Principal]*poolEntry),
 		live:    make(map[*poolEntry]struct{}),
@@ -678,6 +690,15 @@ type pooledRunner struct {
 }
 
 // Exec runs cmd in the checked-out context, refusing once released.
+//
+// It is the ONE place the admission gate is acquired (change 0077): a ticket is
+// taken around the substrate Exec and released on EVERY return path, so a ticket
+// never outlives one Exec. Gating here — around the actual container process,
+// which the container handler spawns per Exec — counts real concurrent
+// executions exactly, with no over- or under-count. Gating pool CHECKOUT instead
+// would be both wrong (an idle warm Runner would hold a slot) and deadlock-prone
+// (a loop holding a checkout while waiting for a slot would wait on a resource it
+// holds).
 func (r *pooledRunner) Exec(ctx context.Context, cmd string, workingDir string) (Output, error) {
 	r.mu.Lock()
 	released := r.released
@@ -687,7 +708,22 @@ func (r *pooledRunner) Exec(ctx context.Context, cmd string, workingDir string) 
 		// closed, matching the substrate contract.
 		return Output{ExitCode: -1}, ErrRunnerReleased
 	}
-	return r.entry.runner.Exec(ctx, cmd, workingDir)
+
+	ticket, waited, err := r.pool.gate.Admit(ctx, r.entry.principal.Tenant)
+	if err != nil {
+		// A capacity refusal (ErrSandboxAtCapacity) or a caller-deadline error.
+		// Either way the command did not run: ExitCode -1 so an ExitCode-only
+		// caller fails closed, and the error is propagated for bash.go to render.
+		return Output{ExitCode: -1}, err
+	}
+	// Released on every path, including a panic in the substrate Exec.
+	defer ticket.Release()
+
+	out, execErr := r.entry.runner.Exec(ctx, cmd, workingDir)
+	// The wait is a scheduling fact, recorded even on an error/timeout result so
+	// the caller can still surface backpressure.
+	out.Waited = waited
+	return out, execErr
 }
 
 // Release hands this checkout back to the pool under the principal it was

@@ -80,6 +80,23 @@ func (e *recordingExec) count() int {
 	return len(e.calls)
 }
 
+// runCalls returns only the container-RUN invocations, filtering out the
+// pre-pull `pull <image>` calls (change 0077). A test asserting "the run mounted
+// the trusted root" cares about runs, not the separate, expected pre-pull.
+func (e *recordingExec) runCalls() [][]string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var runs [][]string
+	for _, c := range e.calls {
+		// c is [name, arg0, ...]; a pull is `<cli> pull <image>`.
+		if len(c) >= 2 && c[1] == "pull" {
+			continue
+		}
+		runs = append(runs, c)
+	}
+	return runs
+}
+
 // assertHandlerRoutes checks the label AND the concrete Runner the Service
 // hands out. Asserting only HandlerName() would pass for a Service that
 // reported "container" while acquiring from the host handler.
@@ -553,12 +570,11 @@ func TestServiceThreadsTrustedRootToTheContainerMount(t *testing.T) {
 		t.Fatalf("Exec: %v", err)
 	}
 
-	if cli.count() != 1 {
-		t.Fatalf("CLI invocations = %d, want 1", cli.count())
+	runs := cli.runCalls()
+	if len(runs) != 1 {
+		t.Fatalf("container RUN invocations = %d, want 1 (pulls excluded)", len(runs))
 	}
-	cli.mu.Lock()
-	argv := cli.calls[0]
-	cli.mu.Unlock()
+	argv := runs[0]
 
 	want := root + ":" + containerWorkspace
 	found := false

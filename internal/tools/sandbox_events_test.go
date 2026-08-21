@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
@@ -166,6 +167,56 @@ func TestSandboxEventHooksNilStoreIsInert(t *testing.T) {
 	h := SandboxEventHooks(nil, "node")
 	if h.Acquired != nil || h.Released != nil || h.Reaped != nil {
 		t.Fatal("hooks over a nil store must be entirely inert")
+	}
+}
+
+// The gate hooks translate a notable admission into a KindSandboxAdmission event
+// with the bounded fields, and a nil store yields inert hooks (change 0077).
+func TestSandboxGateHooksTranslateAdmissions(t *testing.T) {
+	rec := &keyedRecorder{key: event.StreamKey{Tenant: "acme", Loop: "L1"}}
+	h := SandboxGateHooks(rec, "root-node")
+
+	h.Queued(sandbox.AdmissionInfo{Tenant: "acme", Handler: "container", Scope: sandbox.ScopeTenant, Waited: 4200 * time.Millisecond})
+	h.Refused(sandbox.AdmissionInfo{Tenant: "acme", Handler: "container", Scope: sandbox.ScopeGlobal})
+
+	evs, _ := rec.snapshot()
+	if len(evs) != 2 {
+		t.Fatalf("emitted %d events, want 2", len(evs))
+	}
+	for _, e := range evs {
+		if e.Kind != event.KindSandboxAdmission {
+			t.Errorf("kind = %q, want sandbox.admission", e.Kind)
+		}
+		if e.NodeID != "root-node" {
+			t.Errorf("node = %q, want root-node", e.NodeID)
+		}
+	}
+
+	var q event.SandboxAdmissionPayload
+	if err := json.Unmarshal(evs[0].Payload, &q); err != nil {
+		t.Fatalf("queued payload: %v", err)
+	}
+	if q.Outcome != "queued" || q.Scope != "tenant" || q.Handler != "container" || q.WaitMS != 4200 {
+		t.Errorf("queued payload = %+v", q)
+	}
+
+	var r event.SandboxAdmissionPayload
+	if err := json.Unmarshal(evs[1].Payload, &r); err != nil {
+		t.Fatalf("refused payload: %v", err)
+	}
+	if r.Outcome != "refused" || r.Scope != "global" {
+		t.Errorf("refused payload = %+v", r)
+	}
+	// A refusal is immediate: no wait recorded.
+	if r.WaitMS != 0 {
+		t.Errorf("refused wait_ms = %d, want 0 (immediate)", r.WaitMS)
+	}
+}
+
+func TestSandboxGateHooksNilStoreIsInert(t *testing.T) {
+	h := SandboxGateHooks(nil, "node")
+	if h.Queued != nil || h.Refused != nil {
+		t.Fatal("gate hooks over a nil store must be entirely inert")
 	}
 }
 

@@ -38,6 +38,65 @@ func wantAll(t *testing.T, body string, want ...string) {
 	}
 }
 
+// The admission families (change 0077): a queued admission moves the queued
+// counter and observes the wait histogram; a refusal moves the rejected counter,
+// scoped by which bound refused. Uses the projected Record shape the projector
+// produces from a KindSandboxAdmission event.
+func TestSandboxAdmissionFamiliesRecord(t *testing.T) {
+	r := testRecorder(t)
+
+	queued := sandboxRecord("sandbox.admission")
+	queued.Handler = "container"
+	queued.AdmissionOutcome = "queued"
+	queued.AdmissionScope = "tenant"
+	queued.WaitMS = 4000
+
+	refusedGlobal := sandboxRecord("sandbox.admission")
+	refusedGlobal.Outcome = observe.OutcomeError
+	refusedGlobal.Handler = "container"
+	refusedGlobal.AdmissionOutcome = "refused"
+	refusedGlobal.AdmissionScope = "global"
+
+	refusedTenant := refusedGlobal
+	refusedTenant.AdmissionScope = "tenant"
+
+	body := projectAll(t, r, queued, refusedGlobal, refusedTenant)
+
+	wantAll(t, body,
+		`fuse_sandbox_exec_queued_total{handler="container",tenant_id="admitted"} 1`,
+		`fuse_sandbox_queue_wait_seconds_count{handler="container",tenant_id="admitted"} 1`,
+		`fuse_sandbox_queue_wait_seconds_sum{handler="container",tenant_id="admitted"} 4`,
+		`fuse_sandbox_rejected_total{handler="container",scope="global",tenant_id="admitted"} 1`,
+		`fuse_sandbox_rejected_total{handler="container",scope="tenant",tenant_id="admitted"} 1`,
+	)
+	// A refusal must NOT move the queued counter or the wait histogram beyond the
+	// single queued observation.
+	if strings.Contains(body, `fuse_sandbox_exec_queued_total{handler="container",tenant_id="admitted"} 2`) {
+		t.Error("a refusal wrongly incremented the queued counter")
+	}
+}
+
+// An unrecognised admission outcome or scope collapses to __overflow__ / no
+// series rather than minting one — the values arrive from a wire payload.
+func TestSandboxAdmissionUnknownEnumsFallBack(t *testing.T) {
+	r := testRecorder(t)
+
+	bogus := sandboxRecord("sandbox.admission")
+	bogus.Handler = "container"
+	bogus.AdmissionOutcome = "wat" // neither queued nor refused
+	bogus.AdmissionScope = "somewhere"
+
+	body := projectAll(t, r, bogus)
+
+	// An unknown outcome routes to no family at all — no queued, no rejected.
+	if strings.Contains(body, `fuse_sandbox_exec_queued_total{handler="container"`) {
+		t.Error("an unknown outcome minted a queued series")
+	}
+	if strings.Contains(body, `fuse_sandbox_rejected_total{handler="container"`) {
+		t.Error("an unknown outcome minted a rejected series")
+	}
+}
+
 // TestSandboxFamiliesRecordOffProjectedRecords covers every family: a cold
 // acquire, a warm reuse, an unhealthy health transition, and a reap each land on
 // their family with the bounded enums as labels.

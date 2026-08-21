@@ -236,6 +236,16 @@ func buildLoopServerRuntimeDepsWithObserver(sb *sandbox.Service, cfg config.Conf
 			if loopToolReg != nil {
 				loopToolReg.Register(tools.NewBash(sb, sandbox.WithPoolHooks(
 					tools.SandboxEventHooks(store, tree.RootID()))))
+				// The admission gate is PROCESS-scoped (it lives on sb, shared across
+				// every loop), while store is per-loop, so its hooks are installed
+				// here wherever a per-loop store is available (change 0077). This is
+				// the sole production emitter of KindSandboxAdmission — without it the
+				// queue/rejected metrics and their dashboard panel never observe data.
+				// A process serving many loops attributes an admission to whichever
+				// loop's store was installed last; that coarseness is acceptable for a
+				// host-wide capacity signal whose tenant rides on the event and whose
+				// metric is host-level.
+				sb.SetGateHooks(tools.SandboxGateHooks(store, tree.RootID()))
 			}
 			// One blackboard per loop, shared by every agent in that loop's tree (change 0023).
 			bb := agent.NewBlackboard(tree)
