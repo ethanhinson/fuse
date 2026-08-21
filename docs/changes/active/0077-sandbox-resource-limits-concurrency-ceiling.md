@@ -2,11 +2,11 @@
 id: 77
 slug: sandbox-resource-limits-concurrency-ceiling
 title: sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs
-status: proposed
+status: in_progress
 priority: high
 type: feat
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 depends_on: [63]
 related: [63, 64, 74, 75, 76]
 discovered_from: [63]
@@ -16,10 +16,10 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/sandbox-resource-limits-concurrency-ceiling
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -66,3 +66,49 @@ Four axes, settled in grooming (design detail in the linked spec):
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-08-21 — reconcile against merged #0063 (PR #79)
+
+Dependency #0063 merged to `main` on 2026-08-21 (`5793122`), so the substrate this
+change designs against is now real, not the PR #79 branch. Re-read every integration
+point the spec names; all present and shaped as the spec assumed. Branch cut from
+`origin/main@5793122`.
+
+- **`internal/tools/sandbox/container.go`** — `containerRunner.argv` has `--rm -i`, then a
+  `// TODO(#0064)` egress marker, then `--env` pairs, then `-v`/`-w`, then image. Caps insert
+  after `--rm -i` and before the `TODO(#0064)` marker exactly as §2 states; `--pull=never`
+  goes before the image. `containerOption` + `withTrustedRoot` construction seam present — caps
+  arrive as a new `containerOption`. `execRunner` is injected (`withExecRunner`), so the pre-pull
+  is unit-testable with no daemon.
+- **`internal/tools/sandbox/config.go`** — `rawConfig` uses pointer scalars and a nested
+  `rawPool` with a string-decoded duration; `WarnReason` is a closed enum; `resolve()` degrades
+  bad values to a warning + safe default. New `limits:`/`concurrency:` blocks follow the
+  `rawPool` precedent; new `WarnReason` values `bad_limit`/`bad_concurrency` join the enum.
+- **`internal/tools/sandbox/service.go`** — `NewService` applies `serviceOptions` and already
+  clamps a non-positive `IdleTTL`; posture (`o.hosted`) is known here. Posture defaults for the
+  new fields land in `NewService`, keeping `LoadConfig` posture-free. `PoolSource` seam and the
+  frozen-after-construction discipline are intact — the `Gate` lives on `Service`.
+- **`internal/tools/sandbox/pool.go`** — `PoolSource` is the sealed interface `*Service`
+  satisfies (unexported `resolveEnv`); it gains a gate accessor. `pooledRunner.Exec` is the one
+  place a ticket is acquired/released around `entry.runner.Exec`. `PoolHooks` is the emission
+  precedent `GateHooks` mirrors.
+- **`internal/tools/sandbox/sandbox.go`** — `Output{Combined,ExitCode,TimedOut}` gains `Waited`.
+- **`internal/tools/bash.go`** — `bashTool.Execute` owns every `Result` path; the note renders
+  here. `bashSubstrate` interface wraps `Acquire`/`Release`.
+- **`internal/event/event.go`** — four `KindSandbox*` kinds + payloads, closed-enum discipline,
+  pinned in `event_test.go`. New `KindSandboxAdmission` + `SandboxAdmissionPayload` join them.
+- **`internal/tools/sandbox_events.go`** — `SandboxEventHooks(store, nodeID)` translates
+  `sandbox.*Info` → `event.*Payload`, nil-store ⇒ inert. `GateHooks` translation added here.
+- **`internal/observe/projector.go`** — `classify()` / `decorateSandbox()` handle the four
+  sandbox kinds → `OperationSandbox`; the new kind joins them.
+- **`internal/observe/prometheus/recorder.go`** — five `fuse_sandbox_*` families in the pinned
+  family table (line 35) + closed label maps (`sandboxHandlers`, `sandboxCauses`,
+  `sandboxHealthReasons`). Three new families + two new label maps join them.
+
+**Drift:** none material. The spec's line references all resolve; every placement decision holds.
+No spec assumption was invalidated by the merge.
+
+**Build-time value decisions (from the spec's open questions):** hosted caps memory 2g / cpus 2.0
+/ pids 512 / nofile 4096 / fsize 2g; concurrency `max_inflight` 64 / `max_inflight_per_tenant` 16
+/ `max_queued` 256 / `note_threshold` 2s / `pull_timeout` 2m — the spec's starting numbers, adopted.
+Pre-pull hooks on first `Acquire` (spec's preferred option; `pull_failed` maps naturally there).
