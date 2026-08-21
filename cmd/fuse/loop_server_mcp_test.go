@@ -45,7 +45,7 @@ func TestLoopServer_AttachesPerLoopMCPManager(t *testing.T) {
 	cfg := loopServerMCPCfg(stub.URL())
 	reg := newTestModelRegistry()
 
-	deps := buildLoopServerRuntimeDeps(cfg, reg, "cloud/x", defaultToolRegistry(cfg.Research, nil),
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, "cloud/x", defaultToolRegistry(nil, cfg.Research, nil),
 		spawnAgentBlock, permissions.AlwaysApprove, nil)
 	if deps.NewToolRegistry == nil || deps.LoopTeardown == nil {
 		t.Fatal("loop-server Deps must build per-loop registries and a LoopTeardown")
@@ -103,7 +103,7 @@ func TestLoopServer_MCPToolInvokableWithRealPrincipal(t *testing.T) {
 	cfg := loopServerMCPCfg(stub.URL(), "acme")
 	reg := newTestModelRegistry()
 
-	deps := buildLoopServerRuntimeDeps(cfg, reg, "cloud/x", defaultToolRegistry(cfg.Research, nil),
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, "cloud/x", defaultToolRegistry(nil, cfg.Research, nil),
 		spawnAgentBlock, permissions.AlwaysApprove, nil)
 
 	// Build one loop's registry (manager attached) and invoke the MCP tool directly

@@ -68,11 +68,24 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 	skillBlock := set.SystemPromptBlock()
 
-	toolReg, err := buildSessionRegistryNoMCP(cfg, set.Lookup)
+	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE per shell session,
+	// before the first turn. hosted=false — the shell runs the operator's own work
+	// on their own machine, so their off-switch file applies.
+	sb := newSandboxService(false, stderr)
+	toolReg, err := buildSessionRegistryNoMCP(sb, cfg, set.Lookup)
 	if err != nil {
 		fmt.Fprintf(stderr, "session registry error: %v\n", err)
 		return 1
 	}
+	// The bash tool's warm sandbox pool — its Runners and its reaper goroutine — is a
+	// SESSION resource here, not a per-loop one: this ONE registry (and the ONE bash
+	// tool in it) is shared by every turn, every child, and every loop the shell
+	// binding hands out, because Registry.Clone shares TOOL POINTERS. Releasing it
+	// from Deps.LoopTeardown would let one loop close a pool another live loop is
+	// still using, so buildShellRuntimeDeps carries no LoopTeardown and the release
+	// happens exactly once, here, covering every early return below (learning
+	// per-instance-resource-needs-teardown-on-every-early-return).
+	defer func() { _ = tools.ReleaseSandboxes(context.Background(), toolReg) }()
 
 	builtins := tui.NewBuiltinProvider()
 

@@ -51,7 +51,7 @@ func authTestServer(t *testing.T, verifier loopauth.Verifier) (base string, regi
 	dir := t.TempDir()
 	store := fsstore.NewDurableFSStore(dir)
 
-	deps := buildLoopServerRuntimeDeps(cfg, reg, alias, defaultToolRegistry(cfg.Research, nil),
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, alias, defaultToolRegistry(nil, cfg.Research, nil),
 		spawnAgentBlock, permissions.AlwaysApprove, sessionRateGate(cfg))
 	deps.DurableStore = store
 	deps.Registry = store

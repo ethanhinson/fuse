@@ -165,7 +165,7 @@ func TestGatewaySeamRelevanceClassifierFailsSafe(t *testing.T) {
 func newRelevanceTestAgent(t *testing.T, srv *httptest.Server) *agent.Agent {
 	t.Helper()
 	reg := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
 	}
 	mainAdapter := model.NewAdapter(srv.URL, "tkn", srv.Client())

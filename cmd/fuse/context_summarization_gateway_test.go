@@ -75,7 +75,7 @@ func TestGatewaySeamInjectsSummary(t *testing.T) {
 
 	// Real registry + real adapters wired the production way.
 	reg := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
 	}
 

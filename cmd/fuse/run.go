@@ -22,6 +22,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/ratelimit"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
+	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
 
 // sessionRateBucket builds the one shared rate-gate bucket for a session from
@@ -228,9 +229,17 @@ func mergeEntry(reg *model.Registry, alias string, mc model.ModelConfig) *model.
 // the web_search/web_fetch backends (provider resolution is lazy, so a missing
 // key only surfaces when those tools are actually called). skillLookup is
 // optional — when non-nil, a skill tool is added to the registry.
-func defaultToolRegistry(research config.ResearchConfig, skillLookup func(string) (skills.Skill, bool)) *tools.Registry {
+//
+// sb is the process's sandbox substrate selection (ADR-0044, change 0063),
+// resolved ONCE by newSandboxService at the entry point: the bash tool runs
+// every command through it. It is threaded explicitly, as a value, rather than
+// resolved here — this function is called on config reloads and per loop, and
+// re-resolving containment on any of those paths is exactly the fail-open this
+// change exists to prevent. A nil sb yields a bash tool that REFUSES; it never
+// means "run on the host with an inherited environment".
+func defaultToolRegistry(sb *sandbox.Service, research config.ResearchConfig, skillLookup func(string) (skills.Skill, bool)) *tools.Registry {
 	r := tools.NewRegistry()
-	for _, t := range tools.DefaultTools() {
+	for _, t := range tools.DefaultTools(sb) {
 		r.Register(t)
 	}
 	for _, t := range tools.CodeindexTools() {
@@ -245,9 +254,10 @@ func defaultToolRegistry(research config.ResearchConfig, skillLookup func(string
 }
 
 // buildSessionRegistryNoMCP builds a tool registry without starting MCP
-// servers. Used by runShell where MCPProvider owns the server lifecycle.
-func buildSessionRegistryNoMCP(cfg config.Config, skillLookup func(string) (skills.Skill, bool)) (*tools.Registry, error) {
-	return defaultToolRegistry(cfg.Research, skillLookup), nil
+// servers. Used by runShell where MCPProvider owns the server lifecycle. sb is
+// the entry point's once-resolved sandbox substrate (see defaultToolRegistry).
+func buildSessionRegistryNoMCP(sb *sandbox.Service, cfg config.Config, skillLookup func(string) (skills.Skill, bool)) (*tools.Registry, error) {
+	return defaultToolRegistry(sb, cfg.Research, skillLookup), nil
 }
 
 // gatewayAdapter builds the LiteLLM gateway adapter for a session, decorating it

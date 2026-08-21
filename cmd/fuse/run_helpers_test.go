@@ -115,7 +115,7 @@ func TestChildResultPropagatesOtherErrors(t *testing.T) {
 
 func TestChildToolRegistryRejectsUnknownNames(t *testing.T) {
 	reg := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
 	}
 	if _, err := childToolRegistry(reg, []string{"read_file", "reed_file"}); err == nil {
@@ -158,7 +158,7 @@ func TestShouldWireChildSpawn(t *testing.T) {
 // with NO spawn_agent (before 0034, Subset force-included it).
 func TestChildToolRegistryOmitsSpawnWhenSubsetOmitsIt(t *testing.T) {
 	reg := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
 	}
 	reg.Register(tools.NewSpawnAgentTool(func(ctx context.Context, req tools.SpawnRequest) (tools.SpawnHandle, error) {

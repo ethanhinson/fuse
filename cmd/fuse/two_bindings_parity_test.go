@@ -104,7 +104,7 @@ func runResearchProbeSideForParity(t *testing.T, cfg config.Config, reg *model.R
 	logSink := probe.NewLog()
 
 	deps := buildResearchProbeRuntimeDeps(researchProbeDepsInput{
-		cfg: cfg, reg: reg, alias: alias, toolReg: defaultToolRegistry(cfg.Research, nil),
+		cfg: cfg, reg: reg, alias: alias, toolReg: defaultToolRegistry(nil, cfg.Research, nil),
 		tree: tree, act: nil, rootID: rootID, logSink: logSink, traceW: nil, rateGate: sessionRateGate(cfg),
 	})
 	// Override the production NoopStore with a real temp fsstore so the durable
@@ -120,7 +120,7 @@ func runResearchProbeSideForParity(t *testing.T, cfg config.Config, reg *model.R
 // returns the durable event stream.
 func runLoopServerSideForParity(t *testing.T, cfg config.Config, reg *model.Registry, alias, task string) []event.Event {
 	t.Helper()
-	deps := buildLoopServerRuntimeDeps(cfg, reg, alias, defaultToolRegistry(cfg.Research, nil),
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, alias, defaultToolRegistry(nil, cfg.Research, nil),
 		spawnAgentBlock, permissions.AlwaysApprove, sessionRateGate(cfg))
 	deps.BaseDir = t.TempDir()
 	return driveLoopAndAttach(t, deps, task, alias)

@@ -16,6 +16,12 @@ reports/screenshots/
 reports/*.md
 ANALYSIS.md
 
+# trusted-local operator config (.fuse/sandbox.local.yml is the sandbox
+# off-switch). Machine- and trust-scoped: authorizing uncontained execution is a
+# property of one operator's machine, never of the project, so it must never be
+# committed or travel with a clone.
+.fuse/
+
 # docket:start (managed by docket — do not hand-edit)
 .docket/
 .worktrees/

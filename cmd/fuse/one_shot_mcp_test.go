@@ -41,7 +41,7 @@ func TestOneShot_AttachesMCPViaSharedHelper(t *testing.T) {
 		ToolIdentity: config.ToolIdentityConfig{SigningKey: "one-shot-signing-key-0123456789abcdef", LocalSubject: "ethan"},
 	}
 	reg := newTestModelRegistry()
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	tree := agent.NewAgentTreeWithConcurrency("cloud/x", "cloud/x", 1)
 
 	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, "cloud/x", toolReg, tree, io.Discard, false, nil,

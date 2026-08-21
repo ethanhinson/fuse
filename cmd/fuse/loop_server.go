@@ -21,6 +21,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools"
+	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
 
 // stdinForLoopServer is the reader loop-server drains for JSON-RPC frames. It is
@@ -59,12 +60,17 @@ func runLoopServer(_ []string, cfg config.Config, reg *model.Registry, _ io.Writ
 		return 1
 	}
 	systemBlock := skillSet.SystemPromptBlock() + spawnAgentBlock
-	toolReg := defaultToolRegistry(cfg.Research, skillSet.Lookup)
+	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE at startup.
+	// hosted=TRUE — the loop server executes workloads on behalf of REMOTE
+	// principals, so the local off-switch file is structurally inert and a bash
+	// call with no container runtime refuses rather than falling back to this host.
+	sb := newSandboxService(true, stderr)
+	toolReg := defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
 
 	// Reuse the one-shot deps wiring but with a REAL event store so observe/attach
 	// have durable history. Renderer is a discarding renderer — binding #2 has no
 	// display.
-	deps := buildLoopServerRuntimeDeps(cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg))
+	deps := buildLoopServerRuntimeDeps(sb, cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg))
 	rt := runtime.New(deps)
 
 	srv := loopserver.NewServer(stdinForLoopServer, os.Stdout, rt)
@@ -89,15 +95,15 @@ func runLoopServer(_ []string, cfg config.Config, reg *model.Registry, _ io.Writ
 // discardRenderer (no display), (2) permissions.AlwaysApprove is the auto-approve
 // binding policy (no human on a TTY), and (3) BaseDir = session.DefaultLogDir() opens
 // a REAL fsstore per loop so observe/attach have durable history.
-func buildLoopServerRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias string,
+func buildLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
 	rateGate model.RateGate) runtime.Deps {
-	return buildLoopServerRuntimeDepsWithObserver(cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observe.NoopObserver{})
+	return buildLoopServerRuntimeDepsWithObserver(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observe.NoopObserver{})
 }
 
 // buildLoopServerRuntimeDepsWithObserver is the production composition variant
 // that keeps the configured provider-neutral observer in every child factory.
-func buildLoopServerRuntimeDepsWithObserver(cfg config.Config, reg *model.Registry, modelAlias string,
+func buildLoopServerRuntimeDepsWithObserver(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
 	rateGate model.RateGate, observer observe.Observer) runtime.Deps {
 	if observer == nil {
@@ -164,6 +170,12 @@ func buildLoopServerRuntimeDepsWithObserver(cfg config.Config, reg *model.Regist
 			if v, ok := loopManagers.LoadAndDelete(loopReg); ok {
 				v.(*mcp.Manager).Close()
 			}
+			// Release THIS loop's own bash sandbox pool (change 0063): its warm
+			// Runners and its reaper goroutine must not outlive the loop that
+			// created them. It runs on the completion goroutine AND on the
+			// StartLoop early-return path, where nothing else would (learning
+			// per-instance-resource-needs-teardown-on-every-early-return).
+			_ = tools.ReleaseSandboxes(context.Background(), loopReg)
 		},
 		// The per-loop tool registry is built fresh per loop from the same source as the
 		// server's default, so each loop's root tool wiring binds to its own tree below.
@@ -176,6 +188,14 @@ func buildLoopServerRuntimeDepsWithObserver(cfg config.Config, reg *model.Regist
 		// — no shared MCP state.
 		NewToolRegistry: func() *tools.Registry {
 			loopReg := cloneServerToolRegistry(toolReg)
+			// Registry.Clone shares TOOL POINTERS, so the cloned registry would
+			// otherwise carry the server-wide bash tool — and with it one warm
+			// pool shared by every hosted loop, which LoopTeardown could not
+			// close without tearing down another loop's live container. Rebind a
+			// fresh bash over the SAME frozen Service (containment is unchanged;
+			// only the pool is per-loop), which Register overwrites by name
+			// (learning patch-every-cloned-child-builder).
+			loopReg.Register(tools.NewBash(sb))
 			// A no-op when cfg.MCPServers is empty (no dial, no goroutines). NewManager
 			// returns a usable manager even if some servers fail to start (they are skipped
 			// with a warning), so the loop still runs its non-MCP tools.
@@ -194,6 +214,29 @@ func buildLoopServerRuntimeDepsWithObserver(cfg config.Config, reg *model.Regist
 			sched.SetQueueBound(cfg.Agents.QueueBound)
 			sched.SetSessionTokens(cfg.Throughput.SessionTokens)
 			rootNode := tree.Node(tree.RootID())
+			// Rebind THIS loop's bash tool with the sandbox emission hooks (change
+			// 0063 T8–T11). NewToolRegistry above already gave the loop its own
+			// hook-less bash so a StartLoop failure before this point still tears
+			// down a per-loop pool; here — the first place that holds BOTH the
+			// loop's frozen Service and the loop's event store — it is replaced by
+			// one that emits. Register overwrites by name, and no command can have
+			// run yet (the agent does not exist until this factory returns), so no
+			// pool has been created and nothing is stranded.
+			//
+			// `store` is already bound to this loop's StreamKey by the runtime, so
+			// appending to it lands on the right (tenant, loop) stream with no key
+			// plumbing; the root node id completes the envelope. This is the ONLY
+			// production emitter of the four sandbox kinds — without it the whole
+			// sandbox projection (fuse_sandbox_* metrics, the fuse-sandbox
+			// dashboard, its alert rules) can never observe data.
+			//
+			// The loop-server is the binding that has a per-loop event store. The
+			// one-shot, shell, research-probe, and mcp-server bindings do not, and
+			// deliberately pass no hooks rather than emitting into a NoopStore.
+			if loopToolReg != nil {
+				loopToolReg.Register(tools.NewBash(sb, sandbox.WithPoolHooks(
+					tools.SandboxEventHooks(store, tree.RootID()))))
+			}
 			// One blackboard per loop, shared by every agent in that loop's tree (change 0023).
 			bb := agent.NewBlackboard(tree)
 

@@ -38,7 +38,7 @@ func TestRootBlackboardToolsWired(t *testing.T) {
 	bb := agent.NewBlackboard(tree)
 
 	reg := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
 	}
 	// Exercise the real production helper the entry points call.
@@ -65,7 +65,7 @@ func buildChildReg(t *testing.T, requested []string, spawnWithheld bool) *tools.
 	// Parent registry as it would exist at spawn time: default tools plus the
 	// root-bound blackboard tools (so a subset can select them by name).
 	parent := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(nil) {
 		parent.Register(tl)
 	}
 	for _, tl := range tools.NewBlackboardTools(bb.ForNode(rootNode)) {

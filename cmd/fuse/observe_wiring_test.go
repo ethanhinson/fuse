@@ -116,7 +116,7 @@ func TestBuildAgentCoreInstallsObserver(t *testing.T) {
 		t.Fatalf("config load: %v", err)
 	}
 	reg := registryFromConfig(cfg)
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	rec := &recordingObserver{}
 
 	a, _, err := buildAgentCore(cfg, reg, reg.Default, tui.NewRenderer(io.Discard, false), "", nil, "root",
@@ -142,7 +142,7 @@ func TestBuildAgentWithRendererAndTraceForwardsObserver(t *testing.T) {
 		t.Fatalf("config load: %v", err)
 	}
 	reg := registryFromConfig(cfg)
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	rec := &recordingObserver{}
 
 	a, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, tui.NewRenderer(io.Discard, false), false, "",
@@ -209,7 +209,7 @@ func TestOneShotBindingHonorsSuppliedObserver(t *testing.T) {
 		t.Fatalf("config load: %v", err)
 	}
 	reg := registryFromConfig(cfg)
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 	rec := &recordingObserver{}
 
@@ -234,7 +234,7 @@ func TestOneShotBindingObserverSurvivesStartLoop(t *testing.T) {
 		t.Fatalf("config load: %v", err)
 	}
 	reg := registryFromConfig(cfg)
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 	rec := &recordingObserver{}
 
@@ -264,7 +264,7 @@ func TestResearchProbeBindingHonorsSuppliedObserver(t *testing.T) {
 		t.Fatalf("config load: %v", err)
 	}
 	reg := registryFromConfig(cfg)
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 	rec := &recordingObserver{}
 
@@ -284,7 +284,7 @@ func TestShellBindingHonorsSuppliedObserver(t *testing.T) {
 		t.Fatalf("config load: %v", err)
 	}
 	reg := registryFromConfig(cfg)
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 	rec := &recordingObserver{}
 
@@ -341,7 +341,7 @@ func TestBindingsDefaultToNoopObserver(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			toolReg := defaultToolRegistry(cfg.Research, nil)
+			toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 			tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 			deps := tc.build(toolReg, tree)
 			assertNoop(t, "Deps.Observer", deps.Observer)
@@ -375,7 +375,7 @@ func TestChildConstructorsNilObserverStaysNoop(t *testing.T) {
 		t.Fatalf("config load: %v", err)
 	}
 	reg := registryFromConfig(cfg)
-	toolReg := defaultToolRegistry(cfg.Research, nil)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	r := tui.NewRenderer(io.Discard, false)
 
 	core, _, err := buildAgentCore(cfg, reg, reg.Default, r, "", nil, "child",

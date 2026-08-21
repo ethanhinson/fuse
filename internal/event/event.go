@@ -68,6 +68,34 @@ const (
 	// approval func runs and the human outcome after it as a second layer=human
 	// event, so a headless AlwaysApprove binding shows as back-to-back ask→allow.
 	KindPermissionDecision Kind = "permission.decision"
+	// KindSandboxAcquire records a bash execution context being checked out for a
+	// loop: which handler and container runtime backed it, whether a warm one was
+	// reused, and how long a cold start took. It exists because the substrate a
+	// command actually ran on was otherwise unknowable after the fact — a
+	// tool.call alone cannot distinguish a contained run from an uncontained one,
+	// which is precisely the property change 0063 exists to guarantee. It also
+	// establishes the loop→container join, so an operator holding a misbehaving
+	// container id can find the loop that owns it.
+	KindSandboxAcquire Kind = "sandbox.acquire"
+	// KindSandboxRelease records the holder handing an execution context back.
+	// Paired with sandbox.acquire it makes leaks visible: an acquire with no
+	// matching release is a container the loop stranded, and the cause enum
+	// separates an ordinary hand-back from an error-path early return, which is
+	// where leaks actually come from.
+	KindSandboxRelease Kind = "sandbox.release"
+	// KindSandboxReap records the POOL taking a context away rather than the
+	// holder giving it back — idle TTL, pool close, or a warm Runner that could
+	// not be certified for reuse. It is deliberately a distinct kind from
+	// sandbox.release because reaping is not normal traffic: a steady idle_ttl
+	// reap rate means loops are abandoning containers, and a stale_checkout reap
+	// means an isolation invariant was violated.
+	KindSandboxReap Kind = "sandbox.reap"
+	// KindSandboxHealth records a substrate health transition — unhealthy, or
+	// recovered — with a closed-enum reason such as oom or runtime_exit. It exists
+	// so a container dying underneath a loop is attributable to the substrate
+	// rather than surfacing only as an opaque failed tool result, which is how
+	// such failures otherwise present and get misdiagnosed as model error.
+	KindSandboxHealth Kind = "sandbox.health"
 )
 
 // Event is the stable envelope over every loop state transition. Payload is the
@@ -362,6 +390,71 @@ type ClassifierCallPayload struct {
 	Truncated    bool   `json:"truncated,omitempty"`
 	ParseOK      bool   `json:"parse_ok"`
 	Cached       bool   `json:"cached,omitempty"`
+}
+
+// The sandbox payloads (change 0063) are PAYLOAD-FREE by construction: they
+// carry only bounded identity (handler, runtime, short container id) and
+// closed-enum classification. They never carry the command, its arguments, any
+// environment key or value, process output, or a raw error string — all of
+// which are unbounded and model- or attacker-influenced, and events.jsonl is
+// durable and replayed. Correlation comes from the ENVELOPE — Event.NodeID plus
+// the StreamKey{Tenant, Loop} the event is appended under — and is never
+// duplicated into a payload, which would create a second source of truth.
+// event_test.go enforces both properties structurally.
+
+// SandboxAcquirePayload accompanies KindSandboxAcquire. ColdStartMS is omitted
+// on a warm reuse (Reused == true), where there was no start to measure.
+type SandboxAcquirePayload struct {
+	Handler     string `json:"handler"`      // "container" | "host" | "microvm"
+	Runtime     string `json:"runtime"`      // "docker" | "nerdctl" | "podman" | "" (host)
+	ContainerID string `json:"container_id"` // short id, or "" for host
+	Reused      bool   `json:"reused"`
+	ColdStartMS int64  `json:"cold_start_ms,omitempty"`
+}
+
+// SandboxCause is the closed enum of why an execution context stopped being
+// held. It is the wire form of sandbox.ReleaseCause; that package imports this
+// one, so the values cannot be referenced from here and are instead pinned
+// literally and kept in lockstep (event_test.go pins all five).
+type SandboxCause string
+
+const (
+	// SandboxCauseReleased is the ordinary hand-back; the context stays warm.
+	SandboxCauseReleased SandboxCause = "released"
+	// SandboxCauseLoopEnd is teardown driven by the loop or the pool ending.
+	SandboxCauseLoopEnd SandboxCause = "loop_end"
+	// SandboxCauseEarlyReturn is a release from an error path that returned
+	// before the work completed — kept distinct so a leak on an early return is
+	// visible rather than indistinguishable from normal traffic.
+	SandboxCauseEarlyReturn SandboxCause = "early_return"
+	// SandboxCauseIdleTTL is the reaper reclaiming a context idle past its TTL.
+	SandboxCauseIdleTTL SandboxCause = "idle_ttl"
+	// SandboxCauseStaleCheckout is a warm context the pool could not certify for
+	// reuse — the re-asserted principal key did not match, or the scrubbed
+	// environment could not be re-applied — and therefore discarded rather than
+	// handed out. Its firing at all means an isolation invariant was violated:
+	// alert on it, do not tune it.
+	SandboxCauseStaleCheckout SandboxCause = "stale_checkout"
+)
+
+// SandboxReleasePayload accompanies BOTH KindSandboxRelease and KindSandboxReap.
+// One struct serves both because the facts are identical — which substrate, and
+// why it stopped being held — and the kind already says whether the holder gave
+// it back or the pool took it away.
+type SandboxReleasePayload struct {
+	Handler     string       `json:"handler"`
+	ContainerID string       `json:"container_id"`
+	Cause       SandboxCause `json:"cause"`
+}
+
+// SandboxHealthPayload accompanies KindSandboxHealth. Reason is a closed enum —
+// oom | runtime_exit | pull_failed | acquire_failed | unresponsive | recovered —
+// and never the underlying error text, which is unbounded.
+type SandboxHealthPayload struct {
+	Handler     string `json:"handler"`
+	ContainerID string `json:"container_id"`
+	Healthy     bool   `json:"healthy"`
+	Reason      string `json:"reason"`
 }
 
 // UserInputPayload accompanies KindUserInput. Content is the exact user-turn text

@@ -25,7 +25,7 @@ func hasTool(reg *tools.Registry, name string) bool {
 func TestDefaultRegistrySkillToolFollowsLookup(t *testing.T) {
 	cfg := config.Default()
 
-	if hasTool(defaultToolRegistry(cfg.Research, nil), "skill") {
+	if hasTool(defaultToolRegistry(nil, cfg.Research, nil), "skill") {
 		t.Error("nil lookup must NOT register the skill tool")
 	}
 
@@ -33,7 +33,7 @@ func TestDefaultRegistrySkillToolFollowsLookup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasTool(defaultToolRegistry(cfg.Research, set.Lookup), "skill") {
+	if !hasTool(defaultToolRegistry(nil, cfg.Research, set.Lookup), "skill") {
 		t.Error("non-nil lookup MUST register the skill tool (one-shot skill access)")
 	}
 }
@@ -42,7 +42,7 @@ func TestDefaultRegistrySkillToolFollowsLookup(t *testing.T) {
 // Subset selecting them (plus the force-included spawn_agent) must contain both.
 func TestDefaultRegistryIncludesWebTools(t *testing.T) {
 	cfg := config.Default()
-	reg := defaultToolRegistry(cfg.Research, nil)
+	reg := defaultToolRegistry(nil, cfg.Research, nil)
 
 	for _, name := range []string{"web_search", "web_fetch"} {
 		found := false

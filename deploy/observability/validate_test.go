@@ -39,6 +39,52 @@ func TestValidateRejectsAlertMetricMismatch(t *testing.T) {
 	}
 }
 
+// The next four tests exist because a non-empty-string assertion is not
+// validation: a panel or alert that queries a series nothing in this repo can
+// ever produce must fail the gate, not pass it.
+
+func TestValidateRejectsPanelQueryingUnregisteredMetric(t *testing.T) {
+	root := copyArtifacts(t)
+	replaceArtifact(t, root, "grafana/dashboards/fuse-sandbox.json",
+		`sum(fuse_sandbox_active) by (handler, runtime)`,
+		`sum(fuse_sandbox_active) by (handler, runtime) + sum(fuse_sandbox_ghost)`)
+	if err := validate(root); err == nil {
+		t.Fatal("validate accepted a panel querying a metric the recorder never registers")
+	}
+}
+
+func TestValidateRejectsAlertQueryingUnregisteredMetric(t *testing.T) {
+	root := copyArtifacts(t)
+	replaceArtifact(t, root, "alerts.yml",
+		`sum(rate(fuse_sandbox_unhealthy_total[5m])) by (handler, reason) > 0`,
+		`sum(rate(fuse_sandbox_unhealthy_total[5m])) by (handler, reason) > 0 or fuse_sandbox_ghost > 0`)
+	if err := validate(root); err == nil {
+		t.Fatal("validate accepted an alert querying a metric the recorder never registers")
+	}
+}
+
+// A trace-backed panel is exactly the shape that slipped through before: no
+// fuse.sandbox.* span is producible, and no logs datasource is provisioned, so
+// a non-Prometheus panel must be rejected until such a series actually exists.
+func TestValidateRejectsTraceBackedPanel(t *testing.T) {
+	root := copyArtifacts(t)
+	replaceArtifact(t, root, "grafana/dashboards/fuse-sandbox.json",
+		`{"title":"Active sandboxes by handler/runtime","type":"timeseries","targets":[`,
+		`{"title":"Active sandboxes by handler/runtime","type":"timeseries","datasource":{"type":"tempo","uid":"tempo"},"targets":[`)
+	if err := validate(root); err == nil {
+		t.Fatal("validate accepted a Tempo panel querying spans nothing emits")
+	}
+}
+
+func TestValidateRejectsUnvalidatedPanel(t *testing.T) {
+	root := copyArtifacts(t)
+	replaceArtifact(t, root, "grafana/dashboards/fuse-sandbox.json", `"panels":[`, `"panels":[
+{"title":"Something nobody validates","type":"timeseries","targets":[{"expr":"sum(fuse_sandbox_active)"}]},`)
+	if err := validate(root); err == nil {
+		t.Fatal("validate accepted a dashboard panel that no expectation covers")
+	}
+}
+
 func TestValidateAcceptsReferenceArtifacts(t *testing.T) {
 	if err := validate("."); err != nil {
 		t.Fatalf("validate reference artifacts: %v", err)

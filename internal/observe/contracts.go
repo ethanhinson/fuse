@@ -28,6 +28,13 @@ const (
 	// decision, not an operational failure, so these always project
 	// OutcomeSuccess; the verdict rides in the Record's bounded decision fields.
 	OperationPermission OperationKind = "permission"
+	// OperationSandbox classifies the bash execution-context lifecycle
+	// (sandbox.acquire/release/reap/health): one substrate being checked out,
+	// handed back, reclaimed by the pool, or changing health. Acquire, release,
+	// and reap are normal traffic and project OutcomeSuccess; only an unhealthy
+	// health transition is an error. Why a context stopped being held rides in
+	// the Record's bounded Cause enum, not in the outcome.
+	OperationSandbox OperationKind = "sandbox"
 )
 
 // Outcome is the bounded terminal result of an operation.

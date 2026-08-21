@@ -17,7 +17,7 @@ func noopSynthFn(context.Context, string, bool) (string, error) { return "", nil
 // clone, as the root always is) registers pipeline_run.
 func TestRootPipelineToolWired(t *testing.T) {
 	reg := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
 	}
 	wirePipelineTool(reg, noopRunFn, noopSynthFn, nil)
@@ -30,7 +30,7 @@ func TestRootPipelineToolWired(t *testing.T) {
 // clone) carries pipeline_run.
 func TestChildPipelineToolWiredNoSubset(t *testing.T) {
 	reg := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
 	}
 	wirePipelineTool(reg, noopRunFn, noopSynthFn, nil)

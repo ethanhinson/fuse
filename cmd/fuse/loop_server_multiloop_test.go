@@ -69,7 +69,7 @@ func TestLoopServerHostsNConcurrentLoops(t *testing.T) {
 	// ONE Deps / ONE Runtime — the production loop-server wiring. BaseDir is overridden
 	// to a temp dir so the run is isolated from the real session dir; the wiring under
 	// test (per-loop tree + per-loop fsstore keyed by loop id) is unchanged.
-	deps := buildLoopServerRuntimeDeps(cfg, reg, alias, defaultToolRegistry(cfg.Research, nil),
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, alias, defaultToolRegistry(nil, cfg.Research, nil),
 		spawnAgentBlock, permissions.AlwaysApprove, sessionRateGate(cfg))
 	deps.BaseDir = t.TempDir()
 	rt := runtime.New(deps)

@@ -245,10 +245,17 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		// it runs on the normal completion goroutine AND may be invoked once more on a
 		// StartLoop error return (change #59 review S2), so a failure after the manager
 		// dialed still releases it. A double Close would otherwise re-walk an emptied
-		// server map — harmless — but Once makes the intent explicit and the arg is
-		// ignored (one-shot is single-loop, one manager).
-		LoopTeardown: func(_ *tools.Registry) {
+		// server map — harmless — but Once makes the intent explicit. The MCP half
+		// ignores the registry argument (one-shot is single-loop, one manager); the
+		// sandbox half below uses it, since the pool lives on the registry's tools.
+		LoopTeardown: func(loopReg *tools.Registry) {
 			oneShotMCPClose()
+			// Release the bash tool's warm sandbox pool (change 0063): its Runners
+			// and its reaper goroutine belong to the LOOP, not the process. This
+			// also runs on the StartLoop early-return path, where the completion
+			// goroutine never launches — the one path a leak is invisible on
+			// (learning per-instance-resource-needs-teardown-on-every-early-return).
+			_ = tools.ReleaseSandboxes(context.Background(), loopReg)
 		},
 		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			// Publish the Runtime-owned store to the per-loop holder so the eagerly-wired
@@ -462,6 +469,24 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		BaseDir:         "", // NoopStore: research-probe writes no event log (byte-identical).
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
 		NewToolRegistry: func() *tools.Registry { return toolReg },
+		// NO LoopTeardown — deliberately (review fix on change 0063).
+		//
+		// This binding hands EVERY loop the same shared registry above, and
+		// Registry.Clone shares TOOL POINTERS, so there is exactly ONE bash tool and
+		// ONE warm pool behind it. A LoopTeardown calling ReleaseSandboxes here would
+		// therefore make one loop's completion close a pool another live loop is
+		// checked out of — the loop-server carries a LoopTeardown precisely because it
+		// rebinds tools.NewBash(sb) into a per-loop CLONE first, giving each loop a
+		// pool of its own to close.
+		//
+		// The probe is structurally single-loop: Deps.Tree pins ONE tree (and with it
+		// one rootID and one StreamKey), and runResearchProbe drives exactly one
+		// StartLoop. So the pool is a SESSION resource, and runResearchProbe releases
+		// it with a deferred ReleaseSandboxes over that same registry, covering every
+		// early return including a failed StartLoop (learning
+		// per-instance-resource-needs-teardown-on-every-early-return). Deps.MaxConcurrent
+		// does not bear on this: it seeds the agent TREE's scheduler concurrency, and
+		// only when Deps.Tree is nil — it is not a loop-concurrency knob.
 		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			// Publish the Runtime-owned store so the eagerly-wired child-builder/spawner
 			// closures emit onto THIS loop's store (change 0046). Research-probe is
@@ -725,6 +750,24 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		BaseDir:         in.logDir, // present for seam symmetry; the shell's TUI drives turns, not StartLoop.
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
 		NewToolRegistry: func() *tools.Registry { return toolReg },
+		// NO LoopTeardown — deliberately (review fix on change 0063).
+		//
+		// The shell hands EVERY loop the same shared registry above, and
+		// Registry.Clone shares TOOL POINTERS, so there is exactly ONE bash tool and
+		// ONE warm pool behind it — shared with the TUI-driven turns and every child,
+		// which do not go through StartLoop at all. A LoopTeardown calling
+		// ReleaseSandboxes here would make one loop's completion close a pool another
+		// live loop (or the TUI's own next turn) is still using. The loop-server
+		// carries a LoopTeardown precisely because it rebinds tools.NewBash(sb) into a
+		// per-loop CLONE first, giving each loop a pool of its own to close.
+		//
+		// The pool is a SESSION resource here, so runShell releases it with a deferred
+		// ReleaseSandboxes over that same registry, covering every path out of the
+		// session (learning per-instance-resource-needs-teardown-on-every-early-return)
+		// — including today's reality that the shell's Runtime never drives StartLoop,
+		// which left this LoopTeardown unreachable and the pool never released at all.
+		// Deps.MaxConcurrent does not bear on this: it seeds the agent TREE's scheduler
+		// concurrency, and only when Deps.Tree is nil — it is not a loop-concurrency knob.
 		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			// The TUI's own AgentBuilder seam builds the per-turn root with the live
 			// renderer; BuildAgent here builds a root with a discarding renderer for

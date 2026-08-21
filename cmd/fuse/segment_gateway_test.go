@@ -67,7 +67,7 @@ func TestSegmentGatewaySeamArchivesAndRecovers(t *testing.T) {
 	t.Cleanup(func() { tools.SetSegmentsDir("") })
 
 	reg := tools.NewRegistry()
-	for _, tl := range tools.DefaultTools() {
+	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
 	}
 
