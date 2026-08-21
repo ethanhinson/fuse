@@ -2,11 +2,11 @@
 id: 63
 slug: bash-container-substrate-env-scrub-off-switch
 title: bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam
-status: implemented
+status: done
 priority: high
 type: feat
 created: 2026-08-16
-updated: 2026-08-20
+updated: 2026-08-21
 depends_on: [58]
 related: [64, 65, 74, 75, 76, 77]
 discovered_from: [58]
@@ -17,7 +17,7 @@ results: docs/results/2026-08-20-bash-container-substrate-env-scrub-off-switch-r
 trivial: false
 auto_groomable:
 branch: feat/bash-container-substrate-env-scrub-off-switch
-claimed_at: 2026-08-20T20:29:19Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/79
 blocked_by:
 reconciled: true
