@@ -172,3 +172,14 @@ func (c *slashCompleter) View(width int) string {
 
 	return b.String()
 }
+
+// commandWidth is the display-cell width of an entry's command portion,
+// measured UNSTYLED. Single source of truth for both the registry max and
+// the per-row pad.
+func commandWidth(e SlashEntry) int {
+	s := e.Command
+	if e.Syntax != "" {
+		s += " " + e.Syntax
+	}
+	return lipgloss.Width(s)
+}

@@ -3,6 +3,9 @@ package tui
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func completerReg(entries ...SlashEntry) *SlashRegistry {
@@ -186,4 +189,85 @@ func TestSlashCompleterUpdate(t *testing.T) {
 	if c.active {
 		t.Error("deactivate should clear active state")
 	}
+}
+
+func TestCommandWidth(t *testing.T) {
+	if got := commandWidth(SlashEntry{Command: "/model", Syntax: "NAME"}); got != 11 {
+		t.Fatalf("commandWidth with syntax = %d, want 11", got)
+	}
+	if got := commandWidth(SlashEntry{Command: "/model"}); got != 6 {
+		t.Fatalf("commandWidth without syntax = %d, want 6", got)
+	}
+}
+
+func TestTruncateCells(t *testing.T) {
+	t.Run("within budget unchanged", func(t *testing.T) {
+		for _, n := range []int{6, 7, 20} {
+			if got := truncateCells("/model", n); got != "/model" {
+				t.Fatalf("truncateCells(%q, %d) = %q, want unchanged", "/model", n, got)
+			}
+		}
+	})
+
+	t.Run("over-long ascii", func(t *testing.T) {
+		got := truncateCells("abcdefghij", 5)
+		if lipgloss.Width(got) != 5 {
+			t.Fatalf("width = %d, want 5 (got %q)", lipgloss.Width(got), got)
+		}
+		if !strings.HasSuffix(got, "…") {
+			t.Fatalf("got %q, want suffix …", got)
+		}
+	})
+
+	t.Run("over-long multibyte", func(t *testing.T) {
+		// Multibyte 1-cell runes: result is exactly n cells, on a rune boundary.
+		s := "ééééééééé"
+		for _, n := range []int{2, 4, 7} {
+			got := truncateCells(s, n)
+			if !utf8.ValidString(got) {
+				t.Fatalf("n=%d: %q is not valid UTF-8", n, got)
+			}
+			if w := lipgloss.Width(got); w != n {
+				t.Fatalf("n=%d: width = %d (%q), want %d", n, w, got, n)
+			}
+			if !strings.HasSuffix(got, "…") {
+				t.Fatalf("n=%d: got %q, want suffix …", n, got)
+			}
+		}
+	})
+
+	t.Run("over-long wide runes never split", func(t *testing.T) {
+		// 2-cell CJK runes cannot always fill n exactly; the budget must never
+		// be exceeded and a rune must never be split.
+		s := "日本語テキストです"
+		for _, n := range []int{2, 3, 4, 5, 6, 7} {
+			got := truncateCells(s, n)
+			if !utf8.ValidString(got) {
+				t.Fatalf("n=%d: %q is not valid UTF-8", n, got)
+			}
+			if w := lipgloss.Width(got); w > n {
+				t.Fatalf("n=%d: width = %d (%q), want <= %d", n, w, got, n)
+			}
+			if !strings.HasSuffix(got, "…") {
+				t.Fatalf("n=%d: got %q, want suffix …", n, got)
+			}
+			for _, r := range got {
+				if r == utf8.RuneError {
+					t.Fatalf("n=%d: %q contains a split rune", n, got)
+				}
+			}
+		}
+	})
+
+	t.Run("edges", func(t *testing.T) {
+		if got := truncateCells("abcdef", 0); got != "" {
+			t.Fatalf("n=0 -> %q, want empty", got)
+		}
+		if got := truncateCells("abcdef", -3); got != "" {
+			t.Fatalf("n=-3 -> %q, want empty", got)
+		}
+		if got := truncateCells("abcdef", 1); got != "…" {
+			t.Fatalf("n=1 -> %q, want …", got)
+		}
+	})
 }
