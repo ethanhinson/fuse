@@ -2,7 +2,7 @@
 id: 78
 slug: slash-command-models-listing
 title: /models slash command + slash-menu column alignment
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-20
@@ -17,7 +17,7 @@ results: docs/results/2026-08-21-slash-command-models-listing-results.md
 trivial: false
 auto_groomable:
 branch: feat/slash-command-models-listing
-claimed_at: 2026-08-21T05:47:36Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/82
 blocked_by:
 reconciled: true
