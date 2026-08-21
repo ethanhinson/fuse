@@ -537,6 +537,106 @@ func TestAssistantMsgIsPreWrapped(t *testing.T) {
 	}
 }
 
+// TestAgentErrMsgMultilineNoOverflowNoColorBleed reproduces the networked-runtime
+// symptom: a long, multi-line gRPC transport error arrives as an AgentErrMsg.
+// Two invariants must hold after the viewport is sized:
+//   - no emitted visual row exceeds the viewport width (the overflow bug), and
+//   - every emitted row is ANSI-self-contained — if it opens color it also
+//     resets it, so red never bleeds down into later rows / padding (the bleed).
+func TestAgentErrMsgMultilineNoOverflowNoColorBleed(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	// Size narrower than the error text so wrapping must fire.
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 20})
+	m = next.(ShellModel)
+
+	grpcErr := "rpc error: code = Unavailable desc = connection error:\n" +
+		"desc = \"transport: Error while dialing: dial tcp 127.0.0.1:8080: connect: connection refused\""
+	next, _ = m.Update(AgentErrMsg{Err: grpcErr})
+	m = next.(ShellModel)
+
+	// Assert against the stored transcript lines run through hangWrap — the rows
+	// the compositor actually emits, before the viewport clips them to width.
+	// A hidden overflow row still re-wraps in the real terminal and shears the UI.
+	for _, l := range m.lines {
+		for _, r := range hangWrap(l, m.vp.Width) {
+			if w := printWidth(r); w > m.vp.Width {
+				t.Errorf("error row printable width %d > viewport %d: %q", w, m.vp.Width, r)
+			}
+			// A row that turns color on must turn it off before it ends, or the red
+			// leaks into the row below and into trailing padding.
+			if strings.Contains(r, redSeq) &&
+				!strings.Contains(r, "\x1b[0m") && !strings.Contains(r, "\x1b[m") {
+				t.Errorf("error row opens color but never resets it (bleed): %q", r)
+			}
+		}
+	}
+}
+
+// TestAgentErrMsgSurvivesShrink guards the resize path: an error rendered at a
+// wide width and then shrunk must still not overflow or bleed color, because
+// hangWrap re-hard-wraps stored pre lines on every refresh and could split a
+// styled row between its color-open and reset.
+func TestAgentErrMsgSurvivesShrink(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	m := sized(NewShellModel("alpha", true, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	m = next.(ShellModel)
+	next, _ = m.Update(AgentErrMsg{Err: "rpc error: code = Unavailable desc = connection error: " +
+		"desc = transport dialing dial tcp 127.0.0.1:8080 connect connection refused repeatedly"})
+	m = next.(ShellModel)
+	next, _ = m.Update(tea.WindowSizeMsg{Width: 30, Height: 20})
+	m = next.(ShellModel)
+
+	for _, l := range m.lines {
+		for _, r := range hangWrap(l, m.vp.Width) {
+			if w := printWidth(r); w > m.vp.Width {
+				t.Errorf("after shrink, error row width %d > %d: %q", w, m.vp.Width, r)
+			}
+			if strings.Contains(r, redSeq) &&
+				!strings.Contains(r, "\x1b[0m") && !strings.Contains(r, "\x1b[m") {
+				t.Errorf("after shrink, error row opens color but never resets (bleed): %q", r)
+			}
+		}
+	}
+}
+
+// TestRebalanceANSI verifies each row of a hard-wrap-split styled block is made
+// self-contained: carried-open state is re-emitted at the row start and an
+// unbalanced open is reset at the row end.
+func TestRebalanceANSI(t *testing.T) {
+	red := "\x1b[38;2;224;108;117m"
+	reset := "\x1b[0m"
+	// A styled line split by a hard-wrap: open on row 0, reset on row 2, middle
+	// row bare.
+	in := []string{red + "first", "middle", "last" + reset}
+	got := rebalanceANSI(in)
+	if len(got) != 3 {
+		t.Fatalf("row count = %d, want 3", len(got))
+	}
+	for i, r := range got {
+		hasRed := strings.Contains(r, "38;2;224;108;117")
+		hasReset := strings.Contains(r, "\x1b[0m") || strings.Contains(r, "\x1b[m")
+		if !hasRed {
+			t.Errorf("row %d lost its color: %q", i, r)
+		}
+		if !hasReset {
+			t.Errorf("row %d has no reset — color would bleed: %q", i, r)
+		}
+	}
+	// A row with no styling at all must be left untouched (no spurious escapes).
+	plain := rebalanceANSI([]string{"nothing here"})
+	if plain[0] != "nothing here" {
+		t.Errorf("plain row altered: %q", plain[0])
+	}
+}
+
 func TestEnterWhileRunningIsNoop(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	m.running = true

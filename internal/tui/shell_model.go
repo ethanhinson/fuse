@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -463,7 +464,7 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// results may never arrive.
 		m.settlePendingCalls()
 		m.turnFailed = true
-		m.appendLine(agentErrStyle.Render("! " + msg.Err))
+		m.appendErrorLine(msg.Err)
 		return m, nil
 
 	case AgentDoneMsg:
@@ -1084,7 +1085,7 @@ func (m ShellModel) startPrompt(line string) (tea.Model, tea.Cmd) {
 	history := m.history
 	build := m.build
 
-	tree := m.tree                  // capture for closure
+	tree := m.tree                   // capture for closure
 	toolPrincipal := m.toolPrincipal // capture for closure (change #52)
 	run := func() tea.Msg {
 		approve := NewTeaApprovalFunc(ch)
@@ -1310,6 +1311,40 @@ func (m *ShellModel) appendLine(s string) {
 	m.refreshViewport(atBottom)
 }
 
+// appendErrorLine renders a run/transport error (e.g. a gRPC dial failure that
+// spans several lines) into the transcript. It wraps the PLAIN text to the
+// viewport width first, then styles each resulting visual row INDIVIDUALLY and
+// stores it pre:true. This is what keeps the UI intact over the networked
+// runtime, where a long multi-line error is the common case:
+//   - wrapping before styling means every stored row already fits the width, so
+//     nothing overflows and the pre hard-wrap net never has to split a styled
+//     row (a split styled row leaves the color-open on one row and the reset on
+//     another, bleeding red downward — the observed corruption); and
+//   - styling per row means each row carries its own open + reset, self-contained.
+//
+// Width is captured at append time; a later resize re-runs this only for new
+// errors, but the pre hard-wrap net still bounds already-stored rows on shrink.
+func (m *ShellModel) appendErrorLine(err string) {
+	atBottom := !m.ready || m.vp.AtBottom()
+	width := m.vp.Width
+	if width < 8 {
+		width = 8
+	}
+	lines := strings.Split(sanitizeDisplay(err), "\n")
+	for i, l := range lines {
+		if i == 0 {
+			l = "! " + l
+		}
+		// Wrap the plain text, then style each visual row on its own so the color
+		// escapes never straddle a wrap boundary.
+		wrapped := wrap.String(wordwrap.String(l, width), width)
+		for _, row := range strings.Split(wrapped, "\n") {
+			m.lines = append(m.lines, transcriptLine{text: agentErrStyle.Render(row), pre: true})
+		}
+	}
+	m.refreshViewport(atBottom)
+}
+
 // appendPre adds pre-wrapped content (glamour assistant output) one row per
 // line with pre:true, so refreshViewport skips wordwrap and applies only the
 // hard-wrap safety net — glamour's margins and indented blocks are preserved
@@ -1528,6 +1563,45 @@ func formatTokens(n int) string {
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
+// ansiReset is the SGR "reset all attributes" sequence.
+const ansiReset = "\x1b[0m"
+
+// sgrRE matches a single SGR (Select Graphic Rendition) escape — the color and
+// style sequences lipgloss/glamour emit. Used to track open styling across a
+// hard-wrap so each visual row can be made self-contained.
+var sgrRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// rebalanceANSI makes each row's SGR (color/style) state self-contained after a
+// hard-wrap has split a styled line across rows. Without it, wrap.String can put
+// a color-open on one row and its reset on a later row; the terminal then paints
+// every row in between — and the trailing padding — in that color (the bleed).
+//
+// For each row it prepends whatever SGR state was left open by earlier rows and,
+// if the row still has styling open at its end, appends a reset. The carried
+// state is the concatenation of SGR codes seen so far with no intervening reset;
+// a reset (\x1b[0m or \x1b[m) clears it.
+func rebalanceANSI(rows []string) []string {
+	open := "" // SGR sequences active at the end of the previous row
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		prefix := open
+		// Fold this row's own SGR codes into the running open-state.
+		for _, seq := range sgrRE.FindAllString(r, -1) {
+			if seq == ansiReset || seq == "\x1b[m" {
+				open = ""
+			} else {
+				open += seq
+			}
+		}
+		row := prefix + r
+		if open != "" {
+			row += ansiReset
+		}
+		out[i] = row
+	}
+	return out
+}
+
 // hangWrap wraps a single transcriptLine to width with a hanging indent: the
 // first visual row carries l.first, every continuation row carries l.cont (of
 // equal printable width), so wrapped content stays inside the prefix column
@@ -1550,8 +1624,12 @@ func hangWrap(l transcriptLine, width int) []string {
 		// Glamour already wrapped at its render width; don't re-wordwrap (that
 		// folds code blocks and blockquote indents to column 0). Apply only the
 		// hard-wrap safety net so a shrink resize can't overflow the viewport.
-		wrapped := wrap.String(l.text, width)
-		return strings.Split(wrapped, "\n")
+		//
+		// wrap.String may split a styled row between its color-open and its reset
+		// (e.g. a red gRPC error line hard-wrapped on shrink), leaving one row with
+		// color open and no reset — the red then bleeds into the rows below and the
+		// trailing padding. Rebalance each row so its SGR state is self-contained.
+		return rebalanceANSI(strings.Split(wrap.String(l.text, width), "\n"))
 	}
 
 	wrapped := wrap.String(wordwrap.String(l.text, contentW), contentW)

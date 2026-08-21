@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/observe"
 	observabilitylogging "github.com/ethanhinson/fuse/internal/observe/logging"
+	"go.opentelemetry.io/otel"
 )
 
 // enabledMetricsShellConfig is a minimal VALID observability config with the
@@ -134,4 +137,31 @@ func TestSetupShellObservabilityKeepsLogSinkOffTheTUIWriter(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestInstallOTELDiagnosticsRoutesToSink asserts the SDK's global error handler
+// routes to the provided sink instead of the default os.Stderr — this is what
+// keeps async batch-export failures ("traces export: ... rpc timeout") off the
+// TUI's shared terminal, where they would otherwise shear the alt screen.
+func TestInstallOTELDiagnosticsRoutesToSink(t *testing.T) {
+	// OTEL registrations are process-global; reset to discard afterward so this
+	// test can't leak a sink into later tests.
+	t.Cleanup(func() { installOTELDiagnostics(io.Discard) })
+
+	var sink bytes.Buffer
+	installOTELDiagnostics(&sink)
+
+	otel.Handle(errors.New("processor export error: rpc timeout"))
+
+	if !strings.Contains(sink.String(), "rpc timeout") {
+		t.Fatalf("otel error handler did not route to the sink; got %q", sink.String())
+	}
+}
+
+// TestInstallOTELDiagnosticsNilSinkDiscards guards the nil-sink fallback: it must
+// not panic (a nil io.Writer would) and must swallow output silently.
+func TestInstallOTELDiagnosticsNilSinkDiscards(t *testing.T) {
+	t.Cleanup(func() { installOTELDiagnostics(io.Discard) })
+	installOTELDiagnostics(nil)
+	otel.Handle(errors.New("boom")) // must not panic
 }
