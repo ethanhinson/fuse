@@ -2,11 +2,11 @@
 id: 78
 slug: slash-command-models-listing
 title: /models slash command + slash-menu column alignment
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 depends_on: []
 related: []
 discovered_from: []
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/slash-command-models-listing
+claimed_at: 2026-08-21T05:16:03Z
 pr:
 blocked_by:
 reconciled: false
