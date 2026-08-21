@@ -2,7 +2,7 @@
 id: 77
 slug: sandbox-resource-limits-concurrency-ceiling
 title: sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs
-status: in_progress
+status: implemented
 priority: high
 type: feat
 created: 2026-08-20
@@ -17,7 +17,7 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/sandbox-resource-limits-concurrency-ceiling
-pr:
+pr: 80
 blocked_by:
 reconciled: true
 ---
@@ -112,3 +112,17 @@ No spec assumption was invalidated by the merge.
 / pids 512 / nofile 4096 / fsize 2g; concurrency `max_inflight` 64 / `max_inflight_per_tenant` 16
 / `max_queued` 256 / `note_threshold` 2s / `pull_timeout` 2m — the spec's starting numbers, adopted.
 Pre-pull hooks on first `Acquire` (spec's preferred option; `pull_failed` maps naturally there).
+
+### 2026-08-21 — build complete, PR #80
+
+Implemented end-to-end across all four axes plus the event/metric/dashboard wiring. `make test`
+green (39 packages), sandbox package clean under `-race`, `go vet` clean.
+
+**Build-time bug caught by the cmd/fuse gate:** `Service.SetGateHooks` was called on a possibly-nil
+`*Service` in the loop-server `StartLoop` path (some bindings select no substrate, so `sb` is nil —
+the same shape `NewBash(nil)` already tolerates). The unguarded `s.gate` deref panicked mid-request,
+killed the Connect server connection (client saw `unavailable: unexpected EOF`), and the leaked
+half-open HTTP connection then hung a later MCP SSE acceptance test until the 300s test timeout —
+which is why the failure first presented as a test hang rather than a panic. Fixed by a nil-receiver
+guard on `SetGateHooks`, mirroring `NewBash(nil)`; regression test `TestSetGateHooksNilServiceIsNoop`
+added. cmd/fuse now passes in ~4s.
