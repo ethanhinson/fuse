@@ -189,20 +189,15 @@ func TestModelsListingEmptyRegistry(t *testing.T) {
 	}
 }
 
-// TestModelsListingUnresolvableAliasSkipped pins the defensive skip. Names()
-// and Resolve() read the same map, so an alias that Names() lists but Resolve()
-// rejects cannot be built through the exported API; the closest reachable
-// probe is a registry whose entry map is mutated through the caller-retained
-// reference NewRegistry stores (it does not copy). Removing a key removes it
-// from both, so this asserts the surviving aliases still render and nothing
-// panics.
-func TestModelsListingUnresolvableAliasSkipped(t *testing.T) {
+// TestModelsListingSingleEntryRendersOneRow asserts a registry with one
+// entry renders exactly one row. The defensive `continue` in
+// renderModelsListing (for an alias Names() lists but Resolve() rejects) is
+// unreachable through the exported API and is therefore untested here.
+func TestModelsListingSingleEntryRendersOneRow(t *testing.T) {
 	entries := map[string]model.ModelConfig{
-		"glm":      {ID: "cloud/glm-5.2", Persona: "general"},
-		"sonnet-5": {ID: "claude/sonnet-5", Persona: "general"},
+		"glm": {ID: "cloud/glm-5.2", Persona: "general"},
 	}
 	reg := model.NewRegistry("glm", entries)
-	delete(entries, "sonnet-5")
 	_, rows := modelsRows(t, renderModelsListing(reg, "glm"))
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1: %#v", len(rows), rows)

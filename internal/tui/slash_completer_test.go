@@ -406,12 +406,16 @@ func TestSlashCompleterViewLongCommandKeepsKindTag(t *testing.T) {
 	c := newSlashCompleter(reg)
 	c.activate("/")
 
-	row := stripANSIString(viewRows(t, c, 40)[0])
+	width := 40
+	row := stripANSIString(viewRows(t, c, width)[0])
 	if !strings.Contains(row, "[builtin]") {
 		t.Fatalf("kind tag must survive verbatim, got %q", row)
 	}
 	if strings.Contains(row, "a description that cannot possibly fit here") {
 		t.Errorf("description should have been truncated, got %q", row)
+	}
+	if lipgloss.Width(row) > width {
+		t.Errorf("row width = %d, want <= %d (%q)", lipgloss.Width(row), width, row)
 	}
 }
 

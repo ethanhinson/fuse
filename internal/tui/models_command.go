@@ -39,8 +39,9 @@ func renderModelsListing(reg *model.Registry, active string) []string {
 	for _, alias := range reg.Names() {
 		mc, err := reg.Resolve(alias)
 		if err != nil {
-			// Defensive: Names() and Resolve() read the same map, so this is
-			// unreachable today. Skip rather than panic if that ever drifts.
+			// Defensive: Names() and Resolve() read the same map, so this
+			// branch is unreachable through the exported API and therefore
+			// untested. Skip rather than panic if that ever drifts.
 			continue
 		}
 		r := row{alias: alias, id: mc.ID, persona: mc.Persona}
