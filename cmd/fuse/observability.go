@@ -22,6 +22,8 @@ import (
 	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
 	observeprom "github.com/ethanhinson/fuse/internal/observe/prometheus"
 	"github.com/ethanhinson/fuse/internal/version"
+	"github.com/go-logr/logr/funcr"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -185,6 +187,36 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 		s.projection = newProjectionDispatcher(projectors, 1024, s.metrics)
 	}
 	return s, nil
+}
+
+// installOTELDiagnostics routes the OpenTelemetry SDK's own diagnostic output —
+// its global error handler (BatchSpanProcessor export failures, e.g. "traces
+// export: processor export error: rpc timeout") and its internal logger (the
+// OTLP exporter's connection-retry warnings) — to sink instead of the SDK
+// default of os.Stderr.
+//
+// This matters for the TUI: runShell hands the terminal to bubbletea, and any
+// async write to stderr from a background batch-export goroutine lands on the alt
+// screen mid-render and shears the display. Export failures are non-fatal and are
+// already counted via BatchConfig.OnExportError, so the shell passes a sink that
+// never touches the terminal (the log file when logging to file, else io.Discard).
+//
+// Both are process-global OTEL registrations; call once per process. A nil sink
+// falls back to io.Discard.
+func installOTELDiagnostics(sink io.Writer) {
+	if sink == nil {
+		sink = io.Discard
+	}
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		fmt.Fprintf(sink, "otel: %v\n", err)
+	}))
+	otel.SetLogger(funcr.New(func(prefix, args string) {
+		if prefix != "" {
+			fmt.Fprintf(sink, "otel: %s: %s\n", prefix, args)
+		} else {
+			fmt.Fprintf(sink, "otel: %s\n", args)
+		}
+	}, funcr.Options{}))
 }
 
 func newOTLPExporter(ctx context.Context, c config.TracesObservabilityConfig) (sdktrace.SpanExporter, error) {

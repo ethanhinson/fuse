@@ -421,5 +421,20 @@ func setupLocalObservability(ctx context.Context, cfg config.Config, logSink, st
 // therefore accepted and deliberately not used as a sink.
 func setupShellObservability(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) (*observabilityService, func(), int, bool) {
 	_ = stdout
-	return setupLocalObservability(ctx, cfg, stderr, stderr, "shell")
+	obs, closeObs, code, ok := setupLocalObservability(ctx, cfg, stderr, stderr, "shell")
+	// Keep the OTEL SDK's own diagnostics (batch-export failures, OTLP retry
+	// warnings) off the terminal: runShell hands stdout to bubbletea and both
+	// std streams share the TTY, so an async export error written to stderr shears
+	// the alt screen mid-render. Route them to the structured log file when one is
+	// configured, else discard — they are non-fatal and already counted as metrics.
+	if ok {
+		var sink io.Writer = io.Discard
+		if lg := cfg.Observability.Logging; lg.Enabled && lg.Output == "file" && lg.File != "" {
+			if f, err := os.OpenFile(lg.File, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+				sink = f
+			}
+		}
+		installOTELDiagnostics(sink)
+	}
+	return obs, closeObs, code, ok
 }
