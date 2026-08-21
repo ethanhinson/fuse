@@ -6,12 +6,12 @@ status: proposed
 priority: medium
 type: feat
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-21
 depends_on: [63]
 related: [63, 65, 75, 77]
 discovered_from: [58]
 adrs: [44]
-spec:
+spec: docs/superpowers/specs/2026-08-21-bash-egress-control-container-network-config-design.md
 plan:
 results:
 trivial: false
@@ -27,6 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-08-21-bash-egress-control-container-network-config-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-21-bash-egress-control-container-network-config-design.md) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
@@ -36,10 +37,14 @@ ADR-0044 decided that for `bash`, **egress is the container's network configurat
 
 ## What changes
 
-- **Egress expressed as boundary network config — across BOTH the container AND the microVM handler** (per ADR-0044's 2026-08-16 Update): the egress floor is a property of the isolation boundary #63's seam selects, not of any one mechanism. For a container that floor is `--network none`; for the microVM handler it is the equivalent **no-NIC** posture, with any declared egress applied host-side (tap device + nftables for the VM). Same floor, two boundary expressions, one policy surface.
-- **Operator-declared allowlist**: an operator-declared **allowlist** (host/CIDR/port) sourced from **trusted config in the hosted profile**; **allow-all locally**. "What does 'bash reaches the internet' mean in a hosted deploy?" — nothing, unless an operator declared that egress.
-- **Delegated identity for declared targets**: an allowlisted **declared** target MAY route through the #52 egress seam, so a bash call reaching a known service still carries delegated identity where a target is declarable; **everything else is denied**. This is the one place `bash` can borrow ADR-0036's mechanism — a *declared* target gives it the choke point and audience binding the mechanism needs.
-- **Record the metadata-endpoint null-route as the gating egress acceptance criterion for the future PaaS ADR** (per ADR-0044's 2026-08-16 Update): a null-route of the cloud metadata endpoint (`169.254.169.254`) is the concrete acceptance test any future remote/PaaS backend must meet before it can host `bash`. No PaaS work lands in this change — this bullet only records the acceptance criterion so it isn't lost when the eventual PaaS ADR is written.
+Container handler only — the microVM boundary is recorded as a contract a future handler must meet, not built here (the microVM handler is still an unwired stub). Full enforcement stack for the one boundary. See the linked spec for design detail.
+
+- **The floor — `--network none`.** When egress enforcement is on, the container argv gains `--network none` at the reserved insertion point (`container.go:414`): the workload container has no route to the internet by construction.
+- **The path out — a shared host-side egress proxy.** One fuse-managed proxy per host, reachable by the `--network none` container through a single controlled hole; it is the only egress path, enforces the allowlist per call, and denies every undeclared destination. Its per-connection **principal-scoping is a first-class invariant** (a shared proxy must bind the requesting principal's allowlist and credential, never leak across principals); a per-container sidecar is the recorded build-time fallback if that proves too hairy.
+- **Operator-declared allowlist**, selected by an explicit `egress.mode` knob (`allow-all` default / `enforce`). Each entry is `{host-or-CIDR, port}`; sourced from trusted-local config. Allow-all locally, enforce in the hosted profile. Malformed-under-enforce fails toward deny-all, never fail-open.
+- **Delegated identity for declared targets** — per-entry opt-in: an allowlist entry MAY name a #52 `CredentialSource` audience, and the proxy injects the delegated credential resolved via `CredentialFor(principal, target)` for that entry; entries without one are plain allow-through. Everything undeclared is denied. This is the one place `bash` can borrow ADR-0036's mechanism — a *declared* target gives it the choke point and audience binding.
+- **Local ↔ off-switch:** egress is a property of the container boundary; on the host off-switch path there is no container, so egress is unconstrained by design — consistent with #63's machine-trust opt-out.
+- **Record the metadata-endpoint null-route** (`169.254.169.254`) as the concrete acceptance criterion any future remote/PaaS backend (#75) must meet before it can host `bash`. No PaaS work lands here — this only records the criterion so it isn't lost.
 
 ## Out of scope
 
@@ -51,11 +56,10 @@ ADR-0044 decided that for `bash`, **egress is the container's network configurat
 
 ## Open questions
 
-<!-- Groomed into a build-ready spec later; the design decisions themselves are recorded in ADR-0044. -->
-- Config surface/schema for the operator-declared host/CIDR/port allowlist in the hosted profile.
-- Mechanics of enforcing the egress floor + allowlist across the isolation handlers the #63 seam selects — `--network none` for the OCI runtimes (runc / gVisor / Kata) and the no-NIC / host-side tap+nftables equivalent for a microVM handler.
-- Exactly how an allowlisted declared target is matched to a #52 egress-seam route so the delegated credential is presented.
-- Whether/how local allow-all interacts with the host off-switch binding from #63.
+<!-- Design settled in the linked spec; these residuals are owned by the reconcile/plan pass. -->
+- The container→proxy hole under `--network none` — bind-mounted proxy socket vs. userspace-net path — settled at plan time against the supported OCI CLIs, without re-opening general egress.
+- Proxy protocol surface (HTTP CONNECT first vs. raw TCP for `psql`).
+- How the proxy lifecycle and principal-scoping compose with #63's per-principal warm pool.
 
 ## Reconcile log
 
