@@ -12,12 +12,12 @@ related: []
 discovered_from: []
 adrs: []
 spec: docs/superpowers/specs/2026-08-20-slash-command-models-listing-design.md
-plan:
+plan: docs/superpowers/plans/2026-08-21-slash-command-models-listing.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/slash-command-models-listing
-claimed_at: 2026-08-21T05:19:43Z
+claimed_at: 2026-08-21T05:22:04Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-20-slash-command-models-listing-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-20-slash-command-models-listing-design.md) |
+| Plan | [2026-08-21-slash-command-models-listing.md](https://github.com/ethanhinson/fuse/blob/feat/slash-command-models-listing/docs/superpowers/plans/2026-08-21-slash-command-models-listing.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
