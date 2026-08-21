@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0063 — bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0063-bash-container-substrate-env-scrub-off-switch.md)**
+> ↩ **[Change 0063 — bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-08-21-0063-bash-container-substrate-env-scrub-off-switch.md)**
 <!-- docket:backlink:end -->
 
 # bash container substrate + env-scrub + off-switch — design

@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-20-bash-container-substrate-env-scrub-off-switch-design.md) |
-| Plan | [2026-08-20-bash-container-substrate-env-scrub-off-switch-plan.md](https://github.com/ethanhinson/fuse/blob/feat/bash-container-substrate-env-scrub-off-switch/docs/superpowers/plans/2026-08-20-bash-container-substrate-env-scrub-off-switch-plan.md) |
-| Results | [2026-08-20-bash-container-substrate-env-scrub-off-switch-results.md](https://github.com/ethanhinson/fuse/blob/feat/bash-container-substrate-env-scrub-off-switch/docs/results/2026-08-20-bash-container-substrate-env-scrub-off-switch-results.md) |
+| Plan | [2026-08-20-bash-container-substrate-env-scrub-off-switch-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-20-bash-container-substrate-env-scrub-off-switch-plan.md) |
+| Results | [2026-08-20-bash-container-substrate-env-scrub-off-switch-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-20-bash-container-substrate-env-scrub-off-switch-results.md) |
 | PR | [#79](https://github.com/ethanhinson/fuse/pull/79) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
