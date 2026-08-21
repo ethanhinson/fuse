@@ -1,6 +1,6 @@
 # Backlog
 
-**78 changes** — 🟡 5 proposed · ⚪ 2 deferred · 🔵 2 implemented · ✅ 63 done · 🗑️ 6 killed
+**78 changes** — 🟡 5 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 64 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
@@ -19,12 +19,11 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (2)
+## 🔵 Implemented — awaiting merge (1)
 
 | # | Title | Priority | Type | PR | Readiness |
 |---|-------|----------|------|----|-----------|
 | [0077](active/0077-sandbox-resource-limits-concurrency-ceiling.md) | sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs | `high` | `feat` | [#80](https://github.com/ethanhinson/fuse/pull/80) |  |
-| [0078](active/0078-slash-command-models-listing.md) | /models slash command + slash-menu column alignment | `medium` | `feat` | [#82](https://github.com/ethanhinson/fuse/pull/82) |  |
 
 ```mermaid
 graph TD
@@ -36,17 +35,17 @@ graph TD
   0063 --> 0075
   0076
   0063 --> 0077
-  0078
   0012:::done
   0052:::done
   0063:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (69)</summary>
+<details><summary>✅🗑️ Archive — done + killed (70)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0078](archive/2026-08-21-0078-slash-command-models-listing.md) | /models slash command + slash-menu column alignment | 2026-08-21 |
 | [0063](archive/2026-08-21-0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | 2026-08-21 |
 | [0073](archive/2026-08-20-0073-one-shot-default-model.md) | One-shot honors models.default when --model is unset | 2026-08-20 |
 | [0072](archive/2026-08-20-0072-docker-subcommand-classification.md) | Docker subcommand classification — read-only forms auto-approve; the rest reach the classifier instead of dying at the parse floor | 2026-08-20 |
@@ -61,7 +60,6 @@ graph TD
 | [0058](archive/2026-08-16-0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | 2026-08-16 |
 | [0054](archive/2026-08-15-0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | 2026-08-15 |
 | [0061](archive/2026-08-14-0061-observe-local-run-paths.md) | Wire observability into local run paths (fuse shell + one-shot + runtime bindings) | 2026-08-14 |
-| [0056](archive/2026-08-12-0056-sdk-viability-hardening-wander.md) | SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app | 2026-08-12 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -73,6 +71,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 48 done |
+| [2026-08](archive/) | 49 done |
 
 </details>
