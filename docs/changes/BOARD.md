@@ -1,6 +1,6 @@
 # Backlog
 
-**77 changes** — 🟡 6 proposed · ⚪ 2 deferred · ✅ 63 done · 🗑️ 6 killed
+**78 changes** — 🟡 6 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 63 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (6)
 
@@ -11,7 +11,7 @@
 | [0074](active/0074-sandbox-health-emitter.md) | sandbox health emitter — feed KindSandboxHealth so fuse_sandbox_unhealthy_total stops being defined-but-unfed | `medium` | `feat` | needs-brainstorm |
 | [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a k8s Pod-per-Exec handler as first implementation | `medium` | `feat` | needs-brainstorm |
 | [0076](active/0076-fuse-server-helm-chart-compose-stack.md) | fuse server deployment — a container image, a full docker-compose stack, and a Helm chart (not an operator) | `medium` | `feat` | needs-brainstorm |
-| [0077](active/0077-sandbox-resource-limits-concurrency-ceiling.md) | sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs | `high` | `feat` | build-ready |
+| [0078](active/0078-slash-command-models-listing.md) | /models slash command + slash-menu column alignment | `medium` | `feat` | build-ready |
 
 ## ⚪ Deferred (2)
 
@@ -19,6 +19,12 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0077](active/0077-sandbox-resource-limits-concurrency-ceiling.md) | sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs | `high` | `feat` | [#80](https://github.com/ethanhinson/fuse/pull/80) |  |
 
 ```mermaid
 graph TD
@@ -30,6 +36,7 @@ graph TD
   0063 --> 0075
   0076
   0063 --> 0077
+  0078
   0012:::done
   0052:::done
   0063:::done
