@@ -48,6 +48,10 @@ No new registry method is required. If a small accessor reads cleaner than reach
 fields at the call site, add `Registry.DefaultAlias()` — but do not otherwise change the
 registry.
 
+> **Reconciled 2026-08-21 — decided:** add `Registry.DefaultAlias() string`. It is this change's
+> only `internal/model` touch, returns `Default` unchanged, and gives the `/models` call site a
+> testable seam. The `Registry` struct itself is not altered.
+
 ### Behavior
 
 `/models` takes no arguments. It prints a header line, then one aligned row per alias in
@@ -129,6 +133,18 @@ out of view).
   command-column width instead of `len(e.Command)`, so long commands don't over-run the
   description budget.
 
+> **Reconciled 2026-08-21 — the truncation must also change denomination, not just its input.**
+> The existing math is byte-denominated end to end (`used := len(cursor) + len(e.Command) + …`
+> and `desc = desc[:descWidth-1] + "…"`) while the budget it spends is in display cells. That is
+> the defect class on file in the learnings ledger as
+> `fitline-width-invariant-hides-truncated-suffix` (change 0066): a cell budget handed to a byte
+> truncator over-runs on ASCII and under-fills on multibyte, and — critically — a test that
+> asserts only total row width **cannot observe it**. Since this line is being rewritten anyway:
+> measure and truncate in display cells via `lipgloss.Width` (already imported in this file, and
+> the codebase's standard width primitive), reserve one cell for the ellipsis, and never slice a
+> styled string. Also note `desc[:descWidth-1]` is an unguarded byte slice that can panic mid-rune
+> on a multibyte description; the cell-based rewrite removes that hazard.
+
 ### Registry access for the max width
 
 `View(width int)` currently reads only `c.visible`. "Widest across all entries" needs the
@@ -138,6 +154,11 @@ returns the max command-portion display width, or compute it in the completer fr
 registry snapshot. Prefer a registry method: it keeps the width definition next to the
 data and is trivially testable. Cache it if the registry exposes a change signal; otherwise
 recomputing per `View` is cheap for the command counts involved.
+
+> **Reconciled 2026-08-21 — decided:** add `SlashRegistry.MaxCommandWidth() int`, iterating
+> `All()` once per call and measuring the unstyled `Command` (plus `" " + Syntax` when non-empty)
+> in display cells. No caching — the entry counts involved make per-`View` recomputation free, and
+> a cache would need invalidating against the existing `Changes()` reload signal for no gain.
 
 ## Out of scope
 
