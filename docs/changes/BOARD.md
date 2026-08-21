@@ -1,17 +1,17 @@
 # Backlog
 
-**77 changes** — 🟡 6 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 62 done · 🗑️ 6 killed
+**77 changes** — 🟡 6 proposed · ⚪ 2 deferred · ✅ 63 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (6)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0064](active/0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | `medium` | `feat` | ⏳ waiting on #63 — needs your merge |
-| [0065](active/0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | `medium` | `feat` | ⏳ waiting on #63 — needs your merge |
-| [0074](active/0074-sandbox-health-emitter.md) | sandbox health emitter — feed KindSandboxHealth so fuse_sandbox_unhealthy_total stops being defined-but-unfed | `medium` | `feat` | ⏳ waiting on #63 — needs your merge |
-| [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a k8s Pod-per-Exec handler as first implementation | `medium` | `feat` | ⏳ waiting on #63 — needs your merge |
+| [0064](active/0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | `medium` | `feat` | needs-brainstorm |
+| [0065](active/0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | `medium` | `feat` | needs-brainstorm |
+| [0074](active/0074-sandbox-health-emitter.md) | sandbox health emitter — feed KindSandboxHealth so fuse_sandbox_unhealthy_total stops being defined-but-unfed | `medium` | `feat` | needs-brainstorm |
+| [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a k8s Pod-per-Exec handler as first implementation | `medium` | `feat` | needs-brainstorm |
 | [0076](active/0076-fuse-server-helm-chart-compose-stack.md) | fuse server deployment — a container image, a full docker-compose stack, and a Helm chart (not an operator) | `medium` | `feat` | needs-brainstorm |
-| [0077](active/0077-sandbox-resource-limits-concurrency-ceiling.md) | sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs | `high` | `feat` | ⏳ waiting on #63 — needs your merge |
+| [0077](active/0077-sandbox-resource-limits-concurrency-ceiling.md) | sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs | `high` | `feat` | build-ready |
 
 ## ⚪ Deferred (2)
 
@@ -20,17 +20,10 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0063](active/0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | `high` | `feat` | [#79](https://github.com/ethanhinson/fuse/pull/79) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
   0052 --> 0057
-  0058 --> 0063
   0063 --> 0064
   0063 --> 0065
   0063 --> 0074
@@ -39,14 +32,15 @@ graph TD
   0063 --> 0077
   0012:::done
   0052:::done
-  0058:::done
+  0063:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (68)</summary>
+<details><summary>✅🗑️ Archive — done + killed (69)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0063](archive/2026-08-21-0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | 2026-08-21 |
 | [0073](archive/2026-08-20-0073-one-shot-default-model.md) | One-shot honors models.default when --model is unset | 2026-08-20 |
 | [0072](archive/2026-08-20-0072-docker-subcommand-classification.md) | Docker subcommand classification — read-only forms auto-approve; the rest reach the classifier instead of dying at the parse floor | 2026-08-20 |
 | [0070](archive/2026-08-20-0070-auto-mode-shell-parse-widening.md) | Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args | 2026-08-20 |
@@ -61,7 +55,6 @@ graph TD
 | [0054](archive/2026-08-15-0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | 2026-08-15 |
 | [0061](archive/2026-08-14-0061-observe-local-run-paths.md) | Wire observability into local run paths (fuse shell + one-shot + runtime bindings) | 2026-08-14 |
 | [0056](archive/2026-08-12-0056-sdk-viability-hardening-wander.md) | SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app | 2026-08-12 |
-| [0051](archive/2026-08-12-0051-loop-observability-otel-metrics.md) | Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs | 2026-08-12 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -73,6 +66,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 47 done |
+| [2026-08](archive/) | 48 done |
 
 </details>
