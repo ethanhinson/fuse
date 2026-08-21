@@ -1,8 +1,14 @@
 # Backlog
 
-**78 changes** — 🟡 6 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 63 done · 🗑️ 6 killed
+**78 changes** — 🟢 1 in progress · 🟡 5 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 63 done · 🗑️ 6 killed
 
-## 🟡 Proposed (6)
+## 🟢 In progress (1)
+
+| # | Title | Priority | Type | Spec | Branch |
+|---|-------|----------|------|------|--------|
+| [0078](active/0078-slash-command-models-listing.md) | /models slash command + slash-menu column alignment | `medium` | `feat` | [spec](../superpowers/specs/2026-08-20-slash-command-models-listing-design.md) | `feat/slash-command-models-listing` |
+
+## 🟡 Proposed (5)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -11,7 +17,6 @@
 | [0074](active/0074-sandbox-health-emitter.md) | sandbox health emitter — feed KindSandboxHealth so fuse_sandbox_unhealthy_total stops being defined-but-unfed | `medium` | `feat` | needs-brainstorm |
 | [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a k8s Pod-per-Exec handler as first implementation | `medium` | `feat` | needs-brainstorm |
 | [0076](active/0076-fuse-server-helm-chart-compose-stack.md) | fuse server deployment — a container image, a full docker-compose stack, and a Helm chart (not an operator) | `medium` | `feat` | needs-brainstorm |
-| [0078](active/0078-slash-command-models-listing.md) | /models slash command + slash-menu column alignment | `medium` | `feat` | build-ready |
 
 ## ⚪ Deferred (2)
 
