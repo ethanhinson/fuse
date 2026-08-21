@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // fakeProvider is a CommandProvider whose entries can be updated at runtime.
@@ -52,6 +54,110 @@ func TestSlashRegistryAll(t *testing.T) {
 	if len(all) != 2 {
 		t.Fatalf("want 2 entries, got %d", len(all))
 	}
+}
+
+func TestSlashRegistryMaxCommandWidth(t *testing.T) {
+	// "/cc NAME" is 8 cells and must beat "/bbbb" (5) — the " "+Syntax counts.
+	p := &staticProvider{entries: []SlashEntry{
+		{Command: "/a", Kind: KindBuiltin},
+		{Command: "/bbbb", Kind: KindBuiltin},
+		{Command: "/cc", Syntax: "NAME", Kind: KindBuiltin},
+	}}
+	reg := NewSlashRegistry(p)
+	defer reg.Close()
+
+	if got := reg.MaxCommandWidth(); got != 8 {
+		t.Errorf("MaxCommandWidth() = %d, want 8", got)
+	}
+}
+
+func TestSlashRegistryMaxCommandWidthEmpty(t *testing.T) {
+	reg := NewSlashRegistry(&staticProvider{})
+	defer reg.Close()
+
+	if got := reg.MaxCommandWidth(); got != 0 {
+		t.Errorf("empty registry MaxCommandWidth() = %d, want 0", got)
+	}
+}
+
+func TestSlashRegistryMaxCommandWidthDisplayCells(t *testing.T) {
+	// "世界" is 6 bytes but 4 display cells: "/x 世界" is 7 cells, not 9.
+	syntax := "世界"
+	p := &staticProvider{entries: []SlashEntry{
+		{Command: "/x", Syntax: syntax, Kind: KindBuiltin},
+	}}
+	reg := NewSlashRegistry(p)
+	defer reg.Close()
+
+	got := reg.MaxCommandWidth()
+	if byteLen := len("/x " + syntax); got == byteLen {
+		t.Fatalf("MaxCommandWidth() = %d, over-counted by byte length", got)
+	}
+	if want := lipgloss.Width("/x " + syntax); got != want {
+		t.Errorf("MaxCommandWidth() = %d, want %d display cells", got, want)
+	}
+}
+
+func TestSlashRegistryMaxCommandWidthSpansAllEntries(t *testing.T) {
+	// The widest entry lives in the second provider and matches no common
+	// filter; the result must still reflect All(), not any subset.
+	p1 := &staticProvider{entries: []SlashEntry{
+		{Command: "/zz", Description: "match", Kind: KindBuiltin},
+	}}
+	p2 := &staticProvider{entries: []SlashEntry{
+		{Command: "/a-very-long-command", Description: "unrelated", Kind: KindSkill},
+	}}
+	reg := NewSlashRegistry(p1, p2)
+	defer reg.Close()
+
+	if n := len(reg.Filter("match")); n != 1 {
+		t.Fatalf("precondition: Filter should narrow to 1 entry, got %d", n)
+	}
+	if got, want := reg.MaxCommandWidth(), len("/a-very-long-command"); got != want {
+		t.Errorf("MaxCommandWidth() = %d, want %d (widest across All())", got, want)
+	}
+}
+
+// The max width must track the entry list across reloads, not just at
+// construction. A value memoized outside the critical section that replaces
+// r.cached survives a reload stale, which silently reintroduces the gutter
+// misalignment the width exists to prevent.
+func TestSlashRegistryMaxCommandWidthAfterReload(t *testing.T) {
+	narrow := SlashEntry{Command: "/a", Kind: KindSkill}
+	wide := SlashEntry{Command: "/a-much-wider-command", Kind: KindSkill}
+
+	fp := newFakeProvider([]SlashEntry{narrow})
+	reg := NewSlashRegistry(fp)
+	defer reg.Close()
+
+	if got, want := reg.MaxCommandWidth(), commandWidth(narrow); got != want {
+		t.Fatalf("initial MaxCommandWidth() = %d, want %d", got, want)
+	}
+
+	// Grow: a wider entry arrives on reload.
+	fp.push([]SlashEntry{narrow, wide})
+	waitForMaxCommandWidth(t, reg, commandWidth(wide))
+
+	// Shrink: the wide entry goes away again. A max that only ever grows is
+	// just as stale as one that never updates at all.
+	fp.push([]SlashEntry{narrow})
+	waitForMaxCommandWidth(t, reg, commandWidth(narrow))
+}
+
+// waitForMaxCommandWidth polls until the registry's max width reaches want,
+// covering the fan-out debounce, and fails with the last value it observed.
+func waitForMaxCommandWidth(t *testing.T, reg *SlashRegistry, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	got := reg.MaxCommandWidth()
+	for time.Now().Before(deadline) {
+		if got == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+		got = reg.MaxCommandWidth()
+	}
+	t.Fatalf("MaxCommandWidth() = %d after reload, want %d", got, want)
 }
 
 func TestSlashRegistryFilterCaseInsensitive(t *testing.T) {

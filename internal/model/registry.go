@@ -54,6 +54,9 @@ func DefaultRegistry() *Registry {
 	})
 }
 
+// DefaultAlias returns the configured default alias.
+func (r *Registry) DefaultAlias() string { return r.Default }
+
 // Resolve returns the config for an alias, or an error if unknown.
 func (r *Registry) Resolve(alias string) (ModelConfig, error) {
 	mc, ok := r.entries[alias]

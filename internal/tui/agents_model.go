@@ -1578,7 +1578,11 @@ func turnPromptPreview(raw string, budget int) string {
 // absorbs the excess by truncating from the RIGHT, eating the row's
 // duration/event-count suffix), while CJK/emoji under-fill by roughly two
 // thirds. Wide runes are never split, so the result may land one cell short.
+// A non-positive budget has no room for content or an ellipsis, so it yields "".
 func truncateCells(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
 	if lipgloss.Width(s) <= n {
 		return s
 	}
