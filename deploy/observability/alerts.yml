@@ -34,3 +34,13 @@ groups:
       - alert: FuseSandboxStaleCheckout
         expr: increase(fuse_sandbox_reaped_total{cause="stale_checkout"}[5m]) > 0
         for: 0m
+      # Change 0077: an admission refusal means the host is saturated (max_inflight
+      # running AND max_queued parked). By design the queue never refuses under
+      # ordinary load, so this should be zero under correct configuration — its
+      # firing is either a genuine runaway or a misconfigured (too-low) bound.
+      # Deliberately NOT folded into FuseSandboxUnhealthy: acquire_failed means the
+      # substrate is broken (page someone), a rejection means capacity (a different
+      # response), and one alert must not conflate them.
+      - alert: FuseSandboxAtCapacity
+        expr: sum(rate(fuse_sandbox_rejected_total[5m])) by (handler, scope) > 0
+        for: 5m

@@ -77,16 +77,33 @@ func TestContainerDetectionOrder(t *testing.T) {
 	}
 }
 
-// recordingRun captures the argv of the last invocation.
+// recordingRun captures the argv of the last RUN invocation. It deliberately
+// ignores the pre-pull `pull <image>` invocation (change 0077): the "nothing
+// ran" assertions on a working_dir refusal mean "no container run happened", and
+// the pre-pull at Acquire is a separate, expected fact recorded in pullArgs.
 type recordingRun struct {
 	name string
 	args []string
 	out  []byte
 	code int
 	err  error
+
+	// pullArgs records the last `pull` invocation's args, and pulls counts how
+	// many pulls happened, so a test can assert the single-flight pre-pull ran
+	// exactly once without polluting the run assertions.
+	pullArgs []string
+	pulls    int
 }
 
 func (r *recordingRun) run(_ context.Context, name string, args ...string) ([]byte, int, error) {
+	if len(args) > 0 && args[0] == "pull" {
+		r.pullArgs = append([]string(nil), args...)
+		r.pulls++
+		// The pre-pull SUCCEEDS by default: it is a precondition of reaching Exec,
+		// and the run-level out/code/err a test configures describe the container
+		// RUN, not the pull. A test exercising a failing pull uses pullErrRun.
+		return nil, 0, nil
+	}
 	r.name = name
 	r.args = append([]string(nil), args...)
 	return r.out, r.code, r.err
@@ -360,6 +377,11 @@ func TestContainerExecArgvGolden(t *testing.T) {
 		// never anything the model said.
 		"-v", h.root + ":/workspace",
 		"-w", "/workspace",
+		// --pull=never (change 0077): the image is acquired by the pre-pull, so
+		// run must never trigger one. With DefaultConfig (local posture, no caps)
+		// this is the ONLY 0077 addition — the uncontained baseline is otherwise
+		// byte-identical to the #0063 argv.
+		"--pull=never",
 		"example.invalid/img:1.2.3",
 		"/bin/sh", "-c", "echo hi",
 	}

@@ -2,4 +2,7 @@
 {"title":"Active sandboxes by handler/runtime","type":"timeseries","targets":[{"expr":"sum(fuse_sandbox_active) by (handler, runtime)"}]},
 {"title":"Cold-start latency heatmap","type":"heatmap","targets":[{"expr":"sum(rate(fuse_sandbox_cold_start_seconds_bucket[5m])) by (le, handler, runtime)"}]},
 {"title":"Unhealthy by reason","type":"timeseries","targets":[{"expr":"sum(rate(fuse_sandbox_unhealthy_total[5m])) by (handler, reason)"}]},
-{"title":"Reap rate by cause","type":"timeseries","targets":[{"expr":"sum(rate(fuse_sandbox_reaped_total[5m])) by (handler, cause)"}]}]}
+{"title":"Reap rate by cause","type":"timeseries","targets":[{"expr":"sum(rate(fuse_sandbox_reaped_total[5m])) by (handler, cause)"}]},
+{"title":"Exec queued rate","type":"timeseries","targets":[{"expr":"sum(rate(fuse_sandbox_exec_queued_total[5m])) by (handler)"}]},
+{"title":"Queue wait heatmap","type":"heatmap","targets":[{"expr":"sum(rate(fuse_sandbox_queue_wait_seconds_bucket[5m])) by (le, handler)"}]},
+{"title":"Capacity rejections by scope","type":"timeseries","targets":[{"expr":"sum(rate(fuse_sandbox_rejected_total[5m])) by (handler, scope)"}]}]}

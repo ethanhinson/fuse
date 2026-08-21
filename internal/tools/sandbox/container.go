@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/loopauth"
 )
@@ -127,6 +129,20 @@ func withContainerEnvLookup(fn func(string) (string, bool)) containerOption {
 	}
 }
 
+// withLimits sets the per-container cgroup caps this handler renders into argv
+// (change 0077).
+//
+// SECURITY-CRITICAL: like withTrustedRoot, the caps come from the COMPOSITION
+// ROOT — resolved once from trusted operator config at Service construction,
+// before any model has run, with posture defaults already applied. They must
+// never be derived from a tool argument, a wire field, working_dir, or model
+// output: a cap a model could influence is a cap a model could raise, and a cap
+// a model can raise is not a cap. Applied once, at construction; no method
+// changes them afterwards.
+func withLimits(l Limits) containerOption {
+	return func(h *containerHandler) { h.limits = l }
+}
+
 // withTrustedRoot sets the host directory this handler bind-mounts.
 //
 // SECURITY-CRITICAL: the value comes from the COMPOSITION ROOT — the repo root
@@ -158,6 +174,20 @@ type containerHandler struct {
 	// is the degraded-but-safe state: nothing is mounted and any model-supplied
 	// working_dir is refused rather than becoming a mount source itself.
 	root string
+
+	// limits are the per-container cgroup caps (change 0077), resolved once at
+	// construction from trusted operator config with posture defaults already
+	// applied. Every field is optional: an unset field emits no flag. Never
+	// model-derived; see withLimits.
+	limits Limits
+
+	// pullOnce guards the single-flight pre-pull, and pullErr records its
+	// outcome. A failed pull is retried on a later Acquire rather than cached as
+	// a permanent failure, so pullOnce is reset on failure (see prePull).
+	pullMu   sync.Mutex
+	pulling  chan struct{} // non-nil while a pull is in flight; closed when it finishes
+	pullDone bool          // true once a pull has SUCCEEDED; then never pulled again
+	pullErr  error         // last pull's error, read under pullMu
 
 	// envLookup resolves the CLI client's own passthrough variables
 	// (containerClientPassthrough). Nil means the real process environment.
@@ -248,7 +278,16 @@ func (h *containerHandler) Runtime() string { return h.runtime }
 // resolved. The Runner never consults the process environment afterwards, which
 // is what makes it structurally impossible for an ambient variable to reach a
 // container.
-func (h *containerHandler) Acquire(_ context.Context, p loopauth.Principal, env Env) (Runner, error) {
+func (h *containerHandler) Acquire(ctx context.Context, p loopauth.Principal, env Env) (Runner, error) {
+	// Bounded, single-flight pre-pull (change 0077). With --pull=never on the run
+	// argv, the image must be acquired here or `run` fails; doing it under the
+	// pull's own timeout is what keeps a cold image from hanging an Exec on the
+	// command's own deadline. A failed pull is an ACQUIRE failure — it is
+	// reported so selection surfaces "pull_failed" — and is retried on a later
+	// Acquire rather than cached as permanent.
+	if err := h.prePull(ctx); err != nil {
+		return nil, fmt.Errorf("%s pull %s: %w", h.runtime, h.image, err)
+	}
 	return &containerRunner{
 		handler:   h,
 		principal: p,
@@ -399,7 +438,7 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 
 	env := r.currentEnv()
 
-	args := make([]string, 0, 12+2*len(env))
+	args := make([]string, 0, 20+2*len(env))
 	args = append(args,
 		"run",
 		// --rm: the container is torn down when the command exits, so no
@@ -410,6 +449,13 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 		// allocating one would corrupt the combined-output capture.
 		"-i",
 	)
+
+	// Per-container cgroup caps (change 0077). Emitted ONLY for fields the
+	// resolved config set; an unset field renders nothing — never a sentinel,
+	// never `--memory 0` (which some runtimes read as "unlimited" and others
+	// reject). Placement is deliberate: after `--rm -i` and BEFORE the
+	// TODO(#0064) network marker, so egress control lands cleanly beside it.
+	args = append(args, r.handler.limits.argv()...)
 
 	// TODO(#0064): egress control owns this flag (--network none floor + allowlist)
 
@@ -435,8 +481,119 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 	}
 	args = append(args, "-w", workdir)
 
+	// --pull=never (change 0077): the image is acquired by the explicit,
+	// separately-timed pre-pull (see prePull), so `run` must never trigger an
+	// unbounded pull under the command's own deadline. Supported by all three
+	// detected CLIs (docker, nerdctl, podman), preserving the
+	// one-argv-builder-serves-all-three property.
+	args = append(args, "--pull=never")
+
 	args = append(args, r.handler.image, "/bin/sh", "-c", cmd)
 	return args, nil
+}
+
+// argv renders the per-container cgroup caps as OCI run flags, in a fixed order
+// (change 0077). Only set fields render; an unset field emits nothing.
+//
+// Three details a reader must not have to rediscover:
+//
+//   - --memory-swap is pinned EQUAL to --memory. Docker's default when --memory
+//     is set and --memory-swap is not is TWICE the memory limit, so a lone
+//     --memory 2g actually permits 4 GB of memory+swap. Pinning them equal is
+//     what makes the number mean what it says.
+//   - --ulimit fsize bounds a SINGLE FILE, not the mount. It is real protection
+//     against `dd if=/dev/zero of=big`; it is not a disk quota (that is #0065).
+//   - --cpus is rendered from the config's already-canonicalised decimal string,
+//     never a float formatted by %v — argv is golden-tested, so rendering must
+//     be deterministic and locale-independent.
+func (l Limits) argv() []string {
+	var a []string
+	if l.MemoryBytes != nil {
+		m := strconv.FormatInt(*l.MemoryBytes, 10)
+		// Pinned equal — see the doc comment.
+		a = append(a, "--memory", m, "--memory-swap", m)
+	}
+	if l.CPUs != nil {
+		a = append(a, "--cpus", *l.CPUs)
+	}
+	if l.Pids != nil {
+		a = append(a, "--pids-limit", strconv.FormatInt(*l.Pids, 10))
+	}
+	if l.NoFile != nil {
+		n := strconv.FormatInt(*l.NoFile, 10)
+		a = append(a, "--ulimit", "nofile="+n+":"+n)
+	}
+	if l.FsizeBytes != nil {
+		a = append(a, "--ulimit", "fsize="+strconv.FormatInt(*l.FsizeBytes, 10))
+	}
+	return a
+}
+
+// prePull performs the bounded, single-flight image acquisition (change 0077).
+//
+// The pull runs under a context derived from context.Background() and the
+// configured pull_timeout — deliberately NOT from the caller's context, so a
+// short-timeout bash call cannot cancel a pull a later call would have benefited
+// from. The caller waits on the shared in-flight pull only up to ITS OWN
+// deadline: if the caller's ctx fires first it returns that error while the pull
+// completes in the background and the next Acquire finds the image warm.
+//
+// Concurrent callers JOIN the in-flight pull rather than each starting one. A
+// SUCCEEDED pull is remembered and never repeated; a FAILED pull is not cached —
+// it is retried on a later Acquire, because a transient registry blip must not
+// permanently break the substrate.
+func (h *containerHandler) prePull(ctx context.Context) error {
+	h.pullMu.Lock()
+	if h.pullDone {
+		h.pullMu.Unlock()
+		return nil
+	}
+	wait := h.pulling
+	if wait == nil {
+		// We start the pull. A fresh channel marks it in-flight; a background
+		// goroutine runs it under the pull_timeout, independent of any caller.
+		wait = make(chan struct{})
+		h.pulling = wait
+		timeout := DefaultPullTimeout
+		if h.limits.PullTimeout != nil {
+			timeout = *h.limits.PullTimeout
+		}
+		go h.runPull(wait, timeout)
+	}
+	h.pullMu.Unlock()
+
+	// Wait on the shared pull only up to the CALLER's own deadline.
+	select {
+	case <-wait:
+		h.pullMu.Lock()
+		err := h.pullErr
+		h.pullMu.Unlock()
+		return err
+	case <-ctx.Done():
+		// The caller ran out of time; the pull continues in the background.
+		return ctx.Err()
+	}
+}
+
+// runPull executes the actual pull under its own timeout and records the
+// outcome, then closes done to release every joined caller. On failure it clears
+// the in-flight marker so a later Acquire retries; on success it latches
+// pullDone so the image is never pulled again.
+func (h *containerHandler) runPull(done chan struct{}, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	_, _, err := h.run(ctx, h.runtime, "pull", h.image)
+
+	h.pullMu.Lock()
+	h.pullErr = err
+	if err == nil {
+		h.pullDone = true
+	}
+	h.pulling = nil // allow a retry on failure; harmless on success (pullDone gates)
+	h.pullMu.Unlock()
+
+	close(done)
 }
 
 // Exec runs cmd inside a fresh container.

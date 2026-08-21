@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +45,97 @@ const (
 // allowed to become the zero value by omission.
 const DefaultIdleTTL = 5 * time.Minute
 
+// Posture defaults for the resource caps and the admission gate. These are the
+// values NewService applies to fields the operator left unset (change 0077).
+//
+// The CAPS split by posture: an unconfigured hosted process is bounded by these
+// built-ins ("forgot to configure it" is still bounded), while an unconfigured
+// local process gets NO cap flags at all — matching #0063's allow-all-locally
+// stance, since capping a developer's local build defends the machine from its
+// own operator against no threat model.
+//
+// The CONCURRENCY backstop and the PULL TIMEOUT do NOT split: they apply in both
+// postures. A queue that never refuses under ordinary load costs a laptop
+// nothing and protects it from a runaway just as usefully as it protects a host.
+//
+// The numbers are sized to comfortably run a typical build/test command and are
+// each overridable in one line of the trusted-local config; they are the
+// cheapest thing here to change.
+const (
+	defaultHostedMemoryBytes int64 = 2 << 30 // 2 GiB
+	defaultHostedCPUs              = "2.0"
+	defaultHostedPids        int64 = 512
+	defaultHostedNoFile      int64 = 4096
+	defaultHostedFsizeBytes  int64 = 2 << 30 // 2 GiB
+
+	// DefaultPullTimeout bounds the explicit pre-pull, in BOTH postures.
+	DefaultPullTimeout = 2 * time.Minute
+
+	// Admission gate defaults, applied in BOTH postures.
+	defaultMaxInflight          int64 = 64
+	defaultMaxInflightPerTenant int64 = 16
+	defaultMaxQueued            int64 = 256
+	// DefaultNoteThreshold is the wait at or above which the model-visible
+	// backpressure note is attached.
+	DefaultNoteThreshold = 2 * time.Second
+)
+
+// resolveDefaults fills every unset Limits/Concurrency field on cfg with its
+// posture-appropriate default, in place. It is idempotent and only ever fills
+// NIL fields — an operator's explicit value is honoured identically in both
+// postures. It is the one place the fail-safe posture decision is made, called
+// by NewService (which is where the hosted posture is known); LoadConfig stays
+// deliberately posture-free.
+func (cfg *Config) resolveDefaults(hosted bool) {
+	l := &cfg.Limits
+	if hosted {
+		// Caps default ON when hosted. Local leaves them nil ⇒ no flag emitted.
+		if l.MemoryBytes == nil {
+			v := defaultHostedMemoryBytes
+			l.MemoryBytes = &v
+		}
+		if l.CPUs == nil {
+			v := defaultHostedCPUs
+			l.CPUs = &v
+		}
+		if l.Pids == nil {
+			v := defaultHostedPids
+			l.Pids = &v
+		}
+		if l.NoFile == nil {
+			v := defaultHostedNoFile
+			l.NoFile = &v
+		}
+		if l.FsizeBytes == nil {
+			v := defaultHostedFsizeBytes
+			l.FsizeBytes = &v
+		}
+	}
+	// The pull timeout is always resolved — it applies in both postures.
+	if l.PullTimeout == nil {
+		v := DefaultPullTimeout
+		l.PullTimeout = &v
+	}
+
+	c := &cfg.Concurrency
+	if c.MaxInflight == nil {
+		v := defaultMaxInflight
+		c.MaxInflight = &v
+	}
+	if c.MaxInflightPerTenant == nil {
+		v := defaultMaxInflightPerTenant
+		c.MaxInflightPerTenant = &v
+	}
+	if c.MaxQueued == nil {
+		v := defaultMaxQueued
+		c.MaxQueued = &v
+	}
+	if c.NoteThreshold == nil {
+		v := DefaultNoteThreshold
+		c.NoteThreshold = &v
+	}
+}
+
 // Config is the resolved sandbox configuration.
 //
 // A Config obtained from LoadConfig or DefaultConfig is always internally
@@ -75,6 +168,65 @@ type Config struct {
 
 	// IdleTTL is the warm-pool reaper's idle backstop. It is always positive.
 	IdleTTL time.Duration
+
+	// Limits are the per-container cgroup caps (container handler only). Every
+	// field is OPTIONAL and carries its own presence: an unset field emits no
+	// flag, and an explicit zero is distinguishable from absent. LoadConfig fills
+	// only what the operator wrote; NewService applies posture defaults to unset
+	// fields, because posture (hosted vs local) is not known to the loader.
+	Limits Limits
+
+	// Concurrency is the admission gate's configuration — the concurrency
+	// backstop and the pull timeout. Unlike Limits, its defaults do NOT split by
+	// posture: a queue that never refuses under ordinary load costs a laptop
+	// nothing and protects it just as usefully as a host.
+	Concurrency Concurrency
+}
+
+// Limits are the per-container cgroup caps. Each field is a pointer so "unset"
+// (the operator said nothing) is distinguishable from an explicit zero (the
+// operator asked for no cap): the first resolves to a posture default, the
+// second emits no flag. Bytes fields are resolved to an integer count and
+// rendered by the argv builder; CPUs is a decimal string rendered verbatim.
+type Limits struct {
+	// MemoryBytes caps --memory (with --memory-swap pinned equal). nil ⇒ unset.
+	MemoryBytes *int64
+	// CPUs caps --cpus, as a decimal string ("2.0"). nil ⇒ unset. It is carried
+	// as a string, not a float, so argv rendering is deterministic and
+	// locale-independent — argv is golden-tested.
+	CPUs *string
+	// Pids caps --pids-limit. nil ⇒ unset.
+	Pids *int64
+	// NoFile caps --ulimit nofile=N:N. nil ⇒ unset.
+	NoFile *int64
+	// FsizeBytes caps --ulimit fsize=<bytes>. It bounds ONE file, not the mount;
+	// a real per-tenant disk quota is #0065's filesystem work. nil ⇒ unset.
+	FsizeBytes *int64
+	// PullTimeout bounds the explicit pre-pull. nil ⇒ unset; it is always
+	// resolved to a positive default (in both postures) by NewService.
+	PullTimeout *time.Duration
+}
+
+// Concurrency configures the admission gate. Every field is a pointer so unset
+// is distinguishable from an explicit zero, and NewService fills every unset
+// field with a default (the same default in both postures).
+type Concurrency struct {
+	// MaxInflight is the GLOBAL runaway backstop — the aggregate ceiling on
+	// concurrent in-flight Execs across every tenant on this host. Chosen high
+	// enough that ordinary load never touches it. nil ⇒ unset.
+	MaxInflight *int64
+	// MaxInflightPerTenant is one tenant's soft share of the global budget, so a
+	// single tenant's burst queues against its own share and other tenants keep
+	// flowing. nil ⇒ unset.
+	MaxInflightPerTenant *int64
+	// MaxQueued is the WAITER overflow bound — the pathological-case refusal. A
+	// caller is refused only when max_inflight Execs are running AND max_queued
+	// more are already parked behind them. nil ⇒ unset.
+	MaxQueued *int64
+	// NoteThreshold is the wait at or above which the model-visible backpressure
+	// note is attached. A very large value silences the note without touching the
+	// gate. nil ⇒ unset.
+	NoteThreshold *time.Duration
 }
 
 // DefaultConfig is the fail-safe configuration: contained, on the container
@@ -110,6 +262,13 @@ const (
 	WarnContradictory WarnReason = "contradictory"
 	// WarnBadIdleTTL means pool.idle_ttl was unparsable or non-positive.
 	WarnBadIdleTTL WarnReason = "bad_idle_ttl"
+	// WarnBadLimit means a limits.* value was unparsable or non-positive. The
+	// offending field degrades to unset (a posture default), never to a zero cap.
+	WarnBadLimit WarnReason = "bad_limit"
+	// WarnBadConcurrency means a concurrency.* value was unparsable or
+	// non-positive. The offending field degrades to unset (a built-in default),
+	// never to a zero bound — a zero backstop would refuse every Exec.
+	WarnBadConcurrency WarnReason = "bad_concurrency"
 )
 
 // Warning is a LOUD but non-fatal diagnostic from a config load.
@@ -156,11 +315,13 @@ func (w Warning) Error() string {
 // tell "absent" from "explicitly set to the zero value" — the difference
 // between an operator who said nothing and one who said `contained: false`.
 type rawConfig struct {
-	Contained      *bool    `yaml:"contained"`
-	Handler        *string  `yaml:"handler"`
-	Image          *string  `yaml:"image"`
-	EnvPassthrough []string `yaml:"env_passthrough"`
-	Pool           *rawPool `yaml:"pool"`
+	Contained      *bool           `yaml:"contained"`
+	Handler        *string         `yaml:"handler"`
+	Image          *string         `yaml:"image"`
+	EnvPassthrough []string        `yaml:"env_passthrough"`
+	Pool           *rawPool        `yaml:"pool"`
+	Limits         *rawLimits      `yaml:"limits"`
+	Concurrency    *rawConcurrency `yaml:"concurrency"`
 }
 
 type rawPool struct {
@@ -168,6 +329,29 @@ type rawPool struct {
 	// value YAML happens to read as a number ("300") degrades to a warning
 	// rather than to a silently different meaning.
 	IdleTTL *string `yaml:"idle_ttl"`
+}
+
+// rawLimits mirrors the limits: block. Byte-valued caps decode as strings so
+// human sizes ("2g", "512m") are accepted and a bare number degrades to a
+// warning rather than a silently-different meaning. cpus is likewise a string —
+// it is a decimal fraction, not an integer count. Every field is a pointer so
+// absent is distinguishable from an explicit zero.
+type rawLimits struct {
+	Memory      *string `yaml:"memory"`
+	CPUs        *string `yaml:"cpus"`
+	Pids        *int64  `yaml:"pids"`
+	NoFile      *int64  `yaml:"nofile"`
+	Fsize       *string `yaml:"fsize"`
+	PullTimeout *string `yaml:"pull_timeout"`
+}
+
+// rawConcurrency mirrors the concurrency: block. The counts are plain integers;
+// note_threshold is a duration string, decoded like idle_ttl.
+type rawConcurrency struct {
+	MaxInflight          *int64  `yaml:"max_inflight"`
+	MaxInflightPerTenant *int64  `yaml:"max_inflight_per_tenant"`
+	MaxQueued            *int64  `yaml:"max_queued"`
+	NoteThreshold        *string `yaml:"note_threshold"`
 }
 
 // LoadConfig reads the operator off-switch file at <root>/.fuse/sandbox.local.yml.
@@ -328,7 +512,119 @@ func (raw rawConfig) resolve(path string) (Config, []Warning) {
 		}
 	}
 
+	// --- limits & concurrency --------------------------------------------
+	//
+	// Both are POSTURE-FREE here: the loader parses only what the operator wrote
+	// and leaves every unspecified field unset (nil). NewService fills the unset
+	// fields with posture-appropriate defaults. A bad value degrades to unset
+	// (⇒ a later default) with a loud warning, NEVER to a zero cap or a zero
+	// bound — a zero cap some runtimes read as "unlimited", and a zero backstop
+	// would refuse every Exec.
+
+	if raw.Limits != nil {
+		warns = raw.Limits.resolve(path, &cfg.Limits, warns)
+	}
+	if raw.Concurrency != nil {
+		warns = raw.Concurrency.resolve(path, &cfg.Concurrency, warns)
+	}
+
 	return cfg, warns
+}
+
+// resolve fills out from a parsed limits: block, appending a WarnBadLimit for
+// every field it could not honour. It receives out by pointer and appends to
+// warns so the caller's diagnostics accumulate.
+func (raw rawLimits) resolve(path string, out *Limits, warns []Warning) []Warning {
+	bad := func(field, detail string) {
+		warns = append(warns, Warning{
+			Reason: WarnBadLimit,
+			Path:   path,
+			Detail: fmt.Sprintf("limits.%s: %s", field, detail),
+			Effect: "ignoring this cap; the posture default applies",
+		})
+	}
+
+	if raw.Memory != nil {
+		if b, ok := parseBytes(*raw.Memory); ok {
+			out.MemoryBytes = &b
+		} else {
+			bad("memory", fmt.Sprintf("%q is not a positive byte size (want e.g. 2g)", *raw.Memory))
+		}
+	}
+	if raw.CPUs != nil {
+		if s, ok := parseCPUs(*raw.CPUs); ok {
+			out.CPUs = &s
+		} else {
+			bad("cpus", fmt.Sprintf("%q is not a positive decimal (want e.g. 2.0)", *raw.CPUs))
+		}
+	}
+	if raw.Pids != nil {
+		if *raw.Pids > 0 {
+			v := *raw.Pids
+			out.Pids = &v
+		} else {
+			bad("pids", fmt.Sprintf("%d is not positive", *raw.Pids))
+		}
+	}
+	if raw.NoFile != nil {
+		if *raw.NoFile > 0 {
+			v := *raw.NoFile
+			out.NoFile = &v
+		} else {
+			bad("nofile", fmt.Sprintf("%d is not positive", *raw.NoFile))
+		}
+	}
+	if raw.Fsize != nil {
+		if b, ok := parseBytes(*raw.Fsize); ok {
+			out.FsizeBytes = &b
+		} else {
+			bad("fsize", fmt.Sprintf("%q is not a positive byte size (want e.g. 2g)", *raw.Fsize))
+		}
+	}
+	if raw.PullTimeout != nil {
+		if d, ok := parsePositiveDuration(*raw.PullTimeout); ok {
+			out.PullTimeout = &d
+		} else {
+			bad("pull_timeout", fmt.Sprintf("%q is not a positive duration (want e.g. 2m)", *raw.PullTimeout))
+		}
+	}
+	return warns
+}
+
+// resolve fills out from a parsed concurrency: block, appending a
+// WarnBadConcurrency for every field it could not honour.
+func (raw rawConcurrency) resolve(path string, out *Concurrency, warns []Warning) []Warning {
+	bad := func(field, detail string) {
+		warns = append(warns, Warning{
+			Reason: WarnBadConcurrency,
+			Path:   path,
+			Detail: fmt.Sprintf("concurrency.%s: %s", field, detail),
+			Effect: "ignoring this bound; the built-in default applies",
+		})
+	}
+	count := func(field string, v *int64, dst **int64) {
+		if v == nil {
+			return
+		}
+		if *v > 0 {
+			n := *v
+			*dst = &n
+		} else {
+			bad(field, fmt.Sprintf("%d is not positive", *v))
+		}
+	}
+
+	count("max_inflight", raw.MaxInflight, &out.MaxInflight)
+	count("max_inflight_per_tenant", raw.MaxInflightPerTenant, &out.MaxInflightPerTenant)
+	count("max_queued", raw.MaxQueued, &out.MaxQueued)
+	if raw.NoteThreshold != nil {
+		if d, ok := parsePositiveDuration(*raw.NoteThreshold); ok {
+			out.NoteThreshold = &d
+		} else {
+			bad("note_threshold", fmt.Sprintf("%q is not a positive duration (want e.g. 2s)", *raw.NoteThreshold))
+		}
+	}
+	return warns
 }
 
 // parseHandler maps a configured substrate name onto the closed enum.
@@ -366,4 +662,74 @@ func containedWord(contained bool) string {
 		return "contained"
 	}
 	return "UNCONTAINED"
+}
+
+// parseBytes parses a human byte size ("2g", "512m", "1048576") into a positive
+// count of bytes. It accepts an optional k/m/g/t suffix (binary, 1024-based, to
+// match how docker interprets --memory suffixes) and a bare integer. It returns
+// (0, false) for anything unparsable or non-positive, so a bad value degrades to
+// a posture default rather than to a zero cap.
+func parseBytes(v string) (int64, bool) {
+	s := strings.ToLower(strings.TrimSpace(v))
+	if s == "" {
+		return 0, false
+	}
+	var mult int64 = 1
+	switch s[len(s)-1] {
+	case 'k':
+		mult, s = 1<<10, s[:len(s)-1]
+	case 'm':
+		mult, s = 1<<20, s[:len(s)-1]
+	case 'g':
+		mult, s = 1<<30, s[:len(s)-1]
+	case 't':
+		mult, s = 1<<40, s[:len(s)-1]
+	}
+	s = strings.TrimSpace(s)
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	// Guard the multiply against overflow: a wildly large suffixed value is a
+	// typo, not a cap, and a wrapped negative would read as a bad flag.
+	if n > (1<<62)/mult {
+		return 0, false
+	}
+	return n * mult, true
+}
+
+// parseCPUs validates a --cpus decimal and returns it in a canonical rendered
+// form. It parses to a float only to REJECT nonsense and enforce positivity;
+// the returned string is re-rendered deterministically (strconv, not %v) so argv
+// is locale-independent and golden-testable. A trailing ".0" is preserved for a
+// whole number so the flag reads as the decimal docker expects.
+func parseCPUs(v string) (string, bool) {
+	s := strings.TrimSpace(v)
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || f <= 0 || math.IsInf(f, 0) || math.IsNaN(f) {
+		return "", false
+	}
+	return renderCPUs(f), true
+}
+
+// renderCPUs renders a positive CPU fraction deterministically: the shortest
+// decimal that round-trips, but always with at least one fractional digit so a
+// whole number reads as "2.0" rather than "2".
+func renderCPUs(f float64) string {
+	s := strconv.FormatFloat(f, 'f', -1, 64)
+	if !strings.Contains(s, ".") {
+		s += ".0"
+	}
+	return s
+}
+
+// parsePositiveDuration parses a Go duration string and requires it be positive.
+// It returns (0, false) for an unparsable or non-positive value, matching the
+// idle_ttl discipline: a bad duration degrades to a default, never to zero.
+func parsePositiveDuration(v string) (time.Duration, bool) {
+	d, err := time.ParseDuration(strings.TrimSpace(v))
+	if err != nil || d <= 0 {
+		return 0, false
+	}
+	return d, true
 }

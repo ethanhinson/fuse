@@ -33,6 +33,11 @@ var catalog = []Descriptor{
 	// not a metric dimension — and so are the command and its environment.
 	// loop/node stay off the histogram for the same cardinality reason.
 	{"fuse_sandbox_active", "gauge", []string{"tenant_id", "handler", "runtime"}}, {"fuse_sandbox_acquire_total", "counter", []string{"tenant_id", "reused"}}, {"fuse_sandbox_cold_start_seconds", "histogram", []string{"tenant_id", "handler", "runtime"}}, {"fuse_sandbox_unhealthy_total", "counter", []string{"tenant_id", "handler", "reason"}}, {"fuse_sandbox_reaped_total", "counter", []string{"tenant_id", "handler", "cause"}},
+	// Admission families (change 0077). queued_total is the backpressure rate,
+	// queue_wait_seconds its latency distribution, and rejected_total the runaway
+	// signal (and the alert target) — scoped by which bound refused it. All keep
+	// the closed-enum label discipline; container_id/command/env stay forbidden.
+	{"fuse_sandbox_exec_queued_total", "counter", []string{"tenant_id", "handler"}}, {"fuse_sandbox_queue_wait_seconds", "histogram", []string{"tenant_id", "handler"}}, {"fuse_sandbox_rejected_total", "counter", []string{"tenant_id", "handler", "scope"}},
 }
 
 func Catalog() []Descriptor { out := make([]Descriptor, len(catalog)); copy(out, catalog); return out }
@@ -69,9 +74,10 @@ type Recorder struct {
 	loopTotal, modelTotal, toolTotal, spawnTotal, projectionTotal, exportErrors, dropped, reopens, overflow *client.CounterVec
 	decisions, classifierReplies                                                                            *client.CounterVec
 	sandboxAcquire, sandboxUnhealthy, sandboxReaped                                                         *client.CounterVec
+	sandboxQueued, sandboxRejected                                                                         *client.CounterVec
 	loopActive, overrides, admitted, budget, sandboxActive                                                  *client.GaugeVec
 	loopDuration, modelDuration, attempts, toolDuration, spawnDuration, projectionDuration                  *client.HistogramVec
-	sandboxColdStart                                                                                        *client.HistogramVec
+	sandboxColdStart, sandboxQueueWait                                                                      *client.HistogramVec
 	mu                                                                                                      sync.Mutex
 	active                                                                                                  map[string]int
 	// sandboxLive counts live Runners per fuse_sandbox_active series, and
@@ -135,10 +141,13 @@ func New(cfg Config) (*Recorder, error) {
 	r.sandboxColdStart = client.NewHistogramVec(client.HistogramOpts{Name: "fuse_sandbox_cold_start_seconds", Help: "Cold-start latency of a newly spawned sandbox. Observed only on a cold spawn: a warm reuse has no start to measure.", Buckets: b}, []string{"tenant_id", "handler", "runtime"})
 	r.sandboxUnhealthy = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_unhealthy_total", Help: "Sandbox health transitions INTO unhealthy, by bounded reason (oom, runtime_exit, pull_failed, acquire_failed, unresponsive)."}, []string{"tenant_id", "handler", "reason"})
 	r.sandboxReaped = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_reaped_total", Help: "Execution contexts that stopped being held, by bounded cause (released, loop_end, early_return, idle_ttl, stale_checkout). idle_ttl is the leak signal; stale_checkout firing at all means a pool invariant was violated."}, []string{"tenant_id", "handler", "cause"})
+	r.sandboxQueued = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_exec_queued_total", Help: "Execs that waited past the note threshold for a free execution slot — the backpressure rate."}, []string{"tenant_id", "handler"})
+	r.sandboxQueueWait = client.NewHistogramVec(client.HistogramOpts{Name: "fuse_sandbox_queue_wait_seconds", Help: "Distribution of admission queue time. The high quantiles are the saturation signal.", Buckets: b}, []string{"tenant_id", "handler"})
+	r.sandboxRejected = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_rejected_total", Help: "Admission refusals by which bound refused (global, tenant) — the runaway signal and the alert target. Under correct configuration it should be zero."}, []string{"tenant_id", "handler", "scope"})
 	r.overflow = client.NewCounterVec(client.CounterOpts{Name: "fuse_metrics_label_overflow_total", Help: "Collapsed label observations."}, []string{"dimension", "metric"})
 	r.admitted = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_metrics_label_admitted_values", Help: "Admitted non-overflow label values."}, []string{"dimension"})
 	r.budget = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_metrics_label_budget", Help: "Configured label cardinality limit, including __overflow__."}, []string{"dimension"})
-	collectors := []client.Collector{r.loopTotal, r.loopDuration, r.loopActive, r.modelTotal, r.modelDuration, r.attempts, r.toolTotal, r.toolDuration, r.spawnTotal, r.spawnDuration, r.projectionTotal, r.projectionDuration, r.exportErrors, r.dropped, r.reopens, r.overrides, r.overflow, r.admitted, r.budget, r.decisions, r.classifierReplies, r.sandboxActive, r.sandboxAcquire, r.sandboxColdStart, r.sandboxUnhealthy, r.sandboxReaped}
+	collectors := []client.Collector{r.loopTotal, r.loopDuration, r.loopActive, r.modelTotal, r.modelDuration, r.attempts, r.toolTotal, r.toolDuration, r.spawnTotal, r.spawnDuration, r.projectionTotal, r.projectionDuration, r.exportErrors, r.dropped, r.reopens, r.overrides, r.overflow, r.admitted, r.budget, r.decisions, r.classifierReplies, r.sandboxActive, r.sandboxAcquire, r.sandboxColdStart, r.sandboxUnhealthy, r.sandboxReaped, r.sandboxQueued, r.sandboxQueueWait, r.sandboxRejected}
 	for _, c := range collectors {
 		if err := cfg.Registerer.Register(c); err != nil {
 			return nil, err
@@ -194,6 +203,10 @@ var (
 	sandboxRuntimes      = map[string]bool{"docker": true, "nerdctl": true, "podman": true}
 	sandboxCauses        = map[string]bool{"released": true, "loop_end": true, "early_return": true, "idle_ttl": true, "stale_checkout": true}
 	sandboxHealthReasons = map[string]bool{"oom": true, "runtime_exit": true, "pull_failed": true, "acquire_failed": true, "unresponsive": true, "recovered": true}
+	// Admission label vocabularies (change 0077), closed at
+	// event.SandboxAdmissionPayload.
+	sandboxAdmissionOutcomes = map[string]bool{"queued": true, "refused": true}
+	sandboxAdmissionScopes   = map[string]bool{"global": true, "tenant": true}
 )
 
 // sandboxRuntimeNone is the explicit label for a handler that has no container
@@ -254,6 +267,20 @@ func (r *Recorder) recordSandbox(rec observe.Record) {
 		// the outcome avoids re-deriving health from the reason enum here.
 		if rec.Outcome == observe.OutcomeError {
 			r.sandboxUnhealthy.WithLabelValues(tenant, handler, boundedLabel(sandboxHealthReasons, rec.Reason)).Inc()
+		}
+	case "sandbox.admission":
+		// A queued admission ran (it waited, then executed): count it and observe
+		// its wait. A refused admission did not run: count the refusal by scope.
+		// The outcome is the projector's OutcomeSuccess/Error, but we key off the
+		// bounded AdmissionOutcome to pick the family, so an unrecognized value
+		// collapses rather than misroutes.
+		switch boundedLabel(sandboxAdmissionOutcomes, rec.AdmissionOutcome) {
+		case "queued":
+			r.sandboxQueued.WithLabelValues(tenant, handler).Inc()
+			r.sandboxQueueWait.WithLabelValues(tenant, handler).Observe(float64(rec.WaitMS) / 1000)
+		case "refused":
+			scope := boundedLabel(sandboxAdmissionScopes, rec.AdmissionScope)
+			r.sandboxRejected.WithLabelValues(tenant, handler, scope).Inc()
 		}
 	}
 }

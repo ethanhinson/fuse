@@ -71,6 +71,69 @@ func SandboxEventHooks(store event.EventStore, nodeID string) sandbox.PoolHooks 
 	}
 }
 
+// SandboxGateHooks bridges the admission gate's observer seam to a loop's event
+// stream (change 0077). It mirrors SandboxEventHooks exactly: the gate reports
+// notable admissions in bounded terms (sandbox.AdmissionInfo) and this is where
+// those become KindSandboxAdmission events. Keeping the translation here — not in
+// internal/tools/sandbox — is what stops the sandbox package from growing a
+// dependency on the event vocabulary.
+//
+// store is the LOOP'S OWN sink, already bound to that loop's StreamKey; nodeID is
+// the loop's root node. Both live in the envelope and are never duplicated into
+// the payload. A nil store yields inert hooks — the honest shape for a binding
+// with no per-loop event store (one-shot, shell, research-probe, mcp-server) —
+// so the gate stays live but emits into nothing rather than a NoopStore that
+// would make the wiring look active.
+//
+// NOTE the gate is PROCESS-scoped while the store is per-loop. The composition
+// root installs these hooks once per loop via Service.SetGateHooks wherever the
+// loop's EventStore is available; a process serving many loops through one
+// Service therefore attributes an admission to whichever loop's store was last
+// installed. That is an acceptable coarseness for a host-wide capacity signal:
+// the tenant is carried on the info and the metric is host-level, so the
+// operator-facing rate is correct even when a single event's loop attribution is
+// approximate.
+func SandboxGateHooks(store event.EventStore, nodeID string) sandbox.GateHooks {
+	if store == nil {
+		return sandbox.GateHooks{}
+	}
+	emit := func(outcome string, i sandbox.AdmissionInfo) {
+		payload := event.SandboxAdmissionPayload{
+			Handler: i.Handler,
+			Outcome: outcome,
+			Scope:   sandboxAdmissionScope(i.Scope),
+		}
+		// wait_ms is present only when there was a wait — a refusal is immediate,
+		// and a zero would read as an impossibly fast queue in the histogram.
+		if i.Waited > 0 {
+			payload.WaitMS = i.Waited.Milliseconds()
+		}
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return
+		}
+		_ = store.Append(event.Event{NodeID: nodeID, Kind: event.KindSandboxAdmission, Payload: raw})
+	}
+	return sandbox.GateHooks{
+		Queued:  func(i sandbox.AdmissionInfo) { emit(event.SandboxAdmissionQueued, i) },
+		Refused: func(i sandbox.AdmissionInfo) { emit(event.SandboxAdmissionRefused, i) },
+	}
+}
+
+// sandboxAdmissionScope maps the gate's closed scope enum onto the wire string.
+// An unrecognised scope becomes "" rather than passing through: it ends up as a
+// metric label, and an unbounded label is how a closed enum stops being closed.
+func sandboxAdmissionScope(s sandbox.AdmissionScope) string {
+	switch s {
+	case sandbox.ScopeGlobal:
+		return "global"
+	case sandbox.ScopeTenant:
+		return "tenant"
+	default:
+		return ""
+	}
+}
+
 // sandboxCause maps the pool's closed enum onto the event package's closed
 // enum. The two cannot reference each other (sandbox is the leaf), so they are
 // kept in lockstep by an exhaustive switch here plus event_test.go's pinning.

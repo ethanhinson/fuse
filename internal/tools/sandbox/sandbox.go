@@ -15,6 +15,7 @@ package sandbox
 
 import (
 	"context"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/loopauth"
 )
@@ -55,6 +56,12 @@ type Output struct {
 	Combined []byte
 	ExitCode int
 	TimedOut bool
+
+	// Waited is how long this Exec spent in the admission queue before a slot
+	// freed (change 0077). Zero on the uncontended path. It is a FACT about
+	// scheduling, not output: rendering it for a model is the caller's decision,
+	// it is never part of Combined, and it never enters an event payload.
+	Waited time.Duration
 }
 
 // Env is the complete, explicit environment a command may observe.

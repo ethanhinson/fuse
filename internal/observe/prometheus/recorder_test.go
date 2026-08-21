@@ -44,7 +44,8 @@ func TestCatalogLabelsAreExactAndSafe(t *testing.T) {
 			t.Fatalf("%q not forbidden", bad)
 		}
 	}
-	if len(Catalog()) != 26 {
+	// 26 (change 0063) + 3 admission families (change 0077).
+	if len(Catalog()) != 29 {
 		t.Fatalf("catalog size=%d", len(Catalog()))
 	}
 }

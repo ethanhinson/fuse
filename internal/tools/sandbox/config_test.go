@@ -448,3 +448,220 @@ func TestDefaultConfigIsContained(t *testing.T) {
 		t.Errorf("default config is not empty: %+v", cfg)
 	}
 }
+
+// --- limits & concurrency (change 0077) --------------------------------------
+
+// derefI64 and derefDur unwrap the presence-carrying pointers for assertions.
+func derefI64(t *testing.T, p *int64, field string) int64 {
+	t.Helper()
+	if p == nil {
+		t.Fatalf("%s: unset, want a value", field)
+	}
+	return *p
+}
+
+func TestLoadConfigLimitsAndConcurrencyParse(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+contained: true
+limits:
+  memory: 2g
+  cpus: "2.0"
+  pids: 512
+  nofile: 4096
+  fsize: 1g
+  pull_timeout: 2m
+concurrency:
+  max_inflight: 64
+  max_inflight_per_tenant: 16
+  max_queued: 256
+  note_threshold: 2s
+`)
+
+	cfg, warns := LoadConfig(root)
+
+	if len(warns) != 0 {
+		t.Fatalf("warnings = %v, want none for a well-formed file", warns)
+	}
+	if got := derefI64(t, cfg.Limits.MemoryBytes, "memory"); got != 2<<30 {
+		t.Errorf("memory = %d, want %d", got, 2<<30)
+	}
+	if cfg.Limits.CPUs == nil || *cfg.Limits.CPUs != "2.0" {
+		t.Errorf("cpus = %v, want \"2.0\"", cfg.Limits.CPUs)
+	}
+	if got := derefI64(t, cfg.Limits.Pids, "pids"); got != 512 {
+		t.Errorf("pids = %d, want 512", got)
+	}
+	if got := derefI64(t, cfg.Limits.NoFile, "nofile"); got != 4096 {
+		t.Errorf("nofile = %d, want 4096", got)
+	}
+	if got := derefI64(t, cfg.Limits.FsizeBytes, "fsize"); got != 1<<30 {
+		t.Errorf("fsize = %d, want %d", got, 1<<30)
+	}
+	if cfg.Limits.PullTimeout == nil || *cfg.Limits.PullTimeout != 2*time.Minute {
+		t.Errorf("pull_timeout = %v, want 2m", cfg.Limits.PullTimeout)
+	}
+	if got := derefI64(t, cfg.Concurrency.MaxInflight, "max_inflight"); got != 64 {
+		t.Errorf("max_inflight = %d, want 64", got)
+	}
+	if got := derefI64(t, cfg.Concurrency.MaxInflightPerTenant, "max_inflight_per_tenant"); got != 16 {
+		t.Errorf("max_inflight_per_tenant = %d, want 16", got)
+	}
+	if got := derefI64(t, cfg.Concurrency.MaxQueued, "max_queued"); got != 256 {
+		t.Errorf("max_queued = %d, want 256", got)
+	}
+	if cfg.Concurrency.NoteThreshold == nil || *cfg.Concurrency.NoteThreshold != 2*time.Second {
+		t.Errorf("note_threshold = %v, want 2s", cfg.Concurrency.NoteThreshold)
+	}
+}
+
+// An absent block leaves every field unset, so NewService's posture defaults
+// (not a zero cap) decide the outcome.
+func TestLoadConfigNoLimitsLeavesEverythingUnset(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, "contained: true\n")
+
+	cfg, warns := LoadConfig(root)
+
+	if len(warns) != 0 {
+		t.Fatalf("warnings = %v, want none", warns)
+	}
+	if cfg.Limits != (Limits{}) {
+		t.Errorf("Limits = %+v, want zero (all unset)", cfg.Limits)
+	}
+	if cfg.Concurrency != (Concurrency{}) {
+		t.Errorf("Concurrency = %+v, want zero (all unset)", cfg.Concurrency)
+	}
+}
+
+// A malformed or non-positive value degrades to unset with the new WarnReason,
+// and the Config stays directly usable — never a zero cap.
+func TestLoadConfigBadLimitDegradesToUnset(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"unparsable memory", "limits:\n  memory: two-gigs\n"},
+		{"non-positive pids", "limits:\n  pids: 0\n"},
+		{"negative nofile", "limits:\n  nofile: -1\n"},
+		{"unparsable cpus", "limits:\n  cpus: \"lots\"\n"},
+		{"bad pull_timeout", "limits:\n  pull_timeout: soon\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, "contained: true\n"+tc.body)
+
+			cfg, warns := LoadConfig(root)
+
+			if !hasWarning(warns, WarnBadLimit) {
+				t.Errorf("warnings = %v, want a %q", warns, WarnBadLimit)
+			}
+			assertContained(t, cfg) // still usable, still safe
+			if cfg.Limits != (Limits{}) {
+				t.Errorf("Limits = %+v, want zero after a bad value", cfg.Limits)
+			}
+		})
+	}
+}
+
+func TestLoadConfigBadConcurrencyDegradesToUnset(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"zero backstop", "concurrency:\n  max_inflight: 0\n"},
+		{"negative per-tenant", "concurrency:\n  max_inflight_per_tenant: -3\n"},
+		{"bad note_threshold", "concurrency:\n  note_threshold: whenever\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, "contained: true\n"+tc.body)
+
+			cfg, warns := LoadConfig(root)
+
+			if !hasWarning(warns, WarnBadConcurrency) {
+				t.Errorf("warnings = %v, want a %q", warns, WarnBadConcurrency)
+			}
+			if cfg.Concurrency != (Concurrency{}) {
+				t.Errorf("Concurrency = %+v, want zero after a bad value", cfg.Concurrency)
+			}
+		})
+	}
+}
+
+// An explicit zero is distinguishable from absent: it parses as a rejected value
+// (a cap of zero is not a cap) and degrades to unset — but the point is that the
+// loader SEES it and warns, rather than silently reading absent.
+func TestLoadConfigExplicitZeroIsSeen(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, "concurrency:\n  max_queued: 0\n")
+
+	_, warns := LoadConfig(root)
+
+	if !hasWarning(warns, WarnBadConcurrency) {
+		t.Errorf("an explicit zero was not seen: warns = %v", warns)
+	}
+}
+
+// An unrecognised key inside the new blocks still trips KnownFields(true) and
+// discards the whole file toward the safe default.
+func TestLoadConfigUnknownKeyInLimitsIsMalformed(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, "limits:\n  memroy: 2g\n")
+
+	cfg, warns := LoadConfig(root)
+
+	if !hasWarning(warns, WarnMalformed) {
+		t.Errorf("warnings = %v, want %q for an unknown key", warns, WarnMalformed)
+	}
+	assertContained(t, cfg)
+}
+
+func TestParseBytes(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int64
+		ok   bool
+	}{
+		{"2g", 2 << 30, true},
+		{"512m", 512 << 20, true},
+		{"1k", 1 << 10, true},
+		{"1048576", 1048576, true},
+		{"2G", 2 << 30, true},
+		{"  4g  ", 4 << 30, true},
+		{"0", 0, false},
+		{"-1", 0, false},
+		{"nonsense", 0, false},
+		{"", 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := parseBytes(tc.in)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Errorf("parseBytes(%q) = (%d, %v), want (%d, %v)", tc.in, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestParseCPUsCanonicalises(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{"2", "2.0", true},
+		{"2.0", "2.0", true},
+		{"0.5", "0.5", true},
+		{"1.500", "1.5", true},
+		{"0", "", false},
+		{"-1", "", false},
+		{"lots", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := parseCPUs(tc.in)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Errorf("parseCPUs(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.ok)
+		}
+	}
+}

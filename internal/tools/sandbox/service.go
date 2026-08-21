@@ -76,6 +76,13 @@ type Service struct {
 	// real process environment. This is the env-SCRUB seam — what a command may
 	// OBSERVE — and has nothing to do with the off-switch, which is file-only.
 	lookup func(string) (string, bool)
+
+	// gate is the process-scoped admission control on concurrent in-flight
+	// Execs (change 0077). It lives HERE, on the process-scoped Service, and not
+	// on the per-loop Pool: a per-loop gate would give every loop its own full
+	// budget and bound the host by nothing. It is non-nil after construction and
+	// is safe for concurrent use.
+	gate *Gate
 }
 
 // serviceOptions are the knobs NewService accepts. They are a separate struct
@@ -202,13 +209,32 @@ func NewService(cfg Config, opts ...ServiceOption) (*Service, error) {
 		cfg.IdleTTL = DefaultIdleTTL
 	}
 
+	// Fill every unset limit/concurrency field with its posture-appropriate
+	// default. This is where the fail-safe posture decision is made — the caps
+	// split hosted vs local, the concurrency backstop and pull timeout do not —
+	// because o.hosted is known HERE and not in the (deliberately posture-free)
+	// loader. cfg is a value, so the resolved caps become part of the frozen
+	// Service config and reach the container handler below.
+	cfg.resolveDefaults(o.hosted)
+
+	// The container handler needs the resolved caps at construction — like the
+	// mount root, they are settled once, before any model runs, with no method
+	// that can change them afterwards. Appended after withTrustedRoot so caps and
+	// root arrive together as trusted construction facts.
+	o.containerOpts = append(o.containerOpts, withLimits(cfg.Limits))
+
 	s := &Service{
 		cfg:    cfg,
 		root:   o.root,
 		hosted: o.hosted,
 		lookup: o.lookup,
+		gate:   newGate(cfg.Concurrency),
 	}
 	s.handler, s.refusal = selectHandler(cfg, o)
+	// Stamp the selected substrate's bounded id onto the gate so a queued/refused
+	// event names the handler that was full. Safe even on the refusal path
+	// (HandlerName is "" then, and no Exec — hence no Admit — ever runs).
+	s.gate.withHandlerName(s.HandlerName())
 	return s, nil
 }
 
@@ -378,6 +404,39 @@ func (s *Service) Runtime() string {
 // IdleTTL is the warm-pool reaper's idle backstop from the resolved config. It
 // is always positive.
 func (s *Service) IdleTTL() time.Duration { return s.cfg.IdleTTL }
+
+// gate returns the process-scoped admission gate (change 0077). It satisfies the
+// unexported PoolSource accessor, so a Pool built over this Service admits every
+// Exec through the ONE host-wide gate rather than a per-loop one. Never nil after
+// construction.
+func (s *Service) gateFor() *Gate { return s.gate }
+
+// NoteThreshold is the wait at or above which the model-visible backpressure
+// note is attached, from the resolved config. Always positive.
+func (s *Service) NoteThreshold() time.Duration {
+	return durationOr(s.cfg.Concurrency.NoteThreshold, DefaultNoteThreshold)
+}
+
+// SetGateHooks installs the admission-emission observer on this Service's gate.
+// It is called ONCE at the composition root, wherever the loop's EventStore is
+// available, before the Service is used concurrently — mirroring how
+// SandboxEventHooks is installed on the pool. A binding with no per-loop store
+// installs nothing and the gate stays inert.
+//
+// A nil *Service is tolerated: NewBash(nil) is an explicitly supported
+// fail-closed shape, and a composition root that wires the bash tool over a nil
+// Service (no substrate selected) must be able to call this unconditionally, just
+// as it can call NewBash(nil). A nil Service has no gate, so this is a no-op.
+func (s *Service) SetGateHooks(h GateHooks) {
+	if s == nil || s.gate == nil {
+		return
+	}
+	s.gate.setHooks(h)
+}
+
+// Limits reports the resolved per-container cgroup caps, for diagnostics and for
+// the composition root to log. The values are frozen at construction.
+func (s *Service) Limits() Limits { return s.cfg.Limits }
 
 // Warnings returns the diagnostics from the config load. The composition root
 // MUST log them: they are how an operator learns their off-switch file was not

@@ -160,12 +160,46 @@ func TestProjectSandboxHealthLiftsReason(t *testing.T) {
 // payload arrives carrying fields the projection does not know — an unbounded
 // command, env, or error text that must never reach durable telemetry — nothing
 // beyond the bounded set crosses into the marshalled Record.
+// The admission kind projects to OperationSandbox with OutcomeSuccess for a
+// queued admission (the command ran) and OutcomeError for a refused one (change
+// 0077), and lifts the bounded outcome/scope/wait fields.
+func TestProjectSandboxAdmissionClassifyAndLift(t *testing.T) {
+	key := event.StreamKey{Tenant: "acme", Loop: "loop-1"}
+
+	q := ProjectEvent(key, sandboxEvent(t, event.KindSandboxAdmission, event.SandboxAdmissionPayload{
+		Handler: "container", Outcome: "queued", Scope: "tenant", WaitMS: 4200,
+	}))
+	if q.Operation != OperationSandbox || q.Outcome != OutcomeSuccess {
+		t.Errorf("queued: op=%v outcome=%v, want sandbox/success", q.Operation, q.Outcome)
+	}
+	if q.AdmissionOutcome != "queued" || q.AdmissionScope != "tenant" || q.WaitMS != 4200 {
+		t.Errorf("queued fields = %+v", q)
+	}
+	if q.Handler != "container" {
+		t.Errorf("handler = %q, want container", q.Handler)
+	}
+
+	r := ProjectEvent(key, sandboxEvent(t, event.KindSandboxAdmission, event.SandboxAdmissionPayload{
+		Handler: "container", Outcome: "refused", Scope: "global",
+	}))
+	if r.Operation != OperationSandbox || r.Outcome != OutcomeError {
+		t.Errorf("refused: op=%v outcome=%v, want sandbox/error", r.Operation, r.Outcome)
+	}
+	if r.AdmissionOutcome != "refused" || r.AdmissionScope != "global" {
+		t.Errorf("refused fields = %+v", r)
+	}
+	// A refusal is immediate: no wait projected.
+	if r.WaitMS != 0 {
+		t.Errorf("refused WaitMS = %d, want 0", r.WaitMS)
+	}
+}
+
 func TestProjectSandboxRetainsNoRawPayload(t *testing.T) {
 	key := event.StreamKey{Tenant: "acme", Loop: "loop-1"}
 	hostile := []byte(`{"handler":"container","runtime":"docker","container_id":"abc123",` +
 		`"cause":"idle_ttl","reason":"oom","command":"SECRET command","env":{"TOKEN":"SECRET value"},` +
 		`"error":"SECRET error text"}`)
-	for _, kind := range []event.Kind{event.KindSandboxAcquire, event.KindSandboxRelease, event.KindSandboxReap, event.KindSandboxHealth} {
+	for _, kind := range []event.Kind{event.KindSandboxAcquire, event.KindSandboxRelease, event.KindSandboxReap, event.KindSandboxHealth, event.KindSandboxAdmission} {
 		rec := ProjectEvent(key, event.Event{TS: time.Now(), Kind: kind, NodeID: "n1", Seq: 7, Payload: hostile})
 		raw, err := json.Marshal(rec)
 		if err != nil {

@@ -338,6 +338,12 @@ var sandboxDashboardPanels = map[string]string{
 	"Cold-start latency heatmap":          "fuse_sandbox_cold_start_seconds_bucket",
 	"Unhealthy by reason":                 "fuse_sandbox_unhealthy_total",
 	"Reap rate by cause":                  "fuse_sandbox_reaped_total",
+	// Admission panels (change 0077): the backpressure rate, the queue-wait
+	// distribution, and the capacity-rejection rate that the FuseSandboxAtCapacity
+	// alert watches.
+	"Exec queued rate":             "fuse_sandbox_exec_queued_total",
+	"Queue wait heatmap":           "fuse_sandbox_queue_wait_seconds_bucket",
+	"Capacity rejections by scope": "fuse_sandbox_rejected_total",
 }
 
 func validateDashboard(board dashboard, expected map[string]string, registered map[string]bool, provisioned map[string]string) error {

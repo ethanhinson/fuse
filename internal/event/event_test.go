@@ -32,6 +32,7 @@ func TestKindWireValues(t *testing.T) {
 		KindSandboxRelease:     "sandbox.release",
 		KindSandboxReap:        "sandbox.reap",
 		KindSandboxHealth:      "sandbox.health",
+		KindSandboxAdmission:   "sandbox.admission",
 	}
 	for k, want := range cases {
 		if string(k) != want {
@@ -141,6 +142,8 @@ func TestPayloadKindsRoundTrip(t *testing.T) {
 		SandboxReleasePayload{Handler: "container", ContainerID: "9f2c1a3b", Cause: "released"},
 		SandboxReleasePayload{Handler: "container", ContainerID: "9f2c1a3b", Cause: "stale_checkout"},
 		SandboxHealthPayload{Handler: "container", ContainerID: "9f2c1a3b", Healthy: false, Reason: "oom"},
+		SandboxAdmissionPayload{Handler: "container", Outcome: "queued", Scope: "tenant", WaitMS: 4200},
+		SandboxAdmissionPayload{Handler: "container", Outcome: "refused", Scope: "global"},
 	}
 	for i, p := range payloads {
 		raw, err := MarshalPayload(p)
@@ -181,6 +184,19 @@ func TestSandboxCauseWireValues(t *testing.T) {
 	}
 }
 
+// TestSandboxAdmissionOutcomeWireValues pins the admission outcome enum (change
+// 0077). These strings are the wire form of the gate's disposition and are a
+// projector/recorder label vocabulary; the sandbox package cannot import this
+// one, so they are pinned literally and kept in lockstep by hand.
+func TestSandboxAdmissionOutcomeWireValues(t *testing.T) {
+	if SandboxAdmissionQueued != "queued" {
+		t.Errorf("SandboxAdmissionQueued = %q, want queued", SandboxAdmissionQueued)
+	}
+	if SandboxAdmissionRefused != "refused" {
+		t.Errorf("SandboxAdmissionRefused = %q, want refused", SandboxAdmissionRefused)
+	}
+}
+
 // TestSandboxPayloadsArePayloadFree is a STRUCTURAL guard on the payload-free
 // discipline (change 0063): a sandbox event payload may carry only bounded
 // identity and closed-enum classification — never the command, its args, an env
@@ -206,6 +222,7 @@ func TestSandboxPayloadsArePayloadFree(t *testing.T) {
 		reflect.TypeOf(SandboxAcquirePayload{}),
 		reflect.TypeOf(SandboxReleasePayload{}),
 		reflect.TypeOf(SandboxHealthPayload{}),
+		reflect.TypeOf(SandboxAdmissionPayload{}),
 	}
 	norm := func(s string) string {
 		return strings.ToLower(strings.NewReplacer("_", "", "-", "", ",omitempty", "").Replace(s))

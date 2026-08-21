@@ -116,6 +116,7 @@ type fakeSource struct {
 	env      map[string]string
 	acquired []*fakeRunner
 	err      error
+	gate     *Gate
 }
 
 func newFakeSource(clock *fakeClock) *fakeSource {
@@ -123,8 +124,18 @@ func newFakeSource(clock *fakeClock) *fakeSource {
 		clock:     clock,
 		coldStart: 10 * time.Millisecond,
 		env:       map[string]string{"PATH": "/bin"},
+		// A gate with the built-in defaults: generous enough that pool tests
+		// exercising warm reuse and teardown never contend on it. Tests that
+		// want contention build their own Gate (admission_test.go).
+		gate: newGate(Concurrency{}),
 	}
 }
+
+func (s *fakeSource) gateFor() *Gate { return s.gate }
+
+// setGate swaps in a tighter gate so a composition test can force contention
+// between the pool and the admission gate.
+func (s *fakeSource) setGate(g *Gate) { s.gate = g }
 
 func (s *fakeSource) Acquire(_ context.Context, p loopauth.Principal) (Runner, error) {
 	s.mu.Lock()
