@@ -117,6 +117,14 @@ func (c *slashCompleter) View(width int) string {
 		end = len(c.visible)
 	}
 
+	// Width of the widest command portion across the WHOLE registry, so the
+	// gutter does not shift as the visible window scrolls. Measured in display
+	// cells against unstyled text.
+	maxCmd := 0
+	if c.reg != nil {
+		maxCmd = c.reg.MaxCommandWidth()
+	}
+
 	var b strings.Builder
 	for i := c.offset; i < end; i++ {
 		e := c.visible[i]
@@ -125,36 +133,42 @@ func (c *slashCompleter) View(width int) string {
 			cursor = "▸ "
 		}
 
-		// Build the label: command + optional syntax
-		label := e.Command
+		// Measure the plain command portion, then style it. Never measure a
+		// styled string: the escape sequences are not display cells.
+		plain := e.Command
+		if e.Syntax != "" {
+			plain += " " + e.Syntax
+		}
+		pad := maxCmd - lipgloss.Width(plain)
+		if pad < 0 {
+			pad = 0
+		}
+
+		// One label construction for both the selected and normal rows, so the
+		// pad can never be applied to only one of them.
+		head := cursor + e.Command
+		if i == c.cursor {
+			head = completerSelectedStyle.Render(head)
+		}
+		label := head
 		if e.Syntax != "" {
 			label += " " + completerSyntaxStyle.Render(e.Syntax)
 		}
+		label += strings.Repeat(" ", pad)
 
-		// Kind tag right-aligned in fixed column
+		// Kind tag left-aligned in a fixed column
 		tag := e.KindTag()
 		paddedTag := fmt.Sprintf("%-*s", kindTagWidth, tag)
 
-		// Description truncated to remaining width
-		used := len(cursor) + len(e.Command) + 2 + kindTagWidth + 2
+		// Description truncated to the remaining cells.
+		used := lipgloss.Width(cursor) + maxCmd + 2 + kindTagWidth + 2
 		descWidth := width - used
-		desc := e.Description
-		if descWidth > 0 && len(desc) > descWidth {
-			desc = desc[:descWidth-1] + "…"
+		desc := ""
+		if descWidth > 0 {
+			desc = truncateCells(e.Description, descWidth)
 		}
 
-		line := cursor + label + "  " + completerKindStyle.Render(paddedTag) + "  " + desc
-		if i == c.cursor {
-			line = completerSelectedStyle.Render(cursor+e.Command) +
-				(func() string {
-					if e.Syntax != "" {
-						return " " + completerSyntaxStyle.Render(e.Syntax)
-					}
-					return ""
-				})() +
-				"  " + completerKindStyle.Render(paddedTag) + "  " + desc
-		}
-		b.WriteString(line)
+		b.WriteString(label + "  " + completerKindStyle.Render(paddedTag) + "  " + desc)
 		b.WriteByte('\n')
 	}
 
