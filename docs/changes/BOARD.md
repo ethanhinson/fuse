@@ -1,12 +1,6 @@
 # Backlog
 
-**78 changes** — 🟢 1 in progress · 🟡 5 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 63 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0078](active/0078-slash-command-models-listing.md) | /models slash command + slash-menu column alignment | `medium` | `feat` | [spec](../superpowers/specs/2026-08-20-slash-command-models-listing-design.md) | `feat/slash-command-models-listing` |
+**78 changes** — 🟡 5 proposed · ⚪ 2 deferred · 🔵 2 implemented · ✅ 63 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
@@ -25,11 +19,12 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
+## 🔵 Implemented — awaiting merge (2)
 
 | # | Title | Priority | Type | PR | Readiness |
 |---|-------|----------|------|----|-----------|
 | [0077](active/0077-sandbox-resource-limits-concurrency-ceiling.md) | sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs | `high` | `feat` | [#80](https://github.com/ethanhinson/fuse/pull/80) |  |
+| [0078](active/0078-slash-command-models-listing.md) | /models slash command + slash-menu column alignment | `medium` | `feat` | [#82](https://github.com/ethanhinson/fuse/pull/82) |  |
 
 ```mermaid
 graph TD
