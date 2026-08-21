@@ -959,6 +959,11 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.verbose = !m.verbose
 		m.appendLine(fmt.Sprintf("verbose = %v", m.verbose))
 		return m, nil
+	case "/models":
+		for _, l := range renderModelsListing(m.reg, m.alias) {
+			m.appendLine(l)
+		}
+		return m, nil
 	case "/model":
 		if len(fields) < 2 {
 			m.appendLine("usage: /model NAME")

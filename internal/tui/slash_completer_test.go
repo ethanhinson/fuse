@@ -443,3 +443,27 @@ func TestSlashCompleterViewMultibyteDescription(t *testing.T) {
 		t.Errorf("truncated description should end in an ellipsis, got %q", row)
 	}
 }
+
+// TestSlashCompleterPrefixCoexistenceModelAndModels asserts typing `/model`
+// lists BOTH `/model` and `/models` — the shared prefix is not a collision,
+// both commands are distinct and both should be visible.
+func TestSlashCompleterPrefixCoexistenceModelAndModels(t *testing.T) {
+	reg := NewSlashRegistry(NewBuiltinProvider())
+	defer reg.Close()
+
+	c := newSlashCompleter(reg)
+	c.activate("/model")
+
+	var sawModel, sawModels bool
+	for _, e := range c.visible {
+		switch e.Command {
+		case "/model":
+			sawModel = true
+		case "/models":
+			sawModels = true
+		}
+	}
+	if !sawModel || !sawModels {
+		t.Errorf("typing /model should list both /model and /models; visible = %v", c.visible)
+	}
+}
