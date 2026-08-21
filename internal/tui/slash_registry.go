@@ -16,8 +16,14 @@ type SlashRegistry struct {
 	providers []CommandProvider
 	mu        sync.RWMutex
 	cached    []SlashEntry
-	reload    chan struct{}
-	done      chan struct{}
+	// cachedMaxWidth is the widest commandWidth across cached, memoized
+	// because slashCompleter.View asks for it on every keystroke while the
+	// overlay is open and an MCP server can push hundreds of entries. It is
+	// written only in the same critical section that replaces cached, so it
+	// can never be observed stale against the list it describes.
+	cachedMaxWidth int
+	reload         chan struct{}
+	done           chan struct{}
 }
 
 // NewSlashRegistry starts the fan-out goroutine and returns a ready registry.
@@ -80,14 +86,26 @@ func (r *SlashRegistry) fanout() {
 	}
 }
 
-// snapshot rebuilds the cached entry list from all providers.
+// snapshot rebuilds the cached entry list from all providers, along with the
+// memoized max command width. Both are published under one Lock: the width is
+// derived from this exact list, so splitting them would let a reader see a
+// width belonging to a different generation of entries.
 func (r *SlashRegistry) snapshot() {
 	var all []SlashEntry
 	for _, p := range r.providers {
 		all = append(all, p.Commands()...)
 	}
+	// Measured outside the lock — commandWidth is pure and takes no locks, but
+	// there is no reason to hold the write lock across the whole scan.
+	maxWidth := 0
+	for _, e := range all {
+		if w := commandWidth(e); w > maxWidth {
+			maxWidth = w
+		}
+	}
 	r.mu.Lock()
 	r.cached = all
+	r.cachedMaxWidth = maxWidth
 	r.mu.Unlock()
 }
 
@@ -102,14 +120,12 @@ func (r *SlashRegistry) All() []SlashEntry {
 
 // MaxCommandWidth returns the display-cell width of the widest command portion
 // (Command plus " "+Syntax when present) across every entry. 0 when empty.
+// Reads the value memoized by snapshot rather than rescanning: the completer
+// calls this on every keystroke, and All() would copy the whole entry list.
 func (r *SlashRegistry) MaxCommandWidth() int {
-	max := 0
-	for _, e := range r.All() {
-		if w := commandWidth(e); w > max {
-			max = w
-		}
-	}
-	return max
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.cachedMaxWidth
 }
 
 // Filter returns entries whose Command or Description contains f (case-insensitive).

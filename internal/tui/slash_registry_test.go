@@ -118,6 +118,48 @@ func TestSlashRegistryMaxCommandWidthSpansAllEntries(t *testing.T) {
 	}
 }
 
+// The max width must track the entry list across reloads, not just at
+// construction. A value memoized outside the critical section that replaces
+// r.cached survives a reload stale, which silently reintroduces the gutter
+// misalignment the width exists to prevent.
+func TestSlashRegistryMaxCommandWidthAfterReload(t *testing.T) {
+	narrow := SlashEntry{Command: "/a", Kind: KindSkill}
+	wide := SlashEntry{Command: "/a-much-wider-command", Kind: KindSkill}
+
+	fp := newFakeProvider([]SlashEntry{narrow})
+	reg := NewSlashRegistry(fp)
+	defer reg.Close()
+
+	if got, want := reg.MaxCommandWidth(), commandWidth(narrow); got != want {
+		t.Fatalf("initial MaxCommandWidth() = %d, want %d", got, want)
+	}
+
+	// Grow: a wider entry arrives on reload.
+	fp.push([]SlashEntry{narrow, wide})
+	waitForMaxCommandWidth(t, reg, commandWidth(wide))
+
+	// Shrink: the wide entry goes away again. A max that only ever grows is
+	// just as stale as one that never updates at all.
+	fp.push([]SlashEntry{narrow})
+	waitForMaxCommandWidth(t, reg, commandWidth(narrow))
+}
+
+// waitForMaxCommandWidth polls until the registry's max width reaches want,
+// covering the fan-out debounce, and fails with the last value it observed.
+func waitForMaxCommandWidth(t *testing.T, reg *SlashRegistry, want int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	got := reg.MaxCommandWidth()
+	for time.Now().Before(deadline) {
+		if got == want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+		got = reg.MaxCommandWidth()
+	}
+	t.Fatalf("MaxCommandWidth() = %d after reload, want %d", got, want)
+}
+
 func TestSlashRegistryFilterCaseInsensitive(t *testing.T) {
 	p := &staticProvider{entries: []SlashEntry{
 		{Command: "/code-review", Description: "Review code", Kind: KindSkill},
