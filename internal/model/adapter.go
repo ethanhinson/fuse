@@ -140,7 +140,11 @@ func (a *Adapter) WithTraceLabel(w io.Writer, label string) *Adapter {
 // wire types mirror the OpenAI-compatible JSON payloads.
 type wireMessage struct {
 	Role       string         `json:"role"`
-	Content    string         `json:"content,omitempty"`
+	// Content is deliberately NOT omitempty: OpenAI-compatible gateways
+	// (litellm) 400 on messages whose content field is absent — an empty
+	// tool result or a pure tool-call assistant turn must serialize as
+	// "content": "" rather than dropping the field.
+	Content    string         `json:"content"`
 	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	Name       string         `json:"name,omitempty"`
