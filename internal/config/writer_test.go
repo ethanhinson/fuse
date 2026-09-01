@@ -208,6 +208,189 @@ mcp_servers:
 	}
 }
 
+func TestSetModelRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	mc := ModelConfig{ID: "cloud/new-model", MaxTokens: 8192, ContextWindow: 131072, Persona: "coding"}
+	if err := SetModel("shiny", mc); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load after SetModel: %v", err)
+	}
+	got, ok := cfg.Models.Entries["shiny"]
+	if !ok {
+		t.Fatalf("alias 'shiny' not found; entries=%v", cfg.Models.Entries)
+	}
+	if got.ID != "cloud/new-model" || got.MaxTokens != 8192 || got.ContextWindow != 131072 || got.Persona != "coding" {
+		t.Errorf("round-tripped model = %+v, want %+v", got, mc)
+	}
+}
+
+func TestSetModelReplacesInPlace(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	if err := SetModel("m", ModelConfig{ID: "cloud/one", MaxTokens: 1}); err != nil {
+		t.Fatalf("first SetModel: %v", err)
+	}
+	if err := SetModel("m", ModelConfig{ID: "cloud/two", MaxTokens: 2}); err != nil {
+		t.Fatalf("replace SetModel: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Models.Entries["m"]; got.ID != "cloud/two" || got.MaxTokens != 2 {
+		t.Errorf("replaced model = %+v, want id=cloud/two max=2", got)
+	}
+	if len(cfg.Models.Entries) != 1 {
+		t.Errorf("want exactly 1 alias, got %d: %v", len(cfg.Models.Entries), cfg.Models.Entries)
+	}
+}
+
+func TestRemoveModel(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	for _, a := range []string{"alpha", "beta", "gamma"} {
+		if err := SetModel(a, ModelConfig{ID: "cloud/" + a, MaxTokens: 1}); err != nil {
+			t.Fatalf("set %s: %v", a, err)
+		}
+	}
+	if err := RemoveModel("beta"); err != nil {
+		t.Fatalf("RemoveModel: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := cfg.Models.Entries["beta"]; ok {
+		t.Error("beta should have been removed")
+	}
+	if len(cfg.Models.Entries) != 2 {
+		t.Errorf("want 2 aliases after remove, got %d", len(cfg.Models.Entries))
+	}
+}
+
+func TestRemoveModelNoop(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	// Remove from a config with no models block is a no-op.
+	if err := RemoveModel("nonexistent"); err != nil {
+		t.Errorf("RemoveModel on empty config: %v", err)
+	}
+}
+
+// TestSetModelPreservesDefaultAndOtherKeys is the data-loss regression for the
+// models writer: SetModel/RemoveModel must preserve models.default, sibling
+// aliases, and every unrelated key — mutating only the one alias's sub-map.
+func TestSetModelPreservesDefaultAndOtherKeys(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	cfgPath := filepath.Join(dir, ".fuse", "config.yml")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Real on-disk shape: `default` and alias sub-maps are siblings under models.
+	seed := `gateway:
+  url: http://gw.local
+  key: secret
+permissions:
+  mode: prompt-all
+models:
+  default: fast
+  fast:
+    id: cloud/fast
+    max_tokens: 4096
+  slow:
+    id: cloud/slow
+    max_tokens: 2048
+future_unknown_key:
+  nested: keep-me
+`
+	if err := os.WriteFile(cfgPath, []byte(seed), 0o644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	// Add a new alias and remove an existing one.
+	if err := SetModel("added", ModelConfig{ID: "cloud/added", MaxTokens: 16384, Persona: "research"}); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if err := RemoveModel("slow"); err != nil {
+		t.Fatalf("RemoveModel: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	// models.default and the untouched alias survive.
+	if cfg.Models.Default != "fast" {
+		t.Errorf("models.default lost: got %q, want fast", cfg.Models.Default)
+	}
+	if _, ok := cfg.Models.Entries["fast"]; !ok {
+		t.Error("sibling alias 'fast' dropped")
+	}
+	if _, ok := cfg.Models.Entries["slow"]; ok {
+		t.Error("'slow' should have been removed")
+	}
+	if got, ok := cfg.Models.Entries["added"]; !ok || got.ID != "cloud/added" {
+		t.Errorf("added alias missing or wrong: %+v ok=%v", got, ok)
+	}
+	// Unrelated keys survive.
+	if cfg.Permissions.Mode != "prompt-all" {
+		t.Errorf("permissions.mode lost: %q", cfg.Permissions.Mode)
+	}
+	if cfg.Gateway.Key != "secret" {
+		t.Errorf("gateway.key lost: %q", cfg.Gateway.Key)
+	}
+	// Unmodeled key survives at the document level.
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("reread: %v", err)
+	}
+	if !strings.Contains(string(raw), "future_unknown_key") || !strings.Contains(string(raw), "keep-me") {
+		t.Errorf("unmodeled key dropped; file:\n%s", raw)
+	}
+}
+
+// TestSetModelCreatesMissingModelsBlock: writing an alias into a config that has
+// no models block at all must synthesize the block rather than error.
+func TestSetModelCreatesMissingModelsBlock(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	cfgPath := filepath.Join(dir, ".fuse", "config.yml")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("permissions:\n  mode: smart\n"), 0o644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	if err := SetModel("first", ModelConfig{ID: "cloud/first", MaxTokens: 1024}); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, ok := cfg.Models.Entries["first"]; !ok || got.ID != "cloud/first" {
+		t.Errorf("alias not written into synthesized models block: %+v ok=%v", got, ok)
+	}
+	if cfg.Permissions.Mode != "smart" {
+		t.Errorf("permissions.mode lost: %q", cfg.Permissions.Mode)
+	}
+}
+
 func TestWriteAtomic(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

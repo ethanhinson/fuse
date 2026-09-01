@@ -61,6 +61,60 @@ func Path() string {
 	return p
 }
 
+// SetModel inserts or replaces a single alias entry under the `models` mapping
+// in ~/.fuse/config.yml, preserving every other key — including models.default
+// and sibling aliases — verbatim. The write is atomic (temp + rename) so the
+// shell's fsnotify watcher sees one event.
+//
+// The `models` mapping is created if absent. Only the one alias's sub-map is
+// (re)written; operating on the YAML document rather than the typed Config
+// guarantees unmodelled or future keys round-trip unchanged.
+func SetModel(alias string, mc ModelConfig) error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	return updateDocument(path, func(root *yaml.Node) error {
+		models := ensureChildMapping(documentMapping(root), "models")
+		if models == nil {
+			return fmt.Errorf("config document is not a mapping")
+		}
+		var valNode yaml.Node
+		if err := valNode.Encode(mc); err != nil {
+			return fmt.Errorf("encode model %q: %w", alias, err)
+		}
+		if _, existing := findKey(models, alias); existing != nil {
+			*existing = valNode
+			return nil
+		}
+		keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: alias}
+		models.Content = append(models.Content, keyNode, &valNode)
+		return nil
+	})
+}
+
+// RemoveModel deletes a single alias entry from the `models` mapping in
+// ~/.fuse/config.yml, preserving every other key. No-op if the alias (or the
+// models mapping) is absent.
+func RemoveModel(alias string) error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	return updateDocument(path, func(root *yaml.Node) error {
+		mapping := documentMapping(root)
+		if mapping == nil {
+			return nil
+		}
+		_, models := findKey(mapping, "models")
+		if models == nil || models.Kind != yaml.MappingNode {
+			return nil
+		}
+		removeKey(models, alias)
+		return nil
+	})
+}
+
 // updateServers loads the config file as a YAML document, applies mutate to the
 // current mcp_servers list, splices the result back into the document (leaving
 // every other key untouched), and writes it atomically. When the file does not
@@ -90,24 +144,11 @@ func updateServers(path string, mutate func([]MCPServerConfig) []MCPServerConfig
 // together with the decoded mcp_servers list. A missing file yields an empty
 // mapping document and an empty list.
 func loadDocument(path string) (*yaml.Node, []MCPServerConfig, error) {
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return newMappingDocument(), nil, nil
-	}
+	root, err := loadDocumentNode(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read %s: %w", path, err)
+		return nil, nil, err
 	}
-
-	var root yaml.Node
-	if err := yaml.Unmarshal(data, &root); err != nil {
-		return nil, nil, fmt.Errorf("parse %s: %w", path, err)
-	}
-	// An empty file unmarshals to a zero node; treat it as an empty mapping.
-	if root.Kind == 0 {
-		return newMappingDocument(), nil, nil
-	}
-
-	mapping := documentMapping(&root)
+	mapping := documentMapping(root)
 	if mapping == nil {
 		return nil, nil, fmt.Errorf("parse %s: top-level YAML is not a mapping", path)
 	}
@@ -118,7 +159,77 @@ func loadDocument(path string) (*yaml.Node, []MCPServerConfig, error) {
 			return nil, nil, fmt.Errorf("parse %s: mcp_servers: %w", path, err)
 		}
 	}
-	return &root, servers, nil
+	return root, servers, nil
+}
+
+// loadDocumentNode reads path and returns the parsed document root. A missing
+// or empty file yields a fresh empty-mapping document, and a top level that is
+// not a mapping is an error — the shared parse path for every field writer.
+func loadDocumentNode(path string) (*yaml.Node, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return newMappingDocument(), nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	// An empty file unmarshals to a zero node; treat it as an empty mapping.
+	if root.Kind == 0 {
+		return newMappingDocument(), nil
+	}
+	if documentMapping(&root) == nil {
+		return nil, fmt.Errorf("parse %s: top-level YAML is not a mapping", path)
+	}
+	return &root, nil
+}
+
+// updateDocument loads path as a YAML document, applies mutate to the document
+// root (a DocumentNode wrapping a top-level mapping), and writes it back
+// atomically. mutate receives the document root; helpers like documentMapping
+// unwrap it. Every key mutate does not touch round-trips unchanged.
+func updateDocument(path string, mutate func(root *yaml.Node) error) error {
+	root, err := loadDocumentNode(path)
+	if err != nil {
+		return err
+	}
+	if err := mutate(root); err != nil {
+		return err
+	}
+	return writeDocumentAtomic(path, root)
+}
+
+// ensureChildMapping returns the mapping node stored under key in parent,
+// creating an empty mapping (and the key) if absent. Returns nil only when
+// parent itself is nil, or when key exists but its value is not a mapping.
+func ensureChildMapping(parent *yaml.Node, key string) *yaml.Node {
+	if parent == nil {
+		return nil
+	}
+	if _, val := findKey(parent, key); val != nil {
+		if val.Kind != yaml.MappingNode {
+			return nil
+		}
+		return val
+	}
+	child := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	keyNode := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
+	parent.Content = append(parent.Content, keyNode, child)
+	return child
+}
+
+// removeKey drops the key/value pair for key from a mapping node, if present.
+func removeKey(mapping *yaml.Node, key string) {
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			mapping.Content = append(mapping.Content[:i], mapping.Content[i+2:]...)
+			return
+		}
+	}
 }
 
 // setMCPServers encodes servers and replaces (or inserts) the mcp_servers key in

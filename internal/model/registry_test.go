@@ -89,3 +89,91 @@ func TestNamesSorted(t *testing.T) {
 		t.Fatalf("names = %v", got)
 	}
 }
+
+func TestEntriesSortedByAlias(t *testing.T) {
+	r := NewRegistry("b", map[string]ModelConfig{
+		"c": {ID: "x", MaxTokens: 3},
+		"a": {ID: "y", MaxTokens: 1},
+		"b": {ID: "z", MaxTokens: 2},
+	})
+	got := r.Entries()
+	if len(got) != 3 {
+		t.Fatalf("entries len = %d", len(got))
+	}
+	wantAlias := []string{"a", "b", "c"}
+	wantID := []string{"y", "z", "x"}
+	for i, nm := range got {
+		if nm.Alias != wantAlias[i] {
+			t.Errorf("entry %d alias = %q, want %q", i, nm.Alias, wantAlias[i])
+		}
+		if nm.Config.ID != wantID[i] {
+			t.Errorf("entry %d id = %q, want %q", i, nm.Config.ID, wantID[i])
+		}
+	}
+}
+
+func TestDefaultAliasAndHas(t *testing.T) {
+	r := NewRegistry("b", map[string]ModelConfig{"a": {ID: "y"}, "b": {ID: "z"}})
+	if r.DefaultAlias() != "b" {
+		t.Errorf("DefaultAlias = %q, want b", r.DefaultAlias())
+	}
+	if !r.Has("a") {
+		t.Error("Has(a) = false, want true")
+	}
+	if r.Has("nope") {
+		t.Error("Has(nope) = true, want false")
+	}
+}
+
+func TestSetInsertsAndReplaces(t *testing.T) {
+	r := NewRegistry("a", map[string]ModelConfig{"a": {ID: "y"}})
+	// Insert a new alias.
+	r.Set("new", ModelConfig{ID: "cloud/new", MaxTokens: 5, Persona: "coding"})
+	mc, err := r.Resolve("new")
+	if err != nil {
+		t.Fatalf("resolve new: %v", err)
+	}
+	if mc.ID != "cloud/new" || mc.MaxTokens != 5 {
+		t.Errorf("new = %+v", mc)
+	}
+	// Replace an existing alias.
+	r.Set("a", ModelConfig{ID: "cloud/replaced"})
+	mc, _ = r.Resolve("a")
+	if mc.ID != "cloud/replaced" {
+		t.Errorf("replaced a = %q, want cloud/replaced", mc.ID)
+	}
+}
+
+func TestSetOnNilEntriesMap(t *testing.T) {
+	// A registry built with an empty map still accepts Set.
+	r := NewRegistry("", nil)
+	r.Set("x", ModelConfig{ID: "cloud/x"})
+	if !r.Has("x") {
+		t.Fatal("Set did not register x")
+	}
+}
+
+func TestRemove(t *testing.T) {
+	r := NewRegistry("def", map[string]ModelConfig{
+		"def":   {ID: "cloud/def"},
+		"extra": {ID: "cloud/extra"},
+	})
+	// Removing a non-default alias succeeds.
+	if !r.Remove("extra") {
+		t.Error("Remove(extra) = false, want true")
+	}
+	if r.Has("extra") {
+		t.Error("extra still present after Remove")
+	}
+	// Removing an unknown alias reports false.
+	if r.Remove("nope") {
+		t.Error("Remove(nope) = true, want false")
+	}
+	// The default alias is protected.
+	if r.Remove("def") {
+		t.Error("Remove(def) = true, want false — default must be protected")
+	}
+	if !r.Has("def") {
+		t.Error("default was removed despite protection")
+	}
+}
