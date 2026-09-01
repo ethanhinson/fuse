@@ -54,6 +54,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0050](0050-opaque-operands-are-never-path-resolved.md) — Opaque operands are never resolved as filesystem paths for containment proofs (Accepted) ← change #70 · relates to ADR-0049
 - [ADR-0051](0051-network-none-reaches-its-proxy-by-mounted-socket-plus-supplied-forwarder.md) — A `--network none` container reaches its egress proxy through a bind-mounted UNIX socket plus a fuse-supplied loopback forwarder (Accepted) ← change #64 · relates to ADR-0044
 - [ADR-0052](0052-delegated-identity-on-bash-egress-is-forward-proxy-only.md) — Delegated identity on `bash` egress is forward-proxy only — a credentialed destination is reached in plaintext HTTP or refused, never tunnelled (Accepted) ← change #64 · relates to ADR-0036, ADR-0044, ADR-0051
+- [ADR-0053](0053-whole-file-config-discard-salvages-the-posture.md) — A whole-file config discard is fail-safe only while every dimension defaults to the safe side — adding a permissive default obliges the loader to salvage the posture (Accepted) ← change #64 · relates to ADR-0044
 
 ## Superseded / Reversed
 
