@@ -1,6 +1,6 @@
 # Backlog
 
-**81 changes** — 🟡 6 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 66 done · 🗑️ 6 killed
+**81 changes** — 🟡 6 proposed · ⚪ 2 deferred · ✅ 67 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (6)
 
@@ -20,17 +20,10 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0064](active/0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | `medium` | `feat` | [#84](https://github.com/ethanhinson/fuse/pull/84) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
   0052 --> 0057
-  0063 --> 0064
   0063 --> 0065
   0063 --> 0074
   0063 --> 0075
@@ -43,11 +36,12 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (72)</summary>
+<details><summary>✅🗑️ Archive — done + killed (73)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
 | [0079](archive/2026-09-01-0079-tui-models-management-ui.md) | TUI models management UI — argument autocomplete + interactive mapping editor | 2026-09-01 |
+| [0064](archive/2026-09-01-0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | 2026-09-01 |
 | [0078](archive/2026-08-21-0078-slash-command-models-listing.md) | /models slash command + slash-menu column alignment | 2026-08-21 |
 | [0077](archive/2026-08-21-0077-sandbox-resource-limits-concurrency-ceiling.md) | sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs | 2026-08-21 |
 | [0063](archive/2026-08-21-0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | 2026-08-21 |
@@ -61,7 +55,6 @@ graph TD
 | [0062](archive/2026-08-17-0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md) | Wander refresh-to-restore — light up #54 durable resume in the browser demo | 2026-08-17 |
 | [0066](archive/2026-08-16-0066-agents-tab-multiturn-turn-groups.md) | Agents tab & blackboard — turn-aware multiturn UI (collapsible turn groups + per-turn timing) | 2026-08-16 |
 | [0060](archive/2026-08-16-0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md) | Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app | 2026-08-16 |
-| [0058](archive/2026-08-16-0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | 2026-08-16 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -73,6 +66,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 51 done |
+| [2026-08](archive/) | 52 done |
 
 </details>
