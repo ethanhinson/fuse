@@ -12,14 +12,14 @@ related: [63, 65, 75, 77]
 discovered_from: [58]
 adrs: [44]
 spec: docs/superpowers/specs/2026-08-21-bash-egress-control-container-network-config-design.md
-plan:
+plan: docs/superpowers/plans/2026-09-01-bash-egress-control-container-network-config-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/bash-egress-control-container-network-config
 pr:
 blocked_by:
-claimed_at: 2026-09-01T04:03:53Z
+claimed_at: 2026-09-01T04:07:02Z
 reconciled: true
 ---
 
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-21-bash-egress-control-container-network-config-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-21-bash-egress-control-container-network-config-design.md) |
+| Plan | [2026-09-01-bash-egress-control-container-network-config-plan.md](https://github.com/ethanhinson/fuse/blob/feat/bash-egress-control-container-network-config/docs/superpowers/plans/2026-09-01-bash-egress-control-container-network-config-plan.md) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
