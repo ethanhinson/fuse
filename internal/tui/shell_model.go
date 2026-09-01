@@ -210,8 +210,9 @@ type ShellModel struct {
 	segmentsDir   string            // session segments/ dir for the /agents indicator + "s" (0030)
 	humanBus      *agent.HumanBus   // per-node human-message queues (ADR-0022)
 	handleReg     *agent.HandleRegistry
-	router        agent.RouterLLM // async advisory classifier; nil ⇒ default routing only
-	queue         *queueState     // non-nil while the /queue editor is open
+	router        agent.RouterLLM  // async advisory classifier; nil ⇒ default routing only
+	queue         *queueState      // non-nil while the /queue editor is open
+	modelsEdit    *modelsEditState // non-nil while the /models edit editor is open
 	agentsActive  bool
 	agentsModel   *AgentsModel
 	overlayGen    int // increments per overlay entry; stale overlay ticks are dropped
@@ -281,6 +282,9 @@ func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.R
 	var completer *slashCompleter
 	if slashReg != nil {
 		completer = newSlashCompleter(slashReg)
+		if reg != nil {
+			completer.withModelArg(modelAliasCompletions(reg))
+		}
 	}
 
 	m := ShellModel{
@@ -705,6 +709,12 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return model, cmd
 		}
 	}
+	// The /models edit editor likewise owns the keyboard while open.
+	if m.modelsEdit != nil {
+		if handled, model, cmd := m.handleModelsEditorKey(msg); handled {
+			return model, cmd
+		}
+	}
 	// While an approval is pending, intercept y/s/n/Esc before normal input.
 	if len(m.approvals) > 0 {
 		return m.handleApprovalKey(msg)
@@ -840,6 +850,24 @@ func (m ShellModel) handleCompleterKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		if len(m.completer.visible) == 0 || m.running {
 			return false, m, nil
 		}
+		// When the user has already typed arguments past the command in
+		// command-completion mode (e.g. "/models edit", "/model glm", "/mode
+		// auto"), the selected entry's expansion is just the bare command and
+		// would drop those arguments. Submit the raw typed input instead so the
+		// argument survives. Argument-completion mode is exempt: there the
+		// selected alias entry's expansion already carries the full command.
+		if !m.completer.argMode {
+			typed := strings.TrimSpace(m.input.Value())
+			if i := strings.IndexByte(typed, ' '); i > 0 && strings.HasPrefix(typed, "/") {
+				m.completer.deactivate()
+				m.input.Reset()
+				if !m.running {
+					next, cmd := m.handleSlash(typed)
+					return true, next, cmd
+				}
+				return true, m, nil
+			}
+		}
 		entry := m.completer.selected()
 		expansion := entry.Expansion()
 		m.completer.deactivate()
@@ -960,8 +988,12 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.appendLine(fmt.Sprintf("verbose = %v", m.verbose))
 		return m, nil
 	case "/models":
-		for _, l := range renderModelsListing(m.reg, m.alias) {
-			m.appendLine(l)
+		// `/models edit` opens the interactive editor; bare `/models` lists.
+		if len(fields) >= 2 && fields[1] == "edit" {
+			return m.openModelsEditor()
+		}
+		for _, line := range renderModelsListing(m.reg, m.alias) {
+			m.appendLine(line)
 		}
 		return m, nil
 	case "/model":
@@ -1772,6 +1804,8 @@ func (m ShellModel) View() string {
 		vpView = overlayAskOnView(vpView, m.asks[0], len(m.asks), width)
 	} else if m.queue != nil {
 		vpView = renderQueueOverlay(vpView, m.queue, width)
+	} else if m.modelsEdit != nil {
+		vpView = renderModelsEditorOverlay(vpView, m.modelsEdit, width)
 	}
 
 	var b strings.Builder

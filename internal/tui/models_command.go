@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -108,4 +109,77 @@ func padCells(s string, n int) string {
 		return s + strings.Repeat(" ", pad)
 	}
 	return s
+}
+
+// modelAliasCompletions returns a supplier of "/model <alias>" completion
+// entries filtered by prefix, reading the live registry each call so aliases
+// added through the editor appear without rebuilding the completer. Entries are
+// KindBuiltin so selection routes through the existing /model dispatch.
+func modelAliasCompletions(reg *model.Registry) func(prefix string) []SlashEntry {
+	return func(prefix string) []SlashEntry {
+		if reg == nil {
+			return nil
+		}
+		def := reg.DefaultAlias()
+		var out []SlashEntry
+		for _, e := range reg.Entries() {
+			if prefix != "" && !strings.HasPrefix(e.Alias, prefix) {
+				continue
+			}
+			alias := e.Alias // capture for the closure
+			desc := e.Config.ID
+			if e.Config.Persona != "" {
+				desc += "  ·  " + e.Config.Persona
+			}
+			if alias == def {
+				desc += "  (default)"
+			}
+			out = append(out, SlashEntry{
+				Command:     "/model " + alias,
+				Description: desc,
+				Kind:        KindBuiltin,
+				expand:      func() string { return "/model " + alias },
+			})
+		}
+		return out
+	}
+}
+
+// personaCell renders the persona column, substituting a dash for the empty
+// persona so the column never collapses.
+func personaCell(mc model.ModelConfig) string {
+	if mc.Persona == "" {
+		return "-"
+	}
+	return mc.Persona
+}
+
+// limitsCell renders the max-tokens / context-window column. A zero max-tokens
+// means "harness default"; a zero context window means the 128k harness
+// default, so both are shown as "default" rather than "0".
+func limitsCell(mc model.ModelConfig) string {
+	maxTok := "default"
+	if mc.MaxTokens > 0 {
+		maxTok = fmt.Sprintf("%d out", mc.MaxTokens)
+	}
+	ctx := "128k ctx"
+	if mc.ContextWindow > 0 {
+		ctx = fmt.Sprintf("%s ctx", humanTokens(mc.ContextWindow))
+	}
+	return maxTok + " · " + ctx
+}
+
+// humanTokens formats a context-window size compactly. Context windows are
+// conventionally powers of two, so it scales by 1024 (131072 -> "128k",
+// 1048576 -> "1m") to match how those sizes are named. Values under 1024 are
+// shown verbatim.
+func humanTokens(n int) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%dm", (n+(1<<19))>>20)
+	case n >= 1<<10:
+		return fmt.Sprintf("%dk", (n+(1<<9))>>10)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
 }

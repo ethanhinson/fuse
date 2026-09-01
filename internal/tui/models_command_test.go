@@ -206,3 +206,21 @@ func TestModelsListingSingleEntryRendersOneRow(t *testing.T) {
 		t.Fatalf("row %q should list glm", rows[0])
 	}
 }
+
+func TestLimitsCell(t *testing.T) {
+	if got := limitsCell(model.ModelConfig{MaxTokens: 0, ContextWindow: 0}); got != "default · 128k ctx" {
+		t.Errorf("zero limits = %q", got)
+	}
+	if got := limitsCell(model.ModelConfig{MaxTokens: 16384, ContextWindow: 131072}); got != "16384 out · 128k ctx" {
+		t.Errorf("full limits = %q", got)
+	}
+}
+
+func TestHumanTokens(t *testing.T) {
+	cases := map[int]string{131072: "128k", 200704: "196k", 8192: "8k", 1048576: "1m", 500: "500"}
+	for n, want := range cases {
+		if got := humanTokens(n); got != want {
+			t.Errorf("humanTokens(%d) = %q, want %q", n, got, want)
+		}
+	}
+}

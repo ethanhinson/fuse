@@ -980,6 +980,51 @@ func TestCompleterEnterDispatchesSkill(t *testing.T) {
 	}
 }
 
+// TestCompleterEnterPreservesTypedArgs is the regression for the bug where the
+// completer, active on a fully-typed builtin command with arguments (e.g.
+// "/models edit"), dispatched only the selected entry's bare expansion
+// ("/models") and dropped the argument — so "/models edit" opened the listing
+// instead of the editor. Enter must submit the raw typed input in that case.
+func TestCompleterEnterPreservesTypedArgs(t *testing.T) {
+	reg := NewSlashRegistry(NewBuiltinProvider())
+	defer reg.Close()
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+
+	// "/models edit" with the completer still active (input begins with '/').
+	m.input.SetValue("/models edit")
+	m.completer.activate("/models edit")
+	if !m.completer.active {
+		t.Fatal("completer should be active")
+	}
+
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(ShellModel)
+
+	// The editor must be open — proving the "edit" arg survived rather than
+	// being dropped down to a bare "/models" listing.
+	if m.modelsEdit == nil {
+		t.Error("'/models edit' via completer Enter should open the editor, not list")
+	}
+}
+
+// TestCompleterEnterModeArgPreserved guards the same fix for /mode, the other
+// arg-taking builtin, so a future change to the completer path can't silently
+// regress it.
+func TestCompleterEnterModeArgPreserved(t *testing.T) {
+	reg := NewSlashRegistry(NewBuiltinProvider())
+	defer reg.Close()
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), reg, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+
+	m.input.SetValue("/mode auto")
+	m.completer.activate("/mode auto")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(ShellModel)
+
+	if got := m.sessionMode.Get().String(); got != "auto" {
+		t.Errorf("mode = %q, want auto — the arg was dropped by the completer", got)
+	}
+}
+
 // TestRegistryReloadMsgRefreshesCompleter verifies that a registryReloadMsg
 // triggers a completer refresh.
 func TestRegistryReloadMsgRefreshesCompleter(t *testing.T) {

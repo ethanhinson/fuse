@@ -32,31 +32,78 @@ type slashCompleter struct {
 	cursor  int
 	active  bool
 	offset  int // scroll offset for >completerMaxRows items
+	// argModels, when set, supplies model-alias entries filtered by prefix. It
+	// is engaged when the input is "/model <prefix>" so the argument position
+	// completes aliases instead of commands.
+	argModels func(prefix string) []SlashEntry
+	// argMode records whether the current activation is completing an argument
+	// (aliases) rather than command names, so refresh routes to the right source.
+	argMode bool
 }
 
 func newSlashCompleter(reg *SlashRegistry) *slashCompleter {
 	return &slashCompleter{reg: reg}
 }
 
-// activate resets the completer state for a new '/' input session.
+// withModelArg installs the alias supplier used for "/model " argument
+// completion and returns the completer for chaining.
+func (c *slashCompleter) withModelArg(supplier func(prefix string) []SlashEntry) *slashCompleter {
+	c.argModels = supplier
+	return c
+}
+
+// activate resets the completer state for a new '/' input session. When the
+// input has advanced past "/model " into the argument, it switches to alias
+// completion; otherwise it completes command names as before.
 func (c *slashCompleter) activate(input string) {
 	c.active = true
-	c.filter = filterFrom(input)
+	if arg, ok := modelArgPrefix(input); ok && c.argModels != nil {
+		c.argMode = true
+		c.filter = arg
+	} else {
+		c.argMode = false
+		c.filter = filterFrom(input)
+	}
 	c.refresh()
+}
+
+// modelArgPrefix reports whether input is completing the argument of the
+// /model command, returning the (possibly empty) alias prefix typed so far.
+// It matches only when the command token is exactly "/model" followed by a
+// space, so "/models" and "/model" (no space yet) fall through to command
+// completion.
+func modelArgPrefix(input string) (string, bool) {
+	const cmd = "/model "
+	if !strings.HasPrefix(input, cmd) {
+		return "", false
+	}
+	arg := input[len(cmd):]
+	// A second space means the user has moved past the alias token; stop
+	// offering completions rather than matching against a multi-word filter.
+	if strings.Contains(arg, " ") {
+		return "", false
+	}
+	return arg, true
 }
 
 // deactivate hides the overlay.
 func (c *slashCompleter) deactivate() {
 	c.active = false
+	c.argMode = false
 	c.cursor = 0
 	c.offset = 0
 	c.filter = ""
 	c.visible = nil
 }
 
-// refresh re-queries the registry and resets cursor/offset when results change.
+// refresh re-queries the active source (aliases in argument mode, else the
+// command registry) and resets cursor/offset when results change.
 func (c *slashCompleter) refresh() {
-	c.visible = c.reg.Filter(c.filter)
+	if c.argMode && c.argModels != nil {
+		c.visible = c.argModels(c.filter)
+	} else {
+		c.visible = c.reg.Filter(c.filter)
+	}
 	if c.cursor >= len(c.visible) {
 		c.cursor = 0
 	}

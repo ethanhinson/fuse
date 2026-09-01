@@ -75,3 +75,51 @@ func (r *Registry) Names() []string {
 	sort.Strings(names)
 	return names
 }
+
+// Has reports whether an alias is registered.
+func (r *Registry) Has(alias string) bool {
+	_, ok := r.entries[alias]
+	return ok
+}
+
+// NamedModel pairs an alias with its resolved config for listing and editing.
+type NamedModel struct {
+	Alias  string
+	Config ModelConfig
+}
+
+// Entries returns every registered mapping as a slice sorted by alias, so
+// callers (the /models listing and the editor) can iterate without reaching
+// into the unexported map.
+func (r *Registry) Entries() []NamedModel {
+	out := make([]NamedModel, 0, len(r.entries))
+	for _, name := range r.Names() {
+		out = append(out, NamedModel{Alias: name, Config: r.entries[name]})
+	}
+	return out
+}
+
+// Set inserts or replaces the mapping for alias in place. The registry is
+// shared by pointer with the agent builder, so a Set takes effect for the
+// next agent constructed from this registry.
+func (r *Registry) Set(alias string, mc ModelConfig) {
+	if r.entries == nil {
+		r.entries = map[string]ModelConfig{}
+	}
+	r.entries[alias] = mc
+}
+
+// Remove deletes the mapping for alias, reporting whether it existed. The
+// default alias is never removed via this method: removing the model a
+// session is pointed at would leave the registry without a resolvable
+// default, so callers must repoint Default first.
+func (r *Registry) Remove(alias string) bool {
+	if alias == r.Default {
+		return false
+	}
+	if _, ok := r.entries[alias]; !ok {
+		return false
+	}
+	delete(r.entries, alias)
+	return true
+}
