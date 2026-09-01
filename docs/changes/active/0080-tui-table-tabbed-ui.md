@@ -2,7 +2,7 @@
 id: 80
 slug: tui-table-tabbed-ui
 title: Shared TUI table component + tabbed /config UI — line up the menus like Claude
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-09-01
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/tui-table-tabbed-ui
+claimed_at: 2026-09-01T23:46:08Z
 pr:
 blocked_by:
 reconciled: false
