@@ -94,6 +94,15 @@ var ErrProxyClosed = errors.New("sandbox: egress proxy is closed")
 // destination is recorded for the OPERATOR through the refusal hook; the client
 // is told only that policy denied it, because the client is the model's command
 // and a detailed refusal is a probe oracle.
+//
+// # How much it will do at once
+//
+// Being reachable from a shell the model wrote, the proxy is bounded on the
+// CONCURRENCY axis as well as the destination axis: a connection past the
+// ceiling is refused at accept, before a goroutine or an upstream socket exists
+// for it, and never queued. The ceiling is per-principal with a whole-process
+// backstop above it — see the proxyMaxConns* constants, which carry the
+// reasoning for the shape and the numbers.
 type Proxy struct {
 	// root is the fuse-owned 0700 directory holding every per-principal socket
 	// directory. The Proxy OWNS it: Close removes it.
@@ -106,6 +115,14 @@ type Proxy struct {
 	// a matched entry declaring an audience is refused rather than served
 	// without one.
 	credentials toolidentity.CredentialSource
+
+	// maxConnsPerPrincipal is the ceiling on LIVE client connections one
+	// principal's listener brokers at once, and connSlots is the proxy-wide
+	// backstop above it. See the proxyMaxConns* constants for why both exist and
+	// why they are built-in rather than configured.
+	maxConnsPerPrincipal int64
+	maxConns             int64
+	connSlots            *semaphore
 
 	mu        sync.Mutex
 	closed    bool
@@ -156,6 +173,19 @@ const (
 	// not be dialled. It is distinguished from a policy denial so an operator
 	// can tell a misconfiguration from a network fault.
 	RefusedUpstreamUnreachable RefusalReason = "upstream_unreachable"
+	// RefusedPrincipalConnLimit means THIS PRINCIPAL already has
+	// proxyMaxConnsPerPrincipal connections live on its listener. The connection
+	// is refused at accept, before a goroutine or an upstream socket exists for
+	// it, because the accepting side is the only place the cost can still be
+	// declined. This is the bound a runaway command actually hits.
+	RefusedPrincipalConnLimit RefusalReason = "principal_conn_limit"
+	// RefusedProxyConnLimit means the PROXY-WIDE backstop (proxyMaxConns) is
+	// full: every principal's live connections together have reached the host
+	// ceiling. It is distinct from RefusedPrincipalConnLimit for the same reason
+	// the admission gate separates ScopeGlobal from ScopeTenant — one says "this
+	// principal is running away", the other says "the host is", and an operator
+	// acts on them differently.
+	RefusedProxyConnLimit RefusalReason = "proxy_conn_limit"
 )
 
 // RefusalInfo describes one refused connection for the emission seam.
@@ -176,9 +206,12 @@ type RefusalInfo struct {
 // terms and leaving the decision to turn that into events to the composition
 // root.
 //
-// Hooks are invoked from the connection's own goroutine with no proxy lock
-// held. They must not block indefinitely: a hook that hangs stalls one
-// connection's teardown.
+// Hooks are invoked with no proxy lock held, ordinarily from the connection's
+// own goroutine. The ONE exception is a capacity refusal, which by construction
+// has no goroutine of its own and so fires on the LISTENER'S ACCEPT LOOP. A
+// hook that hangs therefore stalls not just one connection's teardown but that
+// principal's ability to accept at all — so a hook must not block, and must
+// certainly not do anything whose backpressure depends on the proxy.
 type ProxyHooks struct {
 	// Refused fires for every connection the proxy did not tunnel.
 	Refused func(RefusalInfo)
@@ -247,18 +280,94 @@ const (
 	// proxySocketName is the socket's leaf name. The unguessable component is
 	// the DIRECTORY above it, so the leaf can stay short and predictable.
 	proxySocketName = "egress.sock"
+
+	// proxyCapacityWriteTimeout bounds the 503 written to a connection refused
+	// for capacity. It is much shorter than proxyHeaderTimeout because that
+	// write happens ON THE ACCEPT LOOP: the whole point of refusing at accept is
+	// that no goroutine is spawned, so the refusal must not be able to park the
+	// loop the way a 30s deadline could. A hundred-odd bytes fit in an empty
+	// socket buffer, so in practice this deadline never fires; it is here so a
+	// pathological peer cannot convert a refusal into a stall.
+	proxyCapacityWriteTimeout = 2 * time.Second
 )
+
+// The connection ceilings. Every accepted connection is a host-side goroutine
+// and, on a match, a host-side upstream socket, and the client is a shell
+// command the MODEL wrote — `for i in $(seq 100000); do curl ... & done` is one
+// line. Without a ceiling the only bound is the container's pids/nofile limits
+// multiplied by the number of live containers, which is six figures of host FDs
+// and goroutines inside the fuse process.
+//
+// # Refused, never queued
+//
+// A connection over the ceiling is REFUSED at accept — 503, closed, recorded —
+// and never parked. The spec's reconcile note for this change is explicit that
+// the proxy lifecycle "must not introduce a second unbounded queue", and a
+// bound that makes callers wait instead of turning them away is that queue
+// wearing a different hat: the goroutine and the FD it was supposed to save are
+// still held.
+//
+// # Per-principal FIRST, host-wide as a backstop
+//
+// The enforcing bound is PER-PRINCIPAL, because the listener already is: one
+// principal cannot spend another's share, so a runaway command exhausts only
+// the tenant that ran it. A single shared ceiling would have made this fix into
+// a cross-principal denial-of-service lever — one loop's `curl` storm locking
+// every other tenant off the network — which is a worse bug than the one being
+// fixed.
+//
+// proxyMaxConns sits above that as a whole-process backstop on FD exhaustion,
+// which the per-principal bound alone cannot give while the number of live
+// principals is open-ended. It is deliberately EIGHT TIMES the per-principal
+// bound so it is not reachable by one principal, or two: hitting it takes eight
+// simultaneously saturated principals, i.e. a host-wide runaway rather than a
+// tenant-scoped one. That residual coupling is inherent to any aggregate bound;
+// the ratio is what keeps it a backstop instead of the operative limit.
+//
+// # Why constants rather than configuration
+//
+// These are process-integrity ceilings, not a capacity policy: the operator's
+// capacity knobs are the admission gate's (max_inflight = 64,
+// max_inflight_per_tenant = 16), and those already bound how many sandboxes
+// exist. 128 concurrent connections is far above any legitimate single
+// principal's egress — a parallel `npm ci` or `pip install` opens dozens — so
+// the value never needs tuning to make a real workload work, and a knob that
+// only ever needs turning UP is a knob that only ever gets turned into the bug.
+const (
+	// proxyMaxConnsPerPrincipal is the live-connection ceiling on ONE
+	// principal's listener.
+	proxyMaxConnsPerPrincipal int64 = 128
+	// proxyMaxConns is the proxy-wide live-connection backstop.
+	proxyMaxConns int64 = 1024
+)
+
+// withConnectionLimits overrides the built-in connection ceilings.
+//
+// It exists so a test can drive the bound with two or three connections instead
+// of manufacturing a thousand; nothing in production supplies it, which is the
+// deliberate answer to "should this be configurable" (see the constants above).
+func withConnectionLimits(perPrincipal, total int64) proxyOption {
+	return func(p *Proxy) {
+		p.maxConnsPerPrincipal = perPrincipal
+		p.maxConns = total
+	}
+}
 
 // NewProxy creates the fuse-owned root directory and returns an empty Proxy.
 // No socket exists until a principal is registered with Listen.
 func NewProxy(opts ...proxyOption) (*Proxy, error) {
 	p := &Proxy{
-		dialer:    &net.Dialer{Timeout: proxyDialTimeout},
-		listeners: make(map[string]*principalListener),
+		dialer:               &net.Dialer{Timeout: proxyDialTimeout},
+		listeners:            make(map[string]*principalListener),
+		maxConnsPerPrincipal: proxyMaxConnsPerPrincipal,
+		maxConns:             proxyMaxConns,
 	}
 	for _, opt := range opts {
 		opt(p)
 	}
+	// newSemaphore clamps a non-positive count to 1, so there is no option value
+	// that turns the backstop off.
+	p.connSlots = newSemaphore(p.maxConns)
 
 	if p.root == "" {
 		dir, err := os.MkdirTemp("", "fuse-egress")
@@ -355,6 +464,7 @@ func (p *Proxy) Listen(principal loopauth.Principal, policy Egress) (string, err
 		ln:        ln,
 		refs:      1,
 		conns:     make(map[io.Closer]struct{}),
+		connSlots: newSemaphore(p.maxConnsPerPrincipal),
 	}
 	p.listeners[key] = pl
 
@@ -496,6 +606,11 @@ type principalListener struct {
 	// lease on a listener already being closed.
 	refs int
 
+	// connSlots is this principal's share of live client connections. It is
+	// per-listener, so it is per-principal by construction: exhausting it costs
+	// only the principal that did it.
+	connSlots *semaphore
+
 	mu     sync.Mutex
 	closed bool
 	// conns holds every client and upstream connection currently open on this
@@ -515,12 +630,25 @@ func (pl *principalListener) serve() {
 			// against, and spinning on a broken listener would burn a core.
 			return
 		}
-		if !pl.track(conn) {
-			_ = conn.Close()
-			return
+		reason, ok := pl.track(conn)
+		if !ok {
+			if reason == "" {
+				// The listener is closed. There is nothing to accept onto and
+				// nothing to say; stop.
+				_ = conn.Close()
+				return
+			}
+			// AT CAPACITY. Refused inline, on this goroutine, and the loop keeps
+			// accepting: spawning a goroutine to deliver the refusal would
+			// reintroduce the unbounded thing being refused, and waiting for a
+			// slot would reintroduce it as a queue. See proxyCapacityWriteTimeout
+			// for why a write on the accept path is safe here.
+			pl.refuseAtCapacity(conn, reason)
+			continue
 		}
 		go func() {
 			defer pl.wg.Done()
+			defer pl.releaseConnSlot()
 			defer pl.untrack(conn)
 			defer func() { _ = conn.Close() }()
 			pl.handle(conn)
@@ -528,18 +656,74 @@ func (pl *principalListener) serve() {
 	}
 }
 
-// track registers c for teardown and accounts for its goroutine. It reports
-// false once the listener is closed, so a connection accepted in the race with
-// close is dropped rather than served under a policy that is going away.
-func (pl *principalListener) track(c io.Closer) bool {
+// track takes this connection's slot in both ceilings, registers it for
+// teardown, and accounts for its goroutine.
+//
+// It reports ok=false in two DIFFERENT situations the accept loop must tell
+// apart, which is why the reason comes back with it:
+//
+//   - reason == "" — the listener is closed. A connection accepted in the race
+//     with close is dropped rather than served under a policy that is going
+//     away, and the accept loop is finished.
+//   - a bounded capacity reason — a ceiling is full. This connection is refused
+//     and the listener carries on; the next one may well be admitted.
+//
+// The per-principal slot is taken FIRST and the proxy-wide one second, in that
+// fixed order everywhere, so the two can never be taken in opposing orders.
+// Neither acquire blocks, so this is about accounting rather than deadlock: a
+// failure at the second must hand back the first, or the ceiling leaks a slot
+// per refusal and slowly becomes a brick.
+func (pl *principalListener) track(c io.Closer) (RefusalReason, bool) {
+	if !pl.connSlots.tryAcquire() {
+		return RefusedPrincipalConnLimit, false
+	}
+	if !pl.proxy.connSlots.tryAcquire() {
+		pl.connSlots.release()
+		return RefusedProxyConnLimit, false
+	}
+
 	pl.mu.Lock()
 	defer pl.mu.Unlock()
 	if pl.closed {
-		return false
+		pl.proxy.connSlots.release()
+		pl.connSlots.release()
+		return "", false
 	}
 	pl.conns[c] = struct{}{}
 	pl.wg.Add(1)
-	return true
+	return "", true
+}
+
+// releaseConnSlot returns the slots a successful track took, in the reverse of
+// acquisition order.
+//
+// It is deliberately NOT folded into untrack: untrack is also called for
+// upstream connections, which take no slot (an upstream exists only because a
+// client connection already holds one, so counting it would charge the ceiling
+// twice for a single tunnel). Exactly one call belongs to each served client
+// connection, on the serving goroutine's way out — including the paths where
+// the listener was closed underneath it, since that goroutine still holds the
+// slots track gave it.
+func (pl *principalListener) releaseConnSlot() {
+	pl.proxy.connSlots.release()
+	pl.connSlots.release()
+}
+
+// refuseAtCapacity tells the operator which ceiling was full and the client
+// only that the proxy is out of capacity.
+//
+// 503 rather than 403: this is not a policy denial, and an operator reading a
+// command's output should be able to tell "you asked for somewhere you were not
+// allowed" from "you asked for too much at once". The client is still told
+// nothing about the destination — it never named one, having been refused
+// before it spoke.
+func (pl *principalListener) refuseAtCapacity(conn net.Conn, reason RefusalReason) {
+	if pl.proxy.hooks.Refused != nil {
+		pl.proxy.hooks.Refused(RefusalInfo{Principal: pl.principal, Reason: reason})
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(proxyCapacityWriteTimeout))
+	writeRefusal(conn, http.StatusServiceUnavailable, egressCapacityBody)
+	_ = conn.Close()
 }
 
 // trackUpstream registers an upstream connection for teardown WITHOUT taking a
@@ -976,6 +1160,12 @@ func (pl *principalListener) delegatedHeader(audience string) (string, bool) {
 // saw the request, which is a probe oracle for the model's command.
 const egressDenialBody = "egress denied by policy\n"
 
+// egressCapacityBody is what a client refused for CAPACITY is told. It names no
+// destination and no ceiling: the numbers are the operator's, reported through
+// the refusal hook, and telling the model's command how much room is left would
+// only tell it how hard to push.
+const egressCapacityBody = "egress proxy at capacity\n"
+
 // refuse reports the refusal to the operator and writes the generic denial to
 // the client. The hook fires first so a refusal is recorded even if the client
 // has already gone away.
@@ -984,6 +1174,14 @@ func (pl *principalListener) refuse(conn net.Conn, status int, info RefusalInfo,
 		pl.proxy.hooks.Refused(info)
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(proxyHeaderTimeout))
+	writeRefusal(conn, status, body)
+}
+
+// writeRefusal writes one self-delimiting close-delimited refusal response. The
+// caller owns the write deadline, because how long a refusal may take to write
+// differs by where it is written FROM — a connection goroutine can afford the
+// full header timeout, the accept loop cannot.
+func writeRefusal(conn net.Conn, status int, body string) {
 	fmt.Fprintf(conn,
 		"HTTP/1.1 %d %s\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
 		status, http.StatusText(status), len(body), body)

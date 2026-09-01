@@ -43,8 +43,32 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"syscall"
 )
+
+// maxRelays bounds how many loopback connections this forwarder relays at
+// once.
+//
+// Every accepted connection costs two file descriptors here and, on the far
+// side of the boundary, a host-side goroutine and possibly a host-side upstream
+// socket in the fuse process. The client is a shell command the MODEL wrote, so
+// `for i in $(seq 100000); do curl -s https://declared.example & done` is one
+// line, and without a bound the only ceiling is the container's own pids/nofile
+// limits — which are sized to keep a command from wedging its container, not to
+// keep it from spending the host's descriptor table.
+//
+// A connection over the bound is REFUSED, never queued: parking it would hold
+// the descriptor the bound exists to save, and the host-side proxy makes the
+// same choice for the same reason.
+//
+// The value matches the host proxy's per-principal ceiling. That is not a
+// coincidence and not an assumption of authority: this bound protects the
+// CONTAINER's descriptor budget and fails fast locally, while the host-side
+// ceiling is the security-relevant one and stays authoritative — several
+// containers can share one principal's listener, so the host still refuses
+// beyond its own share regardless of what any single forwarder allows.
+const maxRelays = 128
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -86,18 +110,59 @@ func run(argv []string) int {
 	return runChild(child)
 }
 
-// serve accepts loopback connections and relays each to the mounted socket.
+// serve accepts loopback connections and relays each to the mounted socket, up
+// to maxRelays at once.
 //
 // An accept error ends the loop rather than retrying: the only expected cause is
 // the listener being closed at teardown, and spinning on a broken listener would
 // burn a core inside a cgroup-capped container for the rest of the command's run.
 func serve(ln net.Listener, socket string) {
+	serveBounded(ln, socket, maxRelays)
+}
+
+// serveBounded is serve with the bound made explicit, so a test can drive it
+// with two connections instead of manufacturing a hundred.
+//
+// The slot is taken ON THE ACCEPT LOOP, before the relay goroutine exists,
+// because the accepting side is the only place the cost can still be declined —
+// a bound checked inside the goroutine has already paid for it. The take is
+// non-blocking: a full bound refuses immediately and the loop goes straight
+// back to accepting, so nothing accumulates either as goroutines or as a queue
+// of parked connections.
+func serveBounded(ln net.Listener, socket string, limit int) {
+	if limit < 1 {
+		limit = 1
+	}
+	slots := make(chan struct{}, limit)
+	// The warning is announced ONCE. A line per refusal would be its own
+	// unbounded thing — the runaway loop this bound exists to survive would
+	// write a hundred thousand of them into the command's stderr, burying the
+	// output the model is actually reading.
+	var announce sync.Once
+
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
-		go relay(conn, socket)
+		select {
+		case slots <- struct{}{}:
+		default:
+			// REFUSED: closed with nothing written, exactly as an unreachable
+			// socket is. This program speaks no HTTP, and a fabricated error
+			// response would be the one message a container-side component
+			// authored — the far side does all the deciding, including how a
+			// refusal is phrased.
+			announce.Do(func() {
+				fmt.Fprintf(os.Stderr, "fuse-egress-forward: at capacity (%d concurrent connections); further connections are refused until one ends\n", limit)
+			})
+			_ = conn.Close()
+			continue
+		}
+		go func() {
+			defer func() { <-slots }()
+			relay(conn, socket)
+		}()
 	}
 }
 

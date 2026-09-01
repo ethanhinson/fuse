@@ -975,3 +975,306 @@ func TestProxyCanonicalizesTargetAtEntry(t *testing.T) {
 		t.Errorf("declared host refused: %+v", info)
 	}
 }
+
+// holdForwardConn opens ONE client connection, drives a single absolute-form
+// request through it, and returns it STILL OPEN.
+//
+// The completed round trip is what makes the connection's live-ness
+// observable: the proxy answered, so the connection is past accept, is tracked,
+// and — because the exchange was keep-alive — is parked in serveForward waiting
+// for the next request rather than being torn down. That is exactly the state a
+// held-open `curl` leaves behind, and counting those is the point of the
+// connection ceiling.
+//
+// It deliberately uses the FORWARD path rather than a CONNECT tunnel: the
+// forward path closes its upstream socket after each exchange, so N held
+// connections cost N file descriptors instead of 2N, which is what lets a test
+// hold the full built-in ceiling open without straining the test process.
+func holdForwardConn(t *testing.T, sock, rawURL string) net.Conn {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse %q: %v", rawURL, err)
+	}
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dial %s: %v", sock, err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+
+	if _, err := io.WriteString(conn, "GET "+rawURL+" HTTP/1.1\r\nHost: "+u.Host+"\r\n\r\n"); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if _, err := io.ReadAll(resp.Body); err != nil {
+		t.Fatalf("drain body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("held connection got %d, want 200 — it was not admitted", resp.StatusCode)
+	}
+	// The deadline is cleared so the connection can simply sit there for the
+	// rest of the test, which is what the ceiling is being asked about.
+	_ = conn.SetDeadline(time.Time{})
+	return conn
+}
+
+// capacityRefusal dials and reads the response the proxy sends UNPROMPTED.
+//
+// Reading before writing is the assertion's shape, not an accident: a
+// capacity refusal happens AT ACCEPT, before the client has said anything, and
+// insisting on that ordering proves the connection was declined before a
+// goroutine or an upstream socket ever existed for it.
+func capacityRefusal(t *testing.T, sock string) *http.Response {
+	t.Helper()
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dial %s: %v", sock, err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatalf("expected an immediate capacity refusal, got %v — the proxy neither refused the connection nor answered it", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
+// lastRefusal returns the most recent recorded refusal, failing if there is
+// none.
+func lastRefusal(t *testing.T, rec *recordingHooks) RefusalInfo {
+	t.Helper()
+	all := rec.snapshot()
+	if len(all) == 0 {
+		t.Fatalf("no refusal was recorded for the operator")
+	}
+	return all[len(all)-1]
+}
+
+// The SHIPPED default is a finite ceiling and it is actually applied. This is
+// the finding in its original form: every accepted connection is a host-side
+// goroutine, the client is a shell command the model wrote, and without a
+// ceiling `for i in $(seq 100000); do curl & done` is bounded only by the
+// container's pids limit.
+//
+// The ceiling's full built-in value is driven here rather than a convenient
+// small override, because "there is a constant" and "the constant is the one
+// the process runs with" are different claims and only the second one is worth
+// anything.
+func TestProxyRefusesBeyondThePerPrincipalConnectionCeiling(t *testing.T) {
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	up := upstream(t, "ok")
+	who := principal("acme", "alice")
+	sock, err := p.Listen(who, allowHostPort(t, up))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	rawURL := "http://" + up + "/"
+
+	for i := int64(0); i < proxyMaxConnsPerPrincipal; i++ {
+		holdForwardConn(t, sock, rawURL)
+	}
+	if n := len(rec.snapshot()); n != 0 {
+		t.Fatalf("%d refusals below the ceiling; the ceiling must not bite a legitimate workload", n)
+	}
+
+	resp := capacityRefusal(t, sock)
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("connection over the ceiling got %d, want 503", resp.StatusCode)
+	}
+
+	info := lastRefusal(t, rec)
+	if info.Reason != RefusedPrincipalConnLimit {
+		t.Errorf("refusal reason = %q, want %q", info.Reason, RefusedPrincipalConnLimit)
+	}
+	if info.Principal != who {
+		t.Errorf("refusal principal = %+v, want %+v", info.Principal, who)
+	}
+}
+
+// The ceiling is PER-PRINCIPAL, so one principal's runaway command cannot lock
+// another principal off the network.
+//
+// This is the constraint that decides the shape of the whole fix: a single
+// shared ceiling would have turned a fix for goroutine exhaustion into a
+// cross-tenant denial-of-service lever, which is the worse of the two bugs.
+// Alice is held at her ceiling and refused; Bob, who has done nothing, is
+// served in the same breath.
+func TestProxyConnectionCeilingIsPerPrincipal(t *testing.T) {
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()), withConnectionLimits(1, 8))
+	up := upstream(t, "ok")
+	rawURL := "http://" + up + "/"
+
+	alice, err := p.Listen(principal("acme", "alice"), allowHostPort(t, up))
+	if err != nil {
+		t.Fatalf("Listen alice: %v", err)
+	}
+	bob, err := p.Listen(principal("acme", "bob"), allowHostPort(t, up))
+	if err != nil {
+		t.Fatalf("Listen bob: %v", err)
+	}
+
+	holdForwardConn(t, alice, rawURL)
+	if resp := capacityRefusal(t, alice); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("alice over her ceiling got %d, want 503", resp.StatusCode)
+	}
+	if reason := lastRefusal(t, rec).Reason; reason != RefusedPrincipalConnLimit {
+		t.Errorf("refusal reason = %q, want %q", reason, RefusedPrincipalConnLimit)
+	}
+
+	// THE ASSERTION. Bob is unaffected by alice being at her ceiling.
+	holdForwardConn(t, bob, rawURL)
+}
+
+// Above the per-principal ceilings there is a whole-process backstop, reported
+// under its own bounded reason so an operator can tell "this principal is
+// running away" from "the host is".
+func TestProxyGlobalConnectionBackstopRefuses(t *testing.T) {
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()), withConnectionLimits(8, 2))
+	up := upstream(t, "ok")
+	rawURL := "http://" + up + "/"
+
+	alice, err := p.Listen(principal("acme", "alice"), allowHostPort(t, up))
+	if err != nil {
+		t.Fatalf("Listen alice: %v", err)
+	}
+	bob, err := p.Listen(principal("acme", "bob"), allowHostPort(t, up))
+	if err != nil {
+		t.Fatalf("Listen bob: %v", err)
+	}
+
+	// Two live connections spend the whole-proxy budget while leaving both
+	// per-principal ceilings (8) far from full, so only the backstop can be what
+	// refuses the third.
+	holdForwardConn(t, alice, rawURL)
+	holdForwardConn(t, bob, rawURL)
+
+	if resp := capacityRefusal(t, alice); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("connection over the proxy-wide backstop got %d, want 503", resp.StatusCode)
+	}
+	if reason := lastRefusal(t, rec).Reason; reason != RefusedProxyConnLimit {
+		t.Errorf("refusal reason = %q, want %q", reason, RefusedProxyConnLimit)
+	}
+}
+
+// A ceiling that is spent but never returned is a slow brick rather than a
+// bound: the principal's egress would work until its ceiling was reached once
+// and then never again. Both slots — the principal's and the proxy's — come
+// back when the connection ends.
+func TestProxyConnectionSlotsAreReturnedWhenAConnectionEnds(t *testing.T) {
+	p := newTestProxy(t, withConnectionLimits(1, 1))
+	up := upstream(t, "ok")
+	rawURL := "http://" + up + "/"
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, up))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	conn := holdForwardConn(t, sock, rawURL)
+	if resp := capacityRefusal(t, sock); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("second connection got %d, want 503", resp.StatusCode)
+	}
+
+	// Ending the connection must return BOTH slots. The retry loop is for the
+	// handoff, not the outcome: the serving goroutine returns the slots as it
+	// exits, which is concurrent with this close.
+	_ = conn.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if tryForward(t, sock, rawURL) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the connection slot was never returned; the ceiling is a one-shot brick, not a bound")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// tryForward reports whether one absolute-form request is SERVED, without
+// failing the test when it is refused. It is for polling a condition that is
+// expected to flip.
+func tryForward(t *testing.T, sock, rawURL string) bool {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse %q: %v", rawURL, err)
+	}
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+
+	if _, err := io.WriteString(conn, "GET "+rawURL+" HTTP/1.1\r\nHost: "+u.Host+"\r\nConnection: close\r\n\r\n"); err != nil {
+		return false
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.ReadAll(resp.Body)
+	return resp.StatusCode == http.StatusOK
+}
+
+// The ceiling holds when the connections arrive ALL AT ONCE, which is how a
+// runaway `curl ... &` loop actually arrives. Run under -race this also covers
+// the accept loop taking and returning slots concurrently with the connection
+// goroutines.
+//
+// The count is exact rather than approximate: nothing ever releases a slot
+// during this test, so once the accept loop has drained the backlog exactly
+// `ceiling` connections are live and every other one has been refused.
+func TestProxyConnectionCeilingHoldsUnderConcurrentDials(t *testing.T) {
+	const ceiling, dials = 4, 64
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()), withConnectionLimits(ceiling, 32))
+	up := upstream(t, "ok")
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, up))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < dials; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := net.Dial("unix", sock)
+			if err != nil {
+				return
+			}
+			// Held for the whole test: a connection that ended would return its
+			// slot and make the expected refusal count a race.
+			t.Cleanup(func() { _ = conn.Close() })
+		}()
+	}
+	wg.Wait()
+
+	want := dials - ceiling
+	deadline := time.Now().Add(15 * time.Second)
+	for len(rec.snapshot()) < want && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	got := rec.snapshot()
+	if len(got) != want {
+		t.Fatalf("recorded %d refusals for %d simultaneous dials against a ceiling of %d, want %d", len(got), dials, ceiling, want)
+	}
+	for _, info := range got {
+		if info.Reason != RefusedPrincipalConnLimit {
+			t.Fatalf("refusal reason = %q, want %q", info.Reason, RefusedPrincipalConnLimit)
+		}
+	}
+}

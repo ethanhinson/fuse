@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -231,5 +232,147 @@ func TestRunRequiresListenAndSocket(t *testing.T) {
 				t.Fatalf("exit code = %d, want 2", code)
 			}
 		})
+	}
+}
+
+// The forwarder bounds how many connections it relays at once, and a
+// connection over that bound is REFUSED — closed immediately — rather than
+// queued.
+//
+// It has the same shape as the host-side proxy's accept loop and therefore the
+// same hazard: one `go relay(...)` per accepted connection, driven by a shell
+// command the model wrote. Unbounded, `for i in $(seq 100000); do curl & done`
+// is capped only by the container's pids/nofile limits, and every one of those
+// relays costs two file descriptors and a socket on the far side of the
+// boundary as well.
+//
+// Refusing by closing with nothing written is the same answer the unreachable-
+// socket path gives, deliberately: this program understands no HTTP, and a
+// fabricated 503 would be the one message a container-side component authored.
+func TestServeRefusesConnectionsOverTheBound(t *testing.T) {
+	socket := unixEchoServer(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go serveBounded(ln, socket, 1)
+
+	// The first connection takes the only slot and HOLDS it: a completed round
+	// trip proves the relay is live, and leaving the connection open keeps it
+	// that way for the rest of the test.
+	held, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = held.Close() })
+	_ = held.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(held, "alpha\n"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if got, err := bufio.NewReader(held).ReadString('\n'); err != nil || got != "upstream:alpha\n" {
+		t.Fatalf("held relay round trip = %q, %v", got, err)
+	}
+
+	// The second connection is over the bound. It is closed with nothing
+	// written, which is what io.ReadAll returning no bytes and no error means.
+	over, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = over.Close() }()
+	_ = over.SetDeadline(time.Now().Add(5 * time.Second))
+	body, err := io.ReadAll(over)
+	if err != nil {
+		t.Fatalf("connection over the bound was neither refused nor served: %v", err)
+	}
+	if len(body) != 0 {
+		t.Fatalf("refused connection got %q, want nothing written", body)
+	}
+
+	// The bound is a bound, not a brick: ending the held connection returns its
+	// slot and the next connection is relayed again.
+	_ = held.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if tryRelay(t, ln.Addr().String()) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the relay slot was never returned; the bound is a one-shot brick")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// tryRelay reports whether one round trip through the forwarder succeeds,
+// without failing the test when it does not.
+func tryRelay(t *testing.T, addr string) bool {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(conn, "beta\n"); err != nil {
+		return false
+	}
+	got, err := bufio.NewReader(conn).ReadString('\n')
+	return err == nil && got == "upstream:beta\n"
+}
+
+// The bound holds when the connections arrive ALL AT ONCE, which is how a
+// runaway `curl ... &` loop arrives. Under -race this also covers the accept
+// loop taking slots concurrently with the relay goroutines returning them.
+func TestServeBoundHoldsUnderConcurrentDials(t *testing.T) {
+	socket := unixEchoServer(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	const bound, dials = 4, 64
+	go serveBounded(ln, socket, bound)
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var relayed int
+	for i := 0; i < dials; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := net.Dial("tcp", ln.Addr().String())
+			if err != nil {
+				return
+			}
+			// Held for the whole test, never closed here: the bound is on
+			// CONCURRENT relays, so a connection that finished would hand its
+			// slot to the next one and every dial would eventually succeed —
+			// correctly, and while proving nothing.
+			t.Cleanup(func() { _ = conn.Close() })
+			_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+			if _, err := io.WriteString(conn, "alpha\n"); err != nil {
+				return
+			}
+			// A refused connection is closed with nothing written, so this read
+			// ends in EOF rather than a line. The far side's answer is the only
+			// proof a relay actually happened.
+			if got, err := bufio.NewReader(conn).ReadString('\n'); err == nil && got == "upstream:alpha\n" {
+				mu.Lock()
+				relayed++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Exact, not approximate: nothing releases a slot during this test, so once
+	// every dial has been answered exactly `bound` connections are relayed and
+	// every other one has been refused.
+	if relayed != bound {
+		t.Fatalf("%d of %d simultaneous connections were relayed against a bound of %d", relayed, dials, bound)
 	}
 }

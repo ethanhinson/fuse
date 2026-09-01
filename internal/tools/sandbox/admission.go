@@ -340,6 +340,20 @@ func (s *semaphore) acquire(ctx context.Context) error {
 	}
 }
 
+// tryAcquire takes a slot if one is free RIGHT NOW and reports whether it did.
+// It never blocks and never queues, which is what a caller needs when the
+// answer to saturation must be a refusal rather than a wait — the egress
+// proxy's connection ceilings, where parking the caller would hold the very
+// goroutine and file descriptor the ceiling exists to save.
+func (s *semaphore) tryAcquire() bool {
+	select {
+	case s.tokens <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *semaphore) release() {
 	select {
 	case <-s.tokens:
