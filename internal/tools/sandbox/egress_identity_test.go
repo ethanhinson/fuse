@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,9 +10,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/loopauth"
 	"github.com/ethanhinson/fuse/internal/toolidentity"
@@ -508,5 +511,271 @@ func TestProxyCredentialRedactsItself(t *testing.T) {
 
 	if got := cred.Header(); got != "Bearer "+secret {
 		t.Errorf("Header() = %q, want the token via the only accessor that exposes it", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NON-HTTP BYTES: the fail-closed claim, and its counterweight.
+//
+// The three tests below pin one claim from three sides, because the dangerous
+// refactor is a plausible-looking one: "the proxy can't do https to a
+// `credential:` destination — let's just raw-copy the bytes through instead."
+// That edit reaches a delegated-identity destination WITHOUT the identity, and
+// every other test in this file drives well-formed plaintext HTTP, so none of
+// them would notice.
+//
+//   - a CONNECT to a `credential:` destination sends NOTHING upstream, even when
+//     the client goes on writing a ClientHello at it anyway;
+//   - non-HTTP bytes arriving on the FORWARD path reach no upstream either, and
+//     mint no credential;
+//   - and a CONNECT to a destination declared WITHOUT a credential still splices
+//     raw bytes in both directions, so "make it all refuse" is not a way to pass
+//     the first two.
+// ---------------------------------------------------------------------------
+
+// tlsClientHelloPrefix is the opening of a real TLS 1.x handshake: content type
+// 0x16 (handshake), version 0x0301, record length, then handshake type 0x01
+// (client_hello). These are the bytes a client puts on the wire the instant a
+// CONNECT tunnel is established for an `https://` destination.
+//
+// The trailing 0x0a is not decoration and not part of TLS: net/http reads a
+// request LINE, so a payload with no newline in it would park in
+// textproto.ReadLine until proxyHeaderTimeout (30s) rather than failing to
+// parse. A genuine ClientHello is hundreds of bytes of key material and very
+// nearly always contains one; supplying it explicitly makes the parse fail
+// promptly and deterministically instead of resting on random bytes. What is
+// under test is where the bytes GO, and that is unaffected.
+var tlsClientHelloPrefix = []byte{0x16, 0x03, 0x01, 0x02, 0x00, 0x01, 0x00, 0x01, 0xfc, 0x03, 0x03, 0x0a}
+
+// rawUpstream is a plain TCP server that RECORDS every byte sent to it and
+// echoes each one straight back.
+//
+// It is deliberately not an HTTP server: the claim being tested is about bytes
+// that are not HTTP, so an upstream that only counts requests could not tell
+// "nothing arrived" from "something arrived that I could not parse". The echo
+// is what lets the same helper also prove the ALLOWED tunnel still carries
+// arbitrary bytes in both directions.
+func rawUpstream(t *testing.T) (addr string, received func() []byte) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	var mu sync.Mutex
+	var got []byte
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				buf := make([]byte, 4096)
+				for {
+					n, err := c.Read(buf)
+					if n > 0 {
+						mu.Lock()
+						got = append(got, buf[:n]...)
+						mu.Unlock()
+						if _, werr := c.Write(buf[:n]); werr != nil {
+							return
+						}
+					}
+					if err != nil {
+						return
+					}
+				}
+			}(c)
+		}
+	}()
+	return ln.Addr().String(), func() []byte {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]byte(nil), got...)
+	}
+}
+
+// drainUntilClosed reads from conn until the peer closes it, reporting what it
+// read and whether the close actually happened.
+//
+// It does NOT fail the test itself, and that is deliberate: a refactor that
+// tunnels these bytes leaves the connection open AND delivers them upstream, and
+// the upstream assertion is the more informative of the two. So this returns a
+// flag and lets each caller assert the byte-level claim first. The deadline
+// bounds a wrongly-open connection to a second instead of hanging the suite.
+func drainUntilClosed(t *testing.T, conn net.Conn) (data []byte, closed bool) {
+	t.Helper()
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 4096)
+	for {
+		n, err := conn.Read(buf)
+		data = append(data, buf[:n]...)
+		if err == nil {
+			continue
+		}
+		return data, !errors.Is(err, os.ErrDeadlineExceeded)
+	}
+}
+
+// A CONNECT to a `credential:` destination forwards NOTHING, even when the
+// client ignores the refusal and writes a TLS ClientHello at the socket anyway.
+//
+// THIS IS THE MOST CONSEQUENTIAL SAFETY CLAIM ON THE IDENTITY PATH. The refusal
+// itself is asserted elsewhere (TestProxyRefusesConnectToCredentialedDestination
+// checks the status and the bounded reason); what is asserted HERE is the part a
+// status code cannot show — that the upstream received ZERO BYTES and the client
+// connection was closed rather than left spliced. A refactor that answered the
+// CONNECT with a raw copy would satisfy every status assertion in the suite while
+// delivering the model's traffic to a delegated-identity destination with no
+// delegated identity on it.
+func TestProxyConnectToCredentialedDestinationForwardsNoBytes(t *testing.T) {
+	addr, received := rawUpstream(t)
+	src := &fakeCredentialSource{fn: func(loopauth.Principal, toolidentity.Target) (toolidentity.Credential, error) {
+		return toolidentity.NewCredential("Bearer", "must-never-be-minted", true), nil
+	}}
+
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()), withCredentialSource(src))
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPortCredential(t, addr, "internal-api"))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dial %s: %v", sock, err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", addr, addr); err != nil {
+		t.Fatalf("write CONNECT: %v", err)
+	}
+	// The client behaves as a real one does: having asked for a tunnel, it starts
+	// the TLS handshake without waiting to be told it has one. The write itself
+	// may well succeed into a local socket buffer — that is not the assertion.
+	// Where those bytes END UP is.
+	_, _ = conn.Write(tlsClientHelloPrefix)
+
+	answer, closed := drainUntilClosed(t, conn)
+	if got := received(); len(got) != 0 {
+		t.Fatalf("upstream received %d bytes (%q) through a refused credentialed CONNECT; it must receive none", len(got), got)
+	}
+	if !closed {
+		t.Errorf("client connection was left open after the refusal; read %q", answer)
+	}
+	if !strings.HasPrefix(string(answer), "HTTP/1.1 403") {
+		t.Errorf("proxy answered %q, want a 403 refusal", answer)
+	}
+	if calls := src.snapshot(); len(calls) != 0 {
+		t.Errorf("credential source was consulted %d times for a refused tunnel: %+v", len(calls), calls)
+	}
+	refusals := rec.snapshot()
+	if len(refusals) != 1 || refusals[0].Reason != RefusedCredentialTunnel {
+		t.Fatalf("refusals = %+v, want one %q", refusals, RefusedCredentialTunnel)
+	}
+}
+
+// Non-HTTP bytes sent straight at the proxy — no CONNECT first — reach no
+// upstream and mint no credential.
+//
+// This is the same claim on the FORWARD path: a client (or a `curl` against a
+// misconfigured HTTPS_PROXY) that opens the socket and immediately speaks TLS
+// names no destination the allowlist can be consulted about. There is nothing to
+// authorize, so nothing is dialled — not the declared destination that happens
+// to be sitting in this principal's allowlist, and not anything else.
+func TestProxyNonHTTPBytesOnForwardPathReachNoUpstream(t *testing.T) {
+	addr, received := rawUpstream(t)
+
+	src := &fakeCredentialSource{fn: func(loopauth.Principal, toolidentity.Target) (toolidentity.Credential, error) {
+		return toolidentity.NewCredential("Bearer", "must-never-be-minted", true), nil
+	}}
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()), withCredentialSource(src))
+	// The destination IS declared, and declared under an identity: if these bytes
+	// were ever going to be handed somewhere by a fallback, this is where they
+	// would go, and it is the worst place for them to go.
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPortCredential(t, addr, "internal-api"))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dial %s: %v", sock, err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := conn.Write(tlsClientHelloPrefix); err != nil {
+		t.Fatalf("write ClientHello: %v", err)
+	}
+
+	answer, closed := drainUntilClosed(t, conn)
+	if got := received(); len(got) != 0 {
+		t.Fatalf("upstream received %d bytes (%q) from a client that never sent an HTTP request", len(got), got)
+	}
+	if !closed {
+		t.Errorf("client connection was left open after the refusal; read %q", answer)
+	}
+	if !strings.HasPrefix(string(answer), "HTTP/1.1 4") {
+		t.Errorf("proxy answered %q, want a 4xx refusal", answer)
+	}
+	if calls := src.snapshot(); len(calls) != 0 {
+		t.Errorf("credential source was consulted %d times for unparseable bytes: %+v", len(calls), calls)
+	}
+	refusals := rec.snapshot()
+	if len(refusals) != 1 || refusals[0].Reason != RefusedMalformedTarget {
+		t.Fatalf("refusals = %+v, want one %q", refusals, RefusedMalformedTarget)
+	}
+	// A refusal names no destination, because the request never produced one.
+	if refusals[0].Host != "" || refusals[0].Port != 0 {
+		t.Errorf("refusal %+v names a destination the client never asked for", refusals[0])
+	}
+}
+
+// THE COUNTERWEIGHT. A CONNECT to a destination declared WITHOUT a credential
+// still carries arbitrary, non-HTTP bytes in BOTH directions.
+//
+// The two tests above are satisfied by a proxy that refuses everything, and a
+// careless hardening edit is exactly how a proxy becomes that. The tunnel is the
+// only way an `https://` destination works at all, so this pins that the allowed
+// path is a real raw splice and not an HTTP relay that happens to have worked in
+// tests that only ever spoke HTTP through it.
+func TestProxyTunnelToPlainDestinationSplicesRawBytes(t *testing.T) {
+	addr, received := rawUpstream(t)
+
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, addr))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	conn, br, resp := connectVia(t, sock, addr)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — a plain declared destination must still tunnel", resp.StatusCode)
+	}
+	_ = resp.Body.Close()
+
+	if _, err := conn.Write(tlsClientHelloPrefix); err != nil {
+		t.Fatalf("write ClientHello: %v", err)
+	}
+	// Read back through br, not conn: a byte the proxy already buffered would
+	// otherwise be invisible here.
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	echo := make([]byte, len(tlsClientHelloPrefix))
+	if _, err := io.ReadFull(br, echo); err != nil {
+		t.Fatalf("read echo through tunnel: %v", err)
+	}
+	if !bytes.Equal(echo, tlsClientHelloPrefix) {
+		t.Errorf("echo = %x, want %x", echo, tlsClientHelloPrefix)
+	}
+	if got := received(); !bytes.Equal(got, tlsClientHelloPrefix) {
+		t.Errorf("upstream received %x, want %x", got, tlsClientHelloPrefix)
+	}
+	if refusals := rec.snapshot(); len(refusals) != 0 {
+		t.Errorf("refusals = %+v, want none", refusals)
 	}
 }
