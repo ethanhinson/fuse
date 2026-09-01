@@ -95,6 +95,13 @@ type serviceOptions struct {
 	containerOpts []containerOption
 	hostHandler   Handler
 	newContainer  func(Config, ...containerOption) (Handler, error)
+
+	// egressProxy and egressForwarder are the two halves of change 0064's
+	// datapath, declared by the composition root through WithEgressProxy. They
+	// are held here — rather than appended to containerOpts as they arrive — so
+	// NewService can apply them LAST, after every caller-supplied option.
+	egressProxy     *Proxy
+	egressForwarder string
 }
 
 // ServiceOption configures a Service at construction.
@@ -139,6 +146,37 @@ func WithEnvLookup(fn func(string) (string, bool)) ServiceOption {
 		if fn != nil {
 			o.lookup = fn
 		}
+	}
+}
+
+// WithEgressProxy declares the egress DATAPATH: the host-side proxy whose
+// per-principal UNIX socket a contained command reaches the network through, and
+// the host path of the statically linked forwarder binary
+// (cmd/fuse-egress-forward, built by `make egress-forwarder`) that is
+// bind-mounted into the container to relay loopback traffic to it.
+//
+// SECURITY-CRITICAL: like WithHostedPosture and WithTrustedRoot, both values come
+// from the COMPOSITION ROOT and from nowhere else. This is the one option that
+// names a BINARY fuse mounts into the sandbox and runs as the command's parent
+// process, so it is applied LAST — after every caller-supplied option — and takes
+// a concrete *Proxy rather than an interface a caller could implement.
+//
+// It is OPTIONAL and its absence is not permissive. Without it, EgressEnforce
+// emits the `--network none` floor and no hole at all: containment is total and
+// every network call fails. Turning enforcement ON is `egress.mode: enforce` in
+// the trusted config; this option only decides whether the declared allowlist has
+// any way to be reached.
+//
+// A nil Proxy or an empty/unresolvable forwarder path is treated as "not
+// supplied" — the fail-closed direction — never as a partially open datapath.
+//
+// Lifecycle: the caller OWNS the Proxy and must Close it at shutdown. The Service
+// never closes it, because a Service is immutable after construction and has no
+// shutdown of its own, and because one Proxy may outlive or precede any Service.
+func WithEgressProxy(p *Proxy, forwarderPath string) ServiceOption {
+	return func(o *serviceOptions) {
+		o.egressProxy = p
+		o.egressForwarder = forwarderPath
 	}
 }
 
@@ -222,6 +260,36 @@ func NewService(cfg Config, opts ...ServiceOption) (*Service, error) {
 	// that can change them afterwards. Appended after withTrustedRoot so caps and
 	// root arrive together as trusted construction facts.
 	o.containerOpts = append(o.containerOpts, withLimits(cfg.Limits))
+
+	// The egress posture (change 0064) is the same kind of trusted construction
+	// fact, and it is appended LAST for the same reason withTrustedRoot is: a
+	// caller-supplied containerOption applied afterwards could otherwise put the
+	// handler back on EgressAllowAll, and a floor the caller (or, through it, a
+	// model) can lower is not a floor. Note that cfg.Egress is deliberately NOT
+	// touched by resolveDefaults — the posture is chosen by the explicit
+	// egress.mode knob only (see Config.Egress).
+	o.containerOpts = append(o.containerOpts, withEgress(cfg.Egress))
+
+	// And the datapath through that floor (change 0064, task 6), appended after
+	// the posture so it is the very last word on what gets mounted into — and
+	// executed inside — the container.
+	//
+	// It is appended UNCONDITIONALLY, including when the composition root
+	// declared no datapath at all. That is deliberate: "the trusted side wins" has
+	// to include the trusted side saying NOTHING, or a caller could open a hole
+	// simply by being the only one who mentioned it. With nothing declared this
+	// writes a nil source and an empty forwarder path, erasing anything an earlier
+	// option set, and enforcement falls back to the datapath-less deny-all.
+	//
+	// The explicit nil-interface dance below is load-bearing: assigning a nil
+	// *Proxy straight into an interface produces a NON-nil interface holding a
+	// nil pointer, which egressDatapathWired would read as "wired" and then
+	// dereference at Acquire.
+	var socketSource egressSocketSource
+	if o.egressProxy != nil {
+		socketSource = o.egressProxy
+	}
+	o.containerOpts = append(o.containerOpts, withEgressDatapath(socketSource, o.egressForwarder))
 
 	s := &Service{
 		cfg:    cfg,

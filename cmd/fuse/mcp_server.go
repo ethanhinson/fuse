@@ -44,7 +44,8 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 	// re-resolve containment. hosted=false — `fuse mcp-server` is launched by the
 	// operator on their own machine over stdio (the same trust model as the
 	// shell), so their file-only off-switch applies.
-	sb := newSandboxService(false, stderr)
+	sb, closeEgress := newSandboxService(cfg, false, stderr)
+	defer closeEgress()
 	toolReg := defaultToolRegistry(sb, cfg.Research, nil) // native tools only; no skill tool in MCP server mode
 
 	var approve permissions.ApprovalFunc

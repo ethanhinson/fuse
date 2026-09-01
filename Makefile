@@ -1,4 +1,4 @@
-.PHONY: build install test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke
+.PHONY: build install egress-forwarder egress-datapath test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke
 
 # Version is stamped into the binary via -ldflags. It defaults to `git describe`
 # (tags + short SHA + dirty marker) and falls back to the source default when git
@@ -13,8 +13,61 @@ build:
 install:
 	go install -ldflags "$(LDFLAGS)" ./cmd/fuse
 
+# egress-forwarder builds the IN-CONTAINER half of egress control (change 0064):
+# the small relay fuse bind-mounts into a `--network none` sandbox so that
+# curl/git/pip can address the host-side proxy over loopback. See
+# cmd/fuse-egress-forward.
+#
+# Three properties of this target are load-bearing, not stylistic:
+#
+#   - GOOS=linux, always. The artifact runs inside the CONTAINER, not on the
+#     host, so it is cross-compiled even when `make build` is producing a darwin
+#     binary right beside it.
+#   - CGO_ENABLED=0, so the result is static: no libc, no dynamic loader, no
+#     dependency on anything in the operator's image. The image is not asked to
+#     cooperate (alpine:3.20 has no socat), which is the entire reason fuse
+#     ships this rather than shelling out to something.
+#   - One artifact per architecture, named by it. The right one is chosen by the
+#     architecture of the IMAGE the sandbox runs, which is a deployment fact —
+#     hence the separate target rather than a step inside `build`.
+#
+# fuse FINDS the artifact itself at startup (cmd/fuse/sandbox.go), looking beside
+# its own executable and nowhere else — a mount source must not be config- or
+# model-selectable — in this order:
+#
+#   <dir of the fuse binary>/dist/fuse-egress-forward-linux-<arch>   (a checkout:
+#       `make build` + `make egress-forwarder` put both here already)
+#   <dir of the fuse binary>/fuse-egress-forward-linux-<arch>        (a `go
+#       install`ed fuse: copy the artifact next to ~/go/bin/fuse)
+#
+# <arch> is the host's, since every container runtime defaults to the host
+# platform. Without the artifact, `egress.mode: enforce` is still safe — it is
+# deny-all, since the floor is on and no hole is opened — and fuse says so loudly
+# on stderr at startup rather than looking like a broken network.
+EGRESS_FORWARDER_ARCHS ?= amd64 arm64
+
+egress-forwarder:
+	@mkdir -p dist
+	@for arch in $(EGRESS_FORWARDER_ARCHS); do \
+	  echo "building dist/fuse-egress-forward-linux-$$arch"; \
+	  CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath \
+	    -ldflags "-s -w $(LDFLAGS)" \
+	    -o dist/fuse-egress-forward-linux-$$arch ./cmd/fuse-egress-forward || exit 1; \
+	done
+
 test: observability-validate
 	go test ./...
+
+# egress-datapath (change 0064): the end-to-end egress datapath check against a
+# REAL container runtime. It builds the arch-matched forwarder artifact, then
+# runs the `egress_datapath`-tagged, GOOS=linux-only test that starts a
+# --network none container and proves a declared destination is reachable
+# through the mounted socket + forwarder while an undeclared one is refused.
+# Native-Linux Docker only: Docker Desktop for macOS cannot relay a host UNIX
+# socket bind-mounted across its VM file-sharing layer, so the test file does
+# not build off linux and this target is a no-op there.
+egress-datapath: egress-forwarder
+	go test -tags egress_datapath -run TestEgressDatapathEndToEnd -v -count=1 -timeout 300s ./internal/tools/sandbox/
 
 # test-race runs the suite under the race detector. The platform's core value is
 # concurrent multi-agent execution, so the race build must be a first-class,

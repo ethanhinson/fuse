@@ -3,6 +3,12 @@
 # built binary (make build)
 /fuse
 
+# cross-compiled build artifacts (make egress-forwarder). These are BUILT, never
+# committed: an executable fuse bind-mounts into a sandbox and runs as the
+# command's parent process must be reproducible from the source in this repo,
+# not trusted because it happens to be sitting in the tree.
+/dist/
+
 # macOS finder cruft
 .DS_Store
 

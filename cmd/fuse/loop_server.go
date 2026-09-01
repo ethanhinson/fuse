@@ -64,7 +64,8 @@ func runLoopServer(_ []string, cfg config.Config, reg *model.Registry, _ io.Writ
 	// hosted=TRUE — the loop server executes workloads on behalf of REMOTE
 	// principals, so the local off-switch file is structurally inert and a bash
 	// call with no container runtime refuses rather than falling back to this host.
-	sb := newSandboxService(true, stderr)
+	sb, closeEgress := newSandboxService(cfg, true, stderr)
+	defer closeEgress()
 	toolReg := defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
 
 	// Reuse the one-shot deps wiring but with a REAL event store so observe/attach

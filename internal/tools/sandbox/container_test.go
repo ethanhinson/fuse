@@ -626,3 +626,174 @@ func TestNewContainerHandlerDefaultRunUsesEnvLookup(t *testing.T) {
 		t.Fatalf("client env = %q, leaked the real process environment despite an injected lookup", got)
 	}
 }
+
+// --- change 0064: the `--network none` floor ---------------------------------
+
+// egressHandler builds a container handler carrying a trusted egress posture,
+// applied through withEgress exactly as the composition root applies it (see
+// NewService), rather than by poking the field.
+func egressHandler(t *testing.T, rec *recordingRun, e Egress, limits Limits) *containerHandler {
+	t.Helper()
+	h, err := newContainerHandler(DefaultConfig(),
+		withLookPath(fakeLookPath("docker")),
+		withExecRunner(rec.run),
+		withTrustedRoot(trustedTestRoot(t)),
+		withLimits(limits),
+		withEgress(e),
+	)
+	if err != nil {
+		t.Fatalf("newContainerHandler: %v", err)
+	}
+	return h
+}
+
+// egressRunArgv runs one Exec and returns the recorded container-RUN argv. The
+// pre-pull invocation is recorded separately on rec (see recordingRun).
+func egressRunArgv(t *testing.T, h *containerHandler, rec *recordingRun, env Env) []string {
+	t.Helper()
+	r, err := h.Acquire(context.Background(), loopauth.Principal{}, env)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if _, err := r.Exec(context.Background(), "true", ""); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	return rec.args
+}
+
+// Under the default posture (EgressAllowAll — also the zero value, which is what
+// every pre-0064 call site produces) argv carries NO network flag at all. The
+// floor is opt-in; a handler that emitted it unconditionally would break every
+// operator who never configured egress, and this is the test that says so.
+func TestContainerArgvNoNetworkFlagUnderAllowAll(t *testing.T) {
+	for name, e := range map[string]Egress{
+		"zero value":         {},
+		"explicit allow-all": {Mode: EgressAllowAll},
+		// An allowlist without the enforcing mode is inert: the mode is the only
+		// thing that turns the floor on.
+		"allow-all with entries": {Mode: EgressAllowAll, Allow: []AllowEntry{{Host: "example.com", Port: 443}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &recordingRun{}
+			argv := egressRunArgv(t, egressHandler(t, rec, e, Limits{}), rec, Env{})
+			if contains(argv, "--network") {
+				t.Fatalf("allow-all argv carries --network: %#v", argv)
+			}
+		})
+	}
+}
+
+// Under EgressEnforce the floor is present, as the `--network none` PAIR — not
+// `--network=none`, because the pair form is what all three detected CLIs share
+// and what the rest of this builder emits.
+func TestContainerArgvNetworkNoneUnderEnforce(t *testing.T) {
+	for name, e := range map[string]Egress{
+		// The deny-all state: enforcing with nothing declared. The floor is a
+		// property of the MODE, never of the allowlist being non-empty.
+		"enforce, empty allowlist": {Mode: EgressEnforce},
+		"enforce with entries":     {Mode: EgressEnforce, Allow: []AllowEntry{{Host: "example.com", Port: 443}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &recordingRun{}
+			argv := egressRunArgv(t, egressHandler(t, rec, e, Limits{}), rec, Env{})
+			if !containsPair(argv, "--network", "none") {
+				t.Fatalf("enforce argv missing the --network none pair: %#v", argv)
+			}
+		})
+	}
+}
+
+// The ordering guarantee, asserted as a WHOLE-ARGV golden: the floor lands after
+// the cgroup caps and before the --env pairs, and every neighbour the reconcile
+// named — the --env pairs, the mount, -w, and the trailing --pull=never — keeps
+// the position it had before 0064.
+func TestContainerArgvEnforceOrderingIsUnchangedAroundTheFloor(t *testing.T) {
+	rec := &recordingRun{}
+	h := egressHandler(t, rec, Egress{Mode: EgressEnforce}, Limits{
+		MemoryBytes: i64(2 << 30),
+		CPUs:        str("2.0"),
+	})
+	argv := egressRunArgv(t, h, rec, Env{Allow: map[string]string{"PATH": "/usr/bin", "HOME": "/root"}})
+
+	want := []string{
+		"run", "--rm", "-i",
+		"--memory", "2147483648", "--memory-swap", "2147483648",
+		"--cpus", "2.0",
+		"--network", "none",
+		"--env", "HOME=/root",
+		"--env", "PATH=/usr/bin",
+		"-v", h.root + ":" + containerWorkspace,
+		"-w", containerWorkspace,
+		"--pull=never",
+		DefaultContainerImage, "/bin/sh", "-c", "true",
+	}
+	if !reflect.DeepEqual(argv, want) {
+		t.Fatalf("argv =\n%#v\nwant\n%#v", argv, want)
+	}
+}
+
+// THE floor must never reach the pre-pull. A `pull` under --network none cannot
+// reach a registry, so an image acquisition that inherited the floor would fail
+// every cold start with an opaque network error — and, with --pull=never on the
+// run argv, would take the whole substrate down with it.
+//
+// This asserts the structural reason as well as the symptom: prePull/runPull
+// build their own argv (`pull <image>`, straight to h.run) and never call
+// containerRunner.argv, so there is no builder for the floor to leak through.
+func TestContainerPrePullArgvCarriesNoNetworkFloor(t *testing.T) {
+	rec := &recordingRun{}
+	h := egressHandler(t, rec, Egress{Mode: EgressEnforce, Allow: []AllowEntry{{Host: "example.com", Port: 443}}}, Limits{})
+
+	// Acquire alone performs the pre-pull; the run argv is asserted elsewhere.
+	if _, err := h.Acquire(context.Background(), loopauth.Principal{}, Env{}); err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	if rec.pulls != 1 {
+		t.Fatalf("pulls = %d, want exactly 1", rec.pulls)
+	}
+	if contains(rec.pullArgs, "--network") {
+		t.Fatalf("pre-pull argv carries the egress floor: %#v", rec.pullArgs)
+	}
+	if !reflect.DeepEqual(rec.pullArgs, []string{"pull", DefaultContainerImage}) {
+		t.Fatalf("pre-pull argv = %#v, want exactly [pull <image>] — it must not share the run builder", rec.pullArgs)
+	}
+}
+
+// withRogueEgress is a caller-supplied containerOption applied BEFORE the ones
+// NewService appends. It stands in for any option a caller (or a future seam a
+// model can reach) could pass to try to lower the floor.
+func withRogueEgress(e Egress) ServiceOption {
+	return func(o *serviceOptions) { o.containerOpts = append(o.containerOpts, withEgress(e)) }
+}
+
+// Trust ordering (learning `trusted-root-never-model-selectable`): the egress
+// posture is established by the trusted side and applied LAST, exactly as
+// withTrustedRoot is, so a caller-supplied option cannot put an enforcing config
+// back on allow-all. If withEgress were appended before the caller's options,
+// the rogue allow-all below would win and the floor would silently vanish.
+func TestServiceAppliesTrustedEgressLastSoCallersCannotLowerTheFloor(t *testing.T) {
+	rec := &recordingRun{}
+	cfg := DefaultConfig()
+	cfg.Egress = Egress{Mode: EgressEnforce}
+
+	svc, err := NewService(cfg,
+		withRogueEgress(Egress{Mode: EgressAllowAll}),
+		withContainerLookPath(fakeLookPath("docker")),
+		withContainerExec(rec.run),
+		WithTrustedRoot(trustedTestRoot(t)),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	h, ok := svc.handler.(*containerHandler)
+	if !ok {
+		t.Fatalf("handler = %T, want *containerHandler", svc.handler)
+	}
+	if h.egress.Mode != EgressEnforce {
+		t.Fatalf("handler egress mode = %v, want %v — a caller option lowered the trusted floor", h.egress.Mode, EgressEnforce)
+	}
+	if argv := egressRunArgv(t, h, rec, Env{}); !containsPair(argv, "--network", "none") {
+		t.Fatalf("argv missing the trusted --network none floor: %#v", argv)
+	}
+}

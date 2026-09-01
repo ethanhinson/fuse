@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"math"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/ethanhinson/fuse/internal/permissions/reputation"
 )
 
 // HandlerContainer is the bounded handler identifier for the container
@@ -134,6 +137,10 @@ func (cfg *Config) resolveDefaults(hosted bool) {
 		v := DefaultNoteThreshold
 		c.NoteThreshold = &v
 	}
+
+	// cfg.Egress is ABSENT here on purpose: egress posture is selected by the
+	// explicit egress.mode knob and never derived from hosted detection, so it
+	// must not join this posture split (change 0064). Do not "fix" the omission.
 }
 
 // Config is the resolved sandbox configuration.
@@ -142,7 +149,8 @@ func (cfg *Config) resolveDefaults(hosted bool) {
 // consistent and always safe to act on directly: there is no "unset" state and
 // no error state a caller must remember to check before using it. Every path
 // that could not produce a trustworthy answer produces the contained default
-// instead.
+// instead — plus, for egress alone, the salvaged posture, because there the
+// contained default is not the restrictive answer.
 type Config struct {
 	// Contained reports whether the command must run isolated from this host.
 	// It is the boolean shadow of Handler and is maintained in lockstep with
@@ -181,6 +189,94 @@ type Config struct {
 	// posture: a queue that never refuses under ordinary load costs a laptop
 	// nothing and protects it just as usefully as a host.
 	Concurrency Concurrency
+
+	// Egress is the container's network posture (change 0064). Its zero value
+	// is allow-all — default container networking, no floor and no proxy — so a
+	// Config nobody configured behaves exactly as it did before 0064.
+	//
+	// Egress posture is selected by the EXPLICIT egress.mode knob only. It is
+	// never derived from hosted detection, from a wire field, or from model
+	// output; see the note in resolveDefaults.
+	Egress Egress
+}
+
+// EgressMode is the bounded egress posture selector. It is a closed enum, and
+// its ZERO VALUE is deliberately the permissive one: an unconfigured Config must
+// keep default container networking so local development is unchanged. Every
+// path that *fails* rather than being unconfigured resolves to EgressEnforce
+// with an empty allowlist instead — see rawEgress.resolve for a parseable file
+// and salvageEgressPosture for one discarded wholesale.
+type EgressMode int
+
+const (
+	// EgressAllowAll is the default: no floor, no proxy, default container
+	// networking. It is the local-dev experience and the containment default.
+	EgressAllowAll EgressMode = iota
+	// EgressEnforce turns on the --network none floor, the host-side proxy, and
+	// the declared allowlist. Everything undeclared is denied.
+	EgressEnforce
+)
+
+// String renders the mode with its config spelling, so a diagnostic naming the
+// mode names something the operator can type back into the file.
+func (m EgressMode) String() string {
+	switch m {
+	case EgressAllowAll:
+		return "allow-all"
+	case EgressEnforce:
+		return "enforce"
+	default:
+		return "unknown(" + strconv.Itoa(int(m)) + ")"
+	}
+}
+
+// Egress is the resolved egress policy: a posture plus, under EgressEnforce, the
+// declared allowlist. An empty Allow under EgressEnforce is the DENY-ALL state,
+// and it is a legitimate resolved outcome — both when the operator declared no
+// entries and when the loader could not trust the ones they declared.
+type Egress struct {
+	// Mode is the posture.
+	Mode EgressMode
+	// Allow is the declared allowlist, in declaration order. It is meaningful
+	// only under EgressEnforce; under EgressAllowAll there is no proxy to
+	// consult it, and the loader leaves it nil.
+	Allow []AllowEntry
+}
+
+// AllowEntry is one declared egress destination: exactly one of Host or CIDR is
+// set, plus a required exact port and an optional #52 credential audience.
+//
+// Per ADR-0048 rule 3, Host is stored ALREADY CANONICAL (reputation.CanonicalHost
+// — lowercased, trailing root dot stripped), so the matcher never compares a raw
+// spelling against a declared one. A bare IP literal in the config is stored as a
+// full-mask CIDR (/32 or /128) rather than as a Host, so the matcher compares IP
+// values and no alternate IPv6 spelling can miss a declared entry.
+type AllowEntry struct {
+	// Host is the canonical hostname. Empty exactly when CIDR is set.
+	Host string
+	// CIDR is the declared address block. nil exactly when Host is set. A CIDR
+	// entry matches only a literal IP destination: a hostname is never resolved
+	// to test membership, because DNS is attacker-influenced (plan Q4).
+	CIDR *net.IPNet
+	// Port is the exact destination port, 1..65535. There are no ranges and no
+	// "any port" wildcard: both the address and the port must match.
+	Port int
+	// Credential optionally names the #52 CredentialSource audience to bind on
+	// the upstream connection. Empty means plain allow-through.
+	//
+	// A credentialed entry is reachable over PLAINTEXT `http://` only. Injecting
+	// the delegated Authorization header means terminating the request, which the
+	// proxy can do for the absolute-form requests a client sends for an `http://`
+	// destination but not inside the opaque CONNECT tunnel it opens for an
+	// `https://` one — that would need TLS interception, which is not built.
+	// A CONNECT to a credentialed destination is refused explicitly
+	// (RefusedCredentialTunnel), never silently downgraded or dropped.
+	//
+	// The loader WARNS (WarnCredentialPlaintextOnly) rather than rejects when it
+	// sees this field set — the entry is still honoured — because the operator
+	// naming this constraint should learn it at load time, not discover it the
+	// first time a CONNECT to the destination is refused.
+	Credential string
 }
 
 // Limits are the per-container cgroup caps. Each field is a pointer so "unset"
@@ -269,6 +365,22 @@ const (
 	// non-positive. The offending field degrades to unset (a built-in default),
 	// never to a zero bound — a zero backstop would refuse every Exec.
 	WarnBadConcurrency WarnReason = "bad_concurrency"
+	// WarnUnknownEgressMode means egress.mode named a posture that does not
+	// exist. The posture resolves to enforcement with an EMPTY allowlist: an
+	// unparseable posture must never resolve to the permissive one.
+	WarnUnknownEgressMode WarnReason = "unknown_egress_mode"
+	// WarnBadEgress means an egress.allow entry could not be honoured. The WHOLE
+	// allowlist is discarded, never partially honoured — a partly-honoured
+	// allowlist is the fail-open shape this reason exists to prevent.
+	WarnBadEgress WarnReason = "bad_egress"
+	// WarnCredentialPlaintextOnly means an egress.allow entry declared a
+	// credential: audience. The entry is honoured — this is a WARN, not a
+	// rejection — but a credentialed destination is reachable only over
+	// PLAINTEXT http through the forward-proxy path, because injecting the
+	// delegated Authorization header requires terminating the request. A
+	// CONNECT (https) to the same destination is refused explicitly
+	// (RefusedCredentialTunnel), never TLS-intercepted. See AllowEntry.Credential.
+	WarnCredentialPlaintextOnly WarnReason = "credential_plaintext_only"
 )
 
 // Warning is a LOUD but non-fatal diagnostic from a config load.
@@ -322,6 +434,25 @@ type rawConfig struct {
 	Pool           *rawPool        `yaml:"pool"`
 	Limits         *rawLimits      `yaml:"limits"`
 	Concurrency    *rawConcurrency `yaml:"concurrency"`
+	Egress         *rawEgress      `yaml:"egress"`
+}
+
+// rawEgress mirrors the egress: block. mode is a string so an unrecognised
+// posture is REPORTED rather than coerced, exactly like handler:.
+type rawEgress struct {
+	Mode  *string         `yaml:"mode"`
+	Allow []rawAllowEntry `yaml:"allow"`
+}
+
+// rawAllowEntry mirrors one egress.allow entry. Both host and port are pointers
+// so an omitted field is distinguishable from an empty or zero one — each is
+// rejected, but the diagnostic names which mistake was made. port is a plain
+// integer: a quoted port is a type error and is caught by the file-level
+// malformed path, which is contained.
+type rawAllowEntry struct {
+	Host       *string `yaml:"host"`
+	Port       *int    `yaml:"port"`
+	Credential *string `yaml:"credential"`
 }
 
 type rawPool struct {
@@ -364,6 +495,12 @@ type rawConcurrency struct {
 // contradictory-toward-containment inputs all resolve to DefaultConfig(), which
 // is contained. The ONLY way to reach the host substrate is a readable,
 // well-formed file that explicitly says so.
+//
+// The one dimension for which DefaultConfig() is not the safe answer is EGRESS,
+// whose default is the permissive posture. A file discarded wholesale therefore
+// resolves to DefaultConfig() carrying the salvaged egress POSTURE — never a
+// salvaged allowlist — so a mistyped key cannot revert enforcement to allow-all.
+// See the "whole-file discard" block below.
 //
 // THE OFF-SWITCH IS FILE-ONLY. This function reads no environment variable, and
 // must never be changed to. Containment is likewise never derived from a wire
@@ -417,15 +554,141 @@ func LoadConfig(root string) (Config, []Warning) {
 			// An empty file is indistinguishable in intent from an absent one.
 			return DefaultConfig(), nil
 		}
-		return DefaultConfig(), []Warning{{
+		// The file is discarded wholesale — except for the egress POSTURE, which
+		// is the one dimension whose default is the permissive side. See
+		// salvageEgressPosture.
+		egress := salvageEgressPosture(data)
+		return discardedConfig(egress), []Warning{{
 			Reason: WarnMalformed,
 			Path:   path,
 			Detail: strings.TrimSpace(err.Error()),
-			Effect: "config file could not be parsed; running contained on the container substrate",
+			Effect: "config file could not be parsed; running contained on the container substrate" + egressEffect(egress),
 		}}
 	}
 
 	return raw.resolve(path)
+}
+
+// --- whole-file discard: salvaging the egress posture -------------------------
+//
+// Change 0063 could discard a config file WHOLESALE and land on DefaultConfig()
+// because the default was the SAFE side of every dimension the file carried:
+// contained, container substrate, no image, no passthrough. Reverting to it
+// could only ever narrow what a command could do.
+//
+// Change 0064 adds a dimension whose default is the UNSAFE side. Egress's zero
+// value is EgressAllowAll — unrestricted, by design, so an unconfigured machine
+// is unchanged. That inverts the discard rule for this one field: an operator
+// who wrote `egress.mode: enforce` and then mistyped an unrelated key would have
+// their enforcement silently reverted to allow-all, which is precisely the
+// fail-OPEN direction the spec forbids ("fail toward deny-all, never toward the
+// internet"). A loud warning does not change the resolved posture.
+//
+// So a whole-file discard salvages the POSTURE, and nothing else:
+//
+//   - The ALLOWLIST is never salvaged. An entry recovered from a file we could
+//     not parse would be an authorization decision derived from bytes we do not
+//     trust; deny-all is the correct outcome. Enforce-with-an-empty-allowlist is
+//     already a legitimate, well-supported resolved state (see Egress).
+//   - The salvage never INVENTS enforcement. A file that asked for allow-all, or
+//     said nothing about egress, keeps the unchanged local-dev posture —
+//     otherwise an unrelated typo would black out a developer's network.
+//   - No OTHER dimension's discard behaviour changes. Containment, handler,
+//     image, and env_passthrough keep exactly the semantics 0063 defined.
+//
+// The paths with no bytes to read (WarnNoRoot, WarnUnreadable) have nothing to
+// salvage from and are deliberately untouched: there is no file content from
+// which a posture could be derived, and inventing one is not an option.
+
+// rawPosture is the deliberately minimal shape used for the second, permissive
+// decode. It carries the posture selector and NOTHING else, so no field of a
+// file we rejected can reach a Config through this door — not even by accident,
+// because the struct has nowhere to put one.
+type rawPosture struct {
+	Egress *struct {
+		Mode *string `yaml:"mode"`
+	} `yaml:"egress"`
+}
+
+// salvageEgressPosture recovers the egress posture, and only the posture, from
+// the bytes of a config file that could not be parsed as the expected shape.
+func salvageEgressPosture(data []byte) Egress {
+	// KnownFields is deliberately OFF here. The strict decode already ran and
+	// already rejected the file; this pass is not a second chance at honouring
+	// it, it is a targeted read of one enum whose default is unsafe. The
+	// commonest reason to be here — a mistyped key elsewhere in the file — is
+	// exactly the case a permissive decode sees through.
+	var raw rawPosture
+	if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&raw); err == nil {
+		if raw.Egress == nil || raw.Egress.Mode == nil {
+			return Egress{}
+		}
+		return salvagedMode(*raw.Egress.Mode)
+	}
+	// The document does not parse as YAML at all (an unterminated quote, a
+	// broken flow sequence), so no decoder — however permissive — can reach the
+	// mode. Fall back to reading the posture out of the text.
+	return scanEgressPosture(data)
+}
+
+// salvagedMode maps a mode string recovered from a discarded file onto a
+// posture, using the same no-fallback-toward-permissive rule as parseEgressMode:
+// only a value that recognisably says allow-all resolves to allow-all. An
+// unrecognised spelling resolves to enforcement, matching what a PARSEABLE file
+// with the same typo would have resolved to (WarnUnknownEgressMode).
+func salvagedMode(mode string) Egress {
+	if m, ok := parseEgressMode(mode); ok && m == EgressAllowAll {
+		return Egress{}
+	}
+	return Egress{Mode: EgressEnforce}
+}
+
+// scanEgressPosture is the last-resort posture read for a file that is not
+// YAML. It looks for a `mode:` key line — `mode` appears nowhere else in this
+// schema — and reads its value.
+//
+// This is a text scan, not a parser, and it is deliberately biased: every way it
+// can be wrong about a `mode:` line's structure resolves toward ENFORCEMENT,
+// whose cost is a loudly-warned deny-all on a file the operator must fix anyway.
+// It is reached only for a file that has already failed two decoders, and it can
+// never widen access, so its imprecision has no fail-open direction. It reads
+// only the posture; it cannot and does not recover an allow entry.
+func scanEgressPosture(data []byte) Egress {
+	for _, line := range strings.Split(string(data), "\n") {
+		// Strip comments first, so a commented-out `# mode: enforce` is
+		// correctly read as "not configured" rather than as enforcement.
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "mode:")
+		if !ok {
+			continue
+		}
+		if salvagedMode(strings.Trim(strings.TrimSpace(rest), "\"'")).Mode == EgressEnforce {
+			return Egress{Mode: EgressEnforce}
+		}
+	}
+	return Egress{}
+}
+
+// discardedConfig is the resolved answer for a whole-file discard: the contained
+// default, carrying the salvaged egress POSTURE and nothing else from the file.
+// The Allow field is dropped explicitly rather than by omission, so a future
+// caller cannot pass an allowlist through here by widening the argument.
+func discardedConfig(egress Egress) Config {
+	cfg := DefaultConfig()
+	cfg.Egress = Egress{Mode: egress.Mode}
+	return cfg
+}
+
+// egressEffect renders the egress half of a whole-file discard's Effect. A
+// discard now has two possible egress outcomes, so the operator must be told
+// which one they got: "running contained" is no longer the whole story.
+func egressEffect(egress Egress) string {
+	if egress.Mode == EgressEnforce {
+		return "; the file named an enforcing egress posture, so egress is ENFORCED with an EMPTY allowlist — no declared destination is salvaged from a config that could not be trusted, so every destination is denied"
+	}
+	return "; no enforcing egress posture was recoverable from the file, so egress is unrestricted (the allow-all default)"
 }
 
 // resolve turns a parsed file into a consistent Config plus diagnostics.
@@ -450,11 +713,21 @@ func (raw rawConfig) resolve(path string) (Config, []Warning) {
 			// understand: its other fields (image, env_passthrough) widen what
 			// a command can see, and they were written by the same hand that
 			// typed a substrate that does not exist.
-			return DefaultConfig(), append(warns, Warning{
+			//
+			// The egress POSTURE is the sole exception, and it is not an
+			// exception to that reasoning but an application of it: discarding
+			// it would WIDEN what the command can reach, because the egress
+			// default is the permissive side. The declared allowlist is
+			// discarded with everything else. See salvageEgressPosture.
+			egress := Egress{}
+			if raw.Egress != nil && raw.Egress.Mode != nil {
+				egress = salvagedMode(*raw.Egress.Mode)
+			}
+			return discardedConfig(egress), append(warns, Warning{
 				Reason: WarnUnknownHandler,
 				Path:   path,
 				Detail: fmt.Sprintf("handler: %q is not %q or %q", *raw.Handler, HandlerContainer, HandlerHost),
-				Effect: "unknown substrate named; the whole config was discarded and the sandbox is running contained on the container substrate",
+				Effect: "unknown substrate named; the whole config was discarded and the sandbox is running contained on the container substrate" + egressEffect(egress),
 			})
 		}
 		cfg.Handler = handler
@@ -528,7 +801,207 @@ func (raw rawConfig) resolve(path string) (Config, []Warning) {
 		warns = raw.Concurrency.resolve(path, &cfg.Concurrency, warns)
 	}
 
+	// --- egress -----------------------------------------------------------
+	//
+	// Also posture-free, but for a different reason: egress posture is chosen by
+	// the operator's explicit egress.mode knob and by nothing else. Unlike the
+	// blocks above, a value here cannot degrade to "unset ⇒ a later default",
+	// because the default IS the permissive posture. So a value the loader
+	// cannot trust degrades toward ENFORCEMENT WITH AN EMPTY ALLOWLIST instead.
+	if raw.Egress != nil {
+		warns = raw.Egress.resolve(path, &cfg.Egress, warns)
+	}
+
 	return cfg, warns
+}
+
+// resolve fills out from a parsed egress: block.
+//
+// FAIL TOWARD DENY, NEVER TOWARD THE INTERNET. There are exactly three outcomes:
+//
+//   - a fully understood block is honoured as written;
+//   - an unrecognised mode resolves to EgressEnforce with an EMPTY allowlist,
+//     because an unparseable posture must never resolve to the permissive one;
+//   - any unusable allow entry discards the WHOLE allowlist, leaving the
+//     operator's declared mode in force with nothing declared. Under enforce
+//     that is deny-all; under allow-all there is no floor to keep on, so it
+//     degrades to the containment default.
+//
+// Partial honouring is the one shape that is never produced. An operator who
+// mistypes one entry of five must not silently get the other four plus a hole
+// where the fifth was meant to be, and must not get a policy they never wrote.
+func (raw rawEgress) resolve(path string, out *Egress, warns []Warning) []Warning {
+	if raw.Mode != nil {
+		mode, ok := parseEgressMode(*raw.Mode)
+		if !ok {
+			// We cannot tell what posture was meant. The allowlist is discarded
+			// with it: it was written by the same hand, and honouring it under a
+			// posture nobody asked for would be inventing policy.
+			*out = Egress{Mode: EgressEnforce}
+			return append(warns, Warning{
+				Reason: WarnUnknownEgressMode,
+				Path:   path,
+				Detail: fmt.Sprintf("egress.mode: %q is not %q or %q", *raw.Mode, EgressAllowAll, EgressEnforce),
+				Effect: "unknown egress mode named; egress is ENFORCED with an empty allowlist, so every destination is denied",
+			})
+		}
+		out.Mode = mode
+	}
+
+	if len(raw.Allow) == 0 {
+		return warns
+	}
+
+	allow := make([]AllowEntry, 0, len(raw.Allow))
+	for i, rawEntry := range raw.Allow {
+		entry, detail, ok := rawEntry.resolve()
+		if !ok {
+			// Discard the whole list, not just this entry.
+			out.Allow = nil
+			effect := "the whole egress allowlist was discarded; egress is ENFORCED with an empty allowlist, so every destination is denied"
+			if out.Mode == EgressAllowAll {
+				effect = "the whole egress block was discarded; egress is unrestricted (mode: allow-all, no proxy) — fix the entry and declare mode: enforce to contain it"
+			}
+			return append(warns, Warning{
+				Reason: WarnBadEgress,
+				Path:   path,
+				Detail: fmt.Sprintf("egress.allow[%d]: %s", i, detail),
+				Effect: effect,
+			})
+		}
+		if entry.Credential != "" {
+			// The entry is honoured, not discarded: this is a WARN naming a real
+			// constraint, not a rejection. See WarnCredentialPlaintextOnly and
+			// AllowEntry.Credential.
+			warns = append(warns, Warning{
+				Reason: WarnCredentialPlaintextOnly,
+				Path:   path,
+				Detail: fmt.Sprintf("egress.allow[%d]: %q port %d declares credential: %q", i, *rawEntry.Host, entry.Port, entry.Credential),
+				Effect: "the credential is usable only over plaintext http through the forward-proxy path; a CONNECT (https) to this destination is refused (RefusedCredentialTunnel), never TLS-intercepted",
+			})
+		}
+		allow = append(allow, entry)
+	}
+
+	// The allowlist is only meaningful under enforcement: there is no proxy in
+	// allow-all to consult it, and carrying it would invite a later reader to
+	// treat it as one.
+	if out.Mode == EgressEnforce {
+		out.Allow = allow
+	}
+	return warns
+}
+
+// resolve validates one declared entry into an AllowEntry. On failure it returns
+// a human diagnostic naming the specific mistake; it never returns a partially
+// populated entry.
+func (raw rawAllowEntry) resolve() (AllowEntry, string, bool) {
+	if raw.Host == nil {
+		return AllowEntry{}, "no host: (want a hostname or a CIDR)", false
+	}
+	if raw.Port == nil {
+		return AllowEntry{}, fmt.Sprintf("host %q has no port: (the port is exact and required)", *raw.Host), false
+	}
+	if *raw.Port < 1 || *raw.Port > 65535 {
+		return AllowEntry{}, fmt.Sprintf("port %d is not in 1..65535", *raw.Port), false
+	}
+
+	host, cidr, ok := parseAllowHost(*raw.Host)
+	if !ok {
+		return AllowEntry{}, fmt.Sprintf("host %q is neither a hostname nor a CIDR", *raw.Host), false
+	}
+
+	entry := AllowEntry{Host: host, CIDR: cidr, Port: *raw.Port}
+	if raw.Credential != nil {
+		entry.Credential = strings.TrimSpace(*raw.Credential)
+	}
+	return entry, "", true
+}
+
+// parseEgressMode maps a configured posture name onto the closed enum.
+//
+// Case-insensitive and space-tolerant but otherwise exact: no aliasing and, above
+// all, NO FALLBACK. An unrecognised name is reported as unrecognised, because the
+// alternative — quietly picking one — would pick the permissive one.
+func parseEgressMode(v string) (EgressMode, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case EgressAllowAll.String():
+		return EgressAllowAll, true
+	case EgressEnforce.String():
+		return EgressEnforce, true
+	default:
+		return EgressEnforce, false
+	}
+}
+
+// parseAllowHost resolves a declared host: value into exactly one of a canonical
+// hostname or a CIDR block.
+//
+// A bare IP literal becomes a full-mask CIDR rather than a Host, so the matcher
+// compares IP values: "2001:db8::1" and "2001:0DB8:0:0:0:0:0:1" are the same
+// destination, and a string comparison would say otherwise.
+//
+// Hostnames are canonicalized ONCE, here, through reputation.CanonicalHost —
+// ADR-0048 rule 3. Do not add a second normalization at the matcher: two
+// normalizers that drift is exactly the bug that ADR records.
+func parseAllowHost(v string) (host string, cidr *net.IPNet, ok bool) {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return "", nil, false
+	}
+
+	if strings.Contains(s, "/") {
+		_, block, err := net.ParseCIDR(s)
+		if err != nil || block == nil {
+			return "", nil, false
+		}
+		return "", block, true
+	}
+
+	if ip := net.ParseIP(s); ip != nil {
+		bits := 8 * net.IPv6len
+		if v4 := ip.To4(); v4 != nil {
+			ip, bits = v4, 8*net.IPv4len
+		}
+		return "", &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}, true
+	}
+
+	h := reputation.CanonicalHost(s)
+	if !validHostname(h) {
+		return "", nil, false
+	}
+	return h, nil, true
+}
+
+// validHostname reports whether h is shaped like a DNS hostname: 1..253 bytes of
+// dot-separated labels, each 1..63 bytes of [a-z0-9-] and not hyphen-bounded.
+//
+// It is deliberately strict, and rejection is deliberately cheap: a rejected host
+// discards the allowlist toward denial with a loud warning, so the failure
+// direction of any strictness bug here is an operator who is told their config is
+// wrong, never a destination that is reachable when it should not be. h must
+// already be canonical.
+func validHostname(h string) bool {
+	if h == "" || len(h) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(h, ".") {
+		if len(label) == 0 || len(label) > 63 {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			switch {
+			case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-':
+			default:
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // resolve fills out from a parsed limits: block, appending a WarnBadLimit for

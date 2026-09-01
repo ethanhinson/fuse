@@ -665,3 +665,497 @@ func TestParseCPUsCanonicalises(t *testing.T) {
 		}
 	}
 }
+
+// --- egress (change 0064) -----------------------------------------------------
+
+// egressAllowLine renders one allow: entry for the table-driven cases below.
+func egressBody(mode string, entries ...string) string {
+	body := "contained: true\negress:\n"
+	if mode != "" {
+		body += "  mode: " + mode + "\n"
+	}
+	if len(entries) > 0 {
+		body += "  allow:\n"
+		for _, e := range entries {
+			body += e
+		}
+	}
+	return body
+}
+
+// The default posture is allow-all in every direction the operator did not
+// speak to: no egress block at all, and an explicit allow-all.
+func TestLoadConfigEgressDefaultsToAllowAll(t *testing.T) {
+	for _, body := range []string{
+		"contained: true\n",
+		egressBody("allow-all"),
+		egressBody("ALLOW-ALL"),         // case-insensitive, like handler:
+		egressBody("\"  allow-all  \""), // space-tolerant, like handler:
+	} {
+		t.Run(body, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, body)
+
+			cfg, warns := LoadConfig(root)
+
+			if len(warns) != 0 {
+				t.Errorf("warnings = %v, want none", warns)
+			}
+			if cfg.Egress.Mode != EgressAllowAll {
+				t.Errorf("Egress.Mode = %v, want EgressAllowAll", cfg.Egress.Mode)
+			}
+			if len(cfg.Egress.Allow) != 0 {
+				t.Errorf("Egress.Allow = %+v, want empty", cfg.Egress.Allow)
+			}
+		})
+	}
+}
+
+// The zero value of the type must be the permissive-but-unchanged local-dev
+// posture, so a Config nobody configured behaves exactly as it did before 0064.
+func TestDefaultConfigEgressIsAllowAll(t *testing.T) {
+	if EgressAllowAll != 0 {
+		t.Errorf("EgressAllowAll = %v, want the zero value", EgressAllowAll)
+	}
+	cfg := DefaultConfig()
+	if cfg.Egress.Mode != EgressAllowAll || len(cfg.Egress.Allow) != 0 {
+		t.Errorf("DefaultConfig().Egress = %+v, want allow-all with no entries", cfg.Egress)
+	}
+}
+
+func TestLoadConfigEgressEnforceParsesAllowList(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, egressBody("enforce",
+		"    - host: pkg.example.com\n      port: 443\n",
+		"    - host: api.internal\n      port: 8443\n      credential: internal-api\n",
+		"    - host: 10.0.0.0/8\n      port: 5432\n",
+		"    - host: 192.0.2.7\n      port: 443\n",
+	))
+
+	cfg, warns := LoadConfig(root)
+
+	// The api.internal entry declares a credential:, which is honoured but
+	// warns — see WarnCredentialPlaintextOnly.
+	if len(warns) != 1 || !hasWarning(warns, WarnCredentialPlaintextOnly) {
+		t.Fatalf("warnings = %v, want exactly one %q warning", warns, WarnCredentialPlaintextOnly)
+	}
+	if cfg.Egress.Mode != EgressEnforce {
+		t.Fatalf("Egress.Mode = %v, want EgressEnforce", cfg.Egress.Mode)
+	}
+	if len(cfg.Egress.Allow) != 4 {
+		t.Fatalf("Egress.Allow = %+v, want 4 entries", cfg.Egress.Allow)
+	}
+
+	if got := cfg.Egress.Allow[0]; got.Host != "pkg.example.com" || got.Port != 443 || got.CIDR != nil || got.Credential != "" {
+		t.Errorf("Allow[0] = %+v, want {pkg.example.com 443}", got)
+	}
+	if got := cfg.Egress.Allow[1]; got.Host != "api.internal" || got.Port != 8443 || got.Credential != "internal-api" {
+		t.Errorf("Allow[1] = %+v, want {api.internal 8443 internal-api}", got)
+	}
+	if got := cfg.Egress.Allow[2]; got.CIDR == nil || got.CIDR.String() != "10.0.0.0/8" || got.Host != "" || got.Port != 5432 {
+		t.Errorf("Allow[2] = %+v, want the CIDR 10.0.0.0/8 on port 5432 with no host", got)
+	}
+	// A bare IP literal is stored as a full-mask block, so the matcher compares
+	// IP values rather than spellings.
+	if got := cfg.Egress.Allow[3]; got.CIDR == nil || got.CIDR.String() != "192.0.2.7/32" || got.Host != "" {
+		t.Errorf("Allow[3] = %+v, want the bare IP as 192.0.2.7/32", got)
+	}
+}
+
+// A credential: entry is honoured, not rejected, but the loader warns that it
+// is reachable only over plaintext http — the constraint an operator reading
+// only the config schema has no other way to learn (finding: credential-only
+// documented on an unexported proxy comment).
+func TestLoadConfigCredentialEntryWarnsPlaintextOnly(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, egressBody("enforce",
+		"    - host: api.internal\n      port: 8443\n      credential: internal-api\n",
+	))
+
+	cfg, warns := LoadConfig(root)
+
+	if !hasWarning(warns, WarnCredentialPlaintextOnly) {
+		t.Fatalf("warnings = %v, want a %q warning", warns, WarnCredentialPlaintextOnly)
+	}
+	// The entry is still honoured — this is a warning, not a rejection.
+	if len(cfg.Egress.Allow) != 1 || cfg.Egress.Allow[0].Credential != "internal-api" {
+		t.Fatalf("Egress.Allow = %+v, want the credentialed entry honoured", cfg.Egress.Allow)
+	}
+	for _, w := range warns {
+		if w.Reason == WarnCredentialPlaintextOnly {
+			if !strings.Contains(w.Detail, "internal-api") || !strings.Contains(w.Detail, "api.internal") {
+				t.Errorf("warning detail %q does not name the entry", w.Detail)
+			}
+		}
+	}
+}
+
+// A declared entry with no credential: must never warn — the reason exists to
+// flag the real constraint, not to fire on every allowlist entry.
+func TestLoadConfigNoCredentialEntryDoesNotWarn(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, egressBody("enforce",
+		"    - host: pkg.example.com\n      port: 443\n",
+	))
+
+	_, warns := LoadConfig(root)
+
+	if hasWarning(warns, WarnCredentialPlaintextOnly) {
+		t.Fatalf("warnings = %v, want no %q warning without a credential: entry", warns, WarnCredentialPlaintextOnly)
+	}
+}
+
+// ADR-0048 rule 3: hosts are canonicalized ONCE, at load, so the matcher never
+// sees a raw spelling and a trailing dot cannot slip past a declared entry.
+func TestLoadConfigEgressHostsAreCanonicalizedAtLoad(t *testing.T) {
+	for _, spelling := range []string{"PKG.Example.COM", "pkg.example.com.", "PKG.Example.COM.", "  pkg.example.com  "} {
+		t.Run(spelling, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, egressBody("enforce",
+				"    - host: \""+spelling+"\"\n      port: 443\n"))
+
+			cfg, warns := LoadConfig(root)
+
+			if len(warns) != 0 {
+				t.Fatalf("warnings = %v, want none", warns)
+			}
+			if len(cfg.Egress.Allow) != 1 || cfg.Egress.Allow[0].Host != "pkg.example.com" {
+				t.Errorf("Allow = %+v, want the canonical host %q", cfg.Egress.Allow, "pkg.example.com")
+			}
+		})
+	}
+}
+
+// An unparseable posture must never resolve to the permissive one: it resolves
+// to enforcement with an EMPTY allowlist, which denies everything.
+func TestLoadConfigUnknownEgressModeIsDenyAll(t *testing.T) {
+	for _, mode := range []string{"banana", "\"\"", "off", "allow", "allowall", "enforce!", "deny-all"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, egressBody(mode,
+				"    - host: pkg.example.com\n      port: 443\n"))
+
+			cfg, warns := LoadConfig(root)
+
+			if !hasWarning(warns, WarnUnknownEgressMode) {
+				t.Errorf("warnings = %v, want a %q warning", warns, WarnUnknownEgressMode)
+			}
+			if cfg.Egress.Mode != EgressEnforce {
+				t.Errorf("Egress.Mode = %v, want EgressEnforce (fail-safe violated)", cfg.Egress.Mode)
+			}
+			if len(cfg.Egress.Allow) != 0 {
+				t.Errorf("Egress.Allow = %+v, want empty (deny-all)", cfg.Egress.Allow)
+			}
+			assertContained(t, cfg)
+		})
+	}
+}
+
+// The fail-open shape this task exists to prevent: ONE botched entry must not
+// leave the other entries standing. The whole list is discarded and the floor
+// stays on.
+func TestLoadConfigMalformedEgressEntryUnderEnforceDiscardsWholeAllowList(t *testing.T) {
+	for _, bad := range []string{
+		"    - host: \"\"\n      port: 443\n",
+		"    - host: \"   \"\n      port: 443\n",
+		"    - host: api.internal\n", // no port
+		"    - host: api.internal\n      port: 0\n",
+		"    - host: api.internal\n      port: -1\n",
+		"    - host: api.internal\n      port: 70000\n",
+		"    - host: 10.0.0.0/99\n      port: 443\n",
+		"    - host: \"bad host\"\n      port: 443\n",
+		"    - host: https://api.internal\n      port: 443\n",
+		"    - host: \"api..internal\"\n      port: 443\n",
+		"    - host: \"-api.internal\"\n      port: 443\n",
+		"    - port: 443\n", // no host at all
+	} {
+		t.Run(bad, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, egressBody("enforce",
+				"    - host: pkg.example.com\n      port: 443\n", bad))
+
+			cfg, warns := LoadConfig(root)
+
+			if !hasWarning(warns, WarnBadEgress) {
+				t.Errorf("warnings = %v, want a %q warning", warns, WarnBadEgress)
+			}
+			if cfg.Egress.Mode != EgressEnforce {
+				t.Errorf("Egress.Mode = %v, want EgressEnforce (the floor must stay on)", cfg.Egress.Mode)
+			}
+			if len(cfg.Egress.Allow) != 0 {
+				t.Errorf("Egress.Allow = %+v, want empty: a botched allowlist must never be partially honoured", cfg.Egress.Allow)
+			}
+		})
+	}
+}
+
+// Under allow-all there is no floor to keep on, so a malformed block degrades to
+// the containment default — loudly, and never as an error return.
+func TestLoadConfigMalformedEgressUnderAllowAllDegradesAndWarns(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, egressBody("allow-all",
+		"    - host: \"\"\n      port: 443\n"))
+
+	cfg, warns := LoadConfig(root)
+
+	if !hasWarning(warns, WarnBadEgress) {
+		t.Errorf("warnings = %v, want a %q warning", warns, WarnBadEgress)
+	}
+	if cfg.Egress.Mode != EgressAllowAll {
+		t.Errorf("Egress.Mode = %v, want EgressAllowAll", cfg.Egress.Mode)
+	}
+	if len(cfg.Egress.Allow) != 0 {
+		t.Errorf("Egress.Allow = %+v, want empty", cfg.Egress.Allow)
+	}
+	assertContained(t, cfg)
+}
+
+// An allowlist under allow-all is inert: there is no proxy to consult it, so the
+// loader validates it and then drops it rather than carrying a list a later
+// reader could mistake for a policy in force.
+func TestLoadConfigWellFormedAllowListUnderAllowAllIsDropped(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, egressBody("allow-all",
+		"    - host: pkg.example.com\n      port: 443\n"))
+
+	cfg, warns := LoadConfig(root)
+
+	if len(warns) != 0 {
+		t.Errorf("warnings = %v, want none for a well-formed block", warns)
+	}
+	if cfg.Egress.Mode != EgressAllowAll {
+		t.Errorf("Egress.Mode = %v, want EgressAllowAll", cfg.Egress.Mode)
+	}
+	if len(cfg.Egress.Allow) != 0 {
+		t.Errorf("Egress.Allow = %+v, want empty under allow-all", cfg.Egress.Allow)
+	}
+}
+
+// enforce with no allow: at all is the deliberate deny-all posture, not an error.
+func TestLoadConfigEnforceWithNoAllowListIsDenyAllWithoutWarning(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, egressBody("enforce"))
+
+	cfg, warns := LoadConfig(root)
+
+	if len(warns) != 0 {
+		t.Errorf("warnings = %v, want none", warns)
+	}
+	if cfg.Egress.Mode != EgressEnforce || len(cfg.Egress.Allow) != 0 {
+		t.Errorf("Egress = %+v, want enforce with an empty allowlist", cfg.Egress)
+	}
+}
+
+// Egress is selected by the explicit knob ONLY. It must not join the posture
+// split in resolveDefaults, in either direction.
+func TestEgressDoesNotParticipateInPostureDefaults(t *testing.T) {
+	for _, hosted := range []bool{false, true} {
+		for _, want := range []Egress{
+			{},
+			{Mode: EgressEnforce},
+			{Mode: EgressEnforce, Allow: []AllowEntry{{Host: "pkg.example.com", Port: 443}}},
+		} {
+			cfg := DefaultConfig()
+			cfg.Egress = want
+			cfg.resolveDefaults(hosted)
+
+			if cfg.Egress.Mode != want.Mode || len(cfg.Egress.Allow) != len(want.Allow) {
+				t.Errorf("resolveDefaults(hosted=%v) changed Egress %+v -> %+v", hosted, want, cfg.Egress)
+			}
+		}
+	}
+}
+
+// An unrecognised key inside the egress block trips KnownFields(true) like every
+// other block, discarding the file toward the safe default.
+func TestLoadConfigUnknownKeyInEgressIsMalformed(t *testing.T) {
+	for _, body := range []string{
+		"egress:\n  mode: enforce\n  alow:\n    - host: a.example.com\n      port: 443\n",
+		"egress:\n  mode: enforce\n  allow:\n    - hostname: a.example.com\n      port: 443\n",
+	} {
+		t.Run(body, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, body)
+
+			cfg, warns := LoadConfig(root)
+
+			if !hasWarning(warns, WarnMalformed) {
+				t.Errorf("warnings = %v, want %q for an unknown key", warns, WarnMalformed)
+			}
+			assertContained(t, cfg)
+		})
+	}
+}
+
+// --- whole-file discard: the egress posture survives, the allowlist does not ---
+//
+// #63 could discard a file wholesale and land on DefaultConfig() because the
+// default was the SAFE side of every dimension the file carried. Egress breaks
+// that: its default is the PERMISSIVE side, so an operator who wrote
+// `mode: enforce` and then mistyped an unrelated key must not be handed
+// unrestricted egress. The posture — and only the posture — is salvaged.
+func TestLoadConfigDiscardedFileSalvagesEnforcingEgressPosture(t *testing.T) {
+	enforcing := "egress:\n  mode: enforce\n  allow:\n    - host: pkg.example.com\n      port: 443\n"
+
+	cases := map[string]string{
+		// A key the strict decode rejects, beside a perfectly good egress block.
+		"unknown top-level key": "containd: false\n" + enforcing,
+		// A key the strict decode rejects INSIDE the egress block itself.
+		"unknown key in egress": "egress:\n  mode: enforce\n  alow:\n    - host: a.example.com\n      port: 443\n",
+		// A type error in an unrelated field.
+		"wrong scalar elsewhere": "contained: \"not a bool\"\n" + enforcing,
+		// A file that does not parse as YAML at ALL — no decode, permissive or
+		// otherwise, can reach the mode.
+		"unterminated flow sequence": "contained: [oh: no\n" + enforcing,
+		"unterminated quote":         "egress:\n  mode: enforce\n  allow:\n    - host: \"unclosed\n      port: 443\n",
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, body)
+
+			cfg, warns := LoadConfig(root)
+
+			assertContained(t, cfg)
+			if !hasWarning(warns, WarnMalformed) {
+				t.Errorf("warnings = %v, want a %q warning", warns, WarnMalformed)
+			}
+			if cfg.Egress.Mode != EgressEnforce {
+				t.Errorf("Egress.Mode = %v, want EgressEnforce (a discarded file must not revert enforce to allow-all)", cfg.Egress.Mode)
+			}
+			// An entry recovered from a file we could not parse would be an
+			// authorization decision derived from bytes we do not trust.
+			if len(cfg.Egress.Allow) != 0 {
+				t.Errorf("Egress.Allow = %+v, want empty: the allowlist is never salvaged", cfg.Egress.Allow)
+			}
+		})
+	}
+}
+
+// The unknown-handler discard path is the second whole-file discard, and it
+// carries the same hazard.
+func TestLoadConfigUnknownHandlerSalvagesEnforcingEgressPosture(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, "handler: banana\nimage: evil:latest\negress:\n  mode: enforce\n  allow:\n    - host: pkg.example.com\n      port: 443\n")
+
+	cfg, warns := LoadConfig(root)
+
+	assertContained(t, cfg)
+	if !hasWarning(warns, WarnUnknownHandler) {
+		t.Errorf("warnings = %v, want a %q warning", warns, WarnUnknownHandler)
+	}
+	if cfg.Egress.Mode != EgressEnforce || len(cfg.Egress.Allow) != 0 {
+		t.Errorf("Egress = %+v, want enforce with an EMPTY allowlist", cfg.Egress)
+	}
+	// Every other dimension keeps exactly the #63 whole-discard semantics.
+	if cfg.Image != "" {
+		t.Errorf("Image = %q, want empty: only the posture is salvaged", cfg.Image)
+	}
+}
+
+// An unrecognisable posture in a discarded file resolves toward enforcement for
+// the same reason parseEgressMode does: the alternative is quietly picking the
+// permissive one.
+func TestLoadConfigDiscardedFileTreatsUnrecognisedModeAsEnforcing(t *testing.T) {
+	for name, body := range map[string]string{
+		"typo mode, unknown key": "containd: false\negress:\n  mode: enfroce\n",
+		"typo mode, broken yaml": "contained: [oh: no\negress:\n  mode: enfroce\n",
+		"unknown handler":        "handler: banana\negress:\n  mode: enfroce\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, body)
+
+			cfg, _ := LoadConfig(root)
+
+			if cfg.Egress.Mode != EgressEnforce {
+				t.Errorf("Egress.Mode = %v, want EgressEnforce", cfg.Egress.Mode)
+			}
+		})
+	}
+}
+
+// The salvage must not INVENT enforcement. A discarded file that asked for
+// allow-all, or said nothing about egress, keeps the unchanged local-dev
+// posture — otherwise an unrelated typo would black out a developer's network.
+func TestLoadConfigDiscardedFileWithoutEnforcementStaysAllowAll(t *testing.T) {
+	for name, body := range map[string]string{
+		"no egress block":      "containd: false\n",
+		"explicit allow-all":   "containd: false\negress:\n  mode: allow-all\n",
+		"allow-all, quoted":    "containd: false\negress:\n  mode: \"ALLOW-ALL\"\n",
+		"broken yaml":          "contained: [oh: no\n",
+		"broken, allow-all":    "contained: [oh: no\negress:\n  mode: allow-all\n",
+		"mode only in comment": "containd: false\n# egress:\n#   mode: enforce\n",
+		"unknown handler":      "handler: banana\nimage: evil:latest\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, body)
+
+			cfg, _ := LoadConfig(root)
+
+			if cfg.Egress.Mode != EgressAllowAll {
+				t.Errorf("Egress.Mode = %v, want EgressAllowAll (the salvage must not invent enforcement)", cfg.Egress.Mode)
+			}
+		})
+	}
+}
+
+// A whole-file discard now has two possible egress outcomes, so its Effect must
+// say which one the operator actually got. "Running contained" is no longer the
+// whole story.
+func TestDiscardWarningEffectNamesTheEgressPosture(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		want string
+	}{
+		"malformed, enforcing":       {"containd: false\negress:\n  mode: enforce\n", "denied"},
+		"malformed, allow-all":       {"containd: false\n", "unrestricted"},
+		"unknown handler, enforcing": {"handler: banana\negress:\n  mode: enforce\n", "denied"},
+		"unknown handler, allow-all": {"handler: banana\n", "unrestricted"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, tc.body)
+
+			_, warns := LoadConfig(root)
+
+			if len(warns) != 1 {
+				t.Fatalf("warnings = %v, want exactly one", warns)
+			}
+			msg := warns[0].Error()
+			if !strings.Contains(strings.ToLower(msg), "egress") {
+				t.Errorf("effect %q does not mention egress", msg)
+			}
+			if !strings.Contains(msg, tc.want) {
+				t.Errorf("effect %q does not describe the posture the operator got (want %q)", msg, tc.want)
+			}
+		})
+	}
+}
+
+// Every egress warning must name what the loader did instead, in words an
+// operator can act on.
+func TestEgressWarningsAreLoud(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, egressBody("banana", "    - host: pkg.example.com\n      port: 443\n"))
+
+	_, warns := LoadConfig(root)
+
+	if len(warns) == 0 {
+		t.Fatal("no warnings")
+	}
+	for _, w := range warns {
+		msg := w.Error()
+		if !strings.Contains(msg, string(w.Reason)) {
+			t.Errorf("message %q does not name its reason %q", msg, w.Reason)
+		}
+		if !strings.Contains(strings.ToLower(msg), "egress") {
+			t.Errorf("message %q does not name the egress block", msg)
+		}
+		if w.Effect == "" {
+			t.Errorf("warning %+v states no effect", w)
+		}
+	}
+}

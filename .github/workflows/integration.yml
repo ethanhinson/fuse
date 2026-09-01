@@ -43,6 +43,29 @@ jobs:
       - name: Run unit tests with race detector
         run: go test -race ./...
 
+  # End-to-end egress datapath proof (change 0064). Starts a REAL --network none
+  # container on the runner's native-Linux Docker and asserts the full datapath:
+  # a declared destination is reachable through the mounted UNIX socket + fuse
+  # forwarder + host proxy, while an undeclared one is refused. This is the check
+  # no unit test can reach and that Docker Desktop for macOS cannot satisfy (its
+  # VM file-sharing layer does not relay a host UNIX socket bind-mount) — so it
+  # is proven here, on a native-Linux daemon, rather than on a developer's Mac.
+  egress-datapath:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Pre-pull the default container image
+        run: docker pull alpine:3.20
+
+      - name: Run end-to-end egress datapath proof
+        run: make egress-datapath
+
   # Permanent headless-browser reconnect lane for @fuse/sdk (change 0056). Drives the REAL
   # Wander example app in headless chromium against a REAL `fuse loop-serve-net` backend
   # (scripted LLM_GATEWAY_URL double, never Claude), kills the network mid-stream, and

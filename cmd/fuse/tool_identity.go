@@ -180,6 +180,37 @@ func buildToolIdentitySource(cfg config.Config) (toolidentity.CredentialSource, 
 		return nil, "an MCP server declares an identity/oauth-exchange auth type but tool_identity.signing_key is unset in ~/.fuse/config.yml — identity-propagating servers cannot mint downstream tokens and will fail closed"
 	}
 
+	return newToolIdentityBroker(cfg)
+}
+
+// newToolIdentityBroker builds THE credential source this binary mints delegated
+// tokens through: the built-in STS (keyed per tenant) fronted by a Broker that
+// also serves the legacy static tier.
+//
+// It is the ONE construction, shared by every seam that needs a
+// toolidentity.CredentialSource — the MCP manager (buildToolIdentitySource) and
+// the sandbox egress proxy (buildEgressCredentialSource). A second construction
+// would be a second root of trust: two STSs keyed from the same config would
+// mint under keys that are equal today and could silently diverge tomorrow, and
+// an operator reading `tool_identity.signing_key` would have no way to know which
+// one their `credential:` entry resolved through.
+//
+// PRECONDITION: cfg.ToolIdentity.SigningKey is non-empty. Each caller gates on
+// that itself, because the reason an operator needs to read is phrased in terms
+// of the seam they configured (an MCP server's auth type, or an egress.allow
+// entry) — not in terms of this shared helper.
+//
+// It is PER-PROCESS, which is the right scope for both seams even though a
+// principal is per-request: nothing here is bound to a principal. The tenant key
+// map covers every tenant the process can serve (loop_server.auth plus the
+// default tenant), and WHICH key a mint uses is decided per call from the
+// Principal the caller passes to CredentialFor — the egress proxy passes its
+// listener's principal, the MCP manager passes the loop's. So one long-lived
+// source serves every loop without carrying any loop's identity.
+//
+// The reason string is non-empty only when construction FAILED; the source is
+// then nil and the caller must fail closed.
+func newToolIdentityBroker(cfg config.Config) (toolidentity.CredentialSource, string) {
 	ttl := 5 * time.Minute
 	if cfg.ToolIdentity.TTL != "" {
 		if d, err := time.ParseDuration(cfg.ToolIdentity.TTL); err == nil && d > 0 {
