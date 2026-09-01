@@ -92,7 +92,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// the skill tool and codeindex tools.
 	// Sandbox substrate (ADR-0044, change 0063), resolved ONCE. hosted=false: the
 	// probe is an operator-local diagnostic run, exactly like one-shot.
-	sb, closeEgress := newSandboxService(false, stderr)
+	sb, closeEgress := newSandboxService(cfg, false, stderr)
 	defer closeEgress()
 	toolReg := defaultToolRegistry(sb, cfg.Research, set.Lookup)
 	// The bash tool's warm sandbox pool — its Runners and its reaper goroutine — is a

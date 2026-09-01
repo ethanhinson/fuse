@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/ethanhinson/fuse/internal/config"
 	"strings"
 	"testing"
 )
@@ -55,7 +57,7 @@ func TestEgressEnforceWithoutDatapathWarnsLoudly(t *testing.T) {
 	withForwarderCandidates(t, []string{filepath.Join(t.TempDir(), "absent")})
 
 	var buf bytes.Buffer
-	proxy, forwarder := resolveEgressDatapath(root, &buf)
+	proxy, forwarder, _ := resolveEgressDatapath(config.Config{}, root, &buf)
 
 	if proxy != nil {
 		t.Errorf("proxy = %v, want nil — no datapath may be opened without a forwarder", proxy)
@@ -81,7 +83,7 @@ func TestEgressEnforceWiresDatapath(t *testing.T) {
 	withForwarderCandidates(t, []string{artifact})
 
 	var buf bytes.Buffer
-	proxy, forwarder := resolveEgressDatapath(root, &buf)
+	proxy, forwarder, _ := resolveEgressDatapath(config.Config{}, root, &buf)
 
 	if proxy == nil {
 		t.Fatalf("proxy = nil, want a live proxy; diagnostics: %s", buf.String())
@@ -118,7 +120,7 @@ func TestEgressAllowAllBuildsNoProxy(t *testing.T) {
 	withForwarderCandidates(t, []string{artifact})
 
 	var buf bytes.Buffer
-	proxy, forwarder := resolveEgressDatapath(root, &buf)
+	proxy, forwarder, _ := resolveEgressDatapath(config.Config{}, root, &buf)
 
 	if proxy != nil {
 		_ = proxy.Close()
@@ -207,7 +209,7 @@ func TestEgressNoticeCorrectedOnHostSubstrate(t *testing.T) {
 	withForwarderCandidates(t, []string{fakeForwarder(t, t.TempDir())})
 
 	var buf bytes.Buffer
-	svc, closeFn := newSandboxService(false, &buf)
+	svc, closeFn := newSandboxService(config.Config{}, false, &buf)
 	t.Cleanup(closeFn)
 
 	if svc == nil || svc.Contained() {
@@ -233,7 +235,7 @@ func TestNewSandboxServiceReturnsCloser(t *testing.T) {
 	withForwarderCandidates(t, []string{artifact})
 
 	var buf bytes.Buffer
-	_, closeFn := newSandboxService(false, &buf)
+	_, closeFn := newSandboxService(config.Config{}, false, &buf)
 	if closeFn == nil {
 		t.Fatal("newSandboxService returned a nil closer")
 	}

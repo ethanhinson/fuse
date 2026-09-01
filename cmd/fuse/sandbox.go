@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
 
@@ -51,6 +53,13 @@ import (
 // note that a missing container runtime is deliberately NOT an error here, it
 // surfaces as a refusal at Acquire.
 //
+// appCfg is the process's own ~/.fuse/config.yml. It reaches this function for
+// exactly one reason: the egress datapath's #52 delegated-identity seam is built
+// from it (buildEgressCredentialSource), so an `egress.allow` entry declaring a
+// `credential:` audience can actually be minted for. It NEVER influences
+// containment — the substrate, the off-switch, and the egress posture are read
+// only from the trusted-local <root>/.fuse/sandbox.local.yml, as before.
+//
 // It also settles the EGRESS datapath (change 0064) and owns its lifetime. The
 // returned func is the shutdown the caller MUST defer: it closes the host-side
 // proxy, tearing down every per-principal socket and removing the fuse-owned
@@ -58,7 +67,7 @@ import (
 // every entry point can defer it unconditionally at the call site — which is also
 // the right place for it, since defers run LIFO and the proxy must outlive the
 // sandbox pool release that comes after it.
-func newSandboxService(hosted bool, warnw io.Writer) (*sandbox.Service, func()) {
+func newSandboxService(appCfg config.Config, hosted bool, warnw io.Writer) (*sandbox.Service, func()) {
 	root, err := os.Getwd()
 	if err != nil {
 		// LoadConfig treats an empty root as "no file was consulted" and
@@ -74,7 +83,7 @@ func newSandboxService(hosted bool, warnw io.Writer) (*sandbox.Service, func()) 
 	// presence cannot turn enforcement ON: only the Service's own config load
 	// decides the posture, and the container handler ignores a datapath unless
 	// that load resolved EgressEnforce.
-	proxy, forwarder := resolveEgressDatapath(root, warnw)
+	proxy, forwarder, stopReporter := resolveEgressDatapath(appCfg, root, warnw)
 
 	opts := []sandbox.ServiceOption{sandbox.WithHostedPosture(hosted)}
 	closeFn := func() {}
@@ -93,6 +102,10 @@ func newSandboxService(hosted bool, warnw io.Writer) (*sandbox.Service, func()) 
 				if cerr := proxy.Close(); cerr != nil {
 					fmt.Fprintf(warnw, "sandbox: egress proxy shutdown: %v\n", cerr)
 				}
+				// AFTER the proxy: Close waits for every connection goroutine and
+				// accept loop, so by this point no further refusal can be reported
+				// and the reporter can drain what it holds and print its summary.
+				stopReporter()
 			})
 		}
 	}
@@ -232,10 +245,16 @@ func firstForwarderArtifact(candidates []string) string {
 // (the container handler ignores a datapath outside enforcement), and allow-all
 // here with "enforce" there is the deny-all floor.
 //
-// Returns (nil, "") for every non-wired outcome. A partial datapath is never
-// returned: WithEgressProxy treats a nil proxy or empty path as "not supplied",
-// and both halves are decided together here so that stays true.
-func resolveEgressDatapath(root string, warnw io.Writer) (*sandbox.Proxy, string) {
+// Returns a nil proxy and an empty forwarder for every non-wired outcome. A
+// partial datapath is never returned: WithEgressProxy treats a nil proxy or
+// empty path as "not supplied", and both halves are decided together here so
+// that stays true.
+//
+// The third return is the refusal reporter's shutdown, which newSandboxService
+// folds into the closer it hands the entry point. It is never nil, and it is
+// safe to call whether or not a proxy was built.
+func resolveEgressDatapath(appCfg config.Config, root string, warnw io.Writer) (*sandbox.Proxy, string, func()) {
+	noop := func() {}
 	// Warnings are discarded on purpose: NewServiceFromRoot returns the SAME
 	// warnings from its own load, and the caller logs those. Reporting them twice
 	// would train an operator to skim them.
@@ -243,20 +262,44 @@ func resolveEgressDatapath(root string, warnw io.Writer) (*sandbox.Proxy, string
 	if cfg.Egress.Mode != sandbox.EgressEnforce {
 		// Allow-all: no floor, no proxy, nothing to say, and no temp directory
 		// created for the overwhelmingly common case.
-		return nil, ""
+		return nil, "", noop
 	}
 
 	candidates := egressForwarderCandidates()
 	forwarder := firstForwarderArtifact(candidates)
 	if forwarder == "" {
 		warnEgressBlackout(warnw, root, cfg, candidates, "")
-		return nil, ""
+		return nil, "", noop
 	}
 
-	proxy, err := sandbox.NewProxy()
+	// THE #52 DELEGATED-IDENTITY SEAM. Resolved here, at the composition root,
+	// because sandbox.WithProxyCredentialSource is a CONSTRUCTION option: as with
+	// the datapath itself, there is no later moment at which a source could be
+	// added to a live Proxy. A nil source is fail-CLOSED, not permissive — a
+	// `credential:` entry with no source is refused (Proxy.delegatedHeader) — and
+	// the reason it is nil is printed, so an operator whose entry can never be
+	// satisfied learns that at startup rather than from an unexplained 403.
+	credentials, credReason := buildEgressCredentialSource(appCfg, cfg.Egress)
+	if credReason != "" {
+		fmt.Fprintf(warnw, "sandbox: egress identity — %s\n", credReason)
+	}
+
+	// THE REFUSAL REPORTER. ProxyHooks.Refused is the only egress observability
+	// this package offers, and an unconsumed hook means an operator can see THAT
+	// a command's network call failed but never WHY. It is non-blocking by
+	// construction: a capacity refusal fires on the listener's accept loop, so a
+	// hook that wrote to warnw directly could stall a principal's ability to
+	// accept behind a slow pipe (see egressRefusalReporter).
+	reporter := newEgressRefusalReporter(warnw)
+
+	proxy, err := sandbox.NewProxy(
+		sandbox.WithProxyCredentialSource(credentials),
+		sandbox.WithProxyHooks(reporter.hooks()),
+	)
 	if err != nil {
+		reporter.stop()
 		warnEgressBlackout(warnw, root, cfg, candidates, err.Error())
-		return nil, ""
+		return nil, "", noop
 	}
 
 	// Enforcement is on AND reachable. Logged unconditionally for the same reason
@@ -264,7 +307,50 @@ func resolveEgressDatapath(root string, warnw io.Writer) (*sandbox.Proxy, string
 	// through should never be quiet, in either direction.
 	fmt.Fprintf(warnw, "sandbox: egress ENFORCED — %d declared destination(s); datapath via %s\n",
 		len(cfg.Egress.Allow), forwarder)
-	return proxy, forwarder
+	return proxy, forwarder, reporter.stop
+}
+
+// buildEgressCredentialSource resolves the CredentialSource the egress proxy
+// mints an `egress.allow` entry's declared `credential:` audience through.
+//
+// # Why it is gated on the EGRESS config, not the MCP config
+//
+// buildToolIdentitySource turns the seam on when an MCP SERVER declares an
+// identity-propagating auth type. That is the right trigger for the MCP manager
+// and the wrong one here: the two seams are opted into by different config. An
+// operator who writes `credential: internal-api` on an egress entry and runs no
+// identity-propagating MCP server has opted in just as explicitly, and gating on
+// the MCP config would leave their entry permanently refused — the defect this
+// fix exists to close. So the trigger is the egress allowlist itself, and the
+// CONSTRUCTION (newToolIdentityBroker) is shared rather than duplicated, so both
+// seams mint under the same tenant keys from the same trusted signing material.
+//
+// It stays INERT for every deployment that declared no `credential:` entry:
+// (nil, "") — no STS, no broker, no notice, byte-identical to before.
+//
+// Every failure returns a NIL source plus a reason, never a degraded one. A nil
+// source is refused at request time by the proxy, so the fail-closed property is
+// structural: there is no value this function can return that turns a declared
+// identity into an unauthenticated allow-through.
+func buildEgressCredentialSource(appCfg config.Config, egress sandbox.Egress) (toolidentity.CredentialSource, string) {
+	declared := 0
+	for _, entry := range egress.Allow {
+		if entry.Credential != "" {
+			declared++
+		}
+	}
+	if declared == 0 {
+		return nil, ""
+	}
+	if appCfg.ToolIdentity.SigningKey == "" {
+		return nil, fmt.Sprintf("%d egress.allow entr%s declare a `credential:` audience but tool_identity.signing_key is unset in ~/.fuse/config.yml — no delegated token can be minted, so every request to those destinations is REFUSED",
+			declared, plural(declared))
+	}
+	src, reason := newToolIdentityBroker(appCfg)
+	if reason != "" {
+		return nil, reason + " — egress entries declaring a `credential:` audience are REFUSED"
+	}
+	return src, ""
 }
 
 // warnEgressBlackout is the operator's only signal that enforcement is on with

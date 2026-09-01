@@ -61,9 +61,9 @@ func (r *recordingHooks) snapshot() []RefusalInfo {
 }
 
 // newTestProxy builds a Proxy rooted in a short directory, closed at test end.
-func newTestProxy(t *testing.T, opts ...proxyOption) *Proxy {
+func newTestProxy(t *testing.T, opts ...ProxyOption) *Proxy {
 	t.Helper()
-	opts = append([]proxyOption{withProxyRoot(shortDir(t))}, opts...)
+	opts = append([]ProxyOption{withProxyRoot(shortDir(t))}, opts...)
 	p, err := NewProxy(opts...)
 	if err != nil {
 		t.Fatalf("NewProxy: %v", err)
@@ -211,7 +211,7 @@ func upstream(t *testing.T, marker string) string {
 // authorized, so it is not served.
 func TestProxyRefusesUnservableRequestShapes(t *testing.T) {
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, "127.0.0.1:9"))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -253,7 +253,7 @@ func TestProxyRefusesUnservableRequestShapes(t *testing.T) {
 // as malformed rather than dialled at whatever the empty host resolves to.
 func TestProxyRefusesAbsoluteFormWithoutHost(t *testing.T) {
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, "127.0.0.1:9"))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -289,7 +289,7 @@ func TestProxyRefusesAbsoluteFormWithoutHost(t *testing.T) {
 func TestProxyForwardsAbsoluteFormToDeclaredDestination(t *testing.T) {
 	addr := upstream(t, "hello from upstream")
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, addr))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -312,7 +312,7 @@ func TestProxyForwardsAbsoluteFormToDeclaredDestination(t *testing.T) {
 // destination reaches the operator, and the client is told nothing.
 func TestProxyRefusesAbsoluteFormUndeclaredDestination(t *testing.T) {
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, "pkg.example.com:80"))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -371,7 +371,7 @@ func TestProxyForwardMatchesExactPort(t *testing.T) {
 // for the OPERATOR, and the client is told nothing beyond a generic denial.
 func TestProxyRefusesUndeclaredDestination(t *testing.T) {
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, "pkg.example.com:443"))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -470,7 +470,7 @@ func TestProxyRefusesCredentialEntryWithoutSource(t *testing.T) {
 	policy := loadEgress(t, fmt.Sprintf("    - host: %s\n      port: %s\n      credential: internal-api\n", host, portStr))
 
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
 	sock, err := p.Listen(principal("acme", "alice"), policy)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -504,7 +504,7 @@ func TestProxyRefusesConnectToCredentialedDestination(t *testing.T) {
 	}}
 
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()), withCredentialSource(src))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()), WithProxyCredentialSource(src))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPortCredential(t, addr, "internal-api"))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -541,7 +541,7 @@ func TestProxyConcurrentPrincipalsSeeOnlyTheirOwnPolicy(t *testing.T) {
 	addrB := upstream(t, "B")
 
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
 
 	sockA, err := p.Listen(principal("acme", "alice"), allowHostPort(t, addrA))
 	if err != nil {
@@ -897,7 +897,7 @@ func TestProxyReleaseAndCloseTearDownListeners(t *testing.T) {
 // required, so a missing one cannot match anything.
 func TestProxyRefusesMalformedTarget(t *testing.T) {
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, "pkg.example.com:443"))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -935,7 +935,7 @@ func TestProxyCanonicalizesTargetAtEntry(t *testing.T) {
 	// spelling can be asserted end to end rather than only at the decision.
 	policy := loadEgress(t, fmt.Sprintf("    - host: localhost\n      port: %d\n", port))
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
 	sock, err := p.Listen(principal("acme", "alice"), policy)
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -1069,7 +1069,7 @@ func lastRefusal(t *testing.T, rec *recordingHooks) RefusalInfo {
 // anything.
 func TestProxyRefusesBeyondThePerPrincipalConnectionCeiling(t *testing.T) {
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
 	up := upstream(t, "ok")
 	who := principal("acme", "alice")
 	sock, err := p.Listen(who, allowHostPort(t, up))
@@ -1109,7 +1109,7 @@ func TestProxyRefusesBeyondThePerPrincipalConnectionCeiling(t *testing.T) {
 // served in the same breath.
 func TestProxyConnectionCeilingIsPerPrincipal(t *testing.T) {
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()), withConnectionLimits(1, 8))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()), withConnectionLimits(1, 8))
 	up := upstream(t, "ok")
 	rawURL := "http://" + up + "/"
 
@@ -1139,7 +1139,7 @@ func TestProxyConnectionCeilingIsPerPrincipal(t *testing.T) {
 // running away" from "the host is".
 func TestProxyGlobalConnectionBackstopRefuses(t *testing.T) {
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()), withConnectionLimits(8, 2))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()), withConnectionLimits(8, 2))
 	up := upstream(t, "ok")
 	rawURL := "http://" + up + "/"
 
@@ -1239,7 +1239,7 @@ func tryForward(t *testing.T, sock, rawURL string) bool {
 func TestProxyConnectionCeilingHoldsUnderConcurrentDials(t *testing.T) {
 	const ceiling, dials = 4, 64
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()), withConnectionLimits(ceiling, 32))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()), withConnectionLimits(ceiling, 32))
 	up := upstream(t, "ok")
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, up))
 	if err != nil {

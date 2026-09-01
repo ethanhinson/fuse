@@ -71,7 +71,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE per shell session,
 	// before the first turn. hosted=false — the shell runs the operator's own work
 	// on their own machine, so their off-switch file applies.
-	sb, closeEgress := newSandboxService(false, stderr)
+	sb, closeEgress := newSandboxService(cfg, false, stderr)
 	defer closeEgress()
 	toolReg, err := buildSessionRegistryNoMCP(sb, cfg, set.Lookup)
 	if err != nil {

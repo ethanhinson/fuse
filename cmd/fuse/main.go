@@ -167,7 +167,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// model has run, against this process's working directory. hosted=false — a
 	// one-shot run executes the operator's OWN work on the operator's machine, so
 	// their file-only off-switch applies.
-	sb, closeEgress := newSandboxService(false, stderr)
+	sb, closeEgress := newSandboxService(cfg, false, stderr)
 	defer closeEgress()
 	toolReg := defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
 	tree := agent.NewAgentTreeWithConcurrency(*modelAlias, *modelAlias, cfg.Agents.MaxConcurrent)

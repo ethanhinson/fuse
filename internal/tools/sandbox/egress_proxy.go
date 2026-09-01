@@ -225,8 +225,14 @@ type ProxyHooks struct {
 	Refused func(RefusalInfo)
 }
 
-// proxyOption configures a Proxy at construction.
-type proxyOption func(*Proxy)
+// ProxyOption configures a Proxy at construction.
+//
+// It is EXPORTED because the two options that carry security-relevant wiring —
+// WithProxyHooks and WithProxyCredentialSource — are the composition root's to
+// supply (cmd/fuse), not this package's. The remaining options (the root
+// directory, the connection ceilings) stay unexported: they exist so a test can
+// drive the machinery, and nothing in production supplies them.
+type ProxyOption func(*Proxy)
 
 // withProxyRoot supplies the directory the per-principal socket directories are
 // created under, TRANSFERRING OWNERSHIP of it to the Proxy: it is chmodded to
@@ -237,7 +243,7 @@ type proxyOption func(*Proxy)
 // capped by the kernel (104 bytes of sun_path on darwin, 108 on Linux), and
 // that budget is spent by the root, the random component, and the socket name
 // together.
-func withProxyRoot(dir string) proxyOption {
+func withProxyRoot(dir string) ProxyOption {
 	return func(p *Proxy) {
 		if dir != "" {
 			p.root = dir
@@ -245,12 +251,18 @@ func withProxyRoot(dir string) proxyOption {
 	}
 }
 
-// withProxyHooks installs the observer seam.
-func withProxyHooks(h ProxyHooks) proxyOption {
+// WithProxyHooks installs the observer seam.
+//
+// The hooks it installs MUST NOT BLOCK: see ProxyHooks — a capacity refusal
+// fires on the listener's accept loop, so a hook that waits on I/O stalls that
+// principal's ability to accept at all. The production caller
+// (cmd/fuse's egressRefusalReporter) hands off to a drain goroutine and drops
+// rather than waiting, which is the shape any other caller has to match.
+func WithProxyHooks(h ProxyHooks) ProxyOption {
 	return func(p *Proxy) { p.hooks = h }
 }
 
-// withCredentialSource wires the #52 identity-propagation seam
+// WithProxyCredentialSource wires the #52 identity-propagation seam
 // (internal/toolidentity), which turns the LISTENER's principal plus an entry's
 // declared audience into a short-lived delegated credential.
 //
@@ -258,7 +270,7 @@ func withProxyHooks(h ProxyHooks) proxyOption {
 // no `credential:` entry needs no source, while a `credential:` entry with no
 // source wired is REFUSED. There is no configuration in which a declared
 // identity degrades to an unauthenticated allow-through.
-func withCredentialSource(src toolidentity.CredentialSource) proxyOption {
+func WithProxyCredentialSource(src toolidentity.CredentialSource) ProxyOption {
 	return func(p *Proxy) { p.credentials = src }
 }
 
@@ -359,7 +371,7 @@ const (
 // It exists so a test can drive the bound with two or three connections instead
 // of manufacturing a thousand; nothing in production supplies it, which is the
 // deliberate answer to "should this be configurable" (see the constants above).
-func withConnectionLimits(perPrincipal, total int64) proxyOption {
+func withConnectionLimits(perPrincipal, total int64) ProxyOption {
 	return func(p *Proxy) {
 		p.maxConnsPerPrincipal = perPrincipal
 		p.maxConns = total
@@ -368,7 +380,7 @@ func withConnectionLimits(perPrincipal, total int64) proxyOption {
 
 // NewProxy creates the fuse-owned root directory and returns an empty Proxy.
 // No socket exists until a principal is registered with Listen.
-func NewProxy(opts ...proxyOption) (*Proxy, error) {
+func NewProxy(opts ...ProxyOption) (*Proxy, error) {
 	p := &Proxy{
 		dialer:               &net.Dialer{Timeout: proxyDialTimeout},
 		listeners:            make(map[string]*principalListener),

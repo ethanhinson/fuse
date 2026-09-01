@@ -96,7 +96,7 @@ func TestProxyPlainEntryDoesNotConsultCredentialSource(t *testing.T) {
 		return toolidentity.NewCredential("Bearer", "should-never-be-minted", true), nil
 	}}
 
-	p := newTestProxy(t, withCredentialSource(src))
+	p := newTestProxy(t, WithProxyCredentialSource(src))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, addr))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -135,7 +135,7 @@ func TestProxyCredentialEntryDelegatesIdentityUpstream(t *testing.T) {
 	}}
 
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()), withCredentialSource(src))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()), WithProxyCredentialSource(src))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPortCredential(t, addr, "internal-api"))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -284,7 +284,7 @@ func TestProxyIdentityRequestIsAddressedToDeclaredDestination(t *testing.T) {
 	}}
 
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()), withCredentialSource(src))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()), WithProxyCredentialSource(src))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPortCredential(t, addr, "internal-api"))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -363,7 +363,7 @@ func TestProxyConcurrentPrincipalsGetTheirOwnCredential(t *testing.T) {
 	src := &fakeCredentialSource{fn: func(p loopauth.Principal, _ toolidentity.Target) (toolidentity.Credential, error) {
 		return toolidentity.NewCredential("Bearer", p.Subject+"-token", true), nil
 	}}
-	p := newTestProxy(t, withCredentialSource(src))
+	p := newTestProxy(t, WithProxyCredentialSource(src))
 
 	sockA, err := p.Listen(principal("acme", "alice"), allowHostPortCredential(t, addrA, "api-a"))
 	if err != nil {
@@ -436,7 +436,7 @@ func TestProxyCredentialResolutionErrorRefuses(t *testing.T) {
 	}}
 
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()), withCredentialSource(src))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()), WithProxyCredentialSource(src))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPortCredential(t, addr, "internal-api"))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -466,7 +466,7 @@ func TestProxyEmptyCredentialRefuses(t *testing.T) {
 	}}
 
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()), withCredentialSource(src))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()), WithProxyCredentialSource(src))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPortCredential(t, addr, "internal-api"))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -638,7 +638,7 @@ func TestProxyConnectToCredentialedDestinationForwardsNoBytes(t *testing.T) {
 	}}
 
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()), withCredentialSource(src))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()), WithProxyCredentialSource(src))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPortCredential(t, addr, "internal-api"))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
@@ -693,7 +693,7 @@ func TestProxyNonHTTPBytesOnForwardPathReachNoUpstream(t *testing.T) {
 		return toolidentity.NewCredential("Bearer", "must-never-be-minted", true), nil
 	}}
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()), withCredentialSource(src))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()), WithProxyCredentialSource(src))
 	// The destination IS declared, and declared under an identity: if these bytes
 	// were ever going to be handed somewhere by a fallback, this is where they
 	// would go, and it is the worst place for them to go.
@@ -747,7 +747,7 @@ func TestProxyTunnelToPlainDestinationSplicesRawBytes(t *testing.T) {
 	addr, received := rawUpstream(t)
 
 	rec := &recordingHooks{}
-	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, addr))
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
