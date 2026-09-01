@@ -1,8 +1,8 @@
 # Backlog
 
-**80 changes** — 🟡 5 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 66 done · 🗑️ 6 killed
+**81 changes** — 🟡 6 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 66 done · 🗑️ 6 killed
 
-## 🟡 Proposed (5)
+## 🟡 Proposed (6)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -11,6 +11,7 @@
 | [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a k8s Pod-per-Exec handler as first implementation | `medium` | `feat` | needs-brainstorm |
 | [0076](active/0076-fuse-server-helm-chart-compose-stack.md) | fuse server deployment — a container image, a full docker-compose stack, and a Helm chart (not an operator) | `medium` | `feat` | needs-brainstorm |
 | [0080](active/0080-tui-table-tabbed-ui.md) | Shared TUI table component + tabbed /config UI — line up the menus like Claude | `medium` | `feat` | build-ready |
+| [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | build-ready |
 
 ## ⚪ Deferred (2)
 
@@ -35,6 +36,7 @@ graph TD
   0063 --> 0075
   0076
   0080
+  0081
   0012:::done
   0052:::done
   0063:::done
