@@ -1,4 +1,4 @@
-.PHONY: build install egress-forwarder test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke
+.PHONY: build install egress-forwarder egress-datapath test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke
 
 # Version is stamped into the binary via -ldflags. It defaults to `git describe`
 # (tags + short SHA + dirty marker) and falls back to the source default when git
@@ -57,6 +57,17 @@ egress-forwarder:
 
 test: observability-validate
 	go test ./...
+
+# egress-datapath (change 0064): the end-to-end egress datapath check against a
+# REAL container runtime. It builds the arch-matched forwarder artifact, then
+# runs the `egress_datapath`-tagged, GOOS=linux-only test that starts a
+# --network none container and proves a declared destination is reachable
+# through the mounted socket + forwarder while an undeclared one is refused.
+# Native-Linux Docker only: Docker Desktop for macOS cannot relay a host UNIX
+# socket bind-mounted across its VM file-sharing layer, so the test file does
+# not build off linux and this target is a no-op there.
+egress-datapath: egress-forwarder
+	go test -tags egress_datapath -run TestEgressDatapathEndToEnd -v -count=1 -timeout 300s ./internal/tools/sandbox/
 
 # test-race runs the suite under the race detector. The platform's core value is
 # concurrent multi-agent execution, so the race build must be a first-class,
