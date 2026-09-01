@@ -53,6 +53,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0049](0049-allowlist-admission-on-deterministic-allow-paths.md) — Admission sets on a no-human deterministic-allow path are allowlists, not denylists (Accepted) ← change #70 · relates to ADR-0044, ADR-0048
 - [ADR-0050](0050-opaque-operands-are-never-path-resolved.md) — Opaque operands are never resolved as filesystem paths for containment proofs (Accepted) ← change #70 · relates to ADR-0049
 - [ADR-0051](0051-network-none-reaches-its-proxy-by-mounted-socket-plus-supplied-forwarder.md) — A `--network none` container reaches its egress proxy through a bind-mounted UNIX socket plus a fuse-supplied loopback forwarder (Accepted) ← change #64 · relates to ADR-0044
+- [ADR-0052](0052-delegated-identity-on-bash-egress-is-forward-proxy-only.md) — Delegated identity on `bash` egress is forward-proxy only — a credentialed destination is reached in plaintext HTTP or refused, never tunnelled (Accepted) ← change #64 · relates to ADR-0036, ADR-0044, ADR-0051
 
 ## Superseded / Reversed
 
