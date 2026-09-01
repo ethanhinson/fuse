@@ -398,3 +398,113 @@ func TestServiceWithNoDeclaredDatapathErasesACallerSupplied(t *testing.T) {
 		t.Fatalf("an undeclared datapath survived into argv: %#v", rec.args)
 	}
 }
+
+// --- the per-principal listener's LIFETIME ----------------------------------
+
+// The seam that stops per-principal listeners accumulating for the process
+// lifetime: a Runner's Release drops the lease its Acquire took, and the last
+// drop tears the listener down.
+//
+// Two Runners for ONE principal are the case that matters. Releasing the first
+// must NOT close a socket the second one's container is still mounting — that
+// would cut a live tunnel belonging to another Exec — and releasing the second
+// must not leave the listener, its goroutine, its 0700 directory and its socket
+// inode behind forever.
+func TestContainerRunnerReleaseDropsItsEgressLease(t *testing.T) {
+	proxy := newTestProxy(t)
+	forwarder := fakeForwarder(t)
+	policy := Egress{Mode: EgressEnforce, Allow: []AllowEntry{{Host: "example.com", Port: 443}}}
+	h := datapathHandler(t, &recordingRun{}, policy, proxy, forwarder)
+	p := loopauth.Principal{Tenant: "t1", Subject: "s1"}
+
+	first, err := h.Acquire(context.Background(), p, Env{})
+	if err != nil {
+		t.Fatalf("Acquire #1: %v", err)
+	}
+	second, err := h.Acquire(context.Background(), p, Env{})
+	if err != nil {
+		t.Fatalf("Acquire #2: %v", err)
+	}
+	socket := first.(*containerRunner).egressSocket
+	if socket == "" {
+		t.Fatal("no egress socket was resolved at Acquire")
+	}
+	if got := second.(*containerRunner).egressSocket; got != socket {
+		t.Fatalf("two sandboxes for one principal got different sockets: %q and %q", socket, got)
+	}
+
+	if err := first.Release(context.Background()); err != nil {
+		t.Fatalf("Release #1: %v", err)
+	}
+	if _, err := os.Stat(socket); err != nil {
+		t.Fatalf("stat(%s) while a second sandbox still holds it = %v, want the socket to survive", socket, err)
+	}
+
+	if err := second.Release(context.Background()); err != nil {
+		t.Fatalf("Release #2: %v", err)
+	}
+	if _, err := os.Stat(socket); !os.IsNotExist(err) {
+		t.Errorf("stat(%s) after the last Release = %v, want not-exist", socket, err)
+	}
+
+	// Release is idempotent, and idempotent in the way that MATTERS here: a
+	// second call must not drop a lease it does not hold, or it would tear down
+	// the listener a LATER sandbox is using.
+	third, err := h.Acquire(context.Background(), p, Env{})
+	if err != nil {
+		t.Fatalf("Acquire #3: %v", err)
+	}
+	reissued := third.(*containerRunner).egressSocket
+	if reissued == socket {
+		t.Errorf("re-issued socket %q reuses the reclaimed path", reissued)
+	}
+	if err := first.Release(context.Background()); err != nil {
+		t.Fatalf("second Release #1: %v", err)
+	}
+	if _, err := os.Stat(reissued); err != nil {
+		t.Fatalf("a repeated Release tore down another sandbox's listener: stat(%s) = %v", reissued, err)
+	}
+}
+
+// End to end over the seam every binding already calls. The warm pool's teardown
+// — Close here, and equally the idle-TTL reaper, which reaches the same
+// teardown — releases the substrate Runner, so a principal's listener goes with
+// the last of its sandboxes rather than living until process exit.
+func TestPoolCloseReleasesThePrincipalsEgressListener(t *testing.T) {
+	rec := &recordingRun{}
+	proxy := newTestProxy(t)
+	forwarder := fakeForwarder(t)
+
+	cfg := DefaultConfig()
+	cfg.Egress = Egress{Mode: EgressEnforce, Allow: []AllowEntry{{Host: "example.com", Port: 443}}}
+
+	svc, err := NewService(cfg,
+		withContainerLookPath(fakeLookPath("docker")),
+		withContainerExec(rec.run),
+		WithTrustedRoot(trustedTestRoot(t)),
+		WithEgressProxy(proxy, forwarder),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+
+	pool := NewPool(svc)
+	r, err := pool.Acquire(context.Background(), loopauth.Principal{Tenant: "t1", Subject: "s1"})
+	if err != nil {
+		t.Fatalf("pool.Acquire: %v", err)
+	}
+	socket := Unwrap(r).(*containerRunner).egressSocket
+	if socket == "" {
+		t.Fatal("no egress socket was resolved at Acquire")
+	}
+	if _, err := os.Stat(socket); err != nil {
+		t.Fatalf("stat(%s) while checked out = %v", socket, err)
+	}
+
+	if err := pool.Close(context.Background()); err != nil {
+		t.Fatalf("pool.Close: %v", err)
+	}
+	if _, err := os.Stat(socket); !os.IsNotExist(err) {
+		t.Errorf("stat(%s) after pool.Close = %v, want not-exist — the listener outlived the sandboxes that used it", socket, err)
+	}
+}

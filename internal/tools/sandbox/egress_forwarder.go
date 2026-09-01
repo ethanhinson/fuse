@@ -173,8 +173,15 @@ func egressForwarderCommand(cmd string) []string {
 // (withEgressDatapath): a caller-suppliable socket source is a caller-suppliable
 // bind-mount into the container. The exported seam is WithEgressProxy, which
 // takes a *Proxy and nothing else.
+//
+// The two methods are ONE LEASE: Listen takes it, Release drops it, and the
+// source tears the listener down when the last holder lets go. Both halves live
+// on the interface so the Runner that took the lease at Acquire can drop it at
+// Release without reaching for the concrete *Proxy — the same reason the source
+// is injected at all.
 type egressSocketSource interface {
 	Listen(loopauth.Principal, Egress) (string, error)
+	Release(loopauth.Principal) error
 }
 
 // resolveForwarderBinary canonicalises the host path of the forwarder binary,

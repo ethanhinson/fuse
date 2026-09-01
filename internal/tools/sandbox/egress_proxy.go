@@ -293,6 +293,19 @@ func (p *Proxy) Root() string { return p.root }
 // the per-principal parameter exists so that policy is resolved from the
 // PRINCIPAL rather than from a proxy-wide "current" value.
 //
+// # Each call TAKES A LEASE
+//
+// Idempotent in path, counted in lifetime: every Listen takes one lease on the
+// principal's listener and the matching Release drops it, with teardown at zero
+// (see Release). That is what makes the listener's life the life of the
+// sandboxes that use it. Without the count, the FIRST sandbox of a principal to
+// finish would close a socket the others are still mounting; with it, a caller
+// that pairs Listen with Release needs to know nothing about the others.
+//
+// A caller that never releases is not a correctness problem, only a leak the
+// process-wide Close reclaims — the deliberate direction, since the opposite
+// error tears down a listener a live container is reaching the network through.
+//
 // A policy whose mode is not EgressEnforce denies everything, since the proxy
 // only ever consults Allow and the loader leaves it nil outside enforcement.
 // There is no path here that resolves to "allow anything".
@@ -305,6 +318,7 @@ func (p *Proxy) Listen(principal loopauth.Principal, policy Egress) (string, err
 	}
 	key := principalKey(principal)
 	if pl, ok := p.listeners[key]; ok {
+		pl.refs++
 		return pl.path, nil
 	}
 
@@ -339,6 +353,7 @@ func (p *Proxy) Listen(principal loopauth.Principal, policy Egress) (string, err
 		dir:       dir,
 		path:      path,
 		ln:        ln,
+		refs:      1,
 		conns:     make(map[io.Closer]struct{}),
 	}
 	p.listeners[key] = pl
@@ -349,19 +364,57 @@ func (p *Proxy) Listen(principal loopauth.Principal, policy Egress) (string, err
 	return path, nil
 }
 
-// Release closes one principal's listener and removes its socket. It is called
-// when that principal's sandbox usage ends; a principal with no listener is not
-// an error, so teardown paths can call it unconditionally.
+// Release drops ONE lease on a principal's listener, closing the listener and
+// removing its socket when the last one goes.
+//
+// It is the counterpart of Listen and the answer to the question "when does a
+// per-principal listener die?". Every Acquire of a contained sandbox takes a
+// lease (containerHandler.Acquire → Listen) and every Runner teardown drops it
+// (containerRunner.Release → here), which is a path the warm pool already runs
+// on all four of its teardown causes — the idle-TTL reaper, Pool.Close, a failed
+// reuse certification, and a principal mismatch. So in a hosted, multi-tenant
+// process a principal's listener, its goroutine, its listening FD, its 0700
+// directory and its socket inode are reclaimed when that principal's last
+// sandbox goes, instead of accumulating until process exit.
+//
+// # Why counted rather than unconditional
+//
+// Listen is idempotent per principal, so several concurrent sandboxes — several
+// loops, several warm pools, one principal — share ONE socket. An unconditional
+// close would let whichever of them finished FIRST cut the others' live tunnels.
+// Counting makes each holder answerable only for its own lease.
+//
+// The count is a lower bound on real usage, never an upper one: a caller that
+// forgets to release leaks a listener until Close, which is the safe direction.
+// The reverse — an extra Release — cannot tear down someone else's listener
+// either, because the listener is removed from the map at zero, so a later
+// unmatched Release finds nothing (and finding nothing is not an error, so
+// teardown paths can call it unconditionally).
+//
+// Teardown is safe against connections that are LIVE at that moment: the
+// listener closes its accepted connections and waits for their goroutines, so
+// this returns only once nothing is still being brokered. It never blocks on an
+// idle tunnel, which by design has no deadline.
+//
+// A reclaimed socket path is never reissued — the next Listen mints a fresh
+// unguessable directory (principalDir) — so no stale mount can reach a listener
+// created later under a different policy.
 func (p *Proxy) Release(principal loopauth.Principal) error {
 	p.mu.Lock()
 	key := principalKey(principal)
 	pl := p.listeners[key]
+	if pl == nil {
+		p.mu.Unlock()
+		return nil
+	}
+	pl.refs--
+	if pl.refs > 0 {
+		p.mu.Unlock()
+		return nil
+	}
 	delete(p.listeners, key)
 	p.mu.Unlock()
 
-	if pl == nil {
-		return nil
-	}
 	return pl.close()
 }
 
@@ -435,6 +488,13 @@ type principalListener struct {
 	dir       string
 	path      string
 	ln        net.Listener
+
+	// refs is the number of outstanding Listen leases, and it is guarded by the
+	// PROXY's mutex, not by the mu below: it is bookkeeping about the listener's
+	// place in p.listeners, and the decision to tear down has to be atomic with
+	// removing it from that map, or a Listen racing the last Release could take a
+	// lease on a listener already being closed.
+	refs int
 
 	mu     sync.Mutex
 	closed bool

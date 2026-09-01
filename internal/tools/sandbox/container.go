@@ -402,11 +402,19 @@ type containerRunner struct {
 	// once at Acquire alongside principal and equally immutable. "" means no
 	// datapath was wired, in which case argv emits none of it.
 	//
-	// It is NOT released when this Runner is: the listener is per-PRINCIPAL and
-	// several sandboxes may share it, so tearing it down here would cut a live
-	// tunnel belonging to another Exec. Proxy.Release / Proxy.Close own that
-	// lifecycle, at the composition root that created the Proxy.
+	// Acquire took a LEASE on that listener and this Runner holds it until
+	// Release. It is deliberately not a close: the listener is per-PRINCIPAL and
+	// several sandboxes may share it, so closing it here would cut a live tunnel
+	// belonging to another Exec. Dropping the lease lets the proxy tear it down
+	// when the LAST holder lets go — see Release below and Proxy.Release.
 	egressSocket string
+
+	// releaseOnce makes the lease drop happen at most once however many times
+	// Release is called. Callers legitimately release twice (bash.go's explicit
+	// call plus its defer), and a second drop would be a lease this Runner never
+	// held — which, if some other sandbox had since taken one, would tear down a
+	// listener that is in use.
+	releaseOnce sync.Once
 
 	// mu guards env. A pooled Runner is re-environed on checkout (ResetEnv)
 	// while a previous Exec may still be unwinding, so the environment is not
@@ -801,13 +809,39 @@ func (r *containerRunner) Exec(ctx context.Context, cmd string, workingDir strin
 	return out, nil
 }
 
-// Release is a no-op. `run --rm` already tears the container down when the
-// command exits, so there is no live resource to hand back; warm reuse is the
-// pool's concern (T6), and it is the pool — not the Runner — that will own any
-// teardown that outlives a single Exec. Release stays idempotent and
-// non-blocking so callers may release unconditionally on every early-return
-// path without branching on which substrate they hold.
-func (*containerRunner) Release(context.Context) error { return nil }
+// Release drops this Runner's EGRESS LEASE and does nothing else.
+//
+// There is no container to stop: `run --rm` already tears one down when the
+// command exits, and warm reuse is the pool's concern. What there IS, under an
+// enforcing posture, is the per-principal listener this Runner's Acquire leased
+// — a goroutine, a listening FD, a 0700 directory and a socket inode on the
+// host. This is where the lease goes back.
+//
+// It is the seam that makes those reclaimable at all. A Runner's life is exactly
+// the span in which its container can reach the socket, and the warm pool
+// already calls this on every teardown it performs (the idle-TTL reaper,
+// Pool.Close, a failed reuse certification, a principal mismatch), so a
+// long-lived multi-tenant process reclaims a principal's listener when that
+// principal's last sandbox goes rather than at process exit. Dropping a lease is
+// not closing a listener: the proxy closes it only when the last holder lets go,
+// so this can never cut a tunnel belonging to another Exec.
+//
+// It stays idempotent (releaseOnce) and non-blocking on every ordinary path, so
+// callers may release unconditionally on every early return without branching on
+// which substrate they hold. The error is reported rather than swallowed — a
+// socket directory that could not be removed is worth surfacing — but every
+// current caller treats teardown as best-effort, which is right: a failed
+// reclaim must not deny anyone a fresh sandbox.
+func (r *containerRunner) Release(context.Context) error {
+	var err error
+	r.releaseOnce.Do(func() {
+		if r.egressSocket == "" || r.handler == nil || r.handler.egressSockets == nil {
+			return
+		}
+		err = r.handler.egressSockets.Release(r.principal)
+	})
+	return err
+}
 
 // runClientCommand is the default execRunner, bound to h so that the CLI
 // client's own environment is resolved through the SAME lookup seam

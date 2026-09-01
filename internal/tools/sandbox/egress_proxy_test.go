@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/loopauth"
 	"github.com/ethanhinson/fuse/internal/toolidentity"
@@ -647,6 +648,199 @@ func TestProxySocketsArePerPrincipalAndPrivate(t *testing.T) {
 	}
 	if perm := rootInfo.Mode().Perm(); perm != 0o700 {
 		t.Errorf("root %s mode = %o, want 700", p.Root(), perm)
+	}
+}
+
+// A listener is LEASED, one lease per Listen, and is torn down when the LAST
+// lease is dropped — not when the first holder happens to finish.
+//
+// This is the whole reason Release can be wired to a per-sandbox teardown at
+// all. Listen is idempotent per principal, so several concurrent sandboxes for
+// one principal share one socket; if the first of them to be released closed
+// that socket, it would cut the others' live tunnels. Counting is what makes
+// "this principal's sandbox usage ended" a statement the proxy can act on.
+//
+// The re-issued path is asserted DIFFERENT: a reclaimed socket path is never
+// handed out again, so there is no window in which a stale mount could reach a
+// listener bound to a policy other than the one it was created with.
+func TestProxyListenerIsLeasedAndTornDownAtTheLastRelease(t *testing.T) {
+	p := newTestProxy(t)
+	alice := principal("acme", "alice")
+	policy := Egress{Mode: EgressEnforce}
+
+	first, err := p.Listen(alice, policy)
+	if err != nil {
+		t.Fatalf("Listen(alice) #1: %v", err)
+	}
+	second, err := p.Listen(alice, policy)
+	if err != nil {
+		t.Fatalf("Listen(alice) #2: %v", err)
+	}
+	if first != second {
+		t.Fatalf("Listen is not idempotent per principal: %q then %q", first, second)
+	}
+
+	// Two leases, one release: the socket is still serving the holder that has
+	// not finished.
+	if err := p.Release(alice); err != nil {
+		t.Fatalf("Release(alice) #1: %v", err)
+	}
+	c, err := net.Dial("unix", first)
+	if err != nil {
+		t.Fatalf("dial %s after one of two leases was dropped: %v", first, err)
+	}
+	_ = c.Close()
+
+	// The last lease is what tears it down.
+	if err := p.Release(alice); err != nil {
+		t.Fatalf("Release(alice) #2: %v", err)
+	}
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Errorf("stat(%s) after the last Release = %v, want not-exist", first, err)
+	}
+	if _, err := os.Stat(filepath.Dir(first)); !os.IsNotExist(err) {
+		t.Errorf("socket directory survived the last Release")
+	}
+
+	// An unmatched Release is not an error: teardown paths call it
+	// unconditionally, and a principal with no listener is a no-op.
+	if err := p.Release(alice); err != nil {
+		t.Errorf("Release(alice) with no listener = %v, want nil", err)
+	}
+
+	third, err := p.Listen(alice, policy)
+	if err != nil {
+		t.Fatalf("Listen(alice) after full release: %v", err)
+	}
+	if third == first {
+		t.Errorf("re-issued socket path %q reuses the reclaimed one", third)
+	}
+}
+
+// Release must be safe against connections that are LIVE at the moment it runs:
+// an established tunnel, and clients arriving in the race with teardown. It must
+// not panic, must not block on a tunnel that could be idle for hours, and must
+// leave no accept or connection goroutine behind (which -race and the proxy's
+// own wait groups together assert).
+func TestProxyReleaseWithConnectionsInFlight(t *testing.T) {
+	up := upstream(t, "marker")
+	p := newTestProxy(t)
+	alice := principal("acme", "alice")
+	sock, err := p.Listen(alice, allowHostPort(t, up))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	// One tunnel already established and idle — the case a timeout would never
+	// reach, since the header deadline is cleared once a tunnel exists.
+	conn, br, resp := connectVia(t, sock, up)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("CONNECT status = %d, want 200", resp.StatusCode)
+	}
+
+	// And a crowd arriving while teardown runs. Every outcome is acceptable here
+	// except a panic or a hang: a client may be served, refused, or find no
+	// socket at all.
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c, derr := net.Dial("unix", sock)
+			if derr != nil {
+				return
+			}
+			defer func() { _ = c.Close() }()
+			_, _ = io.WriteString(c, "CONNECT "+up+" HTTP/1.1\r\nHost: "+up+"\r\n\r\n")
+			_, _ = io.Copy(io.Discard, c)
+		}()
+	}
+
+	released := make(chan error, 1)
+	go func() { released <- p.Release(alice) }()
+	select {
+	case err := <-released:
+		if err != nil {
+			t.Fatalf("Release with connections in flight: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Release blocked on an in-flight connection")
+	}
+	wg.Wait()
+
+	// The idle tunnel was CUT, not left dangling on a listener nobody enforces.
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if _, err := br.Read(make([]byte, 1)); err == nil {
+		t.Error("tunnel still readable after Release")
+	}
+}
+
+// The lease invariant under CONCURRENCY, which is the shape it will actually be
+// used in: many sandboxes for one principal, opening and finishing in any order,
+// from goroutines that know nothing about each other.
+//
+// The assertion is the one that matters and the one an unconditional Release
+// breaks immediately: WHILE a holder's lease is outstanding, the listener it was
+// given is still registered and its socket is still on disk. Another goroutine
+// finishing must not take it away.
+//
+// Liveness is asserted through the proxy's own bookkeeping and the filesystem
+// rather than by dialling, deliberately. A synthetic burst of hundreds of
+// connects overruns the kernel's accept queue and is refused there, which is a
+// property of the burst and not of the listener's lifetime; it would make this
+// test flaky under -race while telling us nothing. Serving DURING teardown is
+// covered by TestProxyReleaseWithConnectionsInFlight, over real connections.
+func TestProxyLeasesAreSafeUnderConcurrentListenAndRelease(t *testing.T) {
+	p := newTestProxy(t)
+	alice := principal("acme", "alice")
+	policy := Egress{Mode: EgressEnforce}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 8; j++ {
+				sock, err := p.Listen(alice, policy)
+				if err != nil {
+					t.Errorf("Listen: %v", err)
+					return
+				}
+				// The lease is HELD right here.
+				if _, serr := os.Stat(sock); serr != nil {
+					t.Errorf("stat(%s) while holding a lease: %v", sock, serr)
+				}
+				p.mu.Lock()
+				pl := p.listeners[principalKey(alice)]
+				p.mu.Unlock()
+				switch {
+				case pl == nil:
+					t.Errorf("listener for %q was torn down while a lease was held", sock)
+				case pl.path != sock:
+					t.Errorf("listener path = %q while a lease on %q was held", pl.path, sock)
+				}
+				if rerr := p.Release(alice); rerr != nil {
+					t.Errorf("Release: %v", rerr)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	// Every lease was dropped, so nothing is left: no listener, and an empty
+	// fuse-owned root rather than a directory per sandbox.
+	p.mu.Lock()
+	remaining := len(p.listeners)
+	p.mu.Unlock()
+	if remaining != 0 {
+		t.Errorf("listeners after every lease was dropped = %d, want 0", remaining)
+	}
+	entries, err := os.ReadDir(p.Root())
+	if err != nil {
+		t.Fatalf("ReadDir(root): %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("%d socket director(ies) left under the root, want 0", len(entries))
 	}
 }
 
