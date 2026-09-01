@@ -850,6 +850,24 @@ func (m ShellModel) handleCompleterKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd
 		if len(m.completer.visible) == 0 || m.running {
 			return false, m, nil
 		}
+		// When the user has already typed arguments past the command in
+		// command-completion mode (e.g. "/models edit", "/model glm", "/mode
+		// auto"), the selected entry's expansion is just the bare command and
+		// would drop those arguments. Submit the raw typed input instead so the
+		// argument survives. Argument-completion mode is exempt: there the
+		// selected alias entry's expansion already carries the full command.
+		if !m.completer.argMode {
+			typed := strings.TrimSpace(m.input.Value())
+			if i := strings.IndexByte(typed, ' '); i > 0 && strings.HasPrefix(typed, "/") {
+				m.completer.deactivate()
+				m.input.Reset()
+				if !m.running {
+					next, cmd := m.handleSlash(typed)
+					return true, next, cmd
+				}
+				return true, m, nil
+			}
+		}
 		entry := m.completer.selected()
 		expansion := entry.Expansion()
 		m.completer.deactivate()
