@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -184,6 +185,167 @@ func TestProxyCredentialEntryDelegatesIdentityUpstream(t *testing.T) {
 	}
 	for _, info := range rec.snapshot() {
 		t.Errorf("credentialed destination refused: %+v", info)
+	}
+}
+
+// addressedUpstream records BOTH halves of what identifies a forwarded request:
+// the Authorization header fuse minted, and the Host header — the VIRTUAL host —
+// the request was addressed to. A gateway, CDN, or reverse proxy in front of the
+// declared TCP destination routes on the latter, so the pair is what decides
+// which backend actually receives fuse's delegated credential.
+type addressedRequest struct {
+	auth string
+	host string
+}
+
+func addressedUpstream(t *testing.T, marker string) (addr string, seen func() []addressedRequest) {
+	t.Helper()
+	var mu sync.Mutex
+	var got []addressedRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, addressedRequest{auth: r.Header.Get("Authorization"), host: r.Host})
+		mu.Unlock()
+		_, _ = io.WriteString(w, marker)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.Listener.Addr().String(), func() []addressedRequest {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]addressedRequest(nil), got...)
+	}
+}
+
+// rawProxyRequest writes request bytes to the proxy socket VERBATIM and reads one
+// response.
+//
+// proxyRequest derives the Host header from the request target, which is exactly
+// what an honest client does — so it cannot express the case this test is about,
+// where the request target and the Host header disagree. Here the caller owns
+// every byte of the request.
+func rawProxyRequest(t *testing.T, sock, raw string) (*http.Response, string) {
+	t.Helper()
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dial %s: %v", sock, err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := io.WriteString(conn, raw); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return resp, string(body)
+}
+
+// THE IDENTITY-CARRYING REQUEST IS ADDRESSED TO THE DESTINATION THE OPERATOR
+// DECLARED — not to anything the model's command chose.
+//
+// The TCP peer was never in doubt: it is dialled from the canonical host the
+// allowlist matched. What this pins is the VIRTUAL host, the Host header the
+// request is written with, because a declared destination is very often a
+// gateway, a CDN, or a reverse proxy that routes on exactly that. If the model
+// can steer it, fuse's minted delegated credential is presented to a backend the
+// model selected — steering, not exfiltration, but still the identity path's
+// central claim ("the upstream sees a credential fuse minted for the LISTENER's
+// principal rather than anything the model's command chose") failing on its
+// destination half.
+//
+// Two model-controlled inputs are driven at once, both of which net/http would
+// otherwise put on the wire:
+//
+//   - The Host HEADER names an unrelated authority. For an absolute-form request
+//     ReadRequest ignores it (RFC 7230 §5.3), so this half is a regression guard
+//     on that: it is the exact shape the pre-forward-proxy origin-form path put
+//     verbatim onto the upstream request.
+//   - The request TARGET's authority is a non-canonical spelling of the declared
+//     destination — a trailing root dot. It matches the allowlist, because
+//     canonicalDestination strips the dot before the match, and the dial is
+//     therefore correct; but it is the RAW spelling that ReadRequest puts in
+//     req.Host and Request.Write emits. A Host-routing frontend that does not
+//     normalize the dot sends "example.com." somewhere other than "example.com"
+//     — typically its default backend, which is not the one the operator
+//     declared.
+func TestProxyIdentityRequestIsAddressedToDeclaredDestination(t *testing.T) {
+	addr, seen := addressedUpstream(t, "delegated")
+	src := &fakeCredentialSource{fn: func(loopauth.Principal, toolidentity.Target) (toolidentity.Credential, error) {
+		return toolidentity.NewCredential("Bearer", "alice-token", true), nil
+	}}
+
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()), withCredentialSource(src))
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPortCredential(t, addr, "internal-api"))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("SplitHostPort(%q): %v", addr, err)
+	}
+	// "127.0.0.1.:PORT" — the same destination, spelled so a naive vhost router
+	// disagrees with the operator's declaration.
+	steered := net.JoinHostPort(host+".", port)
+
+	resp, body := rawProxyRequest(t, sock,
+		"GET http://"+steered+"/ HTTP/1.1\r\n"+
+			"Host: gateway-backend.chosen-by-the-model.invalid\r\n"+
+			"\r\n")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (the destination IS declared)", resp.StatusCode)
+	}
+	if body != "delegated" {
+		t.Errorf("body = %q, want %q", body, "delegated")
+	}
+	for _, info := range rec.snapshot() {
+		t.Errorf("declared destination refused: %+v", info)
+	}
+
+	got := seen()
+	if len(got) != 1 {
+		t.Fatalf("upstream served %d requests, want exactly 1", len(got))
+	}
+	// The credential is fuse's, minted for the listener's principal...
+	if got[0].auth != "Bearer alice-token" {
+		t.Errorf("upstream saw Authorization %q, want %q", got[0].auth, "Bearer alice-token")
+	}
+	// ...and the request carrying it is addressed to the OPERATOR's destination.
+	if got[0].host != addr {
+		t.Errorf("upstream saw Host %q, want the declared destination %q — the delegated credential was presented to a virtual host the model chose", got[0].host, addr)
+	}
+}
+
+// canonicalAuthority is the only place the pinned Host value is spelled, so its
+// edge cases are pinned directly rather than through a socket: the `http`
+// scheme's default port is omitted the way every ordinary client omits it, any
+// other port is present, and an IPv6 literal is bracketed. Getting the shape
+// wrong would break vhost routing for real destinations while still "passing"
+// the socket-level test above, which only ever sees a loopback address on a
+// non-default port.
+func TestCanonicalAuthoritySpelling(t *testing.T) {
+	for _, tc := range []struct {
+		host string
+		port int
+		want string
+	}{
+		{"api.example.com", 80, "api.example.com"},
+		{"api.example.com", 8080, "api.example.com:8080"},
+		{"127.0.0.1", 80, "127.0.0.1"},
+		{"127.0.0.1", 3128, "127.0.0.1:3128"},
+		{"::1", 80, "[::1]"},
+		{"::1", 8080, "[::1]:8080"},
+	} {
+		if got := canonicalAuthority(tc.host, tc.port); got != tc.want {
+			t.Errorf("canonicalAuthority(%q, %d) = %q, want %q", tc.host, tc.port, got, tc.want)
+		}
 	}
 }
 

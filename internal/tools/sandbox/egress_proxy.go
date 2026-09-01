@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,6 +81,13 @@ var ErrProxyClosed = errors.New("sandbox: egress proxy is closed")
 // than anything the model's command chose. Every way that resolution can fail —
 // no source wired, an exchange error, an empty token — refuses the request. See
 // delegatedHeader.
+//
+// That claim has a DESTINATION half as well as a principal half: the request
+// carrying the credential is ADDRESSED to the destination the operator declared,
+// not merely dialled at it. Its virtual host is re-derived from the canonical
+// host and port the allowlist matched (see forwardOnce), so a client spelling
+// that survives canonicalization cannot steer a Host-routing gateway, CDN, or
+// reverse proxy at that address to a backend the model's command picked.
 //
 // A CONNECT to such a destination is refused (RefusedCredentialTunnel): the
 // bytes inside that tunnel are TLS, and intercepting them is out of scope. The
@@ -276,6 +284,11 @@ const (
 	// as a refusal, not as a connection goroutine parked forever before the
 	// upstream is even contacted.
 	proxyCredentialTimeout = 10 * time.Second
+
+	// httpDefaultPort is the `http` scheme's default port. It is read from the
+	// URL grammar for an absolute-form target that names no port, and it is the
+	// port omitted from the authority a forwarded request is addressed to.
+	httpDefaultPort = 80
 
 	// proxySocketName is the socket's leaf name. The unguessable component is
 	// the DIRECTORY above it, so the leaf can stay short and predictable.
@@ -967,6 +980,27 @@ func (pl *principalListener) forwardOnce(conn net.Conn, req *http.Request) bool 
 		return false
 	}
 
+	// THE REQUEST IS ADDRESSED TO THE DESTINATION THE OPERATOR DECLARED. The TCP
+	// peer was never in doubt — it is dialled from `host` below — but the VIRTUAL
+	// host is what a gateway, CDN, or reverse proxy at that address routes on, and
+	// until this line it was the client's raw spelling: http.ReadRequest sets
+	// req.Host from the absolute-form target's authority and Request.Write emits it
+	// verbatim. A spelling that matches the allowlist after canonicalization
+	// ("api.example.com." — same host, trailing root dot) is still a DIFFERENT
+	// literal Host, and a frontend that does not normalize it routes it somewhere
+	// the operator did not declare, typically its default backend. With a
+	// `credential:` entry that means fuse's minted delegated credential presented
+	// to a backend the model's command selected.
+	//
+	// So the authority is re-derived from the ALREADY-CANONICAL host and port that
+	// the allowlist matched — no second normalization, canonicalDestination still
+	// holds the only reputation.CanonicalHost call in the request path — and the
+	// absolute-form scheme and host are cleared, so the request written upstream is
+	// origin-form addressed to the declared destination by construction rather than
+	// by Request.Write's proxy/non-proxy distinction.
+	req.Host = canonicalAuthority(host, port)
+	req.URL.Scheme, req.URL.Host = "", ""
+
 	// THE DELEGATED IDENTITY (#52). Resolution happens BEFORE the upstream is
 	// dialled, so a credential that cannot be supplied never becomes a request
 	// that exists for a moment without one. The principal handed to the seam is
@@ -1095,7 +1129,7 @@ func forwardTarget(req *http.Request) (host string, port int, reason RefusalReas
 	}
 	rawPort := u.Port()
 	if rawPort == "" {
-		rawPort = "80"
+		rawPort = strconv.Itoa(httpDefaultPort)
 	}
 	// Hostname() strips the brackets from an IPv6 literal, exactly as
 	// net.SplitHostPort does for a CONNECT target, so both shapes hand
@@ -1105,6 +1139,25 @@ func forwardTarget(req *http.Request) (host string, port int, reason RefusalReas
 		return host, port, RefusedMalformedTarget
 	}
 	return host, port, ""
+}
+
+// canonicalAuthority renders a canonical destination as the authority a request
+// to it is ADDRESSED to — the value that goes on the wire as `Host`.
+//
+// The `http` scheme's default port is omitted, because that is what every
+// ordinary client does and the Host header is compared literally by more vhost
+// routers than it ought to be; any other port is present, because there the
+// authority is genuinely `host:port`. An IPv6 literal is bracketed, since the
+// canonical form carries no brackets (canonicalDestination is fed by Hostname()
+// and SplitHostPort, both of which strip them).
+func canonicalAuthority(host string, port int) string {
+	if port == httpDefaultPort {
+		if strings.Contains(host, ":") {
+			return "[" + host + "]"
+		}
+		return host
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
 // delegatedHeader resolves audience through the #52 seam for THIS LISTENER's
