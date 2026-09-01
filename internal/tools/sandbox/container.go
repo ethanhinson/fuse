@@ -143,6 +143,21 @@ func withLimits(l Limits) containerOption {
 	return func(h *containerHandler) { h.limits = l }
 }
 
+// withEgress sets the resolved egress posture this handler renders into argv
+// (change 0064).
+//
+// SECURITY-CRITICAL: like withLimits and withTrustedRoot, the posture comes from
+// the COMPOSITION ROOT — resolved once from trusted operator config at Service
+// construction, before any model has run — and it is applied LAST in the options
+// chain (see NewService) so no caller-supplied containerOption can downgrade
+// EgressEnforce back to EgressAllowAll. It must never be derived from a tool
+// argument, a wire field, working_dir, or model output: a floor the model can
+// select is not a floor. Applied once, at construction; no method changes it
+// afterwards.
+func withEgress(e Egress) containerOption {
+	return func(h *containerHandler) { h.egress = e }
+}
+
 // withTrustedRoot sets the host directory this handler bind-mounts.
 //
 // SECURITY-CRITICAL: the value comes from the COMPOSITION ROOT — the repo root
@@ -180,6 +195,12 @@ type containerHandler struct {
 	// applied. Every field is optional: an unset field emits no flag. Never
 	// model-derived; see withLimits.
 	limits Limits
+
+	// egress is the resolved egress posture (change 0064), settled once at
+	// construction from trusted operator config. Its zero value is
+	// EgressAllowAll, which renders no network flag at all — byte-for-byte the
+	// pre-0064 argv. Never model-derived; see withEgress.
+	egress Egress
 
 	// pullOnce guards the single-flight pre-pull, and pullErr records its
 	// outcome. A failed pull is retried on a later Acquire rather than cached as
@@ -453,11 +474,39 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 	// Per-container cgroup caps (change 0077). Emitted ONLY for fields the
 	// resolved config set; an unset field renders nothing — never a sentinel,
 	// never `--memory 0` (which some runtimes read as "unlimited" and others
-	// reject). Placement is deliberate: after `--rm -i` and BEFORE the
-	// TODO(#0064) network marker, so egress control lands cleanly beside it.
+	// reject). Placement is deliberate: after `--rm -i` and BEFORE the egress
+	// floor below (change 0064), which is where network posture lands.
 	args = append(args, r.handler.limits.argv()...)
 
-	// TODO(#0064): egress control owns this flag (--network none floor + allowlist)
+	// The egress FLOOR (change 0064). Under EgressEnforce the container gets
+	// `--network none`: loopback only, no route off the box, so nothing the
+	// command runs can reach the network except through the hole the trusted
+	// side opens for it. Under EgressAllowAll — the default, and the zero value
+	// — nothing is emitted at all, so an operator who never configured egress
+	// gets byte-for-byte the pre-0064 argv.
+	//
+	// Three things about this site a reader must not have to rediscover:
+	//
+	//   - It is decided by the MODE alone, never by the allowlist being
+	//     non-empty. Enforcing with nothing declared is the deny-all state and
+	//     still gets the floor; that is the fail-safe direction.
+	//   - It is the PAIR form (`--network`, `none`), which docker, nerdctl and
+	//     podman all accept — preserving the one-argv-builder-serves-all-three
+	//     property.
+	//   - It is emitted HERE, in the run builder, and nowhere else. The pre-pull
+	//     (prePull/runPull) builds its own `pull <image>` argv straight to h.run
+	//     and must keep doing so: a pull under --network none cannot reach a
+	//     registry, and with --pull=never below, a floored pull would take the
+	//     whole substrate down on every cold image.
+	//
+	// TODO(#0064, task 6): the datapath through this floor is NOT built yet —
+	// the proxy socket mount, the in-container forwarder mount, and the injected
+	// HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY vars all land at this site, after
+	// the floor and before the --env pairs. Until then EgressEnforce is deny-ALL
+	// in practice, allowlist or not: the floor is on and there is no hole yet.
+	if r.handler.egress.Mode == EgressEnforce {
+		args = append(args, "--network", "none")
+	}
 
 	for _, kv := range env {
 		// ALWAYS the `--env K=V` pair form, NEVER a bare `--env K`.

@@ -223,6 +223,15 @@ func NewService(cfg Config, opts ...ServiceOption) (*Service, error) {
 	// root arrive together as trusted construction facts.
 	o.containerOpts = append(o.containerOpts, withLimits(cfg.Limits))
 
+	// The egress posture (change 0064) is the same kind of trusted construction
+	// fact, and it is appended LAST for the same reason withTrustedRoot is: a
+	// caller-supplied containerOption applied afterwards could otherwise put the
+	// handler back on EgressAllowAll, and a floor the caller (or, through it, a
+	// model) can lower is not a floor. Note that cfg.Egress is deliberately NOT
+	// touched by resolveDefaults — the posture is chosen by the explicit
+	// egress.mode knob only (see Config.Egress).
+	o.containerOpts = append(o.containerOpts, withEgress(cfg.Egress))
+
 	s := &Service{
 		cfg:    cfg,
 		root:   o.root,
