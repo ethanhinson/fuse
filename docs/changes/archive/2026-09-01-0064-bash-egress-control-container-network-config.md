@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-08-21-bash-egress-control-container-network-config-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-21-bash-egress-control-container-network-config-design.md) |
-| Plan | [2026-09-01-bash-egress-control-container-network-config-plan.md](https://github.com/ethanhinson/fuse/blob/feat/bash-egress-control-container-network-config/docs/superpowers/plans/2026-09-01-bash-egress-control-container-network-config-plan.md) |
-| Results | [2026-09-01-bash-egress-control-container-network-config-results.md](https://github.com/ethanhinson/fuse/blob/feat/bash-egress-control-container-network-config/docs/results/2026-09-01-bash-egress-control-container-network-config-results.md) |
+| Plan | [2026-09-01-bash-egress-control-container-network-config-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-09-01-bash-egress-control-container-network-config-plan.md) |
+| Results | [2026-09-01-bash-egress-control-container-network-config-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-09-01-bash-egress-control-container-network-config-results.md) |
 | PR | [#84](https://github.com/ethanhinson/fuse/pull/84) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md), [ADR-0051](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0051-network-none-reaches-its-proxy-by-mounted-socket-plus-supplied-forwarder.md), [ADR-0052](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0052-delegated-identity-on-bash-egress-is-forward-proxy-only.md), [ADR-0053](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0053-whole-file-config-discard-salvages-the-posture.md) |
 <!-- docket:artifacts:end -->
