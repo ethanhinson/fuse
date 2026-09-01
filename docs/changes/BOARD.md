@@ -1,12 +1,6 @@
 # Backlog
 
-**80 changes** — 🟢 1 in progress · 🟡 5 proposed · ⚪ 2 deferred · ✅ 66 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0064](active/0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | `medium` | `feat` | [spec](../superpowers/specs/2026-08-21-bash-egress-control-container-network-config-design.md) | `feat/bash-egress-control-container-network-config` |
+**80 changes** — 🟡 5 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 66 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
@@ -24,6 +18,12 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0064](active/0064-bash-egress-control-container-network-config.md) | bash egress control — egress as the container's network configuration, not an in-process dialer allowlist | `medium` | `feat` | [#84](https://github.com/ethanhinson/fuse/pull/84) |  |
 
 ```mermaid
 graph TD
