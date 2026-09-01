@@ -261,6 +261,14 @@ type AllowEntry struct {
 	Port int
 	// Credential optionally names the #52 CredentialSource audience to bind on
 	// the upstream connection. Empty means plain allow-through.
+	//
+	// A credentialed entry is reachable over PLAINTEXT `http://` only. Injecting
+	// the delegated Authorization header means terminating the request, which the
+	// proxy can do for the absolute-form requests a client sends for an `http://`
+	// destination but not inside the opaque CONNECT tunnel it opens for an
+	// `https://` one — that would need TLS interception, which is not built.
+	// A CONNECT to a credentialed destination is refused explicitly
+	// (RefusedCredentialTunnel), never silently downgraded or dropped.
 	Credential string
 }
 

@@ -98,12 +98,12 @@ func TestProxyPlainEntryDoesNotConsultCredentialSource(t *testing.T) {
 		t.Fatalf("Listen: %v", err)
 	}
 
-	conn, br, resp := connectVia(t, sock, addr)
+	resp, body := proxyGet(t, sock, "http://"+addr+"/")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if got := getThroughTunnel(t, conn, br, addr); got != "plain" {
-		t.Errorf("body = %q, want %q", got, "plain")
+	if body != "plain" {
+		t.Errorf("body = %q, want %q", body, "plain")
 	}
 	if calls := src.snapshot(); len(calls) != 0 {
 		t.Errorf("credential source was consulted %d times for an entry with no credential: %+v", len(calls), calls)
@@ -118,6 +118,12 @@ func TestProxyPlainEntryDoesNotConsultCredentialSource(t *testing.T) {
 // A declared entry that names a credential audience reaches the upstream UNDER
 // THAT IDENTITY, and the seam is asked using the LISTENER's principal and the
 // entry's audience — never anything the client sent.
+//
+// Driven through the ABSOLUTE-FORM request an injected HTTP_PROXY actually
+// produces for an `http://` destination, because that is the only client-emitted
+// shape the proxy can inject a header into. A hand-crafted CONNECT-then-plaintext
+// tunnel would exercise the header-setting line without proving any real command
+// can reach it.
 func TestProxyCredentialEntryDelegatesIdentityUpstream(t *testing.T) {
 	addr, seen := authUpstream(t, "delegated")
 	src := &fakeCredentialSource{fn: func(loopauth.Principal, toolidentity.Target) (toolidentity.Credential, error) {
@@ -131,18 +137,30 @@ func TestProxyCredentialEntryDelegatesIdentityUpstream(t *testing.T) {
 		t.Fatalf("Listen: %v", err)
 	}
 
-	// The client names another principal on the CONNECT, and then — the header
-	// that actually reaches the upstream — presents its OWN Authorization inside
-	// the tunnel. Neither takes part: the identity comes from the listener, and
-	// the client's header is REPLACED, not merged, so the upstream cannot be
+	// The client names another principal in a header, and presents its OWN
+	// Authorization. Neither takes part: the identity comes from the listener,
+	// and the client's header is REPLACED, not merged, so the upstream cannot be
 	// offered a credential the model chose.
-	conn, br, resp := connectVia(t, sock, addr, "X-Fuse-Principal: bob")
+	resp, body := proxyGet(t, sock, "http://"+addr+"/",
+		"X-Fuse-Principal: bob",
+		"Authorization: Bearer forged-by-the-model")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	got := getThroughTunnel(t, conn, br, addr, "Authorization: Bearer forged-by-the-model")
-	if got != "delegated" {
-		t.Errorf("body = %q, want %q", got, "delegated")
+	if body != "delegated" {
+		t.Errorf("body = %q, want %q", body, "delegated")
+	}
+	// The delegated credential goes UPSTREAM only. It is never reflected back to
+	// the client, which is the model's command.
+	for name, values := range resp.Header {
+		for _, v := range values {
+			if strings.Contains(v, "alice-token") {
+				t.Errorf("response header %s echoed the delegated credential: %q", name, v)
+			}
+		}
+	}
+	if strings.Contains(body, "alice-token") {
+		t.Errorf("response body echoed the delegated credential: %q", body)
 	}
 
 	auths := seen()
@@ -196,16 +214,14 @@ func TestProxyConcurrentPrincipalsGetTheirOwnCredential(t *testing.T) {
 	drive := func(sock, addr, marker string) {
 		defer wg.Done()
 		for i := 0; i < rounds; i++ {
-			conn, br, resp := connectVia(t, sock, addr)
+			resp, body := proxyGet(t, sock, "http://"+addr+"/")
 			if resp.StatusCode != http.StatusOK {
 				t.Errorf("%s: status = %d, want 200", marker, resp.StatusCode)
-				_ = resp.Body.Close()
 				continue
 			}
-			if got := getThroughTunnel(t, conn, br, addr); got != marker {
-				t.Errorf("%s: body = %q, want %q", marker, got, marker)
+			if body != marker {
+				t.Errorf("%s: body = %q, want %q", marker, body, marker)
 			}
-			_ = conn.Close()
 		}
 	}
 	wg.Add(2)
@@ -261,11 +277,10 @@ func TestProxyCredentialResolutionErrorRefuses(t *testing.T) {
 		t.Fatalf("Listen: %v", err)
 	}
 
-	_, _, resp := connectVia(t, sock, addr)
+	resp, _ := proxyGet(t, sock, "http://"+addr+"/")
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
 	}
-	_ = resp.Body.Close()
 
 	if got := seen(); len(got) != 0 {
 		t.Errorf("upstream served %d requests, want none", len(got))
@@ -292,11 +307,10 @@ func TestProxyEmptyCredentialRefuses(t *testing.T) {
 		t.Fatalf("Listen: %v", err)
 	}
 
-	_, _, resp := connectVia(t, sock, addr)
+	resp, _ := proxyGet(t, sock, "http://"+addr+"/")
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
 	}
-	_ = resp.Body.Close()
 
 	if got := seen(); len(got) != 0 {
 		t.Errorf("upstream served %d requests, want none", len(got))

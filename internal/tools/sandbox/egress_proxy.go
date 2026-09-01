@@ -51,13 +51,22 @@ var ErrProxyClosed = errors.New("sandbox: egress proxy is closed")
 //
 // # What it speaks
 //
-// HTTP CONNECT and nothing else (plan Q2). CONNECT is what the injected
-// HTTP_PROXY/HTTPS_PROXY env vars mean to curl/git/pip, and it names the
-// destination host and port IN THE CLEAR before any byte flows — which is what
-// lets the allowlist be consulted before the connection exists. A non-CONNECT
-// method is refused with 405 rather than being served as an ordinary forward
-// proxy: a second request shape would be a second way to reach the network, and
-// the whole point is that there is exactly one.
+// The two request shapes an injected HTTP_PROXY/HTTPS_PROXY actually makes
+// curl/git/pip emit, and nothing else:
+//
+//   - CONNECT host:port — what a client sends for an `https://` destination.
+//     The tunnel is opaque; the destination is named in the clear on the request
+//     line, which is what lets the allowlist be consulted before the connection
+//     exists.
+//   - An ABSOLUTE-FORM request (GET http://host/path HTTP/1.1) — what the same
+//     client sends for an `http://` destination. This is served as a real
+//     forward proxy: the request is terminated here, authorized against the same
+//     allowlist, relayed to the upstream, and the response relayed back.
+//
+// Both shapes go through ONE allowlist decision and ONE host canonicalization
+// (canonicalDestination). Any other shape — origin-form, asterisk-form, an
+// absolute URI in another scheme — names no destination this proxy can
+// authorize, and is refused with 405 rather than guessed at.
 //
 // Raw TCP (psql and friends) is a named follow-on, not built here.
 //
@@ -65,12 +74,17 @@ var ErrProxyClosed = errors.New("sandbox: egress proxy is closed")
 //
 // An allowlist entry may name a credential audience, which means the operator
 // declared that destination reachable ONLY under the loop initiator's delegated
-// identity. Such a tunnel is not opaque: the proxy reads the client's HTTP
-// requests out of it and sets the Authorization header itself, so the upstream
-// sees a credential fuse minted for the LISTENER's principal rather than
-// anything the model's command chose. Every way that resolution can fail — no
-// source wired, an exchange error, an empty token — refuses the connection.
-// See delegatedHeader and spliceWithIdentity.
+// identity. Injecting an Authorization header requires TERMINATING the request,
+// so it happens on the forward-proxy path: the proxy sets the header itself and
+// the upstream sees a credential fuse minted for the LISTENER's principal rather
+// than anything the model's command chose. Every way that resolution can fail —
+// no source wired, an exchange error, an empty token — refuses the request. See
+// delegatedHeader.
+//
+// A CONNECT to such a destination is refused (RefusedCredentialTunnel): the
+// bytes inside that tunnel are TLS, and intercepting them is out of scope. The
+// refusal is explicit so an operator can diagnose it, rather than a silent drop
+// that is indistinguishable from a network fault.
 //
 // # Failure direction
 //
@@ -107,7 +121,11 @@ type Proxy struct {
 type RefusalReason string
 
 const (
-	// RefusedNonConnect means the client spoke a method other than CONNECT.
+	// RefusedNonConnect means the request was neither a CONNECT nor an
+	// absolute-form `http://` request — origin-form, asterisk-form, or an
+	// absolute URI in a scheme this proxy does not originate. Such a request
+	// names no destination the allowlist can be consulted about, so there is
+	// nothing to authorize and it is refused.
 	RefusedNonConnect RefusalReason = "non_connect"
 	// RefusedMalformedTarget means the CONNECT target was not a usable
 	// host:port — no port, a non-numeric port, a port outside 1..65535, or an
@@ -123,6 +141,17 @@ const (
 	// credential audience that could not be supplied. A declared-identity entry
 	// is never downgraded to an unauthenticated allow-through.
 	RefusedCredentialUnavailable RefusalReason = "credential_unavailable"
+	// RefusedCredentialTunnel means the client asked to CONNECT to a destination
+	// the operator declared under a #52 delegated identity.
+	//
+	// A CONNECT tunnel is opaque, and the client's next bytes are a TLS
+	// ClientHello: the proxy cannot put an Authorization header into a stream it
+	// does not terminate, and terminating it means intercepting TLS, which this
+	// change deliberately does not build. So the request is refused HERE, in
+	// terms the operator can act on ("this destination is reachable only over
+	// plaintext http through the forward path"), rather than by dropping
+	// unparseable bytes into a silence that looks like a network fault.
+	RefusedCredentialTunnel RefusalReason = "credential_tunnel"
 	// RefusedUpstreamUnreachable means the destination WAS declared but could
 	// not be dialled. It is distinguished from a policy denial so an operator
 	// can tell a misconfiguration from a network fault.
@@ -503,8 +532,14 @@ func (pl *principalListener) close() error {
 	return err
 }
 
-// handle serves exactly one client connection: read one request, decide, and
-// either tunnel it or refuse it.
+// handle serves one client connection: read its first request and dispatch it
+// to the tunnel path or the forward-proxy path by SHAPE.
+//
+// The two paths are separate functions rather than one branchy body because they
+// have different lifetimes — a tunnel owns the connection until one side closes,
+// while the forward path serves request after request — and because keeping them
+// apart makes it checkable that both reach the network through the same
+// allowlist decision and nothing else.
 func (pl *principalListener) handle(conn net.Conn) {
 	_ = conn.SetReadDeadline(time.Now().Add(proxyHeaderTimeout))
 	br := bufio.NewReader(conn)
@@ -524,17 +559,14 @@ func (pl *principalListener) handle(conn net.Conn) {
 		}
 		return
 	}
-	// The request body is never forwarded: CONNECT has none, and a non-CONNECT
-	// request is refused rather than proxied.
-	defer func() { _ = req.Body.Close() }()
-
 	if req.Method != http.MethodConnect {
-		pl.refuse(conn, http.StatusMethodNotAllowed, RefusalInfo{
-			Principal: pl.principal,
-			Reason:    RefusedNonConnect,
-		}, "this proxy speaks HTTP CONNECT only\n")
+		pl.serveForward(conn, br, req)
 		return
 	}
+
+	// A CONNECT request has no body; closing it is bookkeeping, and nothing is
+	// forwarded from it either way.
+	defer func() { _ = req.Body.Close() }()
 
 	target := req.URL.Host
 	if target == "" {
@@ -566,27 +598,25 @@ func (pl *principalListener) handle(conn net.Conn) {
 		return
 	}
 
-	// THE DELEGATED IDENTITY (#52). An entry that names an audience is reached
-	// UNDER THAT IDENTITY or not at all. Resolution happens BEFORE the upstream
-	// is dialled, so a credential that cannot be supplied never becomes a
-	// connection that exists for a moment without one.
+	// THE DELEGATED IDENTITY (#52) CANNOT RIDE A TUNNEL. An entry that names an
+	// audience is reached UNDER THAT IDENTITY or not at all, and a CONNECT tunnel
+	// is opaque bytes the proxy does not terminate — for an `https://` target
+	// those bytes are a TLS ClientHello. There is no header to set, so the
+	// request is refused HERE, before the upstream is dialled and before any
+	// credential is minted for a connection that will not carry one.
 	//
-	// The principal handed to the seam is pl.principal — the LISTENER's, fixed
-	// when the socket was created. Nothing the client sent is consulted, here or
-	// anywhere else.
-	var credential string
+	// This is refused loudly rather than silently: an earlier shape of this code
+	// tried to parse HTTP out of the tunnel and dropped whatever did not parse,
+	// which was fail-closed but presented to the operator as an unexplained hang.
+	// A bounded reason says what happened and what would have to change.
 	if entry.Credential != "" {
-		var ok bool
-		credential, ok = pl.delegatedHeader(entry.Credential)
-		if !ok {
-			pl.refuse(conn, http.StatusForbidden, RefusalInfo{
-				Principal: pl.principal,
-				Host:      host,
-				Port:      port,
-				Reason:    RefusedCredentialUnavailable,
-			}, egressDenialBody)
-			return
-		}
+		pl.refuse(conn, http.StatusForbidden, RefusalInfo{
+			Principal: pl.principal,
+			Host:      host,
+			Port:      port,
+			Reason:    RefusedCredentialTunnel,
+		}, egressDenialBody)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), pl.proxy.dialer.Timeout)
@@ -618,15 +648,219 @@ func (pl *principalListener) handle(conn net.Conn) {
 	// br, not conn, is the client-side reader: a client that pipelined bytes
 	// after its CONNECT already has them sitting in the buffer, and reading
 	// from the raw connection would silently drop them.
-	// credential is non-empty EXACTLY when the entry declared an audience and it
-	// resolved: delegatedHeader rejects an empty header, and a plain entry never
-	// calls it. So this is the identity-carrying tunnel and the branch below is
-	// the plain one — a declared-identity entry can never reach the plain path.
-	if credential != "" {
-		spliceWithIdentity(conn, br, upstream, credential)
-		return
-	}
+	//
+	// The tunnel is opaque. A destination declared with an identity never reaches
+	// this line — it was refused above — so no traffic leaves through a tunnel
+	// under an identity the proxy failed to attach.
 	splice(conn, br, upstream)
+}
+
+// serveForward is the FORWARD-PROXY path: the shape a client emits for an
+// `http://` destination when HTTP_PROXY points here.
+//
+// It serves requests in a loop so an ordinary keep-alive client is not forced to
+// reconnect per request, and EVERY iteration is authorized independently against
+// the allowlist. That is the load-bearing part: a persistent connection must not
+// become a way to reach a second destination on the strength of the first one's
+// decision, so nothing about the previous request is carried forward — not the
+// match, not the credential, not the upstream connection.
+//
+// Any refusal, any protocol error, and any response the proxy cannot delimit
+// ends the connection. The loop only continues when the exchange completed
+// cleanly and both sides said they were willing to reuse it.
+func (pl *principalListener) serveForward(conn net.Conn, br *bufio.Reader, req *http.Request) {
+	for {
+		if !pl.forwardOnce(conn, req) {
+			return
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(proxyHeaderTimeout))
+		next, err := http.ReadRequest(br)
+		if err != nil {
+			// The ordinary end of a keep-alive connection is the client going
+			// away, which is not a refusal and not worth recording.
+			return
+		}
+		req = next
+	}
+}
+
+// forwardOnce serves ONE absolute-form request and reports whether the client
+// connection may carry another.
+//
+// The upstream connection is dialled fresh per request and closed when the
+// response has been relayed. That is deliberately not pooled: a pool keyed
+// loosely enough to be worth having is a pool that can hand one destination's
+// socket to another destination's request, and the whole value of this file is
+// that a destination is reached only after ITS OWN allowlist decision.
+func (pl *principalListener) forwardOnce(conn net.Conn, req *http.Request) bool {
+	defer func() { _ = req.Body.Close() }()
+
+	host, port, reason := forwardTarget(req)
+	if reason != "" {
+		status, body := http.StatusMethodNotAllowed, "this proxy serves CONNECT and absolute-form http requests only\n"
+		if reason == RefusedMalformedTarget {
+			status, body = http.StatusBadRequest, "malformed request target\n"
+		}
+		pl.refuse(conn, status, RefusalInfo{
+			Principal: pl.principal,
+			Host:      host,
+			Port:      port,
+			Reason:    reason,
+		}, body)
+		return false
+	}
+
+	// THE MATCH — the same one the CONNECT path makes, against the same policy,
+	// on a host canonicalized by the same single entry point.
+	entry, allowed := pl.policy.Match(host, port)
+	if !allowed {
+		pl.refuse(conn, http.StatusForbidden, RefusalInfo{
+			Principal: pl.principal,
+			Host:      host,
+			Port:      port,
+			Reason:    RefusedNotDeclared,
+		}, egressDenialBody)
+		return false
+	}
+
+	// THE DELEGATED IDENTITY (#52). Resolution happens BEFORE the upstream is
+	// dialled, so a credential that cannot be supplied never becomes a request
+	// that exists for a moment without one. The principal handed to the seam is
+	// pl.principal — the LISTENER's, fixed when the socket was created — and the
+	// header is SET, replacing whatever the client sent, because an identity the
+	// model's command chose is not an identity fuse delegated.
+	if entry.Credential != "" {
+		credential, ok := pl.delegatedHeader(entry.Credential)
+		if !ok {
+			pl.refuse(conn, http.StatusForbidden, RefusalInfo{
+				Principal: pl.principal,
+				Host:      host,
+				Port:      port,
+				Reason:    RefusedCredentialUnavailable,
+			}, egressDenialBody)
+			return false
+		}
+		req.Header.Set("Authorization", credential)
+	}
+	stripHopByHop(req.Header)
+
+	ctx, cancel := context.WithTimeout(context.Background(), pl.proxy.dialer.Timeout)
+	defer cancel()
+	upstream, err := pl.proxy.dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		pl.refuse(conn, http.StatusBadGateway, RefusalInfo{
+			Principal: pl.principal,
+			Host:      host,
+			Port:      port,
+			Reason:    RefusedUpstreamUnreachable,
+		}, "upstream unavailable\n")
+		return false
+	}
+	if !pl.trackUpstream(upstream) {
+		_ = upstream.Close()
+		return false
+	}
+	defer pl.untrack(upstream)
+	defer func() { _ = upstream.Close() }()
+
+	// Deadlines are cleared for the exchange itself: a large body in either
+	// direction is legitimate and slow, and teardown here is by connection close
+	// (Release/Close), which is why the upstream is tracked above.
+	_ = conn.SetReadDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Time{})
+
+	// Write, not WriteProxy: the upstream is the ORIGIN server, so it gets an
+	// origin-form request target, not the absolute URI the client sent us.
+	if err := req.Write(upstream); err != nil {
+		return false
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(upstream), req)
+	if err != nil {
+		pl.refuse(conn, http.StatusBadGateway, RefusalInfo{
+			Principal: pl.principal,
+			Host:      host,
+			Port:      port,
+			Reason:    RefusedUpstreamUnreachable,
+		}, "upstream unavailable\n")
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// The response is relayed as the upstream wrote it, less the hop-by-hop
+	// headers that describe THIS connection rather than the message. Nothing in
+	// it is rewritten: the delegated credential travelled upstream only, and no
+	// part of the response is fuse's to author.
+	stripHopByHop(resp.Header)
+	if err := resp.Write(conn); err != nil {
+		return false
+	}
+
+	// Reuse only when the message was self-delimiting and neither side asked to
+	// close. A response delimited by EOF (ContentLength < 0, not chunked) ends
+	// the connection by definition, and guessing otherwise would splice the next
+	// request onto the tail of this one's body.
+	return !req.Close && !resp.Close &&
+		(resp.ContentLength >= 0 || len(resp.TransferEncoding) > 0)
+}
+
+// hopByHopHeaders describe the CONNECTION a message arrived on, not the message,
+// so a proxy must not pass them along. Proxy-Authorization matters most: it is
+// addressed to this proxy, and forwarding it would hand whatever the client put
+// there to the upstream.
+var hopByHopHeaders = []string{
+	"Connection",
+	"Keep-Alive",
+	"Proxy-Authenticate",
+	"Proxy-Authorization",
+	"Proxy-Connection",
+	"Te",
+	"Trailer",
+	"Transfer-Encoding",
+	"Upgrade",
+}
+
+// stripHopByHop removes the hop-by-hop headers in place. The framing they
+// describe is reconstructed by net/http when the message is written out, from
+// the parsed Close/ContentLength/TransferEncoding fields rather than from these
+// header values.
+func stripHopByHop(h http.Header) {
+	for _, name := range hopByHopHeaders {
+		h.Del(name)
+	}
+}
+
+// forwardTarget resolves the destination of a non-CONNECT request, returning a
+// CANONICAL host and port, or the reason the request cannot be served.
+//
+// Only an absolute-form `http://` request is servable. Origin-form and
+// asterisk-form name no destination at all — a proxy cannot authorize "GET /" —
+// and an absolute URI in any other scheme asks the proxy to originate a protocol
+// it does not speak (an `https://` absolute URI would mean terminating TLS on
+// the client's behalf, which is the interception this change does not build).
+//
+// A missing port means the SCHEME's default, 80, and that is not the same guess
+// the CONNECT path refuses to make. There, a target without a port is a
+// malformed request-target and its port could be anything. Here, the URL grammar
+// says what the port is, so 80 is read rather than assumed — and an operator who
+// declared port 8080 still does not match a request for port 80.
+func forwardTarget(req *http.Request) (host string, port int, reason RefusalReason) {
+	u := req.URL
+	// url.Parse lowercases the scheme, so this comparison needs no folding.
+	if u == nil || u.Scheme != "http" || u.Host == "" {
+		return "", 0, RefusedNonConnect
+	}
+	rawPort := u.Port()
+	if rawPort == "" {
+		rawPort = "80"
+	}
+	// Hostname() strips the brackets from an IPv6 literal, exactly as
+	// net.SplitHostPort does for a CONNECT target, so both shapes hand
+	// canonicalDestination the same spelling.
+	host, port, ok := canonicalDestination(u.Hostname(), rawPort)
+	if !ok {
+		return host, port, RefusedMalformedTarget
+	}
+	return host, port, ""
 }
 
 // delegatedHeader resolves audience through the #52 seam for THIS LISTENER's
@@ -676,55 +910,6 @@ func (pl *principalListener) delegatedHeader(audience string) (string, bool) {
 	return header, true
 }
 
-// spliceWithIdentity is the tunnel for a destination declared WITH an identity.
-//
-// A CONNECT tunnel carries opaque bytes, so the only way an upstream can see a
-// delegated credential is for the proxy to read the client's requests and put
-// it there. Requests are parsed off the client side, the Authorization header is
-// SET (replacing whatever the client sent — the client is the model's command,
-// and an identity it chose is not an identity fuse delegated), and the rewritten
-// request is written to the upstream. The response direction is copied
-// verbatim: nothing in it is fuse's to rewrite.
-//
-// The failure direction is closed. A client whose bytes do not parse as an HTTP
-// request — a TLS ClientHello, most importantly — is not forwarded: the loop
-// ends, both halves close, and NOTHING reaches the upstream. Forwarding those
-// bytes raw is the one thing that must not happen, because it would reach a
-// destination the operator declared under a delegated identity without one.
-// That makes `credential:` entries plaintext-HTTP-only for now, which is a real
-// limitation and is stated here rather than discovered later; TLS delegation
-// needs a decision about interception this change does not make.
-func spliceWithIdentity(client net.Conn, clientReader *bufio.Reader, upstream net.Conn, credential string) {
-	done := make(chan struct{}, 2)
-	go func() {
-		defer func() { done <- struct{}{} }()
-		for {
-			req, err := http.ReadRequest(clientReader)
-			if err != nil {
-				return
-			}
-			req.Header.Set("Authorization", credential)
-			// Write, not WriteProxy: the upstream is the ORIGIN server on the
-			// far side of an established tunnel, so it expects origin-form
-			// request targets, not absolute URIs.
-			writeErr := req.Write(upstream)
-			_ = req.Body.Close()
-			if writeErr != nil {
-				return
-			}
-		}
-	}()
-	go func() {
-		_, _ = io.Copy(client, upstream)
-		done <- struct{}{}
-	}()
-
-	<-done
-	_ = client.Close()
-	_ = upstream.Close()
-	<-done
-}
-
 // egressDenialBody is what a REFUSED client is told: that policy denied it, and
 // nothing else. The destination goes to the operator through the refusal hook.
 // Echoing it back would turn every refusal into a confirmation that the proxy
@@ -752,19 +937,41 @@ func (pl *principalListener) refuse(conn net.Conn, status int, info RefusalInfo,
 // did not write. A port outside 1..65535 is refused for the same reason — the
 // loader will not store one, so nothing could legitimately match it.
 //
-// The host is canonicalized here and ONLY here, through the shared
-// reputation.CanonicalHost. Everything downstream — the match, the dial, and
-// the refusal record — uses this one value.
+// The host is canonicalized through canonicalDestination, which is the single
+// place any request shape's host is normalized. Everything downstream — the
+// match, the dial, and the refusal record — uses that one value.
 func splitConnectTarget(target string) (host string, port int, ok bool) {
 	rawHost, rawPort, err := net.SplitHostPort(target)
 	if err != nil {
 		return "", 0, false
 	}
+	return canonicalDestination(rawHost, rawPort)
+}
+
+// canonicalDestination is THE ONE PLACE a destination host is canonicalized and
+// a destination port is validated. Both request shapes funnel through it — the
+// CONNECT target via splitConnectTarget, the absolute-form URL via
+// forwardTarget — and the value it returns is what is matched, dialled, and
+// reported.
+//
+// One entry point is the point. ADR-0048 rule 3 records the live bug that comes
+// of two normalizers drifting apart: one gate matching a raw spelling while
+// another matches a normalized one. Adding a forward-proxy path was the obvious
+// occasion to write a second one, so there is deliberately no second one — this
+// function holds the only call to reputation.CanonicalHost in this package's
+// request path, and the declared side is canonicalized once in parseAllowHost.
+//
+// The port is exact and required: 1..65535, no defaulting here. A caller that
+// legitimately knows the port (an `http://` URL's implicit 80) supplies it as a
+// string and is answerable for that; a caller that does not know it gets a
+// refusal rather than a guess, because guessing authorizes against an entry the
+// operator did not write.
+func canonicalDestination(rawHost, rawPort string) (host string, port int, ok bool) {
 	host = reputation.CanonicalHost(rawHost)
 	if host == "" {
 		return "", 0, false
 	}
-	port, err = strconv.Atoi(rawPort)
+	port, err := strconv.Atoi(rawPort)
 	if err != nil || port < 1 || port > 65535 {
 		return host, 0, false
 	}

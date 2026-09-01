@@ -7,12 +7,16 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/ethanhinson/fuse/internal/loopauth"
+	"github.com/ethanhinson/fuse/internal/toolidentity"
 )
 
 // shortDir returns a SHORT temporary directory.
@@ -141,6 +145,53 @@ func getThroughTunnel(t *testing.T, conn net.Conn, br *bufio.Reader, hostport st
 	return string(body)
 }
 
+// proxyRequest issues one ABSOLUTE-FORM request through the proxy socket and
+// returns the response and its body.
+//
+// This is the shape curl/git/pip ACTUALLY send for an `http://` destination when
+// HTTP_PROXY names the proxy: `GET http://host/path HTTP/1.1`, target and all.
+// It is the only client-produced shape that can carry a delegated identity, so
+// every #52 assertion is driven through it rather than through a hand-crafted
+// tunnel no real client opens.
+func proxyRequest(t *testing.T, sock, method, rawURL string, extraHeaders ...string) (*http.Response, string) {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse %q: %v", rawURL, err)
+	}
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dial %s: %v", sock, err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	req := method + " " + rawURL + " HTTP/1.1\r\nHost: " + u.Host + "\r\n"
+	for _, h := range extraHeaders {
+		req += h + "\r\n"
+	}
+	req += "\r\n"
+	if _, err := io.WriteString(conn, req); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: method})
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return resp, string(body)
+}
+
+// proxyGet is proxyRequest for the common GET case.
+func proxyGet(t *testing.T, sock, rawURL string, extraHeaders ...string) (*http.Response, string) {
+	t.Helper()
+	return proxyRequest(t, sock, http.MethodGet, rawURL, extraHeaders...)
+}
+
 // upstream starts an HTTP server on loopback that answers every request with
 // marker, and returns its "host:port".
 func upstream(t *testing.T, marker string) string {
@@ -152,10 +203,12 @@ func upstream(t *testing.T, marker string) string {
 	return srv.Listener.Addr().String()
 }
 
-// Only CONNECT is spoken. Everything else is refused with 405 — the proxy does
-// not fall back to forwarding an absolute-URI request, because a forward proxy
-// path would be a second, differently-shaped way to reach the network.
-func TestProxyRefusesNonConnectMethods(t *testing.T) {
+// A request that names NO destination the allowlist could be consulted about is
+// refused with 405. Origin-form ("GET /"), asterisk-form ("OPTIONS *") and a
+// non-`http` absolute URI all fall here: the proxy serves CONNECT and
+// absolute-form `http://` requests, and a shape outside those two cannot be
+// authorized, so it is not served.
+func TestProxyRefusesUnservableRequestShapes(t *testing.T) {
 	rec := &recordingHooks{}
 	p := newTestProxy(t, withProxyHooks(rec.hooks()))
 	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, "127.0.0.1:9"))
@@ -164,9 +217,11 @@ func TestProxyRefusesNonConnectMethods(t *testing.T) {
 	}
 
 	for _, line := range []string{
-		"GET http://127.0.0.1:9/ HTTP/1.1\r\nHost: 127.0.0.1:9\r\n\r\n",
-		"POST http://127.0.0.1:9/ HTTP/1.1\r\nHost: 127.0.0.1:9\r\nContent-Length: 0\r\n\r\n",
+		"GET / HTTP/1.1\r\nHost: 127.0.0.1:9\r\n\r\n",
+		"POST / HTTP/1.1\r\nHost: 127.0.0.1:9\r\nContent-Length: 0\r\n\r\n",
 		"OPTIONS * HTTP/1.1\r\nHost: 127.0.0.1:9\r\n\r\n",
+		"GET ftp://127.0.0.1:9/ HTTP/1.1\r\nHost: 127.0.0.1:9\r\n\r\n",
+		"GET https://127.0.0.1:9/ HTTP/1.1\r\nHost: 127.0.0.1:9\r\n\r\n",
 	} {
 		conn, err := net.Dial("unix", sock)
 		if err != nil {
@@ -190,6 +245,124 @@ func TestProxyRefusesNonConnectMethods(t *testing.T) {
 		if info.Reason != RefusedNonConnect {
 			t.Errorf("refusal reason = %q, want %q", info.Reason, RefusedNonConnect)
 		}
+	}
+}
+
+// An absolute-form URL with no host names no destination either, and is refused
+// as malformed rather than dialled at whatever the empty host resolves to.
+func TestProxyRefusesAbsoluteFormWithoutHost(t *testing.T) {
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, "127.0.0.1:9"))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := io.WriteString(conn, "GET http://:9/ HTTP/1.1\r\nHost: 127.0.0.1:9\r\n\r\n"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+
+	refusals := rec.snapshot()
+	if len(refusals) != 1 || refusals[0].Reason != RefusedMalformedTarget {
+		t.Fatalf("refusals = %+v, want one %q", refusals, RefusedMalformedTarget)
+	}
+}
+
+// An ABSOLUTE-FORM request to a declared destination is served as a real forward
+// proxy: matched against the same allowlist, and relayed to the upstream. This is
+// the shape an injected HTTP_PROXY produces for an `http://` URL, so without it
+// the `http://` half of the allowlist is unreachable in practice.
+func TestProxyForwardsAbsoluteFormToDeclaredDestination(t *testing.T) {
+	addr := upstream(t, "hello from upstream")
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, addr))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	resp, body := proxyGet(t, sock, "http://"+addr+"/some/path")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if body != "hello from upstream" {
+		t.Errorf("body = %q, want %q", body, "hello from upstream")
+	}
+	for _, info := range rec.snapshot() {
+		t.Errorf("declared destination refused: %+v", info)
+	}
+}
+
+// The forward-proxy path is NOT a second, laxer gate. An absolute-form request to
+// an UNDECLARED destination is refused exactly as a CONNECT to one is, the
+// destination reaches the operator, and the client is told nothing.
+func TestProxyRefusesAbsoluteFormUndeclaredDestination(t *testing.T) {
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()))
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, "pkg.example.com:80"))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	resp, body := proxyGet(t, sock, "http://evil.example.net/payload")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+	}
+	if strings.Contains(body, "evil.example.net") {
+		t.Errorf("denial body echoed the destination: %q", body)
+	}
+
+	refusals := rec.snapshot()
+	if len(refusals) != 1 {
+		t.Fatalf("refusals = %+v, want exactly 1", refusals)
+	}
+	got := refusals[0]
+	// The scheme's default port is the port that is matched — an absolute-form
+	// `http://` URL with no port means 80 by the URL grammar, not "any port".
+	if got.Host != "evil.example.net" || got.Port != 80 {
+		t.Errorf("recorded destination = %s:%d, want evil.example.net:80", got.Host, got.Port)
+	}
+	if got.Reason != RefusedNotDeclared {
+		t.Errorf("reason = %q, want %q", got.Reason, RefusedNotDeclared)
+	}
+	if got.Principal.Subject != "alice" {
+		t.Errorf("recorded principal = %+v, want subject alice", got.Principal)
+	}
+}
+
+// A declared host on a NON-default port is not reachable through the scheme's
+// default port, and vice versa. The forward path must not widen the exact-port
+// rule the CONNECT path enforces.
+func TestProxyForwardMatchesExactPort(t *testing.T) {
+	addr := upstream(t, "declared")
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("SplitHostPort: %v", err)
+	}
+	p := newTestProxy(t)
+	// Declared on the upstream's real port only.
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, addr))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	// No port in the URL means 80, which is not the declared port.
+	resp, _ := proxyGet(t, sock, "http://127.0.0.1/")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("portless URL got %d, want %d (port %s is what was declared)", resp.StatusCode, http.StatusForbidden, portStr)
 	}
 }
 
@@ -302,6 +475,40 @@ func TestProxyRefusesCredentialEntryWithoutSource(t *testing.T) {
 		t.Fatalf("Listen: %v", err)
 	}
 
+	resp, _ := proxyGet(t, sock, "http://"+addr+"/")
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
+	}
+
+	refusals := rec.snapshot()
+	if len(refusals) != 1 || refusals[0].Reason != RefusedCredentialUnavailable {
+		t.Fatalf("refusals = %+v, want one %q", refusals, RefusedCredentialUnavailable)
+	}
+}
+
+// A CONNECT to a destination declared WITH a credential audience is refused
+// EXPLICITLY, with its own bounded reason.
+//
+// The proxy cannot inject a delegated credential into a tunnel it does not
+// terminate: the client's next bytes are a TLS ClientHello, and intercepting
+// them is out of scope. Dropping them silently would be fail-closed but
+// undiagnosable — an operator would see a hang and no reason. So the refusal is
+// stated, before the upstream is dialled, and named distinctly enough that
+// "this destination needs TLS interception fuse does not do" is readable from
+// the reason alone.
+func TestProxyRefusesConnectToCredentialedDestination(t *testing.T) {
+	addr := upstream(t, "must never be tunnelled")
+	src := &fakeCredentialSource{fn: func(loopauth.Principal, toolidentity.Target) (toolidentity.Credential, error) {
+		return toolidentity.NewCredential("Bearer", "alice-token", true), nil
+	}}
+
+	rec := &recordingHooks{}
+	p := newTestProxy(t, withProxyHooks(rec.hooks()), withCredentialSource(src))
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPortCredential(t, addr, "internal-api"))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
 	_, _, resp := connectVia(t, sock, addr)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusForbidden)
@@ -309,8 +516,13 @@ func TestProxyRefusesCredentialEntryWithoutSource(t *testing.T) {
 	_ = resp.Body.Close()
 
 	refusals := rec.snapshot()
-	if len(refusals) != 1 || refusals[0].Reason != RefusedCredentialUnavailable {
-		t.Fatalf("refusals = %+v, want one %q", refusals, RefusedCredentialUnavailable)
+	if len(refusals) != 1 || refusals[0].Reason != RefusedCredentialTunnel {
+		t.Fatalf("refusals = %+v, want one %q", refusals, RefusedCredentialTunnel)
+	}
+	// The refusal happens BEFORE resolution: no credential is minted for a
+	// request that is never going to carry one.
+	if calls := src.snapshot(); len(calls) != 0 {
+		t.Errorf("credential source was consulted %d times for a refused tunnel: %+v", len(calls), calls)
 	}
 }
 
@@ -548,6 +760,23 @@ func TestProxyCanonicalizesTargetAtEntry(t *testing.T) {
 		}
 		_ = conn.Close()
 	}
+
+	// The ABSOLUTE-FORM path canonicalizes at the SAME entry point — one
+	// normalizer, two request shapes. A second normalizer that drifted from this
+	// one is the ADR-0048 defect, so both shapes are asserted against the same
+	// declared entry.
+	for _, spelling := range []string{"localhost", "LocalHost", "localhost."} {
+		rawURL := fmt.Sprintf("http://%s:%d/", spelling, port)
+		resp, body := proxyGet(t, sock, rawURL)
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("absolute-form spelling %q got %d, want 200", spelling, resp.StatusCode)
+			continue
+		}
+		if body != "canonical" {
+			t.Errorf("absolute-form spelling %q: body = %q, want %q", spelling, body, "canonical")
+		}
+	}
+
 	for _, info := range rec.snapshot() {
 		t.Errorf("declared host refused: %+v", info)
 	}
