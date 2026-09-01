@@ -2,11 +2,11 @@
 id: 64
 slug: bash-egress-control-container-network-config
 title: bash egress control — egress as the container's network configuration, not an in-process dialer allowlist
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-16
-updated: 2026-08-21
+updated: 2026-09-01
 depends_on: [63]
 related: [63, 65, 75, 77]
 discovered_from: [58]
@@ -16,9 +16,10 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/bash-egress-control-container-network-config
 pr:
 blocked_by:
+claimed_at: 2026-09-01T04:01:49Z
 reconciled: false
 ---
 
