@@ -31,9 +31,19 @@ install:
 #     architecture of the IMAGE the sandbox runs, which is a deployment fact —
 #     hence the separate target rather than a step inside `build`.
 #
-# Wire the result in at the composition root with sandbox.WithEgressProxy(proxy,
-# "<path>/fuse-egress-forward-linux-<arch>"). Without it, `egress.mode: enforce`
-# is still safe — it is deny-all, since the floor is on and no hole is opened.
+# fuse FINDS the artifact itself at startup (cmd/fuse/sandbox.go), looking beside
+# its own executable and nowhere else — a mount source must not be config- or
+# model-selectable — in this order:
+#
+#   <dir of the fuse binary>/dist/fuse-egress-forward-linux-<arch>   (a checkout:
+#       `make build` + `make egress-forwarder` put both here already)
+#   <dir of the fuse binary>/fuse-egress-forward-linux-<arch>        (a `go
+#       install`ed fuse: copy the artifact next to ~/go/bin/fuse)
+#
+# <arch> is the host's, since every container runtime defaults to the host
+# platform. Without the artifact, `egress.mode: enforce` is still safe — it is
+# deny-all, since the floor is on and no hole is opened — and fuse says so loudly
+# on stderr at startup rather than looking like a broken network.
 EGRESS_FORWARDER_ARCHS ?= amd64 arm64
 
 egress-forwarder:

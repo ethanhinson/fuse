@@ -183,7 +183,8 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	// Sandbox substrate (ADR-0044, change 0063), resolved ONCE. hosted=TRUE: this
 	// binding serves remote principals over the network, so no local file may
 	// authorize running their commands uncontained on this host.
-	sb := newSandboxService(true, stderr)
+	sb, closeEgress := newSandboxService(true, stderr)
+	defer closeEgress()
 	toolReg := defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
 
 	// REUSE the shared composition root — the exact deps wiring binding #2 uses. Do not

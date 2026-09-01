@@ -167,7 +167,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// model has run, against this process's working directory. hosted=false — a
 	// one-shot run executes the operator's OWN work on the operator's machine, so
 	// their file-only off-switch applies.
-	sb := newSandboxService(false, stderr)
+	sb, closeEgress := newSandboxService(false, stderr)
+	defer closeEgress()
 	toolReg := defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
 	tree := agent.NewAgentTreeWithConcurrency(*modelAlias, *modelAlias, cfg.Agents.MaxConcurrent)
 	// The Scheduler is the single admission/slot/budget authority (change 0036):
