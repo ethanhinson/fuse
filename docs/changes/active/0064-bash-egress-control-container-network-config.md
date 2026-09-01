@@ -2,7 +2,7 @@
 id: 64
 slug: bash-egress-control-container-network-config
 title: bash egress control — egress as the container's network configuration, not an in-process dialer allowlist
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-16
@@ -13,13 +13,13 @@ discovered_from: [58]
 adrs: [44, 51, 52, 53]
 spec: docs/superpowers/specs/2026-08-21-bash-egress-control-container-network-config-design.md
 plan: docs/superpowers/plans/2026-09-01-bash-egress-control-container-network-config-plan.md
-results:
+results: docs/results/2026-09-01-bash-egress-control-container-network-config-results.md
 trivial: false
 auto_groomable:
 branch: feat/bash-egress-control-container-network-config
-pr:
+pr: https://github.com/ethanhinson/fuse/pull/84
 blocked_by:
-claimed_at: 2026-09-01T07:19:09Z
+claimed_at: 2026-09-01T07:21:16Z
 reconciled: true
 ---
 
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-08-21-bash-egress-control-container-network-config-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-21-bash-egress-control-container-network-config-design.md) |
 | Plan | [2026-09-01-bash-egress-control-container-network-config-plan.md](https://github.com/ethanhinson/fuse/blob/feat/bash-egress-control-container-network-config/docs/superpowers/plans/2026-09-01-bash-egress-control-container-network-config-plan.md) |
+| Results | [2026-09-01-bash-egress-control-container-network-config-results.md](https://github.com/ethanhinson/fuse/blob/feat/bash-egress-control-container-network-config/docs/results/2026-09-01-bash-egress-control-container-network-config-results.md) |
+| PR | [#84](https://github.com/ethanhinson/fuse/pull/84) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md), [ADR-0051](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0051-network-none-reaches-its-proxy-by-mounted-socket-plus-supplied-forwarder.md), [ADR-0052](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0052-delegated-identity-on-bash-egress-is-forward-proxy-only.md), [ADR-0053](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0053-whole-file-config-discard-salvages-the-posture.md) |
 <!-- docket:artifacts:end -->
 
