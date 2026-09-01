@@ -12,12 +12,12 @@ related: [10, 78, 79]
 discovered_from: [79]
 adrs: []
 spec: docs/superpowers/specs/2026-09-01-tui-table-tabbed-ui-design.md
-plan:
+plan: docs/superpowers/plans/2026-09-01-tui-table-tabbed-ui-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/tui-table-tabbed-ui
-claimed_at: 2026-09-01T23:49:36Z
+claimed_at: 2026-09-01T23:52:11Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-09-01-tui-table-tabbed-ui-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-01-tui-table-tabbed-ui-design.md) |
+| Plan | [2026-09-01-tui-table-tabbed-ui-plan.md](https://github.com/ethanhinson/fuse/blob/feat/tui-table-tabbed-ui/docs/superpowers/plans/2026-09-01-tui-table-tabbed-ui-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
