@@ -158,6 +158,32 @@ func withEgress(e Egress) containerOption {
 	return func(h *containerHandler) { h.egress = e }
 }
 
+// withEgressDatapath supplies the two halves of the hole through the
+// `--network none` floor (change 0064, task 6): the source of the principal's
+// host-side proxy socket, and the host path of the statically linked forwarder
+// binary that is bind-mounted into the container to reach it.
+//
+// SECURITY-CRITICAL, and for a sharper reason than its neighbours. The floor is
+// a subtraction — the worst a lost withEgress does is leave the container with
+// the network it had before 0064. This is an ADDITION: it names a binary fuse
+// bind-mounts into the container and then EXECUTES as the command's parent
+// process, and a socket that is one principal's authenticated path off the box.
+// A caller who could supply either would be choosing what runs inside the
+// sandbox and whose policy it runs under. So, like withTrustedRoot and
+// withEgress, both values come from the COMPOSITION ROOT and are applied LAST in
+// the options chain (see NewService / WithEgressProxy), and neither this option
+// nor the interface it takes is exported.
+//
+// Both halves are required: with either missing the datapath is not emitted at
+// all and enforcement stays deny-all (see resolveForwarderBinary), which is the
+// fail-closed direction.
+func withEgressDatapath(src egressSocketSource, forwarderPath string) containerOption {
+	return func(h *containerHandler) {
+		h.egressSockets = src
+		h.egressForwarder = forwarderPath
+	}
+}
+
 // withTrustedRoot sets the host directory this handler bind-mounts.
 //
 // SECURITY-CRITICAL: the value comes from the COMPOSITION ROOT — the repo root
@@ -202,6 +228,14 @@ type containerHandler struct {
 	// pre-0064 argv. Never model-derived; see withEgress.
 	egress Egress
 
+	// egressSockets yields the per-principal host socket the container's
+	// forwarder relays to, and egressForwarder is the canonicalised host path of
+	// that forwarder binary. Both are resolved once at construction from the
+	// composition root; either being absent means NO datapath is emitted and
+	// EgressEnforce stays deny-all. Never model-derived; see withEgressDatapath.
+	egressSockets   egressSocketSource
+	egressForwarder string
+
 	// pullOnce guards the single-flight pre-pull, and pullErr records its
 	// outcome. A failed pull is retried on a later Acquire rather than cached as
 	// a permanent failure, so pullOnce is reset on failure (see prePull).
@@ -241,6 +275,12 @@ func newContainerHandler(cfg Config, opts ...containerOption) (*containerHandler
 	// than something re-derived per Exec from whatever the filesystem looks
 	// like by then.
 	h.root = resolveMountRoot(h.root)
+	// Same discipline for the forwarder binary, and for the same reason: the
+	// artifact fuse mounts and executes inside the container is proved to exist
+	// ONCE, here, rather than being re-stat'ed per Exec — or, worse, handed to
+	// the daemon unproven, which would have it invented as a root-owned
+	// directory. "" means no datapath; see resolveForwarderBinary.
+	h.egressForwarder = resolveForwarderBinary(h.egressForwarder)
 	// Applied only if no test injected its own execRunner (withExecRunner sets
 	// h.run directly), so the client-env lookup wiring never overrides an
 	// explicit test double.
@@ -309,11 +349,45 @@ func (h *containerHandler) Acquire(ctx context.Context, p loopauth.Principal, en
 	if err := h.prePull(ctx); err != nil {
 		return nil, fmt.Errorf("%s pull %s: %w", h.runtime, h.image, err)
 	}
+
+	// The datapath's one per-run value (change 0064, task 6): the HOST path of
+	// THIS principal's proxy socket.
+	//
+	// It is resolved HERE, at Acquire, and not in argv, because that is where the
+	// principal is — argv is built per Exec from a Runner whose principal was
+	// fixed at Acquire and is never reassigned, so a socket resolved here belongs
+	// to exactly one principal for the Runner's whole life. Proxy.Listen is
+	// idempotent per principal, so concurrent sandboxes for one principal share
+	// one socket and a pooled Runner re-checked-out for its own principal
+	// (pool.go's certifyPrincipal forbids any other) gets the same one back.
+	//
+	// A failure is an ACQUIRE failure, loudly. The alternative — degrading to the
+	// datapath-less deny-all — would turn "the proxy could not open a socket"
+	// into "every network call in this loop mysteriously fails", which is the
+	// same containment but an unreadable one.
+	socket := ""
+	if h.egressDatapathWired() {
+		var err error
+		socket, err = h.egressSockets.Listen(p, h.egress)
+		if err != nil {
+			return nil, fmt.Errorf("sandbox: open egress socket: %w", err)
+		}
+	}
+
 	return &containerRunner{
-		handler:   h,
-		principal: p,
-		env:       renderEnv(env),
+		handler:      h,
+		principal:    p,
+		env:          renderEnv(env),
+		egressSocket: socket,
 	}, nil
+}
+
+// egressDatapathWired reports whether BOTH halves of the hole are present under
+// an enforcing posture. All three conditions are required, and the conjunction is
+// the fail-closed statement: no mode, no source, or no forwarder binary means no
+// datapath is emitted and enforcement is deny-all.
+func (h *containerHandler) egressDatapathWired() bool {
+	return h.egress.Mode == EgressEnforce && h.egressSockets != nil && h.egressForwarder != ""
 }
 
 // containerRunner is one principal's container execution context.
@@ -323,6 +397,16 @@ type containerRunner struct {
 	// exactly one principal for its whole life, which is what lets the warm
 	// pool re-assert ownership on checkout (see acquiredFor).
 	principal loopauth.Principal
+
+	// egressSocket is the HOST path of this principal's proxy socket, resolved
+	// once at Acquire alongside principal and equally immutable. "" means no
+	// datapath was wired, in which case argv emits none of it.
+	//
+	// It is NOT released when this Runner is: the listener is per-PRINCIPAL and
+	// several sandboxes may share it, so tearing it down here would cut a live
+	// tunnel belonging to another Exec. Proxy.Release / Proxy.Close own that
+	// lifecycle, at the composition root that created the Proxy.
+	egressSocket string
 
 	// mu guards env. A pooled Runner is re-environed on checkout (ResetEnv)
 	// while a previous Exec may still be unwinding, so the environment is not
@@ -499,13 +583,34 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 	//     registry, and with --pull=never below, a floored pull would take the
 	//     whole substrate down on every cold image.
 	//
-	// TODO(#0064, task 6): the datapath through this floor is NOT built yet —
-	// the proxy socket mount, the in-container forwarder mount, and the injected
-	// HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY vars all land at this site, after
-	// the floor and before the --env pairs. Until then EgressEnforce is deny-ALL
-	// in practice, allowlist or not: the floor is on and there is no hole yet.
+	// The DATAPATH through the floor (change 0064, task 6) lands here, between
+	// the floor and the --env pairs: the two read-only mounts, then the injected
+	// proxy environment. See egress_forwarder.go for the shape and the rejected
+	// alternatives.
 	if r.handler.egress.Mode == EgressEnforce {
 		args = append(args, "--network", "none")
+
+		// Stripped whether or not a datapath follows. Under enforcement these
+		// eight variables are the TRUSTED SIDE's, and an operator's
+		// env_passthrough naming one of them must not be able to redirect egress
+		// (HTTP_PROXY) or exempt destinations from it (NO_PROXY). Doing it before
+		// the injection below means no duplicate key ever reaches the runtime, so
+		// which of docker/nerdctl/podman is in use cannot change the answer.
+		env = stripProxyEnv(env)
+
+		if r.egressSocket != "" {
+			// Read-only, both of them. The socket only needs connect(2), which a
+			// read-only mount permits for a socket inode; the forwarder only
+			// needs execute, and must not be replaceable by the very command it
+			// is about to parent.
+			args = append(args,
+				"-v", r.egressSocket+":"+containerEgressSocket+":ro",
+				"-v", r.handler.egressForwarder+":"+containerEgressForwarder+":ro",
+			)
+			for _, kv := range egressProxyEnv() {
+				args = append(args, "--env", kv)
+			}
+		}
 	}
 
 	for _, kv := range env {
@@ -537,7 +642,16 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 	// one-argv-builder-serves-all-three property.
 	args = append(args, "--pull=never")
 
-	args = append(args, r.handler.image, "/bin/sh", "-c", cmd)
+	args = append(args, r.handler.image)
+	if r.egressSocket != "" {
+		// The forwarder EXEC-WRAPS the shell rather than being backgrounded
+		// beside it, so the loopback listener is already bound when the command's
+		// first byte runs. cmd itself is untouched and still reaches
+		// `/bin/sh -c` as one argument. See egressForwarderCommand.
+		args = append(args, egressForwarderCommand(cmd)...)
+	} else {
+		args = append(args, "/bin/sh", "-c", cmd)
+	}
 	return args, nil
 }
 

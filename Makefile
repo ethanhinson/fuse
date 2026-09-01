@@ -1,4 +1,4 @@
-.PHONY: build install test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke
+.PHONY: build install egress-forwarder test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke
 
 # Version is stamped into the binary via -ldflags. It defaults to `git describe`
 # (tags + short SHA + dirty marker) and falls back to the source default when git
@@ -12,6 +12,38 @@ build:
 
 install:
 	go install -ldflags "$(LDFLAGS)" ./cmd/fuse
+
+# egress-forwarder builds the IN-CONTAINER half of egress control (change 0064):
+# the small relay fuse bind-mounts into a `--network none` sandbox so that
+# curl/git/pip can address the host-side proxy over loopback. See
+# cmd/fuse-egress-forward.
+#
+# Three properties of this target are load-bearing, not stylistic:
+#
+#   - GOOS=linux, always. The artifact runs inside the CONTAINER, not on the
+#     host, so it is cross-compiled even when `make build` is producing a darwin
+#     binary right beside it.
+#   - CGO_ENABLED=0, so the result is static: no libc, no dynamic loader, no
+#     dependency on anything in the operator's image. The image is not asked to
+#     cooperate (alpine:3.20 has no socat), which is the entire reason fuse
+#     ships this rather than shelling out to something.
+#   - One artifact per architecture, named by it. The right one is chosen by the
+#     architecture of the IMAGE the sandbox runs, which is a deployment fact —
+#     hence the separate target rather than a step inside `build`.
+#
+# Wire the result in at the composition root with sandbox.WithEgressProxy(proxy,
+# "<path>/fuse-egress-forward-linux-<arch>"). Without it, `egress.mode: enforce`
+# is still safe — it is deny-all, since the floor is on and no hole is opened.
+EGRESS_FORWARDER_ARCHS ?= amd64 arm64
+
+egress-forwarder:
+	@mkdir -p dist
+	@for arch in $(EGRESS_FORWARDER_ARCHS); do \
+	  echo "building dist/fuse-egress-forward-linux-$$arch"; \
+	  CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath \
+	    -ldflags "-s -w $(LDFLAGS)" \
+	    -o dist/fuse-egress-forward-linux-$$arch ./cmd/fuse-egress-forward || exit 1; \
+	done
 
 test: observability-validate
 	go test ./...
