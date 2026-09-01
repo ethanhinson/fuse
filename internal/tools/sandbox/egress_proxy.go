@@ -152,6 +152,15 @@ const (
 	// names no destination the allowlist can be consulted about, so there is
 	// nothing to authorize and it is refused.
 	RefusedNonConnect RefusalReason = "non_connect"
+	// RefusedUnreadableRequest means the bytes on the connection could not be
+	// read as an HTTP request at all — a client speaking a non-HTTP protocol, a
+	// truncated request, a header-timeout expiry. This is distinct from
+	// RefusedMalformedTarget, which fires only once a request WAS read and its
+	// CONNECT target specifically was unusable: RefusalReason is a closed enum
+	// consulted as a metric label, so conflating "never parsed as a request" with
+	// "parsed, but named a bad target" would make that label mean two different
+	// things.
+	RefusedUnreadableRequest RefusalReason = "unreadable_request"
 	// RefusedMalformedTarget means the CONNECT target was not a usable
 	// host:port — no port, a non-numeric port, a port outside 1..65535, or an
 	// empty host. A missing port is never defaulted: the port is exact and
@@ -823,7 +832,7 @@ func (pl *principalListener) handle(conn net.Conn) {
 		if !errors.Is(err, io.EOF) {
 			pl.refuse(conn, http.StatusBadRequest, RefusalInfo{
 				Principal: pl.principal,
-				Reason:    RefusedMalformedTarget,
+				Reason:    RefusedUnreadableRequest,
 			}, "malformed request\n")
 		}
 		return
@@ -892,12 +901,12 @@ func (pl *principalListener) handle(conn net.Conn) {
 	defer cancel()
 	upstream, err := pl.proxy.dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
-		pl.refuse(conn, http.StatusBadGateway, RefusalInfo{
+		pl.refuse(conn, http.StatusForbidden, RefusalInfo{
 			Principal: pl.principal,
 			Host:      host,
 			Port:      port,
 			Reason:    RefusedUpstreamUnreachable,
-		}, "upstream unavailable\n")
+		}, egressDenialBody)
 		return
 	}
 	if !pl.trackUpstream(upstream) {
@@ -1038,12 +1047,12 @@ func (pl *principalListener) forwardOnce(conn net.Conn, req *http.Request) bool 
 	defer cancel()
 	upstream, err := pl.proxy.dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
-		pl.refuse(conn, http.StatusBadGateway, RefusalInfo{
+		pl.refuse(conn, http.StatusForbidden, RefusalInfo{
 			Principal: pl.principal,
 			Host:      host,
 			Port:      port,
 			Reason:    RefusedUpstreamUnreachable,
-		}, "upstream unavailable\n")
+		}, egressDenialBody)
 		return false
 	}
 	if !pl.trackUpstream(upstream) {
@@ -1066,12 +1075,12 @@ func (pl *principalListener) forwardOnce(conn net.Conn, req *http.Request) bool 
 	}
 	resp, err := http.ReadResponse(bufio.NewReader(upstream), req)
 	if err != nil {
-		pl.refuse(conn, http.StatusBadGateway, RefusalInfo{
+		pl.refuse(conn, http.StatusForbidden, RefusalInfo{
 			Principal: pl.principal,
 			Host:      host,
 			Port:      port,
 			Reason:    RefusedUpstreamUnreachable,
-		}, "upstream unavailable\n")
+		}, egressDenialBody)
 		return false
 	}
 	defer func() { _ = resp.Body.Close() }()

@@ -734,8 +734,10 @@ func TestLoadConfigEgressEnforceParsesAllowList(t *testing.T) {
 
 	cfg, warns := LoadConfig(root)
 
-	if len(warns) != 0 {
-		t.Fatalf("warnings = %v, want none for a well-formed block", warns)
+	// The api.internal entry declares a credential:, which is honoured but
+	// warns — see WarnCredentialPlaintextOnly.
+	if len(warns) != 1 || !hasWarning(warns, WarnCredentialPlaintextOnly) {
+		t.Fatalf("warnings = %v, want exactly one %q warning", warns, WarnCredentialPlaintextOnly)
 	}
 	if cfg.Egress.Mode != EgressEnforce {
 		t.Fatalf("Egress.Mode = %v, want EgressEnforce", cfg.Egress.Mode)
@@ -757,6 +759,49 @@ func TestLoadConfigEgressEnforceParsesAllowList(t *testing.T) {
 	// IP values rather than spellings.
 	if got := cfg.Egress.Allow[3]; got.CIDR == nil || got.CIDR.String() != "192.0.2.7/32" || got.Host != "" {
 		t.Errorf("Allow[3] = %+v, want the bare IP as 192.0.2.7/32", got)
+	}
+}
+
+// A credential: entry is honoured, not rejected, but the loader warns that it
+// is reachable only over plaintext http — the constraint an operator reading
+// only the config schema has no other way to learn (finding: credential-only
+// documented on an unexported proxy comment).
+func TestLoadConfigCredentialEntryWarnsPlaintextOnly(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, egressBody("enforce",
+		"    - host: api.internal\n      port: 8443\n      credential: internal-api\n",
+	))
+
+	cfg, warns := LoadConfig(root)
+
+	if !hasWarning(warns, WarnCredentialPlaintextOnly) {
+		t.Fatalf("warnings = %v, want a %q warning", warns, WarnCredentialPlaintextOnly)
+	}
+	// The entry is still honoured — this is a warning, not a rejection.
+	if len(cfg.Egress.Allow) != 1 || cfg.Egress.Allow[0].Credential != "internal-api" {
+		t.Fatalf("Egress.Allow = %+v, want the credentialed entry honoured", cfg.Egress.Allow)
+	}
+	for _, w := range warns {
+		if w.Reason == WarnCredentialPlaintextOnly {
+			if !strings.Contains(w.Detail, "internal-api") || !strings.Contains(w.Detail, "api.internal") {
+				t.Errorf("warning detail %q does not name the entry", w.Detail)
+			}
+		}
+	}
+}
+
+// A declared entry with no credential: must never warn — the reason exists to
+// flag the real constraint, not to fire on every allowlist entry.
+func TestLoadConfigNoCredentialEntryDoesNotWarn(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, egressBody("enforce",
+		"    - host: pkg.example.com\n      port: 443\n",
+	))
+
+	_, warns := LoadConfig(root)
+
+	if hasWarning(warns, WarnCredentialPlaintextOnly) {
+		t.Fatalf("warnings = %v, want no %q warning without a credential: entry", warns, WarnCredentialPlaintextOnly)
 	}
 }
 

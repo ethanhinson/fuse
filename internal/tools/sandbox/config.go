@@ -271,6 +271,11 @@ type AllowEntry struct {
 	// `https://` one — that would need TLS interception, which is not built.
 	// A CONNECT to a credentialed destination is refused explicitly
 	// (RefusedCredentialTunnel), never silently downgraded or dropped.
+	//
+	// The loader WARNS (WarnCredentialPlaintextOnly) rather than rejects when it
+	// sees this field set — the entry is still honoured — because the operator
+	// naming this constraint should learn it at load time, not discover it the
+	// first time a CONNECT to the destination is refused.
 	Credential string
 }
 
@@ -368,6 +373,14 @@ const (
 	// allowlist is discarded, never partially honoured — a partly-honoured
 	// allowlist is the fail-open shape this reason exists to prevent.
 	WarnBadEgress WarnReason = "bad_egress"
+	// WarnCredentialPlaintextOnly means an egress.allow entry declared a
+	// credential: audience. The entry is honoured — this is a WARN, not a
+	// rejection — but a credentialed destination is reachable only over
+	// PLAINTEXT http through the forward-proxy path, because injecting the
+	// delegated Authorization header requires terminating the request. A
+	// CONNECT (https) to the same destination is refused explicitly
+	// (RefusedCredentialTunnel), never TLS-intercepted. See AllowEntry.Credential.
+	WarnCredentialPlaintextOnly WarnReason = "credential_plaintext_only"
 )
 
 // Warning is a LOUD but non-fatal diagnostic from a config load.
@@ -854,6 +867,17 @@ func (raw rawEgress) resolve(path string, out *Egress, warns []Warning) []Warnin
 				Path:   path,
 				Detail: fmt.Sprintf("egress.allow[%d]: %s", i, detail),
 				Effect: effect,
+			})
+		}
+		if entry.Credential != "" {
+			// The entry is honoured, not discarded: this is a WARN naming a real
+			// constraint, not a rejection. See WarnCredentialPlaintextOnly and
+			// AllowEntry.Credential.
+			warns = append(warns, Warning{
+				Reason: WarnCredentialPlaintextOnly,
+				Path:   path,
+				Detail: fmt.Sprintf("egress.allow[%d]: %q port %d declares credential: %q", i, *rawEntry.Host, entry.Port, entry.Credential),
+				Effect: "the credential is usable only over plaintext http through the forward-proxy path; a CONNECT (https) to this destination is refused (RefusedCredentialTunnel), never TLS-intercepted",
 			})
 		}
 		allow = append(allow, entry)

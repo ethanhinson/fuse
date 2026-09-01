@@ -15,8 +15,14 @@ func loadEgress(t *testing.T, entries ...string) Egress {
 	root := t.TempDir()
 	writeConfigFile(t, root, egressBody("enforce", entries...))
 	cfg, warns := LoadConfig(root)
-	if len(warns) != 0 {
-		t.Fatalf("warnings = %v, want none for %v", warns, entries)
+	for _, w := range warns {
+		// WarnCredentialPlaintextOnly is EXPECTED whenever a fixture declares a
+		// credential: entry — it warns while still honouring the entry, so it is
+		// not a fixture-loading failure. Every other warning still fails the
+		// fixture: this helper's whole point is that the entries load cleanly.
+		if w.Reason != WarnCredentialPlaintextOnly {
+			t.Fatalf("warnings = %v, want none (other than %q) for %v", warns, WarnCredentialPlaintextOnly, entries)
+		}
 	}
 	if cfg.Egress.Mode != EgressEnforce {
 		t.Fatalf("Egress.Mode = %v, want EgressEnforce", cfg.Egress.Mode)

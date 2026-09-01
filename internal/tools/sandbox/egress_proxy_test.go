@@ -417,6 +417,58 @@ func TestProxyRefusesUndeclaredDestination(t *testing.T) {
 	}
 }
 
+// A declared-but-unreachable destination must not tell the client anything
+// an undeclared one does not: both get the same 403 and the same generic
+// denial body. The distinction between "policy denied it" and "it was
+// declared but could not be dialled" is for the OPERATOR only, through
+// RefusalInfo.Reason — a different client-visible status or body would be an
+// allowlist-membership oracle for the model's command.
+func TestProxyRefusesUnreachableUpstreamLikeAnyOtherDenial(t *testing.T) {
+	rec := &recordingHooks{}
+	p := newTestProxy(t, WithProxyHooks(rec.hooks()))
+	// Port 1 is declared but nothing is listening there: the dial fails.
+	sock, err := p.Listen(principal("acme", "alice"), allowHostPort(t, "127.0.0.1:1"))
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	_, _, undeclaredResp := connectVia(t, sock, "evil.example.net:443")
+	undeclaredBody, err := io.ReadAll(undeclaredResp.Body)
+	if err != nil {
+		t.Fatalf("read undeclared body: %v", err)
+	}
+	_ = undeclaredResp.Body.Close()
+
+	_, _, unreachableResp := connectVia(t, sock, "127.0.0.1:1")
+	unreachableBody, err := io.ReadAll(unreachableResp.Body)
+	if err != nil {
+		t.Fatalf("read unreachable body: %v", err)
+	}
+	_ = unreachableResp.Body.Close()
+
+	if unreachableResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("unreachable status = %d, want %d (same as an undeclared denial)", unreachableResp.StatusCode, http.StatusForbidden)
+	}
+	if unreachableResp.StatusCode != undeclaredResp.StatusCode {
+		t.Errorf("unreachable status %d != undeclared status %d", unreachableResp.StatusCode, undeclaredResp.StatusCode)
+	}
+	if string(unreachableBody) != string(undeclaredBody) {
+		t.Errorf("unreachable body %q != undeclared body %q", unreachableBody, undeclaredBody)
+	}
+
+	// The operator, by contrast, still sees the distinction.
+	refusals := rec.snapshot()
+	if len(refusals) != 2 {
+		t.Fatalf("refusals = %+v, want exactly 2", refusals)
+	}
+	if refusals[0].Reason != RefusedNotDeclared {
+		t.Errorf("refusals[0].Reason = %q, want %q", refusals[0].Reason, RefusedNotDeclared)
+	}
+	if refusals[1].Reason != RefusedUpstreamUnreachable {
+		t.Errorf("refusals[1].Reason = %q, want %q", refusals[1].Reason, RefusedUpstreamUnreachable)
+	}
+}
+
 // The deny-all state. A listener with nothing declared refuses everything,
 // including a destination that is trivially reachable from the host.
 func TestProxyEmptyAllowlistRefusesEverything(t *testing.T) {
@@ -911,7 +963,10 @@ func TestProxyRefusesMalformedTarget(t *testing.T) {
 		_ = resp.Body.Close()
 	}
 	for _, info := range rec.snapshot() {
-		if info.Reason != RefusedMalformedTarget && info.Reason != RefusedNotDeclared {
+		// ":443" (empty host) fails http.ReadRequest itself before a target is
+		// ever split out, so it reports RefusedUnreadableRequest rather than
+		// RefusedMalformedTarget — see the finding this constant was split for.
+		if info.Reason != RefusedMalformedTarget && info.Reason != RefusedNotDeclared && info.Reason != RefusedUnreadableRequest {
 			t.Errorf("refusal %+v: unexpected reason", info)
 		}
 	}

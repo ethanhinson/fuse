@@ -726,8 +726,8 @@ func TestProxyNonHTTPBytesOnForwardPathReachNoUpstream(t *testing.T) {
 		t.Errorf("credential source was consulted %d times for unparseable bytes: %+v", len(calls), calls)
 	}
 	refusals := rec.snapshot()
-	if len(refusals) != 1 || refusals[0].Reason != RefusedMalformedTarget {
-		t.Fatalf("refusals = %+v, want one %q", refusals, RefusedMalformedTarget)
+	if len(refusals) != 1 || refusals[0].Reason != RefusedUnreadableRequest {
+		t.Fatalf("refusals = %+v, want one %q", refusals, RefusedUnreadableRequest)
 	}
 	// A refusal names no destination, because the request never produced one.
 	if refusals[0].Host != "" || refusals[0].Port != 0 {
