@@ -15,8 +15,15 @@ seam (`internal/tools/sandbox/sandbox.go`), a container handler
 (`internal/tools/sandbox/container.go`), env-scrub, and the fail-safe file-only
 off-switch. But it left egress **wide open**: the container argv builder emits no
 `--network` flag, so a sandboxed `bash` container gets default (bridged) networking
-and can reach anything the host can. There is a reserved insertion point —
-`TODO(#0064)` at `container.go:414` — waiting for exactly this change.
+and can reach anything the host can. There is a reserved insertion point — the
+`TODO(#0064)` marker in `containerRunner.argv` — waiting for exactly this change.
+
+> **Reconciled 2026-09-01.** Change #0077 (resource limits) has landed since this
+> spec was authored and moved that marker: it now sits immediately AFTER
+> `r.handler.limits.argv()` and before the `--env` pairs, and #0077's own comment
+> names the placement as deliberate so egress lands beside it. Do not trust the
+> pre-#0077 line numbers this spec originally carried — locate the marker by its
+> `TODO(#0064)` text.
 
 ADR-0044 decided the framing: for `bash`, **egress is the container's network
 configuration**, not an in-process dialer allowlist, because a container holds a
@@ -87,7 +94,17 @@ the target; the sidecar is the escape hatch.
 ### Config schema
 
 Extends `sandbox.Config` (`internal/tools/sandbox/config.go`), read fail-safe from
-the trusted-local `.fuse/sandbox.local.yml`:
+the trusted-local `.fuse/sandbox.local.yml`.
+
+> **Reconciled 2026-09-01 — the neighbouring posture split.** #0077 added
+> `Config.Limits`, `Config.Concurrency`, and `(*Config).resolveDefaults(hosted bool)`,
+> which fills unset fields with **posture-dependent** defaults (caps default ON when
+> hosted, OFF locally). `egress.mode` must NOT join that split: this spec's scope
+> decision is that posture is selected by the **explicit knob**, never derived from
+> hosted detection, and the two sit close enough in the same function that a builder
+> could conflate them. If `egress` gains any `resolveDefaults` participation at all,
+> it is posture-INDEPENDENT (`allow-all` in both postures until the operator says
+> otherwise).
 
 ```yaml
 egress:
@@ -159,8 +176,46 @@ the operator's explicit "I trust this machine" opt-out. Summary:
 3. **Warm-pool interaction.** #63's pool reuses warm Runners across calls for one
    principal; confirm the proxy lifecycle and principal-scoping compose with the
    pool's per-principal ownership without leaking policy across pooled reuse.
+   *(Reconciled: `pool.go` already carries `certifyPrincipal` and a
+   `principalScoped` interface as the existing per-principal reuse guard — the
+   proxy's scoping composes with that guard rather than inventing a second one.)*
 4. **CIDR matching + port semantics** in the allowlist matcher (exact host vs CIDR,
    single port vs range) — a small deterministic matcher, specced at plan time.
+
+### Reconciled 2026-09-01 — two ADRs that now bind the matcher
+
+Both post-date this spec and constrain question 4 directly; neither changes the
+design, and both are binding on the build:
+
+- **ADR-0049 (allowlist-admission-on-deterministic-allow-paths).** On a no-human
+  deterministic-allow path, the admission set is an **allowlist established inert**,
+  never a denylist of known-bad. The egress allowlist is already this shape
+  (everything undeclared is denied), so ADR-0049 is a *confirmation* — but it also
+  forbids the tempting build-time shortcut of a "block these obviously-bad
+  destinations" list layered on top of an otherwise-permissive path. Deny is the
+  floor; the allowlist only subtracts from it.
+- **ADR-0048 (web-fetch-host-floor-as-authorization-boundary), rule 3.** The host
+  must be **canonicalized ONCE, before every layer** — lowercase, trailing-dot
+  strip, via the shared `reputation.CanonicalHost`. That ADR records a live bug of
+  exactly this class: a trailing-dot host defeated a configured deny while still
+  matching an allow set, converting a deny into an auto-approve with one character.
+  The egress matcher is the same shape (a host string compared against a declared
+  set to authorize a connection), so it MUST canonicalize once at the proxy's
+  entry, before matching, and the regression suite must cover the trailing-dot and
+  case-mutation forms.
+
+### Reconciled 2026-09-01 — argv neighbours the build must not disturb
+
+`containerRunner.argv` is the handler's stated security boundary and has gained two
+neighbours since this spec: `r.handler.limits.argv()` (#0077 cgroup caps,
+immediately before the insertion point) and a trailing `--pull=never` paired with an
+explicit, separately-timed `prePull`. Adding `--network none` must preserve both —
+in particular `--network none` must not be emitted in a position that would
+interfere with the pre-pull, since a pull under `--network none` cannot succeed and
+the image acquisition deliberately happens outside the command's own deadline.
+There is also now an admission gate (`admission.go`, #0077 concurrency ceiling)
+between the caller and the runner; the proxy lifecycle sits below it and must not
+introduce a second unbounded queue.
 
 ## Acceptance
 

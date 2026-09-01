@@ -19,8 +19,8 @@ auto_groomable:
 branch: feat/bash-egress-control-container-network-config
 pr:
 blocked_by:
-claimed_at: 2026-09-01T04:01:49Z
-reconciled: false
+claimed_at: 2026-09-01T04:03:53Z
+reconciled: true
 ---
 
 ## Artifacts
@@ -65,3 +65,43 @@ Container handler only — the microVM boundary is recorded as a contract a futu
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-09-01 — reconciled at claim; scope unchanged, three constraints folded in
+
+Re-read against `origin/main` (`7753451`), the linked spec, ADR-0044, and changes
+63/65/75/77. **The design holds** — no scope was dropped or added, and both escape
+hatches (obsolete, fundamentally invalidated) were considered and declined.
+
+What changed since the spec was authored (2026-08-21), all folded into the spec:
+
+- **#0077 landed** (resource limits + admission gate, merged as `fa13ee0`). It moved
+  the reserved `TODO(#0064)` insertion point — the spec's `container.go:414` is
+  stale; the marker now sits directly after `r.handler.limits.argv()`. #0077's own
+  comment names that placement as deliberate so egress lands beside it, so this is a
+  friendly move, not a collision. `argv` also gained a trailing `--pull=never` backed
+  by a separately-timed `prePull`, which the `--network none` floor must not break.
+- **`Config` gained a posture split** — `resolveDefaults(hosted bool)` now defaults
+  caps ON when hosted and OFF locally. `egress.mode` deliberately does NOT join that
+  split (the spec's scope decision is an explicit knob, never hosted-derived); the
+  spec now says so at the point of confusion, because the two would otherwise sit in
+  the same function.
+- **Two new ADRs bind the allowlist matcher.** ADR-0049 confirms the allowlist (not
+  denylist) shape on a no-human deterministic-allow path. ADR-0048 rule 3 is the
+  sharper one: canonicalize the host ONCE before every layer, with a recorded live
+  bug where a trailing dot converted a configured deny into an auto-approve. The
+  egress matcher is the same shape and must carry the same canonicalization plus
+  regression coverage.
+
+Dependencies re-verified: **#63 is `done`** (archived 2026-08-21) and its seam is on
+`main` as specced. **#52's identity seam is real and unchanged** —
+`toolidentity.CredentialSource.CredentialFor(ctx, Principal, Target)`, with `Target`
+already carrying the audience binding the per-entry `credential:` opt-in needs.
+`pool.go`'s existing `certifyPrincipal` / `principalScoped` guard is the per-principal
+reuse mechanism the proxy's scoping invariant composes with. Out-of-scope boundaries
+are unmoved: **#65** (per-tenant FS isolation) and **#75** (PaaS substrate) are both
+still `proposed`/needs-brainstorm, so nothing this change defers to them has been
+built elsewhere.
+
+Auto-capture is disabled in this repo (`auto_capture.enabled: false`), so adjacent
+work is reported in prose rather than minted: none surfaced beyond the already-tracked
+#65/#75 deferrals.
