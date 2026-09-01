@@ -18,6 +18,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/loopauth"
 	"github.com/ethanhinson/fuse/internal/permissions/reputation"
+	"github.com/ethanhinson/fuse/internal/toolidentity"
 )
 
 // ErrProxyClosed is returned by Listen after Close. A closed Proxy never opens
@@ -60,6 +61,17 @@ var ErrProxyClosed = errors.New("sandbox: egress proxy is closed")
 //
 // Raw TCP (psql and friends) is a named follow-on, not built here.
 //
+// # Delegated identity (#52)
+//
+// An allowlist entry may name a credential audience, which means the operator
+// declared that destination reachable ONLY under the loop initiator's delegated
+// identity. Such a tunnel is not opaque: the proxy reads the client's HTTP
+// requests out of it and sets the Authorization header itself, so the upstream
+// sees a credential fuse minted for the LISTENER's principal rather than
+// anything the model's command chose. Every way that resolution can fail — no
+// source wired, an exchange error, an empty token — refuses the connection.
+// See delegatedHeader and spliceWithIdentity.
+//
 // # Failure direction
 //
 // Every unrecognized shape denies. An unreadable request, a malformed target,
@@ -75,6 +87,11 @@ type Proxy struct {
 
 	hooks  ProxyHooks
 	dialer *net.Dialer
+
+	// credentials is the OPTIONAL #52 seam. Nil is a valid, fail-closed state:
+	// a matched entry declaring an audience is refused rather than served
+	// without one.
+	credentials toolidentity.CredentialSource
 
 	mu        sync.Mutex
 	closed    bool
@@ -163,6 +180,18 @@ func withProxyHooks(h ProxyHooks) proxyOption {
 	return func(p *Proxy) { p.hooks = h }
 }
 
+// withCredentialSource wires the #52 identity-propagation seam
+// (internal/toolidentity), which turns the LISTENER's principal plus an entry's
+// declared audience into a short-lived delegated credential.
+//
+// It is OPTIONAL, and its absence is not permissive: a deployment that declares
+// no `credential:` entry needs no source, while a `credential:` entry with no
+// source wired is REFUSED. There is no configuration in which a declared
+// identity degrades to an unauthenticated allow-through.
+func withCredentialSource(src toolidentity.CredentialSource) proxyOption {
+	return func(p *Proxy) { p.credentials = src }
+}
+
 const (
 	// proxyDialTimeout bounds the upstream dial for a DECLARED destination, so
 	// a black-holed host cannot pin a connection goroutine forever.
@@ -179,6 +208,12 @@ const (
 	// "invalid argument" that names nothing; checking here produces an error
 	// that says what actually went wrong.
 	maxSocketPathLen = 103
+
+	// proxyCredentialTimeout bounds one #52 resolution. It is separate from the
+	// dial timeout because it precedes the dial: a hung token exchange must end
+	// as a refusal, not as a connection goroutine parked forever before the
+	// upstream is even contacted.
+	proxyCredentialTimeout = 10 * time.Second
 
 	// proxySocketName is the socket's leaf name. The unguessable component is
 	// the DIRECTORY above it, so the leaf can stay short and predictable.
@@ -531,23 +566,27 @@ func (pl *principalListener) handle(conn net.Conn) {
 		return
 	}
 
-	// TODO(#0064 task 5): resolve entry.Credential through the #52
-	// CredentialSource seam using pl.principal — the LISTENER's principal — and
-	// bind it on the upstream connection.
+	// THE DELEGATED IDENTITY (#52). An entry that names an audience is reached
+	// UNDER THAT IDENTITY or not at all. Resolution happens BEFORE the upstream
+	// is dialled, so a credential that cannot be supplied never becomes a
+	// connection that exists for a moment without one.
 	//
-	// Until that source is wired, an entry that declares a credential audience
-	// is REFUSED. It is not downgraded to a plain allow-through: the operator
-	// asked for that destination to be reached under a delegated identity, and
-	// reaching it without one is the fail-open shape this change exists to
-	// prevent.
+	// The principal handed to the seam is pl.principal — the LISTENER's, fixed
+	// when the socket was created. Nothing the client sent is consulted, here or
+	// anywhere else.
+	var credential string
 	if entry.Credential != "" {
-		pl.refuse(conn, http.StatusForbidden, RefusalInfo{
-			Principal: pl.principal,
-			Host:      host,
-			Port:      port,
-			Reason:    RefusedCredentialUnavailable,
-		}, egressDenialBody)
-		return
+		var ok bool
+		credential, ok = pl.delegatedHeader(entry.Credential)
+		if !ok {
+			pl.refuse(conn, http.StatusForbidden, RefusalInfo{
+				Principal: pl.principal,
+				Host:      host,
+				Port:      port,
+				Reason:    RefusedCredentialUnavailable,
+			}, egressDenialBody)
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), pl.proxy.dialer.Timeout)
@@ -579,7 +618,111 @@ func (pl *principalListener) handle(conn net.Conn) {
 	// br, not conn, is the client-side reader: a client that pipelined bytes
 	// after its CONNECT already has them sitting in the buffer, and reading
 	// from the raw connection would silently drop them.
+	// credential is non-empty EXACTLY when the entry declared an audience and it
+	// resolved: delegatedHeader rejects an empty header, and a plain entry never
+	// calls it. So this is the identity-carrying tunnel and the branch below is
+	// the plain one — a declared-identity entry can never reach the plain path.
+	if credential != "" {
+		spliceWithIdentity(conn, br, upstream, credential)
+		return
+	}
 	splice(conn, br, upstream)
+}
+
+// delegatedHeader resolves audience through the #52 seam for THIS LISTENER's
+// principal and returns the Authorization header value to present upstream.
+//
+// It reports false — refuse — in every case that is not an unambiguous success:
+//
+//   - no source wired. The operator declared an identity for this destination
+//     and the deployment cannot mint one. Serving the connection anyway would
+//     silently strip the identity requirement out of the config, which is
+//     precisely the fail-open shape this seam exists to close.
+//   - the seam returned an error. There is no unauthenticated retry.
+//   - the seam succeeded but produced an empty header (an empty token). That is
+//     a failure wearing a success's clothes: the upstream would be reached with
+//     no identity at all.
+//
+// The resolved Credential and any error are deliberately NOT returned, logged,
+// wrapped, or formatted. The token is reachable only through Header(), and the
+// only value that leaves this function is that header string, which goes
+// straight onto the upstream request and nowhere else (the D6 constraint).
+func (pl *principalListener) delegatedHeader(audience string) (string, bool) {
+	source := pl.proxy.credentials
+	if source == nil {
+		return "", false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), proxyCredentialTimeout)
+	defer cancel()
+
+	// Name and Audience are both the declared audience: the entry is written by
+	// the OPERATOR in the egress config, never by the model, and it is the RFC
+	// 8707 resource identifier the minted token is bound to. TierOAuth is
+	// explicit rather than left to the zero value, so a future reordering of the
+	// enum cannot quietly demote this to the identity-free static tier.
+	credential, err := source.CredentialFor(ctx, pl.principal, toolidentity.Target{
+		Name:     audience,
+		Audience: audience,
+		Tier:     toolidentity.TierOAuth,
+	})
+	if err != nil {
+		return "", false
+	}
+	header := credential.Header()
+	if header == "" {
+		return "", false
+	}
+	return header, true
+}
+
+// spliceWithIdentity is the tunnel for a destination declared WITH an identity.
+//
+// A CONNECT tunnel carries opaque bytes, so the only way an upstream can see a
+// delegated credential is for the proxy to read the client's requests and put
+// it there. Requests are parsed off the client side, the Authorization header is
+// SET (replacing whatever the client sent — the client is the model's command,
+// and an identity it chose is not an identity fuse delegated), and the rewritten
+// request is written to the upstream. The response direction is copied
+// verbatim: nothing in it is fuse's to rewrite.
+//
+// The failure direction is closed. A client whose bytes do not parse as an HTTP
+// request — a TLS ClientHello, most importantly — is not forwarded: the loop
+// ends, both halves close, and NOTHING reaches the upstream. Forwarding those
+// bytes raw is the one thing that must not happen, because it would reach a
+// destination the operator declared under a delegated identity without one.
+// That makes `credential:` entries plaintext-HTTP-only for now, which is a real
+// limitation and is stated here rather than discovered later; TLS delegation
+// needs a decision about interception this change does not make.
+func spliceWithIdentity(client net.Conn, clientReader *bufio.Reader, upstream net.Conn, credential string) {
+	done := make(chan struct{}, 2)
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for {
+			req, err := http.ReadRequest(clientReader)
+			if err != nil {
+				return
+			}
+			req.Header.Set("Authorization", credential)
+			// Write, not WriteProxy: the upstream is the ORIGIN server on the
+			// far side of an established tunnel, so it expects origin-form
+			// request targets, not absolute URIs.
+			writeErr := req.Write(upstream)
+			_ = req.Body.Close()
+			if writeErr != nil {
+				return
+			}
+		}
+	}()
+	go func() {
+		_, _ = io.Copy(client, upstream)
+		done <- struct{}{}
+	}()
+
+	<-done
+	_ = client.Close()
+	_ = upstream.Close()
+	<-done
 }
 
 // egressDenialBody is what a REFUSED client is told: that policy denied it, and

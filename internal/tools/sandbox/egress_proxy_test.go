@@ -116,10 +116,17 @@ func connectVia(t *testing.T, sock, target string, extraHeaders ...string) (net.
 }
 
 // getThroughTunnel performs one plain HTTP GET over an established tunnel and
-// returns the body.
-func getThroughTunnel(t *testing.T, conn net.Conn, br *bufio.Reader, hostport string) string {
+// returns the body. Any extra headers are sent verbatim INSIDE the tunnel —
+// tests use them to prove that a header the client sets cannot survive to the
+// upstream when the proxy is supplying a delegated identity.
+func getThroughTunnel(t *testing.T, conn net.Conn, br *bufio.Reader, hostport string, extraHeaders ...string) string {
 	t.Helper()
-	if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", hostport); err != nil {
+	req := fmt.Sprintf("GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n", hostport)
+	for _, h := range extraHeaders {
+		req += h + "\r\n"
+	}
+	req += "\r\n"
+	if _, err := io.WriteString(conn, req); err != nil {
 		t.Fatalf("write GET: %v", err)
 	}
 	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodGet})
@@ -274,10 +281,12 @@ func TestProxyDeclaredDestinationReachesUpstream(t *testing.T) {
 	}
 }
 
-// An entry that declares a #52 credential audience is REFUSED while no
-// credential source is wired (task 5 supplies one). A declared-identity entry
-// that quietly downgrades to an unauthenticated allow-through is the fail-open
-// shape this change exists to prevent.
+// An entry that declares a #52 credential audience is REFUSED when NO
+// credential source is wired. The source is optional, but its absence is never
+// permissive: a declared-identity entry that quietly downgrades to an
+// unauthenticated allow-through is the fail-open shape this change exists to
+// prevent, and a deployment that forgot to wire the seam must find out by
+// losing the destination, not by silently losing the identity.
 func TestProxyRefusesCredentialEntryWithoutSource(t *testing.T) {
 	addr := upstream(t, "unreachable without identity")
 	host, portStr, err := net.SplitHostPort(addr)
