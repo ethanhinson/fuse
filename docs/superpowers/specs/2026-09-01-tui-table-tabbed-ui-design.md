@@ -10,11 +10,20 @@
 `/models` listing (change 0078) and the models editor (change 0079) each measure
 column widths and pad cells independently; the slash-command completer (0078's
 alignment pass) does the same a third way. The result is inconsistent and
-fragile: the `/models` listing goes ragged the moment a persona is blank (its
-persona column is positional, so a missing value shifts nothing into the gap and
-the eye reads misalignment), and every new menu re-implements the same
-`lipgloss.Width` + `padCells` dance. There are ~34 ad-hoc column-render call
-sites across the TUI.
+fragile: every new menu re-implements the same `lipgloss.Width` + `padCells`
+dance. Reconcile (2026-09-01) counted **33 non-test call sites** —
+`internal/tui/agents_model.go` 15, `models_command.go` 10,
+`slash_completer.go` 6, `models_editor.go` 2.
+
+**Reconcile correction:** this spec originally claimed the `/models` listing
+"goes ragged the moment a persona is blank." That is no longer true.
+`renderModelsListing` (`internal/tui/models_command.go:32-88`) pads the persona
+column through `padCells` and trims the tail only when no trailing tag follows,
+so tag offsets hold across blank personas; `personaCell` (`:148-158`) also
+substitutes a dash. Changes 0078/0079 closed it. **The problem this change
+solves is duplication and the absence of a grouped-settings surface — not an
+open alignment defect.** Blank-cell handling remains a requirement of the
+primitive (so the behavior cannot regress), but it is no longer the motivation.
 
 There is also no structured way to present *grouped* settings. The models
 surface is split across two entry points (`/models` list, `/models edit` modal),
@@ -65,7 +74,8 @@ into one place. It must support:
 - a trailing tag column (e.g. `(default, active)`),
 - width clamping to the viewport (the completer already does this; the primitive
   inherits it),
-- blank cells that hold their column (fixing the ragged persona case).
+- blank cells that hold their column (preserving today's behavior, not fixing a
+  live defect — see the reconcile correction above).
 
 ### Tabbed primitive
 
@@ -99,13 +109,28 @@ consistent look, and a deprecation path for the hand-rolled renderers.
 ## Open questions
 
 - Tab-switch key bindings vs. the existing completer/overlay key precedence —
-  settle against `handleKey`'s guard order at build time.
-- `lipgloss/table` (static) vs. `bubbles/table` (interactive) per surface: the
-  listing and slash menu are likely static; the `/config` Models tab and editor
-  want selection/scroll. The build may use both; the primitive should present one
-  fuse-facing API over whichever backs a given surface.
-- Whether the Permissions and MCP tabs are read-only in 0080 or gain edit
-  actions here vs. a follow-up.
+  settle against the key-routing guard order in
+  `internal/tui/shell_model.go` at build time. **Still open.**
+
+### Settled at reconcile (2026-09-01)
+
+- **`lipgloss/table` vs `bubbles/table`.** `lipgloss/table` backs the static
+  surfaces (the `/models` listing, the slash-completer menu, the `/models edit`
+  list view); `bubbles/table` backs the `/config` Models tab, which wants
+  selection and scroll. One fuse-facing API over both. Both packages are present
+  in the module cache at the pinned versions (`lipgloss
+  v1.1.1-0.20250404203927-76690c660834`, `bubbles v1.0.0`) — **no `go.mod`
+  change is required**.
+- **Permissions and MCP tab depth — read-only in 0080.** `/mode` exists as the
+  permissions surface to mirror, but `shell_model.go`'s `handleSlash` switch
+  registers no `/mcp` builtin at all (`/agents`, `/blackboard`, `/approvals`,
+  `/queue`, `/queuedemo`, `/questions`, `/verbose`, `/models`, `/model`,
+  `/mode`, `/exit`). The MCP tab therefore renders configured servers read-only;
+  edit actions are a follow-up.
+- **No prior art.** No table or tabs primitive exists in `internal/tui`, and no
+  `/config` builtin exists. Both primitives and the command are greenfield.
+- **Adoption boundary.** `agents_model.go`'s 15 sites stay out of scope; this
+  change consolidates 18 of the 33 sites, across the three named surfaces.
 
 ## Testing
 
