@@ -149,7 +149,8 @@ func (cfg *Config) resolveDefaults(hosted bool) {
 // consistent and always safe to act on directly: there is no "unset" state and
 // no error state a caller must remember to check before using it. Every path
 // that could not produce a trustworthy answer produces the contained default
-// instead.
+// instead — plus, for egress alone, the salvaged posture, because there the
+// contained default is not the restrictive answer.
 type Config struct {
 	// Contained reports whether the command must run isolated from this host.
 	// It is the boolean shadow of Handler and is maintained in lockstep with
@@ -203,7 +204,8 @@ type Config struct {
 // its ZERO VALUE is deliberately the permissive one: an unconfigured Config must
 // keep default container networking so local development is unchanged. Every
 // path that *fails* rather than being unconfigured resolves to EgressEnforce
-// with an empty allowlist instead — see resolve.
+// with an empty allowlist instead — see rawEgress.resolve for a parseable file
+// and salvageEgressPosture for one discarded wholesale.
 type EgressMode int
 
 const (
@@ -481,6 +483,12 @@ type rawConcurrency struct {
 // is contained. The ONLY way to reach the host substrate is a readable,
 // well-formed file that explicitly says so.
 //
+// The one dimension for which DefaultConfig() is not the safe answer is EGRESS,
+// whose default is the permissive posture. A file discarded wholesale therefore
+// resolves to DefaultConfig() carrying the salvaged egress POSTURE — never a
+// salvaged allowlist — so a mistyped key cannot revert enforcement to allow-all.
+// See the "whole-file discard" block below.
+//
 // THE OFF-SWITCH IS FILE-ONLY. This function reads no environment variable, and
 // must never be changed to. Containment is likewise never derived from a wire
 // field, a tool argument, or model output; the file is a machine-local operator
@@ -533,15 +541,141 @@ func LoadConfig(root string) (Config, []Warning) {
 			// An empty file is indistinguishable in intent from an absent one.
 			return DefaultConfig(), nil
 		}
-		return DefaultConfig(), []Warning{{
+		// The file is discarded wholesale — except for the egress POSTURE, which
+		// is the one dimension whose default is the permissive side. See
+		// salvageEgressPosture.
+		egress := salvageEgressPosture(data)
+		return discardedConfig(egress), []Warning{{
 			Reason: WarnMalformed,
 			Path:   path,
 			Detail: strings.TrimSpace(err.Error()),
-			Effect: "config file could not be parsed; running contained on the container substrate",
+			Effect: "config file could not be parsed; running contained on the container substrate" + egressEffect(egress),
 		}}
 	}
 
 	return raw.resolve(path)
+}
+
+// --- whole-file discard: salvaging the egress posture -------------------------
+//
+// Change 0063 could discard a config file WHOLESALE and land on DefaultConfig()
+// because the default was the SAFE side of every dimension the file carried:
+// contained, container substrate, no image, no passthrough. Reverting to it
+// could only ever narrow what a command could do.
+//
+// Change 0064 adds a dimension whose default is the UNSAFE side. Egress's zero
+// value is EgressAllowAll — unrestricted, by design, so an unconfigured machine
+// is unchanged. That inverts the discard rule for this one field: an operator
+// who wrote `egress.mode: enforce` and then mistyped an unrelated key would have
+// their enforcement silently reverted to allow-all, which is precisely the
+// fail-OPEN direction the spec forbids ("fail toward deny-all, never toward the
+// internet"). A loud warning does not change the resolved posture.
+//
+// So a whole-file discard salvages the POSTURE, and nothing else:
+//
+//   - The ALLOWLIST is never salvaged. An entry recovered from a file we could
+//     not parse would be an authorization decision derived from bytes we do not
+//     trust; deny-all is the correct outcome. Enforce-with-an-empty-allowlist is
+//     already a legitimate, well-supported resolved state (see Egress).
+//   - The salvage never INVENTS enforcement. A file that asked for allow-all, or
+//     said nothing about egress, keeps the unchanged local-dev posture —
+//     otherwise an unrelated typo would black out a developer's network.
+//   - No OTHER dimension's discard behaviour changes. Containment, handler,
+//     image, and env_passthrough keep exactly the semantics 0063 defined.
+//
+// The paths with no bytes to read (WarnNoRoot, WarnUnreadable) have nothing to
+// salvage from and are deliberately untouched: there is no file content from
+// which a posture could be derived, and inventing one is not an option.
+
+// rawPosture is the deliberately minimal shape used for the second, permissive
+// decode. It carries the posture selector and NOTHING else, so no field of a
+// file we rejected can reach a Config through this door — not even by accident,
+// because the struct has nowhere to put one.
+type rawPosture struct {
+	Egress *struct {
+		Mode *string `yaml:"mode"`
+	} `yaml:"egress"`
+}
+
+// salvageEgressPosture recovers the egress posture, and only the posture, from
+// the bytes of a config file that could not be parsed as the expected shape.
+func salvageEgressPosture(data []byte) Egress {
+	// KnownFields is deliberately OFF here. The strict decode already ran and
+	// already rejected the file; this pass is not a second chance at honouring
+	// it, it is a targeted read of one enum whose default is unsafe. The
+	// commonest reason to be here — a mistyped key elsewhere in the file — is
+	// exactly the case a permissive decode sees through.
+	var raw rawPosture
+	if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&raw); err == nil {
+		if raw.Egress == nil || raw.Egress.Mode == nil {
+			return Egress{}
+		}
+		return salvagedMode(*raw.Egress.Mode)
+	}
+	// The document does not parse as YAML at all (an unterminated quote, a
+	// broken flow sequence), so no decoder — however permissive — can reach the
+	// mode. Fall back to reading the posture out of the text.
+	return scanEgressPosture(data)
+}
+
+// salvagedMode maps a mode string recovered from a discarded file onto a
+// posture, using the same no-fallback-toward-permissive rule as parseEgressMode:
+// only a value that recognisably says allow-all resolves to allow-all. An
+// unrecognised spelling resolves to enforcement, matching what a PARSEABLE file
+// with the same typo would have resolved to (WarnUnknownEgressMode).
+func salvagedMode(mode string) Egress {
+	if m, ok := parseEgressMode(mode); ok && m == EgressAllowAll {
+		return Egress{}
+	}
+	return Egress{Mode: EgressEnforce}
+}
+
+// scanEgressPosture is the last-resort posture read for a file that is not
+// YAML. It looks for a `mode:` key line — `mode` appears nowhere else in this
+// schema — and reads its value.
+//
+// This is a text scan, not a parser, and it is deliberately biased: every way it
+// can be wrong about a `mode:` line's structure resolves toward ENFORCEMENT,
+// whose cost is a loudly-warned deny-all on a file the operator must fix anyway.
+// It is reached only for a file that has already failed two decoders, and it can
+// never widen access, so its imprecision has no fail-open direction. It reads
+// only the posture; it cannot and does not recover an allow entry.
+func scanEgressPosture(data []byte) Egress {
+	for _, line := range strings.Split(string(data), "\n") {
+		// Strip comments first, so a commented-out `# mode: enforce` is
+		// correctly read as "not configured" rather than as enforcement.
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = line[:i]
+		}
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "mode:")
+		if !ok {
+			continue
+		}
+		if salvagedMode(strings.Trim(strings.TrimSpace(rest), "\"'")).Mode == EgressEnforce {
+			return Egress{Mode: EgressEnforce}
+		}
+	}
+	return Egress{}
+}
+
+// discardedConfig is the resolved answer for a whole-file discard: the contained
+// default, carrying the salvaged egress POSTURE and nothing else from the file.
+// The Allow field is dropped explicitly rather than by omission, so a future
+// caller cannot pass an allowlist through here by widening the argument.
+func discardedConfig(egress Egress) Config {
+	cfg := DefaultConfig()
+	cfg.Egress = Egress{Mode: egress.Mode}
+	return cfg
+}
+
+// egressEffect renders the egress half of a whole-file discard's Effect. A
+// discard now has two possible egress outcomes, so the operator must be told
+// which one they got: "running contained" is no longer the whole story.
+func egressEffect(egress Egress) string {
+	if egress.Mode == EgressEnforce {
+		return "; the file named an enforcing egress posture, so egress is ENFORCED with an EMPTY allowlist — no declared destination is salvaged from a config that could not be trusted, so every destination is denied"
+	}
+	return "; no enforcing egress posture was recoverable from the file, so egress is unrestricted (the allow-all default)"
 }
 
 // resolve turns a parsed file into a consistent Config plus diagnostics.
@@ -566,11 +700,21 @@ func (raw rawConfig) resolve(path string) (Config, []Warning) {
 			// understand: its other fields (image, env_passthrough) widen what
 			// a command can see, and they were written by the same hand that
 			// typed a substrate that does not exist.
-			return DefaultConfig(), append(warns, Warning{
+			//
+			// The egress POSTURE is the sole exception, and it is not an
+			// exception to that reasoning but an application of it: discarding
+			// it would WIDEN what the command can reach, because the egress
+			// default is the permissive side. The declared allowlist is
+			// discarded with everything else. See salvageEgressPosture.
+			egress := Egress{}
+			if raw.Egress != nil && raw.Egress.Mode != nil {
+				egress = salvagedMode(*raw.Egress.Mode)
+			}
+			return discardedConfig(egress), append(warns, Warning{
 				Reason: WarnUnknownHandler,
 				Path:   path,
 				Detail: fmt.Sprintf("handler: %q is not %q or %q", *raw.Handler, HandlerContainer, HandlerHost),
-				Effect: "unknown substrate named; the whole config was discarded and the sandbox is running contained on the container substrate",
+				Effect: "unknown substrate named; the whole config was discarded and the sandbox is running contained on the container substrate" + egressEffect(egress),
 			})
 		}
 		cfg.Handler = handler

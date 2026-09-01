@@ -942,6 +942,154 @@ func TestLoadConfigUnknownKeyInEgressIsMalformed(t *testing.T) {
 	}
 }
 
+// --- whole-file discard: the egress posture survives, the allowlist does not ---
+//
+// #63 could discard a file wholesale and land on DefaultConfig() because the
+// default was the SAFE side of every dimension the file carried. Egress breaks
+// that: its default is the PERMISSIVE side, so an operator who wrote
+// `mode: enforce` and then mistyped an unrelated key must not be handed
+// unrestricted egress. The posture — and only the posture — is salvaged.
+func TestLoadConfigDiscardedFileSalvagesEnforcingEgressPosture(t *testing.T) {
+	enforcing := "egress:\n  mode: enforce\n  allow:\n    - host: pkg.example.com\n      port: 443\n"
+
+	cases := map[string]string{
+		// A key the strict decode rejects, beside a perfectly good egress block.
+		"unknown top-level key": "containd: false\n" + enforcing,
+		// A key the strict decode rejects INSIDE the egress block itself.
+		"unknown key in egress": "egress:\n  mode: enforce\n  alow:\n    - host: a.example.com\n      port: 443\n",
+		// A type error in an unrelated field.
+		"wrong scalar elsewhere": "contained: \"not a bool\"\n" + enforcing,
+		// A file that does not parse as YAML at ALL — no decode, permissive or
+		// otherwise, can reach the mode.
+		"unterminated flow sequence": "contained: [oh: no\n" + enforcing,
+		"unterminated quote":         "egress:\n  mode: enforce\n  allow:\n    - host: \"unclosed\n      port: 443\n",
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, body)
+
+			cfg, warns := LoadConfig(root)
+
+			assertContained(t, cfg)
+			if !hasWarning(warns, WarnMalformed) {
+				t.Errorf("warnings = %v, want a %q warning", warns, WarnMalformed)
+			}
+			if cfg.Egress.Mode != EgressEnforce {
+				t.Errorf("Egress.Mode = %v, want EgressEnforce (a discarded file must not revert enforce to allow-all)", cfg.Egress.Mode)
+			}
+			// An entry recovered from a file we could not parse would be an
+			// authorization decision derived from bytes we do not trust.
+			if len(cfg.Egress.Allow) != 0 {
+				t.Errorf("Egress.Allow = %+v, want empty: the allowlist is never salvaged", cfg.Egress.Allow)
+			}
+		})
+	}
+}
+
+// The unknown-handler discard path is the second whole-file discard, and it
+// carries the same hazard.
+func TestLoadConfigUnknownHandlerSalvagesEnforcingEgressPosture(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, "handler: banana\nimage: evil:latest\negress:\n  mode: enforce\n  allow:\n    - host: pkg.example.com\n      port: 443\n")
+
+	cfg, warns := LoadConfig(root)
+
+	assertContained(t, cfg)
+	if !hasWarning(warns, WarnUnknownHandler) {
+		t.Errorf("warnings = %v, want a %q warning", warns, WarnUnknownHandler)
+	}
+	if cfg.Egress.Mode != EgressEnforce || len(cfg.Egress.Allow) != 0 {
+		t.Errorf("Egress = %+v, want enforce with an EMPTY allowlist", cfg.Egress)
+	}
+	// Every other dimension keeps exactly the #63 whole-discard semantics.
+	if cfg.Image != "" {
+		t.Errorf("Image = %q, want empty: only the posture is salvaged", cfg.Image)
+	}
+}
+
+// An unrecognisable posture in a discarded file resolves toward enforcement for
+// the same reason parseEgressMode does: the alternative is quietly picking the
+// permissive one.
+func TestLoadConfigDiscardedFileTreatsUnrecognisedModeAsEnforcing(t *testing.T) {
+	for name, body := range map[string]string{
+		"typo mode, unknown key": "containd: false\negress:\n  mode: enfroce\n",
+		"typo mode, broken yaml": "contained: [oh: no\negress:\n  mode: enfroce\n",
+		"unknown handler":        "handler: banana\negress:\n  mode: enfroce\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, body)
+
+			cfg, _ := LoadConfig(root)
+
+			if cfg.Egress.Mode != EgressEnforce {
+				t.Errorf("Egress.Mode = %v, want EgressEnforce", cfg.Egress.Mode)
+			}
+		})
+	}
+}
+
+// The salvage must not INVENT enforcement. A discarded file that asked for
+// allow-all, or said nothing about egress, keeps the unchanged local-dev
+// posture — otherwise an unrelated typo would black out a developer's network.
+func TestLoadConfigDiscardedFileWithoutEnforcementStaysAllowAll(t *testing.T) {
+	for name, body := range map[string]string{
+		"no egress block":      "containd: false\n",
+		"explicit allow-all":   "containd: false\negress:\n  mode: allow-all\n",
+		"allow-all, quoted":    "containd: false\negress:\n  mode: \"ALLOW-ALL\"\n",
+		"broken yaml":          "contained: [oh: no\n",
+		"broken, allow-all":    "contained: [oh: no\negress:\n  mode: allow-all\n",
+		"mode only in comment": "containd: false\n# egress:\n#   mode: enforce\n",
+		"unknown handler":      "handler: banana\nimage: evil:latest\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, body)
+
+			cfg, _ := LoadConfig(root)
+
+			if cfg.Egress.Mode != EgressAllowAll {
+				t.Errorf("Egress.Mode = %v, want EgressAllowAll (the salvage must not invent enforcement)", cfg.Egress.Mode)
+			}
+		})
+	}
+}
+
+// A whole-file discard now has two possible egress outcomes, so its Effect must
+// say which one the operator actually got. "Running contained" is no longer the
+// whole story.
+func TestDiscardWarningEffectNamesTheEgressPosture(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		want string
+	}{
+		"malformed, enforcing":       {"containd: false\negress:\n  mode: enforce\n", "denied"},
+		"malformed, allow-all":       {"containd: false\n", "unrestricted"},
+		"unknown handler, enforcing": {"handler: banana\negress:\n  mode: enforce\n", "denied"},
+		"unknown handler, allow-all": {"handler: banana\n", "unrestricted"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigFile(t, root, tc.body)
+
+			_, warns := LoadConfig(root)
+
+			if len(warns) != 1 {
+				t.Fatalf("warnings = %v, want exactly one", warns)
+			}
+			msg := warns[0].Error()
+			if !strings.Contains(strings.ToLower(msg), "egress") {
+				t.Errorf("effect %q does not mention egress", msg)
+			}
+			if !strings.Contains(msg, tc.want) {
+				t.Errorf("effect %q does not describe the posture the operator got (want %q)", msg, tc.want)
+			}
+		})
+	}
+}
+
 // Every egress warning must name what the loader did instead, in words an
 // operator can act on.
 func TestEgressWarningsAreLoud(t *testing.T) {
