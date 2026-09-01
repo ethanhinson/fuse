@@ -5,6 +5,23 @@ import (
 	"strings"
 )
 
+// NOT BUILT HERE: remote/PaaS backend acceptance criterion (#75).
+//
+// This change (#0064) only enforces egress for the local container backend.
+// A future remote/PaaS backend that wants to host `bash` (#75, tracked out of
+// scope by this change's plan) is NOT automatically covered by this policy —
+// a remote executor sits outside the host-side proxy and nftables floor this
+// package builds, so it needs its own equivalent enforcement.
+//
+// The concrete, non-negotiable acceptance criterion for that future backend,
+// carried over from ADR-0044: the cloud metadata endpoint, 169.254.169.254,
+// MUST be null-routed (or otherwise unreachable) from the remote execution
+// context by default, exactly as the container floor here denies it absent an
+// explicit allowlist entry. A remote/PaaS backend that can reach the metadata
+// endpoint without an operator having declared it in Egress.Allow does not
+// meet the bar this package sets, and must not be considered a peer
+// implementation of "egress control for bash" until it does.
+
 // Match reports whether host:port is DECLARED in this policy's allowlist, and
 // returns the matched entry so its optional #52 credential audience can be read
 // off it.

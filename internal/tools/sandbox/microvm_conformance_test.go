@@ -16,6 +16,43 @@ package sandbox
 // /dev/kvm for real, and is never wired into Service or any composition root.
 // Its only job is to type-check against Handler/Runner and to encode the
 // fail-closed shape.
+//
+// THE MICROVM BOUNDARY CONTRACT (recorded, not built).
+//
+// This change (#0064) builds egress control for the container backend only.
+// When a real microVM handler is eventually built behind this seam, its
+// isolation boundary is NOT the same mechanism as the container backend's
+// (--network none + host-side proxy + nftables on the host's own interface),
+// and per ADR-0044 it MUST provide the following, all as guest/host-boundary
+// properties rather than in-process policy:
+//
+//   - No-NIC floor: like the container's --network none, the guest's default
+//     posture has no network interface at all. Absence of a NIC is the
+//     off-switch, not an in-guest firewall rule the guest could see or flip.
+//   - Host-side tap device: when egress IS declared, the host attaches a tap
+//     device to the guest and enforces the allowlist from the host side —
+//     the guest never holds the policy or the enforcement point, mirroring
+//     why the container backend's proxy lives on the host, not in the
+//     container's netns.
+//   - nftables for declared egress: the host enforces the declared
+//     allowlist via nftables rules on the tap device, the same primitive
+//     class this change's container floor uses, not a bespoke in-guest
+//     mechanism.
+//   - env-scrub re-implemented as guest-init: this change's environment
+//     scrubbing (stripping ambient credentials before a process starts) runs
+//     as a guest-init step for a microVM, since there is no shared host
+//     process environment to scrub from the outside — the guest boots into
+//     an already-scrubbed environment rather than being scrubbed after the
+//     fact.
+//   - Per-principal snapshot/pool reset: a microVM handler reclaims a guest
+//     between principals by resetting to a clean snapshot or pool image,
+//     the VM-level equivalent of this change's per-principal proxy/runner
+//     teardown — state never survives across principals.
+//
+// None of the above is implemented by this file or anywhere else in this
+// change. It is recorded here, beside the seam-conformance stub it will
+// eventually replace, so the contract survives until #0064's successor picks
+// up the microVM handler.
 
 import (
 	"context"
