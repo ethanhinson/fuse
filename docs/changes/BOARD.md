@@ -1,6 +1,6 @@
 # Backlog
 
-**78 changes** — 🟡 5 proposed · ⚪ 2 deferred · ✅ 65 done · 🗑️ 6 killed
+**79 changes** — 🟡 5 proposed · ⚪ 2 deferred · ✅ 66 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
@@ -34,10 +34,11 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (71)</summary>
+<details><summary>✅🗑️ Archive — done + killed (72)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0079](archive/2026-09-01-0079-tui-models-management-ui.md) | TUI models management UI — argument autocomplete + interactive mapping editor | 2026-09-01 |
 | [0078](archive/2026-08-21-0078-slash-command-models-listing.md) | /models slash command + slash-menu column alignment | 2026-08-21 |
 | [0077](archive/2026-08-21-0077-sandbox-resource-limits-concurrency-ceiling.md) | sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs | 2026-08-21 |
 | [0063](archive/2026-08-21-0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | 2026-08-21 |
@@ -52,7 +53,6 @@ graph TD
 | [0066](archive/2026-08-16-0066-agents-tab-multiturn-turn-groups.md) | Agents tab & blackboard — turn-aware multiturn UI (collapsible turn groups + per-turn timing) | 2026-08-16 |
 | [0060](archive/2026-08-16-0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md) | Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app | 2026-08-16 |
 | [0058](archive/2026-08-16-0058-bash-tool-egress-containment.md) | bash tool egress containment — define the authz posture for a tool that can reach anything | 2026-08-16 |
-| [0054](archive/2026-08-15-0054-durable-resumable-sessions.md) | Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory | 2026-08-15 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -64,6 +64,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 50 done |
+| [2026-08](archive/) | 51 done |
 
 </details>
