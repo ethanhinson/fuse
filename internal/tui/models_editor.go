@@ -355,20 +355,27 @@ func renderModelsEditorOverlay(base string, st *modelsEditState, width int) stri
 		if len(st.rows) == 0 {
 			add(" " + headerStyle.Render("no models registered"))
 		}
-		// Measure the alias column so ids line up across rows.
-		aliasW := 0
-		for _, row := range st.rows {
-			aliasW = maxInt(aliasW, lipgloss.Width(row.Alias))
+		cols := []Column{
+			{Style: humanMsgStyle},
+			{Style: modelsIDStyle},
+			{Style: modelsPersonaStyle},
 		}
+		rows := make([]Row, len(st.rows))
 		for i, row := range st.rows {
-			cursor := "  "
-			if i == st.cursor {
-				cursor = askCursorStyle.Render("❯ ")
+			rows[i] = Row{
+				Cells:  []string{row.Alias, truncate(row.Config.ID, 28), personaCell(row.Config)},
+				Active: i == st.cursor,
 			}
-			alias := humanMsgStyle.Render(padCells(row.Alias, aliasW))
-			id := modelsIDStyle.Render(truncate(row.Config.ID, 28))
-			persona := modelsPersonaStyle.Render(personaCell(row.Config))
-			add(fmt.Sprintf("%s%s  %s  %s", cursor, alias, id, persona))
+		}
+		// The real render width, NOT 0 (unbounded): all three columns are padded
+		// to their global max, so one over-wide alias would widen every row and
+		// leave only fitLine below as the guard — and that truncates from the
+		// RIGHT, eating the persona column on every row to pay for one entry.
+		for _, line := range RenderTable(cols, rows, width, TableOpts{
+			ActiveMarker: "❯ ",
+			MarkerStyle:  askCursorStyle,
+		}) {
+			add(line)
 		}
 		add("")
 		if st.status != "" {

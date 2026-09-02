@@ -15,6 +15,7 @@ func NewBuiltinProvider() *BuiltinProvider {
 			{Command: "/models", Syntax: "[edit]", Description: "List available models; /models edit opens the mapping editor", Kind: KindBuiltin, expand: func() string { return "/models" }},
 			{Command: "/model", Syntax: "NAME", Description: "Switch model (Tab to complete an alias)", Kind: KindBuiltin, expand: func() string { return "/model " }},
 			{Command: "/mode", Syntax: "NAME", Description: "Show or set the permission mode (smart/auto/prompt-all/off)", Kind: KindBuiltin, expand: func() string { return "/mode " }},
+			{Command: "/config", Description: "Open the tabbed settings screen (models, permissions, MCP)", Kind: KindBuiltin, expand: func() string { return "/config" }},
 			{Command: "/agents", Description: "Open the live agent tree (also: Tab)", Kind: KindBuiltin, expand: func() string { return "/agents" }},
 			{Command: "/blackboard", Description: "Open the shared agent blackboard (also: b in /agents)", Kind: KindBuiltin, expand: func() string { return "/blackboard" }},
 			{Command: "/approvals", Description: "Show this session's permission decisions", Kind: KindBuiltin, expand: func() string { return "/approvals" }},

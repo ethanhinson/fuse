@@ -448,6 +448,52 @@ func TestSlashCompleterViewMultibyteDescription(t *testing.T) {
 	}
 }
 
+// TestSlashCompleterViewSyntaxHighlight pins the two styling behaviors that the
+// table primitive cannot express as a column style, because both apply to a
+// SUBSTRING of the command cell rather than to the whole cell: the amber
+// highlight on an entry's Syntax on the non-truncated path, and the selected
+// row's highlight covering only the cursor+command head (not the whole line).
+// A width assertion would not witness either; assert on the escape sequences.
+func TestSlashCompleterViewSyntaxHighlight(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(prev)
+
+	reg := completerReg(
+		SlashEntry{Command: "/model", Syntax: "NAME", Kind: KindBuiltin, Description: "switch"},
+		SlashEntry{Command: "/exit", Kind: KindBuiltin, Description: "quit"},
+	)
+	defer reg.Close()
+
+	c := newSlashCompleter(reg)
+	c.activate("/")
+
+	// Row 0 is selected: the head is wrapped in the selected style, and the
+	// syntax token is separately wrapped in the syntax style OUTSIDE it.
+	rows := viewRows(t, c, 120)
+	if want := completerSelectedStyle.Render("▸ /model"); !strings.Contains(rows[0], want) {
+		t.Errorf("selected head not styled as expected\n got %q\nwant substring %q", rows[0], want)
+	}
+	if want := completerSyntaxStyle.Render("NAME"); !strings.Contains(rows[0], want) {
+		t.Errorf("syntax not highlighted\n got %q\nwant substring %q", rows[0], want)
+	}
+	// Row 1 is unselected: no selected-style wrapper on its command portion.
+	if strings.Contains(rows[1], completerSelectedStyle.Render("  /exit")) {
+		t.Errorf("unselected row should not carry the selected style: %q", rows[1])
+	}
+
+	// Move the cursor: the highlight follows, and the syntax highlight persists
+	// on the now-unselected row.
+	c.moveDown()
+	rows = viewRows(t, c, 120)
+	if want := completerSyntaxStyle.Render("NAME"); !strings.Contains(rows[0], want) {
+		t.Errorf("syntax highlight lost when row unselected: %q", rows[0])
+	}
+	if want := completerSelectedStyle.Render("▸ /exit"); !strings.Contains(rows[1], want) {
+		t.Errorf("selected head not styled after moveDown\n got %q\nwant substring %q", rows[1], want)
+	}
+}
+
 // TestSlashCompleterPrefixCoexistenceModelAndModels asserts typing `/model`
 // lists BOTH `/model` and `/models` — the shared prefix is not a collision,
 // both commands are distinct and both should be visible.

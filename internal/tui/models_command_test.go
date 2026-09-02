@@ -35,7 +35,7 @@ func modelsRows(t *testing.T, lines []string) (string, []string) {
 }
 
 func TestModelsListingHeaderAndOrder(t *testing.T) {
-	header, rows := modelsRows(t, renderModelsListing(modelsFixture("glm"), "glm"))
+	header, rows := modelsRows(t, renderModelsListing(modelsFixture("glm"), "glm", 0))
 	if header != "Available models:" {
 		t.Fatalf("header = %q, want %q", header, "Available models:")
 	}
@@ -64,7 +64,7 @@ func TestModelsListingHeaderIsStyled(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	defer lipgloss.SetColorProfile(prev)
 
-	lines := renderModelsListing(modelsFixture("glm"), "glm")
+	lines := renderModelsListing(modelsFixture("glm"), "glm", 0)
 	if lines[0] == stripANSIString(lines[0]) {
 		t.Fatalf("header line is not styled: %q", lines[0])
 	}
@@ -104,7 +104,7 @@ func TestModelsListingTagVocabulary(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, rows := modelsRows(t, renderModelsListing(modelsFixture(tc.def), tc.active))
+			_, rows := modelsRows(t, renderModelsListing(modelsFixture(tc.def), tc.active, 0))
 			row := rowFor(t, rows, tc.alias)
 			if tc.wantTag == "" {
 				if strings.Contains(row, "(") {
@@ -130,7 +130,7 @@ func TestModelsListingTagVocabulary(t *testing.T) {
 // identical on every row — not the total line width, which is blind to a
 // truncated suffix.
 func TestModelsListingColumnOffsets(t *testing.T) {
-	_, rows := modelsRows(t, renderModelsListing(modelsFixture("glm"), "glm"))
+	_, rows := modelsRows(t, renderModelsListing(modelsFixture("glm"), "glm", 0))
 	type offsets struct{ alias, id, persona int }
 	var first offsets
 	for i, row := range rows {
@@ -169,8 +169,44 @@ func TestModelsListingColumnOffsets(t *testing.T) {
 	}
 }
 
+// TestModelsListingFitsWidth is the regression for the unbounded layout: the
+// listing is written into the shell transcript, which word-wraps it to the
+// viewport width. Laid out unbounded, one long model ID pads every row past
+// that width and wordwrap breaks inside the padding run, folding the persona
+// and the tag onto a second line for EVERY entry.
+//
+// Fitting alone is the wrong witness (change 0066): a renderer that dropped the
+// trailing tag would also "fit". So this asserts BOTH that every line fits and
+// that the tag survives verbatim at that narrow width.
+func TestModelsListingFitsWidth(t *testing.T) {
+	reg := model.NewRegistry("glm", map[string]model.ModelConfig{
+		"glm":      {ID: "cloud/glm-5.2-very-long-provider-model-identifier", Persona: "general"},
+		"sonnet-5": {ID: "claude/sonnet-5", Persona: "general"},
+	})
+	const width = 40
+	lines := renderModelsListing(reg, "glm", width)
+	for i, l := range lines {
+		if w := lipgloss.Width(stripANSIString(l)); w > width {
+			t.Errorf("line %d width = %d, want <= %d: %q", i, w, width, l)
+		}
+	}
+	_, rows := modelsRows(t, lines)
+	var tagged string
+	for _, r := range rows {
+		if strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(r), "▸")), "glm") {
+			tagged = r
+		}
+	}
+	if tagged == "" {
+		t.Fatalf("no glm row in %#v", rows)
+	}
+	if !strings.HasSuffix(tagged, "(default, active)") {
+		t.Errorf("tag did not survive the width clamp: %q", tagged)
+	}
+}
+
 func TestModelsListingNilRegistry(t *testing.T) {
-	lines := renderModelsListing(nil, "glm")
+	lines := renderModelsListing(nil, "glm", 0)
 	if len(lines) != 1 {
 		t.Fatalf("nil registry -> %d lines, want 1: %#v", len(lines), lines)
 	}
@@ -180,7 +216,7 @@ func TestModelsListingNilRegistry(t *testing.T) {
 }
 
 func TestModelsListingEmptyRegistry(t *testing.T) {
-	lines := renderModelsListing(model.NewRegistry("", nil), "")
+	lines := renderModelsListing(model.NewRegistry("", nil), "", 0)
 	if len(lines) != 1 {
 		t.Fatalf("empty registry -> %d lines, want 1: %#v", len(lines), lines)
 	}
@@ -198,12 +234,38 @@ func TestModelsListingSingleEntryRendersOneRow(t *testing.T) {
 		"glm": {ID: "cloud/glm-5.2", Persona: "general"},
 	}
 	reg := model.NewRegistry("glm", entries)
-	_, rows := modelsRows(t, renderModelsListing(reg, "glm"))
+	_, rows := modelsRows(t, renderModelsListing(reg, "glm", 0))
 	if len(rows) != 1 {
 		t.Fatalf("got %d rows, want 1: %#v", len(rows), rows)
 	}
 	if !strings.Contains(rows[0], "glm") {
 		t.Fatalf("row %q should list glm", rows[0])
+	}
+}
+
+// TestModelsListingBlankPersonaHoldsColumn asserts an empty persona renders as
+// the dash rather than collapsing, so the persona column — and the tag offset
+// after it — hold their positions across rows.
+func TestModelsListingBlankPersonaHoldsColumn(t *testing.T) {
+	reg := model.NewRegistry("glm", map[string]model.ModelConfig{
+		"glm":      {ID: "cloud/glm-5.2", Persona: "general"},
+		"sonnet-5": {ID: "claude/sonnet-5"}, // no persona
+	})
+	_, rows := modelsRows(t, renderModelsListing(reg, "glm", 0))
+	blank := rowFor(t, rows, "sonnet-5")
+	if !strings.HasSuffix(blank, modelsPersonaBlank) {
+		t.Fatalf("blank-persona row %q should end with %q", blank, modelsPersonaBlank)
+	}
+	// The tagged row's tag must start after the same persona column, so the
+	// dash is genuinely occupying width rather than being appended loosely.
+	tagged := rowFor(t, rows, "glm")
+	if !strings.HasSuffix(tagged, "(default, active)") {
+		t.Fatalf("row %q missing tag", tagged)
+	}
+	wantOffset := lipgloss.Width(blank) - lipgloss.Width(modelsPersonaBlank)
+	gotOffset := lipgloss.Width(strings.TrimSuffix(tagged, "general (default, active)"))
+	if gotOffset != wantOffset {
+		t.Fatalf("persona column offset %d != %d\nblank=%q\ntagged=%q", gotOffset, wantOffset, blank, tagged)
 	}
 }
 
