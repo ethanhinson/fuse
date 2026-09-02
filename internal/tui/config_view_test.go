@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -329,3 +330,28 @@ func (p *staticMCPProvider) Changes() <-chan struct{} { return nil }
 func (p *staticMCPProvider) Close()                   {}
 
 func plainStr(s string) string { return ansiRE.ReplaceAllString(s, "") }
+
+// TestConfigModelsTabScrollsSelectionIntoView: with far more models than the
+// pane can show, the SELECTED alias must appear in the rendered overlay at
+// every cursor position. bubbles/table is rebuilt per render with YOffset 0
+// and SetCursor never moves that offset, so the pane has to window the rows
+// itself — otherwise the selection walks off the bottom and a user can edit or
+// (unconfirmed) delete a model they cannot see.
+func TestConfigModelsTabScrollsSelectionIntoView(t *testing.T) {
+	rows := make([]model.NamedModel, 30)
+	for i := range rows {
+		alias := fmt.Sprintf("mdl%02d", i)
+		rows[i] = model.NamedModel{Alias: alias, Config: model.ModelConfig{ID: "prov/" + alias}}
+	}
+	edit := &modelsEditState{rows: rows}
+	st := newConfigState(edit, permissions.NewSessionMode(permissions.ModeSmart), nil)
+	st.tabs.SetActive(configTabModels)
+
+	for cursor := range rows {
+		edit.cursor = cursor
+		out := plainStr(strings.Join(configOverlayLines(st, 80, configOverlayHeight), "\n"))
+		if !strings.Contains(out, rows[cursor].Alias) {
+			t.Fatalf("cursor=%d: selected alias %q not visible in:\n%s", cursor, rows[cursor].Alias, out)
+		}
+	}
+}

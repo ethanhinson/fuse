@@ -197,7 +197,39 @@ func (st *configState) modelsPaneView(width, height int) string {
 			Selected: askSelectedStyle,
 		}),
 	)
-	tbl.SetCursor(st.edit.cursor)
+	// Window the rows ourselves rather than trusting bubbles/table's offset
+	// bookkeeping: the table is rebuilt on every render with viewport.YOffset 0,
+	// and SetCursor only moves its internal start index — it never touches
+	// YOffset (only MoveUp/MoveDown do, and nothing here calls them). So the
+	// visible slice stays [0:Height) of the rendered content and the selection
+	// falls off the bottom for any cursor at or past the pane height. Feeding
+	// the table exactly the rows that fit, with a cursor rebased into that
+	// slice, keeps the selected alias on screen at every position.
+	//
+	// h is read back off the table rather than derived from bodyH: WithHeight
+	// already deducts the header row, so Height() is the true number of body
+	// rows the pane will paint.
+	h := tbl.Height()
+	if h < 1 {
+		h = 1
+	}
+	if len(rows) > h {
+		cursor := st.edit.cursor
+		if cursor < 0 {
+			cursor = 0
+		}
+		if cursor > len(rows)-1 {
+			cursor = len(rows) - 1
+		}
+		start := 0
+		if cursor >= h {
+			start = cursor - h + 1
+		}
+		tbl.SetRows(rows[start : start+h])
+		tbl.SetCursor(cursor - start)
+	} else {
+		tbl.SetCursor(st.edit.cursor)
+	}
 
 	out := strings.Split(tbl.View(), "\n")
 	return strings.Join(append(out, footer...), "\n")
