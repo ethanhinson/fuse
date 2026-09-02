@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0080 — Shared TUI table component + tabbed /config UI — line up the menus like Claude](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0080-tui-table-tabbed-ui.md)**
+> ↩ **[Change 0080 — Shared TUI table component + tabbed /config UI — line up the menus like Claude](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-09-02-0080-tui-table-tabbed-ui.md)**
 <!-- docket:backlink:end -->
 
 # Design: shared TUI table component + tabbed UI (change 0080)
