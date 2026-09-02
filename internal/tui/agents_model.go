@@ -1571,35 +1571,11 @@ func turnPromptPreview(raw string, budget int) string {
 	return `"` + truncateCells(s, maxInt(1, budget-2)) + `"`
 }
 
-// truncateCells caps s at n DISPLAY CELLS — the ellipsis included — where
-// renderer.go's truncate caps BYTES. Fixed-width panes budget in cells
-// (lipgloss.Width), so handing a cell budget to a byte truncator is wrong in
-// both directions: ASCII overflows by the unreserved ellipsis (and fitLine then
-// absorbs the excess by truncating from the RIGHT, eating the row's
-// duration/event-count suffix), while CJK/emoji under-fill by roughly two
-// thirds. Wide runes are never split, so the result may land one cell short.
-// A non-positive budget has no room for content or an ellipsis, so it yields "".
-func truncateCells(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) <= n {
-		return s
-	}
-	if n <= 1 {
-		return "…"
-	}
-	limit := n - 1 // reserve the ellipsis
-	w := 0
-	for i, r := range s {
-		rw := lipgloss.Width(string(r))
-		if w+rw > limit {
-			return s[:i] + "…"
-		}
-		w += rw
-	}
-	return s + "…"
-}
+// truncateCells moved to table.go as part of change 0080, which consolidates
+// the four hand-rolled fixed-width renderers behind one table primitive. This
+// file's ~15 render sites are OUT OF SCOPE for that change and keep their own
+// composition; they call the shared truncateCells (same package, so no local
+// copy is needed) until 0080's follow-up sweep migrates them.
 
 // eventOffset formats an event's turn-relative offset. It clamps at zero: the
 // defect this replaces was a negative number, so the renderer is structurally

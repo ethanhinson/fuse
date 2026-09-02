@@ -102,15 +102,6 @@ func modelsTag(isDefault, isActive bool) string {
 	}
 }
 
-// padCells right-pads s to n DISPLAY CELLS. Never truncates: n is derived from
-// the widest member of the column, so s can never exceed it.
-func padCells(s string, n int) string {
-	if pad := n - lipgloss.Width(s); pad > 0 {
-		return s + strings.Repeat(" ", pad)
-	}
-	return s
-}
-
 // modelAliasCompletions returns a supplier of "/model <alias>" completion
 // entries filtered by prefix, reading the live registry each call so aliases
 // added through the editor appear without rebuilding the completer. Entries are
