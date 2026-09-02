@@ -13,6 +13,13 @@ const (
 	// completerMinDescCells is the description budget reserved when clamping
 	// the registry-wide command column against the terminal width.
 	completerMinDescCells = 8
+	// completerColGap separates the command, kind-tag and description columns.
+	completerColGap = "  "
+	// completerCursor marks the selected row; completerIndent is its
+	// width-matched filler, so the marker occupies budget rather than adding to
+	// it and every column starts at the same cell on every row.
+	completerCursor = "▸ "
+	completerIndent = "  "
 )
 
 var (
@@ -166,86 +173,54 @@ func (c *slashCompleter) View(width int) string {
 	if end > len(c.visible) {
 		end = len(c.visible)
 	}
+	page := c.visible[c.offset:end]
 
-	// Width of the widest command portion across the WHOLE registry, so the
-	// gutter does not shift as the visible window scrolls. Measured in display
-	// cells against unstyled text.
-	maxCmd := 0
-	if c.reg != nil {
-		maxCmd = c.reg.MaxCommandWidth()
+	cmdW := completerCommandWidth(c.reg, width)
+
+	// Layout is the shared table primitive's (table.go). The two invariants this
+	// overlay contributes are expressed declaratively as column bounds:
+	//
+	//   - the command column is pinned to cmdW by BOTH MinWidth and MaxWidth.
+	//     MinWidth is what makes the width registry-wide rather than page-wide:
+	//     the table measures only the rows it is given, and the widest command
+	//     is routinely scrolled off the page.
+	//   - the description column's MinWidth is the budget the clamp reserves for
+	//     it, so the table's shrink-the-widest pass stops there instead of
+	//     starving it.
+	//
+	// The kind tag is a fixed-width column rather than a fmt pad. Everything
+	// after this point is styling, not measurement.
+	cols := []Column{
+		{MinWidth: cmdW, MaxWidth: cmdW},
+		{MinWidth: kindTagWidth, MaxWidth: kindTagWidth, Style: completerKindStyle},
+		{MinWidth: completerMinDescCells},
 	}
-	// Clamp the registry-wide max against the terminal width ONCE, before the
-	// loop. The registry includes MCP tool names ("/mcp:server/tool") that are
-	// routinely wider than the whole row; without this every row would be
-	// 2+maxCmd+2+kindTagWidth+2 cells regardless of its own command, and the
-	// shell composites this overlay through wordwrap — which breaks at the last
-	// space before the limit, i.e. inside the pad run, spilling the kind tag and
-	// description onto a second line for every entry.
-	if capCmd := width - (2 + 2 + kindTagWidth + 2 + completerMinDescCells); maxCmd > capCmd {
-		maxCmd = capCmd
-		if maxCmd < 0 {
-			maxCmd = 0
+	rows := make([]Row, len(page))
+	for i, e := range page {
+		// commandText remains the single source of truth for the command
+		// portion — the same function MaxCommandWidth measures through — so the
+		// per-row cell can never drift from the registry max. Never a styled
+		// string: escape sequences are not display cells.
+		cmd := commandText(e)
+		if cmdW == 0 {
+			// The clamp left no room at all (a terminal narrower than the fixed
+			// furniture). Drop the command rather than let the column take its
+			// natural width, which MaxWidth: 0 would mean.
+			cmd = ""
+		}
+		rows[i] = Row{
+			Cells:  []string{cmd, e.KindTag(), e.Description},
+			Active: c.offset+i == c.cursor,
 		}
 	}
+	lines := RenderTable(cols, rows, width, TableOpts{
+		Gap:          completerColGap,
+		ActiveMarker: completerCursor,
+	})
 
 	var b strings.Builder
-	for i := c.offset; i < end; i++ {
-		e := c.visible[i]
-		cursor := "  "
-		if i == c.cursor {
-			cursor = "▸ "
-		}
-
-		// Measure the plain command portion through commandWidth, the same
-		// function MaxCommandWidth uses, so the per-row pad can never drift
-		// from the registry max. Never measure a styled string: the escape
-		// sequences are not display cells.
-		var label string
-		cmdCells := commandWidth(e)
-		if cmdCells > maxCmd {
-			// Over the clamped budget: truncate the composed plain text. This
-			// loses the syntax highlight, but a row that overflows the width
-			// wraps and destroys the alignment for every other row.
-			plain := truncateCells(commandText(e), maxCmd)
-			cmdCells = lipgloss.Width(plain)
-			label = cursor + plain
-			if i == c.cursor {
-				label = completerSelectedStyle.Render(label)
-			}
-		} else {
-			head := cursor + e.Command
-			if i == c.cursor {
-				head = completerSelectedStyle.Render(head)
-			}
-			label = head
-			if e.Syntax != "" {
-				label += " " + completerSyntaxStyle.Render(e.Syntax)
-			}
-		}
-
-		// One pad computation for both the selected and normal rows, so it can
-		// never be applied to only one of them. truncateCells may land a cell
-		// short of the budget next to a double-width rune, so pad to the target
-		// rather than assuming the truncated text fills it.
-		pad := maxCmd - cmdCells
-		if pad < 0 {
-			pad = 0
-		}
-		label += strings.Repeat(" ", pad)
-
-		// Kind tag left-aligned in a fixed column
-		tag := e.KindTag()
-		paddedTag := fmt.Sprintf("%-*s", kindTagWidth, tag)
-
-		// Description truncated to the remaining cells.
-		used := lipgloss.Width(cursor) + maxCmd + 2 + kindTagWidth + 2
-		descWidth := width - used
-		desc := ""
-		if descWidth > 0 {
-			desc = truncateCells(e.Description, descWidth)
-		}
-
-		b.WriteString(label + "  " + completerKindStyle.Render(paddedTag) + "  " + desc)
+	for i, line := range lines {
+		b.WriteString(completerStyleCommand(line, page[i], c.offset+i == c.cursor, cmdW))
 		b.WriteByte('\n')
 	}
 
@@ -262,6 +237,86 @@ func (c *slashCompleter) View(width int) string {
 	}
 
 	return b.String()
+}
+
+// completerCommandWidth is the width of the command column: the widest command
+// portion across the WHOLE registry — not the visible page — so the gutter does
+// not shift as the window scrolls, clamped against the render width.
+//
+// The clamp is change 0078's shipped defect and the reason this is a named
+// function rather than an inline expression. The registry includes MCP tool
+// names ("/mcp:server/tool") routinely wider than the whole row, and one such
+// entry sets the registry max even while scrolled off the page. Unclamped,
+// EVERY row becomes 2+max+2+kindTagWidth+2 cells regardless of its own command,
+// and the shell composites this overlay through wordwrap — which breaks at the
+// last space before the limit, i.e. INSIDE the pad run, spilling the kind tag
+// and description onto a second line for every entry.
+//
+// The subtraction is the row's fixed furniture: the 2-cell cursor, the two
+// 2-cell gaps, the kind-tag column, and the description budget.
+func completerCommandWidth(reg *SlashRegistry, width int) int {
+	maxCmd := 0
+	if reg != nil {
+		maxCmd = reg.MaxCommandWidth()
+	}
+	capCmd := width - (2 + 2 + kindTagWidth + 2 + completerMinDescCells)
+	if maxCmd > capCmd {
+		maxCmd = capCmd
+	}
+	if maxCmd < 0 {
+		maxCmd = 0
+	}
+	return maxCmd
+}
+
+// completerStyleCommand re-applies the completer's styling to the command
+// portion of a line already laid out by RenderTable. It is a pure substitution
+// of the leading marker+command run: same display width in, same display width
+// out, so it cannot disturb the table's measurement.
+//
+// It exists because both styles cover a SUBSTRING of the command cell, which a
+// Column.Style (applied to the whole padded cell) cannot express: the selected
+// highlight covers marker+command but NOT the trailing pad, and the syntax
+// highlight covers only the Syntax token. Nesting them as row/column styles
+// would also let an inner reset terminate the outer style mid-line.
+//
+// A truncated command portion keeps the documented styling loss: it was cut by
+// the table as one composed PLAIN string, so there is no longer a Syntax token
+// to highlight.
+func completerStyleCommand(line string, e SlashEntry, selected bool, cmdW int) string {
+	if cmdW <= 0 {
+		return line
+	}
+	marker := completerIndent
+	if selected {
+		marker = completerCursor
+	}
+	cell := commandText(e)
+	truncated := commandWidth(e) > cmdW
+	if truncated {
+		cell = truncateCells(cell, cmdW)
+	}
+	// The plain run the table emitted for this cell. If it does not match — the
+	// sanitizer rewrote the text, or fitTableLine cut the row short — leave the
+	// line alone rather than splice at the wrong offset.
+	plain := marker + padCells(cell, cmdW)
+	if !strings.HasPrefix(line, plain) {
+		return line
+	}
+	// truncateCells may land a cell short of the budget next to a double-width
+	// rune, so pad to the target rather than assume the text fills it.
+	pad := strings.Repeat(" ", cmdW-lipgloss.Width(cell))
+
+	head := marker + cell
+	tail := ""
+	if !truncated && e.Syntax != "" {
+		head = marker + e.Command
+		tail = " " + completerSyntaxStyle.Render(e.Syntax)
+	}
+	if selected {
+		head = completerSelectedStyle.Render(head)
+	}
+	return head + tail + pad + line[len(plain):]
 }
 
 // commandText composes an entry's command portion as plain, unstyled text.
