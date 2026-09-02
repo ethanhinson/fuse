@@ -205,14 +205,18 @@ type ShellModel struct {
 	classifierAvailable bool
 
 	// Subagent tree and inline summary tracking.
-	tree          *agent.AgentTree
-	blackboard    *agent.Blackboard // session blackboard for the /agents Blackboard tab
-	segmentsDir   string            // session segments/ dir for the /agents indicator + "s" (0030)
-	humanBus      *agent.HumanBus   // per-node human-message queues (ADR-0022)
-	handleReg     *agent.HandleRegistry
-	router        agent.RouterLLM  // async advisory classifier; nil ⇒ default routing only
-	queue         *queueState      // non-nil while the /queue editor is open
-	modelsEdit    *modelsEditState // non-nil while the /models edit editor is open
+	tree        *agent.AgentTree
+	blackboard  *agent.Blackboard // session blackboard for the /agents Blackboard tab
+	segmentsDir string            // session segments/ dir for the /agents indicator + "s" (0030)
+	humanBus    *agent.HumanBus   // per-node human-message queues (ADR-0022)
+	handleReg   *agent.HandleRegistry
+	router      agent.RouterLLM  // async advisory classifier; nil ⇒ default routing only
+	queue       *queueState      // non-nil while the /queue editor is open
+	modelsEdit  *modelsEditState // non-nil while the /models edit editor is open
+	// config is non-nil while the /config screen is open. It hosts the tabbed
+	// settings surface and SHARES modelsEdit with `/models edit` rather than
+	// owning a second copy of the editor.
+	config        *configState
 	agentsActive  bool
 	agentsModel   *AgentsModel
 	overlayGen    int // increments per overlay entry; stale overlay ticks are dropped
@@ -709,8 +713,10 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return model, cmd
 		}
 	}
-	// The /models edit editor likewise owns the keyboard while open.
-	if m.modelsEdit != nil {
+	// The /models edit editor likewise owns the keyboard while open — unless
+	// /config is hosting it, in which case the tabbed screen routes to these
+	// same handlers from BELOW the approval and ask guards.
+	if m.modelsEdit != nil && m.config == nil {
 		if handled, model, cmd := m.handleModelsEditorKey(msg); handled {
 			return model, cmd
 		}
@@ -722,6 +728,13 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// A pending ask_user question owns the keyboard next.
 	if len(m.asks) > 0 {
 		return m.handleAskKey(msg)
+	}
+	// The /config screen sits below approvals and asks, and changes nothing
+	// about that precedence.
+	if m.config != nil {
+		if handled, model, cmd := m.handleConfigKey(msg); handled {
+			return model, cmd
+		}
 	}
 
 	// While the completer is active, intercept navigation keys.
@@ -996,6 +1009,10 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 			m.appendLine(line)
 		}
 		return m, nil
+	case "/config":
+		// The tabbed settings screen. Its Models tab shares the editor state and
+		// handlers with `/models edit`; neither route is a copy of the other.
+		return m.openConfig()
 	case "/model":
 		if len(fields) < 2 {
 			m.appendLine("usage: /model NAME")
@@ -1804,6 +1821,8 @@ func (m ShellModel) View() string {
 		vpView = overlayAskOnView(vpView, m.asks[0], len(m.asks), width)
 	} else if m.queue != nil {
 		vpView = renderQueueOverlay(vpView, m.queue, width)
+	} else if m.config != nil {
+		vpView = renderConfigOverlay(vpView, m.config, width)
 	} else if m.modelsEdit != nil {
 		vpView = renderModelsEditorOverlay(vpView, m.modelsEdit, width)
 	}
