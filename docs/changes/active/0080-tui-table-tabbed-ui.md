@@ -2,23 +2,23 @@
 id: 80
 slug: tui-table-tabbed-ui
 title: Shared TUI table component + tabbed /config UI — line up the menus like Claude
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-02
 depends_on: []
 related: [10, 78, 79]
 discovered_from: [79]
 adrs: [54]
 spec: docs/superpowers/specs/2026-09-01-tui-table-tabbed-ui-design.md
 plan: docs/superpowers/plans/2026-09-01-tui-table-tabbed-ui-plan.md
-results:
+results: docs/results/2026-09-01-tui-table-tabbed-ui-results.md
 trivial: false
 auto_groomable:
 branch: feat/tui-table-tabbed-ui
-claimed_at: 2026-09-02T00:50:52Z
-pr:
+claimed_at: 2026-09-02T00:52:43Z
+pr: https://github.com/ethanhinson/fuse/pull/85
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-09-01-tui-table-tabbed-ui-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-01-tui-table-tabbed-ui-design.md) |
 | Plan | [2026-09-01-tui-table-tabbed-ui-plan.md](https://github.com/ethanhinson/fuse/blob/feat/tui-table-tabbed-ui/docs/superpowers/plans/2026-09-01-tui-table-tabbed-ui-plan.md) |
+| Results | [2026-09-01-tui-table-tabbed-ui-results.md](https://github.com/ethanhinson/fuse/blob/feat/tui-table-tabbed-ui/docs/results/2026-09-01-tui-table-tabbed-ui-results.md) |
+| PR | [#85](https://github.com/ethanhinson/fuse/pull/85) |
 | ADRs | [ADR-0054](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0054-charm-table-tabs-as-shared-tui-component-layer.md) |
 <!-- docket:artifacts:end -->
 
