@@ -367,7 +367,11 @@ func renderModelsEditorOverlay(base string, st *modelsEditState, width int) stri
 				Active: i == st.cursor,
 			}
 		}
-		for _, line := range RenderTable(cols, rows, 0, TableOpts{
+		// The real render width, NOT 0 (unbounded): all three columns are padded
+		// to their global max, so one over-wide alias would widen every row and
+		// leave only fitLine below as the guard — and that truncates from the
+		// RIGHT, eating the persona column on every row to pay for one entry.
+		for _, line := range RenderTable(cols, rows, width, TableOpts{
 			ActiveMarker: "❯ ",
 			MarkerStyle:  askCursorStyle,
 		}) {

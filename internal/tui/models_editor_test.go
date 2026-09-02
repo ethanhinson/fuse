@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -235,5 +237,66 @@ func TestModelFormFieldNavigationSkipsLockedAlias(t *testing.T) {
 	f.nextField()
 	if f.field == fieldAlias {
 		t.Error("nextField landed on locked alias during edit")
+	}
+}
+
+// TestModelsEditorOverlayClampsToWidth is the regression guard for the editor
+// opting out of RenderTable's render-width clamp (it passed width 0, meaning
+// unbounded). All three columns are padded to their GLOBAL max, so one
+// over-wide alias widened every row, and the only remaining guard —
+// fitLine(ol, width) — truncates from the RIGHT: it ate the persona column on
+// every row to pay for the one wide entry.
+//
+// The witness is deliberately NOT "the line is <= width": change 0066's
+// learning is that a width assertion cannot see suffix-eating truncation,
+// because the fit produces exactly the width being asserted. The real witness
+// is that the TRAILING column survives verbatim. The width check is kept only
+// as a secondary sanity assertion.
+func TestModelsEditorOverlayClampsToWidth(t *testing.T) {
+	cases := []struct {
+		name      string
+		longAlias string
+	}{
+		// Pure ASCII: a multibyte-only fixture can pass for the wrong reason,
+		// because a byte budget and a cell budget agree on neither direction.
+		{"ascii", strings.Repeat("z", 60)},
+		{"wide-runes", strings.Repeat("宽", 30)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg := model.NewRegistry("alpha", map[string]model.ModelConfig{
+				"alpha":      {ID: "prov/alpha", Persona: "coding"},
+				tc.longAlias: {ID: "prov/long", Persona: "research"},
+			})
+			m := editorShell(t, reg)
+			next, _ := m.openModelsEditor()
+			m = next.(ShellModel)
+
+			base := strings.TrimSuffix(strings.Repeat("\n", 40), "\n")
+			for _, width := range []int{40, 60, 80} {
+				out := renderModelsEditorOverlay(base, m.modelsEdit, width)
+				lines := strings.Split(out, "\n")
+				for i, ln := range lines {
+					if w := lipgloss.Width(ln); w > width {
+						t.Errorf("width %d: line %d is %d cells wide: %q", width, i, w, stripANSIString(ln))
+					}
+				}
+				// The persona column is last; it must survive as the trailing
+				// content of its row rather than being clipped away.
+				for _, persona := range []string{"coding", "research"} {
+					found := false
+					for _, ln := range lines {
+						if strings.HasSuffix(strings.TrimRight(stripANSIString(ln), " "), persona) {
+							found = true
+							break
+						}
+					}
+					if !found {
+						t.Errorf("width %d: persona %q did not survive as trailing row content; rows:\n%s",
+							width, persona, stripANSIString(out))
+					}
+				}
+			}
+		})
 	}
 }
