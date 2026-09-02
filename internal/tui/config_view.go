@@ -118,6 +118,18 @@ func (m ShellModel) handleConfigKey(msg tea.KeyMsg) (handled bool, mdl tea.Model
 		m.closeConfig()
 		return true, m, nil
 	}
+	switch msg.Type {
+	case tea.KeyCtrlC, tea.KeyCtrlD:
+		// Let these fall through to the shell's global quit binding rather than
+		// being swallowed here: /config has no key of its own for either, and
+		// trapping them left the app unquittable while the settings screen was
+		// open. Checked BEFORE dispatching into the shared models-editor
+		// handler below — that handler is also reachable from /models edit's
+		// own standalone entry point and is out of this fix's scope, so the
+		// fall-through has to happen here, in /config's own routing, rather
+		// than inside it.
+		return false, m, nil
+	}
 	if st.tabs.Active() == configTabModels && m.modelsEdit != nil {
 		return m.handleModelsEditorKey(msg)
 	}
@@ -172,15 +184,17 @@ func (st *configState) modelsPaneView(width, height int) string {
 	// beside it.
 	const configColGap = 1
 	fitColumnWidths(widths, []int{3, 4, 3}, width-configColGap*len(titles))
-	cols := make([]btable.Column, 0, len(titles))
+	// Every btable.Row below carries exactly 3 cells (one per title), and
+	// bubbles/table's renderRow indexes m.cols[i] against the ROW's cells — a
+	// column dropped here without also dropping its cells would panic inside
+	// View(). Keep all three columns; Width is widths[i]+configColGap, which is
+	// never <= 0 (configColGap alone is 1), so there is nothing to drop.
+	cols := make([]btable.Column, len(titles))
 	for i, t := range titles {
-		if widths[i] <= 0 {
-			continue
-		}
-		cols = append(cols, btable.Column{Title: t, Width: widths[i] + configColGap})
+		cols[i] = btable.Column{Title: t, Width: widths[i] + configColGap}
 	}
 
-	bodyH := height - len(footer) - 1 // -1 for the table's own header row
+	bodyH := height - len(footer) // WithHeight already deducts the table's own header row
 	if bodyH < 1 {
 		bodyH = 1
 	}

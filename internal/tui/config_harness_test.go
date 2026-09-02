@@ -30,9 +30,13 @@ import (
 //  4. artifacts land in $FUSE_SCREENSHOT_DIR when set, else t.TempDir(), so an
 //     ordinary `go test ./...` leaves no files in the tree.
 //
-// Overlays swallow every key, including Ctrl+C, so these captures tear the
-// program down with captureOverlayFrame (which calls tm.Quit()) rather than
-// sending a keystroke that can never be delivered.
+// Overlays other than /config swallow every key, including Ctrl+C. /config
+// itself now lets Ctrl+C and Ctrl+D fall through to the shell's global quit
+// binding (config_view_test.go's TestConfigCtrlCFallsThroughToQuit covers
+// that directly), but these captures still tear the program down with
+// captureOverlayFrame (which calls tm.Quit()) rather than sending a
+// keystroke, since a quit would end the program before the frame could be
+// captured either way.
 
 // typeNoSubmit sends s as individual key presses without a trailing Enter, so
 // the completer overlay stays open and can be captured mid-flight.

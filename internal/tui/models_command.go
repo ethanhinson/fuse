@@ -59,9 +59,9 @@ func renderModelsListing(reg *model.Registry, active string, width int) []string
 	}
 
 	cols := []Column{
-		{Header: "alias"},
-		{Header: "id"},
-		{Header: "persona", Blank: modelsPersonaBlank},
+		{},
+		{},
+		{Blank: modelsPersonaBlank},
 	}
 	// The header here spans the whole listing rather than labelling columns, so
 	// it is prepended instead of going through TableOpts.ShowHeader.

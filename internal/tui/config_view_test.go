@@ -274,6 +274,47 @@ func TestConfigApprovalsAndAsksKeepPriority(t *testing.T) {
 	})
 }
 
+// TestConfigModelsPaneNeverDropsAColumn: bubbles/table's Row always carries
+// one cell per titled column (alias/model id/persona) here — every row built
+// in modelsPaneView has exactly 3 cells regardless of how narrow the pane is,
+// so btable never indexes past the end of a shortened column list (which
+// panics inside View()). Exercise widths so narrow that a per-column budget
+// would have hit zero under the old drop-the-column logic.
+func TestConfigModelsPaneNeverDropsAColumn(t *testing.T) {
+	m := openConfigVia(t, configShell(t, configRegistry()))
+	for _, width := range []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15} {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("width=%d: modelsPaneView panicked: %v", width, r)
+				}
+			}()
+			out := m.config.modelsPaneView(width, configOverlayHeight)
+			if out == "" {
+				t.Errorf("width=%d: modelsPaneView returned nothing", width)
+			}
+		}()
+	}
+}
+
+// TestConfigCtrlCFallsThroughToQuit: /config must not trap Ctrl+C/Ctrl+D — the
+// global quit binding sits below the /config guard in handleKey, so a key
+// handleConfigKey unconditionally swallows can never reach it.
+func TestConfigCtrlCFallsThroughToQuit(t *testing.T) {
+	for _, kt := range []tea.KeyType{tea.KeyCtrlC, tea.KeyCtrlD} {
+		m := openConfigVia(t, configShell(t, configRegistry()))
+		if handled, _, _ := m.handleConfigKey(tea.KeyMsg{Type: kt}); handled {
+			t.Errorf("handleConfigKey should not handle %v, so the shell's quit binding is reached", kt)
+		}
+		// Drive it through the real handleKey path too: that is what proves
+		// tea.Quit is actually reachable, not just that handleConfigKey
+		// reports unhandled.
+		if _, cmd := m.handleKey(tea.KeyMsg{Type: kt}); cmd == nil {
+			t.Errorf("%v through handleKey should reach the global quit binding", kt)
+		}
+	}
+}
+
 // TestConfigMCPTabListsServers: the MCP pane is a read-only projection of the
 // configured servers, and says so when there are none.
 func TestConfigMCPTabListsServers(t *testing.T) {

@@ -22,7 +22,8 @@ import (
 // to a renderer that may answer an over-wide cell with a second line. The
 // measurement primitive used here is the same one lipgloss/table measures with
 // (lipgloss.Width), so the cell arithmetic is shared even though the compositor
-// is not. Change 0080's ADR records this boundary.
+// is not. See ADR-0054 (adopt charmbracelet table/tabs as the shared TUI
+// component layer), which records this boundary.
 
 const (
 	// tableDefaultGap separates adjacent columns.
@@ -39,23 +40,11 @@ const (
 	tableLastColMin = 4
 )
 
-// ColumnAlign selects how a cell is padded inside its column.
-type ColumnAlign int
-
-const (
-	// AlignLeft right-pads the cell (the default).
-	AlignLeft ColumnAlign = iota
-	// AlignRight left-pads the cell.
-	AlignRight
-)
-
 // Column describes one column of a rendered table.
 type Column struct {
 	// Header is the column title, emitted only when TableOpts.ShowHeader is set.
 	// It participates in the column's natural width measurement.
 	Header string
-	// Align selects left (default) or right padding within the column.
-	Align ColumnAlign
 	// MinWidth raises the column's natural width, and is its floor when the
 	// table has to shrink to fit. It is how a caller expresses a global maximum
 	// measured across rows that are NOT being rendered (the slash completer's
@@ -69,8 +58,6 @@ type Column struct {
 	// therefore every column after it — holds its position.
 	Blank string
 	// Style is applied to the PADDED cell, after measurement and truncation.
-	// Style and Row.Style are alternatives, not layers: nesting lipgloss styles
-	// lets an inner reset terminate the outer one mid-line.
 	Style lipgloss.Style
 }
 
@@ -85,9 +72,6 @@ type Row struct {
 	// Tag is a trailing annotation ("(default, active)") emitted after the last
 	// padded column, so tag offsets align across rows regardless of blank cells.
 	Tag string
-	// Style is applied to the whole composed line, after measurement. The zero
-	// value renders the line unchanged.
-	Style lipgloss.Style
 }
 
 // TableOpts carries the table-wide knobs.
@@ -102,12 +86,6 @@ type TableOpts struct {
 	MarkerStyle lipgloss.Style
 	// ShowHeader emits a leading line built from the Column.Header values.
 	ShowHeader bool
-	// HeaderStyle styles the header line.
-	HeaderStyle lipgloss.Style
-	// KeepTrailingSpace preserves the padding of the final column on rows that
-	// carry no tag. The default trims it: trailing padding is invisible and the
-	// column START offsets, which are what alignment means here, are unaffected.
-	KeepTrailingSpace bool
 }
 
 // RenderTable lays out rows into fixed-width columns and returns the display
@@ -202,16 +180,16 @@ func RenderTable(cols []Column, rows []Row, width int, opts TableOpts) []string 
 		for c := range cols {
 			headers[c] = tableCell(cols[c].Header)
 		}
-		line := composeTableLine(headers, widths, cols, gap, indent, "", opts.KeepTrailingSpace)
-		out = append(out, fitTableLine(opts.HeaderStyle.Render(line), width))
+		line := composeTableLine(headers, widths, cols, gap, indent, "")
+		out = append(out, fitTableLine(line, width))
 	}
 	for r, row := range rows {
 		prefix := indent
 		if row.Active {
 			prefix = opts.MarkerStyle.Render(marker)
 		}
-		line := composeTableLine(cells[r], widths, cols, gap, prefix, tags[r], opts.KeepTrailingSpace)
-		out = append(out, fitTableLine(row.Style.Render(line), width))
+		line := composeTableLine(cells[r], widths, cols, gap, prefix, tags[r])
+		out = append(out, fitTableLine(line, width))
 	}
 	return out
 }
@@ -221,7 +199,7 @@ func RenderTable(cols []Column, rows []Row, width int, opts TableOpts) []string 
 // PLAIN text; styles are applied afterwards so no escape sequence is ever
 // measured. A column clamped to zero width is omitted along with its gap, so the
 // cells it would have wasted go unused rather than overflowing.
-func composeTableLine(vals []string, widths []int, cols []Column, gap, prefix, tag string, keepTrailing bool) string {
+func composeTableLine(vals []string, widths []int, cols []Column, gap, prefix, tag string) string {
 	var b strings.Builder
 	b.WriteString(prefix)
 	wrote := false
@@ -240,11 +218,7 @@ func composeTableLine(vals []string, widths []int, cols []Column, gap, prefix, t
 			// cut mid-escape-sequence.
 			v = truncateCells(v, widths[c])
 		}
-		if cols[c].Align == AlignRight {
-			v = leftPadCells(v, widths[c])
-		} else {
-			v = padCells(v, widths[c])
-		}
+		v = padCells(v, widths[c])
 		b.WriteString(cols[c].Style.Render(v))
 	}
 	s := b.String()
@@ -252,9 +226,6 @@ func composeTableLine(vals []string, widths []int, cols []Column, gap, prefix, t
 		// Appended AFTER the last padded column, so the tag starts at the same
 		// offset on every row whether or not the row has blank cells.
 		return s + " " + tag
-	}
-	if keepTrailing {
-		return s
 	}
 	// Trailing padding is trimmed ONLY here — when no tag follows it. It is
 	// invisible, and the column start offsets are unaffected by dropping it.
@@ -344,14 +315,6 @@ func tableCell(s string) string {
 func padCells(s string, n int) string {
 	if pad := n - lipgloss.Width(s); pad > 0 {
 		return s + strings.Repeat(" ", pad)
-	}
-	return s
-}
-
-// leftPadCells left-pads s to n DISPLAY CELLS, for right-aligned columns.
-func leftPadCells(s string, n int) string {
-	if pad := n - lipgloss.Width(s); pad > 0 {
-		return strings.Repeat(" ", pad) + s
 	}
 	return s
 }
