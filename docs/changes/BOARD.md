@@ -1,12 +1,6 @@
 # Backlog
 
-**81 changes** — 🟢 1 in progress · 🟡 5 proposed · ⚪ 2 deferred · ✅ 67 done · 🗑️ 6 killed
-
-## 🟢 In progress (1)
-
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0080](active/0080-tui-table-tabbed-ui.md) | Shared TUI table component + tabbed /config UI — line up the menus like Claude | `medium` | `feat` | [spec](../superpowers/specs/2026-09-01-tui-table-tabbed-ui-design.md) | `feat/tui-table-tabbed-ui` |
+**81 changes** — 🟡 5 proposed · ⚪ 2 deferred · 🔵 1 implemented · ✅ 67 done · 🗑️ 6 killed
 
 ## 🟡 Proposed (5)
 
@@ -24,6 +18,12 @@
 |---|-------|----------|------|
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0080](active/0080-tui-table-tabbed-ui.md) | Shared TUI table component + tabbed /config UI — line up the menus like Claude | `medium` | `feat` | [#85](https://github.com/ethanhinson/fuse/pull/85) |  |
 
 ```mermaid
 graph TD
