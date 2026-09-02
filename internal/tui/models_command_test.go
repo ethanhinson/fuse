@@ -207,6 +207,32 @@ func TestModelsListingSingleEntryRendersOneRow(t *testing.T) {
 	}
 }
 
+// TestModelsListingBlankPersonaHoldsColumn asserts an empty persona renders as
+// the dash rather than collapsing, so the persona column — and the tag offset
+// after it — hold their positions across rows.
+func TestModelsListingBlankPersonaHoldsColumn(t *testing.T) {
+	reg := model.NewRegistry("glm", map[string]model.ModelConfig{
+		"glm":      {ID: "cloud/glm-5.2", Persona: "general"},
+		"sonnet-5": {ID: "claude/sonnet-5"}, // no persona
+	})
+	_, rows := modelsRows(t, renderModelsListing(reg, "glm"))
+	blank := rowFor(t, rows, "sonnet-5")
+	if !strings.HasSuffix(blank, modelsPersonaBlank) {
+		t.Fatalf("blank-persona row %q should end with %q", blank, modelsPersonaBlank)
+	}
+	// The tagged row's tag must start after the same persona column, so the
+	// dash is genuinely occupying width rather than being appended loosely.
+	tagged := rowFor(t, rows, "glm")
+	if !strings.HasSuffix(tagged, "(default, active)") {
+		t.Fatalf("row %q missing tag", tagged)
+	}
+	wantOffset := lipgloss.Width(blank) - lipgloss.Width(modelsPersonaBlank)
+	gotOffset := lipgloss.Width(strings.TrimSuffix(tagged, "general (default, active)"))
+	if gotOffset != wantOffset {
+		t.Fatalf("persona column offset %d != %d\nblank=%q\ntagged=%q", gotOffset, wantOffset, blank, tagged)
+	}
+}
+
 func TestLimitsCell(t *testing.T) {
 	if got := limitsCell(model.ModelConfig{MaxTokens: 0, ContextWindow: 0}); got != "default · 128k ctx" {
 		t.Errorf("zero limits = %q", got)

@@ -4,18 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-
 	"github.com/ethanhinson/fuse/internal/model"
 )
 
 // modelsActiveMarker is the selected-row glyph, matching the slash completer's
 // cursor so the two listings read the same way.
 const modelsActiveMarker = "▸ "
-
-// modelsIndent is the width-matched filler for non-active rows, so every
-// column starts at the same display cell on every row.
-const modelsIndent = "  "
 
 // modelsEmptyLine is what a nil or empty registry renders instead of a listing.
 const modelsEmptyLine = "no models configured"
@@ -26,17 +20,19 @@ const modelsColGap = "  "
 // renderModelsListing returns the /models output as display lines: a header
 // followed by one aligned row per registry alias. Pure — no ShellModel, no I/O.
 //
-// Two passes: measure the widest alias / ID / persona in DISPLAY CELLS
-// (lipgloss.Width, never len — the same discipline as the slash completer),
-// then emit prefix + padded columns + the parenthesised tag.
+// Layout is delegated to the shared table primitive (table.go): alias / ID /
+// persona columns plus the parenthesised tag, rendered at width 0 (unbounded)
+// because /models writes into scrollback rather than a fixed-width pane. The
+// blank-persona dash is declared as the persona column's Blank rather than
+// substituted at the call site, so the column holds its position — and with it
+// the tag offset — without the caller knowing why.
 func renderModelsListing(reg *model.Registry, active string) []string {
 	if reg == nil {
 		return []string{modelsEmptyLine}
 	}
 
-	type row struct{ alias, id, persona string }
-	var rows []row
-	var wAlias, wID, wPersona int
+	def := reg.DefaultAlias()
+	var rows []Row
 	for _, alias := range reg.Names() {
 		mc, err := reg.Resolve(alias)
 		if err != nil {
@@ -45,46 +41,29 @@ func renderModelsListing(reg *model.Registry, active string) []string {
 			// untested. Skip rather than panic if that ever drifts.
 			continue
 		}
-		r := row{alias: alias, id: mc.ID, persona: mc.Persona}
-		rows = append(rows, r)
-		if w := lipgloss.Width(r.alias); w > wAlias {
-			wAlias = w
-		}
-		if w := lipgloss.Width(r.id); w > wID {
-			wID = w
-		}
-		if w := lipgloss.Width(r.persona); w > wPersona {
-			wPersona = w
-		}
+		rows = append(rows, Row{
+			Cells:  []string{alias, mc.ID, mc.Persona},
+			Active: alias == active,
+			Tag:    modelsTag(alias == def, alias == active),
+		})
 	}
 	if len(rows) == 0 {
 		return []string{modelsEmptyLine}
 	}
 
-	def := reg.DefaultAlias()
+	cols := []Column{
+		{Header: "alias"},
+		{Header: "id"},
+		{Header: "persona", Blank: modelsPersonaBlank},
+	}
+	// The header here spans the whole listing rather than labelling columns, so
+	// it is prepended instead of going through TableOpts.ShowHeader.
 	out := make([]string, 0, len(rows)+1)
 	out = append(out, headerStyle.Render("Available models:"))
-	for _, r := range rows {
-		var b strings.Builder
-		if r.alias == active {
-			b.WriteString(modelsActiveMarker)
-		} else {
-			b.WriteString(modelsIndent)
-		}
-		b.WriteString(padCells(r.alias, wAlias))
-		b.WriteString(modelsColGap)
-		b.WriteString(padCells(r.id, wID))
-		b.WriteString(modelsColGap)
-		b.WriteString(padCells(r.persona, wPersona))
-		if tag := modelsTag(r.alias == def, r.alias == active); tag != "" {
-			b.WriteString(" " + tag)
-		}
-		// Trailing column padding is meaningless once nothing follows it; the
-		// column START offsets, which are what alignment means here, are
-		// unaffected by trimming the tail.
-		out = append(out, strings.TrimRight(b.String(), " "))
-	}
-	return out
+	return append(out, RenderTable(cols, rows, 0, TableOpts{
+		Gap:          modelsColGap,
+		ActiveMarker: modelsActiveMarker,
+	})...)
 }
 
 // modelsTag is the trailing parenthesised annotation. The vocabulary is closed:
@@ -136,11 +115,16 @@ func modelAliasCompletions(reg *model.Registry) func(prefix string) []SlashEntry
 	}
 }
 
+// modelsPersonaBlank is what an empty persona renders as, so the persona column
+// never collapses. It is the persona Column's Blank in the /models listing and
+// personaCell's substitution in the editor.
+const modelsPersonaBlank = "-"
+
 // personaCell renders the persona column, substituting a dash for the empty
 // persona so the column never collapses.
 func personaCell(mc model.ModelConfig) string {
 	if mc.Persona == "" {
-		return "-"
+		return modelsPersonaBlank
 	}
 	return mc.Persona
 }
