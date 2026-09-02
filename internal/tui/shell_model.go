@@ -1005,7 +1005,12 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		if len(fields) >= 2 && fields[1] == "edit" {
 			return m.openModelsEditor()
 		}
-		for _, line := range renderModelsListing(m.reg, m.alias) {
+		// Lay the listing out at the width refreshViewport will wrap it to.
+		// appendLine stores lines with an empty prefix, so hangWrap's contentW
+		// is exactly m.vp.Width; laying out unbounded here would let wordwrap
+		// break inside the padding run and fold every row in two. A 0 width
+		// (viewport not yet sized) means unbounded, matching the no-wrap path.
+		for _, line := range renderModelsListing(m.reg, m.alias, m.vp.Width) {
 			m.appendLine(line)
 		}
 		return m, nil

@@ -21,12 +21,19 @@ const modelsColGap = "  "
 // followed by one aligned row per registry alias. Pure — no ShellModel, no I/O.
 //
 // Layout is delegated to the shared table primitive (table.go): alias / ID /
-// persona columns plus the parenthesised tag, rendered at width 0 (unbounded)
-// because /models writes into scrollback rather than a fixed-width pane. The
+// persona columns plus the parenthesised tag, clamped to width. The
 // blank-persona dash is declared as the persona column's Blank rather than
 // substituted at the call site, so the column holds its position — and with it
 // the tag offset — without the caller knowing why.
-func renderModelsListing(reg *model.Registry, active string) []string {
+//
+// width is the viewport content width the shell will wrap these lines to (0
+// means unbounded, for callers with no pane). It is NOT cosmetic: /models
+// output goes through appendLine -> refreshViewport -> hangWrap, whose
+// wordwrap pass breaks at the last space before the limit. On an unbounded
+// listing that space lands inside a padding run, so one long model ID folds
+// the persona and the trailing tag onto a second line for EVERY row — change
+// 0078's compositor failure. Clamping here is what keeps the rows one line.
+func renderModelsListing(reg *model.Registry, active string, width int) []string {
 	if reg == nil {
 		return []string{modelsEmptyLine}
 	}
@@ -60,7 +67,7 @@ func renderModelsListing(reg *model.Registry, active string) []string {
 	// it is prepended instead of going through TableOpts.ShowHeader.
 	out := make([]string, 0, len(rows)+1)
 	out = append(out, headerStyle.Render("Available models:"))
-	return append(out, RenderTable(cols, rows, 0, TableOpts{
+	return append(out, RenderTable(cols, rows, width, TableOpts{
 		Gap:          modelsColGap,
 		ActiveMarker: modelsActiveMarker,
 	})...)

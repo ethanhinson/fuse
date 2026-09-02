@@ -115,8 +115,10 @@ type TableOpts struct {
 // returned line is guaranteed to be at most width display cells.
 //
 // A width of 0 or less means unbounded — columns take their natural widths.
-// This is what /models uses, which renders into scrollback rather than a
-// fixed-width pane.
+// That is only for callers with no pane to fit (an unsized viewport). Anything
+// whose output reaches the screen, /models included, must pass the real width:
+// the transcript word-wraps, and an over-wide row breaks inside its padding run
+// and folds in two.
 func RenderTable(cols []Column, rows []Row, width int, opts TableOpts) []string {
 	if len(cols) == 0 {
 		return nil
