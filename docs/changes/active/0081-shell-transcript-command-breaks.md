@@ -2,11 +2,11 @@
 id: 81
 slug: shell-transcript-command-breaks
 title: Echo executed slash commands + rule breaks between transcript blocks
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-03
 depends_on: []
 related: [10, 78, 79, 80]
 discovered_from: [80]
@@ -16,9 +16,10 @@ plan:
 results:
 trivial: true
 auto_groomable:
-branch:
+branch: feat/shell-transcript-command-breaks
 pr:
 blocked_by:
+claimed_at: 2026-09-03T02:00:16Z
 reconciled: false
 ---
 
