@@ -413,6 +413,29 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	if interactive {
 		sessionCtx, sessionCancel = context.WithCancel(context.WithoutCancel(loopCtx))
 	}
+	// Test-only observation point for the session context. It is deliberately detached
+	// (WithoutCancel above), so nothing upstream can ever observe or end it, and the
+	// production API never hands it back to a caller — which is exactly what makes a
+	// missing teardown on an early return invisible from outside. nil in production;
+	// only session_cancel_leak_test.go sets it, to prove failLaunch releases what it
+	// created (and that the success path does NOT).
+	if onSessionContext != nil {
+		onSessionContext(sessionCtx, interactive)
+	}
+
+	// failLaunch is the single teardown for every early return below. The session
+	// context is a per-instance resource like any other (learnings:
+	// per-instance-resource-needs-teardown-on-every-early-return): an interactive launch
+	// that fails after the WithCancel above must release it, or the context — and the
+	// idle reaper's parent — leaks for the life of the process. The success path never
+	// calls this: sessionCancel is handed to the reaper and to the run-completion
+	// goroutine, which are the only things allowed to end a live session.
+	failLaunch := func() {
+		if sessionCancel != nil {
+			sessionCancel()
+		}
+		end(observe.OutcomeError)
+	}
 	// Use a caller-supplied tree when the binding externally observes it
 	// (research-probe/shell keep their tree for probe.Summarize / rendering); else
 	// create one from cfg + MaxConcurrent.
@@ -486,7 +509,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	} else {
 		fs, err := fsstore.NewFSEventStore(r.deps.BaseDir, rootID)
 		if err != nil {
-			end(observe.OutcomeError)
+			failLaunch()
 			return nil, fmt.Errorf("runtime: open event store: %w", err)
 		}
 		store = fs
@@ -508,15 +531,15 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 			// rather than Register'ing a duplicate. Heartbeat sets both LeaseExpiry and
 			// owner; SetLive flips Live back to true.
 			if err := r.deps.Registry.Heartbeat(ctx, key, rootID, leaseExpiry); err != nil {
-				end(observe.OutcomeError)
+				failLaunch()
 				return nil, fmt.Errorf("runtime: resume heartbeat: %w", err)
 			}
 			if err := r.deps.Registry.SetLive(ctx, key, true, rootID); err != nil {
-				end(observe.OutcomeError)
+				failLaunch()
 				return nil, fmt.Errorf("runtime: resume set-live: %w", err)
 			}
 		} else if err := r.deps.Registry.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: rootID, Live: true, LeaseExpiry: leaseExpiry}); err != nil {
-			end(observe.OutcomeError)
+			failLaunch()
 			return nil, fmt.Errorf("runtime: register loop: %w", err)
 		}
 	}
@@ -545,7 +568,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		if r.deps.LoopTeardown != nil {
 			r.deps.LoopTeardown(toolReg)
 		}
-		end(observe.OutcomeError)
+		failLaunch()
 		return nil, fmt.Errorf("runtime: build agent: %w", err)
 	}
 	// The FIRST turn span of a resumed session opens here, after the last early return
@@ -553,7 +576,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// per-instance-resource-needs-teardown-on-every-early-return) — everything below is
 	// unconditional, so the run goroutine's completion path is the only teardown site
 	// the tracer needs. Keep it that way: a new early return added after this point
-	// MUST call turns.teardown before returning.
+	// MUST call turns.teardown before returning, and failLaunch() rather than end().
 	//
 	// A resume IS a turn boundary: the revived loop re-runs its transcript and answers
 	// immediately, before any park/wake pair can fire. Opening the turn here (rather
@@ -1115,3 +1138,7 @@ type spawnHandle struct{ h agent.AgentHandle }
 func (s spawnHandle) NodeID() string        { return s.h.NodeID }
 func (s spawnHandle) Wait() agent.SpawnDone { return s.h.Wait() }
 func (s spawnHandle) Result() (any, error)  { return s.h.Result() }
+
+// onSessionContext, when non-nil, is called with each launch's session context and
+// whether that launch is interactive. Test-only seam; see the call site in launchLoop.
+var onSessionContext func(ctx context.Context, interactive bool)
