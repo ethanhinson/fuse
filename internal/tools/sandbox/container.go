@@ -416,11 +416,57 @@ func (h *containerHandler) Acquire(ctx context.Context, p loopauth.Principal, en
 		}
 	}
 
+	// The mount source for THIS principal (change 0065).
+	//
+	// Resolved HERE, at Acquire, and for exactly the reason the egress socket
+	// above is: this is where the AUTHENTICATED Principal is in hand. The
+	// trust direction is the whole point — the tenant comes from
+	// Principal.Tenant, established at the Connect edge before this package is
+	// reached, and never from `command`, from `working_dir`, or from any other
+	// tool argument. A tenant a model could name is a tenant a model could
+	// switch, and a switchable tenant is not an isolation boundary. argv is
+	// built per Exec from a Runner whose principal was fixed at Acquire and is
+	// never reassigned, so a root resolved here belongs to exactly one
+	// principal for that Runner's whole life and cannot drift between Execs.
+	//
+	// With no resolver configured — the default, and the whole local
+	// single-tenant path — this is skipped entirely and the handler's single
+	// trusted root is used unchanged, so argv stays byte-for-byte today's.
+	root := h.root
+	if h.tenantRoots != nil {
+		resolved, err := h.tenantRoots.Root(p)
+		if err != nil {
+			// A resolver ERROR is an ACQUIRE failure, loudly — the same posture
+			// the egress socket takes just above, and for the same reason. The
+			// alternative, degrading to some other root, is the one outcome
+			// forbidden here: it would run this tenant's commands against a
+			// tree it was never granted, which is a cross-tenant disclosure
+			// dressed up as resilience. Degrading to NO root would be safe but
+			// unreadable ("my workspace is mysteriously empty"), so the error
+			// is surfaced instead.
+			return nil, fmt.Errorf("sandbox: resolve tenant mount root: %w", err)
+		}
+		// One canonicalisation, through the SAME function that canonicalises
+		// the single trusted root at construction — never a second
+		// canonicaliser. The later working_dir containment check compares a
+		// canonical candidate against this root, and two paths canonicalised
+		// differently is precisely how an escape comes to look in-tree.
+		//
+		// "" — whether the resolver returned it, or resolveMountRoot rejected
+		// what it did return — is DEGRADED-SAFE and means "mount nothing". It
+		// must never fall back to h.root, to a shared root, or to a parent of
+		// some other tenant's tree: an unmounted container is a broken
+		// workspace, a wrongly-mounted one is a disclosure, and only one of
+		// those is recoverable.
+		root = resolveMountRoot(resolved)
+	}
+
 	return &containerRunner{
 		handler:      h,
 		principal:    p,
 		env:          renderEnv(env),
 		egressSocket: socket,
+		root:         root,
 	}, nil
 }
 
@@ -450,6 +496,20 @@ type containerRunner struct {
 	// belonging to another Exec. Dropping the lease lets the proxy tear it down
 	// when the LAST holder lets go — see Release below and Proxy.Release.
 	egressSocket string
+
+	// root is the HOST directory THIS Runner's containers bind-mount, resolved
+	// once at Acquire alongside principal and equally immutable (change 0065).
+	// With no tenant resolver configured it is the handler's single trusted
+	// root; with one, it is the tree that resolver granted this principal's
+	// tenant.
+	//
+	// It lives on the Runner rather than being re-derived per Exec so that it
+	// is a settled fact for the Runner's whole life: a root re-resolved inside
+	// argv could drift between two Execs of one checked-out Runner, and a mount
+	// that changes underneath a principal is a mount nobody can reason about.
+	// "" means mount nothing — the degraded-safe state — and is never a
+	// substitute root; see workspace.
+	root string
 
 	// releaseOnce makes the lease drop happen at most once however many times
 	// Release is called. Callers legitimately release twice (bash.go's explicit
@@ -500,9 +560,10 @@ func (r *containerRunner) currentEnv() []string {
 // This is where ADR-0044's containment constraint is enforced, and the split it
 // makes is the whole point:
 //
-//   - The mount source is ALWAYS the handler's trusted root. It is not a
-//     function of workingDir, and there is no branch on which model output can
-//     reach it. This is what makes "mount my home directory" unwritable.
+//   - The mount source is ALWAYS the trusted root passed in as `root`. It is
+//     not a function of workingDir, and there is no branch on which model
+//     output can reach it. This is what makes "mount my home directory"
+//     unwritable.
 //   - The model-supplied workingDir is a SUBPATH REQUEST resolved against that
 //     root. It moves -w and nothing else, so the worst a hostile value can do
 //     is name a directory the container was already going to be able to see.
@@ -518,12 +579,22 @@ func (r *containerRunner) currentEnv() []string {
 // The host-side canonicalisation below is what closes the window that DOES
 // exist: a symlink already in the tree pointing out of it.
 //
-// Per-tenant subdivision of the root is #0065's job; this function only settles
-// which root is mounted and that workingDir cannot escape it.
-func (h *containerHandler) workspace(workingDir string) (mount string, workdir string, err error) {
+// The root is a PARAMETER rather than a field read (change 0065). That is the
+// entire per-tenant change to this function: WHICH root is mounted is settled
+// at Acquire, from the authenticated Principal.Tenant, and handed in already
+// canonicalised (see resolveMountRoot). Everything below — the canonical
+// comparison, EvalSymlinks, the filepath.Rel + ".." rejection, the
+// non-directory refusal, the refusal to disclose host paths — is UNCHANGED and
+// must stay that way: the containment algorithm is not reimplemented in order
+// to be made tenant-aware, it is simply pointed at a narrower root.
+//
+// Consequently a caller MUST pass an already-canonicalised root. Both call
+// paths do: h.root is canonicalised at construction, and the per-tenant root at
+// Acquire, through that same one function.
+func (h *containerHandler) workspace(root string, workingDir string) (mount string, workdir string, err error) {
 	workingDir = strings.TrimSpace(workingDir)
 
-	if h.root == "" {
+	if root == "" {
 		if workingDir != "" {
 			// The one thing we must not do here is fall back to mounting the
 			// model's path because we have no trusted one.
@@ -537,14 +608,14 @@ func (h *containerHandler) workspace(workingDir string) (mount string, workdir s
 	// work in (ADR-0044: "The working tree must be mounted in for the model to
 	// see the repo it edits").
 	if workingDir == "" {
-		return h.root, containerWorkspace, nil
+		return root, containerWorkspace, nil
 	}
 
 	// A relative working_dir is relative to the workspace — the only root the
 	// model has any business naming a path against.
 	candidate := workingDir
 	if !filepath.IsAbs(candidate) {
-		candidate = filepath.Join(h.root, candidate)
+		candidate = filepath.Join(root, candidate)
 	}
 
 	// Canonicalise before comparing. A prefix test against an uncanonicalised
@@ -559,7 +630,7 @@ func (h *containerHandler) workspace(workingDir string) (mount string, workdir s
 		return "", "", fmt.Errorf("%w: %q could not be resolved", ErrWorkingDirRefused, workingDir)
 	}
 
-	rel, err := filepath.Rel(h.root, resolved)
+	rel, err := filepath.Rel(root, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", "", fmt.Errorf("%w: %q escapes it", ErrWorkingDirRefused, workingDir)
 	}
@@ -570,9 +641,9 @@ func (h *containerHandler) workspace(workingDir string) (mount string, workdir s
 		return "", "", fmt.Errorf("%w: %q is not a directory", ErrWorkingDirRefused, workingDir)
 	}
 	if rel == "." {
-		return h.root, containerWorkspace, nil
+		return root, containerWorkspace, nil
 	}
-	return h.root, containerWorkspace + "/" + filepath.ToSlash(rel), nil
+	return root, containerWorkspace + "/" + filepath.ToSlash(rel), nil
 }
 
 // argv builds the exact command line for one Exec.
@@ -586,7 +657,10 @@ func (h *containerHandler) workspace(workingDir string) (mount string, workdir s
 // that cannot be contained is a REFUSAL, and a refusal must be unable to
 // produce argv at all, so there is nothing for Exec to accidentally run.
 func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) {
-	mount, workdir, err := r.handler.workspace(workingDir)
+	// The Runner's own root — fixed at Acquire for its authenticated principal
+	// (change 0065) — is the ONLY root argv ever mounts. Never h.root here: on
+	// the per-tenant path that is a wider tree this principal was not granted.
+	mount, workdir, err := r.handler.workspace(r.root, workingDir)
 	if err != nil {
 		return nil, err
 	}
@@ -674,12 +748,16 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 		args = append(args, "--env", kv)
 	}
 
-	// TODO(#0065): per-TENANT subdivision of this mount (Principal.Tenant).
+	// Per-TENANT subdivision of this mount landed in change 0065: the source is
+	// the root resolved for this Runner's authenticated Principal.Tenant at
+	// Acquire (r.root), not a process-wide one.
 	//
-	// What is NOT deferred, and must stay here: the source is the trusted root
-	// and only ever the trusted root. mount is "" only when no trusted root was
-	// resolved at all, in which case nothing is mounted — never a substitute
-	// derived from the command's arguments.
+	// The INVARIANT this site has always carried is unchanged by that, and is
+	// what a reader must not lose: the source is the trusted root and only ever
+	// the trusted root. mount is "" only when no trusted root was resolved for
+	// this principal at all, in which case nothing is mounted — never a
+	// substitute derived from the command's arguments, and never a wider root
+	// borrowed because this principal's own could not be resolved.
 	if mount != "" {
 		args = append(args, "-v", mount+":"+containerWorkspace)
 	}

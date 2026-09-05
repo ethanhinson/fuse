@@ -102,6 +102,14 @@ type serviceOptions struct {
 	// NewService can apply them LAST, after every caller-supplied option.
 	egressProxy     *Proxy
 	egressForwarder string
+
+	// tenantRoots is change 0065's per-tenant mount-root resolver, declared by
+	// the composition root through WithTenantRoots. Held here — rather than
+	// appended to containerOpts as it arrives — so NewService can apply it
+	// LAST, after every caller-supplied option, for the same reason
+	// withTrustedRoot is applied last: this names the host tree fuse
+	// bind-mounts into a container a model drives.
+	tenantRoots *TenantRoots
 }
 
 // ServiceOption configures a Service at construction.
@@ -178,6 +186,40 @@ func WithEgressProxy(p *Proxy, forwarderPath string) ServiceOption {
 		o.egressProxy = p
 		o.egressForwarder = forwarderPath
 	}
+}
+
+// WithTenantRoots declares that the bind-mount source is per-TENANT: each
+// authenticated principal's containers see the tree its Principal.Tenant maps
+// to, and nothing else (change 0065).
+//
+// SECURITY-CRITICAL, and for exactly WithTrustedRoot's reason: this is the
+// bind-mount SOURCE. Like WithHostedPosture, WithTrustedRoot and
+// WithEgressProxy, the value comes from the COMPOSITION ROOT and from nowhere
+// else — never a tool argument, a wire field, working_dir, or model output. It
+// is applied LAST, after every caller-supplied option, and it takes the
+// concrete *TenantRoots rather than an interface a caller could implement,
+// because a caller-suppliable root source IS a caller-suppliable bind-mount
+// into the sandbox.
+//
+// It is the HOSTED-PROFILE WIDENING, not a replacement. WithTrustedRoot's
+// single-root behaviour remains the DEFAULT: with no resolver declared, the
+// container substrate mounts the one trusted root exactly as it did before this
+// change, and the assembled argv is byte-identical. That is deliberate — the
+// local, single-tenant developer path has one tenant and one working tree, and
+// making it pay for a boundary it does not have would be complexity with no
+// isolation to show for it.
+//
+// A nil *TenantRoots is treated as "not supplied" and leaves the single-root
+// default in place; it never becomes a non-nil resolver that resolves nothing
+// (see the nil-interface dance in NewService).
+//
+// Where the resolver is configured, its answer is authoritative and never
+// widened on failure: a principal whose root cannot be resolved gets NO mount
+// and any working_dir is refused. It must never fall back to the trusted root
+// declared by WithTrustedRoot, which under the hosted posture would be a tree
+// shared across tenants.
+func WithTenantRoots(t *TenantRoots) ServiceOption {
+	return func(o *serviceOptions) { o.tenantRoots = t }
 }
 
 // withContainerLookPath overrides container CLI probing (tests).
@@ -290,6 +332,31 @@ func NewService(cfg Config, opts ...ServiceOption) (*Service, error) {
 		socketSource = o.egressProxy
 	}
 	o.containerOpts = append(o.containerOpts, withEgressDatapath(socketSource, o.egressForwarder))
+
+	// The per-tenant mount-root resolver (change 0065), appended LAST — after
+	// withTrustedRoot and after every caller-supplied option — for precisely the
+	// reason withTrustedRoot itself is appended late: this decides what host
+	// tree is bind-mounted into a container a model drives, and the trusted
+	// side must have the last word on it.
+	//
+	// Appended UNCONDITIONALLY, including when the composition root declared no
+	// resolver at all, on the same "the trusted side wins, including by saying
+	// nothing" reasoning as the egress datapath above: with nothing declared
+	// this writes a nil source, erasing anything an earlier option set, and the
+	// handler falls back to the single trusted root — which is the pre-0065
+	// behaviour and a byte-identical argv, NOT a degraded one.
+	//
+	// The nil-interface dance is load-bearing and is the same trap
+	// egressDatapath documents: assigning a nil *TenantRoots straight into the
+	// interface produces a NON-nil interface holding a nil pointer, which
+	// Acquire's `h.tenantRoots != nil` would read as "a resolver is configured"
+	// — turning every local, resolver-less deployment into one that mounts
+	// nothing.
+	var rootSource tenantRootSource
+	if o.tenantRoots != nil {
+		rootSource = o.tenantRoots
+	}
+	o.containerOpts = append(o.containerOpts, withTenantRoots(rootSource))
 
 	s := &Service{
 		cfg:    cfg,
