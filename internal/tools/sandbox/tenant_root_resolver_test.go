@@ -114,6 +114,22 @@ func TestTenantRootsResolverRefusesUnsafeTenantIdentities(t *testing.T) {
 		"mixed case":     "aCme",
 		"uppercase only": "ACME",
 		"uppercase tail": "acmE",
+
+		// DOT-LEADING AND ALL-DOT IDS. "." and ".." are refused explicitly
+		// above; "..." and longer runs are legal, non-traversing directory
+		// names, so nothing escapes containment — but they are still an
+		// oddity for a value that becomes a host directory name, and a
+		// dot-leading tree is invisible to a casual `ls` of the parent,
+		// which works against the operator legibility the layout policy is
+		// otherwise careful about. Refusing the leading dot takes the whole
+		// family at once. It stops there: "_default" is a real identity (see
+		// the resolve assertion above), so the rule is NOT "alphanumeric
+		// first".
+		"three dots":  "...",
+		"four dots":   "....",
+		"many dots":   ".....",
+		"leading dot": ".acme",
+		"hidden tree": ".hidden-tenant",
 	}
 	for name, tenant := range unsafe {
 		t.Run(name, func(t *testing.T) {

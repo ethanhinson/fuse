@@ -208,6 +208,29 @@ func (t *TenantRoots) Root(p loopauth.Principal) (string, error) {
 // merge. Callers that want case-insensitive tenant names must normalise at the
 // identity edge, where the two ids can still be recognised as one identity.
 //
+// # Why a leading dot is refused
+//
+// The same refuse-rather-than-substitute posture, applied to the shape of the
+// whole id rather than to its individual characters. "." and ".." are rejected
+// by name below, but "..." and longer dot runs — and ".acme" — are legal,
+// non-traversing directory names that the character allowlist alone would pass
+// through. None of them escapes containment: filepath.Rel yields a clean single
+// segment and Root's structural check holds, so this is legibility, not
+// traversal. They are refused because a value that becomes a HOST DIRECTORY
+// NAME should be visible to the operator reading the parent: the layout policy
+// above is deliberate about the parent being readable as a tenant list, and a
+// dot-leading tree that a casual `ls` does not show defeats that. Refusing the
+// leading dot excludes every all-dot id and every hidden tree in one rule,
+// without touching any realistic tenant identifier.
+//
+// The rule stops at the DOT, and deliberately does not widen to "the first
+// character must be alphanumeric". event.DefaultTenant is "_default", a real
+// and reachable workspace identity — buildLoopVerifier and loopServerPrincipal
+// both collapse an omitted config tenant onto it at the authentication edge, so
+// a leading-underscore id arrives here on a shipped path and must resolve. A
+// leading underscore or hyphen is also perfectly visible in a directory
+// listing, so the legibility argument above simply does not reach it.
+//
 // The empty tenant fails here by construction, which is the empty-tenant
 // decision documented at Root's call site.
 func tenantDirName(tenant event.TenantID) (string, bool) {
@@ -218,6 +241,13 @@ func tenantDirName(tenant event.TenantID) (string, bool) {
 	// "." and ".." are the two names that traverse; reject them explicitly
 	// rather than relying on the character allowlist to have excluded ".".
 	if s == "." || s == ".." {
+		return "", false
+	}
+	// No leading dot: see the legibility reasoning above. This is what refuses
+	// "...", "....", and ".acme", which the per-character allowlist below would
+	// otherwise accept as hidden directories. It stops at the dot — "_default"
+	// is a real identity this resolver must keep serving.
+	if s[0] == '.' {
 		return "", false
 	}
 	for i := 0; i < len(s); i++ {

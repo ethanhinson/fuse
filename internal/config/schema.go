@@ -198,10 +198,11 @@ type PipelineConfig struct {
 // must be isolated from each other two distinct, explicitly-named tenants.
 //
 // A tenant id also has to be a usable filesystem segment under the hosted
-// bindings: lowercase letters, digits, '-', '_', '.', at most 128 bytes. An
-// uppercase id is REFUSED rather than folded, because a case-insensitive volume
-// would hand "Acme" and "acme" one directory — see
-// internal/tools/sandbox.tenantDirName.
+// bindings: lowercase letters, digits, '-', '_', '.', at most 128 bytes, and it
+// may not START with '.'. An uppercase id is REFUSED rather than folded,
+// because a case-insensitive volume would hand "Acme" and "acme" one directory;
+// a dot-leading id is refused because its workspace tree would be hidden from
+// an operator listing the parent. See internal/tools/sandbox.tenantDirName.
 type AuthTokenConfig struct {
 	Token                 string `yaml:"token"`
 	Tenant                string `yaml:"tenant"`
