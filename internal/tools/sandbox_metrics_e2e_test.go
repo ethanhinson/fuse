@@ -230,7 +230,24 @@ func TestRealContainerOOMMovesUnhealthyMetric(t *testing.T) {
 	// exit. `exit 3` is the command reporting a result, not the substrate
 	// failing, and it must emit NOTHING. This is the guard against the emitter
 	// degenerating into a counter of user command failures.
-	if out, err := r.Exec(ctx, "exit 3", ""); err != nil || out.ExitCode != 3 {
+	out, err := r.Exec(ctx, "exit 3", "")
+	if err != nil {
+		t.Fatalf("Exec(exit 3): err=%v exit=%d out=%q", err, out.ExitCode, out.Combined)
+	}
+	// A container that never STARTED is an unusable host, not a failed
+	// assertion. svc.Available() proves a runtime is installed; it cannot prove
+	// the daemon can build a sandbox right now. On shared CI the daemon
+	// intermittently fails to bind-mount a network namespace
+	// ("bind-mount /proc/<pid>/ns/net -> /var/run/docker/netns/...: no such
+	// file or directory"), and docker exits 127 having run nothing. Reporting
+	// that as a failure of the `exit 3` control blames this test's negative
+	// control for the host's condition and hides the real signal. 127 is the
+	// shell/daemon "could not execute" code and can never be produced by
+	// `exit 3`, so it is unambiguous here.
+	if out.ExitCode == 127 {
+		t.Skipf("skipping: container runtime present but could not start a container: %s", out.Combined)
+	}
+	if out.ExitCode != 3 {
 		t.Fatalf("Exec(exit 3): err=%v exit=%d out=%q", err, out.ExitCode, out.Combined)
 	}
 	if evs, err := store.Replay(0); err != nil {
@@ -243,7 +260,7 @@ func TestRealContainerOOMMovesUnhealthyMetric(t *testing.T) {
 	// it is a tmpfs, so every byte written is CHARGED TO THE MEMORY CGROUP, and
 	// 64MiB against an 8MiB cap gets the container killed. A pipeline that merely
 	// streams (`head /dev/zero | tail`) allocates nothing and would not.
-	out, _ := r.Exec(ctx, "dd if=/dev/zero of=/dev/shm/f bs=1M count=64 2>/dev/null", "")
+	out, _ = r.Exec(ctx, "dd if=/dev/zero of=/dev/shm/f bs=1M count=64 2>/dev/null", "")
 	if out.ExitCode != 137 {
 		t.Skipf("skipping: could not provoke an OOM kill here (exit %d, out %q) — this runtime may not enforce --memory", out.ExitCode, out.Combined)
 	}
