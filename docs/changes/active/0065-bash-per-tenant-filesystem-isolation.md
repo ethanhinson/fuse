@@ -11,7 +11,7 @@ depends_on: [63]
 related: [63, 64, 74, 75, 77]
 discovered_from: [58]
 adrs: [44]
-spec:
+spec: docs/superpowers/specs/2026-09-04-bash-per-tenant-filesystem-isolation-design.md
 plan:
 results:
 trivial: false
@@ -27,6 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-09-04-bash-per-tenant-filesystem-isolation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-04-bash-per-tenant-filesystem-isolation-design.md) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
@@ -36,12 +37,28 @@ ADR-0044 decided that **hosted filesystem access is a per-tenant bind-mount** sc
 
 ## What changes
 
-- **Per-tenant bind-mount**: hosted filesystem access is a bind-mount into the container scoped by ADR-0034 `Principal.Tenant`, so one tenant's shell cannot see another tenant's files.
-- **Extend the tenant-scoped, non-escaping mount to the microVM handler** (per ADR-0044's 2026-08-16 Update): the same `Principal.Tenant`-scoped isolation must hold when #63's seam selects a microVM handler, expressed as the VM-native equivalent of the container bind-mount — a per-tenant **virtio-fs share** OR a per-tenant **block image**. Same tenant-scoping rule, one backing per boundary mechanism.
-- **`working_dir` containment**: the **model-supplied** `working_dir` resolves **within** the mount and cannot escape it (no `..`/symlink/absolute-path escape). This honors ADR-0044's inherited ADR-0036 constraint — the root of trust (the tenant/principal scoping the mount) comes from the **authenticated loop-start context, never from model output** (not the `command`, not `working_dir`).
-- **Health-signal observability obligations inherited from #74** (deferred into this change, 2026-09-04 groom). #74 (`sandbox health emitter`) was deferred until this change lands, because the persistent, tenant-scoped container this change creates is what makes the remaining `event.SandboxHealthPayload` reasons observable at all. Two obligations ride along:
-  - **Populate `ContainerID`.** The payload carries a `ContainerID` that today's stateless-per-`Exec` substrate never produces (always `""`, since `docker run --rm` means no container outlives an `Exec`). A persistent per-tenant container is the first design in which that field has a real value; it must actually be set rather than left vestigial.
-  - **Make the prober-dependent reasons reachable.** `unresponsive` and `recovered` presuppose a long-lived container with a health probe, and `oom` / `runtime_exit` need an exit-code classifier separating substrate failure (e.g. exit 137 OOM-kill) from an ordinary non-zero command exit. Whether this change *builds* the emitter or merely makes it buildable is a design question for its brainstorm — but it should not close in a state where #74 is still un-revivable.
+Change #63 already built the `working_dir` containment half of ADR-0044's rule
+(`workspace()`, `resolveMountRoot`, `ErrWorkingDirRefused`, `WithTrustedRoot`). What is
+missing is **tenancy**: `h.root` is one process-wide value fixed at startup, and one fuse
+process hosts N loops across N tenants (ADR-0030), so today every tenant's `bash` shares one
+mount.
+
+- **Make the mount root a function of `Principal.Tenant`, derived per-Acquire inside the
+  sandbox package.** `Pool.entries` is already keyed by the full `loopauth.Principal` with
+  `certifyPrincipal` re-asserting on cache hits, so the identity is already in hand where the
+  root must be chosen; the filesystem then follows the partition the pool already enforces.
+  Host layout policy stays in the composition root, alongside the other SECURITY-CRITICAL
+  options. The containment algorithm is **inherited unchanged** — only the root it resolves
+  against becomes per-tenant.
+- **microVM: seam only.** Define the tenant→root seam so a future microVM handler can satisfy
+  it, implement it for the container handler alone, and record the binding conditions
+  (per-tenant virtio-fs share or block image; non-escaping `working_dir`; per-principal
+  snapshot pools) so the future handler inherits them.
+- **Land #74's health emitter here** (deferred into this change 2026-09-04). A persistent
+  per-tenant container is what makes `ContainerID` real and a health probe possible, so
+  populate `ContainerID`, emit the reasons the substrate can honestly observe, build the
+  exit-code classifier for `oom`/`runtime_exit`, and flip #63's E2E tripwire that currently
+  asserts `fuse_sandbox_unhealthy_total` stays unfed. Never fabricate a health signal.
 
 ## Out of scope
 
@@ -53,12 +70,12 @@ ADR-0044 decided that **hosted filesystem access is a per-tenant bind-mount** sc
 
 ## Open questions
 
-<!-- Groomed into a build-ready spec later; the design decisions themselves are recorded in ADR-0044. -->
-- Host-side layout of per-tenant directories and how the bind-mount source is resolved from `Principal.Tenant`.
-- Canonical mechanism for guaranteeing `working_dir` cannot escape the mount (resolve-and-verify vs. mount-namespace confinement) across the isolation handlers the #63 seam selects — including the microVM backing (virtio-fs share vs. per-tenant block image).
+<!-- Design settled in the linked spec; these are build-time details it defers. -->
+- Host-side layout of per-tenant directories (naming, permissions, who creates them) — left
+  to the resolver's implementation in the composition root.
 - Lifecycle/cleanup of per-tenant mounts relative to ADR-0034 ownership/lease.
-- How the working tree the model edits is presented within the per-tenant mount.
-- **How does the per-tenant persistent container interact with #74's deferred health emitter?** Specifically: is `ContainerID` populated here, and do the `unresponsive` / `recovered` / `oom` / `runtime_exit` reasons become observable as a consequence of this change or only after a follow-on prober?
+- How the working tree is presented within a per-tenant mount for the local single-tenant case.
+- Whether the health emitter attaches as a new `sandbox.PoolHooks` field or a sibling seam.
 
 ## Reconcile log
 

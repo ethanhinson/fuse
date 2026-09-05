@@ -87,6 +87,14 @@ any emitter lands, so deferring loses no safety.
 persistent, tenant-scoped container exists, all six reasons become observable at
 once, and `ContainerID` is a real value rather than `""`.
 
+**2026-09-04 update (groom of #65).** #65's spec now takes the emitter into its
+own scope (Decision 3): it populates `ContainerID`, builds the exit-code
+classifier for `oom`/`runtime_exit`, and flips #63's E2E tripwire. If #65 lands
+that in full, this change closes as **done-by-#65** rather than reviving. It
+stays open only for the residual case #65's spec names explicitly: if #65 ships
+per-tenant mounts *without* a long-lived container, `unresponsive`/`recovered`
+defer again and land here.
+
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
