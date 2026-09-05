@@ -227,3 +227,56 @@ func kindsOf(evs []event.Event) []event.Kind {
 	}
 	return out
 }
+
+// TestSandboxHealthHooksTranslate pins the sandbox→event reason mapping and the
+// two payload-discipline rules the health emitter carries: ContainerID is always
+// empty (this substrate has no container that outlives an Exec, so there is no
+// honest id to report), and an unrecognised reason is DROPPED rather than
+// emitted with an empty label.
+func TestSandboxHealthHooksTranslate(t *testing.T) {
+	store := &keyedRecorder{key: event.StreamKey{Tenant: "t", Loop: "l"}}
+	hooks := SandboxHealthHooks(store, "node-1")
+
+	for _, r := range []sandbox.HealthReason{
+		sandbox.HealthOOM,
+		sandbox.HealthRuntimeExit,
+		sandbox.HealthPullFailed,
+		sandbox.HealthAcquireFailed,
+	} {
+		hooks.Unhealthy(sandbox.HealthInfo{Handler: "container", Reason: r})
+	}
+	// An unrecognised reason must add nothing.
+	hooks.Unhealthy(sandbox.HealthInfo{Handler: "container", Reason: sandbox.HealthReason("made_up")})
+
+	evs, _ := store.snapshot()
+	if len(evs) != 4 {
+		t.Fatalf("got %d events, want 4 (the unrecognised reason must be dropped)", len(evs))
+	}
+	want := []string{"oom", "runtime_exit", "pull_failed", "acquire_failed"}
+	for i, e := range evs {
+		if e.Kind != event.KindSandboxHealth {
+			t.Errorf("event %d kind = %q, want %q", i, e.Kind, event.KindSandboxHealth)
+		}
+		var p event.SandboxHealthPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatalf("event %d payload: %v", i, err)
+		}
+		if p.Reason != want[i] {
+			t.Errorf("event %d reason = %q, want %q", i, p.Reason, want[i])
+		}
+		if p.ContainerID != "" {
+			t.Errorf("event %d container_id = %q, want empty — this substrate has no durable container to name", i, p.ContainerID)
+		}
+		if p.Healthy {
+			t.Errorf("event %d healthy = true, want false", i)
+		}
+	}
+}
+
+// TestSandboxHealthHooksNilStoreIsInert pins the honest shape for a binding with
+// no per-loop event store: entirely inert hooks, not a live emitter into nothing.
+func TestSandboxHealthHooksNilStoreIsInert(t *testing.T) {
+	if h := SandboxHealthHooks(nil, "node-1"); h.Unhealthy != nil {
+		t.Fatal("SandboxHealthHooks(nil) returned a live hook; want inert")
+	}
+}

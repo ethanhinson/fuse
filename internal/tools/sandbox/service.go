@@ -64,6 +64,11 @@ type Service struct {
 	// constraint. Frozen at construction like everything else on this type.
 	root string
 
+	// health is the substrate-health observer, installed once at the composition
+	// root (SetHealthHooks) and read by the Pool for acquire failures. The zero
+	// value is inert.
+	health HealthHooks
+
 	// hosted records the posture the composition root declared, for
 	// diagnostics only; selection already consumed it.
 	hosted bool
@@ -102,6 +107,14 @@ type serviceOptions struct {
 	// NewService can apply them LAST, after every caller-supplied option.
 	egressProxy     *Proxy
 	egressForwarder string
+
+	// tenantRoots is change 0065's per-tenant mount-root resolver, declared by
+	// the composition root through WithTenantRoots. Held here — rather than
+	// appended to containerOpts as it arrives — so NewService can apply it
+	// LAST, after every caller-supplied option, for the same reason
+	// withTrustedRoot is applied last: this names the host tree fuse
+	// bind-mounts into a container a model drives.
+	tenantRoots *TenantRoots
 }
 
 // ServiceOption configures a Service at construction.
@@ -178,6 +191,40 @@ func WithEgressProxy(p *Proxy, forwarderPath string) ServiceOption {
 		o.egressProxy = p
 		o.egressForwarder = forwarderPath
 	}
+}
+
+// WithTenantRoots declares that the bind-mount source is per-TENANT: each
+// authenticated principal's containers see the tree its Principal.Tenant maps
+// to, and nothing else (change 0065).
+//
+// SECURITY-CRITICAL, and for exactly WithTrustedRoot's reason: this is the
+// bind-mount SOURCE. Like WithHostedPosture, WithTrustedRoot and
+// WithEgressProxy, the value comes from the COMPOSITION ROOT and from nowhere
+// else — never a tool argument, a wire field, working_dir, or model output. It
+// is applied LAST, after every caller-supplied option, and it takes the
+// concrete *TenantRoots rather than an interface a caller could implement,
+// because a caller-suppliable root source IS a caller-suppliable bind-mount
+// into the sandbox.
+//
+// It is the HOSTED-PROFILE WIDENING, not a replacement. WithTrustedRoot's
+// single-root behaviour remains the DEFAULT: with no resolver declared, the
+// container substrate mounts the one trusted root exactly as it did before this
+// change, and the assembled argv is byte-identical. That is deliberate — the
+// local, single-tenant developer path has one tenant and one working tree, and
+// making it pay for a boundary it does not have would be complexity with no
+// isolation to show for it.
+//
+// A nil *TenantRoots is treated as "not supplied" and leaves the single-root
+// default in place; it never becomes a non-nil resolver that resolves nothing
+// (see the nil-interface dance in NewService).
+//
+// Where the resolver is configured, its answer is authoritative and never
+// widened on failure: a principal whose root cannot be resolved gets NO mount
+// and any working_dir is refused. It must never fall back to the trusted root
+// declared by WithTrustedRoot, which under the hosted posture would be a tree
+// shared across tenants.
+func WithTenantRoots(t *TenantRoots) ServiceOption {
+	return func(o *serviceOptions) { o.tenantRoots = t }
 }
 
 // withContainerLookPath overrides container CLI probing (tests).
@@ -290,6 +337,31 @@ func NewService(cfg Config, opts ...ServiceOption) (*Service, error) {
 		socketSource = o.egressProxy
 	}
 	o.containerOpts = append(o.containerOpts, withEgressDatapath(socketSource, o.egressForwarder))
+
+	// The per-tenant mount-root resolver (change 0065), appended LAST — after
+	// withTrustedRoot and after every caller-supplied option — for precisely the
+	// reason withTrustedRoot itself is appended late: this decides what host
+	// tree is bind-mounted into a container a model drives, and the trusted
+	// side must have the last word on it.
+	//
+	// Appended UNCONDITIONALLY, including when the composition root declared no
+	// resolver at all, on the same "the trusted side wins, including by saying
+	// nothing" reasoning as the egress datapath above: with nothing declared
+	// this writes a nil source, erasing anything an earlier option set, and the
+	// handler falls back to the single trusted root — which is the pre-0065
+	// behaviour and a byte-identical argv, NOT a degraded one.
+	//
+	// The nil-interface dance is load-bearing and is the same trap
+	// egressDatapath documents: assigning a nil *TenantRoots straight into the
+	// interface produces a NON-nil interface holding a nil pointer, which
+	// Acquire's `h.tenantRoots != nil` would read as "a resolver is configured"
+	// — turning every local, resolver-less deployment into one that mounts
+	// nothing.
+	var rootSource tenantRootSource
+	if o.tenantRoots != nil {
+		rootSource = o.tenantRoots
+	}
+	o.containerOpts = append(o.containerOpts, withTenantRoots(rootSource))
 
 	s := &Service{
 		cfg:    cfg,
@@ -459,6 +531,65 @@ func (s *Service) TrustedRoot() string { return s.root }
 // containment from it.
 func (s *Service) Hosted() bool { return s.hosted }
 
+// tenantScoped is implemented by handlers that can resolve a per-principal
+// bind-mount source. It is UNEXPORTED and satisfied only by handlers in this
+// package, for the same reason healthObserved is: the question "is this
+// substrate tenant-scoped" must be answered by the substrate, not by a flag a
+// caller-supplied Handler could set.
+type tenantScoped interface {
+	tenantScoped() bool
+}
+
+// TenantScoped reports whether this Service's substrate resolves its bind-mount
+// source PER PRINCIPAL (change 0065) rather than mounting one process-wide
+// trusted root.
+//
+// # Why this accessor exists at all
+//
+// It is the `security-knob-inert-at-composition-root` assertion made
+// answerable. WithTenantRoots is a construction option with no observable
+// effect until a container actually runs, so a composition root that forgets to
+// pass it produces a Service that looks identical to one that did — and the
+// failure mode is silent, because every tenant quietly keeps sharing the single
+// root exactly as it did before this change. That is the shape change #64
+// shipped: an enforcing object with zero non-test callers and a green suite.
+// This lets cmd/fuse's own tests FAIL when the hosted binding stops wiring the
+// resolver.
+//
+// It reads the answer off the HANDLER rather than off a remembered option, so
+// it cannot drift from what the substrate will actually do at Acquire: a
+// resolver that was supplied but overwritten by the trusted-last ordering, or
+// erased by the nil-interface dance, reports false here — which is the truth.
+//
+// It is diagnostic only. Nothing may re-derive containment from it, and no
+// caller can turn scoping ON through it; the only writer is NewService.
+func (s *Service) TenantScoped() bool {
+	if s == nil {
+		return false
+	}
+	ts, ok := s.handler.(tenantScoped)
+	return ok && ts.tenantScoped()
+}
+
+// HealthObserved reports whether a substrate-health observer has been installed
+// through SetHealthHooks.
+//
+// It exists for the same reason TenantScoped does, and closes the second half of
+// the same defect class: SandboxHealthHooks is the ONLY production translator
+// from this package's health seam to the event stream, so a composition root
+// that never calls SetHealthHooks leaves fuse_sandbox_unhealthy_total
+// permanently at zero — which is indistinguishable, on a dashboard, from a
+// perfectly healthy fleet. An always-zero failure counter is the quietest
+// possible way for observability to be broken, so the wiring is asserted rather
+// than assumed.
+//
+// It reports only that a live hook is present, never anything about what was
+// observed. A nil *Service reports false, matching SetHealthHooks' tolerance of
+// one.
+func (s *Service) HealthObserved() bool {
+	return s != nil && s.health.Unhealthy != nil
+}
+
 // Runtime reports which container CLI was detected, or "" on any other
 // substrate. It is a bounded value ("docker"|"nerdctl"|"podman"), safe as a
 // label.
@@ -501,6 +632,44 @@ func (s *Service) SetGateHooks(h GateHooks) {
 	}
 	s.gate.setHooks(h)
 }
+
+// healthObserved is implemented by handlers that can report substrate-health
+// transitions. It is UNEXPORTED and satisfied only by handlers in this package,
+// which is what keeps installation a composition-root act rather than something
+// a caller-supplied Handler can intercept.
+//
+// A handler that does not implement it simply never reports health — the host
+// handler runs no substrate that can be unhealthy in these terms.
+type healthObserved interface {
+	setHealthHooks(HealthHooks)
+}
+
+// SetHealthHooks installs the substrate-health observer (change 0065, task 7).
+//
+// It mirrors SetGateHooks exactly — called ONCE at the composition root where
+// the loop's EventStore is available, before the Service is used concurrently —
+// rather than being a fourth PoolHooks field. HealthHooks' doc comment records
+// why health is a sibling seam and not part of the pool's entry lifecycle.
+//
+// The hooks land in BOTH places health can be honestly observed: on the handler
+// (pull_failed at Acquire, oom/runtime_exit at Exec) and on the Service itself,
+// which the Pool consults for acquire_failed. A nil *Service is tolerated for
+// the same reason SetGateHooks tolerates one: NewBash(nil) is a supported
+// fail-closed shape.
+func (s *Service) SetHealthHooks(h HealthHooks) {
+	if s == nil {
+		return
+	}
+	s.health = h
+	if ho, ok := s.handler.(healthObserved); ok {
+		ho.setHealthHooks(h)
+	}
+}
+
+// healthHooks exposes the installed observer to the Pool, which is the only
+// thing that sees a cold-start failure whole. Unexported: sealing it here means
+// only *Service can supply the pool's health seam, matching gateFor.
+func (s *Service) healthHooks() HealthHooks { return s.health }
 
 // Limits reports the resolved per-container cgroup caps, for diagnostics and for
 // the composition root to log. The values are frozen at construction.

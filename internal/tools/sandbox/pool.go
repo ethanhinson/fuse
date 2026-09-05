@@ -138,6 +138,11 @@ type PoolSource interface {
 	// host-wide gate, not a gate it could construct for itself (which would bound
 	// nothing). Never nil.
 	gateFor() *Gate
+	// healthHooks is the substrate-health observer the composition root
+	// installed (change 0065, task 7). Unexported for the same reason gateFor
+	// is: only *Service may supply it, so a Pool cannot install a health
+	// observer of its own devising.
+	healthHooks() HealthHooks
 }
 
 // EnvResetter is the optional reset-on-checkout seam.
@@ -166,6 +171,24 @@ type principalScoped interface {
 	acquiredFor() loopauth.Principal
 }
 
+// mountScoped is implemented by Runners that can report the HOST directory
+// their containers bind-mount.
+//
+// It is the mount half of the same defence principalScoped provides for
+// identity (change 0065). The pool cannot re-derive a tenant's root for itself
+// — the layout is the composition root's, and the resolution happened at
+// Acquire with the authenticated Principal in hand — so what it CAN do, and
+// does, is pin the root a warm entry was cold-started with and refuse any hit
+// whose Runner no longer agrees with it.
+//
+// That is narrower than re-resolving, and deliberately so: it turns "this warm
+// container's mount silently changed" from an invisible cross-tenant disclosure
+// into a discarded entry and a cold start. A Runner that cannot answer is not
+// penalised (there is no mount to re-assert), matching principalScoped.
+type mountScoped interface {
+	mountRoot() string
+}
+
 // containerIdentified is implemented by Runners backed by a durable container.
 // Nothing implements it today (the container handler uses `run --rm`, so no
 // container outlives an Exec); it is the seam the bounded container id will
@@ -183,6 +206,17 @@ type poolEntry struct {
 	handler     string
 	runtime     string
 	containerID string
+
+	// mountRoot is the HOST directory this entry's Runner was cold-started
+	// against, recorded on the ENTRY independently of the Runner's own copy —
+	// for exactly the reason principal is recorded here independently of the
+	// map key it is filed under: two records that can be compared are what make
+	// a re-assertion possible at all (change 0065).
+	//
+	// "" means the Runner does not report a mount (the host handler, and every
+	// non-container substrate), in which case there is nothing to re-assert and
+	// certifyEntry says so.
+	mountRoot string
 
 	// pooled is false for a TRANSIENT entry — one created because the
 	// principal's warm slot was already checked out. A transient is torn down
@@ -372,9 +406,15 @@ func (p *Pool) Acquire(ctx context.Context, principal loopauth.Principal) (Runne
 	)
 	if e, ok := p.entries[principal]; ok && !e.busy {
 		switch {
-		case !certifyPrincipal(e, principal):
-			// The map handed back an entry belonging to someone else. Never
-			// return it; drop it and pay for a cold start.
+		case !certifyEntry(e, principal):
+			// The map handed back an entry belonging to someone else, or one
+			// whose mount no longer matches what it was certified with. Never
+			// return it; drop it and pay for a cold start. A mount mismatch
+			// takes this SAME discard path — claimTeardown, dropLocked,
+			// CauseStaleCheckout — deliberately: it is the same class of fault
+			// as an identity mismatch, and giving it a quieter path would make
+			// the one failure an operator most needs to see the one they see
+			// least.
 			if e.claimTeardown() {
 				stale = e
 			}
@@ -426,6 +466,37 @@ func (p *Pool) acquireFresh(ctx context.Context, principal loopauth.Principal) (
 	start := p.now()
 	runner, err := p.src.Acquire(ctx, principal)
 	if err != nil {
+		// acquire_failed (change 0065, task 7). This is the one place a cold
+		// start is seen whole: the substrate could not produce a Runner at all,
+		// so nothing this principal asked for can run.
+		//
+		// A caller-deadline expiry is excluded — that is the caller's bound
+		// firing, not the substrate failing — as is a pull failure, which the
+		// handler already reported as pull_failed at its own site and which
+		// would otherwise be double-counted under two reasons for one incident.
+		//
+		// An unresolvable per-tenant workspace root is excluded FOR THE SAME
+		// STATED REASON — one incident, one reason, reported at the site that
+		// can classify it. ErrNoTenantRoot is a CONFIGURATION fault (an unset
+		// or unusable workspace parent, or a tenant id that is not a usable
+		// workspace identity), not the substrate failing: it recurs on every
+		// single bash call for as long as the misconfiguration stands, so
+		// counting it would make acquire_failed a permanent count of one config
+		// mistake wearing an operator-facing name — the same fabrication
+		// health.go's classifyExit comment guards against for command exits —
+		// and would drown the genuine acquire_failed signal (no daemon, a
+		// rejected mount) an operator actually needs to see.
+		// warnHostedWorkspaceUnavailable's startup notice is the correct
+		// operator-facing channel for this fault.
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errPullFailed) && !errors.Is(err, ErrNoTenantRoot) {
+			hooks := p.src.healthHooks()
+			hooks.fire(HealthInfo{
+				Principal: principal,
+				Handler:   p.src.HandlerName(),
+				Runtime:   p.src.Runtime(),
+				Reason:    HealthAcquireFailed,
+			})
+		}
 		// Propagate untouched: a refusal from selection (ErrRefusedUncontained)
 		// must reach the caller as a refusal, never as a pool-flavoured error
 		// that invites a fallback.
@@ -439,7 +510,12 @@ func (p *Pool) acquireFresh(ctx context.Context, principal loopauth.Principal) (
 		handler:     p.src.HandlerName(),
 		runtime:     p.src.Runtime(),
 		containerID: runnerContainerID(runner),
-		busy:        true,
+		// Pinned HERE, at the cold start, because this is the one moment the
+		// entry's mount is known to be right: the substrate has just resolved
+		// it from this principal's authenticated identity. Every later hit is
+		// measured against this value (see certifyEntry).
+		mountRoot: runnerMountRoot(runner),
+		busy:      true,
 	}
 
 	p.mu.Lock()
@@ -624,20 +700,51 @@ func (p *Pool) fireReaped(i ReleaseInfo) {
 	}
 }
 
-// certifyPrincipal re-asserts, on a cache HIT, that the entry really belongs to
-// the principal asking for it.
+// certifyEntry re-asserts, on a cache HIT, that the entry really belongs to the
+// principal asking for it AND still mounts the host tree it was cold-started
+// against.
 //
-// Both the entry's own record and (when the Runner can answer) the Runner's are
-// compared against the requested key. This is the whole point of the learning
+// This is the whole point of the learning
 // cache-over-tenant-scoped-source-reassert-key-on-hit: the map lookup already
 // "succeeded", and trusting that is how one principal ends up inside another's
-// shell.
-func certifyPrincipal(e *poolEntry, principal loopauth.Principal) bool {
+// shell. Two independent records are compared for each property, so no single
+// corrupted one can certify itself.
+//
+// # Why the MOUNT is asserted separately from the principal
+//
+// Today the mount follows from the principal for free: containerRunner.root is
+// derived from the authenticated Principal at Acquire and never reassigned
+// (change 0065), so an entry certified for its principal structurally carries
+// that principal's tenant root. That is an argument about the CURRENT shape of
+// the code, and the thing an operator's isolation actually depends on is the
+// host directory in argv's `-v`, not the identity it happens to be derived
+// from. Asserting the derived value as well as its source is what makes a
+// future refactor that decouples the two fail loudly HERE — one discarded entry
+// and one cold start — instead of silently handing a warm container another
+// tenant's files.
+//
+// It is a PIN, not a re-resolution: the pool cannot re-derive a tenant's root
+// (the layout belongs to the composition root, and the resolution needs the
+// authenticated Principal that Acquire had in hand). Pinning what was resolved
+// at the cold start and refusing anything that no longer matches is the
+// strongest statement this layer can make on its own, and it is exactly the
+// statement that catches drift.
+func certifyEntry(e *poolEntry, principal loopauth.Principal) bool {
 	if e.principal != principal {
 		return false
 	}
 	if ps, ok := e.runner.(principalScoped); ok {
-		return ps.acquiredFor() == principal
+		if ps.acquiredFor() != principal {
+			return false
+		}
+	}
+	// A Runner that reports no mount has nothing to re-assert (the host
+	// handler, and every non-container substrate); it is not penalised, exactly
+	// as a Runner that cannot report its principal is not.
+	if ms, ok := e.runner.(mountScoped); ok {
+		if ms.mountRoot() != e.mountRoot {
+			return false
+		}
 	}
 	return true
 }
@@ -658,6 +765,15 @@ var errNoEnvReset = errors.New("sandbox: runner cannot re-apply its environment"
 func runnerContainerID(r Runner) string {
 	if ci, ok := r.(containerIdentified); ok {
 		return ci.ContainerID()
+	}
+	return ""
+}
+
+// runnerMountRoot reports a Runner's host bind-mount root, or "" when the
+// Runner does not have one to report. See mountScoped.
+func runnerMountRoot(r Runner) string {
+	if ms, ok := r.(mountScoped); ok {
+		return ms.mountRoot()
 	}
 	return ""
 }

@@ -57,6 +57,13 @@ var containerClientPassthrough = [...]string{
 // the command somewhere less safe.
 var ErrNoContainerRuntime = errors.New("no container runtime available")
 
+// errPullFailed marks an Acquire that failed at the pre-pull. It is unexported
+// and carries no caller-facing meaning: its only job is to let the pool tell a
+// pull failure apart from every other cold-start failure, so ONE incident is
+// reported under ONE reason (pull_failed, at the site that observed it) rather
+// than being counted again as acquire_failed one frame up.
+var errPullFailed = errors.New("sandbox: image pre-pull failed")
+
 // ErrWorkingDirRefused reports that a model-supplied working_dir did not
 // resolve to a directory INSIDE the trusted mount.
 //
@@ -195,6 +202,52 @@ func withTrustedRoot(root string) containerOption {
 	return func(h *containerHandler) { h.root = root }
 }
 
+// tenantRootSource yields the HOST directory ONE principal's containers are
+// allowed to see — the bind-mount source, chosen as a function of
+// Principal.Tenant and nothing else (change 0065).
+//
+// The interface is UNEXPORTED, and so is the option that accepts one
+// (withTenantRoots), for exactly the reason egressSocketSource is: a
+// caller-suppliable root source IS a caller-suppliable bind-mount into the
+// container, which is the hole this package exists to close. The exported seam
+// lives at the composition root, where host layout policy belongs; the package
+// itself stays layout-agnostic.
+//
+// The Principal handed in is the AUTHENTICATED one, established at the Connect
+// edge and fixed at Acquire. It is never derived from command, working_dir, or
+// any other tool argument: a tenant the model can select is not an isolation
+// boundary.
+//
+// An implementation that cannot resolve a root returns ("", err) or ("", nil).
+// Both are DEGRADED-SAFE and mean "mount nothing" — never a shared root, never
+// a parent of some other tenant's tree.
+//
+// THE MICROVM BINDING. This seam is the container expression of a boundary
+// ADR-0044's 2026-08-16 Update requires of every substrate, including the
+// microVM handler that does not exist yet. The three conditions such a handler
+// must satisfy — a per-tenant VM-native backing (a virtio-fs share OR a block
+// image, one mechanism), a HOST-side canonicalise-then-compare working_dir
+// check rather than a guest-side one, and warm/snapshot pools that stay
+// strictly per-principal and reset — are recorded in full beside the seam-
+// conformance stub, in microvm_conformance_test.go ("THE MICROVM FILESYSTEM
+// CONTRACT"). They are written down there rather than rediscovered when the
+// handler is built.
+type tenantRootSource interface {
+	Root(loopauth.Principal) (string, error)
+}
+
+// withTenantRoots supplies the per-tenant mount-root resolver (change 0065).
+//
+// SECURITY-CRITICAL, and for the same reason as withTrustedRoot: this names the
+// host directory fuse bind-mounts into a container the model drives. The value
+// comes from the COMPOSITION ROOT, resolved from trusted operator config before
+// any model has run, and is applied LAST in the options chain so no
+// caller-supplied containerOption can swap the isolation boundary out from
+// under it. Applied once, at construction; no method changes it afterwards.
+func withTenantRoots(src tenantRootSource) containerOption {
+	return func(h *containerHandler) { h.tenantRoots = src }
+}
+
 // containerHandler runs commands inside a throwaway OCI container.
 //
 // It is the DEFAULT substrate. Detection happens once, at construction, so that
@@ -236,6 +289,13 @@ type containerHandler struct {
 	egressSockets   egressSocketSource
 	egressForwarder string
 
+	// tenantRoots resolves the per-principal bind-mount source (change 0065).
+	// Nil — the default, and the whole local single-tenant path — means the
+	// handler's single trusted root is used unchanged, so an operator who never
+	// configured a resolver gets byte-for-byte today's argv. Never
+	// model-derived; see withTenantRoots.
+	tenantRoots tenantRootSource
+
 	// pullOnce guards the single-flight pre-pull, and pullErr records its
 	// outcome. A failed pull is retried on a later Acquire rather than cached as
 	// a permanent failure, so pullOnce is reset on failure (see prePull).
@@ -250,6 +310,12 @@ type containerHandler struct {
 	// (Service.lookup / WithEnvLookup) — see withContainerEnvLookup — so one
 	// seam controls both halves of what "the environment is frozen" claims.
 	envLookup func(string) (string, bool)
+
+	// health is the substrate-health observer (change 0065, task 7). Installed
+	// once at the composition root via Service.SetHealthHooks, before the
+	// handler is used concurrently, and never written again — same discipline
+	// as the gate's hooks. The zero value is inert.
+	health HealthHooks
 
 	lookPath func(string) (string, error)
 	run      execRunner
@@ -333,6 +399,19 @@ func (*containerHandler) Name() string { return HandlerContainer }
 // Runtime reports which container CLI was detected at construction.
 func (h *containerHandler) Runtime() string { return h.runtime }
 
+// setHealthHooks satisfies healthObserved. Written once at the composition root
+// before concurrent use, never afterwards — the same discipline every other
+// field on this handler follows.
+func (h *containerHandler) setHealthHooks(hooks HealthHooks) { h.health = hooks }
+
+// tenantScoped satisfies the tenantScoped interface Service.TenantScoped reads
+// through. It reports the substrate's ACTUAL posture — whether Acquire will
+// resolve a per-principal mount source — rather than whether an option was once
+// passed, so a resolver lost to the trusted-last ordering or to the
+// nil-interface trap reports false. That is what makes the composition root's
+// wiring assertion honest rather than a restatement of its own argument.
+func (h *containerHandler) tenantScoped() bool { return h != nil && h.tenantRoots != nil }
+
 // Acquire returns a Runner bound to p and to env.
 //
 // The environment is rendered here, once, from the allowlist the caller
@@ -347,7 +426,23 @@ func (h *containerHandler) Acquire(ctx context.Context, p loopauth.Principal, en
 	// reported so selection surfaces "pull_failed" — and is retried on a later
 	// Acquire rather than cached as permanent.
 	if err := h.prePull(ctx); err != nil {
-		return nil, fmt.Errorf("%s pull %s: %w", h.runtime, h.image, err)
+		// The one place pull_failed can be observed honestly: the image
+		// acquisition itself failed, so this substrate can start no container
+		// for anyone until a later pull succeeds. The error is NOT carried into
+		// the hook — only the closed reason is (see HealthInfo).
+		//
+		// A caller-deadline expiry is excluded: prePull returns ctx.Err() when
+		// the CALLER ran out of time while the pull continues in the background,
+		// and that is the caller's bound firing, not the substrate failing.
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			h.health.fire(HealthInfo{
+				Principal: p,
+				Handler:   HandlerContainer,
+				Runtime:   h.runtime,
+				Reason:    HealthPullFailed,
+			})
+		}
+		return nil, fmt.Errorf("%s pull %s: %w: %w", h.runtime, h.image, errPullFailed, err)
 	}
 
 	// The datapath's one per-run value (change 0064, task 6): the HOST path of
@@ -374,11 +469,57 @@ func (h *containerHandler) Acquire(ctx context.Context, p loopauth.Principal, en
 		}
 	}
 
+	// The mount source for THIS principal (change 0065).
+	//
+	// Resolved HERE, at Acquire, and for exactly the reason the egress socket
+	// above is: this is where the AUTHENTICATED Principal is in hand. The
+	// trust direction is the whole point — the tenant comes from
+	// Principal.Tenant, established at the Connect edge before this package is
+	// reached, and never from `command`, from `working_dir`, or from any other
+	// tool argument. A tenant a model could name is a tenant a model could
+	// switch, and a switchable tenant is not an isolation boundary. argv is
+	// built per Exec from a Runner whose principal was fixed at Acquire and is
+	// never reassigned, so a root resolved here belongs to exactly one
+	// principal for that Runner's whole life and cannot drift between Execs.
+	//
+	// With no resolver configured — the default, and the whole local
+	// single-tenant path — this is skipped entirely and the handler's single
+	// trusted root is used unchanged, so argv stays byte-for-byte today's.
+	root := h.root
+	if h.tenantRoots != nil {
+		resolved, err := h.tenantRoots.Root(p)
+		if err != nil {
+			// A resolver ERROR is an ACQUIRE failure, loudly — the same posture
+			// the egress socket takes just above, and for the same reason. The
+			// alternative, degrading to some other root, is the one outcome
+			// forbidden here: it would run this tenant's commands against a
+			// tree it was never granted, which is a cross-tenant disclosure
+			// dressed up as resilience. Degrading to NO root would be safe but
+			// unreadable ("my workspace is mysteriously empty"), so the error
+			// is surfaced instead.
+			return nil, fmt.Errorf("sandbox: resolve tenant mount root: %w", err)
+		}
+		// One canonicalisation, through the SAME function that canonicalises
+		// the single trusted root at construction — never a second
+		// canonicaliser. The later working_dir containment check compares a
+		// canonical candidate against this root, and two paths canonicalised
+		// differently is precisely how an escape comes to look in-tree.
+		//
+		// "" — whether the resolver returned it, or resolveMountRoot rejected
+		// what it did return — is DEGRADED-SAFE and means "mount nothing". It
+		// must never fall back to h.root, to a shared root, or to a parent of
+		// some other tenant's tree: an unmounted container is a broken
+		// workspace, a wrongly-mounted one is a disclosure, and only one of
+		// those is recoverable.
+		root = resolveMountRoot(resolved)
+	}
+
 	return &containerRunner{
 		handler:      h,
 		principal:    p,
 		env:          renderEnv(env),
 		egressSocket: socket,
+		root:         root,
 	}, nil
 }
 
@@ -409,6 +550,20 @@ type containerRunner struct {
 	// when the LAST holder lets go — see Release below and Proxy.Release.
 	egressSocket string
 
+	// root is the HOST directory THIS Runner's containers bind-mount, resolved
+	// once at Acquire alongside principal and equally immutable (change 0065).
+	// With no tenant resolver configured it is the handler's single trusted
+	// root; with one, it is the tree that resolver granted this principal's
+	// tenant.
+	//
+	// It lives on the Runner rather than being re-derived per Exec so that it
+	// is a settled fact for the Runner's whole life: a root re-resolved inside
+	// argv could drift between two Execs of one checked-out Runner, and a mount
+	// that changes underneath a principal is a mount nobody can reason about.
+	// "" means mount nothing — the degraded-safe state — and is never a
+	// substitute root; see workspace.
+	root string
+
 	// releaseOnce makes the lease drop happen at most once however many times
 	// Release is called. Callers legitimately release twice (bash.go's explicit
 	// call plus its defer), and a second drop would be a lease this Runner never
@@ -429,6 +584,17 @@ type containerRunner struct {
 // verify — against the Runner itself, not only against its own bookkeeping —
 // that it is about to hand the right context to the right principal.
 func (r *containerRunner) acquiredFor() loopauth.Principal { return r.principal }
+
+// mountRoot reports the HOST directory this Runner's containers bind-mount, so
+// a pool can verify — against the Runner itself, not only against its own
+// bookkeeping — that a warm checkout still mounts the tree it was certified
+// with (change 0065; see pool.go's certifyEntry).
+//
+// It reads the immutable field set at Acquire and takes no lock, because there
+// is nothing to lock: root is written once, before this Runner is visible to
+// any other goroutine, and never reassigned. If that ever stops being true,
+// this accessor is where the guard belongs.
+func (r *containerRunner) mountRoot() string { return r.root }
 
 // ResetEnv re-applies a freshly resolved environment to a warm Runner.
 //
@@ -458,9 +624,10 @@ func (r *containerRunner) currentEnv() []string {
 // This is where ADR-0044's containment constraint is enforced, and the split it
 // makes is the whole point:
 //
-//   - The mount source is ALWAYS the handler's trusted root. It is not a
-//     function of workingDir, and there is no branch on which model output can
-//     reach it. This is what makes "mount my home directory" unwritable.
+//   - The mount source is ALWAYS the trusted root passed in as `root`. It is
+//     not a function of workingDir, and there is no branch on which model
+//     output can reach it. This is what makes "mount my home directory"
+//     unwritable.
 //   - The model-supplied workingDir is a SUBPATH REQUEST resolved against that
 //     root. It moves -w and nothing else, so the worst a hostile value can do
 //     is name a directory the container was already going to be able to see.
@@ -476,12 +643,22 @@ func (r *containerRunner) currentEnv() []string {
 // The host-side canonicalisation below is what closes the window that DOES
 // exist: a symlink already in the tree pointing out of it.
 //
-// Per-tenant subdivision of the root is #0065's job; this function only settles
-// which root is mounted and that workingDir cannot escape it.
-func (h *containerHandler) workspace(workingDir string) (mount string, workdir string, err error) {
+// The root is a PARAMETER rather than a field read (change 0065). That is the
+// entire per-tenant change to this function: WHICH root is mounted is settled
+// at Acquire, from the authenticated Principal.Tenant, and handed in already
+// canonicalised (see resolveMountRoot). Everything below — the canonical
+// comparison, EvalSymlinks, the filepath.Rel + ".." rejection, the
+// non-directory refusal, the refusal to disclose host paths — is UNCHANGED and
+// must stay that way: the containment algorithm is not reimplemented in order
+// to be made tenant-aware, it is simply pointed at a narrower root.
+//
+// Consequently a caller MUST pass an already-canonicalised root. Both call
+// paths do: h.root is canonicalised at construction, and the per-tenant root at
+// Acquire, through that same one function.
+func (h *containerHandler) workspace(root string, workingDir string) (mount string, workdir string, err error) {
 	workingDir = strings.TrimSpace(workingDir)
 
-	if h.root == "" {
+	if root == "" {
 		if workingDir != "" {
 			// The one thing we must not do here is fall back to mounting the
 			// model's path because we have no trusted one.
@@ -495,14 +672,14 @@ func (h *containerHandler) workspace(workingDir string) (mount string, workdir s
 	// work in (ADR-0044: "The working tree must be mounted in for the model to
 	// see the repo it edits").
 	if workingDir == "" {
-		return h.root, containerWorkspace, nil
+		return root, containerWorkspace, nil
 	}
 
 	// A relative working_dir is relative to the workspace — the only root the
 	// model has any business naming a path against.
 	candidate := workingDir
 	if !filepath.IsAbs(candidate) {
-		candidate = filepath.Join(h.root, candidate)
+		candidate = filepath.Join(root, candidate)
 	}
 
 	// Canonicalise before comparing. A prefix test against an uncanonicalised
@@ -517,7 +694,7 @@ func (h *containerHandler) workspace(workingDir string) (mount string, workdir s
 		return "", "", fmt.Errorf("%w: %q could not be resolved", ErrWorkingDirRefused, workingDir)
 	}
 
-	rel, err := filepath.Rel(h.root, resolved)
+	rel, err := filepath.Rel(root, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", "", fmt.Errorf("%w: %q escapes it", ErrWorkingDirRefused, workingDir)
 	}
@@ -528,9 +705,9 @@ func (h *containerHandler) workspace(workingDir string) (mount string, workdir s
 		return "", "", fmt.Errorf("%w: %q is not a directory", ErrWorkingDirRefused, workingDir)
 	}
 	if rel == "." {
-		return h.root, containerWorkspace, nil
+		return root, containerWorkspace, nil
 	}
-	return h.root, containerWorkspace + "/" + filepath.ToSlash(rel), nil
+	return root, containerWorkspace + "/" + filepath.ToSlash(rel), nil
 }
 
 // argv builds the exact command line for one Exec.
@@ -544,7 +721,10 @@ func (h *containerHandler) workspace(workingDir string) (mount string, workdir s
 // that cannot be contained is a REFUSAL, and a refusal must be unable to
 // produce argv at all, so there is nothing for Exec to accidentally run.
 func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) {
-	mount, workdir, err := r.handler.workspace(workingDir)
+	// The Runner's own root — fixed at Acquire for its authenticated principal
+	// (change 0065) — is the ONLY root argv ever mounts. Never h.root here: on
+	// the per-tenant path that is a wider tree this principal was not granted.
+	mount, workdir, err := r.handler.workspace(r.root, workingDir)
 	if err != nil {
 		return nil, err
 	}
@@ -632,12 +812,16 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 		args = append(args, "--env", kv)
 	}
 
-	// TODO(#0065): per-TENANT subdivision of this mount (Principal.Tenant).
+	// Per-TENANT subdivision of this mount landed in change 0065: the source is
+	// the root resolved for this Runner's authenticated Principal.Tenant at
+	// Acquire (r.root), not a process-wide one.
 	//
-	// What is NOT deferred, and must stay here: the source is the trusted root
-	// and only ever the trusted root. mount is "" only when no trusted root was
-	// resolved at all, in which case nothing is mounted — never a substitute
-	// derived from the command's arguments.
+	// The INVARIANT this site has always carried is unchanged by that, and is
+	// what a reader must not lose: the source is the trusted root and only ever
+	// the trusted root. mount is "" only when no trusted root was resolved for
+	// this principal at all, in which case nothing is mounted — never a
+	// substitute derived from the command's arguments, and never a wider root
+	// borrowed because this principal's own could not be resolved.
 	if mount != "" {
 		args = append(args, "-v", mount+":"+containerWorkspace)
 	}
@@ -795,6 +979,20 @@ func (r *containerRunner) Exec(ctx context.Context, cmd string, workingDir strin
 		// fires, and the resulting status is indistinguishable from any other
 		// signal death without this.
 		TimedOut: errors.Is(ctx.Err(), context.DeadlineExceeded),
+	}
+
+	// Substrate-health classification (change 0065, task 7), decided BEFORE the
+	// error branch below rewrites ExitCode to -1 — classifyExit needs the raw
+	// status the runtime actually reported. It fires for a signal death or a
+	// failure to start, and for NOTHING else: an ordinary non-zero command exit
+	// is the command reporting a result, not the sandbox being unhealthy.
+	if reason, unhealthy := classifyExit(code, err, out.TimedOut); unhealthy {
+		r.handler.health.fire(HealthInfo{
+			Principal: r.principal,
+			Handler:   HandlerContainer,
+			Runtime:   r.handler.runtime,
+			Reason:    reason,
+		})
 	}
 
 	if err != nil {

@@ -10,7 +10,9 @@ import (
 	"sync"
 
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/toolidentity"
+	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
 
@@ -86,6 +88,75 @@ func newSandboxService(appCfg config.Config, hosted bool, warnw io.Writer) (*san
 	proxy, forwarder, stopReporter := resolveEgressDatapath(appCfg, root, warnw)
 
 	opts := []sandbox.ServiceOption{sandbox.WithHostedPosture(hosted)}
+
+	// THE PER-TENANT BIND-MOUNT SOURCE (change 0065), gated on the HOSTED
+	// posture — and gated on it for a reason worth stating, because this is the
+	// design decision this composition root owns.
+	//
+	// # Why hosted, and only hosted
+	//
+	// `hosted` is the ADR-0034 posture signal: true exactly for the two loop
+	// servers, which execute workloads on behalf of REMOTE principals under
+	// ADR-0030's "one process hosts N loops", where `loop_server.auth` is a LIST
+	// of token→principal entries each carrying its own tenant. That is the only
+	// deployment in which two tenants' bash calls can meet inside one fuse
+	// process, so it is the only deployment where sharing one bind-mount is a
+	// cross-tenant disclosure.
+	//
+	// The local CLI bindings (one-shot, shell, research-probe, mcp-server) pass
+	// hosted=false and keep WithTrustedRoot's single-root behaviour, which the
+	// spec is explicit is not being replaced. That is not laziness: a local
+	// operator has one tenant and one working tree, and moving their bash off
+	// the repo they are standing in — onto some provisioned ~/.fuse/workspaces
+	// box — would break the tool for the overwhelmingly common case while
+	// isolating nothing from nobody. `hosted` comes from how the binary was
+	// launched and from nowhere else — never config, an environment variable, a
+	// wire field, or model output — so this gate is not something a model or a
+	// remote caller can flip.
+	//
+	// # The host layout, and who owns it
+	//
+	// The sandbox package deliberately refuses to answer "which host directory
+	// does tenant X get" — that is composition-root policy, and TenantRoots
+	// takes only the PARENT the trees are children of. This binary's answer:
+	//
+	//	~/.fuse/workspaces/<tenant>/     0700, one direct child per tenant
+	//
+	// chosen because (a) it is a sibling of ~/.fuse/sessions, which is already
+	// where this binary keeps per-deployment durable state, so an operator has
+	// one directory to back up, quota, or put on a dedicated volume; (b) it is
+	// OUTSIDE every tenant's own mounted tree and outside the repo root, so
+	// nothing a contained command can write reaches the parent, the sibling
+	// trees, or the off-switch file; and (c) it needs no new config surface —
+	// and a config-supplied mount parent would be a new knob naming a host
+	// directory fuse bind-mounts into a container a model drives, which is the
+	// same hazard defaultEgressForwarderCandidates documents at length.
+	//
+	// create=true: fuse provisions a tenant's tree on first use, 0700, rather
+	// than requiring out-of-band provisioning. An unprovisioned tenant would
+	// otherwise resolve to NOTHING and every one of its bash calls would refuse
+	// — technically safe, operationally a hosted fuse that does not work until
+	// someone mkdirs by hand. The directory is empty and owner-only, so creating
+	// it grants nothing that was not already this process's.
+	//
+	// # Degraded-safe, and NOT silent
+	//
+	// When the parent cannot be resolved, hostedWorkspaceParent returns "" and
+	// says so loudly; NewTenantRoots over "" then resolves NOTHING for every
+	// principal, so containers mount nothing and any working_dir is refused. It
+	// never falls back to the process-wide trusted root, which under the hosted
+	// posture is the shared tree this change exists to stop handing out. The
+	// notice mirrors #64's "EGRESS ENFORCED with NO DATAPATH": a fail-closed
+	// posture that nobody is told about is indistinguishable from a broken fuse.
+	if hosted {
+		parent := hostedWorkspaceParent(warnw)
+		// Passed UNCONDITIONALLY, including when parent is "". A hosted Service
+		// must be tenant-scoped whether or not provisioning succeeded: dropping
+		// the option on failure would silently restore the shared-root
+		// behaviour, which is the precise fallback the spec forbids.
+		opts = append(opts, sandbox.WithTenantRoots(sandbox.NewTenantRoots(parent, true)))
+	}
+
 	closeFn := func() {}
 	if proxy != nil {
 		opts = append(opts, sandbox.WithEgressProxy(proxy, forwarder))
@@ -130,6 +201,115 @@ func newSandboxService(appCfg config.Config, hosted bool, warnw io.Writer) (*san
 		}
 	}
 	return svc, closeFn
+}
+
+// hostedWorkspaceParentName is the directory, under the fuse home, that the
+// per-tenant workspace trees are children of. A CONSTANT, not a knob: it names
+// a host directory this binary bind-mounts children of into containers a model
+// drives, and the whole reason defaultEgressForwarderCandidates is anchored to
+// the executable rather than to config applies here verbatim.
+const hostedWorkspaceParentName = "workspaces"
+
+// hostedWorkspaceParent resolves — and PROVISIONS — the parent directory the
+// per-tenant bind-mount trees live under, returning "" when it cannot.
+//
+// # Why it must exist before NewTenantRoots sees it
+//
+// sandbox.NewTenantRoots canonicalises its parent through resolveMountRoot,
+// which returns "" for anything it cannot prove is an existing directory — a
+// bind-mount source is never invented, because a source the container daemon
+// has to create is a root-owned empty box that merely LOOKS like a workspace.
+// So a hosted fuse creates the parent itself, at startup, before any model has
+// run, and hands over a path that already exists.
+//
+// 0700 on both the fuse home and the parent. The per-tenant children are 0700
+// too (TenantRoots), but a 0755 parent would let any uid on the host enumerate
+// the tenant list, and a per-tenant tree reachable by another uid is not an
+// isolation boundary regardless of its own mode bits.
+//
+// Every failure returns "" plus a loud, operator-facing notice, never a
+// degraded parent. "" is the fail-CLOSED direction: it resolves to no root for
+// every principal, so containers mount nothing and any working_dir is refused,
+// and it can never widen into a shared tree.
+func hostedWorkspaceParent(warnw io.Writer) string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		warnHostedWorkspaceUnavailable(warnw, "(unresolved)", fmt.Sprintf("this process has no home directory (%v)", err))
+		return ""
+	}
+	parent := filepath.Join(home, ".fuse", hostedWorkspaceParentName)
+	if mkErr := os.MkdirAll(parent, 0o700); mkErr != nil {
+		warnHostedWorkspaceUnavailable(warnw, parent, mkErr.Error())
+		return ""
+	}
+	// Re-asserted on an EXISTING directory as well as a freshly created one:
+	// MkdirAll leaves a pre-existing directory's mode alone, so a parent that
+	// was created 0755 by an earlier fuse — or by an operator — would otherwise
+	// keep leaking the tenant list to every uid on the host.
+	if chErr := os.Chmod(parent, 0o700); chErr != nil {
+		warnHostedWorkspaceUnavailable(warnw, parent, "cannot restrict it to owner-only ("+chErr.Error()+")")
+		return ""
+	}
+	return parent
+}
+
+// warnHostedWorkspaceUnavailable is the operator's only signal that a hosted
+// fuse came up unable to give any tenant a workspace.
+//
+// It mirrors warnEgressBlackout deliberately, because the failure has the same
+// shape: the posture is correct and fail-closed, every bash call refuses, and
+// without this notice that is indistinguishable from the sandbox simply being
+// broken. Naming the directory and the cause is what turns a support ticket
+// into a chmod.
+func warnHostedWorkspaceUnavailable(warnw io.Writer, parent, cause string) {
+	fmt.Fprintf(warnw,
+		"sandbox: HOSTED with NO PER-TENANT WORKSPACE — this binary serves remote principals, so each tenant's bash "+
+			"must run against its own tree under %s, but that directory is unusable (%s). "+
+			"No tenant will be given ANY workspace: every contained command runs with nothing mounted and every "+
+			"working_dir is refused. This is deliberate — sharing one tree across tenants is a cross-tenant "+
+			"disclosure — but it is not a working deployment. Make %s creatable and owner-only, then restart.\n",
+		parent, cause, parent)
+}
+
+// installSandboxLoopHooks installs the two per-LOOP observers on the
+// process-scoped sandbox Service: the admission gate's (change 0077) and the
+// substrate-health emitter's (change 0065).
+//
+// # Why both live here, together
+//
+// Both seams have the same awkward shape and it is better stated once than
+// discovered twice: the Service is PROCESS-scoped (one substrate, one gate, one
+// handler, shared by every loop) while an event store is PER-LOOP. So a process
+// serving many loops attributes an admission — or a health transition — to
+// whichever loop's store was installed last. That coarseness is acceptable for
+// both, and for the same reason SandboxGateHooks already documents: these are
+// HOST-level signals whose tenant rides on the event and whose metrics are
+// host-level, so the operator-facing rate stays correct even where a single
+// event's loop attribution is approximate. Neither is a per-loop accounting
+// record, and neither is used as one.
+//
+// A nil store installs NOTHING — the honest shape for the bindings that have no
+// per-loop store (one-shot, shell, research-probe, mcp-server) — rather than
+// emitting into a NoopStore, which would make the wiring look active on a
+// dashboard that would then never move. A nil *Service is tolerated because
+// NewBash(nil) is a supported fail-closed shape and this must be callable
+// unconditionally beside it.
+//
+// It is called from the per-loop construction factory, at the first point that
+// holds BOTH the frozen Service and the loop's store, and before the loop's
+// agent exists — so no command can have run, and no hook is replaced while it
+// is firing.
+func installSandboxLoopHooks(sb *sandbox.Service, store event.EventStore, nodeID string) {
+	if sb == nil || store == nil {
+		return
+	}
+	sb.SetGateHooks(tools.SandboxGateHooks(store, nodeID))
+	// THE HEALTH EMITTER (change 0065, task 9). This is its ONLY non-test
+	// caller, and without it fuse_sandbox_unhealthy_total can never gain a
+	// series in a real fuse — an always-zero failure counter that reads exactly
+	// like a healthy fleet. See the security-knob-inert-at-composition-root
+	// learning; cmd/fuse's own tests fail if this line is removed.
+	sb.SetHealthHooks(tools.SandboxHealthHooks(store, nodeID))
 }
 
 // egressForwarderName is the artifact `make egress-forwarder` produces for one

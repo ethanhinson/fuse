@@ -184,10 +184,25 @@ type PipelineConfig struct {
 // AuthTokenConfig is one static bearer token→principal mapping for the networked
 // loop-control binding (change 0049). Token is the bearer credential a client
 // presents in `Authorization: Bearer <token>`; Tenant is the isolation boundary
-// the caller acts within (empty ⇒ the storage layer's _default tenant); Subject
-// is the authorization subject recorded as a loop's owner. This is the default
+// the caller acts within; Subject is the authorization subject recorded as a
+// loop's owner. This is the default
 // StaticVerifier surface — richer verifiers (OIDC/JWT, mTLS) slot in behind the
 // same loopauth.Verifier seam without a config re-cut.
+// Tenant is OPTIONAL and remains so. An omitted `tenant:` is collapsed to the
+// _default tenant ONCE, at the trusted authentication edge that builds the
+// Principal from this entry (cmd/fuse's buildLoopVerifier for the networked
+// binding, principalFromConfig for the stdio one), never later and never by the
+// layers that consume a Principal. Two entries that both omit it therefore name
+// ONE tenant: they share a durable event stream, a tool-identity signing key,
+// and — since change 0065 — one bash workspace tree. Give two principals that
+// must be isolated from each other two distinct, explicitly-named tenants.
+//
+// A tenant id also has to be a usable filesystem segment under the hosted
+// bindings: lowercase letters, digits, '-', '_', '.', at most 128 bytes, and it
+// may not START with '.'. An uppercase id is REFUSED rather than folded,
+// because a case-insensitive volume would hand "Acme" and "acme" one directory;
+// a dot-leading id is refused because its workspace tree would be hidden from
+// an operator listing the parent. See internal/tools/sandbox.tenantDirName.
 type AuthTokenConfig struct {
 	Token                 string `yaml:"token"`
 	Tenant                string `yaml:"tenant"`

@@ -41,6 +41,10 @@ const devToken = "fuse-dev-token"
 // use keeps working while every request still authenticates. usedDefault reports
 // whether the dev fallback was synthesized so the caller can log it loudly.
 //
+// It is also the edge at which an entry's optional `tenant:` becomes a real
+// tenant identity: an omitted one collapses to event.DefaultTenant here, once.
+// See the comment on that line — it is load-bearing for bash isolation.
+//
 // Posture note (change 0049): this is fail-USABLE, not fail-open — the server
 // never accepts an unauthenticated request. We deliberately do NOT hard-fail on
 // an empty config because that would break `fuse loop-serve-net` with a bare
@@ -53,7 +57,49 @@ func buildLoopVerifier(cfg config.Config) (loopauth.Verifier, bool) {
 			continue // an entry with no token is unusable; skip it
 		}
 		tokens[a.Token] = loopauth.Principal{
-			Tenant:                event.TenantID(a.Tenant), // "" normalizes to _default at the store
+			// THE EMPTY-TENANT COLLAPSE, PERFORMED HERE AND NOWHERE LATER
+			// (change 0065 review).
+			//
+			// `tenant:` is optional on an auth entry — schema.go documents it,
+			// and the loader pins the shape — so "" is a config a running
+			// deployment legitimately has. It is collapsed to DefaultTenant at
+			// THIS trusted edge, once, on the way out of config and into a
+			// Principal, because downstream this value means two different
+			// things to two subsystems that must not disagree about it:
+			// event storage keys every row by it (an absent tenant must still
+			// land somewhere, so NormalizeTenant collapses), while the bash
+			// mount resolver treats it as an isolation boundary (an absent
+			// identity must NOT silently share a tree, so TenantRoots refuses).
+			// Leaving "" in the Principal let both readings coexist in one
+			// value: the store wrote to _default while the resolver returned
+			// ErrNoTenantRoot, and every bash call from this principal failed
+			// with "bash is unavailable" — at first use, in production.
+			//
+			// Collapsing at the AUTHENTICATION boundary rather than in the
+			// filesystem layer keeps sandbox.tenantDirName's refuse-empty
+			// invariant untouched: it still refuses "", it simply never
+			// receives one from this edge again. The security floor is not
+			// being lowered to meet the config; the config is being resolved to
+			// a real identity before it reaches the floor.
+			//
+			// This is also what the SIBLING edges already do with this exact
+			// value: binding #2's principalFromConfig (loop_server.go) and
+			// toolIdentityTenantKeys (tool_identity.go), which derives signing
+			// keys from this SAME cfg.LoopServer.Auth list, both normalize.
+			// Binding #3 was the last edge passing it through raw.
+			//
+			// Two entries that both omit `tenant` therefore share one identity
+			// — and that is the operator having named one tenant twice, not a
+			// silent merge of the kind d6047bf refuses for "Acme"/"acme". Those
+			// are two DIFFERENT strings a case-insensitive filesystem would
+			// collapse behind the operator's back; these are the SAME string,
+			// and they already share one durable event stream
+			// (fsstore writes <baseDir>/_default/) and one tool-identity
+			// signing key today. The mount adds no reach the store did not
+			// already grant. Operators wanting two isolated principals must
+			// name two distinct tenants — as they must already, for their
+			// events to be distinguishable at all.
+			Tenant:                event.NormalizeTenant(event.TenantID(a.Tenant)),
 			Subject:               a.Subject,
 			ObservabilityOperator: a.ObservabilityOperator,
 		}
