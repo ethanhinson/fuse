@@ -474,7 +474,21 @@ func (p *Pool) acquireFresh(ctx context.Context, principal loopauth.Principal) (
 		// firing, not the substrate failing — as is a pull failure, which the
 		// handler already reported as pull_failed at its own site and which
 		// would otherwise be double-counted under two reasons for one incident.
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errPullFailed) {
+		//
+		// An unresolvable per-tenant workspace root is excluded FOR THE SAME
+		// STATED REASON — one incident, one reason, reported at the site that
+		// can classify it. ErrNoTenantRoot is a CONFIGURATION fault (an unset
+		// or unusable workspace parent, or a tenant id that is not a usable
+		// workspace identity), not the substrate failing: it recurs on every
+		// single bash call for as long as the misconfiguration stands, so
+		// counting it would make acquire_failed a permanent count of one config
+		// mistake wearing an operator-facing name — the same fabrication
+		// health.go's classifyExit comment guards against for command exits —
+		// and would drown the genuine acquire_failed signal (no daemon, a
+		// rejected mount) an operator actually needs to see.
+		// warnHostedWorkspaceUnavailable's startup notice is the correct
+		// operator-facing channel for this fault.
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errPullFailed) && !errors.Is(err, ErrNoTenantRoot) {
 			hooks := p.src.healthHooks()
 			hooks.fire(HealthInfo{
 				Principal: principal,

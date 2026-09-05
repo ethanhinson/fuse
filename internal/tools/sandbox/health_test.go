@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -115,6 +116,45 @@ func TestPoolReportsAcquireFailedAsHealth(t *testing.T) {
 	}
 	if got := rec.reasons(); len(got) != 1 {
 		t.Fatalf("reasons = %v, want a deadline expiry to emit NOTHING further", got)
+	}
+}
+
+// TestPoolDoesNotReportTenantRootFailureAsHealth pins that an unresolvable
+// per-tenant workspace root is NOT substrate health. It is a configuration
+// fault — an unset or unusable workspace parent, or a principal whose tenant id
+// is not a usable workspace identity — and it recurs on EVERY bash call for as
+// long as the misconfiguration stands. Counting it would make
+// fuse_sandbox_unhealthy_total{reason="acquire_failed"} a permanent count of one
+// config mistake, drowning the genuine signal (no daemon, a rejected mount) an
+// operator needs to see.
+func TestPoolDoesNotReportTenantRootFailureAsHealth(t *testing.T) {
+	clock := newFakeClock()
+	src := newFakeSource(clock)
+	rec := &recordHealth{}
+	src.setHealth(rec.hooks())
+
+	pool := NewPool(src)
+	defer func() { _ = pool.Close(context.Background()) }()
+
+	p := loopauth.Principal{Tenant: "t", Subject: "s"}
+
+	src.setErr(fmt.Errorf("%w: tenant %q has no provisioned workspace", ErrNoTenantRoot, p.Tenant))
+	for i := 0; i < 3; i++ {
+		if _, err := pool.Acquire(context.Background(), p); err == nil {
+			t.Fatal("Acquire succeeded, want the injected tenant-root failure")
+		}
+	}
+	if got := rec.reasons(); len(got) != 0 {
+		t.Fatalf("reasons = %v, want a tenant-root misconfiguration to emit NOTHING", got)
+	}
+
+	// ...and the genuine substrate signal must still fire through the same site.
+	src.setErr(errors.New("no daemon"))
+	if _, err := pool.Acquire(context.Background(), p); err == nil {
+		t.Fatal("Acquire succeeded, want the injected failure")
+	}
+	if got := rec.reasons(); len(got) != 1 || got[0] != HealthAcquireFailed {
+		t.Fatalf("reasons = %v, want exactly [acquire_failed]", got)
 	}
 }
 
