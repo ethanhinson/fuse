@@ -12,12 +12,12 @@ related: [63, 64, 74, 75, 77]
 discovered_from: [58]
 adrs: [44]
 spec: docs/superpowers/specs/2026-09-04-bash-per-tenant-filesystem-isolation-design.md
-plan:
+plan: docs/superpowers/plans/2026-09-05-bash-per-tenant-filesystem-isolation.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/bash-per-tenant-filesystem-isolation
-claimed_at: 2026-09-05T04:02:43Z
+claimed_at: 2026-09-05T04:04:30Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-09-04-bash-per-tenant-filesystem-isolation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-04-bash-per-tenant-filesystem-isolation-design.md) |
+| Plan | [2026-09-05-bash-per-tenant-filesystem-isolation.md](https://github.com/ethanhinson/fuse/blob/feat/bash-per-tenant-filesystem-isolation/docs/superpowers/plans/2026-09-05-bash-per-tenant-filesystem-isolation.md) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
