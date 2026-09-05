@@ -1,12 +1,11 @@
 # Backlog
 
-**81 changes** — 🟢 2 in progress · 🟡 2 proposed · ⚪ 3 deferred · ✅ 68 done · 🗑️ 6 killed
+**81 changes** — 🟢 1 in progress · 🟡 2 proposed · ⚪ 3 deferred · 🔵 1 implemented · ✅ 68 done · 🗑️ 6 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch |
 |---|-------|----------|------|------|--------|
-| [0065](active/0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | `medium` | `feat` | [spec](../superpowers/specs/2026-09-04-bash-per-tenant-filesystem-isolation-design.md) | `feat/bash-per-tenant-filesystem-isolation` |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` |
 
 ## 🟡 Proposed (2)
@@ -23,6 +22,12 @@
 | [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 | [0074](active/0074-sandbox-health-emitter.md) | sandbox health emitter — feed KindSandboxHealth so fuse_sandbox_unhealthy_total stops being defined-but-unfed | `medium` | `feat` |
+
+## 🔵 Implemented — awaiting merge (1)
+
+| # | Title | Priority | Type | PR | Readiness |
+|---|-------|----------|------|----|-----------|
+| [0065](active/0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | `medium` | `feat` | [#87](https://github.com/ethanhinson/fuse/pull/87) |  |
 
 ```mermaid
 graph TD
