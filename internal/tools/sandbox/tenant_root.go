@@ -81,8 +81,10 @@ type TenantRoots struct {
 //
 // If create is true, a tenant's own subdirectory is created on first use with
 // 0700 permissions — owner-only, because the whole point of the directory is
-// that it is one tenant's and no other's. If false, a tenant whose directory
-// does not already exist resolves to nothing.
+// that it is one tenant's and no other's — and an ALREADY-EXISTING one is
+// re-restricted to 0700 on every resolve, so a tree provisioned wide out of
+// band cannot stay wide. If false, a tenant whose directory does not already
+// exist resolves to nothing.
 func NewTenantRoots(parent string, create bool) *TenantRoots {
 	return &TenantRoots{parent: resolveMountRoot(parent), create: create}
 }
@@ -127,6 +129,20 @@ func (t *TenantRoots) Root(p loopauth.Principal) (string, error) {
 		// for one tenant race harmlessly.
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return "", fmt.Errorf("%w: create workspace for tenant %q: %w", ErrNoTenantRoot, p.Tenant, err)
+		}
+		// Re-asserted on an EXISTING directory as well as a freshly created
+		// one, exactly as hostedWorkspaceParent does for the parent: MkdirAll
+		// leaves a pre-existing directory's mode alone, so a tenant tree
+		// created 0755 by an earlier fuse — or restored from a backup, or
+		// provisioned out of band by an operator — would otherwise keep a mode
+		// that lets any uid on the host read that tenant's files. The parent
+		// being 0700 mitigates that but does not close it: same-uid processes
+		// still read it, and the mitigation is only as durable as the parent's
+		// own mode. Failing here returns ErrNoTenantRoot rather than mounting
+		// the wide tree anyway — the same fail-closed handling the parent gives
+		// this identical call, so the two levels are one policy.
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return "", fmt.Errorf("%w: restrict workspace for tenant %q to owner-only: %w", ErrNoTenantRoot, p.Tenant, err)
 		}
 	}
 

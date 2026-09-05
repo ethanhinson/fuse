@@ -304,3 +304,37 @@ func tenantRootsHandlerFromService(t *testing.T, opts ...ServiceOption) *contain
 	}
 	return h
 }
+
+// A PRE-EXISTING tenant tree is re-restricted to 0700, not merely left as
+// found. This is the same hazard hostedWorkspaceParent guards one level up:
+// MkdirAll leaves an existing directory's mode alone, so a tenant tree created
+// 0755 by an earlier fuse build, restored from a backup, or provisioned out of
+// band would otherwise keep a mode that lets any uid on the host read that
+// tenant's files. The parent being 0700 mitigates that but does not close it —
+// same-uid processes still read it, and the mitigation evaporates the moment
+// the parent's mode changes.
+func TestTenantRootsResolverReassertsOwnerOnlyOnExistingTenantTree(t *testing.T) {
+	parent := trustedTestRoot(t)
+	// Provisioned out of band, world-readable — the exact shape the guard is for.
+	existing := filepath.Join(parent, "acme")
+	if err := os.Mkdir(existing, 0o755); err != nil {
+		t.Fatalf("Mkdir(%q): %v", existing, err)
+	}
+	if err := os.Chmod(existing, 0o755); err != nil { // defeat any umask narrowing
+		t.Fatalf("Chmod(%q): %v", existing, err)
+	}
+
+	got, err := NewTenantRoots(parent, true).Root(principal("acme", "alice"))
+	if err != nil {
+		t.Fatalf("Root(acme): %v", err)
+	}
+
+	info, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("Stat(%q): %v", got, err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("pre-existing tenant tree %q has mode %#o, want 0700; a tree "+
+			"another uid can read is not an isolation boundary", got, perm)
+	}
+}
