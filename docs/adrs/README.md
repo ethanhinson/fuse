@@ -57,6 +57,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0053](0053-whole-file-config-discard-salvages-the-posture.md) — A whole-file config discard is fail-safe only while every dimension defaults to the safe side — adding a permissive default obliges the loader to salvage the posture (Accepted) ← change #64 · relates to ADR-0044
 - [ADR-0054](0054-charm-table-tabs-as-shared-tui-component-layer.md) — Adopt charmbracelet table/tabs as the shared TUI component layer (Accepted) ← change #80
 - [ADR-0055](0055-warm-pool-entries-certify-on-resolved-mount.md) — A warm sandbox pool entry is certified on its resolved mount, not only on its Principal (Accepted) ← change #65 · relates to ADR-0044, ADR-0034, ADR-0030
+- [ADR-0056](0056-sandbox-health-is-a-sibling-hooks-seam-emitting-only-observable-reasons.md) — Sandbox health is a sibling HealthHooks seam, and only honestly-observable reasons are emitted (Accepted) ← change #65 · relates to ADR-0044, ADR-0055
 
 ## Superseded / Reversed
 
