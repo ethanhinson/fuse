@@ -102,6 +102,18 @@ func TestTenantRootsResolverRefusesUnsafeTenantIdentities(t *testing.T) {
 		"null byte":           "a\x00b",
 		"space":               "a b",
 		"backslash traversal": `..\tenant-b`,
+
+		// THE CASE-COLLISION PAIR. On a case-insensitive filesystem (APFS,
+		// HFS+, NTFS) "Acme" and "acme" name ONE directory, so permitting
+		// uppercase would silently merge two distinct tenants onto one host
+		// tree while filepath.Rel still reports two distinct segments — both
+		// pass the structural check, both get mounted, and the suite stays
+		// green. An uppercase id is therefore refused outright, making the
+		// colliding pair unrepresentable rather than merely unlikely.
+		"uppercase":      "Acme",
+		"mixed case":     "aCme",
+		"uppercase only": "ACME",
+		"uppercase tail": "acmE",
 	}
 	for name, tenant := range unsafe {
 		t.Run(name, func(t *testing.T) {
@@ -128,6 +140,32 @@ func TestTenantRootsResolverRefusesUnsafeTenantIdentities(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The case-collision property stated directly, as a PAIR rather than as two
+// independent refusals: whatever else changes about the allowlist, a tenant id
+// and its case-variant must never both resolve, because on a case-insensitive
+// volume "both resolve" means "both resolve to the same tree".
+func TestTenantRootsResolverRefusesCaseVariantTenantCollisions(t *testing.T) {
+	parent := trustedTestRoot(t)
+	src := NewTenantRoots(parent, true)
+
+	lower, err := src.Root(principal("acme", "s"))
+	if err != nil {
+		t.Fatalf("Root(acme): %v", err)
+	}
+	upper, uerr := src.Root(principal("Acme", "s"))
+	if uerr == nil {
+		t.Fatalf("tenant %q resolved to %q (lowercase sibling %q); on a "+
+			"case-insensitive filesystem these are ONE directory, so the "+
+			"uppercase id must be refused rather than mounted", "Acme", upper, lower)
+	}
+	if !errors.Is(uerr, ErrNoTenantRoot) {
+		t.Fatalf("error = %v, want it to wrap ErrNoTenantRoot", uerr)
+	}
+	if upper != "" {
+		t.Fatalf("a refused tenant still returned the root %q", upper)
 	}
 }
 

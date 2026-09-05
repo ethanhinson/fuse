@@ -166,6 +166,32 @@ func (t *TenantRoots) Root(p loopauth.Principal) (string, error) {
 // at by string manipulation — so a tenant id that is not already a safe segment
 // gets no root at all.
 //
+// # Why uppercase is refused, and why it is refused rather than lowercased
+//
+// The allowlist is LOWERCASE-ONLY, and that is a security decision, not a
+// stylistic one. Filesystems disagree about whether case distinguishes a name:
+// APFS and HFS+ (macOS, the documented dev platform), NTFS, and any
+// case-insensitive volume treat "Acme" and "acme" as ONE directory entry. An
+// allowlist permitting both cases would therefore hand two DISTINCT tenants the
+// same physical tree — and would do so silently, because every check downstream
+// still sees two distinct strings: MkdirAll succeeds for both, filepath.Rel
+// reports the two different segments "Acme" and "acme", so both pass Root's
+// structural containment check and both -v mounts land on the same host tree.
+// That is exactly the collision the paragraph above forbids, reached by a
+// different route: not by manipulating the string, but by trusting a
+// distinction the filesystem does not make. Refusing an uppercase id makes the
+// colliding pair UNREPRESENTABLE rather than merely unlikely.
+//
+// Case-folding the id to lowercase would close the mount collision but IS the
+// collision-by-string-manipulation this function exists to refuse: it would map
+// the distinct tenants "Acme" and "acme" onto one directory deliberately, on
+// every platform, including the case-sensitive ones where they are genuinely
+// two tenants. Refusing keeps the file's posture — fail the whole id rather
+// than substitute — and pushes the decision back to whoever mints tenant ids,
+// where an uppercase id is a loud configuration error rather than a silent
+// merge. Callers that want case-insensitive tenant names must normalise at the
+// identity edge, where the two ids can still be recognised as one identity.
+//
 // The empty tenant fails here by construction, which is the empty-tenant
 // decision documented at Root's call site.
 func tenantDirName(tenant event.TenantID) (string, bool) {
@@ -181,7 +207,8 @@ func tenantDirName(tenant event.TenantID) (string, bool) {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		// Lowercase only: see the case-insensitive-filesystem reasoning above.
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
 		case c == '-' || c == '_' || c == '.':
 		default:
 			return "", false
