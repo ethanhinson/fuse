@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/bash-per-tenant-filesystem-isolation
-claimed_at: 2026-09-05T03:56:21Z
+claimed_at: 2026-09-05T04:02:43Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -55,11 +55,14 @@ mount.
   it, implement it for the container handler alone, and record the binding conditions
   (per-tenant virtio-fs share or block image; non-escaping `working_dir`; per-principal
   snapshot pools) so the future handler inherits them.
-- **Land #74's health emitter here** (deferred into this change 2026-09-04). A persistent
-  per-tenant container is what makes `ContainerID` real and a health probe possible, so
-  populate `ContainerID`, emit the reasons the substrate can honestly observe, build the
-  exit-code classifier for `oom`/`runtime_exit`, and flip #63's E2E tripwire that currently
-  asserts `fuse_sandbox_unhealthy_total` stays unfed. Never fabricate a health signal.
+- **Land #74's health emitter here** (deferred into this change 2026-09-04), **partially** —
+  narrowed by the 2026-09-05 reconcile. Emit the reasons this substrate can honestly observe
+  (`pull_failed`, `acquire_failed`, and a new exit-code classifier for `oom`/`runtime_exit`),
+  and flip #63's E2E tripwire that currently asserts `fuse_sandbox_unhealthy_total` stays
+  unfed. **`unresponsive`, `recovered`, and a real `ContainerID` go back to #74**: the build
+  produces no long-lived container (`run --rm` per Exec is unchanged), so those three are not
+  honestly observable here, and the spec's Decision 3 required amending rather than faking
+  them. Never fabricate a health signal.
 
 ## Out of scope
 
@@ -79,5 +82,67 @@ mount.
 - Whether the health emitter attaches as a new `sandbox.PoolHooks` field or a sibling seam.
 
 ## Reconcile log
+
+### 2026-09-05 — reconcile before build (docket-implement-next)
+
+Verified every load-bearing claim against `origin/main` @ `51dfc48` (not the working tree, per
+the `reconcile-verify-claims-against-origin-not-working-tree` learning). Dependencies #63
+(PR #79) and #64 (PR #84) are both merged and present.
+
+**Spec claims confirmed:**
+- `Tenant` appears in `internal/tools/sandbox/` only in `admission.go` (the #0077 concurrency
+  gate) — the filesystem layer has no tenant notion. The gap is real and as described.
+- `containerHandler.root` is a single process-wide value; `cmd/fuse/sandbox.go` derives it from
+  `os.Getwd()` and `NewServiceFromRoot` applies `WithTrustedRoot` LAST.
+- `Pool.entries` is `map[loopauth.Principal]*poolEntry` and `certifyPrincipal` re-asserts on
+  every hit, including a `principalScoped` runner check — the Principal is in hand at Acquire,
+  exactly where Decision 1 places the root derivation.
+- `workspace()` containment (canonicalise, `EvalSymlinks`, `filepath.Rel` + `..`, non-directory
+  refusal, no host-path disclosure) is intact and is inherited unchanged.
+
+**Corrections to the spec's picture:**
+1. A survey pass reported `resolveMountRoot` as never called in production. **False** — it is
+   applied at `container.go:277` inside `newContainerHandler`, after options, canonicalising
+   `h.root` once at construction. No remediation needed; recorded so the claim is not re-raised.
+2. `container.go:635-643` already carries a `TODO(#0065)` at the single `-v` mount site naming
+   this change, with an explicit invariant to preserve: the source is only ever the trusted
+   root, and `""` means mount nothing rather than substitute.
+
+**Scope narrowed — Decision 3's own conditional fired.** No container outlives an `Exec`
+(`run --rm` per Exec; `Release` states "There is no container to stop"; `containerIdentified` is
+implemented by nothing). Per-tenant mounts do not require persistence, so Decisions 1 and 2 are
+unaffected; but `unresponsive`/`recovered` and a real `ContainerID` are not honestly observable
+without a long-lived container, so all three defer back to #74 (still `deferred`, `depends_on:
+[63]`). The spec carries a dated amendment recording this. Building a persistent-container
+substrate was never in this change's scope and is not being adopted silently.
+
+**Build-time constraints folded in from the learnings ledger:**
+- `security-knob-inert-at-composition-root` — #64 shipped the enforcing object unwired in
+  `cmd/fuse`. The tenant resolver must carry a composition-root wiring assertion, not only
+  package-level unit tests.
+- `trusted-root-never-model-selectable` — the per-tenant root must be applied on the trusted
+  side and never reachable from `working_dir` or any model output; the resolver widens *which*
+  root, never *who* chooses it.
+- `cache-over-tenant-scoped-source-reassert-key-on-hit` — the warm-entry check must assert the
+  resolved MOUNT, not merely the Principal, so a cache hit cannot carry another tenant's root.
+- `canonicalize-once-before-every-matching-layer` — `Principal.Tenant` is `event.TenantID`, and
+  `event.NormalizeTenant("")` collapses the empty tenant to `DefaultTenant "_default"`. The
+  resolver must decide this explicitly: an unauthenticated/empty tenant must not silently share
+  a root with a real one. Open question for build time, flagged below.
+- `race-invisible-to-race-detector-without-concurrent-test` — two-tenant isolation needs a
+  concurrent test, not just sequential ones, for `-race` to see anything.
+
+**Precedent to follow:** #64's egress datapath is the shape for this. A concrete process-scoped
+resource arrives via a `ServiceOption` from the composition root, is forwarded into the handler
+as an unexported `containerOption` holding a narrow interface, and the per-principal value is
+resolved at `Acquire` from the `Principal` parameter and stored immutably on the Runner
+(`egressSocketSource.Listen(p, ...)`, `container.go:342-387`). The tenant root resolver should
+mirror it rather than invent a second shape.
+
+**Test-lane note:** the container E2E and integration tests gate at runtime on
+`exec.LookPath{docker,nerdctl,podman}` and `t.Skipf` — no build tag — so they run under plain
+`make test` when a runtime is present and skip green otherwise.
+
+Scope otherwise stands. No kill, no fundamental invalidation.
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->

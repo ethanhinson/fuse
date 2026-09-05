@@ -123,11 +123,11 @@ possible. Those two facts are the same fact, which is why #74 belongs here rathe
   and `acquire_failed` are reachable already (`container.go` has a real single-flight
   pre-pull with its own `pullErr`; `pool.acquireFresh` sees the acquire error).
   `oom` / `runtime_exit` need an exit-code classifier separating substrate failure (e.g.
-  exit 137) from an ordinary non-zero command exit — in scope here. `unresponsive` /
-  `recovered` require the health probe that a persistent container makes possible — in scope
-  here **if and only if** this change actually produces a long-lived container; if the
-  implementation lands per-tenant mounts without persistence, those two reasons defer again
-  and this spec must be amended rather than the emitter faked.
+  exit 137) from an ordinary non-zero command exit — in scope here.
+  `unresponsive` / `recovered` **are DEFERRED back to #74 by the reconcile of 2026-09-05**,
+  under this decision's own if-and-only-if: the build does NOT produce a long-lived
+  container (see the amendment below), so neither reason is honestly observable and
+  emitting either would be the fabrication the next bullet forbids.
 - **Never fabricate a signal.** #74's out-of-scope rule carries over verbatim: an emit
   inserted purely to make the metric non-zero is worse than an empty metric, because an
   operator would trust it.
@@ -137,6 +137,37 @@ possible. Those two facts are the same fact, which is why #74 belongs here rathe
   real unhealthy transition and assert the family moves on a live `/metrics` scrape.
 - Payload discipline is unchanged: closed enum only, never raw error text, command, or
   environment — the same rule `sandboxCause` already enforces.
+
+### Amendment 2026-09-05 (reconcile) — no long-lived container in this change
+
+Decision 3 made `unresponsive`/`recovered` conditional on this change actually producing a
+persistent container, and required the spec be **amended rather than the emitter faked** if it
+did not. It does not, so this is that amendment.
+
+Verified on `origin/main` @ `51dfc48`: `(*containerRunner).argv` builds `run --rm` per Exec
+(`container.go:557-560`), `(*containerRunner).Release` documents "There is no container to stop"
+(`container.go:835-843`), and `containerIdentified` (`pool.go:169-176`) is documented as
+implemented by nothing. Warm pooling reuses a `*containerRunner` **object** — its env and egress
+lease — never a running container.
+
+**A per-tenant mount does not require persistence.** The mount source is chosen at `Acquire`
+from the `Principal` and handed to each `run --rm`; that is the whole of Decision 1, and it is
+unaffected. Converting the substrate to long-lived containers is a separate change with its own
+lifecycle, reap, and cross-Exec state-leakage design — never scoped here, and adopting it
+silently mid-build would be the larger error.
+
+Consequences, and the scope that stands:
+- **In scope, unchanged:** per-tenant mount root (Decision 1), the microVM seam (Decision 2),
+  the `oom`/`runtime_exit` exit-code classifier, `pull_failed`, `acquire_failed`.
+- **`ContainerID` stays `""`** on this substrate. The `containerIdentified` seam is left exactly
+  as it is; populating it would require inventing an id for a container that does not outlive
+  the Exec.
+- **Deferred back to #74** (`deferred`, `depends_on: [63]`): `unresponsive`, `recovered`, and a
+  real `ContainerID` — all three gated on a persistent-container substrate.
+- **The #63 tripwire in `internal/tools/sandbox_metrics_e2e_test.go:163-171` is still flipped**,
+  because this change *does* land a real emitter: the E2E must drive an honestly-observable
+  unhealthy transition and assert `fuse_sandbox_unhealthy_total` moves on a live `/metrics`
+  scrape. The guard asserts "no emitter exists"; that stops being true here.
 
 ## Out of scope
 
@@ -167,7 +198,10 @@ The security properties are the deliverable, so they are asserted directly, not 
    today's — the single-tenant path must not regress.
 6. **Health end-to-end.** Drive at least one real unhealthy transition against a real
    container and assert `fuse_sandbox_unhealthy_total{...}` moves on the live `/metrics`
-   scrape; flip #63's negative guard as part of the same change.
+   scrape; flip #63's negative guard as part of the same change. Per the 2026-09-05
+   amendment the transition driven must be one this substrate can honestly observe
+   (`pull_failed`, `acquire_failed`, or a classified `oom`/`runtime_exit`) — never
+   `unresponsive`/`recovered`.
 7. Run under `-race`, consistent with the repo's CI `unit-race` lane.
 
 ## Open questions for build time
