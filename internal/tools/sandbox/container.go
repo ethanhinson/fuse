@@ -532,6 +532,17 @@ type containerRunner struct {
 // that it is about to hand the right context to the right principal.
 func (r *containerRunner) acquiredFor() loopauth.Principal { return r.principal }
 
+// mountRoot reports the HOST directory this Runner's containers bind-mount, so
+// a pool can verify — against the Runner itself, not only against its own
+// bookkeeping — that a warm checkout still mounts the tree it was certified
+// with (change 0065; see pool.go's certifyEntry).
+//
+// It reads the immutable field set at Acquire and takes no lock, because there
+// is nothing to lock: root is written once, before this Runner is visible to
+// any other goroutine, and never reassigned. If that ever stops being true,
+// this accessor is where the guard belongs.
+func (r *containerRunner) mountRoot() string { return r.root }
+
 // ResetEnv re-applies a freshly resolved environment to a warm Runner.
 //
 // It exists for the pool's reset-on-checkout: a Runner that outlives one
