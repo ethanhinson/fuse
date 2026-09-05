@@ -2,11 +2,11 @@
 id: 65
 slug: bash-per-tenant-filesystem-isolation
 title: bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-16
-updated: 2026-09-04
+updated: 2026-09-05
 depends_on: [63]
 related: [63, 64, 74, 75, 77]
 discovered_from: [58]
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/bash-per-tenant-filesystem-isolation
+claimed_at: 2026-09-05T03:56:21Z
 pr:
 blocked_by:
 reconciled: false
