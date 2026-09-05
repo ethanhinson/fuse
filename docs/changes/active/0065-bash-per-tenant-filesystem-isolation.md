@@ -2,7 +2,7 @@
 id: 65
 slug: bash-per-tenant-filesystem-isolation
 title: bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-16
@@ -13,12 +13,12 @@ discovered_from: [58]
 adrs: [44, 55, 56, 57]
 spec: docs/superpowers/specs/2026-09-04-bash-per-tenant-filesystem-isolation-design.md
 plan: docs/superpowers/plans/2026-09-05-bash-per-tenant-filesystem-isolation.md
-results:
+results: docs/results/2026-09-05-bash-per-tenant-filesystem-isolation-results.md
 trivial: false
 auto_groomable:
 branch: feat/bash-per-tenant-filesystem-isolation
-claimed_at: 2026-09-05T05:04:56Z
-pr:
+claimed_at: 2026-09-05T05:07:00Z
+pr: https://github.com/ethanhinson/fuse/pull/87
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-09-04-bash-per-tenant-filesystem-isolation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-04-bash-per-tenant-filesystem-isolation-design.md) |
 | Plan | [2026-09-05-bash-per-tenant-filesystem-isolation.md](https://github.com/ethanhinson/fuse/blob/feat/bash-per-tenant-filesystem-isolation/docs/superpowers/plans/2026-09-05-bash-per-tenant-filesystem-isolation.md) |
+| Results | [2026-09-05-bash-per-tenant-filesystem-isolation-results.md](https://github.com/ethanhinson/fuse/blob/feat/bash-per-tenant-filesystem-isolation/docs/results/2026-09-05-bash-per-tenant-filesystem-isolation-results.md) |
+| PR | [#87](https://github.com/ethanhinson/fuse/pull/87) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md), [ADR-0055](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0055-warm-pool-entries-certify-on-resolved-mount.md), [ADR-0056](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0056-sandbox-health-is-a-sibling-hooks-seam-emitting-only-observable-reasons.md), [ADR-0057](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0057-unsafe-tenant-ids-are-refused-never-normalised.md) |
 <!-- docket:artifacts:end -->
 
