@@ -6,7 +6,7 @@ status: proposed
 priority: medium
 type: feat
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-09-04
 depends_on: [63]
 related: [63, 64, 74, 75, 77]
 discovered_from: [58]
@@ -39,6 +39,9 @@ ADR-0044 decided that **hosted filesystem access is a per-tenant bind-mount** sc
 - **Per-tenant bind-mount**: hosted filesystem access is a bind-mount into the container scoped by ADR-0034 `Principal.Tenant`, so one tenant's shell cannot see another tenant's files.
 - **Extend the tenant-scoped, non-escaping mount to the microVM handler** (per ADR-0044's 2026-08-16 Update): the same `Principal.Tenant`-scoped isolation must hold when #63's seam selects a microVM handler, expressed as the VM-native equivalent of the container bind-mount — a per-tenant **virtio-fs share** OR a per-tenant **block image**. Same tenant-scoping rule, one backing per boundary mechanism.
 - **`working_dir` containment**: the **model-supplied** `working_dir` resolves **within** the mount and cannot escape it (no `..`/symlink/absolute-path escape). This honors ADR-0044's inherited ADR-0036 constraint — the root of trust (the tenant/principal scoping the mount) comes from the **authenticated loop-start context, never from model output** (not the `command`, not `working_dir`).
+- **Health-signal observability obligations inherited from #74** (deferred into this change, 2026-09-04 groom). #74 (`sandbox health emitter`) was deferred until this change lands, because the persistent, tenant-scoped container this change creates is what makes the remaining `event.SandboxHealthPayload` reasons observable at all. Two obligations ride along:
+  - **Populate `ContainerID`.** The payload carries a `ContainerID` that today's stateless-per-`Exec` substrate never produces (always `""`, since `docker run --rm` means no container outlives an `Exec`). A persistent per-tenant container is the first design in which that field has a real value; it must actually be set rather than left vestigial.
+  - **Make the prober-dependent reasons reachable.** `unresponsive` and `recovered` presuppose a long-lived container with a health probe, and `oom` / `runtime_exit` need an exit-code classifier separating substrate failure (e.g. exit 137 OOM-kill) from an ordinary non-zero command exit. Whether this change *builds* the emitter or merely makes it buildable is a design question for its brainstorm — but it should not close in a state where #74 is still un-revivable.
 
 ## Out of scope
 
@@ -55,6 +58,7 @@ ADR-0044 decided that **hosted filesystem access is a per-tenant bind-mount** sc
 - Canonical mechanism for guaranteeing `working_dir` cannot escape the mount (resolve-and-verify vs. mount-namespace confinement) across the isolation handlers the #63 seam selects — including the microVM backing (virtio-fs share vs. per-tenant block image).
 - Lifecycle/cleanup of per-tenant mounts relative to ADR-0034 ownership/lease.
 - How the working tree the model edits is presented within the per-tenant mount.
+- **How does the per-tenant persistent container interact with #74's deferred health emitter?** Specifically: is `ContainerID` populated here, and do the `unresponsive` / `recovered` / `oom` / `runtime_exit` reasons become observable as a consequence of this change or only after a follow-on prober?
 
 ## Reconcile log
 
