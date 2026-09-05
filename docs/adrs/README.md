@@ -58,6 +58,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0054](0054-charm-table-tabs-as-shared-tui-component-layer.md) — Adopt charmbracelet table/tabs as the shared TUI component layer (Accepted) ← change #80
 - [ADR-0055](0055-warm-pool-entries-certify-on-resolved-mount.md) — A warm sandbox pool entry is certified on its resolved mount, not only on its Principal (Accepted) ← change #65 · relates to ADR-0044, ADR-0034, ADR-0030
 - [ADR-0056](0056-sandbox-health-is-a-sibling-hooks-seam-emitting-only-observable-reasons.md) — Sandbox health is a sibling HealthHooks seam, and only honestly-observable reasons are emitted (Accepted) ← change #65 · relates to ADR-0044, ADR-0055
+- [ADR-0057](0057-unsafe-tenant-ids-are-refused-never-normalised.md) — Unsafe tenant ids are refused, never normalised — the one legitimate collapse happens at the auth edge (Accepted) ← change #65 · relates to ADR-0034, ADR-0044, ADR-0055, ADR-0056
 
 ## Superseded / Reversed
 
