@@ -346,11 +346,30 @@ func TestContainerWithoutTrustedRootMountsNothingAndRefusesWorkingDir(t *testing
 	}
 }
 
+// LOCAL PARITY (change 0065). This golden is also the parity assertion for the
+// per-tenant mount root: newTestHandler configures NO tenantRootSource, which is
+// the local single-tenant deployment and the default everywhere else, and the
+// argv below is byte-for-byte the argv this test asserted before 0065 existed.
+//
+// The parity is spelled out rather than left implicit because its failure mode
+// is silent and severe in one direction: if a future change ever makes the
+// resolver path the default — by defaulting h.tenantRoots to a non-nil value, or
+// by letting the nil-interface trap wrap a nil *TenantRoots — every resolver-less
+// deployment would resolve to no root, mount nothing, and hand the model an empty
+// box that merely LOOKS like its workspace. The explicit check on h.tenantRoots
+// below names that regression at the point it would occur; the -v element makes
+// it visible in the argv too.
 func TestContainerExecArgvGolden(t *testing.T) {
 	rec := &recordingRun{}
 	cfg := DefaultConfig()
 	cfg.Image = "example.invalid/img:1.2.3"
 	h := newTestHandler(t, cfg, rec)
+
+	// The precondition the golden below encodes: no per-tenant resolver.
+	if h.tenantRoots != nil {
+		t.Fatalf("handler holds a tenant-root resolver (%#v) with none configured; "+
+			"the resolver-less path must remain the default", h.tenantRoots)
+	}
 
 	env := Env{Allow: map[string]string{"PATH": "/usr/bin", "HOME": "/root", "LANG": "C"}}
 	r, err := h.Acquire(context.Background(), loopauth.Principal{}, env)
@@ -374,7 +393,10 @@ func TestContainerExecArgvGolden(t *testing.T) {
 		"--env", "LANG=C",
 		"--env", "PATH=/usr/bin",
 		// The mount source is the TRUSTED root the composition root declared,
-		// never anything the model said.
+		// never anything the model said — and, with no resolver configured,
+		// it is the HANDLER's single root (h.root) unchanged, not a per-tenant
+		// child of it. That h.root, and not some resolver-derived path, is
+		// what appears here IS the 0065 local-parity guarantee.
 		"-v", h.root + ":/workspace",
 		"-w", "/workspace",
 		// --pull=never (change 0077): the image is acquired by the pre-pull, so
@@ -713,6 +735,16 @@ func TestContainerArgvEnforceOrderingIsUnchangedAroundTheFloor(t *testing.T) {
 		MemoryBytes: i64(2 << 30),
 		CPUs:        str("2.0"),
 	})
+	// 0065 local parity, on the fully-loaded argv as well as the bare one: the
+	// egress/limits handler configures no tenant-root resolver either, so the
+	// mount element below is still h.root. Asserted here too because this is the
+	// golden that pins ORDER — a resolver accidentally made default would change
+	// the mount's VALUE while leaving every position intact, and a value-blind
+	// ordering check would not notice.
+	if h.tenantRoots != nil {
+		t.Fatalf("handler holds a tenant-root resolver (%#v) with none configured", h.tenantRoots)
+	}
+
 	argv := egressRunArgv(t, h, rec, Env{Allow: map[string]string{"PATH": "/usr/bin", "HOME": "/root"}})
 
 	want := []string{
