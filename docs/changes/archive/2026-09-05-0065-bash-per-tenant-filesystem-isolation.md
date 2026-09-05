@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-09-04-bash-per-tenant-filesystem-isolation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-04-bash-per-tenant-filesystem-isolation-design.md) |
-| Plan | [2026-09-05-bash-per-tenant-filesystem-isolation.md](https://github.com/ethanhinson/fuse/blob/feat/bash-per-tenant-filesystem-isolation/docs/superpowers/plans/2026-09-05-bash-per-tenant-filesystem-isolation.md) |
-| Results | [2026-09-05-bash-per-tenant-filesystem-isolation-results.md](https://github.com/ethanhinson/fuse/blob/feat/bash-per-tenant-filesystem-isolation/docs/results/2026-09-05-bash-per-tenant-filesystem-isolation-results.md) |
+| Plan | [2026-09-05-bash-per-tenant-filesystem-isolation.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-09-05-bash-per-tenant-filesystem-isolation.md) |
+| Results | [2026-09-05-bash-per-tenant-filesystem-isolation-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-09-05-bash-per-tenant-filesystem-isolation-results.md) |
 | PR | [#87](https://github.com/ethanhinson/fuse/pull/87) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md), [ADR-0055](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0055-warm-pool-entries-certify-on-resolved-mount.md), [ADR-0056](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0056-sandbox-health-is-a-sibling-hooks-seam-emitting-only-observable-reasons.md), [ADR-0057](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0057-unsafe-tenant-ids-are-refused-never-normalised.md) |
 <!-- docket:artifacts:end -->
