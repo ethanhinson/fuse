@@ -531,6 +531,65 @@ func (s *Service) TrustedRoot() string { return s.root }
 // containment from it.
 func (s *Service) Hosted() bool { return s.hosted }
 
+// tenantScoped is implemented by handlers that can resolve a per-principal
+// bind-mount source. It is UNEXPORTED and satisfied only by handlers in this
+// package, for the same reason healthObserved is: the question "is this
+// substrate tenant-scoped" must be answered by the substrate, not by a flag a
+// caller-supplied Handler could set.
+type tenantScoped interface {
+	tenantScoped() bool
+}
+
+// TenantScoped reports whether this Service's substrate resolves its bind-mount
+// source PER PRINCIPAL (change 0065) rather than mounting one process-wide
+// trusted root.
+//
+// # Why this accessor exists at all
+//
+// It is the `security-knob-inert-at-composition-root` assertion made
+// answerable. WithTenantRoots is a construction option with no observable
+// effect until a container actually runs, so a composition root that forgets to
+// pass it produces a Service that looks identical to one that did — and the
+// failure mode is silent, because every tenant quietly keeps sharing the single
+// root exactly as it did before this change. That is the shape change #64
+// shipped: an enforcing object with zero non-test callers and a green suite.
+// This lets cmd/fuse's own tests FAIL when the hosted binding stops wiring the
+// resolver.
+//
+// It reads the answer off the HANDLER rather than off a remembered option, so
+// it cannot drift from what the substrate will actually do at Acquire: a
+// resolver that was supplied but overwritten by the trusted-last ordering, or
+// erased by the nil-interface dance, reports false here — which is the truth.
+//
+// It is diagnostic only. Nothing may re-derive containment from it, and no
+// caller can turn scoping ON through it; the only writer is NewService.
+func (s *Service) TenantScoped() bool {
+	if s == nil {
+		return false
+	}
+	ts, ok := s.handler.(tenantScoped)
+	return ok && ts.tenantScoped()
+}
+
+// HealthObserved reports whether a substrate-health observer has been installed
+// through SetHealthHooks.
+//
+// It exists for the same reason TenantScoped does, and closes the second half of
+// the same defect class: SandboxHealthHooks is the ONLY production translator
+// from this package's health seam to the event stream, so a composition root
+// that never calls SetHealthHooks leaves fuse_sandbox_unhealthy_total
+// permanently at zero — which is indistinguishable, on a dashboard, from a
+// perfectly healthy fleet. An always-zero failure counter is the quietest
+// possible way for observability to be broken, so the wiring is asserted rather
+// than assumed.
+//
+// It reports only that a live hook is present, never anything about what was
+// observed. A nil *Service reports false, matching SetHealthHooks' tolerance of
+// one.
+func (s *Service) HealthObserved() bool {
+	return s != nil && s.health.Unhealthy != nil
+}
+
 // Runtime reports which container CLI was detected, or "" on any other
 // substrate. It is a bounded value ("docker"|"nerdctl"|"podman"), safe as a
 // label.

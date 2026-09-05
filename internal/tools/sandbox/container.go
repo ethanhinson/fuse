@@ -221,6 +221,17 @@ func withTrustedRoot(root string) containerOption {
 // An implementation that cannot resolve a root returns ("", err) or ("", nil).
 // Both are DEGRADED-SAFE and mean "mount nothing" — never a shared root, never
 // a parent of some other tenant's tree.
+//
+// THE MICROVM BINDING. This seam is the container expression of a boundary
+// ADR-0044's 2026-08-16 Update requires of every substrate, including the
+// microVM handler that does not exist yet. The three conditions such a handler
+// must satisfy — a per-tenant VM-native backing (a virtio-fs share OR a block
+// image, one mechanism), a HOST-side canonicalise-then-compare working_dir
+// check rather than a guest-side one, and warm/snapshot pools that stay
+// strictly per-principal and reset — are recorded in full beside the seam-
+// conformance stub, in microvm_conformance_test.go ("THE MICROVM FILESYSTEM
+// CONTRACT"). They are written down there rather than rediscovered when the
+// handler is built.
 type tenantRootSource interface {
 	Root(loopauth.Principal) (string, error)
 }
@@ -392,6 +403,14 @@ func (h *containerHandler) Runtime() string { return h.runtime }
 // before concurrent use, never afterwards — the same discipline every other
 // field on this handler follows.
 func (h *containerHandler) setHealthHooks(hooks HealthHooks) { h.health = hooks }
+
+// tenantScoped satisfies the tenantScoped interface Service.TenantScoped reads
+// through. It reports the substrate's ACTUAL posture — whether Acquire will
+// resolve a per-principal mount source — rather than whether an option was once
+// passed, so a resolver lost to the trusted-last ordering or to the
+// nil-interface trap reports false. That is what makes the composition root's
+// wiring assertion honest rather than a restatement of its own argument.
+func (h *containerHandler) tenantScoped() bool { return h != nil && h.tenantRoots != nil }
 
 // Acquire returns a Runner bound to p and to env.
 //

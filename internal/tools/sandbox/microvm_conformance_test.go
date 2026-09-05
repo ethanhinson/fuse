@@ -53,6 +53,61 @@ package sandbox
 // change. It is recorded here, beside the seam-conformance stub it will
 // eventually replace, so the contract survives until #0064's successor picks
 // up the microVM handler.
+//
+// THE MICROVM FILESYSTEM CONTRACT (change #0065, recorded, not built).
+//
+// Change #0065 makes the container backend's bind-mount source a function of
+// loopauth.Principal.Tenant, resolved per-Acquire through the tenantRootSource
+// seam (container.go) from a resolver the composition root supplies
+// (WithTenantRoots). ADR-0044's 2026-08-16 Update requires the SAME tenant-
+// scoped, non-escaping workspace of the microVM handler, expressed VM-natively.
+// No microVM handler exists, so #0065 records the binding conditions here
+// rather than leaving them to be rediscovered — the contract is INHERITED by
+// the future handler, not renegotiated by it.
+//
+// A microVM handler behind this seam MUST provide all three:
+//
+//   - Per-tenant VM-NATIVE backing, and ONE mechanism, not both. Either a
+//     per-tenant virtio-fs share or a per-tenant block image — never a share
+//     and an image for the same guest. Two backings are two boundaries with
+//     two failure modes, and an escape needs only the weaker of them; a single
+//     mechanism is the whole reason "tenant A's backing contains tenant B's"
+//     can be made unrepresentable rather than merely tested for (see
+//     TenantRoots' "siblings, never nested"). The backing is chosen from the
+//     Principal at Acquire, exactly as the container root is, and is FIXED for
+//     the Runner's life so it cannot drift between Execs.
+//
+//   - working_dir stays NON-ESCAPING within that backing, checked with the
+//     same canonicalise-then-compare discipline containerHandler.workspace()
+//     applies — resolve both sides through the host's own symlink resolution,
+//     compare with filepath.Rel, reject "..", refuse a non-directory, and never
+//     echo a host path back. Critically it is a HOST-SIDE check on the host's
+//     view of the backing, NEVER a guest-side one: a check inside the guest is
+//     a check the guest's own kernel, its /proc, and any symlink the model
+//     plants can influence, so it validates a claim made by the thing being
+//     contained. This is the microVM restatement of #0065's single most
+//     important constraint — do not reimplement containment while making it
+//     tenant-aware — and it applies with more force here, because a VM offers a
+//     tempting in-guest place to put the check that does not exist for a
+//     container.
+//
+//   - Warm/snapshot pools stay STRICTLY PER-PRINCIPAL and reset. Per ADR-0044's
+//     Update, a guest is reclaimed between principals by resetting to a clean
+//     snapshot or pool image. The trap #0065 closed on the container side is the
+//     specific thing to avoid: a warm entry must be certified on the resolved
+//     BACKING as well as on the Principal (see certifyEntry in pool.go and the
+//     cache-over-tenant-scoped-source-reassert-key-on-hit learning). A
+//     tenant-scoped backing must never become the property that makes a snapshot
+//     look reusable across principals — "same image, therefore shareable" is the
+//     inversion, since the image is per-tenant precisely BECAUSE it is not
+//     shareable. Snapshot identity is per-principal or the pool is a
+//     cross-tenant disclosure with a cache in front of it.
+//
+// A microVM handler that cannot satisfy all three fails CLOSED — it refuses to
+// run, matching the kvm-absent posture asserted below — rather than degrading to
+// a shared backing. That is the same rule #0065 enforces for the container
+// handler: an unresolvable per-tenant root mounts NOTHING and refuses every
+// working_dir, and never falls back to a shared or parent tree.
 
 import (
 	"context"
