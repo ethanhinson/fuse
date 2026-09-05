@@ -195,6 +195,41 @@ func withTrustedRoot(root string) containerOption {
 	return func(h *containerHandler) { h.root = root }
 }
 
+// tenantRootSource yields the HOST directory ONE principal's containers are
+// allowed to see — the bind-mount source, chosen as a function of
+// Principal.Tenant and nothing else (change 0065).
+//
+// The interface is UNEXPORTED, and so is the option that accepts one
+// (withTenantRoots), for exactly the reason egressSocketSource is: a
+// caller-suppliable root source IS a caller-suppliable bind-mount into the
+// container, which is the hole this package exists to close. The exported seam
+// lives at the composition root, where host layout policy belongs; the package
+// itself stays layout-agnostic.
+//
+// The Principal handed in is the AUTHENTICATED one, established at the Connect
+// edge and fixed at Acquire. It is never derived from command, working_dir, or
+// any other tool argument: a tenant the model can select is not an isolation
+// boundary.
+//
+// An implementation that cannot resolve a root returns ("", err) or ("", nil).
+// Both are DEGRADED-SAFE and mean "mount nothing" — never a shared root, never
+// a parent of some other tenant's tree.
+type tenantRootSource interface {
+	Root(loopauth.Principal) (string, error)
+}
+
+// withTenantRoots supplies the per-tenant mount-root resolver (change 0065).
+//
+// SECURITY-CRITICAL, and for the same reason as withTrustedRoot: this names the
+// host directory fuse bind-mounts into a container the model drives. The value
+// comes from the COMPOSITION ROOT, resolved from trusted operator config before
+// any model has run, and is applied LAST in the options chain so no
+// caller-supplied containerOption can swap the isolation boundary out from
+// under it. Applied once, at construction; no method changes it afterwards.
+func withTenantRoots(src tenantRootSource) containerOption {
+	return func(h *containerHandler) { h.tenantRoots = src }
+}
+
 // containerHandler runs commands inside a throwaway OCI container.
 //
 // It is the DEFAULT substrate. Detection happens once, at construction, so that
@@ -235,6 +270,13 @@ type containerHandler struct {
 	// EgressEnforce stays deny-all. Never model-derived; see withEgressDatapath.
 	egressSockets   egressSocketSource
 	egressForwarder string
+
+	// tenantRoots resolves the per-principal bind-mount source (change 0065).
+	// Nil — the default, and the whole local single-tenant path — means the
+	// handler's single trusted root is used unchanged, so an operator who never
+	// configured a resolver gets byte-for-byte today's argv. Never
+	// model-derived; see withTenantRoots.
+	tenantRoots tenantRootSource
 
 	// pullOnce guards the single-flight pre-pull, and pullErr records its
 	// outcome. A failed pull is retried on a later Acquire rather than cached as
