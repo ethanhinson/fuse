@@ -138,6 +138,11 @@ type PoolSource interface {
 	// host-wide gate, not a gate it could construct for itself (which would bound
 	// nothing). Never nil.
 	gateFor() *Gate
+	// healthHooks is the substrate-health observer the composition root
+	// installed (change 0065, task 7). Unexported for the same reason gateFor
+	// is: only *Service may supply it, so a Pool cannot install a health
+	// observer of its own devising.
+	healthHooks() HealthHooks
 }
 
 // EnvResetter is the optional reset-on-checkout seam.
@@ -461,6 +466,23 @@ func (p *Pool) acquireFresh(ctx context.Context, principal loopauth.Principal) (
 	start := p.now()
 	runner, err := p.src.Acquire(ctx, principal)
 	if err != nil {
+		// acquire_failed (change 0065, task 7). This is the one place a cold
+		// start is seen whole: the substrate could not produce a Runner at all,
+		// so nothing this principal asked for can run.
+		//
+		// A caller-deadline expiry is excluded — that is the caller's bound
+		// firing, not the substrate failing — as is a pull failure, which the
+		// handler already reported as pull_failed at its own site and which
+		// would otherwise be double-counted under two reasons for one incident.
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, errPullFailed) {
+			hooks := p.src.healthHooks()
+			hooks.fire(HealthInfo{
+				Principal: principal,
+				Handler:   p.src.HandlerName(),
+				Runtime:   p.src.Runtime(),
+				Reason:    HealthAcquireFailed,
+			})
+		}
 		// Propagate untouched: a refusal from selection (ErrRefusedUncontained)
 		// must reach the caller as a refusal, never as a pool-flavoured error
 		// that invites a fallback.

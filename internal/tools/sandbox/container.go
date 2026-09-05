@@ -57,6 +57,13 @@ var containerClientPassthrough = [...]string{
 // the command somewhere less safe.
 var ErrNoContainerRuntime = errors.New("no container runtime available")
 
+// errPullFailed marks an Acquire that failed at the pre-pull. It is unexported
+// and carries no caller-facing meaning: its only job is to let the pool tell a
+// pull failure apart from every other cold-start failure, so ONE incident is
+// reported under ONE reason (pull_failed, at the site that observed it) rather
+// than being counted again as acquire_failed one frame up.
+var errPullFailed = errors.New("sandbox: image pre-pull failed")
+
 // ErrWorkingDirRefused reports that a model-supplied working_dir did not
 // resolve to a directory INSIDE the trusted mount.
 //
@@ -293,6 +300,12 @@ type containerHandler struct {
 	// seam controls both halves of what "the environment is frozen" claims.
 	envLookup func(string) (string, bool)
 
+	// health is the substrate-health observer (change 0065, task 7). Installed
+	// once at the composition root via Service.SetHealthHooks, before the
+	// handler is used concurrently, and never written again — same discipline
+	// as the gate's hooks. The zero value is inert.
+	health HealthHooks
+
 	lookPath func(string) (string, error)
 	run      execRunner
 }
@@ -375,6 +388,11 @@ func (*containerHandler) Name() string { return HandlerContainer }
 // Runtime reports which container CLI was detected at construction.
 func (h *containerHandler) Runtime() string { return h.runtime }
 
+// setHealthHooks satisfies healthObserved. Written once at the composition root
+// before concurrent use, never afterwards — the same discipline every other
+// field on this handler follows.
+func (h *containerHandler) setHealthHooks(hooks HealthHooks) { h.health = hooks }
+
 // Acquire returns a Runner bound to p and to env.
 //
 // The environment is rendered here, once, from the allowlist the caller
@@ -389,7 +407,23 @@ func (h *containerHandler) Acquire(ctx context.Context, p loopauth.Principal, en
 	// reported so selection surfaces "pull_failed" — and is retried on a later
 	// Acquire rather than cached as permanent.
 	if err := h.prePull(ctx); err != nil {
-		return nil, fmt.Errorf("%s pull %s: %w", h.runtime, h.image, err)
+		// The one place pull_failed can be observed honestly: the image
+		// acquisition itself failed, so this substrate can start no container
+		// for anyone until a later pull succeeds. The error is NOT carried into
+		// the hook — only the closed reason is (see HealthInfo).
+		//
+		// A caller-deadline expiry is excluded: prePull returns ctx.Err() when
+		// the CALLER ran out of time while the pull continues in the background,
+		// and that is the caller's bound firing, not the substrate failing.
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			h.health.fire(HealthInfo{
+				Principal: p,
+				Handler:   HandlerContainer,
+				Runtime:   h.runtime,
+				Reason:    HealthPullFailed,
+			})
+		}
+		return nil, fmt.Errorf("%s pull %s: %w: %w", h.runtime, h.image, errPullFailed, err)
 	}
 
 	// The datapath's one per-run value (change 0064, task 6): the HOST path of
@@ -926,6 +960,20 @@ func (r *containerRunner) Exec(ctx context.Context, cmd string, workingDir strin
 		// fires, and the resulting status is indistinguishable from any other
 		// signal death without this.
 		TimedOut: errors.Is(ctx.Err(), context.DeadlineExceeded),
+	}
+
+	// Substrate-health classification (change 0065, task 7), decided BEFORE the
+	// error branch below rewrites ExitCode to -1 — classifyExit needs the raw
+	// status the runtime actually reported. It fires for a signal death or a
+	// failure to start, and for NOTHING else: an ordinary non-zero command exit
+	// is the command reporting a result, not the sandbox being unhealthy.
+	if reason, unhealthy := classifyExit(code, err, out.TimedOut); unhealthy {
+		r.handler.health.fire(HealthInfo{
+			Principal: r.principal,
+			Handler:   HandlerContainer,
+			Runtime:   r.handler.runtime,
+			Reason:    reason,
+		})
 	}
 
 	if err != nil {

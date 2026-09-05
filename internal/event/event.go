@@ -493,6 +493,36 @@ type SandboxHealthPayload struct {
 	Reason      string `json:"reason"`
 }
 
+// SandboxHealthReason is the closed enum of SandboxHealthPayload.Reason.
+//
+// These are named constants rather than the doc comment they used to be
+// (change 0065, task 7) for the same reason SandboxCause and
+// SandboxAdmissionOutcome are: the value becomes a Prometheus label
+// (fuse_sandbox_unhealthy_total{reason=...}), and a closed enum that exists
+// only in prose is one typo away from unbounded cardinality. Declaring them
+// here also gives the translator in internal/tools an exhaustive switch to be
+// checked against, and event_test.go a set to pin.
+//
+// Only the four reasons the CURRENT substrate can honestly observe are declared.
+// "unresponsive" and "recovered" presuppose a container that outlives an Exec,
+// which `docker run --rm` per Exec does not provide; they are deferred to change
+// #74 along with a real ContainerID, and declaring constants for them here would
+// invite an emitter to synthesise a transition nothing observed.
+type SandboxHealthReason = string
+
+const (
+	// SandboxHealthOOM is a container killed by the kernel's OOM killer.
+	SandboxHealthOOM SandboxHealthReason = "oom"
+	// SandboxHealthRuntimeExit is a container that died to some other signal, or
+	// a runtime that could not start the command at all.
+	SandboxHealthRuntimeExit SandboxHealthReason = "runtime_exit"
+	// SandboxHealthPullFailed is image acquisition failing: no container can
+	// start on this substrate until a later pull succeeds.
+	SandboxHealthPullFailed SandboxHealthReason = "pull_failed"
+	// SandboxHealthAcquireFailed is a cold start that produced no Runner.
+	SandboxHealthAcquireFailed SandboxHealthReason = "acquire_failed"
+)
+
 // UserInputPayload accompanies KindUserInput. Content is the exact user-turn text
 // appended to the model-facing transcript for this turn — the raw initial task, or
 // the human injector's batched/prefixed form for a mid-conversation Send. The resume

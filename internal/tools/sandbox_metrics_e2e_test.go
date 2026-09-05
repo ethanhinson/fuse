@@ -160,15 +160,114 @@ func TestContainerLifecycleFeedsSandboxMetricsEndToEnd(t *testing.T) {
 		`fuse_sandbox_active{handler="container",runtime="`+runtime+`",tenant_id="admitted"} 0`,
 	)
 
-	// KindSandboxHealth has no emitter in the running system (recorded gap in the
-	// 0063 close-out): fuse_sandbox_unhealthy_total is defined and its projection
-	// is unit-tested, but no lifecycle path produces the event, so a real run can
-	// never move it. Pin that here so the day an emitter is added, this guard
-	// fails and forces the E2E assertion to be strengthened rather than silently
-	// leaving the family unproven.
-	if strings.Contains(body, "fuse_sandbox_unhealthy_total{") {
-		t.Fatalf("fuse_sandbox_unhealthy_total gained a series from a real run — an emitter now exists; extend this test to drive an unhealthy transition and assert it end-to-end:\n%s", body)
+	// The 0063 close-out left fuse_sandbox_unhealthy_total unproven — defined and
+	// unit-tested in projection, but with no lifecycle path producing the event —
+	// and this test carried a TRIPWIRE that failed the moment the family gained a
+	// series, instructing whoever landed an emitter to replace it with a real
+	// assertion. Change 0065 task 7 landed that emitter, so the guard's premise
+	// ("no emitter exists") is no longer true and the tripwire is replaced here by
+	// the positive assertion it demanded. See
+	// TestRealContainerOOMMovesUnhealthyMetric below.
+}
+
+// TestRealContainerOOMMovesUnhealthyMetric is the positive half the #63 tripwire
+// asked for: an HONESTLY-OBSERVABLE unhealthy transition, driven against a real
+// container, asserted on the live /metrics scrape through the same production
+// chain the lifecycle test uses.
+//
+// The transition is a real OOM kill. A memory cap of 8MiB plus a command that
+// allocates well past it gets the container killed by the kernel's OOM killer,
+// which every one of docker/nerdctl/podman reports as exit 137 — the one
+// substrate failure this test can provoke deterministically without breaking the
+// host's container runtime.
+//
+// It is gated on a real runtime, not build-tagged, matching the test above.
+func TestRealContainerOOMMovesUnhealthyMetric(t *testing.T) {
+	if !containerRuntimeAvailable() {
+		t.Skipf("skipping: none of %s found on PATH", strings.Join(containerCLIsForE2E[:], ", "))
 	}
+
+	ctx := context.Background()
+
+	memCap := int64(8 << 20) // 8MiB — small enough that the allocation below cannot fit.
+	svc, err := sandbox.NewService(
+		sandbox.Config{
+			Contained: true,
+			Handler:   sandbox.HandlerContainer,
+			Image:     sandbox.DefaultContainerImage,
+			Limits:    sandbox.Limits{MemoryBytes: &memCap},
+		},
+		sandbox.WithTrustedRoot(t.TempDir()),
+	)
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if !svc.Available() || svc.HandlerName() != sandbox.HandlerContainer {
+		t.Skipf("skipping: container service unavailable (handler %q)", svc.HandlerName())
+	}
+
+	key := event.StreamKey{Tenant: "admitted", Loop: "loop-health"}
+	store, err := fsstore.NewFSEventStore(t.TempDir(), "sess-health")
+	if err != nil {
+		t.Fatalf("NewFSEventStore: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	// THE production emitter, installed the way the composition root installs it.
+	svc.SetHealthHooks(SandboxHealthHooks(store, "node-root"))
+
+	pool := sandbox.NewPool(svc, sandbox.WithPoolIdleTTL(time.Minute))
+	defer func() { _ = pool.Close(ctx) }()
+
+	principal := loopauth.Principal{Tenant: "t-health", Subject: "s-health"}
+	r, err := pool.Acquire(ctx, principal)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+
+	// First, the NEGATIVE control, and it runs against the same real container as
+	// the positive case so the two cannot diverge: an ORDINARY non-zero command
+	// exit. `exit 3` is the command reporting a result, not the substrate
+	// failing, and it must emit NOTHING. This is the guard against the emitter
+	// degenerating into a counter of user command failures.
+	if out, err := r.Exec(ctx, "exit 3", ""); err != nil || out.ExitCode != 3 {
+		t.Fatalf("Exec(exit 3): err=%v exit=%d out=%q", err, out.ExitCode, out.Combined)
+	}
+	if evs, err := store.Replay(0); err != nil {
+		t.Fatalf("Replay: %v", err)
+	} else if len(evs) != 0 {
+		t.Fatalf("an ordinary non-zero command exit emitted %d health event(s); it must emit none: %+v", len(evs), evs)
+	}
+
+	// Now the real substrate failure. Filling /dev/shm is the reliable trigger:
+	// it is a tmpfs, so every byte written is CHARGED TO THE MEMORY CGROUP, and
+	// 64MiB against an 8MiB cap gets the container killed. A pipeline that merely
+	// streams (`head /dev/zero | tail`) allocates nothing and would not.
+	out, _ := r.Exec(ctx, "dd if=/dev/zero of=/dev/shm/f bs=1M count=64 2>/dev/null", "")
+	if out.ExitCode != 137 {
+		t.Skipf("skipping: could not provoke an OOM kill here (exit %d, out %q) — this runtime may not enforce --memory", out.ExitCode, out.Combined)
+	}
+
+	evs, err := store.Replay(0)
+	if err != nil {
+		t.Fatalf("Replay: %v", err)
+	}
+	if len(evs) == 0 {
+		t.Fatal("the OOM kill produced no health event — the emitter never reached the durable stream")
+	}
+
+	rec := newAdmittedRecorder(t)
+	for _, e := range evs {
+		if err := rec.Project(ctx, observe.ProjectEvent(key, e)); err != nil {
+			t.Fatalf("Project(%s): %v", e.Kind, err)
+		}
+	}
+
+	// The family MOVES. Not merely present: reason="oom", from a container the
+	// kernel actually killed.
+	wantMetrics(t, scrapeMetrics(t, rec),
+		`fuse_sandbox_unhealthy_total{handler="container",reason="oom",tenant_id="admitted"} 1`,
+	)
 }
 
 // newAdmittedRecorder builds the production recorder with a policy that admits

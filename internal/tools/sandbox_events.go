@@ -120,6 +120,77 @@ func SandboxGateHooks(store event.EventStore, nodeID string) sandbox.GateHooks {
 	}
 }
 
+// SandboxHealthHooks bridges the sandbox substrate's health seam to a loop's
+// event stream (change 0065, task 7). It is the third member of the family
+// SandboxEventHooks and SandboxGateHooks belong to, and it lives HERE for the
+// identical reason stated at the top of this file: the sandbox package reports
+// a health transition in bounded terms (sandbox.HealthInfo) and someone ABOVE
+// it decides that becomes a KindSandboxHealth event. That is what stops the
+// sandbox package depending on the event vocabulary.
+//
+// store is the LOOP'S OWN sink and nodeID its root node, both carried in the
+// ENVELOPE; a nil store yields inert hooks, exactly as the other two do.
+//
+// ContainerID is deliberately left EMPTY on every payload this emitter
+// produces. The container substrate is `docker run --rm` per Exec — no
+// container outlives the command it ran, and sandbox.HealthInfo therefore
+// carries no id to report. Synthesising one (the image, the runtime, a
+// generated string) would put a value in an operator-facing field that
+// identifies nothing. A real id arrives with the persistent-container substrate
+// in change #74, through the containerIdentified seam the pool already holds
+// open.
+//
+// Healthy is likewise always false here: every reason this substrate can
+// observe is a failure, and the healthy direction ("recovered") is exactly the
+// half #74 defers. It is read off the info rather than hardcoded so the day
+// #74 reports a recovery, this translator already carries it.
+func SandboxHealthHooks(store event.EventStore, nodeID string) sandbox.HealthHooks {
+	if store == nil {
+		return sandbox.HealthHooks{}
+	}
+	return sandbox.HealthHooks{
+		Unhealthy: func(i sandbox.HealthInfo) {
+			reason := sandboxHealthReason(i.Reason)
+			if reason == "" {
+				// An unrecognised reason is DROPPED rather than emitted with an
+				// empty label. A health event whose reason is "" tells an
+				// operator that something is wrong and nothing about what, which
+				// is the shape of signal that erodes trust in the metric.
+				return
+			}
+			raw, err := json.Marshal(event.SandboxHealthPayload{
+				Handler: i.Handler,
+				Healthy: i.Healthy,
+				Reason:  reason,
+			})
+			if err != nil {
+				return
+			}
+			_ = store.Append(event.Event{NodeID: nodeID, Kind: event.KindSandboxHealth, Payload: raw})
+		},
+	}
+}
+
+// sandboxHealthReason maps the sandbox package's closed enum onto the event
+// package's closed enum, in the same lockstep-by-exhaustive-switch discipline
+// as sandboxCause. An unrecognised reason becomes "" and the caller drops the
+// event: the value is a metric label, and an unbounded label is how a closed
+// enum stops being closed.
+func sandboxHealthReason(r sandbox.HealthReason) event.SandboxHealthReason {
+	switch r {
+	case sandbox.HealthOOM:
+		return event.SandboxHealthOOM
+	case sandbox.HealthRuntimeExit:
+		return event.SandboxHealthRuntimeExit
+	case sandbox.HealthPullFailed:
+		return event.SandboxHealthPullFailed
+	case sandbox.HealthAcquireFailed:
+		return event.SandboxHealthAcquireFailed
+	default:
+		return ""
+	}
+}
+
 // sandboxAdmissionScope maps the gate's closed scope enum onto the wire string.
 // An unrecognised scope becomes "" rather than passing through: it ends up as a
 // metric label, and an unbounded label is how a closed enum stops being closed.

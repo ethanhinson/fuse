@@ -64,6 +64,11 @@ type Service struct {
 	// constraint. Frozen at construction like everything else on this type.
 	root string
 
+	// health is the substrate-health observer, installed once at the composition
+	// root (SetHealthHooks) and read by the Pool for acquire failures. The zero
+	// value is inert.
+	health HealthHooks
+
 	// hosted records the posture the composition root declared, for
 	// diagnostics only; selection already consumed it.
 	hosted bool
@@ -568,6 +573,44 @@ func (s *Service) SetGateHooks(h GateHooks) {
 	}
 	s.gate.setHooks(h)
 }
+
+// healthObserved is implemented by handlers that can report substrate-health
+// transitions. It is UNEXPORTED and satisfied only by handlers in this package,
+// which is what keeps installation a composition-root act rather than something
+// a caller-supplied Handler can intercept.
+//
+// A handler that does not implement it simply never reports health — the host
+// handler runs no substrate that can be unhealthy in these terms.
+type healthObserved interface {
+	setHealthHooks(HealthHooks)
+}
+
+// SetHealthHooks installs the substrate-health observer (change 0065, task 7).
+//
+// It mirrors SetGateHooks exactly — called ONCE at the composition root where
+// the loop's EventStore is available, before the Service is used concurrently —
+// rather than being a fourth PoolHooks field. HealthHooks' doc comment records
+// why health is a sibling seam and not part of the pool's entry lifecycle.
+//
+// The hooks land in BOTH places health can be honestly observed: on the handler
+// (pull_failed at Acquire, oom/runtime_exit at Exec) and on the Service itself,
+// which the Pool consults for acquire_failed. A nil *Service is tolerated for
+// the same reason SetGateHooks tolerates one: NewBash(nil) is a supported
+// fail-closed shape.
+func (s *Service) SetHealthHooks(h HealthHooks) {
+	if s == nil {
+		return
+	}
+	s.health = h
+	if ho, ok := s.handler.(healthObserved); ok {
+		ho.setHealthHooks(h)
+	}
+}
+
+// healthHooks exposes the installed observer to the Pool, which is the only
+// thing that sees a cold-start failure whole. Unexported: sealing it here means
+// only *Service can supply the pool's health seam, matching gateFor.
+func (s *Service) healthHooks() HealthHooks { return s.health }
 
 // Limits reports the resolved per-container cgroup caps, for diagnostics and for
 // the composition root to log. The values are frozen at construction.

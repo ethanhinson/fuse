@@ -117,6 +117,7 @@ type fakeSource struct {
 	acquired []*fakeRunner
 	err      error
 	gate     *Gate
+	health   HealthHooks
 }
 
 func newFakeSource(clock *fakeClock) *fakeSource {
@@ -132,6 +133,22 @@ func newFakeSource(clock *fakeClock) *fakeSource {
 }
 
 func (s *fakeSource) gateFor() *Gate { return s.gate }
+
+// healthHooks satisfies PoolSource's health seam. Read under the same lock the
+// error is, so a test that installs hooks and then trips a failure from another
+// goroutine is race-clean.
+func (s *fakeSource) healthHooks() HealthHooks {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.health
+}
+
+// setHealth installs the observer a pool-level health test asserts on.
+func (s *fakeSource) setHealth(h HealthHooks) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.health = h
+}
 
 // setGate swaps in a tighter gate so a composition test can force contention
 // between the pool and the admission gate.
