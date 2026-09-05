@@ -51,6 +51,10 @@ One curated finding per file; this index is the hint surface. Load it, then read
 - [mcp-read-pumps-drop-inbound-notifications](mcp-read-pumps-drop-inbound-notifications.md) — fuse's MCP client read pumps (StdioClient.readPump, httpClient.readSSEPump) match responses by id and silently drop any id-less frame — so inbound server notifications (`$/progress`, `notifications/resources/updated`) are discarded today; adding a notification *sender* does not make fuse *receive* them — a notification route must be added to the pump itself, not just a handler elsewhere · also: notifications, json-rpc, go, streaming, subscriptions ⟨needs promotion⟩
 - [mcp-render-all-content-block-types](mcp-render-all-content-block-types.md) — MCP tools/call returns a content[] array of typed blocks (text, image, audio, resource, resource_link) plus optional structuredContent; a parser that collects only type==text silently drops everything else, so a tool returning only an image renders BLANK to both the transcript and the model — render non-text blocks as descriptors ([image: mime, size]) and never emit empty · also: rendering, tui, tool-results, json ⟨needs promotion⟩
 
+## multi-tenancy
+
+- [identity-derived-path-collides-case-insensitively](identity-derived-path-collides-case-insensitively.md) — Deriving a host path from an authenticated identity (tenant, principal, account) to isolate it? On a case-insensitive filesystem (APFS, NTFS) `Acme` and `acme` are ONE directory, so two distinct identities share one tree while every containment check still passes green. Refuse unsafe ids at the boundary; never normalise them, which merges the identities instead of separating them. · also: filesystem, isolation, security, trust-boundary, go, blind-spot ⟨needs promotion⟩
+
 ## permissions
 
 - [auto-approve-task-implied-edits-classifier-context](auto-approve-task-implied-edits-classifier-context.md) — In an unattended mode there is no human to ask — structurally auto-approve task-implied in-workspace edits behind a trust boundary you already own, and feed the classifier the user's request instead of running it blind. · also: security, agents, ux ⟨needs promotion⟩
