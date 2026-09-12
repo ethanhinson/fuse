@@ -1,6 +1,6 @@
 # Backlog
 
-**81 changes** — 🟢 1 in progress · 🟡 2 proposed · ⚪ 3 deferred · ✅ 69 done · 🗑️ 6 killed
+**82 changes** — 🟢 1 in progress · 🟡 3 proposed · ⚪ 3 deferred · ✅ 69 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
@@ -8,12 +8,13 @@
 |---|-------|----------|------|------|--------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` |
 
-## 🟡 Proposed (2)
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a k8s Pod-per-Exec handler as first implementation | `medium` | `feat` | needs-brainstorm |
 | [0076](active/0076-fuse-server-helm-chart-compose-stack.md) | fuse server deployment — a container image, a full docker-compose stack, and a Helm chart (not an operator) | `medium` | `feat` | needs-brainstorm |
+| [0082](active/0082-build-release-pipeline.md) | build/release pipeline — tag-driven GoReleaser releases (multi-platform archives + GHCR image + curl installer) so users adopt fuse without a Go toolchain | `medium` | `feat` | build-ready |
 
 ## ⚪ Deferred (3)
 
@@ -31,6 +32,7 @@ graph TD
   0063 --> 0075
   0076
   0081
+  0082
   0012:::done
   0052:::done
   0063:::done
