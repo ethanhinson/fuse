@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/banner"
@@ -25,6 +26,21 @@ func main() {
 
 // run is the testable entry point. It returns a process exit code.
 func run(args []string, stdout, stderr io.Writer) int {
+	// `version` is answered BEFORE config.Load() on purpose. The dispatch switch
+	// below sits under config.Load() + Validate() + validateModelRefs, so a user
+	// with a broken ~/.fuse/config.yml — exactly the user about to file a bug
+	// report, and exactly the state of a fresh install — would get
+	// "config error:" instead of a version. The installer and bug reports need a
+	// script-safe one-liner that works on an unconfigured machine.
+	if len(args) > 0 {
+		switch args[0] {
+		case "version", "--version", "-version":
+			fmt.Fprintf(stdout, "fuse %s\n", version.Version)
+			fmt.Fprintf(stdout, "go %s %s/%s\n", goruntime.Version(), goruntime.GOOS, goruntime.GOARCH)
+			return 0
+		}
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(stderr, "config error: %v\n", err)
