@@ -1,0 +1,197 @@
+# GoReleaser configuration for fuse (docket change 0082).
+#
+# Tag-driven releases: `git push origin vX.Y.Z` runs .github/workflows/release.yml,
+# which runs this config. Everything below is also exercised on every PR by the
+# `release-dry-run` job in integration.yml (`goreleaser check` +
+# `goreleaser release --snapshot --clean --skip=publish,docker`).
+#
+# ARCHIVE-LAYOUT INVARIANT (load-bearing — asserted by release-dry-run):
+# EVERY archive, darwin ones included, must contain `fuse` plus BOTH
+# `fuse-egress-forward-linux-amd64` and `fuse-egress-forward-linux-arm64` at the
+# archive root. cmd/fuse/sandbox.go looks for
+# <dir of the fuse binary>/fuse-egress-forward-linux-<arch>, where <arch> is the
+# SANDBOX IMAGE's arch, not the host's — a deployment fact. A macOS user driving a
+# linux/amd64 container needs the amd64 forwarder unpacked beside their darwin
+# binary, so both forwarders ship in every archive. Dropping one silently turns
+# `egress.mode: enforce` into deny-all.
+version: 2
+
+project_name: fuse
+
+builds:
+  - id: fuse
+    main: ./cmd/fuse
+    binary: fuse
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    # The package path MUST stay identical to the Makefile's VERSION_PKG
+    # (github.com/ethanhinson/fuse/internal/version) — a drifting path injects
+    # nothing and `fuse version` silently reports "dev".
+    ldflags:
+      - -s -w -X github.com/ethanhinson/fuse/internal/version.Version={{ .Version }}
+
+  # The in-container half of egress control (change 0064). Linux-only by
+  # construction: it runs inside the sandbox container, never on the host.
+  # `no_unique_dist_dir` keeps the outputs at the stable paths
+  # dist/fuse-egress-forward-linux-<arch> that the archives and the docker
+  # `extra_files` below reference by name.
+  - id: fuse-egress-forward
+    main: ./cmd/fuse-egress-forward
+    binary: fuse-egress-forward-linux-{{ .Arch }}
+    no_unique_dist_dir: true
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/ethanhinson/fuse/internal/version.Version={{ .Version }}
+
+archives:
+  - id: fuse
+    # `ids` (not the `builds` spelling the plan's task text used): `archives.builds`
+    # is DEPRECATED in v2 and makes `goreleaser check` exit non-zero, which would
+    # fail the release-dry-run CI job. `ids` is the v2 name for the same field.
+    ids:
+      - fuse
+    name_template: fuse_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    # `fuse` sits at the archive root, so the forwarders unpack beside it and
+    # sandbox.go's <exeDir> lookup resolves.
+    strip_binary_directory: true
+    files:
+      # `strip_parent` is load-bearing: without it these land at
+      # dist/fuse-egress-forward-linux-<arch> INSIDE the archive, while `fuse`
+      # sits at the root, and sandbox.go's <exeDir>/fuse-egress-forward-linux-<arch>
+      # lookup then misses — silently turning `egress.mode: enforce` into
+      # deny-all. `strip_binary_directory` above flattens BINARIES only, not
+      # these `files` entries.
+      - src: dist/fuse-egress-forward-linux-amd64
+        strip_parent: true
+      - src: dist/fuse-egress-forward-linux-arm64
+        strip_parent: true
+      - README.md
+      # The repo has no LICENSE file yet (adding one is a human decision, out of
+      # scope for 0082). Declared as an OPTIONAL glob so its absence cannot fail
+      # the archive build; it is picked up automatically once it exists.
+      - LICENSE*
+
+checksum:
+  name_template: fuse_{{ .Version }}_checksums.txt
+  algorithm: sha256
+
+dockers:
+  - id: fuse-amd64
+    use: buildx
+    dockerfile: Dockerfile
+    goos: linux
+    goarch: amd64
+    # `ids` is load-bearing: without it GoReleaser auto-links the artifacts of
+    # EVERY build into the docker context, so the fuse-egress-forward build's
+    # own linux/amd64 output collides with the identically-named `extra_files`
+    # entry below and the duplicate link corrupts the context (the arm64 COPY
+    # then fails with "not found"). Scoping to the `fuse` build means the
+    # forwarders arrive only via `extra_files`, exactly once each.
+    ids:
+      - fuse
+    image_templates:
+      - ghcr.io/ethanhinson/fuse:{{ .Version }}-amd64
+    build_flag_templates:
+      - --platform=linux/amd64
+      - "--label=org.opencontainers.image.source=https://github.com/ethanhinson/fuse"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+    # NOTE for the Dockerfile (task 3): `extra_files` keep their RELATIVE path
+    # inside the build context, so these arrive at <context>/dist/... — the
+    # Dockerfile must `COPY dist/fuse-egress-forward-linux-<arch>`, not
+    # `COPY fuse-egress-forward-linux-<arch>`. The `fuse` binary, being a build
+    # artifact rather than an extra file, lands at the context ROOT as `fuse`.
+    extra_files:
+      - dist/fuse-egress-forward-linux-amd64
+      - dist/fuse-egress-forward-linux-arm64
+
+  - id: fuse-arm64
+    use: buildx
+    dockerfile: Dockerfile
+    goos: linux
+    goarch: arm64
+    # `ids` is load-bearing: without it GoReleaser auto-links the artifacts of
+    # EVERY build into the docker context, so the fuse-egress-forward build's
+    # own linux/arm64 output collides with the identically-named `extra_files`
+    # entry below and the duplicate link corrupts the context (the arm64 COPY
+    # then fails with "not found"). Scoping to the `fuse` build means the
+    # forwarders arrive only via `extra_files`, exactly once each.
+    ids:
+      - fuse
+    image_templates:
+      - ghcr.io/ethanhinson/fuse:{{ .Version }}-arm64
+    build_flag_templates:
+      - --platform=linux/arm64
+      - "--label=org.opencontainers.image.source=https://github.com/ethanhinson/fuse"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+    extra_files:
+      - dist/fuse-egress-forward-linux-amd64
+      - dist/fuse-egress-forward-linux-arm64
+
+docker_manifests:
+  - name_template: ghcr.io/ethanhinson/fuse:{{ .Version }}
+    image_templates:
+      - ghcr.io/ethanhinson/fuse:{{ .Version }}-amd64
+      - ghcr.io/ethanhinson/fuse:{{ .Version }}-arm64
+
+  - name_template: ghcr.io/ethanhinson/fuse:{{ .Major }}.{{ .Minor }}
+    image_templates:
+      - ghcr.io/ethanhinson/fuse:{{ .Version }}-amd64
+      - ghcr.io/ethanhinson/fuse:{{ .Version }}-arm64
+
+  # `skip_push: auto` suppresses the push for pre-release tags, so a -rc.N tag
+  # never moves `latest`. This is deliberately NOT a `{{ if not .Prerelease }}`
+  # name_template hack: an empty manifest name is a config error, not a skip.
+  - name_template: ghcr.io/ethanhinson/fuse:latest
+    skip_push: auto
+    image_templates:
+      - ghcr.io/ethanhinson/fuse:{{ .Version }}-amd64
+      - ghcr.io/ethanhinson/fuse:{{ .Version }}-arm64
+
+release:
+  github:
+    owner: ethanhinson
+    name: fuse
+  draft: false
+  # A tag containing a pre-release segment (v0.2.0-rc.1) publishes as a GitHub
+  # pre-release; a plain vX.Y.Z publishes as a full release.
+  prerelease: auto
+
+changelog:
+  use: github
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+  filters:
+    exclude:
+      - '^docs'
+      - '^chore'
+      - '^test'
+      - '^docket'
