@@ -28,7 +28,13 @@
 # Requires Compose v2.20+ for `include:`.
 #
 #   docker compose -f deploy/compose/docker-compose.yml up -d
-#   docker compose -f deploy/compose/docker-compose.yml --profile docker-socket up -d
+#   docker compose -f deploy/compose/docker-compose.yml \
+#     --profile docker-socket up -d postgres fuse-docker-socket
+#
+# The docker-socket form NAMES ITS SERVICES deliberately: `fuse` has no
+# `profiles:` key, so a bare `--profile docker-socket up` would start it too and
+# the two would collide on the published ports. See the block on
+# `fuse-docker-socket` below.
 #
 # See ./README.md.
 include:
@@ -62,6 +68,11 @@ services:
       # while the container stays healthy. The distroless base ships no /tmp
       # this process can write, so mount one.
       - fuse-tmp:/tmp
+    # DELIBERATELY NOT IN THE &fuse ANCHOR. `fuse-docker-socket` merges this
+    # service and publishes THE SAME host ports, so only one of the two can run
+    # at a time. Keeping the publish block out of the anchor and repeating it
+    # verbatim on both services makes that collision visible to a reader of
+    # this file instead of hiding it behind a YAML merge.
     ports:
       # Loopback publish only (ADR-0043).
       - "127.0.0.1:8787:8787"   # Connect/h2c
@@ -104,16 +115,31 @@ services:
   #
   # WHY A SECOND SERVICE: Compose profiles gate whole services, not individual
   # mounts, so there is no way to make one mount conditional. `fuse-docker-socket`
-  # is the same service via the `&fuse` YAML anchor plus the socket mount, and
-  # it carries `profiles:` so it does not start (and does not contend for the
-  # published ports) unless you pass --profile docker-socket. The two are
-  # mutually exclusive by hand: with the profile active, stop `fuse` first, or
-  # use `docker compose --profile docker-socket up fuse-docker-socket postgres`.
-  # See README.md.
+  # is the same service via the `&fuse` YAML anchor plus the socket mount, and it
+  # carries `profiles:` so it never starts unless you pass --profile docker-socket.
+  #
+  # THE TWO ARE MUTUALLY EXCLUSIVE, AND COMPOSE WILL NOT ENFORCE THAT FOR YOU.
+  # A profile gates only the PROFILED service; `fuse` has no `profiles:` key, so
+  # it starts on every invocation — including `--profile docker-socket up`. Both
+  # services publish 127.0.0.1:8787 and :9090, so that bare command fails with a
+  # port-bind error. Compose has no way to express "exclude this service when
+  # that profile is active": a service with no `profiles:` key is always in the
+  # default set. So NAME THE SERVICES YOU WANT:
+  #
+  #   docker compose -f deploy/compose/docker-compose.yml \
+  #     --profile docker-socket up -d postgres fuse-docker-socket
+  #
+  # See README.md and docs/deploying.md.
   # ==========================================================================
   fuse-docker-socket:
     <<: *fuse
     profiles: ["docker-socket"]
+    # Repeated verbatim from `fuse` on purpose — see the note on that service's
+    # ports block. These are the same host ports, which is why only one of the
+    # two services can run at a time.
+    ports:
+      - "127.0.0.1:8787:8787"   # Connect/h2c
+      - "127.0.0.1:9090:9090"   # Prometheus /metrics
     volumes:
       - fuse-home:/home/nonroot/.fuse
       - ./fuse.compose.yml:/home/nonroot/.fuse/config.yml:ro

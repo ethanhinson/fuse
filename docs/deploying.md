@@ -94,6 +94,13 @@ docker compose -f deploy/compose/docker-compose.yml \
   --profile docker-socket up -d postgres fuse-docker-socket
 ```
 
+**Name those services — do not run `--profile docker-socket up` bare.** A Compose profile gates
+only the *profiled* service, and `fuse` has no `profiles:` key, so it starts on every invocation
+including that one. Both services publish `127.0.0.1:8787` and `:9090`, so the bare form dies with
+a port-bind error. Compose cannot express "exclude this service while that profile is active" — a
+service with no `profiles:` key is always in the default set — which is why the command names what
+it wants instead.
+
 Read that tradeoff in the tri-state section below before you type it.
 
 **Full details — ports, the Prometheus override merge, the profile, the files —** are in
