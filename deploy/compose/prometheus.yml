@@ -1,0 +1,22 @@
+# Prometheus config for the fuse compose dev stack (docket change 0076).
+#
+# This file is mounted OVER /etc/prometheus/prometheus.yml, replacing the
+# inherited deploy/observability/prometheus.yml, whose scrape target is
+# host.docker.internal:9090 (a fuse running on the host). Here fuse is a service
+# in the same compose network, so the target is fuse:9090.
+#
+# deploy/observability/prometheus.yml must NOT be retargeted to match:
+# hasFuseScrapeTarget in deploy/observability/validate.go asserts its exact
+# host.docker.internal:9090 triple, and that is the standalone stack's contract.
+#
+# rule_files points at the alerts.yml the include-merge still mounts from
+# deploy/observability/ — shared, not forked.
+global:
+  scrape_interval: 15s
+rule_files:
+  - /etc/prometheus/alerts.yml
+scrape_configs:
+  - job_name: fuse
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fuse:9090"]

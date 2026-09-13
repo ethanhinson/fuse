@@ -1,0 +1,65 @@
+# fuse server config for the compose dev stack (docket change 0076).
+#
+# ============================================================================
+# DEV-ONLY. NOT A PRODUCTION DEPLOYMENT. EVERY CREDENTIAL HERE IS A
+# CHECKED-IN PLACEHOLDER.
+#
+# `loop_server.auth[0].token` below is the literal built-in dev token, committed
+# to a public git repository. It grants the _default tenant, and
+# observability_operator, to anyone who can read this file — which is everyone.
+# It is here so the stack is usable out of the box on a loopback-only host, and
+# for no other reason.
+#
+# This file is mounted at /home/nonroot/.fuse/config.yml, the TRUSTED home file
+# (ADR-0006): loop_server.auth, observability, and tool_identity are honored from
+# here and nowhere else. That is why a real deployment ships this content as a
+# Secret with real tokens — see deploy/charts/fuse, whose auth guard refuses to
+# render a dev token unless you explicitly ask for one.
+#
+# If you change the token here, restart the fuse service; the trusted file is
+# read at startup.
+# ============================================================================
+loop_server:
+  auth:
+    # Placeholder credential. Same value the server synthesizes when auth is
+    # empty, spelled out here so it is visible rather than logged at startup.
+    - token: "fuse-dev-token"
+      tenant: "_default"
+      subject: "dev"
+      observability_operator: true
+
+observability:
+  # The env FUSE_INSTANCE_ID (compose-1) fills this in; the trusted file wins
+  # when set, so leave it empty here and let one file serve N containers.
+  instance_id: ""
+  metrics:
+    enabled: true
+    # 0.0.0.0, not loopback: Prometheus scrapes this across the compose network
+    # as fuse:9090. The host publish is still 127.0.0.1-bound (ADR-0043).
+    bind: "0.0.0.0:9090"
+    path: "/metrics"
+    # public = the metrics endpoint needs no bearer token. Acceptable ONLY
+    # because this stack is loopback-only and the network is the container
+    # network. In production this is `authenticated` with a scrape principal.
+    access: public
+  traces:
+    enabled: true
+    # The otel-collector service from the included observability stack.
+    endpoint: "otel-collector:4317"
+    protocol: grpc
+    insecure: true          # dev only — plaintext OTLP inside the compose network
+    sample_ratio: 1.0
+  logging:
+    enabled: true
+    output: stdout          # container logs; `docker compose logs -f fuse`
+    level: info
+    max_override_ttl: "1h"  # REQUIRED whenever logging.enabled is true
+  cardinality:
+    # REQUIRED whenever metrics.enabled is true: hash_version plus a budget >= 1
+    # on every dimension (budget 0 is a startup error — the budget must reserve
+    # a slot for __overflow__).
+    hash_version: "sha256-64-v1"   # the only supported version
+    salt: "compose-dev"
+    tenant: { budget: 50 }
+    model:  { budget: 50 }
+    tool:   { budget: 100 }
