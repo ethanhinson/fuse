@@ -12,12 +12,12 @@ related: [76, 64]
 discovered_from: []
 adrs: [44, 51]
 spec: docs/superpowers/specs/2026-09-12-build-release-pipeline-design.md
-plan:
+plan: docs/superpowers/plans/2026-09-13-build-release-pipeline-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/build-release-pipeline
-claimed_at: 2026-09-13T00:01:20Z
+claimed_at: 2026-09-13T00:03:21Z
 pr:
 blocked_by:
 reconciled: true
@@ -29,6 +29,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-09-12-build-release-pipeline-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-12-build-release-pipeline-design.md) |
+| Plan | [2026-09-13-build-release-pipeline-plan.md](https://github.com/ethanhinson/fuse/blob/feat/build-release-pipeline/docs/superpowers/plans/2026-09-13-build-release-pipeline-plan.md) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md), [ADR-0051](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0051-network-none-reaches-its-proxy-by-mounted-socket-plus-supplied-forwarder.md) |
 <!-- docket:artifacts:end -->
 
