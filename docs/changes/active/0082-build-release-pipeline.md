@@ -2,7 +2,7 @@
 id: 82
 slug: build-release-pipeline
 title: build/release pipeline — tag-driven GoReleaser releases (multi-platform archives + GHCR image + curl installer) so users adopt fuse without a Go toolchain
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-09-12
@@ -13,12 +13,12 @@ discovered_from: []
 adrs: [44, 51]
 spec: docs/superpowers/specs/2026-09-12-build-release-pipeline-design.md
 plan: docs/superpowers/plans/2026-09-13-build-release-pipeline-plan.md
-results:
+results: docs/results/2026-09-13-build-release-pipeline-results.md
 trivial: false
 auto_groomable:
 branch: feat/build-release-pipeline
-claimed_at: 2026-09-13T00:03:21Z
-pr:
+claimed_at: 2026-09-13T02:19:38Z
+pr: https://github.com/ethanhinson/fuse/pull/88
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-09-12-build-release-pipeline-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-12-build-release-pipeline-design.md) |
 | Plan | [2026-09-13-build-release-pipeline-plan.md](https://github.com/ethanhinson/fuse/blob/feat/build-release-pipeline/docs/superpowers/plans/2026-09-13-build-release-pipeline-plan.md) |
+| Results | [2026-09-13-build-release-pipeline-results.md](https://github.com/ethanhinson/fuse/blob/feat/build-release-pipeline/docs/results/2026-09-13-build-release-pipeline-results.md) |
+| PR | [#88](https://github.com/ethanhinson/fuse/pull/88) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md), [ADR-0051](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0051-network-none-reaches-its-proxy-by-mounted-socket-plus-supplied-forwarder.md) |
 <!-- docket:artifacts:end -->
 
