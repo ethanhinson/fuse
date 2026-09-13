@@ -32,6 +32,24 @@ builds:
       - arm64
     flags:
       - -trimpath
+    # `tags` (NOT a `flags: [-tags, pgstore]` entry): a real key on a v2 build —
+    # `Build.tags` in GoReleaser v2's own config schema, a FlagArray, with
+    # `additionalProperties: false` on the Build object so a misspelling is rejected
+    # rather than ignored. Verified empirically too, which is the evidence that
+    # counts: a `-tags pgstore` binary's `fuse version` prints
+    # `backends: fsstore,pgstore` (cmd/fuse/backends*.go), and the untagged one
+    # prints `backends: fsstore`.
+    #
+    # WHY the release binary is tagged (change 0076): pgstore is the deployable,
+    # cross-instance durable backend, and a server operator cannot rebuild from
+    # source to get it. durable_backend_pg.go still falls through to fsstore when no
+    # DSN is configured, so CLI behaviour is unchanged — the cost is pgx linked into
+    # the binary. The untagged build stays available (`go build ./cmd/fuse`).
+    #
+    # Deliberately NOT applied to fuse-egress-forward below: that binary is the
+    # in-sandbox forwarder and has no durable-backend code path at all.
+    tags:
+      - pgstore
     # The package path MUST stay identical to the Makefile's VERSION_PKG
     # (github.com/ethanhinson/fuse/internal/version) — a drifting path injects
     # nothing and `fuse version` silently reports "dev".

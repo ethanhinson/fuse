@@ -7,11 +7,20 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null)
 VERSION_PKG := github.com/ethanhinson/fuse/internal/version
 LDFLAGS := $(if $(VERSION),-X $(VERSION_PKG).Version=$(VERSION))
 
+# BUILD_TAGS is `pgstore`, matching the release builds in .goreleaser.yaml (change
+# 0076): the Postgres durable backend is the deployable, cross-instance one, and an
+# operator running the release binary cannot rebuild to get it. The tagged selector
+# (cmd/fuse/durable_backend_pg.go) still falls through to fsstore when no DSN is
+# configured, so local CLI behaviour is unchanged — the cost is pgx linked in.
+# `fuse version` reports which backends a binary actually carries; the untagged path
+# remains available as plain `go build ./cmd/fuse` (and `go test ./...` is untagged).
+BUILD_TAGS ?= pgstore
+
 build:
-	go build -ldflags "$(LDFLAGS)" -o fuse ./cmd/fuse
+	go build -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)" -o fuse ./cmd/fuse
 
 install:
-	go install -ldflags "$(LDFLAGS)" ./cmd/fuse
+	go install -tags "$(BUILD_TAGS)" -ldflags "$(LDFLAGS)" ./cmd/fuse
 
 # egress-forwarder builds the IN-CONTAINER half of egress control (change 0064):
 # the small relay fuse bind-mounts into a `--network none` sandbox so that
