@@ -381,9 +381,9 @@ func TestLoadConfigUnknownKeyInKubernetesIsWholeFileMalformed(t *testing.T) {
 // it, to the container default, which is buildable and contained.
 func TestLoadConfigWholeFileDiscardNeverSalvagesTheKubernetesBlock(t *testing.T) {
 	bodies := map[string]string{
-		"unknown key elsewhere": "containd: false\nkubernetes:\n  namespace_prefix: fuse-sb\n  service_account: privileged\n",
-		"broken yaml":           "contained: [oh: no\nkubernetes:\n  namespace_prefix: fuse-sb\n",
-		"unknown handler":       "handler: banana\nkubernetes:\n  namespace_prefix: fuse-sb\n  service_account: privileged\n",
+		"unknown key elsewhere":                    "containd: false\nkubernetes:\n  namespace_prefix: fuse-sb\n  service_account: privileged\n",
+		"broken yaml":                              "contained: [oh: no\nkubernetes:\n  namespace_prefix: fuse-sb\n",
+		"unknown handler":                          "handler: banana\nkubernetes:\n  namespace_prefix: fuse-sb\n  service_account: privileged\n",
 		"handler kubernetes with a typo elsewhere": "handler: kubernetes\ncontaind: false\nkubernetes:\n  service_account: privileged\n",
 	}
 	for name, body := range bodies {
