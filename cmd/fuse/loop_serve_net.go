@@ -297,7 +297,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		}
 	}()
 
-	if err := serveNetObserved(ctx, ln, rt, verifier, deps.Registry, obs); err != nil {
+	if err := serveNetObserved(ctx, ln, rt, verifier, deps.Registry, deps.DurableStore, obs); err != nil {
 		fmt.Fprintf(stderr, "loop-serve-net: %v\n", err)
 		return 1
 	}
@@ -323,11 +323,22 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 // which the pure-transport E2E test relies on for a subset of its assertions; the
 // production runLoopServeNet always supplies both.
 func serveNet(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry) error {
-	return serveNetObserved(ctx, ln, rt, verifier, registry, nil)
+	return serveNetObserved(ctx, ln, rt, verifier, registry, nil, nil)
 }
 
-func serveNetObserved(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry, obs *observabilityService) error {
+// store is the durable store the readiness probe pings; it may be nil (an
+// in-memory binding), and it need not implement event.Pinger — either way the
+// probe reads as ready. It is passed separately from registry because the
+// observability projection wraps the store and not the registry.
+func serveNetObserved(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry, store event.DurableStore, obs *observabilityService) error {
 	mux := http.NewServeMux()
+
+	// Mounted BEFORE the Connect handler, and unauthenticated by construction:
+	// the auth interceptor below is a connect.HandlerOption on the Connect handler
+	// only, never mux middleware, so these two plain mux routes require no
+	// credential. A kubelet has none to present. See cmd/fuse/health.go.
+	rd := newReadiness(store, verifier)
+	rd.register(mux)
 
 	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx).WithRegistry(registry)
 	if obs != nil {
