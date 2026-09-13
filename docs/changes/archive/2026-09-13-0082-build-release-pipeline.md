@@ -2,7 +2,7 @@
 id: 82
 slug: build-release-pipeline
 title: build/release pipeline — tag-driven GoReleaser releases (multi-platform archives + GHCR image + curl installer) so users adopt fuse without a Go toolchain
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-09-12
@@ -17,7 +17,7 @@ results: docs/results/2026-09-13-build-release-pipeline-results.md
 trivial: false
 auto_groomable:
 branch: feat/build-release-pipeline
-claimed_at: 2026-09-13T02:19:38Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/88
 blocked_by:
 reconciled: true
