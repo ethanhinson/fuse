@@ -37,6 +37,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # helm is a TEST DEPENDENCY, not just a release one: deploy/charts'
+      # `helm lint` + `helm template` gate skips loudly when helm is absent, and
+      # a skip in CI is indistinguishable from a pass in the summary. Installing
+      # it here is what makes `go test ./...` actually exercise the chart.
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.3
+
       - name: Run unit tests with race detector
         run: go test -race ./...
 
@@ -171,3 +179,63 @@ jobs:
           subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.image.outputs.digest }}
           push-to-registry: true
+
+      # THE HELM CHART, published as an OCI artifact to the same GHCR namespace
+      # (docket change 0076). This step is placed last, after both attestations,
+      # so a chart-push failure can never abort the release's provenance half.
+      #
+      # No new grants are needed: `packages: write` (above) and the
+      # docker/login-action step at step 5 already cover an OCI push. helm 3.8+
+      # reads the docker config that action writes, but the login is made
+      # EXPLICIT below rather than inherited — an inherited credential is one
+      # `docker/login-action` refactor away from a confusing 401 at tag time.
+      #
+      # VERSION RULES, matching the image exactly:
+      #   * the chart version IS the tag with its leading `v` stripped, stamped
+      #     over Chart.yaml's in-tree 0.0.0-dev placeholder;
+      #   * a pre-release tag (v1.2.3-rc.1) passes straight through and
+      #     publishes a pre-release chart version — SemVer pre-release ordering
+      #     keeps `helm install` off it unless asked for by name;
+      #   * there is NO floating chart tag. Same rule as the image's `:latest`:
+      #     a mutable pointer at an immutable artifact is how an operator ends
+      #     up running something nobody tagged.
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.3
+
+      - name: Package and push the Helm chart
+        env:
+          VERSION_TAG: ${{ github.ref_name }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          version="${VERSION_TAG#v}"
+
+          printf '%s' "${GHCR_TOKEN}" |
+            helm registry login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+          # Packaged OUTSIDE dist/: dist/ is GoReleaser's, and the archive
+          # attestation above globs `dist/*.tar.gz`. The chart is attested by
+          # neither attestation (it is an OCI artifact, not a release asset), so
+          # dropping a .tgz in there would only risk a future glob picking it up.
+          out="${RUNNER_TEMP}/chart"
+          rm -rf "${out}" && mkdir -p "${out}"
+
+          helm package deploy/charts/fuse \
+            --version "${version}" --app-version "${version}" \
+            --destination "${out}"
+
+          # Assert the artifact exists before pushing, in the same spirit as
+          # "refusing to attest nothing" above: if `helm package` ever changes
+          # its output naming, this must fail by NAME here rather than as an
+          # opaque `helm push` error on a path that was never written.
+          chart="${out}/fuse-${version}.tgz"
+          [ -f "${chart}" ] || {
+            echo "::error::expected ${chart} after 'helm package' — not found; refusing to push nothing." >&2
+            ls -la "${out}" >&2
+            exit 1
+          }
+
+          helm push "${chart}" oci://ghcr.io/ethanhinson/charts
