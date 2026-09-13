@@ -105,6 +105,15 @@ jobs:
       # Either route yielding a digest is a success; NEITHER yielding one is a
       # hard failure, so a GoReleaser field rename is loud rather than silently
       # attesting nothing.
+      #
+      # SECOND COUPLING, same shape: the image reference below is HARDCODED to
+      # match .goreleaser.yaml, which hardcodes ghcr.io/ethanhinson/fuse in every
+      # image_templates and docker_manifests entry. Deriving it from
+      # ${GITHUB_REPOSITORY} instead would agree only by coincidence of the repo
+      # slug: a rename or a fork would send this lookup after an image GoReleaser
+      # never pushed, and the failure would surface as the generic "could not
+      # resolve a digest ... by either route" rather than naming the mismatch.
+      # If the image name changes, it changes in BOTH files.
       - name: Resolve the published image digest
         id: image
         env:
@@ -121,7 +130,8 @@ jobs:
           # tag: both :latest and :X.Y are skip_push:auto and are absent for a
           # pre-release tag. :X.Y.Z is the only manifest every tag publishes.
           version="${VERSION_TAG#v}"
-          image="ghcr.io/${GITHUB_REPOSITORY,,}:${version}"
+          image_name="ghcr.io/ethanhinson/fuse" # must match .goreleaser.yaml
+          image="${image_name}:${version}"
 
           name="$(jq -r --arg img "${image}" \
             'map(select(.type == "Docker Manifest" and .name == $img)) | .[0].name // empty' \
@@ -151,7 +161,7 @@ jobs:
           esac
 
           {
-            printf 'name=%s\n' "ghcr.io/${GITHUB_REPOSITORY,,}"
+            printf 'name=%s\n' "${image_name}"
             printf 'digest=%s\n' "${digest}"
           } >>"${GITHUB_OUTPUT}"
 

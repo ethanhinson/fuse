@@ -140,3 +140,40 @@ otherwise leave it and let `:latest` and `:X.Y` move forward with `v0.1.1`.
 Deleting a release does not delete its attestations, and that is fine: an
 attestation binds provenance to bytes, so a verified yanked archive is still a
 yanked archive. Say so in the replacement release's notes.
+
+### Published but unattested: a red attestation step on a green GoReleaser step
+
+Read the failing step before you reach for the yank procedure above, because
+these two failures are not the same thing.
+
+GoReleaser publishes the GitHub release and pushes the GHCR manifests *before*
+either attestation step runs — the image attestation cannot run earlier, because
+the digest it binds to does not exist until the push. So a run that fails in
+`Resolve the published image digest` or in either `attest-build-provenance` step
+leaves a **real, public, downloadable release with no provenance**, while the
+Actions run shows red. Users following [Verify the artifacts](#verify-the-artifacts)
+will find the archives exactly where they expect and `gh attestation verify` will
+fail on them.
+
+The release itself is fine — the bytes are the bytes GoReleaser built, and the
+checksums file still verifies them. Only the provenance is missing. So:
+
+1. **Re-attest, without re-releasing.** Note that a plain
+   `gh run rerun <run-id> --failed` re-runs the whole `release` job, and
+   GoReleaser will abort on the release it already created — `release:` declares
+   neither `mode: replace` nor `replace_existing_artifacts`, so an existing
+   release is an error, not something it overwrites. To get provenance onto the
+   published bytes, attest them directly: download the release assets and the
+   image digest, then run [`actions/attest-build-provenance`][attest] against
+   them from a workflow dispatch, or `gh attestation` from a trusted checkout of
+   the tagged commit.
+2. If that is more trouble than the release is worth, or the artifacts are
+   themselves wrong, **yank per the procedure above** and ship a new patch
+   version — a clean tag runs the whole pipeline, attestations included. Do not
+   leave an unattested release standing while [`README.md`](../README.md) and
+   this document tell users to verify it.
+
+[attest]: https://github.com/actions/attest-build-provenance
+
+Until one of those lands, treat the version as published: someone may already
+have downloaded it, and `gh attestation verify` will fail for them.

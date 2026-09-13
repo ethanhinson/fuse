@@ -56,7 +56,9 @@ warn() {
 }
 
 cleanup() {
-	# Guard the expansion: the trap is armed before the temp dir exists.
+	# Guard the expansion: the trap is armed BEFORE the temp dir exists (see
+	# main), so cleanup can fire with TMPDIR_FUSE still empty — and an
+	# unguarded `rm -rf "${TMPDIR_FUSE}"` would then be `rm -rf ""`.
 	if [ -n "${TMPDIR_FUSE}" ] && [ -d "${TMPDIR_FUSE}" ]; then
 		rm -rf "${TMPDIR_FUSE}"
 	fi
@@ -106,9 +108,19 @@ base_is_local() {
 }
 
 # local_path_of BASE -> the filesystem path BASE denotes (strips file://).
+#
+# Only the empty authority (file:///abs) and `localhost` are accepted. Stripping
+# a bare `file://` would turn file://localhost/abs into the RELATIVE path
+# `localhost/abs`, and any other authority into a host this script has no way to
+# reach — either way the failure would surface downstream as a confusing
+# "not found: localhost/abs/fuse_...". Name the cause here instead.
 local_path_of() {
 	case "$1" in
-	file://*) printf '%s' "${1#file://}" ;;
+	file:///*) printf '%s' "${1#file://}" ;;
+	file://localhost/*) printf '%s' "${1#file://localhost}" ;;
+	file://*)
+		die "unsupported file:// URL '$1': only file:///absolute/path (empty authority) or file://localhost/absolute/path is supported. Note that a percent-encoded path is NOT decoded — pass a plain directory path instead if it contains spaces."
+		;;
 	*) printf '%s' "$1" ;;
 	esac
 }
@@ -237,9 +249,15 @@ verify_checksum() {
 	_archive=$2
 	_checksums=$3
 
-	# One line, matched on the exact filename at end-of-line so a longer name
-	# that merely contains this one cannot satisfy the check.
-	_expected_lines=$(grep -E "[[:space:]]\*?${_archive}\$" "${_dir}/${_checksums}" || true)
+	# One line, matched on the LITERAL filename. awk, not grep: the archive name
+	# is dot-dense (fuse_0.1.0_darwin_arm64.tar.gz) and interpolating it into a
+	# regex would turn every `.` into "any character", so a checksums line naming
+	# fuse_0X1Y0_darwin_arm64PtarPgz would satisfy a match this function reports
+	# as exact — defeating the duplicate-entry refusal below. Comparing $NF for
+	# string equality also subsumes the `*` binary-mode prefix sha256sum writes.
+	_expected_lines=$(awk -v want="${_archive}" \
+		'{ n = $NF; sub(/^\*/, "", n); if (n == want) print }' \
+		"${_dir}/${_checksums}" || true)
 	if [ -z "${_expected_lines}" ]; then
 		die "${_checksums} contains no entry for ${_archive}; refusing to install unverified bytes."
 	fi
@@ -289,6 +307,14 @@ main() {
 	detect_platform
 
 	BASE_URL=${FUSE_RELEASE_BASE_URL:-}
+	# Whether the CALLER supplied a base, captured before normalisation can
+	# empty it. `[ -z "${BASE_URL}" ]` below is not a safe proxy: a base of `/`
+	# (or `//`) normalises to the empty string and would silently retarget the
+	# install at GitHub — exactly the fall-through resolve_version refuses for
+	# the version.
+	BASE_URL_GIVEN=0
+	[ -n "${BASE_URL}" ] && BASE_URL_GIVEN=1
+
 	# Trailing slashes would produce `dist//fuse_...`, harmless for a path but
 	# ugly in messages and wrong for some servers.
 	while :; do
@@ -297,13 +323,16 @@ main() {
 		*) break ;;
 		esac
 	done
+	if [ "${BASE_URL_GIVEN}" -eq 1 ] && [ -z "${BASE_URL}" ]; then
+		die "FUSE_RELEASE_BASE_URL='${FUSE_RELEASE_BASE_URL}' is not a usable download base (it is only slashes). Refusing to fall back to ${REPO_URL}; set it to a directory, a file:// URL or an https:// URL."
+	fi
 
 	resolve_version
 
 	ARCHIVE="fuse_${VERSION}_${OS}_${ARCH}.tar.gz"
 	CHECKSUMS="fuse_${VERSION}_checksums.txt"
 
-	if [ -z "${BASE_URL}" ]; then
+	if [ "${BASE_URL_GIVEN}" -eq 0 ]; then
 		BASE_URL="${REPO_URL}/releases/download/${TAG}"
 	fi
 
@@ -313,10 +342,13 @@ main() {
 
 	have tar || die "tar is required but was not found on PATH."
 
+	# Arm the trap FIRST, so a signal landing between mktemp and the check
+	# cannot leak the directory. cleanup's own emptiness guard is what makes
+	# this ordering safe.
+	trap cleanup EXIT HUP INT TERM
 	TMPDIR_FUSE=$(mktemp -d 2>/dev/null || mktemp -d -t fuse-install)
 	[ -n "${TMPDIR_FUSE}" ] && [ -d "${TMPDIR_FUSE}" ] ||
 		die "could not create a temporary directory."
-	trap cleanup EXIT HUP INT TERM
 
 	# Step 3: both artifacts land in the temp dir; NOTHING is written to the
 	# install dir until the checksum has been verified and the unpack has

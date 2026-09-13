@@ -79,18 +79,26 @@ esac
 
 # Recover the version from the checksums file, exactly as a caller with a
 # snapshot dist/ would: the version string is generated, not knowable up front.
+# EXACTLY one, mirroring discover_version_from_dir's own `[ "${_count}" -eq 1 ]`.
+# Taking the first of several would pick a version arbitrarily and then run every
+# case with FUSE_VERSION set explicitly — bypassing the discovery logic case 5
+# exists to prove, and reporting a green run for a dist/ the installer refuses.
 VERSION=
+CHECKSUM_COUNT=0
 for f in "${DIST_DIR}"/fuse_*_checksums.txt; do
 	[ -f "${f}" ] || continue
+	CHECKSUM_COUNT=$((CHECKSUM_COUNT + 1))
 	base=${f##*/}
 	base=${base#fuse_}
 	VERSION=${base%_checksums.txt}
-	break
 done
-[ -n "${VERSION}" ] || {
-	printf 'install_test: no fuse_*_checksums.txt in %s\n' "${DIST_DIR}" >&2
+if [ "${CHECKSUM_COUNT}" -ne 1 ]; then
+	printf 'install_test: expected exactly one fuse_*_checksums.txt in %s, found %d\n' \
+		"${DIST_DIR}" "${CHECKSUM_COUNT}" >&2
+	printf "  The installer's discover_version_from_dir requires exactly one too;\n" >&2
+	printf '  rebuild with: goreleaser release --snapshot --clean --skip=publish,docker\n' >&2
 	exit 1
-}
+fi
 
 ARCHIVE="fuse_${VERSION}_${HOST_OS}_${HOST_ARCH}.tar.gz"
 CHECKSUMS="fuse_${VERSION}_checksums.txt"
@@ -438,12 +446,196 @@ case6() {
 	fi
 }
 
+# ---------------------------------------------------------------------------
+# Case 7 — REGRESSION (review finding F4). The checksums entry must be matched
+# as a LITERAL filename, not as a regex. The archive name is dot-dense, so a
+# pattern match would let a near-miss name whose dots are replaced by other
+# characters satisfy a check the code reports as exact — which in turn defeats
+# the duplicate-entry refusal.
+#
+# Fixture: the ONLY entry for our archive is the dot-mutated near-miss name.
+# A literal match finds nothing and must refuse; a regex match finds it and
+# would proceed to compare digests.
+# ---------------------------------------------------------------------------
+
+case7() {
+	name="dot-mutated near-miss checksums entry is refused (not regex-matched)"
+	bad="${WORK}/case7/dist"
+	dest="${WORK}/case7/bin"
+	out="${WORK}/case7.out"
+	mkdir -p "${bad}" "${dest}"
+
+	cp "${DIST_DIR}/${ARCHIVE}" "${bad}/${ARCHIVE}"
+
+	# Every `.` -> `P`. Under an unescaped ERE each `.` matches any character,
+	# so this line matches; as a literal string it does not.
+	near=$(printf '%s' "${ARCHIVE}" | tr '.' 'P')
+	if [ "${near}" = "${ARCHIVE}" ]; then
+		fail "${name}: fixture broken — archive name has no dots to mutate"
+		return
+	fi
+	# The digest is the REAL one, so the only thing that can refuse this install
+	# is the filename comparison itself.
+	real=$(grep -E "[[:space:]]\\*?${ARCHIVE}\$" "${DIST_DIR}/${CHECKSUMS}" |
+		awk '{print $1}' | head -n 1)
+	if [ -z "${real}" ]; then
+		fail "${name}: fixture broken — no digest for ${ARCHIVE} in ${CHECKSUMS}"
+		return
+	fi
+	printf '%s  %s\n' "${real}" "${near}" >"${bad}/${CHECKSUMS}"
+
+	set +e
+	FUSE_RELEASE_BASE_URL="${bad}" \
+		FUSE_INSTALL_DIR="${dest}" \
+		FUSE_VERSION="${VERSION}" \
+		HOME="${WORK}/case7/home" \
+		sh "${INSTALL_SH}" >"${out}" 2>&1
+	status=$?
+	set -e
+
+	n=$(count_files "${dest}")
+	if [ "${status}" -eq 0 ] || [ "${n}" != "0" ]; then
+		fail "${name}: exit ${status}, ${n} file(s) installed — the near-miss name '${near}' satisfied the match"
+		sed 's/^/    /' "${out}" >&2
+		return
+	fi
+	if grep -q 'no entry for' "${out}"; then
+		:
+	else
+		fail "${name}: refused, but not as a missing entry"
+		sed 's/^/    /' "${out}" >&2
+		return
+	fi
+
+	pass "${name} (exit ${status}, install dir empty)"
+}
+
+# ---------------------------------------------------------------------------
+# Case 8 — REGRESSION (review finding F7). A caller-supplied
+# FUSE_RELEASE_BASE_URL that normalises to the empty string ("/" is all trailing
+# slashes) must DIE, not silently retarget the install at GitHub's release
+# download URL. Silently falling through to GitHub is the exact failure
+# resolve_version refuses for the version.
+#
+# The assertion is on the message: a network-less runner would also exit
+# non-zero from a failed download, which is not the behaviour under test.
+# ---------------------------------------------------------------------------
+
+case8_variant() {
+	base=$1
+	name="degenerate base '${base}' dies instead of retargeting GitHub"
+	dest="${WORK}/case8-$(printf '%s' "${base}" | tr -c 'a-z0-9' '_')/bin"
+	out="${WORK}/case8-$(printf '%s' "${base}" | tr -c 'a-z0-9' '_').out"
+	mkdir -p "${dest}"
+
+	set +e
+	FUSE_RELEASE_BASE_URL="${base}" \
+		FUSE_INSTALL_DIR="${dest}" \
+		FUSE_VERSION="${VERSION}" \
+		HOME="${dest}/home" \
+		sh "${INSTALL_SH}" >"${out}" 2>&1
+	status=$?
+	set -e
+
+	n=$(count_files "${dest}")
+	if [ "${status}" -eq 0 ] || [ "${n}" != "0" ]; then
+		fail "${name}: exit ${status}, ${n} file(s) installed"
+		sed 's/^/    /' "${out}" >&2
+		return
+	fi
+	# It must refuse by NAMING the unusable base...
+	if grep -q 'not a usable download base' "${out}"; then
+		:
+	else
+		fail "${name}: exited non-zero, but not with the unusable-base refusal"
+		sed 's/^/    /' "${out}" >&2
+		return
+	fi
+	# ...and must never have got as far as announcing a base it would install
+	# from. Matched on the `installing ... from` banner, not on a bare
+	# "github.com": the refusal message legitimately names the GitHub base it is
+	# declining to fall back to, and grepping for the host alone would trip on
+	# that and report a fall-through that did not happen.
+	if grep -q 'installing fuse .* from ' "${out}"; then
+		fail "${name}: reached the download banner instead of refusing"
+		sed 's/^/    /' "${out}" >&2
+		return
+	fi
+
+	pass "${name} (exit ${status})"
+}
+
+case8() {
+	case8_variant '/'
+	case8_variant '//'
+}
+
+# ---------------------------------------------------------------------------
+# Case 9 — REGRESSION (review finding F9). file:// with an authority.
+# `file://localhost/abs` is a legal spelling of the same local path and must
+# work; any other authority must be refused by NAME rather than silently
+# becoming the relative path `<authority>/abs`.
+# ---------------------------------------------------------------------------
+
+case9() {
+	name="file://localhost/ base installs"
+	dest="${WORK}/case9/bin"
+	out="${WORK}/case9.out"
+	mkdir -p "${WORK}/case9"
+
+	set +e
+	FUSE_RELEASE_BASE_URL="file://localhost${DIST_DIR}" \
+		FUSE_INSTALL_DIR="${dest}" \
+		FUSE_VERSION="${VERSION}" \
+		HOME="${WORK}/case9/home" \
+		sh "${INSTALL_SH}" >"${out}" 2>&1
+	status=$?
+	set -e
+
+	if [ "${status}" -eq 0 ] && [ -x "${dest}/fuse" ]; then
+		pass "${name}"
+	else
+		fail "${name}: exit ${status}"
+		sed 's/^/    /' "${out}" >&2
+	fi
+
+	name="file:// with a foreign authority is refused by name"
+	dest2="${WORK}/case9b/bin"
+	out2="${WORK}/case9b.out"
+	mkdir -p "${dest2}"
+
+	set +e
+	FUSE_RELEASE_BASE_URL="file://example.com${DIST_DIR}" \
+		FUSE_INSTALL_DIR="${dest2}" \
+		FUSE_VERSION="${VERSION}" \
+		HOME="${WORK}/case9b/home" \
+		sh "${INSTALL_SH}" >"${out2}" 2>&1
+	status=$?
+	set -e
+
+	n=$(count_files "${dest2}")
+	if [ "${status}" -eq 0 ] || [ "${n}" != "0" ]; then
+		fail "${name}: exit ${status}, ${n} file(s) installed"
+		sed 's/^/    /' "${out2}" >&2
+		return
+	fi
+	if grep -q 'unsupported file:// URL' "${out2}"; then
+		pass "${name} (exit ${status})"
+	else
+		fail "${name}: refused, but without naming the file:// spelling"
+		sed 's/^/    /' "${out2}" >&2
+	fi
+}
+
 case1
 case2
 case3
 case4
 case5
 case6
+case7
+case8
+case9
 
 printf '\n'
 if [ "${FAILURES}" -eq 0 ]; then
