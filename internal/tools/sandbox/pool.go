@@ -67,6 +67,17 @@ const (
 	// at all means an invariant was violated somewhere; it should be alerted
 	// on, not tuned.
 	CauseStaleCheckout ReleaseCause = "stale_checkout"
+
+	// CauseOrphan is a REMOTE sandbox collected by the substrate-wide reaper
+	// because no live instance was heartbeating it (change 0075).
+	//
+	// It is distinct from CauseIdleTTL, and the distinction is the whole reason it
+	// exists: idle_ttl is THIS process's Pool reclaiming a context IT remembers,
+	// whereas an orphan is by definition a sandbox no Pool remembers — the
+	// instance that owned it is gone. Counting the two together would hide an
+	// instance-crash rate inside ordinary idle churn, and the orphan count is the
+	// only signal that fuse instances are dying without releasing their sandboxes.
+	CauseOrphan ReleaseCause = "orphan"
 )
 
 // AcquireInfo describes one checkout for the emission seam.

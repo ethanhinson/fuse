@@ -32,6 +32,10 @@ type remoteStub struct {
 	provisionCalls int
 
 	reapCalls []time.Duration
+	// reapCount is how many orphans each Reap reports having deleted. It drives
+	// the reap-event assertion: the reaper must report one event PER orphan, with
+	// cause orphan.
+	reapCount int
 
 	sandboxes []*remoteSandboxStub
 }
@@ -71,7 +75,7 @@ func (s *remoteStub) Reap(_ context.Context, staleAfter time.Duration) (int, err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reapCalls = append(s.reapCalls, staleAfter)
-	return 0, nil
+	return s.reapCount, nil
 }
 
 func (s *remoteStub) stats() (verify, provision int, reaps []time.Duration) {
@@ -951,5 +955,155 @@ func TestRemoteRunnerExecRacesHeartbeatAndReaper(t *testing.T) {
 
 	if err := runner.Release(context.Background()); err != nil {
 		t.Fatalf("Release: %v", err)
+	}
+}
+
+// --- the floor_unverified health event and the orphan reap event (task 9) -----
+
+// A REFUSED FLOOR FIRES sandbox.health WITH floor_unverified, on every refused
+// Acquire.
+//
+// Every one, not only the first, and that is deliberate: the verdict is sticky and
+// there is no recovery path, so an operator who missed the first event must still
+// be able to see that a configured Kubernetes handler is refusing everything and
+// why. The reason is its own closed value rather than acquire_failed — a cluster
+// whose CNI does not enforce NetworkPolicy is a permanent, human-sized problem,
+// and it means every sandbox previously run there had unrestricted egress.
+func TestRemoteHandlerEmitsFloorUnverifiedOnEveryRefusedAcquire(t *testing.T) {
+	sub := &remoteStub{verifyErr: errors.New("canary leg 2 reached the api server")}
+	h := testRemoteHandler(t, sub, DefaultConfig())
+
+	var mu sync.Mutex
+	var fired []HealthInfo
+	h.(*remoteHandler).setHealthHooks(HealthHooks{Unhealthy: func(i HealthInfo) {
+		mu.Lock()
+		defer mu.Unlock()
+		fired = append(fired, i)
+	}})
+
+	p := loopauth.Principal{Tenant: "acme", Subject: "s"}
+	for range 3 {
+		if _, err := h.Acquire(context.Background(), p, Env{}); err == nil {
+			t.Fatal("Acquire succeeded on an unverified floor")
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(fired) != 3 {
+		t.Fatalf("health events = %d, want one per refused Acquire (3)", len(fired))
+	}
+	for i, info := range fired {
+		if info.Reason != HealthFloorUnverified {
+			t.Errorf("event %d reason = %q, want %q", i, info.Reason, HealthFloorUnverified)
+		}
+		if info.Healthy {
+			t.Errorf("event %d is marked healthy; an unproven floor is not a healthy transition", i)
+		}
+		if info.Principal != p {
+			t.Errorf("event %d principal = %+v, want %+v", i, info.Principal, p)
+		}
+		if info.Handler != sub.Name() {
+			t.Errorf("event %d handler = %q, want %q", i, info.Handler, sub.Name())
+		}
+	}
+}
+
+// A CALLER-DEADLINE expiry during the first Verify is NOT a floor_unverified
+// event: that is the caller's bound firing, not the substrate failing, and the
+// container handler makes the same exclusion on the provision path. Emitting here
+// would turn a cancelled tool call into a "this cluster is broken" page.
+func TestRemoteHandlerDoesNotEmitFloorUnverifiedForACallerDeadline(t *testing.T) {
+	sub := &remoteStub{verifyErr: context.DeadlineExceeded}
+	h := testRemoteHandler(t, sub, DefaultConfig())
+
+	var mu sync.Mutex
+	var fired []HealthInfo
+	h.(*remoteHandler).setHealthHooks(HealthHooks{Unhealthy: func(i HealthInfo) {
+		mu.Lock()
+		defer mu.Unlock()
+		fired = append(fired, i)
+	}})
+
+	if _, err := h.Acquire(context.Background(), loopauth.Principal{Tenant: "t"}, Env{}); err == nil {
+		t.Fatal("Acquire succeeded")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(fired) != 0 {
+		t.Fatalf("health events = %+v, want none: a caller deadline is not a substrate failure", fired)
+	}
+}
+
+// THE ORPHAN REAPER REPORTS ONE EVENT PER COLLECTED ORPHAN, with cause `orphan`.
+//
+// It is the only signal there is that fuse instances are dying without releasing
+// their sandboxes: an orphan is by definition a sandbox no Pool remembers, so the
+// Pool's own reaper cannot see it and idle_ttl never fires for it. ContainerID is
+// empty because Reap reports HOW MANY it deleted, not which, and inventing an id
+// would be fabricating an observation (ADR-0056).
+func TestRemoteHandlerReaperReportsOrphans(t *testing.T) {
+	sub := &remoteStub{reapCount: 3}
+
+	var mu sync.Mutex
+	var reaped []ReleaseInfo
+	h := testRemoteHandler(t, sub, DefaultConfig(),
+		withRemoteReapInterval(5*time.Millisecond),
+		WithRemoteReapHook(func(i ReleaseInfo) {
+			mu.Lock()
+			defer mu.Unlock()
+			reaped = append(reaped, i)
+		}))
+	_ = h
+
+	waitFor(t, "the reaper to report the 3 orphans the substrate collected", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(reaped) >= 3
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	for i, info := range reaped {
+		if info.Cause != CauseOrphan {
+			t.Errorf("reap %d cause = %q, want %q — idle_ttl is this process's Pool reclaiming what it remembers; an orphan is one no Pool remembers", i, info.Cause, CauseOrphan)
+		}
+		if info.Handler != sub.Name() {
+			t.Errorf("reap %d handler = %q, want %q", i, info.Handler, sub.Name())
+		}
+		if info.ContainerID != "" {
+			t.Errorf("reap %d ContainerID = %q, want empty: Reap reports a COUNT, and an invented id is a fabricated observation", i, info.ContainerID)
+		}
+	}
+}
+
+// A reaper that collected NOTHING reports nothing. The ordinary steady state is a
+// sweep that finds no orphans, and an event per empty sweep would drown the signal
+// the non-empty ones carry.
+func TestRemoteHandlerReaperIsSilentWhenItCollectsNothing(t *testing.T) {
+	sub := &remoteStub{reapCount: 0}
+
+	var mu sync.Mutex
+	count := 0
+	testRemoteHandler(t, sub, DefaultConfig(),
+		withRemoteReapInterval(5*time.Millisecond),
+		WithRemoteReapHook(func(ReleaseInfo) {
+			mu.Lock()
+			defer mu.Unlock()
+			count++
+		}))
+
+	// Wait for several sweeps to have happened, which the reapCalls counter proves
+	// rather than a sleep-and-hope.
+	waitFor(t, "the reaper to sweep at least three times", func() bool {
+		_, _, reaps := sub.stats()
+		return len(reaps) >= 3
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if count != 0 {
+		t.Fatalf("reap events = %d after sweeps that collected nothing, want 0", count)
 	}
 }

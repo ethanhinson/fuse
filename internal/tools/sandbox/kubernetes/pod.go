@@ -365,19 +365,7 @@ func (s *Substrate) renderPod(ns, name string, p loopauth.Principal, now time.Ti
 			// with no egress datapath. A "preferred" affinity is a suggestion the
 			// scheduler may ignore under pressure, which is exactly when it would
 			// break.
-			Affinity: &corev1.Affinity{
-				NodeAffinity: &corev1.NodeAffinity{
-					RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
-						NodeSelectorTerms: []corev1.NodeSelectorTerm{{
-							MatchExpressions: []corev1.NodeSelectorRequirement{{
-								Key:      corev1.LabelArchStable,
-								Operator: corev1.NodeSelectorOpIn,
-								Values:   []string{s.arch},
-							}},
-						}},
-					},
-				},
-			},
+			Affinity: s.archAffinity(),
 		},
 	}
 
@@ -386,6 +374,24 @@ func (s *Substrate) renderPod(ns, name string, p loopauth.Principal, now time.Ti
 		pod.Spec.RuntimeClassName = &rc
 	}
 	return pod
+}
+
+// archAffinity is the REQUIRED arch node pin, shared by the sandbox Pod and the
+// canary so both are scheduled where the arch-specific sidecar entrypoint exists.
+func (s *Substrate) archAffinity() *corev1.Affinity {
+	return &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+					MatchExpressions: []corev1.NodeSelectorRequirement{{
+						Key:      corev1.LabelArchStable,
+						Operator: corev1.NodeSelectorOpIn,
+						Values:   []string{s.arch},
+					}},
+				}},
+			},
+		},
+	}
 }
 
 // renderWorkload is the container the shell runs in.
@@ -486,6 +492,28 @@ func (s *Substrate) confirm(ctx context.Context, ns, name string, want, admitted
 		return nil, err
 	}
 
+	running, err := s.waitReady(ctx, ns, name, admitted)
+	if err != nil {
+		return nil, err
+	}
+	// Re-assert on the object that is actually RUNNING, not only on the one
+	// Create returned: a mutating webhook is not the only way a spec changes, and
+	// a Pod mutated after admission must not be confirmed.
+	if err := assertPosture(want, running); err != nil {
+		return nil, err
+	}
+	return running, nil
+}
+
+// waitReady polls until the Pod is Running with every container Ready, bounded by
+// startup_timeout, and returns the object it observed in that state.
+//
+// It is separate from confirm's posture assertion because the CANARY needs exactly
+// this half and none of the other: a canary Pod holds no workspace, runs no
+// model-supplied command, and has no sandbox posture to assert — asserting one
+// against it would be asserting the wrong thing, and a webhook that mutated it
+// would not change the CNI's enforcement, which is the only question Verify asks.
+func (s *Substrate) waitReady(ctx context.Context, ns, name string, admitted *corev1.Pod) (*corev1.Pod, error) {
 	deadline := time.Now().Add(s.startupTimeout)
 	// A short poll interval: a warm Pod's cold start is the latency every first
 	// Exec pays, so the confirmation must not add meaningfully to it.
@@ -500,12 +528,6 @@ func (s *Substrate) confirm(ctx context.Context, ns, name string, want, admitted
 			return nil, fmt.Errorf("kubernetes: pod %s/%s reached terminal phase %s before becoming ready: %s",
 				ns, name, cur.Status.Phase, podDiagnosis(cur))
 		case cur.Status.Phase == corev1.PodRunning && allContainersReady(cur):
-			// Re-assert on the object that is actually RUNNING, not only on the
-			// one Create returned: a mutating webhook is not the only way a spec
-			// changes, and a Pod mutated after admission must not be confirmed.
-			if err := assertPosture(want, cur); err != nil {
-				return nil, err
-			}
 			return cur, nil
 		}
 

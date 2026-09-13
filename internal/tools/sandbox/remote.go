@@ -188,6 +188,21 @@ func withRemoteHeartbeatInterval(d time.Duration) RemoteOption {
 	}
 }
 
+// WithRemoteReapHook installs the observer the orphan reaper reports through.
+//
+// It is EXPORTED, unlike the other options, for the reason WithProxyHooks is: the
+// decision that a reaped orphan becomes a `sandbox.reap` event belongs to the
+// composition root, not to this package, which stays a leaf with respect to
+// emission. The hook is the SAME ReleaseInfo the Pool's Reaped hook carries, so
+// the existing translator and the existing event shape serve both — the cause
+// (CauseOrphan vs CauseIdleTTL) is what tells them apart.
+//
+// A nil hook is valid and means the count is dropped, which is the state before a
+// composition root wires one.
+func WithRemoteReapHook(fn func(ReleaseInfo)) RemoteOption {
+	return func(h *remoteHandler) { h.reaped = fn }
+}
+
 // withRemoteReapInterval overrides the per-handler orphan-reaper period (tests).
 func withRemoteReapInterval(d time.Duration) RemoteOption {
 	return func(h *remoteHandler) {
@@ -221,6 +236,10 @@ type remoteHandler struct {
 	verifyErr  error
 
 	health HealthHooks
+
+	// reaped is the orphan reaper's observer seam (WithRemoteReapHook). Nil means
+	// the count is dropped.
+	reaped func(ReleaseInfo)
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -314,6 +333,26 @@ func (h *remoteHandler) Close() error {
 // any path below — any consideration of another substrate.
 func (h *remoteHandler) Acquire(ctx context.Context, p loopauth.Principal, env Env) (Runner, error) {
 	if err := h.verify(ctx); err != nil {
+		// THE FLOOR IS UNPROVEN, so this substrate is disqualified. The health
+		// event fires on EVERY refused Acquire rather than once at the first,
+		// deliberately: the verdict is sticky and there is no recovery, so an
+		// operator who missed the first event must still be able to see that a
+		// configured Kubernetes handler is refusing everything and why. The reason
+		// is its own closed value, not acquire_failed — a cluster whose CNI does
+		// not enforce policy is a permanent, human-sized problem, and burying it in
+		// the transient bucket is how it goes unnoticed.
+		//
+		// A caller-deadline expiry is excluded for the same reason the provision
+		// path excludes it: that is the caller's bound firing, not the substrate
+		// failing. Verify's own verdict is cached, so a deadline that fell during
+		// the FIRST verify is the one case where the error is the caller's.
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			h.health.fire(HealthInfo{
+				Principal: p,
+				Handler:   h.name,
+				Reason:    HealthFloorUnverified,
+			})
+		}
 		return nil, fmt.Errorf("%w: %s floor unverified: %w", ErrRefusedUncontained, h.name, err)
 	}
 
@@ -394,13 +433,31 @@ func (h *remoteHandler) reapLoop(idleTTL time.Duration) {
 			// A bounded context: a reap that hangs on a wedged control plane must
 			// not wedge the reaper with it.
 			ctx, cancel := context.WithTimeout(context.Background(), h.reapEvery)
-			// The count and the error are both dropped here. This is a BACKSTOP:
-			// the sandboxes it collects are already unowned, and the substrate
-			// has its own (activeDeadlineSeconds-class) backstop underneath it.
-			// Emission of a reap event per orphan is the substrate's own concern
-			// once ReleaseCause gains `orphan`.
-			_, _ = h.sub.Reap(ctx, 2*idleTTL)
+			n, err := h.sub.Reap(ctx, 2*idleTTL)
 			cancel()
+
+			// The ERROR is still dropped: this is a backstop, the sandboxes it
+			// collects are already unowned, and the substrate has its own
+			// (activeDeadlineSeconds-class) backstop underneath it — so there is
+			// nothing an operator would do with "one sweep failed" that the next
+			// sweep does not do for them, and no honest reason for it in the closed
+			// health enum.
+			//
+			// The COUNT is reported, once per collected orphan, with cause
+			// `orphan`. That is the only signal there is that fuse instances are
+			// dying without releasing their sandboxes: an orphan is by definition a
+			// sandbox no Pool remembers, so the Pool's own reaper cannot see it and
+			// idle_ttl never fires for it. ContainerID is deliberately EMPTY — Reap
+			// reports how many it deleted, not which, and inventing an id would be
+			// fabricating an observation (ADR-0056).
+			if err == nil && n > 0 && h.reaped != nil {
+				for range n {
+					h.reaped(ReleaseInfo{
+						Handler: h.name,
+						Cause:   CauseOrphan,
+					})
+				}
+			}
 		}
 	}
 }
