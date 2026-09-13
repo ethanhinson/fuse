@@ -104,8 +104,15 @@ version. For a full release, also confirm `:latest` moved:
 docker buildx imagetools inspect ghcr.io/ethanhinson/fuse:latest
 ```
 
-For a pre-release tag, confirm it did **not**: `:latest` is declared with
-`skip_push: auto`, so a `-rc.N` tag publishes `:X.Y.Z` and `:X.Y` only.
+For a pre-release tag, confirm neither floating tag moved: both `:latest` and
+`:X.Y` are declared with `skip_push: auto`, so a `-rc.N` tag publishes `:X.Y.Z`
+only.
+
+```sh
+# Both must still resolve to the last GA build, not the rc.
+docker buildx imagetools inspect ghcr.io/ethanhinson/fuse:latest
+docker buildx imagetools inspect ghcr.io/ethanhinson/fuse:0.2
+```
 
 ## Yanking a bad release
 

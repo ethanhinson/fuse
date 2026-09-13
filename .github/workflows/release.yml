@@ -112,8 +112,9 @@ jobs:
             exit 1
           }
 
-          # The version-pinned manifest (ghcr.io/...:X.Y.Z), never :latest:
-          # :latest is skip_push:auto and is absent for a pre-release tag.
+          # The version-pinned manifest (ghcr.io/...:X.Y.Z), never a floating
+          # tag: both :latest and :X.Y are skip_push:auto and are absent for a
+          # pre-release tag. :X.Y.Z is the only manifest every tag publishes.
           version="${VERSION_TAG#v}"
           image="ghcr.io/${GITHUB_REPOSITORY,,}:${version}"
 

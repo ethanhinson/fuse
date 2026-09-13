@@ -150,19 +150,29 @@ dockers:
       - dist/fuse-egress-forward-linux-arm64
 
 docker_manifests:
+  # EVERY FLOATING TAG IS GUARDED WITH `skip_push: auto` (load-bearing).
+  # `:X.Y.Z` is immutable — it names exactly one build and is the only manifest
+  # a pre-release may publish. `:X.Y` and `:latest` both FLOAT: each push
+  # repoints an existing name at new bytes, and both are what operators pin in a
+  # Helm chart or a compose file. So a -rc.N tag must move NEITHER. Without the
+  # guard on `:X.Y`, tagging v0.2.0-rc.1 repoints `:0.2` at a release candidate,
+  # and — worse — a v0.2.1-rc.1 cut after v0.2.0 GA has shipped REGRESSES `:0.2`
+  # from GA back to a pre-release, so anything pinned to `:0.2` silently picks up
+  # an rc in production. `skip_push: auto` suppresses the push whenever the tag
+  # carries a pre-release segment. This is deliberately NOT a
+  # `{{ if not .Prerelease }}` name_template hack: an empty manifest name is a
+  # config error, not a skip.
   - name_template: ghcr.io/ethanhinson/fuse:{{ .Version }}
     image_templates:
       - ghcr.io/ethanhinson/fuse:{{ .Version }}-amd64
       - ghcr.io/ethanhinson/fuse:{{ .Version }}-arm64
 
   - name_template: ghcr.io/ethanhinson/fuse:{{ .Major }}.{{ .Minor }}
+    skip_push: auto
     image_templates:
       - ghcr.io/ethanhinson/fuse:{{ .Version }}-amd64
       - ghcr.io/ethanhinson/fuse:{{ .Version }}-arm64
 
-  # `skip_push: auto` suppresses the push for pre-release tags, so a -rc.N tag
-  # never moves `latest`. This is deliberately NOT a `{{ if not .Prerelease }}`
-  # name_template hack: an empty manifest name is a config error, not a skip.
   - name_template: ghcr.io/ethanhinson/fuse:latest
     skip_push: auto
     image_templates:

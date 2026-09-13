@@ -71,7 +71,8 @@ publish it.
 
 Tags are `:X.Y.Z`, `:X.Y`, and `:latest`, each a multi-arch manifest over
 linux/amd64 and linux/arm64. A pre-release tag (`v0.2.0-rc.1`) publishes
-`:X.Y.Z` and `:X.Y` but does **not** move `:latest`. The entrypoint is `/fuse`,
+`:X.Y.Z` **only** — it moves neither of the floating tags, `:X.Y` or `:latest`,
+so pinning `:X.Y` never gets you a release candidate. The entrypoint is `/fuse`,
 so arguments to `docker run` are fuse's own subcommands.
 
 The image is `gcr.io/distroless/static-debian12:nonroot` (UID 65532) with no
