@@ -1,0 +1,157 @@
+# Tag-driven release (docket change 0082).
+#
+#   git tag -a v0.1.0 -m 'v0.1.0' && git push origin v0.1.0
+#
+# Everything this workflow runs — the whole .goreleaser.yaml, the archive layout,
+# the installer — is already exercised on every PR by `release-dry-run` in
+# integration.yml. What is UNIQUE to this workflow, and therefore first proven by
+# the first real tag, is the publishing half: the GHCR push, the docker manifests,
+# and the two provenance attestations.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  # contents: write   — create the GitHub release and upload archives
+  # packages: write   — push images to ghcr.io
+  # id-token: write   — OIDC token the attestation action signs with
+  # attestations: write — write the provenance attestations themselves
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  # The gate: a tag never releases red code. This duplicates integration.yml's
+  # unit-race job deliberately — integration.yml does not run on tag pushes, and
+  # a tag can point at any commit, including one that never saw a PR.
+  test:
+    runs-on: ubuntu-latest
+    # Cap runaway jobs: the 360-minute default let a transient apt-mirror hang
+    # burn ~6h per job (2026-08-19 incident).
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run unit tests with race detector
+        run: go test -race ./...
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # fetch-depth: 0 — GoReleaser derives the version and the changelog from
+      # git history and tags, and refuses to run against a shallow clone.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # linux/arm64 images are built on an amd64 runner, so the arm64 layer
+      # needs QEMU emulation.
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Provenance over the downloadable artifacts. `gh attestation verify` on a
+      # downloaded archive resolves against this.
+      - name: Attest the release archives
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*_checksums.txt
+
+      # Provenance needs the image DIGEST, not a tag — a tag is mutable and can
+      # be re-pointed after the attestation is written.
+      #
+      # dist/artifacts.json carries one entry per pushed manifest with
+      # `type: "Docker Manifest"`, `name` = the pushed reference, and the digest
+      # in `extra.Digest`. That field is the primary route.
+      #
+      # CAVEAT, stated plainly: the extra.Digest assumption could not be proven
+      # before the first tag, because `--skip=publish` (what PR CI runs) emits no
+      # manifest entries in artifacts.json at all. So the `imagetools inspect`
+      # fallback below is the real coverage, and the first tag is its first proof.
+      # Either route yielding a digest is a success; NEITHER yielding one is a
+      # hard failure, so a GoReleaser field rename is loud rather than silently
+      # attesting nothing.
+      - name: Resolve the published image digest
+        id: image
+        env:
+          VERSION_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          [ -f dist/artifacts.json ] || {
+            echo "::error::dist/artifacts.json is missing — did goreleaser run?" >&2
+            exit 1
+          }
+
+          # The version-pinned manifest (ghcr.io/...:X.Y.Z), never :latest:
+          # :latest is skip_push:auto and is absent for a pre-release tag.
+          version="${VERSION_TAG#v}"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:${version}"
+
+          name="$(jq -r --arg img "${image}" \
+            'map(select(.type == "Docker Manifest" and .name == $img)) | .[0].name // empty' \
+            dist/artifacts.json)"
+          digest="$(jq -r --arg img "${image}" \
+            'map(select(.type == "Docker Manifest" and .name == $img)) | .[0].extra.Digest // empty' \
+            dist/artifacts.json)"
+
+          if [ -n "${digest}" ]; then
+            echo "digest from artifacts.json extra.Digest: ${digest}"
+          else
+            echo "::warning::no extra.Digest for ${image} in dist/artifacts.json (manifest entry ${name:-absent}) — falling back to 'docker buildx imagetools inspect'. If artifacts.json has a manifest entry but no extra.Digest, GoReleaser renamed the field: fix the jq path above." >&2
+            # `|| true`: a failing inspect must fall through to the explicit
+            # "neither route" error below, not die under `set -e` with only
+            # docker's own message. The empty-digest guard is what reports it.
+            digest="$(docker buildx imagetools inspect "${image}" --format '{{ .Manifest.Digest }}' || true)"
+            echo "digest from imagetools inspect: ${digest:-<none>}"
+          fi
+
+          case "${digest}" in
+          sha256:*) ;;
+          *)
+            echo "::error::could not resolve a digest for ${image} by either route (got '${digest}'); refusing to attest nothing." >&2
+            jq -r '.[] | "\(.type)\t\(.name)"' dist/artifacts.json >&2 || true
+            exit 1
+            ;;
+          esac
+
+          {
+            printf 'name=%s\n' "ghcr.io/${GITHUB_REPOSITORY,,}"
+            printf 'digest=%s\n' "${digest}"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Attest the container image
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
