@@ -1,4 +1,4 @@
-.PHONY: build install egress-forwarder egress-datapath test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke
+.PHONY: build install egress-forwarder egress-datapath test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke compose-smoke helm-smoke
 
 # Version is stamped into the binary via -ldflags. It defaults to `git describe`
 # (tags + short SHA + dirty marker) and falls back to the source default when git
@@ -167,3 +167,83 @@ observability-compose-smoke: observability-validate
 	@docker compose version >/dev/null 2>&1 || { echo "SKIP: observability Compose smoke requires Docker Compose v2"; exit 0; }
 	docker compose -f deploy/observability/docker-compose.yml config
 	docker run --rm --entrypoint promtool -v "$(CURDIR)/deploy/observability/alerts.yml:/etc/prometheus/alerts.yml:ro" prom/prometheus:v3.5.0 check rules /etc/prometheus/alerts.yml
+
+# ============================================================================
+# Operator-only deployment smokes (docket change 0076). NEITHER RUNS IN CI, and
+# neither ran in the build that added them.
+#
+# They bring up a REAL external system — a Docker Compose stack in one case, a
+# kind cluster in the other — which is why they live outside `make test`: a gate
+# that needs a container runtime is a gate that is skipped on the machine that
+# matters. They follow observability-compose-smoke's shape (above): a loud
+# `SKIP:` and exit 0 when the tooling is absent, never a silent green that
+# implies the external system was tested.
+#
+# BOTH tear down unconditionally. The teardown is a `trap` in a single shell
+# recipe (`.ONESHELL` is not set, so each Makefile line is its own shell — the
+# whole body has to be one `set -e; ...` chain for the trap to cover it), so a
+# failed readiness wait still deletes the cluster and the volumes.
+#
+# WHY THE TOOLING GUARDS ARE IN THAT SAME SHELL, and not on their own `@command
+# -v ... || exit 0` lines like observability-compose-smoke's: a recipe line is its
+# own shell, so `exit 0` there ends only that line — make marches on to the next
+# one and the target fails with "docker: command not found" AFTER printing SKIP.
+# Folding the guards into the body's single shell is what makes `exit 0` actually
+# skip the target and exit 0. `set -x` then restores the echoed commands that the
+# leading `@` would otherwise suppress.
+#
+# ON THE MODEL: the smoke's loop.start proves the authenticated Connect wire, not
+# a model turn — StartLoop returns the loop id as soon as the loop is launched and
+# deploy/smoke passes no model id, so the server resolves its own default. The
+# launched loop does attempt one turn in the background. If you want that turn to
+# succeed, point the stack's config at a cheap model on your own gateway before
+# running; nothing here names a model.
+# ============================================================================
+
+# Compose dev stack smoke: config, up, /readyz, /metrics, one loop.start, down.
+# The token and tenant are the checked-in dev placeholders from
+# deploy/compose/fuse.compose.yml. Bringing the stack up PULLS
+# ghcr.io/ethanhinson/fuse:latest — override with FUSE_IMAGE=... to smoke a local
+# build instead.
+compose-smoke:
+	@set -e; \
+	command -v docker >/dev/null 2>&1 || { echo "SKIP: fuse Compose smoke requires docker"; exit 0; }; \
+	docker compose version >/dev/null 2>&1 || { echo "SKIP: fuse Compose smoke requires Docker Compose v2"; exit 0; }; \
+	set -x; \
+	compose="docker compose -f deploy/compose/docker-compose.yml"; \
+	trap '$$compose down -v' EXIT; \
+	$$compose config >/dev/null; \
+	$$compose up -d --wait; \
+	go run ./deploy/smoke \
+	  -addr http://127.0.0.1:8787 \
+	  -metrics http://127.0.0.1:9090 \
+	  -token fuse-dev-token \
+	  -tenant _default
+
+# Helm chart smoke on a throwaway kind cluster: install with the dev Postgres and
+# the dev token, wait for Ready, port-forward, then the same /readyz + /metrics +
+# loop.start check. auth.allowDevToken=true renders NO loop_server.auth, so the
+# server synthesizes its built-in `fuse-dev-token` for the `_default` tenant —
+# which is the token passed below. Both are throwaway by construction: the cluster
+# is deleted on exit, pass or fail.
+helm-smoke:
+	@set -e; \
+	command -v helm >/dev/null 2>&1 || { echo "SKIP: fuse Helm smoke requires helm"; exit 0; }; \
+	command -v kind >/dev/null 2>&1 || { echo "SKIP: fuse Helm smoke requires kind"; exit 0; }; \
+	command -v kubectl >/dev/null 2>&1 || { echo "SKIP: fuse Helm smoke requires kubectl"; exit 0; }; \
+	set -x; \
+	cleanup() { [ -n "$$pf" ] && kill $$pf 2>/dev/null || true; kind delete cluster --name fuse-smoke || true; }; \
+	trap cleanup EXIT; \
+	kind create cluster --name fuse-smoke; \
+	helm install fuse deploy/charts/fuse \
+	  --set postgres.dev.enabled=true \
+	  --set auth.allowDevToken=true \
+	  --wait --timeout 5m; \
+	kubectl rollout status deploy/fuse --timeout=5m; \
+	kubectl port-forward svc/fuse 18787:8787 19090:9090 & pf=$$!; \
+	sleep 5; \
+	go run ./deploy/smoke \
+	  -addr http://127.0.0.1:18787 \
+	  -metrics http://127.0.0.1:19090 \
+	  -token fuse-dev-token \
+	  -tenant _default
