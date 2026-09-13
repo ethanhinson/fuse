@@ -412,3 +412,64 @@ func waitServing(t *testing.T, url string) {
 	}
 	t.Fatalf("server never came up at %s", url)
 }
+
+// committedPingStore is the shape the composition root actually holds when
+// observability is on: an event.CommittedDurableStore that is ALSO an
+// event.Pinger. runLoopServeNet wraps exactly this in projectingDurableStore.
+type committedPingStore struct {
+	pingStore
+}
+
+func (s *committedPingStore) AppendCommitted(context.Context, event.StreamKey, event.Event) (event.Event, error) {
+	return event.Event{}, nil
+}
+
+// TestReadyzSeesPingThroughProjectingDurableStore pins the wrapper against the
+// silent-degrade trap. An embedded INTERFACE promotes only the methods of that
+// interface's static type, so projectingDurableStore does not inherit Ping from a
+// concrete inner store that has one — and readiness asserts for event.Pinger
+// optionally, so the assertion failing reads as "nothing to probe, so ready".
+// With metrics enabled (both shipped deploy configs) the store is ALWAYS wrapped,
+// so without an explicit forwarder /readyz answers 200 with Postgres unreachable
+// and the chart's maxUnavailable: 0 guarantee is void.
+func TestReadyzSeesPingThroughProjectingDurableStore(t *testing.T) {
+	inner := &committedPingStore{pingStore: pingStore{err: errors.New("dial tcp 10.0.0.5:5432: connect: connection refused")}}
+	// Constructed the way runLoopServeNet constructs it, and handed to readiness
+	// the way serveNetWithOptions hands it over.
+	wrapped := projectingDurableStore{CommittedDurableStore: inner}
+	rd := newReadiness(wrapped, testVerifier())
+	base := healthServer(t, rd)
+
+	code, body := get(t, base, "/readyz")
+	if code != http.StatusServiceUnavailable {
+		t.Fatalf("/readyz through projectingDurableStore over a failing store = %d, want 503", code)
+	}
+	if body != "" {
+		t.Fatalf("/readyz 503 body = %q, want empty", body)
+	}
+	if n := inner.calls.Load(); n != 1 {
+		t.Fatalf("inner store Ping calls = %d, want 1 (the probe must reach the real store)", n)
+	}
+}
+
+// TestProjectingDurableStorePingDegradesForNonPinger keeps the forwarder honest
+// about event.Pinger's documented degrade: an inner store with no Ping is ready,
+// exactly as an unwrapped Pinger-less store is (TestReadyzStoreWithoutPingerIsReady).
+func TestProjectingDurableStorePingDegradesForNonPinger(t *testing.T) {
+	wrapped := projectingDurableStore{CommittedDurableStore: committedNoPingStore{}}
+	if err := wrapped.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping over a Pinger-less inner store = %v, want nil", err)
+	}
+	rd := newReadiness(wrapped, testVerifier())
+	base := healthServer(t, rd)
+	if code := mustCode(t, base, "/readyz"); code != http.StatusOK {
+		t.Fatalf("/readyz with a wrapped Pinger-less store = %d, want 200", code)
+	}
+}
+
+// committedNoPingStore is a CommittedDurableStore with no Ping of its own.
+type committedNoPingStore struct{ noPingStore }
+
+func (committedNoPingStore) AppendCommitted(context.Context, event.StreamKey, event.Event) (event.Event, error) {
+	return event.Event{}, nil
+}

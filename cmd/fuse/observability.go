@@ -553,6 +553,32 @@ type projectingDurableStore struct {
 	projection *projectionDispatcher
 }
 
+// The compile-time guard is the point: it is what keeps the Ping forwarder below
+// from being deleted as dead code by someone who cannot see who asserts for it.
+var _ event.Pinger = projectingDurableStore{}
+
+// Ping forwards event.Pinger through this wrapper.
+//
+// It exists because embedding an INTERFACE promotes only the methods of that
+// interface's static type: projectingDurableStore's method set is exactly
+// CommittedDurableStore's (Append/Subscribe/Replay/AppendCommitted) plus the
+// Append override, no matter how many extra methods the concrete inner store has.
+// So an OPTIONAL-interface assertion against the wrapper silently fails — and
+// readiness.probe treats a failed event.Pinger assertion as "nothing to probe, so
+// ready" (health.go). Without this method, /readyz answered 200 with the database
+// unreachable in every deployment that enables metrics, which is both shipped
+// configs. Any future wrapper over a store must forward Ping the same way.
+//
+// Returning nil when the inner store implements no Pinger reproduces event.Pinger's
+// documented degrade ("a store that does not implement Pinger is treated as ready")
+// one level down, so wrapping never changes the answer in either direction.
+func (s projectingDurableStore) Ping(ctx context.Context) error {
+	if p, ok := s.CommittedDurableStore.(event.Pinger); ok && p != nil {
+		return p.Ping(ctx)
+	}
+	return nil
+}
+
 func (s projectingDurableStore) Append(ctx context.Context, key event.StreamKey, e event.Event) error {
 	committed, err := s.AppendCommitted(ctx, key, e)
 	if err != nil {
