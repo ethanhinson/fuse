@@ -12,7 +12,7 @@
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a k8s Pod-per-Exec handler as first implementation | `medium` | `feat` | needs-brainstorm |
+| [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a Kubernetes warm-Pod handler as first implementation | `medium` | `feat` | build-ready |
 | [0076](active/0076-fuse-server-helm-chart-compose-stack.md) | fuse server deployment — a container image, a full docker-compose stack, and a Helm chart (not an operator) | `medium` | `feat` | needs-brainstorm |
 
 ## ⚪ Deferred (3)
@@ -29,11 +29,17 @@ graph TD
   0052 --> 0057
   0063 --> 0074
   0063 --> 0075
+  0064 --> 0075
+  0065 --> 0075
+  0077 --> 0075
   0076
   0081
   0012:::done
   0052:::done
   0063:::done
+  0064:::done
+  0065:::done
+  0077:::done
   classDef done fill:#d3f9d8;
 ```
 
