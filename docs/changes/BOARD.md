@@ -1,19 +1,14 @@
 # Backlog
 
-**82 changes** — 🟢 2 in progress · 🟡 1 proposed · ⚪ 3 deferred · ✅ 70 done · 🗑️ 6 killed
+**82 changes** — 🟢 3 in progress · ⚪ 3 deferred · ✅ 70 done · 🗑️ 6 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (3)
 
 | # | Title | Priority | Type | Spec | Branch |
 |---|-------|----------|------|------|--------|
+| [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a Kubernetes warm-Pod handler as first implementation | `medium` | `feat` | [spec](../superpowers/specs/2026-09-13-paas-remote-sandbox-substrate-adr-design.md) | `feat/paas-remote-sandbox-substrate-adr` |
 | [0076](active/0076-fuse-server-helm-chart-compose-stack.md) | fuse server deployment — a docker-compose stack and a Helm chart over the released image (not an operator) | `medium` | `feat` | [spec](../superpowers/specs/2026-09-13-fuse-server-helm-chart-compose-stack-design.md) | `feat/fuse-server-helm-chart-compose-stack` |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` |
-
-## 🟡 Proposed (1)
-
-| # | Title | Priority | Type | Readiness |
-|---|-------|----------|------|-----------|
-| [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a Kubernetes warm-Pod handler as first implementation | `medium` | `feat` | build-ready |
 
 ## ⚪ Deferred (3)
 
