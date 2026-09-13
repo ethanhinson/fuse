@@ -1,0 +1,37 @@
+{{- include "fuse.guards" . -}}
+{{- if .Values.metrics.serviceMonitor.enabled }}
+{{- $access := dig "observability" "metrics" "access" "public" .Values.config }}
+{{- $bearer := .Values.metrics.serviceMonitor.bearerSecret }}
+{{- if and (eq $access "authenticated") (not $bearer.name) }}
+{{- fail "fuse: config.observability.metrics.access=authenticated needs metrics.serviceMonitor.bearerSecret.name — a Secret holding a bearer token this ServiceMonitor presents. Without it every scrape gets 401 and your dashboards go blank while the pods stay Ready, so this refuses at render time instead.\n\nThe chart will NOT mint that token for you. Synthesizing a scrape credential inside a template would hide a live token from the operator who owns the auth surface: it would never appear in your values, it would rotate on every `helm upgrade`, and nothing would record which principal reads the fleet's metrics. Create the token yourself, add it to auth.tokens (with observability_operator where you need the admin routes), put the same value in a Secret, and name that Secret here." }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "fuse.fullname" . }}
+  labels:
+    {{- include "fuse.labels" . | nindent 4 }}
+    {{- with .Values.metrics.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "fuse.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: metrics
+      path: {{ dig "observability" "metrics" "path" "/metrics" .Values.config }}
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}
+      scheme: http
+      {{- if $bearer.name }}
+      # An EXPLICIT reference to a Secret you created. See the guard above for
+      # why the chart does not mint this token itself.
+      bearerTokenSecret:
+        name: {{ $bearer.name | quote }}
+        key: {{ $bearer.key | quote }}
+      {{- end }}
+{{- end }}

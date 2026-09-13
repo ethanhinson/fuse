@@ -429,3 +429,131 @@ func TestMetricsObserverDecoratesLoopScopeWithoutStartingASpan(t *testing.T) {
 		t.Fatalf("scraped metrics do not contain %s\n%s", want, rec.Body.String())
 	}
 }
+
+// --- FUSE_INSTANCE_ID resolution (docket 0076 Task 5) -----------------------
+//
+// The trusted config file still wins (ADR-0006: `observability` is honored from
+// the trusted home file and nowhere else). The env is consulted only when the
+// file leaves instance_id empty, because one Secret shared by N replicas cannot
+// carry N distinct ids.
+
+func TestResolveInstanceIDPrefersConfigOverEnv(t *testing.T) {
+	t.Setenv("FUSE_INSTANCE_ID", "from-env")
+	if got := resolveInstanceID("from-config"); got != "from-config" {
+		t.Fatalf("resolveInstanceID=%q, want from-config", got)
+	}
+}
+
+func TestResolveInstanceIDFallsBackToEnv(t *testing.T) {
+	t.Setenv("FUSE_INSTANCE_ID", "from-env")
+	if got := resolveInstanceID(""); got != "from-env" {
+		t.Fatalf("resolveInstanceID=%q, want from-env", got)
+	}
+}
+
+func TestResolveInstanceIDTrimsEnvWhitespace(t *testing.T) {
+	t.Setenv("FUSE_INSTANCE_ID", "  padded  ")
+	if got := resolveInstanceID(""); got != "padded" {
+		t.Fatalf("resolveInstanceID=%q, want padded", got)
+	}
+}
+
+func TestResolveInstanceIDFallsBackToHostname(t *testing.T) {
+	t.Setenv("FUSE_INSTANCE_ID", "")
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		t.Skip("hostname unavailable on this machine")
+	}
+	if got := resolveInstanceID(""); got != hostname {
+		t.Fatalf("resolveInstanceID=%q, want hostname %q", got, hostname)
+	}
+}
+
+// All three consumers must report the SAME resolved value from a single
+// construction-time lookup: the log identity, the trace resource, and the
+// admin response.
+func TestObservabilityConsumersShareResolvedInstanceID(t *testing.T) {
+	t.Setenv("FUSE_INSTANCE_ID", "env-replica-7")
+
+	requests := make(chan *collectortracepb.ExportTraceServiceRequest, 1)
+	collector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		request := &collectortracepb.ExportTraceServiceRequest{}
+		if err := proto.Unmarshal(body, request); err != nil {
+			t.Error(err)
+			return
+		}
+		requests <- request
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(collector.Close)
+
+	var out bytes.Buffer
+	// instance_id deliberately left empty so the env fallback applies.
+	cfg := config.Config{Observability: config.ObservabilityConfig{
+		Logging: config.LoggingObservabilityConfig{Enabled: true, Output: "stdout", Level: "info", MaxOverrideTTL: "10m"},
+		Traces: config.TracesObservabilityConfig{
+			Enabled: true, Endpoint: strings.TrimPrefix(collector.URL, "http://"), Protocol: "http/protobuf", Insecure: true,
+			BatchSize: 1, BatchTimeout: "1ms", SampleRatio: 1,
+		},
+	}}
+	s, err := newObservability(context.Background(), cfg, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close(context.Background()) })
+
+	if s.instanceID != "env-replica-7" {
+		t.Fatalf("service instanceID=%q", s.instanceID)
+	}
+
+	// Consumer 1 — log identity.
+	if err := s.Reload(context.Background(), cfg.Observability.Logging, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"instance_id":"env-replica-7"`) {
+		t.Fatalf("log identity missing resolved instance: %s", out.String())
+	}
+
+	// Consumer 2 — trace resource.
+	_, span := s.observer.Start(context.Background(), observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "resource"})
+	span.End(observe.OutcomeSuccess)
+	if err := s.provider.ForceFlush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case request := <-requests:
+		attributes := make(map[string]string)
+		for _, a := range request.ResourceSpans[0].Resource.Attributes {
+			attributes[a.Key] = a.Value.GetStringValue()
+		}
+		if attributes["service.instance.id"] != "env-replica-7" {
+			t.Fatalf("trace resource attributes=%+v", attributes)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no trace export")
+	}
+
+	// Consumer 3 — admin response.
+	r := httptest.NewRequest(http.MethodGet, observabilityAdminPath, nil)
+	r.Header.Set("Authorization", "Bearer acme")
+	w := httptest.NewRecorder()
+	s.adminHandler(observabilityVerifier()).ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d", w.Code)
+	}
+	var body struct {
+		InstanceID string `json:"instance_id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.InstanceID != "env-replica-7" {
+		t.Fatalf("admin instance=%q", body.InstanceID)
+	}
+}

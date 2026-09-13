@@ -133,12 +133,24 @@ func loopLeaseTTL(cfg config.Config) time.Duration {
 // override pattern in loop_server.go.
 var netListen = net.Listen
 
+// defaultDrainTimeout is the budget a ctx-driven shutdown gives in-flight requests
+// to finish before the server is closed out from under them. It is the default of
+// the --drain-timeout flag, and the Helm chart derives
+// terminationGracePeriodSeconds = drainTimeout + 10 from it — so changing this
+// default changes a published deployment contract, not just a local wait.
+const defaultDrainTimeout = 20 * time.Second
+
 // serveNetContext is the seam runLoopServeNet derives its serve/shutdown context
-// from. In production it installs signal.NotifyContext(os.Interrupt) so Ctrl-C tears
-// the servers down cleanly; a test swaps it for an already-cancelled context so the
-// dispatch/registration test exits without a real signal.
+// from. In production it installs signal.NotifyContext for BOTH os.Interrupt and
+// syscall.SIGTERM: Ctrl-C tears a local server down cleanly, and SIGTERM is what a
+// container runtime sends first (Kubernetes sends it, waits
+// terminationGracePeriodSeconds, then SIGKILLs). Without SIGTERM here the Go
+// default of "terminate immediately" applies and every graceful-drain property
+// below is unreachable in the only environment that needs it. A test swaps this
+// for an already-cancelled context so the dispatch/registration test exits without
+// a real signal.
 var serveNetContext = func() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(context.Background(), os.Interrupt)
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 // newLoopServeNetObservability is the composition seam for the network command.
@@ -187,8 +199,10 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	fs := flag.NewFlagSet("loop-serve-net", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	addr := fs.String("addr", "127.0.0.1:8787", "TCP address to serve the Connect/protobuf loop-control endpoints on")
+	drainTimeout := fs.Duration("drain-timeout", defaultDrainTimeout,
+		"how long a SIGTERM/Ctrl-C shutdown waits for in-flight requests before closing the server")
 	fs.Usage = func() {
-		fmt.Fprintln(stderr, "usage: fuse loop-serve-net [--addr host:port]")
+		fmt.Fprintln(stderr, "usage: fuse loop-serve-net [--addr host:port] [--drain-timeout 20s]")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "Serves the networked Connect/protobuf (fuse.loop.v1) loop-control endpoints.")
 		fmt.Fprintln(stderr, "EVERY request must present an `Authorization: Bearer <token>` credential.")
@@ -205,6 +219,11 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintln(stderr)
 		fmt.Fprintf(stderr, "With no loop_server.auth configured, a built-in dev token %q (tenant _default)\n", devToken)
 		fmt.Fprintln(stderr, "is used so local development works; a bearer token is still required on the wire.")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "On SIGTERM or Ctrl-C the server drains gracefully: /readyz starts answering 503")
+		fmt.Fprintln(stderr, "immediately (so a load balancer stops sending new work), in-flight requests get up")
+		fmt.Fprintf(stderr, "to --drain-timeout (default %s) to finish, and the server is then closed\n", defaultDrainTimeout)
+		fmt.Fprintln(stderr, "unconditionally. Observe streams are cut; clients reattach from their last seq.")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "flags:")
 		fs.PrintDefaults()
@@ -297,7 +316,8 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		}
 	}()
 
-	if err := serveNetObserved(ctx, ln, rt, verifier, deps.Registry, obs); err != nil {
+	if err := serveNetWithOptions(ctx, ln, rt, verifier, deps.Registry, deps.DurableStore, obs,
+		serveNetOptions{drainTimeout: *drainTimeout}); err != nil {
 		fmt.Fprintf(stderr, "loop-serve-net: %v\n", err)
 		return 1
 	}
@@ -323,11 +343,45 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 // which the pure-transport E2E test relies on for a subset of its assertions; the
 // production runLoopServeNet always supplies both.
 func serveNet(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry) error {
-	return serveNetObserved(ctx, ln, rt, verifier, registry, nil)
+	return serveNetObserved(ctx, ln, rt, verifier, registry, nil, nil)
 }
 
-func serveNetObserved(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry, obs *observabilityService) error {
+// store is the durable store the readiness probe pings; it may be nil (an
+// in-memory binding), and it need not implement event.Pinger — either way the
+// probe reads as ready. It is passed separately from registry because the
+// observability projection wraps the store and not the registry.
+func serveNetObserved(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry, store event.DurableStore, obs *observabilityService) error {
+	return serveNetWithOptions(ctx, ln, rt, verifier, registry, store, obs, serveNetOptions{})
+}
+
+// serveNetOptions carries the shutdown knobs serveNetWithOptions needs that are not
+// part of the composition itself. It exists so the drain budget reaches the server
+// without a sixth positional parameter, and so a test can use a millisecond budget
+// instead of waiting out the 20s production default.
+type serveNetOptions struct {
+	// drainTimeout bounds srv.Shutdown. Zero means defaultDrainTimeout — a zero
+	// budget must NOT mean "close immediately", because that is the value every
+	// existing caller passes implicitly and it would silently turn a graceful
+	// shutdown into an abrupt one.
+	drainTimeout time.Duration
+
+	// afterDraining, when non-nil, is called after readiness has flipped to
+	// draining and BEFORE the listener stops accepting. Tests only: it is the only
+	// way to observe the load-bearing ordering from outside the process, because
+	// once Shutdown has begun the probe endpoint is by definition unreachable on a
+	// new connection. Production leaves it nil.
+	afterDraining func()
+}
+
+func serveNetWithOptions(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry, store event.DurableStore, obs *observabilityService, sopts serveNetOptions) error {
 	mux := http.NewServeMux()
+
+	// Mounted BEFORE the Connect handler, and unauthenticated by construction:
+	// the auth interceptor below is a connect.HandlerOption on the Connect handler
+	// only, never mux middleware, so these two plain mux routes require no
+	// credential. A kubelet has none to present. See cmd/fuse/health.go.
+	rd := newReadiness(store, verifier)
+	rd.register(mux)
 
 	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx).WithRegistry(registry)
 	if obs != nil {
@@ -363,17 +417,91 @@ func serveNetObserved(ctx context.Context, ln net.Listener, rt runtime.Runtime, 
 		BaseContext: func(net.Listener) context.Context { return ctx },
 	}
 
-	// Shut the server down when ctx is cancelled (signal or test). Close() unblocks
-	// Serve immediately; in-flight Observe streams observe the cancelled BaseContext and
-	// return, releasing their subscriptions.
+	// The bounded graceful drain, on ctx cancellation (SIGTERM, Ctrl-C, or a test).
+	// The THREE steps are ordered, and the order is the whole point:
+	//
+	//  1. Flip readiness to draining FIRST, while the listener is still accepting.
+	//     /readyz starts answering 503 immediately, so the load balancer / kubelet
+	//     removes this instance from rotation and stops sending NEW work. Doing this
+	//     after the listener stops is what makes a "graceful" drain useless: the LB
+	//     keeps routing to a socket that is already refusing connections, and those
+	//     requests are lost rather than drained.
+	//  2. srv.Shutdown(drainCtx) — stop accepting, then wait (up to the budget) for
+	//     the requests ALREADY in flight to finish. This is the part that makes a
+	//     rolling update lossless for unary calls.
+	//  3. srv.Close() unconditionally afterwards, whether Shutdown returned cleanly
+	//     or hit the deadline. Shutdown does not wait for hijacked connections and
+	//     does not forcibly end a streaming response, so an Observe stream can
+	//     outlive the budget indefinitely; Close is what guarantees the process
+	//     actually exits within the grace period Kubernetes gave it before SIGKILL.
+	//     Cutting Observe streams here is by design (ADR-0033: a dropped stream is
+	//     normal and clients reattach from their last seq), which is also why the
+	//     drain budget is spent on unary calls and not on waiting for streams.
+	//
+	// In-flight Observe streams additionally observe the cancelled BaseContext and
+	// return on their own, releasing their subscriptions.
+	//
+	// drained makes the drain SYNCHRONOUS WITH RESPECT TO THIS FUNCTION'S RETURN, and
+	// that is not a nicety — without it the drain is a no-op in production. Shutdown
+	// closes the listeners as its FIRST act, so the blocked srv.Serve(ln) below wakes
+	// with http.ErrServerClosed immediately and this function returns nil while
+	// Shutdown is still inside its budget waiting on in-flight requests. runLoopServeNet
+	// then returns 0 and main calls os.Exit(run(...)) — and os.Exit does not wait for
+	// goroutines, so the very requests the drain exists to protect die with the process.
+	// The return therefore blocks on drained below.
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		<-ctx.Done()
+		rd.setDraining()
+		if sopts.afterDraining != nil {
+			sopts.afterDraining()
+		}
+		budget := sopts.drainTimeout
+		if budget <= 0 {
+			budget = defaultDrainTimeout
+		}
+		// The drain context is DETACHED from ctx: ctx is already cancelled — it is
+		// what woke this goroutine — so deriving from it would make Shutdown return
+		// instantly and there would be no drain at all.
+		drainCtx, cancel := context.WithTimeout(context.Background(), budget)
+		defer cancel()
+		_ = srv.Shutdown(drainCtx)
+		// The metrics endpoint, when observability.metrics.bind is set (both
+		// shipped configs set it), is a SECOND http.Server on its own listener
+		// — not part of srv. Drain it here, inside the SAME awaited window and
+		// on the SAME drainCtx budget, so a Prometheus scrape in flight at
+		// SIGTERM finishes instead of being severed by process exit.
+		//
+		// Ordering: AFTER srv.Shutdown, so the metrics endpoint stays up at
+		// least as long as the Connect server and a final scrape can still land
+		// while requests drain. Sharing drainCtx means the two shutdowns split
+		// one budget rather than serializing two, which is what keeps total
+		// shutdown inside terminationGracePeriodSeconds (= drainTimeout + 10).
+		// Because drainCtx may already be expired by now, this is a bounded
+		// best-effort drain, never an additional wait.
+		_ = obs.shutdownMetrics(drainCtx)
 		_ = srv.Close()
 	}()
 
 	err := srv.Serve(ln)
 	// A ctx-driven Close is a clean shutdown, not a serve error.
 	if err == http.ErrServerClosed || ctx.Err() != nil {
+		// Wait out the drain before returning: see the drained comment above. The wait
+		// is DELIBERATELY UNBOUNDED HERE, and that is the safe choice, not a leak.
+		// Shutdown is already bounded by drainCtx's budget and srv.Close() returns
+		// promptly (it closes listeners and connections; it does not wait on handlers),
+		// so the goroutine is guaranteed to finish shortly after the budget. A second
+		// timeout wrapped around this wait could only ever fire BEFORE the budget it is
+		// duplicating expires — reintroducing exactly the truncated drain this wait
+		// exists to prevent.
+		//
+		// Guarded by ctx.Err() != nil: the goroutine only ever reaches close(drained)
+		// after ctx is cancelled, so a genuine Serve error on a live ctx must NOT wait
+		// here — it would block forever.
+		if ctx.Err() != nil {
+			<-drained
+		}
 		return nil
 	}
 	return err

@@ -1,0 +1,391 @@
+# ============================================================================
+# fuse server — Helm values.
+#
+# TWO VALUES ARE MANDATORY and the chart REFUSES TO RENDER without them:
+#
+#   1. AUTH. One of `auth.tokens`, `config.existingSecret`, or
+#      `auth.allowDevToken: true`. With no loop_server.auth the server
+#      synthesizes a loudly-logged dev token rather than running
+#      unauthenticated (ADR-0034) — usable, but never the silent default of a
+#      rendered chart. You say which.
+#
+#   2. A DSN. One of `postgres.dsn`, `postgres.existingSecret`, or
+#      `postgres.dev.enabled: true`. Without one the server falls back to the
+#      filesystem event store in an emptyDir: two replicas share nothing and
+#      every loop dies with the pod. That is not a deployable server, so the
+#      chart will not render one silently.
+#
+# Everything else has a working default.
+# ============================================================================
+
+replicaCount: 1
+
+# Naming. Empty ⇒ "<release>-fuse" (or just "<release>" when the release name
+# already contains "fuse"). Both are truncated to 63 characters.
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/ethanhinson/fuse
+  # Empty ⇒ .Chart.AppVersion (stamped from the release tag at package time).
+  tag: ""
+  # A digest, when set, WINS over tag: `repository@sha256:...`. Pin this in
+  # production — a tag is mutable, a digest is not.
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# --------------------------------------------------------------------------
+# server
+# --------------------------------------------------------------------------
+server:
+  # The Connect/h2c listen port. `--addr 0.0.0.0:<port>`.
+  port: 8787
+  # The /metrics listen port, from config observability.metrics.bind.
+  metricsPort: 9090
+
+  # drainTimeout is passed VERBATIM to `--drain-timeout`, so it is a Go
+  # duration STRING and its unit must be whole seconds ("20s", "45s").
+  #
+  # WHY SECONDS-ONLY: the chart derives
+  #   terminationGracePeriodSeconds = trimSuffix "s" drainTimeout | int | add 10
+  # so the kubelet's SIGKILL always lands 10s AFTER the drain budget expires,
+  # never during it. That arithmetic has no duration parser behind it: "1m" or
+  # "500ms" would parse to 1 and 500 and produce a grace period that is wrong
+  # by orders of magnitude, so `_helpers.tpl`'s `fuse.drainSeconds` FAILS on
+  # any value not matching ^[0-9]+s$. Write "90s", not "1m30s".
+  drainTimeout: "20s"
+
+  # Extra argv appended after `loop-serve-net --addr ... --drain-timeout ...`.
+  extraArgs: []
+  # Extra env vars (list of core/v1 EnvVar) merged after the chart's own.
+  extraEnv: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 512Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+podAnnotations: {}
+podLabels: {}
+priorityClassName: ""
+
+# Pod-level securityContext. The released image is
+# gcr.io/distroless/static-debian12:nonroot ⇒ UID/GID 65532. runAsUser is
+# PINNED rather than left to the image so a mutating admission controller or a
+# re-based image cannot quietly move the process to root.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level securityContext. readOnlyRootFilesystem holds because BOTH
+# writable paths the server needs are emptyDir mounts — see `volumes` in
+# templates/deployment.yaml, and note the /tmp mount is REQUIRED, not a nicety.
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# Sizes for the two required emptyDir mounts. Empty ⇒ node default (unbounded
+# up to node ephemeral-storage).
+volumeSizes:
+  home: ""
+  tmp: ""
+
+# Probes. All three hit the unauthenticated status-code-only endpoints: a 503
+# says nothing about WHY (reasons go to the log), so the endpoint is not an
+# oracle. Liveness is /healthz — "the process answers HTTP" — and must NOT be
+# /readyz, or a transient Postgres outage restarts every pod in the fleet
+# instead of just removing them from the Service.
+probes:
+  liveness:
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 0
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+  # The startup probe owns the slow first start (schema apply on the pgstore's
+  # first Open), which is why liveness can have initialDelaySeconds 0.
+  startup:
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 30
+
+# --------------------------------------------------------------------------
+# auth — the bearer tokens at the edge (ADR-0034)
+# --------------------------------------------------------------------------
+auth:
+  # Rendered into the config Secret as loop_server.auth[]. Each entry:
+  #   - token: "..."                    # REQUIRED
+  #     tenant: "_default"              # REQUIRED; the tenant this token acts as
+  #     subject: "ci"                   # optional; identity in logs and traces
+  #     observability_operator: false   # optional; grants the admin routes
+  #
+  # These land in a Kubernetes Secret, which is base64, NOT encryption. Anyone
+  # with get-secrets in this namespace can read them, and so can anyone who can
+  # read the values file you passed. For a real deployment prefer
+  # `config.existingSecret` with a Secret produced by your secrets manager, and
+  # keep the token out of your git history.
+  tokens: []
+
+  # true ⇒ render a config with NO loop_server.auth and let the server
+  # synthesize its loudly-logged dev token. This satisfies the auth guard. It
+  # is for a throwaway cluster and nothing else: the token appears in the
+  # startup log, which means it appears in your log aggregator.
+  allowDevToken: false
+
+# --------------------------------------------------------------------------
+# config — the trusted home file (ADR-0006)
+# --------------------------------------------------------------------------
+#
+# Rendered into a Secret and mounted at /home/nonroot/.fuse/config.yml via
+# subPath over the home emptyDir. loop_server.auth, observability, and
+# tool_identity are honored from THIS file and nowhere else, which is why it is
+# a Secret and not a ConfigMap.
+#
+# The map below is merged over by your own `config:` values (mergeOverwrite), so
+# you override one leaf without restating the tree. observability.instance_id is
+# deliberately left EMPTY: the trusted file wins when set, and one Secret shared
+# by N replicas cannot carry N ids — FUSE_INSTANCE_ID from the downward API
+# fills it per-pod.
+config:
+  # When set, the chart renders NO config Secret and mounts this existing one
+  # instead. Its data MUST contain a `config.yml` key. Satisfies the auth guard,
+  # because the chart cannot see inside it to check — you own what is in there.
+  #
+  # MUTUALLY EXCLUSIVE WITH auth.tokens, and the chart REFUSES both together:
+  # this one wins, so the tokens would never be rendered anywhere and the server
+  # would authenticate on whatever this Secret holds. Put loop_server.auth inside
+  # it instead.
+  existingSecret: ""
+  # The key inside the Secret holding the config file.
+  key: config.yml
+
+  observability:
+    instance_id: ""
+    metrics:
+      enabled: true
+      # 0.0.0.0 so Prometheus can scrape it across the pod network.
+      bind: "0.0.0.0:9090"
+      path: /metrics
+      # public | authenticated. `public` means /metrics needs no bearer token —
+      # acceptable when a NetworkPolicy or the mesh is what keeps the port
+      # private. Set `authenticated` and give the ServiceMonitor a
+      # bearerSecret (see metrics.serviceMonitor) for a real deployment.
+      access: public
+    traces:
+      enabled: false
+      endpoint: ""
+      protocol: grpc
+      insecure: false
+      sample_ratio: 0.1
+    logging:
+      enabled: true
+      # Container logs. `file` would write inside the pod and be lost with it.
+      output: stdout
+      level: info
+      # REQUIRED whenever logging.enabled is true.
+      max_override_ttl: "1h"
+    cardinality:
+      # REQUIRED whenever metrics.enabled is true: a hash_version plus a budget
+      # >= 1 on every dimension. Budget 0 is a STARTUP ERROR — the budget has
+      # to reserve a slot for __overflow__.
+      hash_version: "sha256-64-v1"
+      salt: ""
+      tenant:
+        budget: 100
+      model:
+        budget: 50
+      tool:
+        budget: 100
+
+# --------------------------------------------------------------------------
+# postgres — the durable event store and loop registry (ADR-0031)
+# --------------------------------------------------------------------------
+postgres:
+  # An inline DSN. Rendered into a chart-owned Secret and injected as
+  # FUSE_PG_DSN via secretKeyRef. Convenient, and it puts a database password
+  # in your values file — prefer existingSecret.
+  dsn: ""
+
+  # An existing Secret holding the DSN. Nothing chart-owned is rendered.
+  existingSecret: ""
+  existingSecretKey: dsn
+
+  # ======================================================================
+  # DEV-ONLY in-chart Postgres. NOT FOR PRODUCTION.
+  # ======================================================================
+  # A one-replica StatefulSet with a hardcoded, checked-in password, no
+  # backups, no replication, no failover, no upgrade path, and a PVC whose
+  # reclaim policy is the StorageClass's problem. It exists so `helm install`
+  # on kind reaches Ready without an external database. Enabling it satisfies
+  # the DSN guard.
+  dev:
+    enabled: false
+    image: postgres:16-alpine
+    storage: 8Gi
+    storageClass: ""
+    # PLACEHOLDER CREDENTIALS. Committed to a public git repository and
+    # therefore known to everyone. Rendered into a chart-owned Secret verbatim.
+    user: fuse
+    password: fuse-dev-password
+    database: fuse
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+# --------------------------------------------------------------------------
+# service / ingress / policy
+# --------------------------------------------------------------------------
+service:
+  type: ClusterIP
+  connectPort: 8787
+  metricsPort: 9090
+  annotations: {}
+
+serviceAccount:
+  create: true
+  # Empty ⇒ the fullname. Set when create is false to use an existing one.
+  name: ""
+  annotations: {}
+  # The server calls no Kubernetes API in this change (sandbox.mode: kubernetes
+  # is not yet available), so it needs no token mounted.
+  automountServiceAccountToken: false
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  # Omitted when empty.
+  targetMemoryUtilizationPercentage: ""
+
+podDisruptionBudget:
+  enabled: false
+  # Exactly one of minAvailable / maxUnavailable.
+  minAvailable: 1
+  maxUnavailable: ""
+
+ingress:
+  # READ THE h2c CAVEAT IN NOTES.txt BEFORE ENABLING. The server speaks h2c
+  # (cleartext HTTP/2) only. Connect's HTTP/1.1 path works through any
+  # ingress; a grpc/grpc-web client needs an ingress controller configured for
+  # h2c upstreams, and most default to HTTP/1.1.
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: fuse.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+networkPolicy:
+  enabled: false
+  # Namespace selectors permitted to reach the Connect port.
+  ingressNamespaceSelectors: []
+  # Pod selectors permitted to reach the Connect port.
+  ingressPodSelectors: []
+  # Namespace selectors permitted to reach the metrics port (your Prometheus).
+  metricsNamespaceSelectors: []
+  # Egress. An empty egress list means "deny all egress", which breaks the DSN,
+  # the model gateway, and OTLP — so the chart always emits the DNS rule plus
+  # whatever you name here.
+  egress:
+    # Ports to allow to any destination. 443 is the model gateway; add your
+    # Postgres port and OTLP port if they are not covered below.
+    allowPorts: [443]
+    postgresPort: 5432
+    otlpPort: 4317
+    # Extra raw networking.k8s.io/v1 egress rules, appended verbatim.
+    extraRules: []
+
+# --------------------------------------------------------------------------
+# metrics — ServiceMonitor and PrometheusRule (prometheus-operator CRDs)
+# --------------------------------------------------------------------------
+metrics:
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels so your Prometheus's serviceMonitorSelector matches this.
+    labels: {}
+    # An EXPLICIT reference to a Secret holding a bearer token, REQUIRED when
+    # config.observability.metrics.access is `authenticated`.
+    #
+    # The chart will NOT mint a scrape principal into auth.tokens for you. A
+    # template that synthesizes a credential hides a live token from the
+    # operator who owns the auth surface: it would never appear in your values,
+    # it would rotate silently on every `helm upgrade`, and nobody would know
+    # which principal was reading the fleet's metrics. Create the token, put it
+    # in auth.tokens AND in a Secret, and name the Secret here.
+    bearerSecret:
+      name: ""
+      key: token
+  prometheusRule:
+    enabled: false
+    # Extra labels so your Prometheus's ruleSelector matches this.
+    labels: {}
+
+# --------------------------------------------------------------------------
+# sandbox — the bash tool's container runtime (ADR-0044)
+# --------------------------------------------------------------------------
+#
+# A TRI-STATE. ADR-0044 makes a container boundary the bash tool's security
+# boundary in every profile, and the released image is distroless: no shell, no
+# docker CLI, no container runtime.
+#
+#   none          (default) The bash tool reports itself unavailable and says
+#                 so at startup. Nothing is rendered. This is the safe one.
+#
+#   docker-socket Mounts the node's /var/run/docker.sock into the pod. ADR-0044
+#                 is explicit that socket access is APPROXIMATELY HOST ROOT: a
+#                 model-authored bash command can start a privileged container
+#                 and own the node, and from the node, everything scheduled on
+#                 it. The chart REFUSES to render this unless you set
+#                 dockerSocket.acknowledgeHostRoot: true — not a safety
+#                 mechanism, a forcing function, so the tradeoff is accepted by
+#                 a human in a reviewable file rather than assumed away.
+#
+#   kubernetes    NOT YET AVAILABLE — it requires change #75, which ships the
+#                 pod-per-sandbox handler and its RBAC. The guard below refuses
+#                 unconditionally while kubernetes.minVersion is "".
+sandbox:
+  mode: none
+
+  dockerSocket:
+    # Read the block above. Setting this true accepts that the fuse pod is
+    # approximately root on its node.
+    acknowledgeHostRoot: false
+    hostPath: /var/run/docker.sock
+
+  kubernetes:
+    # PINNED BY CHANGE #75, which ships the Kubernetes sandbox handler and its
+    # RBAC manifest. Until then this is "" and the guard in _helpers.tpl
+    # refuses `sandbox.mode: kubernetes` outright, with a message naming #75 —
+    # BEFORE any manifest is consulted, so this change needs no file from #75.
+    #
+    # Do not set this by hand hoping to unlock the feature. A non-empty value
+    # here would render RBAC for a handler the image does not contain.
+    minVersion: ""
+
+# Extra arbitrary manifests, rendered through tpl. An escape hatch so you do
+# not have to fork the chart for one ExternalSecret.
+extraManifests: []

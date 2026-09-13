@@ -1,0 +1,35 @@
+{{- include "fuse.guards" . -}}
+{{- if .Values.metrics.prometheusRule.enabled }}
+# The alert groups from deploy/observability/alerts.yml, carried VERBATIM.
+#
+# `.Files.Get` reads the in-chart copy at alerts.yml (a .Files.Get cannot reach
+# outside the chart root, and `helm package` must produce a self-contained
+# artifact). The copy's own header explains that deploy/observability/alerts.yml
+# is the source of truth and that deploy/charts/validate_test.go parses both and
+# asserts their groups are structurally equal, so the two cannot drift silently.
+#
+# The content is NOT re-templated: it is read as a string and round-tripped
+# through fromYaml/toYaml purely to re-indent it under `spec:`. No range over the
+# rules, no reconstruction of the PromQL. A template that rebuilt the rules would
+# be a second place for them to be wrong, and `expr` strings are full of braces
+# and quotes that a re-render would be free to mangle.
+#
+# (This paragraph does not print a literal template delimiter, because a YAML
+# comment in a Helm template is still parsed by the template engine — a stray
+# pair of braces here is a chart-wide parse error, not a comment.)
+{{- $alerts := .Files.Get "alerts.yml" }}
+{{- if not $alerts }}
+{{- fail "fuse: alerts.yml is missing from the chart directory, so metrics.prometheusRule.enabled has no rules to render. It is a copy of deploy/observability/alerts.yml — restore it rather than disabling the PrometheusRule, or the chart ships alerting that silently covers nothing." }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "fuse.fullname" . }}
+  labels:
+    {{- include "fuse.labels" . | nindent 4 }}
+    {{- with .Values.metrics.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- $alerts | fromYaml | toYaml | nindent 2 }}
+{{- end }}
