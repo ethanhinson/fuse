@@ -122,3 +122,9 @@ func TestNewSubstrateRefusesBadNamespacePrefix(t *testing.T) {
 		}
 	}
 }
+
+// loopauthWithSubject is loopPrincipal with an explicit subject, for the
+// assertion that a Pod name is scoped by subject and not by tenant alone.
+func loopauthWithSubject(tenant event.TenantID, subject string) loopauth.Principal {
+	return loopauth.Principal{Tenant: tenant, Subject: subject}
+}
