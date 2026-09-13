@@ -1,16 +1,17 @@
 # ============================================================================
-# A COPY of deploy/observability/alerts.yml, carried inside the chart directory
+# GENERATED FILE — DO NOT EDIT BY HAND.
+#
+# A copy of deploy/observability/alerts.yml, carried inside the chart directory
 # so `helm package` produces a self-contained artifact (.Files.Get cannot reach
 # outside the chart root).
 #
 # It is READ VERBATIM by templates/prometheusrule.yaml and must not diverge:
 # deploy/charts/validate_test.go parses BOTH this file and
 # deploy/observability/alerts.yml and asserts their `groups:` are structurally
-# equal. If you edit the alerts, edit deploy/observability/alerts.yml — the
-# source of truth — and copy it here; the test fails until you do.
+# equal — a check that does NOT require helm, so it cannot be skipped away.
 #
-# Comments are safe to add (the assertion is structural, post-parse); rule
-# content is not.
+# To change the alerts: edit deploy/observability/alerts.yml — the source of
+# truth — then run `make charts-sync-alerts`.
 # ============================================================================
 groups:
   - name: fuse-observability

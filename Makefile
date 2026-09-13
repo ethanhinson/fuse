@@ -1,4 +1,4 @@
-.PHONY: build install egress-forwarder egress-datapath test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke compose-smoke helm-smoke
+.PHONY: build install egress-forwarder egress-datapath test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke compose-smoke helm-smoke charts-sync-alerts
 
 # Version is stamped into the binary via -ldflags. It defaults to `git describe`
 # (tags + short SHA + dirty marker) and falls back to the source default when git
@@ -247,3 +247,9 @@ helm-smoke:
 	  -metrics http://127.0.0.1:19090 \
 	  -token fuse-dev-token \
 	  -tenant _default
+
+# Regenerate the chart's self-contained copy of the alert rules from the source
+# of truth (deploy/observability/alerts.yml). Idempotent; deploy/charts's
+# helm-independent drift test fails until this has been run.
+charts-sync-alerts:
+	@./scripts/charts-sync-alerts.sh
