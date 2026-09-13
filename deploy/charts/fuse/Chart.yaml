@@ -1,0 +1,26 @@
+apiVersion: v2
+name: fuse
+description: |
+  fuse loop-serve-net — a networked, multi-tenant agent-loop server. Connect
+  over h2c (ADR-0033), bearer-token auth at the edge (ADR-0034), and a durable
+  Postgres event store so a client reattaches to its loop after a redeploy on a
+  different replica (ADR-0031).
+type: application
+
+# 0.0.0.0-dev in-tree, STAMPED AT PACKAGE TIME by the release workflow:
+#   helm package deploy/charts/fuse --version ${TAG#v} --app-version ${TAG#v}
+# The chart version is version-locked to the image tag; there is no floating
+# chart tag, the same rule as the image's `:latest`. Do not hand-bump these.
+version: 0.0.0-dev
+appVersion: "0.0.0-dev"
+
+home: https://github.com/ethanhinson/fuse
+sources:
+  - https://github.com/ethanhinson/fuse
+keywords:
+  - agent
+  - llm
+  - connect-rpc
+maintainers:
+  - name: ethanhinson
+    url: https://github.com/ethanhinson

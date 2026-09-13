@@ -1,0 +1,64 @@
+{{- include "fuse.guards" . -}}
+{{- if .Values.ingress.enabled }}
+# ============================================================================
+# THE h2c CAVEAT. Read this before you debug a client that hangs.
+#
+# The server speaks h2c — cleartext HTTP/2 — and terminates no TLS (ADR-0033).
+# Connect's own HTTP/1.1 protocol works through ANY ingress controller: a
+# connect-go or connect-es client over this ingress is fine.
+#
+# A grpc or grpc-web client is NOT. gRPC requires HTTP/2 end to end, and most
+# ingress controllers default to an HTTP/1.1 upstream, which downgrades the
+# backend hop and makes those clients fail in ways that look like the server is
+# broken. You need the controller's h2c/GRPC backend annotation. On
+# ingress-nginx that is:
+#
+#   nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+#
+# and note that setting it makes the whole path gRPC, so a mixed
+# Connect-HTTP/1.1-and-gRPC deployment wants two Ingress objects on two hosts.
+# The Service already carries appProtocol: kubernetes.io/h2c for controllers
+# that read it.
+#
+# TLS is the ingress's or the mesh's job. There is nothing to terminate at the
+# pod, so an ingress without `tls:` puts bearer tokens (ADR-0034) on the wire in
+# cleartext from the client to this hop.
+# ============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "fuse.fullname" . }}
+  labels:
+    {{- include "fuse.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType | default "Prefix" }}
+            backend:
+              service:
+                name: {{ include "fuse.fullname" $ }}
+                port:
+                  # The Connect port only. The metrics port is deliberately NOT
+                  # exposed through the ingress: with metrics.access=public it
+                  # needs no bearer token, so routing it to the internet would
+                  # publish per-tenant series to anyone.
+                  name: connect
+          {{- end }}
+    {{- end }}
+{{- end }}

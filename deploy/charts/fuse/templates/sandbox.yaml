@@ -1,0 +1,51 @@
+{{/*
+================================================================================
+sandbox.mode — the bash tool's container runtime (ADR-0044). A TRI-STATE.
+
+This file is the tri-state's SINGLE DECISION POINT. The guard it calls —
+fuse.guard.sandbox in _helpers.tpl — is also reached from every other top-level
+template via fuse.guards, deliberately: a refusal that only fires when this one
+file renders would be walked straight past by `helm template -s deployment.yaml`.
+
+  none           Nothing is rendered anywhere. The bash tool reports itself
+                 unavailable at startup and says so. The default, and the safe
+                 one: the released image is distroless — no shell, no docker
+                 CLI, no container runtime — so a bash tool inside it has nothing
+                 local to contain itself with, and ADR-0044 makes a container
+                 boundary the bash tool's security boundary in every profile.
+
+  docker-socket  templates/deployment.yaml mounts the NODE's
+                 /var/run/docker.sock into the pod, and the guard REFUSES unless
+                 sandbox.dockerSocket.acknowledgeHostRoot is true. ADR-0044 is
+                 explicit that socket access is APPROXIMATELY HOST ROOT: a
+                 model-authored bash command can start a privileged container
+                 and own the node — and from the node, every other workload
+                 scheduled on it, including its Secrets. The acknowledgement
+                 flag changes NOTHING about that risk; it exists so the tradeoff
+                 is accepted by a human in a reviewable file rather than
+                 inherited from a default. This is why no object appears here:
+                 there is nothing to grant, only a boundary to remove.
+
+  kubernetes     NOT YET AVAILABLE. Requires change #75, which ships the
+                 pod-per-sandbox handler and its RBAC manifest. The guard
+                 refuses unconditionally while sandbox.kubernetes.minVersion is
+                 "" — BEFORE consulting any manifest, so this chart needs no
+                 file from #75 and does not reference one. When #75 lands it
+                 supplies both the RBAC and the pinned minVersion, and THIS FILE
+                 is where its Role/RoleBinding belong.
+
+                 The refusal names #75 rather than reporting a version
+                 comparison, because "0.0.0-dev is older than ''" reads like a
+                 misconfiguration an operator could fix by bumping a value, and
+                 they cannot: the handler is not in the image.
+================================================================================
+*/}}
+{{- include "fuse.guards" . -}}
+{{- if eq .Values.sandbox.mode "docker-socket" }}
+{{- /*
+  Acknowledged. The hostPath volume and its mount are rendered in
+  templates/deployment.yaml, where the pod spec lives — a hostPath is a property
+  of the pod, not a standalone object, so there is nothing for this file to emit.
+  NOTES.txt prints the ADR-0044 warning on every install and upgrade.
+*/}}
+{{- end }}

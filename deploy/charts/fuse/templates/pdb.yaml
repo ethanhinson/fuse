@@ -1,0 +1,25 @@
+{{- include "fuse.guards" . -}}
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- if and .Values.podDisruptionBudget.minAvailable .Values.podDisruptionBudget.maxUnavailable }}
+{{- fail "fuse: set exactly one of podDisruptionBudget.minAvailable or podDisruptionBudget.maxUnavailable — the API rejects both, and a rejected PDB means no disruption budget at all, which is the opposite of what you asked for." }}
+{{- end }}
+{{- if not (or .Values.podDisruptionBudget.minAvailable .Values.podDisruptionBudget.maxUnavailable) }}
+{{- fail "fuse: podDisruptionBudget.enabled=true requires one of podDisruptionBudget.minAvailable or podDisruptionBudget.maxUnavailable." }}
+{{- end }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "fuse.fullname" . }}
+  labels:
+    {{- include "fuse.labels" . | nindent 4 }}
+spec:
+  {{- with .Values.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ . }}
+  {{- end }}
+  {{- with .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "fuse.selectorLabels" . | nindent 6 }}
+{{- end }}

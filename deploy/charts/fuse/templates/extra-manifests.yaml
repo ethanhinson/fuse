@@ -1,0 +1,10 @@
+{{- include "fuse.guards" . -}}
+{{- /*
+  An escape hatch so nobody has to fork the chart for one ExternalSecret or one
+  extra ConfigMap. Each entry is rendered through `tpl`, so it can use the
+  chart's own helpers and .Release values.
+*/}}
+{{- range .Values.extraManifests }}
+---
+{{ tpl (toYaml .) $ }}
+{{- end }}

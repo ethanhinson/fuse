@@ -1,0 +1,131 @@
+fuse {{ include "fuse.imageTag" . }} — release {{ .Release.Name }} in namespace {{ .Release.Namespace }}
+{{ .Values.replicaCount }} replica(s) of {{ include "fuse.image" . }}
+
+CONNECT
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "fuse.fullname" . }} {{ .Values.service.connectPort }}:{{ .Values.service.connectPort }}
+
+  In-cluster: {{ include "fuse.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.connectPort }}
+
+ROLLING UPDATES
+
+  strategy: maxUnavailable 0, maxSurge 1. A surge pod must reach Ready before an
+  old pod is removed, and Ready means /readyz returned 200 — the durable store
+  answered and the verifier is built. A rollout that cannot reach Ready STALLS
+  with the old replicas still serving, rather than emptying the Service.
+
+  On SIGTERM a pod flips /readyz to 503 FIRST, then stops accepting, then lets
+  in-flight unary calls finish within --drain-timeout ({{ .Values.server.drainTimeout }}).
+  terminationGracePeriodSeconds is {{ include "fuse.terminationGracePeriodSeconds" . }} (drain + 10), so the
+  kubelet's SIGKILL lands after the budget, never inside it.
+
+  WHAT THIS DOES NOT PROMISE: a turn that was mid-flight on the dying pod is not
+  resumed. The loop's events are durable; its in-memory execution is not. The
+  client sees a gap marker and a parked loop — exactly what it sees after a
+  crash — and re-owns the loop once the ownership lease expires. Observe streams
+  are cut by design; clients reattach (ADR-0033).
+
+  Liveness is /healthz, NOT /readyz, on purpose: /readyz goes 503 when Postgres
+  is unreachable, and liveness on it would restart the whole fleet during a
+  database blip instead of just removing it from the Service.
+{{- if not (or .Values.postgres.dsn .Values.postgres.existingSecret) }}
+{{- if .Values.postgres.dev.enabled }}
+
+  !! DEV POSTGRES IS ENABLED — NOT FOR PRODUCTION !!
+
+  postgres.dev.enabled=true installed a one-replica StatefulSet with a password
+  committed to a public git repository, no backups, no replication, no failover,
+  and no upgrade path. Its PVC's fate on `helm uninstall` belongs to the
+  StorageClass's reclaim policy, not to this chart.
+
+  Point postgres.dsn or postgres.existingSecret at a database someone operates
+  before this carries anything you would miss.
+{{- end }}
+{{- end }}
+{{- if .Values.auth.allowDevToken }}
+{{- if not .Values.auth.tokens }}
+
+  !! THE DEV TOKEN IS ACTIVE !!
+
+  auth.allowDevToken=true rendered a config with NO loop_server.auth, so the
+  server synthesizes its built-in dev token and LOGS IT AT STARTUP (ADR-0034).
+  That token is published in this repository and is now in your log aggregator.
+  Anyone who has it acts as the _default tenant.
+
+  Set auth.tokens (or config.existingSecret) before this cluster holds anything.
+
+    kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "fuse.fullname" . }} | head
+{{- end }}
+{{- end }}
+{{- if eq .Values.sandbox.mode "docker-socket" }}
+
+  !! ADR-0044: THE BASH TOOL HAS THE NODE'S DOCKER SOCKET — ≈ HOST ROOT !!
+
+  sandbox.mode=docker-socket mounted {{ .Values.sandbox.dockerSocket.hostPath }} from the
+  NODE into this pod, and you acknowledged the tradeoff with
+  sandbox.dockerSocket.acknowledgeHostRoot=true.
+
+  ADR-0044 is explicit that docker-socket access is approximately host root. A
+  model-authored bash command reaching that socket can start a privileged
+  container and own the node — and from the node, every other workload scheduled
+  on it, including its Secrets. The acknowledgement flag changed nothing about
+  that; it only recorded that a human chose it.
+
+  This belongs on a cluster you are willing to lose. Use a dedicated node pool
+  with a taint, and do not schedule anything else there.
+{{- end }}
+{{- if eq .Values.sandbox.mode "none" }}
+
+BASH TOOL
+
+  sandbox.mode=none (the default, and the safe one). The released image is
+  distroless — no shell, no docker CLI, no container runtime — so the bash tool
+  reports itself unavailable at startup and says so. ADR-0044 makes a container
+  boundary the bash tool's security boundary; with no runtime to provide one,
+  unavailable is the correct answer.
+
+  sandbox.mode=kubernetes is NOT YET AVAILABLE — it needs change #75.
+{{- end }}
+{{- if .Values.ingress.enabled }}
+
+INGRESS — THE h2c CAVEAT
+
+  The server speaks h2c (cleartext HTTP/2) and terminates no TLS.
+
+  Connect's HTTP/1.1 protocol works through ANY ingress controller: a connect-go
+  or connect-es client is fine as installed.
+
+  A grpc or grpc-web client is NOT. gRPC needs HTTP/2 end to end, and most
+  controllers default to an HTTP/1.1 upstream — which downgrades the backend hop
+  and makes those clients fail in ways that look like a broken server. Set the
+  controller's h2c/GRPC backend annotation (on ingress-nginx:
+  nginx.ingress.kubernetes.io/backend-protocol: "GRPC"). That makes the whole
+  path gRPC, so a mixed deployment wants two Ingress objects on two hosts.
+{{- if not .Values.ingress.tls }}
+
+  ingress.tls is EMPTY: bearer tokens (ADR-0034) cross the internet in cleartext
+  to this hop. Add a TLS block.
+{{- end }}
+{{- end }}
+
+OBSERVABILITY
+
+  /metrics on port {{ .Values.service.metricsPort }}, access {{ dig "observability" "metrics" "access" "public" .Values.config }}.
+{{- if eq (dig "observability" "metrics" "access" "public" .Values.config | toString) "public" }}
+  `public` means NO bearer token is required to read it. Per-tenant series are
+  readable by anything that can reach the port — set networkPolicy.enabled=true
+  with metricsNamespaceSelectors, or switch to `authenticated` and give the
+  ServiceMonitor a bearerSecret.
+{{- end }}
+
+DEBUGGING — THE IMAGE HAS NO SHELL
+
+  It is distroless. `kubectl exec ... -- sh` will not work, and neither will any
+  other exec: there is no shell, no curl, no ps. Use the endpoints and the logs.
+
+    kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "fuse.fullname" . }} -f
+    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "fuse.fullname" . }} {{ .Values.service.connectPort }}:{{ .Values.service.connectPort }}
+    curl -s -o /dev/null -w '%{http_code}\n' localhost:{{ .Values.service.connectPort }}/readyz
+
+  A 503 from /readyz is intentionally opaque — it is a status code, not an
+  oracle. The reason is in the logs.

@@ -1,0 +1,209 @@
+{{- include "fuse.guards" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fuse.fullname" . }}
+  labels:
+    {{- include "fuse.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  # maxUnavailable 0 / maxSurge 1: a surge pod must reach Ready — which means
+  # /readyz passing, which means the durable store answered — BEFORE an old pod
+  # is taken away. A rollout that cannot reach Ready therefore stalls with the
+  # old replicas still serving rather than emptying the Service.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "fuse.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Rolls the pods when the rendered config changes. A Secret update alone
+        # would not: the kubelet refreshes a projected Secret in place, but the
+        # trusted home file is read once at startup (ADR-0006), so the process
+        # would keep serving the old config indefinitely.
+        checksum/config: {{ include "fuse.configChecksum" . | quote }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "fuse.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "fuse.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # drainTimeout + 10. The kubelet's SIGKILL lands 10s AFTER the server's
+      # own drain budget expires, never inside it: on SIGTERM the server flips
+      # /readyz to 503 first, stops accepting, lets in-flight unary calls finish
+      # within --drain-timeout, then closes. A grace period shorter than the
+      # drain would make the drain a lie.
+      terminationGracePeriodSeconds: {{ include "fuse.terminationGracePeriodSeconds" . }}
+      containers:
+        - name: fuse
+          image: {{ include "fuse.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # The image's ENTRYPOINT is ["/fuse"] with no CMD, so args is the argv
+          # after the binary. No command: override — the entrypoint is correct.
+          args:
+            - loop-serve-net
+            - --addr
+            - {{ printf "0.0.0.0:%v" .Values.server.port | quote }}
+            - --drain-timeout
+            - {{ .Values.server.drainTimeout | quote }}
+            {{- with .Values.server.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            {{- $dsnSecret := include "fuse.dsnSecretName" . }}
+            {{- if $dsnSecret }}
+            - name: FUSE_PG_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $dsnSecret }}
+                  key: {{ include "fuse.dsnSecretKey" . }}
+            {{- end }}
+            # The pod name, so N replicas carry N distinct instance ids. One
+            # Secret shared by N replicas cannot: the trusted config file leaves
+            # observability.instance_id empty and the server falls back to this
+            # env (config wins when set — ADR-0006 is not weakened).
+            - name: FUSE_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: FUSE_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            {{- with .Values.server.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: connect
+              containerPort: {{ .Values.server.port }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.server.metricsPort }}
+              protocol: TCP
+          # Liveness is /healthz — "the process answers HTTP" — deliberately NOT
+          # /readyz. /readyz goes 503 when Postgres is unreachable, and a
+          # liveness probe on it would restart every pod in the fleet during a
+          # database blip instead of merely removing them from the Service.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: connect
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: connect
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          # The startup probe owns the slow first start (the pgstore applies its
+          # embedded schema on the first Open), which is what lets liveness run
+          # with initialDelaySeconds 0 without racing it.
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: connect
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            # The trusted home directory (ADR-0006). The server writes
+            # sessions/, workspaces/, mcp-tokens/, and skills/ under here.
+            - name: home
+              mountPath: /home/nonroot/.fuse
+            # The config file itself, over the home volume via subPath.
+            - name: config
+              mountPath: /home/nonroot/.fuse/config.yml
+              subPath: {{ .Values.config.key }}
+              readOnly: true
+            # ==================================================================
+            # A WRITABLE /tmp IS REQUIRED, NOT A NICETY.
+            #
+            # internal/tools/sandbox's egress proxy calls
+            # os.MkdirTemp("", "fuse-egress") on the serve path whenever the
+            # bash tool is enabled, and the error is SWALLOWED
+            # (cmd/fuse/sandbox.go's warnEgressBlackout). With
+            # readOnlyRootFilesystem: true and no writable /tmp,
+            # `egress.mode: enforce` SILENTLY DEGRADES TO DENY-ALL while the pod
+            # stays Ready — every declared destination unreachable, nothing in
+            # the probe or the metrics saying so. The CLI model adapter also
+            # opens a HITL socket under os.TempDir().
+            #
+            # Do not remove this mount to "tighten" the pod. It is what makes
+            # readOnlyRootFilesystem safe to set rather than merely quiet.
+            # ==================================================================
+            - name: tmp
+              mountPath: /tmp
+            {{- if and (eq .Values.sandbox.mode "docker-socket") .Values.sandbox.dockerSocket.acknowledgeHostRoot }}
+            {{- /* ADR-0044: ≈ host root. See templates/sandbox.yaml. */}}
+            - name: docker-socket
+              mountPath: {{ .Values.sandbox.dockerSocket.hostPath }}
+            {{- end }}
+      volumes:
+        - name: home
+          emptyDir:
+            {{- with .Values.volumeSizes.home }}
+            sizeLimit: {{ . }}
+            {{- end }}
+        - name: tmp
+          emptyDir:
+            {{- with .Values.volumeSizes.tmp }}
+            sizeLimit: {{ . }}
+            {{- end }}
+        - name: config
+          secret:
+            secretName: {{ include "fuse.configSecretName" . }}
+            defaultMode: 0400
+        {{- if and (eq .Values.sandbox.mode "docker-socket") .Values.sandbox.dockerSocket.acknowledgeHostRoot }}
+        - name: docker-socket
+          hostPath:
+            path: {{ .Values.sandbox.dockerSocket.hostPath }}
+            type: Socket
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

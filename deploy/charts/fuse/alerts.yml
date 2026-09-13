@@ -1,0 +1,60 @@
+# ============================================================================
+# A COPY of deploy/observability/alerts.yml, carried inside the chart directory
+# so `helm package` produces a self-contained artifact (.Files.Get cannot reach
+# outside the chart root).
+#
+# It is READ VERBATIM by templates/prometheusrule.yaml and must not diverge:
+# deploy/charts/validate_test.go parses BOTH this file and
+# deploy/observability/alerts.yml and asserts their `groups:` are structurally
+# equal. If you edit the alerts, edit deploy/observability/alerts.yml — the
+# source of truth — and copy it here; the test fails until you do.
+#
+# Comments are safe to add (the assertion is structural, post-parse); rule
+# content is not.
+# ============================================================================
+groups:
+  - name: fuse-observability
+    rules:
+      - alert: FuseHighErrorRate
+        expr: sum(rate(fuse_loop_operations_total{tenant_id!="__overflow__",outcome="error"}[5m])) by (tenant_id) / clamp_min(sum(rate(fuse_loop_operations_total{tenant_id!="__overflow__"}[5m])) by (tenant_id), 0.001) > 0.05
+        for: 10m
+      - alert: FuseHighLatency
+        expr: histogram_quantile(0.95, sum(rate(fuse_loop_operation_duration_seconds_bucket{tenant_id!="__overflow__"}[5m])) by (le, tenant_id, operation)) > 10
+        for: 10m
+      - alert: FuseOverflowAttributionIncomplete
+        expr: increase(fuse_metrics_label_overflow_total[10m]) > 0
+        for: 5m
+      - alert: FuseExporterErrors
+        expr: increase(fuse_observability_export_errors_total[10m]) > 0
+        for: 5m
+      - alert: FuseDroppedObservations
+        expr: increase(fuse_observability_dropped_total[10m]) > 0
+        for: 5m
+  - name: fuse-sandbox
+    rules:
+      - alert: FuseSandboxUnhealthy
+        expr: sum(rate(fuse_sandbox_unhealthy_total[5m])) by (handler, reason) > 0
+        for: 5m
+      - alert: FuseSandboxIdleTTLLeak
+        expr: sum(rate(fuse_sandbox_reaped_total{cause="idle_ttl"}[15m])) by (handler) > 0.1
+        for: 15m
+      - alert: FuseSandboxPoolNotDraining
+        # fuse_sandbox_active can also undercount after a process restart (a
+        # release/reap for a checkout the recorder never saw acquired leaves
+        # the gauge untouched rather than going negative), so this only fires
+        # on the gauge climbing ABOVE the loop count, never below it.
+        expr: sum(fuse_sandbox_active) - sum(fuse_loop_active{operation="loop"}) > 5
+        for: 15m
+      - alert: FuseSandboxStaleCheckout
+        expr: increase(fuse_sandbox_reaped_total{cause="stale_checkout"}[5m]) > 0
+        for: 0m
+      # Change 0077: an admission refusal means the host is saturated (max_inflight
+      # running AND max_queued parked). By design the queue never refuses under
+      # ordinary load, so this should be zero under correct configuration — its
+      # firing is either a genuine runaway or a misconfigured (too-low) bound.
+      # Deliberately NOT folded into FuseSandboxUnhealthy: acquire_failed means the
+      # substrate is broken (page someone), a rejection means capacity (a different
+      # response), and one alert must not conflate them.
+      - alert: FuseSandboxAtCapacity
+        expr: sum(rate(fuse_sandbox_rejected_total[5m])) by (handler, scope) > 0
+        for: 5m

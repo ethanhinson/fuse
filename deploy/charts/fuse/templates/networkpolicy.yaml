@@ -1,0 +1,102 @@
+{{- include "fuse.guards" . -}}
+{{- if .Values.networkPolicy.enabled }}
+# ============================================================================
+# A NetworkPolicy is only as good as the CNI enforcing it. On a cluster whose
+# CNI does not implement NetworkPolicy (or a namespace where it is not wired up)
+# this object is accepted by the API server and does nothing at all, silently.
+# Confirm enforcement before treating it as the boundary that keeps the metrics
+# port private.
+#
+# Selecting BOTH Ingress and Egress makes the default deny-all in both
+# directions for these pods, so every rule the server needs is spelled out
+# below. Note especially the DNS rule: without it the pod cannot resolve the
+# Postgres hostname in its DSN and comes up 503 with a name-resolution error
+# that reads nothing like a NetworkPolicy problem.
+# ============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "fuse.fullname" . }}
+  labels:
+    {{- include "fuse.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "fuse.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # The Connect port.
+    {{- $connectFrom := concat (.Values.networkPolicy.ingressNamespaceSelectors | default list) (.Values.networkPolicy.ingressPodSelectors | default list) }}
+    - ports:
+        - port: connect
+          protocol: TCP
+      {{- if $connectFrom }}
+      from:
+        {{- range .Values.networkPolicy.ingressNamespaceSelectors }}
+        - namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
+        {{- range .Values.networkPolicy.ingressPodSelectors }}
+        - podSelector:
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
+      {{- else }}
+      # No selectors given ⇒ NO `from`, which means any source in the cluster.
+      # That is the Connect port with bearer-token auth in front of it
+      # (ADR-0034), not an open door — but it is not a network boundary either.
+      # Name ingressNamespaceSelectors/ingressPodSelectors to make it one.
+      {{- end }}
+    # The metrics port, scoped to your Prometheus's namespace. This one matters:
+    # with config.observability.metrics.access=public the endpoint has no auth
+    # at all, so this rule is the only thing keeping per-tenant series off any
+    # pod in the cluster.
+    - ports:
+        - port: metrics
+          protocol: TCP
+      {{- with .Values.networkPolicy.metricsNamespaceSelectors }}
+      from:
+        {{- range . }}
+        - namespaceSelector:
+            {{- toYaml . | nindent 12 }}
+        {{- end }}
+      {{- end }}
+  egress:
+    # DNS. Required — see the header.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- with .Values.networkPolicy.egress.postgresPort }}
+    # Postgres. No `to` selector: a managed database is off-cluster and has no
+    # pod labels, and its address is whatever the DSN says. Narrow this with
+    # extraRules and an ipBlock when you know the CIDR.
+    - ports:
+        - port: {{ . }}
+          protocol: TCP
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.otlpPort }}
+    # OTLP to the trace collector.
+    - ports:
+        - port: {{ . }}
+          protocol: TCP
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.allowPorts }}
+    # The model gateway (443) and anything else you name.
+    - ports:
+        {{- range . }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+    {{- end }}
+    {{- with .Values.networkPolicy.egress.extraRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
