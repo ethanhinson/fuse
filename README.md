@@ -5,6 +5,106 @@ that drives LLMs (via a LiteLLM gateway) with tools, a hardened subagent
 runtime, human-in-the-loop permissions, MCP integration, and an embedded skill
 system.
 
+## Installing
+
+Releases ship prebuilt `fuse` binaries for darwin and linux on amd64 and arm64,
+a multi-arch container image on GHCR, and SHA-256 checksums with build
+provenance attestations. No Go toolchain is required.
+
+### Install script (recommended)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ethanhinson/fuse/main/scripts/install.sh | sh
+```
+
+The script detects your OS/arch, resolves the latest release, downloads the
+archive **and** its checksums file, verifies the SHA-256 digest, and refuses to
+install anything on a mismatch, a missing entry, or a malformed digest. It
+installs three binaries — `fuse` plus both egress forwarders (see the caveat
+below) — into `$HOME/.local/bin` by default, warns if that directory is not on
+your `PATH`, and never invokes `sudo`. It does not read or write
+`~/.fuse/config.yml`.
+
+Three environment variables tune it:
+
+| Variable | Effect |
+| --- | --- |
+| `FUSE_VERSION` | Install a specific version (`v0.1.0` or `0.1.0`) instead of the latest release. |
+| `FUSE_INSTALL_DIR` | Install destination. Default `$HOME/.local/bin`. Point it at `/usr/local/bin` yourself if you want that — the script will not elevate for you. |
+| `FUSE_RELEASE_BASE_URL` | Override the download base (an `https://` URL, a `file://` URL, or a plain local directory such as a GoReleaser snapshot `dist/`). With this set, `FUSE_VERSION` must be set too unless the version can be read from the local tree. |
+
+### Manual archive download
+
+Archive names carry the version **without** a leading `v`, while the release
+download path keeps the tag verbatim:
+
+```sh
+VERSION=0.1.0
+curl -fsSLO "https://github.com/ethanhinson/fuse/releases/download/v${VERSION}/fuse_${VERSION}_darwin_arm64.tar.gz"
+curl -fsSLO "https://github.com/ethanhinson/fuse/releases/download/v${VERSION}/fuse_${VERSION}_checksums.txt"
+
+# Verify the bytes, then the provenance.
+# (macOS has no sha256sum; use `shasum -a 256 --ignore-missing -c` there.)
+sha256sum --ignore-missing -c "fuse_${VERSION}_checksums.txt"
+gh attestation verify "fuse_${VERSION}_darwin_arm64.tar.gz" --repo ethanhinson/fuse
+
+tar -xzf "fuse_${VERSION}_darwin_arm64.tar.gz"
+```
+
+Every archive contains `fuse`, `fuse-egress-forward-linux-amd64`,
+`fuse-egress-forward-linux-arm64`, and `README.md` at its root — the darwin
+archives included, because the forwarder that matters is the one matching the
+*sandbox image's* architecture, not the host's. Keep the three binaries in the
+same directory.
+
+### Container image
+
+```sh
+docker run --rm ghcr.io/ethanhinson/fuse:latest version
+docker run --rm -p 8787:8787 ghcr.io/ethanhinson/fuse:latest \
+  loop-serve-net --addr 0.0.0.0:8787
+```
+
+`loop-serve-net` defaults to `--addr 127.0.0.1:8787`, which a published port
+cannot reach from outside the container, so bind `0.0.0.0` explicitly when you
+publish it.
+
+Tags are `:X.Y.Z`, `:X.Y`, and `:latest`, each a multi-arch manifest over
+linux/amd64 and linux/arm64. A pre-release tag (`v0.2.0-rc.1`) publishes
+`:X.Y.Z` and `:X.Y` but does **not** move `:latest`. The entrypoint is `/fuse`,
+so arguments to `docker run` are fuse's own subcommands.
+
+The image is `gcr.io/distroless/static-debian12:nonroot` (UID 65532) with no
+shell and **no container runtime** inside it. Because the bash tool's security
+boundary is a container (ADR-0044), a bash tool used by a fuse running *inside*
+this image needs either the remote sandbox substrate (change #75) or a mounted
+container socket — and a mounted socket is approximately host root, a tradeoff
+the deployment change (#76) owns rather than inherits silently. See the comment
+block in [`Dockerfile`](Dockerfile).
+
+### From source
+
+```sh
+go install github.com/ethanhinson/fuse/cmd/fuse@latest
+```
+
+**Forwarder caveat.** `go install` builds only the `fuse` binary. fuse locates
+the in-container egress forwarder beside its own executable and nowhere else —
+`<exeDir>/dist/fuse-egress-forward-linux-<arch>`, then
+`<exeDir>/fuse-egress-forward-linux-<arch>` (see the `egress-forwarder` comment
+in [`Makefile`](Makefile) and `defaultEgressForwarderCandidates` in
+[`cmd/fuse/sandbox.go`](cmd/fuse/sandbox.go)). Without it, `egress.mode: enforce`
+is still *safe* but is **deny-all**: containers run with `--network none` and no
+declared destination is reachable. fuse says so loudly on stderr at startup
+rather than looking like a broken network. Build and place the artifact with:
+
+```sh
+make egress-forwarder                                  # writes dist/fuse-egress-forward-linux-{amd64,arm64}
+cp dist/fuse-egress-forward-linux-* "$(dirname "$(command -v fuse)")/"
+```
+
+The install script and the release archives do this for you.
+
 ## Building
 
 ```sh
@@ -15,6 +115,8 @@ go test ./...   # run the test suite
 
 Configuration lives in `~/.fuse/config.yml` (with an optional per-repo
 `.fuse.local.yml` override). See `internal/config` for the full schema.
+
+Cutting a release is documented in [docs/releasing.md](docs/releasing.md).
 
 ## Loop observability
 
