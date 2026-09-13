@@ -619,6 +619,35 @@ func (s *Service) resolveEnv() Env {
 // unavailable — never to run the command another way.
 func (s *Service) Available() bool { return s.handler != nil }
 
+// SelectionRefusal reports WHY no substrate was selected, or nil when one was.
+//
+// # Why this accessor exists
+//
+// Until change 0075 a refused selection was observable only from inside Acquire,
+// which means the diagnostic reached the MODEL and never the operator: a fuse
+// configured with a handler this binary cannot build came up printing nothing,
+// looked healthy, and failed every bash call at runtime. That is
+// `security-knob-inert-at-composition-root` wearing its other face — not an
+// unwired knob, but a wired knob whose refusal nobody was told about — and it
+// became load-bearing with the named-handler branch, where a refusal is the
+// EXPECTED outcome of several ordinary misconfigurations (an unregistered name,
+// a discarded config block, an unreachable control plane).
+//
+// So the refusal is readable at startup, and cmd/fuse prints it beside the
+// UNCONTAINED and EGRESS-BLACKOUT notices. It is strictly read-only and nothing
+// can be re-decided from it: the error it returns is the same one Acquire
+// returns, already wrapped in ErrRefusedUncontained, so a caller cannot mistake
+// it for permission to run the command another way.
+//
+// A nil *Service reports nil, matching every other accessor's tolerance of one
+// (NewBash(nil) is a supported fail-closed shape).
+func (s *Service) SelectionRefusal() error {
+	if s == nil {
+		return nil
+	}
+	return s.refusal
+}
+
 // HandlerName reports the bounded substrate identifier ("container" or "host"),
 // or "" when selection refused. It is safe as an event or metric label.
 func (s *Service) HandlerName() string {

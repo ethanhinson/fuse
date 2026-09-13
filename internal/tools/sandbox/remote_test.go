@@ -1107,3 +1107,58 @@ func TestRemoteHandlerReaperIsSilentWhenItCollectsNothing(t *testing.T) {
 		t.Fatalf("reap events = %d after sweeps that collected nothing, want 0", count)
 	}
 }
+
+// TestServiceSelectionRefusalIsReadableAtStartup closes a gap task 10 found in
+// the composition root, not in this package.
+//
+// A refused SELECTION is stored on the Service (s.refusal) and surfaced only at
+// Acquire — so a fuse configured with `handler: kubernetes` that this binary
+// cannot build comes up looking healthy, prints nothing, and fails every bash
+// call at runtime with a message only the model sees. That is the
+// `security-knob-inert-at-composition-root` failure wearing its other face: not
+// an unwired knob, but a wired knob whose refusal nobody is told about.
+//
+// SelectionRefusal makes the refusal readable at STARTUP so cmd/fuse can say it
+// out loud beside the UNCONTAINED and EGRESS-BLACKOUT notices. It is read-only
+// and reports nothing about anything else: a Service that selected a handler
+// reports nil, which is what lets the composition root print unconditionally.
+func TestServiceSelectionRefusalIsReadableAtStartup(t *testing.T) {
+	boom := errors.New("no cluster")
+	cfg := DefaultConfig()
+	cfg.Handler = "kubernetes"
+
+	svc, err := NewService(cfg,
+		WithHandlerFactory("kubernetes", func(Config) (Handler, error) { return nil, boom }))
+	if err != nil {
+		t.Fatalf("NewService returned an error rather than a refusing Service: %v", err)
+	}
+	if svc.Available() {
+		t.Fatal("a failed factory produced an available Service")
+	}
+	refusal := svc.SelectionRefusal()
+	if refusal == nil {
+		t.Fatal("SelectionRefusal() = nil on a Service whose selection refused; the composition root then has " +
+			"NOTHING to print and a fuse that refuses every bash call comes up looking healthy")
+	}
+	if !errors.Is(refusal, ErrRefusedUncontained) {
+		t.Errorf("SelectionRefusal() = %v, want it wrapped in ErrRefusedUncontained", refusal)
+	}
+	if !errors.Is(refusal, boom) {
+		t.Errorf("SelectionRefusal() = %v, want it to carry the factory's own cause %v", refusal, boom)
+	}
+
+	// A Service that DID select reports nil, so the caller can print
+	// unconditionally without inventing a refusal.
+	ok, err := NewService(DefaultConfig(),
+		withContainerLookPath(func(string) (string, error) { return "/usr/bin/docker", nil }),
+		withContainerExec(func(context.Context, string, ...string) ([]byte, int, error) { return []byte("ok"), 0, nil }))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	if r := ok.SelectionRefusal(); r != nil {
+		t.Errorf("SelectionRefusal() = %v on a Service that selected the container handler, want nil", r)
+	}
+	if r := (*Service)(nil).SelectionRefusal(); r != nil {
+		t.Errorf("a nil *Service reports %v; NewBash(nil) is a supported shape and this must be callable beside it", r)
+	}
+}

@@ -1,0 +1,142 @@
+# fuse sandbox RBAC — the Kubernetes warm-Pod substrate (docket 0075, ADR-0058).
+#
+# TWO service accounts, and the distance between them is the point. ADR-0058
+# rule 6: the credential that PROVISIONS a sandbox must never be reachable from
+# inside one. So `fuse` (the server) holds every verb the substrate needs, and
+# `fuse-sandbox` (what a sandbox Pod runs as) holds NONE and is bound to nothing
+# at all — sandbox Pods additionally carry
+# `automountServiceAccountToken: false`, so even this empty identity's token is
+# never projected into the container a model drives.
+#
+# Apply into the namespace fuse itself runs in:
+#
+#   kubectl -n fuse apply -f deploy/k8s/sandbox-rbac.yaml
+#
+# Change #76 (the Helm chart) packages these; this file is the standalone,
+# chart-independent form, because #76 is unmerged and this substrate does not
+# depend on it landing. See docs/sandbox-kubernetes.md.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fuse
+  namespace: fuse
+  labels:
+    app.kubernetes.io/name: fuse
+    app.kubernetes.io/component: server
+---
+# THE SANDBOX IDENTITY. Created here for the namespace fuse runs in only as
+# documentation of its shape: the substrate creates one per TENANT namespace,
+# since a Pod's serviceAccountName must resolve in its own namespace. It has no
+# Role, no RoleBinding, and no ClusterRoleBinding anywhere in this file, and that
+# absence is the security property — every verb a sandbox could perform would be
+# a verb reachable from inside a container running model-authored commands.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fuse-sandbox
+  namespace: fuse
+  labels:
+    app.kubernetes.io/name: fuse
+    app.kubernetes.io/component: sandbox
+automountServiceAccountToken: false
+---
+# NAMESPACE VERBS, cluster-scoped because namespaces are.
+#
+# `create` without `delete` is deliberate: fuse provisions a tenant namespace on
+# that tenant's first Acquire and NEVER removes one (namespace deletion is
+# operator-owned — see the spec's "Recorded, not built"). A fuse that could
+# delete a namespace could delete an operator's, and the reaper works at Pod
+# granularity, so the verb buys nothing.
+#
+# `list`/`watch` are present because Reap must enumerate the namespaces it
+# manages (label `fuse.dev/managed=true`) to find orphans belonging to dead
+# instances.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fuse-sandbox-namespaces
+  labels:
+    app.kubernetes.io/name: fuse
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create"]
+---
+# THE NAMESPACED VERBS, in a ClusterRole bound cluster-wide.
+#
+# # Why cluster-wide rather than one RoleBinding per tenant namespace
+#
+# fuse CREATES the namespaces it then works in, so there is no moment at which a
+# per-namespace RoleBinding could have been pre-applied by an operator: fuse
+# would have to grant itself access to each new namespace, which requires the
+# rbac `bind` escalation and is strictly worse than this. The blast radius is
+# bounded instead by what the verbs are: Pods, exec, Secrets, NetworkPolicies and
+# ResourceQuotas — the substrate's own primitives — and nothing about RBAC,
+# workloads, nodes, or cluster configuration.
+#
+# `pods/exec` is the one verb here that is equivalent to a shell in any Pod in
+# the cluster. It is unavoidable (it IS the bash tool's datapath) and it is why
+# the `fuse` service account's token must never reach a sandbox container.
+#
+# `secrets` is create/get/delete only, scoped to the per-Pod `fuse-egress-tls-*`
+# objects fuse mints; each carries an ownerReference to its Pod so the cluster
+# garbage-collects it when the Pod goes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fuse-sandbox-workloads
+  labels:
+    app.kubernetes.io/name: fuse
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create", "get"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get", "create"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["get", "create", "update"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fuse-sandbox-namespaces
+  labels:
+    app.kubernetes.io/name: fuse
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fuse-sandbox-namespaces
+subjects:
+  - kind: ServiceAccount
+    name: fuse
+    namespace: fuse
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fuse-sandbox-workloads
+  labels:
+    app.kubernetes.io/name: fuse
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fuse-sandbox-workloads
+subjects:
+  - kind: ServiceAccount
+    name: fuse
+    namespace: fuse

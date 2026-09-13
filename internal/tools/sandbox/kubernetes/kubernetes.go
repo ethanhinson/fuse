@@ -229,6 +229,25 @@ var _ sandbox.RemoteSubstrate = (*Substrate)(nil)
 // because the shipped posture is a fuse Pod talking to its own API server; a
 // laptop driving kind is the dev loop and says so explicitly.
 func New(opts Options) (*Substrate, error) {
+	// THE POSTURE IS VALIDATED BEFORE THE CLUSTER IS DIALLED, and the order is
+	// load-bearing rather than incidental.
+	//
+	// Both kinds of failure are refusals, so neither can produce an unsafe
+	// substrate — but only one of them names a mistake the operator MADE. A
+	// discarded kubernetes: block, an unset advertise address under enforce, an
+	// unparsable proxy.listen: each is a line in their file. "in-cluster config
+	// unavailable" is a statement about the environment, and it is the one that
+	// fires on every developer machine — so resolving the client first would mean
+	// an operator who forgot proxy.advertise_address on their laptop is told about
+	// KUBERNETES_SERVICE_HOST instead, and fixes the wrong thing.
+	//
+	// validatePosture runs newSubstrate's checks over a throwaway clientset. It is
+	// cheap (no I/O) and the real newSubstrate below re-runs them, so this cannot
+	// drift into being the only place a check lives.
+	if err := validatePosture(opts); err != nil {
+		return nil, err
+	}
+
 	cfg, err := restConfig(opts.Config.Kubernetes)
 	if err != nil {
 		return nil, err
@@ -244,6 +263,18 @@ func New(opts Options) (*Substrate, error) {
 	s.rest = cfg
 	s.apiHost = cfg.Host
 	return s, nil
+}
+
+// validatePosture reports the first CONFIGURATION fault in opts, or nil.
+//
+// It is newSubstrate's own validation run over a placeholder clientset, so there
+// is exactly one set of rules and this cannot become a second, drifting one. The
+// clientset it builds is discarded: newSubstrate performs no I/O, and the only
+// reason it needs a non-nil one at all is its "a substrate needs a clientset"
+// guard.
+func validatePosture(opts Options) error {
+	_, err := newSubstrate(&kubernetes.Clientset{}, opts)
+	return err
 }
 
 // restConfig resolves the client configuration, in-cluster unless a kubeconfig
@@ -508,7 +539,59 @@ func (s *Substrate) ensureNamespace(ctx context.Context, tenant event.TenantID) 
 	if err := s.assertQuota(ctx, name); err != nil {
 		return "", err
 	}
+	if err := s.assertSandboxServiceAccount(ctx, name); err != nil {
+		return "", err
+	}
 	return name, nil
+}
+
+// assertSandboxServiceAccount makes the zero-permission sandbox identity exist in
+// the tenant's namespace.
+//
+// # Why fuse creates it rather than an operator
+//
+// A Pod's serviceAccountName resolves in the POD's OWN namespace, and fuse creates
+// a fresh namespace per tenant on that tenant's first Acquire — so there is no
+// moment at which an operator could have pre-applied it. Without this, the first
+// Provision in every new tenant namespace is rejected by admission with
+// "serviceaccount not found", which is a substrate that passes every unit test and
+// does not work.
+//
+// # What makes creating it safe
+//
+// It is created with NO Role and NO binding, and fuse never creates one for it:
+// deploy/k8s/sandbox-rbac.yaml binds nothing to `fuse-sandbox`, and this function
+// grants nothing either. That is ADR-0058 rule 6 — the identity a sandbox runs as
+// must be able to do nothing, and fuse's own provisioning credential must be
+// unreachable from inside a sandbox.
+//
+// automountServiceAccountToken is false HERE as well as on the Pod. Belt and
+// braces on purpose: the Pod-level field is the one the read-back assertion
+// checks, and this one is what protects a Pod some future code path creates
+// without it.
+func (s *Substrate) assertSandboxServiceAccount(ctx context.Context, ns string) error {
+	automount := false
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      s.serviceAccount,
+			Namespace: ns,
+			Labels:    map[string]string{labelManaged: "true"},
+		},
+		AutomountServiceAccountToken: &automount,
+	}
+	if _, err := s.cs.CoreV1().ServiceAccounts(ns).Create(ctx, sa, metav1.CreateOptions{}); err != nil {
+		// AlreadyExists is SUCCESS — this runs on every Provision — and it is
+		// deliberately NOT followed by an update-to-match. An operator who has
+		// deliberately given this account a token-projection setting of their own
+		// is making a cluster-policy choice, and the property fuse actually relies
+		// on is asserted where it cannot be edited away: the POD carries
+		// automountServiceAccountToken: false and the read-back refuses any Pod
+		// admitted without it.
+		if !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("kubernetes: create serviceaccount %s/%s: %w", ns, s.serviceAccount, err)
+		}
+	}
+	return nil
 }
 
 // assertDefaultDeny puts (or puts back) the namespace floor.
