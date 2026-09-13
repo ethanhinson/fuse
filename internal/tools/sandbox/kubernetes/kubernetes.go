@@ -140,6 +140,16 @@ type Options struct {
 	// sidecar's entrypoint path is arch-specific and the sidecar image is fuse's
 	// own.
 	Arch string
+
+	// ProxyCredentials mints the transport credential each sandbox's egress
+	// sidecar reaches fuse's own TLS listener with (change 0075, task 7).
+	//
+	// It is REQUIRED under `enforce` and unused otherwise: under enforce a Pod
+	// with a sidecar and no credential starts and then has no egress at all, so
+	// newSubstrate refuses that combination rather than discovering it per Pod.
+	// It is an interface and not the *Proxy so this package keeps importing only
+	// internal/tools/sandbox (ADR-0058 rule 1).
+	ProxyCredentials sandbox.SandboxCredentialSource
 }
 
 // Substrate is a Kubernetes-backed sandbox.RemoteSubstrate.
@@ -169,6 +179,17 @@ type Substrate struct {
 
 	instanceID string
 	arch       string
+
+	// The egress datapath, all resolved once at construction (egress.go).
+	//
+	// advertiseAddress is the address a sandbox reaches THIS instance's proxy on
+	// and is non-empty whenever the posture is enforcing; proxyPort is the port
+	// both the sidecar's -upstream and the per-Pod policy's allowed port are
+	// derived from, so they cannot drift; sidecarImage is the forwarder's image.
+	advertiseAddress string
+	proxyPort        int
+	sidecarImage     string
+	credentials      sandbox.SandboxCredentialSource
 
 	// rest is the client configuration the exec transport needs. The typed
 	// clientset alone is not enough: remotecommand builds its own upgrading
@@ -297,6 +318,24 @@ func newSubstrate(cs kubernetes.Interface, opts Options) (*Substrate, error) {
 		maxPods = defaultMaxPodsPerTenant
 	}
 
+	// THE EGRESS DATAPATH, resolved and REFUSED here rather than per Provision.
+	// Everything below is a statement about the whole substrate: an unset
+	// advertise address or a missing credential minter under enforce would
+	// produce, for every tenant, a Pod whose sidecar can reach nothing — and the
+	// symptom inside the sandbox is a hang, not a configuration error.
+	enforcing := opts.Config.Egress.Mode == sandbox.EgressEnforce
+	advertise, err := resolveAdvertise(k, enforcing)
+	if err != nil {
+		return nil, err
+	}
+	proxyPort, err := proxyListenPort(k)
+	if err != nil {
+		return nil, err
+	}
+	if enforcing && opts.ProxyCredentials == nil {
+		return nil, errors.New("kubernetes: egress is enforcing but no proxy credential source was supplied; a sidecar with no client certificate is closed by the proxy on an unknown serial, which presents inside the sandbox as a network fault")
+	}
+
 	s := &Substrate{
 		cs:              cs,
 		namespacePrefix: prefix,
@@ -317,9 +356,13 @@ func newSubstrate(cs kubernetes.Interface, opts Options) (*Substrate, error) {
 		// concurrency number. An explicit 0 means "derive it" (spec §6) and is
 		// therefore NOT honoured as a ceiling of zero, which would refuse every
 		// Pod the operator was trying to permit.
-		quotaMaxPods: derefPositiveInt64(k.TenantQuotaMaxPods, maxPods),
-		instanceID:   opts.InstanceID,
-		arch:         arch,
+		quotaMaxPods:     derefPositiveInt64(k.TenantQuotaMaxPods, maxPods),
+		instanceID:       opts.InstanceID,
+		arch:             arch,
+		advertiseAddress: advertise,
+		proxyPort:        proxyPort,
+		sidecarImage:     resolveSidecarImage(k),
+		credentials:      opts.ProxyCredentials,
 	}
 	return s, nil
 }

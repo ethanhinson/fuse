@@ -664,3 +664,22 @@ func parseLeaf(t *testing.T, pemBytes []byte) *x509.Certificate {
 	}
 	return leaf
 }
+
+// THE PINNED SERVER NAME IS A CROSS-BINARY CONTRACT.
+//
+// The sidecar verifies a FIXED name against the mounted CA rather than the
+// upstream IP, because the upstream is a Pod IP that changes on every reschedule.
+// If this spelling and cmd/fuse-egress-forward's `proxyServerName` drift apart,
+// every sandbox's egress fails its handshake — and the symptom inside the sandbox
+// is an unexplained connection error, not a name-mismatch anyone can read.
+//
+// The forwarder is a dependency-free static binary that imports nothing of fuse's
+// own (CGO_ENABLED=0, no libc, no interpreter), so the two constants cannot be one
+// constant. Pinning the literal on both sides is the substitute, and this is the
+// half that lives here.
+func TestProxyTLSServerNameIsThePinnedLiteral(t *testing.T) {
+	const pinned = "fuse-egress-proxy"
+	if proxyTLSServerName != pinned {
+		t.Fatalf("proxyTLSServerName = %q, want %q — cmd/fuse-egress-forward's proxyServerName pins the same literal and the two must agree", proxyTLSServerName, pinned)
+	}
+}
