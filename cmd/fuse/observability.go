@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,8 +39,34 @@ const (
 	observabilityReopenPath = "/-/observability/logging/reopen"
 )
 
+// instanceIDEnv names the per-replica instance-id fallback. It is consulted
+// ONLY when the trusted config file leaves observability.instance_id empty:
+// ADR-0006 keeps the observability block honored from the trusted home file and
+// nowhere else, and this does not change that. It fills a gap the file cannot —
+// one Kubernetes Secret shared by N replicas cannot carry N distinct ids — and
+// it is deliberately the ONLY observability field with an env fallback.
+const instanceIDEnv = "FUSE_INSTANCE_ID"
+
+// resolveInstanceID applies the instance-id resolution order:
+// configured (non-empty) -> $FUSE_INSTANCE_ID -> os.Hostname() -> "".
+func resolveInstanceID(configured string) string {
+	if id := strings.TrimSpace(configured); id != "" {
+		return id
+	}
+	if id := strings.TrimSpace(os.Getenv(instanceIDEnv)); id != "" {
+		return id
+	}
+	if hostname, err := os.Hostname(); err == nil {
+		return strings.TrimSpace(hostname)
+	}
+	return ""
+}
+
 type observabilityService struct {
-	cfg             config.ObservabilityConfig
+	cfg config.ObservabilityConfig
+	// instanceID is resolved ONCE at construction so the log identity, the trace
+	// resource, and the admin response all report the same value.
+	instanceID      string
 	observer        observe.Observer
 	projector       observe.Projector
 	projection      *projectionDispatcher
@@ -115,7 +142,7 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 		return nil, err
 	}
 	o := cfg.Observability
-	s := &observabilityService{cfg: o, observer: observe.NoopObserver{}}
+	s := &observabilityService{cfg: o, instanceID: resolveInstanceID(o.InstanceID), observer: observe.NoopObserver{}}
 	fail := func(err error) (*observabilityService, error) { _ = s.Close(context.Background()); return nil, err }
 	var projectors observe.Fanout
 	if o.Metrics.Enabled {
@@ -150,7 +177,7 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 			}
 			sink = file
 		}
-		s.logger = observabilitylogging.New(sink, levels, observabilitylogging.Identity{Service: "fuse", Instance: o.InstanceID})
+		s.logger = observabilitylogging.New(sink, levels, observabilitylogging.Identity{Service: "fuse", Instance: s.instanceID})
 		projectors = append(projectors, s.logger)
 	}
 	if o.Traces.Enabled {
@@ -170,8 +197,8 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 			batch.BatchTimeout, _ = time.ParseDuration(o.Traces.BatchTimeout)
 		}
 		resourceAttributes := []attribute.KeyValue{semconv.ServiceName("fuse"), semconv.ServiceVersion(version.Version)}
-		if o.InstanceID != "" {
-			resourceAttributes = append(resourceAttributes, semconv.ServiceInstanceID(o.InstanceID))
+		if s.instanceID != "" {
+			resourceAttributes = append(resourceAttributes, semconv.ServiceInstanceID(s.instanceID))
 		}
 		s.provider = observeotel.NewProvider(exporter, batch,
 			sdktrace.WithResource(resource.NewWithAttributes(semconv.SchemaURL, resourceAttributes...)),
@@ -396,7 +423,7 @@ func (s *observabilityService) adminHandler(verifier loopauth.Verifier) http.Han
 			_ = json.NewEncoder(w).Encode(struct {
 				InstanceID string                     `json:"instance_id"`
 				State      observabilitylogging.State `json:"state"`
-			}{s.cfg.InstanceID, state})
+			}{s.instanceID, state})
 			return
 		}
 		var m loggingMutation
