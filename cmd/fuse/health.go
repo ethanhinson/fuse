@@ -60,6 +60,15 @@ type readiness struct {
 	mu      sync.Mutex
 	lastAt  time.Time
 	lastErr error
+	// hasLast distinguishes "no probe has ever completed" (cold start) from "a
+	// probe completed and its result was nil". lastAt cannot carry that, because
+	// an injected test clock may legitimately report the zero time.
+	hasLast bool
+	// inflight is non-nil exactly while one goroutine is inside Ping, and is
+	// closed when that Ping returns. A concurrent caller uses it to WAIT only on
+	// the cold-start path; once a result exists, callers read it and return
+	// instead of waiting (see probe).
+	inflight chan struct{}
 
 	// now and logf are injected only by tests (a fake clock for the cache TTL, a
 	// capturing sink for the reason log). Production uses the real ones.
@@ -136,10 +145,25 @@ func (r *readiness) notReady(ctx context.Context) string {
 // Both outcomes are cached, so a probe storm against a store that is DOWN cannot
 // become a connection storm against it either.
 //
-// The lock is held across the Ping so concurrent probes collapse onto one call
-// rather than all missing the cache together and each opening a connection —
-// which is the exact storm the cache exists to prevent. Ping is contracted cheap
-// and is bounded by readinessProbeTimeout, so the critical section is bounded too.
+// Concurrent probes collapse onto ONE Ping rather than all missing the cache
+// together and each opening a connection — the exact storm the cache exists to
+// prevent. They collapse singleflight-style, NOT by queueing: the mutex is
+// released before Ping runs, and a caller that arrives while a probe is in flight
+// returns the previous result immediately instead of waiting for the new one. An
+// earlier shape held the lock across Ping, which collapsed the storm but made
+// every queued probe pay the full readinessProbeTimeout — and since that budget
+// equals the chart's probes.readiness.timeoutSeconds, a store that was merely SLOW
+// timed out every kubelet probe rather than one, and failureThreshold evicted a
+// healthy pod on latency alone. A concurrent probe is now O(1), not O(wait).
+//
+// Cold start is the one case where a caller does wait: until some probe has
+// completed there is no previous result, and the alternatives are both wrong —
+// answering "ready" would advertise an instance whose store may be dead (exactly
+// what the startup probe exists to catch), and answering "not ready" would burn
+// kubelet failures on a store nobody has asked yet. So the first caller, and any
+// caller concurrent with that first Ping, waits for the real answer; that wait is
+// still bounded by readinessProbeTimeout. From the second probe onward nobody
+// waits.
 //
 // The probe context is DETACHED from the request context and carries only the
 // timeout. That is deliberate and load-bearing with the cache: a prober that
@@ -157,17 +181,56 @@ func (r *readiness) probe(_ context.Context) error {
 		return nil
 	}
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	now := r.now()
-	if !r.lastAt.IsZero() && now.Sub(r.lastAt) < readinessProbeTTL {
-		return r.lastErr
+	for {
+		r.mu.Lock()
+		// A result younger than the TTL is served as-is, in flight or not.
+		if r.hasLast && r.now().Sub(r.lastAt) < readinessProbeTTL {
+			err := r.lastErr
+			r.mu.Unlock()
+			return err
+		}
+		if wait := r.inflight; wait != nil {
+			// Someone is already probing. With a previous result in hand, return
+			// it and do NOT queue — stale by at most one probe interval is the
+			// right trade against spending the caller's whole timeout budget.
+			if r.hasLast {
+				err := r.lastErr
+				r.mu.Unlock()
+				return err
+			}
+			// Cold start: nothing to report yet, so wait for that probe and loop
+			// to read whatever it recorded.
+			r.mu.Unlock()
+			select {
+			case <-wait:
+			case <-time.After(readinessProbeTimeout):
+				// The owner is itself bounded by readinessProbeTimeout, so this
+				// fires only if it is wedged past its own deadline. Report
+				// not-ready rather than wait unbounded; nothing is cached, so the
+				// next probe re-evaluates.
+				return context.DeadlineExceeded
+			}
+			continue
+		}
+		// This goroutine owns the probe. Publish inflight, drop the lock, Ping.
+		done := make(chan struct{})
+		r.inflight = done
+		startedAt := r.now()
+		r.mu.Unlock()
+
+		pctx, cancel := context.WithTimeout(context.Background(), readinessProbeTimeout)
+		err := pinger.Ping(pctx)
+		cancel()
+
+		r.mu.Lock()
+		r.lastErr = err
+		r.lastAt = startedAt
+		r.hasLast = true
+		r.inflight = nil
+		r.mu.Unlock()
+		close(done)
+		return err
 	}
-	pctx, cancel := context.WithTimeout(context.Background(), readinessProbeTimeout)
-	defer cancel()
-	r.lastErr = pinger.Ping(pctx)
-	r.lastAt = now
-	return r.lastErr
 }
 
 // setDraining flips this instance to permanently not-ready. It is the seam the

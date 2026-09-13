@@ -473,3 +473,127 @@ type committedNoPingStore struct{ noPingStore }
 func (committedNoPingStore) AppendCommitted(context.Context, event.StreamKey, event.Event) (event.Event, error) {
 	return event.Event{}, nil
 }
+
+// slowPingStore blocks inside Ping for a fixed delay, counting calls. It models a
+// store that is ALIVE but slow — the case that must not evict a healthy pod.
+type slowPingStore struct {
+	pingStore
+	delay time.Duration
+}
+
+func (s *slowPingStore) Ping(ctx context.Context) error {
+	s.calls.Add(1)
+	select {
+	case <-time.After(s.delay):
+		return s.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// TestReadyzConcurrentProbeDoesNotSerializeBehindSlowPing is the latency half of
+// the storm-collapsing contract. Collapsing N probes onto one Ping must not mean
+// the other N-1 WAIT for that Ping: the chart gives the kubelet
+// probes.readiness.timeoutSeconds (2) for a whole probe, so a waiter that blocks
+// for the full readinessProbeTimeout has burned the entire budget before it even
+// starts. With failureThreshold 3 that removes a healthy-but-slow pod from the
+// Service on latency alone.
+//
+// So: once one probe has a cached answer and a second probe is in flight behind
+// it, a third concurrent probe must return an answer PROMPTLY from the cache
+// rather than queue on the prober.
+func TestReadyzConcurrentProbeDoesNotSerializeBehindSlowPing(t *testing.T) {
+	const pingDelay = 1500 * time.Millisecond
+	store := &slowPingStore{delay: pingDelay}
+	rd := newReadiness(store, testVerifier())
+	now := time.Now()
+	var clockMu sync.Mutex
+	rd.now = func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return now
+	}
+	advance := func(d time.Duration) {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		now = now.Add(d)
+	}
+	base := healthServer(t, rd)
+
+	// Cold start: the first caller deliberately waits for the real answer, so a
+	// dead store is never masked as ready at startup.
+	if code := mustCode(t, base, "/readyz"); code != http.StatusOK {
+		t.Fatalf("cold-start probe = %d, want 200", code)
+	}
+
+	// Expire the cache so the next probe misses and re-pings (slowly).
+	advance(readinessProbeTTL + time.Millisecond)
+
+	inflight := make(chan struct{})
+	go func() {
+		defer close(inflight)
+		mustCode(t, base, "/readyz")
+	}()
+	// Wait until the refresh Ping has actually begun, so the next call is
+	// genuinely concurrent with it.
+	deadline := time.Now().Add(5 * time.Second)
+	for store.calls.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if store.calls.Load() < 2 {
+		t.Fatal("refresh Ping never started")
+	}
+
+	start := time.Now()
+	code := mustCode(t, base, "/readyz")
+	elapsed := time.Since(start)
+	if code != http.StatusOK {
+		t.Fatalf("concurrent probe during a slow refresh = %d, want 200 (the last known answer)", code)
+	}
+	// Well under the Ping delay: the probe read the previous value instead of
+	// queueing behind the prober.
+	if elapsed > 300*time.Millisecond {
+		t.Fatalf("concurrent probe took %v with a %v Ping in flight — it serialized behind the prober instead of reading the cached answer", elapsed, pingDelay)
+	}
+	<-inflight
+}
+
+// TestReadyzColdStartWaitsRatherThanMaskingADeadStore pins the cold-start half of
+// the singleflight decision. Concurrent callers skip the wait by reading the
+// PREVIOUS result — but at startup there is no previous result, and answering
+// "ready" there would advertise an instance whose store is dead, which is exactly
+// what the chart's startup probe exists to catch. So the first callers wait for
+// the real answer: with a failing store, EVERY concurrent cold-start probe must
+// read 503, and they must still collapse onto one Ping.
+func TestReadyzColdStartWaitsRatherThanMaskingADeadStore(t *testing.T) {
+	store := &slowPingStore{
+		pingStore: pingStore{err: errors.New("dial tcp 10.0.0.5:5432: connect: connection refused")},
+		delay:     200 * time.Millisecond,
+	}
+	rd := newReadiness(store, testVerifier())
+	base := healthServer(t, rd)
+
+	const n = 8
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	codes := make([]int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			codes[i] = mustCode(t, base, "/readyz")
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i, c := range codes {
+		if c != http.StatusServiceUnavailable {
+			t.Fatalf("cold-start probe %d = %d, want 503 — a dead store must not be masked as ready before any probe has completed", i, c)
+		}
+	}
+	if got := store.calls.Load(); got != 1 {
+		t.Fatalf("pinger calls = %d across %d cold-start probes, want 1", got, n)
+	}
+}
