@@ -17,7 +17,7 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/paas-remote-sandbox-substrate-adr
-claimed_at: 2026-09-13T20:38:00Z
+claimed_at: 2026-09-13T23:56:07Z
 pr:
 blocked_by:
 reconciled: true
