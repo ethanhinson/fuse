@@ -13,6 +13,10 @@ One curated finding per file; this index is the hint surface. Load it, then read
 
 - [shared-worktree-red-suite-verify-detached](shared-worktree-red-suite-verify-detached.md) — A red (or green) suite run in a SHARED feature worktree may reflect another writer's uncommitted files, not any committed state — during 0071 two full-suite runs came back red solely because a concurrent worker's uncommitted RED tests sat in the tree. Before acting on a suite verdict from a worktree other agents may touch, re-verify the branch TIP in a clean detached worktree (git worktree add --detach <tmp> <sha>); trust only verdicts bound to a sha, never to a directory. · also: worktree, concurrency, test-evidence, dispatch ⟨needs promotion⟩
 
+## ci
+
+- [declarative-config-validator-accepts-typos](declarative-config-validator-accepts-typos.md) — goreleaser check / schema linters accept typo'd enum values silently — verify a behavior-gating literal against the consuming tool's source, not against the linter · also: release, config, verification, goreleaser ⟨needs promotion⟩
+
 ## concurrency
 
 - [race-invisible-to-race-detector-without-concurrent-test](race-invisible-to-race-detector-without-concurrent-test.md) — Adding a live-reload that mutates a shared type read on a request path? The data race is invisible to -race until a test drives a request concurrently with the reload. · also: race, mcp, live-reload, testing ⟨needs promotion⟩
@@ -73,6 +77,10 @@ One curated finding per file; this index is the hint surface. Load it, then read
 - [security-knob-inert-at-composition-root](security-knob-inert-at-composition-root.md) — A fail-closed security feature can pass its ENTIRE test suite while doing nothing in the shipped binary, because every unit test constructs the enforcing object directly and nothing wires it at the composition root. 'Fail-closed' is not 'working' — a feature whose enforcement path is never constructed in `cmd/` is inert, and inert-toward-safe reads green forever. Assert the wiring at the composition root, not just the mechanism in the package. · also: testing, composition-root, fail-closed, wiring, go, sandbox ⟨needs promotion⟩
 - [trusted-root-never-model-selectable](trusted-root-never-model-selectable.md) — When a sandbox closes one exfiltration channel, audit whether model-controlled input can still SELECT the boundary's own root. A model-authored `working_dir` that defines the container's host bind-mount source recovers by filesystem exactly the credential access the env-scrub closed. The trusted root is established by the trusted side, applied LAST so no option can redirect it, and model input is only ever resolved as a contained subpath of it. · also: sandbox, containers, permissions, go, trust-boundary ⟨needs promotion⟩
 - [wrapper-peel-needs-arity-model](wrapper-peel-needs-arity-model.md) — Peeling a command wrapper (`nice`, `timeout`, `stdbuf`) by blindly dropping flag-shaped words mistakes a separate option VALUE for argv[0] — relabeling the command and defeating every name-keyed check; model each wrapper's flag arity or fail closed. · also: shell, parsing, permissions ⟨needs promotion⟩
+
+## shell
+
+- [interpolated-filename-into-regex](interpolated-filename-into-regex.md) — Interpolating a filename into grep/awk/sed regex makes every '.' a wildcard — match the field literally (awk $2 == name), never as an ERE · also: posix, regex, security, checksums ⟨needs promotion⟩
 
 ## spec-drift
 
