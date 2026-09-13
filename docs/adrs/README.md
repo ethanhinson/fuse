@@ -59,6 +59,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0055](0055-warm-pool-entries-certify-on-resolved-mount.md) — A warm sandbox pool entry is certified on its resolved mount, not only on its Principal (Accepted) ← change #65 · relates to ADR-0044, ADR-0034, ADR-0030
 - [ADR-0056](0056-sandbox-health-is-a-sibling-hooks-seam-emitting-only-observable-reasons.md) — Sandbox health is a sibling HealthHooks seam, and only honestly-observable reasons are emitted (Accepted) ← change #65 · relates to ADR-0044, ADR-0055
 - [ADR-0057](0057-unsafe-tenant-ids-are-refused-never-normalised.md) — Unsafe tenant ids are refused, never normalised — the one legitimate collapse happens at the auth edge (Accepted) ← change #65 · relates to ADR-0034, ADR-0044, ADR-0055, ADR-0056
+- [ADR-0058](0058-remote-sandbox-substrates-are-adapted-not-merged-and-contained-is-confirmed-by-observation.md) — A remote sandbox substrate is adapted onto the handler seam, and "contained" is confirmed by observation or refused (Accepted) ← change #75 · relates to ADR-0044, ADR-0034, ADR-0036, ADR-0051, ADR-0052, ADR-0055, ADR-0057
 
 ## Superseded / Reversed
 
