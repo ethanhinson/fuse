@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0082 — build/release pipeline — tag-driven GoReleaser releases (multi-platform archives + GHCR image + curl installer) so users adopt fuse without a Go toolchain](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0082-build-release-pipeline.md)**
+> ↩ **[Change 0082 — build/release pipeline — tag-driven GoReleaser releases (multi-platform archives + GHCR image + curl installer) so users adopt fuse without a Go toolchain](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-09-13-0082-build-release-pipeline.md)**
 <!-- docket:backlink:end -->
 
 # build/release pipeline — design

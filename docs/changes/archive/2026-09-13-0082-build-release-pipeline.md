@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-09-12-build-release-pipeline-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-12-build-release-pipeline-design.md) |
-| Plan | [2026-09-13-build-release-pipeline-plan.md](https://github.com/ethanhinson/fuse/blob/feat/build-release-pipeline/docs/superpowers/plans/2026-09-13-build-release-pipeline-plan.md) |
-| Results | [2026-09-13-build-release-pipeline-results.md](https://github.com/ethanhinson/fuse/blob/feat/build-release-pipeline/docs/results/2026-09-13-build-release-pipeline-results.md) |
+| Plan | [2026-09-13-build-release-pipeline-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-09-13-build-release-pipeline-plan.md) |
+| Results | [2026-09-13-build-release-pipeline-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-09-13-build-release-pipeline-results.md) |
 | PR | [#88](https://github.com/ethanhinson/fuse/pull/88) |
 | ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md), [ADR-0051](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0051-network-none-reaches-its-proxy-by-mounted-socket-plus-supplied-forwarder.md) |
 <!-- docket:artifacts:end -->
