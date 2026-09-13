@@ -67,6 +67,19 @@ archives:
     ids:
       - fuse
     name_template: fuse_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    # Declared, not inherited: `tar.gz` is GoReleaser's implicit default, but six
+    # consumers hardcode the extension — scripts/install.sh and
+    # scripts/install_test.sh build `fuse_<ver>_<os>_<arch>.tar.gz` download
+    # names, integration.yml globs `dist/fuse_*_darwin_arm64.tar.gz` for the
+    # archive-layout assertion, release.yml attests `dist/*.tar.gz`, and
+    # README.md + docs/releasing.md print `tar -xzf` commands. An upstream
+    # default change (or a `format_overrides` added later for a Windows build)
+    # would break the download URL, the layout glob, and the attestation subject
+    # at once, and the layout job would only report "found 0" without naming the
+    # cause. `formats` (plural) is the v2 spelling: singular `format` is
+    # DEPRECATED and makes `goreleaser check` exit non-zero, failing
+    # release-dry-run.
+    formats: [tar.gz]
     # `fuse` sits at the archive root, so the forwarders unpack beside it and
     # sandbox.go's <exeDir> lookup resolves.
     strip_binary_directory: true
