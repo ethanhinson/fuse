@@ -83,10 +83,26 @@ container socket — and a mounted socket is approximately host root, a tradeoff
 the deployment change (#76) owns rather than inherits silently. See the comment
 block in [`Dockerfile`](Dockerfile).
 
+**Deploying the server.** A docker-compose dev stack and a Helm chart both ship
+in [`deploy/`](deploy) and run this image unmodified — see
+[docs/deploying.md](docs/deploying.md) for both quickstarts, the config-as-Secret
+model, the bash-tool tri-state, and the rolling-update semantics.
+
 ### From source
 
 ```sh
 go install github.com/ethanhinson/fuse/cmd/fuse@latest
+```
+
+**Postgres needs a build tag.** The `pgstore` event store is behind `-tags
+pgstore`. The released binaries, the image, and `make build` all carry it; a
+plain `go install` does not, so it produces an **fsstore-only** binary that
+ignores a Postgres DSN. `fuse version` prints the truth on its third line
+(`backends: fsstore,pgstore` vs `backends: fsstore`). If you want Postgres from
+source:
+
+```sh
+go install -tags pgstore github.com/ethanhinson/fuse/cmd/fuse@latest
 ```
 
 **Forwarder caveat.** `go install` builds only the `fuse` binary. fuse locates
