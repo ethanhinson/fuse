@@ -221,9 +221,10 @@ func TestExecEnvProxyKeysUnderEnforce(t *testing.T) {
 	}
 
 	t.Run("enforce strips and re-injects", func(t *testing.T) {
-		s := newTestSubstrate(t, fake.NewClientset(), func(o *Options) {
-			o.Config.Egress = sandbox.Egress{Mode: sandbox.EgressEnforce}
-		})
+		// enforcing() supplies the advertise address and credential source the
+		// enforcing posture now requires at construction (task 8); the assertion
+		// below is unchanged and is about the exec ARGV, not the datapath.
+		s := newTestSubstrate(t, fake.NewClientset(), enforcing("10.1.2.3"))
 		got := assignments(t, s.execArgv(sandbox.Env{Allow: hostile}, "true", "/workspace"))
 
 		if got["PATH"] != "/usr/bin:/bin" {
@@ -283,7 +284,8 @@ func TestExecEnvProxyKeysUnderEnforce(t *testing.T) {
 		// "everything is denied" and "the proxy is missing" would be
 		// indistinguishable to a command, and to whoever is reading the logs.
 		s := newTestSubstrate(t, fake.NewClientset(), func(o *Options) {
-			o.Config.Egress = sandbox.Egress{Mode: sandbox.EgressEnforce, Allow: nil}
+			enforcing("10.1.2.3")(o)
+			o.Config.Egress.Allow = nil
 		})
 		got := assignments(t, s.execArgv(sandbox.Env{Allow: map[string]string{"PATH": "/bin"}}, "true", "/workspace"))
 		if got["HTTP_PROXY"] != "http://127.0.0.1:3128" {

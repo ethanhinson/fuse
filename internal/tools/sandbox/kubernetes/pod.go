@@ -62,6 +62,13 @@ type sandboxPod struct {
 	namespace string
 	name      string
 	principal loopauth.Principal
+
+	// credentialed records that this Pod was provisioned with an egress sidecar,
+	// so Teardown knows there is an enrollment lease to drop and a per-Pod policy
+	// to remove. It is not re-derived from the substrate's posture at teardown
+	// time: the posture is fixed at construction, but reading the flag captured at
+	// Provision is what makes the release exactly match the enrollment.
+	credentialed bool
 }
 
 var _ sandbox.RemoteSandbox = (*sandboxPod)(nil)
@@ -159,7 +166,40 @@ func (s *Substrate) Provision(ctx context.Context, p loopauth.Principal, _ sandb
 	}
 	name := podName(p, nonce)
 
-	want := s.renderPod(ns, name, p, time.Now().UTC())
+	// The Pod and the Secret its sidecar mounts are ONE rendering decision: under
+	// enforce a Pod with a sidecar and no Secret never starts, and a Secret with
+	// no Pod is litter nothing collects. Under allow-all secret is nil.
+	want, secret, err := s.renderPodWithEgress(ns, name, p, time.Now().UTC())
+	if err != nil {
+		// The enrollment failed, so there is nothing to release and nothing to
+		// delete: no object has been created yet.
+		return nil, err
+	}
+
+	// THE ORDER BELOW IS LOAD-BEARING, and it is the safe direction rather than
+	// the fast one:
+	//
+	//  1. the Secret, because the Pod's sidecar mounts it and a Pod created first
+	//     would sit in ContainerCreating until it appeared;
+	//  2. the per-Pod egress POLICY, because a Pod admitted before its policy is a
+	//     Pod governed for that window by the namespace default-deny alone — which
+	//     is strictly tighter than intended, and so is the direction to fail in;
+	//  3. the Pod.
+	//
+	// Every failure past step 1 cleans up what came before it. The reverse order
+	// would open a window in which a live Pod had no per-Pod policy, and "briefly
+	// unpoliced" is the one outcome ADR-0058 rule 4 forbids.
+	if secret != nil {
+		if _, serr := s.cs.CoreV1().Secrets(ns).Create(ctx, secret, metav1.CreateOptions{}); serr != nil && !apierrors.IsAlreadyExists(serr) {
+			s.releaseCredential(p)
+			return nil, fmt.Errorf("kubernetes: create egress secret %s/%s: %w", ns, secret.Name, serr)
+		}
+	}
+	if err := s.applyPolicy(ctx, ns, s.renderEgressPolicy(ns, name)); err != nil {
+		s.cleanupEgress(context.WithoutCancel(ctx), ns, name, secret != nil)
+		s.releaseCredential(p)
+		return nil, err
+	}
 
 	admitted, err := s.cs.CoreV1().Pods(ns).Create(ctx, want, metav1.CreateOptions{})
 	if err != nil {
@@ -169,7 +209,18 @@ func (s *Substrate) Provision(ctx context.Context, p loopauth.Principal, _ sandb
 		// a cancelled caller context is the common reason we are here, and a
 		// cleanup issued on it would not leave the process.
 		s.deletePodBestEffort(context.WithoutCancel(ctx), ns, name)
+		s.cleanupEgress(context.WithoutCancel(ctx), ns, name, secret != nil)
+		s.releaseCredential(p)
 		return nil, fmt.Errorf("kubernetes: create pod %s/%s: %w", ns, name, err)
+	}
+
+	// The Secret is adopted by the ADMITTED Pod, which is the first moment its UID
+	// exists. From here Kubernetes owns the Secret's life: the Pod can end in ways
+	// fuse never observes (activeDeadlineSeconds, a node failure, a kubectl
+	// delete), and a Secret whose deletion depended on fuse would survive all of
+	// them carrying a client certificate the proxy may already have revoked.
+	if secret != nil {
+		s.adoptSecretBestEffort(ctx, ns, secret.Name, admitted)
 	}
 
 	confirmed, err := s.confirm(ctx, ns, name, want, admitted)
@@ -178,11 +229,53 @@ func (s *Substrate) Provision(ctx context.Context, p loopauth.Principal, _ sandb
 		// worse than no check: the operator gets an error while a wrongly-postured
 		// Pod keeps running and keeps consuming the tenant's quota.
 		s.deletePodBestEffort(context.WithoutCancel(ctx), ns, name)
+		// The Secret is owned by the Pod now, so deleting the Pod collects it in a
+		// real cluster; cleanupEgress removes it explicitly anyway, because the
+		// garbage collector is asynchronous and the policy has no owner at all.
+		s.cleanupEgress(context.WithoutCancel(ctx), ns, name, secret != nil)
+		s.releaseCredential(p)
 		return nil, err
 	}
 	_ = confirmed
 
-	return &sandboxPod{s: s, namespace: ns, name: name, principal: p}, nil
+	return &sandboxPod{s: s, namespace: ns, name: name, principal: p, credentialed: secret != nil}, nil
+}
+
+// releaseCredential drops the enrollment lease a failed Provision took.
+//
+// Without it every failed Provision leaks one lease on the principal's proxy
+// listener, and a principal whose Acquires keep failing would hold a listener —
+// and a live policy — forever, which is exactly the leak Release's lease counting
+// exists to prevent.
+func (s *Substrate) releaseCredential(p loopauth.Principal) {
+	if s.credentials != nil && s.enforcing() {
+		s.credentials.ReleaseSandbox(p)
+	}
+}
+
+// cleanupEgress removes the per-Pod policy and Secret. Best effort: it runs on
+// failure paths where the error that brought us here is the one worth reporting,
+// and a NotFound is the ordinary outcome for an object that was never created.
+func (s *Substrate) cleanupEgress(ctx context.Context, ns, pod string, hadSecret bool) {
+	_ = s.cs.NetworkingV1().NetworkPolicies(ns).Delete(ctx, egressPolicyName(pod), metav1.DeleteOptions{})
+	if hadSecret {
+		_ = s.cs.CoreV1().Secrets(ns).Delete(ctx, egressSecretName(pod), metav1.DeleteOptions{})
+	}
+}
+
+// adoptSecretBestEffort points the Secret at the admitted Pod.
+//
+// Best effort because a failure here costs a leaked Secret in the worst case and
+// must not fail a Provision that otherwise succeeded — the Pod is running and the
+// sandbox works. The namespace quota and the reaper bound the leak.
+func (s *Substrate) adoptSecretBestEffort(ctx context.Context, ns, name string, pod *corev1.Pod) {
+	api := s.cs.CoreV1().Secrets(ns)
+	cur, err := api.Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	adoptSecret(cur, pod)
+	_, _ = api.Update(ctx, cur, metav1.UpdateOptions{})
 }
 
 // renderPod is the POSTURE FUSE DEMANDS, as one object.
@@ -785,7 +878,29 @@ func boolPtr(p *bool) string {
 // it, so one principal's teardown would take a concurrent Provision's Pod (in the
 // same tenant namespace) with it. Namespaces are cheap and the ResourceQuota
 // bounds what accumulates inside them.
+// teardownEgress releases the enrollment lease and removes the per-Pod policy.
+//
+// The Secret is NOT deleted here: it carries an ownerReference to the Pod, so
+// Kubernetes collects it, and a path that also deleted it explicitly would be a
+// second mechanism doing the same job — one of which would rot. The POLICY has no
+// owner (a NetworkPolicy cannot be owned by the Pod it selects without the Pod's
+// UID at render time, which is before the Pod exists), so it is fuse's to remove.
+func (p *sandboxPod) teardownEgress(ctx context.Context) {
+	if !p.credentialed {
+		return
+	}
+	_ = p.s.cs.NetworkingV1().NetworkPolicies(p.namespace).Delete(ctx, egressPolicyName(p.name), metav1.DeleteOptions{})
+	p.s.releaseCredential(p.principal)
+}
+
 func (p *sandboxPod) Teardown(ctx context.Context) error {
+	// The egress teardown runs FIRST and unconditionally: the credential must stop
+	// working no later than the Pod stops existing, and a Pod whose delete fails
+	// (the API server is unreachable, say) is a Pod whose sidecar is still holding
+	// a usable client certificate. Revoking first means the worst case is a
+	// surviving Pod with no egress rather than a surviving Pod with egress.
+	p.teardownEgress(ctx)
+
 	grace := podGraceSeconds
 	propagation := metav1.DeletePropagationBackground
 	err := p.s.cs.CoreV1().Pods(p.namespace).Delete(ctx, p.name, metav1.DeleteOptions{

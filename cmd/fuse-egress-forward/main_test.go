@@ -69,7 +69,7 @@ func TestRelayJoinsLoopbackToUnixSocket(t *testing.T) {
 		t.Fatalf("listen tcp: %v", err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	go serve(ln, socket)
+	go serve(ln, socketDialer(socket))
 
 	conn, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
@@ -101,7 +101,7 @@ func TestRelayGivesEachClientItsOwnUpstreamConnection(t *testing.T) {
 		t.Fatalf("listen tcp: %v", err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	go serve(ln, socket)
+	go serve(ln, socketDialer(socket))
 
 	open := func(payload string) (net.Conn, *bufio.Reader) {
 		c, err := net.Dial("tcp", ln.Addr().String())
@@ -142,7 +142,7 @@ func TestRelayClosesClientWhenSocketIsUnreachable(t *testing.T) {
 		t.Fatalf("listen tcp: %v", err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	go serve(ln, filepath.Join(t.TempDir(), "absent.sock"))
+	go serve(ln, socketDialer(filepath.Join(t.TempDir(), "absent.sock")))
 
 	conn, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
@@ -374,5 +374,221 @@ func TestServeBoundHoldsUnderConcurrentDials(t *testing.T) {
 	// every other one has been refused.
 	if relayed != bound {
 		t.Fatalf("%d of %d simultaneous connections were relayed against a bound of %d", relayed, dials, bound)
+	}
+}
+
+// THE FLAG MATRIX for the upstream mode (change 0075, task 8).
+//
+// `-socket` and `-upstream` are the two mutually exclusive relay targets: a UNIX
+// socket bind-mounted from the host (the local container substrate) and a TLS
+// connection to fuse's own listener (the Kubernetes sidecar). Exactly one must be
+// named.
+//
+// The exclusion is enforced HERE, in this binary's own flag validation, rather
+// than being left to whoever renders the argv. This program is the thing that
+// would have to choose between two targets, and a forwarder that silently
+// preferred one would relay a sandbox's traffic somewhere its operator did not
+// configure. Exit 2 — a usage error, not a runtime failure — because nothing has
+// been attempted yet.
+func TestForwarderFlagMatrix(t *testing.T) {
+	// A file that exists so the TLS-triple cases fail on the FLAG grammar and not
+	// on a missing file: the validation under test is "was the triple supplied",
+	// which must be answered before anything is read.
+	dir := t.TempDir()
+	pem := filepath.Join(dir, "x.pem")
+	if err := os.WriteFile(pem, []byte("not a real certificate\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	tls3 := []string{"-tls-cert", pem, "-tls-key", pem, "-tls-ca", pem}
+	withTLS := func(argv ...string) []string { return append(argv, tls3...) }
+
+	for name, tc := range map[string]struct {
+		argv    []string
+		wantErr bool
+	}{
+		"socket alone": {
+			argv: []string{"-listen", "127.0.0.1:0", "-socket", "/run/fuse/egress.sock"},
+		},
+		"upstream with the full TLS triple": {
+			argv: withTLS("-listen", "127.0.0.1:0", "-upstream", "tls://10.0.0.1:3129"),
+		},
+		"socket AND upstream": {
+			argv:    withTLS("-listen", "127.0.0.1:0", "-socket", "/run/fuse/egress.sock", "-upstream", "tls://10.0.0.1:3129"),
+			wantErr: true,
+		},
+		"neither socket nor upstream": {
+			argv:    []string{"-listen", "127.0.0.1:0"},
+			wantErr: true,
+		},
+		"upstream with no TLS material at all": {
+			argv:    []string{"-listen", "127.0.0.1:0", "-upstream", "tls://10.0.0.1:3129"},
+			wantErr: true,
+		},
+		"upstream missing the cert": {
+			argv:    []string{"-listen", "127.0.0.1:0", "-upstream", "tls://10.0.0.1:3129", "-tls-key", pem, "-tls-ca", pem},
+			wantErr: true,
+		},
+		"upstream missing the key": {
+			argv:    []string{"-listen", "127.0.0.1:0", "-upstream", "tls://10.0.0.1:3129", "-tls-cert", pem, "-tls-ca", pem},
+			wantErr: true,
+		},
+		"upstream missing the CA": {
+			argv:    []string{"-listen", "127.0.0.1:0", "-upstream", "tls://10.0.0.1:3129", "-tls-cert", pem, "-tls-key", pem},
+			wantErr: true,
+		},
+		"TLS material supplied in socket mode": {
+			argv:    withTLS("-listen", "127.0.0.1:0", "-socket", "/run/fuse/egress.sock"),
+			wantErr: true,
+		},
+		"upstream in a scheme this program does not speak": {
+			argv:    withTLS("-listen", "127.0.0.1:0", "-upstream", "tcp://10.0.0.1:3129"),
+			wantErr: true,
+		},
+		"upstream with no scheme at all": {
+			argv:    withTLS("-listen", "127.0.0.1:0", "-upstream", "10.0.0.1:3129"),
+			wantErr: true,
+		},
+		"upstream with no port": {
+			argv:    withTLS("-listen", "127.0.0.1:0", "-upstream", "tls://10.0.0.1"),
+			wantErr: true,
+		},
+		"no listen": {
+			argv:    []string{"-socket", "/run/fuse/egress.sock"},
+			wantErr: true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := parseFlags(tc.argv)
+			if tc.wantErr && err == nil {
+				t.Fatalf("parseFlags(%v) accepted; want a usage error", tc.argv)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("parseFlags(%v) = %v, want acceptance", tc.argv, err)
+			}
+		})
+	}
+}
+
+// Every rejection parseFlags makes must reach the process as exit 2, and never as
+// exit 1 (a runtime failure) or 0. run is what the container's entrypoint calls,
+// so this is the assertion that actually pins the contract.
+func TestRunExitsTwoOnEveryFlagConflict(t *testing.T) {
+	dir := t.TempDir()
+	pem := filepath.Join(dir, "x.pem")
+	if err := os.WriteFile(pem, []byte("not a real certificate\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	for name, argv := range map[string][]string{
+		"socket and upstream together": {
+			"-listen", "127.0.0.1:0", "-socket", "/run/fuse/egress.sock",
+			"-upstream", "tls://10.0.0.1:3129", "-tls-cert", pem, "-tls-key", pem, "-tls-ca", pem,
+		},
+		"an incomplete TLS triple": {
+			"-listen", "127.0.0.1:0", "-upstream", "tls://10.0.0.1:3129", "-tls-cert", pem,
+		},
+		"neither target": {"-listen", "127.0.0.1:0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if code := run(argv); code != 2 {
+				t.Fatalf("exit code = %d, want 2", code)
+			}
+		})
+	}
+}
+
+// THE RELAY IS BYTE-FOR-BYTE IN UPSTREAM MODE TOO.
+//
+// The whole value of this program is that no policy lives Pod-side. Swapping the
+// transport from a UNIX socket to a TLS connection must not change that: the same
+// bytes go up and the same bytes come back, and this program still understands no
+// HTTP. The far side does all the deciding.
+func TestRelayToTLSUpstreamIsByteForByte(t *testing.T) {
+	up, cred := tlsEchoServer(t)
+
+	dialer, err := newUpstreamDialer(upstreamTarget{
+		mode:    modeTLS,
+		address: up,
+		certPEM: cred.certPEM,
+		keyPEM:  cred.keyPEM,
+		caPEM:   cred.caPEM,
+	})
+	if err != nil {
+		t.Fatalf("newUpstreamDialer: %v", err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	go serveBoundedWith(ln, dialer, 4)
+
+	conn, err := net.DialTimeout("tcp", ln.Addr().String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial forwarder: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := io.WriteString(conn, "hello\n"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got != "upstream:hello\n" {
+		t.Fatalf("relayed = %q, want %q", got, "upstream:hello\n")
+	}
+}
+
+// An upstream that refuses the client certificate closes the loopback connection
+// with NOTHING written — the same answer an unreachable socket gets. There is no
+// error page and no fallback, because any fallback here is a way out of the Pod
+// that did not pass the proxy.
+func TestRelayToTLSUpstreamClosesClientOnHandshakeFailure(t *testing.T) {
+	up, cred := tlsEchoServer(t)
+
+	// A key that does not match the certificate's CA: the handshake fails.
+	other := newTestCredential(t)
+	dialer, err := newUpstreamDialer(upstreamTarget{
+		mode:    modeTLS,
+		address: up,
+		certPEM: other.certPEM,
+		keyPEM:  other.keyPEM,
+		caPEM:   cred.caPEM,
+	})
+	if err != nil {
+		t.Fatalf("newUpstreamDialer: %v", err)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tcp: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	go serveBoundedWith(ln, dialer, 4)
+
+	conn, err := net.DialTimeout("tcp", ln.Addr().String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial forwarder: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, werr := io.WriteString(conn, "hello\n"); werr == nil {
+		buf := make([]byte, 1)
+		if n, rerr := conn.Read(buf); rerr == nil {
+			t.Fatalf("read %d bytes (%q) after a failed handshake; want the connection closed with nothing written", n, buf[:n])
+		}
+	}
+}
+
+// The other half of the cross-binary name contract; see
+// internal/tools/sandbox's TestProxyTLSServerNameIsThePinnedLiteral.
+func TestProxyServerNameIsThePinnedLiteral(t *testing.T) {
+	const pinned = "fuse-egress-proxy"
+	if proxyServerName != pinned {
+		t.Fatalf("proxyServerName = %q, want %q — internal/tools/sandbox's proxyTLSServerName pins the same literal and the two must agree", proxyServerName, pinned)
 	}
 }
