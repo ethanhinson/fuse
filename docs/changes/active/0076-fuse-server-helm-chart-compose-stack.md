@@ -2,7 +2,7 @@
 id: 76
 slug: fuse-server-helm-chart-compose-stack
 title: fuse server deployment — a docker-compose stack and a Helm chart over the released image (not an operator)
-status: in-progress
+status: implemented
 priority: medium
 type: feat
 created: 2026-08-20
@@ -13,12 +13,12 @@ discovered_from: [63]
 adrs: [31, 34, 30, 33, 44]
 spec: docs/superpowers/specs/2026-09-13-fuse-server-helm-chart-compose-stack-design.md
 plan: docs/superpowers/plans/2026-09-13-fuse-server-helm-chart-compose-stack-plan.md
-results:
+results: docs/results/2026-09-13-fuse-server-helm-chart-compose-stack-results.md
 trivial: false
 auto_groomable:
 branch: feat/fuse-server-helm-chart-compose-stack
-claimed_at: 2026-09-13T20:20:05Z
-pr:
+claimed_at: 2026-09-13T23:22:10Z
+pr: https://github.com/ethanhinson/fuse/pull/90
 blocked_by:
 reconciled: true
 ---
@@ -30,6 +30,8 @@ reconciled: true
 |---|---|
 | Spec | [2026-09-13-fuse-server-helm-chart-compose-stack-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-13-fuse-server-helm-chart-compose-stack-design.md) |
 | Plan | [2026-09-13-fuse-server-helm-chart-compose-stack-plan.md](https://github.com/ethanhinson/fuse/blob/feat/fuse-server-helm-chart-compose-stack/docs/superpowers/plans/2026-09-13-fuse-server-helm-chart-compose-stack-plan.md) |
+| Results | [2026-09-13-fuse-server-helm-chart-compose-stack-results.md](https://github.com/ethanhinson/fuse/blob/feat/fuse-server-helm-chart-compose-stack/docs/results/2026-09-13-fuse-server-helm-chart-compose-stack-results.md) |
+| PR | [#90](https://github.com/ethanhinson/fuse/pull/90) |
 | ADRs | [ADR-0031](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0031-durable-distributed-event-store-loop-registry.md), [ADR-0034](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0034-edge-enforced-auth-multi-tenancy-loop-ownership.md), [ADR-0030](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0030-deglobalize-eventstore-multiloop-hosting.md), [ADR-0033](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0033-networked-binding-connect-protobuf-fuse-loop-v1.md), [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
