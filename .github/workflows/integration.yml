@@ -99,6 +99,94 @@ jobs:
       - name: Run headless-browser reconnect lane
         run: go test -tags browser -timeout 300s ./examples/wander/...
 
+  # Keeps the RELEASE CONFIG honest on every PR (change 0082). A .goreleaser.yaml
+  # or Dockerfile edit that breaks the release is otherwise discovered at tag
+  # time, when the only way out is a yanked release and a re-tag. So the whole
+  # config is parsed and a full snapshot release is built here, on every push
+  # and PR, and the archive-layout invariant is ASSERTED rather than assumed.
+  #
+  # `--skip=docker` keeps PR CI registry- and buildx-free; the Docker path is
+  # separately proven by egress-datapath above, and the image build itself is
+  # proven by the first real tag. Nothing here publishes anything.
+  #
+  # This job HARD-FAILS when a tool or artifact is missing — it never
+  # green-skips. Per the `smoke-over-fake-backend-proves-wire-not-system`
+  # learning, a silent skip lets a green suite hide an unexercised path, which
+  # is precisely the failure mode this job exists to prevent.
+  release-dry-run:
+    runs-on: ubuntu-latest
+    # Cap runaway jobs: normal runtime is 2-12 minutes; the 360-minute default
+    # let a transient apt-mirror hang burn ~6h per job (2026-08-19 incident).
+    timeout-minutes: 20
+    steps:
+      # fetch-depth: 0 — GoReleaser derives the version from git tags and
+      # refuses to run against a shallow clone.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          install-only: true
+
+      # `goreleaser check` exits NON-ZERO on any deprecated key, so this doubles
+      # as a deprecation gate. When it fails, fix the config forward to the v2
+      # spelling — never re-introduce the deprecated key to quiet it.
+      - name: Validate .goreleaser.yaml
+        run: goreleaser check
+
+      - name: Build a snapshot release
+        run: goreleaser release --snapshot --clean --skip=publish,docker
+
+      # THE ARCHIVE-LAYOUT INVARIANT (documented at the top of .goreleaser.yaml).
+      # A darwin archive must carry `fuse` AND BOTH linux forwarders at its root,
+      # because cmd/fuse/sandbox.go resolves the forwarder by the SANDBOX IMAGE's
+      # arch, not the host's. Dropping one turns `egress.mode: enforce` into
+      # deny-all, silently. darwin/arm64 is checked because it is the case where
+      # every binary in the archive is for a different platform than the archive.
+      - name: Assert the archive-layout invariant
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(dist/fuse_*_darwin_arm64.tar.gz)
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "::error::expected exactly 1 darwin/arm64 archive in dist/, found ${#archives[@]}" >&2
+            ls -la dist/ >&2
+            exit 1
+          fi
+          archive="${archives[0]}"
+          echo "asserting layout of ${archive}"
+          # Members are listed once and reused: re-running `tar tzf` per binary
+          # would let a truncated archive pass one check and fail the next for
+          # the wrong reason.
+          members="$(tar tzf "${archive}")"
+          echo "${members}"
+          status=0
+          for want in fuse fuse-egress-forward-linux-amd64 fuse-egress-forward-linux-arm64; do
+            # Anchored: `fuse` must be the archive-root entry `fuse`, not a
+            # prefix of `fuse-egress-forward-linux-amd64` or a nested path.
+            if printf '%s\n' "${members}" | grep -qxF "${want}"; then
+              echo "  ok: ${want}"
+            else
+              echo "::error::${archive} is missing the archive-root entry '${want}' — see the ARCHIVE-LAYOUT INVARIANT in .goreleaser.yaml" >&2
+              status=1
+            fi
+          done
+          exit "${status}"
+
+      # Drive the real installer against the snapshot tree over
+      # FUSE_RELEASE_BASE_URL. The test takes the dist dir as $1 and recovers the
+      # generated snapshot version from the single fuse_*_checksums.txt, so no
+      # version string has to be threaded through this workflow. It installs into
+      # its own temp dirs and never touches the runner's $HOME/.local/bin.
+      - name: Exercise scripts/install.sh against the snapshot dist/
+        run: scripts/install_test.sh "${GITHUB_WORKSPACE}/dist"
+
   mcp-integration:
     runs-on: ubuntu-latest
     # Cap runaway jobs: normal runtime is 2-12 minutes; the 360-minute default
