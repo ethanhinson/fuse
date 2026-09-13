@@ -343,3 +343,48 @@ func TestEnsureNamespaceFloorFailureRefuses(t *testing.T) {
 		t.Fatal("ensureNamespace must refuse when the default-deny floor cannot be asserted")
 	}
 }
+
+// TestEnsureNamespaceCreatesTheZeroPermissionServiceAccount closes a gap task 10
+// found while writing deploy/k8s/sandbox-rbac.yaml.
+//
+// A Pod's serviceAccountName must resolve in the Pod's OWN namespace, and fuse
+// creates a fresh namespace per tenant — so the zero-permission `fuse-sandbox`
+// identity cannot be pre-applied by an operator the way fuse's own can. Without
+// this, every first Provision in a new tenant namespace is rejected by admission
+// ("serviceaccount not found") and the substrate is unusable in practice while
+// every unit test that renders a PodSpec still passes.
+//
+// It carries NO Role and NO binding — the substrate never creates one, and the
+// shipped manifest binds nothing to it — which is ADR-0058 rule 6: the identity a
+// sandbox runs as must grant nothing, and fuse's own provisioning credential must
+// be unreachable from inside a sandbox. automountServiceAccountToken is false on
+// the ServiceAccount as well as on the Pod, so neither layer alone is the whole
+// guarantee.
+func TestEnsureNamespaceCreatesTheZeroPermissionServiceAccount(t *testing.T) {
+	cs := fake.NewClientset()
+	s := newTestSubstrate(t, cs)
+
+	ns, err := s.ensureNamespace(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("ensureNamespace: %v", err)
+	}
+
+	sa, err := cs.CoreV1().ServiceAccounts(ns).Get(context.Background(), s.serviceAccount, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("the sandbox ServiceAccount %s/%s was not created: %v — every Provision in a fresh tenant "+
+			"namespace is then rejected by admission", ns, s.serviceAccount, err)
+	}
+	if sa.Labels[labelManaged] != "true" {
+		t.Errorf("ServiceAccount labels = %v, want %s=true", sa.Labels, labelManaged)
+	}
+	if sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken {
+		t.Errorf("AutomountServiceAccountToken = %v, want an explicit false — the sandbox's own identity must not "+
+			"be projected into a container running model-authored commands", sa.AutomountServiceAccountToken)
+	}
+
+	// IDEMPOTENT: ensureNamespace runs on EVERY Provision, so an AlreadyExists on
+	// the second call must be success and not a refusal.
+	if _, err := s.ensureNamespace(context.Background(), "acme"); err != nil {
+		t.Fatalf("second ensureNamespace: %v", err)
+	}
+}

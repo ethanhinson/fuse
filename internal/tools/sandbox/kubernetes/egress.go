@@ -52,6 +52,23 @@ import (
 	"github.com/ethanhinson/fuse/internal/version"
 )
 
+// DefaultProxyListen is the address fuse's own TLS listener binds when
+// kubernetes.proxy.listen is unset.
+//
+// It is EXPORTED because the composition root binds the listener (Proxy.ListenTLS)
+// while this package derives the per-Pod NetworkPolicy's permitted port and the
+// sidecar's -upstream port from the same value. One exported constant is what
+// makes "the port fuse listens on" and "the port a Pod may reach" unable to
+// drift; a second literal in cmd/fuse would be a silent total egress blackout the
+// moment either changed.
+//
+// PodIPEnvVar is exported for the same reason: the operator doc and the
+// advertise-address diagnostic must name the variable this package actually reads.
+const (
+	DefaultProxyListen = "0.0.0.0:3129"
+	PodIPEnvVar        = podIPEnv
+)
+
 const (
 	// podIPEnv is the downward-API variable the hosted chart sets to the fuse
 	// Pod's own IP. It is the DEFAULT advertise address.
@@ -83,7 +100,13 @@ const (
 	// operator set none. The PORT is what matters here — it is the port the
 	// per-Pod policy permits and the port the sidecar dials — and it is read from
 	// this value so the two cannot disagree.
-	defaultProxyListen = "0.0.0.0:3129"
+	//
+	// It is an alias of the EXPORTED DefaultProxyListen rather than a second
+	// literal: the composition root has to bind the same address this package
+	// derives the policy's permitted port from (change 0075, task 10), and two
+	// spellings of one default is exactly how the listener and the policy would
+	// come to disagree about which port a Pod may reach.
+	defaultProxyListen = DefaultProxyListen
 
 	// sidecarEntrypointPrefix is the arch-specific path of the forwarder inside
 	// fuse's own image. The arch suffix is why the Pod carries a REQUIRED arch

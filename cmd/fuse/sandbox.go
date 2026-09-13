@@ -181,6 +181,32 @@ func newSandboxService(appCfg config.Config, hosted bool, warnw io.Writer) (*san
 		}
 	}
 
+	// THE REMOTE SUBSTRATE (change 0075). Registered only when the trusted-local
+	// config NAMES it, because registration has a cost: under `enforce` it binds a
+	// TCP TLS listener, and a local `fuse shell` must not open a port nobody asked
+	// for. Gating on the name costs nothing in safety — a NAME with no
+	// registration is refused loudly by selectHandler, never substituted — so the
+	// gate can only ever narrow what this process offers.
+	//
+	// The config is re-read here for the reason resolveEgressDatapath re-reads it:
+	// the Service's own load is the sole authority on the posture, and this read
+	// decides only what is OFFERED. Both happen at startup, before any model has
+	// run, so they cannot disagree in practice.
+	//
+	// Removing these lines is the `security-knob-inert-at-composition-root`
+	// failure, and cmd/fuse/sandbox_kubernetes_wiring_test.go turns RED when they
+	// go.
+	if preload, _ := sandbox.LoadConfig(root); preload.Handler == sandbox.HandlerKubernetes {
+		credentials := sandbox.SandboxCredentialSource(nil)
+		if preload.Egress.Mode == sandbox.EgressEnforce {
+			credentials = kubernetesProxyCredentials(proxy, preload, warnw)
+		}
+		opts = append(opts, sandbox.WithHandlerFactory(
+			sandbox.HandlerKubernetes,
+			kubernetesHandlerFactory(credentials, instanceIDForSandbox()),
+		))
+	}
+
 	svc, warns, serr := sandbox.NewServiceFromRoot(root, opts...)
 	for _, w := range warns {
 		fmt.Fprintf(warnw, "warning: %s\n", w.Error())
@@ -188,6 +214,20 @@ func newSandboxService(appCfg config.Config, hosted bool, warnw io.Writer) (*san
 	if serr != nil {
 		fmt.Fprintf(warnw, "sandbox: substrate unavailable (%v); the bash tool will refuse to run commands\n", serr)
 		return nil, closeFn
+	}
+	// A REFUSED SELECTION, announced (change 0075). Until now a refusal was
+	// observable only from inside Acquire, which put the diagnostic in front of the
+	// MODEL and never the operator: a fuse whose configured handler this binary
+	// cannot build came up printing nothing, looked healthy, and failed every bash
+	// call at runtime. With the named-handler branch a refusal is the EXPECTED
+	// outcome of several ordinary misconfigurations — an unregistered name, a
+	// discarded kubernetes: block, an unreachable control plane — so it is said out
+	// loud here, in the same unconditional way as the UNCONTAINED and
+	// EGRESS-BLACKOUT notices. The Service is still returned: it is fail-CLOSED and
+	// refuses every command, which is the correct posture, and a nil would make
+	// every entry point's nil-check the place the reason is lost.
+	if refusal := svc.SelectionRefusal(); refusal != nil {
+		fmt.Fprintf(warnw, "sandbox: substrate unavailable (%v); the bash tool will refuse to run commands\n", refusal)
 	}
 	if svc != nil && !svc.Contained() && svc.Available() {
 		fmt.Fprintf(warnw, "sandbox: UNCONTAINED — %s/.fuse/sandbox.local.yml authorizes running bash commands directly on this host\n", root)
@@ -310,6 +350,15 @@ func installSandboxLoopHooks(sb *sandbox.Service, store event.EventStore, nodeID
 	// like a healthy fleet. See the security-knob-inert-at-composition-root
 	// learning; cmd/fuse's own tests fail if this line is removed.
 	sb.SetHealthHooks(tools.SandboxHealthHooks(store, nodeID))
+	// THE ORPHAN-REAP OBSERVER (change 0075, task 10). A remote substrate's
+	// per-handler reaper collects sandboxes NO Pool remembers — leaked by an
+	// instance that died — so neither the Pool's Reaped hook nor idle_ttl can ever
+	// see them. Without this line `sandbox.reap` with cause `orphan` has no
+	// production emitter at all, and an always-zero orphan counter reads exactly
+	// like a fleet that never leaks a sandbox. It is called unconditionally: the
+	// sink is inert on the container and host substrates, which have no reaper of
+	// this kind, so there is nothing to gate on.
+	installRemoteReapObserver(store, nodeID)
 }
 
 // egressForwarderName is the artifact `make egress-forwarder` produces for one
