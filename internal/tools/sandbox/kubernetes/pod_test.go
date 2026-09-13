@@ -1076,3 +1076,60 @@ func affinityArches(t *testing.T, pod *corev1.Pod) []string {
 	}
 	return out
 }
+
+// TestPodDeclaresAnExplicitNonRootUID is the second REGRESSION the kind lane
+// (task 11) found against a real cluster, and the more serious of the two: it made
+// EVERY sandbox Pod unstartable, not only the canary.
+//
+// `runAsNonRoot: true` with no `runAsUser` does not mean "run as some non-root
+// user". It means "REFUSE unless the IMAGE declares a non-root USER", and the
+// kubelet enforces it at container-create time:
+//
+//	Error: container has runAsNonRoot and image will run as root
+//	(container: workload)
+//
+// Neither the substrate's pinned default (alpine:3.20) nor busybox declares a
+// USER, so the demanded posture was unsatisfiable by the very images this
+// substrate ships against. The Pod reached Scheduled and then sat in
+// CreateContainerConfigError until startup_timeout, and the read-back — which
+// asserts `runAsNonRoot` is true and was — reported nothing wrong, because nothing
+// about the SPEC was wrong.
+//
+// The fake clientset runs no kubelet, so no unit test in this package could see it.
+//
+// The fix is an explicit uid/gid, which makes the demand satisfiable with ANY
+// image while keeping the property runAsNonRoot was there for: the workload is not
+// uid 0, so a container-escape primitive does not land on node root. fsGroup is
+// what makes the emptyDir workspace writable by that uid — without it the Pod
+// starts and every command fails on a read-only /workspace, which is the same
+// defect one layer down.
+func TestPodDeclaresAnExplicitNonRootUID(t *testing.T) {
+	s := newTestSubstrate(t, fake.NewClientset())
+	pod := s.renderPod("ns", "sb-x", loopPrincipal("acme"), time.Now().UTC())
+
+	sc := pod.Spec.SecurityContext
+	if sc == nil {
+		t.Fatal("pod securityContext is nil")
+	}
+	if sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
+		t.Fatal("runAsNonRoot must stay true")
+	}
+	if sc.RunAsUser == nil {
+		t.Fatal("runAsUser is nil — `runAsNonRoot: true` alone means \"refuse unless the IMAGE declares a non-root " +
+			"USER\", and neither alpine nor busybox does, so every Pod sits in CreateContainerConfigError until " +
+			"startup_timeout while the spec read-back reports nothing wrong")
+	}
+	if *sc.RunAsUser == 0 {
+		t.Fatalf("runAsUser = 0, which contradicts runAsNonRoot")
+	}
+	if sc.RunAsGroup == nil || *sc.RunAsGroup == 0 {
+		t.Errorf("runAsGroup = %v, want an explicit non-zero gid", sc.RunAsGroup)
+	}
+	// fsGroup is what makes the emptyDir workspace writable by the uid above.
+	// Without it the Pod starts and every command fails writing to /workspace,
+	// which is the same defect one layer down.
+	if sc.FSGroup == nil || *sc.FSGroup == 0 {
+		t.Errorf("fsGroup = %v, want an explicit non-zero gid so the emptyDir workspace is writable by runAsUser",
+			sc.FSGroup)
+	}
+}

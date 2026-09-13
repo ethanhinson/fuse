@@ -393,3 +393,44 @@ func TestVerifyRefusesWhenTheCanaryFloorCannotBeAsserted(t *testing.T) {
 	}
 	assertNoCanaryPods(t, cs)
 }
+
+// TestEnsureCanaryNamespaceCreatesTheSandboxServiceAccount is a REGRESSION test
+// for a defect the kind lane (task 11) found against a real cluster on its first
+// run, and that no fake-client test in this package could see.
+//
+// The canary Pods set serviceAccountName = s.serviceAccount, exactly as a sandbox
+// Pod does, so that leg 2 proves something about the floor the Pods fuse actually
+// ships run under. But a ServiceAccount resolves in the POD's OWN namespace, and
+// the canary namespace is fuse's own creation — so without creating it there,
+// every canary leg on a real cluster is rejected by admission:
+//
+//	pods "canary-open" is forbidden: error looking up service account
+//	<prefix>-canary/fuse-sandbox: serviceaccount "fuse-sandbox" not found
+//
+// Verify then refuses the cluster with a diagnostic blaming the CNI, which is
+// both wrong and deeply misleading: the floor was never probed at all. Every unit
+// test passed, because the generated fake clientset does not run admission.
+//
+// Note the failure direction: it is fail-CLOSED (the substrate refuses), which is
+// why it was invisible rather than dangerous — and why only a real cluster could
+// surface it.
+func TestEnsureCanaryNamespaceCreatesTheSandboxServiceAccount(t *testing.T) {
+	cs := fake.NewClientset()
+	s := newTestSubstrate(t, cs)
+	ns := s.canaryNamespace()
+
+	if err := s.ensureCanaryNamespace(context.Background(), ns); err != nil {
+		t.Fatalf("ensureCanaryNamespace: %v", err)
+	}
+
+	sa, err := cs.CoreV1().ServiceAccounts(ns).Get(context.Background(), s.serviceAccount, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("the canary namespace has no %q ServiceAccount (%v) — every canary Pod is then rejected by "+
+			"admission and Verify refuses the cluster blaming the CNI, having never probed the floor at all",
+			s.serviceAccount, err)
+	}
+	if sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken {
+		t.Errorf("canary ServiceAccount AutomountServiceAccountToken = %v, want an explicit false",
+			sa.AutomountServiceAccountToken)
+	}
+}

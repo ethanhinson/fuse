@@ -56,7 +56,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/remotecommand"
-	utilexec "k8s.io/utils/exec"
 )
 
 const (
@@ -217,6 +216,20 @@ func (s *Substrate) ensureCanaryNamespace(ctx context.Context, ns string) error 
 		// nothing. This must refuse rather than probe anyway.
 		return fmt.Errorf("%w: the canary namespace's %s policy could not be asserted, so leg 2 would not be policed: %w", errFloorUnproven, policyDefaultDeny, err)
 	}
+	// THE SANDBOX SERVICE ACCOUNT, for the same reason a tenant namespace gets one
+	// (see assertSandboxServiceAccount): a Pod's serviceAccountName resolves in the
+	// POD's own namespace, and the canary Pods run under the same zero-permission
+	// identity a sandbox Pod does — deliberately, since leg 2's whole meaning is "a
+	// Pod under the posture fuse actually ships".
+	//
+	// Omitting it made every canary leg on a real cluster fail admission with
+	// "serviceaccount not found", and Verify then refused the cluster with a
+	// diagnostic blaming the CNI having never probed the floor at all. The fake
+	// clientset runs no admission, so no unit test in this package could see it;
+	// the kind lane found it on its first run.
+	if err := s.assertSandboxServiceAccount(ctx, ns); err != nil {
+		return fmt.Errorf("%w: the canary namespace's sandbox service account could not be asserted, so neither leg can be admitted: %w", errFloorUnproven, err)
+	}
 	return nil
 }
 
@@ -336,8 +349,17 @@ func (s *Substrate) renderCanaryPod(ns, name string) *corev1.Pod {
 			// would be a confusing object in an operator's namespace listing.
 			ActiveDeadlineSeconds:         ptrInt64(int64((5 * time.Minute).Seconds())),
 			TerminationGracePeriodSeconds: ptrInt64(podGraceSeconds),
+			// THE SAME securityContext a sandbox Pod carries, uid included. Leg 2's
+			// whole meaning is "a Pod under the posture fuse actually ships", so a
+			// canary that ran under a laxer one would prove something about a
+			// posture no sandbox runs under. The explicit uid is also what makes
+			// either leg startable at all against an image with no USER — see
+			// sandboxUID.
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot:   &tru,
+				RunAsUser:      ptrInt64(sandboxUID),
+				RunAsGroup:     ptrInt64(sandboxGID),
+				FSGroup:        ptrInt64(sandboxGID),
 				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 			},
 			Containers: []corev1.Container{{
@@ -392,9 +414,13 @@ func (s *Substrate) probe(ctx context.Context, ns, pod, target string) (bool, er
 		return true, nil
 	}
 
-	var coded utilexec.CodeExitError
-	if errors.As(streamErr, &coded) {
-		if missingNC(coded.Code, text) {
+	// exitCodeOf, NOT a bare errors.As against one CodeExitError type: there are
+	// two unrelated types by that name in the Kubernetes module graph and matching
+	// the wrong one made THIS branch unreachable, so leg 2's failure to connect —
+	// which is the pass condition — read as "could not be probed" and disqualified
+	// every cluster including correctly-enforcing ones. See exitCodeOf.
+	if code, ok := exitCodeOf(streamErr); ok {
+		if missingNC(code, text) {
 			return false, s.missingNCError(text)
 		}
 		// The command ran and did not connect. That is the RESULT leg 2 needs.

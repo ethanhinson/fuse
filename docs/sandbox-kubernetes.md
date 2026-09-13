@@ -305,6 +305,20 @@ returning `TimedOut` with the Pod **gone**, the metadata endpoint refused under
 run when no cluster is reachable — the absence of a runtime is never a red suite,
 and it is never a silent green one either.
 
+The lane runs `-v` deliberately: a quiet skip is indistinguishable from a pass,
+so the skip reasons must reach you. Point it at a cluster other than the
+documented one with `FUSE_K8S_TEST_CONTEXT=<kube-context> make test-k8s`. Objects
+it creates live under the `fuse-it-` namespace prefix, never the default, so a
+failed run never leaves debris in a namespace a real deployment owns.
+
+**What this lane does NOT cover**, stated rather than implied: the metadata floor
+is exercised under `allow-all` only. The `enforce` leg needs a reachable fuse TLS
+listener at an advertise address the sandbox Pod can route to, which means running
+the fuse process itself in the cluster — that is change #76's deployment. The
+enforce-mode rendering (the sidecar, the per-Pod policy naming one destination,
+the Secret mounted only into the sidecar) is covered by golden-object unit tests
+against the fake client; its end-to-end datapath is not.
+
 ---
 
 ## Observability
