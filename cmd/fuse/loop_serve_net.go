@@ -440,7 +440,18 @@ func serveNetWithOptions(ctx context.Context, ln net.Listener, rt runtime.Runtim
 	//
 	// In-flight Observe streams additionally observe the cancelled BaseContext and
 	// return on their own, releasing their subscriptions.
+	//
+	// drained makes the drain SYNCHRONOUS WITH RESPECT TO THIS FUNCTION'S RETURN, and
+	// that is not a nicety — without it the drain is a no-op in production. Shutdown
+	// closes the listeners as its FIRST act, so the blocked srv.Serve(ln) below wakes
+	// with http.ErrServerClosed immediately and this function returns nil while
+	// Shutdown is still inside its budget waiting on in-flight requests. runLoopServeNet
+	// then returns 0 and main calls os.Exit(run(...)) — and os.Exit does not wait for
+	// goroutines, so the very requests the drain exists to protect die with the process.
+	// The return therefore blocks on drained below.
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		<-ctx.Done()
 		rd.setDraining()
 		if sopts.afterDraining != nil {
@@ -462,6 +473,21 @@ func serveNetWithOptions(ctx context.Context, ln net.Listener, rt runtime.Runtim
 	err := srv.Serve(ln)
 	// A ctx-driven Close is a clean shutdown, not a serve error.
 	if err == http.ErrServerClosed || ctx.Err() != nil {
+		// Wait out the drain before returning: see the drained comment above. The wait
+		// is DELIBERATELY UNBOUNDED HERE, and that is the safe choice, not a leak.
+		// Shutdown is already bounded by drainCtx's budget and srv.Close() returns
+		// promptly (it closes listeners and connections; it does not wait on handlers),
+		// so the goroutine is guaranteed to finish shortly after the budget. A second
+		// timeout wrapped around this wait could only ever fire BEFORE the budget it is
+		// duplicating expires — reintroducing exactly the truncated drain this wait
+		// exists to prevent.
+		//
+		// Guarded by ctx.Err() != nil: the goroutine only ever reaches close(drained)
+		// after ctx is cancelled, so a genuine Serve error on a live ctx must NOT wait
+		// here — it would block forever.
+		if ctx.Err() != nil {
+			<-drained
+		}
 		return nil
 	}
 	return err
