@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/build-release-pipeline
-claimed_at: 2026-09-13T00:00:14Z
+claimed_at: 2026-09-13T00:01:20Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -85,3 +85,39 @@ The design, artifact list, workflow shape, and test plan are in the linked spec.
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-09-13
+
+Reconciled against `origin/main` @ 32363fa. The design holds in full — every premise re-verified,
+no scope change, no re-brainstorm needed.
+
+**Verified still true:**
+- No release exists: `git tag` is empty; no `.goreleaser.yaml`, `Dockerfile`, `scripts/install.sh`,
+  or `docs/releasing.md` on `origin/main`; `.github/workflows/` holds only `integration.yml`.
+- Both build targets are present (`cmd/fuse`, `cmd/fuse-egress-forward`), and `internal/version.Version`
+  is a ldflags-injectable `var` whose test (`TestVersionIsSet`) deliberately does not pin the string —
+  so the `-X` stamp the release builds rely on is safe.
+- The forwarder lookup contract is unchanged: `cmd/fuse/sandbox.go:318` defines
+  `egressForwarderName = "fuse-egress-forward-linux-"` and documents the `<exeDir>/` lookup path, which
+  is exactly what the "both forwarders in every archive" archive-layout invariant serves.
+- `go.mod` declares `go 1.26.5`, matching open question 3's premise.
+- Change #64 (egress forwarder) is archived `done`, so the artifact this pipeline places exists.
+- `fuse version` is still absent from `cmd/fuse/main.go` — the subcommand remains in scope.
+- README still has `## Building` and no `## Installing` — the docs edit remains as specified.
+
+**Adjustment folded in:** the repo has **no `LICENSE` file**, but the spec lists `LICENSE` among the
+archive contents. Rather than expanding scope to choose and add a license (a human/legal decision, not
+an implementer's), the plan will make the archive's `LICENSE` entry conditional: included if the file
+exists at build time, omitted otherwise, so the archive build cannot fail on its absence. Flagged for
+the human below.
+
+**Follow-up surfaced (not minted — `auto_capture` is disabled in this repo):**
+- The repo ships no `LICENSE` file at all. That is an adoption blocker independent of this pipeline
+  (a published release with no license is legally unusable by anyone), and it is a human decision.
+  Worth filing as its own change.
+
+**Related work re-checked:** #76 (server deployment) is still `proposed`/needs-brainstorm and will
+consume the image this change publishes — no overlap to resolve now. ADRs 52–57, all added since the
+change was drafted, are sandbox/TUI-scoped and bear on nothing here; ADR-0044 and ADR-0051 (the cited
+pair) are unchanged and still govern the image's no-container-runtime posture.
+
