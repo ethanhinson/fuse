@@ -24,13 +24,13 @@ func TestHealthcheckExitsZeroOn2xx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var out, errb bytes.Buffer
-	if code := runHealthcheck([]string{"--addr", addrOf(t, srv), "--path", "/readyz"}, &out, &errb); code != 0 {
+	var errb bytes.Buffer
+	if code := runHealthcheck([]string{"--addr", addrOf(t, srv), "--path", "/readyz"}, &errb); code != 0 {
 		t.Fatalf("exit = %d, stderr=%s", code, errb.String())
 	}
 	// Silent on success: a probe that runs every few seconds must not log.
-	if out.Len() != 0 || errb.Len() != 0 {
-		t.Errorf("healthcheck printed on success: stdout=%q stderr=%q", out.String(), errb.String())
+	if errb.Len() != 0 {
+		t.Errorf("healthcheck printed on success: stderr=%q", errb.String())
 	}
 }
 
@@ -40,8 +40,8 @@ func TestHealthcheckExitsOneOn503(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var out, errb bytes.Buffer
-	if code := runHealthcheck([]string{"--addr", addrOf(t, srv)}, &out, &errb); code != 1 {
+	var errb bytes.Buffer
+	if code := runHealthcheck([]string{"--addr", addrOf(t, srv)}, &errb); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }
@@ -55,8 +55,8 @@ func TestHealthcheckExitsOneOnConnectionRefused(t *testing.T) {
 	addr := ln.Addr().String()
 	_ = ln.Close()
 
-	var out, errb bytes.Buffer
-	if code := runHealthcheck([]string{"--addr", addr, "--timeout", "2s"}, &out, &errb); code != 1 {
+	var errb bytes.Buffer
+	if code := runHealthcheck([]string{"--addr", addr, "--timeout", "2s"}, &errb); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 	if errb.Len() == 0 {
@@ -74,8 +74,8 @@ func TestHealthcheckExitsOneOnTimeout(t *testing.T) {
 	}))
 	defer func() { close(block); srv.Close() }()
 
-	var out, errb bytes.Buffer
-	if code := runHealthcheck([]string{"--addr", addrOf(t, srv), "--timeout", "50ms"}, &out, &errb); code != 1 {
+	var errb bytes.Buffer
+	if code := runHealthcheck([]string{"--addr", addrOf(t, srv), "--timeout", "50ms"}, &errb); code != 1 {
 		t.Fatalf("exit = %d, want 1", code)
 	}
 }

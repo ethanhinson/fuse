@@ -24,7 +24,7 @@ const defaultHealthcheckAddr = "127.0.0.1:8787"
 // Readiness (/readyz) is the default probe path rather than liveness: the thing
 // a `docker compose`/orchestrator healthcheck gates on is "should this instance
 // receive traffic", which is exactly /readyz's question.
-func runHealthcheck(args []string, stdout, stderr io.Writer) int {
+func runHealthcheck(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	addr := fs.String("addr", defaultHealthcheckAddr, "TCP address of the fuse server to probe")

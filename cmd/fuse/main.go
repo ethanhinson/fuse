@@ -44,7 +44,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			// config is broken — that is precisely when you most want to learn the
 			// container is unhealthy. It reads no config of its own: everything it
 			// needs is a flag with a default matching the server's own.
-			return runHealthcheck(args[1:], stdout, stderr)
+			return runHealthcheck(args[1:], stderr)
 		}
 	}
 

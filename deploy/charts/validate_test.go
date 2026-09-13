@@ -12,6 +12,7 @@ package charts_test
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,16 +94,25 @@ func requireContains(t *testing.T, haystack, needle, what string) {
 
 // docs parses multi-document helm output into parsed YAML documents, skipping
 // the empty ones helm emits for templates that render nothing.
+//
+// This uses a real YAML stream decoder rather than splitting the text on
+// line-initial "---": a block scalar (the config Secret's stringData holds
+// one via `|`) can itself contain a line starting with "---" — from an
+// extraManifests value rendered through tpl, or a future comment banner — and
+// a text split would cut a document in half there, silently dropping a pod
+// spec from the set assertPodInvariants walks.
 func docs(t *testing.T, rendered string) []map[string]any {
 	t.Helper()
 	var out []map[string]any
-	for _, chunk := range strings.Split(rendered, "\n---") {
-		if strings.TrimSpace(chunk) == "" {
-			continue
-		}
+	dec := yaml.NewDecoder(strings.NewReader(rendered))
+	for {
 		var doc map[string]any
-		if err := yaml.Unmarshal([]byte(chunk), &doc); err != nil {
-			t.Fatalf("rendered document is not valid YAML: %v\n%s", err, chunk)
+		err := dec.Decode(&doc)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("rendered document is not valid YAML: %v\n%s", err, rendered)
 		}
 		if len(doc) == 0 {
 			continue

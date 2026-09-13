@@ -7,7 +7,7 @@ description: |
   different replica (ADR-0031).
 type: application
 
-# 0.0.0.0-dev in-tree, STAMPED AT PACKAGE TIME by the release workflow:
+# 0.0.0-dev in-tree, STAMPED AT PACKAGE TIME by the release workflow:
 #   helm package deploy/charts/fuse --version ${TAG#v} --app-version ${TAG#v}
 # The chart version is version-locked to the image tag; there is no floating
 # chart tag, the same rule as the image's `:latest`. Do not hand-bump these.
