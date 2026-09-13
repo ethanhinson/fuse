@@ -450,3 +450,7 @@ asserting the full #52 checklist — distinct per-principal tokens, downstream 4
 distinguishable tool error, per-principal write isolation, wrong-audience rejection,
 complete mediation of an undeclared target even under auto-approve, and no credential
 leak — so a regression kills the build.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

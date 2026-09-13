@@ -95,9 +95,8 @@ archives:
       - src: dist/fuse-egress-forward-linux-arm64
         strip_parent: true
       - README.md
-      # The repo has no LICENSE file yet (adding one is a human decision, out of
-      # scope for 0082). Declared as an OPTIONAL glob so its absence cannot fail
-      # the archive build; it is picked up automatically once it exists.
+      # MIT license text, shipped in every archive. Declared as a glob so a
+      # rename (LICENSE.md, LICENSE.txt) still matches.
       - LICENSE*
 
 checksum:
