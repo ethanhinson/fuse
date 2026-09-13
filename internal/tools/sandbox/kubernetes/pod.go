@@ -66,16 +66,8 @@ type sandboxPod struct {
 
 var _ sandbox.RemoteSandbox = (*sandboxPod)(nil)
 
-// Exec is implemented in exec.go (task 6). Until it lands it FAILS CLOSED with a
-// diagnostic rather than returning a zero Output: a stub reporting ExitCode 0 and
-// a nil error would be a sandbox claiming to have run a command it never ran, and
-// a caller reading only ExitCode would act on it.
-//
-// ExitCode is -1 on this path for the same reason every other nothing-ran path in
-// this tree uses -1.
-func (p *sandboxPod) Exec(context.Context, sandbox.Env, string, string) (sandbox.Output, error) {
-	return sandbox.Output{ExitCode: -1}, fmt.Errorf("kubernetes: exec into %s is not implemented", p.ID())
-}
+// Exec lives in exec.go: the argv rendering it does is the whole boundary
+// between the environment fuse resolved and the environment the command observes.
 
 // ID is "<namespace>/<pod>", the value that reaches every sandbox event's
 // ContainerID and the Pool's container-id certification.
