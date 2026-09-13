@@ -148,6 +148,9 @@ func main() {
 	if err := validate("deploy/observability"); err != nil {
 		fail(err)
 	}
+	if err := validateCompose("deploy/compose", "fuse:9090"); err != nil {
+		fail(err)
+	}
 }
 
 func validate(root string) error {
@@ -194,7 +197,7 @@ func validate(root string) error {
 	if !contains(prom.RuleFiles, "/etc/prometheus/alerts.yml") {
 		return fmt.Errorf("prometheus does not load the mounted alert rules")
 	}
-	if !hasFuseScrapeTarget(prom) {
+	if !hasFuseScrapeTarget(prom, "host.docker.internal:9090") {
 		return fmt.Errorf("prometheus missing Fuse /metrics scrape target")
 	}
 
@@ -284,13 +287,17 @@ func requireOTLPReceiver(protocols map[string]endpointConfig, owner string) erro
 	return nil
 }
 
-func hasFuseScrapeTarget(config prometheusConfig) bool {
+// hasFuseScrapeTarget takes the expected target as a parameter because two
+// stacks now assert this shape against different hosts: the standalone stack
+// scrapes a fuse on the host (host.docker.internal:9090), the compose stack a
+// fuse service on its own network (fuse:9090).
+func hasFuseScrapeTarget(config prometheusConfig, wantTarget string) bool {
 	for _, scrape := range config.ScrapeConfigs {
 		if scrape.JobName != "fuse" || scrape.MetricsPath != "/metrics" {
 			continue
 		}
 		for _, static := range scrape.StaticConfigs {
-			if contains(static.Targets, "host.docker.internal:9090") {
+			if contains(static.Targets, wantTarget) {
 				return true
 			}
 		}

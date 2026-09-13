@@ -137,9 +137,15 @@ browser-test:
 	go test -tags browser -timeout 300s ./examples/wander/...
 
 # Validates every reference-stack artifact and its routing/provisioning relationships
-# without Docker. This is part of `make test` and the observability CI acceptance gate.
+# without Docker, plus the compose dev stack's own prometheus.yml (change 0076).
+# This is part of `make test` and the observability CI acceptance gate.
+#
+# PACKAGE form, not `go run ./deploy/observability/validate.go`: the single-file
+# form compiles only the file named, so validate_compose.go would never run in
+# the gate it was added to. Test files are excluded from `go run` by the build
+# system, so validate_test.go living in the same directory is not a problem.
 observability-validate:
-	go run ./deploy/observability/validate.go
+	go run ./deploy/observability
 
 # Hermetic release gate for the loop observability stack. This never requires an
 # external collector: traces are exported in-memory and metrics are scraped through

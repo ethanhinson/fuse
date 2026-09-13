@@ -128,3 +128,62 @@ func copyArtifacts(t *testing.T) string {
 	}
 	return root
 }
+
+// The compose stack's own prometheus.yml (docket change 0076) is validated by a
+// second, narrower entry point. Both negatives below are injected, not natural:
+// the shipped file names no fuse_* series at all, and targets fuse:9090.
+
+func TestValidateComposeAcceptsReferenceArtifacts(t *testing.T) {
+	if err := validateCompose("../compose", "fuse:9090"); err != nil {
+		t.Fatalf("validateCompose reference artifacts: %v", err)
+	}
+}
+
+func TestValidateComposeRejectsUnregisteredMetric(t *testing.T) {
+	root := copyComposeArtifacts(t)
+	replaceArtifact(t, root, "prometheus.yml", "  - /etc/prometheus/alerts.yml",
+		"  - /etc/prometheus/alerts.yml\n# keep: fuse_sandbox_ghost")
+	if err := validateCompose(root, "fuse:9090"); err == nil {
+		t.Fatal("validateCompose accepted a config naming a metric the recorder never registers")
+	}
+}
+
+func TestValidateComposeRejectsHostScrapeTarget(t *testing.T) {
+	root := copyComposeArtifacts(t)
+	replaceArtifact(t, root, "prometheus.yml", `targets: ["fuse:9090"]`, `targets: ["host.docker.internal:9090"]`)
+	if err := validateCompose(root, "fuse:9090"); err == nil {
+		t.Fatal("validateCompose accepted the standalone stack's host target for a compose service")
+	}
+}
+
+func TestValidateComposeRejectsMissingAlertRules(t *testing.T) {
+	root := copyComposeArtifacts(t)
+	replaceArtifact(t, root, "prometheus.yml", "  - /etc/prometheus/alerts.yml", "  - /etc/prometheus/other.yml")
+	if err := validateCompose(root, "fuse:9090"); err == nil {
+		t.Fatal("validateCompose accepted a config that does not load the mounted alert rules")
+	}
+}
+
+// copyComposeArtifacts mirrors copyArtifacts for the compose stack's directory,
+// which sits beside this package rather than inside it.
+func copyComposeArtifacts(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	entries, err := os.ReadDir("../compose")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join("../compose", entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, entry.Name()), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
