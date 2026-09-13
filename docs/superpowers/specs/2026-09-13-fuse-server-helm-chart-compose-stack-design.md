@@ -87,8 +87,12 @@ production render must refuse to fall back to the dev token silently.
 
 **1a. Build tag.** `.goreleaser.yaml` build `fuse` gains `tags: [pgstore]`;
 the Makefile's `build`/`install` gain `-tags pgstore`. `fuse version` reports
-the backend set (`fuse 0.3.0 (backends: fsstore,pgstore)`) so the
-`release-dry-run` job can assert the tag took, and an operator can check a
+the backend set on its OWN THIRD LINE (`backends: fsstore,pgstore`) so the
+`release-dry-run` job can assert the tag took. It must NOT go on line 1:
+`TestVersionSubcommand` asserts `lines[0] == "fuse "+version.Version` by exact
+equality, while the Go/platform line is only `strings.Contains`-checked, so an
+appended line is tolerated and a decorated first line is not (reconcile,
+2026-09-13). and an operator can check a
 binary without a database. `go install` users who want Postgres pass the tag
 themselves; the README says so.
 
@@ -126,7 +130,17 @@ file still wins.
 fsstore, `workspaces/` for the hosted sandbox root, `mcp-tokens/`,
 `skills/`). Both deployments mount a writable volume at `/home/nonroot/.fuse`
 and the config **file** over it at `/home/nonroot/.fuse/config.yml` (Secret
-`subPath`), so `readOnlyRootFilesystem: true` holds for everything else.
+`subPath`). A writable **`/tmp`** is also required, and is not optional: the
+egress proxy creates its per-principal socket root with
+`os.MkdirTemp("", "fuse-egress")` (`internal/tools/sandbox/egress_proxy.go:407`,
+on the serve path whenever the bash tool is enabled) and the CLI model adapter
+opens a HITL socket under `os.TempDir()` (`cmd/fuse/cli_adapter.go:58`). The
+egress case fails **closed and silently**: the `MkdirTemp` error is swallowed by
+`warnEgressBlackout` (`cmd/fuse/sandbox.go:479-484`) and `egress.mode: enforce`
+degrades to deny-all without crashing, so a `/tmp`-less deployment looks healthy
+while every declared destination is unreachable. The chart tests assert `/tmp` is
+mounted whenever `readOnlyRootFilesystem` is set. With
+both mounts, `readOnlyRootFilesystem: true` holds for everything else.
 
 ### 2. The compose stack — `deploy/compose/`
 
@@ -134,7 +148,11 @@ and the config **file** over it at `/home/nonroot/.fuse/config.yml` (Secret
 deploy/compose/
   docker-compose.yml      # include: ../observability/docker-compose.yml
   fuse.compose.yml        # the server config, DEV token, loud header
-  prometheus.yml          # job fuse → fuse:9090 (overrides the host.docker.internal target)
+  prometheus.yml          # job fuse → fuse:9090. A NEW FILE mounted over the same
+                          # container path — the observability stack's own prometheus.yml
+                          # MUST NOT be retargeted: hasFuseScrapeTarget in validate.go
+                          # asserts its exact host.docker.internal:9090 triple, so editing
+                          # it fails `make test` (reconcile, 2026-09-13).
   README.md
 ```
 
@@ -149,8 +167,8 @@ deploy/compose/
   `/home/nonroot/.fuse/config.yml:ro`; ports `127.0.0.1:8787:8787` and
   `127.0.0.1:9090:9090` (loopback publish, ADR-0043's posture); `depends_on:
   postgres: condition: service_healthy`; healthcheck via `/readyz`
-  (distroless has no curl — the healthcheck is a `docker compose` external
-  check documented in the README, or omitted; see open questions).
+  (distroless has no curl, so the healthcheck shells out to the new
+  `fuse healthcheck` subcommand — see §1f).
 - `postgres`: `postgres:16-alpine`, a named volume, `pg_isready` healthcheck,
   credentials in the compose file **because this stack is dev-only**, stated in
   the same header the observability file already carries.
@@ -166,13 +184,26 @@ deploy/compose/
 - `FUSE_IMAGE` accepts a GoReleaser snapshot image so the stack is testable
   before a tag.
 
-**Validation.** `deploy/observability/validate.go` is generalised to walk both
-directories: the compose stack's `prometheus.yml` must name only registered
-metrics (it inherits the alerts file, which it already checks), and `docker
-compose -f deploy/compose/docker-compose.yml config` runs in
-`compose-validate` (CI, Docker-free via `docker compose config` — see open
-questions) and the operator-only `compose-smoke` target brings it up, waits on
-`/readyz`, scrapes `/metrics`, and runs one `loop.start` with the Go SDK.
+**Validation.** `validate(root)` in `deploy/observability/validate.go` cannot
+simply be pointed at a second directory: it demands the full four-sidecar shape
+(prometheus + grafana + otel-collector + tempo services, two provisioned
+datasources, two dashboard JSONs), none of which the compose stack owns. So a
+**second, narrower entry point in the same `main` package** reuses
+`registeredMetrics` / `requireRegisteredMetrics` / `readYAML` and checks the
+compose stack's `prometheus.yml`: every `fuse_*` identifier must be a registered
+series, and the `fuse` job's target must be `fuse:9090`. `hasFuseScrapeTarget`
+hard-codes `host.docker.internal:9090` today, so the expected target becomes a
+parameter rather than a second literal. It joins `observability-validate`, which
+`make test` already depends on (`Makefile:58`) — but note that target is
+`go run ./deploy/observability/validate.go`, a **single-file** invocation, so it
+must be widened to compile the new file too or the check silently never runs in
+the gate it was added to. `docker compose -f
+deploy/compose/docker-compose.yml config` is daemon-free and runs in CI (the
+existing `observability-compose-smoke` already relies on that); the operator-only
+`compose-smoke` target brings the stack up, waits on `/readyz`, scrapes
+`/metrics`, and runs one `loop.start` with the Go SDK, reporting a loud SKIP when
+docker is absent rather than green-passing (the `observability-compose-smoke`
+shape, `Makefile:150`).
 
 ### 3. The Helm chart — `deploy/charts/fuse/`
 
@@ -194,7 +225,7 @@ Templates and the values that drive them:
 | `prometheusrule.yaml` (opt) | the groups from `deploy/observability/alerts.yml`, copied in by `make chart` and asserted identical by the validator | `metrics.prometheusRule.enabled` |
 | `networkpolicy.yaml` (opt) | ingress to 8787/9090 from selected namespaces; egress to Postgres, the gateway, OTLP | `networkPolicy.*` |
 | `ingress.yaml` (opt) | HTTP ingress; NOTES explains Connect works over HTTP/1.1 but gRPC clients need an h2-capable ingress | `ingress.*` |
-| `sandbox-*.yaml` (mode-gated) | `none`: nothing. `docker-socket`: hostPath mount + **template fails** unless `sandbox.dockerSocket.acknowledgeHostRoot: true`; NOTES prints the ADR-0044 warning. `kubernetes`: renders `deploy/k8s/sandbox-rbac.yaml`'s objects and **fails** unless `image.tag` ≥ the version that ships #75 (a values-level `sandbox.kubernetes.minVersion` the build pins once #75 lands, `""` until then ⇒ always fails with "not yet available") | `sandbox.mode` |
+| `sandbox-*.yaml` (mode-gated) | `none`: nothing. `docker-socket`: hostPath mount + **template fails** unless `sandbox.dockerSocket.acknowledgeHostRoot: true`; NOTES prints the ADR-0044 warning. `kubernetes`: **fails** unless `image.tag` ≥ the version that ships #75 (a values-level `sandbox.kubernetes.minVersion` the build pins once #75 lands, `""` in THIS change ⇒ always fails with "not yet available"). Because the guard refuses before any manifest is consulted, this change needs NO file from #75 — `deploy/k8s/sandbox-rbac.yaml` does not exist on `origin/main` and is #75's deliverable, which supplies both it and the pinned `minVersion` (reconcile, 2026-09-13) | `sandbox.mode` |
 | `serviceaccount.yaml` | the server's ServiceAccount | `serviceAccount.*` |
 
 **Auth guard.** `helm template` fails unless `auth.tokens` is non-empty,
@@ -223,7 +254,9 @@ and runs the same readiness + `loop.start` check as the compose smoke.
 deploy/charts/fuse --version ${TAG#v} --app-version ${TAG#v}` and `helm push
 … oci://ghcr.io/ethanhinson/charts`. Pre-release tags publish a pre-release
 chart version; there is no floating chart tag (same rule as the image's
-`:latest`). The `release-dry-run` job packages without pushing. Chart
+`:latest`). The `release-dry-run` job packages without pushing — note that job
+lives in **`.github/workflows/integration.yml`**, not `release.yml`; only the
+real `helm push` goes in `release.yml` (reconcile, 2026-09-13). Chart
 provenance attestation is a follow-on.
 
 ### 5. Documentation — `docs/deploying.md`
@@ -256,22 +289,24 @@ the mid-turn caveat from §1c; ingress and h2; the image-has-no-shell facts
   hooks.
 - Resuming a mid-turn loop across an instance death (§1c states the gap).
 
-## Open build questions (for the reconcile/plan pass)
+## Open build questions — RESOLVED at reconcile (2026-09-13)
 
-- Compose `include:` needs Compose v2.20+; confirm the pinned CI version, else
-  fall back to `extends`/`-f` stacking.
-- A distroless image has no `curl`/`wget` for a compose `healthcheck`; either
-  document an external check, or add a `fuse healthcheck` subcommand that
-  dials `/readyz` (cheap, and it also gives Kubernetes an `exec` probe
-  option). Default here: add the subcommand.
-- Whether `docker compose config` can run in CI without a daemon (it can, but
-  the runner image must have the plugin).
-- `readOnlyRootFilesystem` vs. anything that writes outside `~/.fuse`
-  (`os.TempDir` users?) — grep at plan time; add `/tmp` emptyDir if needed.
-- ServiceMonitor bearer token: whether to mint a dedicated scrape principal in
-  `auth.tokens` automatically when `metrics.access: authenticated`.
-- Confirm `fuse version`'s backend line does not break the existing
-  `TestVersionSubcommand` golden.
+- **Compose `include:`** — available: the pinned local toolchain is Docker Compose
+  **v5.1.2**, well past the v2.20 floor. No `extends`/`-f` fallback.
+- **Distroless healthcheck** — take this spec's own stated default and **add a
+  `fuse healthcheck` subcommand** (§1f) that dials `/readyz` and exits 0/1. It is
+  the only option that gives a shell-less image a real compose healthcheck, and
+  it hands Kubernetes an `exec`-probe alternative for free.
+- **`docker compose config` without a daemon** — yes; `observability-compose-smoke`
+  already depends on exactly that, so the pattern is proven in this repo.
+- **`readOnlyRootFilesystem` vs writes outside `~/.fuse`** — a **`/tmp` emptyDir is
+  REQUIRED**, not conditional. Two real writers, named in §1e.
+- **ServiceMonitor bearer token** — do **not** auto-mint a scrape principal into
+  `auth.tokens`. A template that synthesizes a credential hides a live token from
+  the operator who owns the auth surface; `metrics.serviceMonitor.bearerSecret`
+  stays an explicit reference and the default `metrics.access: public` needs none.
+- **`fuse version` golden test** — it **would** have broken on a decorated first
+  line; the backend inventory goes on its own third line. See §1a.
 
 ## Acceptance
 
