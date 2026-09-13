@@ -1,6 +1,6 @@
 # Backlog
 
-**82 changes** — 🟢 1 in progress · 🟡 2 proposed · ⚪ 3 deferred · 🔵 1 implemented · ✅ 69 done · 🗑️ 6 killed
+**82 changes** — 🟢 1 in progress · 🟡 2 proposed · ⚪ 3 deferred · ✅ 70 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
@@ -23,12 +23,6 @@
 | [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 | [0074](active/0074-sandbox-health-emitter.md) | sandbox health emitter — feed KindSandboxHealth so fuse_sandbox_unhealthy_total stops being defined-but-unfed | `medium` | `feat` |
 
-## 🔵 Implemented — awaiting merge (1)
-
-| # | Title | Priority | Type | PR | Readiness |
-|---|-------|----------|------|----|-----------|
-| [0082](active/0082-build-release-pipeline.md) | build/release pipeline — tag-driven GoReleaser releases (multi-platform archives + GHCR image + curl installer) so users adopt fuse without a Go toolchain | `medium` | `feat` | [#88](https://github.com/ethanhinson/fuse/pull/88) |  |
-
 ```mermaid
 graph TD
   0012 --> 0029
@@ -37,17 +31,17 @@ graph TD
   0063 --> 0075
   0076
   0081
-  0082
   0012:::done
   0052:::done
   0063:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (75)</summary>
+<details><summary>✅🗑️ Archive — done + killed (76)</summary>
 
 | # | Title | Merged |
 |---|-------|--------|
+| [0082](archive/2026-09-13-0082-build-release-pipeline.md) | build/release pipeline — tag-driven GoReleaser releases (multi-platform archives + GHCR image + curl installer) so users adopt fuse without a Go toolchain | 2026-09-13 |
 | [0065](archive/2026-09-05-0065-bash-per-tenant-filesystem-isolation.md) | bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape | 2026-09-05 |
 | [0080](archive/2026-09-02-0080-tui-table-tabbed-ui.md) | Shared TUI table component + tabbed /config UI — line up the menus like Claude | 2026-09-02 |
 | [0079](archive/2026-09-01-0079-tui-models-management-ui.md) | TUI models management UI — argument autocomplete + interactive mapping editor | 2026-09-01 |
@@ -62,7 +56,6 @@ graph TD
 | [0071](archive/2026-08-18-0071-turn-scoped-trace-roots-interactive-loops.md) | Turn-scoped trace roots for interactive loops — end loop.run at first park, per-turn root spans | 2026-08-18 |
 | [0068](archive/2026-08-17-0068-auto-mode-deterministic-freedom.md) | Auto-mode deterministic freedom — scratchpad + write_roots + rules-layer shrink to catastrophic-only | 2026-08-17 |
 | [0067](archive/2026-08-17-0067-auto-mode-permission-observability-deny-resilience.md) | Auto-mode permission observability + deny-resilience — measure every gate decision, stop dying on denials | 2026-08-17 |
-| [0062](archive/2026-08-17-0062-wander-refresh-to-restore-light-up-54-durable-resume-in-the.md) | Wander refresh-to-restore — light up #54 durable resume in the browser demo | 2026-08-17 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -74,6 +67,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 54 done |
+| [2026-08](archive/) | 55 done |
 
 </details>
