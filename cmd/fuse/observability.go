@@ -689,3 +689,23 @@ func (d *projectionDispatcher) run() {
 		}
 	}
 }
+
+// shutdownMetrics gracefully drains the SEPARATE metrics listener started by
+// startMetricsEndpoint, so it is part of the server's drain rather than being
+// severed when the process exits.
+//
+// It takes the CALLER's context deliberately: the drain site passes the SAME
+// drainCtx it gave srv.Shutdown, so the Connect server and the metrics endpoint
+// SHARE one budget instead of serializing two. Inventing a second independent
+// timeout here would let total shutdown reach 2×drainTimeout and blow past the
+// pod's terminationGracePeriodSeconds (= drainTimeout + 10) into a SIGKILL.
+//
+// It is safe to call before Close: http.Server.Shutdown is idempotent, and the
+// Close path's own Shutdown of the same server then returns immediately.
+// A nil service, or one with no bound metrics endpoint, is a no-op.
+func (s *observabilityService) shutdownMetrics(ctx context.Context) error {
+	if s == nil || s.metricsServer == nil {
+		return nil
+	}
+	return s.metricsServer.Shutdown(ctx)
+}

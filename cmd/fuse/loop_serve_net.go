@@ -467,6 +467,20 @@ func serveNetWithOptions(ctx context.Context, ln net.Listener, rt runtime.Runtim
 		drainCtx, cancel := context.WithTimeout(context.Background(), budget)
 		defer cancel()
 		_ = srv.Shutdown(drainCtx)
+		// The metrics endpoint, when observability.metrics.bind is set (both
+		// shipped configs set it), is a SECOND http.Server on its own listener
+		// — not part of srv. Drain it here, inside the SAME awaited window and
+		// on the SAME drainCtx budget, so a Prometheus scrape in flight at
+		// SIGTERM finishes instead of being severed by process exit.
+		//
+		// Ordering: AFTER srv.Shutdown, so the metrics endpoint stays up at
+		// least as long as the Connect server and a final scrape can still land
+		// while requests drain. Sharing drainCtx means the two shutdowns split
+		// one budget rather than serializing two, which is what keeps total
+		// shutdown inside terminationGracePeriodSeconds (= drainTimeout + 10).
+		// Because drainCtx may already be expired by now, this is a bounded
+		// best-effort drain, never an additional wait.
+		_ = obs.shutdownMetrics(drainCtx)
 		_ = srv.Close()
 	}()
 
