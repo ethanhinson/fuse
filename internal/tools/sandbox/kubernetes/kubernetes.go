@@ -46,6 +46,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/remotecommand"
 
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
@@ -168,6 +169,28 @@ type Substrate struct {
 
 	instanceID string
 	arch       string
+
+	// rest is the client configuration the exec transport needs. The typed
+	// clientset alone is not enough: remotecommand builds its own upgrading
+	// round-tripper from the rest.Config. It is nil for a substrate built over a
+	// bare clientset (the test constructor), which is why newExecutor exists.
+	rest *rest.Config
+
+	// apiHost is the API server base URL the exec URL is built against, captured
+	// from the same rest.Config the transport uses so the two cannot disagree.
+	apiHost string
+
+	// newExecutor is the exec-transport seam, non-nil only in tests.
+	//
+	// It is here rather than in Options because the exec protocol is the ONE part
+	// of this package that the generated fake clientset does not emulate at all —
+	// fake.Clientset has no exec subresource — so without a seam, every assertion
+	// about the rendered argv, the target container, the stream wiring and the
+	// exit classification would need a live cluster. The seam takes the exec URL
+	// (the value the assertions are ABOUT) and returns an Executor, so what a test
+	// substitutes is only the transport and never the argv rendering or the
+	// classification under test.
+	newExecutor func(url string) (remotecommand.Executor, error)
 }
 
 // Name and Reap are in place from this task; Provision arrives with the Pod
@@ -195,7 +218,13 @@ func New(opts Options) (*Substrate, error) {
 	if err != nil {
 		return nil, fmt.Errorf("kubernetes: client: %w", err)
 	}
-	return newSubstrate(cs, opts)
+	s, err := newSubstrate(cs, opts)
+	if err != nil {
+		return nil, err
+	}
+	s.rest = cfg
+	s.apiHost = cfg.Host
+	return s, nil
 }
 
 // restConfig resolves the client configuration, in-cluster unless a kubeconfig
