@@ -14,15 +14,12 @@ on:
     tags:
       - 'v*'
 
+# Least privilege at workflow scope: the floor every job inherits is read-only.
+# The publishing grants live on the `release` job alone (see below) so that the
+# `test` job — which executes every test in the repo, plus whatever those tests
+# shell out to — cannot reach the release, the registry, or the signing token.
 permissions:
-  # contents: write   — create the GitHub release and upload archives
-  # packages: write   — push images to ghcr.io
-  # id-token: write   — OIDC token the attestation action signs with
-  # attestations: write — write the provenance attestations themselves
-  contents: write
-  packages: write
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
   # The gate: a tag never releases red code. This duplicates integration.yml's
@@ -47,6 +44,14 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The publishing scopes, narrowed to the only job that publishes. This block
+    # REPLACES the workflow-level `contents: read` for this job, so every scope
+    # not listed here is `none`.
+    permissions:
+      contents: write # create the GitHub release and upload archives
+      packages: write # push images to ghcr.io
+      id-token: write # OIDC token the attestation action signs with
+      attestations: write # write the provenance attestations themselves
     steps:
       # fetch-depth: 0 — GoReleaser derives the version and the changelog from
       # git history and tags, and refuses to run against a shallow clone.
