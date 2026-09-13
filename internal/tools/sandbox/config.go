@@ -28,6 +28,19 @@ import (
 // implementation.
 const HandlerContainer = "container"
 
+// HandlerKubernetes is the bounded handler identifier for the Kubernetes
+// warm-Pod substrate (change 0075) — the first REMOTE substrate, reached through
+// a control plane rather than owned on this host.
+//
+// It is declared here beside HandlerContainer for the same reason that one is:
+// the loader must be able to name the substrate whether or not a Kubernetes
+// handler was compiled in or registered. Naming it here does NOT make it
+// buildable — selectHandler needs a factory registered for it by the composition
+// root, and a name with no factory REFUSES rather than falling back (see
+// WithHandlerFactory). That split is deliberate: the loader reports what the
+// operator asked for, and selection decides whether it can be had.
+const HandlerKubernetes = "kubernetes"
+
 const (
 	// configDirName and configFileName locate the operator's off-switch file
 	// relative to the repo root. The ".local." infix follows this repo's
@@ -198,6 +211,87 @@ type Config struct {
 	// never derived from hosted detection, from a wire field, or from model
 	// output; see the note in resolveDefaults.
 	Egress Egress
+
+	// Kubernetes is the Kubernetes substrate's configuration (change 0075),
+	// honoured by a registered kubernetes handler only. Every field is OPTIONAL
+	// and carries its own presence, exactly like Limits: an unset field means the
+	// substrate's own default applies, and the loader fills only what the operator
+	// wrote.
+	//
+	// Its zero value is the SAFE one and means "nothing configured". The one
+	// non-pointer field, Refused, is the load-time verdict a handler factory must
+	// consult: true means the operator's block could not be honoured and the
+	// substrate must not be built from it. See Kubernetes.Refused.
+	Kubernetes Kubernetes
+}
+
+// Kubernetes is the resolved kubernetes: block (change 0075).
+//
+// Every configurable field is a pointer so "unset" (the operator said nothing)
+// is distinguishable from an explicit zero or empty value — the same discipline
+// Limits uses, and for the same reason: the substrate's default for an unset
+// field is not the zero value, and a zero namespace prefix or a zero startup
+// timeout would be a posture nobody chose.
+type Kubernetes struct {
+	// Refused records that the operator's kubernetes: block could not be
+	// honoured, so the whole block was DISCARDED (WarnBadKubernetes).
+	//
+	// It is the one non-pointer field, and it is deliberately a positive
+	// assertion of failure rather than the absence of data: a handler factory
+	// cannot tell "the operator wrote nothing" from "the operator's block was
+	// thrown away" by looking at nil fields, and those two must resolve
+	// differently. An absent block means "use the substrate's defaults"; a
+	// refused one means "build NOTHING", because the handler was named and the
+	// posture it was to be built with is unknown.
+	//
+	// Its zero value is false, which is the safe direction for a hand-built
+	// Config: a caller who never went through LoadConfig has no discarded block.
+	Refused bool
+
+	// Kubeconfig is the path to a kubeconfig file. nil ⇒ unset ⇒ in-cluster
+	// configuration, which is the hosted default.
+	Kubeconfig *string
+	// Context names a context within Kubeconfig. nil ⇒ unset ⇒ the current one.
+	Context *string
+	// NamespacePrefix is the first label of every tenant namespace fuse creates.
+	// It is validated as a DNS-1123 label, because a value that is not one makes
+	// every namespace creation fail at the API server rather than here.
+	NamespacePrefix *string
+	// Image is the workload image. nil ⇒ unset ⇒ the top-level image:, then the
+	// substrate's pinned default.
+	Image *string
+	// SidecarImage is the egress forwarder's image. nil ⇒ unset ⇒ fuse's own
+	// published image at this binary's version.
+	SidecarImage *string
+	// RuntimeClass names a hardened runtime (gVisor, Kata). nil ⇒ unset ⇒ the
+	// cluster's default runtime.
+	RuntimeClass *string
+	// ServiceAccount is the ZERO-PERMISSION identity sandbox Pods run as. nil ⇒
+	// unset ⇒ the substrate's default (fuse-sandbox). It is never fuse's own
+	// service account: ADR-0058 rule 6 keeps the provisioning credential out of
+	// the sandbox.
+	ServiceAccount *string
+	// StartupTimeout bounds provision-to-confirmed. nil ⇒ unset. Always positive
+	// when set.
+	StartupTimeout *time.Duration
+	// PodMaxLifetime becomes activeDeadlineSeconds — the GC backstop that ends a
+	// Pod even with no fuse instance alive to reap it. nil ⇒ unset. Always
+	// positive when set.
+	PodMaxLifetime *time.Duration
+	// ProxyListen is the address fuse's own TLS listener binds. nil ⇒ unset.
+	// Validated as host:port when set.
+	ProxyListen *string
+	// ProxyAdvertiseAddress is the address a sandbox reaches that listener on. It
+	// must name the OWNING instance, because policy and delegated credentials
+	// live in that instance's memory. nil ⇒ unset ⇒ $FUSE_POD_IP.
+	ProxyAdvertiseAddress *string
+	// TenantQuotaMaxPods sizes the per-tenant ResourceQuota. nil ⇒ unset ⇒
+	// concurrency.max_inflight_per_tenant. Never negative when set; an explicit 0
+	// is honoured and means "derive it".
+	TenantQuotaMaxPods *int64
+	// WorkspaceSizeLimitBytes bounds the per-Pod emptyDir workspace. nil ⇒ unset.
+	// Always positive when set.
+	WorkspaceSizeLimitBytes *int64
 }
 
 // EgressMode is the bounded egress posture selector. It is a closed enum, and
@@ -381,6 +475,34 @@ const (
 	// CONNECT (https) to the same destination is refused explicitly
 	// (RefusedCredentialTunnel), never TLS-intercepted. See AllowEntry.Credential.
 	WarnCredentialPlaintextOnly WarnReason = "credential_plaintext_only"
+
+	// WarnBadKubernetes means a value in the kubernetes: block could not be
+	// honoured. The WHOLE block is discarded and marked Refused, never partially
+	// honoured — and if the handler was NAMED kubernetes, construction refuses.
+	//
+	// Whole-block discard rather than per-field degradation is the fail-safe
+	// direction HERE, which is the opposite of limits:. A bad cap degrades to a
+	// posture default that is at least as tight, so the resolved Config is still
+	// a posture someone chose. A half-honoured kubernetes: block is not: the
+	// wrong namespace prefix puts a tenant's Pods somewhere nobody audited, an
+	// unset service account is a different RBAC identity, an unbounded workspace
+	// is no disk bound at all. There is no "at least as tight" default to fall
+	// back to, so the safe answer is to build nothing.
+	WarnBadKubernetes WarnReason = "bad_kubernetes"
+
+	// WarnLimitNotEnforceable means the operator configured a limits.* cap the
+	// SELECTED substrate cannot express — today, pids and nofile under the
+	// kubernetes handler, which core Kubernetes has no per-Pod expression for
+	// (the operator's lever is the kubelet's podPidsLimit; see
+	// docs/sandbox-kubernetes.md).
+	//
+	// The cap is NOT discarded: the operator's value stands in the resolved
+	// Config. Dropping it would turn a configured limit into a fiction, and this
+	// warning exists precisely so the operator learns the cap is unenforced at
+	// LOAD time rather than inferring it from a Pod that outlived its fork bomb.
+	// It is emitted ONCE, naming every affected field, rather than once per
+	// field.
+	WarnLimitNotEnforceable WarnReason = "limit_not_enforceable"
 )
 
 // Warning is a LOUD but non-fatal diagnostic from a config load.
@@ -435,6 +557,40 @@ type rawConfig struct {
 	Limits         *rawLimits      `yaml:"limits"`
 	Concurrency    *rawConcurrency `yaml:"concurrency"`
 	Egress         *rawEgress      `yaml:"egress"`
+	Kubernetes     *rawKubernetes  `yaml:"kubernetes"`
+}
+
+// rawKubernetes mirrors the kubernetes: block. Durations and byte sizes decode as
+// STRINGS so a value YAML happens to read as a number ("60") degrades to a
+// warning rather than to a silently different meaning — the same reason
+// pool.idle_ttl and limits.memory do. Every field is a pointer so absent is
+// distinguishable from an explicit empty or zero value.
+type rawKubernetes struct {
+	Kubeconfig      *string                 `yaml:"kubeconfig"`
+	Context         *string                 `yaml:"context"`
+	NamespacePrefix *string                 `yaml:"namespace_prefix"`
+	Image           *string                 `yaml:"image"`
+	SidecarImage    *string                 `yaml:"sidecar_image"`
+	RuntimeClass    *string                 `yaml:"runtime_class"`
+	ServiceAccount  *string                 `yaml:"service_account"`
+	StartupTimeout  *string                 `yaml:"startup_timeout"`
+	PodMaxLifetime  *string                 `yaml:"pod_max_lifetime"`
+	Proxy           *rawKubernetesProxy     `yaml:"proxy"`
+	TenantQuota     *rawKubernetesQuota     `yaml:"tenant_quota"`
+	Workspace       *rawKubernetesWorkspace `yaml:"workspace"`
+}
+
+type rawKubernetesProxy struct {
+	Listen           *string `yaml:"listen"`
+	AdvertiseAddress *string `yaml:"advertise_address"`
+}
+
+type rawKubernetesQuota struct {
+	MaxPods *int64 `yaml:"max_pods"`
+}
+
+type rawKubernetesWorkspace struct {
+	SizeLimit *string `yaml:"size_limit"`
 }
 
 // rawEgress mirrors the egress: block. mode is a string so an unrecognised
@@ -726,7 +882,7 @@ func (raw rawConfig) resolve(path string) (Config, []Warning) {
 			return discardedConfig(egress), append(warns, Warning{
 				Reason: WarnUnknownHandler,
 				Path:   path,
-				Detail: fmt.Sprintf("handler: %q is not %q or %q", *raw.Handler, HandlerContainer, HandlerHost),
+				Detail: fmt.Sprintf("handler: %q is not %q, %q or %q", *raw.Handler, HandlerContainer, HandlerHost, HandlerKubernetes),
 				Effect: "unknown substrate named; the whole config was discarded and the sandbox is running contained on the container substrate" + egressEffect(egress),
 			})
 		}
@@ -812,7 +968,219 @@ func (raw rawConfig) resolve(path string) (Config, []Warning) {
 		warns = raw.Egress.resolve(path, &cfg.Egress, warns)
 	}
 
+	// --- kubernetes -------------------------------------------------------
+	//
+	// FAIL SAFE BY DISCARDING THE WHOLE BLOCK, not by degrading a field. See
+	// WarnBadKubernetes for why this is the opposite choice from limits: — there
+	// is no "at least as tight" default for a sandbox posture to fall back to.
+	//
+	// It is resolved regardless of which handler was named: an operator who
+	// configures the block and then flips `handler:` back must not have their
+	// configuration silently dropped, because being ignored is what sends people
+	// looking for an env-var opt-out that must never exist. The REFUSAL is what
+	// is handler-sensitive, and that decision belongs to selection, not here.
+	if raw.Kubernetes != nil {
+		warns = raw.Kubernetes.resolve(path, &cfg.Kubernetes, warns)
+	}
+
+	// Caps the SELECTED substrate cannot express are reported once, here, where
+	// both the handler and the resolved caps are known. It is deliberately last:
+	// it reads cfg.Limits after every degradation above has run, so a cap that
+	// did not survive parsing is not reported as unenforceable — it is already
+	// unset, and naming it would point the operator at a value their file does not
+	// carry.
+	warns = warnUnenforceableLimits(path, cfg, warns)
+
 	return cfg, warns
+}
+
+// dns1123LabelMax is the DNS-1123 label ceiling. A namespace_prefix longer than
+// this cannot be the first label of a namespace name, so every namespace creation
+// would fail at the API server rather than here.
+const dns1123LabelMax = 63
+
+// validDNS1123Label reports whether s is a valid DNS-1123 label: 1..63 bytes of
+// lowercase alphanumerics and hyphens, starting and ending alphanumeric.
+//
+// It is spelled out rather than pulled from a regexp so this package needs no new
+// dependency to validate the one value whose invalidity is otherwise discovered
+// at the API server, and so the rule reads exactly as the operator's error
+// message states it.
+func validDNS1123Label(s string) bool {
+	if s == "" || len(s) > dns1123LabelMax {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		alnum := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+		switch {
+		case alnum:
+		case c == '-':
+			// A leading or trailing hyphen is invalid, and so is a name made only
+			// of them.
+			if i == 0 || i == len(s)-1 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// resolve fills out from a parsed kubernetes: block.
+//
+// It is ALL-OR-NOTHING. The first unusable value discards the whole block — every
+// field, including the ones that parsed — and records Refused so a handler
+// factory has a load-time fact to refuse on. Returning early on the first fault
+// would be tempting but wrong for the operator: the loop below collects EVERY
+// fault so one load tells them about all of them, and only then discards.
+func (raw rawKubernetes) resolve(path string, out *Kubernetes, warns []Warning) []Warning {
+	var faults []string
+	bad := func(field, detail string) {
+		faults = append(faults, fmt.Sprintf("kubernetes.%s: %s", field, detail))
+	}
+
+	// Resolved into a LOCAL, copied into out only if the block is clean. That is
+	// what makes the all-or-nothing property structural rather than a matter of
+	// remembering to undo partial writes.
+	var k Kubernetes
+
+	// The free-form string fields. They are trimmed and taken as written: they
+	// name an image, a path, a context, or an identity in someone else's
+	// namespace, and this loader is not the authority on any of those spellings.
+	// An EMPTY value is "unset" rather than a fault, because an empty string is
+	// how the documented schema itself spells "use the default".
+	optional := func(in *string) *string {
+		if in == nil {
+			return nil
+		}
+		v := strings.TrimSpace(*in)
+		if v == "" {
+			return nil
+		}
+		return &v
+	}
+	k.Kubeconfig = optional(raw.Kubeconfig)
+	k.Context = optional(raw.Context)
+	k.Image = optional(raw.Image)
+	k.SidecarImage = optional(raw.SidecarImage)
+	k.RuntimeClass = optional(raw.RuntimeClass)
+	k.ServiceAccount = optional(raw.ServiceAccount)
+
+	// namespace_prefix is the one string this loader DOES validate, because it is
+	// the only one whose invalidity is not the API server's to report politely:
+	// it becomes the first label of every tenant namespace, so a bad value fails
+	// every single Provision, for every tenant, forever.
+	if raw.NamespacePrefix != nil {
+		v := strings.TrimSpace(*raw.NamespacePrefix)
+		if validDNS1123Label(v) {
+			k.NamespacePrefix = &v
+		} else {
+			bad("namespace_prefix", fmt.Sprintf("%q is not a DNS-1123 label (lowercase alphanumerics and hyphens, 1-%d bytes, starting and ending alphanumeric)", *raw.NamespacePrefix, dns1123LabelMax))
+		}
+	}
+
+	if raw.StartupTimeout != nil {
+		if d, ok := parsePositiveDuration(*raw.StartupTimeout); ok {
+			k.StartupTimeout = &d
+		} else {
+			bad("startup_timeout", fmt.Sprintf("%q is not a positive duration (want e.g. 60s)", *raw.StartupTimeout))
+		}
+	}
+	if raw.PodMaxLifetime != nil {
+		if d, ok := parsePositiveDuration(*raw.PodMaxLifetime); ok {
+			k.PodMaxLifetime = &d
+		} else {
+			bad("pod_max_lifetime", fmt.Sprintf("%q is not a positive duration (want e.g. 4h)", *raw.PodMaxLifetime))
+		}
+	}
+
+	if raw.Proxy != nil {
+		if raw.Proxy.Listen != nil {
+			v := strings.TrimSpace(*raw.Proxy.Listen)
+			if _, port, err := net.SplitHostPort(v); err != nil || strings.TrimSpace(port) == "" {
+				bad("proxy.listen", fmt.Sprintf("%q is not host:port (want e.g. 0.0.0.0:3129)", *raw.Proxy.Listen))
+			} else {
+				k.ProxyListen = &v
+			}
+		}
+		// advertise_address is NOT validated as host:port: it is an address
+		// without a port (the port comes from listen), and it may legitimately be
+		// a hostname the cluster resolves. An unset one under `enforce` is a
+		// CONSTRUCTION-time refusal with a diagnostic, which is where it belongs
+		// — the loader cannot see the egress posture's datapath wiring.
+		k.ProxyAdvertiseAddress = optional(raw.Proxy.AdvertiseAddress)
+	}
+
+	if raw.TenantQuota != nil && raw.TenantQuota.MaxPods != nil {
+		if v := *raw.TenantQuota.MaxPods; v >= 0 {
+			// Zero is HONOURED and documented as "derive it from
+			// concurrency.max_inflight_per_tenant", so unlike a limits: cap it is
+			// not a fault. Negative is nonsense and is.
+			k.TenantQuotaMaxPods = &v
+		} else {
+			bad("tenant_quota.max_pods", fmt.Sprintf("%d is negative (0 means derive it from concurrency.max_inflight_per_tenant)", v))
+		}
+	}
+
+	if raw.Workspace != nil && raw.Workspace.SizeLimit != nil {
+		if b, ok := parseBytes(*raw.Workspace.SizeLimit); ok {
+			k.WorkspaceSizeLimitBytes = &b
+		} else {
+			bad("workspace.size_limit", fmt.Sprintf("%q is not a positive byte size (want e.g. 2g)", *raw.Workspace.SizeLimit))
+		}
+	}
+
+	if len(faults) > 0 {
+		// THE WHOLE BLOCK GOES, and Refused is the only thing left. A named
+		// kubernetes handler is then unbuildable, which is the point: the
+		// operator asked for a substrate and did not say — understandably — which
+		// posture to build it with.
+		*out = Kubernetes{Refused: true}
+		return append(warns, Warning{
+			Reason: WarnBadKubernetes,
+			Path:   path,
+			Detail: strings.Join(faults, "; "),
+			Effect: "the whole kubernetes: block was discarded; if handler: kubernetes was named, the sandbox REFUSES to run rather than building a Pod posture nobody configured — fix the values above",
+		})
+	}
+
+	*out = k
+	return warns
+}
+
+// warnUnenforceableLimits reports, once, every configured cap the selected
+// substrate cannot express.
+//
+// The cap is left in the resolved Config deliberately — see
+// WarnLimitNotEnforceable. One warning naming every affected field, rather than
+// one per field, because an operator configuring a whole limits: block is making
+// ONE mistake (choosing a substrate that cannot honour it) and should read one
+// diagnostic about it.
+func warnUnenforceableLimits(path string, cfg Config, warns []Warning) []Warning {
+	if cfg.Handler != HandlerKubernetes {
+		// The container substrate expresses every cap in the schema, so warning
+		// there would be noise on the common path.
+		return warns
+	}
+
+	var fields []string
+	if cfg.Limits.Pids != nil {
+		fields = append(fields, "pids")
+	}
+	if cfg.Limits.NoFile != nil {
+		fields = append(fields, "nofile")
+	}
+	if len(fields) == 0 {
+		return warns
+	}
+	return append(warns, Warning{
+		Reason: WarnLimitNotEnforceable,
+		Path:   path,
+		Detail: fmt.Sprintf("limits.%s cannot be expressed per Pod by core Kubernetes", strings.Join(fields, " and limits.")),
+		Effect: "the cap is recorded but NOT enforced by this substrate; set the kubelet's podPidsLimit on the sandbox node pool instead (see docs/sandbox-kubernetes.md)",
+	})
 }
 
 // resolve fills out from a parsed egress: block.
@@ -1112,6 +1480,12 @@ func parseHandler(v string) (string, bool) {
 		return HandlerContainer, true
 	case HandlerHost:
 		return HandlerHost, true
+	case HandlerKubernetes:
+		// A remote substrate is a recognised NAME here and a refusal at
+		// selection unless the composition root registered a factory for it. The
+		// loader's job is to report what the operator asked for, not to decide
+		// whether this binary can provide it.
+		return HandlerKubernetes, true
 	default:
 		return "", false
 	}
