@@ -605,3 +605,35 @@ func TestServerSelectorsDoNotMatchDevPostgresPod(t *testing.T) {
 		t.Fatalf("checked %d server selectors, want %d — a template stopped rendering:\n%s", checked, len(selectors), out)
 	}
 }
+
+// config.existingSecret and auth.tokens together must REFUSE, for the same
+// reason secret-dsn.yaml refuses postgres.dsn + postgres.existingSecret: with
+// both, config.existingSecret wins and secret-config.yaml renders nothing, so
+// the tokens never reach the server. Before this guard existed the render
+// SUCCEEDED and `real-token` appeared nowhere in the output — an operator's
+// bearer tokens silently discarded while the pod authenticated on whatever the
+// external Secret held.
+func TestExistingConfigSecretWithAuthTokensRefuses(t *testing.T) {
+	requireHelm(t)
+	out := mustRefuse(t,
+		"--set", "postgres.dsn=postgres://user:pw@db:5432/fuse",
+		"--set", "config.existingSecret=my-external-config",
+		"--set", "auth.tokens[0].token=real-token",
+		"--set", "auth.tokens[0].tenant=_default",
+	)
+	requireContains(t, out, "config.existingSecret", "config/auth guard")
+	requireContains(t, out, "auth.tokens", "config/auth guard")
+}
+
+// The counterpart: config.existingSecret with auth.allowDevToken=true is NOT
+// guarded and must keep rendering. allowDevToken supplies no content of its own
+// — it is the flag that OMITS loop_server.auth so the server synthesizes its
+// dev token — so nothing is discarded, and if the external Secret carries no
+// auth the server does exactly what the flag asked for.
+func TestExistingConfigSecretWithAllowDevTokenRenders(t *testing.T) {
+	requireHelm(t)
+	mustTemplate(t,
+		"--set", "postgres.dsn=postgres://user:pw@db:5432/fuse",
+		"--set", "config.existingSecret=my-external-config",
+		"--set", "auth.allowDevToken=true")
+}

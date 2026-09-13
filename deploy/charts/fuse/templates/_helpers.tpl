@@ -211,6 +211,16 @@ repository, and nothing in the manifest would say so. So: say which.
 {{- if not (or .Values.auth.tokens .Values.config.existingSecret .Values.auth.allowDevToken) -}}
 {{- fail "fuse: no authentication configured. The server would fall back to its built-in dev token — a value published in this repository — and would authenticate the whole cluster with it. Choose one, explicitly:\n  --set-file/--values auth.tokens[0].{token,tenant}   real bearer tokens (ADR-0034)\n  --set config.existingSecret=NAME                     a Secret you manage, holding config.yml\n  --set auth.allowDevToken=true                        the dev token, on purpose, on a throwaway cluster\nSee values.yaml's auth section." -}}
 {{- end -}}
+{{/*
+And the mirror of secret-dsn.yaml's refusal, for the same reason: with both
+config.existingSecret and auth.tokens, config.existingSecret WINS —
+secret-config.yaml renders nothing and the pod mounts the external Secret — so
+the chart would discard the tokens while the pod authenticated on whatever that
+Secret holds, and nothing would indicate the tokens are inert.
+*/}}
+{{- if and .Values.config.existingSecret .Values.auth.tokens -}}
+{{- fail "fuse: set only one of auth.tokens or config.existingSecret. With both, config.existingSecret wins: the chart renders no config Secret at all, so the tokens in auth.tokens never reach the server and it authenticates on whatever the existing Secret holds — bearer tokens checked into a values file and no indication they are inert. Put loop_server.auth inside the Secret you manage, or drop config.existingSecret and let the chart render one." -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

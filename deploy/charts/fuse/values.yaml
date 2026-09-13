@@ -167,6 +167,11 @@ config:
   # When set, the chart renders NO config Secret and mounts this existing one
   # instead. Its data MUST contain a `config.yml` key. Satisfies the auth guard,
   # because the chart cannot see inside it to check — you own what is in there.
+  #
+  # MUTUALLY EXCLUSIVE WITH auth.tokens, and the chart REFUSES both together:
+  # this one wins, so the tokens would never be rendered anywhere and the server
+  # would authenticate on whatever this Secret holds. Put loop_server.auth inside
+  # it instead.
   existingSecret: ""
   # The key inside the Secret holding the config file.
   key: config.yml
