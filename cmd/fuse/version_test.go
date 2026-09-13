@@ -33,6 +33,12 @@ func TestVersionSubcommand(t *testing.T) {
 	if plat := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH); !strings.Contains(s, plat) {
 		t.Errorf("output missing platform %q:\n%s", plat, s)
 	}
+	// backends line is present in both build modes; assert only the prefix
+	// common to both (fsstore is always compiled in) so this test passes
+	// whether or not -tags pgstore was used.
+	if !strings.Contains(s, "backends: fsstore") {
+		t.Errorf("output missing backends line:\n%s", s)
+	}
 	if errb.Len() != 0 {
 		t.Errorf("version wrote to stderr: %q", errb.String())
 	}

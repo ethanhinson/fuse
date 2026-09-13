@@ -37,6 +37,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		case "version", "--version", "-version":
 			fmt.Fprintf(stdout, "fuse %s\n", version.Version)
 			fmt.Fprintf(stdout, "go %s %s/%s\n", goruntime.Version(), goruntime.GOOS, goruntime.GOARCH)
+			fmt.Fprintf(stdout, "backends: %s\n", durableBackends)
 			return 0
 		}
 	}
