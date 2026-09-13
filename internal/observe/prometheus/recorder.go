@@ -74,7 +74,7 @@ type Recorder struct {
 	loopTotal, modelTotal, toolTotal, spawnTotal, projectionTotal, exportErrors, dropped, reopens, overflow *client.CounterVec
 	decisions, classifierReplies                                                                            *client.CounterVec
 	sandboxAcquire, sandboxUnhealthy, sandboxReaped                                                         *client.CounterVec
-	sandboxQueued, sandboxRejected                                                                         *client.CounterVec
+	sandboxQueued, sandboxRejected                                                                          *client.CounterVec
 	loopActive, overrides, admitted, budget, sandboxActive                                                  *client.GaugeVec
 	loopDuration, modelDuration, attempts, toolDuration, spawnDuration, projectionDuration                  *client.HistogramVec
 	sandboxColdStart, sandboxQueueWait                                                                      *client.HistogramVec
@@ -139,8 +139,8 @@ func New(cfg Config) (*Recorder, error) {
 	r.sandboxActive = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_sandbox_active", Help: "Live sandbox execution contexts by handler and container runtime — what is running where."}, []string{"tenant_id", "handler", "runtime"})
 	r.sandboxAcquire = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_acquire_total", Help: "Sandbox checkouts by whether a warm context was reused — pool effectiveness."}, []string{"tenant_id", "reused"})
 	r.sandboxColdStart = client.NewHistogramVec(client.HistogramOpts{Name: "fuse_sandbox_cold_start_seconds", Help: "Cold-start latency of a newly spawned sandbox. Observed only on a cold spawn: a warm reuse has no start to measure.", Buckets: b}, []string{"tenant_id", "handler", "runtime"})
-	r.sandboxUnhealthy = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_unhealthy_total", Help: "Sandbox health transitions INTO unhealthy, by bounded reason (oom, runtime_exit, pull_failed, acquire_failed, unresponsive)."}, []string{"tenant_id", "handler", "reason"})
-	r.sandboxReaped = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_reaped_total", Help: "Execution contexts that stopped being held, by bounded cause (released, loop_end, early_return, idle_ttl, stale_checkout). idle_ttl is the leak signal; stale_checkout firing at all means a pool invariant was violated."}, []string{"tenant_id", "handler", "cause"})
+	r.sandboxUnhealthy = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_unhealthy_total", Help: "Sandbox health transitions INTO unhealthy, by bounded reason (oom, runtime_exit, pull_failed, acquire_failed, floor_unverified, unresponsive). floor_unverified means a remote substrate's network floor could not be proved: alert on it."}, []string{"tenant_id", "handler", "reason"})
+	r.sandboxReaped = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_reaped_total", Help: "Execution contexts that stopped being held, by bounded cause (released, loop_end, early_return, idle_ttl, stale_checkout, orphan). idle_ttl is the leak signal; stale_checkout firing at all means a pool invariant was violated; orphan means a fuse instance died without releasing a remote sandbox."}, []string{"tenant_id", "handler", "cause"})
 	r.sandboxQueued = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_exec_queued_total", Help: "Execs that waited past the note threshold for a free execution slot — the backpressure rate."}, []string{"tenant_id", "handler"})
 	r.sandboxQueueWait = client.NewHistogramVec(client.HistogramOpts{Name: "fuse_sandbox_queue_wait_seconds", Help: "Distribution of admission queue time. The high quantiles are the saturation signal.", Buckets: b}, []string{"tenant_id", "handler"})
 	r.sandboxRejected = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_rejected_total", Help: "Admission refusals by which bound refused (global, tenant) — the runaway signal and the alert target. Under correct configuration it should be zero."}, []string{"tenant_id", "handler", "scope"})
@@ -199,10 +199,24 @@ func (r *Recorder) Project(_ context.Context, rec observe.Record) error {
 // to __overflow__: these values come off a payload, and an unrecognized one is
 // far likelier to be a bug or an injection than a series worth minting.
 var (
-	sandboxHandlers      = map[string]bool{"container": true, "host": true, "microvm": true}
-	sandboxRuntimes      = map[string]bool{"docker": true, "nerdctl": true, "podman": true}
-	sandboxCauses        = map[string]bool{"released": true, "loop_end": true, "early_return": true, "idle_ttl": true, "stale_checkout": true}
-	sandboxHealthReasons = map[string]bool{"oom": true, "runtime_exit": true, "pull_failed": true, "acquire_failed": true, "unresponsive": true, "recovered": true}
+	// "kubernetes" (change 0075) is a fourth handler. Without it every metric a
+	// `handler: kubernetes` deployment produces collapses to __overflow__, which
+	// presents as "the dashboards are empty" with the events plainly present in
+	// the stream — so widening the handler enum without widening this map is a
+	// silently broken deployment rather than a compile error.
+	sandboxHandlers = map[string]bool{"container": true, "host": true, "microvm": true, "kubernetes": true}
+	sandboxRuntimes = map[string]bool{"docker": true, "nerdctl": true, "podman": true}
+	// "orphan" (change 0075) is the remote substrate's reaper collecting a sandbox
+	// no fuse instance was heartbeating. It is a distinct series from idle_ttl
+	// deliberately: idle_ttl is this process's Pool reclaiming what it remembers,
+	// and orphan is the only signal there is that instances are dying without
+	// releasing.
+	sandboxCauses = map[string]bool{"released": true, "loop_end": true, "early_return": true, "idle_ttl": true, "stale_checkout": true, "orphan": true}
+	// "floor_unverified" (change 0075) is the remote substrate's canary pair
+	// failing to prove NetworkPolicy enforcement. Alert on this series: it means
+	// the cluster's CNI does not enforce policy, so the metadata-deny floor does
+	// not exist and no sandbox on that cluster is contained.
+	sandboxHealthReasons = map[string]bool{"oom": true, "runtime_exit": true, "pull_failed": true, "acquire_failed": true, "unresponsive": true, "recovered": true, "floor_unverified": true}
 	// Admission label vocabularies (change 0077), closed at
 	// event.SandboxAdmissionPayload.
 	sandboxAdmissionOutcomes = map[string]bool{"queued": true, "refused": true}

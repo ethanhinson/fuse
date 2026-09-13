@@ -30,6 +30,21 @@ const (
 	// runtime CLI itself failed to start the command. It is the residual
 	// substrate-failure bucket, NOT a bucket for ordinary command failure.
 	HealthRuntimeExit HealthReason = "runtime_exit"
+
+	// HealthFloorUnverified is a REMOTE substrate whose network floor could not be
+	// PROVED (change 0075, ADR-0058 rule 3): the canary pair did not come back
+	// (open reaches, closed does not), so this cluster's policy enforcement is
+	// unestablished and every Acquire refuses for the handler's lifetime.
+	//
+	// It is a fifth honest reason rather than a shade of acquire_failed, and the
+	// distinction is the one an operator acts on: acquire_failed says "a sandbox
+	// could not be produced", which is usually transient and usually a capacity or
+	// image problem, while this says "this cluster is disqualified until its CNI
+	// is fixed" — a permanent, human-sized change, and one that means every
+	// sandbox previously run on this cluster may have had unrestricted egress. A
+	// single label for both would put an alert-now condition in the same bucket as
+	// ordinary noise.
+	HealthFloorUnverified HealthReason = "floor_unverified"
 )
 
 // Deliberately ABSENT from this enum, and not an oversight: "unresponsive" and

@@ -186,6 +186,8 @@ func sandboxHealthReason(r sandbox.HealthReason) event.SandboxHealthReason {
 		return event.SandboxHealthPullFailed
 	case sandbox.HealthAcquireFailed:
 		return event.SandboxHealthAcquireFailed
+	case sandbox.HealthFloorUnverified:
+		return event.SandboxHealthFloorUnverified
 	default:
 		return ""
 	}
@@ -224,6 +226,8 @@ func sandboxCause(c sandbox.ReleaseCause) event.SandboxCause {
 		return event.SandboxCauseIdleTTL
 	case sandbox.CauseStaleCheckout:
 		return event.SandboxCauseStaleCheckout
+	case sandbox.CauseOrphan:
+		return event.SandboxCauseOrphan
 	default:
 		return ""
 	}

@@ -444,6 +444,11 @@ const (
 	// handed out. Its firing at all means an isolation invariant was violated:
 	// alert on it, do not tune it.
 	SandboxCauseStaleCheckout SandboxCause = "stale_checkout"
+	// SandboxCauseOrphan is a remote sandbox collected by the substrate-wide
+	// reaper because no live instance was heartbeating it (change 0075). Distinct
+	// from idle_ttl: this one means an instance died without releasing, which is
+	// the only signal that fact produces.
+	SandboxCauseOrphan SandboxCause = "orphan"
 )
 
 // SandboxReleasePayload accompanies BOTH KindSandboxRelease and KindSandboxReap.
@@ -484,7 +489,7 @@ const (
 )
 
 // SandboxHealthPayload accompanies KindSandboxHealth. Reason is a closed enum —
-// oom | runtime_exit | pull_failed | acquire_failed | unresponsive | recovered —
+// oom | runtime_exit | pull_failed | acquire_failed | floor_unverified —
 // and never the underlying error text, which is unbounded.
 type SandboxHealthPayload struct {
 	Handler     string `json:"handler"`
@@ -503,7 +508,9 @@ type SandboxHealthPayload struct {
 // here also gives the translator in internal/tools an exhaustive switch to be
 // checked against, and event_test.go a set to pin.
 //
-// Only the four reasons the CURRENT substrate can honestly observe are declared.
+// Only the reasons a substrate can honestly observe are declared: the original
+// four, plus floor_unverified for the remote substrate whose canary pair did not
+// prove the floor (change 0075).
 // "unresponsive" and "recovered" presuppose a container that outlives an Exec,
 // which `docker run --rm` per Exec does not provide; they are deferred to change
 // #74 along with a real ContainerID, and declaring constants for them here would
@@ -521,6 +528,11 @@ const (
 	SandboxHealthPullFailed SandboxHealthReason = "pull_failed"
 	// SandboxHealthAcquireFailed is a cold start that produced no Runner.
 	SandboxHealthAcquireFailed SandboxHealthReason = "acquire_failed"
+	// SandboxHealthFloorUnverified is a remote substrate whose network floor the
+	// canary pair could not prove (change 0075). Alert on it: it means the
+	// cluster's CNI does not enforce NetworkPolicy, so the metadata-deny floor
+	// does not exist and no sandbox on that cluster is contained.
+	SandboxHealthFloorUnverified SandboxHealthReason = "floor_unverified"
 )
 
 // UserInputPayload accompanies KindUserInput. Content is the exact user-turn text

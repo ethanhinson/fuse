@@ -212,18 +212,16 @@ type Substrate struct {
 	// substitutes is only the transport and never the argv rendering or the
 	// classification under test.
 	newExecutor func(url string) (remotecommand.Executor, error)
+
+	// verdict is the STICKY canary-pair result (verify.go). A cluster whose CNI
+	// does not enforce NetworkPolicy is disqualified for the process's lifetime,
+	// not re-probed in the hope of a different answer.
+	verdict canaryVerdict
 }
 
-// Name and Reap are in place from this task; Provision arrives with the Pod
-// (task 5) and Verify with the canary pair (task 9), at which point the
-// compile-time conformance assertion
-//
-//	var _ sandbox.RemoteSubstrate = (*Substrate)(nil)
-//
-// is declared. It is deliberately NOT declared yet: a stub method that returned
-// a nil error to satisfy the interface early would be a substrate claiming to
-// have verified a floor it never probed, which is the one failure ADR-0058
-// rule 3 exists to make impossible.
+// Substrate satisfies the full remote seam as of task 9: Verify is the canary
+// pair, so this assertion no longer risks claiming a floor nothing probed.
+var _ sandbox.RemoteSubstrate = (*Substrate)(nil)
 
 // New builds a Substrate against a real cluster.
 //
