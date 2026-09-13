@@ -188,9 +188,14 @@ Adapter behaviour:
 - **`Acquire`** → `Verify` once (sync.Once, result cached, refusal sticky) →
   `Provision` → a `remoteRunner{sandbox, principal, env}`. Emits
   `sandbox.acquire` with `ColdStartMS` = provision-to-Running.
-- **`Exec`** → the existing `workspace()` containment check against
-  `MountRoot()` (same function, same `ErrWorkingDirRefused`), then
-  `sandbox.Exec(ctx, r.env, cmd, dir)`. The env is passed **per Exec** (see §3
+- **`Exec`** → the existing containment check against `MountRoot()`, then
+  `sandbox.Exec(ctx, r.env, cmd, dir)`. **Reconcile correction (2026-09-13):** that check
+  today lives as a METHOD, `func (h *containerHandler) workspace(root, workingDir string)`
+  (`container.go:658`), so the adapter cannot call it. The build first **promotes the algorithm
+  to a package-level function** — a behaviour-preserving extraction, with
+  `containerHandler.workspace` delegating to it — so both handlers share ONE containment
+  implementation and one `ErrWorkingDirRefused`. Duplicating the algorithm is forbidden (its own
+  doc comment says so). The env is passed **per Exec** (see §3
   exec), which is how `ResetEnv` works on a Pod whose container env cannot
   change: the pool's reset-on-checkout stores the fresh allowlist on the Runner
   and the next Exec renders it.
@@ -215,6 +220,16 @@ error))`, and `selectHandler` consults registered factories for
 named handler that cannot be constructed refuses** — no substitution of the
 container handler, exactly as kvm-absent refuses under the microVM rule.
 `Contained` is `true` for every non-host handler, unchanged.
+
+**Reconcile correction (2026-09-13):** there is no registry and no `WithHandler…` option today —
+`selectHandler` (`service.go:443`) is a hardcoded two-branch decision, and its comment records the
+ABSENCE of a host-fallback branch as a structural security property ("unreachable from this branch
+by construction, not by a check that a later edit could invert"). The third branch must therefore be
+added so that **no** path leads from a failed named-handler construction to `o.hostHandler`, and a
+regression test must assert that a `kubernetes` handler whose construction fails yields
+`ErrRefusedUncontained` and never the host. Relatedly, `PoolSource` is **sealed** by three
+unexported methods (`resolveEnv`, `gateFor`, `healthHooks`), so the substrate is reached THROUGH
+`*Service`, never beside it.
 
 ### 3. The Kubernetes substrate
 
@@ -338,6 +353,17 @@ NetworkPolicy fuse-egress-<pod>: egress allowed ONLY to ipBlock A/32 port 3129
 NetworkPolicy fuse-default-deny: everything else (incl. 169.254.169.254) denied
 ```
 
+**Reconcile correction (2026-09-13):** none of this TLS surface exists yet. `Proxy` today is
+UNIX-socket-only (`Listen`/`Release`/`Close`, `egress_proxy.go`); there is no `ListenTLS`, no
+`Enroll`, and no in-process CA. All of it is net-new. Two constraints fall out: (a) ADR-0052's
+refusal to terminate TLS for a *credentialed destination* (`RefusedCredentialTunnel`) is untouched —
+the new listener is the sandbox→proxy **transport**, a different hop; (b) the per-principal and
+total connection ceilings are compile-time constants (`proxyMaxConnsPerPrincipal = 128`,
+`proxyMaxConns = 1024`), so "the ceilings apply as on the socket path" means reusing the same
+semaphore, not adding config. `fuse-egress-forward` today has exactly TWO flags (`-listen`,
+`-socket`), both required, exit 2 if either is missing; `-upstream`/`-tls-cert`/`-tls-key`/`-tls-ca`
+are new and their mutual exclusion with `-socket` is enforced in that binary's own flag validation.
+
 - **`Proxy.ListenTLS(addr, ca *CA)`** adds one TLS listener beside the UNIX
   sockets. **`Proxy.Enroll(principal, policy) (ClientCredential, error)`** mints
   a client certificate from an in-process ephemeral CA (per fuse process, never
@@ -399,6 +425,19 @@ Loader rules: `handler: kubernetes` ⇒ `Contained: true`. A malformed
 `egress:` block is shared and unchanged. New warn reasons:
 `WarnBadKubernetes`, `WarnLimitNotEnforceable`.
 
+**Reconcile correction (2026-09-13) — the enum surface is wider than it reads.**
+`parseHandler` (`config.go:1109`) accepts exactly `container` and `host`; `kubernetes` is a third
+value and anything else must still yield `WarnUnknownHandler`. `WarnReason` currently has **11**
+values and grows to 13. `HealthReason` has exactly **four** (`pull_failed`, `acquire_failed`, `oom`,
+`runtime_exit`) and gains a fifth, `floor_unverified` — which means THREE places change, not one:
+`sandbox.HealthReason`, `internal/event`'s `SandboxHealthReason`, and the translator
+`sandboxHealthReason` in `internal/tools/sandbox_events.go`. Likewise `ReleaseCause` (five) and
+`internal/event`'s `SandboxCause` (five, pinned literally because sandbox imports event and not the
+reverse) BOTH gain `orphan`. `internal/event/event_test.go` pins the five kind strings, so the
+event-side additions need their own assertions. Also note the whole-file-discard salvage path
+(`salvageEgressPosture`, ADR-0053): the new `kubernetes:` block must not resolve to a permissive
+posture on a degraded read — a named-but-unbuildable handler refuses.
+
 ### 7. Composition root and deploy artifacts
 
 - `cmd/fuse/sandbox.go`: when the loaded config names `kubernetes`, register
@@ -406,6 +445,11 @@ Loader rules: `handler: kubernetes` ⇒ `Contained: true`. A malformed
   substrate from the block, the resolved `Egress`, the `Limits`, and — under
   `enforce` — the proxy's `ListenTLS`/`Enroll` handles. Both local and hosted
   postures may select it (a laptop driving kind is a first-class dev loop).
+- **Reconcile correction (2026-09-13):** `deploy/` on `origin/main` contains only
+  `deploy/observability/`; `deploy/k8s/` does not exist and #76's chart is unmerged (its own
+  worktree, branch `feat/fuse-server-helm-chart-compose-stack`). This change therefore creates
+  `deploy/k8s/` standalone, and `FUSE_POD_IP` remains a **claim on** #76 — documented in the
+  operator doc so #76 can honour it — not a shared fact to rely on.
 - `deploy/k8s/sandbox-rbac.yaml`: `ServiceAccount fuse` (the server) with a
   `ClusterRole` for `namespaces` (get/create) and a `ClusterRole` for the
   namespaced verbs on `pods`, `pods/exec`, `secrets`, `networkpolicies`,
@@ -450,13 +494,18 @@ reason, since the alternative is a silent refusal.
   — this change gives them a substrate where they are observable, but does not
   build them.
 
-## Open build questions (for the reconcile/plan pass)
+## Open build questions — RESOLVED at reconcile (2026-09-13)
 
-- client-go version and module weight; whether `k8s.io/kubectl`-free
-  `remotecommand` WebSocket (`NewWebSocketExecutor`, k8s ≥1.29) should be
-  preferred with SPDY fallback.
-- The exact downward-API env name (`FUSE_POD_IP`) must be agreed with #76's
-  chart; this spec claims it.
+- **client-go version / module weight — resolved.** `go.mod` declares `go 1.26.5` and carries
+  **zero** `k8s.io/*` modules, so this is a wholly new dependency surface sharing no base with the
+  existing testcontainers/moby chain. Pin one `k8s.io/client-go` release compatible with that Go
+  version, keep every client-go import inside `internal/tools/sandbox/kubernetes`, and prefer
+  `remotecommand.NewWebSocketExecutor` with SPDY fallback (no `k8s.io/kubectl` dependency).
+- **`FUSE_POD_IP` — resolved as a claim, not an agreement.** #76 is unmerged, so this change
+  documents the name in the operator doc and defaults to it; it does not depend on #76 landing.
+- **`containerIdentified` gains its first implementor.** Nothing satisfies it today (`run --rm`
+  leaves no durable container), so a warm Pod turns a documented-but-dead seam live and the Pool's
+  `certifyEntry`/`runnerContainerID` paths get real coverage — worth explicit tests.
 - Whether `Verify` should re-run periodically (a CNI can be swapped under a
   running cluster). Default here: once per handler lifetime.
 - Whether the in-process CA should be rotated per `IdleTTL` or per process.
@@ -464,6 +513,17 @@ reason, since the alternative is a silent refusal.
   cert, which is correct because the Pods are orphans by then).
 
 ## Acceptance
+
+**Gating posture (reconcile, 2026-09-13).** This package's stated policy
+(`container_integration_test.go`) is that substrate-dependent tests are **runtime-gated, not
+build-tagged** — "absence of a runtime is never a red suite" — using the `t.Skipf("skipping: …")`
+idiom. The Kubernetes tests follow it: a cluster-absent machine sees the package go green while the
+kind lane is reported as skipped. Two obligations come with that: the skip message must be **loud
+and specific** (name what did not run and why), and the results file must **enumerate which
+acceptances actually executed** rather than implying the whole list did. The unit layer — seam
+conformance (the `microvm_conformance_test.go` precedent), read-back assertion, policy rendering,
+env-rendering, limits mapping, config loading, refusal paths, and the composition-root wiring
+assertion — must be green with **no** cluster.
 
 - `handler: kubernetes` against a kind cluster runs a `bash` command through a
   warm Pod; a second command reuses it; the idle reaper deletes it.

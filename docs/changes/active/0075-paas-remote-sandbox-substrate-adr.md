@@ -17,10 +17,10 @@ results:
 trivial: false
 auto_groomable:
 branch: feat/paas-remote-sandbox-substrate-adr
-claimed_at: 2026-09-13T20:22:22Z
+claimed_at: 2026-09-13T20:35:08Z
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -68,3 +68,80 @@ Settled at groom on 2026-09-13; design detail in the linked spec.
 ## Reconcile log
 
 <!-- Appended by docket-implement-next's reconcile pass: dated entries of what changed. -->
+
+### 2026-09-13 — reconcile at claim (docket-implement-next)
+
+Verified the spec's load-bearing code claims against `origin/main` with git plumbing (not the
+local working tree — learning `reconcile-verify-claims-against-origin-not-working-tree`).
+**The design is sound and stays in scope.** All four `depends_on` (#63, #64, #65, #77) are
+`done` and their infrastructure is present on `origin/main`. Ten corrections, all mechanical
+— none touches a scope decision or a rule of the ADR:
+
+1. **`workspace()` is a METHOD, not a package-level function.** It is
+   `func (h *containerHandler) workspace(root, workingDir string) (mount, workdir string, err error)`
+   at `internal/tools/sandbox/container.go:658`. The spec's §2 says the adapter reuses "the same
+   function". It cannot as written. The build must **promote the algorithm to a package-level
+   function** (behaviour-preserving extraction, `containerHandler.workspace` delegating to it) so
+   the remote adapter shares one containment implementation rather than duplicating it. The
+   existing doc comment warns against reimplementation, so extraction is the intended direction.
+2. **There is no handler registry and no `WithHandler…` option.** `selectHandler` (`service.go:443`)
+   is a hardcoded two-branch decision, and its comment records the **absence** of a host-fallback
+   branch as a structural security property ("unreachable from this branch by construction, not by
+   a check that a later edit could invert"). `WithHandlerFactory` as specced is net-new, and the
+   build must add the third branch **without** introducing any path from a failed named-handler
+   construction to `o.hostHandler`. A regression test asserting no-fallback is required.
+3. **`PoolSource` is sealed** by three unexported methods (`resolveEnv`, `gateFor`,
+   `healthHooks`). A remote substrate must therefore be reached **through `*Service`**, never
+   beside it — which the adapter shape already implies but the spec does not state.
+4. **`Proxy.ListenTLS`, `Proxy.Enroll`, and the in-process CA do not exist.** `Proxy` today is
+   UNIX-socket-only (`Listen`/`Release`/`Close`, `egress_proxy.go`). All of §5's TLS surface is
+   net-new code, not an extension of an existing listener. Note ADR-0052 deliberately refuses to
+   terminate TLS for *credentialed destinations* (`RefusedCredentialTunnel`); the new TLS listener
+   is the **sandbox-to-proxy transport**, a different thing, and the build must not disturb that
+   refusal.
+5. **Proxy connection ceilings are compile-time constants** (`proxyMaxConnsPerPrincipal = 128`,
+   `proxyMaxConns = 1024`), not config. The spec's "connection-count ceilings apply per principal
+   exactly as on the socket path" is satisfied by reusing the same semaphore, not by new config.
+6. **`fuse-egress-forward` has exactly two flags** (`-listen`, `-socket`), both required, exit 2
+   on either missing. `-upstream`/`-tls-cert`/`-tls-key`/`-tls-ca` are all new, and the
+   mutual-exclusion rule the spec names must be enforced in that binary's own flag validation.
+7. **`k8s.io/client-go` is absent from `go.mod`** (zero `k8s.io/*` modules; `go 1.26.5`). It is a
+   large new dependency surface sharing no base with the existing testcontainers/moby chain. Pin
+   a release matching the repo's Go version and keep the import confined to
+   `internal/tools/sandbox/kubernetes` so `internal/tools/sandbox` never imports it (as specced).
+   Prefer `NewWebSocketExecutor` with SPDY fallback, resolving the spec's first open question.
+8. **`containerIdentified` is currently satisfied by nothing** — `docker run --rm` leaves no
+   durable container. A warm Pod is its **first implementor**, so `ContainerID()` moves from a
+   documented-but-dead seam to a live one; the Pool's `certifyEntry` path gains real coverage.
+9. **Enum extensions are larger than the spec implies.** `WarnReason` has 11 values and gains
+   `WarnBadKubernetes` + `WarnLimitNotEnforceable` (13). `HealthReason` has exactly **four**
+   (`pull_failed`, `acquire_failed`, `oom`, `runtime_exit`) and gains a fifth,
+   `floor_unverified`; `internal/event`'s `SandboxHealthReason` and
+   `internal/tools/sandbox_events.go`'s `sandboxHealthReason` translator must both learn it, and
+   `event_test.go` pins the kind strings. `ReleaseCause`/`SandboxCause` (five each) gain `orphan`
+   — pinned literally in `internal/event` because sandbox imports event, not the reverse, so
+   **both** sides change.
+10. **`deploy/k8s/` does not exist** and #76's Helm chart is unmerged (separate worktree, branch
+    `feat/fuse-server-helm-chart-compose-stack`). This change creates `deploy/k8s/sandbox-rbac.yaml`
+    standalone; the `FUSE_POD_IP` downward-API name stays a **claim on** #76 rather than a shared
+    fact, recorded in the operator doc so #76 can honour it.
+
+**Test-gating posture.** `kind`, `docker` (29.4.0) and `kubectl` are present on this machine, so
+the kind lane can genuinely run. Per this package's stated policy (`container_integration_test.go`)
+docker-dependent tests are **runtime-gated, not build-tagged** — absence of a runtime must never
+redden the suite — so the Kubernetes integration tests follow the same `t.Skipf` idiom, and the
+skip is made loud (learning `smoke-over-fake-backend-proves-wire-not-system`). Whatever does not
+execute is named explicitly in the results file rather than implied green.
+
+**Learnings applied as build constraints.** `security-knob-inert-at-composition-root` — the
+`kubernetes` handler must be asserted **constructed at `cmd/fuse`**, not only unit-tested, and the
+whole-file-discard path must not resolve the new block to a permissive posture.
+`trusted-root-never-model-selectable` — the Pod's `emptyDir` root is established by the trusted
+side and model `working_dir` is only ever a contained subpath.
+`identity-derived-path-collides-case-insensitively` / ADR-0057 — the tenant→namespace map is
+injective by hash suffix, which is why slug rewriting is acceptable here where it was refused for
+directory names. `microvm_conformance_test.go` is the precedent for the seam-conformance test.
+
+No obsolescence, no fundamental invalidation. Auto-capture is disabled for this repo
+(`auto_capture.enabled: false`), so adjacent work surfaced here is reported in prose only —
+see the results file.
