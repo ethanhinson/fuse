@@ -12,6 +12,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/httpstream"
 	"k8s.io/client-go/tools/remotecommand"
+	clientgoexec "k8s.io/client-go/util/exec"
 	utilexec "k8s.io/utils/exec"
 
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
@@ -237,13 +238,12 @@ func (p *sandboxPod) Exec(ctx context.Context, env sandbox.Env, cmd, workingDir 
 	// A command that RAN and exited non-zero comes back as a CodeExitError. That
 	// is a RESULT, not a substrate failure: reporting it as one would make `grep`
 	// finding nothing look like a broken sandbox.
-	var coded utilexec.CodeExitError
-	if errors.As(streamErr, &coded) {
-		if diag := s.diagnoseMissingShell(coded.Code, buf.String()); diag != "" {
+	if code, ok := exitCodeOf(streamErr); ok {
+		if diag := s.diagnoseMissingShell(code, buf.String()); diag != "" {
 			out.ExitCode = -1
 			return out, fmt.Errorf("kubernetes: exec into %s: %s", p.ID(), diag)
 		}
-		out.ExitCode = coded.Code
+		out.ExitCode = code
 		return out, nil
 	}
 
@@ -390,4 +390,47 @@ func (s *Substrate) execURL(namespace, pod string, argv []string) string {
 	base := strings.TrimSuffix(s.apiHost, "/")
 	return fmt.Sprintf("%s/api/v1/namespaces/%s/pods/%s/exec?%s",
 		base, neturl.PathEscape(namespace), neturl.PathEscape(pod), q.Encode())
+}
+
+// exitCodeOf reports the exit status of a command that RAN, distinguishing it from
+// a transport failure in which nothing ran at all.
+//
+// # Why this is a function and not two lines of errors.As
+//
+// There are TWO unrelated types named CodeExitError in the Kubernetes module
+// graph — k8s.io/client-go/util/exec and k8s.io/utils/exec — with identical
+// shapes, identical names, and identical %T renderings ("exec.CodeExitError").
+// client-go's remotecommand streams return the FIRST one; this package originally
+// matched only the second, so errors.As silently returned false for every real
+// exit code and every legitimately-failing command was reported as a broken
+// substrate. Worse, Verify's leg 2 — whose failure to connect IS the pass
+// condition — read as "could not be probed" and disqualified every cluster,
+// including correctly-enforcing ones.
+//
+// Nothing about the types makes that visible at a call site, and a hand-rolled
+// test double fabricating either one proves nothing about which the wire produces
+// (both existing tables used the wrong one and were green). So the match lives
+// HERE, once, checking both, with the client-go one first because it is what the
+// transport actually returns — and TestExitCodeClassificationUsesTheTransportsOwn
+// ErrorType drives both through it.
+//
+// The false return is load-bearing and must not be widened: a transport failure
+// carries no evidence about the command, and reporting it as exit 0 would make a
+// broken datapath look like a passing canary.
+func exitCodeOf(err error) (int, bool) {
+	if err == nil {
+		return 0, false
+	}
+	// The one the wire returns.
+	var cg clientgoexec.CodeExitError
+	if errors.As(err, &cg) {
+		return cg.Code, true
+	}
+	// Kept so a client-go switch to the shared package cannot silently reintroduce
+	// the defect this function exists to close.
+	var ut utilexec.CodeExitError
+	if errors.As(err, &ut) {
+		return ut.Code, true
+	}
+	return 0, false
 }

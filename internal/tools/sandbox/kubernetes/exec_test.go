@@ -10,6 +10,7 @@ import (
 
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/remotecommand"
+	clientgoexec "k8s.io/client-go/util/exec"
 	utilexec "k8s.io/utils/exec"
 
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
@@ -580,4 +581,71 @@ func (e *stubExecutor) StreamWithContext(_ context.Context, opts remotecommand.S
 		}
 	}
 	return e.err
+}
+
+// TestExitCodeClassificationUsesTheTransportsOwnErrorType is the third — and
+// worst — REGRESSION the kind lane (task 11) found against a real cluster.
+//
+// client-go's remotecommand streams report a non-zero exit as
+// `k8s.io/client-go/util/exec`.CodeExitError. This package's classification
+// matched `k8s.io/utils/exec`.CodeExitError instead: TWO DIFFERENT TYPES that
+// share a name, print identically as "exec.CodeExitError" in a %T, and are
+// completely unrelated to errors.As.
+//
+// Every existing test passed because every existing test fabricated the error
+// with the WRONG type too, which is the whole lesson: a hand-rolled double that
+// constructs the value under test cannot tell you the value under test is the one
+// the real transport produces. Only a live cluster could.
+//
+// The consequences were not cosmetic:
+//
+//   - Exec: every command exiting non-zero — `grep` finding nothing, `test -f`
+//     on an absent file, a failing build — was reported as a SUBSTRATE FAILURE
+//     with ExitCode -1 instead of as a result. The bash tool would have told the
+//     model its sandbox was broken every time a command legitimately failed.
+//   - Verify: leg 2's `nc` failing to connect IS the pass condition, and it was
+//     read as "the leg could not be probed", so the canary pair refused EVERY
+//     cluster — including a correctly-enforcing one. The substrate was
+//     unconditionally disqualified.
+//
+// So this table drives BOTH types through the classifier. The client-go one is
+// the one the wire produces and must be honoured; the utils one is kept because
+// nothing stops client-go switching, and honouring both is free.
+func TestExitCodeClassificationUsesTheTransportsOwnErrorType(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{
+			// THE ONE THE REAL TRANSPORT PRODUCES. Verified against a live kind
+			// cluster: remotecommand's streamProtocolV4 returns exactly this.
+			name: "k8s.io/client-go/util/exec (what the wire actually returns)",
+			err:  clientgoexec.CodeExitError{Err: errors.New("command terminated with exit code 3"), Code: 3},
+		},
+		{
+			name: "k8s.io/utils/exec (kept so a client-go switch cannot break this)",
+			err:  utilexec.CodeExitError{Err: errors.New("command terminated with exit code 3"), Code: 3},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, ok := exitCodeOf(tc.err)
+			if !ok {
+				t.Fatalf("exitCodeOf did not recognise %T as a command that RAN and exited non-zero; every "+
+					"legitimately-failing command is then reported as a broken substrate, and the canary's leg 2 "+
+					"— whose failure to connect IS the pass condition — disqualifies every cluster", tc.err)
+			}
+			if code != 3 {
+				t.Fatalf("exitCodeOf = %d, want 3", code)
+			}
+		})
+	}
+
+	// A TRANSPORT failure is still not an exit code. This is the half that must
+	// not be widened away: "the exec could not be established" carries no
+	// evidence about the command at all, and treating it as exit 0 would make a
+	// broken datapath look like a passing canary.
+	if code, ok := exitCodeOf(errors.New("dial tcp: connection refused")); ok {
+		t.Fatalf("exitCodeOf classified a transport failure as exit %d; there is no evidence either way and it "+
+			"must refuse", code)
+	}
 }

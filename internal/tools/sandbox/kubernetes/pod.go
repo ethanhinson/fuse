@@ -50,6 +50,22 @@ const (
 	// podGraceSeconds bounds teardown. Five seconds, matching the container
 	// handler's disposition: a sandbox has nothing to flush.
 	podGraceSeconds = int64(5)
+
+	// sandboxUID and sandboxGID are the uid/gid every sandbox container — and
+	// every canary container — runs as.
+	//
+	// They are FIXED rather than configurable for the reason every other object
+	// name here is: an operator-settable uid buys nothing except the ability to
+	// set it to 0, and the whole property being bought is "not uid 0". 65532 is
+	// the `nonroot` uid distroless and several hardened base images already use,
+	// so an operator building a custom workload image against a familiar
+	// convention lands on the same number.
+	//
+	// They exist at all because `runAsNonRoot: true` on its own is a REFUSAL
+	// ("unless the image declares a non-root USER"), not a selection — see the
+	// pod securityContext below.
+	sandboxUID = int64(65532)
+	sandboxGID = int64(65532)
 )
 
 // sandboxPod is a confirmed Pod presented as a sandbox.RemoteSandbox.
@@ -340,6 +356,25 @@ func (s *Substrate) renderPod(ns, name string, p loopauth.Principal, now time.Ti
 
 			SecurityContext: &corev1.PodSecurityContext{
 				RunAsNonRoot: &tru,
+				// AN EXPLICIT UID, and it is not decoration.
+				//
+				// `runAsNonRoot: true` ALONE does not mean "run as some non-root
+				// user". It means "REFUSE unless the IMAGE declares a non-root
+				// USER", enforced by the kubelet at container-create time —
+				// "container has runAsNonRoot and image will run as root". Neither
+				// this substrate's pinned default (alpine:3.20) nor busybox declares
+				// one, so without these three fields the demanded posture is
+				// unsatisfiable by the very images the substrate ships against: the
+				// Pod reaches Scheduled and then sits in CreateContainerConfigError
+				// until startup_timeout, while the read-back reports nothing wrong
+				// because nothing about the SPEC is wrong.
+				//
+				// fsGroup is the second half. The workspace is an emptyDir, created
+				// root-owned; without fsGroup the Pod starts and every command fails
+				// writing to /workspace, which is the same defect one layer down.
+				RunAsUser:  ptrInt64(sandboxUID),
+				RunAsGroup: ptrInt64(sandboxGID),
+				FSGroup:    ptrInt64(sandboxGID),
 				SeccompProfile: &corev1.SeccompProfile{
 					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				},
@@ -667,6 +702,15 @@ func assertPosture(want, got *corev1.Pod) error {
 		if sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
 			fault("pod runAsNonRoot is %s, want true (a root workload plus any container-escape primitive is node root)", boolPtr(sc.RunAsNonRoot))
 		}
+		// The EXPLICIT uid is asserted separately from runAsNonRoot, because the
+		// two fail differently and a webhook can strip one without the other.
+		// runAsNonRoot alone is a REFUSAL ("unless the image declares a non-root
+		// USER"), so a stripped runAsUser turns every Pod into a
+		// CreateContainerConfigError — while a runAsUser silently reset to 0 would
+		// make Pods start and contradict runAsNonRoot outright. Both are drift.
+		if sc.RunAsUser == nil || *sc.RunAsUser != sandboxUID {
+			fault("pod runAsUser is %s, want %d; runAsNonRoot without an explicit uid refuses every image that declares no USER, and a uid of 0 contradicts it", int64Ptr(sc.RunAsUser), sandboxUID)
+		}
 		// A nil profile AND an explicit Unconfined are both drift, and they are
 		// separate mistakes: a nil check alone passes a webhook that sets
 		// Unconfined on purpose.
@@ -890,6 +934,17 @@ func boolPtr(p *bool) string {
 		return "nil (which DEFAULTS TO TRUE)"
 	}
 	return fmt.Sprintf("%v", *p)
+}
+
+// int64Ptr renders an optional numeric field for a drift diagnostic. "nil" is
+// spelled out rather than shown as 0, because for runAsUser those two are
+// different failures — nil refuses every image with no USER, 0 contradicts
+// runAsNonRoot.
+func int64Ptr(p *int64) string {
+	if p == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("%d", *p)
 }
 
 // Teardown deletes the Pod. It is idempotent and treats "already gone" as
