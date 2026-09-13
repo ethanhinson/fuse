@@ -493,3 +493,115 @@ func TestPrometheusRuleGroupsEqualObservabilityAlerts(t *testing.T) {
 			alertsPath, gotYAML, alertsPath, wantYAML)
 	}
 }
+
+// labelsSubsetOf implements the real Kubernetes label-selector semantics: a
+// matchLabels selector matches a pod when EVERY key/value in the selector is
+// present and equal in the pod's labels. Subset, not equality — which is
+// precisely the trap this test exists to catch. A pod that merely ADDS a
+// component label still satisfies a selector that omits it.
+func labelsSubsetOf(selector, labels map[string]any) bool {
+	if len(selector) == 0 {
+		return false
+	}
+	for k, want := range selector {
+		got, ok := labels[k]
+		if !ok || fmt.Sprint(got) != fmt.Sprint(want) {
+			return false
+		}
+	}
+	return true
+}
+
+// The server's Service, Deployment, PDB and NetworkPolicy selectors must NOT
+// match the dev-Postgres pod.
+//
+// They used to. The server's selector was the bare name+instance pair and the
+// Postgres pod carried those two labels plus a component label, so — label
+// selectors matching on SUBSET — every server selector matched the database
+// pod: Service/…-fuse load-balanced Connect traffic onto Postgres, the server's
+// ReplicaSet counted it toward `replicas`, the deny-all-egress NetworkPolicy
+// applied to the database, and the PDB budgeted the wrong pod set.
+//
+// postgres.dev.enabled=true is the path `make helm-smoke` and the chart tests
+// take, so this must stay asserted.
+func TestServerSelectorsDoNotMatchDevPostgresPod(t *testing.T) {
+	requireHelm(t)
+	out := mustTemplate(t,
+		"--set", "auth.allowDevToken=true",
+		"--set", "postgres.dev.enabled=true",
+		"--set", "podDisruptionBudget.enabled=true",
+		"--set", "podDisruptionBudget.minAvailable=1",
+		"--set", "networkPolicy.enabled=true")
+
+	// The dev-Postgres pod template's labels, from the StatefulSet.
+	var pgLabels map[string]any
+	var serverLabels map[string]any
+	for _, doc := range docs(t, out) {
+		kind, _ := doc["kind"].(string)
+		switch kind {
+		case "StatefulSet":
+			pgLabels = mapAt(doc, "spec", "template", "metadata", "labels")
+		case "Deployment":
+			serverLabels = mapAt(doc, "spec", "template", "metadata", "labels")
+		}
+	}
+	if pgLabels == nil {
+		t.Fatalf("no dev-Postgres StatefulSet pod labels rendered:\n%s", out)
+	}
+	if serverLabels == nil {
+		t.Fatalf("no server Deployment pod labels rendered:\n%s", out)
+	}
+	if c, _ := pgLabels["app.kubernetes.io/component"].(string); c != "postgres-dev" {
+		t.Fatalf("StatefulSet pod labels are not the dev-Postgres pod's: %#v", pgLabels)
+	}
+
+	// Every server-owned selector, by the path it lives at.
+	type sel struct {
+		kind string
+		path []string
+	}
+	selectors := []sel{
+		{"Deployment", []string{"spec", "selector", "matchLabels"}},
+		{"Service", []string{"spec", "selector"}},
+		{"PodDisruptionBudget", []string{"spec", "selector", "matchLabels"}},
+		{"NetworkPolicy", []string{"spec", "podSelector", "matchLabels"}},
+	}
+	pgName := ""
+	for _, doc := range docs(t, out) {
+		if kind, _ := doc["kind"].(string); kind == "StatefulSet" {
+			pgName, _ = mapAt(doc, "metadata")["name"].(string)
+		}
+	}
+
+	var checked int
+	for _, doc := range docs(t, out) {
+		kind, _ := doc["kind"].(string)
+		name, _ := mapAt(doc, "metadata")["name"].(string)
+		// postgres-dev owns its own Service, which SHOULD select its own pod.
+		if strings.HasPrefix(name, pgName) {
+			continue
+		}
+		for _, s := range selectors {
+			if kind != s.kind {
+				continue
+			}
+			ml := mapAt(doc, s.path...)
+			if ml == nil {
+				t.Fatalf("%s/%s: no selector at %v:\n%s", kind, name, s.path, out)
+			}
+			checked++
+			if labelsSubsetOf(ml, pgLabels) {
+				t.Errorf("%s/%s selector %#v MATCHES the dev-Postgres pod's labels %#v — "+
+					"Kubernetes selectors match on subset, so this server object is pointed at the database pod. "+
+					"Narrow the selector with app.kubernetes.io/component: server.", kind, name, ml, pgLabels)
+			}
+			if !labelsSubsetOf(ml, serverLabels) {
+				t.Errorf("%s/%s selector %#v does NOT match the server pod's own labels %#v — the object selects nothing",
+					kind, name, ml, serverLabels)
+			}
+		}
+	}
+	if checked != len(selectors) {
+		t.Fatalf("checked %d server selectors, want %d — a template stopped rendering:\n%s", checked, len(selectors), out)
+	}
+}

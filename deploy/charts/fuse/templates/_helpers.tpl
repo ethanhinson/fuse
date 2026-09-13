@@ -44,6 +44,27 @@ app.kubernetes.io/name: {{ include "fuse.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{/*
+================================================================================
+fuse.serverSelectorLabels — the SERVER's selector, narrowed by component.
+
+Kubernetes label selectors match on SUBSET, so the bare name+instance pair in
+fuse.selectorLabels is NOT a server selector: the dev-Postgres pod carries those
+same two labels and merely ADDS `app.kubernetes.io/component: postgres-dev`, so
+it satisfies them. Selecting the server with the unnarrowed pair pointed the
+Service, the Deployment's ReplicaSet, the PDB and the deny-all NetworkPolicy at
+the database pod.
+
+Every server object that SELECTS pods uses this. fuse.selectorLabels stays the
+common identity pair for LABELING (fuse.labels) and for postgres-dev, which adds
+its own component.
+================================================================================
+*/}}
+{{- define "fuse.serverSelectorLabels" -}}
+{{ include "fuse.selectorLabels" . }}
+app.kubernetes.io/component: server
+{{- end -}}
+
 {{- define "fuse.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
 {{- default (include "fuse.fullname" .) .Values.serviceAccount.name -}}

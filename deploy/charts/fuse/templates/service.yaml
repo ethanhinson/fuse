@@ -25,4 +25,4 @@ spec:
       targetPort: metrics
       protocol: TCP
   selector:
-    {{- include "fuse.selectorLabels" . | nindent 4 }}
+    {{- include "fuse.serverSelectorLabels" . | nindent 4 }}

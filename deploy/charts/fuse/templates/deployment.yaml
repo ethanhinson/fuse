@@ -20,7 +20,7 @@ spec:
       maxSurge: 1
   selector:
     matchLabels:
-      {{- include "fuse.selectorLabels" . | nindent 6 }}
+      {{- include "fuse.serverSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
@@ -33,7 +33,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       labels:
-        {{- include "fuse.selectorLabels" . | nindent 8 }}
+        {{- include "fuse.serverSelectorLabels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

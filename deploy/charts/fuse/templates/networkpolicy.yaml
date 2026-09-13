@@ -22,7 +22,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      {{- include "fuse.selectorLabels" . | nindent 6 }}
+      {{- include "fuse.serverSelectorLabels" . | nindent 6 }}
   policyTypes:
     - Ingress
     - Egress
