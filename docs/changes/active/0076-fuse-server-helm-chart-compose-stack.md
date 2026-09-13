@@ -2,7 +2,7 @@
 id: 76
 slug: fuse-server-helm-chart-compose-stack
 title: fuse server deployment — a docker-compose stack and a Helm chart over the released image (not an operator)
-status: proposed
+status: in-progress
 priority: medium
 type: feat
 created: 2026-08-20
@@ -16,7 +16,8 @@ plan:
 results:
 trivial: false
 auto_groomable:
-branch:
+branch: feat/fuse-server-helm-chart-compose-stack
+claimed_at: 2026-09-13T20:13:00Z
 pr:
 blocked_by:
 reconciled: false
