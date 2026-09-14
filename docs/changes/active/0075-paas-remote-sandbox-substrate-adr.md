@@ -10,14 +10,14 @@ updated: 2026-09-13
 depends_on: [63, 64, 65, 77]
 related: [63, 64, 65, 76, 77, 82]
 discovered_from: [63]
-adrs: [44, 34, 36, 51, 52, 55, 57]
+adrs: [44, 34, 36, 51, 52, 55, 57, 58]
 spec: docs/superpowers/specs/2026-09-13-paas-remote-sandbox-substrate-adr-design.md
 plan: docs/superpowers/plans/2026-09-13-paas-remote-sandbox-substrate-adr-plan.md
 results:
 trivial: false
 auto_groomable:
 branch: feat/paas-remote-sandbox-substrate-adr
-claimed_at: 2026-09-13T23:56:07Z
+claimed_at: 2026-09-14T02:00:01Z
 pr:
 blocked_by:
 reconciled: true
@@ -30,7 +30,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-09-13-paas-remote-sandbox-substrate-adr-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-13-paas-remote-sandbox-substrate-adr-design.md) |
 | Plan | [2026-09-13-paas-remote-sandbox-substrate-adr-plan.md](https://github.com/ethanhinson/fuse/blob/feat/paas-remote-sandbox-substrate-adr/docs/superpowers/plans/2026-09-13-paas-remote-sandbox-substrate-adr-plan.md) |
-| ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md), [ADR-0034](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0034-edge-enforced-auth-multi-tenancy-loop-ownership.md), [ADR-0036](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0036-tool-authz-delegated-downstream-rfc8693-egress-seam.md), [ADR-0051](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0051-network-none-reaches-its-proxy-by-mounted-socket-plus-supplied-forwarder.md), [ADR-0052](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0052-delegated-identity-on-bash-egress-is-forward-proxy-only.md), [ADR-0055](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0055-warm-pool-entries-certify-on-resolved-mount.md), [ADR-0057](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0057-unsafe-tenant-ids-are-refused-never-normalised.md) |
+| ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md), [ADR-0034](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0034-edge-enforced-auth-multi-tenancy-loop-ownership.md), [ADR-0036](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0036-tool-authz-delegated-downstream-rfc8693-egress-seam.md), [ADR-0051](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0051-network-none-reaches-its-proxy-by-mounted-socket-plus-supplied-forwarder.md), [ADR-0052](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0052-delegated-identity-on-bash-egress-is-forward-proxy-only.md), [ADR-0055](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0055-warm-pool-entries-certify-on-resolved-mount.md), [ADR-0057](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0057-unsafe-tenant-ids-are-refused-never-normalised.md), [ADR-0058](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0058-remote-sandbox-substrates-are-adapted-not-merged-and-contained-is-confirmed-by-observation.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
