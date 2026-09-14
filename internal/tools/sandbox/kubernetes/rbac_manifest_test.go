@@ -63,6 +63,13 @@ var requiredGrants = []struct {
 	// Services — Verify reads the API server's ClusterIP for the canary target.
 	{"", "services", "get", "canaryTarget: Services(\"default\").Get"},
 
+	// Endpoints — LEG 3 excepts a BACKING ADDRESS of the kubernetes Service, not
+	// its ClusterIP: kube-proxy DNATs a ClusterIP before the CNI's policy
+	// dataplane evaluates the ipBlock, so an except naming it can never match.
+	// Without this grant runExceptLeg silently DECLINES on every real deployment
+	// and the `except` half of the allow-all floor goes unproven at runtime.
+	{"", "endpoints", "get", "canaryExceptTarget: Endpoints(\"default\").Get"},
+
 	{"", "resourcequotas", "get", "assertQuota: ResourceQuotas(ns).Get"},
 	{"", "resourcequotas", "create", "assertQuota: ResourceQuotas(ns).Create"},
 	{"", "resourcequotas", "update", "assertQuota: ResourceQuotas(ns).Update"},

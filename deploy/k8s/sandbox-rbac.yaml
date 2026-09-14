@@ -124,6 +124,16 @@ rules:
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get"]
+  # `endpoints` is READ-ONLY and exists for Verify's LEG 3 alone: it excepts a
+  # BACKING ADDRESS of the default/kubernetes Service rather than its ClusterIP,
+  # because kube-proxy DNATs a ClusterIP before the CNI's policy dataplane
+  # evaluates the ipBlock — so an `except` naming the ClusterIP can never match and
+  # the leg would condemn a CNI that honours `except` perfectly. Without this grant
+  # leg 3 silently DECLINES and the `except` half of the allow-all metadata floor
+  # is never proved against the operator's own CNI.
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get"]
   - apiGroups: [""]
     resources: ["resourcequotas"]
     verbs: ["get", "create", "update"]

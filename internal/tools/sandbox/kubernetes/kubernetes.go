@@ -324,6 +324,26 @@ func newSubstrate(cs kubernetes.Interface, opts Options) (*Substrate, error) {
 	if errs := validateDNS1123Label(prefix); len(errs) > 0 {
 		return nil, fmt.Errorf("kubernetes: namespace_prefix %q is not a DNS-1123 label: %s", prefix, strings.Join(errs, "; "))
 	}
+	// THE COMPOSED NAME, not just the prefix. A DNS-1123 label may be 63 bytes,
+	// so validateDNS1123Label above accepts a prefix that leaves namespaceName no
+	// room: the name is prefix + "-" + slug + "-" + 8 hex, so anything over 52
+	// bytes drives the slug budget to zero or below, dns1123Slug returns "", the
+	// filler "t" is substituted, and the result exceeds 63. The API server then
+	// rejects the namespace on EVERY Provision, for EVERY tenant — a substrate
+	// that constructed cleanly and can provision nothing.
+	//
+	// Checked by COMPOSING rather than by comparing len(prefix) against a literal:
+	// the budget arithmetic lives in namespaceName, and a second copy of it here
+	// is the thing that would drift the moment the hash width or the separators
+	// changed. "x" is a one-byte stand-in for the shortest slug any tenant can
+	// produce (dns1123Slug's filler is likewise one byte), so this passes exactly
+	// when every tenant's name fits.
+	if errs := validateDNS1123Label(namespaceName(prefix, "x")); len(errs) > 0 {
+		return nil, fmt.Errorf("kubernetes: namespace_prefix %q is a valid DNS-1123 label but is TOO LONG to compose a namespace name: "+
+			"a tenant namespace is %q (%d bytes) and a DNS-1123 label is at most 63. "+
+			"The prefix carries a %q slug and a %d-byte hash of the tenant id, so it must be at most %d bytes",
+			prefix, namespaceName(prefix, "x"), len(namespaceName(prefix, "x")), "-<tenant>-", 8, 63-1-1-8-1)
+	}
 
 	// The image falls back through kubernetes.image, then the top-level image:,
 	// then the pinned default — in that order, because the more specific setting

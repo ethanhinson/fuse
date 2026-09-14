@@ -47,6 +47,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,12 +68,20 @@ const (
 	canaryOpenPod = canaryPodPrefix + "open"
 	// canaryClosedPod is leg 2: default-deny only, must FAIL.
 	canaryClosedPod = canaryPodPrefix + "closed"
+	// canaryExceptPod is leg 3: allowed 0.0.0.0/0 EXCEPT the one address leg 1
+	// proved reachable, and must FAIL. See the `except` design note below.
+	canaryExceptPod = canaryPodPrefix + "except"
 
 	// canaryAllowPolicy is leg 1's explicit allow. It selects canaryOpenPod BY
 	// NAME LABEL and nothing else: a broader selector would cover leg 2 as well,
 	// both legs would reach, and the pair would prove nothing while still looking
 	// like it ran.
 	canaryAllowPolicy = "fuse-canary-allow"
+
+	// canaryExceptPolicy is leg 3's broad allow with a single exception. Like
+	// canaryAllowPolicy it selects its own leg BY NAME LABEL: a selector covering
+	// leg 1 would except leg 1's destination too and leg 1 would fail.
+	canaryExceptPolicy = "fuse-canary-except"
 
 	// canaryNamespaceSuffix is appended to the namespace prefix. The canary lives
 	// in its own namespace so a probe never consumes a tenant's quota and is never
@@ -148,7 +158,12 @@ func (s *Substrate) runCanaryPair(ctx context.Context) error {
 	defer func() {
 		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), canaryCleanupTimeout)
 		defer cancel()
-		for _, name := range []string{canaryOpenPod, canaryClosedPod} {
+		// Leg 3 is in this list unconditionally even though it only RUNS under
+		// allow-all: deleting a Pod that was never created is a NotFound, which
+		// deleteCanaryLeg treats as the terminating condition, and a cleanup list
+		// that had to agree with the posture branch below is a cleanup list that
+		// would eventually disagree with it.
+		for _, name := range []string{canaryOpenPod, canaryClosedPod, canaryExceptPod} {
 			s.deleteCanaryLeg(cctx, ns, name)
 		}
 	}()
@@ -179,7 +194,9 @@ func (s *Substrate) runCanaryPair(ctx context.Context) error {
 	// THE VERDICT. Exactly one combination passes.
 	switch {
 	case openReached && !closedReached:
-		return nil
+		// The PAIR has proved enforcement exists. Under allow-all that is not yet
+		// the whole floor — see runExceptLeg.
+		return s.runExceptLeg(ctx, ns)
 	case !openReached && !closedReached:
 		// BOTH FAILED. Named as leg 1, deliberately: leg 1 is the one that should
 		// have succeeded, and the honest reading is "nothing in this cluster can
@@ -196,6 +213,193 @@ func (s *Substrate) runCanaryPair(ctx context.Context) error {
 		// endpoint.
 		return fmt.Errorf("%w: leg 2 (%s) REACHED %s under the %s policy alone; this cluster's CNI does not enforce NetworkPolicy, so the metadata-deny floor does not exist and no sandbox on it is contained",
 			errFloorUnproven, canaryClosedPod, target, policyDefaultDeny)
+	}
+}
+
+// runExceptLeg is LEG 3: it proves `ipBlock.except` is HONOURED on this cluster.
+//
+// # Why the pair is not enough
+//
+// The pair proves the CNI enforces NetworkPolicy at all. Under `enforce` that is
+// the whole floor: the per-Pod policy names exactly one destination and the
+// metadata endpoints are unreachable BY OMISSION, which is plain default-deny and
+// is precisely what the pair established. Under `allow-all` there is no proxy in
+// the path, so the floor is carried ENTIRELY by `0.0.0.0/0` with an `except` list
+// (see renderEgressPolicy) — a DISTINCT CNI feature. A CNI that enforces
+// default-deny and IGNORES `except` passes both legs of the pair while leaving
+// 169.254.169.254 reachable from every sandbox, and Verify would have declared
+// the floor proven.
+//
+// # Why the destination is NOT 169.254.169.254
+//
+// The obvious leg — a Pod under the real per-Pod policy probing the metadata
+// address, which must fail — proves NOTHING, and for exactly the reason the
+// original probe is a PAIR rather than a single leg: on kind, and on every
+// non-cloud cluster, nothing listens at 169.254.169.254, so the failure is
+// attributable to the destination being unreachable and not to `except` being
+// honoured. A leg that cannot tell those apart is decoration.
+//
+// So the address is swapped and the MECHANISM is kept: leg 3 is allowed
+// `0.0.0.0/0 except [<addr>/32]` — structurally the same object the allow-all
+// floor ships, differing only in which address is carved out — and probes <addr>.
+// For that failure to be attributable, <addr> must be independently KNOWN
+// REACHABLE, which is why leg 3 is itself a two-probe construction (below).
+//
+// # Why the address is the API server's ENDPOINT and NOT its ClusterIP
+//
+// This is the subtlety that makes the naive version of this leg report a false
+// alarm on a CNI that is in fact correct, and it cost a full kind run to find.
+//
+// A ClusterIP is a kube-proxy DNAT target, not an address on the wire. The packet
+// is rewritten to a backing endpoint BEFORE the CNI's policy dataplane sees it, so
+// an `except` naming the ClusterIP can never match: Calico honours `except`
+// perfectly and still lets a Pod reach 10.96.0.1 while excepting 10.96.0.1/32,
+// because by then the destination is the endpoint's address. A leg built on the
+// ClusterIP therefore reports "this CNI ignores except" against a CNI that does
+// not — disqualifying every correctly-configured cluster.
+//
+// So leg 3 reads the `kubernetes` Service's ENDPOINTS and uses a backing address.
+// That is a real address on a real host, reached with no DNAT in the path, so it
+// is the same kind of destination 169.254.169.254 is — which is exactly the
+// property the floor's `except` has to work against.
+//
+// # Why leg 3 needs its own baseline
+//
+// The pair's baseline is the ClusterIP; leg 3's destination is a different
+// address, and a leg 3 that simply failed against an address nothing had proved
+// reachable would be the single unattributable probe this whole file exists to
+// avoid. So leg 3 probes the endpoint address TWICE:
+//
+//   - 3a, from LEG 1's Pod — which carries an unrestricted allow-all and no
+//     `except` at all — which MUST REACH. That establishes the endpoint address is
+//     reachable from this namespace under policy.
+//   - 3b, from a Pod whose policy is `0.0.0.0/0 except [<endpoint>/32]`, which
+//     MUST FAIL.
+//
+// 3a costs no extra Pod (leg 1's is still alive and still allowed everything), and
+// with 3a green the only available explanation for 3b failing is that `except` was
+// honoured — while 3b REACHING means it was ignored.
+//
+// Run only under allow-all. Under enforce nothing in the datapath uses `except`,
+// and a leg proving a property that posture does not rest on would cost a Pod and
+// a policy per Verify for nothing.
+func (s *Substrate) runExceptLeg(ctx context.Context, ns string) error {
+	if s.enforcing() {
+		return nil
+	}
+
+	addr, err := s.canaryExceptTarget(ctx)
+	if err != nil {
+		// DECLINE, not refuse — the same judgement as an unreachable baseline
+		// below. Leg 3 has no address to except, so it can establish nothing; and
+		// the PAIR has already proved enforcement exists, so disqualifying the
+		// cluster here would punish it for a gap in a supplementary probe. The
+		// kind lane's TestIntegrationMetadataFloorHoldsInBothModes remains the
+		// check for the property.
+		return nil
+	}
+	host, _, _ := strings.Cut(addr, ":")
+
+	// 3a — THE BASELINE, from leg 1's Pod, which is allowed everything and
+	// excepts nothing. Without this, 3b's failure is unattributable.
+	baseReached, err := s.probe(ctx, ns, canaryOpenPod, addr)
+	if err != nil {
+		return fmt.Errorf("%w: leg 3's baseline probe from %s to %s could not be run: %w", errFloorUnproven, canaryOpenPod, addr, err)
+	}
+	if !baseReached {
+		// NOT a refusal of the cluster. The pair has already proved enforcement
+		// exists; what could not be established is a BASELINE for the `except`
+		// check, and refusing here would disqualify a correctly-enforcing cluster
+		// for a reason that says nothing about `except`. It is reported as a gap in
+		// the gate — the kind lane's TestIntegrationMetadataFloorHoldsInBothModes
+		// remains the check for the property — rather than treated as proof either
+		// way.
+		//
+		// This is the same judgement the pair makes with "both fail": an
+		// uninformative probe is never read as a pass, and here the pass has
+		// already been earned by the pair.
+		return nil
+	}
+
+	if err := s.applyPolicy(ctx, ns, s.renderCanaryExcept(ns, host)); err != nil {
+		return err
+	}
+
+	// 3b's Pod is created AFTER its policy, for the same reason leg 1's is: a Pod
+	// that probed in the window before its policy landed would be probing under
+	// the default-deny alone, fail, and report a pass for the wrong reason — here
+	// that is the UNSAFE direction, since 3b's failure is the pass.
+	exceptReached, err := s.runCanaryLeg(ctx, ns, canaryExceptPod, addr)
+	if err != nil {
+		return err
+	}
+	if exceptReached {
+		return fmt.Errorf("%w: leg 3 (%s) REACHED %s while its NetworkPolicy allowed 0.0.0.0/0 EXCEPT %s/32, and leg 1 proved that address reachable under an allow with no except — "+
+			"this cluster's CNI enforces NetworkPolicy but IGNORES ipBlock.except. Under egress.mode: allow-all the "+
+			"metadata-deny floor is carried entirely by an except list, so every sandbox on this cluster can reach "+
+			"169.254.169.254 and hold the NODE's cloud identity",
+			errFloorUnproven, canaryExceptPod, addr, host)
+	}
+	return nil
+}
+
+// canaryExceptTarget is a BACKING ADDRESS of the `kubernetes` Service, with the
+// port it is served on.
+//
+// An endpoint rather than the Service's ClusterIP, because a ClusterIP is DNAT'd
+// by kube-proxy before the CNI's policy dataplane sees the packet and an `except`
+// naming it can never match — see runExceptLeg. This is the address the `except`
+// under test has to actually apply to.
+func (s *Substrate) canaryExceptTarget(ctx context.Context) (string, error) {
+	eps, err := s.cs.CoreV1().Endpoints("default").Get(ctx, canaryAPIService, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("the default/%s Endpoints could not be read, so leg 3 has no un-DNAT'd address to except: %w", canaryAPIService, err)
+	}
+	for _, sub := range eps.Subsets {
+		for _, a := range sub.Addresses {
+			if a.IP == "" || net.ParseIP(a.IP).To4() == nil {
+				// v4 only: the except rendered below is a /32.
+				continue
+			}
+			port := canaryAPIPort
+			if len(sub.Ports) > 0 && sub.Ports[0].Port > 0 {
+				port = strconv.Itoa(int(sub.Ports[0].Port))
+			}
+			return a.IP + ":" + port, nil
+		}
+	}
+	return "", fmt.Errorf("the default/%s Endpoints list no IPv4 address, so leg 3 has no un-DNAT'd address to except", canaryAPIService)
+}
+
+// renderCanaryExcept is leg 3's broad allow minus exactly one address.
+//
+// It mirrors renderEgressPolicy's allow-all branch deliberately: one ipBlock with
+// CIDR 0.0.0.0/0 and an Except list. What is being tested is that SHAPE, so a leg
+// whose policy had a different shape would prove something about a policy no
+// sandbox runs under — the same argument that makes the canary namespace carry the
+// real default-deny rather than a weaker one.
+func (s *Substrate) renderCanaryExcept(ns, addr string) *networkingv1.NetworkPolicy {
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      canaryExceptPolicy,
+			Namespace: ns,
+			Labels:    map[string]string{labelManaged: "true"},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			// ONLY leg 3. A selector that also covered leg 1 would except leg 1's
+			// destination from leg 1's allow, leg 1 would fail, and the pair would
+			// refuse a perfectly good cluster.
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{labelPod: canaryExceptPod}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				To: []networkingv1.NetworkPolicyPeer{{
+					IPBlock: &networkingv1.IPBlock{
+						CIDR:   "0.0.0.0/0",
+						Except: []string{addr + "/32"},
+					},
+				}},
+			}},
+		},
 	}
 }
 
