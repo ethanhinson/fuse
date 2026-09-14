@@ -31,7 +31,29 @@ pair** (ADR-0058 rule 3) in `<namespace_prefix>-canary`:
 | `canary-closed` | the namespace default-deny only | **fail to reach** the same |
 
 Only the pair proves enforcement — a lone failure could just be an absent
-destination. **Any** other outcome, including "both failed", is a refusal naming
+destination.
+
+Under `egress.mode: allow-all` a **third leg** runs as well, because in that
+posture the metadata floor is carried entirely by `ipBlock.except` — a distinct
+CNI feature from default-deny, and one a CNI can ignore while passing both legs
+above:
+
+| Pod | Policy | Must |
+|---|---|---|
+| `canary-except` | `0.0.0.0/0` **except** a backing address of the `kubernetes` Service | **fail to reach** that address |
+
+The excepted address is a Service **endpoint**, not its ClusterIP: kube-proxy
+DNATs a ClusterIP before the CNI evaluates the `ipBlock`, so an `except` naming
+one can never match and the leg would condemn a CNI that honours `except`
+correctly. Leg 3 first re-probes that same address from `canary-open` — which is
+allowed everything and excepts nothing — so a failure is attributable to `except`
+and nothing else. If that baseline cannot be established (or the `kubernetes`
+Endpoints cannot be read), leg 3 **declines** rather than refusing: the pair has
+already proved enforcement, and an uninterpretable probe is never read either
+way. Leg 3 does not run under `enforce`, where the floor is by omission and
+nothing in the datapath uses `except`.
+
+This requires read-only `get` on `endpoints` (see `deploy/k8s/sandbox-rbac.yaml`). **Any** other outcome, including "both failed", is a refusal naming
 which leg failed, and the verdict is **sticky**: a cluster whose floor is
 unproven is disqualified for the life of the process and is never re-probed in
 the hope of a different answer. Each refusal emits one `sandbox.health` event
@@ -336,7 +358,7 @@ Two new closed-enum values arrive with this substrate:
 
 | Value | Where | Means |
 |---|---|---|
-| `floor_unverified` | `sandbox.health` reason | the canary pair did not prove NetworkPolicy enforcement; the handler is disqualified |
+| `floor_unverified` | `sandbox.health` reason | the canary did not prove NetworkPolicy enforcement (or, under `allow-all`, that `ipBlock.except` is honoured); the handler is disqualified |
 | `orphan` | `sandbox.reap` cause | a Pod whose heartbeat went stale was collected — an instance died without releasing it |
 
 ---

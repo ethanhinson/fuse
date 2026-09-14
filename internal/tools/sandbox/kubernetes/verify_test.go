@@ -43,6 +43,17 @@ type canaryProbes struct {
 	openReaches   bool
 	closedReaches bool
 
+	// exceptReaches is LEG 3b's outcome: whether the Pod allowed 0.0.0.0/0 EXCEPT
+	// the API server's ENDPOINT address nevertheless reached it. True means the
+	// CNI IGNORED `except`, which must disqualify the cluster.
+	exceptReaches bool
+
+	// baselineUnreachable makes LEG 3a — the probe from leg 1's Pod to the
+	// endpoint address, under an allow with no except — FAIL. Leg 3b is then
+	// unattributable and leg 3 must decline to conclude anything rather than
+	// refuse a cluster the pair already vouched for.
+	baselineUnreachable bool
+
 	// ncMissing makes every probe report the "nc: not found" shape, which must
 	// fail CLOSED with a diagnostic rather than be read as "closed, good".
 	ncMissing bool
@@ -55,8 +66,18 @@ type canaryProbes struct {
 func (c *canaryProbes) install(s *Substrate) {
 	s.newExecutor = func(url string) (remotecommand.Executor, error) {
 		c.execs.Add(1)
+		// LEG 3 probes the ENDPOINT address, and leg 3a does so from LEG 1's Pod,
+		// so the outcome is keyed on the TARGET as well as the Pod — the pod name
+		// alone cannot tell leg 1's own probe from leg 3a's.
+		toEndpoint := strings.Contains(url, apiEndpointIP)
 		reaches := c.openReaches
-		if strings.Contains(url, canaryClosedPod) {
+		switch {
+		case strings.Contains(url, canaryExceptPod):
+			reaches = c.exceptReaches
+		case toEndpoint:
+			// LEG 3a, from leg 1's Pod.
+			reaches = !c.baselineUnreachable
+		case strings.Contains(url, canaryClosedPod):
 			reaches = c.closedReaches
 		}
 		switch {
@@ -93,6 +114,26 @@ func defaultAPIService() *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: canaryAPIService, Namespace: "default"},
 		Spec:       corev1.ServiceSpec{ClusterIP: "10.96.0.1"},
+	}
+}
+
+// apiEndpointIP is the address BACKING the `kubernetes` Service — a real host
+// address, not a DNAT target. Leg 3 excepts THIS and not the ClusterIP: a
+// ClusterIP is rewritten by kube-proxy before the CNI's policy dataplane sees the
+// packet, so an except naming it can never match and leg 3 would report "this CNI
+// ignores except" against a CNI that honours it perfectly. Real Calico on kind
+// does exactly that, which is how the distinction was found.
+const apiEndpointIP = "192.168.228.3"
+
+// defaultAPIEndpoints is the Endpoints object leg 3 reads its address from. The
+// generated fake supplies neither this nor the Service.
+func defaultAPIEndpoints() *corev1.Endpoints {
+	return &corev1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{Name: canaryAPIService, Namespace: "default"},
+		Subsets: []corev1.EndpointSubset{{
+			Addresses: []corev1.EndpointAddress{{IP: apiEndpointIP}},
+			Ports:     []corev1.EndpointPort{{Port: 6443}},
+		}},
 	}
 }
 
@@ -520,5 +561,287 @@ func TestVerifyWaitsForTheCanaryLegsToBeGone(t *testing.T) {
 			t.Errorf("canary leg %s is still present when Verify returned (err=%v); the next run's Create will hit "+
 				"AlreadyExists and that run will SKIP rather than verify the floor", name, err)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// LEG 3 — the `except` leg (MINOR 2).
+//
+// The pair proves ENFORCEMENT EXISTS. It does not prove `ipBlock.except` is
+// honoured, and under `allow-all` the metadata floor is carried ENTIRELY by an
+// `except` list inside 0.0.0.0/0. A CNI that enforces default-deny (passing both
+// legs) but ignores `except` leaves 169.254.169.254 reachable while Verify has
+// declared the floor proven.
+//
+// Why the destination is the API server's ClusterIP and NOT 169.254.169.254:
+// a leg that probed the real metadata address could not distinguish "except was
+// honoured" from "nothing listens at 169.254.169.254 on this cluster" — which on
+// kind, and on any non-cloud cluster, is the actual reason it fails. That probe
+// proves nothing, and it is the same reasoning that made the original a PAIR
+// rather than a single probe. Leg 1 has ALREADY proved the API ClusterIP is
+// reachable from a Pod under a plain allow-all, so a leg 3 that is allowed
+// 0.0.0.0/0 EXCEPT that same address and still fails has exactly one available
+// explanation: `except` was honoured. The MECHANISM under test is identical to
+// the metadata floor's; only the address is one this cluster can vouch for.
+
+// TestVerifyThirdLegProvesExceptIsHonoured — leg 3 must run under allow-all, and
+// a CNI that ignores `except` (leg 3 REACHES) must disqualify the cluster.
+func TestVerifyThirdLegProvesExceptIsHonoured(t *testing.T) {
+	for name, tc := range map[string]struct {
+		exceptReaches bool
+		wantPass      bool
+	}{
+		"except is honoured — leg 3 cannot reach the excepted address": {
+			exceptReaches: false, wantPass: true,
+		},
+		"except is IGNORED — leg 3 REACHES the address it was excepted from": {
+			exceptReaches: true, wantPass: false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			probes := &canaryProbes{openReaches: true, closedReaches: false, exceptReaches: tc.exceptReaches}
+			cs := fake.NewClientset(defaultAPIService(), defaultAPIEndpoints())
+			// ALLOW-ALL: the posture whose floor rests on `except`.
+			s := newTestSubstrate(t, cs)
+			readyOnCreate(t, cs, s)
+			probes.install(s)
+
+			err := s.Verify(context.Background())
+			if tc.wantPass && err != nil {
+				t.Fatalf("Verify = %v, want nil", err)
+			}
+			if !tc.wantPass {
+				if err == nil {
+					t.Fatal("Verify PASSED with a CNI that ignores ipBlock.except; under allow-all the metadata floor " +
+						"is carried entirely by an except list, so every sandbox on this cluster can read the node's cloud identity")
+				}
+				if !strings.Contains(err.Error(), canaryExceptPod) {
+					t.Errorf("Verify = %q, must name the failing leg %q", err, canaryExceptPod)
+				}
+				if !strings.Contains(err.Error(), "except") {
+					t.Errorf("Verify = %q, must name `except` as the ignored construct", err)
+				}
+			}
+			assertNoCanaryPods(t, cs)
+		})
+	}
+}
+
+// Leg 3's policy must except EXACTLY the address leg 1 proved reachable, and
+// must otherwise be the same broad-allow shape the metadata floor uses. An
+// except of some other address would make leg 3's failure unattributable, and a
+// narrow allow (rather than 0.0.0.0/0 minus one) would test a different
+// NetworkPolicy construct than the one the floor depends on.
+func TestVerifyThirdLegPolicyMirrorsTheMetadataFloorShape(t *testing.T) {
+	probes := &canaryProbes{openReaches: true, closedReaches: false, exceptReaches: false}
+	cs := fake.NewClientset(defaultAPIService(), defaultAPIEndpoints())
+	s := newTestSubstrate(t, cs)
+	readyOnCreate(t, cs, s)
+	probes.install(s)
+
+	if err := s.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	ns := s.canaryNamespace()
+	pol, err := cs.NetworkingV1().NetworkPolicies(ns).Get(context.Background(), canaryExceptPolicy, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("leg 3's policy %s/%s: %v", ns, canaryExceptPolicy, err)
+	}
+	if got := pol.Spec.PodSelector.MatchLabels[labelPod]; got != canaryExceptPod {
+		t.Errorf("leg 3's policy selects %q, want ONLY %q — a broader selector would cover leg 1 and leg 1 would then fail", got, canaryExceptPod)
+	}
+	if len(pol.Spec.Egress) != 1 || len(pol.Spec.Egress[0].To) != 1 {
+		t.Fatalf("leg 3's policy = %+v, want exactly one rule with one peer", pol.Spec.Egress)
+	}
+	block := pol.Spec.Egress[0].To[0].IPBlock
+	if block == nil || block.CIDR != "0.0.0.0/0" {
+		t.Fatalf("leg 3's ipBlock = %+v, want the broad 0.0.0.0/0 the allow-all floor uses", block)
+	}
+
+	// THE ATTRIBUTION. The excepted address must be the one leg 1 reached, and
+	// ipBlockReaches — the same predicate the floor's own assertion uses — must
+	// say it is excluded.
+	want := apiEndpointIP
+	if len(block.Except) != 1 || block.Except[0] != want+"/32" {
+		t.Fatalf("leg 3's except = %v, want exactly [%s/32] — the Service's ENDPOINT address, which leg 3a proved reachable. "+
+			"The ClusterIP would be wrong: kube-proxy DNATs it before the CNI's policy dataplane sees the packet, so an "+
+			"except naming it can never match and leg 3 would condemn a CNI that honours except perfectly", block.Except, want)
+	}
+	if ipBlockReaches(block, want) {
+		t.Errorf("leg 3's ipBlock still permits %s; the leg would then be expected to reach and would prove nothing", want)
+	}
+}
+
+// Under ENFORCE there is no `except` in the datapath at all — the per-Pod policy
+// names one destination and the floor is by omission — so leg 3 must NOT run.
+// Running it there would spend a Pod and a policy proving a property nothing in
+// that posture depends on.
+func TestVerifyThirdLegDoesNotRunUnderEnforce(t *testing.T) {
+	probes := &canaryProbes{openReaches: true, closedReaches: false}
+	s, cs := verifySubstrate(t, probes) // enforcing
+	if err := s.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if _, err := cs.NetworkingV1().NetworkPolicies(s.canaryNamespace()).Get(context.Background(), canaryExceptPolicy, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("leg 3's policy exists under enforce (err=%v); the enforce floor is by OMISSION and does not rest on `except`", err)
+	}
+}
+
+// TestVerifyWaitsForTheThirdLegToBeGone is the cleanup discipline of commit
+// 4d4fbb0, extended to leg 3.
+//
+// A leg that lingers in Terminating when Verify returns makes the NEXT Verify's
+// Create hit AlreadyExists, which runCanaryLeg turns into a refusal that
+// re-running does not clear — every run leaves the same residue. That defect
+// made two of five kind acceptances SKIP in the combined run while passing
+// individually. Leg 3 must go through deleteCanaryLeg (delete-and-CONFIRM) for
+// the same reason both other legs do; a best-effort delete here reintroduces
+// exactly the lane defect 4d4fbb0 fixed, and only under allow-all, where it
+// would be found last.
+func TestVerifyWaitsForTheThirdLegToBeGone(t *testing.T) {
+	cs := fake.NewClientset(defaultAPIService(), defaultAPIEndpoints())
+	s := newTestSubstrate(t, cs) // ALLOW-ALL: leg 3 runs.
+	readyOnCreate(t, cs, s)
+	(&canaryProbes{openReaches: true, closedReaches: false, exceptReaches: false}).install(s)
+
+	// The same graceful-delete model: accepted, but the object REMAINS until
+	// something polls for it. The generated fake deletes synchronously, so
+	// without this reactor no fake-backed test can see the difference between a
+	// delete-and-confirm and a fire-and-forget.
+	var mu sync.Mutex
+	terminating := map[string]int{}
+	cs.PrependReactor("delete", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		name := action.(k8stesting.DeleteAction).GetName()
+		if !strings.HasPrefix(name, canaryPodPrefix) {
+			return false, nil, nil
+		}
+		mu.Lock()
+		if _, already := terminating[name]; !already {
+			terminating[name] = 2
+		}
+		left := terminating[name]
+		mu.Unlock()
+		if left > 0 {
+			return true, nil, nil
+		}
+		return false, nil, nil
+	})
+	cs.PrependReactor("get", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		name := action.(k8stesting.GetAction).GetName()
+		mu.Lock()
+		left, tracked := terminating[name]
+		if tracked && left > 0 {
+			terminating[name] = left - 1
+		}
+		mu.Unlock()
+		if !tracked || left <= 0 {
+			return false, nil, nil
+		}
+		now := metav1.Now()
+		return true, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: s.canaryNamespace(), DeletionTimestamp: &now,
+		}}, nil
+	})
+
+	if err := s.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	for _, name := range []string{canaryOpenPod, canaryClosedPod, canaryExceptPod} {
+		if _, err := cs.CoreV1().Pods(s.canaryNamespace()).Get(context.Background(), name, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Errorf("canary leg %s is still present when Verify returned (err=%v); the next run's Create will hit "+
+				"AlreadyExists and that run will SKIP rather than verify the floor", name, err)
+		}
+	}
+}
+
+// TestVerifyThirdLegExceptsTheEndpointAndNotTheClusterIP is the regression for the
+// mistake that made this leg condemn real Calico.
+//
+// A ClusterIP is a kube-proxy DNAT target. The packet is rewritten to a backing
+// endpoint BEFORE the CNI's policy dataplane evaluates the ipBlock, so an `except`
+// naming the ClusterIP can NEVER match — a Pod allowed `0.0.0.0/0 except
+// 10.96.0.1/32` reaches 10.96.0.1 on a CNI that honours `except` flawlessly. The
+// first version of leg 3 did exactly that and disqualified the kind lane's Calico
+// cluster, skipping all five acceptances.
+//
+// So: the excepted address must be one the CNI actually sees, and it must be the
+// SAME address leg 3 probes. This asserts both, which is what makes the leg's
+// failure attributable to `except` rather than to address translation.
+func TestVerifyThirdLegExceptsTheEndpointAndNotTheClusterIP(t *testing.T) {
+	probes := &canaryProbes{openReaches: true, closedReaches: false, exceptReaches: false}
+	cs := fake.NewClientset(defaultAPIService(), defaultAPIEndpoints())
+	s := newTestSubstrate(t, cs)
+	readyOnCreate(t, cs, s)
+	probes.install(s)
+
+	if err := s.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	pol, err := cs.NetworkingV1().NetworkPolicies(s.canaryNamespace()).Get(context.Background(), canaryExceptPolicy, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("leg 3's policy: %v", err)
+	}
+	block := pol.Spec.Egress[0].To[0].IPBlock
+	const clusterIP = "10.96.0.1"
+	for _, ex := range block.Except {
+		if strings.HasPrefix(ex, clusterIP+"/") {
+			t.Fatalf("leg 3 excepts the ClusterIP %s. kube-proxy DNATs it before the CNI evaluates the ipBlock, so the "+
+				"except can never match and leg 3 will condemn every correctly-enforcing cluster (it did exactly that "+
+				"against real Calico). Except a BACKING ENDPOINT address instead", ex)
+		}
+	}
+	if len(block.Except) != 1 || block.Except[0] != apiEndpointIP+"/32" {
+		t.Fatalf("leg 3's except = %v, want [%s/32] — the Service's backing endpoint", block.Except, apiEndpointIP)
+	}
+}
+
+// TestVerifyThirdLegDeclinesRatherThanRefusesOnAnUnATTRIBUTABLEBaseline — when leg
+// 3a cannot establish that the endpoint address is reachable at all, leg 3b's
+// failure says nothing about `except`, and Verify must NOT read it either way.
+//
+// It must not refuse: the PAIR has already proved enforcement exists, and
+// disqualifying the cluster because a supplementary probe had no baseline would
+// break every correctly-enforcing cluster whose API endpoint a Pod cannot address
+// directly. And it must not pass leg 3b off as proof: that is the single
+// unattributable probe this entire file is built to avoid. Declining is the only
+// honest third option — the kind lane's TestIntegrationMetadataFloorHoldsInBothModes
+// remains the check for the property.
+func TestVerifyThirdLegDeclinesRatherThanRefusesOnAnUnattributableBaseline(t *testing.T) {
+	// exceptReaches is TRUE — the outcome that would otherwise condemn the
+	// cluster. With no baseline it is not evidence, so it must not be read as any.
+	probes := &canaryProbes{openReaches: true, closedReaches: false, exceptReaches: true, baselineUnreachable: true}
+	cs := fake.NewClientset(defaultAPIService(), defaultAPIEndpoints())
+	s := newTestSubstrate(t, cs)
+	readyOnCreate(t, cs, s)
+	probes.install(s)
+
+	if err := s.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify = %v, want nil: the PAIR proved enforcement, and leg 3 having no baseline is not grounds to "+
+			"disqualify a cluster — it is a gap in what leg 3 could establish", err)
+	}
+	// And leg 3b must not have been run at all: a probe whose result cannot be
+	// interpreted is a Pod spent for nothing.
+	if _, err := cs.NetworkingV1().NetworkPolicies(s.canaryNamespace()).Get(context.Background(), canaryExceptPolicy, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Errorf("leg 3b's policy was applied (err=%v) though its baseline was unreachable and its result would be unattributable", err)
+	}
+	assertNoCanaryPods(t, cs)
+}
+
+// Leg 3 needs the Endpoints object. A cluster whose Endpoints fuse cannot read is
+// the same shape as an unreachable baseline: the PAIR already passed, so Verify
+// declines to conclude rather than disqualifying the cluster.
+func TestVerifyThirdLegDeclinesWithoutTheAPIEndpoints(t *testing.T) {
+	probes := &canaryProbes{openReaches: true, closedReaches: false}
+	cs := fake.NewClientset(defaultAPIService()) // no Endpoints
+	s := newTestSubstrate(t, cs)
+	readyOnCreate(t, cs, s)
+	probes.install(s)
+
+	if err := s.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify = %v; unreadable Endpoints leave leg 3 without an address to except, which is a gap in leg 3 "+
+			"and not evidence against a cluster the pair already vouched for", err)
 	}
 }

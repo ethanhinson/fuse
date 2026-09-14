@@ -17,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
 
 // TestNamespaceNameInjective is THE headline assertion of this task.
@@ -61,23 +62,31 @@ func TestNamespaceNameInjective(t *testing.T) {
 		"",
 	}
 
-	seen := make(map[string]event.TenantID, len(tenants))
-	for _, tenant := range tenants {
-		name := namespaceName("fuse-sb", tenant)
+	// The PREFIX is varied too, and that is not decoration. The 63-byte ceiling
+	// is asserted below, but for a long time it was only ever asserted against
+	// "fuse-sb" — so the one prefix that can actually break it, a long-but-valid
+	// one, was never tested. The longest composable prefix (52 bytes: 52 + "-" +
+	// 1 slug byte + "-" + 8 hex = 63) is the boundary case, and it must produce
+	// names that are still valid, still injective, and still within 63.
+	for _, prefix := range []string{"fuse-sb", strings.Repeat("p", 52)} {
+		seen := make(map[string]event.TenantID, len(tenants))
+		for _, tenant := range tenants {
+			name := namespaceName(prefix, tenant)
 
-		if prior, dup := seen[name]; dup {
-			t.Fatalf("namespaceName collision: tenants %q and %q both map to %q — the tenant→namespace map MUST be injective", prior, tenant, name)
-		}
-		seen[name] = tenant
+			if prior, dup := seen[name]; dup {
+				t.Fatalf("namespaceName(%q, …) collision: tenants %q and %q both map to %q — the tenant→namespace map MUST be injective", prefix, prior, tenant, name)
+			}
+			seen[name] = tenant
 
-		if len(name) > 63 {
-			t.Errorf("namespaceName(%q) = %q is %d bytes; a DNS-1123 label is at most 63", tenant, name, len(name))
-		}
-		if errs := validateDNS1123Label(name); len(errs) > 0 {
-			t.Errorf("namespaceName(%q) = %q is not a valid DNS-1123 label: %v", tenant, name, errs)
-		}
-		if !strings.HasPrefix(name, "fuse-sb-") {
-			t.Errorf("namespaceName(%q) = %q does not carry the configured prefix", tenant, name)
+			if len(name) > 63 {
+				t.Errorf("namespaceName(%q, %q) = %q is %d bytes; a DNS-1123 label is at most 63", prefix, tenant, name, len(name))
+			}
+			if errs := validateDNS1123Label(name); len(errs) > 0 {
+				t.Errorf("namespaceName(%q, %q) = %q is not a valid DNS-1123 label: %v", prefix, tenant, name, errs)
+			}
+			if !strings.HasPrefix(name, prefix+"-") {
+				t.Errorf("namespaceName(%q, %q) = %q does not carry the configured prefix", prefix, tenant, name)
+			}
 		}
 	}
 }
@@ -386,5 +395,52 @@ func TestEnsureNamespaceCreatesTheZeroPermissionServiceAccount(t *testing.T) {
 	// the second call must be success and not a refusal.
 	if _, err := s.ensureNamespace(context.Background(), "acme"); err != nil {
 		t.Fatalf("second ensureNamespace: %v", err)
+	}
+}
+
+// TestNewSubstrateRefusesAPrefixTooLongToComposeAName is MINOR 1.
+//
+// validateDNS1123Label accepts a prefix up to 63 bytes, and newSubstrate used to
+// validate the prefix ALONE. But the namespace name is prefix + "-" + slug + "-"
+// + 8 hex, so a prefix over 52 bytes leaves namespaceName a NEGATIVE slug budget:
+// dns1123Slug returns "", the filler "t" is substituted, and the composed name is
+// longer than 63 — which the API server rejects on EVERY Provision, for EVERY
+// tenant. A prefix the constructor accepted therefore produced a substrate that
+// could never provision anything, and the diagnostic arrived per-Acquire from the
+// API server rather than at construction where the knob is named.
+//
+// The refusal must name the ACTUAL problem — the prefix is too long to compose a
+// namespace name — not a generic "not a DNS-1123 label", because the prefix IS a
+// valid label and an operator told otherwise has nothing to act on.
+func TestNewSubstrateRefusesAPrefixTooLongToComposeAName(t *testing.T) {
+	// 53 bytes: a perfectly valid DNS-1123 label on its own, and one byte more
+	// than the longest prefix that can still carry a one-byte slug and the hash.
+	long := strings.Repeat("p", 53)
+	if errs := validateDNS1123Label(long); len(errs) > 0 {
+		t.Fatalf("the fixture prefix %q is not itself a valid label (%v); the test would then prove nothing", long, errs)
+	}
+
+	_, err := newSubstrate(fake.NewClientset(), Options{
+		Config: sandbox.Config{Kubernetes: sandbox.Kubernetes{NamespacePrefix: ptr(long)}},
+	})
+	if err == nil {
+		t.Fatalf("newSubstrate accepted namespace_prefix %q, which composes the %d-byte namespace name %q — "+
+			"the API server rejects that on every Provision, for every tenant",
+			long, len(namespaceName(long, "acme")), namespaceName(long, "acme"))
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "too long") {
+		t.Errorf("newSubstrate = %q; the refusal must say the PREFIX IS TOO LONG to compose a namespace name — "+
+			"a generic invalid-label message points the operator at a prefix that is in fact a valid label", err)
+	}
+
+	// The longest prefix that CAN compose a name must still be accepted: a fix
+	// that simply tightened the bound to something arbitrary would pass the
+	// assertion above while refusing working configurations.
+	ok := strings.Repeat("p", 52)
+	if _, err := newSubstrate(fake.NewClientset(), Options{
+		Config: sandbox.Config{Kubernetes: sandbox.Kubernetes{NamespacePrefix: ptr(ok)}},
+	}); err != nil {
+		t.Errorf("newSubstrate refused namespace_prefix %q (%d bytes), which composes the valid %d-byte name %q: %v",
+			ok, len(ok), len(namespaceName(ok, "acme")), namespaceName(ok, "acme"), err)
 	}
 }
