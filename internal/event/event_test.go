@@ -173,14 +173,49 @@ func TestSandboxCauseWireValues(t *testing.T) {
 		SandboxCauseEarlyReturn:   "early_return",
 		SandboxCauseIdleTTL:       "idle_ttl",
 		SandboxCauseStaleCheckout: "stale_checkout",
+		// orphan (change 0075) is the sixth: a REMOTE sandbox the substrate-wide
+		// reaper collected because no live instance was heartbeating it. It is
+		// deliberately not folded into idle_ttl — idle_ttl is this process's Pool
+		// reclaiming what it remembers, and an orphan is a sandbox no Pool
+		// remembers, so the orphan count is the only signal that fuse instances
+		// are dying without releasing.
+		SandboxCauseOrphan: "orphan",
 	}
 	for c, want := range cases {
 		if string(c) != want {
 			t.Errorf("SandboxCause %q != %q", string(c), want)
 		}
 	}
+	if len(cases) != 6 {
+		t.Fatalf("cause enum must have exactly 6 values, got %d", len(cases))
+	}
+}
+
+// TestSandboxHealthReasonWireValues pins the health-reason enum. These strings
+// become a Prometheus label (fuse_sandbox_unhealthy_total{reason=...}) and are the
+// wire form of sandbox.HealthReason; the sandbox package imports this one, so they
+// are pinned literally here and kept in lockstep by the translator in
+// internal/tools.
+//
+// FIVE values, not four: floor_unverified (change 0075) is the remote substrate's
+// canary pair failing to prove the network floor, and it is the one on this list
+// an operator should page on — it means that cluster's CNI does not enforce
+// NetworkPolicy, so no sandbox on it is contained.
+func TestSandboxHealthReasonWireValues(t *testing.T) {
+	cases := map[SandboxHealthReason]string{
+		SandboxHealthOOM:             "oom",
+		SandboxHealthRuntimeExit:     "runtime_exit",
+		SandboxHealthPullFailed:      "pull_failed",
+		SandboxHealthAcquireFailed:   "acquire_failed",
+		SandboxHealthFloorUnverified: "floor_unverified",
+	}
+	for r, want := range cases {
+		if r != want {
+			t.Errorf("SandboxHealthReason %q != %q", r, want)
+		}
+	}
 	if len(cases) != 5 {
-		t.Fatalf("cause enum must have exactly 5 values, got %d", len(cases))
+		t.Fatalf("health-reason enum must have exactly 5 values, got %d", len(cases))
 	}
 }
 

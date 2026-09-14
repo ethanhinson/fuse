@@ -358,3 +358,53 @@ func TestSandboxMetricsIgnoreNonSandboxRecords(t *testing.T) {
 		}
 	}
 }
+
+// THE THREE LABEL VOCABULARIES CHANGE 0075 WIDENS (the Kubernetes substrate).
+//
+// The recorder pins its label vocabularies as ALLOWLISTS rather than importing the
+// wire enums, deliberately, so that widening a wire enum is a reviewed edit to the
+// metric catalog too. The cost of that choice is exactly this failure mode: a new
+// value the recorder does not know collapses to __overflow__ and there is no
+// compile error, no test failure, and no log line — it presents as "the dashboards
+// are empty" while the events are plainly there in the stream.
+//
+// So each of the three is asserted as a REAL series and, in the same test, as NOT
+// having become __overflow__. Asserting only the former would pass if the allowlist
+// were widened and the value misspelled.
+func TestSandboxKubernetesLabelsAreNotOverflow(t *testing.T) {
+	r := testRecorder(t)
+
+	// handler=kubernetes on an acquire's cold-start histogram. runtime is the
+	// cluster's reported server version in production, which is NOT a bounded
+	// value, so "none" is what a substrate with no container CLI reports.
+	cold := sandboxRecord("sandbox.acquire")
+	cold.Handler, cold.ContainerID, cold.ColdStartMS = "kubernetes", "ns/sb-abc-1", 2000
+
+	// reason=floor_unverified: the canary pair did not prove the network floor.
+	floor := sandboxRecord("sandbox.health")
+	floor.Outcome, floor.ErrorCategory = observe.OutcomeError, observe.ErrorCategoryTool
+	floor.Handler, floor.Reason = "kubernetes", "floor_unverified"
+
+	// cause=orphan: the substrate-wide reaper collected a sandbox no instance was
+	// heartbeating.
+	orphan := sandboxRecord("sandbox.reap")
+	orphan.Handler, orphan.Cause = "kubernetes", "orphan"
+
+	body := projectAll(t, r, cold, floor, orphan)
+	wantAll(t, body,
+		`fuse_sandbox_cold_start_seconds_count{handler="kubernetes",runtime="none",tenant_id="admitted"} 1`,
+		`fuse_sandbox_unhealthy_total{handler="kubernetes",reason="floor_unverified",tenant_id="admitted"} 1`,
+		`fuse_sandbox_reaped_total{cause="orphan",handler="kubernetes",tenant_id="admitted"} 1`,
+	)
+	// Only SERIES lines are examined: the metrics-policy families legitimately
+	// mention __overflow__ in their HELP text, and a substring search over the
+	// whole body would read that as a collapsed label.
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "#") || !strings.Contains(line, "__overflow__") {
+			continue
+		}
+		if strings.HasPrefix(line, "fuse_sandbox_") {
+			t.Errorf("a change-0075 sandbox label collapsed to __overflow__: %s", line)
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/loopauth"
@@ -107,6 +108,13 @@ type serviceOptions struct {
 	// NewService can apply them LAST, after every caller-supplied option.
 	egressProxy     *Proxy
 	egressForwarder string
+
+	// handlerFactories are the substrate constructors the composition root
+	// registered by NAME (change 0075), consulted by selectHandler for a config
+	// that names neither built-in. It is nil until something registers one, and a
+	// nil map reads as "nothing registered" — so the absence of a registration is
+	// a refusal, never a fallback. See WithHandlerFactory.
+	handlerFactories map[string]func(Config) (Handler, error)
 
 	// tenantRoots is change 0065's per-tenant mount-root resolver, declared by
 	// the composition root through WithTenantRoots. Held here — rather than
@@ -225,6 +233,55 @@ func WithEgressProxy(p *Proxy, forwarderPath string) ServiceOption {
 // shared across tenants.
 func WithTenantRoots(t *TenantRoots) ServiceOption {
 	return func(o *serviceOptions) { o.tenantRoots = t }
+}
+
+// WithHandlerFactory registers the constructor for a substrate named in the
+// trusted config but implemented OUTSIDE this package (change 0075).
+//
+// It is the seam that lets a remote substrate — a Kubernetes warm Pod, and any
+// later PaaS — be selected by `handler: <name>` without this package importing a
+// control-plane SDK. The factory is called at most once, during NewService, with
+// the frozen Config; it may not run afterwards, so nothing a model does can
+// cause a substrate to be constructed.
+//
+// SECURITY-CRITICAL, in two directions:
+//
+//   - Like WithHostedPosture and WithTrustedRoot, the registration comes from the
+//     COMPOSITION ROOT and from nowhere else. It is not reachable from the config
+//     file: the file only NAMES a handler, and a name with no registration
+//     refuses (see selectHandler). An operator cannot introduce a substrate, only
+//     select one the binary already carries.
+//   - It can never widen containment. The two built-in names are REFUSED as
+//     registration keys, so a factory cannot intercept the host off-switch or
+//     stand in for the container handler; and a factory whose handler reports the
+//     host identity is discarded rather than used.
+//
+// A registration that could not do its job is IGNORED rather than half-honoured:
+// an empty or whitespace name, either reserved name, and a nil function all
+// register nothing. That is the fail-closed direction — an ignored registration
+// makes the named handler refuse, where honouring a broken one would make
+// selection depend on a value nobody can name.
+//
+// Registering the same name twice keeps the LAST registration, matching every
+// other option's last-write-wins semantics.
+func WithHandlerFactory(name string, fn func(Config) (Handler, error)) ServiceOption {
+	return func(o *serviceOptions) {
+		name = strings.TrimSpace(name)
+		if name == "" || fn == nil {
+			return
+		}
+		if name == HandlerContainer || name == HandlerHost {
+			// The built-in decisions are not registrable. selectHandler reaches
+			// them through their own branches, and a factory that could shadow
+			// either would be a caller-supplied substitute for the containment
+			// decision itself.
+			return
+		}
+		if o.handlerFactories == nil {
+			o.handlerFactories = make(map[string]func(Config) (Handler, error), 1)
+		}
+		o.handlerFactories[name] = fn
+	}
 }
 
 // withContainerLookPath overrides container CLI probing (tests).
@@ -430,19 +487,77 @@ func defaultContainerFactory(cfg Config, opts ...containerOption) (Handler, erro
 //
 //  1. The config authorized the host AND the hosted posture is not active
 //     ⇒ host. This is the operator's local off-switch, honoured.
-//  2. Otherwise ⇒ container. This is the default, and it is what an absent,
+//  2. The config NAMED a substrate that is neither host nor container ⇒ that
+//     substrate's registered factory, and REFUSE if it is absent or fails
+//     (change 0075). A named handler is never substituted.
+//  3. Otherwise ⇒ container. This is the default, and it is what an absent,
 //     unreadable, malformed, or un-understood config resolves to (T3).
-//  3. The container substrate could not be constructed and the host was not
+//  4. The container substrate could not be constructed and the host was not
 //     authorized ⇒ REFUSE. Never a host fallback.
 //
-// Rule 4 has no branch of its own, and that is the point: under the hosted
+// Rule 5 has no branch of its own, and that is the point: under the hosted
 // posture the off-switch is not overridden, it is never consulted. `contained:
 // false` and `handler: host` are structurally inert because hostAuthorized is
 // unreachable while hosted is true, so there is no path — including the
-// container-unavailable path — on which a hosted process reaches the host.
+// container-unavailable path and the named-handler path — on which a hosted
+// process reaches the host.
+//
+// # THE STRUCTURAL PROPERTY THIS FUNCTION'S SHAPE IS
+//
+// After the ONE `hostAuthorized` branch at the top returns, the identifier
+// `o.hostHandler` does not appear anywhere in this function again. That absence
+// is the security property, and it is deliberately structural rather than a
+// check: there is no expression on any later path — not the named-handler
+// path, not the unregistered-name path, not the container path — that can
+// evaluate to the host handler, so no later edit can invert a condition and
+// reach it. Change 0075 added rule 2 in the middle of exactly that property, so
+// TestServiceNamedHandlerFactoryFailureRefusesAndNeverReachesTheHost pins it
+// with a recording host handler that must see zero Acquires.
+//
+// The second half of rule 2 is the same discipline pointed sideways rather than
+// down: a named handler that cannot be built must not fall through to the
+// CONTAINER handler either. Substituting a different contained substrate for the
+// one the operator named is not a containment breach, but it is the
+// `security-knob-inert-at-composition-root` failure — an operator configures
+// `handler: kubernetes`, gets a working bash tool, and never learns their
+// sandbox is not where they think it is. The registered factory or nothing.
 func selectHandler(cfg Config, o *serviceOptions) (Handler, error) {
 	if hostAuthorized(cfg, o.hosted) {
 		return o.hostHandler, nil
+	}
+
+	// A NAMED substrate — anything the loader resolved that is neither of the two
+	// built-ins — is served by its registered factory and by nothing else.
+	//
+	// The condition is written as "not container and not host" rather than as a
+	// lookup in the factory map, and the direction matters: an unregistered name
+	// must REFUSE, so the branch has to be entered on the strength of the NAME
+	// alone. A map-membership condition would instead fall through to the
+	// container handler for a name nobody registered, which is precisely the
+	// silent substitution above.
+	if name := cfg.Handler; name != "" && name != HandlerContainer && name != HandlerHost {
+		factory := o.handlerFactories[name]
+		if factory == nil {
+			return nil, fmt.Errorf("%w: config names handler %q, which this binary has no factory for", ErrRefusedUncontained, name)
+		}
+		handler, err := factory(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s handler: %w", ErrRefusedUncontained, name, err)
+		}
+		if handler == nil {
+			// A factory returning (nil, nil) would otherwise produce a Service
+			// that reports Available() and then nil-derefs at the first Acquire.
+			return nil, fmt.Errorf("%w: %s handler factory produced no handler", ErrRefusedUncontained, name)
+		}
+		if handler.Name() == HandlerHost {
+			// A registered factory cannot be a door to the host substrate. This
+			// one IS a check rather than a structural absence — a factory is
+			// caller-supplied code, so its RETURN value cannot be constrained by
+			// shape the way this function's own branches are — and it is the
+			// narrowest possible one: the handler is discarded, never used.
+			return nil, fmt.Errorf("%w: %s handler factory produced a %q handler", ErrRefusedUncontained, name, HandlerHost)
+		}
+		return handler, nil
 	}
 
 	handler, err := o.newContainer(cfg, o.containerOpts...)
@@ -503,6 +618,35 @@ func (s *Service) resolveEnv() Env {
 // Acquire refuses, and the correct response is to report the bash tool as
 // unavailable — never to run the command another way.
 func (s *Service) Available() bool { return s.handler != nil }
+
+// SelectionRefusal reports WHY no substrate was selected, or nil when one was.
+//
+// # Why this accessor exists
+//
+// Until change 0075 a refused selection was observable only from inside Acquire,
+// which means the diagnostic reached the MODEL and never the operator: a fuse
+// configured with a handler this binary cannot build came up printing nothing,
+// looked healthy, and failed every bash call at runtime. That is
+// `security-knob-inert-at-composition-root` wearing its other face — not an
+// unwired knob, but a wired knob whose refusal nobody was told about — and it
+// became load-bearing with the named-handler branch, where a refusal is the
+// EXPECTED outcome of several ordinary misconfigurations (an unregistered name,
+// a discarded config block, an unreachable control plane).
+//
+// So the refusal is readable at startup, and cmd/fuse prints it beside the
+// UNCONTAINED and EGRESS-BLACKOUT notices. It is strictly read-only and nothing
+// can be re-decided from it: the error it returns is the same one Acquire
+// returns, already wrapped in ErrRefusedUncontained, so a caller cannot mistake
+// it for permission to run the command another way.
+//
+// A nil *Service reports nil, matching every other accessor's tolerance of one
+// (NewBash(nil) is a supported fail-closed shape).
+func (s *Service) SelectionRefusal() error {
+	if s == nil {
+		return nil
+	}
+	return s.refusal
+}
 
 // HandlerName reports the bounded substrate identifier ("container" or "host"),
 // or "" when selection refused. It is safe as an event or metric label.

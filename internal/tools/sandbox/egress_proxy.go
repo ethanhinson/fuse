@@ -136,6 +136,12 @@ type Proxy struct {
 	closed    bool
 	listeners map[string]*principalListener
 
+	// tls is the OPTIONAL sandbox→proxy TLS listener (change 0075, egress_tls.go).
+	// Nil is the ordinary local-substrate state: the UNIX sockets are the whole
+	// datapath and no certificate exists. It is guarded by mu because ListenTLS,
+	// Enroll and Close all read it.
+	tls *tlsListener
+
 	// wg tracks the accept loops so Close can be synchronous.
 	wg sync.WaitGroup
 }
@@ -559,6 +565,14 @@ func (p *Proxy) Release(principal loopauth.Principal) error {
 	delete(p.listeners, key)
 	p.mu.Unlock()
 
+	// The certificates minted for this principal die WITH its policy, in one
+	// step: a serial that outlived the listener holding its policy would resolve
+	// to nothing on the next handshake, and "resolves to nothing" is a state the
+	// TLS path deliberately treats as an unauthenticated peer. Revoking here
+	// makes the revocation a consequence of teardown rather than a second thing
+	// a caller has to remember.
+	p.revokeSerials(key)
+
 	return pl.close()
 }
 
@@ -580,9 +594,20 @@ func (p *Proxy) Close() error {
 		listeners = append(listeners, pl)
 	}
 	p.listeners = nil
+	tl := p.tls
+	p.tls = nil
 	p.mu.Unlock()
 
 	var firstErr error
+	// The TLS listener closes FIRST, so no further handshake can find a serial
+	// while the listeners it would resolve to are being torn down. Every
+	// certificate it issued is dead with it: the CA is in memory and the registry
+	// went with the listener.
+	if tl != nil {
+		if err := tl.ln.Close(); err != nil {
+			firstErr = err
+		}
+	}
 	for _, pl := range listeners {
 		if err := pl.close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -795,7 +820,15 @@ func (pl *principalListener) close() error {
 	pl.conns = nil
 	pl.mu.Unlock()
 
-	err := pl.ln.Close()
+	// ln and dir are nil/empty for a listener created by Enroll: a remote
+	// sandbox has no container to bind-mount a socket into, so such a listener
+	// exists only for its policy, its semaphore and this teardown set. Guarding
+	// here rather than giving the TLS path its own teardown is what keeps ONE
+	// close path — and therefore one place where live connections are closed.
+	var err error
+	if pl.ln != nil {
+		err = pl.ln.Close()
+	}
 	for _, c := range conns {
 		_ = c.Close()
 	}
@@ -804,8 +837,10 @@ func (pl *principalListener) close() error {
 	// Go unlinks a socket it created on Close; removing the directory removes
 	// it again if that ever stops being true, and takes the unguessable path
 	// component out of the filesystem with it.
-	if rmErr := os.RemoveAll(pl.dir); rmErr != nil && err == nil {
-		err = rmErr
+	if pl.dir != "" {
+		if rmErr := os.RemoveAll(pl.dir); rmErr != nil && err == nil {
+			err = rmErr
+		}
 	}
 	return err
 }
