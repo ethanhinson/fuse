@@ -773,6 +773,26 @@ func assertPosture(want, got *corev1.Pod) error {
 		if sc.RunAsUser == nil || *sc.RunAsUser != sandboxUID {
 			fault("pod runAsUser is %s, want %d; runAsNonRoot without an explicit uid refuses every image that declares no USER, and a uid of 0 contradicts it", int64Ptr(sc.RunAsUser), sandboxUID)
 		}
+		// THE GROUP HALF, and it is not symmetry for symmetry's sake.
+		//
+		// renderPod states why fsGroup is load-bearing: the workspace is an
+		// emptyDir, created ROOT-OWNED, and without fsGroup the Pod STARTS and then
+		// every command fails writing to /workspace. That is the worst failure
+		// shape available — a Pod that passes the read-back and is then useless —
+		// and it is exactly what the explicit runAsUser assertion above exists to
+		// prevent, one field over. runAsGroup is the other half: without it the
+		// process's primary group is the image's (root's, for the images this
+		// substrate ships against) and no longer matches the fsGroup that owns the
+		// workspace.
+		//
+		// Both are asserted as PRESENT AND EQUAL, not merely present: a value reset
+		// to 0 passes a nil check and reintroduces the root-owned workspace.
+		if sc.RunAsGroup == nil || *sc.RunAsGroup != sandboxGID {
+			fault("pod runAsGroup is %s, want %d; without an explicit gid the primary group is the image's, which no longer matches the fsGroup owning the workspace", int64Ptr(sc.RunAsGroup), sandboxGID)
+		}
+		if sc.FSGroup == nil || *sc.FSGroup != sandboxGID {
+			fault("pod fsGroup is %s, want %d; the workspace emptyDir is created root-owned, so without it the Pod starts and then EVERY command fails writing to %s", int64Ptr(sc.FSGroup), sandboxGID, workspaceMount)
+		}
 		// A nil profile AND an explicit Unconfined are both drift, and they are
 		// separate mistakes: a nil check alone passes a webhook that sets
 		// Unconfined on purpose.
@@ -920,6 +940,19 @@ func assertPosture(want, got *corev1.Pod) error {
 			// present-and-weaker value is drift.
 			if sc.RunAsUser != nil && *sc.RunAsUser != sandboxUID {
 				fault("container %q overrides runAsUser to %d, want %d or unset (the container value takes PRECEDENCE over the pod's, so this is the pod-level non-root floor removed one level down)", wc.Name, *sc.RunAsUser, sandboxUID)
+			}
+			// runAsGroup's container-level twin. It is guarded now that the POD
+			// level asserts it: leaving it open would be precisely the trapdoor the
+			// runAsUser case above closes — the container value wins, so a
+			// container-level gid 0 gives a workload whose primary group is root's
+			// while the pod-level field still reads as correct, and which therefore
+			// cannot write the fsGroup-owned workspace.
+			//
+			// fsGroup has no container-level counterpart to guard: it is a
+			// pod-only field (it describes volume ownership, not a process), so the
+			// pod-level assertion is the whole of it.
+			if sc.RunAsGroup != nil && *sc.RunAsGroup != sandboxGID {
+				fault("container %q overrides runAsGroup to %d, want %d or unset (the container value takes PRECEDENCE over the pod's, so this is the pod-level gid removed one level down, leaving a process that cannot write the fsGroup-owned workspace)", wc.Name, *sc.RunAsGroup, sandboxGID)
 			}
 			if sc.RunAsNonRoot != nil && !*sc.RunAsNonRoot {
 				fault("container %q overrides runAsNonRoot to false, want true or unset (it takes precedence over the pod's true and lets an image's root USER through)", wc.Name)

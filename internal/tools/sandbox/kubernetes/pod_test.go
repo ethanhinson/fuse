@@ -542,6 +542,26 @@ func TestProvisionRefusesDrift(t *testing.T) {
 			mutate: func(p *corev1.Pod) { p.Spec.SecurityContext.RunAsNonRoot = nil },
 		},
 		{
+			name:   "pod fsGroup stripped",
+			why:    "renderPod calls fsGroup load-bearing in its own words: the workspace is an emptyDir created ROOT-OWNED, so without it the Pod STARTS and then every command fails writing to /workspace — the same shape as the CreateContainerConfigError the explicit runAsUser assertion exists to prevent, one field over, and invisible to a read-back that does not look",
+			mutate: func(p *corev1.Pod) { p.Spec.SecurityContext.FSGroup = nil },
+		},
+		{
+			name:   "pod fsGroup reset to root's gid",
+			why:    "a present-but-wrong value passes a nil check: gid 0 on the workspace emptyDir is the root-owned directory the non-root workload cannot write to",
+			mutate: func(p *corev1.Pod) { p.Spec.SecurityContext.FSGroup = ptr(int64(0)) },
+		},
+		{
+			name:   "pod runAsGroup stripped",
+			why:    "renderPod demands an explicit gid alongside the uid; without it the primary group is the image's (root's, for the images this substrate ships against), so the process's group no longer matches the fsGroup that owns the workspace",
+			mutate: func(p *corev1.Pod) { p.Spec.SecurityContext.RunAsGroup = nil },
+		},
+		{
+			name:   "pod runAsGroup reset to root's gid",
+			why:    "gid 0 is the group half of the non-root posture removed while runAsNonRoot and runAsUser both still read as correct",
+			mutate: func(p *corev1.Pod) { p.Spec.SecurityContext.RunAsGroup = ptr(int64(0)) },
+		},
+		{
 			name: "workload image substituted",
 			why:  "the image is the trusted side's choice; an injector swapping it runs code fuse never approved with fuse's posture",
 			mutate: func(p *corev1.Pod) {
@@ -723,6 +743,17 @@ func TestProvisionRefusesDrift(t *testing.T) {
 				for i := range p.Spec.Containers {
 					if p.Spec.Containers[i].Name == containerWorkload {
 						p.Spec.Containers[i].SecurityContext.RunAsUser = ptr(int64(0))
+					}
+				}
+			},
+		},
+		{
+			name: "container-level runAsGroup overriding the pod's gid",
+			why:  "the container value takes PRECEDENCE over the pod's, so now that the pod-level runAsGroup is asserted, leaving the container level unguarded would be the same trapdoor the adjacent runAsUser check was added to close — a workload whose primary group is root's while the pod-level gid reads as correct, and which therefore cannot write the fsGroup-owned workspace",
+			mutate: func(p *corev1.Pod) {
+				for i := range p.Spec.Containers {
+					if p.Spec.Containers[i].Name == containerWorkload {
+						p.Spec.Containers[i].SecurityContext.RunAsGroup = ptr(int64(0))
 					}
 				}
 			},
