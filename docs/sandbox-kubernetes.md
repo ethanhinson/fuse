@@ -121,7 +121,11 @@ presents inside the sandbox as a *hang*, telling you nothing):
 1. **An advertise address.** `kubernetes.proxy.advertise_address`, defaulting to
    `$FUSE_POD_IP`. It must name **this** instance — a Service ClusterIP would
    load-balance a sandbox onto a replica that does not hold its policy, so it is
-   deliberately not supported.
+   deliberately not supported. It must be an **IP literal**, not a hostname: it is
+   interpolated into the per-Pod NetworkPolicy `ipBlock` that pins egress to the
+   owning instance, and the prefix length follows the family (`/32` for IPv4,
+   `/128` for IPv6 — a `/32` over IPv6 would silently widen the allow to 2^96
+   addresses). A non-IP value is refused at construction.
 2. **A credential minter** — the in-process ephemeral CA behind
    `Proxy.Enroll`, wired at the composition root. Each sandbox gets its own
    client certificate in a per-Pod Secret mounted read-only into the **sidecar

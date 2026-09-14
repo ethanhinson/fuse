@@ -534,3 +534,81 @@ func TestAssertPostureRefusesTheEgressSecretMountedIntoTheWorkload(t *testing.T)
 		t.Errorf("error %q must name the %q volume", err, volumeEgressTLS)
 	}
 }
+
+// THE ADVERTISE ADDRESS MUST BE AN IP LITERAL, AND ITS PREFIX LENGTH ITS FAMILY'S.
+//
+// The per-Pod allow under `enforce` is a single ipBlock built by interpolating the
+// advertise address into a CIDR. A hostname there yields a CIDR the API server
+// rejects — loud, fail-closed, survivable. An IPv6 literal with a /32 suffix does
+// NOT: `fd00::5/32` is SYNTACTICALLY VALID and covers 2^96 addresses, so the
+// per-Pod allow silently widens from "this one instance" to a vast slice of IPv6
+// space while still reading like a /32 pin. That is a containment regression the
+// API server cannot catch for us, so the refusal is at construction.
+func TestNewSubstrateRefusesNonIPAdvertiseAddress(t *testing.T) {
+	t.Setenv(podIPEnv, "")
+	for _, bad := range []string{"fuse.svc.cluster.local", "10.1.2.3:3129", "10.1.2.300", "not an ip"} {
+		_, err := newSubstrate(fake.NewClientset(), Options{
+			Config: sandbox.Config{
+				Egress: sandbox.Egress{Mode: sandbox.EgressEnforce},
+				Kubernetes: sandbox.Kubernetes{
+					ProxyListen:           ptr("0.0.0.0:3129"),
+					ProxyAdvertiseAddress: ptr(bad),
+				},
+			},
+			ProxyCredentials: staticCredentials{},
+		})
+		if err == nil {
+			t.Fatalf("advertise address %q is not an IP literal and must be refused at construction", bad)
+		}
+		if !strings.Contains(err.Error(), "advertise_address") {
+			t.Errorf("advertise address %q: error %q must name advertise_address", bad, err)
+		}
+	}
+
+	// The same refusal via $FUSE_POD_IP: a chart that set the variable to a
+	// Service DNS name is exactly the mistake this guards.
+	t.Setenv(podIPEnv, "fuse.svc.cluster.local")
+	if _, err := newSubstrate(fake.NewClientset(), Options{
+		Config: sandbox.Config{
+			Egress:     sandbox.Egress{Mode: sandbox.EgressEnforce},
+			Kubernetes: sandbox.Kubernetes{ProxyListen: ptr("0.0.0.0:3129")},
+		},
+		ProxyCredentials: staticCredentials{},
+	}); err == nil {
+		t.Fatalf("a non-IP $%s must be refused at construction", podIPEnv)
+	}
+}
+
+// An IPv6 advertise address pins to /128 — the single owning instance — not /32.
+func TestEgressPolicyPrefixLengthFollowsAddressFamily(t *testing.T) {
+	for _, tc := range []struct {
+		addr string
+		want string
+	}{
+		{"10.1.2.3", "10.1.2.3/32"},
+		{"fd00::5", "fd00::5/128"},
+	} {
+		s := newTestSubstrate(t, fake.NewClientset(), enforcing(tc.addr))
+		pol := s.renderEgressPolicy("ns", "pod-1")
+		peers := pol.Spec.Egress[0].To
+		if len(peers) != 1 || peers[0].IPBlock == nil {
+			t.Fatalf("advertise %q: want exactly one ipBlock peer, got %+v", tc.addr, peers)
+		}
+		if got := peers[0].IPBlock.CIDR; got != tc.want {
+			t.Errorf("advertise %q: CIDR = %q, want %q", tc.addr, got, tc.want)
+		}
+		// And the block must permit ONLY the owning instance.
+		if !ipBlockReaches(peers[0].IPBlock, tc.addr) {
+			t.Errorf("advertise %q: the allow must reach the owning instance", tc.addr)
+		}
+	}
+
+	// The load-bearing half: a /32 over IPv6 would have reached this neighbour.
+	s := newTestSubstrate(t, fake.NewClientset(), enforcing("fd00::5"))
+	pol := s.renderEgressPolicy("ns", "pod-1")
+	for _, neighbour := range []string{"fd00::1:0:0:0:1", "fd00:0:0:0:ffff::9"} {
+		if ipBlockReaches(pol.Spec.Egress[0].To[0].IPBlock, neighbour) {
+			t.Errorf("the per-Pod allow must not reach %s — only the owning instance", neighbour)
+		}
+	}
+}
