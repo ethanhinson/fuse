@@ -37,6 +37,12 @@ type remoteStub struct {
 	// cause orphan.
 	reapCount int
 
+	// mount overrides what a provisioned sandbox reports as its MountRoot. Empty
+	// means the default "/workspace"; the marker "-" means report the EMPTY
+	// string, which is a substrate that gave the adapter no root to contain
+	// against.
+	mount string
+
 	sandboxes []*remoteSandboxStub
 }
 
@@ -61,9 +67,17 @@ func (s *remoteStub) Provision(_ context.Context, p loopauth.Principal, spec Rem
 	if s.provisionErr != nil {
 		return nil, s.provisionErr
 	}
+	mount := "/workspace"
+	switch s.mount {
+	case "":
+	case "-":
+		mount = ""
+	default:
+		mount = s.mount
+	}
 	sb := &remoteSandboxStub{
 		id:        fmt.Sprintf("ns/pod-%d", s.provisionCalls),
-		mount:     "/workspace",
+		mount:     mount,
 		principal: p,
 		spec:      spec,
 	}
@@ -284,22 +298,60 @@ func TestRemoteRunnerReleaseIsIdempotent(t *testing.T) {
 }
 
 // The containment check runs in the ADAPTER, against the sandbox's own
-// MountRoot() — through Task 1's one resolveWorkspace — and a refusal never
-// reaches the substrate. This is ADR-0044's gate 4 for a remote sandbox: the
-// model's working_dir is a subpath request, and an escape is refused, not
-// clamped.
-func TestRemoteRunnerExecContainsTheWorkingDir(t *testing.T) {
-	root := t.TempDir()
+// MountRoot(), and a refusal never reaches the substrate. This is ADR-0044's
+// gate 4 for a remote sandbox: the model's working_dir is a subpath request, and
+// an escape is refused, not clamped.
+//
+// This test runs the SHIPPED configuration and nothing else — a plain
+// NewRemoteHandler, no options. That is the whole point of it: the adapter
+// previously resolved containment through resolveWorkspace, which canonicalises
+// against fuse's OWN filesystem, so its only coverage was a test-only host root
+// (a real t.TempDir()) that never ships. In the shipped binary "/workspace" is a
+// path in the Pod and not in fuse's container, so every honoured case below
+// refused and the feature was inoperative.
+func TestRemoteRunnerExecContainsTheWorkingDirInTheShippedConfiguration(t *testing.T) {
 	sub := &remoteStub{}
-	h := testRemoteHandler(t, sub, DefaultConfig(), withRemoteTrustedRoot(root))
+	h := testRemoteHandler(t, sub, DefaultConfig())
 
 	runner, err := h.Acquire(context.Background(), loopauth.Principal{Tenant: "t"}, Env{})
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
+	sb := sub.only(t)
+	mount := sb.MountRoot() // "/workspace" — a path fuse's own filesystem does not have.
 
-	for _, escape := range []string{"..", "../..", "/etc", "/"} {
-		t.Run(escape, func(t *testing.T) {
+	// --- HONOURED. A non-empty working_dir must actually work. --------------
+	for _, tc := range []struct {
+		workingDir string
+		want       string
+	}{
+		{"internal/tools", mount + "/internal/tools"},
+		{mount + "/internal/tools", mount + "/internal/tools"},
+		{mount, mount},
+		{".", mount},
+	} {
+		t.Run("honoured "+tc.workingDir, func(t *testing.T) {
+			out, err := runner.Exec(context.Background(), "echo hi", tc.workingDir)
+			if err != nil {
+				t.Fatalf("Exec(working_dir=%q) = %v; a contained in-Pod subpath must be honoured, "+
+					"and it is NOT resolvable on fuse's own filesystem", tc.workingDir, err)
+			}
+			if out.ExitCode != 0 {
+				t.Fatalf("ExitCode = %d, want 0", out.ExitCode)
+			}
+			execs, _, _ := sb.observed()
+			got := execs[len(execs)-1].workingDir
+			if got != tc.want {
+				t.Fatalf("the substrate was asked to run in %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	before, _, _ := sb.observed()
+
+	// --- REFUSED, and refused before the control plane is touched. ----------
+	for _, escape := range []string{"..", "../..", "/etc", "/", mount + "/../etc", mount + "/pkg/../..", "/workspaceXXX"} {
+		t.Run("refused "+escape, func(t *testing.T) {
 			out, err := runner.Exec(context.Background(), "cat /etc/shadow", escape)
 			if !errors.Is(err, ErrWorkingDirRefused) {
 				t.Fatalf("err = %v, want it to wrap ErrWorkingDirRefused", err)
@@ -310,8 +362,35 @@ func TestRemoteRunnerExecContainsTheWorkingDir(t *testing.T) {
 		})
 	}
 
-	// The load-bearing assertion: nothing reached the substrate at all. A
+	// The load-bearing assertion: not one refusal reached the substrate. A
 	// refusal that still issued the exec would have already run the command.
+	after, _, _ := sb.observed()
+	if len(after) != len(before) {
+		t.Fatalf("%d refusals still reached the substrate: %#v", len(after)-len(before), after[len(before):])
+	}
+}
+
+// A substrate that reports no MountRoot at all has given the adapter nothing to
+// contain a working_dir against. The refusal must be ErrNoTrustedRoot and it must
+// happen before the control plane is touched — promoting the model's own path to
+// the working directory is the fail-open direction ADR-0044 forbids.
+func TestRemoteRunnerExecRefusesWhenTheSubstrateReportsNoMountRoot(t *testing.T) {
+	sub := &remoteStub{mount: "-"} // "-" is the stub's "report an empty MountRoot" marker.
+	h := testRemoteHandler(t, sub, DefaultConfig())
+
+	runner, err := h.Acquire(context.Background(), loopauth.Principal{Tenant: "t"}, Env{})
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	for _, workingDir := range []string{"", "pkg", "/workspace"} {
+		out, err := runner.Exec(context.Background(), "echo hi", workingDir)
+		if !errors.Is(err, ErrNoTrustedRoot) {
+			t.Fatalf("Exec(working_dir=%q) err = %v, want it to wrap ErrNoTrustedRoot", workingDir, err)
+		}
+		if out.ExitCode != -1 {
+			t.Fatalf("ExitCode = %d, want -1", out.ExitCode)
+		}
+	}
 	if execs, _, _ := sub.only(t).observed(); len(execs) != 0 {
 		t.Fatalf("the refusal still reached the substrate: %#v", execs)
 	}

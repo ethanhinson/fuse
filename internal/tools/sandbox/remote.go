@@ -114,8 +114,11 @@ type RemoteSandbox interface {
 	// Exec runs cmd under env, rooted at workingDir.
 	//
 	// workingDir arrives ALREADY CONTAINMENT-CHECKED by the adapter (through
-	// resolveWorkspace against MountRoot) and is an in-sandbox absolute path. An
-	// implementation must not re-derive it from anything the model supplied.
+	// containRemoteWorkingDir against MountRoot) and is an in-sandbox absolute
+	// path. An implementation must not re-derive it from anything the model
+	// supplied. The adapter's check is LEXICAL — it cannot reach this filesystem —
+	// so the in-sandbox `cd` an implementation issues is the real resolver; it must
+	// FAIL the command rather than fall back to some other directory.
 	//
 	// env is the COMPLETE environment the command may observe, passed per Exec
 	// rather than baked into the sandbox at provision time. That is what makes
@@ -166,18 +169,20 @@ type RemoteSpec struct {
 // RemoteOption configures the adapter at construction.
 type RemoteOption func(*remoteHandler)
 
-// withRemoteTrustedRoot declares the HOST tree whose containment the adapter
-// resolves a working_dir against (tests).
+// THERE IS NO TRUSTED-ROOT OPTION HERE, and its absence is deliberate.
 //
-// It is unexported deliberately. On a remote substrate the workspace is the
-// sandbox's own filesystem, so the trusted root a working_dir is contained
-// against is the sandbox's MountRoot and not a host path — there is nothing for a
-// composition root to declare. The option exists so a test can exercise the
-// containment path with a real directory tree, since resolveWorkspace
-// canonicalises against a real filesystem.
-func withRemoteTrustedRoot(root string) RemoteOption {
-	return func(h *remoteHandler) { h.root = root }
-}
+// An earlier revision carried an unexported withRemoteTrustedRoot so a test could
+// point the adapter's containment at a real host directory tree — which
+// resolveWorkspace needs, because it canonicalises against a real filesystem.
+// That option was the defect: it was the ONLY configuration under which the
+// containment path worked, and it never shipped. In the shipped binary the root
+// was the in-Pod "/workspace", a path fuse's own container does not have, so every
+// non-empty working_dir was refused.
+//
+// containRemoteWorkingDir consults no filesystem, so the tests now exercise
+// exactly the configuration that ships, and there is nothing for a composition
+// root — or a test — to declare. On a remote substrate the trusted root is the
+// sandbox's own MountRoot and nothing else.
 
 // withRemoteHeartbeatInterval overrides the per-Runner heartbeat period (tests).
 func withRemoteHeartbeatInterval(d time.Duration) RemoteOption {
@@ -220,11 +225,6 @@ type remoteHandler struct {
 	// name is the substrate's bounded identifier, captured at construction so
 	// Name() cannot start reporting something else mid-process.
 	name string
-
-	// root is the host tree used only by tests; see withRemoteTrustedRoot. In
-	// production it is "" and containment is resolved against the sandbox's own
-	// MountRoot.
-	root string
 
 	heartbeatEvery time.Duration
 	reapEvery      time.Duration
@@ -559,17 +559,22 @@ func (r *remoteRunner) Exec(ctx context.Context, cmd string, workingDir string) 
 		return Output{ExitCode: -1}, fmt.Errorf("%w: %s", ErrSandboxGone, r.id)
 	}
 
-	// ONE containment implementation, shared with the container handler (change
-	// 0075, task 1). The root and the mount point are the SAME value here: the
-	// sandbox's workspace is its own filesystem, so the trusted root a
-	// working_dir resolves against IS the in-sandbox mount root. h.root is
-	// non-empty only in tests, which need a real directory tree because
-	// resolveWorkspace canonicalises against a real filesystem.
-	root := mount
-	if r.handler != nil && r.handler.root != "" {
-		root = r.handler.root
-	}
-	_, workdir, err := resolveWorkspace(root, workingDir, mount)
+	// ONE containment implementation PER RESOLUTION MODEL, and this substrate's
+	// model is the lexical one.
+	//
+	// The container handler's resolveWorkspace canonicalises against fuse's own
+	// filesystem, which is correct there — the mount source really is a directory
+	// on this host. Here the workspace is an emptyDir inside a Pod that fuse
+	// cannot see at all, so that algorithm would judge the wrong filesystem: it
+	// refuses every working_dir (fuse's container has no "/workspace") and, if
+	// fuse's image ever did carry one, it would decide ADR-0044's gate 4 against
+	// fuse's tree instead of the sandbox's. containRemoteWorkingDir is the purely
+	// lexical check for a root fuse does not host; see its doc comment for the
+	// residual in-Pod-symlink risk and why the Pod boundary is what bounds it.
+	//
+	// mount is the SUBSTRATE's own reported root (snapshot at Acquire, re-asserted
+	// by the Pool). workingDir is the model's subpath request, applied last.
+	workdir, err := containRemoteWorkingDir(mount, workingDir)
 	if err != nil {
 		// A containment refusal, decided BEFORE the control plane is touched: no
 		// exec is issued, so nothing runs. Reported as a substrate failure

@@ -48,8 +48,10 @@ const (
 // `&&` and NOT `;`: a failed cd must not fall through to running the command in
 // whatever directory the shell happened to start in. That would run the caller's
 // command somewhere they did not ask for, which is precisely the refusal
-// resolveWorkspace makes on the containment side — it would be perverse to undo
-// it here.
+// containRemoteWorkingDir makes on the containment side — it would be perverse to
+// undo it here. On this substrate the `&&` carries MORE weight than on the local
+// one: the adapter's check is lexical, so this cd is the only step that resolves
+// the path against the filesystem that will actually run the command.
 //
 // `exec` so the outer shell replaces itself: one fewer process between the
 // caller's deadline and the command, and the command's own exit status is what
@@ -189,9 +191,15 @@ func egressProxyEnv() []string {
 // Exec runs cmd in the Pod's workload container.
 //
 // workingDir arrives ALREADY CONTAINMENT-CHECKED by the adapter (through
-// resolveWorkspace against MountRoot) and is an in-Pod absolute path. Nothing here
-// re-derives it, and nothing here consults anything the model supplied beyond cmd
-// itself.
+// containRemoteWorkingDir against MountRoot) and is an in-Pod absolute path.
+// Nothing here re-derives it, and nothing here consults anything the model
+// supplied beyond cmd itself.
+//
+// That adapter check is LEXICAL, because fuse has no access to the Pod's
+// filesystem. execScript's `cd -- "$1" && ...` is therefore the REAL resolver,
+// and its `&&` is load-bearing for containment and not only for tidiness: a cd
+// that fails must fail the command, never fall through to running it in whatever
+// directory the shell started in.
 //
 // Error semantics match the container and host handlers exactly, because the bash
 // tool cannot tell which substrate it is on: a command that RAN and exited

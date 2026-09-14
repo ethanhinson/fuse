@@ -44,6 +44,7 @@ package kubernetes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -381,6 +382,90 @@ func TestIntegrationDeadlineTearsThePodDown(t *testing.T) {
 	// deadline path precisely so a timed-out command leaves no process behind, and
 	// "deleted" here means the API server no longer has the object.
 	assertPodGone(t, ctx, cs, id)
+}
+
+// TestIntegrationWorkingDirIsContainedAgainstThePodsFilesystem is ADR-0044's gate
+// 4 on a substrate fuse does not own: a non-empty working_dir must be HONOURED
+// when it names a subpath of the Pod's workspace, and REFUSED when it escapes —
+// and the decision must be made about the POD's filesystem, not fuse's.
+//
+// It is the acceptance that only a real cluster settles, because the defect it
+// pins was invisible to every other lane. The adapter used to resolve containment
+// through sandbox.resolveWorkspace, which canonicalises with EvalSymlinks/Stat
+// against whatever filesystem the fuse PROCESS is running on. The unit lane hid
+// that behind a test-only host-root option pointed at a t.TempDir(), and the only
+// kind-lane path through the adapter passed working_dir="", the one value that
+// never touches a filesystem at all. In the shipped binary "/workspace" is a path
+// in the Pod and not in fuse's container, so every non-empty working_dir was
+// refused: the feature was inoperative.
+//
+// So this test runs THROUGH THE ADAPTER (sandbox.NewRemoteHandler with no options
+// — the shipped configuration) with a working_dir that exists ONLY in the Pod. A
+// pass is only possible if containment stopped consulting fuse's filesystem.
+func TestIntegrationWorkingDirIsContainedAgainstThePodsFilesystem(t *testing.T) {
+	const acceptance = "a non-empty working_dir naming an in-Pod subpath RUNS there through the adapter, and an escape is refused"
+	s, cs := clusterOrSkip(t, acceptance)
+	loadImageOrSkip(t, acceptance)
+	cleanupNamespaces(t, cs)
+	verifyOrSkip(t, s, acceptance)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	h, err := sandbox.NewRemoteHandler(s, sandbox.Config{IdleTTL: 2 * time.Minute})
+	if err != nil {
+		t.Fatalf("NewRemoteHandler: %v", err)
+	}
+	if c, ok := h.(interface{ Close() error }); ok {
+		t.Cleanup(func() { _ = c.Close() })
+	}
+
+	p := loopauth.Principal{Tenant: event.TenantID("it-workdir"), Subject: "s-workdir"}
+	runner, err := h.Acquire(ctx, p, sandbox.Env{})
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	t.Cleanup(func() { _ = runner.Release(context.WithoutCancel(ctx)) })
+
+	// Create the subdirectory INSIDE the Pod. Nothing on the machine running this
+	// test has it, which is the whole point: the containment decision below must be
+	// about the Pod's emptyDir.
+	if out, err := runner.Exec(ctx, "mkdir -p /workspace/deep/nest && echo made", ""); err != nil || out.ExitCode != 0 {
+		t.Fatalf("mkdir in the Pod: err=%v exit=%d combined=%q", err, out.ExitCode, out.Combined)
+	}
+
+	// HONOURED, both spellings. `pwd` is the assertion: it reports where the
+	// command ACTUALLY ran, inside the Pod, rather than what fuse computed.
+	for _, workingDir := range []string{"deep/nest", "/workspace/deep/nest"} {
+		out, err := runner.Exec(ctx, "pwd", workingDir)
+		if err != nil {
+			t.Fatalf("Exec(working_dir=%q) = %v; an in-Pod subpath must be honoured — this is the refusal that made "+
+				"the feature inoperative, and it is only reproducible with a working_dir fuse's own filesystem lacks "+
+				"(combined: %q)", workingDir, err, out.Combined)
+		}
+		if out.ExitCode != 0 {
+			t.Fatalf("Exec(working_dir=%q) exit = %d, want 0 (combined: %q)", workingDir, out.ExitCode, out.Combined)
+		}
+		if got := strings.TrimSpace(string(out.Combined)); got != "/workspace/deep/nest" {
+			t.Fatalf("the command ran in %q, want /workspace/deep/nest — the working_dir did not reach the Pod", got)
+		}
+	}
+
+	// REFUSED, and refused in the adapter: nothing runs at all. `/etc` and `/`
+	// genuinely EXIST in the Pod, so only the containment check stops them.
+	for _, escape := range []string{"..", "../..", "/etc", "/", "/workspace/../etc", "/workspaceXXX"} {
+		out, err := runner.Exec(ctx, "pwd", escape)
+		if !errors.Is(err, sandbox.ErrWorkingDirRefused) {
+			t.Fatalf("Exec(working_dir=%q) err = %v, want it to wrap ErrWorkingDirRefused (combined: %q)",
+				escape, err, out.Combined)
+		}
+		if out.ExitCode != -1 {
+			t.Fatalf("Exec(working_dir=%q) exit = %d, want -1 so an ExitCode-only caller fails closed", escape, out.ExitCode)
+		}
+		if len(out.Combined) != 0 {
+			t.Fatalf("a refused working_dir still produced output %q; the command RAN", out.Combined)
+		}
+	}
 }
 
 // TestIntegrationMetadataFloorHoldsInBothModes is the acceptance the whole egress
