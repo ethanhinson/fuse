@@ -79,9 +79,18 @@ rules:
 # the cluster. It is unavoidable (it IS the bash tool's datapath) and it is why
 # the `fuse` service account's token must never reach a sandbox container.
 #
-# `secrets` is create/get/delete only, scoped to the per-Pod `fuse-egress-tls-*`
-# objects fuse mints; each carries an ownerReference to its Pod so the cluster
-# garbage-collects it when the Pod goes.
+# `secrets` is scoped to the per-Pod `fuse-egress-tls-*` objects fuse mints. It
+# includes `update` because the ownerReference is what the garbage collector acts
+# on, and adoptSecretBestEffort sets it with a read-modify-write Update AFTER the
+# Pod is admitted (the Pod's UID does not exist until then, so the reference
+# cannot be written at create time). Without `update` that call is Forbidden —
+# silently, since it is best-effort — the ownerReference is never set, and every
+# enforce-mode Pod leaks a Secret holding a client certificate AND its private
+# key: Teardown does not delete it precisely because it relies on this
+# ownerReference, and neither does Reap.
+#
+# `patch` would be the equivalent grant over the same object and is not granted
+# in addition; `update` is the one the code actually issues.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -104,10 +113,17 @@ rules:
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create", "delete"]
+    verbs: ["get", "create", "delete", "update"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get", "create"]
+  # `services` is READ-ONLY and exists for Verify alone: canaryTarget reads the
+  # default/kubernetes Service to learn the API server's ClusterIP, because that
+  # address is allocated per cluster and cannot be hardcoded. Without it Verify
+  # cannot run its canary at all, so the egress floor reports unproven.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
   - apiGroups: [""]
     resources: ["resourcequotas"]
     verbs: ["get", "create", "update"]
