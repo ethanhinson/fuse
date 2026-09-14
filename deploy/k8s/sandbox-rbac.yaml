@@ -91,7 +91,11 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list", "watch", "create", "delete"]
+    # `patch` is what sandboxPod.Heartbeat needs: it stamps the idle-deadline
+    # annotation with a MergePatch on every beat. Without it each beat is
+    # Forbidden, the annotation never advances past the one renderPod wrote at
+    # creation, and after 2*IdleTTL the reaper deletes a Pod serving a live Exec.
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create", "get"]
