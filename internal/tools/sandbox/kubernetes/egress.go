@@ -151,6 +151,21 @@ func resolveAdvertise(k sandbox.Kubernetes, enforcing bool) (string, error) {
 		addr = os.Getenv(podIPEnv)
 	}
 	if addr != "" {
+		// IT MUST BE AN IP LITERAL. The address is interpolated into the per-Pod
+		// allow's CIDR (see advertiseCIDR), and a NON-IP is not merely useless
+		// there — an IPv6 address carrying a v4 prefix length is a SYNTACTICALLY
+		// VALID CIDR covering an enormous range, so the "one instance" pin
+		// silently becomes a wide allow. A hostname would be rejected by the API
+		// server, which is survivable; the v6 widening would not be caught at all.
+		// So both are refused here, at construction, where the diagnostic can name
+		// the knob.
+		if net.ParseIP(addr) == nil {
+			return "", fmt.Errorf(
+				"kubernetes: proxy advertise address %q is not an IP address; "+
+					"set kubernetes.proxy.advertise_address (or $%s) to THIS instance's IP literal. "+
+					"A hostname cannot be expressed as the per-Pod NetworkPolicy ipBlock that pins egress to the owning instance",
+				addr, podIPEnv)
+		}
 		return addr, nil
 	}
 	if !enforcing {
@@ -216,7 +231,7 @@ func (s *Substrate) renderEgressPolicy(ns, pod string) *networkingv1.NetworkPoli
 		// unreachable because it is not named, which is the strongest form the
 		// floor takes.
 		to = []networkingv1.NetworkPolicyPeer{{
-			IPBlock: &networkingv1.IPBlock{CIDR: s.advertiseAddress + "/32"},
+			IPBlock: &networkingv1.IPBlock{CIDR: advertiseCIDR(s.advertiseAddress)},
 		}}
 		port := intstr.FromInt32(int32(s.proxyPort)) // #nosec G115 -- validated 1..65535 by proxyListenPort
 		ports = []networkingv1.NetworkPolicyPort{{Port: &port}}
@@ -248,6 +263,30 @@ func (s *Substrate) renderEgressPolicy(ns, pod string) *networkingv1.NetworkPoli
 			Egress:      []networkingv1.NetworkPolicyEgressRule{{To: to, Ports: ports}},
 		},
 	}
+}
+
+// advertiseCIDR pins the advertise address to the single host it names, choosing
+// the prefix length by ADDRESS FAMILY.
+//
+// /32 over IPv4 and /128 over IPv6. The family matters because "/32" is valid
+// syntax for an IPv6 prefix too and covers 2^96 addresses: on a dual-stack or v6
+// cluster, $FUSE_POD_IP is a v6 literal, and a hard-coded /32 would turn the
+// narrowest allow in the whole design — the ONE address a sandbox may reach under
+// `enforce` — into a silent, enormous widening that still reads like a pin.
+//
+// resolveAdvertise has already refused anything net.ParseIP cannot parse, so the
+// nil branch here is unreachable; it is written to fail CLOSED (a /32 of the
+// unparsable text, which the API server rejects) rather than to render a block
+// whose meaning nobody can state.
+func advertiseCIDR(addr string) string {
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		return addr + "/32"
+	}
+	if ip.To4() != nil {
+		return ip.String() + "/32"
+	}
+	return ip.String() + "/128"
 }
 
 // renderEgressSecret holds the sidecar's credential. It carries no ownerReference

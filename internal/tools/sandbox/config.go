@@ -1105,11 +1105,13 @@ func (raw rawKubernetes) resolve(path string, out *Kubernetes, warns []Warning) 
 				k.ProxyListen = &v
 			}
 		}
-		// advertise_address is NOT validated as host:port: it is an address
-		// without a port (the port comes from listen), and it may legitimately be
-		// a hostname the cluster resolves. An unset one under `enforce` is a
-		// CONSTRUCTION-time refusal with a diagnostic, which is where it belongs
-		// — the loader cannot see the egress posture's datapath wiring.
+		// advertise_address is NOT validated here: it is an address without a
+		// port (the port comes from listen), and both of its faults belong to
+		// construction, which is the only place that can see the egress posture's
+		// datapath wiring. Unset under `enforce` is refused there, and so is a
+		// NON-IP value — it must be an IP literal, not a hostname, because it is
+		// interpolated into the per-Pod NetworkPolicy ipBlock that pins a
+		// sandbox's egress to the owning instance.
 		k.ProxyAdvertiseAddress = optional(raw.Proxy.AdvertiseAddress)
 	}
 
