@@ -591,6 +591,20 @@ func (s *Substrate) waitReady(ctx context.Context, ns, name string, admitted *co
 // Phase alone is not the readiness signal: a Pod is Running the moment ONE
 // container starts, and an exec into a container that has not started yet fails
 // with an opaque error at the worst possible time — the caller's first command.
+//
+// NATIVE SIDECARS are the second list. A Kubernetes 1.29+ sidecar is an
+// initContainers ENTRY carrying restartPolicy:Always — it never exits, it is live
+// for the Pod's whole life, and its status is reported in
+// Status.InitContainerStatuses, never in ContainerStatuses. A readiness check that
+// walked only ContainerStatuses would call such a Pod ready while the sidecar is
+// still pulling or crash-looping.
+//
+// Plain init containers are deliberately NOT held to Ready: an init container is
+// EXPECTED to run to completion and report Ready:false, so demanding readiness of
+// one would be unsatisfiable. assertPosture refuses both kinds outright, so in
+// practice neither reaches a confirmed sandbox; this function is nonetheless
+// correct on its own, because waitReady also serves the CANARY, which asserts no
+// posture at all.
 func allContainersReady(pod *corev1.Pod) bool {
 	if len(pod.Status.ContainerStatuses) != len(pod.Spec.Containers) {
 		return false
@@ -600,7 +614,34 @@ func allContainersReady(pod *corev1.Pod) bool {
 			return false
 		}
 	}
+	for _, c := range pod.Spec.InitContainers {
+		if !isNativeSidecar(c) {
+			continue
+		}
+		st, ok := initStatusNamed(pod, c.Name)
+		// A MISSING status is not a ready one — the same reason the lengths are
+		// compared above.
+		if !ok || !st.Ready {
+			return false
+		}
+	}
 	return true
+}
+
+// isNativeSidecar reports whether an initContainers entry is a Kubernetes 1.29+
+// native sidecar: one that never exits and therefore must be Ready before the Pod
+// is usable, as opposed to a plain init container that runs to completion.
+func isNativeSidecar(c corev1.Container) bool {
+	return c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways
+}
+
+func initStatusNamed(pod *corev1.Pod, name string) (corev1.ContainerStatus, bool) {
+	for _, cs := range pod.Status.InitContainerStatuses {
+		if cs.Name == name {
+			return cs, true
+		}
+	}
+	return corev1.ContainerStatus{}, false
 }
 
 // podDiagnosis renders why a Pod is not ready, for the error a caller sees.
@@ -613,13 +654,18 @@ func podDiagnosis(pod *corev1.Pod) string {
 	if pod.Status.Reason != "" {
 		parts = append(parts, "pod reason "+pod.Status.Reason)
 	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		switch {
-		case cs.State.Waiting != nil && cs.State.Waiting.Reason != "":
-			parts = append(parts, fmt.Sprintf("container %s waiting: %s", cs.Name, cs.State.Waiting.Reason))
-		case cs.State.Terminated != nil:
-			parts = append(parts, fmt.Sprintf("container %s terminated: %s (exit %d)",
-				cs.Name, cs.State.Terminated.Reason, cs.State.Terminated.ExitCode))
+	// Init statuses are reported too: a Pod stuck behind a native sidecar that
+	// cannot pull reports NOTHING in ContainerStatuses, and an operator would see
+	// a bare startup timeout with no reason attached.
+	for _, list := range [][]corev1.ContainerStatus{pod.Status.InitContainerStatuses, pod.Status.ContainerStatuses} {
+		for _, cs := range list {
+			switch {
+			case cs.State.Waiting != nil && cs.State.Waiting.Reason != "":
+				parts = append(parts, fmt.Sprintf("container %s waiting: %s", cs.Name, cs.State.Waiting.Reason))
+			case cs.State.Terminated != nil:
+				parts = append(parts, fmt.Sprintf("container %s terminated: %s (exit %d)",
+					cs.Name, cs.State.Terminated.Reason, cs.State.Terminated.ExitCode))
+			}
 		}
 	}
 	if len(parts) == 0 {
@@ -651,6 +697,12 @@ var errDrift = errors.New("kubernetes: the admitted pod does not match the deman
 // volume, no extra container). The second kind is what catches an injector, which
 // does not change fuse's fields at all — it ADDS. A check that only compared the
 // fields fuse set would pass a Pod with a mounted docker socket beside them.
+//
+// "There must be NOTHING of this kind" has to cover every list a webhook can
+// append to, not just the obvious one: volumes, containers, INIT CONTAINERS and
+// EPHEMERAL CONTAINERS. And the "this must be X" half has to be asserted at the
+// level that WINS — a container securityContext overrides the pod's, so a
+// pod-level floor alone is a floor with a trapdoor.
 func assertPosture(want, got *corev1.Pod) error {
 	var faults []string
 	fault := func(format string, args ...any) {
@@ -676,6 +728,16 @@ func assertPosture(want, got *corev1.Pod) error {
 	}
 	if got.Spec.HostIPC {
 		fault("hostIPC is true: the node's IPC namespace is shared across tenants")
+	}
+	// shareProcessNamespace is hostPID's INTRA-POD twin, and it defeats a
+	// separation this very function goes out of its way to enforce: with one PID
+	// namespace across the Pod, the workload reaches the egress sidecar's
+	// filesystem through /proc/<pid>/root — the egress-tls client certificate and
+	// private key included — without mounting anything, so the volumeEgressTLS
+	// mount check below would still pass. nil and false are both fine; only an
+	// explicit true is drift.
+	if got.Spec.ShareProcessNamespace != nil && *got.Spec.ShareProcessNamespace {
+		fault("shareProcessNamespace is true: one PID namespace across the Pod lets the workload read the egress sidecar's filesystem (and its client key) through /proc/<pid>/root without mounting anything")
 	}
 	if got.Spec.EnableServiceLinks == nil || *got.Spec.EnableServiceLinks {
 		fault("enableServiceLinks is %s, want explicit false (it injects every Service's host and port into a container whose environment must be exactly the allowlist)", boolPtr(got.Spec.EnableServiceLinks))
@@ -754,6 +816,42 @@ func assertPosture(want, got *corev1.Pod) error {
 		fault("the %q emptyDir has no sizeLimit: an unbounded workspace fills the node's disk, denying service to every other tenant on it", volumeWorkspace)
 	}
 
+	// --- initContainers and ephemeralContainers: fuse demands NONE of either ---
+	//
+	// This is the same additive hole as the volumes above, one field over, and it
+	// is the CANONICAL mutating-webhook shape: Istio, Linkerd and every
+	// NET_ADMIN iptables-setup injector append to initContainers, not to
+	// containers. A check that iterated Containers alone passed all of them.
+	//
+	// A PLAIN init container is not benign for having exited: it ran privileged
+	// code inside this Pod, with access to every volume in it — the egress-tls
+	// Secret's certificate and key, and write access to the workspace emptyDir the
+	// caller's commands then run against — and once it completes the Pod is
+	// Running with every container Ready and nothing in Containers to show for it.
+	//
+	// A NATIVE SIDECAR (a 1.29+ initContainers entry carrying
+	// restartPolicy:Always) is strictly worse: it never exits, so it is live in
+	// the Pod's network namespace — the loopback the egress forwarder listens on —
+	// for the sandbox's whole life.
+	//
+	// So the demand is emptiness, not a name allowlist: fuse's renderer sets
+	// neither list, which makes ANY entry in either one an addition by the cluster.
+	for _, c := range got.Spec.InitContainers {
+		kind := "init container"
+		if isNativeSidecar(c) {
+			kind = "NATIVE SIDECAR (restartPolicy:Always init container, live for the Pod's whole life)"
+		}
+		fault("%s %q was injected (image %q): fuse demands NO initContainers at all — it executes code inside this Pod with access to every volume in it, the %q client key and the %q emptyDir included, and it shares the network namespace where the egress forwarder listens",
+			kind, c.Name, c.Image, volumeEgressTLS, volumeWorkspace)
+	}
+	// Ephemeral containers arrive through a SUBRESOURCE on a Pod that is already
+	// running, which is why they are asserted on every read-back and not only on
+	// the admitted object: this is the one injection route that does not need a
+	// mutating webhook at all, just kubectl debug and RBAC on pods/ephemeralcontainers.
+	for _, c := range got.Spec.EphemeralContainers {
+		fault("ephemeral container %q was injected (image %q): it is a live container in this Pod's namespaces, and fuse demands none", c.Name, c.Image)
+	}
+
 	// --- containers: names first ---
 	//
 	// An injected container shares the Pod's network namespace and its loopback,
@@ -810,6 +908,30 @@ func assertPosture(want, got *corev1.Pod) error {
 			}
 			if sc.Privileged != nil && *sc.Privileged {
 				fault("container %q is privileged: that is root on the node", wc.Name)
+			}
+			// The CONTAINER-level overrides of the POD-level floor. Container
+			// securityContext TAKES PRECEDENCE over the pod's, so each pod-level
+			// assertion above can be neutralised without touching the field it
+			// asserts, by setting the same field one level down — where fuse's
+			// renderer sets nothing and, until this block, nothing compared.
+			//
+			// nil is CORRECT here, unlike at the pod level: an unset container
+			// field inherits the pod's, which has already been asserted. Only a
+			// present-and-weaker value is drift.
+			if sc.RunAsUser != nil && *sc.RunAsUser != sandboxUID {
+				fault("container %q overrides runAsUser to %d, want %d or unset (the container value takes PRECEDENCE over the pod's, so this is the pod-level non-root floor removed one level down)", wc.Name, *sc.RunAsUser, sandboxUID)
+			}
+			if sc.RunAsNonRoot != nil && !*sc.RunAsNonRoot {
+				fault("container %q overrides runAsNonRoot to false, want true or unset (it takes precedence over the pod's true and lets an image's root USER through)", wc.Name)
+			}
+			if sc.SeccompProfile != nil && sc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+				fault("container %q overrides seccompProfile to %q, want RuntimeDefault or unset (it takes precedence over the pod's, so the syscall floor can be removed here)", wc.Name, sc.SeccompProfile.Type)
+			}
+			// An Unmasked /proc re-exposes the kernel paths the runtime masks
+			// (/proc/sys, /proc/kcore, /proc/sysrq-trigger) inside a container
+			// whose capability set still reads as correctly dropped.
+			if sc.ProcMount != nil && *sc.ProcMount != corev1.DefaultProcMount {
+				fault("container %q procMount is %q, want Default or unset (Unmasked re-exposes /proc/sys, /proc/kcore and /proc/sysrq-trigger beside a correctly-dropped capability set)", wc.Name, *sc.ProcMount)
 			}
 			if sc.Capabilities == nil {
 				fault("container %q has no capability restrictions, want drop: [ALL]", wc.Name)
