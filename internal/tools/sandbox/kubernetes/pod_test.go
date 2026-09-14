@@ -654,6 +654,122 @@ func TestProvisionRefusesDrift(t *testing.T) {
 				}
 			},
 		},
+
+		// --- the injection surfaces BESIDE Spec.Containers ---
+		//
+		// Every case below is an injector that adds nothing to Containers at all,
+		// which is exactly why a check that iterates only Containers passes it.
+		{
+			name: "plain init container injected",
+			why:  "the CANONICAL mutating-webhook shape (Istio, Linkerd, every NET_ADMIN iptables-setup injector) adds to initContainers, not containers; a plain one runs privileged code in this Pod — with access to the egress-tls client key and write access to the workspace emptyDir — and then EXITS, after which the Pod is Running with every container Ready and the read-back sees a clean containers list",
+			mutate: func(p *corev1.Pod) {
+				p.Spec.InitContainers = append(p.Spec.InitContainers, corev1.Container{
+					Name:    "istio-init",
+					Image:   "mesh/proxyv2:1",
+					Command: []string{"istio-iptables"},
+					SecurityContext: &corev1.SecurityContext{
+						Capabilities: &corev1.Capabilities{Add: []corev1.Capability{"NET_ADMIN", "NET_RAW"}},
+					},
+					VolumeMounts: []corev1.VolumeMount{{Name: volumeWorkspace, MountPath: workspaceMount}},
+				})
+				p.Status.InitContainerStatuses = append(p.Status.InitContainerStatuses,
+					// A completed init container: Ready is FALSE and Running is
+					// nil, which is what a passing Pod actually looks like.
+					corev1.ContainerStatus{Name: "istio-init", Ready: false,
+						State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}})
+			},
+		},
+		{
+			name: "native sidecar injected (initContainers entry with restartPolicy Always)",
+			why:  "a Kubernetes 1.29+ native sidecar is an initContainers entry that NEVER exits: it stays live for the Pod's whole life sharing the netns where the egress forwarder listens, and its status lands in InitContainerStatuses — a second list the readiness check must not ignore either",
+			mutate: func(p *corev1.Pod) {
+				always := corev1.ContainerRestartPolicyAlways
+				p.Spec.InitContainers = append(p.Spec.InitContainers, corev1.Container{
+					Name:          "istio-proxy",
+					Image:         "mesh/proxyv2:1",
+					RestartPolicy: &always,
+				})
+				p.Status.InitContainerStatuses = append(p.Status.InitContainerStatuses,
+					corev1.ContainerStatus{Name: "istio-proxy", Ready: true,
+						State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}})
+			},
+		},
+		{
+			name: "ephemeral container injected",
+			why:  "an ephemeral container is a live debug container in the running Pod — the workload's namespaces, the workload's volumes — arriving through a subresource the spec comparison never looks at",
+			mutate: func(p *corev1.Pod) {
+				p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, corev1.EphemeralContainer{
+					EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+						Name:  "debugger",
+						Image: "busybox:latest",
+					},
+					TargetContainerName: containerWorkload,
+				})
+				p.Status.EphemeralContainerStatuses = append(p.Status.EphemeralContainerStatuses,
+					corev1.ContainerStatus{Name: "debugger", Ready: true})
+			},
+		},
+
+		// --- the CONTAINER-level overrides of a POD-level floor ---
+		//
+		// Container securityContext TAKES PRECEDENCE over the pod's. So every
+		// pod-level assertion above can be neutralised without touching the field
+		// it asserts, by setting the same field one level down — where neither
+		// container declares it and nothing was comparing.
+		{
+			name: "container-level runAsUser 0 overriding the pod's non-root floor",
+			why:  "container securityContext.runAsUser takes PRECEDENCE over the pod's; root in the workload plus any container-escape primitive is node root, and the pod-level runAsUser the read-back checks is still intact",
+			mutate: func(p *corev1.Pod) {
+				for i := range p.Spec.Containers {
+					if p.Spec.Containers[i].Name == containerWorkload {
+						p.Spec.Containers[i].SecurityContext.RunAsUser = ptr(int64(0))
+					}
+				}
+			},
+		},
+		{
+			name: "container-level runAsNonRoot cleared to false",
+			why:  "the same override by the adjacent field: runAsNonRoot:false at the container level lets an image's root USER through while the pod-level true is untouched",
+			mutate: func(p *corev1.Pod) {
+				for i := range p.Spec.Containers {
+					if p.Spec.Containers[i].Name == containerWorkload {
+						p.Spec.Containers[i].SecurityContext.RunAsNonRoot = ptr(false)
+					}
+				}
+			},
+		},
+		{
+			name: "container-level seccompProfile set to Unconfined",
+			why:  "container seccompProfile overrides the pod's RuntimeDefault, so the syscall floor the pod-level check defends can be removed one level down",
+			mutate: func(p *corev1.Pod) {
+				for i := range p.Spec.Containers {
+					if p.Spec.Containers[i].Name == containerWorkload {
+						p.Spec.Containers[i].SecurityContext.SeccompProfile = &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeUnconfined,
+						}
+					}
+				}
+			},
+		},
+		{
+			name: "container procMount set to Unmasked",
+			why:  "Unmasked /proc re-exposes the kernel paths the runtime masks (/proc/sys, /proc/kcore, /proc/sysrq-trigger) inside a container whose capabilities look correctly dropped",
+			mutate: func(p *corev1.Pod) {
+				unmasked := corev1.UnmaskedProcMount
+				for i := range p.Spec.Containers {
+					if p.Spec.Containers[i].Name == containerWorkload {
+						p.Spec.Containers[i].SecurityContext.ProcMount = &unmasked
+					}
+				}
+			},
+		},
+
+		// --- the pod-level flag that defeats the egress credential split ---
+		{
+			name:   "shareProcessNamespace enabled",
+			why:    "a shared PID namespace lets the workload read the egress sidecar's filesystem through /proc/<pid>/root — including the egress-tls client certificate and key the read-back goes out of its way to keep out of the workload — so it defeats that separation without mounting anything",
+			mutate: func(p *corev1.Pod) { p.Spec.ShareProcessNamespace = ptr(true) },
+		},
 	}
 
 	for _, tc := range tests {
@@ -731,6 +847,98 @@ func TestProvisionRefusesContainerNotReady(t *testing.T) {
 		t.Fatal("Provision must refuse a Running Pod whose containers are not Ready")
 	}
 	assertNoPodsLeftBehind(t, cs, "a Running Pod with an unready container")
+}
+
+// TestAllContainersReadyCoversInitContainerStatuses is the readiness half of the
+// native-sidecar gap.
+//
+// A Kubernetes 1.29+ native sidecar is an initContainers entry with
+// restartPolicy:Always. It stays live for the Pod's whole life, and its status is
+// reported in Status.InitContainerStatuses — NOT in ContainerStatuses. So a
+// readiness check that walks only ContainerStatuses calls such a Pod ready while
+// the sidecar is still pulling, still crash-looping, or not yet started.
+//
+// This is asserted on allContainersReady directly rather than through Provision
+// because assertPosture now REFUSES any init container outright: routed through
+// Provision, the posture fault would mask whatever the readiness check did, and
+// the test would pass no matter how allContainersReady behaved.
+func TestAllContainersReadyCoversInitContainerStatuses(t *testing.T) {
+	// A minimal two-container Pod matching the substrate's shape, both Ready. The
+	// init list is what each case varies.
+	base := func() *corev1.Pod {
+		return &corev1.Pod{
+			Spec: corev1.PodSpec{Containers: []corev1.Container{
+				{Name: containerWorkload}, {Name: containerEgress},
+			}},
+			Status: corev1.PodStatus{
+				Phase: corev1.PodRunning,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{Name: containerWorkload, Ready: true}, {Name: containerEgress, Ready: true},
+				},
+			},
+		}
+	}
+	always := corev1.ContainerRestartPolicyAlways
+
+	tests := []struct {
+		name  string
+		build func(*corev1.Pod)
+		want  bool
+		why   string
+	}{
+		{
+			name:  "no init containers at all",
+			build: func(*corev1.Pod) {},
+			want:  true,
+			why:   "the ordinary sandbox Pod: two containers, both Ready, nothing else",
+		},
+		{
+			name: "native sidecar Ready",
+			build: func(p *corev1.Pod) {
+				p.Spec.InitContainers = []corev1.Container{{Name: "sidecar", RestartPolicy: &always}}
+				p.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: "sidecar", Ready: true}}
+			},
+			want: true,
+			why:  "a live sidecar that IS ready must not be reported unready; that would hang every Provision to the startup deadline",
+		},
+		{
+			name: "native sidecar NOT Ready",
+			build: func(p *corev1.Pod) {
+				p.Spec.InitContainers = []corev1.Container{{Name: "sidecar", RestartPolicy: &always}}
+				p.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: "sidecar", Ready: false}}
+			},
+			want: false,
+			why:  "a restartPolicy:Always init container is a LIVE container for the Pod's whole life; if it is not Ready the Pod is not ready, and its status is only ever in InitContainerStatuses",
+		},
+		{
+			name: "native sidecar with no status reported yet",
+			build: func(p *corev1.Pod) {
+				p.Spec.InitContainers = []corev1.Container{{Name: "sidecar", RestartPolicy: &always}}
+			},
+			want: false,
+			why:  "a missing status is not a ready one; the same reason the ContainerStatuses length is compared against the spec",
+		},
+		{
+			name: "completed plain init container",
+			build: func(p *corev1.Pod) {
+				p.Spec.InitContainers = []corev1.Container{{Name: "setup"}}
+				p.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: "setup", Ready: false,
+					State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}}}
+			},
+			want: true,
+			why:  "a PLAIN init container is expected to exit with Ready:false; demanding readiness of it would never be satisfiable, so only restartPolicy:Always entries are held to it",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := base()
+			tc.build(pod)
+			if got := allContainersReady(pod); got != tc.want {
+				t.Fatalf("allContainersReady = %v, want %v.\nWhy this matters: %s", got, tc.want, tc.why)
+			}
+		})
+	}
 }
 
 // TestProvisionRefusesFailedPod — a Pod that reaches a terminal phase is refused
