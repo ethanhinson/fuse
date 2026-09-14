@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -432,5 +433,92 @@ func TestEnsureCanaryNamespaceCreatesTheSandboxServiceAccount(t *testing.T) {
 	if sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken {
 		t.Errorf("canary ServiceAccount AutomountServiceAccountToken = %v, want an explicit false",
 			sa.AutomountServiceAccountToken)
+	}
+}
+
+// THE CLEANUP MUST WAIT FOR THE LEGS TO BE GONE, NOT MERELY ASK.
+//
+// deletePodBestEffort issues a delete with a grace period and returns at once, so
+// on a REAL cluster the canary Pod lingers in Terminating for seconds afterwards.
+// runCanaryPair's deferred cleanup then returns while both legs still exist, and
+// the NEXT Verify's Create hits AlreadyExists — which runCanaryLeg turns into
+// "canary leg %s already existed (a previous run's leftover, now deleted); re-run
+// to verify". Re-running does not clear it, because every run leaves the same
+// residue.
+//
+// In the kind lane that made TestIntegrationMetadataFloorHoldsInBothModes and
+// TestIntegrationOrphanIsReapedByASecondInstance SKIP in the combined run while
+// passing individually: two of five acceptances silently not executing, which is
+// the `smoke-over-fake-backend-proves-wire-not-system` shape exactly.
+//
+// The generated fake deletes SYNCHRONOUSLY, so no fake-backed test could see
+// this. This reactor models the API server's actual behaviour — a graceful delete
+// stamps deletionTimestamp and the object REMAINS — and asserts the contract the
+// real cluster needs: when Verify returns, a subsequent Create of the same name
+// must succeed.
+func TestVerifyWaitsForTheCanaryLegsToBeGone(t *testing.T) {
+	cs := fake.NewClientset(defaultAPIService())
+	s := newTestSubstrate(t, cs, enforcing("10.1.2.3"))
+	readyOnCreate(t, cs, s)
+	(&canaryProbes{openReaches: true, closedReaches: false}).install(s)
+
+	// A GRACEFUL delete: the object gets a deletionTimestamp and stays. It
+	// disappears only once something polls for it, which is what models the
+	// kubelet completing the termination while the caller waits.
+	// terminating holds, per leg, how many more Gets must report it as STILL
+	// PRESENT before the underlying delete is finally allowed through. Two polls'
+	// grace, so a cleanup that asks once and gives up is still caught while one
+	// that waits properly succeeds.
+	var mu sync.Mutex
+	terminating := map[string]int{}
+	cs.PrependReactor("delete", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		name := action.(k8stesting.DeleteAction).GetName()
+		if !strings.HasPrefix(name, canaryPodPrefix) {
+			return false, nil, nil
+		}
+		mu.Lock()
+		_, already := terminating[name]
+		if !already {
+			terminating[name] = 2
+		}
+		left := terminating[name]
+		mu.Unlock()
+		if left > 0 {
+			// ACCEPTED but NOT YET REMOVED — the object keeps existing, which is
+			// exactly what a graceful delete does on a real API server.
+			return true, nil, nil
+		}
+		return false, nil, nil // grace elapsed: let the tracker actually delete it.
+	})
+	cs.PrependReactor("get", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		name := action.(k8stesting.GetAction).GetName()
+		mu.Lock()
+		left, tracked := terminating[name]
+		if tracked && left > 0 {
+			terminating[name] = left - 1
+		}
+		mu.Unlock()
+		if !tracked || left <= 0 {
+			return false, nil, nil
+		}
+		// STILL THERE, with a deletionTimestamp.
+		now := metav1.Now()
+		return true, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: s.canaryNamespace(), DeletionTimestamp: &now,
+		}}, nil
+	})
+
+	if err := s.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	// THE CONTRACT: once Verify has returned, the legs are gone as far as a
+	// subsequent Create is concerned. Asserted by asking the same question the
+	// next run asks.
+	for _, name := range []string{canaryOpenPod, canaryClosedPod} {
+		if _, err := cs.CoreV1().Pods(s.canaryNamespace()).Get(context.Background(), name, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+			t.Errorf("canary leg %s is still present when Verify returned (err=%v); the next run's Create will hit "+
+				"AlreadyExists and that run will SKIP rather than verify the floor", name, err)
+		}
 	}
 }

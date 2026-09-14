@@ -87,6 +87,17 @@ const (
 	// a timeout and this is how long Verify waits for it.
 	canaryConnectWait = "3"
 
+	// canaryCleanupTimeout bounds the wait for BOTH legs to actually disappear.
+	// Generous relative to podGraceSeconds (5s each): a node under load takes
+	// longer than the grace period to finish, and the cost of waiting is a slower
+	// Verify while the cost of not waiting is the next run refusing.
+	canaryCleanupTimeout = 90 * time.Second
+
+	// canaryCleanupPoll is how often the wait re-asks. Short enough that the
+	// common case (the Pod is gone within its grace period) adds no meaningful
+	// latency.
+	canaryCleanupPoll = 250 * time.Millisecond
+
 	// canaryAPIPort is the API server's Service port.
 	canaryAPIPort = "443"
 	// canaryAPIService is the Service every cluster has.
@@ -135,10 +146,10 @@ func (s *Substrate) runCanaryPair(ctx context.Context) error {
 	// cancelled on a refusal path, and a cleanup issued on it would not leave the
 	// process — leaking two Pods that then sit until activeDeadlineSeconds.
 	defer func() {
-		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), canaryProbeTimeout)
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), canaryCleanupTimeout)
 		defer cancel()
 		for _, name := range []string{canaryOpenPod, canaryClosedPod} {
-			s.deletePodBestEffort(cctx, ns, name)
+			s.deleteCanaryLeg(cctx, ns, name)
 		}
 	}()
 
@@ -185,6 +196,68 @@ func (s *Substrate) runCanaryPair(ctx context.Context) error {
 		// endpoint.
 		return fmt.Errorf("%w: leg 2 (%s) REACHED %s under the %s policy alone; this cluster's CNI does not enforce NetworkPolicy, so the metadata-deny floor does not exist and no sandbox on it is contained",
 			errFloorUnproven, canaryClosedPod, target, policyDefaultDeny)
+	}
+}
+
+// deleteCanaryLeg deletes one leg AND WAITS FOR IT TO BE GONE.
+//
+// The wait is the whole point, and it is why this is not deletePodBestEffort.
+//
+// A delete carries a grace period, so the API server stamps a deletionTimestamp
+// and the object REMAINS until the kubelet finishes terminating it — seconds. A
+// cleanup that only asked would return with both legs still present, and the NEXT
+// Verify's Create would hit AlreadyExists, which runCanaryLeg turns into "a
+// previous run's leftover, now deleted; re-run to verify". Re-running does not
+// help: every run leaves the same residue, so the refusal is permanent.
+//
+// That is not a theoretical race. It made two of the five kind acceptances SKIP in
+// the combined `make test-k8s` run while passing individually — a lane reporting
+// green with a third of its cases silently unexecuted, which is precisely the
+// failure shape this package's integration-test header warns about. The canary
+// pair's contract is "cleaned up on EVERY path", and until the object is actually
+// gone that contract is not met.
+//
+// The names are FIXED (canary-open / canary-closed), so a per-run unique name was
+// the alternative; waiting is chosen instead because the fixed names are what let
+// an operator and the reaper recognise a leg as a group, and because a cleanup
+// that does not observe its own effect is the defect either way.
+//
+// Best-effort still: a leg that will not go away is not worth failing a Verify
+// whose verdict is already decided, and the canary Pod's activeDeadlineSeconds and
+// the reaper both bound it. The next run's AlreadyExists diagnostic is then the
+// honest report.
+func (s *Substrate) deleteCanaryLeg(ctx context.Context, ns, name string) {
+	api := s.cs.CoreV1().Pods(ns)
+
+	grace := podGraceSeconds
+	propagation := metav1.DeletePropagationBackground
+
+	// Delete-and-confirm, repeated until the object is gone. Polling a GET alone
+	// is not enough: the FIRST delete is the graceful one and the object survives
+	// its grace period, and re-asserting the delete each round is what collects a
+	// Pod whose termination stalled — a delete against an already-absent object is
+	// a NotFound, which is the terminating condition, so the repetition costs
+	// nothing in the common case.
+	//
+	// A GET rather than a watch to confirm: the object may already be gone before a
+	// watch could be established, and a watch started after the delete event sees
+	// nothing and would wait out the whole timeout.
+	for {
+		delErr := api.Delete(ctx, name, metav1.DeleteOptions{
+			GracePeriodSeconds: &grace,
+			PropagationPolicy:  &propagation,
+		})
+		if apierrors.IsNotFound(delErr) {
+			return
+		}
+		if _, err := api.Get(ctx, name, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(canaryCleanupPoll):
+		}
 	}
 }
 
