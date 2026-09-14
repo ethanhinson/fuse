@@ -1190,6 +1190,23 @@ func (s *Substrate) reapNamespace(ctx context.Context, ns string, cutoff time.Ti
 			// NotFound means another instance's reaper got there first, which is
 			// the outcome this reaper wanted.
 			deleted++
+			// THE PER-POD POLICY GOES WITH IT. `fuse-egress-<pod>` has no
+			// ownerReference and cannot have one — a NetworkPolicy cannot be owned
+			// by the Pod it selects (see teardownEgress) — so unlike the Secret,
+			// nothing but fuse will ever collect it. This reaper is the path that
+			// runs exactly when no Teardown will, so skipping it here leaks one
+			// policy per dead instance per sandbox, without bound.
+			//
+			// Best-effort and NOT folded into firstErr: the Pod is gone, which is
+			// what `deleted` counts and what bounds the tenant's quota. A policy
+			// selecting no Pod grants nothing, so a failure here is litter, not a
+			// containment hole, and must not make a successful reap report failure.
+			_ = s.cs.NetworkingV1().NetworkPolicies(ns).Delete(ctx, egressPolicyName(pod.Name), metav1.DeleteOptions{})
+			// The per-Pod SECRET needs no delete here: Provision adopts it to the
+			// admitted Pod's UID, so the Pod delete above collects it. Deleting it
+			// explicitly would be a second mechanism doing the garbage collector's
+			// job — one of which would rot — and the ownerReference is the one that
+			// also survives the Pod ending in ways fuse never observes.
 		case firstErr == nil:
 			firstErr = fmt.Errorf("kubernetes: delete orphan %s/%s: %w", ns, pod.Name, err)
 		}

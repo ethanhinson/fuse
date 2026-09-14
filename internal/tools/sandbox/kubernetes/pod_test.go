@@ -1225,6 +1225,101 @@ func TestReapToleratesAlreadyDeleted(t *testing.T) {
 	}
 }
 
+// THE REAPER MUST COLLECT THE PER-POD NETWORKPOLICY, NOT JUST THE POD.
+//
+// teardownEgress deletes `fuse-egress-<pod>` because a NetworkPolicy cannot be
+// owned by the Pod it selects — there is no ownerReference backstop for it, unlike
+// the Secret. The reaper is the path that runs precisely when no Teardown ever
+// will (the owning instance died), so a reaper that deletes only the Pod leaves one
+// policy behind per dead instance, without bound, in every tenant namespace.
+//
+// Not a containment hole — a policy selecting no Pod grants nothing — but an
+// unbounded leak in the one code path whose whole purpose is to bound leaks.
+//
+// A FRESH Pod's policy must survive: the reaper's scope is orphans.
+func TestReapCollectsThePerPodNetworkPolicy(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+	cs := fake.NewClientset()
+	s := newTestSubstrate(t, cs)
+
+	if _, err := cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "fuse-sb-a-1", Labels: map[string]string{labelManaged: "true"}},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("seed namespace: %v", err)
+	}
+
+	for _, pod := range []struct {
+		name      string
+		heartbeat time.Time
+	}{
+		{"orphan", now.Add(-2 * time.Hour)},
+		{"live", now.Add(-time.Minute)},
+	} {
+		if _, err := cs.CoreV1().Pods("fuse-sb-a-1").Create(ctx, &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        pod.name,
+				Namespace:   "fuse-sb-a-1",
+				Labels:      map[string]string{labelManaged: "true", labelPod: pod.name},
+				Annotations: map[string]string{annotationHeartbeat: pod.heartbeat.Format(time.RFC3339)},
+			},
+		}, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("seed pod %s: %v", pod.name, err)
+		}
+		if _, err := cs.NetworkingV1().NetworkPolicies("fuse-sb-a-1").Create(ctx,
+			s.renderEgressPolicy("fuse-sb-a-1", pod.name), metav1.CreateOptions{}); err != nil {
+			t.Fatalf("seed policy for %s: %v", pod.name, err)
+		}
+	}
+
+	if _, err := s.Reap(ctx, time.Hour); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+
+	_, err := cs.NetworkingV1().NetworkPolicies("fuse-sb-a-1").Get(ctx, egressPolicyName("orphan"), metav1.GetOptions{})
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("%s survived the reap (err=%v) — the policy has no ownerReference, so nothing else will ever collect it",
+			egressPolicyName("orphan"), err)
+	}
+	if _, err := cs.NetworkingV1().NetworkPolicies("fuse-sb-a-1").Get(ctx, egressPolicyName("live"), metav1.GetOptions{}); err != nil {
+		t.Errorf("%s must survive: its Pod is alive and still needs its egress allow (%v)", egressPolicyName("live"), err)
+	}
+}
+
+// A MISSING policy is the ORDINARY case, not a failure: under allow-all the
+// per-Pod policy still exists, but a Pod half-created before an instance died may
+// have none, and another instance's reaper may have collected it first. Neither
+// may make Reap report an error or stop counting the Pod as collected.
+func TestReapToleratesMissingNetworkPolicy(t *testing.T) {
+	ctx := context.Background()
+	cs := fake.NewClientset()
+	s := newTestSubstrate(t, cs)
+
+	if _, err := cs.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "fuse-sb-a-1", Labels: map[string]string{labelManaged: "true"}},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("seed namespace: %v", err)
+	}
+	if _, err := cs.CoreV1().Pods("fuse-sb-a-1").Create(ctx, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "orphan",
+			Namespace:   "fuse-sb-a-1",
+			Labels:      map[string]string{labelManaged: "true"},
+			Annotations: map[string]string{annotationHeartbeat: time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)},
+		},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("seed pod: %v", err)
+	}
+
+	n, err := s.Reap(ctx, time.Hour)
+	if err != nil {
+		t.Fatalf("Reap must tolerate a NotFound policy: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("Reap reported %d, want 1 — the Pod was collected regardless of the policy", n)
+	}
+}
+
 // --- small accessors, kept here so the assertions above read as assertions ---
 
 func containerByName(t *testing.T, pod *corev1.Pod, name string) corev1.Container {
