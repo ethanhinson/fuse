@@ -2,9 +2,9 @@
 slug: smoke-over-fake-backend-proves-wire-not-system
 hook: "A cross-language smoke test (real generated client stub → real server handler) run against a FAKE/scripted backend proves the WIRE serializes and round-trips, NOT that the system works end-to-end — and if it t.Skips silently when its toolchain is absent, a green suite hides that the path never ran. Keep the rigorous property test (no-loss/no-dup, real lifecycle) on the authoritative side, run the smoke against the real backend for at least one acceptance, and make the skip loud."
 topics: [testing, integration, streaming, cross-language, ci]
-changes: [55, 50, 49, 56, 63]
+changes: [55, 50, 49, 56, 63, 75]
 created: 2026-08-11
-updated: 2026-08-21
+updated: 2026-09-17
 promotion_state: candidate
 promoted_to:
 ---
@@ -97,3 +97,27 @@ has no production emitter yet, so the test asserts it gains *no* series, which m
 emitter is added the guard fails and forces the coverage to be extended rather than leaving the
 family quietly unproven. Same skip discipline as the rest of this finding: gated on a real container
 CLI, and it ran against real Docker rather than skipping.
+
+## War story — the acceptance lane that skipped a third of its cases and still reported green (#0075, PR #91)
+
+*2026-09-17.* The Kubernetes sandbox substrate's real-cluster lane (`make test-k8s` against kind +
+Calico) reported **green while silently skipping 2 of its 5 acceptances**. Cause: the `Verify`
+canary's cleanup issued a graceful delete and returned immediately, so the canary Pod lingered in
+`Terminating` and poisoned every later `Verify` in the combined run — the later cases skipped out
+rather than failing. Fixed by delete-and-confirm; now 5/5, reproduced twice consecutively.
+
+This is the finding's third limb (a silent skip reads as coverage) at the *acceptance* layer rather
+than the toolchain layer, and it is nastier there: the lane exists precisely because the fake-client
+tests cannot prove the system, so a lane that quietly runs 60% of itself re-opens the exact gap it
+was built to close. **A skip inside a lane must be as loud as a skip of the whole lane** — count
+executed cases against expected and fail on a shortfall, rather than trusting each case to report
+itself. The same run also proved the *intended* skip direction correctly
+(`KUBECONFIG=/nonexistent make test-k8s` → 4/4 skip, package ok, skip message naming what did not
+run), so both halves of the discipline are now pinned.
+
+Related and unresolved from the same change: the `egress.mode: enforce` datapath is covered only by
+golden-object tests against the fake client, with live verification under `allow-all` only. It is
+named in the results file, in `docs/sandbox-kubernetes.md`, and in ADR-0058's Consequences, and its
+end-to-end acceptance is owed by change #76 — which is this finding's standing instruction: name
+what did not run, in the artifact, rather than letting an optimistic summary absorb it. See also
+[[cluster-only-defects-invisible-to-fake-client-tests]].

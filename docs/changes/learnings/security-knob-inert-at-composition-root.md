@@ -2,7 +2,7 @@
 slug: security-knob-inert-at-composition-root
 hook: "A fail-closed security feature can pass its ENTIRE test suite while doing nothing in the shipped binary, because every unit test constructs the enforcing object directly and nothing wires it at the composition root. 'Fail-closed' is not 'working' — a feature whose enforcement path is never constructed in `cmd/` is inert, and inert-toward-safe reads green forever. Assert the wiring at the composition root, not just the mechanism in the package."
 topics: [security, testing, composition-root, fail-closed, wiring, go, sandbox, durability, deployment]
-changes: [64, 76]
+changes: [64, 76, 75]
 created: 2026-09-01
 updated: 2026-09-17
 promotion_state: candidate
@@ -87,3 +87,24 @@ Two generalizations this adds to item 3:
 Verified on kind: with Postgres scaled to 0 the replacement pod stays NotReady and converges
 (restarts=1) once Postgres returns; a loop started before a rolling restart replays all five
 events through the new pods.
+
+## War story — a refused handler selection that only the model could see (#0075, PR #91)
+
+*2026-09-17.* The remote-sandbox work added a third branch to `selectHandler` for an explicitly
+named handler, with the correct security property: a named handler that cannot be constructed
+**refuses**, and there is no path from that failure to the host handler. The refusal was right; its
+*observability* was the inert half. A refused selection was reachable only from inside `Acquire`, so
+a `fuse` binary whose configured `kubernetes` handler failed to build came up **silent** — no
+startup error, no health signal — and failed every bash call at runtime with a message that only the
+model in the loop ever saw.
+
+`Service.SelectionRefusal()` was added beyond the plan's literal text to surface it. The
+generalization for this finding: composition-root wiring has **two** obligations, not one. The first
+is that the enforcing object is actually constructed (the original lesson). The second is that a
+*refusal to construct it* is visible at the boundary an operator watches — startup, logs, readiness
+— and not only at the call site that later trips over it. A correct fail-closed refusal reported
+nowhere is indistinguishable, from outside, from a feature that works.
+
+The same change's `kubernetes` handler was accordingly asserted **constructed at `cmd/fuse`**, not
+only unit-tested, with the whole-file-discard config path checked not to resolve the new block to a
+permissive posture.
