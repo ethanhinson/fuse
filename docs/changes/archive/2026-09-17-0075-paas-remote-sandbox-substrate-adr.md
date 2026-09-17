@@ -2,11 +2,11 @@
 id: 75
 slug: paas-remote-sandbox-substrate-adr
 title: PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a Kubernetes warm-Pod handler as first implementation
-status: implemented
+status: done
 priority: medium
 type: feat
 created: 2026-08-20
-updated: 2026-09-13
+updated: 2026-09-17
 depends_on: [63, 64, 65, 77]
 related: [63, 64, 65, 76, 77, 82]
 discovered_from: [63]
@@ -17,7 +17,7 @@ results: docs/results/2026-09-13-paas-remote-sandbox-substrate-adr-results.md
 trivial: false
 auto_groomable:
 branch: feat/paas-remote-sandbox-substrate-adr
-claimed_at: 2026-09-14T02:02:53Z
+claimed_at: 
 pr: https://github.com/ethanhinson/fuse/pull/91
 blocked_by:
 reconciled: true
