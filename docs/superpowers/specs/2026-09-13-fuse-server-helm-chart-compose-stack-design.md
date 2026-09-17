@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0076 — fuse server deployment — a docker-compose stack and a Helm chart over the released image (not an operator)](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0076-fuse-server-helm-chart-compose-stack.md)**
+> ↩ **[Change 0076 — fuse server deployment — a docker-compose stack and a Helm chart over the released image (not an operator)](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/archive/2026-09-17-0076-fuse-server-helm-chart-compose-stack.md)**
 <!-- docket:backlink:end -->
 
 # fuse server deployment — a docker-compose stack and a Helm chart over the #82 image

@@ -29,8 +29,8 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-09-13-fuse-server-helm-chart-compose-stack-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-13-fuse-server-helm-chart-compose-stack-design.md) |
-| Plan | [2026-09-13-fuse-server-helm-chart-compose-stack-plan.md](https://github.com/ethanhinson/fuse/blob/feat/fuse-server-helm-chart-compose-stack/docs/superpowers/plans/2026-09-13-fuse-server-helm-chart-compose-stack-plan.md) |
-| Results | [2026-09-13-fuse-server-helm-chart-compose-stack-results.md](https://github.com/ethanhinson/fuse/blob/feat/fuse-server-helm-chart-compose-stack/docs/results/2026-09-13-fuse-server-helm-chart-compose-stack-results.md) |
+| Plan | [2026-09-13-fuse-server-helm-chart-compose-stack-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-09-13-fuse-server-helm-chart-compose-stack-plan.md) |
+| Results | [2026-09-13-fuse-server-helm-chart-compose-stack-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-09-13-fuse-server-helm-chart-compose-stack-results.md) |
 | PR | [#90](https://github.com/ethanhinson/fuse/pull/90) |
 | ADRs | [ADR-0031](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0031-durable-distributed-event-store-loop-registry.md), [ADR-0034](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0034-edge-enforced-auth-multi-tenancy-loop-ownership.md), [ADR-0030](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0030-deglobalize-eventstore-multiloop-hosting.md), [ADR-0033](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0033-networked-binding-connect-protobuf-fuse-loop-v1.md), [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
