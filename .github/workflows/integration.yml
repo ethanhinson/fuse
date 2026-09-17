@@ -40,6 +40,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # helm is a TEST DEPENDENCY, not just a release one: deploy/charts'
+      # `helm lint` + `helm template` gate skips loudly when helm is absent, and
+      # a skip in CI is indistinguishable from a pass in the summary. Installing
+      # it here is what makes `go test -race ./...` actually exercise the chart.
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.3
+
       - name: Run unit tests with race detector
         run: go test -race ./...
 
@@ -134,6 +142,13 @@ jobs:
           version: '~> v2'
           install-only: true
 
+      # Pinned to the same helm the release job uses, so a chart that renders
+      # here renders there. `helm` is also what deploy/charts' Go gate shells
+      # out to, and a dry run without it would prove nothing about the chart.
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.15.3
+
       # `goreleaser check` exits NON-ZERO on any deprecated key, so this doubles
       # as a deprecation gate. When it fails, fix the config forward to the v2
       # spelling — never re-introduce the deprecated key to quiet it.
@@ -178,6 +193,74 @@ jobs:
             fi
           done
           exit "${status}"
+
+      # THE DEPLOYMENT ARTIFACTS (docket change 0076), same rationale as the
+      # release config above: a chart or compose file that only breaks at tag
+      # time costs a yanked release, so both are rendered on every PR.
+      #
+      # HARD-FAIL, never green-skip — this job's documented posture. Both tools
+      # are installed by steps above, so an absent one is a broken workflow and
+      # must fail here rather than be tolerated.
+      #
+      # `--version 0.0.0-dev` mirrors Chart.yaml's in-tree placeholder: the real
+      # version is stamped from the tag by release.yml and is not knowable here.
+      # NOTHING in this step pushes, and no packaged chart leaves the runner.
+      - name: Lint, render, and package the Helm chart
+        run: |
+          set -euo pipefail
+
+          command -v helm >/dev/null || {
+            echo "::error::helm is not on PATH — the setup-helm step above must have failed. This job hard-fails rather than skipping." >&2
+            exit 1
+          }
+          helm version
+
+          # The minimal valid values set: BOTH mandatory guards satisfied (an
+          # auth surface and a DSN) and nothing else, so a new guard that fires
+          # on the defaults is caught here instead of at install time.
+          minimal=(
+            --set 'postgres.dsn=postgres://fuse:dry-run@postgres:5432/fuse?sslmode=disable'
+            --set auth.allowDevToken=true
+          )
+
+          helm lint deploy/charts/fuse "${minimal[@]}"
+          helm template fuse-dry-run deploy/charts/fuse "${minimal[@]}" >/dev/null
+
+          # Packaged into its OWN directory, never dist/: dist/ belongs to
+          # GoReleaser and is globbed by the two steps around this one
+          # (fuse_*_darwin_arm64.tar.gz above, fuse_*_checksums.txt below).
+          # A stray artifact there is a trap for a future glob widening.
+          out="${RUNNER_TEMP}/chart-dry-run"
+          rm -rf "${out}" && mkdir -p "${out}"
+
+          helm package deploy/charts/fuse \
+            --version 0.0.0-dev --app-version 0.0.0-dev \
+            --destination "${out}"
+
+          chart="${out}/fuse-0.0.0-dev.tgz"
+          [ -f "${chart}" ] || {
+            echo "::error::expected ${chart} after 'helm package' — not found. release.yml's publish step asserts the same <name>-<version>.tgz shape, so this is a real break." >&2
+            ls -la "${out}" >&2
+            exit 1
+          }
+          echo "ok: packaged ${chart}"
+
+      # `config` parses, merges the `include:`d observability stack, and
+      # interpolates — the whole of what a broken compose file gets wrong —
+      # without pulling an image or starting a container. Bring-up stays an
+      # operator-only smoke (`make compose-smoke`).
+      #
+      # The stack uses `include:`, which needs Compose v2.20+. ubuntu-latest
+      # ships well past that, and `docker compose version` is printed first so a
+      # future runner-image regression names the version in the log instead of
+      # surfacing as an inscrutable parse error. No guard beyond that: an absent
+      # compose fails here under `set -e`, which is this job's posture.
+      - name: Validate the compose stack
+        run: |
+          set -euo pipefail
+          docker compose version
+          docker compose -f deploy/compose/docker-compose.yml config >/dev/null
+          echo "ok: deploy/compose/docker-compose.yml"
 
       # Drive the real installer against the snapshot tree over
       # FUSE_RELEASE_BASE_URL. The test takes the dist dir as $1 and recovers the

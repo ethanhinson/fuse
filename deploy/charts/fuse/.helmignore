@@ -1,0 +1,22 @@
+# Patterns to ignore when building packages.
+.DS_Store
+.git/
+.gitignore
+.bzr/
+.hg/
+.hgignore
+.svn/
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+.project
+.idea/
+*.tmproj
+.vscode/
+
+# Go test files live one directory up (deploy/charts/validate_test.go) and so
+# are outside the chart root already; this guards against a stray one landing
+# inside it.
+*_test.go

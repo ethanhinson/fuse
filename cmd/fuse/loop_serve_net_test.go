@@ -241,7 +241,7 @@ func TestLoopServeNetObservedInstallsObserver(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	serveDone := make(chan error, 1)
 	served := false
-	go func() { serveDone <- serveNetObserved(ctx, ln, fr, nil, nil, obs) }()
+	go func() { serveDone <- serveNetObserved(ctx, ln, fr, nil, nil, nil, obs) }()
 	t.Cleanup(func() {
 		cancel()
 		if served {

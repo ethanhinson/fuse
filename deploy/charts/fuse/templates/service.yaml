@@ -1,0 +1,28 @@
+{{- include "fuse.guards" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fuse.fullname" . }}
+  labels:
+    {{- include "fuse.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    # The server speaks h2c (cleartext HTTP/2) on this port — see NOTES.txt's
+    # ingress caveat. appProtocol: kubernetes.io/h2c tells an ingress controller
+    # or mesh that reads it not to downgrade the upstream to HTTP/1.1.
+    - name: connect
+      port: {{ .Values.service.connectPort }}
+      targetPort: connect
+      protocol: TCP
+      appProtocol: kubernetes.io/h2c
+    - name: metrics
+      port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "fuse.serverSelectorLabels" . | nindent 4 }}

@@ -1,0 +1,184 @@
+{{- include "fuse.guards" . -}}
+{{- if .Values.postgres.dev.enabled }}
+# ============================================================================
+# DEV-ONLY POSTGRES. NOT FOR PRODUCTION. NOT A DATABASE YOU KEEP DATA IN.
+#
+# One replica. A hardcoded password committed to a public git repository, so
+# every reader of this repo has it. No backups, no replication, no failover, no
+# connection pooling, no upgrade path, no monitoring, and a PVC whose fate on
+# `helm uninstall` is the StorageClass's reclaim policy, not this chart's.
+#
+# It exists for exactly one reason: so `helm install` on kind reaches Ready
+# without an external database. Enabling it satisfies the chart's DSN guard,
+# which is the point — the guard asks you to CHOOSE a store, and this is the
+# choice that says "throwaway".
+#
+# For anything else set postgres.dsn or postgres.existingSecret against a
+# database someone operates.
+#
+# NOTE ON THE POD INVARIANTS: this is the upstream postgres:16-alpine image, not
+# the fuse server, so it carries no /healthz or /readyz — its readiness is
+# pg_isready, and its liveness the same. It is labelled
+# `app.kubernetes.io/component: postgres-dev` so chart tests can tell the two
+# kinds of pod apart rather than guessing. It DOES carry the same
+# non-root/no-capabilities/read-only-root hardening and the same writable-/tmp
+# mount, because there is no reason for a dev database to be softer than the
+# server in front of it.
+# ============================================================================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "fuse.postgresDevFullname" . }}
+  labels:
+    {{- include "fuse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-dev
+type: Opaque
+stringData:
+  # PLACEHOLDER CREDENTIALS — see the header. Publicly known.
+  username: {{ .Values.postgres.dev.user | quote }}
+  password: {{ .Values.postgres.dev.password | quote }}
+  database: {{ .Values.postgres.dev.database | quote }}
+  # The DSN the server consumes as FUSE_PG_DSN. sslmode=disable: this is
+  # in-cluster plaintext to a dev database, and TLS here would be theatre next
+  # to the checked-in password above.
+  dsn: {{ printf "postgres://%s:%s@%s:5432/%s?sslmode=disable" .Values.postgres.dev.user .Values.postgres.dev.password (include "fuse.postgresDevFullname" .) .Values.postgres.dev.database | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fuse.postgresDevFullname" . }}
+  labels:
+    {{- include "fuse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-dev
+spec:
+  # Headless: the StatefulSet's governing Service. The DSN above resolves
+  # through it to the single pod.
+  clusterIP: None
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+  selector:
+    {{- include "fuse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-dev
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "fuse.postgresDevFullname" . }}
+  labels:
+    {{- include "fuse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-dev
+spec:
+  serviceName: {{ include "fuse.postgresDevFullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fuse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres-dev
+  template:
+    metadata:
+      labels:
+        {{- include "fuse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres-dev
+      annotations:
+        # Carried so this pod is not the one exception to the chart's
+        # checksum-annotation rule; nothing here reads the fuse config.
+        checksum/config: {{ include "fuse.configChecksum" . | quote }}
+    spec:
+      # 70/70 is postgres:16-alpine's postgres user. Pinned rather than inherited
+      # so the PVC's ownership is predictable across an image rebase.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.dev.image | quote }}
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fuse.postgresDevFullname" . }}
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fuse.postgresDevFullname" . }}
+                  key: password
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fuse.postgresDevFullname" . }}
+                  key: database
+            # The image refuses to initdb into a non-empty mount root
+            # (lost+found on many CSI volumes), so data lives in a subdirectory.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          # exec, not httpGet: Postgres speaks its own wire protocol, so there is
+          # no /healthz to hit. pg_isready is the equivalent.
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.dev.user | quote }}, "-d", {{ .Values.postgres.dev.database | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.dev.user | quote }}, "-d", {{ .Values.postgres.dev.database | quote }}]
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.dev.user | quote }}, "-d", {{ .Values.postgres.dev.database | quote }}]
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 60
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- with .Values.postgres.dev.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            # Required under readOnlyRootFilesystem: the postgres entrypoint and
+            # the server both write under /tmp (the unix socket directory among
+            # them), and initdb fails outright without it.
+            - name: tmp
+              mountPath: /tmp
+            # The entrypoint writes its socket directory here.
+            - name: run
+              mountPath: /var/run/postgresql
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.postgres.dev.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.dev.storage }}
+{{- end }}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,8 +39,34 @@ const (
 	observabilityReopenPath = "/-/observability/logging/reopen"
 )
 
+// instanceIDEnv names the per-replica instance-id fallback. It is consulted
+// ONLY when the trusted config file leaves observability.instance_id empty:
+// ADR-0006 keeps the observability block honored from the trusted home file and
+// nowhere else, and this does not change that. It fills a gap the file cannot —
+// one Kubernetes Secret shared by N replicas cannot carry N distinct ids — and
+// it is deliberately the ONLY observability field with an env fallback.
+const instanceIDEnv = "FUSE_INSTANCE_ID"
+
+// resolveInstanceID applies the instance-id resolution order:
+// configured (non-empty) -> $FUSE_INSTANCE_ID -> os.Hostname() -> "".
+func resolveInstanceID(configured string) string {
+	if id := strings.TrimSpace(configured); id != "" {
+		return id
+	}
+	if id := strings.TrimSpace(os.Getenv(instanceIDEnv)); id != "" {
+		return id
+	}
+	if hostname, err := os.Hostname(); err == nil {
+		return strings.TrimSpace(hostname)
+	}
+	return ""
+}
+
 type observabilityService struct {
-	cfg             config.ObservabilityConfig
+	cfg config.ObservabilityConfig
+	// instanceID is resolved ONCE at construction so the log identity, the trace
+	// resource, and the admin response all report the same value.
+	instanceID      string
 	observer        observe.Observer
 	projector       observe.Projector
 	projection      *projectionDispatcher
@@ -115,7 +142,7 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 		return nil, err
 	}
 	o := cfg.Observability
-	s := &observabilityService{cfg: o, observer: observe.NoopObserver{}}
+	s := &observabilityService{cfg: o, instanceID: resolveInstanceID(o.InstanceID), observer: observe.NoopObserver{}}
 	fail := func(err error) (*observabilityService, error) { _ = s.Close(context.Background()); return nil, err }
 	var projectors observe.Fanout
 	if o.Metrics.Enabled {
@@ -150,7 +177,7 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 			}
 			sink = file
 		}
-		s.logger = observabilitylogging.New(sink, levels, observabilitylogging.Identity{Service: "fuse", Instance: o.InstanceID})
+		s.logger = observabilitylogging.New(sink, levels, observabilitylogging.Identity{Service: "fuse", Instance: s.instanceID})
 		projectors = append(projectors, s.logger)
 	}
 	if o.Traces.Enabled {
@@ -170,8 +197,8 @@ func newObservability(ctx context.Context, cfg config.Config, stdout io.Writer) 
 			batch.BatchTimeout, _ = time.ParseDuration(o.Traces.BatchTimeout)
 		}
 		resourceAttributes := []attribute.KeyValue{semconv.ServiceName("fuse"), semconv.ServiceVersion(version.Version)}
-		if o.InstanceID != "" {
-			resourceAttributes = append(resourceAttributes, semconv.ServiceInstanceID(o.InstanceID))
+		if s.instanceID != "" {
+			resourceAttributes = append(resourceAttributes, semconv.ServiceInstanceID(s.instanceID))
 		}
 		s.provider = observeotel.NewProvider(exporter, batch,
 			sdktrace.WithResource(resource.NewWithAttributes(semconv.SchemaURL, resourceAttributes...)),
@@ -396,7 +423,7 @@ func (s *observabilityService) adminHandler(verifier loopauth.Verifier) http.Han
 			_ = json.NewEncoder(w).Encode(struct {
 				InstanceID string                     `json:"instance_id"`
 				State      observabilitylogging.State `json:"state"`
-			}{s.cfg.InstanceID, state})
+			}{s.instanceID, state})
 			return
 		}
 		var m loggingMutation
@@ -526,6 +553,32 @@ type projectingDurableStore struct {
 	projection *projectionDispatcher
 }
 
+// The compile-time guard is the point: it is what keeps the Ping forwarder below
+// from being deleted as dead code by someone who cannot see who asserts for it.
+var _ event.Pinger = projectingDurableStore{}
+
+// Ping forwards event.Pinger through this wrapper.
+//
+// It exists because embedding an INTERFACE promotes only the methods of that
+// interface's static type: projectingDurableStore's method set is exactly
+// CommittedDurableStore's (Append/Subscribe/Replay/AppendCommitted) plus the
+// Append override, no matter how many extra methods the concrete inner store has.
+// So an OPTIONAL-interface assertion against the wrapper silently fails — and
+// readiness.probe treats a failed event.Pinger assertion as "nothing to probe, so
+// ready" (health.go). Without this method, /readyz answered 200 with the database
+// unreachable in every deployment that enables metrics, which is both shipped
+// configs. Any future wrapper over a store must forward Ping the same way.
+//
+// Returning nil when the inner store implements no Pinger reproduces event.Pinger's
+// documented degrade ("a store that does not implement Pinger is treated as ready")
+// one level down, so wrapping never changes the answer in either direction.
+func (s projectingDurableStore) Ping(ctx context.Context) error {
+	if p, ok := s.CommittedDurableStore.(event.Pinger); ok && p != nil {
+		return p.Ping(ctx)
+	}
+	return nil
+}
+
 func (s projectingDurableStore) Append(ctx context.Context, key event.StreamKey, e event.Event) error {
 	committed, err := s.AppendCommitted(ctx, key, e)
 	if err != nil {
@@ -635,4 +688,24 @@ func (d *projectionDispatcher) run() {
 			return
 		}
 	}
+}
+
+// shutdownMetrics gracefully drains the SEPARATE metrics listener started by
+// startMetricsEndpoint, so it is part of the server's drain rather than being
+// severed when the process exits.
+//
+// It takes the CALLER's context deliberately: the drain site passes the SAME
+// drainCtx it gave srv.Shutdown, so the Connect server and the metrics endpoint
+// SHARE one budget instead of serializing two. Inventing a second independent
+// timeout here would let total shutdown reach 2×drainTimeout and blow past the
+// pod's terminationGracePeriodSeconds (= drainTimeout + 10) into a SIGKILL.
+//
+// It is safe to call before Close: http.Server.Shutdown is idempotent, and the
+// Close path's own Shutdown of the same server then returns immediately.
+// A nil service, or one with no bound metrics endpoint, is a no-op.
+func (s *observabilityService) shutdownMetrics(ctx context.Context) error {
+	if s == nil || s.metricsServer == nil {
+		return nil
+	}
+	return s.metricsServer.Shutdown(ctx)
 }

@@ -99,6 +99,7 @@ var (
 	_ event.DurableStore          = (*PGStore)(nil)
 	_ event.CommittedDurableStore = (*PGStore)(nil)
 	_ event.LoopRegistry          = (*PGStore)(nil)
+	_ event.Pinger                = (*PGStore)(nil)
 )
 
 // Open connects to Postgres via a pgxpool, applies the embedded schema
@@ -664,5 +665,15 @@ func (s *PGStore) Close() error {
 
 	s.listenWG.Wait()
 	s.pool.Close()
+	return nil
+}
+
+// Ping is the event.Pinger cheap-liveness probe (change 0076): it round-trips the
+// pool with pgxpool's own Ping, bounded by the caller's context. It must live in
+// this package because pool is unexported with no accessor.
+func (s *PGStore) Ping(ctx context.Context) error {
+	if err := s.pool.Ping(ctx); err != nil {
+		return fmt.Errorf("pgstore: ping: %w", err)
+	}
 	return nil
 }

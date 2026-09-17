@@ -80,6 +80,19 @@ type CommittedDurableStore interface {
 	AppendCommitted(ctx context.Context, key StreamKey, e Event) (Event, error)
 }
 
+// Pinger is the OPTIONAL cheap-liveness seam a readiness probe asserts for. It is
+// deliberately NOT part of DurableStore: like CommittedDurableStore above, a
+// consumer type-asserts for it and degrades when it is absent, so no test double
+// or minimal store is forced to grow a method it has no use for. A store that does
+// not implement Pinger is treated as ready.
+//
+// Ping MUST be cheap and bounded by the caller's context — a probe calls it on
+// every /readyz hit, so it never scans, never writes, and never blocks on a slow
+// subscriber.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
 // EventStore is the agent-free seam over the loop event stream. The loop Appends;
 // consumers (a TUI, an external binding, the session-log projection) Subscribe for
 // a live tail or Replay durable history from a cursor. All three implementations

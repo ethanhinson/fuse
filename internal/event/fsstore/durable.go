@@ -17,6 +17,7 @@ package fsstore
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -57,6 +58,7 @@ type FSDurableStore struct {
 var (
 	_ event.DurableStore          = (*FSDurableStore)(nil)
 	_ event.CommittedDurableStore = (*FSDurableStore)(nil)
+	_ event.Pinger                = (*FSDurableStore)(nil)
 )
 
 // NewDurableFSStore creates a durable, tenant-partitioned event store rooted at
@@ -320,4 +322,22 @@ func lastSeqInFile(path string) (event.Seq, error) {
 		}
 	}
 	return max, nil
+}
+
+// Ping is the event.Pinger cheap-liveness probe (change 0076): the store is live
+// when its baseDir still exists and is still a directory. It must live in this
+// package because baseDir is unexported with no accessor. No read, write, or lock
+// is taken — a readiness probe hits this on every request.
+func (s *FSDurableStore) Ping(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	fi, err := os.Stat(s.baseDir)
+	if err != nil {
+		return fmt.Errorf("fsstore: ping %s: %w", s.baseDir, err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("fsstore: ping %s: not a directory", s.baseDir)
+	}
+	return nil
 }

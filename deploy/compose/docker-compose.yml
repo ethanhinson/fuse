@@ -1,0 +1,186 @@
+# fuse server dev stack (docket change 0076).
+#
+# ============================================================================
+# DEV-ONLY. NOT A PRODUCTION DEPLOYMENT. EVERY CREDENTIAL HERE IS A
+# CHECKED-IN PLACEHOLDER.
+#
+# The Postgres username/password below and the bearer token in
+# ./fuse.compose.yml are literals committed to a public git repository. They
+# are known to anyone who can read this file. Do not reuse them anywhere, do
+# not point this stack at data you care about, and do not derive a production
+# deployment from it. For Kubernetes, use deploy/charts/fuse, which refuses to
+# render a dev token unless you explicitly ask for one.
+#
+# Every port this stack publishes is bound to 127.0.0.1 (ADR-0043's loopback
+# posture): nothing here is reachable from off-host, which is the only thing
+# keeping the placeholder credentials from being an open door.
+# ============================================================================
+#
+# `include:` pulls deploy/observability/docker-compose.yml in unchanged (one
+# stack, not two), then overrides ONLY Prometheus's config mount so the scrape
+# target is the `fuse` service instead of host.docker.internal. Compose merges
+# `volumes` by container target, so ./prometheus.yml replaces the inherited
+# prometheus.yml mount while the inherited alerts.yml mount survives — verified
+# with `docker compose config`. deploy/observability/prometheus.yml is NOT
+# edited: deploy/observability/validate.go asserts its exact
+# host.docker.internal:9090 triple, so the standalone stack stays green.
+#
+# Requires Compose v2.20+ for `include:`.
+#
+#   docker compose -f deploy/compose/docker-compose.yml up -d
+#   docker compose -f deploy/compose/docker-compose.yml \
+#     --profile docker-socket up -d postgres fuse-docker-socket
+#
+# The docker-socket form NAMES ITS SERVICES deliberately: `fuse` has no
+# `profiles:` key, so a bare `--profile docker-socket up` would start it too and
+# the two would collide on the published ports. See the block on
+# `fuse-docker-socket` below.
+#
+# See ./README.md.
+include:
+  - ../observability/docker-compose.yml
+
+services:
+  # Prometheus override: our config, scraping fuse:9090 inside the network.
+  prometheus:
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  fuse: &fuse
+    image: ${FUSE_IMAGE:-ghcr.io/ethanhinson/fuse:latest}
+    # The image's ENTRYPOINT is /fuse with no CMD, so `command` is the argv.
+    command: ["loop-serve-net", "--addr", "0.0.0.0:8787"]
+    environment:
+      # Placeholder credential — see the header. Matches the postgres service.
+      FUSE_PG_DSN: postgres://fuse:fuse-dev-password@postgres:5432/fuse?sslmode=disable
+      FUSE_INSTANCE_ID: compose-1
+    volumes:
+      # The trusted home directory (ADR-0006). A named volume, because the
+      # released image is distroless with a read-only-friendly layout and the
+      # server writes session state under here when no DSN is set.
+      - fuse-home:/home/nonroot/.fuse
+      # The config file itself, mounted read-only over the home volume.
+      - ./fuse.compose.yml:/home/nonroot/.fuse/config.yml:ro
+      # A WRITABLE /tmp is REQUIRED, not a nicety. internal/tools/sandbox's
+      # egress proxy calls os.MkdirTemp("", "fuse-egress") on the serve path
+      # whenever the bash tool is enabled, and the failure is swallowed: with no
+      # writable /tmp, `egress.mode: enforce` silently degrades to deny-all
+      # while the container stays healthy. The distroless base ships no /tmp
+      # this process can write, so mount one.
+      - fuse-tmp:/tmp
+    # DELIBERATELY NOT IN THE &fuse ANCHOR. `fuse-docker-socket` merges this
+    # service and publishes THE SAME host ports, so only one of the two can run
+    # at a time. Keeping the publish block out of the anchor and repeating it
+    # verbatim on both services makes that collision visible to a reader of
+    # this file instead of hiding it behind a YAML merge.
+    ports:
+      # Loopback publish only (ADR-0043).
+      - "127.0.0.1:8787:8787"   # Connect/h2c
+      - "127.0.0.1:9090:9090"   # Prometheus /metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+      fuse-home-init:
+        condition: service_completed_successfully
+    healthcheck:
+      # The image is distroless: no shell, no curl, nothing to script with. The
+      # `fuse healthcheck` subcommand exists for exactly this. It defaults to
+      # 127.0.0.1:8787/readyz and is dispatched before config.Load(), so it
+      # still reports unhealthy on a server whose config is broken.
+      # Compose requires the CMD prefix on an exec-form test; ["CMD", "/fuse",
+      # "healthcheck"] is the exec form (no shell involved), which is the only
+      # form that can work here.
+      test: ["CMD", "/fuse", "healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  # ==========================================================================
+  # `docker-socket` profile — the bash tool's container runtime.
+  #
+  # ADR-0044 ("the bash tool is contained, not credentialed") makes a container
+  # boundary the bash tool's security boundary in every profile. The released
+  # image is distroless: no shell, no docker CLI, no container runtime — so a
+  # bash tool inside it has nothing local to contain itself with, and WITHOUT
+  # this profile the bash tool reports itself unavailable and says so at
+  # startup. That is the default and it is the safe one.
+  #
+  # ADR-0044's deployment constraint is explicit that the alternative —
+  # handing the container the host's docker socket — is a privilege-escalation
+  # tradeoff that "socket access is approximately host root", and that an
+  # implementation must ADDRESS it rather than assume it away. Addressing it
+  # here means: it is off by default, it lives behind a named profile you must
+  # type, and this comment states the cost. A model-authored bash command
+  # running against this socket can start a privileged container and own the
+  # host. Accept that only on a dev machine you are willing to lose.
+  #
+  # WHY A SECOND SERVICE: Compose profiles gate whole services, not individual
+  # mounts, so there is no way to make one mount conditional. `fuse-docker-socket`
+  # is the same service via the `&fuse` YAML anchor plus the socket mount, and it
+  # carries `profiles:` so it never starts unless you pass --profile docker-socket.
+  #
+  # THE TWO ARE MUTUALLY EXCLUSIVE, AND COMPOSE WILL NOT ENFORCE THAT FOR YOU.
+  # A profile gates only the PROFILED service; `fuse` has no `profiles:` key, so
+  # it starts on every invocation — including `--profile docker-socket up`. Both
+  # services publish 127.0.0.1:8787 and :9090, so that bare command fails with a
+  # port-bind error. Compose has no way to express "exclude this service when
+  # that profile is active": a service with no `profiles:` key is always in the
+  # default set. So NAME THE SERVICES YOU WANT:
+  #
+  #   docker compose -f deploy/compose/docker-compose.yml \
+  #     --profile docker-socket up -d postgres fuse-docker-socket
+  #
+  # See README.md and docs/deploying.md.
+  # ==========================================================================
+  fuse-docker-socket:
+    <<: *fuse
+    profiles: ["docker-socket"]
+    # Repeated verbatim from `fuse` on purpose — see the note on that service's
+    # ports block. These are the same host ports, which is why only one of the
+    # two services can run at a time.
+    ports:
+      - "127.0.0.1:8787:8787"   # Connect/h2c
+      - "127.0.0.1:9090:9090"   # Prometheus /metrics
+    volumes:
+      - fuse-home:/home/nonroot/.fuse
+      - ./fuse.compose.yml:/home/nonroot/.fuse/config.yml:ro
+      - fuse-tmp:/tmp
+      # ≈ host root. See the block above.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # Named volumes are created ROOT-OWNED 0755 when their mount point does not
+  # exist in the image, and /home/nonroot/.fuse does not exist in the distroless
+  # image. The server runs as uid 65532 (the base image's `nonroot`), so without
+  # this step it cannot create ~/.fuse/workspaces and logs "HOSTED with NO
+  # PER-TENANT WORKSPACE" — harmless under the default profile (bash is
+  # unavailable anyway) but every `working_dir` is refused under docker-socket.
+  # Observed live on 2026-09-16. Compose has no uid option for volumes, so a
+  # one-shot init container owns the chown; `fuse` waits for it to complete.
+  fuse-home-init:
+    image: busybox:1.36
+    command: ["sh", "-c", "chown -R 65532:65532 /home/nonroot/.fuse /tmp-fuse && chmod 0700 /home/nonroot/.fuse"]
+    volumes:
+      - fuse-home:/home/nonroot/.fuse
+      - fuse-tmp:/tmp-fuse
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      # PLACEHOLDER CREDENTIALS — dev-only, see the header. Anyone reading this
+      # repository knows them. The service is not published to the host at all.
+      POSTGRES_USER: fuse
+      POSTGRES_PASSWORD: fuse-dev-password
+      POSTGRES_DB: fuse
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fuse -d fuse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  fuse-home:
+  fuse-tmp:
+  postgres-data:

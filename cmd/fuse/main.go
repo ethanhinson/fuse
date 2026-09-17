@@ -26,7 +26,7 @@ func main() {
 
 // run is the testable entry point. It returns a process exit code.
 func run(args []string, stdout, stderr io.Writer) int {
-	// `version` is answered BEFORE config.Load() on purpose. The dispatch switch
+	// `version` and `healthcheck` are answered BEFORE config.Load() on purpose. The dispatch switch
 	// below sits under config.Load() + Validate() + validateModelRefs, so a user
 	// with a broken ~/.fuse/config.yml — exactly the user about to file a bug
 	// report, and exactly the state of a fresh install — would get
@@ -37,7 +37,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		case "version", "--version", "-version":
 			fmt.Fprintf(stdout, "fuse %s\n", version.Version)
 			fmt.Fprintf(stdout, "go %s %s/%s\n", goruntime.Version(), goruntime.GOOS, goruntime.GOARCH)
+			fmt.Fprintf(stdout, "backends: %s\n", durableBackends)
 			return 0
+		case "healthcheck":
+			// A container healthcheck must be able to answer about a server whose
+			// config is broken — that is precisely when you most want to learn the
+			// container is unhealthy. It reads no config of its own: everything it
+			// needs is a flag with a default matching the server's own.
+			return runHealthcheck(args[1:], stderr)
 		}
 	}
 
@@ -95,6 +102,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "  fuse mcps         list connected MCP servers")
 			fmt.Fprintln(stdout, "  fuse loop-server  headless stdio JSON-RPC loop-control server (binding #2)")
 			fmt.Fprintln(stdout, "  fuse loop-serve-net  networked Connect/protobuf (fuse.loop.v1) loop-control server (binding #3; bearer-token auth)")
+			fmt.Fprintln(stdout, "  fuse healthcheck  probe a running server's /readyz; exit 0 when healthy (container healthcheck)")
 			fmt.Fprintln(stdout, "  fuse help         show this help")
 			return 0
 		}

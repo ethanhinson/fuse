@@ -1,0 +1,41 @@
+{{- include "fuse.guards" . -}}
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "fuse.fullname" . }}
+  labels:
+    {{- include "fuse.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "fuse.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    {{- with .Values.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ . }}
+    {{- end }}
+    {{- with .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ . }}
+    {{- end }}
+  behavior:
+    scaleDown:
+      # Scale-down is deliberately slow. Removing a replica abandons any loop it
+      # owns until the ownership lease expires and another instance re-owns it on
+      # the next resolve (ADR-0031/0034), and a loop mid-turn shows the client a
+      # gap marker and parks — the same shape as a crash. Do not tighten this
+      # without reading docs/deploying.md's mid-turn caveat.
+      stabilizationWindowSeconds: 300
+{{- end }}
