@@ -80,6 +80,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      fuse-home-init:
+        condition: service_completed_successfully
     healthcheck:
       # The image is distroless: no shell, no curl, nothing to script with. The
       # `fuse healthcheck` subcommand exists for exactly this. It defaults to
@@ -146,6 +148,21 @@ services:
       - fuse-tmp:/tmp
       # ≈ host root. See the block above.
       - /var/run/docker.sock:/var/run/docker.sock
+
+  # Named volumes are created ROOT-OWNED 0755 when their mount point does not
+  # exist in the image, and /home/nonroot/.fuse does not exist in the distroless
+  # image. The server runs as uid 65532 (the base image's `nonroot`), so without
+  # this step it cannot create ~/.fuse/workspaces and logs "HOSTED with NO
+  # PER-TENANT WORKSPACE" — harmless under the default profile (bash is
+  # unavailable anyway) but every `working_dir` is refused under docker-socket.
+  # Observed live on 2026-09-16. Compose has no uid option for volumes, so a
+  # one-shot init container owns the chown; `fuse` waits for it to complete.
+  fuse-home-init:
+    image: busybox:1.36
+    command: ["sh", "-c", "chown -R 65532:65532 /home/nonroot/.fuse /tmp-fuse && chmod 0700 /home/nonroot/.fuse"]
+    volumes:
+      - fuse-home:/home/nonroot/.fuse
+      - fuse-tmp:/tmp-fuse
 
   postgres:
     image: postgres:16-alpine
