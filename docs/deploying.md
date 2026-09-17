@@ -59,6 +59,14 @@ Use `/healthz` for liveness and **never** `/readyz`: readiness goes 503 when Pos
 unreachable, and a liveness probe on it would restart the whole fleet during a database blip
 instead of just removing it from the Service.
 
+**Startup is strict.** When a DSN is configured and Postgres cannot be opened at startup, the
+server refuses to start — it logs `refusing to start on the filesystem store` and exits 1 —
+rather than silently falling back to the per-loop filesystem store. That fallback would report
+Ready (a nil store is "nothing to probe"), accept loops, and lose every one of them at the next
+restart; it happened live when the server and the dev Postgres StatefulSet started concurrently.
+Under Kubernetes the refusal is a restart until the database is up (the startup probe budget
+covers it); under Compose `depends_on: service_healthy` means it never fires.
+
 ### `fuse healthcheck`
 
 ```sh

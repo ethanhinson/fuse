@@ -71,7 +71,11 @@ func runLoopServer(_ []string, cfg config.Config, reg *model.Registry, _ io.Writ
 	// Reuse the one-shot deps wiring but with a REAL event store so observe/attach
 	// have durable history. Renderer is a discarding renderer — binding #2 has no
 	// display.
-	deps := buildLoopServerRuntimeDeps(sb, cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg))
+	deps, derr := buildLoopServerRuntimeDepsStrict(sb, cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), observe.NoopObserver{})
+	if derr != nil {
+		fmt.Fprintf(stderr, "loop-server: %v\n", derr)
+		return 1
+	}
 	rt := runtime.New(deps)
 
 	srv := loopserver.NewServer(stdinForLoopServer, os.Stdout, rt)
@@ -102,25 +106,60 @@ func buildLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *mod
 	return buildLoopServerRuntimeDepsWithObserver(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observe.NoopObserver{})
 }
 
-// buildLoopServerRuntimeDepsWithObserver is the production composition variant
-// that keeps the configured provider-neutral observer in every child factory.
+// selectDurableBackendFn is the durable-backend selector the composition root
+// consults. A package var so a test can make selection FAIL without a database:
+// the untagged selector (durable_backend.go) never errors, and the pgstore one
+// errors only when a DSN is configured and Postgres cannot be opened.
+var selectDurableBackendFn = selectDurableBackend
+
+// buildLoopServerRuntimeDepsWithObserver is the LENIENT composition variant used by
+// tests and library callers: on a selector error it falls back to nil store/registry
+// (the legacy per-loop fsstore path via BaseDir — no cross-process reattach).
+//
+// The two SERVER bindings do NOT use it — see buildLoopServerRuntimeDepsStrict. A
+// server that silently ran on the filesystem store because Postgres was not up yet
+// would report Ready (the nil store is "nothing to probe"), accept loops, and lose
+// every one of them on its next restart. Observed live on the #0076 Helm chart:
+// the server and the dev Postgres StatefulSet start concurrently, the first pod
+// lost the race, and none of its loops ever reached the database.
 func buildLoopServerRuntimeDepsWithObserver(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
 	rateGate model.RateGate, observer observe.Observer) runtime.Deps {
-	if observer == nil {
-		observer = observe.NoopObserver{}
-	}
-
-	// Select the SHARED durable backend (change 0047): a process-wide durable event
-	// store + loop registry, threaded into Deps as VALUES so the loop-server resolves
-	// loops via the durable seam and a FRESH process can reattach to a prior process's
-	// loop (cold cross-process reattach). The untagged build always returns the
-	// filesystem backend (no pgx import); the pgstore build may return Postgres. On the
-	// unlikely selector error, fall back to nil (the legacy per-loop fsstore path via
-	// BaseDir still works — just without cross-process reattach).
-	durableStore, durableReg, derr := selectDurableBackend(cfg)
+	durableStore, durableReg, derr := selectDurableBackendFn(cfg)
 	if derr != nil {
 		durableStore, durableReg = nil, nil
+	}
+	return assembleLoopServerRuntimeDeps(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observer, durableStore, durableReg)
+}
+
+// buildLoopServerRuntimeDepsStrict is the composition variant BOTH server bindings
+// use: a durable-backend selector error is returned, never absorbed, so a
+// configured-but-unreachable Postgres refuses to start the server instead of
+// degrading it to a store that does not survive a restart. Under Kubernetes that
+// refusal is a restart until the database is up, which is the correct convergence;
+// under Compose `depends_on: service_healthy` means it never fires.
+func buildLoopServerRuntimeDepsStrict(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
+	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
+	rateGate model.RateGate, observer observe.Observer) (runtime.Deps, error) {
+	durableStore, durableReg, derr := selectDurableBackendFn(cfg)
+	if derr != nil {
+		return runtime.Deps{}, fmt.Errorf("durable backend: %w — refusing to start on the filesystem store (loops would not survive a restart); fix the DSN or wait for Postgres", derr)
+	}
+	return assembleLoopServerRuntimeDeps(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observer, durableStore, durableReg), nil
+}
+
+// assembleLoopServerRuntimeDeps is the shared assembly behind both variants: the
+// caller has already selected the durable backend (change 0047 — a process-wide
+// durable event store + loop registry, threaded into Deps as VALUES so the
+// loop-server resolves loops via the durable seam and a FRESH process can reattach
+// to a prior process's loop). nil store/registry means the legacy per-loop fsstore
+// path via BaseDir.
+func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
+	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
+	rateGate model.RateGate, observer observe.Observer,
+	durableStore event.DurableStore, durableReg event.LoopRegistry) runtime.Deps {
+	if observer == nil {
+		observer = observe.NoopObserver{}
 	}
 
 	// Resolve the shared MCP attach options ONCE (change #59, Task 4): they are derived
