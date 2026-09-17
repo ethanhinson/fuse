@@ -98,17 +98,25 @@ docker compose -f deploy/compose/docker-compose.yml --profile docker-socket conf
 
 | File | What it is |
 |---|---|
-| `docker-compose.yml` | `include:`s `../observability/docker-compose.yml`, adds `fuse` + `postgres`, overrides Prometheus's config mount |
+| `docker-compose.yml` | `include:`s `../observability/docker-compose.yml` **together with** `prometheus-override.yml` as one path list, adds `fuse` + `postgres` |
+| `prometheus-override.yml` | the Prometheus config-mount override, merged INTO the include (not a standalone file) |
 | `fuse.compose.yml` | the server config, mounted at `/home/nonroot/.fuse/config.yml` — the trusted home file (ADR-0006) |
 | `prometheus.yml` | mounted over the inherited `/etc/prometheus/prometheus.yml`; scrapes `fuse:9090` |
 
 Two merge facts worth knowing before you edit:
 
-- **The Prometheus override is a merge, not a replacement.** Compose merges
-  `volumes` by container target, so `./prometheus.yml` replaces the inherited
-  `prometheus.yml` mount while the inherited `alerts.yml` mount survives — the
-  alert rules stay shared with the standalone stack rather than forked. Confirm
-  with `docker compose ... config` after any change here.
+- **The Prometheus override is a merge, not a replacement — and it lives in
+  the `include:` path list, not under this file's `services:`.** Compose v2.24+
+  refuses a top-level `services.prometheus:` here with "conflicts with imported
+  resource" (an included service may not be overridden by the including
+  project; CI's v2.38 enforces it, some newer releases do not). So
+  `prometheus-override.yml` is merged into the include itself, where later
+  files override earlier ones. Compose merges `volumes` by container target, so
+  the override's `../compose/prometheus.yml` (relative to the FIRST file's
+  directory, `deploy/observability`) replaces the inherited `prometheus.yml`
+  mount while the inherited `alerts.yml` mount survives — the alert rules stay
+  shared with the standalone stack rather than forked. Confirm with
+  `docker compose ... config` after any change here.
 - **`deploy/observability/prometheus.yml` must not be retargeted** to `fuse:9090`
   to "simplify" this. `hasFuseScrapeTarget` in `deploy/observability/validate.go`
   asserts that file's exact `host.docker.internal:9090` triple — it is the

@@ -38,14 +38,21 @@
 #
 # See ./README.md.
 include:
-  - ../observability/docker-compose.yml
+  # A PATH LIST, not a bare path, and the override lives in its own file —
+  # deliberately. Compose v2.24+ (v2.38 on the CI runner) refuses a top-level
+  # `services.prometheus:` in THIS file with "conflicts with imported resource":
+  # an included service may not be overridden by the including project. The
+  # sanctioned shape is to merge the override INTO the include: every file in
+  # `path:` is loaded as one sub-project, later files override earlier ones,
+  # and the merged result is what this project imports. Relative paths inside
+  # the list resolve against the FIRST file's directory (deploy/observability),
+  # which is why prometheus-override.yml spells `../compose/prometheus.yml`.
+  # Verified against Compose v2.38.2 and v5.1.2 with `docker compose config`.
+  - path:
+      - ../observability/docker-compose.yml
+      - ./prometheus-override.yml
 
 services:
-  # Prometheus override: our config, scraping fuse:9090 inside the network.
-  prometheus:
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-
   fuse: &fuse
     image: ${FUSE_IMAGE:-ghcr.io/ethanhinson/fuse:latest}
     # The image's ENTRYPOINT is /fuse with no CMD, so `command` is the argv.
