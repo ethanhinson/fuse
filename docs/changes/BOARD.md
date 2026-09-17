@@ -20,7 +20,7 @@
 
 | # | Title | Priority | Type | PR | Readiness |
 |---|-------|----------|------|----|-----------|
-| [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a Kubernetes warm-Pod handler as first implementation | `medium` | `feat` | [#91](https://github.com/ethanhinson/fuse/pull/91) |  |
+| [0075](active/0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a Kubernetes warm-Pod handler as first implementation | `medium` | `feat` | [#91](https://github.com/ethanhinson/fuse/pull/91) | finalize blocked — needs you |
 
 ```mermaid
 graph TD
