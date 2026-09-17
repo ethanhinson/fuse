@@ -148,21 +148,3 @@ directory names. `microvm_conformance_test.go` is the precedent for the seam-con
 No obsolescence, no fundamental invalidation. Auto-capture is disabled for this repo
 (`auto_capture.enabled: false`), so adjacent work surfaced here is reported in prose only —
 see the results file.
-
-## Finalize blocked
-
-- **2026-09-16** — `docket-finalize-change` halted at the **merge step**: `gh pr merge 91` was
-  denied by the Claude Code auto-mode permission classifier (reason: `Merge Without Review`).
-  The harness-native retry was attempted once and the denial stood, so the run aborted rather
-  than looping or working around it.
-
-  **The merge gate itself passed green.** The branch was rebased onto `origin/main` (`24a4863`,
-  docket #0076) — 23 commits, new tip `c59623e`, force-pushed to PR #91. One conflict, in the
-  `Makefile` `.PHONY:` line, was resolved by `docket-rebase-resolver` as a both-sides union
-  (#0076's `compose-smoke helm-smoke charts-sync-alerts` plus #0075's `test-k8s`). On the rebased
-  sha: `go vet ./...` exit 0, `go build -tags pgstore ./...` exit 0, and `make test` exit 0 in a
-  clean detached worktree.
-
-  **To clear:** a human merges PR #91 (rebased, pushed, green), then re-runs
-  `docket-finalize-change 75`. Archive, learnings harvest, branch/worktree cleanup and the board
-  refresh are all still pending — none of them ran.
