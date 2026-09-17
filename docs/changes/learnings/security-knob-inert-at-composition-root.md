@@ -1,10 +1,10 @@
 ---
 slug: security-knob-inert-at-composition-root
 hook: "A fail-closed security feature can pass its ENTIRE test suite while doing nothing in the shipped binary, because every unit test constructs the enforcing object directly and nothing wires it at the composition root. 'Fail-closed' is not 'working' — a feature whose enforcement path is never constructed in `cmd/` is inert, and inert-toward-safe reads green forever. Assert the wiring at the composition root, not just the mechanism in the package."
-topics: [security, testing, composition-root, fail-closed, wiring, go, sandbox]
-changes: [64]
+topics: [security, testing, composition-root, fail-closed, wiring, go, sandbox, durability, deployment]
+changes: [64, 76]
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-17
 promotion_state: candidate
 promoted_to:
 ---
@@ -60,3 +60,30 @@ wired the composition root (with a loud "EGRESS ENFORCED with NO DATAPATH" fallb
 and made the loader salvage the enforce posture on discard; both were pinned by new
 `cmd/fuse` tests asserting the *wiring*, plus a Linux-gated e2e test proving the datapath end
 to end on a real container.
+
+**2026-09-17 (#76, PR #90).** The same shape, with the absorption one layer deeper and the
+consequence *data loss* rather than a blackout — found only by running the Helm chart live on
+kind, after a full green suite and a deep review. The server and the dev Postgres StatefulSet
+start concurrently; the first server pod lost the race, and the composition root **swallowed
+the durable-store selector error** and fell back to the per-loop filesystem store. That pod
+then reported **Ready** — a nil durable store is "nothing to probe", so the readiness probe
+had nothing to fail on — accepted real loops, and every one of them was gone after the next
+rollout (0 rows in Postgres).
+
+Two generalizations this adds to item 3:
+
+- **A silent fallback to a less-durable backend is the fail-closed-inert bug with the safety
+  polarity inverted.** The unwired state here failed toward *working-but-ephemeral*, which is
+  worse than a blackout: a blackout is observed immediately, a store that accepts every write
+  and forgets them at the next restart is observed only after the restart. When a configured
+  backend cannot be opened, **refuse to start** — under Kubernetes an exit-1 is a restart
+  until the dependency is up, which is the correct behavior, not an outage. Keep the lenient
+  builder for library callers and make the strict variant the one both server bindings use.
+- **Readiness must probe the thing that can be absent.** "Nothing to probe" must never resolve
+  to Ready. A probe that only checks liveness of what *was* constructed cannot see a component
+  that was silently not constructed — the same blind spot as a unit test that builds the
+  enforcing object itself.
+
+Verified on kind: with Postgres scaled to 0 the replacement pod stays NotReady and converges
+(restarts=1) once Postgres returns; a loop started before a rolling restart replays all five
+events through the new pods.
