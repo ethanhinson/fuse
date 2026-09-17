@@ -315,6 +315,23 @@ kubernetes:
   context: kind-fuse-sandbox
 YAML
 
+# 4b. ONLY for `egress.mode: enforce` from a laptop — three things the
+#     allow-all loop does not need:
+#     (a) the host-side forwarder artifact must sit beside the fuse binary
+#         (`make egress-forwarder`), exactly as for the local container handler:
+#         the composition root refuses to arm egress enforcement without it, and
+#         the handler then refuses every Acquire with "no proxy credential
+#         source". The Pod's forwarder comes from `kubernetes.sidecar_image`,
+#         which must therefore be an image built from THIS tree (the forwarder's
+#         `-upstream tls://` mode is new), loaded with `kind load docker-image`.
+#     (b) `kubernetes.proxy.listen: 0.0.0.0:3129` — a Go dual-stack listener.
+#     (c) `kubernetes.proxy.advertise_address` = the address a POD reaches your
+#         laptop at, which on Docker Desktop / OrbStack is what
+#         `docker exec fuse-sandbox-control-plane getent hosts host.docker.internal`
+#         prints — NOT your LAN IP, which changes and may not be routable from
+#         the kind network. Prove it from inside a policed Pod before blaming
+#         the proxy.
+
 # 5. The gated integration lane. It SKIPS loudly with no reachable cluster and
 #    is deliberately NOT part of `make test`.
 make test-k8s
@@ -338,12 +355,18 @@ it creates live under the `fuse-it-` namespace prefix, never the default, so a
 failed run never leaves debris in a namespace a real deployment owns.
 
 **What this lane does NOT cover**, stated rather than implied: the metadata floor
-is exercised under `allow-all` only. The `enforce` leg needs a reachable fuse TLS
-listener at an advertise address the sandbox Pod can route to, which means running
-the fuse process itself in the cluster — that is change #76's deployment. The
-enforce-mode rendering (the sidecar, the per-Pod policy naming one destination,
-the Secret mounted only into the sidecar) is covered by golden-object unit tests
-against the fake client; its end-to-end datapath is not.
+is exercised under `allow-all` only, and the `enforce` datapath is not in the lane
+at all. The lane cannot run it because the enforce leg needs a fuse TLS listener
+at an advertise address the sandbox Pod can route to, and the lane owns no fuse
+process. The enforce-mode rendering (the sidecar, the per-Pod policy naming one
+destination, the Secret mounted only into the sidecar) is covered by golden-object
+unit tests against the fake client. The end-to-end datapath was verified by hand
+on 2026-09-16 with fuse running on a laptop against a Calico kind cluster per
+step 4b above: a declared plaintext destination was served through sidecar → TLS
+→ proxy, an undeclared destination was refused `not_declared`, a CONNECT to an
+undeclared host was refused, and from inside the policed Pod only the advertise
+address:port was reachable. Repeat that by hand after touching the datapath; it
+is not automated.
 
 ---
 
