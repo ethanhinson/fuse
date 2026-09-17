@@ -621,93 +621,21 @@ func (r *containerRunner) currentEnv() []string {
 // workspace resolves the bind-mount SOURCE and the in-container working
 // directory for one Exec.
 //
-// This is where ADR-0044's containment constraint is enforced, and the split it
-// makes is the whole point:
+// It is a one-line DELEGATION to resolveWorkspace (workspace.go), which carries
+// the algorithm and the reasoning behind every line of it. The algorithm was
+// promoted out of this method in change 0075 so that the remote substrate
+// adapter resolves a model-supplied working_dir through the SAME implementation
+// rather than a second copy of it — see resolveWorkspace's doc comment, which
+// records why duplicating it is forbidden.
 //
-//   - The mount source is ALWAYS the trusted root passed in as `root`. It is
-//     not a function of workingDir, and there is no branch on which model
-//     output can reach it. This is what makes "mount my home directory"
-//     unwritable.
-//   - The model-supplied workingDir is a SUBPATH REQUEST resolved against that
-//     root. It moves -w and nothing else, so the worst a hostile value can do
-//     is name a directory the container was already going to be able to see.
-//   - Anything that does not resolve inside the root is REFUSED, not clamped.
-//     Silently rewriting an escape to the root would run a command somewhere
-//     the caller did not ask for, which is how "cd /etc && rm -rf ." becomes a
-//     surprise in the repo.
+// The only thing this method adds is the container substrate's mount point:
+// containerWorkspace, a constant, never anything derived from model output.
 //
-// Note that the returned workdir is a CONTAINER path. The runtime resolves it
-// inside the container's own namespace, so a symlink the model plants in the
-// tree after this check can only redirect -w to another path inside the mount —
-// there is no TOCTOU window between here and the mount that reaches the host.
-// The host-side canonicalisation below is what closes the window that DOES
-// exist: a symlink already in the tree pointing out of it.
-//
-// The root is a PARAMETER rather than a field read (change 0065). That is the
-// entire per-tenant change to this function: WHICH root is mounted is settled
-// at Acquire, from the authenticated Principal.Tenant, and handed in already
-// canonicalised (see resolveMountRoot). Everything below — the canonical
-// comparison, EvalSymlinks, the filepath.Rel + ".." rejection, the
-// non-directory refusal, the refusal to disclose host paths — is UNCHANGED and
-// must stay that way: the containment algorithm is not reimplemented in order
-// to be made tenant-aware, it is simply pointed at a narrower root.
-//
-// Consequently a caller MUST pass an already-canonicalised root. Both call
-// paths do: h.root is canonicalised at construction, and the per-tenant root at
-// Acquire, through that same one function.
+// A caller MUST still pass an already-canonicalised root. Both call paths do:
+// h.root is canonicalised at construction, and the per-tenant root at Acquire,
+// through that same one function (see resolveMountRoot).
 func (h *containerHandler) workspace(root string, workingDir string) (mount string, workdir string, err error) {
-	workingDir = strings.TrimSpace(workingDir)
-
-	if root == "" {
-		if workingDir != "" {
-			// The one thing we must not do here is fall back to mounting the
-			// model's path because we have no trusted one.
-			return "", "", fmt.Errorf("%w: cannot place working_dir %q", ErrNoTrustedRoot, workingDir)
-		}
-		return "", containerWorkspace, nil
-	}
-
-	// THE DEFAULT, and the common case: no working_dir at all still mounts the
-	// working tree. An unmounted container is an empty box the agent cannot
-	// work in (ADR-0044: "The working tree must be mounted in for the model to
-	// see the repo it edits").
-	if workingDir == "" {
-		return root, containerWorkspace, nil
-	}
-
-	// A relative working_dir is relative to the workspace — the only root the
-	// model has any business naming a path against.
-	candidate := workingDir
-	if !filepath.IsAbs(candidate) {
-		candidate = filepath.Join(root, candidate)
-	}
-
-	// Canonicalise before comparing. A prefix test against an uncanonicalised
-	// path is defeated by "..", by a doubled separator, and by a symlink; both
-	// sides here are fully resolved, so the comparison is between real paths.
-	resolved, err := filepath.EvalSymlinks(candidate)
-	if err != nil {
-		// Includes "does not exist", which is a refusal rather than a silent
-		// fallback to the root: the caller asked to run somewhere specific.
-		// The host path is deliberately NOT echoed back — the container never
-		// discloses this host's directory layout (see containerWorkspace).
-		return "", "", fmt.Errorf("%w: %q could not be resolved", ErrWorkingDirRefused, workingDir)
-	}
-
-	rel, err := filepath.Rel(root, resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", "", fmt.Errorf("%w: %q escapes it", ErrWorkingDirRefused, workingDir)
-	}
-	if info, err := os.Stat(resolved); err != nil || !info.IsDir() {
-		// In-tree but not a directory. Refused here so the caller gets the
-		// reason, rather than at the daemon, where it surfaces as an opaque
-		// runtime failure of a container that was already created.
-		return "", "", fmt.Errorf("%w: %q is not a directory", ErrWorkingDirRefused, workingDir)
-	}
-	if rel == "." {
-		return root, containerWorkspace, nil
-	}
-	return root, containerWorkspace + "/" + filepath.ToSlash(rel), nil
+	return resolveWorkspace(root, workingDir, containerWorkspace)
 }
 
 // argv builds the exact command line for one Exec.

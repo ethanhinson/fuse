@@ -1,0 +1,742 @@
+package kubernetes
+
+// VERIFY — THE CANARY PAIR (change 0075, task 9; ADR-0058 rule 3, spec §3).
+//
+// This is gate 3: either the network floor is PROVEN on this cluster or the
+// handler is disqualified. Nothing softer is available, because the thing being
+// checked is whether the cluster's CNI enforces NetworkPolicy AT ALL — and a
+// cluster whose CNI does not (Flannel without a policy plugin, a bare kubenet, a
+// managed cluster with policy switched off) accepts every NetworkPolicy object
+// fuse creates, reports them back unchanged, and enforces none of them. The
+// default-deny reads as present and is decoration. There is no field to inspect
+// and no API to ask; the only way to know is to try.
+//
+// # Why a PAIR, and why "both fail" is a refusal
+//
+// A single probe cannot distinguish the two things that matter:
+//
+//   - A policed Pod failing to reach a destination could mean the policy is
+//     enforced, or it could mean the destination is unreachable from this cluster
+//     for reasons having nothing to do with policy.
+//   - An unpoliced Pod reaching a destination could mean policy is absent, or it
+//     could mean this particular Pod was correctly allowed.
+//
+// So: leg 1 is a Pod with an EXPLICIT allow-all policy targeting it, which MUST
+// reach the API server's ClusterIP. Leg 2 is a Pod under the default-deny ALONE,
+// which MUST FAIL to reach the same address. Only both together say "policy
+// decides reachability here".
+//
+// "Both fail" is therefore a REFUSAL, and it is the outcome a lone-leg check gets
+// backwards: leg 2 failing looks like enforcement working, while in fact the
+// cluster cannot reach the API server at all and leg 2's failure proves nothing.
+// Any outcome but (open reaches, closed does not) refuses, naming the leg.
+//
+// # kubernetes.default, and why `nc`
+//
+// The destination is the `kubernetes.default` Service's ClusterIP on 443: it is
+// present in every cluster, reachable from every Pod that is allowed to reach
+// anything, and needs no operator setup. The probe is busybox `nc -z -w 3` —
+// present in the pinned default image — because it answers exactly the question
+// being asked (did a TCP connect succeed) with an exit status and nothing else. An
+// image LACKING it makes Verify fail CLOSED with a diagnostic naming the image,
+// because "the command was not found" and "the connection was refused" are
+// indistinguishable through an exit status, and reading the former as the latter
+// would make leg 2 "pass" on a cluster that enforces nothing.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/remotecommand"
+)
+
+const (
+	// canaryPodPrefix is the shared prefix of both legs, so a cleanup or an
+	// operator's `kubectl get pods` can identify them as a group.
+	canaryPodPrefix = "canary-"
+	// canaryOpenPod is leg 1: explicitly allowed, must REACH.
+	canaryOpenPod = canaryPodPrefix + "open"
+	// canaryClosedPod is leg 2: default-deny only, must FAIL.
+	canaryClosedPod = canaryPodPrefix + "closed"
+	// canaryExceptPod is leg 3: allowed 0.0.0.0/0 EXCEPT the one address leg 1
+	// proved reachable, and must FAIL. See the `except` design note below.
+	canaryExceptPod = canaryPodPrefix + "except"
+
+	// canaryAllowPolicy is leg 1's explicit allow. It selects canaryOpenPod BY
+	// NAME LABEL and nothing else: a broader selector would cover leg 2 as well,
+	// both legs would reach, and the pair would prove nothing while still looking
+	// like it ran.
+	canaryAllowPolicy = "fuse-canary-allow"
+
+	// canaryExceptPolicy is leg 3's broad allow with a single exception. Like
+	// canaryAllowPolicy it selects its own leg BY NAME LABEL: a selector covering
+	// leg 1 would except leg 1's destination too and leg 1 would fail.
+	canaryExceptPolicy = "fuse-canary-except"
+
+	// canaryNamespaceSuffix is appended to the namespace prefix. The canary lives
+	// in its own namespace so a probe never consumes a tenant's quota and is never
+	// mistaken for a tenant's sandbox.
+	canaryNamespaceSuffix = "-canary"
+
+	// canaryProbeTimeout bounds `nc -z -w 3` plus its exec round trip. The -w 3
+	// inside the container is the real bound; this is the transport's.
+	canaryProbeTimeout = 20 * time.Second
+
+	// canaryConnectWait is nc's own connect timeout in seconds. Short: a policed
+	// Pod's connect is DROPPED rather than refused, so leg 2's failure arrives as
+	// a timeout and this is how long Verify waits for it.
+	canaryConnectWait = "3"
+
+	// canaryCleanupTimeout bounds the wait for BOTH legs to actually disappear.
+	// Generous relative to podGraceSeconds (5s each): a node under load takes
+	// longer than the grace period to finish, and the cost of waiting is a slower
+	// Verify while the cost of not waiting is the next run refusing.
+	canaryCleanupTimeout = 90 * time.Second
+
+	// canaryCleanupPoll is how often the wait re-asks. Short enough that the
+	// common case (the Pod is gone within its grace period) adds no meaningful
+	// latency.
+	canaryCleanupPoll = 250 * time.Millisecond
+
+	// canaryAPIPort is the API server's Service port.
+	canaryAPIPort = "443"
+	// canaryAPIService is the Service every cluster has.
+	canaryAPIService = "kubernetes"
+)
+
+// verifyOnce and verifyErr are the SUBSTRATE's half of the sticky verdict.
+//
+// The adapter (sandbox.remoteHandler) caches it too, and both halves are wanted:
+// the adapter's is what makes every Acquire refuse, and this one is what makes a
+// Verify called directly — by a second adapter over the same substrate, or by the
+// composition root's own startup check — return the same answer without probing
+// again. A Verify that re-probed would eventually pass on a flake, and what it
+// gates is the network floor.
+type canaryVerdict struct {
+	once sync.Once
+	err  error
+}
+
+// canaryNamespace is where both legs run.
+func (s *Substrate) canaryNamespace() string {
+	return s.namespacePrefix + canaryNamespaceSuffix
+}
+
+// Verify proves the cluster's network floor with the canary pair, once.
+//
+// A non-nil error DISQUALIFIES the substrate for the process's lifetime (the
+// adapter refuses every Acquire with it), which is why every return below names
+// what went wrong in terms an operator can act on: which leg, and — for the image
+// case — which image.
+func (s *Substrate) Verify(ctx context.Context) error {
+	s.verdict.once.Do(func() { s.verdict.err = s.runCanaryPair(ctx) })
+	return s.verdict.err
+}
+
+// runCanaryPair is one execution of the probe, with cleanup on EVERY path.
+func (s *Substrate) runCanaryPair(ctx context.Context) error {
+	ns := s.canaryNamespace()
+
+	if err := s.ensureCanaryNamespace(ctx, ns); err != nil {
+		return err
+	}
+
+	// Both legs are cleaned up unconditionally, on a context of our own making:
+	// the ctx that brought us here may be the caller's and may already be
+	// cancelled on a refusal path, and a cleanup issued on it would not leave the
+	// process — leaking two Pods that then sit until activeDeadlineSeconds.
+	defer func() {
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), canaryCleanupTimeout)
+		defer cancel()
+		// Leg 3 is in this list unconditionally even though it only RUNS under
+		// allow-all: deleting a Pod that was never created is a NotFound, which
+		// deleteCanaryLeg treats as the terminating condition, and a cleanup list
+		// that had to agree with the posture branch below is a cleanup list that
+		// would eventually disagree with it.
+		for _, name := range []string{canaryOpenPod, canaryClosedPod, canaryExceptPod} {
+			s.deleteCanaryLeg(cctx, ns, name)
+		}
+	}()
+
+	// Leg 1's allow is asserted BEFORE leg 1's Pod. A Pod that started under the
+	// default-deny and was allowed a moment later could have run its probe in the
+	// window and reported a failure that says nothing about the cluster — which
+	// would refuse a perfectly good cluster, the one direction of error that is
+	// merely annoying rather than unsafe, but is still a wrong answer.
+	if err := s.applyPolicy(ctx, ns, s.renderCanaryAllow(ns)); err != nil {
+		return err
+	}
+
+	target, err := s.canaryTarget(ctx)
+	if err != nil {
+		return err
+	}
+
+	openReached, openErr := s.runCanaryLeg(ctx, ns, canaryOpenPod, target)
+	if openErr != nil {
+		return openErr
+	}
+	closedReached, closedErr := s.runCanaryLeg(ctx, ns, canaryClosedPod, target)
+	if closedErr != nil {
+		return closedErr
+	}
+
+	// THE VERDICT. Exactly one combination passes.
+	switch {
+	case openReached && !closedReached:
+		// The PAIR has proved enforcement exists. Under allow-all that is not yet
+		// the whole floor — see runExceptLeg.
+		return s.runExceptLeg(ctx, ns)
+	case !openReached && !closedReached:
+		// BOTH FAILED. Named as leg 1, deliberately: leg 1 is the one that should
+		// have succeeded, and the honest reading is "nothing in this cluster can
+		// reach the API server", which makes leg 2's failure uninformative.
+		return fmt.Errorf("%w: leg 1 (%s) could not reach %s even with an explicit allow-all policy, and leg 2 (%s) could not either — nothing in this cluster reaches the API server, so leg 2's failure proves nothing about NetworkPolicy enforcement",
+			errFloorUnproven, canaryOpenPod, target, canaryClosedPod)
+	case !openReached:
+		return fmt.Errorf("%w: leg 1 (%s) could not reach %s despite an explicit allow-all policy targeting it; the canary cannot establish a baseline, so enforcement cannot be proved",
+			errFloorUnproven, canaryOpenPod, target)
+	default:
+		// closedReached: THE DANGEROUS OUTCOME. The default-deny is present as an
+		// object and is not enforced, so every sandbox Pod fuse has ever created
+		// on this cluster has had unrestricted egress — including to the metadata
+		// endpoint.
+		return fmt.Errorf("%w: leg 2 (%s) REACHED %s under the %s policy alone; this cluster's CNI does not enforce NetworkPolicy, so the metadata-deny floor does not exist and no sandbox on it is contained",
+			errFloorUnproven, canaryClosedPod, target, policyDefaultDeny)
+	}
+}
+
+// runExceptLeg is LEG 3: it proves `ipBlock.except` is HONOURED on this cluster.
+//
+// # Why the pair is not enough
+//
+// The pair proves the CNI enforces NetworkPolicy at all. Under `enforce` that is
+// the whole floor: the per-Pod policy names exactly one destination and the
+// metadata endpoints are unreachable BY OMISSION, which is plain default-deny and
+// is precisely what the pair established. Under `allow-all` there is no proxy in
+// the path, so the floor is carried ENTIRELY by `0.0.0.0/0` with an `except` list
+// (see renderEgressPolicy) — a DISTINCT CNI feature. A CNI that enforces
+// default-deny and IGNORES `except` passes both legs of the pair while leaving
+// 169.254.169.254 reachable from every sandbox, and Verify would have declared
+// the floor proven.
+//
+// # Why the destination is NOT 169.254.169.254
+//
+// The obvious leg — a Pod under the real per-Pod policy probing the metadata
+// address, which must fail — proves NOTHING, and for exactly the reason the
+// original probe is a PAIR rather than a single leg: on kind, and on every
+// non-cloud cluster, nothing listens at 169.254.169.254, so the failure is
+// attributable to the destination being unreachable and not to `except` being
+// honoured. A leg that cannot tell those apart is decoration.
+//
+// So the address is swapped and the MECHANISM is kept: leg 3 is allowed
+// `0.0.0.0/0 except [<addr>/32]` — structurally the same object the allow-all
+// floor ships, differing only in which address is carved out — and probes <addr>.
+// For that failure to be attributable, <addr> must be independently KNOWN
+// REACHABLE, which is why leg 3 is itself a two-probe construction (below).
+//
+// # Why the address is the API server's ENDPOINT and NOT its ClusterIP
+//
+// This is the subtlety that makes the naive version of this leg report a false
+// alarm on a CNI that is in fact correct, and it cost a full kind run to find.
+//
+// A ClusterIP is a kube-proxy DNAT target, not an address on the wire. The packet
+// is rewritten to a backing endpoint BEFORE the CNI's policy dataplane sees it, so
+// an `except` naming the ClusterIP can never match: Calico honours `except`
+// perfectly and still lets a Pod reach 10.96.0.1 while excepting 10.96.0.1/32,
+// because by then the destination is the endpoint's address. A leg built on the
+// ClusterIP therefore reports "this CNI ignores except" against a CNI that does
+// not — disqualifying every correctly-configured cluster.
+//
+// So leg 3 reads the `kubernetes` Service's ENDPOINTS and uses a backing address.
+// That is a real address on a real host, reached with no DNAT in the path, so it
+// is the same kind of destination 169.254.169.254 is — which is exactly the
+// property the floor's `except` has to work against.
+//
+// # Why leg 3 needs its own baseline
+//
+// The pair's baseline is the ClusterIP; leg 3's destination is a different
+// address, and a leg 3 that simply failed against an address nothing had proved
+// reachable would be the single unattributable probe this whole file exists to
+// avoid. So leg 3 probes the endpoint address TWICE:
+//
+//   - 3a, from LEG 1's Pod — which carries an unrestricted allow-all and no
+//     `except` at all — which MUST REACH. That establishes the endpoint address is
+//     reachable from this namespace under policy.
+//   - 3b, from a Pod whose policy is `0.0.0.0/0 except [<endpoint>/32]`, which
+//     MUST FAIL.
+//
+// 3a costs no extra Pod (leg 1's is still alive and still allowed everything), and
+// with 3a green the only available explanation for 3b failing is that `except` was
+// honoured — while 3b REACHING means it was ignored.
+//
+// Run only under allow-all. Under enforce nothing in the datapath uses `except`,
+// and a leg proving a property that posture does not rest on would cost a Pod and
+// a policy per Verify for nothing.
+func (s *Substrate) runExceptLeg(ctx context.Context, ns string) error {
+	if s.enforcing() {
+		return nil
+	}
+
+	addr, err := s.canaryExceptTarget(ctx)
+	if err != nil {
+		// DECLINE, not refuse — the same judgement as an unreachable baseline
+		// below. Leg 3 has no address to except, so it can establish nothing; and
+		// the PAIR has already proved enforcement exists, so disqualifying the
+		// cluster here would punish it for a gap in a supplementary probe. The
+		// kind lane's TestIntegrationMetadataFloorHoldsInBothModes remains the
+		// check for the property.
+		return nil
+	}
+	host, _, _ := strings.Cut(addr, ":")
+
+	// 3a — THE BASELINE, from leg 1's Pod, which is allowed everything and
+	// excepts nothing. Without this, 3b's failure is unattributable.
+	baseReached, err := s.probe(ctx, ns, canaryOpenPod, addr)
+	if err != nil {
+		return fmt.Errorf("%w: leg 3's baseline probe from %s to %s could not be run: %w", errFloorUnproven, canaryOpenPod, addr, err)
+	}
+	if !baseReached {
+		// NOT a refusal of the cluster. The pair has already proved enforcement
+		// exists; what could not be established is a BASELINE for the `except`
+		// check, and refusing here would disqualify a correctly-enforcing cluster
+		// for a reason that says nothing about `except`. It is reported as a gap in
+		// the gate — the kind lane's TestIntegrationMetadataFloorHoldsInBothModes
+		// remains the check for the property — rather than treated as proof either
+		// way.
+		//
+		// This is the same judgement the pair makes with "both fail": an
+		// uninformative probe is never read as a pass, and here the pass has
+		// already been earned by the pair.
+		return nil
+	}
+
+	if err := s.applyPolicy(ctx, ns, s.renderCanaryExcept(ns, host)); err != nil {
+		return err
+	}
+
+	// 3b's Pod is created AFTER its policy, for the same reason leg 1's is: a Pod
+	// that probed in the window before its policy landed would be probing under
+	// the default-deny alone, fail, and report a pass for the wrong reason — here
+	// that is the UNSAFE direction, since 3b's failure is the pass.
+	exceptReached, err := s.runCanaryLeg(ctx, ns, canaryExceptPod, addr)
+	if err != nil {
+		return err
+	}
+	if exceptReached {
+		return fmt.Errorf("%w: leg 3 (%s) REACHED %s while its NetworkPolicy allowed 0.0.0.0/0 EXCEPT %s/32, and leg 1 proved that address reachable under an allow with no except — "+
+			"this cluster's CNI enforces NetworkPolicy but IGNORES ipBlock.except. Under egress.mode: allow-all the "+
+			"metadata-deny floor is carried entirely by an except list, so every sandbox on this cluster can reach "+
+			"169.254.169.254 and hold the NODE's cloud identity",
+			errFloorUnproven, canaryExceptPod, addr, host)
+	}
+	return nil
+}
+
+// canaryExceptTarget is a BACKING ADDRESS of the `kubernetes` Service, with the
+// port it is served on.
+//
+// An endpoint rather than the Service's ClusterIP, because a ClusterIP is DNAT'd
+// by kube-proxy before the CNI's policy dataplane sees the packet and an `except`
+// naming it can never match — see runExceptLeg. This is the address the `except`
+// under test has to actually apply to.
+func (s *Substrate) canaryExceptTarget(ctx context.Context) (string, error) {
+	eps, err := s.cs.CoreV1().Endpoints("default").Get(ctx, canaryAPIService, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("the default/%s Endpoints could not be read, so leg 3 has no un-DNAT'd address to except: %w", canaryAPIService, err)
+	}
+	for _, sub := range eps.Subsets {
+		for _, a := range sub.Addresses {
+			if a.IP == "" || net.ParseIP(a.IP).To4() == nil {
+				// v4 only: the except rendered below is a /32.
+				continue
+			}
+			port := canaryAPIPort
+			if len(sub.Ports) > 0 && sub.Ports[0].Port > 0 {
+				port = strconv.Itoa(int(sub.Ports[0].Port))
+			}
+			return a.IP + ":" + port, nil
+		}
+	}
+	return "", fmt.Errorf("the default/%s Endpoints list no IPv4 address, so leg 3 has no un-DNAT'd address to except", canaryAPIService)
+}
+
+// renderCanaryExcept is leg 3's broad allow minus exactly one address.
+//
+// It mirrors renderEgressPolicy's allow-all branch deliberately: one ipBlock with
+// CIDR 0.0.0.0/0 and an Except list. What is being tested is that SHAPE, so a leg
+// whose policy had a different shape would prove something about a policy no
+// sandbox runs under — the same argument that makes the canary namespace carry the
+// real default-deny rather than a weaker one.
+func (s *Substrate) renderCanaryExcept(ns, addr string) *networkingv1.NetworkPolicy {
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      canaryExceptPolicy,
+			Namespace: ns,
+			Labels:    map[string]string{labelManaged: "true"},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			// ONLY leg 3. A selector that also covered leg 1 would except leg 1's
+			// destination from leg 1's allow, leg 1 would fail, and the pair would
+			// refuse a perfectly good cluster.
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{labelPod: canaryExceptPod}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			Egress: []networkingv1.NetworkPolicyEgressRule{{
+				To: []networkingv1.NetworkPolicyPeer{{
+					IPBlock: &networkingv1.IPBlock{
+						CIDR:   "0.0.0.0/0",
+						Except: []string{addr + "/32"},
+					},
+				}},
+			}},
+		},
+	}
+}
+
+// deleteCanaryLeg deletes one leg AND WAITS FOR IT TO BE GONE.
+//
+// The wait is the whole point, and it is why this is not deletePodBestEffort.
+//
+// A delete carries a grace period, so the API server stamps a deletionTimestamp
+// and the object REMAINS until the kubelet finishes terminating it — seconds. A
+// cleanup that only asked would return with both legs still present, and the NEXT
+// Verify's Create would hit AlreadyExists, which runCanaryLeg turns into "a
+// previous run's leftover, now deleted; re-run to verify". Re-running does not
+// help: every run leaves the same residue, so the refusal is permanent.
+//
+// That is not a theoretical race. It made two of the five kind acceptances SKIP in
+// the combined `make test-k8s` run while passing individually — a lane reporting
+// green with a third of its cases silently unexecuted, which is precisely the
+// failure shape this package's integration-test header warns about. The canary
+// pair's contract is "cleaned up on EVERY path", and until the object is actually
+// gone that contract is not met.
+//
+// The names are FIXED (canary-open / canary-closed), so a per-run unique name was
+// the alternative; waiting is chosen instead because the fixed names are what let
+// an operator and the reaper recognise a leg as a group, and because a cleanup
+// that does not observe its own effect is the defect either way.
+//
+// Best-effort still: a leg that will not go away is not worth failing a Verify
+// whose verdict is already decided, and the canary Pod's activeDeadlineSeconds and
+// the reaper both bound it. The next run's AlreadyExists diagnostic is then the
+// honest report.
+func (s *Substrate) deleteCanaryLeg(ctx context.Context, ns, name string) {
+	api := s.cs.CoreV1().Pods(ns)
+
+	grace := podGraceSeconds
+	propagation := metav1.DeletePropagationBackground
+
+	// Delete-and-confirm, repeated until the object is gone. Polling a GET alone
+	// is not enough: the FIRST delete is the graceful one and the object survives
+	// its grace period, and re-asserting the delete each round is what collects a
+	// Pod whose termination stalled — a delete against an already-absent object is
+	// a NotFound, which is the terminating condition, so the repetition costs
+	// nothing in the common case.
+	//
+	// A GET rather than a watch to confirm: the object may already be gone before a
+	// watch could be established, and a watch started after the delete event sees
+	// nothing and would wait out the whole timeout.
+	for {
+		delErr := api.Delete(ctx, name, metav1.DeleteOptions{
+			GracePeriodSeconds: &grace,
+			PropagationPolicy:  &propagation,
+		})
+		if apierrors.IsNotFound(delErr) {
+			return
+		}
+		if _, err := api.Get(ctx, name, metav1.GetOptions{}); apierrors.IsNotFound(err) {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(canaryCleanupPoll):
+		}
+	}
+}
+
+// errFloorUnproven is the sentinel every canary refusal wraps. The adapter turns
+// it into a sandbox.health event with reason floor_unverified.
+var errFloorUnproven = errors.New("kubernetes: the network floor could not be proved by the canary pair")
+
+// ensureCanaryNamespace creates the canary namespace and asserts THE SAME
+// default-deny a tenant namespace carries.
+//
+// The same floor, not a weaker one: leg 2's entire meaning is "a Pod under the
+// floor fuse actually ships". A canary namespace with a different policy would
+// prove something about a policy no sandbox runs under.
+func (s *Substrate) ensureCanaryNamespace(ctx context.Context, ns string) error {
+	if _, err := s.cs.CoreV1().Namespaces().Get(ctx, ns, metav1.GetOptions{}); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("kubernetes: canary namespace %s: %w", ns, err)
+		}
+		obj := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   ns,
+			Labels: map[string]string{labelManaged: "true"},
+		}}
+		if _, err := s.cs.CoreV1().Namespaces().Create(ctx, obj, metav1.CreateOptions{}); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("kubernetes: create canary namespace %s: %w", ns, err)
+		}
+	}
+	if err := s.assertDefaultDeny(ctx, ns); err != nil {
+		// Without the floor, leg 2 is not a policed Pod and the pair proves
+		// nothing. This must refuse rather than probe anyway.
+		return fmt.Errorf("%w: the canary namespace's %s policy could not be asserted, so leg 2 would not be policed: %w", errFloorUnproven, policyDefaultDeny, err)
+	}
+	// THE SANDBOX SERVICE ACCOUNT, for the same reason a tenant namespace gets one
+	// (see assertSandboxServiceAccount): a Pod's serviceAccountName resolves in the
+	// POD's own namespace, and the canary Pods run under the same zero-permission
+	// identity a sandbox Pod does — deliberately, since leg 2's whole meaning is "a
+	// Pod under the posture fuse actually ships".
+	//
+	// Omitting it made every canary leg on a real cluster fail admission with
+	// "serviceaccount not found", and Verify then refused the cluster with a
+	// diagnostic blaming the CNI having never probed the floor at all. The fake
+	// clientset runs no admission, so no unit test in this package could see it;
+	// the kind lane found it on its first run.
+	if err := s.assertSandboxServiceAccount(ctx, ns); err != nil {
+		return fmt.Errorf("%w: the canary namespace's sandbox service account could not be asserted, so neither leg can be admitted: %w", errFloorUnproven, err)
+	}
+	return nil
+}
+
+// renderCanaryAllow is leg 1's explicit allow-all egress, targeting leg 1's Pod
+// and no other.
+func (s *Substrate) renderCanaryAllow(ns string) *networkingv1.NetworkPolicy {
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      canaryAllowPolicy,
+			Namespace: ns,
+			Labels:    map[string]string{labelManaged: "true"},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			// ONLY leg 1. See canaryAllowPolicy's comment: a wider selector makes
+			// the pair meaningless while still looking correct.
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{labelPod: canaryOpenPod}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			// ONE rule with an EMPTY `to`: that is NetworkPolicy's spelling of
+			// "allow all egress". An empty rule LIST would mean the opposite
+			// (deny everything), which is the exact inversion the default-deny
+			// relies on — hence the explicit single empty rule here.
+			Egress: []networkingv1.NetworkPolicyEgressRule{{}},
+		},
+	}
+}
+
+// canaryTarget is the API server's ClusterIP:port, read from the Service every
+// cluster has.
+//
+// Read rather than assumed: the ClusterIP is allocated per cluster from the
+// service CIDR, so there is no address to hardcode. A Service fuse cannot read is
+// a refusal — probing a guessed address would produce a leg-1 failure that says
+// nothing about policy.
+func (s *Substrate) canaryTarget(ctx context.Context) (string, error) {
+	svc, err := s.cs.CoreV1().Services("default").Get(ctx, canaryAPIService, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("%w: the default/%s Service could not be read, so the canary has no destination it can be sure is reachable: %w", errFloorUnproven, canaryAPIService, err)
+	}
+	ip := svc.Spec.ClusterIP
+	if ip == "" || ip == corev1.ClusterIPNone {
+		return "", fmt.Errorf("%w: the default/%s Service has no ClusterIP (%q), so the canary has no destination", errFloorUnproven, canaryAPIService, ip)
+	}
+	return ip + ":" + canaryAPIPort, nil
+}
+
+// runCanaryLeg creates one canary Pod, waits for it to be Ready, probes, and
+// reports whether the connect SUCCEEDED.
+//
+// The two returns are deliberately distinct: (reached, nil) is a PROBE RESULT the
+// verdict reads, and a non-nil error is "the leg could not be run at all" — a Pod
+// that would not start, an image with no `nc`. Collapsing them would make an
+// unrunnable leg indistinguishable from a leg that ran and failed, and leg 2 is a
+// leg whose failure is the passing outcome.
+func (s *Substrate) runCanaryLeg(ctx context.Context, ns, name, target string) (bool, error) {
+	pod := s.renderCanaryPod(ns, name)
+
+	admitted, err := s.cs.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return false, fmt.Errorf("%w: canary leg %s could not be created: %w", errFloorUnproven, name, err)
+		}
+		// A previous run's leftover, or a concurrent Verify in another instance.
+		// Delete and refuse rather than probe a Pod this call did not create: its
+		// posture and its policy are unknown to us.
+		s.deletePodBestEffort(context.WithoutCancel(ctx), ns, name)
+		return false, fmt.Errorf("%w: canary leg %s already existed (a previous run's leftover, now deleted); re-run to verify", errFloorUnproven, name)
+	}
+
+	// Readiness only — no assertPosture. The canary is not a sandbox: it runs no
+	// model-supplied command, holds no workspace, and exists for a few seconds.
+	// Asserting the SANDBOX posture against it would be asserting the wrong thing,
+	// and a webhook that mutates it does not make the CNI's enforcement any
+	// different, which is the only question being asked.
+	if _, err := s.waitReady(ctx, ns, name, admitted); err != nil {
+		return false, fmt.Errorf("%w: canary leg %s never became Ready: %w", errFloorUnproven, name, err)
+	}
+
+	reached, err := s.probe(ctx, ns, name, target)
+	if err != nil {
+		return false, fmt.Errorf("%w: canary leg %s could not be probed: %w", errFloorUnproven, name, err)
+	}
+	return reached, nil
+}
+
+// renderCanaryPod is a minimal, hardened Pod carrying the labelPod label the
+// policies select on.
+//
+// It shares the sandbox Pod's security posture but NOT its shape: no workspace, no
+// sidecar, no per-Exec environment, and a short activeDeadlineSeconds, because it
+// is a probe rather than an execution context.
+func (s *Substrate) renderCanaryPod(ns, name string) *corev1.Pod {
+	fals := false
+	tru := true
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: ns,
+			Labels: map[string]string{
+				labelManaged: "true",
+				// The policies select on this. Without it leg 1's allow matches
+				// nothing and leg 1 fails on every cluster.
+				labelPod:      name,
+				labelInstance: s.instanceID,
+			},
+			Annotations: map[string]string{
+				// A canary is not a sandbox, but it carries a heartbeat so the
+				// reaper collects one that a crashed Verify left behind.
+				annotationHeartbeat: time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+		Spec: corev1.PodSpec{
+			AutomountServiceAccountToken: &fals,
+			ServiceAccountName:           s.serviceAccount,
+			EnableServiceLinks:           &fals,
+			RestartPolicy:                corev1.RestartPolicyNever,
+			// Minutes, not hours: a canary that outlived its Verify by four hours
+			// would be a confusing object in an operator's namespace listing.
+			ActiveDeadlineSeconds:         ptrInt64(int64((5 * time.Minute).Seconds())),
+			TerminationGracePeriodSeconds: ptrInt64(podGraceSeconds),
+			// THE SAME securityContext a sandbox Pod carries, uid included. Leg 2's
+			// whole meaning is "a Pod under the posture fuse actually ships", so a
+			// canary that ran under a laxer one would prove something about a
+			// posture no sandbox runs under. The explicit uid is also what makes
+			// either leg startable at all against an image with no USER — see
+			// sandboxUID.
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot:   &tru,
+				RunAsUser:      ptrInt64(sandboxUID),
+				RunAsGroup:     ptrInt64(sandboxGID),
+				FSGroup:        ptrInt64(sandboxGID),
+				SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+			},
+			Containers: []corev1.Container{{
+				Name:    containerWorkload,
+				Image:   s.image,
+				Command: []string{"sleep", "infinity"},
+				SecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: &fals,
+					Privileged:               &fals,
+					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+				},
+			}},
+			Affinity: s.archAffinity(),
+		},
+	}
+}
+
+// probe runs `nc -z -w 3 <ip> 443` in the canary and reports whether it connected.
+//
+// The THREE outcomes are kept apart, and that separation is the whole correctness
+// of this function:
+//
+//   - exit 0 → CONNECTED.
+//   - exit non-zero with no sign of a missing `nc` → did not connect. A RESULT.
+//   - any sign that `nc` was not found → an ERROR, never "did not connect". This
+//     is the case the design note at the top of the file is about: reading a
+//     missing binary as a refused connection makes leg 2 pass on a cluster that
+//     enforces nothing, which is the precise failure this gate exists to catch.
+func (s *Substrate) probe(ctx context.Context, ns, pod, target string) (bool, error) {
+	host, port, ok := strings.Cut(target, ":")
+	if !ok {
+		return false, fmt.Errorf("kubernetes: canary target %q is not host:port", target)
+	}
+	argv := []string{"nc", "-z", "-w", canaryConnectWait, host, port}
+
+	pctx, cancel := context.WithTimeout(ctx, canaryProbeTimeout)
+	defer cancel()
+
+	exec, err := s.executorFor(s.execURL(ns, pod, argv))
+	if err != nil {
+		return false, err
+	}
+
+	var buf syncBuffer
+	streamErr := exec.StreamWithContext(pctx, remotecommand.StreamOptions{Stdout: &buf, Stderr: &buf})
+	text := buf.String()
+
+	if streamErr == nil {
+		if missingNC(0, text) {
+			return false, s.missingNCError(text)
+		}
+		return true, nil
+	}
+
+	// exitCodeOf, NOT a bare errors.As against one CodeExitError type: there are
+	// two unrelated types by that name in the Kubernetes module graph and matching
+	// the wrong one made THIS branch unreachable, so leg 2's failure to connect —
+	// which is the pass condition — read as "could not be probed" and disqualified
+	// every cluster including correctly-enforcing ones. See exitCodeOf.
+	if code, ok := exitCodeOf(streamErr); ok {
+		if missingNC(code, text) {
+			return false, s.missingNCError(text)
+		}
+		// The command ran and did not connect. That is the RESULT leg 2 needs.
+		return false, nil
+	}
+
+	// A transport failure: the exec could not be established at all. Not a probe
+	// result — there is no evidence either way — so it refuses.
+	if missingNC(-1, streamErr.Error()) {
+		return false, s.missingNCError(streamErr.Error())
+	}
+	return false, fmt.Errorf("the exec into %s/%s failed: %w", ns, pod, streamErr)
+}
+
+// missingNC recognises the shapes a shell and a kubelet use to say `nc` is not
+// there.
+//
+// The text match and the 126/127 exit statuses are both needed: a shell that ran
+// and could not find the binary reports 127 WITH a diagnostic, while a kubelet
+// that could not execute what fuse named reports through the status alone. 126 is
+// "found but not executable", which an image with a stub `nc` would produce.
+func missingNC(code int, text string) bool {
+	lower := strings.ToLower(text)
+	switch {
+	case strings.Contains(lower, "nc: not found"),
+		strings.Contains(lower, "nc: command not found"),
+		strings.Contains(lower, "executable file not found"):
+		return true
+	case code == 126 || code == 127:
+		// The only binary this probe names is `nc`.
+		return true
+	default:
+		return false
+	}
+}
+
+// missingNCError names the IMAGE, because the fix is to change the image and an
+// operator who pinned a distroless one has no other way to learn that.
+func (s *Substrate) missingNCError(text string) error {
+	return fmt.Errorf("%w: the canary probe needs busybox `nc` and the workload image %q does not provide it (%s); Verify fails CLOSED here rather than reading a missing binary as a refused connection, which would make the policed leg appear to pass on a cluster that enforces nothing",
+		errFloorUnproven, s.image, strings.TrimSpace(text))
+}

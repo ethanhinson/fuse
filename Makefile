@@ -1,4 +1,4 @@
-.PHONY: build install egress-forwarder egress-datapath test test-race lint test-integration proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke compose-smoke helm-smoke charts-sync-alerts
+.PHONY: build install egress-forwarder egress-datapath test test-race lint test-integration test-k8s proto sdk-ts-test browser-test observability-validate observability-acceptance observability-race observability-compose-smoke compose-smoke helm-smoke charts-sync-alerts
 
 # Version is stamped into the binary via -ldflags. It defaults to `git describe`
 # (tags + short SHA + dirty marker) and falls back to the source default when git
@@ -97,6 +97,36 @@ test-integration:
 	  status=$$? ; \
 	  docker compose -f internal/mcp/testdata/docker-compose.yml down -v ; \
 	  exit $$status
+
+# test-k8s (change 0075): the Kubernetes warm-Pod acceptances that only a REAL
+# cluster can settle — a warm Pod serving two commands with the second REUSING it,
+# the reaper deleting it, a deadline-exceeded command leaving no Pod behind, the
+# cloud-metadata endpoint unreachable, and an orphan collected by a second
+# "instance".
+#
+# ITS OWN LANE, deliberately NOT part of `make test`. The tests are RUNTIME-gated
+# (t.Skipf), not build-tagged, so they compile and skip on every ordinary run —
+# this target exists to give an operator a way to say "I have a cluster, run them"
+# and to see the skip reasons when they do not, since `go test ./...` prints none.
+#
+# Two prerequisites, and the second is the one people miss:
+#
+#   kind create cluster --name fuse-sandbox
+#   kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
+#
+# kind's default kindnetd does NOT enforce NetworkPolicy, so the substrate's own
+# canary pair correctly REFUSES such a cluster (ADR-0058 rule 3) and every
+# acceptance here skips naming that. Install Calico or Cilium first. Point the lane
+# at another cluster with FUSE_K8S_TEST_CONTEXT=<kube-context>.
+#
+# -v is not optional here: it is the only way the LOUD skip messages — which name
+# exactly which acceptance did not run and why — reach the operator. A quiet skip
+# is indistinguishable from a pass, which is the whole point of
+# `smoke-over-fake-backend-proves-wire-not-system`.
+#
+# See docs/sandbox-kubernetes.md for the full dev loop.
+test-k8s:
+	go test -run 'TestIntegration' -v -count=1 -timeout 1800s ./internal/tools/sandbox/kubernetes/
 
 # proto regenerates the committed loop.* wire stubs (Go + TS) from the .proto
 # contract (change 0055, fuse.loop.v1). Generate-and-commit: run this after editing

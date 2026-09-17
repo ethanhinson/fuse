@@ -242,6 +242,11 @@ func TestSandboxHealthHooksTranslate(t *testing.T) {
 		sandbox.HealthRuntimeExit,
 		sandbox.HealthPullFailed,
 		sandbox.HealthAcquireFailed,
+		// floor_unverified (change 0075): a REMOTE substrate whose canary pair
+		// could not prove the network floor. It must translate like the other
+		// four, because dropping it would silently discard the one health signal
+		// that means "no sandbox on this cluster is contained".
+		sandbox.HealthFloorUnverified,
 	} {
 		hooks.Unhealthy(sandbox.HealthInfo{Handler: "container", Reason: r})
 	}
@@ -249,10 +254,10 @@ func TestSandboxHealthHooksTranslate(t *testing.T) {
 	hooks.Unhealthy(sandbox.HealthInfo{Handler: "container", Reason: sandbox.HealthReason("made_up")})
 
 	evs, _ := store.snapshot()
-	if len(evs) != 4 {
-		t.Fatalf("got %d events, want 4 (the unrecognised reason must be dropped)", len(evs))
+	if len(evs) != 5 {
+		t.Fatalf("got %d events, want 5 (the unrecognised reason must be dropped)", len(evs))
 	}
-	want := []string{"oom", "runtime_exit", "pull_failed", "acquire_failed"}
+	want := []string{"oom", "runtime_exit", "pull_failed", "acquire_failed", "floor_unverified"}
 	for i, e := range evs {
 		if e.Kind != event.KindSandboxHealth {
 			t.Errorf("event %d kind = %q, want %q", i, e.Kind, event.KindSandboxHealth)
@@ -278,5 +283,39 @@ func TestSandboxHealthHooksTranslate(t *testing.T) {
 func TestSandboxHealthHooksNilStoreIsInert(t *testing.T) {
 	if h := SandboxHealthHooks(nil, "node-1"); h.Unhealthy != nil {
 		t.Fatal("SandboxHealthHooks(nil) returned a live hook; want inert")
+	}
+}
+
+// TestSandboxCauseTranslatesOrphan pins the sixth release cause through the
+// translator (change 0075).
+//
+// The reap KIND plus the orphan CAUSE together are the only signal that fuse
+// instances are dying without releasing their sandboxes: an orphan is by
+// definition a sandbox no Pool remembers, so idle_ttl never fires for it. A cause
+// that fell through the translator's switch would become "" and the event would be
+// dropped, which is why this is pinned rather than left to the exhaustive-switch
+// convention.
+func TestSandboxCauseTranslatesOrphan(t *testing.T) {
+	store := &keyedRecorder{key: event.StreamKey{Tenant: "t", Loop: "l"}}
+	hooks := SandboxEventHooks(store, "node-1")
+
+	hooks.Reaped(sandbox.ReleaseInfo{Handler: "kubernetes", Cause: sandbox.CauseOrphan})
+
+	evs, _ := store.snapshot()
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1", len(evs))
+	}
+	if evs[0].Kind != event.KindSandboxReap {
+		t.Fatalf("kind = %q, want %q", evs[0].Kind, event.KindSandboxReap)
+	}
+	var p event.SandboxReleasePayload
+	if err := json.Unmarshal(evs[0].Payload, &p); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	if p.Cause != event.SandboxCauseOrphan {
+		t.Fatalf("cause = %q, want %q", p.Cause, event.SandboxCauseOrphan)
+	}
+	if p.Handler != "kubernetes" {
+		t.Fatalf("handler = %q, want kubernetes", p.Handler)
 	}
 }
