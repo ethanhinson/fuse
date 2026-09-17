@@ -1,0 +1,11 @@
+# Merged into the observability include by deploy/compose/docker-compose.yml's
+# `include: [{path: [..., ./prometheus-override.yml]}]` — see the comment there.
+# NOT a standalone compose file. It replaces only Prometheus's config mount so
+# the scrape target is the `fuse` service instead of host.docker.internal; the
+# inherited alerts.yml mount survives because Compose merges volumes by
+# container target. Paths are relative to deploy/observability (the first file
+# in the include's path list), hence `../compose/`.
+services:
+  prometheus:
+    volumes:
+      - ../compose/prometheus.yml:/etc/prometheus/prometheus.yml:ro

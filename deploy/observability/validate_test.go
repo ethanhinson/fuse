@@ -164,6 +164,34 @@ func TestValidateComposeRejectsMissingAlertRules(t *testing.T) {
 	}
 }
 
+func TestValidateComposeRejectsTopLevelOverrideOfIncludedService(t *testing.T) {
+	root := copyComposeArtifacts(t)
+	// The pre-fix shape: overriding the included prometheus service under this
+	// file's own services: — what Compose v2.38 rejects as "conflicts with
+	// imported resource".
+	replaceArtifact(t, root, "docker-compose.yml", "services:\n  fuse: &fuse",
+		"services:\n  prometheus:\n    volumes:\n      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro\n  fuse: &fuse")
+	if err := validateCompose(root, "fuse:9090"); err == nil {
+		t.Fatal("validateCompose accepted a top-level override of an included service")
+	}
+}
+
+func TestValidateComposeRejectsOverrideOutsideIncludePathList(t *testing.T) {
+	root := copyComposeArtifacts(t)
+	replaceArtifact(t, root, "docker-compose.yml", "      - ./prometheus-override.yml\n", "")
+	if err := validateCompose(root, "fuse:9090"); err == nil {
+		t.Fatal("validateCompose accepted an include that does not merge the prometheus override")
+	}
+}
+
+func TestValidateComposeRejectsOverrideMountRelativeToWrongDir(t *testing.T) {
+	root := copyComposeArtifacts(t)
+	replaceArtifact(t, root, "prometheus-override.yml", "../compose/prometheus.yml:", "./prometheus.yml:")
+	if err := validateCompose(root, "fuse:9090"); err == nil {
+		t.Fatal("validateCompose accepted an override mount that resolves against the wrong directory")
+	}
+}
+
 // copyComposeArtifacts mirrors copyArtifacts for the compose stack's directory,
 // which sits beside this package rather than inside it.
 func copyComposeArtifacts(t *testing.T) string {
