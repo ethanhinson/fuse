@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -363,6 +364,13 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	}
 	if raw.Gateway.Key != "" {
 		c.Gateway.Key = raw.Gateway.Key
+	}
+	if raw.Gateway.RequestTimeout != "" {
+		d, err := time.ParseDuration(raw.Gateway.RequestTimeout)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("%s: gateway.request_timeout %q is not a positive duration (e.g. \"20m\")", path, raw.Gateway.RequestTimeout)
+		}
+		c.Gateway.RequestTimeout = raw.Gateway.RequestTimeout
 	}
 	// A present max_turns (including an explicit 0) overrides; an omitted key
 	// (nil) leaves the unset default for the call site to resolve. (0038)

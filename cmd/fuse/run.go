@@ -268,6 +268,11 @@ func buildSessionRegistryNoMCP(sb *sandbox.Service, cfg config.Config, skillLook
 // path: WithRateGate(nil) leaves the adapter's gate nil, adding zero latency.
 func gatewayAdapter(cfg config.Config, gate model.RateGate) *model.Adapter {
 	a := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
+	// gateway.request_timeout (validated by the loader) replaces the adapter's
+	// built-in per-attempt deadline; empty keeps the default.
+	if d, err := time.ParseDuration(cfg.Gateway.RequestTimeout); err == nil && d > 0 {
+		a.RequestTimeout = d
+	}
 	if gate != nil {
 		a = a.WithRateGate(gate)
 	}
