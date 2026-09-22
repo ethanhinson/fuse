@@ -453,3 +453,62 @@ func TestCompleteSSEClientErrorNotRetried(t *testing.T) {
 		t.Errorf("a client error must not be retried: %d calls", n)
 	}
 }
+
+// TestFinishReasonParsedBufferedAndStreamed: the choice-level finish_reason
+// reaches CompletionResp on both reader paths, so the loop can tell a reply
+// that was cut at max_tokens from one that finished.
+func TestFinishReasonParsedBufferedAndStreamed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("stream") == "1" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, `data: {"choices":[{"delta":{"role":"assistant","content":"partial"},"finish_reason":null}]}`+"\n\n")
+			io.WriteString(w, `data: {"choices":[{"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":3,"completion_tokens":100}}`+"\n\n")
+			io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"partial"},"finish_reason":"length"}],"usage":{"prompt_tokens":3,"completion_tokens":100}}`)
+	}))
+	defer srv.Close()
+	for _, mode := range []string{"", "?stream=1"} {
+		a := NewAdapter(srv.URL+mode, "k", srv.Client())
+		resp, err := a.Complete(context.Background(), CompletionReq{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}, MaxTokens: 100})
+		if err != nil {
+			t.Fatalf("mode %q: %v", mode, err)
+		}
+		if resp.FinishReason != "length" {
+			t.Errorf("mode %q: finish=%q", mode, resp.FinishReason)
+		}
+	}
+}
+
+// TestCachedTokensParsed: a provider's prompt_tokens_details.cached_tokens
+// reaches CompletionResp on both reader paths and survives into the
+// reassembled trace block, so a run can measure its prefix-cache hit rate.
+func TestCachedTokensParsed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("stream") == "1" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, `data: {"choices":[{"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4024,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":3168,"audio_tokens":0}}}`+"\n\n")
+			io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4024,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":3168}}}`)
+	}))
+	defer srv.Close()
+	for _, mode := range []string{"", "?stream=1"} {
+		var trace strings.Builder
+		a := NewAdapter(srv.URL+mode, "k", srv.Client()).WithTrace(&trace)
+		resp, err := a.Complete(context.Background(), CompletionReq{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}})
+		if err != nil {
+			t.Fatalf("mode %q: %v", mode, err)
+		}
+		if resp.InputTokens != 4024 || resp.CachedTokens != 3168 {
+			t.Errorf("mode %q: input=%d cached=%d", mode, resp.InputTokens, resp.CachedTokens)
+		}
+		if !strings.Contains(trace.String(), `"cached_tokens": 3168`) {
+			t.Errorf("mode %q: trace lacks cached_tokens: %s", mode, trace.String())
+		}
+	}
+}

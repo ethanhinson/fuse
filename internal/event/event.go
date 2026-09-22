@@ -289,8 +289,12 @@ type ModelCallStartPayload struct {
 type ModelCallEndPayload struct {
 	Content      string        `json:"content"`
 	InputTokens  int           `json:"input_tokens"`
+	CachedTokens int           `json:"cached_tokens,omitempty"` // of input_tokens, served from the provider's prefix cache
 	OutputTokens int           `json:"output_tokens"`
 	ToolCalls    []ToolCallRef `json:"tool_calls,omitempty"`
+	// FinishReason is the gateway's finish_reason for the reply ("stop",
+	// "length", ...); "length" marks a reply cut at the output cap.
+	FinishReason string `json:"finish_reason,omitempty"`
 }
 
 // ModelDeltaPayload carries one incremental token chunk (Stage B).

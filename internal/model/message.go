@@ -41,7 +41,13 @@ type CompletionResp struct {
 	Content      string
 	ToolCalls    []ToolCall
 	InputTokens  int // prompt tokens reported by the gateway
+	CachedTokens int // of InputTokens, how many the provider served from its prefix cache (0 when unreported)
 	OutputTokens int // completion tokens reported by the gateway
+	// FinishReason is the gateway's choice-level finish_reason ("stop",
+	// "length", "tool_calls", ...). "length" means the reply was cut at
+	// max_tokens: whatever it says is incomplete, and a missing tool call is
+	// not a decision to stop. Empty when the gateway did not report one.
+	FinishReason string
 }
 
 // AsMessage converts the response into an assistant Message for appending to

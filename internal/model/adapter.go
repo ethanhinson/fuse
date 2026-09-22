@@ -188,13 +188,33 @@ type wireStreamOptions struct {
 type wireUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
+	// PromptTokensDetails carries the prefix-cache hit count where the
+	// provider reports one (OpenAI-compatible shape, forwarded by LiteLLM and
+	// OpenRouter). Omitted on the wire when nil so a buffered reply and a
+	// reassembled trace block stay comparable.
+	PromptTokensDetails *wirePromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+type wirePromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+// cachedTokens reads the prefix-cache hit count, 0 when unreported.
+func (u wireUsage) cachedTokens() int {
+	if u.PromptTokensDetails == nil {
+		return 0
+	}
+	return u.PromptTokensDetails.CachedTokens
+}
+
+type wireChoice struct {
+	Message      wireMessage `json:"message"`
+	FinishReason string      `json:"finish_reason,omitempty"`
 }
 
 type wireResp struct {
-	Choices []struct {
-		Message wireMessage `json:"message"`
-	} `json:"choices"`
-	Usage wireUsage `json:"usage"`
+	Choices []wireChoice `json:"choices"`
+	Usage   wireUsage    `json:"usage"`
 }
 
 // wireStreamChunk is one SSE `data:` event of a streamed chat completion. Each
@@ -207,6 +227,7 @@ type wireStreamChunk struct {
 			Content   string              `json:"content"`
 			ToolCalls []wireDeltaToolCall `json:"tool_calls"`
 		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *wireUsage `json:"usage"`
 	Error *struct {
@@ -474,7 +495,9 @@ func (a *Adapter) readBuffered(body io.Reader, tools []ToolSchema) (_ Completion
 	out := CompletionResp{
 		Content:      msg.Content,
 		InputTokens:  wr.Usage.PromptTokens,
+		CachedTokens: wr.Usage.cachedTokens(),
 		OutputTokens: wr.Usage.CompletionTokens,
+		FinishReason: wr.Choices[0].FinishReason,
 	}
 	for _, tc := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
@@ -511,6 +534,7 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 	var content strings.Builder
 	byIndex := map[int]*ToolCall{}
 	var order []int
+	var finishReason string
 	var usage wireUsage
 
 	sc := bufio.NewScanner(body)
@@ -540,6 +564,9 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 		if len(chunk.Choices) == 0 {
 			continue
 		}
+		if fr := chunk.Choices[0].FinishReason; fr != "" {
+			finishReason = fr
+		}
 		d := chunk.Choices[0].Delta
 		content.WriteString(d.Content)
 		for _, tc := range d.ToolCalls {
@@ -565,7 +592,9 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 	out := CompletionResp{
 		Content:      content.String(),
 		InputTokens:  usage.PromptTokens,
+		CachedTokens: usage.cachedTokens(),
 		OutputTokens: usage.CompletionTokens,
+		FinishReason: finishReason,
 	}
 	sort.Ints(order)
 	for _, idx := range order {
@@ -584,11 +613,10 @@ func (a *Adapter) traceReassembled(marker string, out CompletionResp) {
 		return
 	}
 	var wr wireResp
-	wr.Choices = make([]struct {
-		Message wireMessage `json:"message"`
-	}, 1)
+	wr.Choices = make([]wireChoice, 1)
 	wr.Choices[0].Message.Role = "assistant"
 	wr.Choices[0].Message.Content = out.Content
+	wr.Choices[0].FinishReason = out.FinishReason
 	for _, tc := range out.ToolCalls {
 		var w wireToolCall
 		w.ID, w.Type = tc.ID, "function"
@@ -596,6 +624,9 @@ func (a *Adapter) traceReassembled(marker string, out CompletionResp) {
 		wr.Choices[0].Message.ToolCalls = append(wr.Choices[0].Message.ToolCalls, w)
 	}
 	wr.Usage = wireUsage{PromptTokens: out.InputTokens, CompletionTokens: out.OutputTokens}
+	if out.CachedTokens > 0 {
+		wr.Usage.PromptTokensDetails = &wirePromptTokensDetails{CachedTokens: out.CachedTokens}
+	}
 	if b, jerr := json.Marshal(wr); jerr == nil {
 		a.tracef(marker, prettyJSON(b))
 	}
