@@ -402,3 +402,54 @@ func TestCompleteSSEErrorEventIsError(t *testing.T) {
 		t.Errorf("error should carry the streamed message: %v", err)
 	}
 }
+
+// TestCompleteSSETransientErrorRetries: a provider dropping the connection
+// mid-generation reaches us as a streamed error event (LiteLLM's
+// "provider_unavailable" shape); that is transient and must be retried.
+func TestCompleteSSETransientErrorRetries(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n == 1 {
+			io.WriteString(w, `data: {"error":{"message":"litellm.APIError: APIError: OpenrouterException - Message: Network connection lost., Metadata: {'error_type': 'provider_unavailable'}","type":"None","code":"500"}}`+"\n\n")
+			return
+		}
+		io.WriteString(w, `data: {"choices":[{"delta":{"role":"assistant","content":"recovered"}}]}`+"\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	a.MaxAttempts = 2
+	a.RetryBackoff = time.Millisecond
+	resp, err := a.Complete(context.Background(), CompletionReq{Model: "m"})
+	if err != nil {
+		t.Fatalf("transient streamed error should have been retried: %v", err)
+	}
+	if resp.Content != "recovered" || atomic.LoadInt32(&calls) != 2 {
+		t.Errorf("want content from the second attempt (2 calls), got %q after %d calls", resp.Content, calls)
+	}
+}
+
+// TestCompleteSSEClientErrorNotRetried: a streamed 4xx rejection is terminal;
+// re-sending the same request would only fail the same way.
+func TestCompleteSSEClientErrorNotRetried(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"error":{"message":"litellm.BadRequestError: context length exceeded","type":"invalid_request_error","code":"400"}}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	a.MaxAttempts = 3
+	a.RetryBackoff = time.Millisecond
+	if _, err := a.Complete(context.Background(), CompletionReq{Model: "m"}); err == nil {
+		t.Fatal("expected the streamed 400 to surface as an error")
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("a client error must not be retried: %d calls", n)
+	}
+}
