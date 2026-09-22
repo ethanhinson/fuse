@@ -59,7 +59,7 @@ func runLoopServer(_ []string, cfg config.Config, reg *model.Registry, _ io.Writ
 		fmt.Fprintf(stderr, "skills error: %v\n", serr)
 		return 1
 	}
-	systemBlock := skillSet.SystemPromptBlock() + spawnAgentBlock
+	systemBlock := rootSystemBlock(cfg, skillSet)
 	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE at startup.
 	// hosted=TRUE — the loop server executes workloads on behalf of REMOTE
 	// principals, so the local off-switch file is structurally inert and a bash

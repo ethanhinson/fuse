@@ -422,3 +422,24 @@ func TestPromptAll_PromptsEvenSafeTools(t *testing.T) {
 		t.Fatal("prompt-all mode should prompt even for safe-list tools")
 	}
 }
+
+// TestSchemasOmitDisabledTools: a tool on permissions.disabled is denied
+// unconditionally, so it is not advertised to the model either; the rest of
+// the registry's schemas pass through in registration order.
+func TestSchemasOmitDisabledTools(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(stubTool{name: "bash"})
+	reg.Register(stubTool{name: "read_file"})
+	reg.Register(stubTool{name: "spawn_agent"})
+	g := New(config.PermissionsConfig{Mode: "off", Disabled: []string{"spawn_agent", "bash"}}, reg, AlwaysApprove)
+	var names []string
+	for _, s := range g.Schemas() {
+		names = append(names, s.Name)
+	}
+	if len(names) != 1 || names[0] != "read_file" {
+		t.Fatalf("advertised = %v, want [read_file]", names)
+	}
+	if n := len(New(config.PermissionsConfig{Mode: "off"}, reg, AlwaysApprove).Schemas()); n != 3 {
+		t.Fatalf("no disabled list: advertised %d, want 3", n)
+	}
+}

@@ -176,7 +176,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "skills error: %v\n", serr)
 		return 1
 	}
-	oneShotSystemBlock := skillSet.SystemPromptBlock() + spawnAgentBlock
+	oneShotSystemBlock := rootSystemBlock(cfg, skillSet)
 
 	// Build a tool registry with spawn_agent AND the skill tool wired up.
 	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE here, before any

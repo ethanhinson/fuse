@@ -389,9 +389,35 @@ func (g *PermissionGate) SetMode(mode PermissionMode) {
 	}
 }
 
-// Schemas delegates to the inner registry so agent.New receives the full
-// schema list.
-func (g *PermissionGate) Schemas() []model.ToolSchema { return g.inner.Schemas() }
+// Schemas returns the inner registry's schemas minus the tools this gate
+// denies unconditionally (permissions.disabled). Advertising a tool the gate
+// will always refuse costs its schema on every model call and buys a wasted
+// turn when the model tries it; the deny in Execute stays as defense in depth
+// for a call that arrives by any other route.
+func (g *PermissionGate) Schemas() []model.ToolSchema {
+	all := g.inner.Schemas()
+	if len(g.cfg.Disabled) == 0 {
+		return all
+	}
+	out := make([]model.ToolSchema, 0, len(all))
+	for _, s := range all {
+		if g.disabled(s.Name) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// disabled reports whether name is on the gate's unconditional deny list.
+func (g *PermissionGate) disabled(name string) bool {
+	for _, d := range g.cfg.Disabled {
+		if d == name {
+			return true
+		}
+	}
+	return false
+}
 
 // Execute resolves the merged ToolPolicy and either auto-approves, prompts,
 // or returns a denial/error result.
@@ -897,12 +923,12 @@ func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
 		// ledger. Both may independently observe the same holder auto→non-auto edge
 		// and each call valve.reset(), but reset is idempotent (0,0 → 0,0) and both
 		// reach the same conclusion, so the shared budget stays correct.
-		lastObservedMode: mode,
-		cfg:              g.cfg,
-		cache:            g.cache.Clone(),
-		approve:          prefixedApprove(label, g.approve),
-		inner:            g.inner,
-		classifier:       g.classifier.cloneForChild(),
+		lastObservedMode:   mode,
+		cfg:                g.cfg,
+		cache:              g.cache.Clone(),
+		approve:            prefixedApprove(label, g.approve),
+		inner:              g.inner,
+		classifier:         g.classifier.cloneForChild(),
 		workspaceRoot:      g.workspaceRoot,
 		writeRoots:         g.writeRoots,
 		interactive:        g.interactive,

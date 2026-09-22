@@ -839,9 +839,11 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
 	}
 	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
-	// Advertise the auto-approved scratch directory (change 0068) on every
-	// binding's system prompt — buildAgentCore is the single chokepoint both
-	// gate construction and prompt composition flow through.
+	// buildAgentCore is the single chokepoint both gate construction and
+	// prompt composition flow through: drop the spawn_agent instructions for an
+	// agent that cannot spawn (see prompt_blocks.go), then advertise the
+	// auto-approved scratch directory (change 0068) on every binding's prompt.
+	extra = withoutUnavailableSpawnBlock(extra, cfg, toolReg)
 	extra = appendScratchBlock(extra)
 
 	// Models with ID prefix "cli/" bypass the LiteLLM gateway and route through

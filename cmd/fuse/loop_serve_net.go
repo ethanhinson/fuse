@@ -225,7 +225,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintf(stderr, "skills error: %v\n", serr)
 		return 1
 	}
-	systemBlock := skillSet.SystemPromptBlock() + spawnAgentBlock
+	systemBlock := rootSystemBlock(cfg, skillSet)
 	// Sandbox substrate (ADR-0044, change 0063), resolved ONCE. hosted=TRUE: this
 	// binding serves remote principals over the network, so no local file may
 	// authorize running their commands uncontained on this host.
