@@ -87,12 +87,20 @@ func gateWriteRoots(cfg config.Config) []string {
 // appendScratchBlock appends the scratch-directory advertisement to a system
 // prompt's extra block so models reach for the auto-approved scratch area
 // instead of /tmp.
+//
+// The wording draws the line explicitly: once the prompt shed its skills and
+// spawn blocks (2026-09-22) this sentence became the most prominent
+// instruction in it, and a plain "use it for temporary files" sent models to
+// write the task's own deliverable there (LCB-100: solution.py landed in the
+// scratch directory on 34% of problems, against 1% before), so the run ended
+// with the workspace file empty.
 func appendScratchBlock(extra string) string {
 	s := sessionScratchDir()
 	if s == "" {
 		return extra
 	}
-	block := "Scratch directory: " + s + " — use it for temporary files instead of /tmp; writes there are auto-approved in auto mode."
+	block := "Scratch directory for throwaway files only (probes, drafts, temporary output), auto-approved in auto mode: " + s +
+		". Files the task asks for belong in the working directory, never there."
 	if extra == "" {
 		return block
 	}

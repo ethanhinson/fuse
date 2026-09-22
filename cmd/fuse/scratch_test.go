@@ -47,6 +47,10 @@ func TestScratchAdvertisedAndInRoots(t *testing.T) {
 	if !strings.Contains(extra, dir) || !strings.Contains(extra, "existing block") {
 		t.Errorf("appendScratchBlock lost content: %q", extra)
 	}
+	// The block must say where deliverables go, not only where scratch is.
+	if !strings.Contains(extra, "working directory") || !strings.Contains(extra, "throwaway") {
+		t.Errorf("appendScratchBlock does not draw the scratch/deliverable line: %q", extra)
+	}
 }
 
 // TestGateWriteRoots_ConfigRootsCanonicalized proves config write_roots are
