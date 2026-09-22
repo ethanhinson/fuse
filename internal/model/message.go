@@ -2,6 +2,8 @@
 // shared across the harness.
 package model
 
+import "encoding/json"
+
 // Message is a single chat message in OpenAI-compatible form.
 type Message struct {
 	Role       string
@@ -51,7 +53,22 @@ type CompletionResp struct {
 }
 
 // AsMessage converts the response into an assistant Message for appending to
-// the running conversation.
+// the running conversation. A tool call whose arguments are not valid JSON is
+// still executed as the model sent it (the registry answers "bad arguments"
+// so the model can retry), but the history copy wraps the raw text in a valid
+// JSON object: some providers validate every tool call in the transcript and
+// reject the whole request otherwise.
 func (r CompletionResp) AsMessage() Message {
-	return Message{Role: "assistant", Content: r.Content, ToolCalls: r.ToolCalls}
+	if len(r.ToolCalls) == 0 {
+		return Message{Role: "assistant", Content: r.Content}
+	}
+	calls := make([]ToolCall, len(r.ToolCalls))
+	for i, tc := range r.ToolCalls {
+		if !json.Valid([]byte(tc.Arguments)) {
+			wrapped, _ := json.Marshal(map[string]string{"malformed_arguments": tc.Arguments})
+			tc.Arguments = string(wrapped)
+		}
+		calls[i] = tc
+	}
+	return Message{Role: "assistant", Content: r.Content, ToolCalls: calls}
 }

@@ -512,3 +512,22 @@ func TestCachedTokensParsed(t *testing.T) {
 		}
 	}
 }
+
+// TestAsMessageWrapsMalformedArguments: a tool call whose arguments are not
+// JSON keeps the call for execution (the registry will answer "bad
+// arguments") but the history copy is a valid JSON object, so a provider that
+// validates the transcript does not reject every later request. A call-free
+// reply keeps a nil ToolCalls slice (transcript round-trips compare deeply).
+func TestAsMessageWrapsMalformedArguments(t *testing.T) {
+	r := CompletionResp{ToolCalls: []ToolCall{{ID: "1", Name: "write_file", Arguments: `{"path": "x"`}, {ID: "2", Name: "bash", Arguments: `{"command":"ls"}`}}}
+	m := r.AsMessage()
+	if !json.Valid([]byte(m.ToolCalls[0].Arguments)) || !strings.Contains(m.ToolCalls[0].Arguments, `{\"path\": \"x\"`) {
+		t.Errorf("malformed args not wrapped: %s", m.ToolCalls[0].Arguments)
+	}
+	if m.ToolCalls[1].Arguments != `{"command":"ls"}` || r.ToolCalls[0].Arguments != `{"path": "x"` {
+		t.Errorf("valid args or the response itself changed")
+	}
+	if got := (CompletionResp{Content: "done"}).AsMessage(); got.ToolCalls != nil {
+		t.Errorf("call-free reply should keep a nil slice")
+	}
+}
