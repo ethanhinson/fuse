@@ -844,7 +844,9 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	// agent that cannot spawn (see prompt_blocks.go), then advertise the
 	// auto-approved scratch directory (change 0068) on every binding's prompt.
 	extra = withoutUnavailableSpawnBlock(extra, cfg, toolReg)
-	extra = appendScratchBlock(extra)
+	if scratchBlockWanted(cfg) {
+		extra = appendScratchBlock(extra)
+	}
 
 	// Models with ID prefix "cli/" bypass the LiteLLM gateway and route through
 	// the CLIAdapter, which spawns claude --print with fuse mcp-server attached.

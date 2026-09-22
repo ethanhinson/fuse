@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/session"
 )
 
@@ -82,6 +83,15 @@ func gateWriteRoots(cfg config.Config) []string {
 		}
 	}
 	return roots
+}
+
+// scratchBlockWanted reports whether the prompt should advertise the scratch
+// directory at all. Its point is "writes here need no approval", which only
+// means something while a gate can ask; with permissions off (including
+// --approve-all) every path is equally free and the advertisement only pulls
+// the model's files away from the working directory.
+func scratchBlockWanted(cfg config.Config) bool {
+	return permissions.ParseMode(cfg.Permissions.Mode) != permissions.ModeOff
 }
 
 // appendScratchBlock appends the scratch-directory advertisement to a system
