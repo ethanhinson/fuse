@@ -569,13 +569,19 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			FinishReason: resp.FinishReason,
 		})
 		a.renderer.Tokens(resp.InputTokens, resp.OutputTokens)
-		lastUsage = resp.InputTokens + resp.OutputTokens
+		// Only the prompt side of usage is trusted for the context estimate. The
+		// completion count includes reasoning tokens that never re-enter the
+		// conversation: a reasoning model can spend 110k tokens on a turn whose
+		// visible reply is one tool call, and counting that against the window
+		// aborted a run with ErrContextTooLarge at ~4k tokens of real history.
+		// The assistant message is measured by size like any unaccounted message.
+		lastUsage = resp.InputTokens
 
 		if resp.Content != "" {
 			a.renderer.Assistant(resp.Content)
 		}
+		accounted = len(messages) // covered by lastUsage: exactly what this request sent
 		messages = append(messages, resp.AsMessage())
-		accounted = len(messages)
 
 		if len(resp.ToolCalls) == 0 {
 			// turn.end (change 0043): the no-tool-calls terminal path.
