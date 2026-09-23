@@ -79,8 +79,7 @@ func TestTurnScopedTraceTopologyThroughRealOTELExporter(t *testing.T) {
 	// --- Criterion 1a: the first-turn trace is rooted at fuse.loop.run and is
 	// ENDED (hence exported) while the session is parked and alive. ---
 	requireAlive(t, h, "after first park")
-	flush(t, provider)
-	runSpans := exportedNamed(t, exporter, "fuse.loop.run")
+	runSpans := awaitExported(t, provider, exporter, h, "fuse.loop.run", 1, "after first park")
 	if len(runSpans) != 1 {
 		t.Fatalf("exported fuse.loop.run spans = %d, want 1 (ended at the first park)", len(runSpans))
 	}
@@ -103,8 +102,7 @@ func TestTurnScopedTraceTopologyThroughRealOTELExporter(t *testing.T) {
 	}
 	waitForKind(t, evCh, event.KindLoopParked, 3*time.Second)
 	requireAlive(t, h, "after second park")
-	flush(t, provider)
-	turns := exportedNamed(t, exporter, "fuse.loop.turn")
+	turns := awaitExported(t, provider, exporter, h, "fuse.loop.turn", 1, "after second park")
 	if len(turns) != 1 {
 		t.Fatalf("exported fuse.loop.turn spans after one later turn = %d, want 1", len(turns))
 	}
@@ -116,8 +114,7 @@ func TestTurnScopedTraceTopologyThroughRealOTELExporter(t *testing.T) {
 	}
 	waitForKind(t, evCh, event.KindLoopParked, 3*time.Second)
 	requireAlive(t, h, "after third park")
-	flush(t, provider)
-	turns = exportedNamed(t, exporter, "fuse.loop.turn")
+	turns = awaitExported(t, provider, exporter, h, "fuse.loop.turn", 2, "after third park")
 	if len(turns) != 2 {
 		t.Fatalf("exported fuse.loop.turn spans after two later turns = %d, want 2", len(turns))
 	}
@@ -179,6 +176,32 @@ func flush(t *testing.T, provider *sdktrace.TracerProvider) {
 	t.Helper()
 	if err := provider.ForceFlush(context.Background()); err != nil {
 		t.Fatalf("ForceFlush: %v", err)
+	}
+}
+
+// awaitExported flushes and reads the exporter until at least want spans named
+// name have been exported, or the deadline passes, and returns what it found.
+//
+// The wait is needed because of an ordering the loop chooses on purpose: it
+// emits loop.parked BEFORE it calls the injector's park hook, which is what ends
+// the turn span (a client must be able to re-enable input before the loop
+// blocks). So the park event the test waits on can arrive a few microseconds
+// before the span has ended, and a single flush at that instant exports
+// nothing. Span export is asynchronous in production too, so the criterion
+// "exported while the session is alive" is a bounded wait, not an instant read:
+// the session is re-checked alive on every pass, and the caller still asserts
+// the exact count so an over-export is caught.
+func awaitExported(t *testing.T, provider *sdktrace.TracerProvider, exporter *tracetest.InMemoryExporter, h LoopHandle, name string, want int, when string) []tracetest.SpanStub {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		flush(t, provider)
+		spans := exportedNamed(t, exporter, name)
+		if len(spans) >= want || time.Now().After(deadline) {
+			return spans
+		}
+		requireAlive(t, h, when)
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
