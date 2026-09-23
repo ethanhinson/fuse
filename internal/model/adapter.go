@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -139,7 +140,7 @@ func (a *Adapter) WithTraceLabel(w io.Writer, label string) *Adapter {
 
 // wire types mirror the OpenAI-compatible JSON payloads.
 type wireMessage struct {
-	Role       string         `json:"role"`
+	Role string `json:"role"`
 	// Content is deliberately NOT omitempty: OpenAI-compatible gateways
 	// (litellm) 400 on messages whose content field is absent — an empty
 	// tool result or a pure tool-call assistant turn must serialize as
@@ -187,13 +188,33 @@ type wireStreamOptions struct {
 type wireUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
+	// PromptTokensDetails carries the prefix-cache hit count where the
+	// provider reports one (OpenAI-compatible shape, forwarded by LiteLLM and
+	// OpenRouter). Omitted on the wire when nil so a buffered reply and a
+	// reassembled trace block stay comparable.
+	PromptTokensDetails *wirePromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+type wirePromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+// cachedTokens reads the prefix-cache hit count, 0 when unreported.
+func (u wireUsage) cachedTokens() int {
+	if u.PromptTokensDetails == nil {
+		return 0
+	}
+	return u.PromptTokensDetails.CachedTokens
+}
+
+type wireChoice struct {
+	Message      wireMessage `json:"message"`
+	FinishReason string      `json:"finish_reason,omitempty"`
 }
 
 type wireResp struct {
-	Choices []struct {
-		Message wireMessage `json:"message"`
-	} `json:"choices"`
-	Usage wireUsage `json:"usage"`
+	Choices []wireChoice `json:"choices"`
+	Usage   wireUsage    `json:"usage"`
 }
 
 // wireStreamChunk is one SSE `data:` event of a streamed chat completion. Each
@@ -206,12 +227,54 @@ type wireStreamChunk struct {
 			Content   string              `json:"content"`
 			ToolCalls []wireDeltaToolCall `json:"tool_calls"`
 		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *wireUsage `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
+		// Code is a string ("500") from LiteLLM and a number from some
+		// upstreams; it is read leniently.
+		Code any `json:"code"`
 	} `json:"error"`
+}
+
+// retryableStreamError classifies an error object that arrived as an SSE
+// data event. LiteLLM wraps everything that goes wrong after the headers were
+// sent in this one shape, so it covers both a genuine rejection (bad request,
+// auth, context too long: pointless to retry) and a transient failure (the
+// provider dropped the connection mid-generation, a 5xx, a rate limit: worth
+// another attempt). A 4xx code other than 408/429, or an exception class that
+// names a client-side fault, is terminal; everything else is retried.
+func retryableStreamError(typ string, code any, message string) bool {
+	if n, ok := errorCode(code); ok && n >= 400 && n < 500 && n != http.StatusRequestTimeout && n != http.StatusTooManyRequests {
+		return false
+	}
+	head := typ + " " + message
+	if len(head) > 200 {
+		head = head[:200]
+	}
+	for _, terminal := range []string{
+		"invalid_request", "BadRequest", "Authentication", "PermissionDenied",
+		"NotFound", "ContextWindowExceeded", "ContentPolicy", "UnsupportedParams",
+	} {
+		if strings.Contains(head, terminal) {
+			return false
+		}
+	}
+	return true
+}
+
+// errorCode reads a numeric HTTP-style code out of the lenient Code field.
+func errorCode(code any) (int, bool) {
+	switch v := code.(type) {
+	case float64:
+		return int(v), true
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		return n, err == nil
+	}
+	return 0, false
 }
 
 // wireDeltaToolCall is a streamed tool-call fragment. `index` identifies which
@@ -333,7 +396,7 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	attempts := 0
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		attempts = attempt
-		resp, err, retryable := a.completeOnce(ctx, body)
+		resp, err, retryable := a.completeOnce(ctx, body, req.Tools)
 		if err == nil {
 			// Reconcile the pre-dispatch estimate with the gateway's reported usage so
 			// the tpm axis reflects real spend without double-charging the estimate
@@ -372,7 +435,7 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 
 // completeOnce performs a single bounded request attempt. retryable reports
 // whether the failure class is worth another attempt.
-func (a *Adapter) completeOnce(ctx context.Context, body []byte) (_ CompletionResp, err error, retryable bool) {
+func (a *Adapter) completeOnce(ctx context.Context, body []byte, tools []ToolSchema) (_ CompletionResp, err error, retryable bool) {
 	attemptCtx := ctx
 	if a.RequestTimeout > 0 {
 		var cancel context.CancelFunc
@@ -409,13 +472,13 @@ func (a *Adapter) completeOnce(ctx context.Context, body []byte) (_ CompletionRe
 	// parsed incrementally; a buffered JSON body (a gateway that ignored
 	// stream, or a test double) is parsed whole. Both return the same result.
 	if strings.Contains(res.Header.Get("Content-Type"), "text/event-stream") {
-		return a.readStream(res.Body)
+		return a.readStream(res.Body, tools)
 	}
-	return a.readBuffered(res.Body)
+	return a.readBuffered(res.Body, tools)
 }
 
 // readBuffered parses a whole non-streamed chat-completion JSON body.
-func (a *Adapter) readBuffered(body io.Reader) (_ CompletionResp, err error, retryable bool) {
+func (a *Adapter) readBuffered(body io.Reader, tools []ToolSchema) (_ CompletionResp, err error, retryable bool) {
 	raw, err := io.ReadAll(body)
 	if err != nil {
 		return CompletionResp{}, fmt.Errorf("read gateway response: %w", err), true
@@ -432,12 +495,32 @@ func (a *Adapter) readBuffered(body io.Reader) (_ CompletionResp, err error, ret
 	out := CompletionResp{
 		Content:      msg.Content,
 		InputTokens:  wr.Usage.PromptTokens,
+		CachedTokens: wr.Usage.cachedTokens(),
 		OutputTokens: wr.Usage.CompletionTokens,
+		FinishReason: wr.Choices[0].FinishReason,
 	}
 	for _, tc := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
 	}
-	return out, nil, false
+	return a.recoverToolCalls(out, tools), nil, false
+}
+
+// recoverToolCalls applies the Qwen-style XML fallback (see recover.go) to a
+// reply that carried no structured tool call. Both reader paths funnel through
+// it so a leaked call is lifted the same way whether the gateway streamed or
+// buffered. A recovery is recorded in the trace so a run's transcript shows
+// that the harness, not the provider, produced the structured call.
+func (a *Adapter) recoverToolCalls(out CompletionResp, tools []ToolSchema) CompletionResp {
+	if len(out.ToolCalls) > 0 {
+		return out
+	}
+	content, calls, ok := recoverXMLToolCalls(out.Content, tools)
+	if !ok {
+		return out
+	}
+	out.Content, out.ToolCalls = content, calls
+	a.traceReassembled("RECOVERED", out)
+	return out
 }
 
 // readStream consumes an SSE chat-completion stream and reassembles it into a
@@ -445,11 +528,13 @@ func (a *Adapter) readBuffered(body io.Reader) (_ CompletionResp, err error, ret
 // are merged by index (first fragment carries id+name, later ones append
 // arguments), and the trailing usage chunk supplies token counts. A read error
 // mid-stream is retryable (the generation may simply have dropped); a streamed
-// `error` event is not (the upstream rejected the request).
-func (a *Adapter) readStream(body io.Reader) (_ CompletionResp, err error, retryable bool) {
+// `error` event is retryable unless it reports a client-side rejection (see
+// retryableStreamError).
+func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionResp, err error, retryable bool) {
 	var content strings.Builder
 	byIndex := map[int]*ToolCall{}
 	var order []int
+	var finishReason string
 	var usage wireUsage
 
 	sc := bufio.NewScanner(body)
@@ -470,13 +555,17 @@ func (a *Adapter) readStream(body io.Reader) (_ CompletionResp, err error, retry
 			return CompletionResp{}, fmt.Errorf("decode stream chunk: %w", jerr), false
 		}
 		if chunk.Error != nil {
-			return CompletionResp{}, fmt.Errorf("gateway stream error: %s", chunk.Error.Message), false
+			return CompletionResp{}, fmt.Errorf("gateway stream error: %s", chunk.Error.Message),
+				retryableStreamError(chunk.Error.Type, chunk.Error.Code, chunk.Error.Message)
 		}
 		if chunk.Usage != nil {
 			usage = *chunk.Usage
 		}
 		if len(chunk.Choices) == 0 {
 			continue
+		}
+		if fr := chunk.Choices[0].FinishReason; fr != "" {
+			finishReason = fr
 		}
 		d := chunk.Choices[0].Delta
 		content.WriteString(d.Content)
@@ -503,29 +592,31 @@ func (a *Adapter) readStream(body io.Reader) (_ CompletionResp, err error, retry
 	out := CompletionResp{
 		Content:      content.String(),
 		InputTokens:  usage.PromptTokens,
+		CachedTokens: usage.cachedTokens(),
 		OutputTokens: usage.CompletionTokens,
+		FinishReason: finishReason,
 	}
 	sort.Ints(order)
 	for _, idx := range order {
 		out.ToolCalls = append(out.ToolCalls, *byIndex[idx])
 	}
 	// Record a reassembled RESP block so --trace stays useful with streaming on.
-	a.traceReassembled(out)
-	return out, nil, false
+	a.traceReassembled("RESP", out)
+	return a.recoverToolCalls(out, tools), nil, false
 }
 
-// traceReassembled writes a RESP trace block for a streamed response, shaped
-// like the buffered JSON so trace output is comparable across both paths.
-func (a *Adapter) traceReassembled(out CompletionResp) {
+// traceReassembled writes a trace block under marker for an assembled
+// response, shaped like the buffered JSON so trace output is comparable across
+// both paths ("RESP" for a streamed reply, "RECOVERED" after the XML fallback).
+func (a *Adapter) traceReassembled(marker string, out CompletionResp) {
 	if a.trace == nil {
 		return
 	}
 	var wr wireResp
-	wr.Choices = make([]struct {
-		Message wireMessage `json:"message"`
-	}, 1)
+	wr.Choices = make([]wireChoice, 1)
 	wr.Choices[0].Message.Role = "assistant"
 	wr.Choices[0].Message.Content = out.Content
+	wr.Choices[0].FinishReason = out.FinishReason
 	for _, tc := range out.ToolCalls {
 		var w wireToolCall
 		w.ID, w.Type = tc.ID, "function"
@@ -533,7 +624,10 @@ func (a *Adapter) traceReassembled(out CompletionResp) {
 		wr.Choices[0].Message.ToolCalls = append(wr.Choices[0].Message.ToolCalls, w)
 	}
 	wr.Usage = wireUsage{PromptTokens: out.InputTokens, CompletionTokens: out.OutputTokens}
+	if out.CachedTokens > 0 {
+		wr.Usage.PromptTokensDetails = &wirePromptTokensDetails{CachedTokens: out.CachedTokens}
+	}
 	if b, jerr := json.Marshal(wr); jerr == nil {
-		a.tracef("RESP", prettyJSON(b))
+		a.tracef(marker, prettyJSON(b))
 	}
 }

@@ -268,6 +268,11 @@ func buildSessionRegistryNoMCP(sb *sandbox.Service, cfg config.Config, skillLook
 // path: WithRateGate(nil) leaves the adapter's gate nil, adding zero latency.
 func gatewayAdapter(cfg config.Config, gate model.RateGate) *model.Adapter {
 	a := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
+	// gateway.request_timeout (validated by the loader) replaces the adapter's
+	// built-in per-attempt deadline; empty keeps the default.
+	if d, err := time.ParseDuration(cfg.Gateway.RequestTimeout); err == nil && d > 0 {
+		a.RequestTimeout = d
+	}
 	if gate != nil {
 		a = a.WithRateGate(gate)
 	}
@@ -834,10 +839,14 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
 	}
 	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
-	// Advertise the auto-approved scratch directory (change 0068) on every
-	// binding's system prompt — buildAgentCore is the single chokepoint both
-	// gate construction and prompt composition flow through.
-	extra = appendScratchBlock(extra)
+	// buildAgentCore is the single chokepoint both gate construction and
+	// prompt composition flow through: drop the spawn_agent instructions for an
+	// agent that cannot spawn (see prompt_blocks.go), then advertise the
+	// auto-approved scratch directory (change 0068) on every binding's prompt.
+	extra = withoutUnavailableSpawnBlock(extra, cfg, toolReg)
+	if scratchBlockWanted(cfg) {
+		extra = appendScratchBlock(extra)
+	}
 
 	// Models with ID prefix "cli/" bypass the LiteLLM gateway and route through
 	// the CLIAdapter, which spawns claude --print with fuse mcp-server attached.

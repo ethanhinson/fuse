@@ -158,6 +158,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// One-shot interactivity: a human is reachable only on a real TTY. This
 	// drives the approval channel (y/N/a prompt) — --approve-all layers on top.
 	oneShotInteractive := stdinIsTerminal()
+	// --approve-all is mode off for this run, as its help text says. Making
+	// that literal (rather than only answering every prompt "yes") means the
+	// gate builds no auto-mode classifier, so a scripted run does not spend a
+	// model call per gray-area command whose verdict it would ignore anyway,
+	// and the prompt does not advertise the scratch directory as the one
+	// auto-approved place to write (see appendScratchBlock).
+	if *approveAll {
+		cfg.Permissions.Mode = "off"
+	}
 	if *approveAll || !oneShotInteractive {
 		// --approve-all and the piped-stdin deny fallback both answer without a
 		// human: label their LayerHuman decision events as policy-decided.
@@ -184,7 +193,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "skills error: %v\n", serr)
 		return 1
 	}
-	oneShotSystemBlock := skillSet.SystemPromptBlock() + spawnAgentBlock
+	oneShotSystemBlock := rootSystemBlock(cfg, skillSet)
 
 	// Build a tool registry with spawn_agent AND the skill tool wired up.
 	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE here, before any

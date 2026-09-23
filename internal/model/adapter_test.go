@@ -402,3 +402,132 @@ func TestCompleteSSEErrorEventIsError(t *testing.T) {
 		t.Errorf("error should carry the streamed message: %v", err)
 	}
 }
+
+// TestCompleteSSETransientErrorRetries: a provider dropping the connection
+// mid-generation reaches us as a streamed error event (LiteLLM's
+// "provider_unavailable" shape); that is transient and must be retried.
+func TestCompleteSSETransientErrorRetries(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n == 1 {
+			io.WriteString(w, `data: {"error":{"message":"litellm.APIError: APIError: OpenrouterException - Message: Network connection lost., Metadata: {'error_type': 'provider_unavailable'}","type":"None","code":"500"}}`+"\n\n")
+			return
+		}
+		io.WriteString(w, `data: {"choices":[{"delta":{"role":"assistant","content":"recovered"}}]}`+"\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	a.MaxAttempts = 2
+	a.RetryBackoff = time.Millisecond
+	resp, err := a.Complete(context.Background(), CompletionReq{Model: "m"})
+	if err != nil {
+		t.Fatalf("transient streamed error should have been retried: %v", err)
+	}
+	if resp.Content != "recovered" || atomic.LoadInt32(&calls) != 2 {
+		t.Errorf("want content from the second attempt (2 calls), got %q after %d calls", resp.Content, calls)
+	}
+}
+
+// TestCompleteSSEClientErrorNotRetried: a streamed 4xx rejection is terminal;
+// re-sending the same request would only fail the same way.
+func TestCompleteSSEClientErrorNotRetried(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"error":{"message":"litellm.BadRequestError: context length exceeded","type":"invalid_request_error","code":"400"}}`+"\n\n")
+	}))
+	defer srv.Close()
+
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	a.MaxAttempts = 3
+	a.RetryBackoff = time.Millisecond
+	if _, err := a.Complete(context.Background(), CompletionReq{Model: "m"}); err == nil {
+		t.Fatal("expected the streamed 400 to surface as an error")
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("a client error must not be retried: %d calls", n)
+	}
+}
+
+// TestFinishReasonParsedBufferedAndStreamed: the choice-level finish_reason
+// reaches CompletionResp on both reader paths, so the loop can tell a reply
+// that was cut at max_tokens from one that finished.
+func TestFinishReasonParsedBufferedAndStreamed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("stream") == "1" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, `data: {"choices":[{"delta":{"role":"assistant","content":"partial"},"finish_reason":null}]}`+"\n\n")
+			io.WriteString(w, `data: {"choices":[{"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":3,"completion_tokens":100}}`+"\n\n")
+			io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"partial"},"finish_reason":"length"}],"usage":{"prompt_tokens":3,"completion_tokens":100}}`)
+	}))
+	defer srv.Close()
+	for _, mode := range []string{"", "?stream=1"} {
+		a := NewAdapter(srv.URL+mode, "k", srv.Client())
+		resp, err := a.Complete(context.Background(), CompletionReq{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}, MaxTokens: 100})
+		if err != nil {
+			t.Fatalf("mode %q: %v", mode, err)
+		}
+		if resp.FinishReason != "length" {
+			t.Errorf("mode %q: finish=%q", mode, resp.FinishReason)
+		}
+	}
+}
+
+// TestCachedTokensParsed: a provider's prompt_tokens_details.cached_tokens
+// reaches CompletionResp on both reader paths and survives into the
+// reassembled trace block, so a run can measure its prefix-cache hit rate.
+func TestCachedTokensParsed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("stream") == "1" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, `data: {"choices":[{"delta":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4024,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":3168,"audio_tokens":0}}}`+"\n\n")
+			io.WriteString(w, "data: [DONE]\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4024,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":3168}}}`)
+	}))
+	defer srv.Close()
+	for _, mode := range []string{"", "?stream=1"} {
+		var trace strings.Builder
+		a := NewAdapter(srv.URL+mode, "k", srv.Client()).WithTrace(&trace)
+		resp, err := a.Complete(context.Background(), CompletionReq{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}})
+		if err != nil {
+			t.Fatalf("mode %q: %v", mode, err)
+		}
+		if resp.InputTokens != 4024 || resp.CachedTokens != 3168 {
+			t.Errorf("mode %q: input=%d cached=%d", mode, resp.InputTokens, resp.CachedTokens)
+		}
+		if !strings.Contains(trace.String(), `"cached_tokens": 3168`) {
+			t.Errorf("mode %q: trace lacks cached_tokens: %s", mode, trace.String())
+		}
+	}
+}
+
+// TestAsMessageWrapsMalformedArguments: a tool call whose arguments are not
+// JSON keeps the call for execution (the registry will answer "bad
+// arguments") but the history copy is a valid JSON object, so a provider that
+// validates the transcript does not reject every later request. A call-free
+// reply keeps a nil ToolCalls slice (transcript round-trips compare deeply).
+func TestAsMessageWrapsMalformedArguments(t *testing.T) {
+	r := CompletionResp{ToolCalls: []ToolCall{{ID: "1", Name: "write_file", Arguments: `{"path": "x"`}, {ID: "2", Name: "bash", Arguments: `{"command":"ls"}`}}}
+	m := r.AsMessage()
+	if !json.Valid([]byte(m.ToolCalls[0].Arguments)) || !strings.Contains(m.ToolCalls[0].Arguments, `{\"path\": \"x\"`) {
+		t.Errorf("malformed args not wrapped: %s", m.ToolCalls[0].Arguments)
+	}
+	if m.ToolCalls[1].Arguments != `{"command":"ls"}` || r.ToolCalls[0].Arguments != `{"path": "x"` {
+		t.Errorf("valid args or the response itself changed")
+	}
+	if got := (CompletionResp{Content: "done"}).AsMessage(); got.ToolCalls != nil {
+		t.Errorf("call-free reply should keep a nil slice")
+	}
+}

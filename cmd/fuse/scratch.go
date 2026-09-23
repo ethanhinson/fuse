@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/session"
 )
 
@@ -84,15 +85,32 @@ func gateWriteRoots(cfg config.Config) []string {
 	return roots
 }
 
+// scratchBlockWanted reports whether the prompt should advertise the scratch
+// directory at all. Its point is "writes here need no approval", which only
+// means something while a gate can ask; with permissions off (including
+// --approve-all) every path is equally free and the advertisement only pulls
+// the model's files away from the working directory.
+func scratchBlockWanted(cfg config.Config) bool {
+	return permissions.ParseMode(cfg.Permissions.Mode) != permissions.ModeOff
+}
+
 // appendScratchBlock appends the scratch-directory advertisement to a system
 // prompt's extra block so models reach for the auto-approved scratch area
 // instead of /tmp.
+//
+// The wording draws the line explicitly: once the prompt shed its skills and
+// spawn blocks (2026-09-22) this sentence became the most prominent
+// instruction in it, and a plain "use it for temporary files" sent models to
+// write the task's own deliverable there (LCB-100: solution.py landed in the
+// scratch directory on 34% of problems, against 1% before), so the run ended
+// with the workspace file empty.
 func appendScratchBlock(extra string) string {
 	s := sessionScratchDir()
 	if s == "" {
 		return extra
 	}
-	block := "Scratch directory: " + s + " — use it for temporary files instead of /tmp; writes there are auto-approved in auto mode."
+	block := "Scratch directory for throwaway files only (probes, drafts, temporary output), auto-approved in auto mode: " + s +
+		". Files the task asks for belong in the working directory, never there."
 	if extra == "" {
 		return block
 	}

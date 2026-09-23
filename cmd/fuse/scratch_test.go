@@ -47,6 +47,10 @@ func TestScratchAdvertisedAndInRoots(t *testing.T) {
 	if !strings.Contains(extra, dir) || !strings.Contains(extra, "existing block") {
 		t.Errorf("appendScratchBlock lost content: %q", extra)
 	}
+	// The block must say where deliverables go, not only where scratch is.
+	if !strings.Contains(extra, "working directory") || !strings.Contains(extra, "throwaway") {
+		t.Errorf("appendScratchBlock does not draw the scratch/deliverable line: %q", extra)
+	}
 }
 
 // TestGateWriteRoots_ConfigRootsCanonicalized proves config write_roots are
@@ -95,5 +99,22 @@ func TestSweepScratch(t *testing.T) {
 	}
 	if _, err := os.Stat(fresh); err != nil {
 		t.Error("fresh scratch dir was swept")
+	}
+}
+
+// TestScratchBlockWantedFollowsMode: the advertisement rides in modes where a
+// gate can ask (its "auto-approved here" claim is the point) and is dropped
+// when permissions are off, which --approve-all now sets for its run.
+func TestScratchBlockWantedFollowsMode(t *testing.T) {
+	var cfg config.Config
+	for _, mode := range []string{"auto", "smart", "prompt-all", ""} {
+		cfg.Permissions.Mode = mode
+		if !scratchBlockWanted(cfg) {
+			t.Errorf("mode %q: scratch block should be advertised", mode)
+		}
+	}
+	cfg.Permissions.Mode = "off"
+	if scratchBlockWanted(cfg) {
+		t.Errorf("mode off: scratch block must not be advertised")
 	}
 }

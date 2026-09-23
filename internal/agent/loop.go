@@ -563,8 +563,10 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		a.emit(event.KindModelCallEnd, turn, event.ModelCallEndPayload{
 			Content:      resp.Content,
 			InputTokens:  resp.InputTokens,
+			CachedTokens: resp.CachedTokens,
 			OutputTokens: resp.OutputTokens,
 			ToolCalls:    toolCallRefs(resp.ToolCalls),
+			FinishReason: resp.FinishReason,
 		})
 		a.renderer.Tokens(resp.InputTokens, resp.OutputTokens)
 		lastUsage = resp.InputTokens + resp.OutputTokens

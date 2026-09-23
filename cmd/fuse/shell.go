@@ -66,7 +66,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		fmt.Fprintf(stderr, "skills error: %v\n", err)
 		return 1
 	}
-	skillBlock := set.SystemPromptBlock()
+	// Skills listing and spawn_agent guidance, each only when its tool is
+	// enabled (prompt_blocks.go).
+	skillBlock := rootSystemBlock(cfg, set)
 
 	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE per shell session,
 	// before the first turn. hosted=false — the shell runs the operator's own work
@@ -122,9 +124,6 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		slashReg = tui.NewSlashRegistry(builtins)
 	}
 	defer slashReg.Close()
-
-	// Inject aggressive spawn_agent guidance (shared with one-shot mode).
-	skillBlock += spawnAgentBlock
 
 	traceFile := ""
 	for i := 0; i < len(args)-1; i++ {
