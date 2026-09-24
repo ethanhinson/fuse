@@ -1,0 +1,72 @@
+{
+ "engine": "single",
+ "model": "qwen3.8-27b-or",
+ "gateway_model": "cloud/qwen3.8-27b",
+ "harness": {
+  "fuse": "fuse 0.1.0-dev\ngo go1.26.5 darwin/arm64\nbackends: fsstore",
+  "max_turns": 40,
+  "max_tokens_single": 128000,
+  "max_tokens_fuse": 128000,
+  "request_timeout_fuse": "40m",
+  "context_window_fuse": 0,
+  "timeout_s": 3600,
+  "spawn": false,
+  "max_spawns": 6
+ },
+ "run_name": "20260922-qwen3.8-27b-or-single-smoke",
+ "started": "20260923-0247",
+ "solve_wall_s": 2184.4,
+ "lcb": {
+  "benchmark": "livecodebench",
+  "pass@1": 50.0,
+  "n_graded": 2,
+  "n_infra": 0,
+  "status_counts": {
+   "ok": 1,
+   "truncated": 1
+  },
+  "prompt_tokens": 1861,
+  "cached_tokens": 0,
+  "completion_tokens": 210872,
+  "records": [
+   {
+    "question_id": "arc196_b",
+    "platform": "atcoder",
+    "code": "import sys\n\nMOD = 998244353\n\n\ndef solve():\n    data = sys.stdin.buffer.read().split()\n    if not data:\n        return\n\n    it = iter(data)\n    T = int(next(it))\n    out = []\n\n    for _ in range(T):\n        H = int(next(it))\n        W = int(next(it))\n        rows = [next(it) for _ in range(H)]\n\n        col_xor = bytearray(W)\n        row_ok = True\n        total_A = 0\n\n        for row in rows:\n            rx = 0\n            for j, ch in enumerate(row):\n                if ch & 1:  # 'A'\n                    rx ^= 1\n                    total_A += 1\n                    col_xor[j] = col_xor[j] ^ 1\n            if rx:\n                row_ok = False\n\n        if not row_ok or any(col_xor):\n            out.append(\"0\")\n            continue\n\n        if total_A == 0:\n            out.append(\"2\")\n            continue\n\n        if total_A == H * W:\n            out.append(str(pow(2, H + W, MOD)))\n            continue\n\n        n = H + W\n        parent = [-1] * n\n        parity = bytearray(n)\n        comp = n\n\n        def find(x, parent=parent, parity=parity):\n            acc = 0\n            while True:\n                p = parent[x]\n                if p < 0:\n                    break\n                acc ^= parity[x]\n                gp = parent[p]\n                if gp >= 0:\n                    parity[x] = parity[x] ^ parity[p]\n                    parent[x] = gp\n                x = p\n            return x, acc\n\n        q = bytearray(W)\n        ok = True\n        par = parent\n        parit = parity\n\n        for i, row in enumerate(rows):\n            p = 0\n            for j, ch in enumerate(row):\n                if ch & 1:  # 'A'\n                    p ^= 1\n                    q[j] = q[j] ^ 1\n                else:  # 'B'\n                    C = p ^ q[j] ^ 1\n                    rx, px = find(i)\n                    ry, py = find(H + j)\n\n                    if rx == ry:\n                        if (px ^ py) != C:\n                            ok = False\n                            break\n                    else:\n                        sx = par[rx]\n                        sy = par[ry]\n                        if sx > sy:\n                            par[rx] = ry\n                            parit[rx] = px ^ py ^ C\n                            par[ry] = sx + sy\n                        else:\n                            par[ry] = rx\n                            parit[ry] = px ^ py ^ C\n                            par[rx] = sx + sy\n                        comp -= 1\n\n            if not ok:\n                break\n\n        if not ok:\n            out.append(\"0\")\n        else:\n            out.append(str(pow(2, comp, MOD)))\n\n    sys.stdout.write(\"\\n\".join(out))\n\n\nif __name__ == \"__main__\":\n    solve()",
+    "passed": true,
+    "grade": "ok",
+    "status": "ok",
+    "finish_reason": "stop",
+    "prompt_tokens": 1092,
+    "cached_tokens": null,
+    "completion_tokens": 82872,
+    "n_calls": 1,
+    "n_agents": null,
+    "tool_calls": null,
+    "wall_s": 1530.3,
+    "timeout": false,
+    "exit_code": null,
+    "ws": "runs/20260922-qwen3.8-27b-or-single-smoke/ws/arc196_b"
+   },
+   {
+    "question_id": "arc196_c",
+    "platform": "atcoder",
+    "code": "",
+    "passed": false,
+    "grade": "fail",
+    "status": "truncated",
+    "finish_reason": "length",
+    "prompt_tokens": 769,
+    "cached_tokens": null,
+    "completion_tokens": 128000,
+    "n_calls": 1,
+    "n_agents": null,
+    "tool_calls": null,
+    "wall_s": 2184.4,
+    "timeout": false,
+    "exit_code": null,
+    "ws": "runs/20260922-qwen3.8-27b-or-single-smoke/ws/arc196_c"
+   }
+  ]
+ }
+}

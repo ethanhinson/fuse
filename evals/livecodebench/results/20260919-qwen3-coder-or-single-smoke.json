@@ -1,0 +1,69 @@
+{
+ "engine": "single",
+ "model": "qwen3-coder-or",
+ "gateway_model": "cloud/qwen3-coder-30b",
+ "harness": {
+  "fuse": "fuse v0.1.1-dirty\ngo go1.26.5 darwin/arm64",
+  "max_turns": 40,
+  "max_tokens_single": 16384,
+  "max_tokens_fuse": 128000,
+  "request_timeout_fuse": "40m",
+  "context_window_fuse": 0,
+  "timeout_s": 1200,
+  "spawn": false,
+  "max_spawns": 6
+ },
+ "run_name": "20260919-qwen3-coder-or-single-smoke",
+ "started": "20260919-1952",
+ "solve_wall_s": 511.5,
+ "lcb": {
+  "benchmark": "livecodebench",
+  "pass@1": 0.0,
+  "n_graded": 2,
+  "n_infra": 0,
+  "status_counts": {
+   "truncated": 1,
+   "ok": 1
+  },
+  "prompt_tokens": 1735,
+  "completion_tokens": 21628,
+  "records": [
+   {
+    "question_id": "arc196_b",
+    "platform": "atcoder",
+    "code": "",
+    "passed": false,
+    "grade": "fail",
+    "status": "truncated",
+    "finish_reason": "length",
+    "prompt_tokens": 1025,
+    "completion_tokens": 16384,
+    "n_calls": 1,
+    "n_agents": null,
+    "tool_calls": null,
+    "wall_s": 511.5,
+    "timeout": false,
+    "exit_code": null,
+    "ws": "runs/20260919-qwen3-coder-or-single-smoke/ws/arc196_b"
+   },
+   {
+    "question_id": "arc196_c",
+    "platform": "atcoder",
+    "code": "def mod_inverse(a, mod):\n    return pow(a, mod - 2, mod)\n\ndef solve():\n    MOD = 998244353\n    \n    N = int(input())\n    S = input().strip()\n    \n    # The key insight is that we want to count the number of ways to pair\n    # white and black vertices such that the resulting graph is strongly connected.\n    \n    # This is equivalent to counting the number of valid bracket sequences\n    # where W represents an opening bracket and B represents a closing bracket.\n    \n    # But we also need to consider that the original path structure matters.\n    \n    # Actually, let's think of it this way:\n    # We have a path 1->2->3->...->2N\n    # We add N edges from white to black vertices\n    # For strong connectivity, we need to make sure we can traverse the entire graph\n    \n    # The correct mathematical approach:\n    # This is the number of valid ways to pair W and B vertices such that\n    # the resulting graph is strongly connected.\n    \n    # This is actually the number of valid bracket sequences with N opening and N closing brackets,\n    # which is the N-th Catalan number.\n    \n    # But we need to be careful about the constraint.\n    \n    # Let's compute the N-th Catalan number:\n    # C_N = (2N)! / ((N+1)! * N!)\n    # Or C_N = (1/(N+1)) * (2N choose N)\n    \n    # But we also need to check if the string is valid in the sense that \n    # at no point do we have more B's than W's in the prefix.\n    \n    # Actually, let's compute it directly:\n    \n    # Precompute factorials\n    fact = [1] * (2 * N + 1)\n    for i in range(1, 2 * N + 1):\n        fact[i] = (fact[i-1] * i) % MOD\n    \n    # Compute (2N choose N)\n    numerator = fact[2 * N]\n    denominator = (fact[N] * fact[N]) % MOD\n    inv_den = mod_inverse(denominator, MOD)\n    binomial = (numerator * inv_den) % MOD\n    \n    # Compute C_N = (2N choose N) / (N+1)\n    catalan = (binomial * mod_inverse(N + 1, MOD)) % MOD\n    \n    # But we also need to check if the string is valid for the pairing to make sense.\n    # The string is valid if at no point the number of B's exceeds the number of W's.\n    \n    # Let's check if the string is valid:\n    balance = 0\n    valid = True\n    for char in S:\n        if char == 'W':\n            balance += 1\n        else:  # char == 'B'\n            balance -= 1\n        if balance < 0:\n            valid = False\n            break\n    \n    # If the string is not valid, then the answer is 0\n    if not valid:\n        print(0)\n    else:\n        print(catalan)\n\nsolve()",
+    "passed": false,
+    "grade": "fail",
+    "status": "ok",
+    "finish_reason": "stop",
+    "prompt_tokens": 710,
+    "completion_tokens": 5244,
+    "n_calls": 1,
+    "n_agents": null,
+    "tool_calls": null,
+    "wall_s": 177.5,
+    "timeout": false,
+    "exit_code": null,
+    "ws": "runs/20260919-qwen3-coder-or-single-smoke/ws/arc196_c"
+   }
+  ]
+ }
+}

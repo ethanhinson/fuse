@@ -1,0 +1,46 @@
+diff --git a/lcb_runner/evaluation/testing_util.py b/lcb_runner/evaluation/testing_util.py
+index ecc8947..5b3597d 100644
+--- a/lcb_runner/evaluation/testing_util.py
++++ b/lcb_runner/evaluation/testing_util.py
+@@ -92,15 +92,38 @@ class MockStdinWithBuffer:
+ 
+ 
+ class MockBuffer:
++    """Binary stdin for in-process grading. Upstream returns the whole input
++    from read() every time and the first line from every readline(), so a
++    solution reading stdin.buffer line by line sees line 1 forever and fails
++    tests it passes when run as a real process. Keep a read position."""
++
+     def __init__(self, inputs: str):
+         self.inputs = inputs.encode("utf-8")  # Convert to bytes
++        self.pos = 0
+ 
+     def read(self, *args):
+-        # Return as byte strings that can be split
+-        return self.inputs
++        if args and args[0] is not None and args[0] >= 0:
++            chunk = self.inputs[self.pos:self.pos + args[0]]
++        else:
++            chunk = self.inputs[self.pos:]
++        self.pos += len(chunk)
++        return chunk
+ 
+     def readline(self, *args):
+-        return self.inputs.split(b"\n")[0] + b"\n"
++        end = self.inputs.find(b"\n", self.pos)
++        end = len(self.inputs) if end < 0 else end + 1
++        line = self.inputs[self.pos:end]
++        self.pos = end
++        return line
++
++    def readlines(self, *args):
++        lines = []
++        while self.pos < len(self.inputs):
++            lines.append(self.readline())
++        return lines
++
++    def __iter__(self):
++        return iter(self.readlines())
+ 
+ 
+ def clean_if_name(code: str) -> str:
