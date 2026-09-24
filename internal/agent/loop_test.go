@@ -319,6 +319,94 @@ func TestRunPrunesOldToolResultsWhenOverBudget(t *testing.T) {
 	}
 }
 
+// skillExec answers the skill tool with a fixed body and records every call.
+type skillExec struct {
+	fakeExec
+	body string
+}
+
+func (s *skillExec) Execute(ctx context.Context, name, args string) tools.Result {
+	s.calls = append(s.calls, name)
+	if name == "skill" {
+		return tools.Result{Output: s.body}
+	}
+	return tools.Result{Output: "ok"}
+}
+
+// TestRunSkillPreflightLoadsSkillBeforeFirstTurn: a preflight that names a
+// skill puts the skill call and its body into the transcript ahead of the
+// first model turn, exactly as if the model had called it.
+func TestRunSkillPreflightLoadsSkillBeforeFirstTurn(t *testing.T) {
+	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}
+	exec := &skillExec{body: "# Ledger\nkeep a plan on disk"}
+	a := New(comp, exec, nopRenderer{}, "m", "", 10, 100)
+	var asked string
+	a.SkillPreflight = func(ctx context.Context, request string) (string, error) {
+		asked = request
+		return "ledger", nil
+	}
+	hist, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "solve task.md"}})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if asked != "solve task.md" {
+		t.Fatalf("preflight must see the user's request, got %q", asked)
+	}
+	if len(exec.calls) != 1 || exec.calls[0] != "skill" {
+		t.Fatalf("expected exactly one skill tool execution, got %v", exec.calls)
+	}
+	// user, assistant(skill call), tool(body), assistant("done")
+	if len(hist) != 4 || hist[1].Role != "assistant" || len(hist[1].ToolCalls) != 1 || hist[1].ToolCalls[0].Name != "skill" ||
+		hist[2].Role != "tool" || hist[2].Content != exec.body || hist[3].Content != "done" {
+		t.Fatalf("unexpected transcript: %+v", hist)
+	}
+	if hist[1].ToolCalls[0].Arguments != `{"name":"ledger"}` {
+		t.Fatalf("skill call args: %s", hist[1].ToolCalls[0].Arguments)
+	}
+}
+
+// TestRunSkillPreflightNoneOrErrorIsInert: "" and an error both leave the
+// transcript byte-identical to a run without the hook.
+func TestRunSkillPreflightNoneOrErrorIsInert(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fn   func(context.Context, string) (string, error)
+	}{
+		{"none", func(context.Context, string) (string, error) { return "", nil }},
+		{"error", func(context.Context, string) (string, error) { return "ledger", errors.New("gateway down") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}
+			exec := &skillExec{body: "body"}
+			a := New(comp, exec, nopRenderer{}, "m", "", 10, 100)
+			a.SkillPreflight = tc.fn
+			hist, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}})
+			if err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if len(exec.calls) != 0 || len(hist) != 2 {
+				t.Fatalf("hook must be inert, got calls=%v hist=%d", exec.calls, len(hist))
+			}
+		})
+	}
+}
+
+// TestRunSkillPreflightSkippedWhenSeeded: a resumed loop never re-decides.
+func TestRunSkillPreflightSkippedWhenSeeded(t *testing.T) {
+	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}
+	exec := &skillExec{body: "body"}
+	a := New(comp, exec, nopRenderer{}, "m", "", 10, 100)
+	a.SetSeeded(true)
+	called := false
+	a.SkillPreflight = func(context.Context, string) (string, error) { called = true; return "ledger", nil }
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if called || len(exec.calls) != 0 {
+		t.Fatal("preflight must not run on a seeded (resumed) loop")
+	}
+}
+
 // TestRunErrsWhenPruningInsufficient: un-prunable bloat (user content) still
 // ends the turn with ErrContextTooLarge as a last resort.
 func TestRunErrsWhenPruningInsufficient(t *testing.T) {

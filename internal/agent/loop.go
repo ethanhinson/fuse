@@ -376,6 +376,24 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	}
 	detector := newLoopDetector(loopLimit)
 
+	// Skill preflight: decide up front whether a skill applies, then load it the
+	// way the model would have (assistant tool call + tool result), so the skill
+	// body is the first thing after the request. Fresh runs only: a resumed loop
+	// already made this decision in its recorded history.
+	if a.SkillPreflight != nil && !a.seeded && len(messages) > 0 && messages[len(messages)-1].Role == "user" {
+		name, err := a.SkillPreflight(ctx, messages[len(messages)-1].Content)
+		switch {
+		case err != nil:
+			a.renderer.Errorf("skill preflight: %v (continuing without a skill)", err)
+		case name != "":
+			args, _ := json.Marshal(map[string]string{"name": name})
+			call := model.ToolCall{ID: "skill-preflight", Name: "skill", Arguments: string(args)}
+			messages = append(messages, model.Message{Role: "assistant", ToolCalls: []model.ToolCall{call}})
+			toolMsgs, _ := a.executeTools(ctx, 0, messages, []model.ToolCall{call})
+			messages = append(messages, toolMsgs...)
+		}
+	}
+
 	// Policy-denial tracking (change 0067): repeats of a policy-DENIED call are
 	// handled by a nudge protocol instead of the generic doom-loop abort. After
 	// two identical denials a synthetic user message tells the model the call is

@@ -298,6 +298,10 @@ type Config struct {
 	Gateway    Gateway
 	Models     ModelsConfig
 	SkillPaths []string
+	// SkillSelect controls the skill preflight (a constrained selection call
+	// before the first turn when skills are listed and the skill tool is
+	// enabled): "auto" (default) or "off".
+	SkillSelect string
 	// MaxTurns is a pointer so an omitted `max_turns` (nil) is distinguishable
 	// from an explicit `max_turns: 0`. nil = unset ⇒ the call site applies the
 	// context-aware backstop (unlimited in the interactive shell, 100 headless);
@@ -453,6 +457,7 @@ type rawConfig struct {
 	Gateway     Gateway                `yaml:"gateway"`
 	Models      map[string]interface{} `yaml:"models"`
 	SkillPaths  []string               `yaml:"skill_paths"`
+	SkillSelect string                 `yaml:"skill_select"`
 	MaxTurns    *int                   `yaml:"max_turns"`
 	MaxTokens   int                    `yaml:"max_tokens"`
 	Permissions rawPermissionsConfig   `yaml:"permissions"`

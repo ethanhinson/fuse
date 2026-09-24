@@ -107,6 +107,20 @@ type Agent struct {
 	// Only meaningful with humanInjector set; a spawned child is never interactive.
 	interactive bool
 
+	// SkillPreflight, when set, runs once at the start of a fresh run (not
+	// seeded, seed ends with the user's request) and returns the name of the
+	// skill to load before the first model turn, or "" for none. The loop then
+	// performs the skill call itself through the tool executor, exactly as if
+	// the model had chosen it, so the body enters the transcript as an ordinary
+	// tool result. Why this exists: the system-prompt directive ("call the skill
+	// tool first when the request matches") is a suggestion the model weighs
+	// against the request, and open-weight models drop it whenever the request
+	// carries its own instructions (0/13 on the LCB-100 task prompt across four
+	// models; docs/results/2026-09-24-skill-trigger-probes.md). A constrained
+	// selection the model cannot skip was 40/40 on the same requests. A
+	// preflight error is reported and the run proceeds without a skill.
+	SkillPreflight func(ctx context.Context, request string) (skill string, err error)
+
 	// seeded, when true, marks that Run's seed history was reconstructed from a
 	// durable event stream that ALREADY contains those turns (change 0054 resume):
 	// the runtime folded events → transcript and handed it back as the seed. Run

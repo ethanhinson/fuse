@@ -383,6 +383,12 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	if len(raw.SkillPaths) > 0 {
 		c.SkillPaths = raw.SkillPaths
 	}
+	if raw.SkillSelect != "" {
+		if raw.SkillSelect != "auto" && raw.SkillSelect != "off" {
+			return fmt.Errorf("%s: skill_select %q must be \"auto\" or \"off\"", path, raw.SkillSelect)
+		}
+		c.SkillSelect = raw.SkillSelect
+	}
 	// Permission-loosening keys are honored only from a trusted source. From an
 	// untrusted (repo-plantable) source they are inert and each present one is
 	// collected for a single aggregated startup warning.
