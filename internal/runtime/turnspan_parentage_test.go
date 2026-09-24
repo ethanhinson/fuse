@@ -301,13 +301,25 @@ func TestUnlinkedResumedTurnIsStillARoot(t *testing.T) {
 	fakeB.admit(0)
 	waitForKind(t, evB, event.KindLoopParked, 2*time.Second)
 	reqSpan.End(observe.OutcomeSuccess)
-	flush(t, provider)
+
+	// The loop emits loop.parked before its park hook ends the turn span, so a
+	// single flush at the park event can export nothing. Wait, bounded, for the
+	// turn span to be exported (same race as awaitExported in
+	// turnspan_otel_acceptance_test.go; this test has no LoopHandle to re-check).
+	var turns []tracetest.SpanStub
+	for deadline := time.Now().Add(3 * time.Second); ; {
+		flush(t, provider)
+		turns = exportedNamed(t, exporter, "fuse.loop.turn")
+		if len(turns) >= 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	requests := exportedNamed(t, exporter, "fuse.api.request.resume")
 	if len(requests) != 1 {
 		t.Fatalf("exported fuse.api.request.resume spans = %d, want 1", len(requests))
 	}
-	turns := exportedNamed(t, exporter, "fuse.loop.turn")
 	if len(turns) != 1 {
 		t.Fatalf("exported fuse.loop.turn spans = %d, want 1", len(turns))
 	}
