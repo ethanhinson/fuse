@@ -1,0 +1,53 @@
+{
+ "engine": "fuse",
+ "model": "qwen3.6-35b-or",
+ "gateway_model": "cloud/qwen3.6-35b",
+ "harness": {
+  "fuse": "fuse v0.1.1-dirty\ngo go1.26.5 darwin/arm64",
+  "max_turns": 30,
+  "max_tokens_single": 128000,
+  "max_tokens_fuse": 16384,
+  "request_timeout_fuse": "40m",
+  "context_window_fuse": 0,
+  "timeout_s": 2400,
+  "spawn": false,
+  "max_spawns": 6
+ },
+ "run_name": "20260921-qwen3.6-35b-or-fuse-smoke",
+ "started": "20260922-0503",
+ "solve_wall_s": 54.4,
+ "lcb": {
+  "benchmark": "livecodebench",
+  "pass@1": 100.0,
+  "n_graded": 1,
+  "n_infra": 0,
+  "status_counts": {
+   "ok": 1
+  },
+  "prompt_tokens": 28004,
+  "completion_tokens": 16543,
+  "records": [
+   {
+    "question_id": "arc196_b",
+    "platform": "atcoder",
+    "code": "import sys\nfrom collections import defaultdict, deque\n\nMOD = 998244353\n\ndef solve():\n    input = sys.stdin.read().split()\n    idx = 0\n    T = int(input[idx]); idx += 1\n    \n    results = []\n    \n    for _ in range(T):\n        H = int(input[idx]); idx += 1\n        W = int(input[idx]); idx += 1\n        \n        grid = []\n        for i in range(H):\n            grid.append(input[idx]); idx += 1\n        \n        # Count A's per row and column\n        row_a = [0] * H\n        col_a = [0] * W\n        for i in range(H):\n            for j in range(W):\n                if grid[i][j] == 'A':\n                    row_a[i] += 1\n                    col_a[j] += 1\n        \n        for i in range(H):\n            if row_a[i] % 2 != 0:\n                results.append(0)\n                break\n        else:\n            for j in range(W):\n                if col_a[j] % 2 != 0:\n                    results.append(0)\n                    break\n            else:\n                # Compute row references a[i][j]\n                # a[i][j] = cumulative XOR of d[i][1..j] where d[i][j] = 1 iff grid[i][j]=='A'\n                # Actually: a[i][0] = 0, a[i][j] = a[i][j-1] XOR (1 if grid[i][j-1]=='A' else 0)... \n                # Wait, d[i][j] = r[i][j-1] XOR r[i][j], and d[i][j] = 1 iff grid[i][j] == 'A'.\n                # a[i][0] = 0.\n                # a[i][j] = a[i][j-1] XOR d[i][j] for j=1,...,W-1.\n                # So a[i][j] = d[i][1] XOR d[i][2] XOR ... XOR d[i][j].\n                \n                # Let me compute a[i][j] for all i,j.\n                a = [[0]*W for _ in range(H)]\n                for i in range(H):\n                    val = 0\n                    for j in range(1, W):\n                        val ^= (1 if grid[i][j] == 'A' else 0)\n                        a[i][j] = val\n                \n                # Compute column references c[i][j]\n                # c[0][j] = 0, c[i][j] = c[i-1][j] XOR d[i][j] for i=1,...,H-1.\n                c = [[0]*W for _ in range(H)]\n                for j in range(W):\n                    val = 0\n                    for i in range(1, H):\n                        val ^= (1 if grid[i][j] == 'A' else 0)\n                        c[i][j] = val\n                \n                # Build bipartite graph for Type B cells\n                # Nodes: rows 0..H-1, columns H..H+W-1\n                # For Type B cell (i,j): s_i XOR t_j = 1 XOR a[i][j] XOR c[i][j]\n                # t_j is represented as node index H+j\n                \n                adj = defaultdict(list)\n                constraints = {}  # (u, v) -> value, where u < v for edges\n                \n                for i in range(H):\n                    for j in range(W):\n                        if grid[i][j] == 'B':\n                            val = 1 ^ a[i][j] ^ c[i][j]\n                            adj[i].append((H+j, val))\n                            adj[H+j].append((i, val))\n                            constraints[(min(i, H+j), max(i, H+j))] = val\n                \n                # BFS for connected components\n                visited = [False] * (H + W)\n                num_components = 0\n                possible = True\n                \n                for node in range(H + W):\n                    if visited[node]:\n                        continue\n                    num_components += 1\n                    \n                    # BFS\n                    q = deque([node])\n                    visited[node] = True\n                    value = {}  # node -> value (relative to the starting node)\n                    value[node] = 0\n                    \n                    while q:\n                        u = q.popleft()\n                        for v, w in adj[u]:\n                            expected = value[u] ^ w\n                            if v in value:\n                                if value[v] != expected:\n                                    possible = False\n                                    break\n                            else:\n                                value[v] = expected\n                                visited[v] = True\n                                q.append(v)\n                        if not possible:\n                            break\n                    if not possible:\n                        break\n                \n                if not possible:\n                    results.append(0)\n                else:\n                    results.append(pow(2, num_components, MOD))\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()",
+    "passed": true,
+    "grade": "ok",
+    "status": "ok",
+    "finish_reason": "length",
+    "prompt_tokens": 28004,
+    "completion_tokens": 16543,
+    "n_calls": 4,
+    "n_agents": 1,
+    "tool_calls": {
+     "read_file": 4,
+     "list_directory": 2
+    },
+    "wall_s": 54.4,
+    "timeout": false,
+    "exit_code": 0,
+    "ws": "runs/20260921-qwen3.6-35b-or-fuse-smoke/ws/arc196_b"
+   }
+  ]
+ }
+}

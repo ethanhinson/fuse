@@ -1,0 +1,157 @@
+{
+ "engine": "fuse",
+ "model": "qwen3.8-27b-or",
+ "gateway_model": "cloud/qwen3.8-27b",
+ "harness": {
+  "fuse": "fuse 0.1.0-dev\ngo go1.26.5 darwin/arm64\nbackends: fsstore",
+  "max_turns": 40,
+  "task_prompt_version": 2,
+  "max_tokens_single": 128000,
+  "max_tokens_fuse": 128000,
+  "request_timeout_fuse": "40m",
+  "context_window_fuse": 134144,
+  "timeout_s": 7200,
+  "spawn": false,
+  "max_spawns": 6
+ },
+ "run_name": "20260923-qwen3.8-27b-or-fuse-v2prompt-smoke",
+ "started": "20260923-1618",
+ "solve_wall_s": 7200.6,
+ "lcb": {
+  "benchmark": "livecodebench",
+  "pass@1": 40.0,
+  "n_graded": 5,
+  "n_infra": 0,
+  "status_counts": {
+   "timeout": 1,
+   "ok": 4
+  },
+  "prompt_tokens": 1738099,
+  "cached_tokens": 1203440,
+  "completion_tokens": 1086059,
+  "records": [
+   {
+    "question_id": "arc196_c",
+    "platform": "atcoder",
+    "code": "",
+    "passed": false,
+    "grade": "fail",
+    "status": "timeout",
+    "finish_reason": "stop",
+    "prompt_tokens": 733962,
+    "cached_tokens": 503328,
+    "completion_tokens": 305755,
+    "n_calls": 33,
+    "n_agents": 1,
+    "tool_calls": {
+     "read_file": 3,
+     "list_directory": 2,
+     "bash": 30,
+     "edit_file": 1
+    },
+    "wall_s": 7200.5,
+    "timeout": true,
+    "exit_code": null,
+    "ws": "runs/20260923-qwen3.8-27b-or-fuse-v2prompt-smoke/ws/arc196_c"
+   },
+   {
+    "question_id": "abc400_g",
+    "platform": "atcoder",
+    "code": "import sys\n\ndef solve():\n    data = sys.stdin.buffer.read().split()\n    t = int(data[0]); p = 1\n    out = []\n    for _ in range(t):\n        N = int(data[p]); K = int(data[p+1]); p += 2\n        cakes = []\n        mx = [0, 0, 0]\n        for i in range(N):\n            x = int(data[p]); y = int(data[p+1]); z = int(data[p+2]); p += 3\n            cakes.append((x, y, z))\n            if x > mx[0]: mx[0] = x\n            if y > mx[1]: mx[1] = y\n            if z > mx[2]: mx[2] = z\n        s = sorted(range(N), key=lambda i: cakes[i][0]+cakes[i][1]+cakes[i][2], reverse=True)\n        A = [sum(cakes[s[i]][d] for i in range(N)) for d in range(3)]\n        M = [max(cakes[s[i]][d] for i in range(min(N, 2*K))) for d in range(3)]\n        ans = sum(A) - min(mx)\n        ans2 = max(sum(A) - mx[c] for c in range(3))\n        if ans2 > ans: ans = ans2\n        # single-axis pairing\n        for d in range(3):\n            o = sorted(range(N), key=lambda i: cakes[i][d], reverse=True)\n            v = 0\n            for i in range(K):\n                v += cakes[o[2*i]][d] + cakes[o[2*i+1]][d]\n            if v > ans: ans = v\n        out.append(str(ans))\n    sys.stdout.write(\"\\n\".join(out) + \"\\n\")\n\nif __name__ == \"__main__\":\n    solve()\n",
+    "passed": false,
+    "grade": "fail(wrong_answer)",
+    "status": "ok",
+    "finish_reason": "stop",
+    "prompt_tokens": 305668,
+    "cached_tokens": 214816,
+    "completion_tokens": 226136,
+    "n_calls": 28,
+    "n_agents": 1,
+    "tool_calls": {
+     "read_file": 2,
+     "list_directory": 1,
+     "bash": 15,
+     "write_file": 12
+    },
+    "wall_s": 7200.5,
+    "timeout": true,
+    "exit_code": null,
+    "ws": "runs/20260923-qwen3.8-27b-or-fuse-v2prompt-smoke/ws/abc400_g"
+   },
+   {
+    "question_id": "arc193_a",
+    "platform": "atcoder",
+    "code": "import sys\n\ndef main():\n    data = list(map(int, sys.stdin.buffer.read().split()))\n    p = 0\n    N = data[p]; p += 1\n    W = [0] + data[p:p + N]; p += N\n    L = [0] * (N + 1)\n    R = [0] * (N + 1)\n    for i in range(1, N + 1):\n        L[i] = data[p]\n        R[i] = data[p + 1]\n        p += 2\n    Q = data[p]; p += 1\n    M = 2 * N\n    INF = 10 ** 30\n\n    # A vertex whose interval covers [h, g] (h = min R, g = max L)\n    # intersects every other interval -> isolated vertex.\n    # All other vertices form a single connected component; any two of\n    # them are connected by a path of at most 3 edges.\n    h = min(R[1:])\n    g = max(L[1:])\n    single = bytearray(N + 1)\n    bucketR = [INF] * (M + 1)      # bucketR[x] = min W[i] over non-single i with R[i] == x\n    bucketL = [INF] * (M + 3)      # bucketL[x] = min W[i] over non-single i with L[i] == x\n    for i in range(1, N + 1):\n        if L[i] <= h and R[i] >= g:\n            single[i] = 1\n        else:\n            if W[i] < bucketR[R[i]]:\n                bucketR[R[i]] = W[i]\n            if W[i] < bucketL[L[i]]:\n                bucketL[L[i]] = W[i]\n\n    # F[x]  = min W[i] for non-single i with R[i] <= x\n    # FB[x] = min W[i] for non-single i with L[i] >= x\n    F = [INF] * (M + 1)\n    best = INF\n    for x in range(1, M + 1):\n        if bucketR[x] < best:\n            best = bucketR[x]\n        F[x] = best\n    FB = [INF] * (M + 3)\n    best = INF\n    for x in range(M, 0, -1):\n        if bucketL[x] < best:\n            best = bucketL[x]\n        FB[x] = best\n\n    out = []\n    for _ in range(Q):\n        s = data[p]\n        t = data[p + 1]\n        p += 2\n        if single[s] or single[t]:\n            out.append(\"-1\")\n            continue\n        if R[s] < L[t] or R[t] < L[s]:\n            out.append(str(W[s] + W[t]))\n            continue\n        A = L[s] if L[s] < L[t] else L[t]\n        B = R[s] if R[s] > R[t] else R[t]\n        m = F[A - 1]\n        v = FB[B + 1]\n        if v < m:\n            m = v\n        v = F[L[s] - 1] + FB[R[t] + 1]\n        if v < m:\n            m = v\n        v = FB[R[s] + 1] + F[L[t] - 1]\n        if v < m:\n            m = v\n        if m >= INF:\n            out.append(\"-1\")\n        else:\n            out.append(str(W[s] + W[t] + m))\n    sys.stdout.write(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "passed": true,
+    "grade": "ok",
+    "status": "ok",
+    "finish_reason": "stop",
+    "prompt_tokens": 202068,
+    "cached_tokens": 115248,
+    "completion_tokens": 90321,
+    "n_calls": 21,
+    "n_agents": 1,
+    "tool_calls": {
+     "read_file": 4,
+     "list_directory": 2,
+     "bash": 12,
+     "write_file": 5
+    },
+    "wall_s": 1917.6,
+    "timeout": false,
+    "exit_code": 0,
+    "ws": "runs/20260923-qwen3.8-27b-or-fuse-v2prompt-smoke/ws/arc193_a"
+   },
+   {
+    "question_id": "arc192_e",
+    "platform": "atcoder",
+    "code": "import sys\nMOD = 998244353\n\ndef main():\n    W, H, L, R, D, U = map(int, sys.stdin.buffer.read().split())\n    N = W + H + 4\n    fact = [1] * (N + 1)\n    for i in range(1, N + 1):\n        fact[i] = fact[i - 1] * i % MOD\n    invfact = [1] * (N + 1)\n    invfact[N] = pow(fact[N], MOD - 2, MOD)\n    for i in range(N, 0, -1):\n        invfact[i - 1] = invfact[i] * i % MOD\n\n    def C(n, k):\n        if k < 0 or k > n or n < 0:\n            return 0\n        return fact[n] * invfact[k] % MOD * invfact[n - k] % MOD\n\n    # T: total monotone paths in full (W+1)x(H+1) grid (any start, any end)\n    T = (C(W + H + 4, W + 2) - (W + 3) - (H + 1) - (W + 1) * (H + 1)) % MOD\n\n    # S1: paths whose start point lies inside the hole\n    A0, A1 = W - R, W - L\n    B0, B1 = H - U, H - D\n    term1 = C(A1 + B1 + 4, B1 + 2) - C(A0 + B1 + 3, B1 + 2)\n    term2 = C(A1 + B0 + 3, B0 + 1) - C(A0 + B0 + 2, B0 + 1)\n    S1 = (term1 - term2 - (A1 - A0 + 1) * (B1 - B0 + 1)) % MOD\n\n    # S2: first hole point (L, y), entry step from (L-1, y), y in [D, U]\n    #  Hpre(y) = C(L+y+1, L) - 1 ;  G(y) = C(W-L+H-y+2, W-L+1) - 1\n    S2 = 0\n    if L >= 1:\n        cnt = U - D + 1\n        fL = fact[L + D + 1: L + U + 2]\n        fG = fact[W - L + H - U + 2: W - L + H - D + 3][::-1]\n        iL = invfact[D + 1: U + 2]\n        iG = invfact[H - U + 1: H - D + 2][::-1]\n        acc = 0\n        for i in range(cnt):\n            acc = (acc + fL[i] * fG[i] % MOD * iL[i] % MOD * iG[i]) % MOD\n        sumAB = acc * invfact[L] % MOD * invfact[W - L + 1] % MOD\n        sumA = (C(L + U + 2, L + 1) - C(L + D + 1, L + 1)) % MOD\n        sumB = (C(W - L + H - D + 3, W - L + 2) - C(W - L + H - U + 2, W - L + 2)) % MOD\n        S2 = (sumAB - sumA - sumB + cnt) % MOD\n\n    # S3: first hole point (x, D), entry step from (x, D-1), x in [L, R]\n    #  Hpre(x) = C(x+D+1, x+1) - 1 ;  G(x) = C(W-x+H-D+2, W-x+1) - 1\n    S3 = 0\n    if D >= 1:\n        cnt2 = R - L + 1\n        fH = fact[L + D + 1: R + D + 2]\n        fG2 = fact[W - R + H - D + 2: W - L + H - D + 3][::-1]\n        iH = invfact[L + 1: R + 2]\n        iG2 = invfact[W - R + 1: W - L + 2][::-1]\n        acc2 = 0\n        for i in range(cnt2):\n            acc2 = (acc2 + fH[i] * fG2[i] % MOD * iH[i] % MOD * iG2[i]) % MOD\n        sumBG = acc2 * invfact[D] % MOD * invfact[H - D + 1] % MOD\n        sumC = (C(R + D + 2, D + 1) - C(L + D + 1, D + 1)) % MOD\n        sumD2 = (C(W - L + H - D + 3, H - D + 2) - C(W - R + H - D + 2, H - D + 2)) % MOD\n        S3 = (sumBG - sumC - sumD2 + cnt2) % MOD\n\n    ans = (T - S1 - S2 - S3) % MOD\n    print(ans)\n\nif __name__ == \"__main__\":\n    main()\n",
+    "passed": true,
+    "grade": "ok",
+    "status": "ok",
+    "finish_reason": "stop",
+    "prompt_tokens": 445423,
+    "cached_tokens": 340256,
+    "completion_tokens": 283908,
+    "n_calls": 37,
+    "n_agents": 1,
+    "tool_calls": {
+     "read_file": 3,
+     "list_directory": 1,
+     "bash": 20,
+     "write_file": 11,
+     "edit_file": 4
+    },
+    "wall_s": 6357.2,
+    "timeout": false,
+    "exit_code": 0,
+    "ws": "runs/20260923-qwen3.8-27b-or-fuse-v2prompt-smoke/ws/arc192_e"
+   },
+   {
+    "question_id": "arc189_d",
+    "platform": "atcoder",
+    "code": "import sys\n\ndef prefix(A):\n    P = [0]*(len(A)+1)\n    for k, a in enumerate(A): P[k+1] = P[k] + a\n    return P\n\ndef make_seg(arr, size):\n    NEG = -10**30\n    seg = [NEG]*(2*size)\n    for k, v in enumerate(arr): seg[size+k] = v\n    for k in range(size-1, 0, -1): seg[k] = max(seg[2*k], seg[2*k+1])\n    return seg\n\ndef build(A):\n    n = len(A); P = prefix(A)\n    Fw = [2*P[w+1] - P[w] for w in range(n)]\n    Gv = [P[v+1] - 2*P[v] for v in range(n)]\n    size = 1\n    while size < n: size *= 2\n    NEG = -10**30\n    segF = make_seg(Fw, size)\n    segG = make_seg(Gv, size)\n    return P, Fw, Gv, segF, segG, size, NEG\n\ndef rightmost_ge(seg, size, r, X):\n    # rightmost w in [0, r] with value >= X, else -1\n    l, rr = size, size + r + 1\n    left_nodes, right_nodes = [], []\n    while l < rr:\n        if l & 1: left_nodes.append(l); l += 1\n        if rr & 1: rr -= 1; right_nodes.append(rr)\n        l //= 2; rr //= 2\n    nodes = left_nodes + right_nodes[::-1]\n    for nd in reversed(nodes):\n        if seg[nd] >= X:\n            node = nd\n            while node < size:\n                if seg[2*node+1] >= X: node = 2*node+1\n                else: node = 2*node\n            return node - size\n    return -1\n\ndef leftmost_ge(seg, size, n, l, X):\n    # leftmost v in [l, n-1] with value >= X, else n\n    l2, r2 = size + l, size + n\n    left_nodes, right_nodes = [], []\n    while l2 < r2:\n        if l2 & 1: left_nodes.append(l2); l2 += 1\n        if r2 & 1: r2 -= 1; right_nodes.append(r2)\n        l2 //= 2; r2 //= 2\n    nodes = left_nodes + right_nodes[::-1]\n    for nd in nodes:\n        if seg[nd] >= X:\n            node = nd\n            while node < size:\n                if seg[2*node] >= X: node = 2*node\n                else: node = 2*node+1\n            return node - size\n    return n\n\ndef solve(A):\n    n = len(A)\n    P, Fw, Gv, segF, segG, size, NEG = build(A)\n    # O(n^2) for now: for each i, try l = 0 and l = i-1 (brute over all l is the\n    # safe version); using all l is O(n^2 log n) which is fine for small n only.\n    # R2(l) = r2 = # of right slimes with Gv < -P[i-l]; r2 is the max r reachable\n    # at given l. L1(r) = l2 = # of left slimes with Fw < A[i]+P[i+r2]; l2 is max l\n    # reachable at given r2.\n    def r2_of(l):\n        Y = -P[i-l]\n        v = leftmost_ge(segG, size, n, i+1, Y)\n        r = v - i - 1\n        if r > n-1-i: r = n-1-i\n        return r\n    def l2_of(r2):\n        X = A[i] + P[i+r2]\n        w = rightmost_ge(segF, size, i-1, X)\n        return i - 1 - w if w >= 0 else i\n    def feasible(l):\n        return l <= l2_of(r2_of(l))\n    ans = []\n    for i in range(n):\n        # iterate T(l) = l2_of(r2_of(l)) from 0: monotonically increasing,\n        # converges to leftmost fixed point\n        l = 0\n        while True:\n            nl = l2_of(r2_of(l))\n            if nl == l: break\n            l = nl\n        l_left = l\n        # rightmost feasible l: iterate from i: monotonically decreasing,\n        # converges to rightmost fixed point\n        l = i\n        while True:\n            nl = l2_of(r2_of(l))\n            if nl == l: break\n            l = nl\n        l_right = l\n        best = 0\n        for l in (l_left, l_right):\n            r = r2_of(l)\n            val = P[i+r+1] - P[i-l]\n            if val > best: best = val\n        ans.append(best)\n    return ans\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    n = int(data[0])\n    A = [int(x) for x in data[1:1+n]]\n    ans = solve(A)\n    print(' '.join(map(str, ans)))\n\nif __name__ == '__main__':\n    main()\n",
+    "passed": false,
+    "grade": "fail(wrong_answer)",
+    "status": "ok",
+    "finish_reason": "stop",
+    "prompt_tokens": 50978,
+    "cached_tokens": 29792,
+    "completion_tokens": 179939,
+    "n_calls": 9,
+    "n_agents": 1,
+    "tool_calls": {
+     "read_file": 2,
+     "list_directory": 1,
+     "bash": 3,
+     "write_file": 2,
+     "edit_file": 3
+    },
+    "wall_s": 7200.6,
+    "timeout": true,
+    "exit_code": null,
+    "ws": "runs/20260923-qwen3.8-27b-or-fuse-v2prompt-smoke/ws/arc189_d"
+   }
+  ]
+ }
+}

@@ -1,0 +1,81 @@
+{
+ "engine": "fuse",
+ "model": "qwen3.8-27b-or",
+ "gateway_model": "cloud/qwen3.8-27b",
+ "harness": {
+  "fuse": "fuse 0.1.0-dev\ngo go1.26.5 darwin/arm64\nbackends: fsstore",
+  "max_turns": 40,
+  "max_tokens_single": 128000,
+  "max_tokens_fuse": 128000,
+  "request_timeout_fuse": "40m",
+  "context_window_fuse": 134144,
+  "timeout_s": 3600,
+  "spawn": false,
+  "max_spawns": 6
+ },
+ "run_name": "20260922-qwen3.8-27b-or-fuse-smoke",
+ "started": "20260923-0247",
+ "solve_wall_s": 3600.7,
+ "lcb": {
+  "benchmark": "livecodebench",
+  "pass@1": 0.0,
+  "n_graded": 2,
+  "n_infra": 0,
+  "status_counts": {
+   "ok": 1,
+   "truncated": 1
+  },
+  "prompt_tokens": 282879,
+  "cached_tokens": 154448,
+  "completion_tokens": 359924,
+  "records": [
+   {
+    "question_id": "arc196_b",
+    "platform": "atcoder",
+    "code": "import sys\n\nMOD = 998244353\nA_ORD = 65  # ord('A')\n\n\ndef solve_case(H, W, rows):\n    # Physical endpoints: 2 per cell.\n    #   v(i,j) = endpoint at top of cell (i,j)   (shared with bottom of (i-1,j))\n    #   h(i,j) = endpoint at right of cell (i,j) (shared with left of (i,j-1))\n    # For cell (i,j): t=v(i,j), r=h(i,j), b=v(i+1,j), l=h(i,j-1)  (indices mod).\n    #   Type A (adjacent pair):  t^b = 1  and  r^l = 1\n    #   Type B (opposite pair):  t^b = 0,  r^l = 0,  t^r = 1\n    #\n    # Column j cycle:  v(i,j)^v(i+1,j) = A(i,j)  -> needs col j A-count even;\n    #   then v(i,j) = g_j ^ P_j(i),  P_j(i) = xor of A(k,j) for k < i.\n    # Row i cycle:     h(i,j)^h(i,j+1) = A(i,j)  -> needs row i A-count even;\n    #   then h(i,j) = r_i ^ Q_i(j),  Q_i(j) = xor of A(i,k) for k < j.\n    # Each B cell (i,j):  g_j ^ r_i = 1 ^ P_j(i) ^ Q_i(j).\n    # Parity DSU over H column-vertices + W row-vertices.\n    # Answer: 0 if any parity odd or contradictory cycle, else 2^(components).\n\n    # Row parity + column parity.\n    colxor = bytearray(W)\n    for i in range(H):\n        r = rows[i]\n        x = 0\n        for j in range(W):\n            x ^= (r[j] == A_ORD)\n        if x:\n            return 0\n        for j in range(W):\n            colxor[j] ^= (r[j] == A_ORD)\n    for j in range(W):\n        if colxor[j]:\n            return 0\n\n    n = H + W\n    parent = list(range(n))\n    size = [1] * n\n    par = bytearray(n)\n    comps = n\n    bad = False\n\n    def find(x):\n        r = x\n        v = 0\n        p = parent\n        pr = par\n        while p[r] != r:\n            v ^= pr[r]\n            r = p[r]\n        c = x\n        acc = 0\n        while p[c] != c:\n            pc = p[c]\n            pv = pr[c]\n            p[c] = r\n            pr[c] = v ^ acc\n            acc ^= pv\n            c = pc\n        return r, v\n\n    def union(x, y, w):\n        nonlocal comps, bad\n        rx, vx = find(x)\n        ry, vy = find(y)\n        if rx == ry:\n            if (vx ^ vy) != w:\n                bad = True\n            return\n        tval = w ^ vx ^ vy\n        if size[rx] < size[ry]:\n            parent[rx] = ry\n            par[rx] = tval\n            size[ry] += size[rx]\n        else:\n            parent[ry] = rx\n            par[ry] = tval\n            size[rx] += size[ry]\n        comps -= 1\n\n    # cp[j] = P_j(i) before processing row i (starts 0).\n    cp = bytearray(W)\n    for i in range(H):\n        r = rows[i]\n        rp = 0  # Q_i(j) before cell (i,j)\n        rowv = H + i\n        for j in range(W):\n            a = r[j] == A_ORD\n            if not a:\n                union(j, rowv, 1 ^ cp[j] ^ rp)\n                if bad:\n                    break\n            if a:\n                rp ^= 1\n                cp[j] ^= 1\n        if bad:\n            break\n    if bad:\n        return 0\n    return pow(2, comps, MOD)\n\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    t = int(data[0])\n    idx = 1\n    out = []\n    for _ in range(t):\n        H = int(data[idx])\n        W = int(data[idx + 1])\n        idx += 2\n        rows = data[idx:idx + H]\n        idx += H\n        out.append(str(solve_case(H, W, rows)))\n    sys.stdout.write('\\n'.join(out) + '\\n')\n\n\nif __name__ == '__main__':\n    main()\n",
+    "passed": false,
+    "grade": "fail(wrong_answer)",
+    "status": "ok",
+    "finish_reason": "stop",
+    "prompt_tokens": 279169,
+    "cached_tokens": 153664,
+    "completion_tokens": 231871,
+    "n_calls": 23,
+    "n_agents": 1,
+    "tool_calls": {
+     "read_file": 1,
+     "list_directory": 1,
+     "bash": 10,
+     "write_file": 10,
+     "edit_file": 2
+    },
+    "wall_s": 3600.7,
+    "timeout": true,
+    "exit_code": null,
+    "ws": "runs/20260922-qwen3.8-27b-or-fuse-smoke/ws/arc196_b"
+   },
+   {
+    "question_id": "arc196_c",
+    "platform": "atcoder",
+    "code": "",
+    "passed": false,
+    "grade": "fail",
+    "status": "truncated",
+    "finish_reason": "length",
+    "prompt_tokens": 3710,
+    "cached_tokens": 784,
+    "completion_tokens": 128053,
+    "n_calls": 2,
+    "n_agents": 1,
+    "tool_calls": {
+     "read_file": 1,
+     "list_directory": 1
+    },
+    "wall_s": 2294.4,
+    "timeout": false,
+    "exit_code": 0,
+    "ws": "runs/20260922-qwen3.8-27b-or-fuse-smoke/ws/arc196_c"
+   }
+  ]
+ }
+}

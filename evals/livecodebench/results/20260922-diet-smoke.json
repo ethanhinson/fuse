@@ -1,0 +1,55 @@
+{
+ "engine": "fuse",
+ "model": "qwen3.6-35b-or",
+ "gateway_model": "cloud/qwen3.6-35b",
+ "harness": {
+  "fuse": "fuse v0.1.1-3-g17d3449-dirty\ngo go1.26.5 darwin/arm64",
+  "max_turns": 30,
+  "max_tokens_single": 128000,
+  "max_tokens_fuse": 16384,
+  "request_timeout_fuse": "40m",
+  "context_window_fuse": 0,
+  "timeout_s": 2400,
+  "spawn": false,
+  "max_spawns": 6
+ },
+ "run_name": "20260922-diet-smoke",
+ "started": "20260922-0956",
+ "solve_wall_s": 258.2,
+ "lcb": {
+  "benchmark": "livecodebench",
+  "pass@1": 0.0,
+  "n_graded": 1,
+  "n_infra": 0,
+  "status_counts": {
+   "ok": 1
+  },
+  "prompt_tokens": 549726,
+  "completion_tokens": 23393,
+  "records": [
+   {
+    "question_id": "arc196_b",
+    "platform": "atcoder",
+    "code": "1 0 1 0\n0 1 0 1\n1 0 1 0",
+    "passed": false,
+    "grade": "fail",
+    "status": "ok",
+    "finish_reason": "stop",
+    "prompt_tokens": 549726,
+    "completion_tokens": 23393,
+    "n_calls": 32,
+    "n_agents": 2,
+    "tool_calls": {
+     "read_file": 6,
+     "list_directory": 2,
+     "write_file": 1,
+     "bash": 23
+    },
+    "wall_s": 258.1,
+    "timeout": false,
+    "exit_code": 1,
+    "ws": "runs/20260922-diet-smoke/ws/arc196_b"
+   }
+  ]
+ }
+}

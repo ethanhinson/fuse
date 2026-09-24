@@ -1,0 +1,49 @@
+{
+ "note": "Fixed dev panel for prompt iteration (2026-09-23). Never a result: 10 problems fuse lost under prompt v1 with no solution on disk, 10 it solved quickly. Read --behaviour, not pass@1.",
+ "v1_failures": [
+  "abc400_g",
+  "arc195_d",
+  "arc193_b",
+  "3762",
+  "abc389_g",
+  "arc190_d",
+  "arc189_d",
+  "arc192_e",
+  "abc384_f",
+  "arc189_b"
+ ],
+ "v1_passes": [
+  "3674",
+  "3682",
+  "3697",
+  "3739",
+  "3783",
+  "abc385_e",
+  "abc390_e",
+  "abc393_d",
+  "abc393_f",
+  "abc391_g"
+ ],
+ "ids": [
+  "abc400_g",
+  "arc195_d",
+  "arc193_b",
+  "3762",
+  "abc389_g",
+  "arc190_d",
+  "arc189_d",
+  "arc192_e",
+  "abc384_f",
+  "arc189_b",
+  "3674",
+  "3682",
+  "3697",
+  "3739",
+  "3783",
+  "abc385_e",
+  "abc390_e",
+  "abc393_d",
+  "abc393_f",
+  "abc391_g"
+ ]
+}

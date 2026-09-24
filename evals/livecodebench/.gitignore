@@ -1,0 +1,7 @@
+# upstream LiveCodeBench, fetched and patched by setup.sh
+vendor/
+# per-run workspaces, traces and checkpoints — large; results/*.json are the keepers
+runs/
+# HF datasets cache when HF_HOME is pointed here
+.hf/
+__pycache__/

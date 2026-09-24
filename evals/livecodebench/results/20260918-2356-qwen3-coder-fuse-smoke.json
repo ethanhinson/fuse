@@ -1,0 +1,54 @@
+{
+ "engine": "fuse",
+ "model": "qwen3-coder",
+ "gateway_model": "local/qwen3-coder-30b",
+ "harness": {
+  "fuse": "fuse v0.1.1-dirty\ngo go1.26.5 darwin/arm64",
+  "max_turns": 30,
+  "max_tokens_single": 128000,
+  "max_tokens_fuse": 16384,
+  "request_timeout_fuse": "40m",
+  "timeout_s": 1800,
+  "spawn": false,
+  "max_spawns": 6
+ },
+ "run_name": "20260918-2356-qwen3-coder-fuse-smoke",
+ "started": "20260918-2356",
+ "solve_wall_s": 760.2,
+ "lcb": {
+  "benchmark": "livecodebench",
+  "pass@1": 0.0,
+  "n_graded": 1,
+  "n_infra": 0,
+  "status_counts": {
+   "ok": 1
+  },
+  "prompt_tokens": 56576,
+  "completion_tokens": 1951,
+  "records": [
+   {
+    "question_id": "abc400_e",
+    "platform": "atcoder",
+    "code": "import sys\nfrom bisect import bisect_right\n\ndef sieve(n):\n    \"\"\"Generate all primes up to n using Sieve of Eratosthenes\"\"\"\n    is_prime = [True] * (n + 1)\n    is_prime[0] = is_prime[1] = False\n    \n    for i in range(2, int(n**0.5) + 1):\n        if is_prime[i]:\n            for j in range(i*i, n + 1, i):\n                is_prime[j] = False\n    \n    return [i for i in range(2, n + 1) if is_prime[i]]\n\ndef generate_400_numbers(limit):\n    \"\"\"Generate all 400 numbers up to limit\"\"\"\n    primes = sieve(int(limit**0.5) + 1000)\n    \n    # Collect all 400 numbers\n    four_hundred_numbers = set()\n    \n    # For each pair of distinct primes p, q\n    for i in range(len(primes)):\n        if primes[i] * primes[i] > limit:\n            break\n        for j in range(i + 1, len(primes)):\n            p = primes[i]\n            q = primes[j]\n            \n            # Try various even powers\n            pow_p = 1  # Start with p^0 = 1, then p^2, p^4, ...\n            while pow_p <= limit:\n                pow_q = 1  # Start with q^0 = 1, then q^2, q^4, ...\n                while pow_q <= limit:\n                    num = pow_p * pow_q\n                    if num <= limit:\n                        four_hundred_numbers.add(num)\n                    else:\n                        break\n                    \n                    # Increase power of q by 2 (q^0, q^2, q^4, ...)\n                    pow_q *= q * q\n                    \n                # Increase power of p by 2 (p^0, p^2, p^4, ...)\n                pow_p *= p * p\n                \n            if pow_p > limit:\n                break\n    \n    return sorted(list(four_hundred_numbers))\n\ndef main():\n    # Generate all 400 numbers up to some limit\n    # Since we can have queries with A = 10^12, let's go a bit higher\n    limit = 10**13\n    \n    # Generate the numbers (this might take a while, but we do it once)\n    four_hundred_numbers = generate_400_numbers(limit)\n    \n    # Read queries\n    Q = int(input())\n    \n    for _ in range(Q):\n        A = int(input())\n        \n        # Find the largest 400 number <= A\n        # Use binary search or bisect to find rightmost element <= A\n        idx = bisect_right(four_hundred_numbers, A)\n        if idx > 0:\n            print(four_hundred_numbers[idx - 1])\n        else:\n            # This shouldn't happen according to problem constraints\n            print(\"0\")  # Should not occur\n\nif __name__ == \"__main__\":\n    main()",
+    "passed": false,
+    "grade": "fail",
+    "status": "ok",
+    "finish_reason": "stop",
+    "prompt_tokens": 56576,
+    "completion_tokens": 1951,
+    "n_calls": 8,
+    "n_agents": 1,
+    "tool_calls": {
+     "read_file": 3,
+     "bash": 3,
+     "spawn_agent": 1,
+     "write_file": 1
+    },
+    "wall_s": 760.0,
+    "timeout": false,
+    "exit_code": 1,
+    "ws": "runs/20260918-2356-qwen3-coder-fuse-smoke/ws/abc400_e"
+   }
+  ]
+ }
+}
