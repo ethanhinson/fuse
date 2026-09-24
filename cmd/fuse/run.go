@@ -881,6 +881,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
 	installRelevance(a, cfg, traceW, gate)
+	installSkillActivation(a, cfg)
 	applyToolTimeout(a, cfg)
 	// Session observer (change 0061). Installed AFTER installSummarizer /
 	// installRelevance so SetObserver can propagate it into the auxiliary

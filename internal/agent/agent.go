@@ -16,6 +16,21 @@ type Completer interface {
 	Complete(ctx context.Context, req model.CompletionReq) (model.CompletionResp, error)
 }
 
+// SkillActivator evaluates declared skill triggers against what the run does.
+// Each returned attachment is a skill body plus the reason it fired. The agent
+// package stays independent of the skills package; cmd/fuse adapts one.
+type SkillActivator interface {
+	OnRequest(request string) []SkillAttachment
+	OnToolCall(name, arguments string) []SkillAttachment
+}
+
+// SkillAttachment is one fired skill: its name, why it fired, and the body.
+type SkillAttachment struct {
+	Name   string
+	Reason string
+	Body   string
+}
+
 // ToolExecutor advertises tool schemas and executes tool calls by name.
 type ToolExecutor interface {
 	Schemas() []model.ToolSchema
@@ -106,6 +121,18 @@ type Agent struct {
 	// bus is wired. False ⇒ byte-identical single-task run-to-completion (ADR-0016).
 	// Only meaningful with humanInjector set; a spawned child is never interactive.
 	interactive bool
+
+	// SkillActivator, when set, is the deterministic skill-routing layer: the
+	// loop offers it the user's request at the start of a fresh run and every
+	// executed tool call afterwards, and attaches the body of each skill it
+	// fires as a labelled user-role note at the next turn boundary, once per
+	// skill. No model call is made and nothing is imposed: the body is simply
+	// present, the way an auto-attached editor rule is, and the model decides
+	// what to do with it. Why a runtime layer: the description-driven "model
+	// calls the skill tool" path fires 0/13 on open-weight models once the
+	// request carries its own instructions
+	// (docs/results/2026-09-24-skill-trigger-probes.md).
+	SkillActivator SkillActivator
 
 	// seeded, when true, marks that Run's seed history was reconstructed from a
 	// durable event stream that ALREADY contains those turns (change 0054 resume):

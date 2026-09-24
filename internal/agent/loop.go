@@ -376,6 +376,15 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	}
 	detector := newLoopDetector(loopLimit)
 
+	// Skill activation, request-time triggers: `always`, phrases and paths named
+	// in the request. Fresh runs only; a resumed loop's history already holds
+	// whatever was attached. Attachments are queued and land as a user-role
+	// note at the next turn boundary, next to any injected human message.
+	var pendingSkills []SkillAttachment
+	if a.SkillActivator != nil && !a.seeded && len(messages) > 0 && messages[len(messages)-1].Role == "user" {
+		pendingSkills = append(pendingSkills, a.SkillActivator.OnRequest(messages[len(messages)-1].Content)...)
+	}
+
 	// Policy-denial tracking (change 0067): repeats of a policy-DENIED call are
 	// handled by a nudge protocol instead of the generic doom-loop abort. After
 	// two identical denials a synthetic user message tells the model the call is
@@ -425,6 +434,13 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		// them as a single batched user turn before the model is called (ADR-0022).
 		// This is a self-pull — the node reads its own queue at a point where it is
 		// between model calls — so ADR-0016's run-to-completion contract holds.
+		if len(pendingSkills) > 0 {
+			note := skillAttachmentNote(pendingSkills)
+			messages = append(messages, model.Message{Role: "user", Content: note})
+			a.renderer.Errorf("skills: attached %s", skillNames(pendingSkills))
+			a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: note})
+			pendingSkills = nil
+		}
 		if hm, ok := a.humanInjector.Poll(); ok {
 			messages = append(messages, hm)
 			// Record the injected human turn in the durable stream (change 0054): the
@@ -749,6 +765,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 
 		toolMsgs, results := a.executeTools(ctx, turn, messages, resp.ToolCalls)
 		messages = append(messages, toolMsgs...)
+		if a.SkillActivator != nil {
+			for _, c := range resp.ToolCalls {
+				pendingSkills = append(pendingSkills, a.SkillActivator.OnToolCall(c.Name, c.Arguments)...)
+			}
+		}
 
 		// Policy-denial bookkeeping (change 0067). A valve-layer denial in a
 		// headless run ends it NOW with one structured stop — the valve stays
@@ -1121,4 +1142,26 @@ func (a *Agent) executeReturnResultTurn(ctx context.Context, turn int, messages 
 		}
 	}
 	return out
+}
+
+// skillAttachmentNote renders fired skills as one user-role note. The frame
+// says what was attached and why, so the transcript is auditable and the model
+// can see the trigger; the body follows verbatim.
+func skillAttachmentNote(atts []SkillAttachment) string {
+	var b strings.Builder
+	for i, at := range atts {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		fmt.Fprintf(&b, "[fuse] Skill `%s` attached because %s. Its instructions:\n\n%s", at.Name, at.Reason, at.Body)
+	}
+	return b.String()
+}
+
+func skillNames(atts []SkillAttachment) string {
+	names := make([]string, len(atts))
+	for i, at := range atts {
+		names[i] = at.Name
+	}
+	return strings.Join(names, ", ")
 }

@@ -319,6 +319,68 @@ func TestRunPrunesOldToolResultsWhenOverBudget(t *testing.T) {
 	}
 }
 
+// fakeActivator fires one skill on a request phrase and one on a path.
+type fakeActivator struct{ fired map[string]bool }
+
+func (f *fakeActivator) OnRequest(req string) []SkillAttachment {
+	if strings.Contains(req, "contest") && !f.fired["ledger"] {
+		f.fired["ledger"] = true
+		return []SkillAttachment{{Name: "ledger", Reason: "the request mentions \"contest\"", Body: "LEDGER BODY"}}
+	}
+	return nil
+}
+func (f *fakeActivator) OnToolCall(name, args string) []SkillAttachment {
+	if strings.Contains(args, ".docket/") && !f.fired["docket"] {
+		f.fired["docket"] = true
+		return []SkillAttachment{{Name: "docket", Reason: "bash touched .docket/x", Body: "DOCKET BODY"}}
+	}
+	return nil
+}
+
+// TestRunSkillActivatorAttachesOnRequestAndOnPath: a request-time trigger lands
+// before the first model call; a path trigger from a tool call lands at the
+// next turn boundary, after that call's result.
+func TestRunSkillActivatorAttachesOnRequestAndOnPath(t *testing.T) {
+	comp := &scriptedCompleter{responses: []model.CompletionResp{
+		{ToolCalls: []model.ToolCall{{ID: "1", Name: "bash", Arguments: `{"command":"cat .docket/x"}`}}},
+		{Content: "done"},
+	}}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.SkillActivator = &fakeActivator{fired: map[string]bool{}}
+	hist, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "solve this contest problem"}})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// user, note(ledger), assistant(bash), tool, note(docket), assistant(done)
+	if len(hist) != 6 {
+		t.Fatalf("expected 6 messages, got %d: %+v", len(hist), hist)
+	}
+	if hist[1].Role != "user" || !strings.Contains(hist[1].Content, "Skill `ledger` attached because the request mentions") || !strings.Contains(hist[1].Content, "LEDGER BODY") {
+		t.Fatalf("request-time attachment missing: %+v", hist[1])
+	}
+	if hist[4].Role != "user" || !strings.Contains(hist[4].Content, "Skill `docket` attached because bash touched") || !strings.Contains(hist[4].Content, "DOCKET BODY") {
+		t.Fatalf("path attachment missing at the turn boundary: %+v", hist[4])
+	}
+}
+
+// TestRunSkillActivatorInertWithoutTriggersOrWhenSeeded.
+func TestRunSkillActivatorInertWithoutTriggersOrWhenSeeded(t *testing.T) {
+	for _, seeded := range []bool{false, true} {
+		comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}
+		a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 100)
+		a.SetSeeded(seeded)
+		a.SkillActivator = &fakeActivator{fired: map[string]bool{}}
+		req := "hi"
+		if seeded {
+			req = "contest" // would fire, but seeded runs never re-evaluate the request
+		}
+		hist, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: req}})
+		if err != nil || len(hist) != 2 {
+			t.Fatalf("seeded=%v: expected inert run, got err=%v len=%d", seeded, err, len(hist))
+		}
+	}
+}
+
 // TestRunErrsWhenPruningInsufficient: un-prunable bloat (user content) still
 // ends the turn with ErrContextTooLarge as a last resort.
 func TestRunErrsWhenPruningInsufficient(t *testing.T) {

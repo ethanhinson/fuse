@@ -298,6 +298,10 @@ type Config struct {
 	Gateway    Gateway
 	Models     ModelsConfig
 	SkillPaths []string
+	// SkillActivation: "auto" (default) evaluates skills' declared activation
+	// triggers and attaches fired bodies; "off" leaves skills model- and
+	// user-invoked only.
+	SkillActivation string
 	// MaxTurns is a pointer so an omitted `max_turns` (nil) is distinguishable
 	// from an explicit `max_turns: 0`. nil = unset ⇒ the call site applies the
 	// context-aware backstop (unlimited in the interactive shell, 100 headless);
@@ -450,15 +454,16 @@ type AgentsConfig struct {
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
 type rawConfig struct {
-	Gateway     Gateway                `yaml:"gateway"`
-	Models      map[string]interface{} `yaml:"models"`
-	SkillPaths  []string               `yaml:"skill_paths"`
-	MaxTurns    *int                   `yaml:"max_turns"`
-	MaxTokens   int                    `yaml:"max_tokens"`
-	Permissions rawPermissionsConfig   `yaml:"permissions"`
-	MCPServers  []MCPServerConfig      `yaml:"mcp_servers"`
-	Research    rawResearchConfig      `yaml:"research"`
-	Agents      rawAgentsConfig        `yaml:"agents"`
+	Gateway         Gateway                `yaml:"gateway"`
+	Models          map[string]interface{} `yaml:"models"`
+	SkillPaths      []string               `yaml:"skill_paths"`
+	SkillActivation string                 `yaml:"skill_activation"`
+	MaxTurns        *int                   `yaml:"max_turns"`
+	MaxTokens       int                    `yaml:"max_tokens"`
+	Permissions     rawPermissionsConfig   `yaml:"permissions"`
+	MCPServers      []MCPServerConfig      `yaml:"mcp_servers"`
+	Research        rawResearchConfig      `yaml:"research"`
+	Agents          rawAgentsConfig        `yaml:"agents"`
 	// Throughput reuses the resolved ThroughputConfig shape on-disk (plain
 	// ints/maps, no free-text scalars — yaml.Unmarshal is safe); the tighten-only
 	// merge happens in mergeFile, not here.

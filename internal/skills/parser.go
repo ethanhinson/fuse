@@ -18,14 +18,43 @@ type Skill struct {
 	Agent        string // subagent type hint — stored for future dispatch
 	Body         string
 	Path         string
+	// Activation holds the declarative triggers under which the runtime attaches
+	// this skill's body to a run without the model asking for it. Absent (the
+	// zero value) means today's behaviour: listed by description, loaded only
+	// when the model calls the skill tool or the user names it.
+	Activation Activation
 }
+
+// Activation is the `activation:` frontmatter block. Every field is optional.
+//
+//	activation:
+//	  always: true                      # attach at the start of every fresh run
+//	  phrases: ["contest problem", ...] # attach when the request contains one (case-insensitive)
+//	  paths: ["**/*.py", ".docket/**"]  # attach when the agent reads, writes, edits, lists or greps a matching path,
+//	                                    # or the request mentions one
+//
+// Why: the description-driven "model decides" mode fires 0/13 on open-weight
+// models once the request carries its own instructions
+// (docs/results/2026-09-24-skill-trigger-probes.md). Cursor's auto-attached
+// rules, Claude Code's `paths` and the hook-based activators people build on
+// top of it all get reliability the same way: a deterministic trigger on what
+// the session actually touches. This is that, inside the runtime.
+type Activation struct {
+	Always  bool     `yaml:"always"`
+	Phrases []string `yaml:"phrases"`
+	Paths   []string `yaml:"paths"`
+}
+
+// Declared reports whether any trigger is set.
+func (a Activation) Declared() bool { return a.Always || len(a.Phrases) > 0 || len(a.Paths) > 0 }
 
 // frontmatter holds the fields that are safe to parse with a strict YAML
 // parser (no free-text values that might contain unquoted ': ').
 type frontmatter struct {
-	SlashCommand string `yaml:"slash_command"`
-	Context      string `yaml:"context"`
-	Agent        string `yaml:"agent"`
+	SlashCommand string     `yaml:"slash_command"`
+	Context      string     `yaml:"context"`
+	Agent        string     `yaml:"agent"`
+	Activation   Activation `yaml:"activation"`
 }
 
 // ParseSkill splits YAML frontmatter (delimited by leading `---` lines) from
@@ -65,6 +94,7 @@ func ParseSkill(path string, data []byte) (Skill, error) {
 		SlashCommand: fm.SlashCommand,
 		Context:      fm.Context,
 		Agent:        fm.Agent,
+		Activation:   fm.Activation,
 		Body:         body,
 		Path:         path,
 	}, nil
