@@ -319,6 +319,27 @@ func TestRunPrunesOldToolResultsWhenOverBudget(t *testing.T) {
 	}
 }
 
+// TestRunReasoningTokensDoNotCountAgainstContext: a reasoning model's
+// completion count includes thinking that is never resent. A 120k-token turn
+// with a one-line visible reply must not trip ErrContextTooLarge on a 134k
+// window when the real history is a few hundred bytes.
+func TestRunReasoningTokensDoNotCountAgainstContext(t *testing.T) {
+	comp := &scriptedCompleter{responses: []model.CompletionResp{
+		{ToolCalls: []model.ToolCall{{ID: "1", Name: "bash", Arguments: `{"command":"ls"}`}},
+			InputTokens: 4_000, OutputTokens: 120_000},
+		{Content: "done", InputTokens: 4_100, OutputTokens: 20},
+	}}
+	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.ContextWindow = 134_144
+	_, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "solve it"}})
+	if err != nil {
+		t.Fatalf("reasoning tokens must not count against the window, got %v", err)
+	}
+	if comp.i != 2 {
+		t.Fatalf("expected both turns to run, completer called %d times", comp.i)
+	}
+}
+
 // TestRunErrsWhenPruningInsufficient: un-prunable bloat (user content) still
 // ends the turn with ErrContextTooLarge as a last resort.
 func TestRunErrsWhenPruningInsufficient(t *testing.T) {
