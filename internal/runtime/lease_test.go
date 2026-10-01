@@ -18,7 +18,7 @@ import (
 type fakeRegistry struct {
 	mu         sync.Mutex
 	records    map[event.StreamKey]event.LoopRecord
-	heartbeats int             // total Heartbeat calls
+	heartbeats int               // total Heartbeat calls
 	hbKeys     []event.StreamKey // keys observed by Heartbeat, in order
 }
 

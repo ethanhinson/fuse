@@ -53,24 +53,24 @@ func TestValidateAgainstSchema_FidelityCases(t *testing.T) {
 		raw    string
 	}{
 		{
-			name: "top_level_type_mismatch",
+			name:   "top_level_type_mismatch",
 			schema: `{"type":"object","properties":{"n":{"type":"integer"}},"required":["n"]}`,
-			raw:  `["not","an","object"]`,
+			raw:    `["not","an","object"]`,
 		},
 		{
-			name: "nested_object_mismatch",
+			name:   "nested_object_mismatch",
 			schema: `{"type":"object","properties":{"addr":{"type":"object","properties":{"zip":{"type":"integer"}},"required":["zip"]}},"required":["addr"]}`,
-			raw:  `{"addr":{"zip":"90210"}}`,
+			raw:    `{"addr":{"zip":"90210"}}`,
 		},
 		{
-			name: "array_of_wrong_type",
+			name:   "array_of_wrong_type",
 			schema: `{"type":"object","properties":{"tags":{"type":"array","items":{"type":"string"}}},"required":["tags"]}`,
-			raw:  `{"tags":[1,2,3]}`,
+			raw:    `{"tags":[1,2,3]}`,
 		},
 		{
-			name: "enum_violation",
+			name:   "enum_violation",
 			schema: `{"type":"object","properties":{"color":{"enum":["red","green","blue"]}},"required":["color"]}`,
-			raw:  `{"color":"purple"}`,
+			raw:    `{"color":"purple"}`,
 		},
 	}
 	for _, tc := range cases {

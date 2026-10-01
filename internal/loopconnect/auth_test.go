@@ -43,9 +43,9 @@ func TestAuthInterceptor_Unary_ValidToken(t *testing.T) {
 	interceptor := NewAuthInterceptor(testVerifier())
 
 	var (
-		called    bool
-		gotPrin   loopauth.Principal
-		gotOK     bool
+		called  bool
+		gotPrin loopauth.Principal
+		gotOK   bool
 	)
 	next := connect.UnaryFunc(func(ctx context.Context, _ connect.AnyRequest) (connect.AnyResponse, error) {
 		called = true

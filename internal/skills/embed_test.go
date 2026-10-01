@@ -48,12 +48,12 @@ func TestEmbeddedResearchCarriesBudgetGuidance(t *testing.T) {
 		t.Fatal("embedded research skill not found or empty")
 	}
 	for _, want := range []string{
-		"agent budget:",             // references the injected budget line
-		"never count it",            // tells the model not to tally its own spawns
-		"facet-researcher",          // change 0034: worker-typed spawns replace prose
+		"agent budget:",              // references the injected budget line
+		"never count it",             // tells the model not to tally its own spawns
+		"facet-researcher",           // change 0034: worker-typed spawns replace prose
 		`worker: "facet-researcher"`, // the model passes the worker param
 		"do the facet work directly", // the 0033-era fallback line when stripped
-		"Completion contract",       // the final-synthesis requirement
+		"Completion contract",        // the final-synthesis requirement
 		"numbered source list",
 	} {
 		if !strings.Contains(body, want) {
@@ -88,10 +88,10 @@ func TestEmbeddedResearchPinsCitationStyle(t *testing.T) {
 		t.Fatal("embedded research skill not found or empty")
 	}
 	for _, want := range []string{
-		"MANDATORY",       // the elements are non-optional
-		"`[N]`",           // the required inline marker form is named
+		"MANDATORY",                 // the elements are non-optional
+		"`[N]`",                     // the required inline marker form is named
 		"NOT inline markdown links", // markdown-link citations are excluded
-		"## Sources",      // the numbered source list heading is required
+		"## Sources",                // the numbered source list heading is required
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("embedded research citation contract missing %q", want)

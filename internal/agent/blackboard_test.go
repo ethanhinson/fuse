@@ -75,7 +75,7 @@ func TestBlackboardKeysGlob(t *testing.T) {
 		pattern string
 		want    []string
 	}{
-		{"foo/a", []string{"foo/a"}},        // exact
+		{"foo/a", []string{"foo/a"}},          // exact
 		{"foo/*", []string{"foo/a", "foo/b"}}, // prefix glob
 		{"*", []string{"bar/c", "baz", "foo/a", "foo/b"}},
 		{"", []string{"bar/c", "baz", "foo/a", "foo/b"}},

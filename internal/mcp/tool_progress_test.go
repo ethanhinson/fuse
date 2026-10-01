@@ -43,12 +43,12 @@ func paramsMap(t *testing.T, v any) map[string]any {
 // fakeTracker is a callTracker double: it mints a fixed token and records
 // begin/end calls so the test can assert lifecycle.
 type fakeTracker struct {
-	token   string
-	begins  int
-	ends    int
-	drains  int
-	server  string
-	toolNm  string
+	token  string
+	begins int
+	ends   int
+	drains int
+	server string
+	toolNm string
 }
 
 func (f *fakeTracker) beginCall(server, tool string) (string, func() string) {
