@@ -314,10 +314,13 @@ func TestLoggingReloadAndReopenRequireOperator(t *testing.T) {
 }
 
 func TestBuildLoopVerifierPropagatesOperatorCapability(t *testing.T) {
-	v, usedDefault := buildLoopVerifier(config.Config{LoopServer: config.LoopServerConfig{Auth: []config.AuthTokenConfig{
+	v, usedDefault, err := buildLoopVerifier(config.Config{LoopServer: config.LoopServerConfig{Auth: []config.AuthTokenConfig{
 		{Token: "tenant", Tenant: "acme", Subject: "alice"},
 		{Token: "operator", Tenant: "ops", Subject: "olivia", ObservabilityOperator: true},
 	}}})
+	if err != nil {
+		t.Fatalf("buildLoopVerifier: %v", err)
+	}
 	if usedDefault {
 		t.Fatal("configured verifier unexpectedly used default")
 	}

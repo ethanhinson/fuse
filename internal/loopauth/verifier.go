@@ -4,9 +4,12 @@
 // loop runs or how a request arrives on the wire.
 //
 // The default implementation is StaticVerifier, a config-driven token→Principal
-// map suitable for local development and small deployments. Richer verifiers
-// (OIDC/JWT, mTLS, a secrets-backed token store) slot in behind the same Verifier
-// interface without a re-cut of the callers.
+// map suitable for local development and small deployments. IssuerVerifier
+// accepts short-lived HS256 JWS tokens minted by trusted services that share a
+// secret with fuse, so a service can name a new subject per request without a
+// config change; FirstOf chains the two. Other verifiers (OIDC, mTLS, a
+// secrets-backed token store) slot in behind the same Verifier interface without
+// a re-cut of the callers.
 //
 // The seam is intentionally dependency-light: it imports ONLY internal/event and
 // the standard library. Both the Connect edge (internal/loopconnect) and the

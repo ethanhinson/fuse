@@ -50,7 +50,14 @@ const devToken = "fuse-dev-token"
 // an empty config because that would break `fuse loop-serve-net` with a bare
 // zero-config for local development (and the dispatch smoke test that runs it),
 // yet a bearer token is still mandatory on the wire.
-func buildLoopVerifier(cfg config.Config) (loopauth.Verifier, bool) {
+//
+// Trusted issuers (loop_server.issuers) are checked AFTER the static map, so a
+// static token resolves exactly as it did before issuers existed. Configuring
+// any issuer also turns the dev-token fallback off: the operator has said who
+// may call this server, so the world-known dev token must not be added to that
+// list. An issuer with no tenants may assert only _default. The error is
+// non-nil only for an issuer Config.Validate would already have refused.
+func buildLoopVerifier(cfg config.Config) (loopauth.Verifier, bool, error) {
 	tokens := map[string]loopauth.Principal{}
 	for _, a := range cfg.LoopServer.Auth {
 		if a.Token == "" {
@@ -104,12 +111,53 @@ func buildLoopVerifier(cfg config.Config) (loopauth.Verifier, bool) {
 			ObservabilityOperator: a.ObservabilityOperator,
 		}
 	}
+	issuers, err := loopIssuers(cfg)
+	if err != nil {
+		return nil, false, err
+	}
 	usedDefault := false
-	if len(tokens) == 0 {
+	if len(tokens) == 0 && issuers == nil {
 		tokens[devToken] = loopauth.Principal{Tenant: event.DefaultTenant, Subject: "dev", ObservabilityOperator: true}
 		usedDefault = true
 	}
-	return loopauth.NewStaticVerifier(tokens), usedDefault
+	static := loopauth.NewStaticVerifier(tokens)
+	if issuers == nil {
+		return static, usedDefault, nil
+	}
+	return loopauth.FirstOf(static, issuers), usedDefault, nil
+}
+
+// loopIssuers builds the issuer verifier from loop_server.issuers, or returns
+// nil when none are configured. Tenants are normalized here, at the same trusted
+// edge that collapses an omitted static-entry tenant (see buildLoopVerifier), so
+// "" in an issuer's tenants list means _default and nothing else.
+func loopIssuers(cfg config.Config) (*loopauth.IssuerVerifier, error) {
+	if len(cfg.LoopServer.Issuers) == 0 {
+		return nil, nil
+	}
+	issuers := make([]loopauth.Issuer, 0, len(cfg.LoopServer.Issuers))
+	for _, ic := range cfg.LoopServer.Issuers {
+		maxTTL, err := ic.MaxTTLDuration()
+		if err != nil {
+			return nil, fmt.Errorf("loop_server.issuers %q: max_ttl: %w", ic.Issuer, err)
+		}
+		tenants := []event.TenantID{event.DefaultTenant}
+		if len(ic.Tenants) > 0 {
+			tenants = tenants[:0]
+			for _, t := range ic.Tenants {
+				tenants = append(tenants, event.NormalizeTenant(event.TenantID(t)))
+			}
+		}
+		issuers = append(issuers, loopauth.Issuer{
+			Name:                  ic.Issuer,
+			Key:                   []byte(ic.SigningKey),
+			Audience:              ic.Audience,
+			Tenants:               tenants,
+			MaxTTL:                maxTTL,
+			ObservabilityOperator: ic.ObservabilityOperator,
+		})
+	}
+	return loopauth.NewIssuerVerifier(issuers)
 }
 
 // loopLeaseTTL resolves the owner-liveness lease TTL for binding #3 from
@@ -195,6 +243,12 @@ var newLoopServeNetObservability = newObservability
 //	    - token: <bearer-token> # required per request
 //	      tenant: <tenant-id>   # isolation boundary; empty ⇒ _default
 //	      subject: <subject>    # recorded as a loop's owner
+//	  issuers:                  # trusted services that mint per-user HS256 tokens
+//	    - issuer: cms           # must equal the token's iss
+//	      signing_key: <secret> # HS256 shared secret, at least 32 bytes
+//	      audience: fuse-loop   # must equal the token's aud
+//	      tenants: [_default]   # tenants the issuer may assert; empty ⇒ only _default
+//	      max_ttl: 1h           # refuse tokens whose exp - iat is longer; default 1h
 func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdout io.Writer, stderr io.Writer) int {
 	fs := flag.NewFlagSet("loop-serve-net", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -216,9 +270,23 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintln(stderr, "        tenant: <tenant-id>    # isolation boundary; empty ⇒ _default")
 		fmt.Fprintln(stderr, "        subject: <subject>     # recorded as a loop's owner")
 		fmt.Fprintln(stderr, "        observability_operator: false # required for global logging reload/reopen")
+		fmt.Fprintln(stderr, "    issuers:                   # trusted services that mint short-lived per-user tokens")
+		fmt.Fprintln(stderr, "      - issuer: cms            # must equal the token's iss claim")
+		fmt.Fprintln(stderr, "        signing_key: <secret>  # HS256 shared secret, at least 32 bytes")
+		fmt.Fprintln(stderr, "        audience: fuse-loop    # must equal the token's aud claim")
+		fmt.Fprintln(stderr, "        tenants: [_default]    # tenants this issuer may assert; empty ⇒ only _default")
+		fmt.Fprintln(stderr, "        max_ttl: 1h            # refuse tokens whose exp - iat is longer; default 1h")
+		fmt.Fprintln(stderr, "        observability_operator: false # granted to every principal of this issuer")
 		fmt.Fprintln(stderr)
-		fmt.Fprintf(stderr, "With no loop_server.auth configured, a built-in dev token %q (tenant _default)\n", devToken)
-		fmt.Fprintln(stderr, "is used so local development works; a bearer token is still required on the wire.")
+		fmt.Fprintln(stderr, "A static token is looked up first. Otherwise the bearer value is read as a compact")
+		fmt.Fprintln(stderr, "JWS (header alg exactly HS256) from the issuer named by its iss claim, with claims")
+		fmt.Fprintln(stderr, "sub (required: the loop owner), aud, iat and exp (required), and tenant (optional,")
+		fmt.Fprintf(stderr, "default _default, must be in the issuer's tenants). iat may be at most %s ahead of\n", loopauth.IssuerClockSkew)
+		fmt.Fprintln(stderr, "this server's clock. Every refusal is the same Unauthenticated error.")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "With neither loop_server.auth nor loop_server.issuers configured, a built-in dev")
+		fmt.Fprintf(stderr, "token %q (tenant _default) is used so local development works; a\n", devToken)
+		fmt.Fprintln(stderr, "bearer token is still required on the wire.")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "On SIGTERM or Ctrl-C the server drains gracefully: /readyz starts answering 503")
 		fmt.Fprintln(stderr, "immediately (so a load balancer stops sending new work), in-flight requests get up")
@@ -258,9 +326,13 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	// Identity + authorization live at the Connect edge (ADR-0030): build the bearer-
 	// token Verifier from config and hand the edge the durable registry (deps.Registry)
 	// so it can authorize per-loop ownership. The runtime seam never learns any of this.
-	verifier, usedDefault := buildLoopVerifier(cfg)
+	verifier, usedDefault, verr := buildLoopVerifier(cfg)
+	if verr != nil {
+		fmt.Fprintf(stderr, "loop-serve-net: %v\n", verr)
+		return 1
+	}
 	if usedDefault {
-		fmt.Fprintf(stderr, "loop-serve-net: no loop_server.auth configured — using the built-in dev token %q (tenant %q); set loop_server.auth in ~/.fuse/config.yml for a shared server\n",
+		fmt.Fprintf(stderr, "loop-serve-net: no loop_server.auth or loop_server.issuers configured - using the built-in dev token %q (tenant %q); set loop_server.auth in ~/.fuse/config.yml for a shared server\n",
 			devToken, event.DefaultTenant)
 	}
 

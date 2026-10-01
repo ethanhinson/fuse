@@ -28,10 +28,13 @@ import (
 // list) have always done it. The resolver's refuse-empty invariant is untouched: it
 // still refuses "", it simply never sees one from this edge again.
 func TestBuildLoopVerifierCollapsesEmptyTenantAtTheAuthEdge(t *testing.T) {
-	v, usedDefault := buildLoopVerifier(config.Config{LoopServer: config.LoopServerConfig{Auth: []config.AuthTokenConfig{
+	v, usedDefault, err := buildLoopVerifier(config.Config{LoopServer: config.LoopServerConfig{Auth: []config.AuthTokenConfig{
 		{Token: "tok-acme", Tenant: "acme", Subject: "alice"},
 		{Token: "tok-bare", Subject: "bob"}, // tenant omitted: the documented shape
 	}}})
+	if err != nil {
+		t.Fatalf("buildLoopVerifier: %v", err)
+	}
 	if usedDefault {
 		t.Fatal("auth entries were configured; the dev-token fallback must not be synthesized")
 	}

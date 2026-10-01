@@ -75,10 +75,52 @@ func (c Config) Validate() error {
 		}
 	}
 
+	if err := validateIssuers(c.LoopServer.Issuers); err != nil {
+		return err
+	}
+
 	if err := validateObservability(c.Observability); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+// validateIssuers checks loop_server.issuers. Each problem names the issuer by
+// position and name so the operator can find the entry. A bad issuer refuses
+// startup instead of being skipped: skipping it would turn every token that
+// issuer mints into a mysterious Unauthenticated at runtime.
+func validateIssuers(issuers []IssuerConfig) error {
+	seen := map[string]int{}
+	for i, is := range issuers {
+		where := fmt.Sprintf("loop_server.issuers[%d]", i)
+		if is.Issuer != "" {
+			where = fmt.Sprintf("loop_server.issuers[%d] (%q)", i, is.Issuer)
+		}
+		if strings.TrimSpace(is.Issuer) == "" {
+			return fmt.Errorf("config: %s: issuer is required (it must equal the token's iss claim)", where)
+		}
+		if prev, dup := seen[is.Issuer]; dup {
+			return fmt.Errorf("config: %s: issuer %q is already declared by loop_server.issuers[%d]", where, is.Issuer, prev)
+		}
+		seen[is.Issuer] = i
+		if is.SigningKey == "" {
+			return fmt.Errorf("config: %s: signing_key is required", where)
+		}
+		if len(is.SigningKey) < MinIssuerSigningKeyBytes {
+			return fmt.Errorf("config: %s: signing_key must be at least %d bytes for HS256, got %d", where, MinIssuerSigningKeyBytes, len(is.SigningKey))
+		}
+		if strings.TrimSpace(is.Audience) == "" {
+			return fmt.Errorf("config: %s: audience is required (it must equal the token's aud claim)", where)
+		}
+		d, err := is.MaxTTLDuration()
+		if err != nil {
+			return fmt.Errorf("config: %s: max_ttl %q is not a valid duration (e.g. \"15m\", \"1h\"): %w", where, is.MaxTTL, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("config: %s: max_ttl must be positive, got %s", where, d)
+		}
+	}
 	return nil
 }
 
