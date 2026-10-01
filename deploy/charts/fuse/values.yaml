@@ -141,6 +141,10 @@ auth:
   # read the values file you passed. For a real deployment prefer
   # `config.existingSecret` with a Secret produced by your secrets manager, and
   # keep the token out of your git history.
+  #
+  # Trusted token issuers (services that mint short-lived per-user tokens) go
+  # under config.loop_server.issuers, next to these tokens; see README.md
+  # "Trusted token issuers". They satisfy the auth guard on their own.
   tokens: []
 
   # true ⇒ render a config with NO loop_server.auth and let the server
