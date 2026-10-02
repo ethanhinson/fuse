@@ -108,12 +108,14 @@ func (b *Broker) CredentialFor(ctx context.Context, p loopauth.Principal, t Targ
 		if b.exch == nil {
 			return Credential{}, errors.New("toolidentity: no token exchanger configured for an OAuth-tier target")
 		}
+		loop, _ := LoopFrom(ctx)
 		res, err := b.exch.Exchange(ctx, ExchangeRequest{
 			Tenant:   p.Tenant,
 			Subject:  p.Subject,
 			Actor:    "fuse",
 			Audience: t.Audience,
 			Scopes:   t.Scopes,
+			Loop:     loop,
 		})
 		if err != nil {
 			return Credential{}, fmt.Errorf("toolidentity: exchange for %q: %w", t.Name, err)

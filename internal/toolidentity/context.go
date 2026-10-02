@@ -37,3 +37,23 @@ func PrincipalFrom(ctx context.Context) (loopauth.Principal, bool) {
 	p, ok := ctx.Value(principalCtxKey{}).(loopauth.Principal)
 	return p, ok
 }
+
+// loopCtxKey carries the id of the loop a tool call runs in, from the loop-start
+// context to the egress, beside the Principal. Like principalCtxKey it is
+// unexported: only the composition root (from the runtime's own loop id) sets it,
+// never anything the model emits.
+type loopCtxKey struct{}
+
+// WithLoop returns a child context carrying the id of the loop its tool calls run
+// in. The composition root seeds it once per loop (cmd/fuse's LoopContext) from the
+// runtime's own id, so the per-call delegation token can name the loop as well as
+// the user (the loop_id claim).
+func WithLoop(ctx context.Context, loopID string) context.Context {
+	return context.WithValue(ctx, loopCtxKey{}, loopID)
+}
+
+// LoopFrom returns the loop id WithLoop stashed on ctx; "" and ok=false when none.
+func LoopFrom(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(loopCtxKey{}).(string)
+	return id, ok && id != ""
+}

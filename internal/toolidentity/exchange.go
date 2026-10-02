@@ -26,6 +26,7 @@ type ExchangeRequest struct {
 	Actor    string   // fuse; becomes `act.sub` (delegation, not impersonation)
 	Audience string   // RFC 8707 resource id; becomes `aud`
 	Scopes   []string // becomes the space-delimited `scope`
+	Loop     string   // the loop the call runs in; becomes `loop_id` (omitted when empty)
 }
 
 // ExchangeResult is a minted downstream token plus its expiry and a descriptor of
@@ -120,6 +121,11 @@ func (s *BuiltinSTS) Exchange(_ context.Context, req ExchangeRequest) (ExchangeR
 	}
 	if len(req.Scopes) > 0 {
 		claims["scope"] = strings.Join(req.Scopes, " ")
+	}
+	// Which loop (conversation) the call comes from, so the downstream service can
+	// attribute the call to it rather than guess from the subject alone.
+	if req.Loop != "" {
+		claims["loop_id"] = req.Loop
 	}
 
 	token, err := signHS256(claims, key)

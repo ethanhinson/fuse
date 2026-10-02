@@ -681,7 +681,9 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// identity survives a resume/re-park unchanged.
 	runCtx := sessionCtx
 	if r.deps.LoopContext != nil {
-		runCtx = r.deps.LoopContext(sessionCtx, cfg)
+		loopCfg := cfg
+		loopCfg.LoopID = rootID
+		runCtx = r.deps.LoopContext(sessionCtx, loopCfg)
 	}
 
 	go func() {

@@ -95,6 +95,13 @@ type LoopConfig struct {
 	// context cancellation. Default false ⇒ single-task run-to-completion, so every
 	// existing binding is unaffected.
 	Interactive bool
+
+	// LoopID is the loop's own id (the tree RootID), set by the runtime just before it
+	// calls Deps.LoopContext - callers starting a loop leave it empty. It lets the
+	// composition root stamp the loop onto the run context (toolidentity.WithLoop), so a
+	// downstream service told "the user, through fuse" by a per-call delegation token is
+	// also told which loop the call comes from.
+	LoopID string
 }
 
 // LoopHandle observes and awaits one running loop.

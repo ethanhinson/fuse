@@ -108,3 +108,34 @@ func TestStartLoop_TeardownOnBuildAgentError(t *testing.T) {
 		t.Fatalf("LoopTeardown got the wrong registry: %p, want the loop's own %p", torndown, loopReg)
 	}
 }
+
+// TestStartLoop_LoopContextGetsTheLoopID proves the runtime hands Deps.LoopContext the
+// loop's own id (LoopConfig.LoopID, the handle's ID), so the composition root can stamp
+// it for the delegation token; the caller never sets it.
+func TestStartLoop_LoopContextGetsTheLoopID(t *testing.T) {
+	var seen string
+	reg := tools.NewRegistry()
+	buildAgent := func(s event.EventStore, tree *agent.AgentTree, modelID string, r *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+		fake := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}
+		return agent.New(fake, execAll{r}, nopRenderer{}, modelID, "", 3, 0), nil, modelID, nil
+	}
+	rt := New(Deps{
+		MaxConcurrent:   1,
+		NewToolRegistry: func() *tools.Registry { return reg },
+		BuildAgent:      buildAgent,
+		LoopContext: func(ctx context.Context, cfg LoopConfig) context.Context {
+			seen = cfg.LoopID
+			return ctx
+		},
+	})
+	h, err := rt.StartLoop(context.Background(), LoopConfig{Task: "go", ModelID: "cloud/x", Subject: "alice"})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	if _, err := h.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if seen == "" || seen != h.ID() {
+		t.Fatalf("LoopContext saw LoopID %q, want the loop's id %q", seen, h.ID())
+	}
+}
