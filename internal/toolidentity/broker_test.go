@@ -157,3 +157,29 @@ func TestStaticCredentialRedacts(t *testing.T) {
 		}
 	}
 }
+
+// The broker passes the loop id WithLoop put on the context into the exchange, so the
+// minted token names the loop; a context without one mints without it.
+func TestBroker_PassesLoopFromContext(t *testing.T) {
+	sts, err := NewBuiltinSTS(BuiltinSTSConfig{Issuer: "fuse", TTL: time.Minute, TenantKeys: map[event.TenantID][]byte{event.DefaultTenant: []byte("k-0123456789abcdef0123456789abcd")}})
+	if err != nil {
+		t.Fatalf("NewBuiltinSTS: %v", err)
+	}
+	b := NewBroker(sts, nil, nil)
+	target := Target{Name: "cms", Tier: TierOAuth, Audience: "https://cms.example.com/mcp"}
+	p := loopauth.Principal{Tenant: event.DefaultTenant, Subject: "alice"}
+	loopOf := func(ctx context.Context) any {
+		cred, err := b.CredentialFor(ctx, p, target)
+		if err != nil {
+			t.Fatalf("CredentialFor: %v", err)
+		}
+		token := strings.TrimPrefix(cred.Header(), "Bearer ")
+		return decodeClaims(t, token)["loop_id"]
+	}
+	if got := loopOf(WithLoop(context.Background(), "loop_abc")); got != "loop_abc" {
+		t.Fatalf("loop_id = %v, want loop_abc", got)
+	}
+	if got := loopOf(context.Background()); got != nil {
+		t.Fatalf("loop_id = %v without a loop on the context", got)
+	}
+}

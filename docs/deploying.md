@@ -141,8 +141,10 @@ it is the reference, and every non-obvious one carries its reasoning inline.
 
 ### Two guards: the chart refuses to render without an answer
 
-1. **Auth.** One of `auth.tokens`, `config.existingSecret`, or `auth.allowDevToken=true`. With
-   no `loop_server.auth` the server synthesizes a loudly-logged dev token rather than running
+1. **Auth.** One of `auth.tokens`, `config.loop_server.issuers` (trusted services that mint
+   short-lived per-user tokens, see the README's "Trusted token issuers"), `config.existingSecret`,
+   or `auth.allowDevToken=true`. With no `loop_server.auth` and no `loop_server.issuers` the
+   server synthesizes a loudly-logged dev token rather than running
    unauthenticated (ADR-0034) — fine for a binary, wrong as the silent default of a rendered
    chart, since that token is published in this repository.
 2. **A DSN.** One of `postgres.dsn`, `postgres.existingSecret`, or `postgres.dev.enabled=true`
@@ -157,7 +159,8 @@ it is the reference, and every non-obvious one carries its reasoning inline.
 
 ### Config is a Secret, not a ConfigMap
 
-The chart renders `.Values.config` (plus `auth.tokens`, layered in as `loop_server.auth`) into a
+The chart renders `.Values.config` (plus `auth.tokens`, layered in as `loop_server.auth`; the
+rest of `config.loop_server`, such as `lease_ttl` and `issuers`, is kept) into a
 **Secret**, mounted by `subPath` at `/home/nonroot/.fuse/config.yml` — the trusted home file
 (ADR-0006). It is a Secret because `loop_server.auth`, `observability`, and `tool_identity` are
 honored from *that file and nowhere else*. Set `config.existingSecret` to supply your own

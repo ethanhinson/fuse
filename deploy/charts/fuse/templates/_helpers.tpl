@@ -163,6 +163,10 @@ rendered into loop_server.auth and NOT into .Values.config, so an operator
 cannot half-set both and get a surprising merge: the tokens key has exactly one
 source.
 
+auth.tokens replaces only loop_server.auth. The rest of config.loop_server
+(lease_ttl, issuers) is kept, so trusted token issuers can sit next to the
+static tokens.
+
 When auth.allowDevToken is true, loop_server.auth is OMITTED entirely — that is
 what makes the server synthesize and loudly log its dev token (ADR-0034). An
 empty list would be a different thing to no key at all in some loaders, so the
@@ -172,7 +176,9 @@ key is absent, not empty.
 {{- define "fuse.configYaml" -}}
 {{- $cfg := omit .Values.config "existingSecret" "key" | deepCopy -}}
 {{- if .Values.auth.tokens -}}
-{{- $_ := set $cfg "loop_server" (dict "auth" .Values.auth.tokens) -}}
+{{- $ls := get $cfg "loop_server" | default dict -}}
+{{- $_ := set $ls "auth" .Values.auth.tokens -}}
+{{- $_ := set $cfg "loop_server" $ls -}}
 {{- end -}}
 {{- toYaml $cfg -}}
 {{- end -}}
@@ -206,10 +212,12 @@ loudly-logged dev token rather than refusing to start (ADR-0034). That is the
 right behavior for a binary and the wrong default for a rendered chart: a
 production cluster would come up authenticated by a token published in this
 repository, and nothing in the manifest would say so. So: say which.
+Trusted issuers under config.loop_server.issuers also count: with any issuer
+configured the server does not synthesize the dev token.
 */}}
 {{- define "fuse.guard.auth" -}}
-{{- if not (or .Values.auth.tokens .Values.config.existingSecret .Values.auth.allowDevToken) -}}
-{{- fail "fuse: no authentication configured. The server would fall back to its built-in dev token — a value published in this repository — and would authenticate the whole cluster with it. Choose one, explicitly:\n  --set-file/--values auth.tokens[0].{token,tenant}   real bearer tokens (ADR-0034)\n  --set config.existingSecret=NAME                     a Secret you manage, holding config.yml\n  --set auth.allowDevToken=true                        the dev token, on purpose, on a throwaway cluster\nSee values.yaml's auth section." -}}
+{{- if not (or .Values.auth.tokens .Values.config.existingSecret .Values.auth.allowDevToken (dig "loop_server" "issuers" nil .Values.config)) -}}
+{{- fail "fuse: no authentication configured. The server would fall back to its built-in dev token - a value published in this repository - and would authenticate the whole cluster with it. Choose one, explicitly:\n  --set-file/--values auth.tokens[0].{token,tenant}   real bearer tokens (ADR-0034)\n  --set config.existingSecret=NAME                     a Secret you manage, holding config.yml\n  config.loop_server.issuers                           trusted services that mint per-user tokens\n  --set auth.allowDevToken=true                        the dev token, on purpose, on a throwaway cluster\nSee values.yaml's auth section." -}}
 {{- end -}}
 {{/*
 And the mirror of secret-dsn.yaml's refusal, for the same reason: with both

@@ -18,7 +18,7 @@ import (
 type progressEmittingTool struct{}
 
 func (progressEmittingTool) Name() string        { return "prog" }
-func (progressEmittingTool) Description() string  { return "emits progress" }
+func (progressEmittingTool) Description() string { return "emits progress" }
 func (progressEmittingTool) Parameters() map[string]any {
 	return map[string]any{"type": "object"}
 }

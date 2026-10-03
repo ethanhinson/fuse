@@ -141,12 +141,12 @@ func ensureAt(h string) string {
 type AsideKind int
 
 const (
-	AsideUnknown AsideKind = iota
-	AsideStatus            // "is X running", "X status", "did X finish"
-	AsideLastTool          // "what is X doing", "X's last tool"
-	AsideWrites            // "what did X write", "X's blackboard"
-	AsideCount             // "how many running", "active count"
-	AsideTree              // "show the tree", "who's spawned"
+	AsideUnknown  AsideKind = iota
+	AsideStatus             // "is X running", "X status", "did X finish"
+	AsideLastTool           // "what is X doing", "X's last tool"
+	AsideWrites             // "what did X write", "X's blackboard"
+	AsideCount              // "how many running", "active count"
+	AsideTree               // "show the tree", "who's spawned"
 )
 
 // AsideQuery is a parsed /btw question: an intent plus an optional @handle target.

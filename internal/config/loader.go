@@ -530,10 +530,15 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	// file. A repo-plantable .fuse.local.yml that set loop_server.auth could mint
 	// itself a token or re-point a tenant, so an untrusted source's block is
 	// dropped and named in the aggregated permission warning (ADR-0006).
-	if len(raw.LoopServer.Auth) > 0 || raw.LoopServer.LeaseTTL != "" {
+	// loop_server.issuers is the same surface: an issuer's signing key mints
+	// tokens for any subject in its tenants.
+	if len(raw.LoopServer.Auth) > 0 || len(raw.LoopServer.Issuers) > 0 || raw.LoopServer.LeaseTTL != "" {
 		if trusted {
 			if len(raw.LoopServer.Auth) > 0 {
 				c.LoopServer.Auth = raw.LoopServer.Auth
+			}
+			if len(raw.LoopServer.Issuers) > 0 {
+				c.LoopServer.Issuers = raw.LoopServer.Issuers
 			}
 			if raw.LoopServer.LeaseTTL != "" {
 				c.LoopServer.LeaseTTL = raw.LoopServer.LeaseTTL

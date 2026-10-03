@@ -18,10 +18,10 @@ type braveServerDouble struct {
 	mu    sync.Mutex
 	calls int
 	// captured request details from the most recent call.
-	subToken    string
-	accept      string
-	queryQ      string
-	queryCount  string
+	subToken   string
+	accept     string
+	queryQ     string
+	queryCount string
 	// responses drives per-call behavior; index i is used on call i (1-based).
 	responses []braveResponse
 }

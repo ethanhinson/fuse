@@ -15,11 +15,11 @@ func TestBlockedParsesNonEmpty(t *testing.T) {
 
 func TestBlockedKnownBad(t *testing.T) {
 	bad := []string{
-		"malware-test.example",   // from hosts-format file
-		"phishing-test.example",  // from hosts-format file
+		"malware-test.example",        // from hosts-format file
+		"phishing-test.example",       // from hosts-format file
 		"telemetry-collector.example", // hosts file, after a comment block
-		"ad-broker.example",      // from one-domain-per-line file
-		"data-broker.example",    // from one-domain-per-line file
+		"ad-broker.example",           // from one-domain-per-line file
+		"data-broker.example",         // from one-domain-per-line file
 	}
 	for _, h := range bad {
 		if !Blocked(h) {

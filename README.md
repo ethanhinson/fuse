@@ -408,10 +408,72 @@ not strand a loop). Reconnecting a dropped `Observe` is just re-opening
 `Observe(from_seq)` with the same token — the stream dedups replay/live at the
 watermark, so there is no loss or duplication across the handoff.
 
-If `loop_server.auth` is empty, a single built-in dev token (`fuse-dev-token`,
+If neither `loop_server.auth` nor `loop_server.issuers` is set, a single built-in dev token (`fuse-dev-token`,
 mapped to the `_default` tenant) is synthesized so local development works out of
 the box — the server still authenticates every request; it never runs open.
 Configure real tokens for any shared or deployed server.
+
+#### Trusted token issuers
+
+Static tokens need a config change and a restart for every new caller. When
+another service (a CMS, a web app) signs its own users in and starts loops on
+their behalf, declare it as a **trusted issuer** instead: it shares an HS256
+secret with fuse and mints a short-lived token per request that names the user.
+New users then need no change on the fuse side.
+
+```yaml
+loop_server:
+  auth: [...]                       # static tokens keep working and are checked first
+  issuers:
+    - issuer: cms                   # must equal the token's iss
+      signing_key: <random secret>  # HS256 shared secret, at least 32 bytes
+      audience: fuse-loop           # must equal the token's aud
+      tenants: [_default]           # tenants this issuer may assert; empty means only _default
+      max_ttl: 1h                   # refuse tokens whose exp - iat is longer (default 1h)
+      observability_operator: false # granted to every principal of this issuer (default false)
+```
+
+The bearer token is a compact JWS. fuse refuses it unless all of this holds:
+
+| Part | Rule |
+| --- | --- |
+| header `alg` | exactly `HS256` (`none`, `RS256`, a missing alg and every other value are refused) |
+| `iss` | names a configured issuer; that issuer's key must verify the signature |
+| `sub` | non-empty string; becomes the principal's subject, recorded as the loop's owner |
+| `aud` | equals the issuer's `audience` (a string, or an array that contains it) |
+| `iat`, `exp` | both required; `exp` in the future, `iat` at most 30s in the future, `exp - iat` at most `max_ttl` |
+| `nbf` | optional; honored when present |
+| `tenant` | optional, default `_default`; must be in the issuer's `tenants` |
+
+The result is the same `{tenant, subject}` principal a static entry gives, so
+ownership and tenant checks work unchanged. A token cannot grant
+`observability_operator`; only the issuer's config entry can. Every refusal is
+the same `Unauthenticated` error with no detail. Configuring any issuer also
+turns off the built-in dev token. Like `auth`, `issuers` is honored only from
+`~/.fuse/config.yml`.
+
+Minting a token in TypeScript (Node, no library needed):
+
+```ts
+import { createHmac } from "node:crypto";
+
+function fuseLoopToken(secret: string, sub: string, tenant?: string): string {
+  const b64 = (v: object) => Buffer.from(JSON.stringify(v)).toString("base64url");
+  const now = Math.floor(Date.now() / 1000);
+  const claims = { iss: "cms", sub, aud: "fuse-loop", iat: now, exp: now + 300, ...(tenant ? { tenant } : {}) };
+  const input = `${b64({ alg: "HS256", typ: "JWT" })}.${b64(claims)}`;
+  return `${input}.${createHmac("sha256", secret).update(input).digest("base64url")}`;
+}
+
+// fetch(`${fuseUrl}/fuse.loop.v1.LoopService/StartLoop`, {
+//   method: "POST",
+//   headers: { Authorization: `Bearer ${fuseLoopToken(secret, user.id)}`, "Content-Type": "application/json" },
+//   body: JSON.stringify({ task: "..." }),
+// });
+```
+
+Mint a fresh token per call (or cache one for less than its lifetime). A
+long-running `Observe` stream is authenticated once, when it opens.
 
 The service is three RPCs:
 

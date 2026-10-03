@@ -192,3 +192,24 @@ func TestBuiltinSTS_RejectsForgedAlgHeader(t *testing.T) {
 		t.Fatal("Verify must reject a token whose alg is not HS256 (alg-confusion)")
 	}
 }
+
+// A loop id given to the exchange becomes the loop_id claim, so the downstream service
+// knows which loop (conversation) the call comes from; with none, the claim is absent.
+func TestBuiltinSTS_LoopClaim(t *testing.T) {
+	sts := newTestSTS(t)
+	mint := func(loop string) map[string]any {
+		res, err := sts.Exchange(context.Background(), ExchangeRequest{
+			Tenant: "tenantA", Subject: "alice", Actor: "fuse", Audience: "https://api.example.com", Loop: loop,
+		})
+		if err != nil {
+			t.Fatalf("Exchange: %v", err)
+		}
+		return decodeClaims(t, res.Token)
+	}
+	if got := mint("loop_123")["loop_id"]; got != "loop_123" {
+		t.Fatalf("loop_id = %v, want loop_123", got)
+	}
+	if _, present := mint("")["loop_id"]; present {
+		t.Fatal("loop_id present without a loop")
+	}
+}

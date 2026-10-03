@@ -24,8 +24,8 @@ type scraperServerDouble struct {
 	robotsCalls int
 	// robotsBody, when non-empty, is served for /robots.txt; robotsStatus
 	// defaults to 200 and robots404 forces a 404 (no robots.txt present).
-	robotsBody   string
-	robots404    bool
+	robotsBody string
+	robots404  bool
 	// page response.
 	pageBody        string
 	pageContentType string

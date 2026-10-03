@@ -250,7 +250,8 @@ func newToolIdentityBroker(cfg config.Config) (toolidentity.CredentialSource, st
 }
 
 // toolIdentityTenantKeys builds the STS per-tenant signing-key map (change #59). It
-// keys every tenant the loop-verifier knows (declared under loop_server.auth) plus
+// keys every tenant the loop-verifier knows (declared under loop_server.auth or
+// in a loop_server.issuers entry's tenants) plus
 // event.DefaultTenant, so the built-in STS can mint for the real per-loop tenant on
 // the loop-server path — reaching #52's per-tenant credential isolation (D4), not a
 // new mechanism.
@@ -271,8 +272,18 @@ func toolIdentityTenantKeys(cfg config.Config) map[event.TenantID][]byte {
 		// DefaultTenant uses the raw signing key — byte-identical to pre-#59.
 		event.DefaultTenant: signingKey,
 	}
+	var tenants []string
 	for _, a := range cfg.LoopServer.Auth {
-		tenant := event.NormalizeTenant(event.TenantID(a.Tenant))
+		tenants = append(tenants, a.Tenant)
+	}
+	// A trusted issuer's tenants are tenants the loop-verifier can produce too
+	// (loop_server.issuers): a principal minted by an issuer must mint tool
+	// tokens under its own tenant's key, exactly like a static entry's.
+	for _, is := range cfg.LoopServer.Issuers {
+		tenants = append(tenants, is.Tenants...)
+	}
+	for _, t := range tenants {
+		tenant := event.NormalizeTenant(event.TenantID(t))
 		if _, ok := keys[tenant]; ok {
 			continue // DefaultTenant (or a repeat) already keyed; do not re-derive.
 		}

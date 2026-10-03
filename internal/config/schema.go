@@ -2,6 +2,8 @@
 // .fuse.local.yml, falling back to a built-in default registry when absent.
 package config
 
+import "time"
+
 // Gateway describes the LiteLLM gateway endpoint.
 type Gateway struct {
 	URL string `yaml:"url"`
@@ -233,9 +235,58 @@ type AuthTokenConfig struct {
 //     record whose lease has expired is treated as abandoned and re-ownable on a
 //     cold resolve. A duration string (e.g. "30s", "2m"); empty ⇒ the runtime's
 //     built-in default (30s).
+//   - Issuers are trusted token issuers: services that share an HS256 secret with
+//     fuse and mint short-lived bearer tokens naming the subject per request, so
+//     a new user of that service needs no config change or restart here. They
+//     are checked after Auth. Configuring issuers (with or without Auth) turns
+//     the dev-token fallback off.
 type LoopServerConfig struct {
 	Auth     []AuthTokenConfig `yaml:"auth"`
+	Issuers  []IssuerConfig    `yaml:"issuers"`
 	LeaseTTL string            `yaml:"lease_ttl"`
+}
+
+// DefaultIssuerMaxTTL is the longest token lifetime (exp - iat) an issuer
+// accepts when its max_ttl is unset.
+const DefaultIssuerMaxTTL = "1h"
+
+// MinIssuerSigningKeyBytes is the shortest accepted issuer signing key. RFC 7518
+// section 3.2 requires an HS256 key of at least the hash output size, 256 bits.
+const MinIssuerSigningKeyBytes = 32
+
+// IssuerConfig is one trusted token issuer for the networked loop binding
+// (loop_server.issuers). A client presents a compact HS256 JWS as its bearer
+// token; fuse picks the issuer whose Issuer equals the token's "iss", verifies
+// the signature with SigningKey, and checks "aud", "iat", "exp" and "sub". The
+// resulting principal is {tenant claim (omitted means _default), sub}, exactly
+// what a static auth entry would give.
+//
+//   - Issuer must equal the token's "iss" and be unique across issuers.
+//   - SigningKey is the HS256 shared secret, at least 32 bytes.
+//   - Audience must equal the token's "aud" (or be one of its entries).
+//   - Tenants are the tenants this issuer may assert. A token naming any other
+//     tenant is refused. Empty means only _default.
+//   - MaxTTL refuses tokens whose exp - iat exceeds it. A Go duration; empty
+//     means DefaultIssuerMaxTTL.
+//   - ObservabilityOperator grants observability_operator to every principal
+//     this issuer produces. No token claim can grant it.
+type IssuerConfig struct {
+	Issuer                string   `yaml:"issuer"`
+	SigningKey            string   `yaml:"signing_key"`
+	Audience              string   `yaml:"audience"`
+	Tenants               []string `yaml:"tenants"`
+	MaxTTL                string   `yaml:"max_ttl"`
+	ObservabilityOperator bool     `yaml:"observability_operator"`
+}
+
+// MaxTTLDuration resolves MaxTTL, applying DefaultIssuerMaxTTL when unset. The
+// error is the parse error; Config.Validate reports it at startup.
+func (i IssuerConfig) MaxTTLDuration() (time.Duration, error) {
+	raw := i.MaxTTL
+	if raw == "" {
+		raw = DefaultIssuerMaxTTL
+	}
+	return time.ParseDuration(raw)
 }
 
 // ObservabilityConfig controls the optional telemetry adapters used by

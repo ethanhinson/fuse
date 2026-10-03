@@ -199,8 +199,15 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 		// the loop-server analogue of the shell's WithToolPrincipal, adapted to the
 		// per-loop, principal-per-loop reality — retiring the DefaultTenant shim here by
 		// construction.
+		// It also stamps the loop's own id (toolidentity.WithLoop), which the delegation
+		// token carries as loop_id, so the downstream service knows which conversation a
+		// call comes from, not only whose.
 		LoopContext: func(ctx context.Context, lc runtime.LoopConfig) context.Context {
-			return toolidentity.WithPrincipal(ctx, loopServerPrincipal(lc))
+			ctx = toolidentity.WithPrincipal(ctx, loopServerPrincipal(lc))
+			if lc.LoopID != "" {
+				ctx = toolidentity.WithLoop(ctx, lc.LoopID)
+			}
+			return ctx
 		},
 		// LoopTeardown closes THIS loop's own MCP manager at loop completion (change #59,
 		// Task 4), so no manager (and its read-pump/notify goroutines) outlives its loop and
