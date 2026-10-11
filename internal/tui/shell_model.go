@@ -275,7 +275,7 @@ type staleResource struct {
 // when auto is active with no classifier.
 func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.Registry, slashReg *SlashRegistry, build AgentBuilder, sessionMode *permissions.SessionMode, classifierAvailable bool) ShellModel {
 	in := textinput.New()
-	in.Placeholder = "type a task, /model NAME, /verbose, /exit"
+	in.Placeholder = defaultPlaceholder
 	in.Prompt = ""
 	in.Focus()
 
@@ -849,6 +849,14 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startPrompt(line)
 	}
 
+	// Several characters in one message are TEXT, whether or not the terminal wrapped
+	// them as a bracketed paste (fast typing and automation arrive bare). The input's key
+	// map matches on a message's string form, so the bare burst "right" would otherwise
+	// match the Right-arrow binding and move the cursor instead of typing the word. A
+	// pasted message stringifies with brackets, which no binding matches.
+	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
+		msg.Paste = true
+	}
 	// Let the text input handle the key first.
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -979,6 +987,12 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 	switch cmd {
 	case "/exit", "/quit":
 		return m, tea.Quit
+	// Reached from the slash menu (a typed line is routed earlier, see
+	// routeOrchestratorInput); the menu selects the bare command.
+	case "/orchestrator":
+		return m.orchestratorCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
+	case "/interrupt":
+		return m.interruptCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
 	case "/agents":
 		return m.enterAgentsView()
 	case "/blackboard":

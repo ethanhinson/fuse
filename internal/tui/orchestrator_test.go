@@ -69,6 +69,9 @@ func TestOrchestratorModeRoutesPlainLines(t *testing.T) {
 	if !strings.Contains(m.View(), "orchestrator") {
 		t.Fatal("the prompt must show the orchestrator is the one listening")
 	}
+	if !strings.Contains(m.input.Placeholder, "orchestrator") {
+		t.Fatalf("placeholder does not say who is listening: %q", m.input.Placeholder)
+	}
 	m = typeAndEnter(m, "tell it to run the tests first")
 	if got := o.got(); len(got) != 1 || got[0] != "tell it to run the tests first" {
 		t.Fatalf("orchestrator heard %v", got)
@@ -80,6 +83,9 @@ func TestOrchestratorModeRoutesPlainLines(t *testing.T) {
 	m = typeAndEnter(m, "/orchestrator off")
 	if m.orchMode {
 		t.Fatal("/orchestrator off should turn the mode off")
+	}
+	if m.input.Placeholder != defaultPlaceholder {
+		t.Fatalf("placeholder not restored: %q", m.input.Placeholder)
 	}
 	m = typeAndEnter(m, "plain note for the agent")
 	if n := len(bus.Pending(tree.RootID())); n != 1 {
@@ -131,5 +137,19 @@ func TestOrchestratorCommandsAreInTheSlashMenu(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("%s missing from the slash menu: %s", want, joined)
 		}
+	}
+}
+
+// Picking /orchestrator from the slash menu reaches handleSlash, not the typed-line path.
+func TestOrchestratorFromTheSlashMenu(t *testing.T) {
+	m, _, _, _ := orchShell(t)
+	m.running = false
+	next, _ := m.handleSlash("/orchestrator")
+	if !next.(ShellModel).orchMode {
+		t.Fatal("the slash-menu route did not turn orchestrator mode on")
+	}
+	next, _ = next.(ShellModel).handleSlash("/orchestrator off")
+	if next.(ShellModel).orchMode {
+		t.Fatal("/orchestrator off via handleSlash did not turn the mode off")
 	}
 }

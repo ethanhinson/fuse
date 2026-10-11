@@ -13,6 +13,11 @@ import (
 // its own model and tools) lives behind OrchestratorSession; the shell only routes
 // the person's words to it and renders what it says back.
 
+const (
+	defaultPlaceholder = "type a task, /model NAME, /verbose, /exit"
+	orchPlaceholder    = "ask the orchestrator, or tell it what to steer - /orchestrator off to go back"
+)
+
 // OrchestratorSession is the shell's handle on the orchestrator chat. Say hands it one
 // message from the person and returns at once: the orchestrator answers on its own
 // goroutine, by sending OrchReplyMsg / OrchActionMsg / OrchErrMsg into the program.
@@ -82,10 +87,12 @@ func (m ShellModel) orchestratorCommand(arg string) (tea.Model, tea.Cmd) {
 	switch strings.ToLower(arg) {
 	case "":
 		m.orchMode = true
+		m.input.Placeholder = orchPlaceholder
 		m.appendLine(orchStyle.Render("orchestrator mode on") +
 			headerStyle.Render(" - your messages go to the orchestrator, which can watch and steer the agent. /orchestrator off to go back."))
 	case "off":
 		m.orchMode = false
+		m.input.Placeholder = defaultPlaceholder
 		m.appendLine(headerStyle.Render("orchestrator mode off - your messages go to the agent again"))
 	default:
 		m.sayToOrchestrator(arg)
