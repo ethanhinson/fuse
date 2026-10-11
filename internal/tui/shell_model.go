@@ -210,9 +210,11 @@ type ShellModel struct {
 	segmentsDir string            // session segments/ dir for the /agents indicator + "s" (0030)
 	humanBus    *agent.HumanBus   // per-node human-message queues (ADR-0022)
 	handleReg   *agent.HandleRegistry
-	router      agent.RouterLLM  // async advisory classifier; nil ⇒ default routing only
-	queue       *queueState      // non-nil while the /queue editor is open
-	modelsEdit  *modelsEditState // non-nil while the /models edit editor is open
+	router      agent.RouterLLM     // async advisory classifier; nil ⇒ default routing only
+	orch        OrchestratorSession // the /orchestrator chat; nil ⇒ unavailable
+	orchMode    bool                // plain lines go to the orchestrator instead of the agent
+	queue       *queueState         // non-nil while the /queue editor is open
+	modelsEdit  *modelsEditState    // non-nil while the /models edit editor is open
 	// config is non-nil while the /config screen is open. It hosts the tabbed
 	// settings surface and SHARES modelsEdit with `/models edit` rather than
 	// owning a second copy of the editor.
@@ -466,6 +468,24 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ToolResultMsg:
 		return m.handleToolResult(msg)
+
+	case OrchReplyMsg:
+		text := msg.Text
+		if m.md != nil {
+			if rendered, err := m.md.Render(text); err == nil {
+				text = strings.TrimRight(rendered, "\n")
+			}
+		}
+		m.appendPre(orchStyle.Render("orchestrator") + "\n" + assistantStyle.Render(text))
+		return m, nil
+
+	case OrchActionMsg:
+		m.appendLine(orchStyle.Render("orchestrator ›") + " " + headerStyle.Render(sanitizeDisplay(msg.Text)))
+		return m, nil
+
+	case OrchErrMsg:
+		m.appendLine(orchStyle.Render("orchestrator ›") + " " + agentErrStyle.Render(sanitizeDisplay(msg.Err)))
+		return m, nil
 
 	case AgentErrMsg:
 		// Settle any still-queued calls before showing the error; their
@@ -797,6 +817,11 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		line := strings.TrimSpace(m.input.Value())
 		if line == "" {
 			return m, nil
+		}
+		// The orchestrator and /interrupt must work mid-turn, so they come before the
+		// busy-queue below.
+		if next, cmd, handled := m.routeOrchestratorInput(line); handled {
+			return next, cmd
 		}
 		// Human-messaging routing (ADR-0022): /btw, @all, @handle, /rename, and —
 		// while an agent is busy — queued messages are all handled here rather than
@@ -1786,6 +1811,9 @@ func (m ShellModel) View() string {
 	}
 	rule := ruleStyle.Render(strings.Repeat("─", width))
 	prompt := promptAliasStyle.Render("["+m.alias+"]") + " > " + m.input.View()
+	if m.orchMode {
+		prompt = orchStyle.Render("[orchestrator]") + " > " + m.input.View()
+	}
 
 	var status string
 	switch {

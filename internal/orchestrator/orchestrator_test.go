@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
@@ -164,4 +165,63 @@ func TestHugePayloadStillShowsInStatus(t *testing.T) {
 	if !strings.Contains(res.Output, "read_file ok") {
 		t.Fatalf("a huge result vanished from status:\n%s", res.Output)
 	}
+}
+
+func TestLocalTargetReadsStoreAndSteersBus(t *testing.T) {
+	store := &memStore{}
+	bus := agent.NewHumanBus(nil)
+	busy := true
+	lt := &LocalTarget{Store: store, Bus: bus, NodeID: "root", BusyFn: func() bool { return busy }}
+
+	raw, _ := json.Marshal(event.ToolCallPayload{ID: "1", Name: "bash", Args: json.RawMessage(`{}`)})
+	_ = store.Append(event.Event{Kind: event.KindToolCall, Payload: raw})
+
+	reg := tools.NewRegistry()
+	Register(reg, lt)
+	if res := call(t, reg, "loop_status", `{}`); !strings.Contains(res.Output, "running tool bash") {
+		t.Fatalf("busy local target:\n%s", res.Output)
+	}
+	// The shell root agent is not parked between prompts; BusyFn is what says idle.
+	busy = false
+	if res := call(t, reg, "loop_status", `{}`); !strings.Contains(res.Output, "idle") {
+		t.Fatalf("idle local target:\n%s", res.Output)
+	}
+
+	if res := call(t, reg, "steer_agent", `{"message":"try again","interrupt":true}`); res.IsError {
+		t.Fatalf("steer: %s", res.Output)
+	}
+	msg, ok := agent.NewHumanInjector("root", bus).Poll()
+	if !ok || !strings.Contains(msg.Content, "[orchestrator guidance]") || !strings.Contains(msg.Content, "try again") {
+		t.Fatalf("bus got %q ok=%v", msg.Content, ok)
+	}
+}
+
+// memStore is a minimal in-memory event.EventStore.
+type memStore struct {
+	mu sync.Mutex
+	ev []event.Event
+}
+
+func (m *memStore) Append(e event.Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e.Seq = event.Seq(len(m.ev) + 1)
+	m.ev = append(m.ev, e)
+	return nil
+}
+func (m *memStore) Subscribe() (<-chan event.Event, func()) {
+	ch := make(chan event.Event)
+	close(ch)
+	return ch, func() {}
+}
+func (m *memStore) Replay(from event.Seq) ([]event.Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []event.Event
+	for _, e := range m.ev {
+		if e.Seq > from {
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }

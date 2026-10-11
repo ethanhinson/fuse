@@ -12,6 +12,15 @@ import (
 
 type statusTool struct{ w *watcher }
 
+// stateOf is the target's state for loop_status: the event-derived state, overridden
+// by the target's own word on whether it is mid-turn when it has one.
+func (t *statusTool) stateOf() string {
+	if br, ok := t.w.t.(busyReporter); ok && br.knowsBusy() && !br.Busy() {
+		return "idle - waiting for the next prompt"
+	}
+	return state(t.w.ring)
+}
+
 func (t *statusTool) Name() string { return "loop_status" }
 func (t *statusTool) Description() string {
 	return "Show what the agent you are watching is doing right now: its current state and its most recent activity (user turns, model replies, tool calls and results, sub-agents, errors). Call this before advising or steering."
@@ -50,7 +59,7 @@ func (t *statusTool) Execute(ctx context.Context, args string) tools.Result {
 	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
 		lines[i], lines[j] = lines[j], lines[i]
 	}
-	out := "state: " + state(t.w.ring) + "\n"
+	out := "state: " + t.stateOf() + "\n"
 	if len(lines) == 0 {
 		out += "no recent activity"
 	} else {

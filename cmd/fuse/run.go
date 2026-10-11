@@ -211,6 +211,9 @@ func validateModelRefs(cfg config.Config, reg *model.Registry) error {
 	if err := check("permissions.auto.classifier_model", cfg.Permissions.Auto.ClassifierModel); err != nil {
 		return err
 	}
+	if err := check("orchestrator.model", cfg.Orchestrator.Model); err != nil {
+		return err
+	}
 	return nil
 }
 

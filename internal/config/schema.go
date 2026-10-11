@@ -344,6 +344,15 @@ type CardinalityObservabilityConfig struct {
 	Tool        CardinalityDimensionConfig `yaml:"tool"`
 }
 
+// OrchestratorConfig configures the orchestrator: the chat model that watches a running
+// agent and steers it on the person's behalf.
+type OrchestratorConfig struct {
+	// Model is the alias the orchestrator runs on. Empty means the session's current
+	// model. Honored only from the trusted home file: it chooses which model is allowed
+	// to steer your agent, so a repo-planted file must not set it.
+	Model string `yaml:"model"`
+}
+
 // Config is the fully resolved fuse configuration.
 type Config struct {
 	Gateway    Gateway
@@ -357,9 +366,11 @@ type Config struct {
 	MaxTurns    *int
 	MaxTokens   int
 	Permissions PermissionsConfig
-	MCPServers  []MCPServerConfig
-	Research    ResearchConfig
-	Agents      AgentsConfig
+	// Orchestrator configures the steering side-channel (/orchestrator).
+	Orchestrator OrchestratorConfig
+	MCPServers   []MCPServerConfig
+	Research     ResearchConfig
+	Agents       AgentsConfig
 	// Throughput is the turn-level rate/quota surface (change 0036): global
 	// requests-per-minute / tokens-per-minute smoothing plus an optional session
 	// token ceiling, with optional per-provider rate overrides. Every numeric is
@@ -507,9 +518,11 @@ type rawConfig struct {
 	MaxTurns    *int                   `yaml:"max_turns"`
 	MaxTokens   int                    `yaml:"max_tokens"`
 	Permissions rawPermissionsConfig   `yaml:"permissions"`
-	MCPServers  []MCPServerConfig      `yaml:"mcp_servers"`
-	Research    rawResearchConfig      `yaml:"research"`
-	Agents      rawAgentsConfig        `yaml:"agents"`
+	// Orchestrator is the steering side-channel's model choice (trusted-only).
+	Orchestrator OrchestratorConfig `yaml:"orchestrator"`
+	MCPServers   []MCPServerConfig  `yaml:"mcp_servers"`
+	Research     rawResearchConfig  `yaml:"research"`
+	Agents       rawAgentsConfig    `yaml:"agents"`
 	// Throughput reuses the resolved ThroughputConfig shape on-disk (plain
 	// ints/maps, no free-text scalars — yaml.Unmarshal is safe); the tighten-only
 	// merge happens in mergeFile, not here.
