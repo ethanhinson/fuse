@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/orchestrator"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tui"
@@ -33,6 +34,11 @@ type shellOrchestrator struct {
 
 	mu      sync.Mutex
 	started bool
+
+	// parked is signalled each time the orchestrator finishes an answer and waits for
+	// the next message. The shell ignores it; a line-by-line client uses WaitIdle to
+	// know when to prompt again.
+	parked chan struct{}
 }
 
 const orchestratorNode = "orchestrator"
@@ -42,6 +48,7 @@ func newShellOrchestrator(ctx context.Context, out chan<- tea.Msg, target orches
 	return &shellOrchestrator{
 		ctx: ctx, out: out, target: target, newAgent: newAgent,
 		bus: agent.NewHumanBus(nil), node: orchestratorNode,
+		parked: make(chan struct{}, 1),
 	}
 }
 
@@ -72,6 +79,12 @@ func (o *shellOrchestrator) start() bool {
 	a.SetInteractive(true)
 	a.SetMaxTurns(0) // a conversation must not end at a turn cap
 	a.SetHumanInjector(agent.NewHumanInjector(o.node, o.bus))
+	a.SetEventSink(parkSink{onParked: func() {
+		select {
+		case o.parked <- struct{}{}:
+		default: // a signal is already pending
+		}
+	}})
 	go func() {
 		if _, err := a.Run(o.ctx, nil); err != nil && o.ctx.Err() == nil {
 			o.send(tui.OrchErrMsg{Err: err.Error()})
@@ -79,6 +92,35 @@ func (o *shellOrchestrator) start() bool {
 	}()
 	return true
 }
+
+// WaitIdle blocks until the orchestrator has finished answering and is waiting for the
+// next message, or ctx is done.
+func (o *shellOrchestrator) WaitIdle(ctx context.Context) error {
+	select {
+	case <-o.parked:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// parkSink is an event sink that only watches for the loop parking.
+type parkSink struct{ onParked func() }
+
+func (p parkSink) Append(e event.Event) error {
+	if e.Kind == event.KindLoopParked {
+		p.onParked()
+	}
+	return nil
+}
+
+func (parkSink) Subscribe() (<-chan event.Event, func()) {
+	c := make(chan event.Event)
+	close(c)
+	return c, func() {}
+}
+
+func (parkSink) Replay(event.Seq) ([]event.Event, error) { return nil, nil }
 
 func (o *shellOrchestrator) send(m tea.Msg) {
 	select {
