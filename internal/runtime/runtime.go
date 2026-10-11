@@ -71,6 +71,24 @@ type Runtime interface {
 	Resume(ctx context.Context, tenant event.TenantID, loopID string) (LoopHandle, error)
 }
 
+// SteerOpts qualifies one steering message.
+type SteerOpts struct {
+	// Source says who is speaking (agent.SourceHuman, the default, or
+	// agent.SourceOrchestrator). The agent sees it as a label on the message.
+	Source string
+	// Interrupt cancels the loop's in-flight model call or tool batch so the message
+	// lands now instead of at the next turn boundary.
+	Interrupt bool
+}
+
+// Steerer is an optional Runtime capability (ADR-0047): Send with a source label and
+// an interrupt. A binding type-asserts for it and falls back to Send, so a Runtime
+// that does not steer (a test fake) still works everywhere. The in-process runtime
+// implements it. Errors match Send's: ErrLoopNotFound, ErrLoopFinished.
+type Steerer interface {
+	Steer(ctx context.Context, tenant event.TenantID, loopID string, input string, opts SteerOpts) error
+}
+
 // LoopConfig is the policy-free description of one loop to start. It carries loop
 // mechanics inputs only; renderer/gate/transport are the binding's business and
 // never appear here.
@@ -95,6 +113,13 @@ type LoopConfig struct {
 	// context cancellation. Default false ⇒ single-task run-to-completion, so every
 	// existing binding is unaffected.
 	Interactive bool
+
+	// Orchestrate, when set to another loop's id (in the same tenant), starts this
+	// loop as that loop's ORCHESTRATOR: a persistent chat loop whose only tools watch
+	// and steer the target (internal/orchestrator), so a client chats with it through
+	// the ordinary Send and Observe. It implies Interactive. ModelID picks the
+	// orchestrator's own model, independent of the target's.
+	Orchestrate string
 
 	// LoopID is the loop's own id (the tree RootID), set by the runtime just before it
 	// calls Deps.LoopContext - callers starting a loop leave it empty. It lets the

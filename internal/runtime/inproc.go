@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethanhinson/fuse/internal/orchestrator"
 	"sync"
 	"time"
 
@@ -407,7 +408,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// event-emission ctx (durableSink), so Appends survive the disconnect too.
 	// A resumed loop is always interactive (it re-parks to await the next Send), so the
 	// session-detach and reaper apply to it exactly as to a fresh interactive start.
-	interactive := cfg.Interactive || opts.resume
+	interactive := cfg.Interactive || opts.resume || cfg.Orchestrate != ""
 	sessionCtx := loopCtx
 	var sessionCancel context.CancelFunc
 	if interactive {
@@ -545,7 +546,21 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	}
 
 	var toolReg *tools.Registry
-	if r.deps.NewToolRegistry != nil {
+	if cfg.Orchestrate != "" {
+		// An orchestrator holds ONLY the watch-and-steer tools - never the binding's
+		// shell, file or MCP tools - and acts on a loop in its own tenant, so it can
+		// reach nothing its caller could not.
+		if cfg.Orchestrate == rootID {
+			failLaunch()
+			return nil, fmt.Errorf("runtime: a loop cannot orchestrate itself")
+		}
+		if _, err := r.liveLoop(ctx, tenant, cfg.Orchestrate); err != nil {
+			failLaunch()
+			return nil, fmt.Errorf("runtime: orchestrate target: %w", err)
+		}
+		toolReg = tools.NewRegistry()
+		orchestrator.Register(toolReg, &runtimeTarget{rt: r, tenant: tenant, loopID: cfg.Orchestrate})
+	} else if r.deps.NewToolRegistry != nil {
 		toolReg = r.deps.NewToolRegistry()
 	} else {
 		toolReg = tools.NewRegistry()
@@ -591,6 +606,9 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		// is covered by turn roots instead.
 		end(observe.OutcomeSuccess)
 		turns.wake()
+	}
+	if cfg.Orchestrate != "" {
+		a.SetSystemPrompt(orchestrator.SystemPrompt())
 	}
 	a.SetObserver(obs)
 	a.SetEventSink(store)
@@ -985,30 +1003,58 @@ func modelFromEvents(events []event.Event) string {
 // longer drains, so enqueuing would strand the message forever); a still-running
 // loop enqueues and returns nil.
 func (r *inProcRuntime) Send(ctx context.Context, tenant event.TenantID, loopID string, input string) error {
+	lp, err := r.liveLoop(ctx, tenant, loopID)
+	if err != nil {
+		return err
+	}
+	lp.humanBus.Enqueue(lp.node.ID, agent.ModeRespond, "@human", input)
+	return nil
+}
+
+// Steer is Send with a source label and an optional interrupt (the Steerer
+// capability). With opts.Interrupt the loop's in-flight model call or tool batch is
+// cancelled so the message lands now.
+func (r *inProcRuntime) Steer(ctx context.Context, tenant event.TenantID, loopID string, input string, opts SteerOpts) error {
+	lp, err := r.liveLoop(ctx, tenant, loopID)
+	if err != nil {
+		return err
+	}
+	source := opts.Source
+	if source == "" {
+		source = agent.SourceHuman
+	}
+	lp.humanBus.Steer(lp.node.ID, source, opts.Interrupt, input)
+	return nil
+}
+
+// liveLoop resolves the loop a Send or Steer targets and refuses one that cannot
+// take input: ErrLoopNotFound for an unknown loop (or a wrong-tenant hit), and
+// ErrLoopFinished for a loop whose run goroutine has completed, since its injector
+// will never drain another message and enqueuing would strand it. It also counts the
+// call as session activity, resetting the idle-reap window.
+func (r *inProcRuntime) liveLoop(ctx context.Context, tenant event.TenantID, loopID string) (*loop, error) {
 	lp := r.loopCache(tenant, loopID)
 	if lp == nil {
 		// Not live in THIS instance's cache (or a tenant mismatch on the bare-loopID
-		// cache key — loopCache returns nil for a wrong-tenant hit). With the durable seam
+		// cache key - loopCache returns nil for a wrong-tenant hit). With the durable seam
 		// present, resolve the loop's existence/liveness UNDER THE REQUESTED TENANT: a
-		// finished loop ⇒ ErrLoopFinished (replay-only); a still-live loop owned by ANOTHER
-		// instance ⇒ ErrLoopNotFound here (this instance holds no injector for it); an
-		// unknown loop (or one under a different tenant) ⇒ ErrLoopNotFound. Without the
+		// finished loop => ErrLoopFinished (replay-only); a still-live loop owned by ANOTHER
+		// instance => ErrLoopNotFound here (this instance holds no injector for it); an
+		// unknown loop (or one under a different tenant) => ErrLoopNotFound. Without the
 		// seam, resolveDurable returns ErrLoopNotFound directly (legacy in-memory behavior).
 		rec, _, rerr := r.resolveDurable(ctx, tenant, loopID)
 		if rerr != nil {
-			return rerr
+			return nil, rerr
 		}
 		if !rec.Live {
-			return fmt.Errorf("%w: %q", ErrLoopFinished, loopID)
+			return nil, fmt.Errorf("%w: %q", ErrLoopFinished, loopID)
 		}
-		return fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
+		return nil, fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
 	}
-	// A finished loop's injector will never drain another message. Report it instead
-	// of silently stranding the input on the queue.
 	if lp.handle != nil {
 		select {
 		case <-lp.handle.done:
-			return fmt.Errorf("%w: %q", ErrLoopFinished, loopID)
+			return nil, fmt.Errorf("%w: %q", ErrLoopFinished, loopID)
 		default:
 		}
 	}
@@ -1017,8 +1063,7 @@ func (r *inProcRuntime) Send(ctx context.Context, tenant event.TenantID, loopID 
 	if lp.touch != nil {
 		lp.touch()
 	}
-	lp.humanBus.Enqueue(lp.node.ID, agent.ModeRespond, "@human", input)
-	return nil
+	return lp, nil
 }
 
 // Spawn starts a child agent under the loop and returns a handle wrapping
