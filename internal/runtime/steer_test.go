@@ -208,3 +208,42 @@ func eventually(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition never became true")
 }
+
+// With BaseDir "" a loop normally writes and keeps no event stream (one-shot stays
+// byte-identical). InMemoryEvents makes the stream observable without writing a file.
+func TestInMemoryEventsMakeABaseDirlessLoopObservable(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		inMemory  bool
+		wantAnyEv bool
+	}{{"off keeps the no-op store", false, false}, {"on keeps events in memory", true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &steerFake{}
+			rt := New(Deps{
+				MaxConcurrent:  1,
+				InMemoryEvents: tc.inMemory,
+				BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+					return agent.New(f.completer(modelID), execAll{reg}, nopRenderer{}, modelID, "", 2, 0), nil, modelID, nil
+				},
+			})
+			h, err := rt.StartLoop(context.Background(), LoopConfig{Task: "go", ModelID: "target"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := h.Wait(); err != nil {
+				t.Fatal(err)
+			}
+			evs, err := rt.Attach(context.Background(), event.DefaultTenant, h.ID(), 0)
+			if err != nil {
+				// A finished loop with no store may not even resolve; that is the "off" case.
+				if tc.wantAnyEv {
+					t.Fatalf("Attach: %v", err)
+				}
+				return
+			}
+			if (len(evs) > 0) != tc.wantAnyEv {
+				t.Fatalf("events = %d, wantAny = %v", len(evs), tc.wantAnyEv)
+			}
+		})
+	}
+}

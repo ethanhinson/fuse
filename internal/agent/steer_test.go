@@ -38,12 +38,17 @@ func TestPollLabelsSteerSource(t *testing.T) {
 	if !ok || !strings.HasPrefix(m.Content, "[orchestrator guidance]\n") || !strings.Contains(m.Content, "check the tests first") {
 		t.Fatalf("orchestrator poll = %q, %v", m.Content, ok)
 	}
+	// The model is told whose authority the guidance carries, so it does not mistake it
+	// for untrusted injected content.
+	if !strings.Contains(m.Content, "speaks for them") {
+		t.Fatalf("guidance carries no provenance: %q", m.Content)
+	}
 
 	// Mixed sources in one batch keep their own label per segment.
 	bus.Enqueue("n1", ModeDirect, "@human", "from human")
 	bus.Steer("n1", SourceOrchestrator, false, "from orchestrator")
 	m, _ = inj.Poll()
-	if !strings.Contains(m.Content, "[human message]\nfrom human") || !strings.Contains(m.Content, "[orchestrator guidance]\nfrom orchestrator") {
+	if !strings.Contains(m.Content, "[human message]\nfrom human") || !strings.Contains(m.Content, "[orchestrator guidance]\n(Sent by the orchestrator") || !strings.Contains(m.Content, "\nfrom orchestrator") {
 		t.Fatalf("mixed poll = %q", m.Content)
 	}
 }

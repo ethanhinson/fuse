@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -207,25 +208,41 @@ func printOrchestratorMsg(w io.Writer, m tea.Msg) {
 // wireTarget is an orchestrator.Target over the SDK: it follows the loop's event stream
 // and steers through Send, so the orchestrator reaches a remote loop the same way any
 // client does.
+//
+// It starts following the stream when it is built, so the history is already arriving
+// by the time the orchestrator first looks. The wire has no "history finished" marker
+// (Observe replays then tails on one stream), so the first read waits for the stream to
+// go quiet before answering; later reads just take what has arrived.
 type wireTarget struct {
 	ctx    context.Context
 	client *fuse.Client
 	loop   string
 
 	mu      sync.Mutex
-	started bool
 	err     error
 	buf     []event.Event
+	arrived chan struct{} // signalled (coalesced) whenever an event is buffered
+	settled bool
 }
 
 func newWireTarget(ctx context.Context, c *fuse.Client, loop string) *wireTarget {
-	return &wireTarget{ctx: ctx, client: c, loop: loop}
+	t := &wireTarget{ctx: ctx, client: c, loop: loop, arrived: make(chan struct{}, 1)}
+	t.follow()
+	return t
 }
 
-// maxWireBuf bounds the events held between two reads of the watcher.
-const maxWireBuf = 4000
+const (
+	// maxWireBuf bounds the events held between two reads of the watcher.
+	maxWireBuf = 4000
+	// settleFirst is how long the first read waits for any history to show up.
+	settleFirst = time.Second
+	// settleQuiet is how long the stream must be silent before history counts as done.
+	settleQuiet = 150 * time.Millisecond
+	// settleMax caps the whole wait, so a busy stream cannot hold the first read forever.
+	settleMax = 2 * time.Second
+)
 
-func (t *wireTarget) start() {
+func (t *wireTarget) follow() {
 	ch, unsub, err := t.client.Observe(t.ctx, t.loop, 0)
 	if err != nil {
 		t.err = err
@@ -240,20 +257,53 @@ func (t *wireTarget) start() {
 				t.buf = append([]event.Event(nil), t.buf[over:]...)
 			}
 			t.mu.Unlock()
+			select {
+			case t.arrived <- struct{}{}:
+			default:
+			}
 		}
 	}()
 }
 
-func (t *wireTarget) Events(_ context.Context, after event.Seq) ([]event.Event, error) {
+// settle waits, once, for the replayed history to arrive: first for any event (a loop
+// with no events yet never sends one, hence the short cap), then for the stream to go
+// quiet.
+func (t *wireTarget) settle(ctx context.Context) {
+	deadline := time.NewTimer(settleMax)
+	defer deadline.Stop()
+	wait := settleFirst
+	for {
+		quiet := time.NewTimer(wait)
+		select {
+		case <-t.arrived:
+			quiet.Stop()
+			wait = settleQuiet
+		case <-quiet.C:
+			return
+		case <-deadline.C:
+			quiet.Stop()
+			return
+		case <-ctx.Done():
+			quiet.Stop()
+			return
+		}
+	}
+}
+
+func (t *wireTarget) Events(ctx context.Context, after event.Seq) ([]event.Event, error) {
+	t.mu.Lock()
+	first := !t.settled
+	t.settled = true
+	err := t.err
+	t.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	if first {
+		t.settle(ctx)
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.started {
-		t.started = true
-		t.start()
-	}
-	if t.err != nil {
-		return nil, t.err
-	}
 	// The watcher only ever moves forward, so what it has already seen can go.
 	keep := t.buf[:0]
 	for _, e := range t.buf {

@@ -55,6 +55,12 @@ type Deps struct {
 	// When "", StartLoop uses event.NoopStore{} instead of opening an fsstore — the
 	// one-shot binding uses this so its behavior stays byte-identical (no new files).
 	BaseDir string
+	// InMemoryEvents, when BaseDir is "", keeps each loop's event stream in a bounded
+	// in-memory store instead of discarding it, so the loop can be observed (replay and
+	// live tail) while it runs without writing any file. A one-shot run sets it when it
+	// opens a control socket; left false, a one-shot run keeps its no-op store and stays
+	// byte-identical. Ignored when BaseDir or DurableStore is set.
+	InMemoryEvents bool
 	// MaxConcurrent seeds the loop tree's scheduler concurrency (used only when Tree
 	// is nil, i.e. when StartLoop creates its own tree).
 	MaxConcurrent int
@@ -506,7 +512,11 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	if durable {
 		store = &durableSink{store: r.deps.DurableStore, key: key, ctx: sessionCtx, observer: obs}
 	} else if r.deps.BaseDir == "" {
-		store = event.NoopStore{}
+		if r.deps.InMemoryEvents {
+			store = event.NewMemStore(0)
+		} else {
+			store = event.NoopStore{}
+		}
 	} else {
 		fs, err := fsstore.NewFSEventStore(r.deps.BaseDir, rootID)
 		if err != nil {

@@ -239,6 +239,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer closeObs()
 
 	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate, obs.observer)
+	// A control socket needs the run's event stream to be observable; without one the
+	// run keeps its no-op store and writes nothing.
+	deps.InMemoryEvents = *controlSocket != ""
 	rt := runtime.New(deps)
 	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: task, ModelID: *modelAlias})
 	if err != nil {

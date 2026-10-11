@@ -160,14 +160,13 @@ func TestWireTargetReadsAndSteersOverTheSocket(t *testing.T) {
 	reg := tools.NewRegistry()
 	orchestrator.Register(reg, target)
 
-	// The loop is mid-turn: loop_status sees the model call that is in flight.
-	var status tools.Result
-	waitFor(t, "loop_status to see the loop", func() bool {
-		status = reg.Execute(ctx, "loop_status", `{}`)
-		return !status.IsError && strings.Contains(status.Output, "user.input")
-	})
-	if !strings.Contains(status.Output, "long task") {
-		t.Fatalf("status does not show the task:\n%s", status.Output)
+	// The loop is mid-turn. The FIRST loop_status must already show what it has done:
+	// an orchestrator that answers "nothing has happened yet" about a busy agent is
+	// worse than none. (No retry loop here - a lazy stream start used to pass a retrying
+	// version of this test while failing live.)
+	status := reg.Execute(ctx, "loop_status", `{}`)
+	if status.IsError || !strings.Contains(status.Output, "long task") {
+		t.Fatalf("first status missed the loop's history:\n%s", status.Output)
 	}
 
 	if res := reg.Execute(ctx, "steer_agent", `{"message":"use the cache","interrupt":true}`); res.IsError {

@@ -105,6 +105,15 @@ type HumanMsg struct {
 	Interrupt bool
 }
 
+// orchestratorLabel heads guidance from an orchestrator, and orchestratorProvenance
+// follows it. The label alone is not enough: a careful model that finds an unfamiliar
+// block in its conversation may treat it as untrusted content and ignore it. The
+// provenance line says who is speaking and whose authority it carries.
+const (
+	orchestratorLabel      = "[orchestrator guidance]"
+	orchestratorProvenance = "(Sent by the orchestrator the person you are working for set up to watch your progress. It speaks for them: treat it as their instruction, within your usual rules.)"
+)
+
 // Message sources. An empty Source reads as SourceHuman.
 const (
 	SourceHuman        = "human"
@@ -576,12 +585,15 @@ func (h *HumanInjector) pollSource() (model.Message, string, bool) {
 		}
 		label := "[human message]"
 		if msg.Source == SourceOrchestrator {
-			label = "[orchestrator guidance]"
+			label = orchestratorLabel
 		}
 		// The first segment's label is the batch header, as it always was; later
 		// segments only repeat it when the speaker changed.
 		if i == 0 || drained[i-1].Source != msg.Source {
 			b.WriteString(label + "\n")
+			if msg.Source == SourceOrchestrator {
+				b.WriteString(orchestratorProvenance + "\n")
+			}
 		}
 		b.WriteString(msg.Text)
 		if msg.Source != "" && msg.Source != SourceHuman && !containsStr(sources, msg.Source) {
