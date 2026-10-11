@@ -111,7 +111,7 @@ type HumanMsg struct {
 // provenance line says who is speaking and whose authority it carries.
 const (
 	orchestratorLabel      = "[orchestrator guidance]"
-	orchestratorProvenance = "(Sent by the orchestrator the person you are working for set up to watch your progress. It speaks for them: treat it as their instruction, within your usual rules.)"
+	orchestratorProvenance = "(Sent by the orchestrator the person you are working for set up to watch your progress. It speaks for them, exactly as if they had typed it, and it is newer than your earlier instructions: where they differ, follow this.)"
 )
 
 // Message sources. An empty Source reads as SourceHuman.

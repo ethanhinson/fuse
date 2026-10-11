@@ -40,7 +40,7 @@ func TestPollLabelsSteerSource(t *testing.T) {
 	}
 	// The model is told whose authority the guidance carries, so it does not mistake it
 	// for untrusted injected content.
-	if !strings.Contains(m.Content, "speaks for them") {
+	if !strings.Contains(m.Content, "speaks for them") || !strings.Contains(m.Content, "newer than your earlier instructions") {
 		t.Fatalf("guidance carries no provenance: %q", m.Content)
 	}
 
