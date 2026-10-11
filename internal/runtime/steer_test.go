@@ -74,9 +74,23 @@ func newSteerRuntime(t *testing.T, f *steerFake) Runtime {
 		MaxConcurrent: 2,
 		IdleTTL:       time.Minute,
 		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+			// The real bindings wire bash, spawn_agent and friends onto whatever registry
+			// they are handed. Do the same here so the test proves the runtime keeps an
+			// orchestrator away from them.
+			reg.Register(extraTool{"bash"})
+			reg.Register(extraTool{"spawn_agent"})
 			return agent.New(f.completer(modelID), execAll{reg}, nopRenderer{}, modelID, "binding prompt", 1, 0), nil, modelID, nil
 		},
 	})
+}
+
+type extraTool struct{ name string }
+
+func (e extraTool) Name() string               { return e.name }
+func (e extraTool) Description() string        { return "test tool" }
+func (e extraTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (e extraTool) Execute(context.Context, string) tools.Result {
+	return tools.Result{Output: "ran " + e.name}
 }
 
 func lastUser(req model.CompletionReq) string {
@@ -169,7 +183,8 @@ func TestOrchestratorLoopSteersTarget(t *testing.T) {
 	if !strings.Contains(f.orchSystem, "orchestrator") {
 		t.Fatalf("orchestrator ran without its system prompt: %q", f.orchSystem)
 	}
-	// It holds only the orchestrator tools - no bash, no write access.
+	// It holds only the orchestrator tools - no bash, no spawn_agent, even though the
+	// binding wired them onto its registry.
 	if strings.Join(f.orchTools, ",") != "loop_status,loop_event,steer_agent" {
 		t.Fatalf("orchestrator tools = %v", f.orchTools)
 	}

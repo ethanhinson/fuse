@@ -58,6 +58,13 @@ export interface StartLoopArgs {
   task: string;
   model: string;
   interactive?: boolean;
+  /**
+   * Start this loop as the orchestrator of another loop (same tenant): a persistent chat
+   * loop that watches and steers the target. Chat with it through `send` and `observe`
+   * like any interactive loop; `model` picks the orchestrator's own model. Implies
+   * `interactive`.
+   */
+  orchestrate?: string;
 }
 
 /**
@@ -170,6 +177,12 @@ export interface Client {
   /** Send injects human input at the loop's next turn boundary. */
   send(loopId: string, input: string): Promise<void>;
   /**
+   * Interrupt is `send` that does not wait: it cancels the loop's in-flight model call or
+   * tool batch so the message lands now. Use it to steer a loop that is mid-turn. A server
+   * whose runtime cannot interrupt delivers it at the next boundary like `send`.
+   */
+  interrupt(loopId: string, input: string): Promise<void>;
+  /**
    * observe streams domain events from `fromSeq` (default 0), skipping keepalives and
    * reconnecting transparently from the last-seen seq on stream end/error. Break the
    * `for await` loop to stop observing (which closes the underlying stream).
@@ -260,6 +273,7 @@ export function createClient(options: ClientOptions): Client {
         task: args.task,
         model: args.model,
         interactive: args.interactive ?? false,
+        orchestrateLoopId: args.orchestrate ?? "",
         tenant,
       });
       return { loopId: resp.loopId };
@@ -267,6 +281,10 @@ export function createClient(options: ClientOptions): Client {
 
     async send(loopId: string, input: string): Promise<void> {
       await wire.send({ loopId, input, tenant });
+    },
+
+    async interrupt(loopId: string, input: string): Promise<void> {
+      await wire.send({ loopId, input, tenant, interrupt: true });
     },
 
     observe(loopId: string, arg?: bigint | ObserveOptions): AsyncIterable<Event> {

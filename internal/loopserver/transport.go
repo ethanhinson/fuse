@@ -67,6 +67,10 @@ type startParams struct {
 	// run-to-completion (binding #2's stdio clients never set it, so they are
 	// byte-identical). A chat client (binding #3 WS) sets it true.
 	Interactive bool `json:"interactive,omitempty"`
+	// Orchestrate, when set to another loop's id, starts this loop as that loop's
+	// orchestrator: a persistent chat loop that watches and steers the target. It
+	// implies interactive; chat with it through loop.send and loop.observe.
+	Orchestrate string `json:"orchestrate,omitempty"`
 }
 type startResult struct {
 	LoopID string `json:"loop_id"`
@@ -75,6 +79,9 @@ type sendParams struct {
 	LoopID string `json:"loop_id"`
 	Input  string `json:"input"`
 	Tenant string `json:"tenant,omitempty"`
+	// Interrupt cancels the loop's in-flight model call or tool batch so this message
+	// lands now instead of at the next turn boundary.
+	Interrupt bool `json:"interrupt,omitempty"`
 }
 type observeParams struct {
 	LoopID  string    `json:"loop_id"`

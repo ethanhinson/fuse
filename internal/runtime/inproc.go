@@ -609,6 +609,19 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	}
 	if cfg.Orchestrate != "" {
 		a.SetSystemPrompt(orchestrator.SystemPrompt())
+		// The binding wires its whole tool surface (bash, spawn_agent, blackboard, ...)
+		// onto whatever registry it is handed. An orchestrator watches and steers; it
+		// must not also act, so cut the registry back to exactly its own tools. The
+		// agent reads the registry live each turn, so this takes effect before Run.
+		keep := map[string]bool{}
+		for _, n := range orchestrator.ToolNames {
+			keep[n] = true
+		}
+		for _, t := range toolReg.Tools() {
+			if !keep[t.Name()] {
+				toolReg.Unregister(t.Name())
+			}
+		}
 	}
 	a.SetObserver(obs)
 	a.SetEventSink(store)

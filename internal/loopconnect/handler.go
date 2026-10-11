@@ -156,6 +156,14 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
 		return nil, aerr
 	}
+	// Orchestrating another loop is acting on it: the caller must be allowed to
+	// drive that loop, by the same ownership rule Send and Observe apply.
+	if m.OrchestrateLoopId != "" {
+		if aerr := h.authorizeLoop(ctx, tenant, m.OrchestrateLoopId, p, havePrincipal); aerr != nil {
+			apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
+			return nil, aerr
+		}
+	}
 	loopBase := h.baseCtx
 	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
 		loopBase = trace.ContextWithSpanContext(loopBase, sc)
@@ -175,9 +183,15 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		// and the loop-server hook falls back to the tenant-only local principal.
 		Subject:     p.Subject,
 		Interactive: m.Interactive,
+		Orchestrate: m.OrchestrateLoopId,
 	})
 	if err != nil {
 		apiOutcome = observeotel.OutcomeFromError(ctx, err)
+		if errors.Is(err, runtime.ErrLoopNotFound) || errors.Is(err, runtime.ErrLoopFinished) {
+			// The orchestrate target is not a loop the caller can steer: a client
+			// error, not a server fault.
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	// Record ownership. The seam's StartLoop already Registered the record (with
@@ -233,7 +247,8 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
 		return nil, aerr
 	}
-	err := h.rt.Send(ctx, tenant, m.LoopId, m.Input)
+	opts := runtime.SteerOpts{Interrupt: m.Interrupt}
+	err := runtime.SendOrSteer(ctx, h.rt, tenant, m.LoopId, m.Input, opts)
 	// A finished loop may be RESUMABLE (change 0054, D3): a persistent conversational
 	// session whose park was reaped after a disconnect can be revived. Rather than
 	// surfacing CodeFailedPrecondition, transparently resume it and retry the Send once,
@@ -243,7 +258,7 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 	// to the mapping below unchanged.
 	if errors.Is(err, runtime.ErrLoopFinished) {
 		if _, rerr := h.rt.Resume(ctx, tenant, m.LoopId); rerr == nil {
-			err = h.rt.Send(ctx, tenant, m.LoopId, m.Input)
+			err = runtime.SendOrSteer(ctx, h.rt, tenant, m.LoopId, m.Input, opts)
 		}
 	}
 	if err != nil {

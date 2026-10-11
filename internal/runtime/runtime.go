@@ -89,6 +89,17 @@ type Steerer interface {
 	Steer(ctx context.Context, tenant event.TenantID, loopID string, input string, opts SteerOpts) error
 }
 
+// SendOrSteer delivers input to a loop through the Steerer capability when rt has it,
+// and through plain Send otherwise (so an interrupt request degrades to an ordinary
+// next-boundary message on a runtime that cannot interrupt). Bindings call this
+// instead of type-asserting themselves.
+func SendOrSteer(ctx context.Context, rt Runtime, tenant event.TenantID, loopID, input string, opts SteerOpts) error {
+	if st, ok := rt.(Steerer); ok && (opts.Interrupt || opts.Source != "") {
+		return st.Steer(ctx, tenant, loopID, input, opts)
+	}
+	return rt.Send(ctx, tenant, loopID, input)
+}
+
 // LoopConfig is the policy-free description of one loop to start. It carries loop
 // mechanics inputs only; renderer/gate/transport are the binding's business and
 // never appear here.

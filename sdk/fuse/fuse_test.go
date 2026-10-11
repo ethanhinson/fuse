@@ -12,17 +12,18 @@ import (
 // public Client surface can be exercised without a runtime or a network. It records
 // the arguments each method received and returns scripted results.
 type stubBackend struct {
-	startCfg   StartLoopConfig
-	startID    LoopID
-	startErr   error
-	sawSendID  LoopID
-	sawSendIn  string
-	sendErr    error
-	sawObsID   LoopID
-	sawObsFrom Seq
-	obsCh      <-chan Event
-	obsUnsub   func()
-	obsErr     error
+	startCfg     StartLoopConfig
+	startID      LoopID
+	startErr     error
+	sawSendID    LoopID
+	sawSendIn    string
+	sendErr      error
+	sawInterrupt bool
+	sawObsID     LoopID
+	sawObsFrom   Seq
+	obsCh        <-chan Event
+	obsUnsub     func()
+	obsErr       error
 }
 
 func (s *stubBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (LoopID, error) {
@@ -30,8 +31,8 @@ func (s *stubBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (LoopI
 	return s.startID, s.startErr
 }
 
-func (s *stubBackend) send(ctx context.Context, id LoopID, input string) error {
-	s.sawSendID, s.sawSendIn = id, input
+func (s *stubBackend) send(ctx context.Context, id LoopID, input string, interrupt bool) error {
+	s.sawSendID, s.sawSendIn, s.sawInterrupt = id, input, interrupt
 	return s.sendErr
 }
 
@@ -126,4 +127,15 @@ func TestPublicTypeAliases(t *testing.T) {
 		t.Fatalf("type alias round-trip lost data: %+v", raw)
 	}
 	var _ LoopID = "loop-1"
+}
+
+func TestInterruptSendsWithInterruptFlag(t *testing.T) {
+	b := &stubBackend{}
+	c := newTestClient(b)
+	if err := c.Send(context.Background(), "l1", "hi"); err != nil || b.sawInterrupt {
+		t.Fatalf("Send: err=%v interrupt=%v", err, b.sawInterrupt)
+	}
+	if err := c.Interrupt(context.Background(), "l1", "stop"); err != nil || !b.sawInterrupt || b.sawSendIn != "stop" {
+		t.Fatalf("Interrupt: err=%v interrupt=%v in=%q", err, b.sawInterrupt, b.sawSendIn)
+	}
 }

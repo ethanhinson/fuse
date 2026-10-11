@@ -36,6 +36,7 @@ func (b *localBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (Loop
 		ModelID:     cfg.Model,
 		Tenant:      b.tenant,
 		Interactive: cfg.Interactive,
+		Orchestrate: cfg.Orchestrate,
 	})
 	if err != nil {
 		return "", err
@@ -43,8 +44,8 @@ func (b *localBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (Loop
 	return h.ID(), nil
 }
 
-func (b *localBackend) send(ctx context.Context, id LoopID, input string) error {
-	return b.rt.Send(ctx, b.tenant, id, input)
+func (b *localBackend) send(ctx context.Context, id LoopID, input string, interrupt bool) error {
+	return runtime.SendOrSteer(ctx, b.rt, b.tenant, id, input, runtime.SteerOpts{Interrupt: interrupt})
 }
 
 // observe implements the wire's history-then-live contract over the seam, porting

@@ -46,6 +46,11 @@ type StartLoopConfig struct {
 	Task        string // the initial user task
 	Model       string // resolved gateway model id; "" ⇒ the server resolves the default
 	Interactive bool   // persistent conversational mode (parks between turns)
+	// Orchestrate, when set to another loop's id (same tenant), starts this loop as that
+	// loop's orchestrator: a persistent chat loop that watches and steers the target.
+	// Chat with it through Send and Observe like any interactive loop; Model picks the
+	// orchestrator's own model. It implies Interactive.
+	Orchestrate LoopID
 }
 
 // Credentials is the per-Client identity: the bearer token presented on every remote
@@ -76,7 +81,7 @@ var (
 // Client, never the local/remote split.
 type backend interface {
 	startLoop(ctx context.Context, cfg StartLoopConfig) (LoopID, error)
-	send(ctx context.Context, id LoopID, input string) error
+	send(ctx context.Context, id LoopID, input string, interrupt bool) error
 	observe(ctx context.Context, id LoopID, from Seq) (<-chan Event, func(), error)
 }
 
@@ -93,7 +98,14 @@ func (c *Client) StartLoop(ctx context.Context, cfg StartLoopConfig) (LoopID, er
 
 // Send injects human input at the loop's next turn boundary.
 func (c *Client) Send(ctx context.Context, id LoopID, input string) error {
-	return c.backend.send(ctx, id, input)
+	return c.backend.send(ctx, id, input, false)
+}
+
+// Interrupt is Send that does not wait: it cancels the loop's in-flight model call or
+// tool batch so the message lands now. Use it to steer a loop that is mid-turn. A
+// server whose runtime cannot interrupt delivers it at the next boundary like Send.
+func (c *Client) Interrupt(ctx context.Context, id LoopID, input string) error {
+	return c.backend.send(ctx, id, input, true)
 }
 
 // Observe returns a live event tail beginning at fromSeq plus an idempotent

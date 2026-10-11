@@ -81,10 +81,11 @@ func (b bearerInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFun
 
 func (b *remoteBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (LoopID, error) {
 	resp, err := b.client.StartLoop(ctx, connect.NewRequest(&loopv1.StartLoopRequest{
-		Task:        cfg.Task,
-		Model:       cfg.Model,
-		Tenant:      b.tenant,
-		Interactive: cfg.Interactive,
+		Task:              cfg.Task,
+		Model:             cfg.Model,
+		Tenant:            b.tenant,
+		Interactive:       cfg.Interactive,
+		OrchestrateLoopId: cfg.Orchestrate,
 	}))
 	if err != nil {
 		return "", mapConnectError(err)
@@ -92,11 +93,12 @@ func (b *remoteBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (Loo
 	return resp.Msg.LoopId, nil
 }
 
-func (b *remoteBackend) send(ctx context.Context, id LoopID, input string) error {
+func (b *remoteBackend) send(ctx context.Context, id LoopID, input string, interrupt bool) error {
 	_, err := b.client.Send(ctx, connect.NewRequest(&loopv1.SendRequest{
-		LoopId: id,
-		Input:  input,
-		Tenant: b.tenant,
+		LoopId:    id,
+		Input:     input,
+		Tenant:    b.tenant,
+		Interrupt: interrupt,
 	}))
 	return mapConnectError(err)
 }

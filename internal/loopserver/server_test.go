@@ -534,3 +534,43 @@ func readNote(t *testing.T, dec *json.Decoder) eventNoteParams {
 	}
 	return np
 }
+
+type steeringRuntime struct {
+	*fakeRuntime
+	steerOpts runtime.SteerOpts
+	steerIn   string
+	steered   bool
+}
+
+func (s *steeringRuntime) Steer(ctx context.Context, tn event.TenantID, loopID, input string, opts runtime.SteerOpts) error {
+	s.steered, s.steerOpts, s.steerIn = true, opts, input
+	return nil
+}
+
+func TestDispatchLoopSendInterrupt(t *testing.T) {
+	fr := &steeringRuntime{fakeRuntime: &fakeRuntime{}}
+	s := NewServer(nil, nil, fr)
+	r := req{JSONRPC: "2.0", ID: json.RawMessage(`3`), Method: "loop.send", Params: json.RawMessage(`{"loop_id":"l","input":"stop now","interrupt":true}`)}
+	if got := s.dispatch(context.Background(), r); got.Error != nil {
+		t.Fatalf("unexpected error: %+v", got.Error)
+	}
+	if !fr.steered || !fr.steerOpts.Interrupt || fr.steerIn != "stop now" {
+		t.Fatalf("steer = %v %+v %q", fr.steered, fr.steerOpts, fr.steerIn)
+	}
+}
+
+func TestDispatchLoopStartOrchestrate(t *testing.T) {
+	fr := &fakeRuntime{startID: "orch"}
+	s := NewServer(nil, nil, fr)
+	r := req{JSONRPC: "2.0", ID: json.RawMessage(`4`), Method: "loop.start", Params: json.RawMessage(`{"task":"watch","model":"m","orchestrate":"target-1"}`)}
+	if got := s.dispatch(context.Background(), r); got.Error != nil {
+		t.Fatalf("unexpected error: %+v", got.Error)
+	}
+	if fr.startCfg.Orchestrate != "target-1" {
+		t.Fatalf("Orchestrate = %q", fr.startCfg.Orchestrate)
+	}
+	fr.startErr = runtime.ErrLoopNotFound
+	if got := s.dispatch(context.Background(), r); got.Error == nil || got.Error.Code != codeInvalidParams {
+		t.Fatalf("unknown target should be invalid params, got %+v", got.Error)
+	}
+}
