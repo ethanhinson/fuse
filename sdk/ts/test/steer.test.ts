@@ -9,7 +9,7 @@ import { LoopService } from "../../../proto/gen/ts/fuse/loop/v1/loop_pb.js";
 import { createClient } from "../src/index.js";
 
 function harness() {
-  const sends: Array<{ loopId: string; input: string; interrupt: boolean; tenant: string }> = [];
+  const sends: Array<{ loopId: string; input: string; interrupt: boolean; tenant: string; source: string }> = [];
   const starts: Array<{ task: string; orchestrateLoopId: string; interactive: boolean }> = [];
   const transport = createRouterTransport(({ service }) => {
     service(LoopService, {
@@ -22,7 +22,7 @@ function harness() {
         return { loopId: "orch-1" };
       },
       send(req) {
-        sends.push({ loopId: req.loopId, input: req.input, interrupt: req.interrupt, tenant: req.tenant });
+        sends.push({ loopId: req.loopId, input: req.input, interrupt: req.interrupt, tenant: req.tenant, source: req.source });
         return {};
       },
     });
@@ -40,8 +40,8 @@ test("send does not interrupt; interrupt does", async () => {
   await client.send("loop-1", "hello");
   await client.interrupt("loop-1", "stop now");
   assert.deepEqual(sends, [
-    { loopId: "loop-1", input: "hello", interrupt: false, tenant: "acme" },
-    { loopId: "loop-1", input: "stop now", interrupt: true, tenant: "acme" },
+    { loopId: "loop-1", input: "hello", interrupt: false, tenant: "acme", source: "" },
+    { loopId: "loop-1", input: "stop now", interrupt: true, tenant: "acme", source: "" },
   ]);
 });
 
@@ -53,4 +53,12 @@ test("startLoop threads the orchestrate target", async () => {
 
   await client.startLoop({ task: "plain", model: "m" });
   assert.equal(starts[1].orchestrateLoopId, "");
+});
+
+test("sendWith labels the source", async () => {
+  const { client, sends } = harness();
+  await client.sendWith("loop-1", "try the cache", { source: "orchestrator", interrupt: true });
+  assert.deepEqual(sends, [
+    { loopId: "loop-1", input: "try the cache", interrupt: true, tenant: "acme", source: "orchestrator" },
+  ]);
 });

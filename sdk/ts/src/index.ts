@@ -170,6 +170,17 @@ export function isCompletion(event: Event): boolean {
   return event.kind === KIND_LOOP_PARKED;
 }
 
+/** Options for {@link Client.sendWith}. */
+export interface SendOptions {
+  /** Cancel the loop's in-flight model call or tool batch so the message lands now. */
+  interrupt?: boolean;
+  /**
+   * Who is speaking: "human" (the default) or "orchestrator". The agent sees guidance
+   * from an orchestrator under its own label.
+   */
+  source?: "human" | "orchestrator";
+}
+
 /** The remote-only fuse client surface. */
 export interface Client {
   /** StartLoop constructs and drives one loop, returning its id. */
@@ -182,6 +193,8 @@ export interface Client {
    * whose runtime cannot interrupt delivers it at the next boundary like `send`.
    */
   interrupt(loopId: string, input: string): Promise<void>;
+  /** sendWith is `send` with {@link SendOptions}: interrupt the loop and/or label the source. */
+  sendWith(loopId: string, input: string, options: SendOptions): Promise<void>;
   /**
    * observe streams domain events from `fromSeq` (default 0), skipping keepalives and
    * reconnecting transparently from the last-seen seq on stream end/error. Break the
@@ -285,6 +298,16 @@ export function createClient(options: ClientOptions): Client {
 
     async interrupt(loopId: string, input: string): Promise<void> {
       await wire.send({ loopId, input, tenant, interrupt: true });
+    },
+
+    async sendWith(loopId: string, input: string, options: SendOptions): Promise<void> {
+      await wire.send({
+        loopId,
+        input,
+        tenant,
+        interrupt: options.interrupt ?? false,
+        source: options.source ?? "",
+      });
     },
 
     observe(loopId: string, arg?: bigint | ObserveOptions): AsyncIterable<Event> {

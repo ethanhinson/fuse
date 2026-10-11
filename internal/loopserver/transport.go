@@ -82,6 +82,8 @@ type sendParams struct {
 	// Interrupt cancels the loop's in-flight model call or tool batch so this message
 	// lands now instead of at the next turn boundary.
 	Interrupt bool `json:"interrupt,omitempty"`
+	// Source labels who is speaking: "human" (default) or "orchestrator".
+	Source string `json:"source,omitempty"`
 }
 type observeParams struct {
 	LoopID  string    `json:"loop_id"`

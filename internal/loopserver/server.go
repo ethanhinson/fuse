@@ -136,7 +136,10 @@ func (s *Server) handleSend(ctx context.Context, r req) resp {
 	if err := json.Unmarshal(r.Params, &p); err != nil {
 		return s.errResp(r.ID, codeInvalidParams, "invalid params: "+err.Error())
 	}
-	if err := runtime.SendOrSteer(ctx, s.rt, event.TenantID(p.Tenant), p.LoopID, p.Input, runtime.SteerOpts{Interrupt: p.Interrupt}); err != nil {
+	if !runtime.ValidSource(p.Source) {
+		return s.errResp(r.ID, codeInvalidParams, fmt.Sprintf("unknown source %q (want \"human\" or \"orchestrator\")", p.Source))
+	}
+	if err := runtime.SendOrSteer(ctx, s.rt, event.TenantID(p.Tenant), p.LoopID, p.Input, runtime.SteerOpts{Interrupt: p.Interrupt, Source: p.Source}); err != nil {
 		if errors.Is(err, runtime.ErrLoopFinished) || errors.Is(err, runtime.ErrLoopNotFound) {
 			return s.errResp(r.ID, codeInvalidParams, err.Error())
 		}

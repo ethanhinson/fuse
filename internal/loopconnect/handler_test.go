@@ -279,10 +279,6 @@ func TestSendInterruptUsesSteerer(t *testing.T) {
 	if !rt.steered || !rt.steerOpts.Interrupt || rt.steerIn != "stop" {
 		t.Fatalf("steer = %v %+v %q", rt.steered, rt.steerOpts, rt.steerIn)
 	}
-	// A wire client can never claim to be the orchestrator.
-	if rt.steerOpts.Source != "" {
-		t.Fatalf("wire Send set a source: %q", rt.steerOpts.Source)
-	}
 }
 
 // A plain Send stays a plain Send, and an interrupt on a runtime without the
@@ -321,5 +317,20 @@ func TestStartLoopOrchestrateThreaded(t *testing.T) {
 	_, err := client.StartLoop(context.Background(), connect.NewRequest(&loopv1.StartLoopRequest{Task: "watch", OrchestrateLoopId: "gone"}))
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("unknown orchestrate target code = %v, want FailedPrecondition", connect.CodeOf(err))
+	}
+}
+
+func TestSendSourceValidatedAndThreaded(t *testing.T) {
+	rt := &steeringRuntime{fakeRuntime: &fakeRuntime{}}
+	client := newTestServer(t, rt)
+	if _, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{LoopId: "l", Input: "try X", Source: "orchestrator"})); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !rt.steered || rt.steerOpts.Source != "orchestrator" {
+		t.Fatalf("source not threaded: steered=%v opts=%+v", rt.steered, rt.steerOpts)
+	}
+	_, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{LoopId: "l", Input: "x", Source: "root"}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("unknown source code = %v, want InvalidArgument", connect.CodeOf(err))
 	}
 }

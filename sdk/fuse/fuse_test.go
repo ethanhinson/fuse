@@ -19,6 +19,7 @@ type stubBackend struct {
 	sawSendIn    string
 	sendErr      error
 	sawInterrupt bool
+	sawSource    string
 	sawObsID     LoopID
 	sawObsFrom   Seq
 	obsCh        <-chan Event
@@ -31,8 +32,8 @@ func (s *stubBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (LoopI
 	return s.startID, s.startErr
 }
 
-func (s *stubBackend) send(ctx context.Context, id LoopID, input string, interrupt bool) error {
-	s.sawSendID, s.sawSendIn, s.sawInterrupt = id, input, interrupt
+func (s *stubBackend) send(ctx context.Context, id LoopID, input string, opts SendOptions) error {
+	s.sawSendID, s.sawSendIn, s.sawInterrupt, s.sawSource = id, input, opts.Interrupt, opts.Source
 	return s.sendErr
 }
 
@@ -137,5 +138,16 @@ func TestInterruptSendsWithInterruptFlag(t *testing.T) {
 	}
 	if err := c.Interrupt(context.Background(), "l1", "stop"); err != nil || !b.sawInterrupt || b.sawSendIn != "stop" {
 		t.Fatalf("Interrupt: err=%v interrupt=%v in=%q", err, b.sawInterrupt, b.sawSendIn)
+	}
+}
+
+func TestSendWithCarriesSource(t *testing.T) {
+	b := &stubBackend{}
+	c := newTestClient(b)
+	if err := c.SendWith(context.Background(), "l1", "try X", SendOptions{Source: SourceOrchestrator, Interrupt: true}); err != nil {
+		t.Fatal(err)
+	}
+	if b.sawSource != SourceOrchestrator || !b.sawInterrupt {
+		t.Fatalf("source=%q interrupt=%v", b.sawSource, b.sawInterrupt)
 	}
 }

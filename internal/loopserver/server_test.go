@@ -574,3 +574,19 @@ func TestDispatchLoopStartOrchestrate(t *testing.T) {
 		t.Fatalf("unknown target should be invalid params, got %+v", got.Error)
 	}
 }
+
+func TestDispatchLoopSendSource(t *testing.T) {
+	fr := &steeringRuntime{fakeRuntime: &fakeRuntime{}}
+	s := NewServer(nil, nil, fr)
+	ok := req{JSONRPC: "2.0", ID: json.RawMessage(`5`), Method: "loop.send", Params: json.RawMessage(`{"loop_id":"l","input":"try X","source":"orchestrator"}`)}
+	if got := s.dispatch(context.Background(), ok); got.Error != nil {
+		t.Fatalf("unexpected error: %+v", got.Error)
+	}
+	if fr.steerOpts.Source != "orchestrator" {
+		t.Fatalf("source = %q", fr.steerOpts.Source)
+	}
+	bad := req{JSONRPC: "2.0", ID: json.RawMessage(`6`), Method: "loop.send", Params: json.RawMessage(`{"loop_id":"l","input":"x","source":"root"}`)}
+	if got := s.dispatch(context.Background(), bad); got.Error == nil || got.Error.Code != codeInvalidParams {
+		t.Fatalf("unknown source should be invalid params: %+v", got.Error)
+	}
+}

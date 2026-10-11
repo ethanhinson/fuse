@@ -93,12 +93,13 @@ func (b *remoteBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (Loo
 	return resp.Msg.LoopId, nil
 }
 
-func (b *remoteBackend) send(ctx context.Context, id LoopID, input string, interrupt bool) error {
+func (b *remoteBackend) send(ctx context.Context, id LoopID, input string, opts SendOptions) error {
 	_, err := b.client.Send(ctx, connect.NewRequest(&loopv1.SendRequest{
 		LoopId:    id,
 		Input:     input,
 		Tenant:    b.tenant,
-		Interrupt: interrupt,
+		Interrupt: opts.Interrupt,
+		Source:    opts.Source,
 	}))
 	return mapConnectError(err)
 }

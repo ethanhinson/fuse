@@ -81,7 +81,7 @@ var (
 // Client, never the local/remote split.
 type backend interface {
 	startLoop(ctx context.Context, cfg StartLoopConfig) (LoopID, error)
-	send(ctx context.Context, id LoopID, input string, interrupt bool) error
+	send(ctx context.Context, id LoopID, input string, opts SendOptions) error
 	observe(ctx context.Context, id LoopID, from Seq) (<-chan Event, func(), error)
 }
 
@@ -98,14 +98,35 @@ func (c *Client) StartLoop(ctx context.Context, cfg StartLoopConfig) (LoopID, er
 
 // Send injects human input at the loop's next turn boundary.
 func (c *Client) Send(ctx context.Context, id LoopID, input string) error {
-	return c.backend.send(ctx, id, input, false)
+	return c.backend.send(ctx, id, input, SendOptions{})
+}
+
+// SendOptions qualifies one message to a loop.
+type SendOptions struct {
+	// Interrupt cancels the loop's in-flight model call or tool batch so the message
+	// lands now instead of at the next turn boundary.
+	Interrupt bool
+	// Source labels who is speaking: "" or SourceHuman (the default), or
+	// SourceOrchestrator for guidance from an orchestrator. The agent sees the label.
+	Source string
+}
+
+// Message sources for SendOptions.Source.
+const (
+	SourceHuman        = "human"
+	SourceOrchestrator = "orchestrator"
+)
+
+// SendWith is Send with options: interrupt the loop, and/or label the message's source.
+func (c *Client) SendWith(ctx context.Context, id LoopID, input string, opts SendOptions) error {
+	return c.backend.send(ctx, id, input, opts)
 }
 
 // Interrupt is Send that does not wait: it cancels the loop's in-flight model call or
 // tool batch so the message lands now. Use it to steer a loop that is mid-turn. A
 // server whose runtime cannot interrupt delivers it at the next boundary like Send.
 func (c *Client) Interrupt(ctx context.Context, id LoopID, input string) error {
-	return c.backend.send(ctx, id, input, true)
+	return c.backend.send(ctx, id, input, SendOptions{Interrupt: true})
 }
 
 // Observe returns a live event tail beginning at fromSeq plus an idempotent

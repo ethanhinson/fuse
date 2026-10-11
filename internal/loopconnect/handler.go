@@ -15,6 +15,7 @@ package loopconnect
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"connectrpc.com/connect"
@@ -247,7 +248,12 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
 		return nil, aerr
 	}
-	opts := runtime.SteerOpts{Interrupt: m.Interrupt}
+	if !runtime.ValidSource(m.Source) {
+		aerr := connect.NewError(connect.CodeInvalidArgument, errors.New("loopconnect: unknown source "+strconv.Quote(m.Source)+" (want \"human\" or \"orchestrator\")"))
+		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
+		return nil, aerr
+	}
+	opts := runtime.SteerOpts{Interrupt: m.Interrupt, Source: m.Source}
 	err := runtime.SendOrSteer(ctx, h.rt, tenant, m.LoopId, m.Input, opts)
 	// A finished loop may be RESUMABLE (change 0054, D3): a persistent conversational
 	// session whose park was reaped after a disconnect can be revived. Rather than

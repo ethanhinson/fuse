@@ -71,6 +71,18 @@ type Runtime interface {
 	Resume(ctx context.Context, tenant event.TenantID, loopID string) (LoopHandle, error)
 }
 
+// Message sources for SteerOpts.Source. They are the agent's own labels, re-exported so
+// a binding names them without importing the agent package.
+const (
+	SourceHuman        = agent.SourceHuman
+	SourceOrchestrator = agent.SourceOrchestrator
+)
+
+// ValidSource reports whether s is an accepted message source ("" reads as human).
+func ValidSource(s string) bool {
+	return s == "" || s == SourceHuman || s == SourceOrchestrator
+}
+
 // SteerOpts qualifies one steering message.
 type SteerOpts struct {
 	// Source says who is speaking (agent.SourceHuman, the default, or
