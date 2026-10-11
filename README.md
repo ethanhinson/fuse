@@ -353,6 +353,60 @@ JSON, and `--timeout <dur>` bounds the whole run (default 3m). Nothing about the
 agents is faked — the recorder is just an `agent.Renderer` layered over the
 production wiring, so what you see is exactly what `/research` does.
 
+## Steering a running agent
+
+You can talk to an agent while it works, and you can hand that job to an
+**orchestrator**: a second model that watches the agent and steers it for you.
+This works in every way you can run fuse.
+
+Two things to know first:
+
+- **A steer** is a message to a running agent. It is read at the agent's next
+  step. Add **interrupt** and fuse cancels what the agent is doing right now
+  (the model call or the running command) so the message lands at once. Steps
+  the agent had not started yet are skipped, and every tool call still gets a
+  result, so the conversation stays valid.
+- **The orchestrator** is a chat. It has three tools: look at what the agent is
+  doing, read one event in full, and steer the agent. It has no shell and no
+  file access. Its messages reach the agent labelled as guidance from the
+  orchestrator, spoken for you, and newer than the agent's earlier instructions.
+
+| How you run fuse | Steer | Chat with the orchestrator |
+|---|---|---|
+| `fuse shell` | type while it works; `/interrupt MESSAGE` to cut in | `/orchestrator` (stays on until `/orchestrator off`), or `/orchestrator MESSAGE` for one message |
+| `fuse "task"` | start with `--control /tmp/run.sock`, then `fuse steer --socket /tmp/run.sock --loop ID [--interrupt] "msg"` | `fuse orchestrate --socket /tmp/run.sock --loop ID` |
+| `fuse loop-serve-net` (Docker, compose, Helm) | `fuse steer --url URL --token T --loop ID`, or `Send` with `interrupt` | `fuse orchestrate --url URL --token T --loop ID`, or start a loop with `orchestrate` set (below) |
+| `fuse loop-server` (stdio) | `loop.send` with `"interrupt": true` | `loop.start` with `"orchestrate": "<loop id>"` |
+| Go and TypeScript SDKs | `client.Interrupt` / `client.SendWith` (Go), `client.interrupt` / `client.sendWith` (TS) | `StartLoopConfig.Orchestrate` (Go), `orchestrate` in `startLoop` (TS) |
+
+The one-shot run prints the exact `fuse steer` line, with its loop id, when it
+starts with `--control`. The control socket is private to your user (mode 0600).
+
+Starting an orchestrator on a server makes it a loop like any other. It lives in
+the same tenant as the loop it watches and needs the same permission to drive
+it, then you chat with it through `Send` and `Observe`:
+
+```go
+worker, _ := client.StartLoop(ctx, fuse.StartLoopConfig{Task: "migrate the schema", Model: "minimax", Interactive: true})
+orch, _ := client.StartLoop(ctx, fuse.StartLoopConfig{Task: "Tell me what it is doing.", Model: "deepseek-flash", Orchestrate: worker})
+client.Send(ctx, orch, "Tell it to run the tests before it finishes. Interrupt it if it is mid-edit.")
+```
+
+Pick the orchestrator's model in `~/.fuse/config.yml` (home file only, so a
+repository cannot choose which model steers your agent):
+
+```yaml
+orchestrator:
+  model: deepseek-flash   # an alias from `fuse models`; empty means the session's model
+```
+
+`fuse orchestrate` runs the orchestrator model on your machine, using your
+gateway config, and reaches the agent only through the wire. `--model` overrides
+the alias for one session.
+
+Limits: a hosted server with more than one replica needs a message to reach the
+replica that runs the loop (the same limit `Send` already has).
+
 ## Networked loop-control — `loop-serve-net` (Connect/protobuf)
 
 `fuse loop-serve-net` exposes the same policy-free multi-loop runtime that

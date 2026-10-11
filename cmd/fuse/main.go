@@ -127,7 +127,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	rest := fs.Args()
 	if len(rest) == 0 {
 		banner.Print(stderr, version.Version)
-		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] \"<task>\"")
+		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] [--control SOCKET] \"<task>\"")
 		return 2
 	}
 	task := rest[0]
