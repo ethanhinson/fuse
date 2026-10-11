@@ -548,4 +548,7 @@ const (
 type UserInputPayload struct {
 	Turn    int    `json:"turn"`
 	Content string `json:"content"`
+	// Source names a non-human speaker for a steered turn (e.g. "orchestrator"); empty
+	// for a plain human or task turn. Informational only - the resume fold ignores it.
+	Source string `json:"source,omitempty"`
 }

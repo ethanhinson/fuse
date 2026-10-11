@@ -425,13 +425,13 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		// them as a single batched user turn before the model is called (ADR-0022).
 		// This is a self-pull — the node reads its own queue at a point where it is
 		// between model calls — so ADR-0016's run-to-completion contract holds.
-		if hm, ok := a.humanInjector.Poll(); ok {
+		if hm, src, ok := a.humanInjector.pollSource(); ok {
 			messages = append(messages, hm)
 			// Record the injected human turn in the durable stream (change 0054): the
 			// exact batched/prefixed text that entered the transcript, so a later fold
 			// rebuilds this user turn identically. Emitted at THIS turn (unlike the seed,
 			// which is turn 0) so replay order matches conversation order.
-			a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content})
+			a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content, Source: src})
 		}
 
 		estimate := lastUsage + messagesSize(messages[accounted:])/bytesPerToken
@@ -540,9 +540,19 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			Model:    a.modelID,
 			MsgCount: len(req.Messages),
 		})
-		modelCtx, modelSpan := a.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete", Fields: []observe.Field{{Key: "model", Value: a.modelID}}})
+		// An Interrupt steer cancels this call so the steer lands now (see steer.go).
+		callCtx, endScope := a.interruptScope(ctx)
+		modelCtx, modelSpan := a.observer.Start(callCtx, observe.Descriptor{Kind: observe.OperationModelAttempt, Name: "complete", Fields: []observe.Field{{Key: "model", Value: a.modelID}}})
 		resp, err := a.model.Complete(modelCtx, req)
 		modelSpan.End(modelOutcome(err))
+		steered := endScope()
+		if err != nil && steered && ctx.Err() == nil {
+			// Cancelled by a steer, not by the caller: drop the half-made call and go
+			// round again - the top-of-turn Poll injects the steer before the retry.
+			a.renderer.Errorf("model call interrupted by a steering message")
+			turn--
+			continue
+		}
 		if err != nil {
 			// The estimate said we fit but the provider disagreed: prune hard
 			// (deterministic — recovery must not depend on another LLM call)
@@ -611,6 +621,14 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 					continue
 				}
 				// errNoBus or ctx cancellation: end the run like a normal terminal turn.
+			}
+			// A steer that arrived while this final answer was being produced would
+			// otherwise be stranded: Send has already reported it accepted. Give it
+			// one more turn instead of dropping it.
+			if hm, src, ok := a.humanInjector.pollSource(); ok && ctx.Err() == nil {
+				messages = append(messages, hm)
+				a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content, Source: src})
+				continue
 			}
 			return messages, nil
 		}
@@ -753,7 +771,9 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			}
 		}
 
-		toolMsgs, results := a.executeTools(ctx, turn, messages, resp.ToolCalls)
+		toolCtx, endToolScope := a.interruptScope(ctx)
+		toolMsgs, results := a.executeTools(toolCtx, turn, messages, resp.ToolCalls)
+		endToolScope()
 		messages = append(messages, toolMsgs...)
 
 		// Policy-denial bookkeeping (change 0067). A valve-layer denial in a
@@ -879,14 +899,14 @@ func (a *Agent) executeTools(ctx context.Context, turn int, messages []model.Mes
 			go func(i int, call model.ToolCall) {
 				defer wg.Done()
 				a.renderer.ToolCall(call.Name, call.Arguments)
-				results[i] = toolResult{call: call, res: a.executeToolBounded(tctx, turn, call)}
+				results[i] = toolResult{call: call, res: a.runTool(tctx, turn, call)}
 			}(i, call)
 		}
 		wg.Wait()
 	} else {
 		for i, call := range calls {
 			a.renderer.ToolCall(call.Name, call.Arguments)
-			results[i] = toolResult{call: call, res: a.executeToolBounded(tctx, turn, call)}
+			results[i] = toolResult{call: call, res: a.runTool(tctx, turn, call)}
 		}
 	}
 
