@@ -247,3 +247,9 @@ func TestInMemoryEventsMakeABaseDirlessLoopObservable(t *testing.T) {
 		})
 	}
 }
+
+func modelToolCall(id, name, args string) model.CompletionResp {
+	return model.CompletionResp{ToolCalls: []model.ToolCall{{ID: id, Name: name, Arguments: args}}}
+}
+
+func modelText(s string) model.CompletionResp { return model.CompletionResp{Content: s} }

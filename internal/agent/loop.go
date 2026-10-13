@@ -425,13 +425,13 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		// them as a single batched user turn before the model is called (ADR-0022).
 		// This is a self-pull — the node reads its own queue at a point where it is
 		// between model calls — so ADR-0016's run-to-completion contract holds.
-		if hm, src, ok := a.humanInjector.pollSource(); ok {
+		if hm, pd, ok := a.humanInjector.pollDetail(); ok {
 			messages = append(messages, hm)
 			// Record the injected human turn in the durable stream (change 0054): the
 			// exact batched/prefixed text that entered the transcript, so a later fold
 			// rebuilds this user turn identically. Emitted at THIS turn (unlike the seed,
 			// which is turn 0) so replay order matches conversation order.
-			a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content, Source: src})
+			a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content, Source: pd.Source, ReqSeqs: pd.ReqSeqs})
 		}
 
 		estimate := lastUsage + messagesSize(messages[accounted:])/bytesPerToken
@@ -625,9 +625,9 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			// A steer that arrived while this final answer was being produced would
 			// otherwise be stranded: Send has already reported it accepted. Give it
 			// one more turn instead of dropping it.
-			if hm, src, ok := a.humanInjector.pollSource(); ok && ctx.Err() == nil {
+			if hm, pd, ok := a.humanInjector.pollDetail(); ok && ctx.Err() == nil {
 				messages = append(messages, hm)
-				a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content, Source: src})
+				a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content, Source: pd.Source, ReqSeqs: pd.ReqSeqs})
 				continue
 			}
 			return messages, nil

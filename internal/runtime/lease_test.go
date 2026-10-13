@@ -167,10 +167,11 @@ func TestHeartbeatRenewerRunsWhileLiveAndStopsAtCompletion(t *testing.T) {
 	}
 }
 
-// TestResolveReOwnsExpiredLease seeds a Live record whose lease has already expired and
-// asserts resolveDurable does NOT surface it as ErrLoopNotFound and refreshes the lease
-// (re-own under this instance) rather than treating it as a hard error.
-func TestResolveReOwnsExpiredLease(t *testing.T) {
+// TestResolveReapsExpiredLease seeds a Live record whose lease has already expired. It
+// is an abandoned loop: reading it must still work, but it must be reported not live and
+// its lease must NOT be refreshed - a refreshed lease makes a dead loop look alive, so a
+// Send is accepted and then waits on a stream nobody reads.
+func TestResolveReapsExpiredLease(t *testing.T) {
 	reg := newFakeRegistry()
 	rt := New(Deps{Registry: reg, LeaseTTL: 30 * time.Second}).(*inProcRuntime)
 
@@ -197,21 +198,19 @@ func TestResolveReOwnsExpiredLease(t *testing.T) {
 	if gotKey != key {
 		t.Fatalf("key mismatch: %+v", gotKey)
 	}
-	// The lease must have been refreshed to now+TTL under this instance.
+	if rec.Live {
+		t.Fatal("an abandoned loop must be reported not live")
+	}
 	stored, _ := reg.record(key)
-	if !stored.LeaseExpiry.After(now) {
-		t.Fatalf("lease should be renewed to a future time, got %v (now=%v)", stored.LeaseExpiry, now)
+	if stored.Live {
+		t.Fatal("the registry must record the abandoned loop as not live")
 	}
-	if reg.heartbeatCount() == 0 {
-		t.Fatal("expected a re-own Heartbeat on the expired-lease resolve")
+	if reg.heartbeatCount() != 0 {
+		t.Fatal("an abandoned loop's lease must not be refreshed")
 	}
-	// The returned record reflects the refreshed lease.
-	if !rec.LeaseExpiry.After(now) {
-		t.Fatalf("returned record lease not refreshed: %v", rec.LeaseExpiry)
-	}
-	// Owner (authorization subject) is left intact by re-own.
+	// Owner (authorization subject) is left intact.
 	if stored.Owner != "alice" {
-		t.Fatalf("re-own must not change Owner, got %q", stored.Owner)
+		t.Fatalf("reaping must not change Owner, got %q", stored.Owner)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 )
 
@@ -103,6 +104,9 @@ type HumanMsg struct {
 	// Interrupt marks a steer that must not wait for the in-flight model call or
 	// tool batch to finish: the bus calls the node's interrupt hook on enqueue.
 	Interrupt bool
+	// ReqSeq is the steer.request event this message was relayed from, when another
+	// replica sent it; zero for a message sent in this process.
+	ReqSeq event.Seq
 }
 
 // orchestratorLabel heads guidance from an orchestrator, and orchestratorProvenance
@@ -255,7 +259,21 @@ func (b *HumanBus) Steer(nodeID, source string, interrupt bool, text string) Hum
 	return b.enqueue(nodeID, ModeDirect, handle, text, source, interrupt)
 }
 
+// Relay enqueues a message that another replica relayed through the durable stream as
+// steer.request event reqSeq. It behaves like Send (human) or Steer (orchestrator) would
+// have in this process, and remembers reqSeq so the delivery can be recorded.
+func (b *HumanBus) Relay(nodeID, source string, interrupt bool, text string, reqSeq event.Seq) HumanMsg {
+	if source == SourceOrchestrator {
+		return b.enqueueRelayed(nodeID, ModeDirect, "@orchestrator", text, source, interrupt, reqSeq)
+	}
+	return b.enqueueRelayed(nodeID, ModeRespond, "@human", text, SourceHuman, interrupt, reqSeq)
+}
+
 func (b *HumanBus) enqueue(nodeID string, mode MsgMode, handle, text, source string, interrupt bool) HumanMsg {
+	return b.enqueueRelayed(nodeID, mode, handle, text, source, interrupt, 0)
+}
+
+func (b *HumanBus) enqueueRelayed(nodeID string, mode MsgMode, handle, text, source string, interrupt bool, reqSeq event.Seq) HumanMsg {
 	b.mu.Lock()
 	msg := HumanMsg{
 		ID:        fmt.Sprintf("hm-%d", b.seq.Add(1)),
@@ -268,6 +286,7 @@ func (b *HumanBus) enqueue(nodeID string, mode MsgMode, handle, text, source str
 		Handle:    handle,
 		Source:    source,
 		Interrupt: interrupt,
+		ReqSeq:    reqSeq,
 	}
 	b.queues[nodeID] = append(b.queues[nodeID], msg)
 	// Wake an interactive loop parked in WaitForMessage on this node (no-op for a
@@ -562,21 +581,29 @@ var errNoBus = fmt.Errorf("agent: interactive loop has no human bus to await")
 // models handle poorly. Returns (nil, false) when nothing is pending. It is safe
 // to call every turn; a nil bus is a no-op.
 func (h *HumanInjector) Poll() (model.Message, bool) {
-	m, _, ok := h.pollSource()
+	m, _, ok := h.pollDetail()
 	return m, ok
 }
 
-// pollSource is Poll plus the batch's source label for the user.input event: ""
-// when every segment came from the human (so the event stays byte-identical to the
-// pre-steering stream), else the distinct sources joined with a comma.
-func (h *HumanInjector) pollSource() (model.Message, string, bool) {
+// polled describes one drained batch for the user.input event.
+type polled struct {
+	// Source is "" when every segment came from the human (so the event stays
+	// byte-identical to the pre-steering stream), else the distinct sources, comma-joined.
+	Source string
+	// ReqSeqs are the relayed steer.request events the batch delivered.
+	ReqSeqs []event.Seq
+}
+
+// pollDetail is Poll plus what the user.input event records about the batch.
+func (h *HumanInjector) pollDetail() (model.Message, polled, bool) {
 	if h == nil || h.bus == nil {
-		return model.Message{}, "", false
+		return model.Message{}, polled{}, false
 	}
 	drained := h.bus.Drain(h.nodeID)
 	if len(drained) == 0 {
-		return model.Message{}, "", false
+		return model.Message{}, polled{}, false
 	}
+	var reqSeqs []event.Seq
 	var b strings.Builder
 	var sources []string
 	for i, msg := range drained {
@@ -599,8 +626,11 @@ func (h *HumanInjector) pollSource() (model.Message, string, bool) {
 		if msg.Source != "" && msg.Source != SourceHuman && !containsStr(sources, msg.Source) {
 			sources = append(sources, msg.Source)
 		}
+		if msg.ReqSeq != 0 {
+			reqSeqs = append(reqSeqs, msg.ReqSeq)
+		}
 	}
-	return model.Message{Role: "user", Content: b.String()}, strings.Join(sources, ","), true
+	return model.Message{Role: "user", Content: b.String()}, polled{Source: strings.Join(sources, ","), ReqSeqs: reqSeqs}, true
 }
 
 func containsStr(xs []string, x string) bool {

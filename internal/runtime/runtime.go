@@ -101,6 +101,15 @@ type Steerer interface {
 	Steer(ctx context.Context, tenant event.TenantID, loopID string, input string, opts SteerOpts) error
 }
 
+// Shutdowner is an optional Runtime capability (ADR-0047): end every loop this runtime
+// runs and wait, until ctx is done, for each to record that it is no longer live. A server
+// calls it at the end of a graceful drain so its loops are handed off at once - the next
+// message to any replica sees ErrLoopFinished and the edge resumes the loop - instead of
+// the loop looking alive until its lease expires.
+type Shutdowner interface {
+	Shutdown(ctx context.Context) error
+}
+
 // SendOrSteer delivers input to a loop through the Steerer capability when rt has it,
 // and through plain Send otherwise (so an interrupt request degrades to an ordinary
 // next-boundary message on a runtime that cannot interrupt). Bindings call this

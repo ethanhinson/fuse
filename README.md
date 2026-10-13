@@ -404,8 +404,31 @@ orchestrator:
 gateway config, and reaches the agent only through the wire. `--model` overrides
 the alias for one session.
 
-Limits: a hosted server with more than one replica needs a message to reach the
-replica that runs the loop (the same limit `Send` already has).
+### More than one replica
+
+A hosted fuse can run as many replicas as you like (the Helm chart ships an
+autoscaler), and a steer or a chat message can reach any of them.
+
+- **Each loop runs on one replica**, the one that started it. The replicas share
+  Postgres, so every replica can read every loop.
+- **A message that lands on a different replica is not lost or refused.** That
+  replica writes it into the loop's stream (a `steer.request` event) and answers
+  right away. The replica that runs the loop picks it up within a moment. The
+  request is stored before you are told it was accepted, and the agent's next
+  `user.input` event records that it was delivered, so nothing is delivered twice,
+  even across a restart. An orchestrator on one replica can steer a loop on
+  another the same way.
+- **When a replica goes away, its chat loops move.** On a clean shutdown (a
+  scale-down or rollout) the replica marks its loops as no longer running before
+  it exits. After a crash, the loop is treated as abandoned once its lease runs
+  out (30 seconds by default). Either way, the next message to any replica
+  resumes the loop from its stream, with its full conversation. Work that was
+  half done on the replica that went away is not continued; a non-chat run that
+  was in progress is lost.
+- **Use Postgres.** Replicas on the filesystem store share nothing in a normal
+  cluster. The Helm chart will not render without a database (`postgres.dsn`,
+  `postgres.existingSecret` or the dev-only `postgres.dev.enabled`). Raise
+  `replicaCount`, or set `autoscaling.enabled: true`, to run more than one.
 
 ## Networked loop-control — `loop-serve-net` (Connect/protobuf)
 
