@@ -21,10 +21,13 @@ package pgstore
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
@@ -51,6 +54,12 @@ var (
 // tagged suite is skip-clean on a Docker-less box.
 func getHarness() pgHarness {
 	harnessOnce.Do(func() {
+		// An existing server can stand in for the container (FUSE_TEST_PG_DSN): handy
+		// where Docker is not available but Postgres is.
+		if dsn := os.Getenv("FUSE_TEST_PG_DSN"); dsn != "" {
+			harness.dsn = dsn
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 
@@ -303,5 +312,61 @@ func TestPGTenantIsolation(t *testing.T) {
 	ly, _ := s.List(ctx, "tenantY")
 	if len(ly) != 0 {
 		t.Fatalf("List(tenantY) = %d, want 0", len(ly))
+	}
+}
+
+// Replicas start together when an autoscaler adds pods or a rollout replaces them. Opening
+// many stores at the same instant against a brand-new database must all succeed: the
+// schema DDL is applied under an advisory lock. (Without it the losers fail with a
+// duplicate-key error on pg_type.)
+func TestConcurrentOpenOnAFreshDatabase(t *testing.T) {
+	base := dsnOrSkip(t)
+	ctx := context.Background()
+
+	admin, err := pgx.Connect(ctx, base)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer admin.Close(ctx)
+	dbName := fmt.Sprintf("race_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+dbName); err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+dbName+" WITH (FORCE)") })
+
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Path = "/" + dbName
+	freshDSN := u.String()
+
+	const replicas = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, replicas)
+	stores := make(chan *PGStore, replicas)
+	start := make(chan struct{})
+	for i := 0; i < replicas; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			s, err := Open(ctx, freshDSN)
+			if err != nil {
+				errs <- err
+				return
+			}
+			stores <- s
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	close(stores)
+	for s := range stores {
+		_ = s.Close()
+	}
+	for err := range errs {
+		t.Errorf("a replica failed to start: %v", err)
 	}
 }
