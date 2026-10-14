@@ -153,3 +153,28 @@ func TestOrchestratorFromTheSlashMenu(t *testing.T) {
 		t.Fatal("/orchestrator off via handleSlash did not turn the mode off")
 	}
 }
+
+// While a turn runs the slash menu is closed, so the status line is where the person
+// learns the orchestrator exists. It goes away once the orchestrator is on, and never
+// shows when there is no orchestrator.
+func TestStatusHintMentionsTheOrchestratorWhileRunning(t *testing.T) {
+	m, _, _, _ := orchShell(t)
+	m.running = true
+	if h := stripANSIString(m.agentsHint()); !strings.Contains(h, "/orchestrator to steer") {
+		t.Fatalf("running hint = %q", h)
+	}
+	m.orchMode = true
+	if h := stripANSIString(m.agentsHint()); strings.Contains(h, "/orchestrator") {
+		t.Fatalf("hint should go away in orchestrator mode: %q", h)
+	}
+	m.orchMode = false
+	m.orch = nil
+	if h := stripANSIString(m.agentsHint()); strings.Contains(h, "/orchestrator") {
+		t.Fatalf("hint shown with no orchestrator: %q", h)
+	}
+	m.orch = &fakeOrch{}
+	m.running = false
+	if h := stripANSIString(m.agentsHint()); strings.Contains(h, "/orchestrator") {
+		t.Fatalf("hint shown while idle: %q", h)
+	}
+}

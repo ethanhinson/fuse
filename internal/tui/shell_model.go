@@ -1523,6 +1523,16 @@ func isFileReadTool(name string) bool {
 // counter when children are active, so users see fan-out without opening the
 // overlay; otherwise just the Tab affordance.
 func (m ShellModel) agentsHint() string {
+	hint := m.agentsHintCore()
+	// The slash menu is closed while a turn runs, which is exactly when the orchestrator
+	// is most useful, so say that it is there.
+	if hint != "" && m.running && m.orch != nil && !m.orchMode {
+		hint += ruleStyle.Render(" · /orchestrator to steer")
+	}
+	return hint
+}
+
+func (m ShellModel) agentsHintCore() string {
 	if m.tree == nil {
 		return ""
 	}

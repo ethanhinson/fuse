@@ -74,7 +74,16 @@ func (m *ShellModel) resetInput() {
 	}
 }
 
+// appendSpacer puts one blank line before a block unless the transcript already ends in
+// one, so the orchestrator exchange does not butt up against the agent's output.
+func (m *ShellModel) appendSpacer() {
+	if n := len(m.lines); n > 0 && strings.TrimSpace(m.lines[n-1].text) != "" {
+		m.appendLine("")
+	}
+}
+
 func (m *ShellModel) sayToOrchestrator(text string) {
+	m.appendSpacer()
 	m.appendLine(orchStyle.Render("you → orchestrator") + " " + sanitizeDisplay(text))
 	m.orch.Say(text)
 }
@@ -88,6 +97,7 @@ func (m ShellModel) orchestratorCommand(arg string) (tea.Model, tea.Cmd) {
 	case "":
 		m.orchMode = true
 		m.input.Placeholder = orchPlaceholder
+		m.appendSpacer()
 		m.appendLine(orchStyle.Render("orchestrator mode on") +
 			headerStyle.Render(" - your messages go to the orchestrator, which can watch and steer the agent. /orchestrator off to go back."))
 	case "off":
@@ -113,6 +123,7 @@ func (m ShellModel) interruptCommand(text string) (tea.Model, tea.Cmd) {
 		return m.startPrompt(text)
 	}
 	m.humanBus.Steer(m.tree.RootID(), agent.SourceHuman, true, text)
+	m.appendSpacer()
 	m.appendLine(humanMsgStyle.Render("⚡ interrupt") + " " + sanitizeDisplay(text))
 	return m, nil
 }
