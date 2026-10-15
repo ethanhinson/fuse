@@ -193,17 +193,12 @@ func (m *ShellModel) moveQueued(delta int) {
 	}
 }
 
-// renderQueueOverlay paints the queue editor over the bottom of the viewport.
-func renderQueueOverlay(base string, q *queueState, width int) string {
-	if q == nil || width < 8 {
-		return base
-	}
-	var lines []string
-	add := func(s string) { lines = append(lines, s) }
-	add(" " + askHeaderStyle.Render("⋯ Message queue") + headerStyle.Render(fmt.Sprintf("  (%d pending)", len(q.rows))))
-	add("")
+// queueScreen renders the queue editor as a full-screen surface.
+func queueScreen(q *queueState, width, height int) string {
+	title := askHeaderStyle.Render("⋯ Message queue") + headerStyle.Render(fmt.Sprintf("  (%d pending)", len(q.rows)))
+	var body []string
 	if len(q.rows) == 0 {
-		add(" " + headerStyle.Render("no pending messages"))
+		body = append(body, " "+headerStyle.Render("no pending messages"))
 	}
 	for i, row := range q.rows {
 		cursor := "  "
@@ -214,27 +209,12 @@ func renderQueueOverlay(base string, q *queueState, width int) string {
 		if row.mode == agent.ModeBroadcast {
 			tag = humanMsgStyle.Render("@all")
 		}
-		add(fmt.Sprintf("%s%s  %s", cursor, tag, sanitizeDisplay(truncate(row.text, width-24))))
+		body = append(body, fmt.Sprintf(" %s%s  %s", cursor, tag, sanitizeDisplay(truncate(row.text, width-24))))
 	}
-	add("")
+	hint := askKeysStyle.Render("j/k move · e edit · d delete · J/K reorder · Esc close")
 	if q.editing != nil {
-		add(" " + askKeysStyle.Render("edit:"))
-		add("   " + askSelectedStyle.Render(*q.editing+"▌"))
-		add(" " + askKeysStyle.Render("Enter save · Esc cancel"))
-	} else {
-		add(" " + askKeysStyle.Render("j/k move · e edit · d delete · J/K reorder · Esc close"))
+		body = append(body, "", " "+askKeysStyle.Render("edit:"), "   "+askSelectedStyle.Render(*q.editing+"▌"))
+		hint = askKeysStyle.Render("Enter save · Esc cancel")
 	}
-
-	overlay := lines
-	baseLines := strings.Split(base, "\n")
-	start := len(baseLines) - len(overlay)
-	if start < 0 {
-		start = 0
-	}
-	for i, ol := range overlay {
-		if start+i < len(baseLines) {
-			baseLines[start+i] = fitLine(ol, width)
-		}
-	}
-	return strings.Join(baseLines, "\n")
+	return renderScreenFrame(title, body, hint, width, height)
 }

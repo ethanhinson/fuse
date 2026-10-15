@@ -92,7 +92,7 @@ func TestConfigTabsRenderWithoutPanicking(t *testing.T) {
 			m := openConfigVia(t, configShell(t, reg))
 			for tab := 0; tab < m.config.tabs.Len(); tab++ {
 				m.config.tabs.SetActive(tab)
-				lines := configOverlayLines(m.config, 80, configOverlayHeight)
+				lines := strings.Split(configScreen(m.config, 80, 24), "\n")
 				if len(lines) == 0 {
 					t.Fatalf("tab %d rendered nothing", tab)
 				}
@@ -112,7 +112,7 @@ func TestConfigOverlayLinesFitWidth(t *testing.T) {
 	for _, width := range []int{20, 30, 40, 60, 80, 120} {
 		for tab := 0; tab < m.config.tabs.Len(); tab++ {
 			m.config.tabs.SetActive(tab)
-			for i, line := range configOverlayLines(m.config, width, configOverlayHeight) {
+			for i, line := range strings.Split(configScreen(m.config, width, 24), "\n") {
 				if w := lipgloss.Width(line); w > width {
 					t.Errorf("width=%d tab=%d line %d is %d cells: %q", width, tab, i, w, line)
 				}
@@ -289,7 +289,7 @@ func TestConfigModelsPaneNeverDropsAColumn(t *testing.T) {
 					t.Fatalf("width=%d: modelsPaneView panicked: %v", width, r)
 				}
 			}()
-			out := m.config.modelsPaneView(width, configOverlayHeight)
+			out := m.config.modelsPaneView(width, 16)
 			if out == "" {
 				t.Errorf("width=%d: modelsPaneView returned nothing", width)
 			}
@@ -327,7 +327,7 @@ func TestConfigMCPTabListsServers(t *testing.T) {
 
 	st := newConfigState(&modelsEditState{}, permissions.NewSessionMode(permissions.ModeSmart), reg)
 	st.tabs.SetActive(configTabMCP)
-	out := plainStr(strings.Join(configOverlayLines(st, 80, configOverlayHeight), "\n"))
+	out := plainStr(strings.Join(strings.Split(configScreen(st, 80, 24), "\n"), "\n"))
 	for _, want := range []string{"files", "web"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("MCP tab missing server %q in:\n%s", want, out)
@@ -336,7 +336,7 @@ func TestConfigMCPTabListsServers(t *testing.T) {
 
 	empty := newConfigState(&modelsEditState{}, permissions.NewSessionMode(permissions.ModeSmart), nil)
 	empty.tabs.SetActive(configTabMCP)
-	out = plainStr(strings.Join(configOverlayLines(empty, 80, configOverlayHeight), "\n"))
+	out = plainStr(strings.Join(strings.Split(configScreen(empty, 80, 24), "\n"), "\n"))
 	if !strings.Contains(out, "no MCP servers") {
 		t.Errorf("empty MCP tab should say so, got:\n%s", out)
 	}
@@ -347,7 +347,7 @@ func TestConfigMCPTabListsServers(t *testing.T) {
 func TestConfigPermissionsTabIsReadOnly(t *testing.T) {
 	m := openConfigVia(t, configShell(t, configRegistry()))
 	m.config.tabs.SetActive(configTabPermissions)
-	out := plainStr(strings.Join(configOverlayLines(m.config, 80, configOverlayHeight), "\n"))
+	out := plainStr(strings.Join(strings.Split(configScreen(m.config, 80, 24), "\n"), "\n"))
 	if !strings.Contains(out, permissions.ModeSmart.String()) {
 		t.Errorf("permissions tab should report the current mode, got:\n%s", out)
 	}
@@ -390,7 +390,7 @@ func TestConfigModelsTabScrollsSelectionIntoView(t *testing.T) {
 
 	for cursor := range rows {
 		edit.cursor = cursor
-		out := plainStr(strings.Join(configOverlayLines(st, 80, configOverlayHeight), "\n"))
+		out := plainStr(strings.Join(strings.Split(configScreen(st, 80, 24), "\n"), "\n"))
 		if !strings.Contains(out, rows[cursor].Alias) {
 			t.Fatalf("cursor=%d: selected alias %q not visible in:\n%s", cursor, rows[cursor].Alias, out)
 		}

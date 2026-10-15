@@ -47,7 +47,7 @@ func modelsHarness(t *testing.T, reg *model.Registry) *harness {
 
 func TestHarness_ModelsListing(t *testing.T) {
 	h := modelsHarness(t, richModelRegistry())
-	h.typeAndSubmit("/models")
+	h.typeAndSubmit("/models list")
 
 	// The listing prints synchronously into the transcript on Enter.
 	h.waitForOutput("cloud/glm-5.2", 2*time.Second)

@@ -284,6 +284,11 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	m := tui.NewShellModel(alias, verbose, glamourStyle, reg, slashReg, build, sessionMode, classifierConstructible(cfg))
 	m = m.WithTree(tree)
 	m = m.WithBlackboard(bb)
+	// "n" in the models editor lists what the gateway serves.
+	m = m.WithModelLister(gatewayAdapter(cfg, nil).ListModels)
+	m = m.WithCatalogLister(func(ctx context.Context) ([]model.CatalogModel, error) {
+		return model.FetchOpenRouterCatalog(ctx, model.OpenRouterBaseURL, nil)
+	})
 	// Seed the local authorization identity (change #52) so identity-propagating
 	// MCP tool calls mint a per-call credential from it.
 	m = m.WithToolPrincipal(localPrincipal(cfg))

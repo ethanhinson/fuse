@@ -214,6 +214,8 @@ type ShellModel struct {
 	orch        OrchestratorSession // the /orchestrator chat; nil ⇒ unavailable
 	orchMode    bool                // plain lines go to the orchestrator instead of the agent
 	queue       *queueState         // non-nil while the /queue editor is open
+	lister      ModelLister         // lists the gateway's models for the editor's discover view
+	catalog     CatalogLister       // lists the OpenRouter catalogue for the discover view
 	modelsEdit  *modelsEditState    // non-nil while the /models edit editor is open
 	// config is non-nil while the /config screen is open. It hosts the tabbed
 	// settings surface and SHARES modelsEdit with `/models edit` rather than
@@ -405,6 +407,10 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.agentsActive && m.agentsModel != nil {
 			m.agentsModel.refreshSnapshot()
 		}
+		return m, nil
+
+	case modelsDiscoveredMsg:
+		m.applyModelsDiscovered(msg)
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -1040,8 +1046,9 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.appendLine(fmt.Sprintf("verbose = %v", m.verbose))
 		return m, nil
 	case "/models":
-		// `/models edit` opens the interactive editor; bare `/models` lists.
-		if len(fields) >= 2 && fields[1] == "edit" {
+		// `/models` opens the keyboard picker/editor; `/models list` prints the
+		// static listing into the transcript.
+		if len(fields) < 2 || fields[1] != "list" {
 			return m.openModelsEditor()
 		}
 		// Lay the listing out at the width refreshViewport will wrap it to.
@@ -1067,12 +1074,7 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 			m.appendLine(fmt.Sprintf("unknown model %q", name))
 			return m, nil
 		}
-		m.alias = name
-		// Keep the agents-tab tree root in sync so it renders the current model,
-		// not the one snapshotted at construction.
-		if m.tree != nil {
-			m.tree.SetRootModel(name)
-		}
+		m.switchModel(name)
 		m.appendLine(fmt.Sprintf("switched to %s", name))
 		return m, nil
 	case "/mode":
@@ -1114,6 +1116,16 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 
 	m.appendLine(fmt.Sprintf("unknown command %s", cmd))
 	return m, nil
+}
+
+// switchModel makes alias the active model. The caller has already resolved it.
+func (m *ShellModel) switchModel(alias string) {
+	m.alias = alias
+	// Keep the agents-tab tree root in sync so it renders the current model,
+	// not the one snapshotted at construction.
+	if m.tree != nil {
+		m.tree.SetRootModel(alias)
+	}
 }
 
 // handleSlashEntry dispatches a resolved SlashEntry from the registry.
@@ -1833,6 +1845,18 @@ func (m ShellModel) View() string {
 	if width < 1 {
 		width = 40
 	}
+	// /queue, /config and /models edit are sticky full-screen surfaces: they
+	// replace the transcript, input and status bar until Esc. A pending approval
+	// or question still has to be answerable, so it overlays the screen.
+	if m.screenOpen() {
+		base := m.screenView()
+		if len(m.approvals) > 0 {
+			base = overlayApprovalOnView(base, m.approvals[0].req, len(m.approvals), width)
+		} else if len(m.asks) > 0 {
+			base = overlayAskOnView(base, m.asks[0], len(m.asks), width)
+		}
+		return base
+	}
 	rule := ruleStyle.Render(strings.Repeat("─", width))
 	prompt := promptAliasStyle.Render("["+m.alias+"]") + " > " + m.input.View()
 	if m.orchMode {
@@ -1876,12 +1900,6 @@ func (m ShellModel) View() string {
 		vpView = overlayApprovalOnView(vpView, m.approvals[0].req, len(m.approvals), width)
 	} else if len(m.asks) > 0 {
 		vpView = overlayAskOnView(vpView, m.asks[0], len(m.asks), width)
-	} else if m.queue != nil {
-		vpView = renderQueueOverlay(vpView, m.queue, width)
-	} else if m.config != nil {
-		vpView = renderConfigOverlay(vpView, m.config, width)
-	} else if m.modelsEdit != nil {
-		vpView = renderModelsEditorOverlay(vpView, m.modelsEdit, width)
 	}
 
 	var b strings.Builder

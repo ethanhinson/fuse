@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 )
 
@@ -42,16 +43,13 @@ const (
 	configTabMCP
 )
 
-// configOverlayHeight is how many rows of the viewport the overlay paints over:
-// title, tab bar, rule, a body, and the key hint. It matches the models editor's
-// rough footprint so the two surfaces feel the same size.
-const configOverlayHeight = 16
-
 // configState is the transient /config overlay state, nil unless the screen is
 // open. It holds pointers rather than snapshots so the panes always render
 // current data — the shell rebuilds its ShellModel value on every key.
 type configState struct {
 	tabs *Tabs
+	// active reads the session's active model alias live.
+	active string
 	// edit is the shared models-editor state — the same struct /models edit
 	// drives. It is never a copy.
 	edit *modelsEditState
@@ -107,6 +105,10 @@ func (m ShellModel) handleConfigKey(msg tea.KeyMsg) (handled bool, mdl tea.Model
 	if st.tabs.Active() == configTabModels && m.modelsEdit != nil && m.modelsEdit.form != nil {
 		return m.handleModelsFormKey(msg)
 	}
+	// The discover list owns esc and the arrows the same way the form does.
+	if st.tabs.Active() == configTabModels && m.modelsEdit != nil && m.modelsEdit.discover != nil {
+		return m.handleModelsEditorKey(msg)
+	}
 	if ok, c := st.tabs.Update(msg); ok {
 		return true, m, c
 	}
@@ -148,14 +150,21 @@ func (st *configState) modelsPaneView(width, height int) string {
 	if st.edit.form != nil {
 		var lines []string
 		renderModelForm(func(s string) { lines = append(lines, s) }, st.edit.form)
+		if st.edit.status != "" {
+			lines = append(lines, "", " "+st.edit.status)
+		}
 		return strings.Join(lines, "\n")
+	}
+
+	if st.edit.discover != nil {
+		return strings.Join(discoverLines(st.edit.discover, st.edit.discoverBoth, width, height), "\n")
 	}
 
 	var footer []string
 	if st.edit.status != "" {
 		footer = append(footer, st.edit.status)
 	}
-	footer = append(footer, askKeysStyle.Render("j/k move · a add · e edit · d delete"))
+	footer = append(footer, askKeysStyle.Render("↑/↓ move · Enter select · n discover · a add · e edit · d delete"))
 
 	if len(st.edit.rows) == 0 {
 		return strings.Join(append([]string{headerStyle.Render("no models registered")}, footer...), "\n")
@@ -164,14 +173,14 @@ func (st *configState) modelsPaneView(width, height int) string {
 	// Measure in display cells over sanitized text, then fit the columns to the
 	// pane width the same way table.go does — bubbles/table does not clamp its
 	// own column widths against the render width.
-	titles := []string{"alias", "model id", "persona"}
+	titles := []string{"alias", "model id", "persona", "data", ""}
 	rows := make([]btable.Row, len(st.edit.rows))
 	widths := make([]int, len(titles))
 	for i, t := range titles {
 		widths[i] = lipgloss.Width(t)
 	}
 	for i, r := range st.edit.rows {
-		cells := []string{tableCell(r.Alias), tableCell(r.Config.ID), tableCell(personaCell(r.Config))}
+		cells := []string{tableCell(r.Alias), tableCell(r.Config.ID), tableCell(personaCell(r.Config)), privacyLabel(model.PrivacyOfRoute(r.Config.ID)), activeTag(r.Alias == st.active)}
 		for c, v := range cells {
 			if w := lipgloss.Width(v); w > widths[c] {
 				widths[c] = w
@@ -183,7 +192,7 @@ func (st *configState) modelsPaneView(width, height int) string {
 	// content, so the gap is folded into each column's width rather than added
 	// beside it.
 	const configColGap = 1
-	fitColumnWidths(widths, []int{3, 4, 3}, width-configColGap*len(titles))
+	fitColumnWidths(widths, []int{3, 4, 3, 0, 0}, width-configColGap*len(titles))
 	// Every btable.Row below carries exactly 3 cells (one per title), and
 	// bubbles/table's renderRow indexes m.cols[i] against the ROW's cells — a
 	// column dropped here without also dropping its cells would panic inside
@@ -331,48 +340,21 @@ func (st *configState) mcpServers() []mcpServer {
 	return out
 }
 
-// configOverlayLines renders the whole overlay — title, tab bar, active pane,
-// key hint — as display lines, each guaranteed to be at most width cells.
-func configOverlayLines(st *configState, width, height int) []string {
-	if st == nil || width < 8 || height < 4 {
-		return nil
+// configScreen renders /config as a full-screen surface: title, tab bar over the
+// active pane, and a pinned key hint.
+func configScreen(st *configState, width, height int) string {
+	if st == nil {
+		return ""
 	}
-	title := fitTableLine(" "+askHeaderStyle.Render("⚙ Config"), width)
-	hint := fitTableLine(" "+askKeysStyle.Render("tab/shift+tab or 1-3 switch · Esc close"), width)
-
-	lines := []string{title}
-	// The tab bar and pane get everything the title and hint do not: a glyph
-	// spends a row from the same budget, exactly as it spends a cell.
-	body := st.tabs.View(width, height-len(lines)-1)
-	if body != "" {
-		lines = append(lines, strings.Split(body, "\n")...)
+	// One cell of left gutter, matching the other screens' title and body.
+	body := st.tabs.View(width-1, screenBodyHeight(height))
+	bodyLines := strings.Split(body, "\n")
+	for i := range bodyLines {
+		bodyLines[i] = " " + bodyLines[i]
 	}
-	for len(lines) < height-1 {
-		lines = append(lines, "")
+	hint := askKeysStyle.Render("tab/shift+tab · ←/→ · 1-3 switch · Esc close")
+	if st.tabs.Active() == configTabModels {
+		hint = modelsEditorHint(st.edit, hint)
 	}
-	return append(lines[:height-1], hint)
-}
-
-// renderConfigOverlay paints the /config screen over the bottom of the
-// viewport, mirroring renderModelsEditorOverlay and renderQueueOverlay.
-func renderConfigOverlay(base string, st *configState, width int) string {
-	if st == nil || width < 8 {
-		return base
-	}
-	baseLines := strings.Split(base, "\n")
-	height := configOverlayHeight
-	if height > len(baseLines) {
-		height = len(baseLines)
-	}
-	overlay := configOverlayLines(st, width, height)
-	start := len(baseLines) - len(overlay)
-	if start < 0 {
-		start = 0
-	}
-	for i, ol := range overlay {
-		if start+i < len(baseLines) {
-			baseLines[start+i] = fitTableLine(ol, width)
-		}
-	}
-	return strings.Join(baseLines, "\n")
+	return renderScreenFrame(askHeaderStyle.Render("⚙ Config"), bodyLines, hint, width, height)
 }

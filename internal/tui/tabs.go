@@ -54,7 +54,7 @@ type Pane struct {
 // approvals and asks are dispatched BEFORE the active overlay ever sees a key —
 // this component changes nothing about that priority):
 //
-//   - tab / shift+tab — next / previous tab, wrapping in both directions.
+//   - tab / right, shift+tab / left — next / previous tab, wrapping in both directions.
 //   - 1..9 — jump to that tab, 1-indexed. An index with no pane is not claimed.
 //   - esc — deliberately NOT handled, and deliberately NOT delegated: it is the
 //     host's close key (matching /queue and the models editor), and delegating
@@ -118,10 +118,10 @@ func (t *Tabs) Update(msg tea.KeyMsg) (bool, tea.Cmd) {
 		return false, nil
 	}
 	switch msg.String() {
-	case "tab":
+	case "tab", "right":
 		t.Next()
 		return true, nil
-	case "shift+tab":
+	case "shift+tab", "left":
 		t.Prev()
 		return true, nil
 	case "esc":

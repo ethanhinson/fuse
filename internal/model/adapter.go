@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -630,4 +631,55 @@ func (a *Adapter) traceReassembled(marker string, out CompletionResp) {
 	if b, jerr := json.Marshal(wr); jerr == nil {
 		a.tracef(marker, prettyJSON(b))
 	}
+}
+
+// ListModels asks the gateway which model IDs it serves (GET {base}/models, the
+// OpenAI-compatible listing LiteLLM exposes). IDs come back sorted and
+// de-duplicated. A single attempt bounded by RequestTimeout: this is an
+// interactive lookup, so a failure is reported rather than retried.
+func (a *Adapter) ListModels(ctx context.Context) ([]string, error) {
+	if a.baseURL == "" {
+		return nil, errors.New("no gateway configured")
+	}
+	if a.RequestTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, a.RequestTimeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+a.key)
+	res, err := a.hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gateway status %d: %s", res.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return nil, fmt.Errorf("decode model list: %w", err)
+	}
+	seen := map[string]bool{}
+	var ids []string
+	for _, d := range body.Data {
+		// Wildcard routes (openrouter/*) are patterns, not models.
+		if d.ID != "" && !strings.Contains(d.ID, "*") && !seen[d.ID] {
+			seen[d.ID] = true
+			ids = append(ids, d.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
