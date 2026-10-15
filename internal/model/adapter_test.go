@@ -531,3 +531,30 @@ func TestAsMessageWrapsMalformedArguments(t *testing.T) {
 		t.Errorf("call-free reply should keep a nil slice")
 	}
 }
+
+func TestListModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" || r.Header.Get("Authorization") != "Bearer k" {
+			t.Errorf("bad request: %s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
+		}
+		io.WriteString(w, `{"data":[{"id":"cloud/b"},{"id":"cloud/a"},{"id":"cloud/b"},{"id":""}]}`)
+	}))
+	defer srv.Close()
+	ids, err := NewAdapter(srv.URL, "k", srv.Client()).ListModels(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ids, ",") != "cloud/a,cloud/b" {
+		t.Errorf("ids = %v", ids)
+	}
+}
+
+func TestListModelsNonOKIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "nope", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	if _, err := NewAdapter(srv.URL, "k", srv.Client()).ListModels(context.Background()); err == nil {
+		t.Fatal("want error")
+	}
+}

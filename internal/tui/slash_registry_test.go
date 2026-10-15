@@ -296,3 +296,29 @@ func TestSlashEntryExpansion(t *testing.T) {
 		t.Errorf("custom expansion = %q, want %q", got, "custom")
 	}
 }
+
+// A command that starts with what was typed comes before one that merely contains it,
+// and a description-only match comes last. The matched SET is unchanged.
+func TestSlashRegistryFilterRanksPrefixFirst(t *testing.T) {
+	reg := NewSlashRegistry(&staticProvider{entries: []SlashEntry{
+		{Command: "/verbose", Description: "Toggle verbose tool output"},
+		{Command: "/models", Description: "List available models"},
+		{Command: "/orchestrator", Description: "Chat with the orchestrator"},
+		{Command: "/exit", Description: "Leave; the shell stops (output of o)"},
+		{Command: "/mode", Description: "Set the mode"},
+	}})
+	defer reg.Close()
+
+	var got []string
+	for _, e := range reg.Filter("o") {
+		got = append(got, e.Command)
+	}
+	want := []string{"/orchestrator", "/verbose", "/models", "/mode", "/exit"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("Filter(o) = %v, want %v", got, want)
+	}
+	// The leading slash is optional in the filter.
+	if first := reg.Filter("/o")[0].Command; first != "/orchestrator" {
+		t.Fatalf("Filter(/o) first = %s", first)
+	}
+}

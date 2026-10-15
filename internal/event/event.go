@@ -59,6 +59,13 @@ const (
 	// prefixed form for human turns; the raw task for the initial turn). Skipped for
 	// a resumed loop's seed history, whose user turns are already in the stream.
 	KindUserInput Kind = "user.input"
+	// KindSteerRequest is a message for a loop that another replica asked to deliver:
+	// the replica that received a Send or Steer does not run the loop, so it writes the
+	// request into the loop's durable stream, and the replica that does run the loop
+	// reads it from there and queues it like a local message. The user.input event that
+	// later records the delivery names the request (UserInputPayload.ReqSeqs), which is
+	// how a restarted owner knows what is still undelivered.
+	KindSteerRequest Kind = "steer.request"
 	// KindPermissionDecision records one permission-gate resolution: the verdict
 	// (allow/ask/deny), the pipeline layer that decided it, and a bounded command
 	// preview. It exists because gate behaviour was otherwise invisible in the
@@ -548,4 +555,19 @@ const (
 type UserInputPayload struct {
 	Turn    int    `json:"turn"`
 	Content string `json:"content"`
+	// Source names a non-human speaker for a steered turn (e.g. "orchestrator"); empty
+	// for a plain human or task turn. Informational only - the resume fold ignores it.
+	Source string `json:"source,omitempty"`
+	// ReqSeqs are the steer.request events this turn delivered, when it carries messages
+	// that another replica relayed. Empty for a locally sent message.
+	ReqSeqs []Seq `json:"req_seqs,omitempty"`
+}
+
+// SteerRequestPayload accompanies KindSteerRequest.
+type SteerRequestPayload struct {
+	Content string `json:"content"`
+	// Source is "human" or "orchestrator".
+	Source string `json:"source,omitempty"`
+	// Interrupt asks the owner to cancel the loop's in-flight step.
+	Interrupt bool `json:"interrupt,omitempty"`
 }

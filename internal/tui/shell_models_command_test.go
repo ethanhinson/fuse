@@ -15,7 +15,7 @@ func TestModelsCommand_ListsHeaderAndActiveRow(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, sm, true))
 	m.lines = nil // drop banner/welcome lines so we inspect only what /models appends.
 
-	next, _ := m.handleSlash("/models")
+	next, _ := m.handleSlash("/models list")
 	out := plainLines(next.(ShellModel))
 
 	if !strings.Contains(out, "Available models:") {

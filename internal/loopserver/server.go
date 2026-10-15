@@ -116,8 +116,13 @@ func (s *Server) handleStart(ctx context.Context, r req) resp {
 	if err := json.Unmarshal(r.Params, &p); err != nil {
 		return s.errResp(r.ID, codeInvalidParams, "invalid params: "+err.Error())
 	}
-	h, err := s.rt.StartLoop(ctx, runtime.LoopConfig{Task: p.Task, ModelID: p.Model, Interactive: p.Interactive})
+	h, err := s.rt.StartLoop(ctx, runtime.LoopConfig{Task: p.Task, ModelID: p.Model, Interactive: p.Interactive, Orchestrate: p.Orchestrate})
 	if err != nil {
+		if errors.Is(err, runtime.ErrLoopFinished) || errors.Is(err, runtime.ErrLoopNotFound) {
+			// An orchestrate target that is gone or unknown: a client-addressable
+			// condition, like a stale loop_id on loop.send.
+			return s.errResp(r.ID, codeInvalidParams, err.Error())
+		}
 		return s.errResp(r.ID, codeInternal, err.Error())
 	}
 	return s.okResp(r.ID, startResult{LoopID: h.ID()})
@@ -131,7 +136,10 @@ func (s *Server) handleSend(ctx context.Context, r req) resp {
 	if err := json.Unmarshal(r.Params, &p); err != nil {
 		return s.errResp(r.ID, codeInvalidParams, "invalid params: "+err.Error())
 	}
-	if err := s.rt.Send(ctx, event.TenantID(p.Tenant), p.LoopID, p.Input); err != nil {
+	if !runtime.ValidSource(p.Source) {
+		return s.errResp(r.ID, codeInvalidParams, fmt.Sprintf("unknown source %q (want \"human\" or \"orchestrator\")", p.Source))
+	}
+	if err := runtime.SendOrSteer(ctx, s.rt, event.TenantID(p.Tenant), p.LoopID, p.Input, runtime.SteerOpts{Interrupt: p.Interrupt, Source: p.Source}); err != nil {
 		if errors.Is(err, runtime.ErrLoopFinished) || errors.Is(err, runtime.ErrLoopNotFound) {
 			return s.errResp(r.ID, codeInvalidParams, err.Error())
 		}

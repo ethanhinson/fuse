@@ -272,9 +272,8 @@ func TestModelsEditorOverlayClampsToWidth(t *testing.T) {
 			next, _ := m.openModelsEditor()
 			m = next.(ShellModel)
 
-			base := strings.TrimSuffix(strings.Repeat("\n", 40), "\n")
 			for _, width := range []int{40, 60, 80} {
-				out := renderModelsEditorOverlay(base, m.modelsEdit, width)
+				out := modelsEditorScreen(m.modelsEdit, "", width, 40)
 				lines := strings.Split(out, "\n")
 				for i, ln := range lines {
 					if w := lipgloss.Width(ln); w > width {

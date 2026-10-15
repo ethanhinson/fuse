@@ -22,11 +22,13 @@ type Client struct { /* ... */ }
 
 func (c *Client) StartLoop(ctx, StartLoopConfig) (LoopID, error)
 func (c *Client) Send(ctx, id LoopID, input string) error
+func (c *Client) Interrupt(ctx, id LoopID, input string) error            // Send that cancels the loop's current step so the message lands now
+func (c *Client) SendWith(ctx, id LoopID, input string, SendOptions) error // Interrupt, and/or Source: SourceHuman | SourceOrchestrator
 func (c *Client) Observe(ctx, id LoopID, fromSeq Seq) (<-chan Event, func(), error)
 
 func IsCompletion(e Event) bool   // true on the loop.parked completion event
 
-type StartLoopConfig struct { Task, Model string; Interactive bool }
+type StartLoopConfig struct { Task, Model string; Interactive bool; Orchestrate LoopID } // Orchestrate: watch and steer that loop
 type Credentials     struct { Token, Tenant string }
 
 // Event / Seq / Kind / LoopID are aliases of internal/event types so callers

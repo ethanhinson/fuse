@@ -34,6 +34,10 @@ type modelsEditState struct {
 	cursor int
 	// form is non-nil while adding or editing a mapping.
 	form *modelForm
+	// discoverBoth is set when both discover sources are available (Tab switches).
+	discoverBoth bool
+	// discover is non-nil while the provider's model list is shown.
+	discover *discoverState
 	// status is a one-line result/error banner shown under the list.
 	status string
 }
@@ -128,6 +132,9 @@ func (m ShellModel) handleModelsEditorKey(msg tea.KeyMsg) (handled bool, model t
 	if st.form != nil {
 		return m.handleModelsFormKey(msg)
 	}
+	if st.discover != nil {
+		return m.handleDiscoverKey(msg)
+	}
 
 	switch msg.String() {
 	case "esc", "q":
@@ -143,11 +150,27 @@ func (m ShellModel) handleModelsEditorKey(msg tea.KeyMsg) (handled bool, model t
 			st.cursor++
 		}
 		return true, m, nil
+	case "n":
+		return m.startDiscover()
 	case "a":
 		st.form = &modelForm{}
 		st.status = ""
 		return true, m, nil
-	case "e", "enter":
+	case "enter":
+		// Enter picks the highlighted model as the active one. Standalone
+		// /models is a picker, so it closes; inside /config the screen stays.
+		if len(st.rows) > 0 {
+			alias := st.rows[st.cursor].Alias
+			m.switchModel(alias)
+			if m.config == nil {
+				m.modelsEdit = nil
+				m.appendLine(fmt.Sprintf("switched to %s", alias))
+			} else {
+				st.status = okStyle("active model: " + alias)
+			}
+		}
+		return true, m, nil
+	case "e":
 		if len(st.rows) > 0 {
 			row := st.rows[st.cursor]
 			st.form = &modelForm{
@@ -337,65 +360,56 @@ func intField(n int) string {
 func errStyle(s string) string { return errorStyle.Render(s) }
 func okStyle(s string) string  { return okBannerStyle.Render(s) }
 
-// renderModelsEditorOverlay paints the editor over the bottom of the viewport,
-// mirroring renderQueueOverlay. In list mode it shows the aliases with a
-// cursor; in form mode it shows the field form.
-func renderModelsEditorOverlay(base string, st *modelsEditState, width int) string {
-	if st == nil || width < 8 {
-		return base
+// modelsEditorScreen renders the editor as a full-screen surface. In list mode
+// it shows the aliases with a cursor; in form mode it shows the field form.
+func modelsEditorScreen(st *modelsEditState, active string, width, height int) string {
+	if st == nil {
+		return ""
 	}
-	var lines []string
-	add := func(s string) { lines = append(lines, s) }
-
 	if st.form != nil {
-		renderModelForm(add, st.form)
-	} else {
-		add(" " + askHeaderStyle.Render("⚙ Model mappings") + headerStyle.Render(fmt.Sprintf("  (%d)", len(st.rows))))
-		add("")
-		if len(st.rows) == 0 {
-			add(" " + headerStyle.Render("no models registered"))
-		}
-		cols := []Column{
-			{Style: humanMsgStyle},
-			{Style: modelsIDStyle},
-			{Style: modelsPersonaStyle},
-		}
-		rows := make([]Row, len(st.rows))
-		for i, row := range st.rows {
-			rows[i] = Row{
-				Cells:  []string{row.Alias, truncate(row.Config.ID, 28), personaCell(row.Config)},
-				Active: i == st.cursor,
-			}
-		}
-		// The real render width, NOT 0 (unbounded): all three columns are padded
-		// to their global max, so one over-wide alias would widen every row and
-		// leave only fitLine below as the guard — and that truncates from the
-		// RIGHT, eating the persona column on every row to pay for one entry.
-		for _, line := range RenderTable(cols, rows, width, TableOpts{
-			ActiveMarker: "❯ ",
-			MarkerStyle:  askCursorStyle,
-		}) {
-			add(line)
-		}
-		add("")
+		var lines []string
+		renderModelForm(func(s string) { lines = append(lines, s) }, st.form)
+		// renderModelForm leads with its own title row; lift it into the frame.
+		title := strings.TrimPrefix(lines[0], " ")
 		if st.status != "" {
-			add(" " + st.status)
+			lines = append(lines, "", " "+st.status)
 		}
-		add(" " + askKeysStyle.Render("j/k move · a add · e edit · d delete · Esc close"))
+		return renderScreenFrame(title, lines[1:], modelsEditorHint(st, ""), width, height)
 	}
-
-	overlay := lines
-	baseLines := strings.Split(base, "\n")
-	start := len(baseLines) - len(overlay)
-	if start < 0 {
-		start = 0
+	if st.discover != nil {
+		return renderScreenFrame(askHeaderStyle.Render("⚙ New models from provider"),
+			discoverLines(st.discover, st.discoverBoth, width, screenBodyHeight(height)),
+			modelsEditorHint(st, ""), width, height)
 	}
-	for i, ol := range overlay {
-		if start+i < len(baseLines) {
-			baseLines[start+i] = fitLine(ol, width)
+	title := askHeaderStyle.Render("⚙ Model mappings") + headerStyle.Render(fmt.Sprintf("  (%d)", len(st.rows)))
+	var body []string
+	if len(st.rows) == 0 {
+		body = append(body, " "+headerStyle.Render("no models registered"))
+	}
+	cols := []Column{
+		{Style: humanMsgStyle},
+		{Style: modelsIDStyle},
+		{Style: modelsPersonaStyle},
+		{Style: modelsPersonaStyle},
+	}
+	rows := make([]Row, len(st.rows))
+	for i, row := range st.rows {
+		rows[i] = Row{
+			Cells:  []string{row.Alias, truncate(row.Config.ID, 28), personaCell(row.Config), privacyLabel(model.PrivacyOfRoute(row.Config.ID))},
+			Active: i == st.cursor,
+			Tag:    activeTag(row.Alias == active),
 		}
 	}
-	return strings.Join(baseLines, "\n")
+	// The real render width, NOT 0 (unbounded): all three columns are padded to
+	// their global max, so one over-wide alias would widen every row.
+	body = append(body, RenderTable(cols, rows, width, TableOpts{
+		ActiveMarker: "❯ ",
+		MarkerStyle:  askCursorStyle,
+	})...)
+	if st.status != "" {
+		body = append(body, "", " "+st.status)
+	}
+	return renderScreenFrame(title, body, askKeysStyle.Render("↑/↓ move · Enter select · n discover · a add · e edit · d delete · Esc close"), width, height)
 }
 
 // renderModelForm paints the add/edit form via the add callback.
@@ -438,6 +452,32 @@ func renderModelForm(add func(string), f *modelForm) {
 		}
 		add(line)
 	}
-	add("")
-	add(" " + askKeysStyle.Render("Tab/↑↓ field · Enter save · Esc cancel"))
+}
+
+// modelFormHint and modelDiscoverHint are the key hints for the editor's two
+// sub-views, shared by the /models screen and the /config Models tab.
+const (
+	modelFormHint = "Tab/↑↓ field · Enter save · Esc cancel"
+)
+
+// modelsEditorHint returns the hint matching what the editor is showing, or
+// listHint when it is on its list.
+func modelsEditorHint(st *modelsEditState, listHint string) string {
+	switch {
+	case st == nil:
+		return listHint
+	case st.form != nil:
+		return askKeysStyle.Render(modelFormHint)
+	case st.discover != nil:
+		return askKeysStyle.Render(discoverHint(st.discover, st.discoverBoth))
+	}
+	return listHint
+}
+
+// activeTag marks the session's active model row.
+func activeTag(isActive bool) string {
+	if isActive {
+		return "(active)"
+	}
+	return ""
 }

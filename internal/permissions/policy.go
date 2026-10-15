@@ -96,6 +96,13 @@ var safeList = map[string]bool{
 	// pipeline_run is orchestration: spawned children inherit a cloned gate and are
 	// independently re-gated — same rationale as spawn_agent.
 	"pipeline_run": true,
+	// The orchestrator's tools (internal/orchestrator) exist only on an orchestrator
+	// loop. loop_status and loop_event read the watched loop's event stream;
+	// steer_agent only sends text to that loop's agent, whose own tool calls stay
+	// gated. The person chatting with the orchestrator is the approver.
+	"loop_status": true,
+	"loop_event":  true,
+	"steer_agent": true,
 }
 
 // onSafeList returns true for the hard-coded safe set, all codeindex_* tools, and

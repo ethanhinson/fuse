@@ -129,21 +129,31 @@ func (r *SlashRegistry) MaxCommandWidth() int {
 }
 
 // Filter returns entries whose Command or Description contains f (case-insensitive).
-// Empty f returns All().
+// Empty f returns All(). Results are ranked, not just filtered: a command that STARTS
+// with f comes first, then other commands containing f, then entries matched only by
+// their description. Registry order breaks ties, so the set is unchanged and the order
+// is stable. Without the ranking, typing "/o" buried the one command beginning with "o"
+// under every command whose name merely contains one.
 func (r *SlashRegistry) Filter(f string) []SlashEntry {
 	all := r.All()
 	if f == "" {
 		return all
 	}
-	lower := strings.ToLower(f)
-	var out []SlashEntry
+	lower := strings.ToLower(strings.TrimPrefix(f, "/"))
+	var prefix, inCommand, inDescription []SlashEntry
 	for _, e := range all {
-		if strings.Contains(strings.ToLower(e.Command), lower) ||
-			strings.Contains(strings.ToLower(e.Description), lower) {
-			out = append(out, e)
+		cmd := strings.ToLower(strings.TrimPrefix(e.Command, "/"))
+		switch {
+		case strings.HasPrefix(cmd, lower):
+			prefix = append(prefix, e)
+		case strings.Contains(strings.ToLower(e.Command), lower):
+			inCommand = append(inCommand, e)
+		case strings.Contains(strings.ToLower(e.Description), lower):
+			inDescription = append(inDescription, e)
 		}
 	}
-	return out
+	out := append(prefix, inCommand...)
+	return append(out, inDescription...)
 }
 
 // Changes returns the unified reload channel.

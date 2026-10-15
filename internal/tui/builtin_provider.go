@@ -20,6 +20,8 @@ func NewBuiltinProvider() *BuiltinProvider {
 			{Command: "/blackboard", Description: "Open the shared agent blackboard (also: b in /agents)", Kind: KindBuiltin, expand: func() string { return "/blackboard" }},
 			{Command: "/approvals", Description: "Show this session's permission decisions", Kind: KindBuiltin, expand: func() string { return "/approvals" }},
 			{Command: "/questions", Description: "Show this session's answered ask_user questions", Kind: KindBuiltin, expand: func() string { return "/questions" }},
+			{Command: "/orchestrator", Syntax: "[off|MESSAGE]", Description: "Talk to a model that watches and steers the agent", Kind: KindBuiltin, expand: func() string { return "/orchestrator" }},
+			{Command: "/interrupt", Syntax: "MESSAGE", Description: "Stop the agent's current step and redirect it", Kind: KindBuiltin, expand: func() string { return "/interrupt " }},
 			{Command: "/queue", Description: "Open the pending human-message queue editor (edit/reorder/delete)", Kind: KindBuiltin, expand: func() string { return "/queue" }},
 		},
 	}

@@ -58,6 +58,13 @@ export interface StartLoopArgs {
   task: string;
   model: string;
   interactive?: boolean;
+  /**
+   * Start this loop as the orchestrator of another loop (same tenant): a persistent chat
+   * loop that watches and steers the target. Chat with it through `send` and `observe`
+   * like any interactive loop; `model` picks the orchestrator's own model. Implies
+   * `interactive`.
+   */
+  orchestrate?: string;
 }
 
 /**
@@ -163,12 +170,31 @@ export function isCompletion(event: Event): boolean {
   return event.kind === KIND_LOOP_PARKED;
 }
 
+/** Options for {@link Client.sendWith}. */
+export interface SendOptions {
+  /** Cancel the loop's in-flight model call or tool batch so the message lands now. */
+  interrupt?: boolean;
+  /**
+   * Who is speaking: "human" (the default) or "orchestrator". The agent sees guidance
+   * from an orchestrator under its own label.
+   */
+  source?: "human" | "orchestrator";
+}
+
 /** The remote-only fuse client surface. */
 export interface Client {
   /** StartLoop constructs and drives one loop, returning its id. */
   startLoop(args: StartLoopArgs): Promise<{ loopId: string }>;
   /** Send injects human input at the loop's next turn boundary. */
   send(loopId: string, input: string): Promise<void>;
+  /**
+   * Interrupt is `send` that does not wait: it cancels the loop's in-flight model call or
+   * tool batch so the message lands now. Use it to steer a loop that is mid-turn. A server
+   * whose runtime cannot interrupt delivers it at the next boundary like `send`.
+   */
+  interrupt(loopId: string, input: string): Promise<void>;
+  /** sendWith is `send` with {@link SendOptions}: interrupt the loop and/or label the source. */
+  sendWith(loopId: string, input: string, options: SendOptions): Promise<void>;
   /**
    * observe streams domain events from `fromSeq` (default 0), skipping keepalives and
    * reconnecting transparently from the last-seen seq on stream end/error. Break the
@@ -260,6 +286,7 @@ export function createClient(options: ClientOptions): Client {
         task: args.task,
         model: args.model,
         interactive: args.interactive ?? false,
+        orchestrateLoopId: args.orchestrate ?? "",
         tenant,
       });
       return { loopId: resp.loopId };
@@ -267,6 +294,20 @@ export function createClient(options: ClientOptions): Client {
 
     async send(loopId: string, input: string): Promise<void> {
       await wire.send({ loopId, input, tenant });
+    },
+
+    async interrupt(loopId: string, input: string): Promise<void> {
+      await wire.send({ loopId, input, tenant, interrupt: true });
+    },
+
+    async sendWith(loopId: string, input: string, options: SendOptions): Promise<void> {
+      await wire.send({
+        loopId,
+        input,
+        tenant,
+        interrupt: options.interrupt ?? false,
+        source: options.source ?? "",
+      });
     },
 
     observe(loopId: string, arg?: bigint | ObserveOptions): AsyncIterable<Event> {
