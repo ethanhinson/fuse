@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethanhinson/fuse/internal/orchestrator"
 	"sync"
 	"time"
 
@@ -54,6 +55,16 @@ type Deps struct {
 	// When "", StartLoop uses event.NoopStore{} instead of opening an fsstore — the
 	// one-shot binding uses this so its behavior stays byte-identical (no new files).
 	BaseDir string
+	// InMemoryEvents, when BaseDir is "", keeps each loop's event stream in a bounded
+	// in-memory store instead of discarding it, so the loop can be observed (replay and
+	// live tail) while it runs without writing any file. A one-shot run sets it when it
+	// opens a control socket; left false, a one-shot run keeps its no-op store and stays
+	// byte-identical. Ignored when BaseDir or DurableStore is set.
+	InMemoryEvents bool
+	// RelayPoll is how often a loop's owner re-reads its durable stream for messages
+	// that other replicas relayed to it (zero means 2s). A live subscription wakes the
+	// owner immediately; this only bounds the delay when a wake-up is missed.
+	RelayPoll time.Duration
 	// MaxConcurrent seeds the loop tree's scheduler concurrency (used only when Tree
 	// is nil, i.e. when StartLoop creates its own tree).
 	MaxConcurrent int
@@ -162,6 +173,10 @@ type loop struct {
 	// reaped; nil for a non-interactive loop (which has no reaper). Safe to call
 	// concurrently.
 	touch func()
+
+	// cancel ends the loop's run: the session cancel of an interactive loop. Nil for a
+	// one-shot loop, which runs under the caller's context.
+	cancel context.CancelFunc
 }
 
 // New builds an in-process Runtime. deps carries the collaborators a binding
@@ -407,7 +422,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// event-emission ctx (durableSink), so Appends survive the disconnect too.
 	// A resumed loop is always interactive (it re-parks to await the next Send), so the
 	// session-detach and reaper apply to it exactly as to a fresh interactive start.
-	interactive := cfg.Interactive || opts.resume
+	interactive := cfg.Interactive || opts.resume || cfg.Orchestrate != ""
 	sessionCtx := loopCtx
 	var sessionCancel context.CancelFunc
 	if interactive {
@@ -505,7 +520,11 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	if durable {
 		store = &durableSink{store: r.deps.DurableStore, key: key, ctx: sessionCtx, observer: obs}
 	} else if r.deps.BaseDir == "" {
-		store = event.NoopStore{}
+		if r.deps.InMemoryEvents {
+			store = event.NewMemStore(0)
+		} else {
+			store = event.NoopStore{}
+		}
 	} else {
 		fs, err := fsstore.NewFSEventStore(r.deps.BaseDir, rootID)
 		if err != nil {
@@ -545,7 +564,21 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	}
 
 	var toolReg *tools.Registry
-	if r.deps.NewToolRegistry != nil {
+	if cfg.Orchestrate != "" {
+		// An orchestrator holds ONLY the watch-and-steer tools - never the binding's
+		// shell, file or MCP tools - and acts on a loop in its own tenant, so it can
+		// reach nothing its caller could not.
+		if cfg.Orchestrate == rootID {
+			failLaunch()
+			return nil, fmt.Errorf("runtime: a loop cannot orchestrate itself")
+		}
+		if _, err := r.liveLoop(ctx, tenant, cfg.Orchestrate); err != nil && !errors.Is(err, errLiveElsewhere) {
+			failLaunch()
+			return nil, fmt.Errorf("runtime: orchestrate target: %w", err)
+		}
+		toolReg = tools.NewRegistry()
+		orchestrator.Register(toolReg, &runtimeTarget{rt: r, tenant: tenant, loopID: cfg.Orchestrate})
+	} else if r.deps.NewToolRegistry != nil {
 		toolReg = r.deps.NewToolRegistry()
 	} else {
 		toolReg = tools.NewRegistry()
@@ -591,6 +624,22 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		// is covered by turn roots instead.
 		end(observe.OutcomeSuccess)
 		turns.wake()
+	}
+	if cfg.Orchestrate != "" {
+		a.SetSystemPrompt(orchestrator.SystemPrompt())
+		// The binding wires its whole tool surface (bash, spawn_agent, blackboard, ...)
+		// onto whatever registry it is handed. An orchestrator watches and steers; it
+		// must not also act, so cut the registry back to exactly its own tools. The
+		// agent reads the registry live each turn, so this takes effect before Run.
+		keep := map[string]bool{}
+		for _, n := range orchestrator.ToolNames {
+			keep[n] = true
+		}
+		for _, t := range toolReg.Tools() {
+			if !keep[t.Name()] {
+				toolReg.Unregister(t.Name())
+			}
+		}
 	}
 	a.SetObserver(obs)
 	a.SetEventSink(store)
@@ -643,6 +692,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 
 	h := &loopHandle{id: rootID, done: make(chan struct{})}
 	lp.handle = h
+	lp.cancel = sessionCancel
 
 	// Owner-liveness lease renewer (change 0049 Task 7): while the loop runs, refresh
 	// LeaseExpiry every ~⅓ TTL so a cold instance can tell a live owner from an
@@ -657,6 +707,13 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	if r.deps.Registry != nil {
 		stopRenew = make(chan struct{})
 		r.startLeaseRenewer(sessionCtx, key, rootID, stopRenew)
+	}
+
+	// Messages other replicas relay to this loop arrive through its durable stream.
+	var stopRelay chan struct{}
+	if r.deps.DurableStore != nil {
+		stopRelay = make(chan struct{})
+		r.startRelayPump(sessionCtx, key, lp.humanBus, rootNode.ID, stopRelay)
 	}
 
 	// Idle-TTL reaper for an interactive session (change 0054, D2): once the loop is
@@ -715,6 +772,9 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		// the shutdown deterministic and immediate.
 		if stopRenew != nil {
 			close(stopRenew)
+		}
+		if stopRelay != nil {
+			close(stopRelay)
 		}
 		// Stop the idle reaper too, and release the session context (change 0054): the
 		// run is over, so the reaper must not fire, and the WithoutCancel-derived session
@@ -821,28 +881,16 @@ func (r *inProcRuntime) resolveDurable(ctx context.Context, tenant event.TenantI
 		}
 		return event.LoopRecord{}, key, err
 	}
-	// Reap / re-own on resolve (change 0049 Task 7): a record that is still marked Live
-	// but whose lease has EXPIRED describes a loop whose owning instance died without
-	// flipping SetLive(false) — an abandoned live loop. Rather than surface it as a hard
-	// error or refuse observe/replay, the cold-resolving instance re-owns it: refresh the
-	// lease under THIS node id (Heartbeat with now()+TTL) and record the refreshed record
-	// so observe/attach/replay of the abandoned loop proceeds. This does NOT resurrect a
-	// one-shot's execution nor resume a parked persistent loop's driving (that rides #53);
-	// it only clears the abandoned-lease as a blocker to reading the stream. A non-expired
-	// live record is left to its owner untouched; a not-live (completed) record is served
-	// replay unchanged (its lease is irrelevant once it is done).
-	if rec.Live && !rec.LeaseExpiry.IsZero() && r.now().After(rec.LeaseExpiry) {
-		newExpiry := r.now().Add(r.leaseTTL())
-		// The re-owning node id is the loop's own id (rootID == loopID == key.Loop, the same
-		// value StartLoop records as OwnerNodeID) — this instance now serves the abandoned
-		// loop's stream. Best-effort: on Heartbeat failure fall back to the record as
-		// resolved (the caller still gets a usable, non-error result — the lease simply stays
-		// stale until the next resolve retries).
-		reOwner := string(key.Loop)
-		if err := r.deps.Registry.Heartbeat(ctx, key, reOwner, newExpiry); err == nil {
-			rec.LeaseExpiry = newExpiry
-			rec.OwnerNodeID = reOwner
-		}
+	// A record that is still marked Live but whose lease has EXPIRED describes a loop
+	// whose owning instance died without flipping SetLive(false): an abandoned loop.
+	// Reading its history needs no lease, so the stream stays readable either way. What
+	// must NOT happen is refreshing the lease: nothing here runs the loop, and a
+	// refreshed lease makes a dead loop look alive, so a Send is accepted and then waits
+	// on a stream nobody reads. Mark it not live instead; the next Send then sees
+	// ErrLoopFinished and the edge resumes the loop on a healthy instance.
+	rec, err = r.reapIfAbandoned(ctx, key, rec)
+	if err != nil {
+		return event.LoopRecord{}, key, err
 	}
 	return rec, key, nil
 }
@@ -985,30 +1033,67 @@ func modelFromEvents(events []event.Event) string {
 // longer drains, so enqueuing would strand the message forever); a still-running
 // loop enqueues and returns nil.
 func (r *inProcRuntime) Send(ctx context.Context, tenant event.TenantID, loopID string, input string) error {
+	lp, err := r.liveLoop(ctx, tenant, loopID)
+	if errors.Is(err, errLiveElsewhere) {
+		return r.relayRequest(ctx, tenant, loopID, input, SteerOpts{})
+	}
+	if err != nil {
+		return err
+	}
+	lp.humanBus.Enqueue(lp.node.ID, agent.ModeRespond, "@human", input)
+	return nil
+}
+
+// Steer is Send with a source label and an optional interrupt (the Steerer
+// capability). With opts.Interrupt the loop's in-flight model call or tool batch is
+// cancelled so the message lands now. If another replica runs the loop, the message is
+// relayed to it through the durable stream (see relay.go).
+func (r *inProcRuntime) Steer(ctx context.Context, tenant event.TenantID, loopID string, input string, opts SteerOpts) error {
+	lp, err := r.liveLoop(ctx, tenant, loopID)
+	if errors.Is(err, errLiveElsewhere) {
+		return r.relayRequest(ctx, tenant, loopID, input, opts)
+	}
+	if err != nil {
+		return err
+	}
+	source := opts.Source
+	if source == "" {
+		source = agent.SourceHuman
+	}
+	lp.humanBus.Steer(lp.node.ID, source, opts.Interrupt, input)
+	return nil
+}
+
+// liveLoop resolves the loop a Send or Steer targets and refuses one that cannot
+// take input: ErrLoopNotFound for an unknown loop (or a wrong-tenant hit), and
+// ErrLoopFinished for a loop whose run goroutine has completed, since its injector
+// will never drain another message and enqueuing would strand it. It also counts the
+// call as session activity, resetting the idle-reap window.
+func (r *inProcRuntime) liveLoop(ctx context.Context, tenant event.TenantID, loopID string) (*loop, error) {
 	lp := r.loopCache(tenant, loopID)
 	if lp == nil {
 		// Not live in THIS instance's cache (or a tenant mismatch on the bare-loopID
-		// cache key — loopCache returns nil for a wrong-tenant hit). With the durable seam
+		// cache key - loopCache returns nil for a wrong-tenant hit). With the durable seam
 		// present, resolve the loop's existence/liveness UNDER THE REQUESTED TENANT: a
-		// finished loop ⇒ ErrLoopFinished (replay-only); a still-live loop owned by ANOTHER
-		// instance ⇒ ErrLoopNotFound here (this instance holds no injector for it); an
-		// unknown loop (or one under a different tenant) ⇒ ErrLoopNotFound. Without the
+		// finished loop => ErrLoopFinished (replay-only); a still-live loop owned by ANOTHER
+		// instance => ErrLoopNotFound here (this instance holds no injector for it); an
+		// unknown loop (or one under a different tenant) => ErrLoopNotFound. Without the
 		// seam, resolveDurable returns ErrLoopNotFound directly (legacy in-memory behavior).
-		rec, _, rerr := r.resolveDurable(ctx, tenant, loopID)
+		rec, _, rerr := r.resolveDurableForDelivery(ctx, tenant, loopID)
 		if rerr != nil {
-			return rerr
+			return nil, rerr
 		}
 		if !rec.Live {
-			return fmt.Errorf("%w: %q", ErrLoopFinished, loopID)
+			return nil, fmt.Errorf("%w: %q", ErrLoopFinished, loopID)
 		}
-		return fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
+		// Live and owned by a replica that is still renewing its lease: the caller
+		// relays through the durable stream.
+		return nil, fmt.Errorf("%w: %q: %w", errLiveElsewhere, loopID, ErrLoopNotFound)
 	}
-	// A finished loop's injector will never drain another message. Report it instead
-	// of silently stranding the input on the queue.
 	if lp.handle != nil {
 		select {
 		case <-lp.handle.done:
-			return fmt.Errorf("%w: %q", ErrLoopFinished, loopID)
+			return nil, fmt.Errorf("%w: %q", ErrLoopFinished, loopID)
 		default:
 		}
 	}
@@ -1017,8 +1102,7 @@ func (r *inProcRuntime) Send(ctx context.Context, tenant event.TenantID, loopID 
 	if lp.touch != nil {
 		lp.touch()
 	}
-	lp.humanBus.Enqueue(lp.node.ID, agent.ModeRespond, "@human", input)
-	return nil
+	return lp, nil
 }
 
 // Spawn starts a child agent under the loop and returns a handle wrapping
@@ -1144,3 +1228,68 @@ func (s spawnHandle) Result() (any, error)  { return s.h.Result() }
 // onSessionContext, when non-nil, is called with each launch's session context and
 // whether that launch is interactive. Test-only seam; see the call site in launchLoop.
 var onSessionContext func(ctx context.Context, interactive bool)
+
+// resolveDurableForDelivery resolves a loop that is not in this process's cache for a
+// Send or Steer. Unlike resolveDurable (which serves reads and so quietly re-owns an
+// abandoned loop's lease), delivery must not: nothing here runs the loop. A live record
+// whose lease has expired means the owner died; it is marked not live so the caller
+// sees ErrLoopFinished and the edge can resume the loop on this replica.
+func (r *inProcRuntime) resolveDurableForDelivery(ctx context.Context, tenant event.TenantID, loopID string) (event.LoopRecord, event.StreamKey, error) {
+	key := event.StreamKey{Tenant: event.NormalizeTenant(tenant), Loop: event.LoopID(loopID)}
+	if r.deps.Registry == nil {
+		return event.LoopRecord{}, key, fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
+	}
+	rec, err := r.deps.Registry.Resolve(ctx, key)
+	if err != nil {
+		if errors.Is(err, event.ErrLoopUnknown) {
+			return event.LoopRecord{}, key, fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
+		}
+		return event.LoopRecord{}, key, err
+	}
+	rec, err = r.reapIfAbandoned(ctx, key, rec)
+	if err != nil {
+		return event.LoopRecord{}, key, err
+	}
+	return rec, key, nil
+}
+
+// reapIfAbandoned marks a record not live when it claims to be live but its owner's lease
+// has expired, and returns the record as it now stands. A record with no lease, or a
+// valid one, is returned untouched.
+func (r *inProcRuntime) reapIfAbandoned(ctx context.Context, key event.StreamKey, rec event.LoopRecord) (event.LoopRecord, error) {
+	if !rec.Live || rec.LeaseExpiry.IsZero() || !r.now().After(rec.LeaseExpiry) {
+		return rec, nil
+	}
+	if err := r.deps.Registry.SetLive(ctx, key, false, rec.OwnerNodeID); err != nil {
+		return rec, err
+	}
+	rec.Live = false
+	return rec, nil
+}
+
+// Shutdown ends every loop this runtime runs and waits for each to finish, so each has
+// recorded itself not live before the process exits. See Shutdowner.
+func (r *inProcRuntime) Shutdown(ctx context.Context) error {
+	r.mu.Lock()
+	loops := make([]*loop, 0, len(r.loops))
+	for _, lp := range r.loops {
+		loops = append(loops, lp)
+	}
+	r.mu.Unlock()
+	for _, lp := range loops {
+		if lp.cancel != nil {
+			lp.cancel()
+		}
+	}
+	for _, lp := range loops {
+		if lp.handle == nil {
+			continue
+		}
+		select {
+		case <-lp.handle.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
+}

@@ -210,9 +210,11 @@ type ShellModel struct {
 	segmentsDir string            // session segments/ dir for the /agents indicator + "s" (0030)
 	humanBus    *agent.HumanBus   // per-node human-message queues (ADR-0022)
 	handleReg   *agent.HandleRegistry
-	router      agent.RouterLLM  // async advisory classifier; nil ⇒ default routing only
-	queue       *queueState      // non-nil while the /queue editor is open
-	modelsEdit  *modelsEditState // non-nil while the /models edit editor is open
+	router      agent.RouterLLM     // async advisory classifier; nil ⇒ default routing only
+	orch        OrchestratorSession // the /orchestrator chat; nil ⇒ unavailable
+	orchMode    bool                // plain lines go to the orchestrator instead of the agent
+	queue       *queueState         // non-nil while the /queue editor is open
+	modelsEdit  *modelsEditState    // non-nil while the /models edit editor is open
 	// config is non-nil while the /config screen is open. It hosts the tabbed
 	// settings surface and SHARES modelsEdit with `/models edit` rather than
 	// owning a second copy of the editor.
@@ -273,7 +275,7 @@ type staleResource struct {
 // when auto is active with no classifier.
 func NewShellModel(alias string, verbose bool, glamourStyle string, reg *model.Registry, slashReg *SlashRegistry, build AgentBuilder, sessionMode *permissions.SessionMode, classifierAvailable bool) ShellModel {
 	in := textinput.New()
-	in.Placeholder = "type a task, /model NAME, /verbose, /exit"
+	in.Placeholder = defaultPlaceholder
 	in.Prompt = ""
 	in.Focus()
 
@@ -466,6 +468,24 @@ func (m ShellModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ToolResultMsg:
 		return m.handleToolResult(msg)
+
+	case OrchReplyMsg:
+		text := msg.Text
+		if m.md != nil {
+			if rendered, err := m.md.Render(text); err == nil {
+				text = strings.TrimRight(rendered, "\n")
+			}
+		}
+		m.appendPre(orchStyle.Render("orchestrator") + "\n" + assistantStyle.Render(text))
+		return m, nil
+
+	case OrchActionMsg:
+		m.appendLine(orchStyle.Render("orchestrator ›") + " " + headerStyle.Render(sanitizeDisplay(msg.Text)))
+		return m, nil
+
+	case OrchErrMsg:
+		m.appendLine(orchStyle.Render("orchestrator ›") + " " + agentErrStyle.Render(sanitizeDisplay(msg.Err)))
+		return m, nil
 
 	case AgentErrMsg:
 		// Settle any still-queued calls before showing the error; their
@@ -798,6 +818,11 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if line == "" {
 			return m, nil
 		}
+		// The orchestrator and /interrupt must work mid-turn, so they come before the
+		// busy-queue below.
+		if next, cmd, handled := m.routeOrchestratorInput(line); handled {
+			return next, cmd
+		}
 		// Human-messaging routing (ADR-0022): /btw, @all, @handle, /rename, and —
 		// while an agent is busy — queued messages are all handled here rather than
 		// dropped. Falls through to the normal slash/prompt path for routeNormal.
@@ -824,6 +849,14 @@ func (m ShellModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startPrompt(line)
 	}
 
+	// Several characters in one message are TEXT, whether or not the terminal wrapped
+	// them as a bracketed paste (fast typing and automation arrive bare). The input's key
+	// map matches on a message's string form, so the bare burst "right" would otherwise
+	// match the Right-arrow binding and move the cursor instead of typing the word. A
+	// pasted message stringifies with brackets, which no binding matches.
+	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
+		msg.Paste = true
+	}
 	// Let the text input handle the key first.
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -954,6 +987,12 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 	switch cmd {
 	case "/exit", "/quit":
 		return m, tea.Quit
+	// Reached from the slash menu (a typed line is routed earlier, see
+	// routeOrchestratorInput); the menu selects the bare command.
+	case "/orchestrator":
+		return m.orchestratorCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
+	case "/interrupt":
+		return m.interruptCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
 	case "/agents":
 		return m.enterAgentsView()
 	case "/blackboard":
@@ -1484,6 +1523,16 @@ func isFileReadTool(name string) bool {
 // counter when children are active, so users see fan-out without opening the
 // overlay; otherwise just the Tab affordance.
 func (m ShellModel) agentsHint() string {
+	hint := m.agentsHintCore()
+	// The slash menu is closed while a turn runs, which is exactly when the orchestrator
+	// is most useful, so say that it is there.
+	if hint != "" && m.running && m.orch != nil && !m.orchMode {
+		hint += ruleStyle.Render(" · /orchestrator to steer")
+	}
+	return hint
+}
+
+func (m ShellModel) agentsHintCore() string {
 	if m.tree == nil {
 		return ""
 	}
@@ -1786,6 +1835,9 @@ func (m ShellModel) View() string {
 	}
 	rule := ruleStyle.Render(strings.Repeat("─", width))
 	prompt := promptAliasStyle.Render("["+m.alias+"]") + " > " + m.input.View()
+	if m.orchMode {
+		prompt = orchStyle.Render("[orchestrator]") + " > " + m.input.View()
+	}
 
 	var status string
 	switch {

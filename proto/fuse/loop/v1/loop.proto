@@ -32,6 +32,11 @@ message StartLoopRequest {
   string model = 2;
   string tenant = 3;
   bool interactive = 4;
+  // orchestrate_loop_id, when set, starts this loop as the orchestrator of that other
+  // loop (same tenant): a persistent chat loop whose only tools watch and steer the
+  // target. Chat with it through Send and Observe like any interactive loop. It implies
+  // interactive; model picks the orchestrator's own model.
+  string orchestrate_loop_id = 5;
 }
 
 message StartLoopResponse {
@@ -42,6 +47,15 @@ message SendRequest {
   string loop_id = 1;
   string input = 2;
   string tenant = 3;
+  // interrupt cancels the loop's in-flight model call or tool batch so this message
+  // lands now instead of at the next turn boundary (steering). Servers whose runtime
+  // cannot interrupt deliver it at the next boundary like any other message.
+  bool interrupt = 4;
+  // source labels who is speaking: "human" (the default) or "orchestrator". The agent
+  // sees guidance from an orchestrator under its own label. Any other value is
+  // rejected. The label is informational, not a credential: a client can already put
+  // any text in a message.
+  string source = 5;
 }
 
 message SendResponse {}

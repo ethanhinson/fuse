@@ -110,7 +110,7 @@ func Open(ctx context.Context, dsn string) (*PGStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: pool: %w", err)
 	}
-	if _, err := pool.Exec(ctx, schemaSQL); err != nil {
+	if err := applySchema(ctx, pool); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("pgstore: apply schema: %w", err)
 	}
@@ -676,4 +676,31 @@ func (s *PGStore) Ping(ctx context.Context) error {
 		return fmt.Errorf("pgstore: ping: %w", err)
 	}
 	return nil
+}
+
+// schemaLockKey is the Postgres advisory-lock key that serializes schema application. Any
+// fixed int64 would do; this one is just distinctive.
+const schemaLockKey int64 = 0x66757365_73636d61 // "fusescma"
+
+// applySchema runs the embedded DDL inside a transaction that holds an advisory lock.
+//
+// CREATE TABLE IF NOT EXISTS is idempotent for one caller but NOT safe against another
+// replica running it at the same instant: both can pass the existence check, and the
+// loser fails with a duplicate-key error on pg_type. Replicas start together whenever an
+// autoscaler adds pods or a rollout replaces them, so the race is routine. The lock makes
+// the second replica wait for the first to commit, then see the objects already exist.
+// pg_advisory_xact_lock is released automatically at commit or rollback.
+func applySchema(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, schemaLockKey); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, schemaSQL); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

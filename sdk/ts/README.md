@@ -50,6 +50,16 @@ for await (const ev of client.observe(loopId)) {
 }
 ```
 
+Steering a loop that is mid-turn:
+
+```ts
+await client.interrupt(loopId, "stop, use the cache instead"); // cancels the current step
+await client.sendWith(loopId, "also add tests", { source: "orchestrator" });
+
+// A chat loop that watches and steers another loop (implies interactive):
+const orch = await client.startLoop({ task: "tell me what it is doing", model: "m", orchestrate: loopId });
+```
+
 `observe(loopId, fromSeq?)` is an **async iterable over domain events**. It:
 
 - **skips keepalive frames** (`frame.keepalive || !frame.event`);

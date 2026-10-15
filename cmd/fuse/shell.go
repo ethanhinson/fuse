@@ -17,6 +17,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/event/fsstore"
 	"github.com/ethanhinson/fuse/internal/mcp"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/orchestrator"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/segment"
@@ -348,6 +349,27 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	flushCtx, cancelFlusher := context.WithCancel(context.Background())
 	defer cancelFlusher()
 	tree.StartDirtyFlusher(flushCtx)
+
+	// /orchestrator: a persistent chat loop on its own model (orchestrator.model, else
+	// the session's) that watches the root agent through the shell's event store and
+	// steers it through the same human bus a typed message uses. It only starts when the
+	// person first talks to it.
+	orchModel := cfg.Orchestrator.Model
+	if orchModel == "" {
+		orchModel = alias
+	}
+	orchTarget := &orchestrator.LocalTarget{
+		Store: eventStore, Bus: humanBus, NodeID: rootNode.ID,
+		BusyFn: func() bool {
+			n := tree.Node(rootNode.ID)
+			return n != nil && n.Snapshot().Status == agent.StatusRunning
+		},
+	}
+	m = m.WithOrchestrator(newShellOrchestrator(flushCtx, m.Channel(), orchTarget,
+		func(r agent.Renderer, orchTools *tools.Registry) (*agent.Agent, error) {
+			return buildChildAgent(cfg, reg, orchModel, r, orchestrator.SystemPrompt(), orchTools,
+				childBaseApprove, traceW, "orchestrator", sessionMode, true, rateGate, segmentSink)
+		}))
 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion(), tea.WithOutput(stdout))
 	// Pump agent events, tree updates, and registry reloads into the program.

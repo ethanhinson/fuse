@@ -561,6 +561,14 @@ func serveNetWithOptions(ctx context.Context, ln net.Listener, rt runtime.Runtim
 		// Because drainCtx may already be expired by now, this is a bounded
 		// best-effort drain, never an additional wait.
 		_ = obs.shutdownMetrics(drainCtx)
+		// Hand this replica's loops off: end them and wait until each has recorded itself
+		// not live. Without it an interactive loop stays "live" for up to a lease TTL after
+		// the process is gone, and a message sent in that window is relayed to nobody. The
+		// next message instead sees the loop finished and the edge resumes it on another
+		// replica. Same drainCtx, so it splits the one budget rather than adding to it.
+		if sd, ok := rt.(runtime.Shutdowner); ok {
+			_ = sd.Shutdown(drainCtx)
+		}
 		_ = srv.Close()
 	}()
 

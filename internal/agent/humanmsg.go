@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 )
 
@@ -97,7 +98,31 @@ type HumanMsg struct {
 	TS       time.Time
 	Status   MsgStatus
 	Handle   string // display-only; looked up fresh at render, survives rename
+	// Source says who is speaking: SourceHuman (the default) or SourceOrchestrator.
+	// Poll labels each delivered segment with it so the model knows who it is hearing.
+	Source string
+	// Interrupt marks a steer that must not wait for the in-flight model call or
+	// tool batch to finish: the bus calls the node's interrupt hook on enqueue.
+	Interrupt bool
+	// ReqSeq is the steer.request event this message was relayed from, when another
+	// replica sent it; zero for a message sent in this process.
+	ReqSeq event.Seq
 }
+
+// orchestratorLabel heads guidance from an orchestrator, and orchestratorProvenance
+// follows it. The label alone is not enough: a careful model that finds an unfamiliar
+// block in its conversation may treat it as untrusted content and ignore it. The
+// provenance line says who is speaking and whose authority it carries.
+const (
+	orchestratorLabel      = "[orchestrator guidance]"
+	orchestratorProvenance = "(Sent by the orchestrator the person you are working for set up to watch your progress. It speaks for them, exactly as if they had typed it, and it is newer than your earlier instructions: where they differ, follow this.)"
+)
+
+// Message sources. An empty Source reads as SourceHuman.
+const (
+	SourceHuman        = "human"
+	SourceOrchestrator = "orchestrator"
+)
 
 // HumanBus owns the per-node human-message queues and the delivered log. It is a
 // typed layer (its own mutex + Seq counter) rather than raw blackboard keys: the
@@ -117,6 +142,26 @@ type HumanBus struct {
 	// non-interactive loop never calls WaitForMessage, so it is byte-identical to
 	// the pre-existing poll-only bus. Lazily created per node on first use under mu.
 	notify map[string]chan struct{}
+
+	// interrupts holds each node's interrupt hook: the running loop registers a func
+	// that cancels its in-flight model call / tool batch, and an Interrupt steer
+	// fires it. Guarded by mu.
+	interrupts map[string]func()
+}
+
+// SetInterrupt registers (or clears, with nil) the hook an Interrupt steer fires for
+// a node. The agent loop sets it for the span of each turn.
+func (b *HumanBus) SetInterrupt(nodeID string, fn func()) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.interrupts == nil {
+		b.interrupts = map[string]func(){}
+	}
+	if fn == nil {
+		delete(b.interrupts, nodeID)
+		return
+	}
+	b.interrupts[nodeID] = fn
 }
 
 // NewHumanBus returns an empty bus bound to tree (nil-safe for unit tests).
@@ -180,29 +225,83 @@ func (b *HumanBus) WaitForMessage(ctx context.Context, nodeID string) error {
 	}
 }
 
+// hasPendingInterrupt reports whether an Interrupt steer is queued for the node.
+func (b *HumanBus) hasPendingInterrupt(nodeID string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, m := range b.queues[nodeID] {
+		if m.Interrupt {
+			return true
+		}
+	}
+	return false
+}
+
 // nextSeq returns the next global monotonic sequence number.
 func (b *HumanBus) nextSeq() uint64 { return b.seq.Add(1) }
 
 // Enqueue appends a message to a node's queue with a fresh Seq and returns it.
 // The caller supplies the resolved target node ID, mode, display handle, and text.
 func (b *HumanBus) Enqueue(nodeID string, mode MsgMode, handle, text string) HumanMsg {
+	return b.enqueue(nodeID, mode, handle, text, SourceHuman, false)
+}
+
+// Steer enqueues a direct steering message for a node. source labels who is speaking
+// (SourceHuman or SourceOrchestrator). With interrupt set, the node's in-flight model
+// call or tool batch is cancelled so the steer lands now instead of at the end of the
+// current batch; without it the steer waits for the next turn boundary like any other
+// message. Safe to call from any goroutine.
+func (b *HumanBus) Steer(nodeID, source string, interrupt bool, text string) HumanMsg {
+	handle := "@human"
+	if source == SourceOrchestrator {
+		handle = "@orchestrator"
+	}
+	return b.enqueue(nodeID, ModeDirect, handle, text, source, interrupt)
+}
+
+// Relay enqueues a message that another replica relayed through the durable stream as
+// steer.request event reqSeq. It behaves like Send (human) or Steer (orchestrator) would
+// have in this process, and remembers reqSeq so the delivery can be recorded.
+func (b *HumanBus) Relay(nodeID, source string, interrupt bool, text string, reqSeq event.Seq) HumanMsg {
+	if source == SourceOrchestrator {
+		return b.enqueueRelayed(nodeID, ModeDirect, "@orchestrator", text, source, interrupt, reqSeq)
+	}
+	return b.enqueueRelayed(nodeID, ModeRespond, "@human", text, SourceHuman, interrupt, reqSeq)
+}
+
+func (b *HumanBus) enqueue(nodeID string, mode MsgMode, handle, text, source string, interrupt bool) HumanMsg {
+	return b.enqueueRelayed(nodeID, mode, handle, text, source, interrupt, 0)
+}
+
+func (b *HumanBus) enqueueRelayed(nodeID string, mode MsgMode, handle, text, source string, interrupt bool, reqSeq event.Seq) HumanMsg {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	msg := HumanMsg{
-		ID:       fmt.Sprintf("hm-%d", b.seq.Add(1)),
-		ToNodeID: nodeID,
-		Mode:     mode,
-		Text:     text,
-		Seq:      b.nextSeq(),
-		TS:       time.Now(),
-		Status:   MsgPending,
-		Handle:   handle,
+		ID:        fmt.Sprintf("hm-%d", b.seq.Add(1)),
+		ToNodeID:  nodeID,
+		Mode:      mode,
+		Text:      text,
+		Seq:       b.nextSeq(),
+		TS:        time.Now(),
+		Status:    MsgPending,
+		Handle:    handle,
+		Source:    source,
+		Interrupt: interrupt,
+		ReqSeq:    reqSeq,
 	}
 	b.queues[nodeID] = append(b.queues[nodeID], msg)
 	// Wake an interactive loop parked in WaitForMessage on this node (no-op for a
 	// non-interactive loop, which never parks). Signal happens under mu so it cannot
 	// race the queue append a waiter will drain.
 	b.signalLocked(nodeID)
+	var hook func()
+	if interrupt {
+		hook = b.interrupts[nodeID]
+	}
+	b.mu.Unlock()
+	// The hook only cancels a context, so it is cheap, but run it outside mu anyway.
+	if hook != nil {
+		hook()
+	}
 	return msg
 }
 
@@ -482,20 +581,77 @@ var errNoBus = fmt.Errorf("agent: interactive loop has no human bus to await")
 // models handle poorly. Returns (nil, false) when nothing is pending. It is safe
 // to call every turn; a nil bus is a no-op.
 func (h *HumanInjector) Poll() (model.Message, bool) {
+	m, _, ok := h.pollDetail()
+	return m, ok
+}
+
+// polled describes one drained batch for the user.input event.
+type polled struct {
+	// Source is "" when every segment came from the human (so the event stays
+	// byte-identical to the pre-steering stream), else the distinct sources, comma-joined.
+	Source string
+	// ReqSeqs are the relayed steer.request events the batch delivered.
+	ReqSeqs []event.Seq
+}
+
+// pollDetail is Poll plus what the user.input event records about the batch.
+func (h *HumanInjector) pollDetail() (model.Message, polled, bool) {
 	if h == nil || h.bus == nil {
-		return model.Message{}, false
+		return model.Message{}, polled{}, false
 	}
 	drained := h.bus.Drain(h.nodeID)
 	if len(drained) == 0 {
-		return model.Message{}, false
+		return model.Message{}, polled{}, false
 	}
+	var reqSeqs []event.Seq
 	var b strings.Builder
-	b.WriteString("[human message]\n")
+	var sources []string
 	for i, msg := range drained {
 		if i > 0 {
 			b.WriteString("\n---\n")
 		}
+		label := "[human message]"
+		if msg.Source == SourceOrchestrator {
+			label = orchestratorLabel
+		}
+		// The first segment's label is the batch header, as it always was; later
+		// segments only repeat it when the speaker changed.
+		if i == 0 || drained[i-1].Source != msg.Source {
+			b.WriteString(label + "\n")
+			if msg.Source == SourceOrchestrator {
+				b.WriteString(orchestratorProvenance + "\n")
+			}
+		}
 		b.WriteString(msg.Text)
+		if msg.Source != "" && msg.Source != SourceHuman && !containsStr(sources, msg.Source) {
+			sources = append(sources, msg.Source)
+		}
+		if msg.ReqSeq != 0 {
+			reqSeqs = append(reqSeqs, msg.ReqSeq)
+		}
 	}
-	return model.Message{Role: "user", Content: b.String()}, true
+	return model.Message{Role: "user", Content: b.String()}, polled{Source: strings.Join(sources, ","), ReqSeqs: reqSeqs}, true
+}
+
+func containsStr(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+// setInterrupt registers fn as the hook an Interrupt steer fires for this node
+// (nil clears it). It also reports whether an interrupt steer is already queued, so
+// a caller that registers just after the message arrived still sees it.
+func (h *HumanInjector) setInterrupt(fn func()) (pending bool) {
+	if h == nil || h.bus == nil {
+		return false
+	}
+	h.bus.SetInterrupt(h.nodeID, fn)
+	if fn == nil {
+		return false
+	}
+	return h.bus.hasPendingInterrupt(h.nodeID)
 }

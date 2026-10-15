@@ -92,6 +92,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runLoopServer(args[1:], cfg, reg, stdout, stderr)
 		case "loop-serve-net":
 			return runLoopServeNet(args[1:], cfg, reg, stdout, stderr)
+		case "steer":
+			return runSteer(args[1:], stdout, stderr)
+		case "orchestrate":
+			return runOrchestrate(args[1:], cfg, reg, os.Stdin, stdout, stderr)
 		case "help":
 			banner.Print(stdout, version.Version)
 			fmt.Fprintln(stdout, "commands:")
@@ -103,6 +107,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, "  fuse loop-server  headless stdio JSON-RPC loop-control server (binding #2)")
 			fmt.Fprintln(stdout, "  fuse loop-serve-net  networked Connect/protobuf (fuse.loop.v1) loop-control server (binding #3; bearer-token auth)")
 			fmt.Fprintln(stdout, "  fuse healthcheck  probe a running server's /readyz; exit 0 when healthy (container healthcheck)")
+			fmt.Fprintln(stdout, "  fuse steer        send a message to a running loop (--socket or --url, --loop; --interrupt to cut in)")
+			fmt.Fprintln(stdout, "  fuse orchestrate  chat with an orchestrator that watches and steers a running loop")
 			fmt.Fprintln(stdout, "  fuse help         show this help")
 			return 0
 		}
@@ -113,6 +119,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	modelAlias := fs.String("model", "", "model alias to run (default: config default)")
 	verbose := fs.Bool("verbose", false, "render full tool args and output")
 	traceFile := fs.String("trace", "", "write raw gateway JSON to this file (- = stderr)")
+	controlSocket := fs.String("control", "", "serve a control socket at this path so the run can be steered (fuse steer / fuse orchestrate --socket PATH)")
 	approveAll := fs.Bool("approve-all", false, "auto-approve every tool call (scripted use; equivalent to mode: off for this run — a deliberate footgun)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -120,7 +127,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	rest := fs.Args()
 	if len(rest) == 0 {
 		banner.Print(stderr, version.Version)
-		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] \"<task>\"")
+		fmt.Fprintln(stderr, "usage: fuse [--model NAME] [--verbose] [--trace FILE] [--control SOCKET] \"<task>\"")
 		return 2
 	}
 	task := rest[0]
@@ -232,6 +239,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	defer closeObs()
 
 	deps, oneShotMCPClose := buildOneShotRuntimeDeps(cfg, reg, *modelAlias, toolReg, tree, stdout, *verbose, traceW, rootApprove, oneShotSystemBlock, oneShotBudget, rateGate, obs.observer)
+	// A control socket needs the run's event stream to be observable; without one the
+	// run keeps its no-op store and writes nothing.
+	deps.InMemoryEvents = *controlSocket != ""
 	rt := runtime.New(deps)
 	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: task, ModelID: *modelAlias})
 	if err != nil {
@@ -241,6 +251,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		oneShotMCPClose()
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
+	}
+	if *controlSocket != "" {
+		// The loop is running; open the way in. A failure here must not kill a run
+		// that is already doing the person's work, so it only warns.
+		ctlCtx, ctlCancel := context.WithCancel(context.Background())
+		defer ctlCancel()
+		if stopCtl, cerr := serveControlSocket(ctlCtx, *controlSocket, rt); cerr != nil {
+			fmt.Fprintf(stderr, "%v (continuing without a control socket)\n", cerr)
+		} else {
+			defer stopCtl()
+			fmt.Fprintf(stderr, "control: steer this run with: fuse steer --socket %s --loop %s \"message\"\n", *controlSocket, h.ID())
+		}
 	}
 	if _, err := h.Wait(); err != nil {
 		fmt.Fprintf(stderr, "run error: %v\n", err)

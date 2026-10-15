@@ -32,13 +32,18 @@ const (
 )
 
 type StartLoopRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Task          string                 `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
-	Model         string                 `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
-	Tenant        string                 `protobuf:"bytes,3,opt,name=tenant,proto3" json:"tenant,omitempty"`
-	Interactive   bool                   `protobuf:"varint,4,opt,name=interactive,proto3" json:"interactive,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Task        string                 `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
+	Model       string                 `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
+	Tenant      string                 `protobuf:"bytes,3,opt,name=tenant,proto3" json:"tenant,omitempty"`
+	Interactive bool                   `protobuf:"varint,4,opt,name=interactive,proto3" json:"interactive,omitempty"`
+	// orchestrate_loop_id, when set, starts this loop as the orchestrator of that other
+	// loop (same tenant): a persistent chat loop whose only tools watch and steer the
+	// target. Chat with it through Send and Observe like any interactive loop. It implies
+	// interactive; model picks the orchestrator's own model.
+	OrchestrateLoopId string `protobuf:"bytes,5,opt,name=orchestrate_loop_id,json=orchestrateLoopId,proto3" json:"orchestrate_loop_id,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *StartLoopRequest) Reset() {
@@ -99,6 +104,13 @@ func (x *StartLoopRequest) GetInteractive() bool {
 	return false
 }
 
+func (x *StartLoopRequest) GetOrchestrateLoopId() string {
+	if x != nil {
+		return x.OrchestrateLoopId
+	}
+	return ""
+}
+
 type StartLoopResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	LoopId        string                 `protobuf:"bytes,1,opt,name=loop_id,json=loopId,proto3" json:"loop_id,omitempty"`
@@ -144,10 +156,19 @@ func (x *StartLoopResponse) GetLoopId() string {
 }
 
 type SendRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	LoopId        string                 `protobuf:"bytes,1,opt,name=loop_id,json=loopId,proto3" json:"loop_id,omitempty"`
-	Input         string                 `protobuf:"bytes,2,opt,name=input,proto3" json:"input,omitempty"`
-	Tenant        string                 `protobuf:"bytes,3,opt,name=tenant,proto3" json:"tenant,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	LoopId string                 `protobuf:"bytes,1,opt,name=loop_id,json=loopId,proto3" json:"loop_id,omitempty"`
+	Input  string                 `protobuf:"bytes,2,opt,name=input,proto3" json:"input,omitempty"`
+	Tenant string                 `protobuf:"bytes,3,opt,name=tenant,proto3" json:"tenant,omitempty"`
+	// interrupt cancels the loop's in-flight model call or tool batch so this message
+	// lands now instead of at the next turn boundary (steering). Servers whose runtime
+	// cannot interrupt deliver it at the next boundary like any other message.
+	Interrupt bool `protobuf:"varint,4,opt,name=interrupt,proto3" json:"interrupt,omitempty"`
+	// source labels who is speaking: "human" (the default) or "orchestrator". The agent
+	// sees guidance from an orchestrator under its own label. Any other value is
+	// rejected. The label is informational, not a credential: a client can already put
+	// any text in a message.
+	Source        string `protobuf:"bytes,5,opt,name=source,proto3" json:"source,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -199,6 +220,20 @@ func (x *SendRequest) GetInput() string {
 func (x *SendRequest) GetTenant() string {
 	if x != nil {
 		return x.Tenant
+	}
+	return ""
+}
+
+func (x *SendRequest) GetInterrupt() bool {
+	if x != nil {
+		return x.Interrupt
+	}
+	return false
+}
+
+func (x *SendRequest) GetSource() string {
+	if x != nil {
+		return x.Source
 	}
 	return ""
 }
@@ -466,18 +501,21 @@ var File_fuse_loop_v1_loop_proto protoreflect.FileDescriptor
 
 const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\n" +
-	"\x17fuse/loop/v1/loop.proto\x12\ffuse.loop.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"v\n" +
+	"\x17fuse/loop/v1/loop.proto\x12\ffuse.loop.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa6\x01\n" +
 	"\x10StartLoopRequest\x12\x12\n" +
 	"\x04task\x18\x01 \x01(\tR\x04task\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x16\n" +
 	"\x06tenant\x18\x03 \x01(\tR\x06tenant\x12 \n" +
-	"\vinteractive\x18\x04 \x01(\bR\vinteractive\",\n" +
+	"\vinteractive\x18\x04 \x01(\bR\vinteractive\x12.\n" +
+	"\x13orchestrate_loop_id\x18\x05 \x01(\tR\x11orchestrateLoopId\",\n" +
 	"\x11StartLoopResponse\x12\x17\n" +
-	"\aloop_id\x18\x01 \x01(\tR\x06loopId\"T\n" +
+	"\aloop_id\x18\x01 \x01(\tR\x06loopId\"\x8a\x01\n" +
 	"\vSendRequest\x12\x17\n" +
 	"\aloop_id\x18\x01 \x01(\tR\x06loopId\x12\x14\n" +
 	"\x05input\x18\x02 \x01(\tR\x05input\x12\x16\n" +
-	"\x06tenant\x18\x03 \x01(\tR\x06tenant\"\x0e\n" +
+	"\x06tenant\x18\x03 \x01(\tR\x06tenant\x12\x1c\n" +
+	"\tinterrupt\x18\x04 \x01(\bR\tinterrupt\x12\x16\n" +
+	"\x06source\x18\x05 \x01(\tR\x06source\"\x0e\n" +
 	"\fSendResponse\"\\\n" +
 	"\x0eObserveRequest\x12\x17\n" +
 	"\aloop_id\x18\x01 \x01(\tR\x06loopId\x12\x19\n" +

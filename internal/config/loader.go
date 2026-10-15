@@ -387,6 +387,14 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	// untrusted (repo-plantable) source they are inert and each present one is
 	// collected for a single aggregated startup warning.
 	ignored := mergePermissions(c, raw.Permissions, trusted)
+	// orchestrator.model picks which model may steer the agent: trusted-only.
+	if m := strings.TrimSpace(raw.Orchestrator.Model); m != "" {
+		if trusted {
+			c.Orchestrator.Model = m
+		} else {
+			ignored = append(ignored, "orchestrator.model")
+		}
+	}
 	// Capture the trusted home file's projects: map for applyProjectOverride.
 	if projects != nil {
 		*projects = raw.Projects

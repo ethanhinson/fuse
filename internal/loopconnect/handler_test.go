@@ -255,3 +255,82 @@ func TestStartLoopLaunchesUnderLoopLifetimeContext(t *testing.T) {
 		t.Fatalf("StartLoop seam ctx was already errored (%v) — loop tied to request ctx, would die early", rt.sawStartCtxErr)
 	}
 }
+
+// steeringRuntime is a fakeRuntime that also has the optional Steerer capability.
+type steeringRuntime struct {
+	*fakeRuntime
+	steered   bool
+	steerOpts runtime.SteerOpts
+	steerIn   string
+}
+
+func (s *steeringRuntime) Steer(ctx context.Context, tn event.TenantID, loopID, input string, opts runtime.SteerOpts) error {
+	s.steered, s.steerOpts, s.steerIn = true, opts, input
+	return nil
+}
+
+// An interrupt Send reaches a Steerer runtime as a steer with Interrupt set.
+func TestSendInterruptUsesSteerer(t *testing.T) {
+	rt := &steeringRuntime{fakeRuntime: &fakeRuntime{}}
+	client := newTestServer(t, rt)
+	if _, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{LoopId: "l", Input: "stop", Interrupt: true})); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !rt.steered || !rt.steerOpts.Interrupt || rt.steerIn != "stop" {
+		t.Fatalf("steer = %v %+v %q", rt.steered, rt.steerOpts, rt.steerIn)
+	}
+}
+
+// A plain Send stays a plain Send, and an interrupt on a runtime without the
+// capability degrades to an ordinary Send rather than failing.
+func TestSendWithoutSteererFallsBackToSend(t *testing.T) {
+	rt := &fakeRuntime{}
+	client := newTestServer(t, rt)
+	if _, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{LoopId: "l", Input: "stop", Interrupt: true})); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if rt.sawSendIn != "stop" {
+		t.Fatalf("fallback Send did not deliver: %q", rt.sawSendIn)
+	}
+
+	st := &steeringRuntime{fakeRuntime: &fakeRuntime{}}
+	client = newTestServer(t, st)
+	if _, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{LoopId: "l", Input: "hi"})); err != nil {
+		t.Fatal(err)
+	}
+	if st.steered || st.sawSendIn != "hi" {
+		t.Fatalf("a plain send must use Send (steered=%v in=%q)", st.steered, st.sawSendIn)
+	}
+}
+
+func TestStartLoopOrchestrateThreaded(t *testing.T) {
+	rt := &fakeRuntime{startID: "orch-1"}
+	client := newTestServer(t, rt)
+	if _, err := client.StartLoop(context.Background(), connect.NewRequest(&loopv1.StartLoopRequest{Task: "watch", Model: "m", OrchestrateLoopId: "target-9"})); err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	if rt.sawStartCfg.Orchestrate != "target-9" {
+		t.Fatalf("Orchestrate = %q", rt.sawStartCfg.Orchestrate)
+	}
+
+	rt.startErr = runtime.ErrLoopNotFound
+	_, err := client.StartLoop(context.Background(), connect.NewRequest(&loopv1.StartLoopRequest{Task: "watch", OrchestrateLoopId: "gone"}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("unknown orchestrate target code = %v, want FailedPrecondition", connect.CodeOf(err))
+	}
+}
+
+func TestSendSourceValidatedAndThreaded(t *testing.T) {
+	rt := &steeringRuntime{fakeRuntime: &fakeRuntime{}}
+	client := newTestServer(t, rt)
+	if _, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{LoopId: "l", Input: "try X", Source: "orchestrator"})); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !rt.steered || rt.steerOpts.Source != "orchestrator" {
+		t.Fatalf("source not threaded: steered=%v opts=%+v", rt.steered, rt.steerOpts)
+	}
+	_, err := client.Send(context.Background(), connect.NewRequest(&loopv1.SendRequest{LoopId: "l", Input: "x", Source: "root"}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("unknown source code = %v, want InvalidArgument", connect.CodeOf(err))
+	}
+}
