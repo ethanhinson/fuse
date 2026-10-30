@@ -58,3 +58,11 @@ A fuse harness (models, skills, MCP servers, permissions, agents, workflows, thr
 ### 2026-10-30
 
 Unchanged against main aaffe63. The change was minted after the design was settled and the code was built on feat/harnessspec-proto-and-public-validator; a whole-branch review's seven findings were fixed before publishing (reserved model alias default, no literal credential headers, reserved secret-ref: literal prefix, band attribution, uint32 overflow and inert MCP fields reported). ADR-0060 records the decision.
+
+## Run halted
+
+### 2026-10-30
+
+The code is complete and green on feat/harnessspec-proto-and-public-validator (head 84bd275, pushed to origin; no PR yet). The docket build path stopped at `workspace.prepare`, which returns `invalid-state` / `blocked` with no reason, and `workspace.inspect` reports the existing worktree as `foreign`, because the branch and worktree were created by hand before the change was minted. Removing the local worktree did not unblock it; the likely remaining cause is the already-pushed remote branch, and deleting that remote branch was denied by the session's permission policy.
+
+To resume, a human either deletes the remote branch `feat/harnessspec-proto-and-public-validator` (local branch keeps the commits; it fast-forwards from main aaffe63) and re-runs `workspace.prepare`, or confirms another way to adopt the existing branch. Then: commit-spec, plan, gate evidence, results, publish, PR, mark-implemented.
