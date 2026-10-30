@@ -63,6 +63,11 @@ Unchanged against main aaffe63. The change was minted after the design was settl
 
 ### 2026-10-30
 
-The code is complete and green on feat/harnessspec-proto-and-public-validator (head 84bd275, pushed to origin; no PR yet). The docket build path stopped at `workspace.prepare`, which returns `invalid-state` / `blocked` with no reason, and `workspace.inspect` reports the existing worktree as `foreign`, because the branch and worktree were created by hand before the change was minted. Removing the local worktree did not unblock it; the likely remaining cause is the already-pushed remote branch, and deleting that remote branch was denied by the session's permission policy.
+PR opened by hand: https://github.com/ethanhinson/fuse/pull/101 (head 84bd2754cf741dbef69b97d845a2d026aead48b3, base main). The finalize-owned gate (`make test`) PASSED at that head (drive 564bd09326fdd8785f7c9db1d9f14cf7, exit 0). docket could not record it, for these reasons:
 
-To resume, a human either deletes the remote branch `feat/harnessspec-proto-and-public-validator` (local branch keeps the commits; it fast-forwards from main aaffe63) and re-runs `workspace.prepare`, or confirms another way to adopt the existing branch. Then: commit-spec, plan, gate evidence, results, publish, PR, mark-implemented.
+- `evidence record` refuses with `head-mismatch`. It reads the feature head from a docket-owned workspace, and this worktree is `foreign`.
+- `change resume-halted --acknowledge-quiescent` refuses with `workspace-writer-active`.
+- `workspace prepare` stays `blocked`.
+- Because of that, `pr:`, the build evidence, and `implemented` cannot be set through `pr publish` / `mark-implemented`.
+
+Also, `build.test_command` is unconfigured, so a build-owned gate cannot run until `docket repository configure-tests` is run. Merging the PR and letting the sweep or finalize close the change is the remaining path.
