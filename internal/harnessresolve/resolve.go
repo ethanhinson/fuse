@@ -1,5 +1,5 @@
 // Package harnessresolve turns a client's fuse.harness.v1 HarnessSpec into the
-// configuration one loop runs with on a fuse server (change 0085).
+// configuration one loop runs with on a fuse server (change 0085, ADR-0061).
 //
 // One networked fuse server serves many tenants and clients, and each may
 // start a loop with its own harness. The server's trusted operator config is

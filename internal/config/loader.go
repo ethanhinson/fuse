@@ -372,7 +372,7 @@ func FromYAML(data []byte, source string) (Config, error) {
 }
 
 // OverlaySpec resolves a harness-spec document over base, the operator's
-// trusted config (change 0085). The document is the one the harness-spec
+// trusted config (change 0085, ADR-0061). The document is the one the harness-spec
 // mapping renders (internal/harnessconfig); the merge is the loader's own, at a
 // third trust level between the trusted home file and the untrusted
 // .fuse.local.yml:

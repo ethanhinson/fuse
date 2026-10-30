@@ -21,7 +21,7 @@ import (
 var ErrHarnessUnsupported = errors.New("runtime: this runtime does not run harness specs")
 
 // HarnessResolver resolves the harness spec a loop is started with into that
-// loop's own construction (change 0085). The runtime stays policy-free: it
+// loop's own construction (change 0085, ADR-0061). The runtime stays policy-free: it
 // never interprets a spec, it only asks the binding's resolver for the factory
 // that builds a loop from one. The composition root implements it by
 // validating the spec and layering it over its trusted operator config.
