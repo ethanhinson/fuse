@@ -922,6 +922,16 @@ func (r *inProcRuntime) Observe(ctx context.Context, tenant event.TenantID, loop
 // store (the cold cross-process reattach path — the 0047 fix).
 func (r *inProcRuntime) Attach(ctx context.Context, tenant event.TenantID, loopID string, from event.Seq) ([]event.Event, error) {
 	if lp := r.loopCache(tenant, loopID); lp != nil {
+		// With the shared durable store, read it under the CALLER's context. The
+		// cached loop's own sink is bound to the loop's session context, which has
+		// ended once an interactive session finishes (idle reap, shutdown), so
+		// replaying through it would fail with context.Canceled exactly when a
+		// client reconnects to read the history.
+		// The sink is otherwise the same (it still opens the store replay span).
+		if r.deps.DurableStore != nil {
+			sink := &durableSink{store: r.deps.DurableStore, key: lp.key, ctx: ctx, observer: r.deps.Observer}
+			return sink.Replay(from)
+		}
 		return lp.store.Replay(from)
 	}
 	_, key, err := r.resolveDurable(ctx, tenant, loopID)
