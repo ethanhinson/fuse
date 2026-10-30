@@ -20,14 +20,10 @@ package harnessresolve
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
-
-	"google.golang.org/protobuf/proto"
 
 	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
@@ -55,7 +51,7 @@ type Resolved struct {
 	// Skills are the names of the skills the spec makes available, in spec
 	// order; nil when the spec names none (the server's full set applies).
 	Skills []string
-	// Digest identifies the spec's content (see Digest).
+	// Digest identifies the spec's content (harness.Digest).
 	Digest string
 }
 
@@ -95,23 +91,7 @@ func (r Resolver) Resolve(ctx context.Context, tenant string, spec *harnessv1.Ha
 	if ps := harnessconfig.Combine(shape, secretProblems, skillProblems, mapped); len(ps) > 0 {
 		return Resolved{}, &harness.ValidationError{Violations: fromProblems(ps)}
 	}
-	return Resolved{Config: cfg, Skills: skills, Digest: Digest(spec)}, nil
-}
-
-// Digest is the spec's content digest: "sha256:" and the hex SHA-256 of its
-// deterministic protobuf encoding. A nil spec digests as the empty spec.
-func Digest(spec *harnessv1.HarnessSpec) string {
-	if spec == nil {
-		spec = &harnessv1.HarnessSpec{}
-	}
-	b, err := proto.MarshalOptions{Deterministic: true}.Marshal(spec)
-	if err != nil {
-		// A generated message with no unknown-field quirks always marshals; a
-		// failure here is a programming error, not a spec problem.
-		panic(fmt.Sprintf("harnessresolve: marshal spec: %v", err))
-	}
-	sum := sha256.Sum256(b)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return Resolved{Config: cfg, Skills: skills, Digest: harness.Digest(spec)}, nil
 }
 
 // secretRef is one secret_ref field of a spec.

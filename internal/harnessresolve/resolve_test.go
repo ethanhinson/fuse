@@ -85,7 +85,7 @@ func TestResolveLayersAValidSpec(t *testing.T) {
 	if !reflect.DeepEqual(got.Skills, []string{"research"}) {
 		t.Errorf("skills = %v", got.Skills)
 	}
-	if got.Digest != Digest(spec) || !strings.HasPrefix(got.Digest, "sha256:") || len(got.Digest) != len("sha256:")+64 {
+	if got.Digest != harness.Digest(spec) || !strings.HasPrefix(got.Digest, "sha256:") || len(got.Digest) != len("sha256:")+64 {
 		t.Errorf("digest = %q", got.Digest)
 	}
 }
@@ -170,22 +170,6 @@ func TestResolveNilAndEmptySpecIsTheBase(t *testing.T) {
 		if !reflect.DeepEqual(got.Config, base) || got.Skills != nil {
 			t.Fatalf("resolved %+v", got)
 		}
-	}
-}
-
-func TestDigestIsStableAndContentAddressed(t *testing.T) {
-	a := &harnessv1.HarnessSpec{Workflows: map[string]*harnessv1.Workflow{"a": {Skill: "x"}, "b": {Skill: "y"}, "c": {Skill: "z"}}}
-	for i := 0; i < 20; i++ {
-		if Digest(a) != Digest(a) {
-			t.Fatal("digest is not deterministic over map order")
-		}
-	}
-	b := &harnessv1.HarnessSpec{Workflows: map[string]*harnessv1.Workflow{"a": {Skill: "x"}}}
-	if Digest(a) == Digest(b) {
-		t.Fatal("different specs share a digest")
-	}
-	if Digest(nil) != Digest(&harnessv1.HarnessSpec{}) {
-		t.Fatal("nil and empty spec differ")
 	}
 }
 
