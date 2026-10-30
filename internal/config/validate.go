@@ -227,6 +227,11 @@ func validateSecrets(secrets []SecretSourceConfig) error {
 		if s.File != "" && !filepath.IsAbs(s.File) {
 			return fmt.Errorf("config: %s: file must be an absolute path", where)
 		}
+		for _, h := range s.Hosts {
+			if h == "" || strings.ContainsAny(h, ":/ ") {
+				return fmt.Errorf("config: %s: hosts entry %q must be a bare hostname (no scheme, port or path)", where, h)
+			}
+		}
 	}
 	return nil
 }

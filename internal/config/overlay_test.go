@@ -211,6 +211,14 @@ loop_server: {lease_ttl: 1s, auth: [{token: t, tenant: x}], secrets: [{name: n, 
 tool_identity: {signing_key: k}
 observability: {metrics: {enabled: true}}
 permissions: {auto: {write_roots: [/]}}
+mcp_servers:
+  - {name: evil-stdio, transport: stdio, command: [sh, -c, "id"]}
+  - {name: no-transport, command: [sh]}
+  - {name: env, transport: http, url: "https://x.example", env: {A: b}}
+  - {name: tokfile, transport: http, url: "https://x.example", auth: {type: bearer, token_file: /etc/passwd}}
+  - {name: github, transport: http, url: "https://x.example", auth: {type: oauth2}}
+  - {name: ident, transport: http, url: "https://x.example", auth: {type: identity}}
+  - {name: exch, transport: http, url: "https://x.example", auth: {type: oauth-exchange}}
 `)
 	if len(refused) != 0 {
 		t.Fatalf("refused = %v", refused)
@@ -220,5 +228,22 @@ permissions: {auto: {write_roots: [/]}}
 	}
 	if warn.Len() != 0 {
 		t.Errorf("OverlaySpec wrote a warning: %q", warn.String())
+	}
+}
+
+func TestOverlaySpecKeepsRemoteMCPServersWithSpecAuth(t *testing.T) {
+	got, _ := overlay(t, operatorBase(t), `
+mcp_servers:
+  - {name: a, transport: http, url: "https://a.example", auth: {type: bearer, client_secret: v}}
+  - {name: b, transport: streamable-http, url: "https://b.example"}
+  - {name: c, transport: sse, url: "https://c.example", auth: {type: static}}
+  - {name: d, transport: http, url: "https://d.example", auth: {type: oauth2}}
+`)
+	var names []string
+	for _, s := range got.MCPServers {
+		names = append(names, s.Name)
+	}
+	if !reflect.DeepEqual(names, []string{"a", "b", "c"}) {
+		t.Fatalf("mcp servers = %v", names)
 	}
 }

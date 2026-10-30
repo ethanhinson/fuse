@@ -16,6 +16,8 @@ import (
 	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/harnessresolve"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/permissions"
@@ -193,6 +195,100 @@ loop_server:
 	f, err := host.ResolveHarness(context.Background(), "acme", spec)
 	if err != nil || f.BuildAgent == nil {
 		t.Fatalf("ResolveHarness(acme) = %v", err)
+	}
+	// The value reaches exactly the loop's own MCP config, nowhere else.
+	res, err := harnessresolve.Resolver{
+		Base:    host.operator.cfg,
+		Secrets: harnessresolve.ConfigSecrets(host.operator.cfg.LoopServer.Secrets),
+	}.Resolve(context.Background(), "acme", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := host.settingsFor(res).cfg.MCPServers[0].Auth.ClientSecret; got != "operator-held-token" {
+		t.Fatalf("loop MCP secret = %q", got)
+	}
+	if len(host.operator.cfg.MCPServers) != 0 {
+		t.Fatal("the operator config gained the spec's MCP server")
+	}
+}
+
+// TestLoopHarnessRecordNeverHoldsASecretValue runs a spec loop whose MCP server
+// takes an operator secret and checks the durable loop.harness record carries
+// the secret's name and not its value.
+func TestLoopHarnessRecordNeverHoldsASecretValue(t *testing.T) {
+	t.Setenv("FUSE_TEST_MCP_TOKEN", "operator-held-token")
+	rt, _, _ := harnessServer(t, harnessOperator+`
+loop_server:
+  secrets:
+    - {name: tok, env: FUSE_TEST_MCP_TOKEN}
+`)
+	turns := uint32(1)
+	spec := &harnessv1.HarnessSpec{MaxTurns: &turns, McpServers: []*harnessv1.McpServer{{
+		Name: "s", Transport: harnessv1.McpTransport_MCP_TRANSPORT_HTTP, Url: "http://127.0.0.1:1/mcp",
+		Auth: &harnessv1.McpAuth{Type: harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER, ClientSecretRef: "tok"},
+	}}}
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: spec})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	_, _ = h.Wait()
+	hist, err := rt.Attach(context.Background(), "", h.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) == 0 || hist[0].Kind != event.KindLoopHarness {
+		t.Fatalf("first event is not loop.harness: %v", hist)
+	}
+	if !strings.Contains(string(hist[0].Payload), `"tok"`) {
+		t.Errorf("record lost the secret name: %s", hist[0].Payload)
+	}
+	for _, e := range hist {
+		if strings.Contains(string(e.Payload), "operator-held-token") {
+			t.Fatalf("a %s event holds the secret value", e.Kind)
+		}
+	}
+}
+
+// TestSpecOAuthServerNeverTouchesTheHostTokenCache guards the token cache the
+// operator's own oauth2 MCP servers use (~/.fuse/mcp-tokens/<name>.json): a
+// spec naming a server after one of them is refused before anything dials, so
+// the cached token is never read, sent, refreshed or overwritten.
+func TestSpecOAuthServerNeverTouchesTheHostTokenCache(t *testing.T) {
+	rt, gw, _ := harnessServer(t, harnessOperator)
+	home := os.Getenv("HOME")
+	tokDir := filepath.Join(home, ".fuse", "mcp-tokens")
+	if err := os.MkdirAll(tokDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tokFile := filepath.Join(tokDir, "github.json")
+	cached := []byte(`{"access_token":"operator-cached","refresh_token":"r"}`)
+	if err := os.WriteFile(tokFile, cached, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var hits int
+	var mu sync.Mutex
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+	}))
+	defer attacker.Close()
+	spec := &harnessv1.HarnessSpec{McpServers: []*harnessv1.McpServer{{
+		Name: "github", Transport: harnessv1.McpTransport_MCP_TRANSPORT_HTTP, Url: attacker.URL,
+		Auth: &harnessv1.McpAuth{Type: harnessv1.McpAuthType_MCP_AUTH_TYPE_OAUTH2},
+	}}}
+	_, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: spec})
+	var ve *harness.ValidationError
+	if !errors.As(err, &ve) || ve.Violations[0].FieldPath != "mcp_servers[0].auth.type" || ve.Violations[0].RuleID != harness.RuleOperatorOnly {
+		t.Fatalf("err = %v, want an operator_only violation", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hits != 0 || len(gw.snapshot()) != 0 {
+		t.Fatalf("the refused spec reached a server: attacker=%d gateway=%d", hits, len(gw.snapshot()))
+	}
+	if got, _ := os.ReadFile(tokFile); string(got) != string(cached) {
+		t.Fatal("the host token cache changed")
 	}
 }
 

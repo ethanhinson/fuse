@@ -256,13 +256,18 @@ type LoopServerConfig struct {
 // Env (an environment variable of the fuse server process) or File (an absolute
 // path on its host; one trailing newline is trimmed) holds the value. Tenants
 // lists the tenants whose loops may reference it; empty means only the default
-// tenant, the same rule as an issuer's tenants. Operator-only: it is part of the
+// tenant, the same rule as an issuer's tenants. Hosts binds the secret to its
+// destinations: the URL of the spec field that carries it (the MCP server's url,
+// or research.custom.url) must have one of these hostnames. Without Hosts the
+// spec chooses where the value is sent, so allowing a tenant to use the secret
+// discloses the value to that tenant. Operator-only: it is part of the
 // trusted-only loop_server block, and a spec can never express it.
 type SecretSourceConfig struct {
 	Name    string   `yaml:"name"`
 	Env     string   `yaml:"env"`
 	File    string   `yaml:"file"`
 	Tenants []string `yaml:"tenants"`
+	Hosts   []string `yaml:"hosts"`
 }
 
 // SecretRefPattern is the shape of a secret name, the same pattern

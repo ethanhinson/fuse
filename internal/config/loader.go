@@ -451,6 +451,7 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 		raw.Observability = rawObservabilityConfig{}
 		raw.ToolIdentity = ToolIdentityConfig{}
 		raw.Permissions.Auto.WriteRoots = nil
+		raw.MCPServers = specMCPServers(raw.MCPServers)
 	}
 
 	if raw.Gateway.URL != "" {

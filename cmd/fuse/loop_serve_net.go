@@ -281,6 +281,8 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintln(stderr, "      - name: search-key       # the secret_ref name a spec uses")
 		fmt.Fprintln(stderr, "        env: SEARCH_KEY        # or file: /run/secrets/search-key (exactly one)")
 		fmt.Fprintln(stderr, "        tenants: [acme]        # tenants allowed to use it; empty => only _default")
+		fmt.Fprintln(stderr, "        hosts: [api.example.com] # hostnames it may be sent to; empty => wherever the spec says,")
+		fmt.Fprintln(stderr, "                               # which discloses the value to every allowed tenant")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "A static token is looked up first. Otherwise the bearer value is read as a compact")
 		fmt.Fprintln(stderr, "JWS (header alg exactly HS256) from the issuer named by its iss claim, with claims")

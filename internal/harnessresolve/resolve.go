@@ -71,6 +71,7 @@ func (r Resolver) Resolve(ctx context.Context, tenant string, spec *harnessv1.Ha
 
 	values, secretProblems := r.resolveSecrets(ctx, tenant, spec)
 	skills, skillProblems := r.resolveSkills(spec)
+	skillProblems = append(skillProblems, operatorOnlyProblems(spec)...)
 
 	var mapped []harnessconfig.Problem
 	cfg, refused, err := harnessconfig.Overlay(r.Base, spec, func(name string) (string, error) {
@@ -98,6 +99,8 @@ func (r Resolver) Resolve(ctx context.Context, tenant string, spec *harnessv1.Ha
 type secretRef struct {
 	path string
 	name string
+	// destination is the URL the resolved value will be sent to.
+	destination string
 }
 
 // secretRefs lists every secret_ref the spec sets, in a stable order.
@@ -105,7 +108,7 @@ func secretRefs(spec *harnessv1.HarnessSpec) []secretRef {
 	var out []secretRef
 	for i, s := range spec.GetMcpServers() {
 		if n := s.GetAuth().GetClientSecretRef(); n != "" {
-			out = append(out, secretRef{path: fmt.Sprintf("mcp_servers[%d].auth.client_secret_ref", i), name: n})
+			out = append(out, secretRef{path: fmt.Sprintf("mcp_servers[%d].auth.client_secret_ref", i), name: n, destination: s.GetUrl()})
 		}
 	}
 	headers := spec.GetResearch().GetCustom().GetHeaders()
@@ -116,43 +119,63 @@ func secretRefs(spec *harnessv1.HarnessSpec) []secretRef {
 	sort.Strings(names)
 	for _, k := range names {
 		if n := headers[k].GetSecretRef(); n != "" {
-			out = append(out, secretRef{path: fmt.Sprintf("research.custom.headers[%s].secret_ref", strconv.Quote(k)), name: n})
+			out = append(out, secretRef{path: fmt.Sprintf("research.custom.headers[%s].secret_ref", strconv.Quote(k)), name: n, destination: spec.GetResearch().GetCustom().GetUrl()})
 		}
 	}
 	return out
 }
 
-// resolveSecrets resolves every secret_ref once per name. A name that does not
-// resolve is a violation at each field that references it, with one fixed
-// message whatever the cause, so a client cannot probe which secrets exist.
+// resolveSecrets resolves every secret_ref for its destination. A reference
+// that does not resolve is a violation at its field, with one fixed message
+// whatever the cause, so a client cannot probe which secrets exist or where
+// they may be sent. The overlay later looks values up by name, so a name that
+// resolved for one destination and failed for another is a violation either way.
 func (r Resolver) resolveSecrets(ctx context.Context, tenant string, spec *harnessv1.HarnessSpec) (map[string]string, []harnessconfig.Problem) {
 	values := map[string]string{}
 	failed := map[string]bool{}
 	var problems []harnessconfig.Problem
 	for _, ref := range secretRefs(spec) {
-		if _, ok := values[ref.name]; !ok && !failed[ref.name] {
-			var v string
-			var err error
-			if r.Secrets == nil {
-				err = ErrSecretUnavailable
-			} else {
-				v, err = r.Secrets.ResolveSecret(ctx, tenant, ref.name)
-			}
-			if err != nil {
-				failed[ref.name] = true
-			} else {
-				values[ref.name] = v
-			}
+		var v string
+		err := ErrSecretUnavailable
+		if r.Secrets != nil {
+			v, err = r.Secrets.ResolveSecret(ctx, tenant, ref.name, ref.destination)
 		}
-		if failed[ref.name] {
+		if err != nil {
+			failed[ref.name] = true
 			problems = append(problems, harnessconfig.Problem{
 				FieldPath: ref.path,
 				Message:   fmt.Sprintf("secret %q is not available to this tenant", ref.name),
 				RuleID:    harness.RuleSecretRef,
 			})
+			continue
 		}
+		values[ref.name] = v
+	}
+	for name := range failed {
+		delete(values, name)
 	}
 	return values, problems
+}
+
+// operatorOnlyProblems reports spec values only the server's operator may
+// configure: an MCP server whose auth type reads or writes the host's token
+// cache and may open an interactive browser flow on the server (oauth2), or
+// mints fuse-signed delegation tokens for an audience (identity,
+// oauth-exchange). A client could otherwise name a server after one the
+// operator authorized and have the cached token sent to its own URL.
+func operatorOnlyProblems(spec *harnessv1.HarnessSpec) []harnessconfig.Problem {
+	var out []harnessconfig.Problem
+	for i, s := range spec.GetMcpServers() {
+		switch t := s.GetAuth().GetType(); t {
+		case harnessv1.McpAuthType_MCP_AUTH_TYPE_OAUTH2, harnessv1.McpAuthType_MCP_AUTH_TYPE_IDENTITY, harnessv1.McpAuthType_MCP_AUTH_TYPE_OAUTH_EXCHANGE:
+			out = append(out, harnessconfig.Problem{
+				FieldPath: fmt.Sprintf("mcp_servers[%d].auth.type", i),
+				Message:   fmt.Sprintf("auth type %s is configured by the server operator only; use none, bearer or static in a harness spec", t),
+				RuleID:    harness.RuleOperatorOnly,
+			})
+		}
+	}
+	return out
 }
 
 // resolveSkills checks every SkillRef against the installed skills.

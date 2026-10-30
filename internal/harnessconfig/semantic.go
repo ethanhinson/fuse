@@ -31,6 +31,10 @@ const (
 	// RuleSecretRef marks a secret name the server will not resolve for the
 	// loop's tenant (change 0085).
 	RuleSecretRef = "fuse.secret_ref"
+	// RuleOperatorOnly marks a value a spec may not set because only the
+	// server's operator may configure it, e.g. an MCP auth type that uses host
+	// token state or mints fuse-signed tokens (change 0085, ADR-0061).
+	RuleOperatorOnly = "fuse.operator_only"
 )
 
 // Problem is one validation problem located at a HarnessSpec field path (empty

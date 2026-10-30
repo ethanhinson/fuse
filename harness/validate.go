@@ -55,6 +55,10 @@ const (
 	// RuleSecretRef marks a secret the server will not resolve for the loop's
 	// tenant (change 0085).
 	RuleSecretRef = harnessconfig.RuleSecretRef
+	// RuleOperatorOnly marks a value only the server's operator may configure,
+	// such as an MCP auth type that needs host token state or mints
+	// fuse-signed tokens (change 0085).
+	RuleOperatorOnly = harnessconfig.RuleOperatorOnly
 )
 
 // Violation is one problem with a spec.

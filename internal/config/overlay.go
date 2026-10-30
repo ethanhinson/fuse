@@ -118,3 +118,30 @@ func mergeSpecWorkflows(c *Config, raw map[string]WorkflowConfig) (refused []str
 	}
 	return refused
 }
+
+// SpecMCPAuthTypes are the MCP auth types a harness spec may use (change 0085,
+// ADR-0061): none, bearer and static send at most a credential the spec itself
+// names. oauth2 reads and writes the server host's token cache and may open an
+// interactive browser flow on it, and identity / oauth-exchange mint
+// fuse-signed delegation tokens for an audience; all three stay operator-only.
+var SpecMCPAuthTypes = map[string]bool{"": true, "none": true, "bearer": true, "static": true}
+
+// specMCPServers keeps only the MCP server entries a spec may declare: a remote
+// transport, no host process (command, env), no host path (auth.token_file),
+// and an auth type in SpecMCPAuthTypes. The harness-spec mapping never renders
+// anything else; this is the defensive floor for any other document.
+func specMCPServers(in []MCPServerConfig) []MCPServerConfig {
+	var out []MCPServerConfig
+	for _, s := range in {
+		switch s.Transport {
+		case "http", "sse", "streamable-http":
+		default:
+			continue
+		}
+		if len(s.Command) > 0 || len(s.Env) > 0 || s.Auth.TokenFile != "" || !SpecMCPAuthTypes[s.Auth.Type] {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}

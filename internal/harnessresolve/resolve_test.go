@@ -31,7 +31,7 @@ workflows: {research: {pool: {concurrent: 4}}}
 
 type mapSecrets map[string]string
 
-func (m mapSecrets) ResolveSecret(_ context.Context, tenant, name string) (string, error) {
+func (m mapSecrets) ResolveSecret(_ context.Context, tenant, name, _ string) (string, error) {
 	if v, ok := m[tenant+"/"+name]; ok {
 		return v, nil
 	}
@@ -192,7 +192,7 @@ func TestConfigSecrets(t *testing.T) {
 		{"", "env-default"}, {"_default", "env-default"}, {"acme", "env-acme"}, {"acme", "file"}, {"", "file"},
 	}
 	for _, c := range ok {
-		v, err := s.ResolveSecret(ctx, c.tenant, c.name)
+		v, err := s.ResolveSecret(ctx, c.tenant, c.name, "https://anywhere.example")
 		if err != nil || v != secretValue {
 			t.Errorf("ResolveSecret(%q, %q) = %q, %v", c.tenant, c.name, v, err)
 		}
@@ -201,12 +201,76 @@ func TestConfigSecrets(t *testing.T) {
 		{"acme", "env-default"}, {"", "env-acme"}, {"other", "file"}, {"", "nope"}, {"", "unset-env"}, {"", "missing-file"},
 	}
 	for _, c := range denied {
-		v, err := s.ResolveSecret(ctx, c.tenant, c.name)
+		v, err := s.ResolveSecret(ctx, c.tenant, c.name, "https://anywhere.example")
 		if !errors.Is(err, ErrSecretUnavailable) || v != "" {
 			t.Errorf("ResolveSecret(%q, %q) = %q, %v; want ErrSecretUnavailable", c.tenant, c.name, v, err)
 		}
 		if err != nil && (strings.Contains(err.Error(), secretValue) || strings.Contains(err.Error(), dir)) {
 			t.Errorf("error leaks a value or host path: %v", err)
 		}
+	}
+}
+
+func TestResolveRefusesOperatorOnlyMCPAuth(t *testing.T) {
+	var servers []*harnessv1.McpServer
+	for i, at := range []harnessv1.McpAuthType{
+		harnessv1.McpAuthType_MCP_AUTH_TYPE_OAUTH2,
+		harnessv1.McpAuthType_MCP_AUTH_TYPE_IDENTITY,
+		harnessv1.McpAuthType_MCP_AUTH_TYPE_OAUTH_EXCHANGE,
+		harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER,
+	} {
+		servers = append(servers, &harnessv1.McpServer{
+			Name: string(rune('a' + i)), Transport: harnessv1.McpTransport_MCP_TRANSPORT_HTTP,
+			Url: "https://mcp.example.com", Audience: "https://mcp.example.com", Auth: &harnessv1.McpAuth{Type: at},
+		})
+	}
+	_, err := Resolver{Base: config.Default()}.Resolve(context.Background(), "", &harnessv1.HarnessSpec{McpServers: servers})
+	var got []string
+	for _, v := range violations(t, err) {
+		got = append(got, v.FieldPath+" "+v.RuleID)
+	}
+	want := []string{
+		"mcp_servers[0].auth.type fuse.operator_only",
+		"mcp_servers[1].auth.type fuse.operator_only",
+		"mcp_servers[2].auth.type fuse.operator_only",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("violations = %v, want %v", got, want)
+	}
+}
+
+func TestConfigSecretsBindToDestinationHosts(t *testing.T) {
+	t.Setenv("FUSE_TEST_SECRET", secretValue)
+	s := ConfigSecrets([]config.SecretSourceConfig{{Name: "k", Env: "FUSE_TEST_SECRET", Hosts: []string{"api.example.com"}}})
+	ctx := context.Background()
+	for _, dest := range []string{"https://api.example.com/mcp", "https://API.example.com:8443/x"} {
+		if v, err := s.ResolveSecret(ctx, "", "k", dest); err != nil || v != secretValue {
+			t.Errorf("ResolveSecret(%q) = %q, %v", dest, v, err)
+		}
+	}
+	for _, dest := range []string{"https://attacker.example/collect", "https://api.example.com.attacker.example", "", "::bad"} {
+		if v, err := s.ResolveSecret(ctx, "", "k", dest); !errors.Is(err, ErrSecretUnavailable) || v != "" {
+			t.Errorf("ResolveSecret(%q) = %q, %v; want ErrSecretUnavailable", dest, v, err)
+		}
+	}
+}
+
+func TestResolveRefusesASecretSentToAnUnlistedHost(t *testing.T) {
+	t.Setenv("FUSE_TEST_SECRET", secretValue)
+	r := Resolver{Base: config.Default(), Secrets: ConfigSecrets([]config.SecretSourceConfig{{Name: "tok", Env: "FUSE_TEST_SECRET", Hosts: []string{"mcp.example.com"}}})}
+	spec := func(u string) *harnessv1.HarnessSpec {
+		return &harnessv1.HarnessSpec{McpServers: []*harnessv1.McpServer{{
+			Name: "s", Transport: harnessv1.McpTransport_MCP_TRANSPORT_HTTP, Url: u,
+			Auth: &harnessv1.McpAuth{Type: harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER, ClientSecretRef: "tok"},
+		}}}
+	}
+	got, err := r.Resolve(context.Background(), "", spec("https://mcp.example.com/mcp"))
+	if err != nil || got.Config.MCPServers[0].Auth.ClientSecret != secretValue {
+		t.Fatalf("listed host: %v", err)
+	}
+	_, err = r.Resolve(context.Background(), "", spec("https://attacker.example/mcp"))
+	vs := violations(t, err)
+	if len(vs) != 1 || vs[0].FieldPath != "mcp_servers[0].auth.client_secret_ref" || vs[0].RuleID != harness.RuleSecretRef {
+		t.Fatalf("unlisted host: %+v", vs)
 	}
 }
