@@ -3,6 +3,7 @@ package fuse
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"connectrpc.com/connect"
@@ -92,7 +93,17 @@ func (b *remoteBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (Loo
 		Harness:           cfg.Harness,
 	}))
 	if err != nil {
+		// Unimplemented means "harness specs unsupported" only for a StartLoop that
+		// carried one; anywhere else it is a routing problem the caller should see.
+		if cfg.Harness != nil && connect.CodeOf(err) == connect.CodeUnimplemented {
+			return "", ErrHarnessUnsupported
+		}
 		return "", mapConnectError(err)
+	}
+	// A server that predates harness specs drops the field and runs the loop on its
+	// own config; only a server that ran the spec acknowledges it with its digest.
+	if cfg.Harness != nil && resp.Msg.HarnessDigest == "" {
+		return "", fmt.Errorf("%w: loop %s was started without it (the server predates harness specs)", ErrHarnessUnsupported, resp.Msg.LoopId)
 	}
 	return resp.Msg.LoopId, nil
 }
@@ -197,8 +208,6 @@ func mapConnectError(err error) error {
 		return ErrLoopNotFound
 	case connect.CodeFailedPrecondition:
 		return ErrLoopFinished
-	case connect.CodeUnimplemented:
-		return ErrHarnessUnsupported
 	case connect.CodeInvalidArgument:
 		// A refused harness spec (change 0085) carries its violations as one
 		// ValidateHarnessResponse detail; surface them as the same

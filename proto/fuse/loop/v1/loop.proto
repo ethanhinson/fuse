@@ -49,6 +49,12 @@ message StartLoopRequest {
 
 message StartLoopResponse {
   string loop_id = 1;
+  // harness_digest acknowledges the request's harness (change 0085): the content
+  // digest of the spec the loop runs and recorded (sha256 of its deterministic
+  // encoding, as harness.Digest computes it). Empty when the request carried no
+  // spec. A client that sent a spec and gets no digest back is talking to a server
+  // that predates harness specs and ran the loop on its own config instead.
+  string harness_digest = 2;
 }
 
 message SendRequest {

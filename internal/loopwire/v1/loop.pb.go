@@ -127,8 +127,14 @@ func (x *StartLoopRequest) GetHarness() *v1.HarnessSpec {
 }
 
 type StartLoopResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	LoopId        string                 `protobuf:"bytes,1,opt,name=loop_id,json=loopId,proto3" json:"loop_id,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	LoopId string                 `protobuf:"bytes,1,opt,name=loop_id,json=loopId,proto3" json:"loop_id,omitempty"`
+	// harness_digest acknowledges the request's harness (change 0085): the content
+	// digest of the spec the loop runs and recorded (sha256 of its deterministic
+	// encoding, as harness.Digest computes it). Empty when the request carried no
+	// spec. A client that sent a spec and gets no digest back is talking to a server
+	// that predates harness specs and ran the loop on its own config instead.
+	HarnessDigest string `protobuf:"bytes,2,opt,name=harness_digest,json=harnessDigest,proto3" json:"harness_digest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -166,6 +172,13 @@ func (*StartLoopResponse) Descriptor() ([]byte, []int) {
 func (x *StartLoopResponse) GetLoopId() string {
 	if x != nil {
 		return x.LoopId
+	}
+	return ""
+}
+
+func (x *StartLoopResponse) GetHarnessDigest() string {
+	if x != nil {
+		return x.HarnessDigest
 	}
 	return ""
 }
@@ -523,9 +536,10 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\x06tenant\x18\x03 \x01(\tR\x06tenant\x12 \n" +
 	"\vinteractive\x18\x04 \x01(\bR\vinteractive\x12.\n" +
 	"\x13orchestrate_loop_id\x18\x05 \x01(\tR\x11orchestrateLoopId\x126\n" +
-	"\aharness\x18\x06 \x01(\v2\x1c.fuse.harness.v1.HarnessSpecR\aharness\",\n" +
+	"\aharness\x18\x06 \x01(\v2\x1c.fuse.harness.v1.HarnessSpecR\aharness\"S\n" +
 	"\x11StartLoopResponse\x12\x17\n" +
-	"\aloop_id\x18\x01 \x01(\tR\x06loopId\"\x8a\x01\n" +
+	"\aloop_id\x18\x01 \x01(\tR\x06loopId\x12%\n" +
+	"\x0eharness_digest\x18\x02 \x01(\tR\rharnessDigest\"\x8a\x01\n" +
 	"\vSendRequest\x12\x17\n" +
 	"\aloop_id\x18\x01 \x01(\tR\x06loopId\x12\x14\n" +
 	"\x05input\x18\x02 \x01(\tR\x05input\x12\x16\n" +

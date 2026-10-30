@@ -82,8 +82,10 @@ var (
 	// runtime.ErrLoopFinished).
 	ErrLoopFinished = errors.New("fuse: loop finished")
 	// ErrHarnessUnsupported is a StartLoop carrying a harness spec on a runtime
-	// that does not run specs (connect Unimplemented / runtime.ErrHarnessUnsupported).
-	// A spec the runtime runs but refuses is a *harness.ValidationError instead.
+	// that does not run specs: runtime.ErrHarnessUnsupported locally; remotely a
+	// connect Unimplemented, or a server that predates specs and answered without
+	// the harness digest (that loop was started on the server's own config). A
+	// spec the runtime runs but refuses is a *harness.ValidationError instead.
 	ErrHarnessUnsupported = errors.New("fuse: runtime does not run harness specs")
 )
 

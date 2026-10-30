@@ -28,9 +28,12 @@ import (
 	"syscall"
 	"time"
 
+	"connectrpc.com/connect"
+
 	"github.com/ethanhinson/fuse/harness"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopconnect"
+	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/runtime"
@@ -149,7 +152,14 @@ func main() {
 	}
 
 	handler := loopconnect.NewHandler(f).WithKeepalive(time.Hour)
-	path, h := loopv1connect.NewLoopServiceHandler(handler)
+	var svc loopv1connect.LoopServiceHandler = handler
+	// FUSE_TEST_PREDATING=1 serves like a server from before harness specs (change
+	// 0085): proto3 drops the harness field, so the loop starts on the server's
+	// config and the response carries no harness digest.
+	if os.Getenv("FUSE_TEST_PREDATING") == "1" {
+		svc = predatingHandler{handler}
+	}
+	path, h := loopv1connect.NewLoopServiceHandler(svc)
 	_ = path
 
 	mux := http.NewServeMux()
@@ -180,4 +190,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "serve: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// predatingHandler drops the request's harness spec, as a pre-0085 server does.
+type predatingHandler struct{ *loopconnect.Handler }
+
+func (p predatingHandler) StartLoop(ctx context.Context, req *connect.Request[loopv1.StartLoopRequest]) (*connect.Response[loopv1.StartLoopResponse], error) {
+	req.Msg.Harness = nil
+	return p.Handler.StartLoop(ctx, req)
 }

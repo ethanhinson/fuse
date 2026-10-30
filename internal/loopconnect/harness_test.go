@@ -20,14 +20,22 @@ func TestStartLoopThreadsTheHarnessSpec(t *testing.T) {
 	client := newTestServer(t, rt)
 	turns := uint32(1)
 	spec := &harnessv1.HarnessSpec{MaxTurns: &turns, Skills: []*harnessv1.SkillRef{{Name: "research"}}}
-	if _, err := client.StartLoop(context.Background(), connect.NewRequest(&loopv1.StartLoopRequest{Task: "t", Harness: spec})); err != nil {
+	resp, err := client.StartLoop(context.Background(), connect.NewRequest(&loopv1.StartLoopRequest{Task: "t", Harness: spec}))
+	if err != nil {
 		t.Fatal(err)
 	}
 	if !proto.Equal(rt.sawStartCfg.Harness, spec) {
 		t.Fatalf("Harness = %v, want %v", rt.sawStartCfg.Harness, spec)
 	}
-	if _, err := client.StartLoop(context.Background(), connect.NewRequest(&loopv1.StartLoopRequest{Task: "t"})); err != nil {
+	if resp.Msg.HarnessDigest != harness.Digest(spec) {
+		t.Fatalf("harness_digest = %q, want %q", resp.Msg.HarnessDigest, harness.Digest(spec))
+	}
+	resp, err = client.StartLoop(context.Background(), connect.NewRequest(&loopv1.StartLoopRequest{Task: "t"}))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if resp.Msg.HarnessDigest != "" {
+		t.Fatalf("no-spec StartLoop answered harness_digest %q", resp.Msg.HarnessDigest)
 	}
 	if rt.sawStartCfg.Harness != nil {
 		t.Fatalf("an absent spec reached the seam as %v", rt.sawStartCfg.Harness)

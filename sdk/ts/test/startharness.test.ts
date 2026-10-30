@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { create, toBinary } from "@bufbuild/protobuf";
 import { createConnectTransport } from "@connectrpc/connect-node";
 
-import { createClient, FuseHarnessError, harness } from "../src/index.js";
+import { createClient, FuseHarnessError, FuseHarnessUnsupportedError, harness } from "../src/index.js";
 import { spawnGoServer } from "./helpers.js";
 
 test("startLoop carries a harness spec and surfaces its violations", async () => {
@@ -40,6 +40,25 @@ test("startLoop carries a harness spec and surfaces its violations", async () =>
         return true;
       },
     );
+  } finally {
+    stop();
+  }
+});
+
+test("startLoop refuses a server that started the loop without the spec", async () => {
+  const { url, stop } = await spawnGoServer("./test/server", { FUSE_TEST_PREDATING: "1" });
+  try {
+    const client = createClient({
+      baseUrl: url,
+      credentials: { token: "any", tenant: "acme" },
+      transport: createConnectTransport({ baseUrl: url, httpVersion: "1.1" }),
+    });
+    await assert.rejects(
+      client.startLoop({ task: "t", model: "", harness: { maxTurns: 1 } }),
+      (err: unknown) => err instanceof FuseHarnessUnsupportedError,
+    );
+    const { loopId } = await client.startLoop({ task: "t", model: "" });
+    assert.equal(loopId, "loop-ts");
   } finally {
     stop();
   }

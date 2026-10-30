@@ -79,7 +79,8 @@ export interface StartLoopArgs {
   /**
    * The harness this loop runs (change 0085): the server layers it over its own trusted
    * config, which stays the floor. A spec the server refuses rejects with a
-   * {@link FuseHarnessError} listing every violation. Omitted: the server's config.
+   * {@link FuseHarnessError} listing every violation; a server that cannot run specs
+   * rejects with a {@link FuseHarnessUnsupportedError}. Omitted: the server's config.
    */
   harness?: MessageInitShape<typeof HarnessSpecSchema>;
 }
@@ -96,6 +97,18 @@ export class FuseHarnessError extends Error {
     super(message);
     this.name = "FuseHarnessError";
     this.violations = violations;
+  }
+}
+
+/**
+ * FuseHarnessUnsupportedError is thrown by {@link Client.startLoop} when a harness spec was
+ * sent but the server does not run specs: it answered Unimplemented, or it predates harness
+ * specs and started the loop on its own config (no harness digest in the response).
+ */
+export class FuseHarnessUnsupportedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FuseHarnessUnsupportedError";
   }
 }
 
@@ -339,8 +352,16 @@ export function createClient(options: ClientOptions): Client {
           harness: args.harness,
           tenant,
         });
+        if (args.harness !== undefined && resp.harnessDigest === "") {
+          throw new FuseHarnessUnsupportedError(
+            `fuse: loop ${resp.loopId} was started without the harness spec (the server predates harness specs)`,
+          );
+        }
         return { loopId: resp.loopId };
       } catch (err) {
+        if (args.harness !== undefined && err instanceof ConnectError && err.code === Code.Unimplemented) {
+          throw new FuseHarnessUnsupportedError(`fuse: the server does not run harness specs: ${err.rawMessage}`);
+        }
         throw harnessErrorOf(err) ?? err;
       }
     },

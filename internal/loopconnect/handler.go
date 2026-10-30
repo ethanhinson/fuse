@@ -212,7 +212,11 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 			return nil, aerr
 		}
 	}
-	resp := connect.NewResponse(&loopv1.StartLoopResponse{LoopId: handle.ID()})
+	out := &loopv1.StartLoopResponse{LoopId: handle.ID()}
+	if m.Harness != nil {
+		out.HarnessDigest = harness.Digest(m.Harness)
+	}
+	resp := connect.NewResponse(out)
 	if id := observeotel.TraceID(ctx); id != "" {
 		resp.Header().Set("Fuse-Trace-Id", id)
 	}

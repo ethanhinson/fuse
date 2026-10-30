@@ -4,13 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"connectrpc.com/connect"
 
 	"google.golang.org/protobuf/proto"
 
 	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/loopconnect"
+	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
+	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
 	"github.com/ethanhinson/fuse/internal/runtime"
 )
 
@@ -62,5 +69,47 @@ func TestStartLoopCarriesTheHarnessSpec(t *testing.T) {
 				t.Fatalf("err = %v, want ErrHarnessUnsupported", err)
 			}
 		})
+	}
+}
+
+// predatingHandler is a server from before harness specs: proto3 drops the
+// unknown harness field, so it starts the loop on its own config and answers
+// without a harness digest.
+type predatingHandler struct{ *loopconnect.Handler }
+
+func (p predatingHandler) StartLoop(ctx context.Context, req *connect.Request[loopv1.StartLoopRequest]) (*connect.Response[loopv1.StartLoopResponse], error) {
+	req.Msg.Harness = nil
+	return p.Handler.StartLoop(ctx, req)
+}
+
+func TestRemoteStartLoopRefusesAServerThatIgnoredTheSpec(t *testing.T) {
+	f := &fakeRuntime{startID: "loop-old"}
+	_, h := loopv1connect.NewLoopServiceHandler(predatingHandler{loopconnect.NewHandler(f)})
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	c := NewRemote(srv.URL, Credentials{Tenant: string(event.DefaultTenant)})
+	if _, err := c.StartLoop(context.Background(), StartLoopConfig{Task: "t", Harness: sdkSpec()}); !errors.Is(err, ErrHarnessUnsupported) {
+		t.Fatalf("err = %v, want ErrHarnessUnsupported", err)
+	}
+	if id, err := c.StartLoop(context.Background(), StartLoopConfig{Task: "t"}); err != nil || id != "loop-old" {
+		t.Fatalf("no-spec StartLoop = %q, %v", id, err)
+	}
+}
+
+// TestRemoteUnimplementedIsNotAHarnessError keeps a misrouted server's
+// Unimplemented (404) visible as itself on every call that carried no spec.
+func TestRemoteUnimplementedIsNotAHarnessError(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	c := NewRemote(srv.URL, Credentials{Tenant: string(event.DefaultTenant)})
+	ctx := context.Background()
+	if _, err := c.StartLoop(ctx, StartLoopConfig{Task: "t"}); err == nil || errors.Is(err, ErrHarnessUnsupported) {
+		t.Fatalf("StartLoop err = %v", err)
+	}
+	if err := c.Send(ctx, "x", "hi"); err == nil || errors.Is(err, ErrHarnessUnsupported) {
+		t.Fatalf("Send err = %v", err)
+	}
+	if _, err := c.StartLoop(ctx, StartLoopConfig{Task: "t", Harness: sdkSpec()}); !errors.Is(err, ErrHarnessUnsupported) {
+		t.Fatalf("spec StartLoop err = %v, want ErrHarnessUnsupported", err)
 	}
 }
