@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"net"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -150,6 +152,9 @@ func (c Config) Problems() []Problem {
 	if err := validateIssuers(c.LoopServer.Issuers); err != nil {
 		ps = append(ps, Problem{Path: "loop_server.issuers", Message: strings.TrimPrefix(err.Error(), "config: "), Err: err})
 	}
+	if err := validateSecrets(c.LoopServer.Secrets); err != nil {
+		ps = append(ps, Problem{Path: "loop_server.secrets", Message: strings.TrimPrefix(err.Error(), "config: "), Err: err})
+	}
 	if err := validateObservability(c.Observability); err != nil {
 		ps = append(ps, Problem{Path: "observability", Message: strings.TrimPrefix(err.Error(), "config: "), Err: err})
 	}
@@ -190,6 +195,37 @@ func validateIssuers(issuers []IssuerConfig) error {
 		}
 		if d <= 0 {
 			return fmt.Errorf("config: %s: max_ttl must be positive, got %s", where, d)
+		}
+	}
+	return nil
+}
+
+var secretRefRE = regexp.MustCompile(SecretRefPattern)
+
+// validateSecrets checks loop_server.secrets (change 0085). Like the issuers it
+// stops at the first problem and names the entry by position and name.
+func validateSecrets(secrets []SecretSourceConfig) error {
+	seen := map[string]int{}
+	for i, s := range secrets {
+		where := fmt.Sprintf("loop_server.secrets[%d]", i)
+		if s.Name != "" {
+			where = fmt.Sprintf("loop_server.secrets[%d] (%q)", i, s.Name)
+		}
+		if s.Name == "" {
+			return fmt.Errorf("config: %s: name is required", where)
+		}
+		if !secretRefRE.MatchString(s.Name) {
+			return fmt.Errorf("config: %s: name must match %s", where, SecretRefPattern)
+		}
+		if prev, dup := seen[s.Name]; dup {
+			return fmt.Errorf("config: %s: name %q is already declared by loop_server.secrets[%d]", where, s.Name, prev)
+		}
+		seen[s.Name] = i
+		if (s.Env == "") == (s.File == "") {
+			return fmt.Errorf("config: %s: exactly one of env or file is required", where)
+		}
+		if s.File != "" && !filepath.IsAbs(s.File) {
+			return fmt.Errorf("config: %s: file must be an absolute path", where)
 		}
 	}
 	return nil
