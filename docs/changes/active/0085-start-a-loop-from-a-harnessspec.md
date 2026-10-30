@@ -2,7 +2,7 @@
 id: 85
 slug: 'start-a-loop-from-a-harnessspec'
 title: 'Start a loop from a HarnessSpec'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/start-a-loop-from-a-harnessspec'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/107'
 blocked_by:
 reconciled: true
 ---
@@ -62,3 +62,12 @@ Change 0084 (ADR-0060) made fuse.harness.v1 HarnessSpec the portable, validated 
 ### 2026-10-30
 
 Unchanged against main 741227a. The change was minted and groomed in this run from the settled design; 0084 (merged) supplies the HarnessSpec proto, the public validator and the spec-to-config mapping this change consumes.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: e5ea184fbc0236762880c9cae49fc4f94e175c49
+ran_at:   2026-10-30T06:01:17Z
+<!-- docket:build-evidence:end -->
