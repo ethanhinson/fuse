@@ -51,10 +51,12 @@ type resp struct {
 	Error   *rpcError       `json:"error,omitempty"`
 }
 
-// rpcError is the JSON-RPC 2.0 error object.
+// rpcError is the JSON-RPC 2.0 error object. Data carries structured detail
+// when there is any: a refused harness spec's violations (change 0085).
 type rpcError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
 }
 
 // method params / results
@@ -71,6 +73,22 @@ type startParams struct {
 	// orchestrator: a persistent chat loop that watches and steers the target. It
 	// implies interactive; chat with it through loop.send and loop.observe.
 	Orchestrate string `json:"orchestrate,omitempty"`
+	// Harness, when present, is the fuse.harness.v1 HarnessSpec the loop runs, in
+	// protojson (change 0085). The server layers it over its own config; a spec it
+	// refuses is codeInvalidParams with the violations in error.data.
+	Harness json.RawMessage `json:"harness,omitempty"`
+}
+
+// harnessErrorData is error.data for a refused harness spec: every violation,
+// keyed like the proto wire (field_path, message, rule_id).
+type harnessErrorData struct {
+	Violations []harnessViolation `json:"violations"`
+}
+
+type harnessViolation struct {
+	FieldPath string `json:"field_path"`
+	Message   string `json:"message"`
+	RuleID    string `json:"rule_id"`
 }
 type startResult struct {
 	LoopID string `json:"loop_id"`
