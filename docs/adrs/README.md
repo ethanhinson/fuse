@@ -60,6 +60,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0058](0058-remote-sandbox-substrates-are-adapted-not-merged-and-contained-is-confirmed-by-observation.md) — A remote sandbox substrate is adapted onto the handler seam, and "contained" is confirmed by observation or refused (Accepted) ← change #75 · relates to ADR-0044, ADR-0034, ADR-0036, ADR-0051, ADR-0052, ADR-0055, ADR-0057
 - [ADR-0059](0059-steering-and-the-orchestrator-labelled-optionally-interrupti.md) — Steering and the orchestrator - labelled, optionally interrupting messages to a running loop, delivered on every binding and across replicas (Accepted) → supersedes ADR-0021, ADR-0022 · relates to ADR-0006, ADR-0016, ADR-0021, ADR-0022, ADR-0033, ADR-0047
 - [ADR-0060](0060-harnessspec-proto-is-the-portable-harness-definition-client.md) — HarnessSpec proto is the portable harness definition - client-settable surface only, public packages, protovalidate shape plus Go semantic validation (Accepted) ← change #84 · relates to ADR-0006, ADR-0033
+- [ADR-0061](0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md) — A loop runs a client HarnessSpec layered over the operator config, rebuilt from its recorded spec (Accepted) ← change #85 · relates to ADR-0006, ADR-0033, ADR-0047, ADR-0060
 
 ## Superseded / Reversed
 
