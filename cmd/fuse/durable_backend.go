@@ -23,8 +23,6 @@ package main
 import (
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
-	"github.com/ethanhinson/fuse/internal/event/fsstore"
-	"github.com/ethanhinson/fuse/internal/session"
 )
 
 // selectDurableBackend returns the process-shared durable event store + loop registry
@@ -39,7 +37,10 @@ import (
 // cfg is accepted for signature parity with the pgstore selector (which reads a
 // Postgres DSN from it); the untagged path ignores it.
 func selectDurableBackend(cfg config.Config) (event.DurableStore, event.LoopRegistry, error) {
-	s := fsstore.NewDurableFSStore(session.DefaultLogDir())
+	s, err := newFSDurableBackend()
+	if err != nil {
+		return nil, nil, err
+	}
 	// The store IS its own registry (FSDurableStore satisfies both interfaces): return
 	// the same value for both seams so they share one on-disk tree.
 	return s, s, nil

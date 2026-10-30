@@ -63,3 +63,22 @@ func TestBuildLoopServerDepsWiresDurableSeam(t *testing.T) {
 		t.Fatal("buildLoopServerRuntimeDeps left Deps.Registry nil (durable seam not wired)")
 	}
 }
+
+// TestFSDurableBackendIsReadyOnAFreshHost guards first start: the filesystem store
+// only created its sessions directory on the first event, while /readyz pings that
+// directory, so a fresh host reported not-ready forever - a load balancer never sent
+// it the first request that would have created the directory.
+func TestFSDurableBackendIsReadyOnAFreshHost(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store, _, err := selectDurableBackend(config.Config{})
+	if err != nil {
+		t.Fatalf("selectDurableBackend: %v", err)
+	}
+	p, ok := store.(event.Pinger)
+	if !ok {
+		t.Fatal("the filesystem store is not a Pinger")
+	}
+	if err := p.Ping(context.Background()); err != nil {
+		t.Fatalf("a fresh host is not ready: %v", err)
+	}
+}
