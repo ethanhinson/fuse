@@ -30,22 +30,31 @@ import (
 
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/harness/v1/harnessv1connect"
-	"github.com/ethanhinson/fuse/internal/configcheck"
 	"github.com/ethanhinson/fuse/internal/harnessconfig"
 )
 
-// Semantic rule ids. Shape violations carry protovalidate's own rule ids
-// (e.g. "double.lte", "string.uri") or the CEL ids declared in harness.proto.
+// Rule ids for problems outside the shape layer. Shape violations carry
+// protovalidate's own rule ids (e.g. "double.lte", "string.uri") or the CEL ids
+// declared in harness.proto.
 const (
 	// RuleConfig marks a structural rule from internal/config.
-	RuleConfig = "fuse.config"
+	RuleConfig = harnessconfig.RuleConfig
 	// RuleModelRef marks a model alias that resolves to no configured or
 	// built-in model.
-	RuleModelRef = "fuse.model_ref"
+	RuleModelRef = harnessconfig.RuleModelRef
 	// RuleMapping marks a spec the runtime could not map into its config.
-	RuleMapping = "fuse.mapping"
+	RuleMapping = harnessconfig.RuleMapping
 	// RuleInternal marks a validator failure (not a problem with the spec).
-	RuleInternal = "fuse.internal"
+	RuleInternal = harnessconfig.RuleInternal
+	// RuleTightenOnly marks a tighten-only field whose value would loosen the
+	// limit a server's operator set. Only a server resolving the spec over its
+	// own config reports it (change 0085).
+	RuleTightenOnly = harnessconfig.RuleTightenOnly
+	// RuleSkillRef marks a skill the server has not installed (change 0085).
+	RuleSkillRef = harnessconfig.RuleSkillRef
+	// RuleSecretRef marks a secret the server will not resolve for the loop's
+	// tenant (change 0085).
+	RuleSecretRef = harnessconfig.RuleSecretRef
 )
 
 // Violation is one problem with a spec.
@@ -76,37 +85,36 @@ func Validate(spec *harnessv1.HarnessSpec) []Violation {
 		spec = &harnessv1.HarnessSpec{}
 	}
 	out := shape(spec)
-	flagged := map[string]bool{}
 	for _, v := range out {
 		if v.RuleID == RuleInternal {
 			return out
 		}
-		flagged[v.FieldPath] = true
 	}
-
+	var semantic []harnessconfig.Problem
 	cfg, err := harnessconfig.ToConfig(spec, harnessconfig.PlaceholderSecrets)
 	if err != nil {
-		out = append(out, Violation{Message: err.Error(), RuleID: RuleMapping})
+		semantic = []harnessconfig.Problem{{Message: err.Error(), RuleID: RuleMapping}}
 	} else {
-		semantic := func(rule string, path, msg string) {
-			path = harnessconfig.SpecPath(path)
-			if path != "" {
-				if flagged[path] {
-					return
-				}
-				flagged[path] = true
-			}
-			out = append(out, Violation{FieldPath: path, Message: msg, RuleID: rule})
-		}
-		for _, p := range cfg.Problems() {
-			semantic(RuleConfig, p.Path, p.Message)
-		}
-		for _, p := range configcheck.ModelRefProblems(cfg, configcheck.Registry(cfg)) {
-			semantic(RuleModelRef, p.Path, p.Message)
-		}
+		semantic = harnessconfig.SemanticProblems(cfg)
 	}
+	return fromProblems(harnessconfig.Combine(toProblems(out), semantic))
+}
 
-	sortViolations(out)
+// toProblems converts violations to the internal problem form the shared
+// semantic layer combines; fromProblems is the inverse.
+func toProblems(vs []Violation) []harnessconfig.Problem {
+	out := make([]harnessconfig.Problem, len(vs))
+	for i, v := range vs {
+		out[i] = harnessconfig.Problem{FieldPath: v.FieldPath, Message: v.Message, RuleID: v.RuleID}
+	}
+	return out
+}
+
+func fromProblems(ps []harnessconfig.Problem) []Violation {
+	out := make([]Violation, len(ps))
+	for i, p := range ps {
+		out[i] = Violation{FieldPath: p.FieldPath, Message: p.Message, RuleID: p.RuleID}
+	}
 	return out
 }
 
