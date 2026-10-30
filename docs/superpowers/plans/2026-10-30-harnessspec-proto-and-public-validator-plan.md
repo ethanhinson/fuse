@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0084 — HarnessSpec proto and public validator](../../changes/active/0084-harnessspec-proto-and-public-validator.md)**
+> ↩ **[Change 0084 — HarnessSpec proto and public validator](../../changes/archive/2026-10-30-0084-harnessspec-proto-and-public-validator.md)**
 <!-- docket:backlink:end -->
 
 # HarnessSpec proto and public validator - plan (recorded after the fact)

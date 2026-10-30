@@ -2,7 +2,7 @@
 id: 84
 slug: 'harnessspec-proto-and-public-validator'
 title: 'HarnessSpec proto and public validator'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -31,7 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-30-harnessspec-proto-and-public-validator-design.md](../../superpowers/specs/2026-10-30-harnessspec-proto-and-public-validator-design.md) |
-| Plan | [2026-10-30-harnessspec-proto-and-public-validator-plan.md](../../superpowers/plans/2026-10-30-harnessspec-proto-and-public-validator-plan.md) |
+| Plan | [2026-10-30-harnessspec-proto-and-public-validator-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-10-30-harnessspec-proto-and-public-validator-plan.md) |
 | ADRs | [ADR-0006](../../adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md), [ADR-0033](../../adrs/0033-networked-binding-connect-protobuf-fuse-loop-v1.md), [ADR-0060](../../adrs/0060-harnessspec-proto-is-the-portable-harness-definition-client.md) |
 <!-- docket:artifacts:end -->
 
