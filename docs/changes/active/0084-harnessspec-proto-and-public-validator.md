@@ -12,7 +12,7 @@ depends_on: []
 stacked_on:
 related: [17, 50, 55]
 discovered_from: []
-adrs: [6, 33]
+adrs: [6, 33, 60]
 spec: 'docs/superpowers/specs/2026-10-30-harnessspec-proto-and-public-validator-design.md'
 plan:
 results:
@@ -31,7 +31,7 @@ reconciled: false
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-30-harnessspec-proto-and-public-validator-design.md](../../superpowers/specs/2026-10-30-harnessspec-proto-and-public-validator-design.md) |
-| ADRs | [ADR-0006](../../adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md), [ADR-0033](../../adrs/0033-networked-binding-connect-protobuf-fuse-loop-v1.md) |
+| ADRs | [ADR-0006](../../adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md), [ADR-0033](../../adrs/0033-networked-binding-connect-protobuf-fuse-loop-v1.md), [ADR-0060](../../adrs/0060-harnessspec-proto-is-the-portable-harness-definition-client.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
