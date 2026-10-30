@@ -253,7 +253,7 @@ func TestResumeRefusesATamperedHarnessRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	specJSON, _ := protojson.Marshal(testSpec())
-	payload, _ := json.Marshal(event.LoopHarnessPayload{Spec: specJSON, Digest: "sha256:00"})
+	payload, _ := json.Marshal(event.LoopHarnessPayload{Spec: specJSON, SpecBytes: harness.Encode(testSpec()), Digest: "sha256:00"})
 	if err := store.Append(ctx, key, event.Event{Kind: event.KindLoopHarness, NodeID: "tampered", Payload: payload}); err != nil {
 		t.Fatal(err)
 	}
@@ -273,4 +273,55 @@ func (f *fakeRegistry) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.records)
+}
+
+// TestHarnessRecordKeepsFieldsThisReplicaDoesNotKnow: a record written by a
+// newer replica (a field this binary has no descriptor for) still verifies and
+// resumes here, and keeps the field, because the bytes are what is recorded.
+func TestHarnessRecordKeepsFieldsThisReplicaDoesNotKnow(t *testing.T) {
+	b := append(harness.Encode(testSpec()), 0xf8, 0x06, 0x01) // field 111, varint 1
+	payload, _ := json.Marshal(event.LoopHarnessPayload{SpecBytes: b, Digest: harness.DigestBytes(b)})
+	spec, err := harnessFromEvents([]event.Event{{Kind: event.KindLoopHarness, Payload: payload}})
+	if err != nil {
+		t.Fatalf("harnessFromEvents: %v", err)
+	}
+	if len(spec.ProtoReflect().GetUnknown()) == 0 {
+		t.Fatal("the unknown field was dropped")
+	}
+	if spec.GetModels().GetDefaultAlias() != "glm" || spec.GetMaxTurns() != 2 {
+		t.Fatalf("known fields lost: %v", spec)
+	}
+	if got := harness.Encode(spec); harness.DigestBytes(got) != harness.DigestBytes(b) {
+		t.Fatalf("re-encoding changed the digest: %x vs %x", got, b)
+	}
+}
+
+// failingAppendStore refuses every append, as an unreachable durable store does.
+type failingAppendStore struct{ event.DurableStore }
+
+func (failingAppendStore) Append(context.Context, event.StreamKey, event.Event) error {
+	return errors.New("store down")
+}
+
+func TestFailedHarnessRecordLeavesTheLoopNotLive(t *testing.T) {
+	reg := newFakeRegistry()
+	fh := &fakeHarness{completer: &scriptedCompleter{}}
+	store := failingAppendStore{fsstore.NewDurableFSStore(t.TempDir())}
+	rt := New(Deps{MaxConcurrent: 1, DurableStore: store, Registry: reg, Harness: fh})
+	if _, err := rt.StartLoop(context.Background(), LoopConfig{Task: "hi", Harness: testSpec()}); err == nil {
+		t.Fatal("StartLoop succeeded without recording its harness")
+	}
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if len(reg.records) != 1 {
+		t.Fatalf("records = %d", len(reg.records))
+	}
+	for _, rec := range reg.records {
+		if rec.Live {
+			t.Fatal("a loop that never ran is still recorded live")
+		}
+	}
+	if _, _, built, _ := fh.snapshot(); built != 0 {
+		t.Fatal("an agent was built for a loop whose harness was not recorded")
+	}
 }

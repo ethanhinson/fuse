@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
@@ -68,14 +69,15 @@ func (r *inProcRuntime) resolveHarness(ctx context.Context, cfg LoopConfig) (*Lo
 	return &f, nil
 }
 
-// harnessEvent is the loop.harness record of spec: the spec as supplied, in
-// protojson, and its content digest.
+// harnessEvent is the loop.harness record of spec: its deterministic encoding,
+// the digest over it, and a protojson rendering for readers.
 func harnessEvent(rootID string, spec *harnessv1.HarnessSpec) (event.Event, error) {
 	js, err := protojson.Marshal(spec)
 	if err != nil {
 		return event.Event{}, fmt.Errorf("runtime: encode harness spec: %w", err)
 	}
-	payload, err := event.MarshalPayload(event.LoopHarnessPayload{Spec: js, Digest: harness.Digest(spec)})
+	b := harness.Encode(spec)
+	payload, err := event.MarshalPayload(event.LoopHarnessPayload{Spec: js, SpecBytes: b, Digest: harness.DigestBytes(b)})
 	if err != nil {
 		return event.Event{}, fmt.Errorf("runtime: encode harness record: %w", err)
 	}
@@ -83,10 +85,10 @@ func harnessEvent(rootID string, spec *harnessv1.HarnessSpec) (event.Event, erro
 }
 
 // harnessFromEvents recovers the harness spec a loop was started with from its
-// durable stream, verifying the recorded digest. It returns nil for a loop
-// started without one. A record that does not decode, or whose digest does not
-// match its spec, is an error: a resume must never rebuild a loop from a
-// harness other than the one it was started with.
+// durable stream: the recorded bytes, after checking the recorded digest over
+// them. It returns nil for a loop started without one. A record that does not
+// decode, or whose digest does not match, is an error: a resume must never
+// rebuild a loop from a harness other than the one it was started with.
 func harnessFromEvents(events []event.Event) (*harnessv1.HarnessSpec, error) {
 	for _, e := range events {
 		if e.Kind != event.KindLoopHarness {
@@ -96,12 +98,12 @@ func harnessFromEvents(events []event.Event) (*harnessv1.HarnessSpec, error) {
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
 			return nil, fmt.Errorf("runtime: decode harness record: %w", err)
 		}
-		spec := &harnessv1.HarnessSpec{}
-		if err := protojson.Unmarshal(p.Spec, spec); err != nil {
-			return nil, fmt.Errorf("runtime: decode harness spec: %w", err)
-		}
-		if got := harness.Digest(spec); got != p.Digest {
+		if got := harness.DigestBytes(p.SpecBytes); got != p.Digest {
 			return nil, fmt.Errorf("runtime: harness record digest %q does not match its spec (%q)", p.Digest, got)
+		}
+		spec := &harnessv1.HarnessSpec{}
+		if err := proto.Unmarshal(p.SpecBytes, spec); err != nil {
+			return nil, fmt.Errorf("runtime: decode harness spec: %w", err)
 		}
 		return spec, nil
 	}

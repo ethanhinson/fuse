@@ -463,9 +463,17 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// idle reaper's parent — leaks for the life of the process. The success path never
 	// calls this: sessionCancel is handed to the reaper and to the run-completion
 	// goroutine, which are the only things allowed to end a live session.
+	// liveKey is set once the loop is recorded live in the durable registry. A
+	// launch that fails after that point flips it back to not-live, so no replica
+	// treats a loop that never ran as live elsewhere until its lease expires.
+	var liveKey *event.StreamKey
+	var liveOwner string
 	failLaunch := func() {
 		if sessionCancel != nil {
 			sessionCancel()
+		}
+		if liveKey != nil {
+			_ = r.deps.Registry.SetLive(context.Background(), *liveKey, false, liveOwner)
 		}
 		end(observe.OutcomeError)
 	}
@@ -579,6 +587,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 			failLaunch()
 			return nil, fmt.Errorf("runtime: register loop: %w", err)
 		}
+		liveKey, liveOwner = &key, rootID
 	}
 
 	// Record the harness this loop runs (change 0085) as its stream's first event,
