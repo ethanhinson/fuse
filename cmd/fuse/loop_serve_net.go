@@ -352,7 +352,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	// STRICT: a configured-but-unreachable Postgres refuses to start rather than
 	// silently serving — and reporting Ready — on a store that loses every loop at
 	// the next restart. See buildLoopServerRuntimeDepsStrict.
-	deps, derr := buildLoopServerRuntimeDepsStrict(sb, cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), obs.observer)
+	deps, derr := buildLoopServerRuntimeDepsStrict(sb, cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), obs.observer, skillSet)
 	if derr != nil {
 		shutdownObservability()
 		fmt.Fprintf(stderr, "loop-serve-net: %v\n", derr)

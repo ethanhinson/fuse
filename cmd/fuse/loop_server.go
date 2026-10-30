@@ -71,7 +71,7 @@ func runLoopServer(_ []string, cfg config.Config, reg *model.Registry, _ io.Writ
 	// Reuse the one-shot deps wiring but with a REAL event store so observe/attach
 	// have durable history. Renderer is a discarding renderer — binding #2 has no
 	// display.
-	deps, derr := buildLoopServerRuntimeDepsStrict(sb, cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), observe.NoopObserver{})
+	deps, derr := buildLoopServerRuntimeDepsStrict(sb, cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), observe.NoopObserver{}, skillSet)
 	if derr != nil {
 		fmt.Fprintf(stderr, "loop-server: %v\n", derr)
 		return 1
@@ -129,7 +129,7 @@ func buildLoopServerRuntimeDepsWithObserver(sb *sandbox.Service, cfg config.Conf
 	if derr != nil {
 		durableStore, durableReg = nil, nil
 	}
-	return assembleLoopServerRuntimeDeps(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observer, durableStore, durableReg)
+	return assembleLoopServerRuntimeDeps(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observer, durableStore, durableReg, nil)
 }
 
 // buildLoopServerRuntimeDepsStrict is the composition variant BOTH server bindings
@@ -140,12 +140,12 @@ func buildLoopServerRuntimeDepsWithObserver(sb *sandbox.Service, cfg config.Conf
 // under Compose `depends_on: service_healthy` means it never fires.
 func buildLoopServerRuntimeDepsStrict(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
-	rateGate model.RateGate, observer observe.Observer) (runtime.Deps, error) {
+	rateGate model.RateGate, observer observe.Observer, skillSet *skills.Set) (runtime.Deps, error) {
 	durableStore, durableReg, derr := selectDurableBackendFn(cfg)
 	if derr != nil {
 		return runtime.Deps{}, fmt.Errorf("durable backend: %w — refusing to start on the filesystem store (loops would not survive a restart); fix the DSN or wait for Postgres", derr)
 	}
-	return assembleLoopServerRuntimeDeps(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observer, durableStore, durableReg), nil
+	return assembleLoopServerRuntimeDeps(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observer, durableStore, durableReg, skillSet), nil
 }
 
 // assembleLoopServerRuntimeDeps is the shared assembly behind both variants: the
@@ -154,10 +154,17 @@ func buildLoopServerRuntimeDepsStrict(sb *sandbox.Service, cfg config.Config, re
 // loop-server resolves loops via the durable seam and a FRESH process can reattach
 // to a prior process's loop). nil store/registry means the legacy per-loop fsstore
 // path via BaseDir.
+//
+// It also wires Deps.Harness (change 0085), so a client may start a loop from a
+// fuse.harness.v1 HarnessSpec: the spec is validated and layered over cfg (the
+// operator's trusted config is the floor), and that loop is built by the same
+// per-loop factory as every other loop, from its resolved settings instead of the
+// server's. skillSet is the set of skills installed on the server, which a spec's
+// skill references resolve against (nil: none).
 func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
 	rateGate model.RateGate, observer observe.Observer,
-	durableStore event.DurableStore, durableReg event.LoopRegistry) runtime.Deps {
+	durableStore event.DurableStore, durableReg event.LoopRegistry, skillSet *skills.Set) runtime.Deps {
 	if observer == nil {
 		observer = observe.NoopObserver{}
 	}
@@ -170,14 +177,22 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 	// buildGate → buildTargetMediator(cfg) inside buildAgentCore, so we discard it here.
 	mcpOpts, _ := mcpAttach(cfg, os.Stderr)
 
-	// Per-loop MCP manager registry (change #59, Task 4): each hosted loop gets its OWN
-	// mcp.Manager, constructed in NewToolRegistry and registered into that loop's OWN
-	// cloned tool registry — never a shared manager, registry, or credential across loops
-	// (guardrail deglobalize-holder-also-per-instance-the-shared-graph). Keyed by the
-	// per-loop registry pointer so LoopTeardown closes exactly that loop's manager at loop
-	// completion. sync.Map because NewToolRegistry (StartLoop goroutine) and LoopTeardown
-	// (run-completion goroutine) touch it from different goroutines for concurrent loops.
-	var loopManagers sync.Map // *tools.Registry -> *mcp.Manager
+	host := &loopServerHost{
+		sb:          sb,
+		rootApprove: rootApprove,
+		observer:    observer,
+		skills:      skillSet,
+		operator: loopSettings{
+			cfg:         cfg,
+			reg:         reg,
+			modelAlias:  modelAlias,
+			toolReg:     toolReg,
+			systemBlock: systemBlock,
+			rateGate:    rateGate,
+			mcpOpts:     mcpOpts,
+		},
+	}
+	server := host.factory(host.operator)
 
 	return runtime.Deps{
 		Observer: observer,
@@ -188,7 +203,7 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 		DurableStore:  durableStore,
 		Registry:      durableReg,
 		BaseDir:       session.DefaultLogDir(),
-		MaxConcurrent: cfg.Agents.MaxConcurrent,
+		MaxConcurrent: server.MaxConcurrent,
 		// LoopContext threads the REAL authenticated loop-initiator principal onto the
 		// run context (change #59, Task 3). The Connect edge resolved the principal and
 		// carried its tenant + subject on LoopConfig; here — at the composition root, not
@@ -212,18 +227,71 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 		// LoopTeardown closes THIS loop's own MCP manager at loop completion (change #59,
 		// Task 4), so no manager (and its read-pump/notify goroutines) outlives its loop and
 		// no two loops ever share one. The registry key is the loop's own registry — the
-		// exact one NewToolRegistry attached the manager to.
-		LoopTeardown: func(loopReg *tools.Registry) {
-			if v, ok := loopManagers.LoadAndDelete(loopReg); ok {
-				v.(*mcp.Manager).Close()
-			}
-			// Release THIS loop's own bash sandbox pool (change 0063): its warm
-			// Runners and its reaper goroutine must not outlive the loop that
-			// created them. It runs on the completion goroutine AND on the
-			// StartLoop early-return path, where nothing else would (learning
-			// per-instance-resource-needs-teardown-on-every-early-return).
-			_ = tools.ReleaseSandboxes(context.Background(), loopReg)
-		},
+		// exact one NewToolRegistry attached the manager to. It serves loops built from a
+		// harness spec too: their factory registers into the same map.
+		LoopTeardown:    host.teardown,
+		NewToolRegistry: server.NewToolRegistry,
+		BuildAgent:      server.BuildAgent,
+		Harness:         host,
+	}
+}
+
+// loopSettings is everything one hosted loop's construction is built from. The
+// server's own settings come from its trusted config at startup; a loop started
+// from a harness spec gets settings resolved from the spec layered over them
+// (change 0085), so its agent, subagents, workflows and pools are built from its
+// own config through the very same factory.
+type loopSettings struct {
+	cfg         config.Config
+	reg         *model.Registry
+	modelAlias  string
+	toolReg     *tools.Registry // the base registry each loop clones
+	systemBlock string
+	rateGate    model.RateGate
+	mcpOpts     []mcp.ManagerOption
+}
+
+// loopServerHost is the per-server state every hosted loop's construction
+// shares: the frozen sandbox substrate, the binding's approval policy, the
+// observer, the installed skills, the per-loop MCP manager registry, and the
+// server's own loop settings (the operator floor for harness specs).
+type loopServerHost struct {
+	sb          *sandbox.Service
+	rootApprove permissions.ApprovalFunc
+	observer    observe.Observer
+	skills      *skills.Set
+	operator    loopSettings
+
+	// Per-loop MCP manager registry (change #59, Task 4): each hosted loop gets its OWN
+	// mcp.Manager, constructed in NewToolRegistry and registered into that loop's OWN
+	// cloned tool registry — never a shared manager, registry, or credential across loops
+	// (guardrail deglobalize-holder-also-per-instance-the-shared-graph). Keyed by the
+	// per-loop registry pointer so LoopTeardown closes exactly that loop's manager at loop
+	// completion. sync.Map because NewToolRegistry (StartLoop goroutine) and LoopTeardown
+	// (run-completion goroutine) touch it from different goroutines for concurrent loops.
+	loopManagers sync.Map // *tools.Registry -> *mcp.Manager
+}
+
+// teardown releases what a loop's NewToolRegistry attached to its registry.
+func (h *loopServerHost) teardown(loopReg *tools.Registry) {
+	if v, ok := h.loopManagers.LoadAndDelete(loopReg); ok {
+		v.(*mcp.Manager).Close()
+	}
+	// Release THIS loop's own bash sandbox pool (change 0063): its warm
+	// Runners and its reaper goroutine must not outlive the loop that
+	// created them. It runs on the completion goroutine AND on the
+	// StartLoop early-return path, where nothing else would (learning
+	// per-instance-resource-needs-teardown-on-every-early-return).
+	_ = tools.ReleaseSandboxes(context.Background(), loopReg)
+}
+
+// factory builds the per-loop construction closures from s.
+func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
+	sb, cfg, reg, modelAlias, toolReg, systemBlock := h.sb, s.cfg, s.reg, s.modelAlias, s.toolReg, s.systemBlock
+	rootApprove, rateGate, observer, mcpOpts := h.rootApprove, s.rateGate, h.observer, s.mcpOpts
+	loopManagers := &h.loopManagers
+	return runtime.LoopFactory{
+		MaxConcurrent: cfg.Agents.MaxConcurrent,
 		// The per-loop tool registry is built fresh per loop from the same source as the
 		// server's default, so each loop's root tool wiring binds to its own tree below.
 		// It ALSO attaches a per-loop MCP manager (change #59, Task 4): mcp.NewManager
@@ -253,8 +321,6 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 			}
 			return loopReg
 		},
-		// BuildAgent is the per-loop factory (change 0046): store + tree are THIS loop's
-		// own, so all wiring below is loop-local — no process-global, no cross-loop clobber.
 		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, loopToolReg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			sched := tree.Scheduler()
 			sched.SetMaxSpawns(cfg.Agents.MaxSpawns)

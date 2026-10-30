@@ -74,7 +74,7 @@ func TestLenientBuilderStillFallsBack(t *testing.T) {
 	if deps.DurableStore != nil || deps.Registry != nil {
 		t.Fatal("lenient builder must fall back to nil store/registry on a selector error")
 	}
-	if _, err := buildLoopServerRuntimeDepsStrict(nil, cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil), "", nil, nil, nil); err == nil {
+	if _, err := buildLoopServerRuntimeDepsStrict(nil, cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil), "", nil, nil, nil, nil); err == nil {
 		t.Fatal("strict builder must return the selector error")
 	}
 }
