@@ -2,7 +2,7 @@
 id: 84
 slug: 'harnessspec-proto-and-public-validator'
 title: 'HarnessSpec proto and public validator'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -71,3 +71,15 @@ PR opened by hand: https://github.com/ethanhinson/fuse/pull/101 (head 84bd2754cf
 - Because of that, `pr:`, the build evidence, and `implemented` cannot be set through `pr publish` / `mark-implemented`.
 
 Also, `build.test_command` is unconfigured, so a build-owned gate cannot run until `docket repository configure-tests` is run. Merging the PR and letting the sweep or finalize close the change is the remaining path.
+
+## Implemented outside docket's workspace (2026-10-30)
+
+Marked implemented by hand, with the human's approval, because docket would not adopt the
+hand-made worktree (`resume-halted` refused with `workspace-writer-active`, and
+`evidence record` refused with `head-mismatch`), so `mark-implemented` could not run.
+The work itself is complete and merged:
+
+- PR #101 merged into main as c4327b06797bc2a6001520536ca6a0cfe8de889b (head 84bd2754).
+- All GitHub CI checks passed on the PR (unit-race, mcp-integration, browser-acceptance,
+  egress-datapath, observability-acceptance, release-dry-run).
+- `make test` passed at 84bd2754 (gate drive 564bd09326fdd8785f7c9db1d9f14cf7).
