@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/harnessspec-proto-and-public-validator'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/101'
 blocked_by:
 reconciled: true
 ---
