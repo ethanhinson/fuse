@@ -24,13 +24,13 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0018](0018-per-session-directory-layout-flat-log-read-compat.md) — Per-session directory layout for session logs and segments, with flat-log read-compatibility and no migration (Accepted) ← change #30 · relates to ADR-0017
 - [ADR-0019](0019-process-global-segment-sink-holder.md) — Process-global, lock-guarded segment sink holder as the sink-injection mechanism in cmd/fuse (Accepted) ← change #30 · relates to ADR-0017, ADR-0018
 - [ADR-0020](0020-born-compressed-non-destructive-segment-store.md) — Segments are born gzip-compressed with an uncompressed index, and age sweeps compress rather than delete (non-destructive GC) (Accepted) ← change #30 · relates to ADR-0017, ADR-0018, ADR-0019
-- [ADR-0021](0021-human-is-a-participant-node-in-the-agent-tree.md) — The human is a first-class participant in the agent tree — questions route from the asking node and replies route back to it, in three phases (Proposed) ← change #0050 · relates to ADR-0007, ADR-0016, ADR-0023
-- [ADR-0022](0022-human-message-bus-per-node-queue-async-router.md) — Human messages ride one substrate — a per-node blackboard queue, self-pulled at turn boundaries, with an async advisory router and completion-hook bubbling (Proposed) ← change #0051 · relates to ADR-0007, ADR-0016, ADR-0021, ADR-0023
+- [ADR-0021](0021-human-is-a-participant-node-in-the-agent-tree.md) — The human is a first-class participant in the agent tree — questions route from the asking node and replies route back to it, in three phases (Proposed) ← change #50 · relates to ADR-0007, ADR-0016, ADR-0023
+- [ADR-0022](0022-human-message-bus-per-node-queue-async-router.md) — Human messages ride one substrate — a per-node blackboard queue, self-pulled at turn boundaries, with an async advisory router and completion-hook bubbling (Proposed) ← change #51 · relates to ADR-0007, ADR-0016, ADR-0021, ADR-0023
 - [ADR-0023](0023-structured-delegation-return-result-tool.md) — Structured delegation returns via a synthesized return_result tool, not a final-message directive (Accepted) ← change #42 · relates to ADR-0012
 - [ADR-0024](0024-eventstore-independent-of-segment-store.md) — EventStore is independent of the segment store — events born plaintext, segments untouched (Accepted) ← change #43 · relates to ADR-0017, ADR-0018, ADR-0019, ADR-0020
 - [ADR-0025](0025-eventstore-ordering-backpressure.md) — EventStore ordering and back-pressure — store-allocated Seq, non-blocking drop-newest-with-gap subscriber delivery (Accepted) ← change #43 · relates to ADR-0016, ADR-0019, ADR-0024, ADR-0030
 - [ADR-0026](0026-handle-returning-spawn-seam-agent-free-interface.md) — Handle-returning spawn seam via an agent-free interface in internal/tools (Accepted) ← change #44 · relates to ADR-0016, ADR-0017
-- [ADR-0028](0028-loopserver-new-jsonrpc-server-not-mcp-extension.md) — Binding #2 is a new internal/loopserver JSON-RPC server, not an extension of internal/mcp (Accepted) ← change #45 · relates to ADR-0027
+- [ADR-0028](0028-loopserver-new-jsonrpc-server-not-mcp-extension.md) — Binding (Accepted) ← change #45 · relates to ADR-0027
 - [ADR-0029](0029-shell-partial-runtime-binding.md) — The interactive shell is a partial Runtime binding — construction+store through the seam, turn cadence retained by the TUI (Accepted) ← change #45 · relates to ADR-0027, ADR-0028
 - [ADR-0030](0030-deglobalize-eventstore-multiloop-hosting.md) — De-globalize the event store and segment sink; thread per-loop state as values so one process hosts N concurrent loops (Accepted) ← change #46 → supersedes ADR-0027 · relates to ADR-0025, ADR-0019
 - [ADR-0031](0031-durable-distributed-event-store-loop-registry.md) — Durable, backend-agnostic event store + durable loop registry — existence and history survive restart and are reachable from any instance (Accepted) ← change #47 · relates to ADR-0024, ADR-0025, ADR-0027, ADR-0030
@@ -60,11 +60,12 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0056](0056-sandbox-health-is-a-sibling-hooks-seam-emitting-only-observable-reasons.md) — Sandbox health is a sibling HealthHooks seam, and only honestly-observable reasons are emitted (Accepted) ← change #65 · relates to ADR-0044, ADR-0055
 - [ADR-0057](0057-unsafe-tenant-ids-are-refused-never-normalised.md) — Unsafe tenant ids are refused, never normalised — the one legitimate collapse happens at the auth edge (Accepted) ← change #65 · relates to ADR-0034, ADR-0044, ADR-0055, ADR-0056
 - [ADR-0058](0058-remote-sandbox-substrates-are-adapted-not-merged-and-contained-is-confirmed-by-observation.md) — A remote sandbox substrate is adapted onto the handler seam, and "contained" is confirmed by observation or refused (Accepted) ← change #75 · relates to ADR-0044, ADR-0034, ADR-0036, ADR-0051, ADR-0052, ADR-0055, ADR-0057
+- [ADR-0059](0059-steering-and-the-orchestrator-labelled-optionally-interrupti.md) — Steering and the orchestrator - labelled, optionally interrupting messages to a running loop, delivered on every binding and across replicas (Accepted) · relates to ADR-0006, ADR-0016, ADR-0021, ADR-0022, ADR-0033, ADR-0047
 
 ## Superseded / Reversed
 
 - [ADR-0027](0027-runtime-owns-loop-eventstore-global-holder-bridge.md) — Runtime owns the loop event store as instance state; process-global holders kept as a single-loop compatibility bridge (Superseded by ADR-30) ← change #45 · relates to ADR-0025, ADR-0019, ADR-0016
-- [ADR-0032](0032-binding-3-websocket-session-http-replay-shared-dispatch.md) — Binding #3 transport — WebSocket full-session + thin stateless HTTP replay over a shared dispatch core (Superseded by ADR-33) ← change #48 · relates to ADR-0028, ADR-0030, ADR-0031
+- [ADR-0032](0032-binding-3-websocket-session-http-replay-shared-dispatch.md) — Binding (Superseded by ADR-33) ← change #48 · relates to ADR-0028, ADR-0030, ADR-0031
 
 ## Deprecated
 
