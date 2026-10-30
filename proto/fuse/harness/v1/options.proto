@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+// Field and enum-value options for fuse.harness.v1 (change 0084).
+//
+// These options are presentation metadata for clients that render a HarnessSpec
+// as a form: a label, help text, the widget kind to draw, and two markers that
+// carry fuse semantics a renderer must not lose - `secret_ref` (the field holds
+// the NAME of a secret the runtime resolves, never a secret value) and
+// `tighten_only` (the field is a numeric brake that, per ADR-0006, a lower-trust
+// overlay may only lower, never raise or introduce). They are read from the
+// generated descriptors (Go: proto.GetExtension on FieldOptions; TS: getOption
+// on the protoc-gen-es descriptor), so the schema is the single source of the
+// form and no renderer hand-tracks field metadata.
+//
+// The options carry NO validation semantics. Validation is protovalidate (shape
+// rules, shared by every language) plus the Go semantic validator in
+// github.com/ethanhinson/fuse/harness (ADR-0060).
+package fuse.harness.v1;
+
+import "google/protobuf/descriptor.proto";
+
+option go_package = "github.com/ethanhinson/fuse/harness/v1;harnessv1";
+
+// Widget is the input control a form renderer should draw for a field. It is a
+// hint: a renderer that does not know a widget falls back to one derived from
+// the field's proto type.
+enum Widget {
+  // No hint; derive the control from the field type.
+  WIDGET_UNSPECIFIED = 0;
+  // Single-line free text.
+  WIDGET_TEXT = 1;
+  // Multi-line free text (prompts, personas).
+  WIDGET_TEXTAREA = 2;
+  // A number input.
+  WIDGET_NUMBER = 3;
+  // An on/off switch.
+  WIDGET_TOGGLE = 4;
+  // A choice among enum values (labels from EnumValueUI.display_name).
+  WIDGET_SELECT = 5;
+  // An editable list of strings.
+  WIDGET_LIST = 6;
+  // An editable key/value map.
+  WIDGET_KEY_VALUE = 7;
+  // A URL input.
+  WIDGET_URL = 8;
+  // A model alias picker: offers the aliases the spec's models block (plus the
+  // runtime's built-in registry) defines.
+  WIDGET_MODEL_ALIAS = 9;
+  // A secret picker: offers secret names, never accepts a secret value.
+  WIDGET_SECRET_REF = 10;
+}
+
+// FieldUI is the per-field presentation metadata.
+message FieldUI {
+  // Short human label for the field.
+  string label = 1;
+  // Longer help text: what the field does and what an unset value means.
+  string help = 2;
+  // The control to draw.
+  Widget widget = 3;
+  // The field holds a secret NAME resolved by the runtime at use time, never a
+  // secret value. A renderer must not offer a free-text secret-value input here.
+  bool secret_ref = 4;
+  // The field is a numeric brake under the ADR-0006 tighten-only discipline: a
+  // lower-trust overlay may only lower an already-set positive value.
+  bool tighten_only = 5;
+}
+
+// EnumValueUI is the per-enum-value presentation metadata.
+message EnumValueUI {
+  // Human label shown in a select control instead of the SCREAMING_CASE name.
+  string display_name = 1;
+  // Optional help text for the choice.
+  string help = 2;
+}
+
+extend google.protobuf.FieldOptions {
+  // Presentation metadata for a HarnessSpec field.
+  FieldUI ui = 51700;
+}
+
+extend google.protobuf.EnumValueOptions {
+  // Presentation metadata for a HarnessSpec enum value.
+  EnumValueUI value_ui = 51701;
+}

@@ -1,6 +1,7 @@
 version: v2
 plugins:
-  # Go message stubs → internal/loopwire/v1 (module-relative via go_package).
+  # Go message stubs, module-relative via go_package: fuse.loop.v1 → internal/loopwire/v1,
+  # fuse.harness.v1 → harness/v1 (public: importable from other Go modules, ADR-0060).
   - local: protoc-gen-go
     out: ../
     opt:
@@ -18,3 +19,7 @@ plugins:
     opt:
       - target=ts
       - import_extension=js
+      # fuse.harness.v1 imports buf/validate/validate.proto (protovalidate, a buf
+      # dependency). Its TS descriptors ship in the @bufbuild/protovalidate npm
+      # package, so point the import there instead of generating a local copy.
+      - rewrite_imports=./buf/validate/**/*_pb.js:@bufbuild/protovalidate/gen

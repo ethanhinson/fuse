@@ -128,11 +128,11 @@ test-integration:
 test-k8s:
 	go test -run 'TestIntegration' -v -count=1 -timeout 1800s ./internal/tools/sandbox/kubernetes/
 
-# proto regenerates the committed loop.* wire stubs (Go + TS) from the .proto
-# contract (change 0055, fuse.loop.v1). Generate-and-commit: run this after editing
-# proto/fuse/loop/v1/*.proto and commit the result. Requires buf + protoc-gen-go +
-# protoc-gen-connect-go on PATH and the TS plugin installed under proto/
-# (cd proto && npm ci).
+# proto regenerates the committed wire stubs (Go + TS) from the .proto contracts
+# (change 0055, fuse.loop.v1; change 0084, fuse.harness.v1). Generate-and-commit: run
+# this after editing proto/fuse/**/*.proto and commit the result. Requires buf +
+# protoc-gen-go + protoc-gen-connect-go on PATH and the TS plugin installed under
+# proto/ (cd proto && npm ci); proto/generate.sh lists the pinned versions.
 proto:
 	./proto/generate.sh
 
