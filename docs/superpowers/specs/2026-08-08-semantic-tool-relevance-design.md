@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0028 — Semantic tool-result relevance scoring for smarter pruning](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0028-semantic-tool-relevance.md)**
+> ↩ **[Change 0028 — Semantic tool-result relevance scoring for smarter pruning](../../changes/archive/2026-08-08-0028-semantic-tool-relevance.md)**
 <!-- docket:backlink:end -->
 
 # Semantic tool-result relevance scoring for smarter pruning

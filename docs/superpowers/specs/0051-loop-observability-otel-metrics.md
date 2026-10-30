@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0051 — Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0051-loop-observability-otel-metrics.md)**
+> ↩ **[Change 0051 — Observability for the loop — OTEL traces + Prometheus metrics + Grafana + structured logs](../../changes/archive/2026-08-12-0051-loop-observability-otel-metrics.md)**
 <!-- docket:backlink:end -->
 
 # Loop Observability: OpenTelemetry, Prometheus, Grafana, and Structured Logs

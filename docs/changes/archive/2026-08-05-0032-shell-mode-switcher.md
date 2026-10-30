@@ -25,6 +25,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| ADRs | [ADR-0006](../../adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0047 — Durable / distributed event store — survives restart and is shared across instances](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0047-durable-distributed-event-store.md)**
+> ↩ **[Change 0047 — Durable / distributed event store — survives restart and is shared across instances](../../changes/archive/2026-08-11-0047-durable-distributed-event-store.md)**
 <!-- docket:backlink:end -->
 
 # Spec 0047 — Durable, distributed event store: cross-process / cross-instance loop reattach

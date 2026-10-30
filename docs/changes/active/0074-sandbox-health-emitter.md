@@ -27,7 +27,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
+| ADRs | [ADR-0044](../../adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

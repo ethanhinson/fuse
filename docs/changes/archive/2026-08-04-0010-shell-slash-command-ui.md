@@ -28,8 +28,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-04-shell-slash-command-ui-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-04-shell-slash-command-ui-design.md) |
-| PR | [#9](https://github.com/ethanhinson/fuse/pull/9) |
+| Spec | [2026-08-04-shell-slash-command-ui-design.md](../../superpowers/specs/2026-08-04-shell-slash-command-ui-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

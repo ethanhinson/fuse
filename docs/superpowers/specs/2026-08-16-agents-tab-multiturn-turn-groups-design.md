@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0066 — Agents tab & blackboard — turn-aware multiturn UI (collapsible turn groups + per-turn timing)](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0066-agents-tab-multiturn-turn-groups.md)**
+> ↩ **[Change 0066 — Agents tab & blackboard — turn-aware multiturn UI (collapsible turn groups + per-turn timing)](../../changes/archive/2026-08-16-0066-agents-tab-multiturn-turn-groups.md)**
 <!-- docket:backlink:end -->
 
 # Agents tab & blackboard — turn-aware multiturn UI — design

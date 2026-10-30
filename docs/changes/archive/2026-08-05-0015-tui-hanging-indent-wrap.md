@@ -28,9 +28,8 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [0015-tui-hanging-indent-wrap.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0015-tui-hanging-indent-wrap.md) |
+| Spec | [0015-tui-hanging-indent-wrap.md](../../superpowers/specs/0015-tui-hanging-indent-wrap.md) |
 | Plan | [0015-tui-hanging-indent-wrap.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/0015-tui-hanging-indent-wrap.md) |
-| PR | [#12](https://github.com/ethanhinson/fuse/pull/12) |
 <!-- docket:artifacts:end -->
 
 ## Why

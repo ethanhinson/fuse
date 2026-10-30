@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0004 — Skill Runtime](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0004-skill-runtime.md)**
+> ↩ **[Change 0004 — Skill Runtime](../../changes/archive/2026-08-04-0004-skill-runtime.md)**
 <!-- docket:backlink:end -->
 
 # Skill Runtime

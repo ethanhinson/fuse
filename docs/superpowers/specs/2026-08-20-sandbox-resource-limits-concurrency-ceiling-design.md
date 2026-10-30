@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0077 — sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0077-sandbox-resource-limits-concurrency-ceiling.md)**
+> ↩ **[Change 0077 — sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs](../../changes/archive/2026-08-21-0077-sandbox-resource-limits-concurrency-ceiling.md)**
 <!-- docket:backlink:end -->
 
 # sandbox resource limits — cgroup caps + concurrency ceiling — design

@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0056 — SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0056-sdk-viability-hardening-wander.md)**
+> ↩ **[Change 0056 — SDK viability hardening — dogfood @fuse/sdk by building Wander, fix what blocks a real web app](../../changes/archive/2026-08-12-0056-sdk-viability-hardening-wander.md)**
 <!-- docket:backlink:end -->
 
 # Design — SDK viability hardening via Wander (change 0056)

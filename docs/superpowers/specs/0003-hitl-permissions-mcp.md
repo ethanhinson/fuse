@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0003 — HITL Permission Layer + MCP Client Integration](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0003-hitl-permissions-mcp.md)**
+> ↩ **[Change 0003 — HITL Permission Layer + MCP Client Integration](../../changes/archive/2026-08-04-0003-hitl-permissions-mcp.md)**
 <!-- docket:backlink:end -->
 
 # HITL Permission Layer + MCP Client Integration

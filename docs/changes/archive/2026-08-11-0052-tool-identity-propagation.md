@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-11-tool-identity-propagation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-tool-identity-propagation-design.md) |
+| Spec | [2026-08-11-tool-identity-propagation-design.md](../../superpowers/specs/2026-08-11-tool-identity-propagation-design.md) |
 | Plan | [2026-08-11-tool-identity-propagation-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-11-tool-identity-propagation-plan.md) |
 | Results | [2026-08-11-tool-identity-propagation-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-11-tool-identity-propagation-results.md) |
-| PR | [#55](https://github.com/ethanhinson/fuse/pull/55) |
-| ADRs | [ADR-0036](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0036-tool-authz-delegated-downstream-rfc8693-egress-seam.md) |
+| ADRs | [ADR-0036](../../adrs/0036-tool-authz-delegated-downstream-rfc8693-egress-seam.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

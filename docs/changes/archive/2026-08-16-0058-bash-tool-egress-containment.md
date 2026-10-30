@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-15-bash-tool-egress-containment-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-bash-tool-egress-containment-design.md) |
+| Spec | [2026-08-15-bash-tool-egress-containment-design.md](../../superpowers/specs/2026-08-15-bash-tool-egress-containment-design.md) |
 | Plan | [2026-08-16-bash-tool-egress-containment-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-16-bash-tool-egress-containment-plan.md) |
 | Results | [2026-08-16-bash-tool-egress-containment-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-16-bash-tool-egress-containment-results.md) |
-| PR | [#62](https://github.com/ethanhinson/fuse/pull/62) |
-| ADRs | [ADR-0044](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0044-bash-tool-contained-not-credentialed.md) |
+| ADRs | [ADR-0044](../../adrs/0044-bash-tool-contained-not-credentialed.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-10-durable-distributed-event-store-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-10-durable-distributed-event-store-design.md) |
+| Spec | [2026-08-10-durable-distributed-event-store-design.md](../../superpowers/specs/2026-08-10-durable-distributed-event-store-design.md) |
 | Plan | [2026-08-10-durable-distributed-event-store.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-10-durable-distributed-event-store.md) |
 | Results | [2026-08-10-durable-distributed-event-store-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-10-durable-distributed-event-store-results.md) |
-| PR | [#50](https://github.com/ethanhinson/fuse/pull/50) |
-| ADRs | [ADR-0031](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0031-durable-distributed-event-store-loop-registry.md) |
+| ADRs | [ADR-0031](../../adrs/0031-durable-distributed-event-store-loop-registry.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

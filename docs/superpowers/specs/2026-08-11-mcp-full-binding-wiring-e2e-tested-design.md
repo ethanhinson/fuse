@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0059 — Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0059-mcp-full-binding-wiring-e2e-tested.md)**
+> ↩ **[Change 0059 — Wire MCP into every loop binding and prove it end-to-end — no more features on untestable paths](../../changes/archive/2026-08-11-0059-mcp-full-binding-wiring-e2e-tested.md)**
 <!-- docket:backlink:end -->
 
 # Spec 0059 — Wire MCP into every loop binding and prove it end-to-end

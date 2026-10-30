@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0027 — Anchored context summarization at compression threshold](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0027-context-summarization.md)**
+> ↩ **[Change 0027 — Anchored context summarization at compression threshold](../../changes/archive/2026-08-08-0027-context-summarization.md)**
 <!-- docket:backlink:end -->
 
 # Anchored context summarization at compression threshold

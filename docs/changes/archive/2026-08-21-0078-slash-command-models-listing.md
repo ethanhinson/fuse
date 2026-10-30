@@ -28,10 +28,9 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-20-slash-command-models-listing-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-20-slash-command-models-listing-design.md) |
+| Spec | [2026-08-20-slash-command-models-listing-design.md](../../superpowers/specs/2026-08-20-slash-command-models-listing-design.md) |
 | Plan | [2026-08-21-slash-command-models-listing.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-21-slash-command-models-listing.md) |
 | Results | [2026-08-21-slash-command-models-listing-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-21-slash-command-models-listing-results.md) |
-| PR | [#82](https://github.com/ethanhinson/fuse/pull/82) |
 <!-- docket:artifacts:end -->
 
 ## Why

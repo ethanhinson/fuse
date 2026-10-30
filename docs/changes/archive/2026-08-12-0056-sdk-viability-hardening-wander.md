@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-11-sdk-viability-hardening-wander-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-sdk-viability-hardening-wander-design.md) |
+| Spec | [2026-08-11-sdk-viability-hardening-wander-design.md](../../superpowers/specs/2026-08-11-sdk-viability-hardening-wander-design.md) |
 | Plan | [2026-08-11-sdk-viability-hardening-wander-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-11-sdk-viability-hardening-wander-plan.md) |
 | Results | [2026-08-11-sdk-viability-hardening-wander-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-11-sdk-viability-hardening-wander-results.md) |
-| PR | [#57](https://github.com/ethanhinson/fuse/pull/57) |
-| ADRs | [ADR-0037](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0037-sdk-observe-terminal-vs-transient-by-connect-code.md) |
+| ADRs | [ADR-0037](../../adrs/0037-sdk-observe-terminal-vs-transient-by-connect-code.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

@@ -27,8 +27,7 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [0003-hitl-permissions-mcp.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0003-hitl-permissions-mcp.md) |
-| PR | [#3](https://github.com/ethanhinson/fuse/pull/3) |
+| Spec | [0003-hitl-permissions-mcp.md](../../superpowers/specs/0003-hitl-permissions-mcp.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

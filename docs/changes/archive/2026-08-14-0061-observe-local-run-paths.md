@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-13-observe-local-run-paths-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-13-observe-local-run-paths-design.md) |
+| Spec | [2026-08-13-observe-local-run-paths-design.md](../../superpowers/specs/2026-08-13-observe-local-run-paths-design.md) |
 | Plan | [2026-08-14-observe-local-run-paths-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-14-observe-local-run-paths-plan.md) |
 | Results | [2026-08-14-observe-local-run-paths-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-14-observe-local-run-paths-results.md) |
-| PR | [#59](https://github.com/ethanhinson/fuse/pull/59) |
-| ADRs | [ADR-0040](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0040-provider-neutral-composite-observer.md), [ADR-0042](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0042-local-run-paths-adapt-observability-io.md) |
+| ADRs | [ADR-0040](../../adrs/0040-provider-neutral-composite-observer.md), [ADR-0042](../../adrs/0042-local-run-paths-adapt-observability-io.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

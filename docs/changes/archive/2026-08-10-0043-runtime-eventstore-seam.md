@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [0043-runtime-eventstore-seam.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0043-runtime-eventstore-seam.md) |
+| Spec | [0043-runtime-eventstore-seam.md](../../superpowers/specs/0043-runtime-eventstore-seam.md) |
 | Plan | [2026-08-10-runtime-eventstore-seam-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-10-runtime-eventstore-seam-plan.md) |
 | Results | [2026-08-10-runtime-eventstore-seam-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-10-runtime-eventstore-seam-results.md) |
-| PR | [#46](https://github.com/ethanhinson/fuse/pull/46) |
-| ADRs | [ADR-0016](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0016-subagent-spawn-tree-runtime.md), [ADR-0017](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0017-segment-store-fssink-subpackage-split.md), [ADR-0018](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0018-per-session-directory-layout-flat-log-read-compat.md), [ADR-0019](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0019-process-global-segment-sink-holder.md), [ADR-0020](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0020-born-compressed-non-destructive-segment-store.md), [ADR-0024](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0024-eventstore-independent-of-segment-store.md), [ADR-0025](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0025-eventstore-ordering-backpressure.md) |
+| ADRs | [ADR-0016](../../adrs/0016-subagent-spawn-tree-runtime.md), [ADR-0017](../../adrs/0017-segment-store-fssink-subpackage-split.md), [ADR-0018](../../adrs/0018-per-session-directory-layout-flat-log-read-compat.md), [ADR-0019](../../adrs/0019-process-global-segment-sink-holder.md), [ADR-0020](../../adrs/0020-born-compressed-non-destructive-segment-store.md), [ADR-0024](../../adrs/0024-eventstore-independent-of-segment-store.md), [ADR-0025](../../adrs/0025-eventstore-ordering-backpressure.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

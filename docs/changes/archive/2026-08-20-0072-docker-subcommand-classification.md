@@ -28,8 +28,7 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-20-docker-subcommand-classification-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-20-docker-subcommand-classification-design.md) |
-| PR | [#77](https://github.com/ethanhinson/fuse/pull/77) |
+| Spec | [2026-08-20-docker-subcommand-classification-design.md](../../superpowers/specs/2026-08-20-docker-subcommand-classification-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

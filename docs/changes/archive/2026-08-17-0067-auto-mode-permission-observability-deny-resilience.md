@@ -28,10 +28,9 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-17-auto-mode-permission-observability-deny-resilience-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-17-auto-mode-permission-observability-deny-resilience-design.md) |
+| Spec | [2026-08-17-auto-mode-permission-observability-deny-resilience-design.md](../../superpowers/specs/2026-08-17-auto-mode-permission-observability-deny-resilience-design.md) |
 | Plan | [2026-08-17-auto-mode-permission-observability-deny-resilience-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-17-auto-mode-permission-observability-deny-resilience-plan.md) |
 | Results | [2026-08-17-auto-mode-permission-observability-deny-resilience-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-17-auto-mode-permission-observability-deny-resilience-results.md) |
-| PR | 71 |
 <!-- docket:artifacts:end -->
 
 ## Why

@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0006 — Terminal Markdown Rendering](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0006-tui-markdown-rendering.md)**
+> ↩ **[Change 0006 — Terminal Markdown Rendering](../../changes/archive/2026-08-04-0006-tui-markdown-rendering.md)**
 <!-- docket:backlink:end -->
 
 # Terminal Markdown Rendering

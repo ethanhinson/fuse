@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-08-structured-delegation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-structured-delegation-design.md) |
+| Spec | [2026-08-08-structured-delegation-design.md](../../superpowers/specs/2026-08-08-structured-delegation-design.md) |
 | Plan | [0024-structured-delegation.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/0024-structured-delegation.md) |
 | Results | [2026-08-08-structured-delegation-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-08-structured-delegation-results.md) |
-| PR | [#29](https://github.com/ethanhinson/fuse/pull/29) |
-| ADRs | [ADR-0012](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0012-vendor-jsonschema-validation-library.md) |
+| ADRs | [ADR-0012](../../adrs/0012-vendor-jsonschema-validation-library.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

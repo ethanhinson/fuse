@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-18-turn-scoped-trace-roots-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-18-turn-scoped-trace-roots-design.md) |
+| Spec | [2026-08-18-turn-scoped-trace-roots-design.md](../../superpowers/specs/2026-08-18-turn-scoped-trace-roots-design.md) |
 | Plan | [2026-08-18-turn-scoped-trace-roots-interactive-loops-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-18-turn-scoped-trace-roots-interactive-loops-plan.md) |
 | Results | [2026-08-18-turn-scoped-trace-roots-live-verification.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-18-turn-scoped-trace-roots-live-verification.md) |
-| PR | [#74](https://github.com/ethanhinson/fuse/pull/74) |
-| ADRs | [ADR-0040](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0040-provider-neutral-composite-observer.md), [ADR-0045](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0045-conversational-turn-attribution-by-timestamp-bucketing.md), [ADR-0047](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0047-optional-observer-capabilities.md) |
+| ADRs | [ADR-0040](../../adrs/0040-provider-neutral-composite-observer.md), [ADR-0045](../../adrs/0045-conversational-turn-attribution-by-timestamp-bucketing.md), [ADR-0047](../../adrs/0047-optional-observer-capabilities.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

@@ -28,10 +28,9 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-06-mcp-capability-negotiation-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-06-mcp-capability-negotiation-design.md) |
+| Spec | [2026-08-06-mcp-capability-negotiation-design.md](../../superpowers/specs/2026-08-06-mcp-capability-negotiation-design.md) |
 | Plan | [2026-08-07-mcp-capability-negotiation-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-07-mcp-capability-negotiation-plan.md) |
-| PR | [#23](https://github.com/ethanhinson/fuse/pull/23) |
-| ADRs | [ADR-0010](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0010-mcp-client-requires-init-handshake-fails-open-capabilities.md) |
+| ADRs | [ADR-0010](../../adrs/0010-mcp-client-requires-init-handshake-fails-open-capabilities.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

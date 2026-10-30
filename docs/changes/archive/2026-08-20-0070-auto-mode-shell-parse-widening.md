@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-17-auto-mode-shell-parse-widening-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-17-auto-mode-shell-parse-widening-design.md) |
+| Spec | [2026-08-17-auto-mode-shell-parse-widening-design.md](../../superpowers/specs/2026-08-17-auto-mode-shell-parse-widening-design.md) |
 | Plan | [2026-08-19-auto-mode-shell-parse-widening-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-19-auto-mode-shell-parse-widening-plan.md) |
 | Results | [2026-08-19-auto-mode-shell-parse-widening-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-19-auto-mode-shell-parse-widening-results.md) |
-| PR | [#76](https://github.com/ethanhinson/fuse/pull/76) |
-| ADRs | [ADR-0049](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0049-allowlist-admission-on-deterministic-allow-paths.md), [ADR-0050](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0050-opaque-operands-are-never-path-resolved.md) |
+| ADRs | [ADR-0049](../../adrs/0049-allowlist-admission-on-deterministic-allow-paths.md), [ADR-0050](../../adrs/0050-opaque-operands-are-never-path-resolved.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

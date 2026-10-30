@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0078 — /models slash command + slash-menu column alignment](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0078-slash-command-models-listing.md)**
+> ↩ **[Change 0078 — /models slash command + slash-menu column alignment](../../changes/archive/2026-08-21-0078-slash-command-models-listing.md)**
 <!-- docket:backlink:end -->
 
 # `/models` listing + slash-menu column alignment — design

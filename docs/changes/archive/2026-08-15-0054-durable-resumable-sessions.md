@@ -28,10 +28,9 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-15-durable-resumable-sessions-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-durable-resumable-sessions-design.md) |
+| Spec | [2026-08-15-durable-resumable-sessions-design.md](../../superpowers/specs/2026-08-15-durable-resumable-sessions-design.md) |
 | Plan | [2026-08-15-durable-resumable-sessions-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-15-durable-resumable-sessions-plan.md) |
 | Results | [2026-08-15-durable-resumable-sessions-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-15-durable-resumable-sessions-results.md) |
-| PR | 60 |
 <!-- docket:artifacts:end -->
 
 ## Why

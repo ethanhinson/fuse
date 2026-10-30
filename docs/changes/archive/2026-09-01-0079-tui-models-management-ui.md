@@ -26,9 +26,6 @@ reconciled: true
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
-| Artifact | Link |
-|---|---|
-| PR | [#83](https://github.com/ethanhinson/fuse/pull/83) |
 <!-- docket:artifacts:end -->
 
 ## Why

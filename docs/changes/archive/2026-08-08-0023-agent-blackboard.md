@@ -28,10 +28,9 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-08-agent-blackboard-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-agent-blackboard-design.md) |
+| Spec | [2026-08-08-agent-blackboard-design.md](../../superpowers/specs/2026-08-08-agent-blackboard-design.md) |
 | Plan | [0023-agent-blackboard.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/0023-agent-blackboard.md) |
 | Results | [2026-08-08-agent-blackboard-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-08-agent-blackboard-results.md) |
-| PR | [#25](https://github.com/ethanhinson/fuse/pull/25) |
 <!-- docket:artifacts:end -->
 
 ## Why

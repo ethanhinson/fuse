@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-15-wander-refresh-to-restore-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-15-wander-refresh-to-restore-design.md) |
+| Spec | [2026-08-15-wander-refresh-to-restore-design.md](../../superpowers/specs/2026-08-15-wander-refresh-to-restore-design.md) |
 | Plan | [2026-08-17-wander-refresh-to-restore-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-17-wander-refresh-to-restore-plan.md) |
 | Results | [2026-08-17-wander-refresh-to-restore-light-up-54-durable-resume-in-the-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-17-wander-refresh-to-restore-light-up-54-durable-resume-in-the-results.md) |
-| PR | [#73](https://github.com/ethanhinson/fuse/pull/73) |
-| ADRs | [ADR-0046](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0046-restorable-session-persists-principal-name-not-credential.md) |
+| ADRs | [ADR-0046](../../adrs/0046-restorable-session-persists-principal-name-not-credential.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

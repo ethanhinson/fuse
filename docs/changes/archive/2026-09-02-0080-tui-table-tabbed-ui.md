@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-09-01-tui-table-tabbed-ui-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-09-01-tui-table-tabbed-ui-design.md) |
+| Spec | [2026-09-01-tui-table-tabbed-ui-design.md](../../superpowers/specs/2026-09-01-tui-table-tabbed-ui-design.md) |
 | Plan | [2026-09-01-tui-table-tabbed-ui-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-09-01-tui-table-tabbed-ui-plan.md) |
 | Results | [2026-09-01-tui-table-tabbed-ui-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-09-01-tui-table-tabbed-ui-results.md) |
-| PR | [#85](https://github.com/ethanhinson/fuse/pull/85) |
-| ADRs | [ADR-0054](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0054-charm-table-tabs-as-shared-tui-component-layer.md) |
+| ADRs | [ADR-0054](../../adrs/0054-charm-table-tabs-as-shared-tui-component-layer.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

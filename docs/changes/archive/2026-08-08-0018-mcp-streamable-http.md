@@ -28,11 +28,10 @@ claimed_at:
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-07-mcp-streamable-http-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-07-mcp-streamable-http-design.md) |
+| Spec | [2026-08-07-mcp-streamable-http-design.md](../../superpowers/specs/2026-08-07-mcp-streamable-http-design.md) |
 | Plan | [2026-08-07-mcp-streamable-http-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-07-mcp-streamable-http-plan.md) |
 | Results | [2026-08-07-mcp-streamable-http-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-07-mcp-streamable-http-results.md) |
-| PR | [#24](https://github.com/ethanhinson/fuse/pull/24) |
-| ADRs | [ADR-0011](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0011-streamable-http-mcp-transport-request-scoped.md) |
+| ADRs | [ADR-0011](../../adrs/0011-streamable-http-mcp-transport-request-scoped.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

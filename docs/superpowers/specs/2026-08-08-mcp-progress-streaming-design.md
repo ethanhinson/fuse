@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0020 — MCP `$/progress` notifications and streaming tool results](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0020-mcp-progress-streaming.md)**
+> ↩ **[Change 0020 — MCP `$/progress` notifications and streaming tool results](../../changes/archive/2026-08-08-0020-mcp-progress-streaming.md)**
 <!-- docket:backlink:end -->
 
 # MCP `$/progress` notifications and streaming tool results

@@ -28,9 +28,8 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-08-mcp-progress-streaming-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-mcp-progress-streaming-design.md) |
+| Spec | [2026-08-08-mcp-progress-streaming-design.md](../../superpowers/specs/2026-08-08-mcp-progress-streaming-design.md) |
 | Plan | [2026-08-08-mcp-progress-streaming-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-08-mcp-progress-streaming-plan.md) |
-| PR | [#30](https://github.com/ethanhinson/fuse/pull/30) |
 <!-- docket:artifacts:end -->
 
 ## Why

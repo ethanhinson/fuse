@@ -28,10 +28,9 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-09-auto-mode-flow-parity.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-09-auto-mode-flow-parity.md) |
+| Spec | [2026-08-09-auto-mode-flow-parity.md](../../superpowers/specs/2026-08-09-auto-mode-flow-parity.md) |
 | Plan | [2026-08-09-auto-mode-flow-parity-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-09-auto-mode-flow-parity-plan.md) |
-| PR | [#43](https://github.com/ethanhinson/fuse/pull/43) |
-| ADRs | [ADR-0005](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
+| ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](../../adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

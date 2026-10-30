@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0010 — Shell Slash-Command Autocomplete + MCP & Skill Invocation](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0010-shell-slash-command-ui.md)**
+> ↩ **[Change 0010 — Shell Slash-Command Autocomplete + MCP & Skill Invocation](../../changes/archive/2026-08-04-0010-shell-slash-command-ui.md)**
 <!-- docket:backlink:end -->
 
 # Shell Slash-Command Autocomplete + MCP & Skill Invocation

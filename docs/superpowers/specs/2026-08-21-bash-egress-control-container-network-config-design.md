@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0064 — bash egress control — egress as the container's network configuration, not an in-process dialer allowlist](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0064-bash-egress-control-container-network-config.md)**
+> ↩ **[Change 0064 — bash egress control — egress as the container's network configuration, not an in-process dialer allowlist](../../changes/archive/2026-09-01-0064-bash-egress-control-container-network-config.md)**
 <!-- docket:backlink:end -->
 
 # bash egress control — egress as the container's network configuration

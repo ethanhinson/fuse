@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0024 — Structured delegation — expected result schemas for spawn_agent](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0024-structured-delegation.md)**
+> ↩ **[Change 0024 — Structured delegation — expected result schemas for spawn_agent](../../changes/archive/2026-08-08-0024-structured-delegation.md)**
 <!-- docket:backlink:end -->
 
 # Structured delegation — expected result schemas for spawn_agent

@@ -26,8 +26,7 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [0006-tui-markdown-rendering.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0006-tui-markdown-rendering.md) |
-| PR | [#7](https://github.com/ethanhinson/fuse/pull/7) |
+| Spec | [0006-tui-markdown-rendering.md](../../superpowers/specs/0006-tui-markdown-rendering.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

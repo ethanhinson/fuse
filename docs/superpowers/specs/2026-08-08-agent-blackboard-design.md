@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0023 — Shared result blackboard for inter-agent communication](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0023-agent-blackboard.md)**
+> ↩ **[Change 0023 — Shared result blackboard for inter-agent communication](../../changes/archive/2026-08-08-0023-agent-blackboard.md)**
 <!-- docket:backlink:end -->
 
 # Shared result blackboard for inter-agent communication

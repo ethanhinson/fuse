@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [0045-runtime-interface-and-binding.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0045-runtime-interface-and-binding.md) |
+| Spec | [0045-runtime-interface-and-binding.md](../../superpowers/specs/0045-runtime-interface-and-binding.md) |
 | Plan | [2026-08-10-runtime-interface-and-binding.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-10-runtime-interface-and-binding.md) |
 | Results | [2026-08-10-runtime-interface-and-binding-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-10-runtime-interface-and-binding-results.md) |
-| PR | [#48](https://github.com/ethanhinson/fuse/pull/48) |
-| ADRs | [ADR-0016](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0016-subagent-spawn-tree-runtime.md), [ADR-0022](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0022-human-message-bus-per-node-queue-async-router.md), [ADR-0024](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0024-eventstore-independent-of-segment-store.md), [ADR-0025](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0025-eventstore-ordering-backpressure.md), [ADR-0026](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0026-handle-returning-spawn-seam-agent-free-interface.md), [ADR-0027](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0027-runtime-owns-loop-eventstore-global-holder-bridge.md), [ADR-0028](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0028-loopserver-new-jsonrpc-server-not-mcp-extension.md), [ADR-0029](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0029-shell-partial-runtime-binding.md) |
+| ADRs | [ADR-0016](../../adrs/0016-subagent-spawn-tree-runtime.md), [ADR-0022](../../adrs/0022-human-message-bus-per-node-queue-async-router.md), [ADR-0024](../../adrs/0024-eventstore-independent-of-segment-store.md), [ADR-0025](../../adrs/0025-eventstore-ordering-backpressure.md), [ADR-0026](../../adrs/0026-handle-returning-spawn-seam-agent-free-interface.md), [ADR-0027](../../adrs/0027-runtime-owns-loop-eventstore-global-holder-bridge.md), [ADR-0028](../../adrs/0028-loopserver-new-jsonrpc-server-not-mcp-extension.md), [ADR-0029](../../adrs/0029-shell-partial-runtime-binding.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

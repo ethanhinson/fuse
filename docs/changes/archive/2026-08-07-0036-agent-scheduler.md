@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [0036-agent-scheduler.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0036-agent-scheduler.md) |
+| Spec | [0036-agent-scheduler.md](../../superpowers/specs/0036-agent-scheduler.md) |
 | Plan | [0036-agent-scheduler.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/0036-agent-scheduler.md) |
 | Results | [2026-08-06-agent-scheduler-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-06-agent-scheduler-results.md) |
-| PR | [#21](https://github.com/ethanhinson/fuse/pull/21) |
-| ADRs | [ADR-0007](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0007-scheduler-single-admission-authority.md), [ADR-0008](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0008-rate-gate-per-logical-request-tpm-steady-state.md), [ADR-0009](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0009-queue-bound-visibility-global-pool-only.md) |
+| ADRs | [ADR-0007](../../adrs/0007-scheduler-single-admission-authority.md), [ADR-0008](../../adrs/0008-rate-gate-per-logical-request-tpm-steady-state.md), [ADR-0009](../../adrs/0009-queue-bound-visibility-global-pool-only.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

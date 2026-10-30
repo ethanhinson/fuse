@@ -28,11 +28,10 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-08-agent-workflow-composition-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-08-agent-workflow-composition-design.md) |
+| Spec | [2026-08-08-agent-workflow-composition-design.md](../../superpowers/specs/2026-08-08-agent-workflow-composition-design.md) |
 | Plan | [2026-08-08-agent-workflow-composition-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-08-agent-workflow-composition-plan.md) |
 | Results | [2026-08-08-agent-workflow-composition-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-08-agent-workflow-composition-results.md) |
-| PR | [#32](https://github.com/ethanhinson/fuse/pull/32) |
-| ADRs | [ADR-0014](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0014-pipeline-conditional-routing-skip-propagation.md) |
+| ADRs | [ADR-0014](../../adrs/0014-pipeline-conditional-routing-skip-propagation.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

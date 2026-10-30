@@ -27,8 +27,7 @@ reconciled: true
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-10-persistent-conversational-loop-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-10-persistent-conversational-loop-design.md) |
-| PR | 51 |
+| Spec | [2026-08-10-persistent-conversational-loop-design.md](../../superpowers/specs/2026-08-10-persistent-conversational-loop-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

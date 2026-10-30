@@ -28,11 +28,10 @@ claimed_at:
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [2026-08-11-networked-runtime-binding-design.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/2026-08-11-networked-runtime-binding-design.md) |
+| Spec | [2026-08-11-networked-runtime-binding-design.md](../../superpowers/specs/2026-08-11-networked-runtime-binding-design.md) |
 | Plan | [2026-08-11-networked-runtime-binding.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/2026-08-11-networked-runtime-binding.md) |
 | Results | [2026-08-11-networked-runtime-binding-results.md](https://github.com/ethanhinson/fuse/blob/main/docs/results/2026-08-11-networked-runtime-binding-results.md) |
-| PR | [#51](https://github.com/ethanhinson/fuse/pull/51) |
-| ADRs | [ADR-0032](https://github.com/ethanhinson/fuse/blob/docket/docs/adrs/0032-binding-3-websocket-session-http-replay-shared-dispatch.md) |
+| ADRs | [ADR-0032](../../adrs/0032-binding-3-websocket-session-http-replay-shared-dispatch.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

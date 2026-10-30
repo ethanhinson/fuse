@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0065 — bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0065-bash-per-tenant-filesystem-isolation.md)**
+> ↩ **[Change 0065 — bash per-tenant filesystem isolation — a Principal.Tenant-scoped bind-mount the working_dir cannot escape](../../changes/archive/2026-09-05-0065-bash-per-tenant-filesystem-isolation.md)**
 <!-- docket:backlink:end -->
 
 # bash per-tenant filesystem isolation — design

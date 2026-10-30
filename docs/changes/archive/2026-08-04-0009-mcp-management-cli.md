@@ -28,7 +28,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
-| Spec | [0009-mcp-management-cli.md](https://github.com/ethanhinson/fuse/blob/docket/docs/superpowers/specs/0009-mcp-management-cli.md) |
+| Spec | [0009-mcp-management-cli.md](../../superpowers/specs/0009-mcp-management-cli.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

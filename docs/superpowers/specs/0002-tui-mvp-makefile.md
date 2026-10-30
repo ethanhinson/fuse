@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0002 — Bubbletea TUI MVP + Makefile](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0002-tui-mvp-makefile.md)**
+> ↩ **[Change 0002 — Bubbletea TUI MVP + Makefile](../../changes/archive/2026-08-04-0002-tui-mvp-makefile.md)**
 <!-- docket:backlink:end -->
 
 # Fuse TUI MVP + Makefile

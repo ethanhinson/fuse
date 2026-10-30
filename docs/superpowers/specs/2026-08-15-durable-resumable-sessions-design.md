@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0054 — Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0054-durable-resumable-sessions.md)**
+> ↩ **[Change 0054 — Durable, resumable sessions — a conversation survives disconnect; refresh restores transcript + memory](../../changes/archive/2026-08-15-0054-durable-resumable-sessions.md)**
 <!-- docket:backlink:end -->
 
 # Durable, resumable sessions — design

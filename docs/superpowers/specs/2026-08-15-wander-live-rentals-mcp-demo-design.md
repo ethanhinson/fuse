@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0060 — Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md)**
+> ↩ **[Change 0060 — Wander live rentals MCP demo — light up #59's live data backend + wire the rentals server into the concierge app](../../changes/archive/2026-08-16-0060-wander-live-rentals-mcp-demo-light-up-59-s-live-data-backend.md)**
 <!-- docket:backlink:end -->
 
 # Wander live rentals MCP demo — design

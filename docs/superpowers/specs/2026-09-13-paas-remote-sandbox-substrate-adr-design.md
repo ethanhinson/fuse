@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0075 — PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a Kubernetes warm-Pod handler as first implementation](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0075-paas-remote-sandbox-substrate-adr.md)**
+> ↩ **[Change 0075 — PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a Kubernetes warm-Pod handler as first implementation](../../changes/archive/2026-09-17-0075-paas-remote-sandbox-substrate-adr.md)**
 <!-- docket:backlink:end -->
 
 # PaaS/remote sandbox substrate — the provision/attach/teardown seam, with a Kubernetes warm-Pod handler

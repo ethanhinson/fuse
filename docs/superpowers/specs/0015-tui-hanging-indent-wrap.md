@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0015 — Hanging-indent wrapping for the shell transcript](https://github.com/ethanhinson/fuse/blob/docket/docs/changes/active/0015-tui-hanging-indent-wrap.md)**
+> ↩ **[Change 0015 — Hanging-indent wrapping for the shell transcript](../../changes/archive/2026-08-05-0015-tui-hanging-indent-wrap.md)**
 <!-- docket:backlink:end -->
 
 # 0015 — Hanging-indent wrapping for the shell transcript

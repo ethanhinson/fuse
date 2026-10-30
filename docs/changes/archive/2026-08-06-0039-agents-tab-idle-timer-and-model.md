@@ -29,7 +29,6 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Plan | [0039-agents-tab-idle-timer-and-model-plan.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/plans/0039-agents-tab-idle-timer-and-model-plan.md) |
-| PR | [#18](https://github.com/ethanhinson/fuse/pull/18) |
 <!-- docket:artifacts:end -->
 
 ## Why
