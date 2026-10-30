@@ -4,7 +4,7 @@ slug: 'steering-and-the-orchestrator-labelled-optionally-interrupti'
 title: 'Steering and the orchestrator - labelled, optionally interrupting messages to a running loop, delivered on every binding and across replicas'
 status: 'Accepted'
 date: '2026-10-30'
-supersedes: []
+supersedes: [21, 22]
 reverses: []
 relates_to: [6, 16, 21, 22, 33, 47]
 change:
