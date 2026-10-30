@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -103,17 +104,49 @@ func TestObserveAndAttach(t *testing.T) {
 	}
 }
 
+// enteredCompleter is blockingCompleter plus a signal: entered closes the first time
+// Complete is called, so a test knows the run goroutine is parked inside the model
+// call (past the turn-0 Poll) before it acts. Calls after release return at once.
+type enteredCompleter struct {
+	entered chan struct{}
+	once    *sync.Once
+	release <-chan struct{}
+}
+
+func (c enteredCompleter) Complete(ctx context.Context, req model.CompletionReq) (model.CompletionResp, error) {
+	c.once.Do(func() { close(c.entered) })
+	<-c.release
+	return model.CompletionResp{Content: "ok"}, nil
+}
+
 // TestSendEnqueuesForRoot proves Send to a RUNNING loop enqueues on the root node's
-// human-bus queue (ADR-0022). The completer blocks before the first turn, so the run
-// goroutine is live but its injector has not drained yet — the enqueue is observable.
+// human-bus queue (ADR-0022), and that the message is then delivered rather than
+// stranded. The test waits until the run is blocked inside its turn-0 model call
+// before sending, so the turn-0 Poll has already run and the enqueue is observable;
+// without that wait the run goroutine could drain the message first. On release the
+// final answer's late-message delivery (ADR-0059 steering) gives the message one
+// more turn, so the agent needs a 2-turn budget here, not 1.
 func TestSendEnqueuesForRoot(t *testing.T) {
 	release := make(chan struct{})
-	rt := newTestRuntime(t, blockingCompleter{release: release})
+	fake := enteredCompleter{entered: make(chan struct{}), once: &sync.Once{}, release: release}
+	rt := New(Deps{
+		BaseDir:       t.TempDir(),
+		MaxConcurrent: 2,
+		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+			return agent.New(fake, execAll{reg}, nopRenderer{}, modelID, "", 2, 0), nil, modelID, nil
+		},
+	})
 
 	h, err := rt.StartLoop(context.Background(), LoopConfig{Task: "hi", ModelID: "cloud/x"})
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
+	select {
+	case <-fake.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("run never reached its first model call")
+	}
+
 	// The loop is running (completer blocked): Send must enqueue and return nil.
 	if err := rt.Send(context.Background(), event.DefaultTenant, h.ID(), "more work"); err != nil {
 		t.Fatalf("Send to running loop: %v", err)
@@ -127,10 +160,14 @@ func TestSendEnqueuesForRoot(t *testing.T) {
 		t.Fatalf("root queue = %+v, want one 'more work' message", pending)
 	}
 
-	// Let the run finish so the test doesn't leak the goroutine.
+	// Release the run: the late message gets its extra turn and the run then ends
+	// cleanly with nothing left queued.
 	close(release)
 	if _, err := h.Wait(); err != nil {
 		t.Fatalf("Wait: %v", err)
+	}
+	if left := lp.humanBus.Pending(h.ID()); len(left) != 0 {
+		t.Fatalf("message was not delivered; queue = %+v", left)
 	}
 }
 
