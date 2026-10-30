@@ -16,6 +16,7 @@
 package loopv1
 
 import (
+	v1 "github.com/ethanhinson/fuse/harness/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
@@ -42,8 +43,15 @@ type StartLoopRequest struct {
 	// target. Chat with it through Send and Observe like any interactive loop. It implies
 	// interactive; model picks the orchestrator's own model.
 	OrchestrateLoopId string `protobuf:"bytes,5,opt,name=orchestrate_loop_id,json=orchestrateLoopId,proto3" json:"orchestrate_loop_id,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// harness, when set, is the harness this loop runs (change 0085): the server
+	// layers it over its own trusted config, which stays the floor - fields marked
+	// tighten_only may only tighten the server's values, and operator-only surfaces
+	// always come from the server. An invalid spec fails with InvalidArgument whose
+	// single detail is a fuse.harness.v1.ValidateHarnessResponse listing every
+	// violation, and no loop is created. Unset: the server's config, as before.
+	Harness       *v1.HarnessSpec `protobuf:"bytes,6,opt,name=harness,proto3" json:"harness,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *StartLoopRequest) Reset() {
@@ -109,6 +117,13 @@ func (x *StartLoopRequest) GetOrchestrateLoopId() string {
 		return x.OrchestrateLoopId
 	}
 	return ""
+}
+
+func (x *StartLoopRequest) GetHarness() *v1.HarnessSpec {
+	if x != nil {
+		return x.Harness
+	}
+	return nil
 }
 
 type StartLoopResponse struct {
@@ -501,13 +516,14 @@ var File_fuse_loop_v1_loop_proto protoreflect.FileDescriptor
 
 const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\n" +
-	"\x17fuse/loop/v1/loop.proto\x12\ffuse.loop.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa6\x01\n" +
+	"\x17fuse/loop/v1/loop.proto\x12\ffuse.loop.v1\x1a\x1dfuse/harness/v1/harness.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xde\x01\n" +
 	"\x10StartLoopRequest\x12\x12\n" +
 	"\x04task\x18\x01 \x01(\tR\x04task\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x16\n" +
 	"\x06tenant\x18\x03 \x01(\tR\x06tenant\x12 \n" +
 	"\vinteractive\x18\x04 \x01(\bR\vinteractive\x12.\n" +
-	"\x13orchestrate_loop_id\x18\x05 \x01(\tR\x11orchestrateLoopId\",\n" +
+	"\x13orchestrate_loop_id\x18\x05 \x01(\tR\x11orchestrateLoopId\x126\n" +
+	"\aharness\x18\x06 \x01(\v2\x1c.fuse.harness.v1.HarnessSpecR\aharness\",\n" +
 	"\x11StartLoopResponse\x12\x17\n" +
 	"\aloop_id\x18\x01 \x01(\tR\x06loopId\"\x8a\x01\n" +
 	"\vSendRequest\x12\x17\n" +
@@ -560,22 +576,24 @@ var file_fuse_loop_v1_loop_proto_goTypes = []any{
 	(*ObserveRequest)(nil),        // 4: fuse.loop.v1.ObserveRequest
 	(*ObserveEvent)(nil),          // 5: fuse.loop.v1.ObserveEvent
 	(*Event)(nil),                 // 6: fuse.loop.v1.Event
-	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
+	(*v1.HarnessSpec)(nil),        // 7: fuse.harness.v1.HarnessSpec
+	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
 }
 var file_fuse_loop_v1_loop_proto_depIdxs = []int32{
-	6, // 0: fuse.loop.v1.ObserveEvent.event:type_name -> fuse.loop.v1.Event
-	7, // 1: fuse.loop.v1.Event.ts:type_name -> google.protobuf.Timestamp
-	0, // 2: fuse.loop.v1.LoopService.StartLoop:input_type -> fuse.loop.v1.StartLoopRequest
-	2, // 3: fuse.loop.v1.LoopService.Send:input_type -> fuse.loop.v1.SendRequest
-	4, // 4: fuse.loop.v1.LoopService.Observe:input_type -> fuse.loop.v1.ObserveRequest
-	1, // 5: fuse.loop.v1.LoopService.StartLoop:output_type -> fuse.loop.v1.StartLoopResponse
-	3, // 6: fuse.loop.v1.LoopService.Send:output_type -> fuse.loop.v1.SendResponse
-	5, // 7: fuse.loop.v1.LoopService.Observe:output_type -> fuse.loop.v1.ObserveEvent
-	5, // [5:8] is the sub-list for method output_type
-	2, // [2:5] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	7, // 0: fuse.loop.v1.StartLoopRequest.harness:type_name -> fuse.harness.v1.HarnessSpec
+	6, // 1: fuse.loop.v1.ObserveEvent.event:type_name -> fuse.loop.v1.Event
+	8, // 2: fuse.loop.v1.Event.ts:type_name -> google.protobuf.Timestamp
+	0, // 3: fuse.loop.v1.LoopService.StartLoop:input_type -> fuse.loop.v1.StartLoopRequest
+	2, // 4: fuse.loop.v1.LoopService.Send:input_type -> fuse.loop.v1.SendRequest
+	4, // 5: fuse.loop.v1.LoopService.Observe:input_type -> fuse.loop.v1.ObserveRequest
+	1, // 6: fuse.loop.v1.LoopService.StartLoop:output_type -> fuse.loop.v1.StartLoopResponse
+	3, // 7: fuse.loop.v1.LoopService.Send:output_type -> fuse.loop.v1.SendResponse
+	5, // 8: fuse.loop.v1.LoopService.Observe:output_type -> fuse.loop.v1.ObserveEvent
+	6, // [6:9] is the sub-list for method output_type
+	3, // [3:6] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_fuse_loop_v1_loop_proto_init() }

@@ -10,6 +10,7 @@ syntax = "proto3";
 // kind stays a string to avoid lock-stepping a proto enum with internal/event.Kind.
 package fuse.loop.v1;
 
+import "fuse/harness/v1/harness.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/ethanhinson/fuse/internal/loopwire/v1;loopv1";
@@ -37,6 +38,13 @@ message StartLoopRequest {
   // target. Chat with it through Send and Observe like any interactive loop. It implies
   // interactive; model picks the orchestrator's own model.
   string orchestrate_loop_id = 5;
+  // harness, when set, is the harness this loop runs (change 0085): the server
+  // layers it over its own trusted config, which stays the floor - fields marked
+  // tighten_only may only tighten the server's values, and operator-only surfaces
+  // always come from the server. An invalid spec fails with InvalidArgument whose
+  // single detail is a fuse.harness.v1.ValidateHarnessResponse listing every
+  // violation, and no loop is created. Unset: the server's config, as before.
+  fuse.harness.v1.HarnessSpec harness = 6;
 }
 
 message StartLoopResponse {
