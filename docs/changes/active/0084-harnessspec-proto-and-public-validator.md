@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/harnessspec-proto-and-public-validator'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -52,3 +52,9 @@ A fuse harness (models, skills, MCP servers, permissions, agents, workflows, thr
 - Mounting HarnessService on loop-serve-net or any binding.
 - Any change to the YAML loader, .fuse.local.yml trust rules, or CLI behavior.
 - Secret storage or resolution backends (the spec carries secret_ref names only).
+
+## Reconcile log
+
+### 2026-10-30
+
+Unchanged against main aaffe63. The change was minted after the design was settled and the code was built on feat/harnessspec-proto-and-public-validator; a whole-branch review's seven findings were fixed before publishing (reserved model alias default, no literal credential headers, reserved secret-ref: literal prefix, band attribution, uint32 overflow and inert MCP fields reported). ADR-0060 records the decision.
