@@ -180,6 +180,13 @@ message Models {
       max_len: 128
       pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
+    // The config document keys the default alias as models.default, beside
+    // the alias entries, so an alias named "default" cannot exist.
+    (buf.validate.field).cel = {
+      id: "fuse.models.entries.reserved_default"
+      message: "\"default\" is reserved and cannot be a model alias"
+      expression: "!('default' in this)"
+    },
     (fuse.harness.v1.ui) = {
       label: "Model aliases"
       widget: WIDGET_KEY_VALUE
@@ -847,6 +854,14 @@ message CustomSearchProvider {
   // Request headers. A value is either a literal or the name of a secret.
   map<string, HeaderValue> headers = 2 [
     (buf.validate.field).map.keys.string.min_len = 1,
+    // A header whose name conventionally carries a credential must use
+    // secret_ref. The pattern is kept identical to credentialHeaderPattern in
+    // internal/harnessconfig (a test pins the two together).
+    (buf.validate.field).cel = {
+      id: "fuse.headers.credential_literal"
+      message: "a credential header (auth, key, token, secret, password, cookie) must use secret_ref, not a literal"
+      expression: "this.all(k, !k.matches('(?i)(auth|key|token|secret|password|^cookie$)') || !has(this[k].literal))"
+    },
     (fuse.harness.v1.ui) = {
       label: "Headers"
       widget: WIDGET_KEY_VALUE
@@ -863,16 +878,24 @@ message CustomSearchProvider {
 }
 
 // HeaderValue is a header's value: a non-secret literal, or the NAME of a
-// secret the runtime resolves. Credentials (an Authorization header, an API key)
-// belong in secret_ref.
+// secret the runtime resolves. Credential-named headers (an Authorization
+// header, an API key) must use secret_ref; validation rejects a literal there.
 message HeaderValue {
   oneof value {
     option (buf.validate.oneof).required = true;
     // A non-secret literal value.
-    string literal = 1 [(fuse.harness.v1.ui) = {
-      label: "Value"
-      widget: WIDGET_TEXT
-    }];
+    string literal = 1 [
+      // "secret-ref:" is the mapping's reserved stand-in for a secret_ref.
+      (buf.validate.field).cel = {
+        id: "fuse.literal.reserved_prefix"
+        message: "a literal must not start with the reserved prefix \"secret-ref:\""
+        expression: "!this.startsWith('secret-ref:')"
+      },
+      (fuse.harness.v1.ui) = {
+        label: "Value"
+        widget: WIDGET_TEXT
+      }
+    ];
     // Name of the secret holding the value.
     string secret_ref = 2 [
       (buf.validate.field).string = {

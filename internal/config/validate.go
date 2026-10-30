@@ -102,16 +102,27 @@ func (c Config) Problems() []Problem {
 		add("context.summarization.threshold", "must be in [0,1], got %g", t)
 	}
 	// Relevance borderline band must be ordered and within [0,1] when set. The
-	// problem is attributed to the bound at fault: the upper bound when only it
-	// is out of range, otherwise the lower one.
+	// problem is attributed to the bound(s) at fault: the one out of range, or
+	// BOTH when the band is merely out of order (either may be the one the
+	// author set; the other may be a default). Validate reports the first, whose
+	// text is the same either way.
 	rel := c.Context.Relevance
 	if rel.BorderlineLo < 0 || rel.BorderlineHi > 1 || (rel.BorderlineHi > 0 && rel.BorderlineLo > rel.BorderlineHi) {
-		path := "context.relevance.borderline_lo"
-		if rel.BorderlineLo >= 0 && rel.BorderlineHi > 1 && rel.BorderlineLo <= rel.BorderlineHi {
-			path = "context.relevance.borderline_hi"
+		var paths []string
+		switch {
+		case rel.BorderlineLo < 0 && rel.BorderlineHi > 1:
+			paths = []string{"context.relevance.borderline_lo", "context.relevance.borderline_hi"}
+		case rel.BorderlineLo < 0:
+			paths = []string{"context.relevance.borderline_lo"}
+		case rel.BorderlineHi > 1:
+			paths = []string{"context.relevance.borderline_hi"}
+		default:
+			paths = []string{"context.relevance.borderline_lo", "context.relevance.borderline_hi"}
 		}
 		msg := fmt.Sprintf("borderline band [%g,%g] is invalid (want 0<=lo<=hi<=1)", rel.BorderlineLo, rel.BorderlineHi)
-		ps = append(ps, Problem{Path: path, Message: msg, Err: fmt.Errorf("config: context.relevance %s", msg)})
+		for _, path := range paths {
+			ps = append(ps, Problem{Path: path, Message: msg, Err: fmt.Errorf("config: context.relevance %s", msg)})
+		}
 	}
 	if rel.RecencyFloorPct < 0 || rel.RecencyFloorPct > 100 {
 		add("context.relevance.recency_floor_pct", "must be in [0,100], got %d", rel.RecencyFloorPct)

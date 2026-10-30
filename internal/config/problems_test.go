@@ -71,6 +71,7 @@ func TestProblemsCollectsEveryRuleWithPaths(t *testing.T) {
 		"max_tokens":                          "must be >= 0, got -1",
 		"context.summarization.threshold":     "must be in [0,1], got 2",
 		"context.relevance.borderline_lo":     "borderline band [0.9,0.2] is invalid (want 0<=lo<=hi<=1)",
+		"context.relevance.borderline_hi":     "borderline band [0.9,0.2] is invalid (want 0<=lo<=hi<=1)",
 		"context.relevance.recency_floor_pct": "must be in [0,100], got 101",
 	}
 	if len(got) != len(want) {

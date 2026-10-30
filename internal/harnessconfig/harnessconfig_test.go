@@ -2,10 +2,12 @@ package harnessconfig
 
 import (
 	"errors"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
 
+	"buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -306,4 +308,51 @@ func TestSpecCannotExpressOperatorSurfaces(t *testing.T) {
 		}
 	}
 	walk((&harnessv1.HarnessSpec{}).ProtoReflect().Descriptor())
+}
+
+// TestCredentialHeaderPatternMatchesProto pins credentialHeaderPattern to the
+// fuse.headers.credential_literal CEL rule, so FromConfig and the spec
+// validator agree on which headers are credentials.
+func TestCredentialHeaderPatternMatchesProto(t *testing.T) {
+	fd := (&harnessv1.CustomSearchProvider{}).ProtoReflect().Descriptor().Fields().ByName("headers")
+	rules := proto.GetExtension(fd.Options(), validate.E_Field).(*validate.FieldRules)
+	var expr string
+	for _, r := range rules.GetCel() {
+		if r.GetId() == "fuse.headers.credential_literal" {
+			expr = r.GetExpression()
+		}
+	}
+	if !strings.Contains(expr, "'"+credentialHeaderPattern+"'") {
+		t.Fatalf("CEL expression %q does not use credentialHeaderPattern %q", expr, credentialHeaderPattern)
+	}
+	for name, want := range map[string]bool{
+		"Authorization": true, "X-Api-Key": true, "Cookie": true, "x-auth-token": true,
+		"Accept": false, "X-Client": false, "Set-Cookie": false,
+	} {
+		if got := credentialHeader(name); got != want {
+			t.Errorf("credentialHeader(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestFromConfigReportsUnrepresentableNumbersAndInertFields(t *testing.T) {
+	cfg := config.Default()
+	cfg.Throughput.SessionTokens = math.MaxUint32 + 1
+	cfg.MCPServers = []config.MCPServerConfig{{
+		Name: "r", Transport: "http", URL: "https://r.example.com",
+		Command: []string{"x"}, Env: map[string]string{"A": "b"},
+	}}
+	spec, omitted := FromConfig(cfg)
+	paths := map[string]bool{}
+	for _, o := range omitted {
+		paths[o.Path] = true
+	}
+	for _, want := range []string{"throughput.session_tokens", "mcp_servers[0].command", "mcp_servers[0].env"} {
+		if !paths[want] {
+			t.Errorf("missing omission %q (got %v)", want, paths)
+		}
+	}
+	if spec.GetThroughput().GetSessionTokens() != 0 {
+		t.Errorf("out-of-range value carried: %d", spec.GetThroughput().GetSessionTokens())
+	}
 }

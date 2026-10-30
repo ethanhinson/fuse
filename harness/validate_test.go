@@ -116,6 +116,7 @@ func TestValidateSemanticRules(t *testing.T) {
 		"models.default_alias":            "fuse.model_ref",
 		"orchestrator.model":              "fuse.model_ref",
 		"context.relevance.borderline_lo": "fuse.config",
+		"context.relevance.borderline_hi": "fuse.config",
 	}
 	for path, rule := range want {
 		v, ok := got[path]

@@ -2110,8 +2110,8 @@ func (x *CustomSearchProvider) GetSnippetField() string {
 }
 
 // HeaderValue is a header's value: a non-secret literal, or the NAME of a
-// secret the runtime resolves. Credentials (an Authorization header, an API key)
-// belong in secret_ref.
+// secret the runtime resolves. Credential-named headers (an Authorization
+// header, an API key) must use secret_ref; validation rejects a literal there.
 type HeaderValue struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Value:
@@ -2251,11 +2251,12 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12/\n" +
 	"\x05value\x18\x02 \x01(\v2\x19.fuse.harness.v1.WorkflowR\x05value:\x028\x01B\f\n" +
 	"\n" +
-	"_max_turns\"\xe9\x02\n" +
+	"_max_turns\"\xdd\x03\n" +
 	"\x06Models\x12\x85\x01\n" +
 	"\rdefault_alias\x18\x01 \x01(\tB`\xbaH\x05r\x03\x18\x80\x01\xa2\x9f\x19T\n" +
-	"\rDefault model\x12AAlias of the model the agent runs on unless a task picks another.\x18\tR\fdefaultAlias\x12\x82\x01\n" +
-	"\aentries\x18\x02 \x03(\v2$.fuse.harness.v1.Models.EntriesEntryBB\xbaH*\x9a\x01'\"%r#\x10\x01\x18\x80\x012\x1c^[A-Za-z0-9][A-Za-z0-9._-]*$\xa2\x9f\x19\x11\n" +
+	"\rDefault model\x12AAlias of the model the agent runs on unless a task picks another.\x18\tR\fdefaultAlias\x12\xf6\x01\n" +
+	"\aentries\x18\x02 \x03(\v2$.fuse.harness.v1.Models.EntriesEntryB\xb5\x01\xbaH\x9c\x01\xba\x01o\n" +
+	"$fuse.models.entries.reserved_default\x121\"default\" is reserved and cannot be a model alias\x1a\x14!('default' in this)\x9a\x01'\"%r#\x10\x01\x18\x80\x012\x1c^[A-Za-z0-9][A-Za-z0-9._-]*$\xa2\x9f\x19\x11\n" +
 	"\rModel aliases\x18\aR\aentries\x1aR\n" +
 	"\fEntriesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12,\n" +
@@ -2451,11 +2452,12 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\x12Respect robots.txt\x18\x04H\x00R\rrespectRobots\x88\x01\x01\x12T\n" +
 	"\x06custom\x18\x06 \x01(\v2%.fuse.harness.v1.CustomSearchProviderB\x15\xa2\x9f\x19\x11\n" +
 	"\x0fCustom endpointR\x06customB\x11\n" +
-	"\x0f_respect_robots\"\xd8\x03\n" +
+	"\x0f_respect_robots\"\xc8\x05\n" +
 	"\x14CustomSearchProvider\x12(\n" +
 	"\x03url\x18\x01 \x01(\tB\x16\xbaH\b\xd8\x01\x01r\x03\x88\x01\x01\xa2\x9f\x19\a\n" +
-	"\x03URL\x18\bR\x03url\x12i\n" +
-	"\aheaders\x18\x02 \x03(\v22.fuse.harness.v1.CustomSearchProvider.HeadersEntryB\x1b\xbaH\t\x9a\x01\x06\"\x04r\x02\x10\x01\xa2\x9f\x19\v\n" +
+	"\x03URL\x18\bR\x03url\x12\xd8\x02\n" +
+	"\aheaders\x18\x02 \x03(\v22.fuse.harness.v1.CustomSearchProvider.HeadersEntryB\x89\x02\xbaH\xf6\x01\xba\x01\xe9\x01\n" +
+	"\x1ffuse.headers.credential_literal\x12ca credential header (auth, key, token, secret, password, cookie) must use secret_ref, not a literal\x1aathis.all(k, !k.matches('(?i)(auth|key|token|secret|password|^cookie$)') || !has(this[k].literal))\x9a\x01\x06\"\x04r\x02\x10\x01\xa2\x9f\x19\v\n" +
 	"\aHeaders\x18\aR\aheaders\x125\n" +
 	"\fresults_path\x18\x03 \x01(\tB\x12\xa2\x9f\x19\x0e\n" +
 	"\fResults pathR\vresultsPath\x122\n" +
@@ -2468,9 +2470,10 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\rSnippet fieldR\fsnippetField\x1aX\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x122\n" +
-	"\x05value\x18\x02 \x01(\v2\x1c.fuse.harness.v1.HeaderValueR\x05value:\x028\x01\"\xa4\x01\n" +
-	"\vHeaderValue\x12)\n" +
-	"\aliteral\x18\x01 \x01(\tB\r\xa2\x9f\x19\t\n" +
+	"\x05value\x18\x02 \x01(\v2\x1c.fuse.harness.v1.HeaderValueR\x05value:\x028\x01\"\xae\x02\n" +
+	"\vHeaderValue\x12\xb2\x01\n" +
+	"\aliteral\x18\x01 \x01(\tB\x95\x01\xbaH\x84\x01\xba\x01\x80\x01\n" +
+	"\x1cfuse.literal.reserved_prefix\x12?a literal must not start with the reserved prefix \"secret-ref:\"\x1a\x1f!this.startsWith('secret-ref:')\xa2\x9f\x19\t\n" +
 	"\x05Value\x18\x01H\x00R\aliteral\x12Z\n" +
 	"\n" +
 	"secret_ref\x18\x02 \x01(\tB9\xbaH&r$\x10\x01\x18\xfd\x012\x1d^[A-Za-z0-9][A-Za-z0-9_./-]*$\xa2\x9f\x19\f\n" +

@@ -63,5 +63,21 @@
       {"fieldPath": "research.custom.headers[\"X\"].value", "ruleId": "required"},
       {"fieldPath": "workflows[\"Bad Key\"]", "ruleId": "string.pattern"}
     ]
+  },
+  {
+    "name": "reserved model alias and header rules",
+    "spec": {
+      "models": {"entries": {"default": {"id": "cloud/x"}}},
+      "research": {"custom": {"headers": {
+        "Authorization": {"literal": "Bearer sk-123"},
+        "X-Api-Key": {"secretRef": "ok"},
+        "Accept": {"literal": "secret-ref:sneaky"}
+      }}}
+    },
+    "want": [
+      {"fieldPath": "models.entries", "ruleId": "fuse.models.entries.reserved_default"},
+      {"fieldPath": "research.custom.headers", "ruleId": "fuse.headers.credential_literal"},
+      {"fieldPath": "research.custom.headers[\"Accept\"].literal", "ruleId": "fuse.literal.reserved_prefix"}
+    ]
   }
 ]

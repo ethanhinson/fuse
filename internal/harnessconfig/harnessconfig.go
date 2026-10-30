@@ -19,7 +19,9 @@ package harnessconfig
 
 import (
 	"fmt"
+	"math"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -368,6 +370,10 @@ func FromConfig(cfg config.Config) (*harnessv1.HarnessSpec, []Omission) {
 			omit(path, "negative value; the spec field is unsigned")
 			return 0
 		}
+		if uint64(n) > math.MaxUint32 {
+			omit(path, "value exceeds the spec field's uint32 range")
+			return 0
+		}
 		return uint32(n)
 	}
 	s := &harnessv1.HarnessSpec{}
@@ -416,6 +422,14 @@ func FromConfig(cfg config.Config) (*harnessv1.HarnessSpec, []Omission) {
 			continue
 		}
 		out := &harnessv1.McpServer{Name: srv.Name, Transport: tr, Url: srv.URL, Audience: srv.Audience, Scopes: srv.Scopes}
+		// command/env only configure a stdio host process; on a remote server they
+		// are inert, but still reported rather than silently dropped.
+		if len(srv.Command) > 0 {
+			omit(at+".command", reasonOperator)
+		}
+		if len(srv.Env) > 0 {
+			omit(at+".env", reasonOperator)
+		}
 		auth := &harnessv1.McpAuth{ClientId: srv.Auth.ClientID, Scopes: srv.Auth.Scopes}
 		if srv.Auth.Type != "" && srv.Auth.Type != "none" {
 			if t, ok := authFromConfig[srv.Auth.Type]; ok {
@@ -689,20 +703,18 @@ func FromConfig(cfg config.Config) (*harnessv1.HarnessSpec, []Omission) {
 	return s, om
 }
 
+// credentialHeaderPattern matches header names that conventionally carry a
+// credential. It is the same expression as the
+// fuse.headers.credential_literal CEL rule in harness.proto (pinned by a test):
+// the spec rejects a literal value for such a header, and FromConfig never
+// copies one into a spec.
+const credentialHeaderPattern = `(?i)(auth|key|token|secret|password|^cookie$)`
+
+var credentialHeaderRE = regexp.MustCompile(credentialHeaderPattern)
+
 // credentialHeader reports whether a header name conventionally carries a
-// credential, so FromConfig never copies its literal value into a spec.
-func credentialHeader(name string) bool {
-	n := strings.ToLower(name)
-	if n == "cookie" {
-		return true
-	}
-	for _, frag := range []string{"auth", "key", "token", "secret", "password"} {
-		if strings.Contains(n, frag) {
-			return true
-		}
-	}
-	return false
-}
+// credential.
+func credentialHeader(name string) bool { return credentialHeaderRE.MatchString(name) }
 
 // SpecPath translates a config key path (as config.Problem.Path reports it)
 // into the HarnessSpec field path a form places the error against. It returns
