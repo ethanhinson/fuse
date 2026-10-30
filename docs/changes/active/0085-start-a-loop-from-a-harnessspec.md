@@ -13,7 +13,7 @@ stacked_on:
 related: [84]
 discovered_from: []
 adrs: [6, 60]
-spec:
+spec: 'docs/superpowers/specs/2026-10-30-start-a-loop-from-a-harnessspec-design.md'
 plan:
 results:
 auto_groomable:
@@ -30,6 +30,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-10-30-start-a-loop-from-a-harnessspec-design.md](../../superpowers/specs/2026-10-30-start-a-loop-from-a-harnessspec-design.md) |
 | ADRs | [ADR-0006](../../adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md), [ADR-0060](../../adrs/0060-harnessspec-proto-is-the-portable-harness-definition-client.md) |
 <!-- docket:artifacts:end -->
 
