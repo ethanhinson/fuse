@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/start-a-loop-from-a-harnessspec'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -54,3 +54,9 @@ Change 0084 (ADR-0060) made fuse.harness.v1 HarnessSpec the portable, validated 
 - stdio MCP servers in specs.
 - Per-tenant model gateways.
 - Mounting HarnessService on loop-serve-net.
+
+## Reconcile log
+
+### 2026-10-30
+
+Unchanged against main 741227a. The change was minted and groomed in this run from the settled design; 0084 (merged) supplies the HarnessSpec proto, the public validator and the spec-to-config mapping this change consumes.
