@@ -2,7 +2,7 @@
 id: 22
 slug: human-message-bus-per-node-queue-async-router
 title: Human messages ride one substrate — a per-node blackboard queue, self-pulled at turn boundaries, with an async advisory router and completion-hook bubbling
-status: Proposed
+status: Superseded by ADR-59
 date: 2026-08-09
 supersedes: []
 reverses: []
@@ -184,3 +184,7 @@ at render so renames reflect immediately.
   load-bearing, not optional.
 - **True mid-run preemption.** Out of scope (would revisit ADR-0016); deferred.
 ```
+
+## Update
+
+**2026-10-30 (see ADR-0059):** This ADR was never accepted; it stayed `Proposed` until docket v1.0.0 stopped accepting that status. Much of what it proposed was built in b65dc6e (2026-08-09) on a typed in-memory human-message bus rather than blackboard keys, and the steering and orchestrator work (005fc45..17d84a2, merged 2026-10-12) then replaced its run-to-completion constraint with interrupting steers delivered on every binding and across replicas. ADR-0059 records that design, after the fact, and supersedes this one. Note that this record's `change:` field (0051) names a number docket later reused for an unrelated change (OTEL loop observability); it does not link to the work described here.

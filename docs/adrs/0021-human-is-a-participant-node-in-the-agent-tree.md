@@ -2,7 +2,7 @@
 id: 21
 slug: human-is-a-participant-node-in-the-agent-tree
 title: The human is a first-class participant in the agent tree — questions route from the asking node and replies route back to it, in three phases
-status: Proposed
+status: Superseded by ADR-59
 date: 2026-08-09
 supersedes: []
 reverses: []
@@ -155,3 +155,7 @@ contract and belongs in its own decision.
   The relay is request/response per approval, not a durable mailbox; reusing the
   blackboard (already a session-scoped, provenance-stamped, wait-able store) is a
   smaller, more honest fit for Phase 3.
+
+## Update
+
+**2026-10-30 (see ADR-0059):** This ADR was never accepted; it stayed `Proposed` until docket v1.0.0 stopped accepting that status. Much of what it proposed was built in b65dc6e (2026-08-09) on a typed in-memory human-message bus rather than blackboard keys, and the steering and orchestrator work (005fc45..17d84a2, merged 2026-10-12) then replaced its run-to-completion constraint with interrupting steers delivered on every binding and across replicas. ADR-0059 records that design, after the fact, and supersedes this one. Note that this record's `change:` field (0050) names a number docket later reused for an unrelated change (the client SDK); it does not link to the work described here.
