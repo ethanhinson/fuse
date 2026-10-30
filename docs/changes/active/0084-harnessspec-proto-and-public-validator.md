@@ -2,7 +2,7 @@
 id: 84
 slug: 'harnessspec-proto-and-public-validator'
 title: 'HarnessSpec proto and public validator'
-status: 'implemented'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
