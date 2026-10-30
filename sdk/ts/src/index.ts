@@ -33,6 +33,11 @@ import {
   type Event as WireEvent,
 } from "../../../proto/gen/ts/fuse/loop/v1/loop_pb.js";
 
+// The fuse.harness.v1 surface (change 0084): HarnessSpec and friends, the UI-hint options,
+// and validateHarnessShape. Exported as a namespace so its message names (Context, Model,
+// Violation, ...) never collide with the loop client's own exports.
+export * as harness from "./harness.js";
+
 /** Credentials presented on every request: a bearer token and the tenant field. */
 export interface Credentials {
   token: string;
