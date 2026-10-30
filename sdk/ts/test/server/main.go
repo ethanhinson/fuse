@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ethanhinson/fuse/harness"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopconnect"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
@@ -55,7 +56,18 @@ type fakeRuntime struct {
 	observeGate func()
 }
 
+// StartLoop validates a harness spec when one is carried (change 0085), so the node
+// test can drive both outcomes over the real wire: a refused spec is returned as the
+// runtime's *harness.ValidationError (the handler turns it into InvalidArgument with a
+// ValidateHarnessResponse detail), and an accepted one is acknowledged in the loop id
+// with its content digest, proving the spec crossed the wire intact.
 func (f *fakeRuntime) StartLoop(ctx context.Context, cfg runtime.LoopConfig) (runtime.LoopHandle, error) {
+	if cfg.Harness != nil {
+		if vs := harness.Validate(cfg.Harness); len(vs) > 0 {
+			return nil, &harness.ValidationError{Violations: vs}
+		}
+		return fakeHandle{id: f.startID + " " + harness.Digest(cfg.Harness)}, nil
+	}
 	return fakeHandle{id: f.startID}, nil
 }
 
