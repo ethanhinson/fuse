@@ -18,6 +18,7 @@ sdk/ts/dist/
 
 # local scratch + generated review artifacts (screenshots, videos, ad-hoc reports)
 scratchpad/
+tmp/
 reports/screenshots/
 reports/*.md
 ANALYSIS.md
