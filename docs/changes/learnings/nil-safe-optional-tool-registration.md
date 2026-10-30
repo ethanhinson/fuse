@@ -1,5 +1,6 @@
 ---
 name: nil-safe-optional-tool-registration
+slug: nil-safe-optional-tool-registration
 description: Pass capability-injection functions as nil to omit context-sensitive tools from one-shot/test tool registries without branching at call sites
 metadata:
   type: feedback

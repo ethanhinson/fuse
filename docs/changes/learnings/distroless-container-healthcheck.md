@@ -1,5 +1,6 @@
 ---
 name: distroless-container-healthcheck
+slug: distroless-container-healthcheck
 title: Distroless containers have no shell — gate readiness host-side, not via HEALTHCHECK
 promotion_state: candidate
 changes: [8]

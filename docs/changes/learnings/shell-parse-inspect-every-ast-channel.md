@@ -1,5 +1,6 @@
 ---
 name: shell-parse-inspect-every-ast-channel
+slug: shell-parse-inspect-every-ast-channel
 title: Shell-safety classifiers must inspect every AST channel that names a target — argv extraction alone drops redirects
 promotion_state: candidate
 changes: [17, 70]

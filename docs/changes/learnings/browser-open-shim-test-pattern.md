@@ -1,5 +1,6 @@
 ---
 name: browser-open-shim-test-pattern
+slug: browser-open-shim-test-pattern
 title: Test browser-opening code with a PATH-prepended open/xdg-open shim — no production changes needed
 promotion_state: retained
 changes: [8]

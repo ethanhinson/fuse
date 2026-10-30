@@ -1,5 +1,6 @@
 ---
 name: playwright-go-cdn-pin
+slug: playwright-go-cdn-pin
 title: playwright-go CDN is retired — pin v0.5001.0 and override PLAYWRIGHT_DOWNLOAD_HOST
 promotion_state: candidate
 changes: [8]

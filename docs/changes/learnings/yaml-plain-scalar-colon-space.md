@@ -1,7 +1,7 @@
 ---
 name: yaml-plain-scalar-colon-space
 slug: yaml-plain-scalar-colon-space
-title: YAML plain scalars cannot contain ': ' — extract free-text fields with a line reader
+title: "YAML plain scalars cannot contain ': ' — extract free-text fields with a line reader"
 hook: "YAML rejects unquoted ': ' in plain scalars — extract free-text fields (name, description) via a line reader, not yaml.Unmarshal"
 promotion_state: retained
 changes: []

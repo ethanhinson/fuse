@@ -1,5 +1,6 @@
 ---
 name: live-control-reads-state-at-decision-point
+slug: live-control-reads-state-at-decision-point
 title: A user-facing "live" control must read shared state at the decision point, not snapshot it at construction
 promotion_state: candidate
 changes: [35, 39]

@@ -1,5 +1,6 @@
 ---
 name: gate-as-tool-executor
+slug: gate-as-tool-executor
 title: Implement middleware gates as ToolExecutor adapters, not Agent loop patches
 promotion_state: retained
 changes: [3]

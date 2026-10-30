@@ -1,5 +1,6 @@
 ---
 name: fail-closed-guard-calibrate-benign-set
+slug: fail-closed-guard-calibrate-benign-set
 title: A fail-closed security guard must carve out the common benign case, or prompt-fatigue trains users to blanket-approve
 promotion_state: candidate
 changes: [37]

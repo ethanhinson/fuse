@@ -1,5 +1,6 @@
 ---
 name: model-compat-layer-for-tool-loops
+slug: model-compat-layer-for-tool-loops
 description: Schema-stripping compat layers cause more problems than they solve — use only a fingerprint loop detector; Cline and Grok Build validate this approach
 metadata:
   type: feedback

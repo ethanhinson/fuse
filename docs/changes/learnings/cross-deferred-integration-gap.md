@@ -1,5 +1,6 @@
 ---
 name: cross-deferred-integration-gap
+slug: cross-deferred-integration-gap
 title: Track cross-task deferrals as explicit obligations — two tasks can each defer the same wiring to the other
 promotion_state: candidate
 changes: [17]

@@ -1,5 +1,6 @@
 ---
 name: ollama-openai-compat-gaps
+slug: ollama-openai-compat-gaps
 description: Ollama's OpenAI-compatible endpoint silently ignores tool_choice and strips Qwen3 thinking tokens to empty string; use LM Studio or llama.cpp server for local models instead
 metadata:
   type: feedback

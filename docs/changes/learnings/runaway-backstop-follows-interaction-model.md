@@ -1,5 +1,6 @@
 ---
 name: runaway-backstop-follows-interaction-model
+slug: runaway-backstop-follows-interaction-model
 title: A runaway backstop calibrated for one interaction model becomes a bug when the interaction model changes — and budget posture is not approval posture
 promotion_state: candidate
 changes: [38, 67]
