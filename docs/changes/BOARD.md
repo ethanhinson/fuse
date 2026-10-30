@@ -1,26 +1,27 @@
 # Backlog
 
-**83 changes** — 🟢 1 in progress · 🟡 1 proposed · ⚪ 3 deferred · ✅ 72 done · 🗑️ 6 killed
+**84 changes** — 🟢 1 in progress · 🟡 2 proposed · ⚪ 3 deferred · ✅ 72 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
-| # | Title | Priority | Type | Spec | Branch |
-|---|-------|----------|------|------|--------|
-| [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` |
+| # | Title | Priority | Type | Spec | Branch | State |
+|---|-------|----------|------|------|--------|-------|
+| [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟡 Proposed (1)
+## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-brainstorm |
+| [0084](active/0084-harnessspec-proto-and-public-validator.md) | HarnessSpec proto and public validator | `high` | `feat` | needs-grooming |
+| [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
 
 | # | Title | Priority | Type |
 |---|-------|----------|------|
-| [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
-| [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
 | [0074](active/0074-sandbox-health-emitter.md) | sandbox health emitter — feed KindSandboxHealth so fuse_sandbox_unhealthy_total stops being defined-but-unfed | `medium` | `feat` |
+| [0057](active/0057-egress-identity-builtin-http-tools.md) | Egress identity for built-in HTTP tools — route web_fetch/web_search through the #52 credential seam | `medium` | `feat` |
+| [0029](active/0029-read-file-dedup-cache.md) | Read_file content deduplication cache | `medium` | `feat` |
 
 ```mermaid
 graph TD
@@ -29,6 +30,7 @@ graph TD
   0063 --> 0074
   0081
   0083
+  0084
   0012:::done
   0052:::done
   0063:::done
@@ -37,7 +39,7 @@ graph TD
 
 <details><summary>✅🗑️ Archive — done + killed (78)</summary>
 
-| # | Title | Merged |
+| # | Title | Closed |
 |---|-------|--------|
 | [0076](archive/2026-09-17-0076-fuse-server-helm-chart-compose-stack.md) | fuse server deployment — a docker-compose stack and a Helm chart over the released image (not an operator) | 2026-09-17 |
 | [0075](archive/2026-09-17-0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a Kubernetes warm-Pod handler as first implementation | 2026-09-17 |
