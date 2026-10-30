@@ -15,6 +15,7 @@ import (
 	"errors"
 	"net/http"
 
+	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/event"
 )
 
@@ -51,6 +52,12 @@ type StartLoopConfig struct {
 	// Chat with it through Send and Observe like any interactive loop; Model picks the
 	// orchestrator's own model. It implies Interactive.
 	Orchestrate LoopID
+	// Harness, when set, is the harness this loop runs (change 0085): the runtime
+	// layers it over its own trusted config, which stays the floor. A spec it
+	// refuses fails StartLoop with a *harness.ValidationError (match it with
+	// errors.As) listing every violation with its field path; a runtime that does
+	// not run specs fails with ErrHarnessUnsupported. Nil: the runtime's config.
+	Harness *harnessv1.HarnessSpec
 }
 
 // Credentials is the per-Client identity: the bearer token presented on every remote
@@ -74,6 +81,10 @@ var (
 	// ErrLoopFinished is a Send to a finished loop (connect FailedPrecondition /
 	// runtime.ErrLoopFinished).
 	ErrLoopFinished = errors.New("fuse: loop finished")
+	// ErrHarnessUnsupported is a StartLoop carrying a harness spec on a runtime
+	// that does not run specs (connect Unimplemented / runtime.ErrHarnessUnsupported).
+	// A spec the runtime runs but refuses is a *harness.ValidationError instead.
+	ErrHarnessUnsupported = errors.New("fuse: runtime does not run harness specs")
 )
 
 // backend is the unexported seam the two constructors satisfy; Client delegates every

@@ -2,10 +2,13 @@ package fuse
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"connectrpc.com/connect"
 
+	"github.com/ethanhinson/fuse/harness"
+	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/event"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
@@ -86,6 +89,7 @@ func (b *remoteBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (Loo
 		Tenant:            b.tenant,
 		Interactive:       cfg.Interactive,
 		OrchestrateLoopId: cfg.Orchestrate,
+		Harness:           cfg.Harness,
 	}))
 	if err != nil {
 		return "", mapConnectError(err)
@@ -193,6 +197,23 @@ func mapConnectError(err error) error {
 		return ErrLoopNotFound
 	case connect.CodeFailedPrecondition:
 		return ErrLoopFinished
+	case connect.CodeUnimplemented:
+		return ErrHarnessUnsupported
+	case connect.CodeInvalidArgument:
+		// A refused harness spec (change 0085) carries its violations as one
+		// ValidateHarnessResponse detail; surface them as the same
+		// *harness.ValidationError the local backend returns.
+		var cerr *connect.Error
+		if errors.As(err, &cerr) {
+			for _, d := range cerr.Details() {
+				if m, derr := d.Value(); derr == nil {
+					if resp, ok := m.(*harnessv1.ValidateHarnessResponse); ok {
+						return harness.ValidationErrorFromProto(resp)
+					}
+				}
+			}
+		}
+		return err
 	default:
 		return err
 	}
