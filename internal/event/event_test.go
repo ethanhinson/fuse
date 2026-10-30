@@ -33,6 +33,7 @@ func TestKindWireValues(t *testing.T) {
 		KindSandboxReap:        "sandbox.reap",
 		KindSandboxHealth:      "sandbox.health",
 		KindSandboxAdmission:   "sandbox.admission",
+		KindLoopHarness:        "loop.harness",
 	}
 	for k, want := range cases {
 		if string(k) != want {
