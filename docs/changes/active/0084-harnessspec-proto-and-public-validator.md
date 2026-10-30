@@ -2,7 +2,7 @@
 id: 84
 slug: 'harnessspec-proto-and-public-validator'
 title: 'HarnessSpec proto and public validator'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/harnessspec-proto-and-public-validator'
 pr:
 blocked_by:
 reconciled: false
