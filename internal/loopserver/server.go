@@ -1,6 +1,6 @@
 // Package loopserver is binding #2: a dedicated JSON-RPC 2.0 server that exposes
 // loop control (loop.start / loop.send / loop.observe) over a runtime.Runtime. It
-// is a pure adapter — it imports internal/runtime and internal/event, plus the
+// is a pure adapter - it imports internal/runtime and internal/event, plus the
 // public harness types a loop.start may carry (change 0085), and
 // NEVER a renderer, TUI, MCP tool registry, or CLI type (Decision Note D-2). Its
 // "no approval gate" (auto-approve) policy is a binding choice wired by the

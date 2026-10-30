@@ -269,7 +269,7 @@ type loopServerHost struct {
 
 	// Per-loop MCP manager registry (change #59, Task 4): each hosted loop gets its OWN
 	// mcp.Manager, constructed in NewToolRegistry and registered into that loop's OWN
-	// cloned tool registry — never a shared manager, registry, or credential across loops
+	// cloned tool registry - never a shared manager, registry, or credential across loops
 	// (guardrail deglobalize-holder-also-per-instance-the-shared-graph). Keyed by the
 	// per-loop registry pointer so LoopTeardown closes exactly that loop's manager at loop
 	// completion. sync.Map because NewToolRegistry (StartLoop goroutine) and LoopTeardown
