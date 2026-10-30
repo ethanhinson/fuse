@@ -40,3 +40,14 @@ Given up: silently clamping a spec to the floor, which would run a harness other
 - Record the resolved config (or a resolved spec) instead of the supplied spec: the resolved config holds secret values and operator-only settings, and a frozen floor would let a resumed loop keep limits the operator has since lowered.
 - Pass the spec to BuildAgent and change its signature: touches every binding and test, and leaks harness policy into the runtime seam; the optional resolver plus a per-loop factory keeps the CLI/TUI bindings byte-identical.
 - Resolve secrets from a tenant-unaware map or from environment variables named directly in the spec: either lets one tenant reach another's secret or lets a client read any server environment variable.
+
+## Update
+
+### 2026-10-30
+
+Refinements from the whole-branch review of change 0085, before merge. They narrow the decision and leave it in place:
+
+- A spec MCP server may use only remote transports with none, bearer or static auth. oauth2 reads and writes the host's token cache, keyed by server name, and can open a browser flow on the server. identity and oauth-exchange mint fuse-signed delegation tokens. All three are refused as `fuse.operator_only` at `mcp_servers[i].auth.type`. `config.OverlaySpec` also drops stdio servers and entries that set command, env or auth.token_file.
+- A `loop_server.secrets` entry may list `hosts`. Its value is then sent only to a URL with one of those hostnames, and the SecretResolver receives the destination. Without `hosts`, the spec chooses where the value goes, so allowing a tenant to use the secret discloses its value to that tenant.
+- `loop.harness` records the spec's deterministic encoding (`spec_bytes`), with the digest computed over exactly those bytes. Resume verifies and decodes the bytes, so a record survives a schema or protobuf version difference between replicas.
+- `StartLoopResponse.harness_digest` acknowledges a spec. Both SDKs fail a StartLoop that sent a spec and got no digest back, because a server that predates specs silently drops the field.
