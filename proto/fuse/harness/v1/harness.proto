@@ -1,0 +1,913 @@
+syntax = "proto3";
+
+// Package fuse.harness.v1 is the portable, versioned, IDL-defined harness
+// specification (change 0084, ADR-0060): the models, skills, MCP servers,
+// permission posture, agent/workflow/throughput brakes, context management and
+// research settings that make up a fuse harness, in a form any client of the
+// runtime (the Go SDK, the TS SDK, a remote caller of the networked binding)
+// can build, serialize and validate.
+//
+// HarnessSpec covers ONLY the client-settable surface of internal/config.Config.
+// Operator-only trusted settings are deliberately absent, so a spec cannot even
+// express them (ADR-0006 trust boundary, encoded in the type):
+//
+//   - gateway (url, key, request_timeout): the LLM gateway endpoint and its
+//     credential are the runtime host's; a spec picks models, not gateways.
+//   - loop_server (auth, issuers, lease_ttl): bearer-credential surface.
+//   - tool_identity (signing_key, ttl, local_subject): signing-key surface.
+//   - observability: telemetry egress and listener surface.
+//   - skill_paths: directories on the runtime host's disk; a spec references
+//     skills by NAME (SkillRef) instead.
+//   - projects: overrides keyed by absolute host paths.
+//   - permissions.auto.write_roots: host directories made workspace-equivalent.
+//   - stdio MCP servers (command, env) and mcp auth.token_file: a stdio server is
+//     a process spawned on the runtime host with its environment; only remote
+//     (HTTP) MCP servers are client-settable. token_file is a host path.
+//   - sandbox substrate selection: an entry-point flag, not config, and the
+//     platform floor in any case.
+//
+// internal/config stays the authority for semantics: the Go mapping renders a
+// spec through the config package's own merge, and the Go validator
+// (github.com/ethanhinson/fuse/harness) reuses config's validation rules. The
+// protovalidate rules here are the per-field SHAPE rules every language shares.
+//
+// Numeric fields follow the YAML loader's convention: 0 means "unset, use the
+// runtime default". Booleans whose runtime default is true are `optional` so an
+// explicit false is distinguishable from unset.
+package fuse.harness.v1;
+
+import "buf/validate/validate.proto";
+import "fuse/harness/v1/options.proto";
+
+option go_package = "github.com/ethanhinson/fuse/harness/v1;harnessv1";
+
+// HarnessService validates a HarnessSpec. It is defined so a server can expose
+// the same validation the Go library performs; fuse itself does not mount it on
+// any binding (change 0084 scope).
+service HarnessService {
+  // ValidateHarness returns every violation in the spec (shape and semantic),
+  // each with a field path a form can place the error next to. An empty
+  // violation list means the spec is valid.
+  rpc ValidateHarness(ValidateHarnessRequest) returns (ValidateHarnessResponse) {}
+}
+
+// ValidateHarnessRequest carries the spec to validate.
+message ValidateHarnessRequest {
+  HarnessSpec spec = 1;
+}
+
+// ValidateHarnessResponse lists the violations; empty means valid.
+message ValidateHarnessResponse {
+  repeated Violation violations = 1;
+}
+
+// Violation is one problem with a spec.
+message Violation {
+  // Path of the offending field in protovalidate's field-path syntax, e.g.
+  // `context.summarization.threshold`, `mcp_servers[0].url`,
+  // `models.entries["fast"].max_tokens`. Empty when the problem is not
+  // attributable to a single field.
+  string field_path = 1;
+  // Human-readable description, relative to the field.
+  string message = 2;
+  // Stable identifier of the rule that fired: a protovalidate rule id (e.g.
+  // `double.lte`) or a `fuse.`-prefixed semantic rule id.
+  string rule_id = 3;
+}
+
+// HarnessSpec is a complete, client-settable harness definition.
+message HarnessSpec {
+  // Model aliases and the default model.
+  Models models = 1 [(fuse.harness.v1.ui) = {
+    label: "Models"
+    help: "Model aliases this harness can use and the default one. Aliases extend the runtime's built-in registry."
+  }];
+
+  // Skills the harness uses, by reference.
+  repeated SkillRef skills = 2 [(fuse.harness.v1.ui) = {
+    label: "Skills"
+    help: "Skills referenced by name. The runtime resolves names against the skills it has installed."
+  }];
+
+  // Remote MCP servers (connectors).
+  repeated McpServer mcp_servers = 3 [
+    (buf.validate.field).repeated.max_items = 64,
+    (buf.validate.field).cel = {
+      id: "fuse.mcp_servers.unique_names"
+      message: "MCP server names must be unique"
+      expression: "this.map(s, s.name).unique()"
+    },
+    (fuse.harness.v1.ui) = {
+      label: "MCP servers"
+      help: "Remote MCP servers whose tools the agent may call."
+    }
+  ];
+
+  // Tool-call permission gate.
+  Permissions permissions = 4 [(fuse.harness.v1.ui) = {
+    label: "Permissions"
+    help: "How tool calls are gated: the mode, pattern lists, and auto-mode rules."
+  }];
+
+  // The orchestrator side-channel.
+  Orchestrator orchestrator = 5 [(fuse.harness.v1.ui) = {label: "Orchestrator"}];
+
+  // Subagent runtime brakes.
+  Agents agents = 6 [(fuse.harness.v1.ui) = {
+    label: "Agents"
+    help: "Brakes on subagent spawning and leaf tool calls."
+  }];
+
+  // Named workflows binding a skill to a spawn pool and worker types.
+  map<string, Workflow> workflows = 7 [
+    (buf.validate.field).map.keys.string = {
+      min_len: 1
+      max_len: 64
+      pattern: "^[a-z0-9][a-z0-9_-]*$"
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Workflows"
+      help: "Per-workflow spawn pools and worker definitions. An entry named like a built-in workflow (research) overrides it field by field."
+    }
+  ];
+
+  // Turn-level rate and quota limits.
+  Throughput throughput = 8 [(fuse.harness.v1.ui) = {
+    label: "Throughput"
+    help: "Request and token rate smoothing plus an optional session token ceiling. 0 = unlimited."
+  }];
+
+  // Context-management knobs.
+  Context context = 9 [(fuse.harness.v1.ui) = {label: "Context management"}];
+
+  // Pipeline-composition caps.
+  Pipeline pipeline = 10 [(fuse.harness.v1.ui) = {label: "Pipelines"}];
+
+  // Turn cap. Unset: the runtime's context-aware backstop; 0: unlimited; N: cap.
+  optional uint32 max_turns = 11 [(fuse.harness.v1.ui) = {
+    label: "Max turns"
+    help: "Cap on agent turns per task. Leave unset for the runtime backstop; 0 means unlimited."
+    widget: WIDGET_NUMBER
+  }];
+
+  // Per-turn output token ceiling. 0: runtime default.
+  uint32 max_tokens = 12 [(fuse.harness.v1.ui) = {
+    label: "Max output tokens"
+    help: "Per-turn output token ceiling. 0 uses the runtime default."
+    widget: WIDGET_NUMBER
+  }];
+
+  // Research mode settings.
+  Research research = 13 [(fuse.harness.v1.ui) = {label: "Research"}];
+}
+
+// Models holds model aliases and the default alias.
+message Models {
+  // The default model alias. Empty: the runtime default.
+  string default_alias = 1 [
+    (buf.validate.field).string.max_len = 128,
+    (fuse.harness.v1.ui) = {
+      label: "Default model"
+      help: "Alias of the model the agent runs on unless a task picks another."
+      widget: WIDGET_MODEL_ALIAS
+    }
+  ];
+
+  // Alias -> model entry. An alias that matches a built-in one replaces it.
+  map<string, Model> entries = 2 [
+    (buf.validate.field).map.keys.string = {
+      min_len: 1
+      max_len: 128
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    // The config document keys the default alias as models.default, beside
+    // the alias entries, so an alias named "default" cannot exist.
+    (buf.validate.field).cel = {
+      id: "fuse.models.entries.reserved_default"
+      message: "\"default\" is reserved and cannot be a model alias"
+      expression: "!('default' in this)"
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Model aliases"
+      widget: WIDGET_KEY_VALUE
+    }
+  ];
+}
+
+// Model is one named model entry.
+message Model {
+  // Gateway model id, e.g. `cloud/deepseek-v4-flash`.
+  string id = 1 [
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 256
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Gateway model id"
+      help: "The model id the gateway routes, e.g. cloud/deepseek-v4-flash."
+      widget: WIDGET_TEXT
+    }
+  ];
+  // Per-turn output ceiling for this model. 0: the harness max_tokens.
+  uint32 max_tokens = 2 [(fuse.harness.v1.ui) = {
+    label: "Max output tokens"
+    widget: WIDGET_NUMBER
+  }];
+  // Context window in tokens. 0: the runtime default.
+  uint32 context_window = 3 [(fuse.harness.v1.ui) = {
+    label: "Context window"
+    help: "Model context size in tokens. 0 uses the runtime default."
+    widget: WIDGET_NUMBER
+  }];
+  // Persona prompt name, e.g. `coding`, `research`, `general`.
+  string persona = 4 [
+    (buf.validate.field).string.max_len = 64,
+    (fuse.harness.v1.ui) = {
+      label: "Persona"
+      widget: WIDGET_TEXT
+    }
+  ];
+  // Text prepended before the persona system prompt (e.g. `/no_think`).
+  string system_prefix = 5 [
+    (buf.validate.field).string.max_len = 4096,
+    (fuse.harness.v1.ui) = {
+      label: "System prefix"
+      help: "Text placed before the persona system prompt, for model-specific directives."
+      widget: WIDGET_TEXTAREA
+    }
+  ];
+}
+
+// SkillRef references a skill by name. It is a reference, never a path: the
+// runtime resolves the name against the skills it has installed.
+message SkillRef {
+  // Skill name, e.g. `research`.
+  string name = 1 [
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 128
+      pattern: "^[a-z0-9][a-z0-9_-]*$"
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Skill"
+      widget: WIDGET_TEXT
+    }
+  ];
+}
+
+// McpTransport is the wire a remote MCP server speaks.
+enum McpTransport {
+  // Unset; rejected by validation (a remote server must name its transport).
+  MCP_TRANSPORT_UNSPECIFIED = 0;
+  // Legacy HTTP+SSE transport (config value `http`).
+  MCP_TRANSPORT_HTTP = 1 [(fuse.harness.v1.value_ui) = {display_name: "HTTP + SSE"}];
+  // SSE transport (config value `sse`).
+  MCP_TRANSPORT_SSE = 2 [(fuse.harness.v1.value_ui) = {display_name: "SSE"}];
+  // Streamable HTTP transport (config value `streamable-http`).
+  MCP_TRANSPORT_STREAMABLE_HTTP = 3 [(fuse.harness.v1.value_ui) = {display_name: "Streamable HTTP"}];
+}
+
+// McpAuthType selects the downstream credential and identity tier (change #52).
+enum McpAuthType {
+  // No credential (config value `none` / unset).
+  MCP_AUTH_TYPE_UNSPECIFIED = 0 [(fuse.harness.v1.value_ui) = {display_name: "None"}];
+  // Static bearer token (config value `bearer`).
+  MCP_AUTH_TYPE_BEARER = 1 [(fuse.harness.v1.value_ui) = {display_name: "Bearer token"}];
+  // OAuth 2 client (config value `oauth2`).
+  MCP_AUTH_TYPE_OAUTH2 = 2 [(fuse.harness.v1.value_ui) = {display_name: "OAuth 2"}];
+  // Static per-server credential (config value `static`).
+  MCP_AUTH_TYPE_STATIC = 3 [(fuse.harness.v1.value_ui) = {display_name: "Static credential"}];
+  // Per-call delegation token from the loop initiator (config value `identity`).
+  MCP_AUTH_TYPE_IDENTITY = 4 [(fuse.harness.v1.value_ui) = {
+    display_name: "Initiator identity"
+    help: "Mint a per-call, audience-bound token from the user who started the loop."
+  }];
+  // RFC 8693 token exchange (config value `oauth-exchange`).
+  MCP_AUTH_TYPE_OAUTH_EXCHANGE = 5 [(fuse.harness.v1.value_ui) = {display_name: "OAuth token exchange"}];
+}
+
+// McpServer is one remote MCP server.
+message McpServer {
+  // Server name; prefixes its tools. Unique within the spec.
+  string name = 1 [
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 64
+      pattern: "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Name"
+      widget: WIDGET_TEXT
+    }
+  ];
+  // Transport the server speaks.
+  McpTransport transport = 2 [
+    (buf.validate.field).enum = {
+      defined_only: true
+      not_in: [0]
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Transport"
+      widget: WIDGET_SELECT
+    }
+  ];
+  // Server URL.
+  string url = 3 [
+    (buf.validate.field).string.uri = true,
+    (fuse.harness.v1.ui) = {
+      label: "URL"
+      widget: WIDGET_URL
+    }
+  ];
+  // Downstream credential configuration.
+  McpAuth auth = 4 [(fuse.harness.v1.ui) = {label: "Authentication"}];
+  // RFC 8707 resource identifier a delegation token is bound to (identity tiers).
+  string audience = 5 [
+    (buf.validate.field).string.max_len = 512,
+    (fuse.harness.v1.ui) = {
+      label: "Audience"
+      help: "Resource identifier minted delegation tokens are bound to. Required for the identity and token-exchange auth types."
+      widget: WIDGET_TEXT
+    }
+  ];
+  // Downstream scopes a minted delegation token requests.
+  repeated string scopes = 6 [
+    (buf.validate.field).repeated.items.string.min_len = 1,
+    (fuse.harness.v1.ui) = {
+      label: "Scopes"
+      widget: WIDGET_LIST
+    }
+  ];
+}
+
+// McpAuth configures a server's downstream credential.
+message McpAuth {
+  // Credential type and identity tier.
+  McpAuthType type = 1 [
+    (buf.validate.field).enum.defined_only = true,
+    (fuse.harness.v1.ui) = {
+      label: "Type"
+      widget: WIDGET_SELECT
+    }
+  ];
+  // OAuth client id; empty means dynamic registration.
+  string client_id = 2 [
+    (buf.validate.field).string.max_len = 256,
+    (fuse.harness.v1.ui) = {
+      label: "Client id"
+      widget: WIDGET_TEXT
+    }
+  ];
+  // NAME of the secret holding the client secret (or the bearer token for
+  // type bearer). Never the secret value.
+  string client_secret_ref = 3 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
+    (buf.validate.field).string = {
+      max_len: 253
+      pattern: "^[A-Za-z0-9][A-Za-z0-9_./-]*$"
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Client secret"
+      help: "Name of the secret that holds the client secret or bearer token."
+      widget: WIDGET_SECRET_REF
+      secret_ref: true
+    }
+  ];
+  // OAuth scopes.
+  repeated string scopes = 4 [
+    (buf.validate.field).repeated.items.string.min_len = 1,
+    (fuse.harness.v1.ui) = {
+      label: "OAuth scopes"
+      widget: WIDGET_LIST
+    }
+  ];
+}
+
+// PermissionMode is the HITL gate mode.
+enum PermissionMode {
+  // Runtime default (smart).
+  PERMISSION_MODE_UNSPECIFIED = 0 [(fuse.harness.v1.value_ui) = {display_name: "Default (smart)"}];
+  // No gate (config value `off`).
+  PERMISSION_MODE_OFF = 1 [(fuse.harness.v1.value_ui) = {
+    display_name: "Off"
+    help: "Every tool call runs without asking."
+  }];
+  // Ask for every tool call (config value `prompt-all`).
+  PERMISSION_MODE_PROMPT_ALL = 2 [(fuse.harness.v1.value_ui) = {display_name: "Ask for everything"}];
+  // Ask only for non-safe calls (config value `smart`).
+  PERMISSION_MODE_SMART = 3 [(fuse.harness.v1.value_ui) = {display_name: "Smart"}];
+  // Classifier-backed auto mode (config value `auto`).
+  PERMISSION_MODE_AUTO = 4 [(fuse.harness.v1.value_ui) = {display_name: "Auto"}];
+}
+
+// Permissions is the tool-call permission gate.
+message Permissions {
+  // Gate mode.
+  PermissionMode mode = 1 [
+    (buf.validate.field).enum.defined_only = true,
+    (fuse.harness.v1.ui) = {
+      label: "Mode"
+      widget: WIDGET_SELECT
+    }
+  ];
+  // Whether the "allow for this session" choice is offered. Unset: true.
+  optional bool session_allow = 2 [(fuse.harness.v1.ui) = {
+    label: "Offer allow-for-session"
+    widget: WIDGET_TOGGLE
+  }];
+  // Patterns promoted beyond the built-in safe list.
+  repeated string auto_approve = 3 [
+    (buf.validate.field).repeated.items.string.min_len = 1,
+    (fuse.harness.v1.ui) = {
+      label: "Auto-approve patterns"
+      widget: WIDGET_LIST
+    }
+  ];
+  // Patterns that always prompt.
+  repeated string always_prompt = 4 [
+    (buf.validate.field).repeated.items.string.min_len = 1,
+    (fuse.harness.v1.ui) = {
+      label: "Always-ask patterns"
+      widget: WIDGET_LIST
+    }
+  ];
+  // Tool names fully disabled.
+  repeated string disabled = 5 [
+    (buf.validate.field).repeated.items.string.min_len = 1,
+    (fuse.harness.v1.ui) = {
+      label: "Disabled tools"
+      widget: WIDGET_LIST
+    }
+  ];
+  // Auto-mode classifier and static rules.
+  AutoPermissions auto = 6 [(fuse.harness.v1.ui) = {label: "Auto mode"}];
+}
+
+// AutoPermissions configures auto mode. permissions.auto.write_roots is
+// deliberately absent: it names host directories (operator-only).
+message AutoPermissions {
+  // Model alias the auto-mode classifier runs on.
+  string classifier_model = 1 [
+    (buf.validate.field).string.max_len = 128,
+    (fuse.harness.v1.ui) = {
+      label: "Classifier model"
+      widget: WIDGET_MODEL_ALIAS
+    }
+  ];
+  // Command patterns always denied.
+  repeated string deny = 2 [
+    (buf.validate.field).repeated.items.string.min_len = 1,
+    (fuse.harness.v1.ui) = {
+      label: "Deny patterns"
+      widget: WIDGET_LIST
+    }
+  ];
+  // Command patterns always asked.
+  repeated string ask = 3 [
+    (buf.validate.field).repeated.items.string.min_len = 1,
+    (fuse.harness.v1.ui) = {
+      label: "Ask patterns"
+      widget: WIDGET_LIST
+    }
+  ];
+  // web_fetch host globs always denied.
+  repeated string fetch_deny = 4 [
+    (buf.validate.field).repeated.items.string.min_len = 1,
+    (fuse.harness.v1.ui) = {
+      label: "Denied fetch hosts"
+      widget: WIDGET_LIST
+    }
+  ];
+  // web_fetch host globs always asked.
+  repeated string fetch_ask = 5 [
+    (buf.validate.field).repeated.items.string.min_len = 1,
+    (fuse.harness.v1.ui) = {
+      label: "Ask-first fetch hosts"
+      widget: WIDGET_LIST
+    }
+  ];
+  // Deterministically allow `git push` in auto mode.
+  bool allow_push = 6 [(fuse.harness.v1.ui) = {
+    label: "Allow git push"
+    widget: WIDGET_TOGGLE
+  }];
+}
+
+// Orchestrator configures the steering side-channel.
+message Orchestrator {
+  // Model alias the orchestrator runs on. Empty: the session's model.
+  string model = 1 [
+    (buf.validate.field).string.max_len = 128,
+    (fuse.harness.v1.ui) = {
+      label: "Orchestrator model"
+      widget: WIDGET_MODEL_ALIAS
+    }
+  ];
+}
+
+// Agents holds subagent runtime brakes. 0 = runtime default throughout.
+message Agents {
+  // Lifetime child-agent budget per root turn.
+  uint32 max_spawns = 1 [(fuse.harness.v1.ui) = {
+    label: "Max spawns"
+    help: "Total child agents one root turn may create. 0 uses the runtime default."
+    widget: WIDGET_NUMBER
+  }];
+  // Children running at once.
+  uint32 max_concurrent = 2 [(fuse.harness.v1.ui) = {
+    label: "Max concurrent"
+    widget: WIDGET_NUMBER
+  }];
+  // Per-pool pending-queue multiplier.
+  double queue_bound = 3 [
+    (buf.validate.field).double = {
+      gte: 0
+      finite: true
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Queue bound"
+      help: "Per-pool pending-queue multiplier. 0 uses the runtime default."
+      widget: WIDGET_NUMBER
+      tighten_only: true
+    }
+  ];
+  // Timeout for one leaf tool call, in seconds.
+  uint32 tool_timeout_seconds = 4 [(fuse.harness.v1.ui) = {
+    label: "Tool timeout (seconds)"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+}
+
+// Workflow binds a skill to a spawn pool and typed workers.
+message Workflow {
+  // Skill name the workflow binds.
+  string skill = 1 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
+    (buf.validate.field).string = {
+      max_len: 128
+      pattern: "^[a-z0-9][a-z0-9_-]*$"
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Skill"
+      widget: WIDGET_TEXT
+    }
+  ];
+  // Subtree spawn pool.
+  Pool pool = 2 [(fuse.harness.v1.ui) = {label: "Pool"}];
+  // Worker name -> worker definition.
+  map<string, Worker> workers = 3 [
+    (buf.validate.field).map.keys.string = {
+      min_len: 1
+      max_len: 64
+      pattern: "^[a-z0-9][a-z0-9_-]*$"
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Workers"
+      widget: WIDGET_KEY_VALUE
+    }
+  ];
+}
+
+// Pool is a workflow subtree's spawn policy. 0 = that brake off.
+message Pool {
+  // Children running or pending at once.
+  uint32 concurrent = 1 [(fuse.harness.v1.ui) = {
+    label: "Concurrent"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+  // Lifetime spawn quota.
+  uint32 total = 2 [(fuse.harness.v1.ui) = {
+    label: "Total"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+  // Spawn depth below the workflow root.
+  uint32 max_depth = 3 [(fuse.harness.v1.ui) = {
+    label: "Max depth"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+  // Lifetime token quota.
+  uint32 tokens = 4 [(fuse.harness.v1.ui) = {
+    label: "Token quota"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+}
+
+// Worker is a typed worker: a tool allowlist and an optional model pin.
+message Worker {
+  // Tool allowlist. Omitting spawn_agent makes the worker unable to nest.
+  repeated string tools = 1 [
+    (buf.validate.field).repeated.items.string.min_len = 1,
+    (fuse.harness.v1.ui) = {
+      label: "Tools"
+      widget: WIDGET_LIST
+    }
+  ];
+  // Model alias; empty inherits the parent's model.
+  string model = 2 [
+    (buf.validate.field).string.max_len = 128,
+    (fuse.harness.v1.ui) = {
+      label: "Model"
+      widget: WIDGET_MODEL_ALIAS
+    }
+  ];
+}
+
+// Throughput is the turn-level rate and quota surface. 0 = unlimited.
+message Throughput {
+  // Requests per minute through the gateway.
+  uint32 requests_per_minute = 1 [(fuse.harness.v1.ui) = {
+    label: "Requests per minute"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+  // Tokens per minute through the gateway.
+  uint32 tokens_per_minute = 2 [(fuse.harness.v1.ui) = {
+    label: "Tokens per minute"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+  // Lifetime session token ceiling.
+  uint32 session_tokens = 3 [(fuse.harness.v1.ui) = {
+    label: "Session token ceiling"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+  // Per-provider rate overrides keyed by provider name.
+  map<string, ProviderThroughput> providers = 4 [
+    (buf.validate.field).map.keys.string.min_len = 1,
+    (fuse.harness.v1.ui) = {
+      label: "Per-provider limits"
+      widget: WIDGET_KEY_VALUE
+    }
+  ];
+}
+
+// ProviderThroughput is a per-provider rate override. 0 = the global limit.
+message ProviderThroughput {
+  // Requests per minute.
+  uint32 requests_per_minute = 1 [(fuse.harness.v1.ui) = {
+    label: "Requests per minute"
+    widget: WIDGET_NUMBER
+  }];
+  // Tokens per minute.
+  uint32 tokens_per_minute = 2 [(fuse.harness.v1.ui) = {
+    label: "Tokens per minute"
+    widget: WIDGET_NUMBER
+  }];
+}
+
+// Context groups context-management knobs.
+message Context {
+  // Tier 2 anchored summarization.
+  Summarization summarization = 1 [(fuse.harness.v1.ui) = {label: "Summarization"}];
+  // Relevance-aware tool-result pruning.
+  Relevance relevance = 2 [(fuse.harness.v1.ui) = {label: "Relevance pruning"}];
+}
+
+// Summarization configures anchored LLM summarization.
+message Summarization {
+  // Unset: true.
+  optional bool enabled = 1 [(fuse.harness.v1.ui) = {
+    label: "Enabled"
+    widget: WIDGET_TOGGLE
+  }];
+  // Model alias; empty: the session's model.
+  string model = 2 [
+    (buf.validate.field).string.max_len = 128,
+    (fuse.harness.v1.ui) = {
+      label: "Summarizer model"
+      widget: WIDGET_MODEL_ALIAS
+    }
+  ];
+  // Context-window fraction that triggers summarization. 0: runtime default.
+  double threshold = 3 [
+    (buf.validate.field).double = {
+      gte: 0
+      lte: 1
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Threshold"
+      help: "Fraction of the context window (0 to 1) at which history is summarized. 0 uses the runtime default."
+      widget: WIDGET_NUMBER
+    }
+  ];
+  // Summarizer output token cap. 0: runtime default.
+  uint32 max_output = 4 [(fuse.harness.v1.ui) = {
+    label: "Max summary tokens"
+    widget: WIDGET_NUMBER
+  }];
+}
+
+// Relevance configures relevance-aware pruning. 0 = runtime default throughout.
+message Relevance {
+  // Heuristic scoring. Unset: true; false selects pure recency.
+  optional bool heuristic = 1 [(fuse.harness.v1.ui) = {
+    label: "Heuristic scoring"
+    widget: WIDGET_TOGGLE
+  }];
+  // Percent of the protection budget reserved for the recency floor.
+  uint32 recency_floor_pct = 2 [
+    (buf.validate.field).uint32.lte = 100,
+    (fuse.harness.v1.ui) = {
+      label: "Recency floor (%)"
+      widget: WIDGET_NUMBER
+    }
+  ];
+  // Result-body prefix scanned, in bytes.
+  uint32 body_scan_bytes = 3 [(fuse.harness.v1.ui) = {
+    label: "Body scan bytes"
+    widget: WIDGET_NUMBER
+  }];
+  // Classifier model alias for the borderline band; empty: heuristic only.
+  string classifier_model = 4 [
+    (buf.validate.field).string.max_len = 128,
+    (fuse.harness.v1.ui) = {
+      label: "Classifier model"
+      widget: WIDGET_MODEL_ALIAS
+    }
+  ];
+  // Candidates per classifier call.
+  uint32 classifier_batch_size = 5 [(fuse.harness.v1.ui) = {
+    label: "Classifier batch size"
+    widget: WIDGET_NUMBER
+  }];
+  // Lower bound of the borderline band sent to the classifier.
+  double borderline_lo = 6 [
+    (buf.validate.field).double = {
+      gte: 0
+      lte: 1
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Borderline low"
+      widget: WIDGET_NUMBER
+    }
+  ];
+  // Upper bound of the borderline band sent to the classifier.
+  double borderline_hi = 7 [
+    (buf.validate.field).double = {
+      gte: 0
+      lte: 1
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Borderline high"
+      widget: WIDGET_NUMBER
+    }
+  ];
+}
+
+// Pipeline groups pipeline-composition knobs.
+message Pipeline {
+  // Caps on LLM-synthesized pipelines.
+  PipelineSynthesis synthesis = 1 [(fuse.harness.v1.ui) = {label: "Synthesis caps"}];
+}
+
+// PipelineSynthesis caps a synthesized DAG. 0 = runtime default.
+message PipelineSynthesis {
+  // Maximum steps.
+  uint32 max_steps = 1 [(fuse.harness.v1.ui) = {
+    label: "Max steps"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+  // Maximum fan-out.
+  uint32 max_fanout = 2 [(fuse.harness.v1.ui) = {
+    label: "Max fan-out"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+  // Maximum depth.
+  uint32 max_depth = 3 [(fuse.harness.v1.ui) = {
+    label: "Max depth"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+  // Maximum attempts per step.
+  uint32 max_attempts = 4 [(fuse.harness.v1.ui) = {
+    label: "Max attempts"
+    widget: WIDGET_NUMBER
+    tighten_only: true
+  }];
+}
+
+// ResearchProvider selects the web search backend.
+enum ResearchProvider {
+  // Auto-detect from available keys (config value "").
+  RESEARCH_PROVIDER_UNSPECIFIED = 0 [(fuse.harness.v1.value_ui) = {display_name: "Automatic"}];
+  // Brave Search (config value `brave`).
+  RESEARCH_PROVIDER_BRAVE = 1 [(fuse.harness.v1.value_ui) = {display_name: "Brave"}];
+  // Tavily (config value `tavily`).
+  RESEARCH_PROVIDER_TAVILY = 2 [(fuse.harness.v1.value_ui) = {display_name: "Tavily"}];
+  // A custom JSON endpoint (config value `custom`).
+  RESEARCH_PROVIDER_CUSTOM = 3 [(fuse.harness.v1.value_ui) = {display_name: "Custom endpoint"}];
+}
+
+// Research configures research mode. 0 = runtime default throughout.
+message Research {
+  // Search backend.
+  ResearchProvider provider = 1 [
+    (buf.validate.field).enum.defined_only = true,
+    (fuse.harness.v1.ui) = {
+      label: "Search provider"
+      widget: WIDGET_SELECT
+    }
+  ];
+  // Search queries per research run.
+  uint32 max_queries = 2 [(fuse.harness.v1.ui) = {
+    label: "Max queries"
+    widget: WIDGET_NUMBER
+  }];
+  // Results kept per query.
+  uint32 max_results = 3 [(fuse.harness.v1.ui) = {
+    label: "Max results"
+    widget: WIDGET_NUMBER
+  }];
+  // Content extracted per source, in KB.
+  uint32 max_content_kb = 4 [(fuse.harness.v1.ui) = {
+    label: "Max content (KB)"
+    widget: WIDGET_NUMBER
+  }];
+  // Honor robots.txt. Unset: true.
+  optional bool respect_robots = 5 [(fuse.harness.v1.ui) = {
+    label: "Respect robots.txt"
+    widget: WIDGET_TOGGLE
+  }];
+  // Custom endpoint settings (provider custom).
+  CustomSearchProvider custom = 6 [(fuse.harness.v1.ui) = {label: "Custom endpoint"}];
+}
+
+// CustomSearchProvider is a JSON search endpoint (SearXNG-shaped by default).
+message CustomSearchProvider {
+  // Endpoint URL.
+  string url = 1 [
+    (buf.validate.field).ignore = IGNORE_IF_ZERO_VALUE,
+    (buf.validate.field).string.uri = true,
+    (fuse.harness.v1.ui) = {
+      label: "URL"
+      widget: WIDGET_URL
+    }
+  ];
+  // Request headers. A value is either a literal or the name of a secret.
+  map<string, HeaderValue> headers = 2 [
+    (buf.validate.field).map.keys.string.min_len = 1,
+    // A header whose name conventionally carries a credential must use
+    // secret_ref. The pattern is kept identical to credentialHeaderPattern in
+    // internal/harnessconfig (a test pins the two together).
+    (buf.validate.field).cel = {
+      id: "fuse.headers.credential_literal"
+      message: "a credential header (auth, key, token, secret, password, cookie) must use secret_ref, not a literal"
+      expression: "this.all(k, !k.matches('(?i)(auth|key|token|secret|password|^cookie$)') || !has(this[k].literal))"
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Headers"
+      widget: WIDGET_KEY_VALUE
+    }
+  ];
+  // JSON path to the results array. Empty: runtime default.
+  string results_path = 3 [(fuse.harness.v1.ui) = {label: "Results path"}];
+  // Result title field. Empty: runtime default.
+  string title_field = 4 [(fuse.harness.v1.ui) = {label: "Title field"}];
+  // Result URL field. Empty: runtime default.
+  string url_field = 5 [(fuse.harness.v1.ui) = {label: "URL field"}];
+  // Result snippet field. Empty: runtime default.
+  string snippet_field = 6 [(fuse.harness.v1.ui) = {label: "Snippet field"}];
+}
+
+// HeaderValue is a header's value: a non-secret literal, or the NAME of a
+// secret the runtime resolves. Credential-named headers (an Authorization
+// header, an API key) must use secret_ref; validation rejects a literal there.
+message HeaderValue {
+  oneof value {
+    option (buf.validate.oneof).required = true;
+    // A non-secret literal value.
+    string literal = 1 [
+      // "secret-ref:" is the mapping's reserved stand-in for a secret_ref.
+      (buf.validate.field).cel = {
+        id: "fuse.literal.reserved_prefix"
+        message: "a literal must not start with the reserved prefix \"secret-ref:\""
+        expression: "!this.startsWith('secret-ref:')"
+      },
+      (fuse.harness.v1.ui) = {
+        label: "Value"
+        widget: WIDGET_TEXT
+      }
+    ];
+    // Name of the secret holding the value.
+    string secret_ref = 2 [
+      (buf.validate.field).string = {
+        min_len: 1
+        max_len: 253
+        pattern: "^[A-Za-z0-9][A-Za-z0-9_./-]*$"
+      },
+      (fuse.harness.v1.ui) = {
+        label: "Secret"
+        widget: WIDGET_SECRET_REF
+        secret_ref: true
+      }
+    ];
+  }
+}

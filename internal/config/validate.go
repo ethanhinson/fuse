@@ -17,48 +17,115 @@ var validModes = map[string]bool{
 	"auto":       true,
 }
 
+// Problem is one structural validation finding against a resolved Config
+// (change 0084). Path is the dotted YAML key path of the offending key (e.g.
+// "context.summarization.threshold") so a caller that renders config as a form
+// can place the error next to the field; Message describes the problem relative
+// to that key. Err, when set, is the complete error the CLI has always printed
+// for this rule (kept byte-identical, wrapping preserved); when nil the full
+// text is "config: <Path> <Message>".
+type Problem struct {
+	Path    string
+	Message string
+	Err     error
+}
+
+// Error renders the problem as the CLI's startup error text.
+func (p Problem) Error() string {
+	if p.Err != nil {
+		return p.Err.Error()
+	}
+	return "config: " + p.Path + " " + p.Message
+}
+
+// Unwrap exposes the wrapped legacy error, if any.
+func (p Problem) Unwrap() error { return p.Err }
+
 // Validate performs structural validation of a resolved Config and returns the
 // first problem found, or nil. It deliberately does NOT resolve model aliases —
 // that requires the model.Registry, which lives above this leaf package, so
-// model-reference checks are done by the caller (see cmd/fuse) where both the
-// config and the registry are in scope. Validate covers the checks that need
-// only the config itself: enum membership and numeric sanity.
+// model-reference checks are done by the caller (see internal/configcheck) where
+// both the config and the registry are in scope. Validate covers the checks that
+// need only the config itself: enum membership and numeric sanity.
 //
 // The loader already clamps some numerics (e.g. negative MaxSpawns → 64); this
 // method catches the values the loader passes through untouched and the enums it
 // silently defaults, so a malformed config fails loudly at startup rather than
 // behaving surprisingly at runtime.
+//
+// The rules themselves live in Problems (change 0084), which reports every
+// failing rule with its key path; Validate keeps the startup contract of
+// returning the first one, with the exact text it has always had.
 func (c Config) Validate() error {
+	ps := c.Problems()
+	if len(ps) == 0 {
+		return nil
+	}
+	if ps[0].Err != nil {
+		return ps[0].Err
+	}
+	return ps[0]
+}
+
+// Problems runs every structural validation rule and returns all failures, in
+// rule order (so Problems()[0] is what Validate reports). It is the single home
+// of these rules: the CLI startup gate (Validate) and the harness-spec validator
+// (github.com/ethanhinson/fuse/harness, change 0084) both read it, so the two
+// can never disagree about what a valid config is.
+func (c Config) Problems() []Problem {
+	var ps []Problem
+	add := func(path, format string, args ...any) {
+		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
+	}
+
 	if m := c.Permissions.Mode; m != "" && !validModes[m] {
-		return fmt.Errorf("config: permissions.mode %q is invalid (want off, prompt-all, smart, or auto)", m)
+		add("permissions.mode", "%q is invalid (want off, prompt-all, smart, or auto)", m)
 	}
 
 	// Note: agents.tool_timeout_seconds is intentionally NOT checked here. The
 	// loader's tighten-only merge (ADR-0006) only applies a value when it is > 0
 	// and silently drops a negative, so a negative can never reach the resolved
-	// Config — a Validate check for it would be dead code implying a protection
-	// that does not exist. MaxTurns/MaxTokens ARE passed through unclamped, so
-	// they are checked below.
+	// Config - a check for it would be dead code implying a protection that does
+	// not exist. MaxTurns/MaxTokens ARE passed through unclamped, so they are
+	// checked below.
 	if c.MaxTokens < 0 {
-		return fmt.Errorf("config: max_tokens must be >= 0, got %d", c.MaxTokens)
+		add("max_tokens", "must be >= 0, got %d", c.MaxTokens)
 	}
 	if c.MaxTurns != nil && *c.MaxTurns < 0 {
-		return fmt.Errorf("config: max_turns must be >= 0 (0 = unlimited), got %d", *c.MaxTurns)
+		add("max_turns", "must be >= 0 (0 = unlimited), got %d", *c.MaxTurns)
 	}
 
 	// Summarization threshold is a context-window fraction; only 0 (unset) or a
 	// value in (0,1] is meaningful. A value >1 or <0 would never (or always)
 	// trigger, silently defeating Tier-2 summarization.
 	if t := c.Context.Summarization.Threshold; t < 0 || t > 1 {
-		return fmt.Errorf("config: context.summarization.threshold must be in [0,1], got %g", t)
+		add("context.summarization.threshold", "must be in [0,1], got %g", t)
 	}
-	// Relevance borderline band must be ordered and within [0,1] when set.
+	// Relevance borderline band must be ordered and within [0,1] when set. The
+	// problem is attributed to the bound(s) at fault: the one out of range, or
+	// BOTH when the band is merely out of order (either may be the one the
+	// author set; the other may be a default). Validate reports the first, whose
+	// text is the same either way.
 	rel := c.Context.Relevance
 	if rel.BorderlineLo < 0 || rel.BorderlineHi > 1 || (rel.BorderlineHi > 0 && rel.BorderlineLo > rel.BorderlineHi) {
-		return fmt.Errorf("config: context.relevance borderline band [%g,%g] is invalid (want 0<=lo<=hi<=1)", rel.BorderlineLo, rel.BorderlineHi)
+		var paths []string
+		switch {
+		case rel.BorderlineLo < 0 && rel.BorderlineHi > 1:
+			paths = []string{"context.relevance.borderline_lo", "context.relevance.borderline_hi"}
+		case rel.BorderlineLo < 0:
+			paths = []string{"context.relevance.borderline_lo"}
+		case rel.BorderlineHi > 1:
+			paths = []string{"context.relevance.borderline_hi"}
+		default:
+			paths = []string{"context.relevance.borderline_lo", "context.relevance.borderline_hi"}
+		}
+		msg := fmt.Sprintf("borderline band [%g,%g] is invalid (want 0<=lo<=hi<=1)", rel.BorderlineLo, rel.BorderlineHi)
+		for _, path := range paths {
+			ps = append(ps, Problem{Path: path, Message: msg, Err: fmt.Errorf("config: context.relevance %s", msg)})
+		}
 	}
 	if rel.RecencyFloorPct < 0 || rel.RecencyFloorPct > 100 {
-		return fmt.Errorf("config: context.relevance.recency_floor_pct must be in [0,100], got %d", rel.RecencyFloorPct)
+		add("context.relevance.recency_floor_pct", "must be in [0,100], got %d", rel.RecencyFloorPct)
 	}
 
 	// loop_server.lease_ttl (change 0049) is a Go duration string when set; a
@@ -68,22 +135,26 @@ func (c Config) Validate() error {
 	if ttl := c.LoopServer.LeaseTTL; ttl != "" {
 		d, err := time.ParseDuration(ttl)
 		if err != nil {
-			return fmt.Errorf("config: loop_server.lease_ttl %q is not a valid duration (e.g. \"30s\", \"2m\"): %w", ttl, err)
-		}
-		if d < 0 {
-			return fmt.Errorf("config: loop_server.lease_ttl must be >= 0, got %s", d)
+			ps = append(ps, Problem{
+				Path:    "loop_server.lease_ttl",
+				Message: fmt.Sprintf("%q is not a valid duration (e.g. \"30s\", \"2m\")", ttl),
+				Err:     fmt.Errorf("config: loop_server.lease_ttl %q is not a valid duration (e.g. \"30s\", \"2m\"): %w", ttl, err),
+			})
+		} else if d < 0 {
+			add("loop_server.lease_ttl", "must be >= 0, got %s", d)
 		}
 	}
 
+	// The issuer and observability checks are operator-only surfaces and stop at
+	// their first problem; each is reported under its block's path.
 	if err := validateIssuers(c.LoopServer.Issuers); err != nil {
-		return err
+		ps = append(ps, Problem{Path: "loop_server.issuers", Message: strings.TrimPrefix(err.Error(), "config: "), Err: err})
 	}
-
 	if err := validateObservability(c.Observability); err != nil {
-		return err
+		ps = append(ps, Problem{Path: "observability", Message: strings.TrimPrefix(err.Error(), "config: "), Err: err})
 	}
 
-	return nil
+	return ps
 }
 
 // validateIssuers checks loop_server.issuers. Each problem names the issuer by

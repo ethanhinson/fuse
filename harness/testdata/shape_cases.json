@@ -1,0 +1,83 @@
+[
+  {
+    "name": "empty spec is valid",
+    "spec": {},
+    "want": []
+  },
+  {
+    "name": "realistic spec is valid",
+    "spec": {
+      "models": {"defaultAlias": "fast", "entries": {"fast": {"id": "cloud/fast-1", "maxTokens": 4096}}},
+      "skills": [{"name": "research"}],
+      "mcpServers": [{"name": "rentals", "transport": "MCP_TRANSPORT_STREAMABLE_HTTP", "url": "https://mcp.example.com/mcp",
+                      "auth": {"type": "MCP_AUTH_TYPE_BEARER", "clientSecretRef": "rentals/token"}}],
+      "permissions": {"mode": "PERMISSION_MODE_AUTO"},
+      "research": {"custom": {"url": "https://search.example.com", "headers": {"Authorization": {"secretRef": "search-auth"}, "Accept": {"literal": "application/json"}}}}
+    },
+    "want": []
+  },
+  {
+    "name": "mcp server shapes",
+    "spec": {
+      "mcpServers": [
+        {"name": "a", "transport": "MCP_TRANSPORT_HTTP", "url": "not a url"},
+        {"name": "a", "url": "https://ok.example.com"},
+        {"name": "", "transport": "MCP_TRANSPORT_SSE", "url": "https://x.example.com", "auth": {"clientSecretRef": "bad ref!"}}
+      ]
+    },
+    "want": [
+      {"fieldPath": "mcp_servers", "ruleId": "fuse.mcp_servers.unique_names"},
+      {"fieldPath": "mcp_servers[0].url", "ruleId": "string.uri"},
+      {"fieldPath": "mcp_servers[1].transport", "ruleId": "enum.not_in"},
+      {"fieldPath": "mcp_servers[2].auth.client_secret_ref", "ruleId": "string.pattern"},
+      {"fieldPath": "mcp_servers[2].name", "ruleId": "string.min_len"},
+      {"fieldPath": "mcp_servers[2].name", "ruleId": "string.pattern"}
+    ]
+  },
+  {
+    "name": "ranges and names",
+    "spec": {
+      "skills": [{"name": "Bad Name"}],
+      "context": {"summarization": {"threshold": 1.5}, "relevance": {"recencyFloorPct": 150, "borderlineLo": -0.1}},
+      "agents": {"queueBound": -1}
+    },
+    "want": [
+      {"fieldPath": "agents.queue_bound", "ruleId": "double.gte"},
+      {"fieldPath": "context.relevance.borderline_lo", "ruleId": "double.gte_lte"},
+      {"fieldPath": "context.relevance.recency_floor_pct", "ruleId": "uint32.lte"},
+      {"fieldPath": "context.summarization.threshold", "ruleId": "double.gte_lte"},
+      {"fieldPath": "skills[0].name", "ruleId": "string.pattern"}
+    ]
+  },
+  {
+    "name": "map keys, list items, oneof",
+    "spec": {
+      "workflows": {"Bad Key": {}},
+      "models": {"entries": {"ok": {"id": ""}}},
+      "permissions": {"autoApprove": [""]},
+      "research": {"custom": {"headers": {"X": {}}}}
+    },
+    "want": [
+      {"fieldPath": "models.entries[\"ok\"].id", "ruleId": "string.min_len"},
+      {"fieldPath": "permissions.auto_approve[0]", "ruleId": "string.min_len"},
+      {"fieldPath": "research.custom.headers[\"X\"].value", "ruleId": "required"},
+      {"fieldPath": "workflows[\"Bad Key\"]", "ruleId": "string.pattern"}
+    ]
+  },
+  {
+    "name": "reserved model alias and header rules",
+    "spec": {
+      "models": {"entries": {"default": {"id": "cloud/x"}}},
+      "research": {"custom": {"headers": {
+        "Authorization": {"literal": "Bearer sk-123"},
+        "X-Api-Key": {"secretRef": "ok"},
+        "Accept": {"literal": "secret-ref:sneaky"}
+      }}}
+    },
+    "want": [
+      {"fieldPath": "models.entries", "ruleId": "fuse.models.entries.reserved_default"},
+      {"fieldPath": "research.custom.headers", "ruleId": "fuse.headers.credential_literal"},
+      {"fieldPath": "research.custom.headers[\"Accept\"].literal", "ruleId": "fuse.literal.reserved_prefix"}
+    ]
+  }
+]

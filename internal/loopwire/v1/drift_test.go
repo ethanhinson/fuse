@@ -53,7 +53,8 @@ func TestGeneratedStubsHaveNoDrift(t *testing.T) {
 		"    out: " + tmp + "/ts\n" +
 		"    opt:\n" +
 		"      - target=ts\n" +
-		"      - import_extension=js\n"
+		"      - import_extension=js\n" +
+		"      - rewrite_imports=./buf/validate/**/*_pb.js:@bufbuild/protovalidate/gen\n"
 	tmplPath := filepath.Join(tmp, "buf.gen.drift.yaml")
 	if err := os.WriteFile(tmplPath, []byte(template), 0o644); err != nil {
 		t.Fatalf("write drift template: %v", err)

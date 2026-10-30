@@ -353,7 +353,27 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 	if err != nil {
 		return fmt.Errorf("read config %s: %w", path, err)
 	}
+	return mergeData(c, data, path, trusted, projects)
+}
 
+// FromYAML resolves a config document the way the loader resolves the trusted
+// home file: Default() with data merged over it as a TRUSTED source (every key
+// honored, no projects: capture, no .fuse.local.yml, no environment overrides).
+// source names the document in errors. It exists so a caller holding a document
+// that is not a file on disk (the harness-spec mapping, change 0084) gets the
+// loader's exact merge semantics (defaults, omitted-key discipline, clamps)
+// from the one place they live instead of a re-implementation.
+func FromYAML(data []byte, source string) (Config, error) {
+	c := Default()
+	if err := mergeData(&c, data, source, true, nil); err != nil {
+		return Config{}, err
+	}
+	return c, nil
+}
+
+// mergeData is mergeFile's body over already-read bytes; path names the source
+// in errors and warnings.
+func mergeData(c *Config, data []byte, path string, trusted bool, projects *map[string]ProjectConfig) error {
 	var raw rawConfig
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
