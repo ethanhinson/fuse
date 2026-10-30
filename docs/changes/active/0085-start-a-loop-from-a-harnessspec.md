@@ -2,7 +2,7 @@
 id: 85
 slug: 'start-a-loop-from-a-harnessspec'
 title: 'Start a loop from a HarnessSpec'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/start-a-loop-from-a-harnessspec'
 pr:
 blocked_by:
 reconciled: false
