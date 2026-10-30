@@ -17,7 +17,13 @@ import (
 func newFSDurableBackend() (*fsstore.FSDurableStore, error) {
 	dir := session.DefaultLogDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("durable store: create %s: %w", dir, err)
+		return nil, fsBackendError{fmt.Errorf("filesystem durable store: create %s: %w", dir, err)}
 	}
 	return fsstore.NewDurableFSStore(dir), nil
 }
+
+// fsBackendError marks a failure of the filesystem durable store itself, so the
+// startup error names its real remedy instead of the Postgres one.
+type fsBackendError struct{ error }
+
+func (e fsBackendError) Unwrap() error { return e.error }

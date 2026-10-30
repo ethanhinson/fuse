@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -142,6 +143,10 @@ func buildLoopServerRuntimeDepsStrict(sb *sandbox.Service, cfg config.Config, re
 	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
 	rateGate model.RateGate, observer observe.Observer, skillSet *skills.Set) (runtime.Deps, error) {
 	durableStore, durableReg, derr := selectDurableBackendFn(cfg)
+	var fsErr fsBackendError
+	if errors.As(derr, &fsErr) {
+		return runtime.Deps{}, fmt.Errorf("durable backend: %w; refusing to start without a durable store - check that the directory can be created and written by this user", derr)
+	}
 	if derr != nil {
 		return runtime.Deps{}, fmt.Errorf("durable backend: %w — refusing to start on the filesystem store (loops would not survive a restart); fix the DSN or wait for Postgres", derr)
 	}
