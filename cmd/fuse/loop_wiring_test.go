@@ -349,6 +349,10 @@ func TestRunnerYieldsCoordinatorSlot(t *testing.T) {
 
 const wiringPipelineDef = "name: p\nsteps:\n  - name: s1\n    worker: reader\n    prompt: hi\n"
 
+// wiringPlainPipelineDef names no worker: outside a workflow a worker step is
+// refused (agent.ErrWorkerOutsideWorkflow), so the plain path runs freeform steps.
+const wiringPlainPipelineDef = "name: p\nsteps:\n  - name: s1\n    prompt: hi\n"
+
 func TestPipelineRunFnWorkflowUsesRunner(t *testing.T) {
 	ctx := context.Background()
 
@@ -371,7 +375,7 @@ func TestPipelineRunFnWorkflowUsesRunner(t *testing.T) {
 	plain := newWiringHarness(t)
 	plainFn := makePipelineRunFn(plain.makeSpawner(plain.root, 0), plain.w.bb, plain.tree.Scheduler(), plain.root,
 		plain.w.scope.runner(plain.makeSpawner, plain.root))
-	line, err = plainFn(ctx, []byte(wiringPipelineDef), "")
+	line, err = plainFn(ctx, []byte(wiringPlainPipelineDef), "")
 	if err != nil || line != "pipeline p: completed" {
 		t.Fatalf("plain pipeline = %q, %v; want completed", line, err)
 	}

@@ -73,6 +73,10 @@ func (a *workflowActivation) workerNames() []string {
 //     and a non-empty requested subset may only NARROW it (any requested tool not
 //     in the allowlist is rejected). The allowlist is authoritative — a worker
 //     without spawn_agent cannot regain it via the subset.
+//   - worker names a known worker with an empty allowlist: an error (change
+//     0095). The allowlist is the worker's whole tool set, so an empty one would
+//     otherwise fall through to "inherit all"; the config and harness validators
+//     refuse it first, and this is the defense in depth behind them.
 func resolveWorkerTools(wf config.WorkflowConfig, worker string, requested []string) ([]string, error) {
 	if worker == "" {
 		return requested, nil
@@ -80,6 +84,9 @@ func resolveWorkerTools(wf config.WorkflowConfig, worker string, requested []str
 	w, ok := wf.Workers[worker]
 	if !ok {
 		return nil, fmt.Errorf("unknown worker %q", worker)
+	}
+	if len(w.Tools) == 0 {
+		return nil, fmt.Errorf("worker %q declares no tools", worker)
 	}
 	allow := map[string]bool{}
 	for _, t := range w.Tools {
@@ -185,7 +192,7 @@ func newWorkflowScope(tree *agent.AgentTree, workflows map[string]config.Workflo
 
 // childPlan is the workflow-resolved shape of one child spawn.
 type childPlan struct {
-	tools []string // effective tool list (nil = inherit all)
+	tools []string // effective tool list (nil = inherit all, only for a freeform spawn: a bound worker always has a non-empty allowlist)
 	model string   // worker model pin, "" when none
 	bound bool     // a worker was selected inside a workflow
 }
@@ -213,6 +220,16 @@ func unknownWorkflowErr(name string, names []string) error {
 		list = strings.Join(names, ", ")
 	}
 	return fmt.Errorf("unknown workflow %q (available: %s)", name, list)
+}
+
+// workerOutsideWorkflowErr is the one refusal for a worker named where no
+// workflow is active. names is the sorted list of configured workflows.
+func workerOutsideWorkflowErr(worker string, names []string) error {
+	list := "none configured"
+	if len(names) > 0 {
+		list = strings.Join(names, ", ")
+	}
+	return fmt.Errorf("%w: worker %q named outside any workflow; pass workflow (available: %s)", agent.ErrWorkerOutsideWorkflow, worker, list)
 }
 
 // activateWorkflow activates the workflow node roots (its WorkflowRoot marker):
@@ -317,8 +334,9 @@ func (s *workflowScope) spawnTool(fn tools.SpawnFunc, node *agent.AgentNode) *to
 // checkRequest validates a spawn request's workflow and worker names before any
 // node exists or any quota is spent. A worker resolves against the requested
 // workflow when one is named, else against the parent's governing workflow;
-// outside every workflow a worker is ignored (as before). A nested activation is
-// left to the Spawner (agent.ErrNestedWorkflow).
+// outside every workflow a worker is refused (agent.ErrWorkerOutsideWorkflow),
+// since it has nothing to resolve against. A nested activation is left to the
+// Spawner (agent.ErrNestedWorkflow).
 func (s *workflowScope) checkRequest(parent *agent.AgentNode, workflow, worker string) error {
 	if workflow != "" {
 		if err := s.check(workflow); err != nil {
@@ -334,10 +352,12 @@ func (s *workflowScope) checkRequest(parent *agent.AgentNode, workflow, worker s
 	if worker == "" {
 		return nil
 	}
-	if act, _ := s.activationOf(parent.ID); act != nil {
-		if _, ok := act.cfg.Workers[worker]; !ok {
-			return fmt.Errorf("unknown worker %q", worker)
-		}
+	act, _ := s.activationOf(parent.ID)
+	if act == nil {
+		return workerOutsideWorkflowErr(worker, s.names())
+	}
+	if _, ok := act.cfg.Workers[worker]; !ok {
+		return fmt.Errorf("unknown worker %q", worker)
 	}
 	return nil
 }
@@ -357,8 +377,9 @@ func (s *workflowScope) spawnFunc(sp *agent.Spawner, parent *agent.AgentNode) to
 // prepareChild is the child builder's first step: it activates the workflow a
 // workflow-root child roots, then resolves the child's tools and model pin
 // against the governing workflow. Outside every workflow the requested subset
-// passes through unchanged and any worker is ignored. It repeats the name checks
-// for paths that call Spawner.Spawn directly (pipeline steps).
+// passes through unchanged and a named worker is refused
+// (agent.ErrWorkerOutsideWorkflow). It repeats the name checks for paths that
+// call Spawner.Spawn directly (pipeline steps).
 func (s *workflowScope) prepareChild(opts agent.SpawnOpts, child *agent.AgentNode) (childPlan, error) {
 	if opts.Workflow != "" {
 		if _, err := s.activateWorkflow(child); err != nil {
@@ -367,6 +388,9 @@ func (s *workflowScope) prepareChild(opts agent.SpawnOpts, child *agent.AgentNod
 	}
 	act, _ := s.activationOf(child.ID)
 	if act == nil {
+		if opts.Worker != "" {
+			return childPlan{}, workerOutsideWorkflowErr(opts.Worker, s.names())
+		}
 		return childPlan{tools: opts.Tools}, nil
 	}
 	rt, err := resolveWorkerTools(act.cfg, opts.Worker, opts.Tools)
