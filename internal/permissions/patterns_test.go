@@ -128,8 +128,11 @@ func TestProtectiveMatch_NamesTheFirstHit(t *testing.T) {
 	if pat, ok := protectivePattern([]string{"web_fetch"}, "web_fetch", `{"url":"https://example.com"}`); !ok || pat != "web_fetch" {
 		t.Fatalf("tool-name subject = %q %v, want web_fetch true", pat, ok)
 	}
-	if pat, ok := protectivePattern([]string{"bash:/usr/bin/rm *"}, "bash", bashArgs("/usr/bin/rm -rf a/b")); !ok || pat != "bash:/usr/bin/rm *" {
-		t.Fatalf("raw-text subject = %q %v, want bash:/usr/bin/rm * true", pat, ok)
+	if _, err := splitSegments("sudo ls"); err == nil {
+		t.Fatal("fixture: sudo ls must be unparseable so the raw-text subject is exercised")
+	}
+	if pat, ok := protectivePattern([]string{"bash:sudo *"}, "bash", bashArgs("sudo ls")); !ok || pat != "bash:sudo *" {
+		t.Fatalf("raw-text subject = %q %v, want bash:sudo * true", pat, ok)
 	}
 	if pat, ok := protectivePattern(pats, "bash", bashArgs("ls")); ok || pat != "" {
 		t.Fatalf("miss = %q %v, want \"\" false", pat, ok)

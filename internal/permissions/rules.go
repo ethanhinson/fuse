@@ -590,9 +590,8 @@ func matchesSegment(kind patternConsumer, patterns []string, seg Segment) bool {
 
 // protectiveHit reports whether any protective pattern matches the parsed
 // command: per segment (full subject and head) or against the whole command.
-// It is the ONE protective subject rule; auto mode (evalRules) and smart mode
-// (protectivePattern) both call it, so the two modes cannot drift apart
-// (change 0088).
+// It is the boolean wrapper over protectiveHitPattern that the deny call site
+// in evalRules uses.
 func protectiveHit(patterns []string, segments []Segment) bool {
 	_, ok := protectiveHitPattern(patterns, segments)
 	return ok
@@ -602,6 +601,9 @@ func protectiveHit(patterns []string, segments []Segment) bool {
 // subjects protectiveHit always did (each segment's subject, each segment's
 // "bash:<argv0>" head, then the whole command) with matchProtective and
 // returns the first pattern that matched, so an explicit ask can name it.
+// It is the ONE protective subject rule; auto mode (evalRules) and smart mode
+// (protectivePattern) both call it, so the two modes cannot drift apart
+// (change 0088).
 func protectiveHitPattern(patterns []string, segments []Segment) (string, bool) {
 	if len(patterns) == 0 || len(segments) == 0 {
 		return "", false
