@@ -1,19 +1,14 @@
 # Backlog
 
-**94 changes** — 🟢 2 in progress · 🟣 1 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 80 done · 🗑️ 6 killed
+**94 changes** — 🟢 3 in progress · 🟡 2 proposed · ⚪ 3 deferred · ✅ 80 done · 🗑️ 6 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (3)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
+| [0093](active/0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md) | Permission floor and wrapper parity across modes and bindings | `medium` | `fix` | [spec](../superpowers/specs/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md) | `fix/permission-floor-and-wrapper-parity-across-modes-and-binding` | building |
 | [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | [spec](../superpowers/specs/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md) | `fix/workflows-activate-per-spawn-in-every-host-enforcing-pools-a` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🟣 Groomed (1)
-
-| # | Title | Priority | Type | Spec | Readiness |
-|---|-------|----------|------|------|-----------|
-| [0093](active/0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md) | Permission floor and wrapper parity across modes and bindings | `medium` | `fix` | [spec](../superpowers/specs/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md) | build-ready |
 
 ## 🟡 Proposed (2)
 

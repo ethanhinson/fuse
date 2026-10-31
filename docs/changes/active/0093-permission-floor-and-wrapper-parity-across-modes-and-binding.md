@@ -2,7 +2,7 @@
 id: 93
 slug: 'permission-floor-and-wrapper-parity-across-modes-and-binding'
 title: 'Permission floor and wrapper parity across modes and bindings'
-status: 'proposed'
+status: 'in-progress'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/permission-floor-and-wrapper-parity-across-modes-and-binding'
 pr:
 blocked_by:
 reconciled: false
