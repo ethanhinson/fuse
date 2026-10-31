@@ -1,6 +1,6 @@
 # Backlog
 
-**96 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 2 proposed · ⚪ 3 deferred · ✅ 83 done · 🗑️ 6 killed
+**97 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 83 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|----|-------|
 | [0094](active/0094-approval-provenance-is-per-gate-not-per-process.md) | Approval provenance is per gate, not per process | `medium` | `fix` | [#118](https://github.com/ethanhinson/fuse/pull/118) | awaiting merge |
 
-## 🟡 Proposed (2)
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0097](active/0097-approve-all-carries-across-the-cli-model-relay-and-policy-de.md) | Approve-all carries across the CLI-model relay, and policy denials say who denied | `low` | `fix` | needs-grooming |
 | [0096](active/0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | `high` | `fix` | ⏳ waiting on #94 — needs your merge |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
@@ -38,6 +39,7 @@ graph TD
   0083
   0094
   0094 --> 0096
+  0097
   0012:::done
   0052:::done
   0063:::done
