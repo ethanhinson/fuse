@@ -146,6 +146,45 @@ func TestMCPServerGateProvenanceFollowsSocket(t *testing.T) {
 		}
 	})
 
+	// A socket whose parent says its approver is policy (a cli/ model under a
+	// policy approver relays an AlwaysApprove stand-in): the explicit ask must
+	// be denied at the rules layer, decided_by policy, and never run. An unknown
+	// label is also policy (fail-safe).
+	for _, prov := range []string{"policy", "bogus"} {
+		t.Run("socket with provenance "+prov+" is policy", func(t *testing.T) {
+			dir, err := os.MkdirTemp("", "hitl")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(dir) })
+			sockPath := filepath.Join(dir, "s.sock")
+			srv, err := hitl.NewServer(sockPath, func(context.Context, permissions.ApprovalRequest) (bool, bool, error) {
+				return true, false, nil
+			})
+			if err != nil {
+				t.Fatalf("hitl.NewServer: %v", err)
+			}
+			t.Cleanup(srv.Close)
+
+			gate := buildMCPServerGate(cfg, toolReg, mcpServerApprover(sockPath, prov))
+			var decisions []permissions.Decision
+			ctx := permissions.WithDecisionSink(context.Background(), func(d permissions.Decision) {
+				decisions = append(decisions, d)
+			})
+			marker := "ran-" + prov
+			res := gate.Execute(ctx, "bash", argsJSON(map[string]any{"command": "touch " + marker}))
+			if !res.Denied {
+				t.Fatalf("policy-labeled socket gate must deny the explicit ask; res=%+v decisions=%+v", res, decisions)
+			}
+			if _, err := os.Stat(filepath.Join(work, marker)); err == nil {
+				t.Fatalf("denied command was executed: %s exists", marker)
+			}
+			if len(decisions) != 1 || decisions[0].Verdict != "deny" || decisions[0].Layer != permissions.LayerRules || decisions[0].DecidedBy != permissions.DecidedByPolicy {
+				t.Fatalf("decisions = %+v, want one deny/%s/%s", decisions, permissions.LayerRules, permissions.DecidedByPolicy)
+			}
+		})
+	}
+
 	t.Run("socket is human", func(t *testing.T) {
 		// os.MkdirTemp, not t.TempDir: a long test name can push a macOS unix
 		// socket path past its 104-byte limit.
@@ -163,7 +202,7 @@ func TestMCPServerGateProvenanceFollowsSocket(t *testing.T) {
 		}
 		t.Cleanup(srv.Close)
 
-		gate := buildMCPServerGate(cfg, toolReg, hitl.ClientApprovalFunc(sockPath))
+		gate := buildMCPServerGate(cfg, toolReg, mcpServerApprover(sockPath, ""))
 		var decisions []permissions.Decision
 		ctx := permissions.WithDecisionSink(context.Background(), func(d permissions.Decision) {
 			decisions = append(decisions, d)

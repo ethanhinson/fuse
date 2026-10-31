@@ -283,7 +283,7 @@ type researchProbeDepsInput struct {
 // recorder), workflow activation (worker allowlists, pool backstop), AlwaysApprove
 // (headless; a policy approver, so the probe's root and child gates are policy
 // provenance and deny explicit asks at the rules layer). BaseDir is ""
-// (NoopStore — the probe writes no event log). The tree is supplied by the caller (Deps.Tree) so probe.Summarize still sees it after
+// (NoopStore - the probe writes no event log). The tree is supplied by the caller (Deps.Tree) so probe.Summarize still sees it after
 // h.Wait(). Cloned child-builder site 3 of 4, wired through loopWiring (learning
 // patch-every-cloned-child-builder).
 //

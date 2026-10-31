@@ -630,7 +630,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	}
 
 	// Human approval required. The ask is emitted BEFORE g.approve runs so asks
-	// are countable regardless of the gate's approver — an AlwaysApprove
+	// are countable regardless of the gate's approver - an AlwaysApprove
 	// (headless policy) gate shows as back-to-back ask→allow events.
 	g.emitDecision(ctx, mode, name, args, "ask", askLayer, askReason, "", askClassifier)
 	req := ApprovalRequest{

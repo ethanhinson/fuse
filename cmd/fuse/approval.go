@@ -26,7 +26,7 @@ func stdinIsTerminal() bool {
 // every entry point rather than silently auto-approved:
 //
 //   - approveAll ⇒ the explicit --approve-all opt-in: auto-approve every call
-//     (equivalent to mode: off for this run — the documented footgun). Policy
+//     (equivalent to mode: off for this run - the documented footgun). Policy
 //     provenance: no human answers.
 //   - isTTY ⇒ a human is reachable: prompt y/N/a on the terminal, honoring
 //     session_allow via the "a" (always) answer. Human provenance.

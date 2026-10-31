@@ -32,17 +32,17 @@ import (
 //     nil; Claude handles multi-step tool use internally).
 type CLIAdapter struct {
 	fuseExe string
-	approve permissions.ApprovalFunc
+	approve permissions.Approver
 	counter atomic.Uint64
 }
 
 // newCLIAdapter returns a CLIAdapter. fuseExe is the path to this binary
-// (from os.Executable); approve is the HITL gate for the current turn. Only its
-// Answer func is kept: the relay server it starts per call takes a bare func,
-// and the mcp-server subprocess on the other end labels its socket client
-// human regardless of approve's provenance.
+// (from os.Executable); approve is the HITL gate for the current turn. The
+// whole Approver is kept: its Answer feeds the per-call relay server and its
+// DecidedBy is passed to the mcp-server subprocess (FUSE_HITL_PROVENANCE) so
+// the subprocess's gate records the same provenance as this process's approver.
 func newCLIAdapter(fuseExe string, approve permissions.Approver) *CLIAdapter {
-	return &CLIAdapter{fuseExe: fuseExe, approve: approve.Answer}
+	return &CLIAdapter{fuseExe: fuseExe, approve: approve}
 }
 
 // cliJSONResult mirrors the --output-format json response from the claude CLI.
@@ -59,7 +59,7 @@ func (a *CLIAdapter) Complete(ctx context.Context, req model.CompletionReq) (mod
 	// Fresh HITL relay server per subprocess invocation. The socket is unique
 	// across concurrent calls by combining PID and a per-adapter counter.
 	socketPath := fmt.Sprintf("%s/fuse-hitl-%d-%d.sock", os.TempDir(), os.Getpid(), a.counter.Add(1))
-	srv, err := hitl.NewServer(socketPath, a.approve)
+	srv, err := hitl.NewServer(socketPath, a.approve.Answer)
 	if err != nil {
 		return model.CompletionResp{}, fmt.Errorf("cli adapter: hitl server: %w", err)
 	}
@@ -83,7 +83,7 @@ func (a *CLIAdapter) Complete(ctx context.Context, req model.CompletionReq) (mod
 	)
 	// FUSE_HITL_SOCKET is inherited by the claude subprocess, which passes it
 	// to `fuse mcp-server` children so they can dial back to this relay.
-	cmd.Env = append(os.Environ(), "FUSE_HITL_SOCKET="+socketPath)
+	cmd.Env = a.subprocessEnv(socketPath)
 
 	out, err := cmd.Output()
 	if err != nil {
@@ -102,6 +102,16 @@ func (a *CLIAdapter) Complete(ctx context.Context, req model.CompletionReq) (mod
 		InputTokens:  result.InputTokens,
 		OutputTokens: result.OutputTokens,
 	}, nil
+}
+
+// subprocessEnv returns the claude subprocess environment: the inherited
+// environment plus the relay socket and the approver's provenance label, which
+// `fuse mcp-server` reads to label its socket client (human vs policy).
+func (a *CLIAdapter) subprocessEnv(socketPath string) []string {
+	return append(os.Environ(),
+		"FUSE_HITL_SOCKET="+socketPath,
+		"FUSE_HITL_PROVENANCE="+a.approve.DecidedBy,
+	)
 }
 
 // writeMCPConfig writes a temporary MCP config JSON that tells Claude to spawn

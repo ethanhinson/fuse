@@ -1,6 +1,6 @@
 # Approval provenance is per gate, not per process
 
-Change 0094 — Approval provenance is per gate, not per process
+Change 0094 - Approval provenance is per gate, not per process
 
 Designed against the permissions package and the cmd/fuse composition roots as they stand once the floor-and-wrapper-parity change (PR #116) has merged. Line numbers are approximate for that state and are cited from that branch; the same lines exist on main today with small offsets.
 
