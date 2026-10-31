@@ -146,7 +146,8 @@ func TestDecisionSink_ClassifierAndParseLayers(t *testing.T) {
 
 	t.Run("unparseable bash asks via parse layer", func(t *testing.T) {
 		ctx, rec := recordDecisions()
-		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), AlwaysApprove,
+		approve, _ := newApproveRecorder(true)
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 			WithWorkspaceRoot(t.TempDir()))
 		g.Execute(ctx, "bash", bashArgs("echo $(whoami)"))
 		if len(*rec) != 2 {

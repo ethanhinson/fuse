@@ -486,7 +486,11 @@ func TestAutoMode_RedirectWriteTargets_EndToEnd(t *testing.T) {
 			}
 			restore := chdir(t, canon)
 			defer restore()
-			g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), AlwaysApprove,
+			// A human approver keeps the parse-floor rows at LayerParse; under a
+			// policy stand-in they are rules-layer denies (change 0096,
+			// unparseable_test.go). resolveAuto never calls the approver.
+			approve, _ := newApproveRecorder(false)
+			g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 				WithWorkspaceRoot(canon))
 			got, layer, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs(tc.cmd))
 			if got != tc.want {
@@ -594,7 +598,11 @@ func TestAutoMode_OpaqueArgs_EndToEnd(t *testing.T) {
 			}
 			restore := chdir(t, canon)
 			defer restore()
-			g := New(autoCfg(config.AutoConfig{}, tc.autoApprove, nil), newTestRegistry("bash"), AlwaysApprove,
+			// A human approver keeps the parse-floor rows at LayerParse; under a
+			// policy stand-in they are rules-layer denies (change 0096,
+			// unparseable_test.go). resolveAuto never calls the approver.
+			approve, _ := newApproveRecorder(false)
+			g := New(autoCfg(config.AutoConfig{}, tc.autoApprove, nil), newTestRegistry("bash"), Human(approve),
 				WithWorkspaceRoot(canon))
 			got, layer, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs(tc.cmd))
 			if got != tc.want {
