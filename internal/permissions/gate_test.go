@@ -490,3 +490,108 @@ func TestSmartMode_AllowPatternsStayStrict(t *testing.T) {
 		})
 	}
 }
+
+// TestSmartMode_AlwaysPrompt_HumanPrompts: with a human bound, a smart-mode
+// always_prompt match prompts and the pre-approval ask event names the rule.
+func TestSmartMode_AlwaysPrompt_HumanPrompts(t *testing.T) {
+	cfg := config.PermissionsConfig{Mode: "smart", AlwaysPrompt: []string{"bash:cat*"}}
+	approve, called := newApproveRecorder(true)
+	g := New(cfg, newTestRegistry("bash"), approve, WithApprovalProvenance(DecidedByHuman))
+	ctx, rec := recordDecisions()
+	res := g.Execute(ctx, "bash", bashArgs("cat x.txt"))
+	if res.IsError {
+		t.Fatalf("approved call must run, got %+v", res)
+	}
+	if !*called {
+		t.Fatal("always_prompt match must prompt the human")
+	}
+	var ask, allow *Decision
+	for i := range *rec {
+		d := &(*rec)[i]
+		switch d.Verdict {
+		case "ask":
+			ask = d
+		case "allow":
+			allow = d
+		}
+	}
+	if ask == nil || ask.Layer != LayerRules || ask.Reason != "matched ask rule bash:cat*" {
+		t.Fatalf("want ask at rules layer naming the rule, got %+v", *rec)
+	}
+	if allow == nil || allow.Layer != LayerHuman || allow.DecidedBy != DecidedByHuman {
+		t.Fatalf("want human-layer allow decided by human, got %+v", *rec)
+	}
+}
+
+// TestSmartMode_AlwaysPrompt_PolicyStandInDenies: with only a policy stand-in
+// bound, a smart-mode always_prompt match is a rules-layer deny, never
+// answered by the stand-in.
+func TestSmartMode_AlwaysPrompt_PolicyStandInDenies(t *testing.T) {
+	if _, err := splitSegments("sudo ls"); err == nil {
+		t.Fatal("fixture: sudo ls must be unparseable so the raw-text subject is exercised")
+	}
+	rows := []struct{ pat, tool, args string }{
+		{"bash:cat*", "bash", bashArgs("cat x.txt")},
+		{"bash:rm *", "bash", bashArgs("rm -rf a/b")},
+		{"web_fetch", "web_fetch", `{"url":"https://example.com"}`},
+		{"bash:sudo *", "bash", bashArgs("sudo ls")},
+	}
+	for _, row := range rows {
+		t.Run(row.pat, func(t *testing.T) {
+			cfg := config.PermissionsConfig{Mode: "smart", AlwaysPrompt: []string{row.pat}}
+			approve := func(context.Context, ApprovalRequest) (bool, bool, error) {
+				t.Errorf("approver must not be called under a policy stand-in")
+				return true, false, nil
+			}
+			g := New(cfg, newTestRegistry("bash", "web_fetch"), approve, WithApprovalProvenance(DecidedByPolicy))
+			ctx, rec := recordDecisions()
+			res := g.Execute(ctx, row.tool, row.args)
+			if !res.IsError || !res.Denied {
+				t.Fatalf("want denial, got %+v", res)
+			}
+			if !strings.Contains(res.Output, "matched ask rule "+row.pat) || !strings.Contains(res.Output, "no approver bound") {
+				t.Errorf("deny output must name the rule and the missing approver, got %q", res.Output)
+			}
+			if len(*rec) != 1 {
+				t.Fatalf("want exactly one decision, got %+v", *rec)
+			}
+			d := (*rec)[0]
+			want := "matched ask rule " + row.pat + "; no approver bound"
+			if d.Verdict != "deny" || d.Layer != LayerRules || d.DecidedBy != DecidedByPolicy || d.Mode != "smart" || d.Reason != want {
+				t.Errorf("want deny/rules/policy/smart %q, got %+v", want, d)
+			}
+		})
+	}
+}
+
+// TestSmartMode_PolicyStandIn_UnmatchedStillAllows pins that a policy
+// stand-in still answers smart-mode calls no always_prompt rule matched.
+func TestSmartMode_PolicyStandIn_UnmatchedStillAllows(t *testing.T) {
+	t.Run("stand-in answers", func(t *testing.T) {
+		cfg := config.PermissionsConfig{Mode: "smart"}
+		g := New(cfg, newTestRegistry("bash"), AlwaysApprove, WithApprovalProvenance(DecidedByPolicy))
+		ctx, rec := recordDecisions()
+		res := g.Execute(ctx, "bash", bashArgs("make build"))
+		if res.IsError || res.Denied {
+			t.Fatalf("want allowed, got %+v", res)
+		}
+		ds := *rec
+		if len(ds) != 2 || ds[0].Verdict != "ask" || ds[0].Layer != LayerHuman ||
+			ds[1].Verdict != "allow" || ds[1].Layer != LayerHuman || ds[1].DecidedBy != DecidedByPolicy {
+			t.Fatalf("want ask/human then allow/human by policy, got %+v", ds)
+		}
+	})
+	t.Run("auto_approve promotes", func(t *testing.T) {
+		cfg := config.PermissionsConfig{Mode: "smart", AutoApprove: []string{"bash:git"}}
+		approve, called := newApproveRecorder(true)
+		g := New(cfg, newTestRegistry("bash"), approve, WithApprovalProvenance(DecidedByPolicy))
+		ctx, rec := recordDecisions()
+		res := g.Execute(ctx, "bash", bashArgs("git status"))
+		if res.IsError || *called {
+			t.Fatalf("want allowed without approver, got %+v called=%v", res, *called)
+		}
+		if len(*rec) != 1 || (*rec)[0].Verdict != "allow" || (*rec)[0].Layer != LayerSmartConfig {
+			t.Fatalf("want one allow/smart_config, got %+v", *rec)
+		}
+	})
+}

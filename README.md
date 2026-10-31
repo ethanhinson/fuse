@@ -252,10 +252,12 @@ Protective patterns (`always_prompt`, `auto.deny`, `auto.ask`) are also
 matched against the segment head `bash:<argv0>` and against the whole command,
 and their `*` matches any run of characters **including `/`**, so
 `deny: ["bash:rm *"]` denies `rm -rf a/b` and `ask: ["bash:npm publish*"]`
-matches `npm publish ./pkg/dir`. In auto mode a matching `ask` or
-`always_prompt` rule is final: it prompts a human when one is bound (and is
-denied when none is), and no later layer (the read-only safelist, heuristics or
-classifier) can override it. Allow patterns (`auto_approve`) are strict: their `*` stops at
+matches `npm publish ./pkg/dir`. A matching `always_prompt` or
+`auto.ask` rule is final in smart and auto mode alike: it prompts a human when
+one is bound, and when the binding has no human (the loop servers, the headless
+mcp-server, piped stdin) it is denied with the matched pattern in the reason
+(`matched ask rule <pattern>; no approver bound`). No later layer (the read-only
+safelist, smart mode's allow step, heuristics or classifier) can override it. Allow patterns (`auto_approve`) are strict: their `*` stops at
 `/`, so `bash:git *` does not approve `git clone https://host/repo` and
 `bash:rm build/*` does not approve `rm build/../x`, and every segment must
 match on its own. `?` matches one character and `[...]` classes work as in a
@@ -458,6 +460,12 @@ autoscaler), and a steer or a chat message can reach any of them.
 [Connect](https://connectrpc.com) service (`fuse.loop.v1`, IDL in
 `proto/fuse/loop/v1/loop.proto`). It is browser-reachable over HTTP/2 with no
 proxy and speaks Connect, gRPC, and gRPC-Web (served over h2c):
+
+Neither `loop-server` nor `loop-serve-net` has a human approver, so an operator
+`always_prompt` or `auto.ask` rule cannot prompt anyone: a matching call is
+denied with the pattern in the reason, in smart mode (the default) and auto mode
+alike, and the model sees that reason as the tool result. To let such a command
+run unattended, move its pattern to `auto_approve` or remove it.
 
 ```sh
 fuse loop-serve-net --addr 127.0.0.1:8787

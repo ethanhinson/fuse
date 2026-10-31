@@ -39,12 +39,12 @@ var protectiveParityRows = []struct {
 }
 
 // TestProtectivePatterns_SameMatchInSmartAndAuto checks the matcher layer:
-// smart's matchesProtective (raw JSON args) and auto's protectiveHit (parsed
+// smart's protectivePattern (raw JSON args) and auto's protectiveHit (parsed
 // segments) agree with each other and with the expected hit.
 func TestProtectivePatterns_SameMatchInSmartAndAuto(t *testing.T) {
 	for _, r := range protectiveParityRows {
 		t.Run(r.desc, func(t *testing.T) {
-			smart := matchesProtective([]string{r.pattern}, "bash", bashArgs(r.cmd))
+			_, smart := protectivePattern([]string{r.pattern}, "bash", bashArgs(r.cmd))
 			auto := protectiveHit([]string{r.pattern}, segsFor(t, r.cmd))
 			if smart != r.hit || auto != r.hit {
 				t.Errorf("%q vs %q: smart=%v auto=%v, want %v in both", r.pattern, r.cmd, smart, auto, r.hit)
@@ -59,7 +59,9 @@ func TestProtectivePatterns_SameMatchInSmartAndAuto(t *testing.T) {
 // always_prompt, both modes prompt exactly when it hits, and auto.ask agrees;
 // with the pattern as auto.deny, auto denies without a prompt exactly when it
 // hits. Smart mode has no deny consumer, so its deny-shaped rule is the
-// always_prompt row.
+// always_prompt row. A final policy pass binds only a stand-in approver: a hit
+// is then the same rules-layer deny in both modes with identical reasons, and
+// a miss is never a rules-layer deny.
 func TestProtectivePatterns_SameVerdictInSmartAndAuto(t *testing.T) {
 	for _, r := range protectiveParityRows {
 		t.Run(r.desc, func(t *testing.T) {
@@ -94,6 +96,41 @@ func TestProtectivePatterns_SameVerdictInSmartAndAuto(t *testing.T) {
 			}
 			if denyFailed != r.hit {
 				t.Errorf("auto.deny %q on %q: denied=%v, want %v", r.pattern, r.cmd, denyFailed, r.hit)
+			}
+
+			// Policy pass (change 0092): with only a stand-in bound, a hit is the same
+			// rules-layer deny in both modes, with identical reasons; a miss is never a
+			// rules-layer deny.
+			policyRun := func(cfg config.PermissionsConfig) []Decision {
+				ctx, rec := recordDecisions()
+				g := New(cfg, newTestRegistry("bash"), AlwaysApprove,
+					WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByPolicy))
+				g.Execute(ctx, "bash", bashArgs(r.cmd))
+				return *rec
+			}
+			rulesDenies := func(ds []Decision) []Decision {
+				var out []Decision
+				for _, d := range ds {
+					if d.Verdict == "deny" && d.Layer == LayerRules {
+						out = append(out, d)
+					}
+				}
+				return out
+			}
+			smartD := rulesDenies(policyRun(smartCfg([]string{r.pattern})))
+			autoD := rulesDenies(policyRun(autoCfg(config.AutoConfig{}, r.witness, []string{r.pattern})))
+			if r.hit {
+				if len(smartD) != 1 || len(autoD) != 1 {
+					t.Fatalf("policy pass: want one rules deny in each mode, smart=%+v auto=%+v", smartD, autoD)
+				}
+				if smartD[0].DecidedBy != DecidedByPolicy || autoD[0].DecidedBy != DecidedByPolicy {
+					t.Errorf("policy pass: deny must be decided by policy, smart=%+v auto=%+v", smartD[0], autoD[0])
+				}
+				if smartD[0].Reason != autoD[0].Reason {
+					t.Errorf("policy pass: reasons differ, smart=%q auto=%q", smartD[0].Reason, autoD[0].Reason)
+				}
+			} else if len(smartD) != 0 || len(autoD) != 0 {
+				t.Errorf("policy pass: miss must not be a rules deny, smart=%+v auto=%+v", smartD, autoD)
 			}
 		})
 	}
