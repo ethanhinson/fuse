@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0088 — Protective permission patterns match across slashes and in every mode alike](../changes/active/0088-protective-permission-patterns-match-across-slashes-and-in-e.md)**
+> ↩ **[Change 0088 — Protective permission patterns match across slashes and in every mode alike](../changes/archive/2026-10-31-0088-protective-permission-patterns-match-across-slashes-and-in-e.md)**
 <!-- docket:backlink:end -->
 
 # Protective permission patterns match across slashes - Results

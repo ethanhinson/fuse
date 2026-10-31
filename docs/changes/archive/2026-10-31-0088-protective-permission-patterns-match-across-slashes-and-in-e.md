@@ -2,7 +2,7 @@
 id: 88
 slug: 'protective-permission-patterns-match-across-slashes-and-in-e'
 title: 'Protective permission patterns match across slashes and in every mode alike'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md](../../superpowers/specs/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md) |
+| Spec (merged) | [2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md) |
 | Plan | [2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e.md](../../superpowers/plans/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e.md) |
 | Results | [2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-results.md](../../results/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-results.md) |
 | ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0049](../../adrs/0049-allowlist-admission-on-deterministic-allow-paths.md), [ADR-0065](../../adrs/0065-permission-patterns-match-by-consumer-generous-for-protectiv.md) |
