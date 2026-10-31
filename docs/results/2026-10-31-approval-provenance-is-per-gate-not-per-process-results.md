@@ -4,7 +4,7 @@
 
 # Approval provenance is per gate, not per process - Results
 
-**Human action:** No action is required before merge. One optional walkthrough is offered; one follow-up (provenance across the CLI-model relay) is reported for triage.
+**Human action:** No action is required before merge. One optional walkthrough is offered.
 
 ## Outcome
 
@@ -33,5 +33,3 @@ Full suite (`make test`) green at the final branch head via the build gate; `mak
 
 ## Known issues and follow-ups
 
-- **Provenance is lost across the CLI-model HITL relay.** When a `cli/` model is used under a policy approver, the gate relays prompts to a `fuse mcp-server` subprocess whose HITL socket client labels itself human, so an ask match behind that hop can still be approved and recorded as human. Confirmed by review; pre-existing, now documented in ADR-0070. Workaround: avoid explicit ask rules with `cli/` models in headless bindings. Suggested next action: carry the approver's provenance across the relay (for example an env var next to the socket). Backlog: No existing change fits (checked 5); Related to #96 (same area, but it concerns unparseable commands, not the relay). A human captures it with `docket change create`.
-- **Policy denials keep the reason text "tool call denied by user".** Orchestrator and piped-stdin denials now record `decided_by: policy` but the reason still names a user. Suspected cosmetic/audit-wording issue; no behavior impact. Suggested next action: use a neutral reason for policy approvers and update the one pinned assertion. Backlog: No existing change fits (checked 5).
