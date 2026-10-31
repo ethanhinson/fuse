@@ -2,23 +2,70 @@ package permissions
 
 import (
 	"encoding/json"
-	"path"
 	"strings"
 )
 
-// matchesAny returns true if name (or "name:firstToken" for bash) matches any
-// glob in patterns. Uses path.Match semantics (same as filepath.Match but
-// always uses '/' as separator for cross-platform consistency).
-func matchesAny(patterns []string, toolName, args string) bool {
-	subjects := subjects(toolName, args)
-	for _, pat := range patterns {
-		for _, subj := range subjects {
-			if ok, _ := path.Match(pat, subj); ok {
-				return true
-			}
+// matchesProtective reports whether any protective pattern (always_prompt in
+// smart mode) matches a tool call (change 0088). It keeps the legacy
+// {tool, "bash:<firstToken>"} subjects, so no rule that demoted a call before
+// stops demoting it, and adds the one shared protective subject rule
+// (protectiveHit: each parsed segment, its head, and the whole command) with
+// the slash-spanning glob. A command the parser refuses is matched on its raw
+// text instead, so a protective rule still reaches it.
+func matchesProtective(patterns []string, toolName, args string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	for _, subj := range subjects(toolName, args) {
+		if matchesSubjects(consumerProtective, patterns, subj) {
+			return true
 		}
 	}
-	return false
+	if toolName != "bash" {
+		return false
+	}
+	command := bashCommand(args)
+	segments, err := splitSegments(command)
+	if err != nil {
+		raw := strings.TrimSpace(command)
+		return raw != "" && matchesSubjects(consumerProtective, patterns, "bash:"+raw)
+	}
+	return protectiveHit(patterns, segments)
+}
+
+// matchesPermissive reports whether an allow pattern (auto_approve in smart
+// mode) admits a tool call (change 0088). The legacy {tool,
+// "bash:<firstToken>"} match is kept for compatibility, so nothing that
+// allowed before stops allowing. It additionally admits a bash command when
+// EVERY parsed segment matches strictly, through the same allSegmentsAllowed
+// auto mode uses (path.Match, opaque-arg and redirect guards, no allow_push),
+// so "bash:git *" means the same thing in both modes and never crosses '/'.
+// That segment path declines when any segment is catastrophic
+// (isDangerous against workspaceRoot): auto mode denies those before any
+// allow is consulted, and smart mode has no deny consumer, so without this
+// floor "bash:rm *" would silently approve `rm -rf ~`. The call asks instead.
+func matchesPermissive(patterns []string, toolName, args, workspaceRoot string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	for _, subj := range subjects(toolName, args) {
+		if matchesSubjects(consumerPermissive, patterns, subj) {
+			return true
+		}
+	}
+	if toolName != "bash" {
+		return false
+	}
+	segments, err := splitSegments(bashCommand(args))
+	if err != nil || len(segments) == 0 {
+		return false
+	}
+	for _, seg := range segments {
+		if isDangerous(seg, workspaceRoot) {
+			return false
+		}
+	}
+	return allSegmentsAllowed(segments, patterns, false)
 }
 
 // subjects returns the match candidates for a tool call. For bash it adds

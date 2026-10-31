@@ -443,3 +443,50 @@ func TestSchemasOmitDisabledTools(t *testing.T) {
 		t.Fatalf("no disabled list: advertised %d, want 3", n)
 	}
 }
+
+// TestSmartMode_SlashBearingAlwaysPromptDemotes is change 0088 end to end in
+// smart mode: before, always_prompt bash:rm * missed rm -rf a/b (the legacy
+// subject was only bash:rm), so auto_approve bash:rm ran it silently.
+func TestSmartMode_SlashBearingAlwaysPromptDemotes(t *testing.T) {
+	approve, called := newApproveRecorder(false)
+	cfg := config.PermissionsConfig{
+		Mode:         "smart",
+		AutoApprove:  []string{"bash:rm"},
+		AlwaysPrompt: []string{"bash:rm *"},
+	}
+	g := New(cfg, newTestRegistry("bash"), approve)
+	res := g.Execute(context.Background(), "bash", bashArgs("rm -rf a/b"))
+	if !*called {
+		t.Fatal("always_prompt bash:rm * must demote rm -rf a/b to a prompt in smart mode")
+	}
+	if !res.IsError {
+		t.Fatal("the recorder denied, so the call must not run")
+	}
+}
+
+// TestSmartMode_AllowPatternsStayStrict proves the smart allow consumer does
+// not widen across '/' or across segments (ADR-0005), and that bash:git * now
+// approves a plain git command in smart mode as it does in auto.
+func TestSmartMode_AllowPatternsStayStrict(t *testing.T) {
+	cases := []struct {
+		cmd         string
+		autoApprove []string
+		wantPrompt  bool
+	}{
+		{"git status", []string{"bash:git *"}, false},
+		{"git clone https://x/y", []string{"bash:git *"}, true},
+		{"git status && rm -rf /", []string{"bash:git *"}, true},
+		{"rm build/../x", []string{"bash:rm build/*"}, true},
+		{"go test ./...", []string{"bash:go"}, false}, // legacy fixture, unchanged
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			approve, called := newApproveRecorder(false)
+			g := New(config.PermissionsConfig{Mode: "smart", AutoApprove: tc.autoApprove}, newTestRegistry("bash"), approve)
+			g.Execute(context.Background(), "bash", bashArgs(tc.cmd))
+			if *called != tc.wantPrompt {
+				t.Errorf("smart %q with allow %v: prompted=%v, want %v", tc.cmd, tc.autoApprove, *called, tc.wantPrompt)
+			}
+		})
+	}
+}
