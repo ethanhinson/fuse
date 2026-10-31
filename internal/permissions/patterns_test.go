@@ -138,3 +138,50 @@ func TestProtectiveMatch_NamesTheFirstHit(t *testing.T) {
 		t.Fatalf("miss = %q %v, want \"\" false", pat, ok)
 	}
 }
+
+// TestProtectiveRawSubjects: the protective matcher also sees the command as
+// written before wrappers are peeled (change 0093), through both entry points,
+// and the permissive consumer never does: a bare "bash:timeout" allow must not
+// approve "timeout 5 rm -rf a/b".
+func TestProtectiveRawSubjects(t *testing.T) {
+	hits := []struct{ pattern, cmd string }{
+		{"bash:timeout*", "timeout 5 rm x"},
+		{"bash:nice *", "nice -n 5 make"},
+		{"bash:env *", "env TZ=UTC make"},
+		{"bash:bash *", `bash -c "make"`},
+		{"bash:timeout*", "git status && timeout 5 rm x"},
+		{"bash:rm *", "timeout 5 rm x"},
+	}
+	for _, h := range hits {
+		t.Run(h.pattern+" on "+h.cmd, func(t *testing.T) {
+			segs := segsFor(t, h.cmd)
+			if pat, ok := protectiveHitPattern([]string{h.pattern}, segs); !ok || pat != h.pattern {
+				t.Errorf("protectiveHitPattern = %q %v, want %q true", pat, ok, h.pattern)
+			}
+			var hit bool
+			for _, seg := range segs {
+				hit = hit || matchesSegment(consumerProtective, []string{h.pattern}, seg)
+			}
+			if !hit {
+				t.Errorf("matchesSegment(protective, %q) missed every segment of %q", h.pattern, h.cmd)
+			}
+		})
+	}
+
+	// The permissive consumer never sees raw subjects.
+	for _, pat := range []string{"bash:timeout", "bash:timeout*", "bash:timeout *", "bash:timeout 5 rm x"} {
+		for _, seg := range segsFor(t, "timeout 5 rm x") {
+			if matchesSegment(consumerPermissive, []string{pat}, seg) {
+				t.Errorf("permissive %q matched peeled segment %+v through a raw subject", pat, seg)
+			}
+		}
+	}
+
+	// Nothing peeled: no raw subject is added (rawText equals the parsed text).
+	if got := rawSubjects(segsFor(t, "rm x")[0]); got != nil {
+		t.Errorf("rawSubjects(rm x) = %v, want nil", got)
+	}
+	if got := rawSubjects(Segment{Name: "rm", Args: []string{"x"}}); got != nil {
+		t.Errorf("rawSubjects with empty Raw = %v, want nil", got)
+	}
+}

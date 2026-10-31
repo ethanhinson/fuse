@@ -10,10 +10,10 @@ import (
 // 0092). Subject order is unchanged: the legacy {tool, "bash:<firstToken>"}
 // subjects first, so no rule that demoted a call before stops demoting it,
 // then the one shared protective subject rule (protectiveHitPattern: each
-// parsed segment, its head, and the whole command) with the slash-spanning
-// glob. A command the parser refuses is matched on its raw text instead, so a
-// protective rule still reaches it. Returning the pattern lets a smart-mode
-// deny name the rule exactly as the auto-mode reason does.
+// parsed segment, its head, its raw pre-peel text, and the whole command) with
+// the slash-spanning glob. A command the parser refuses is matched on its raw
+// text instead, so a protective rule still reaches it. Returning the pattern
+// lets a smart-mode deny name the rule exactly as the auto-mode reason does.
 func protectivePattern(patterns []string, toolName, args string) (string, bool) {
 	if len(patterns) == 0 {
 		return "", false
