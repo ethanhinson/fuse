@@ -2,7 +2,7 @@
 id: 95
 slug: 'workers-must-declare-tools-and-worker-requires-an-active-wor'
 title: 'Workers must declare tools, and worker requires an active workflow'
-status: 'proposed'
+status: 'in-progress'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/workers-must-declare-tools-and-worker-requires-an-active-wor'
 pr:
 blocked_by:
 reconciled: false
