@@ -1,20 +1,20 @@
 # Backlog
 
-**92 changes** — 🟢 2 in progress · 🔵 3 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
+**92 changes** — 🟢 1 in progress · 🔵 4 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0088](active/0088-protective-permission-patterns-match-across-slashes-and-in-e.md) | Protective permission patterns match across slashes and in every mode alike | `high` | `fix` | [spec](../superpowers/specs/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md) | `fix/protective-permission-patterns-match-across-slashes-and-in-e` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (3)
+## 🔵 Built (4)
 
 | # | Title | Priority | Type | PR | State |
 |---|-------|----------|------|----|-------|
 | [0090](active/0090-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo.md) | Turn and token budgets are enforced in hosted interactive loops | `high` | `fix` | [#111](https://github.com/ethanhinson/fuse/pull/111) | awaiting merge |
 | [0089](active/0089-static-credential-mcp-servers-authenticate-and-every-loop-re.md) | Static-credential MCP servers authenticate, and every loop reports its MCP servers | `medium` | `fix` | [#109](https://github.com/ethanhinson/fuse/pull/109) | awaiting merge |
+| [0088](active/0088-protective-permission-patterns-match-across-slashes-and-in-e.md) | Protective permission patterns match across slashes and in every mode alike | `high` | `fix` | [#112](https://github.com/ethanhinson/fuse/pull/112) | awaiting merge |
 | [0087](active/0087-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h.md) | Explicit ask rules are honored: prompt a human, deny when no human is bound | `high` | `fix` | [#110](https://github.com/ethanhinson/fuse/pull/110) | awaiting merge |
 
 ## 🟡 Proposed (3)

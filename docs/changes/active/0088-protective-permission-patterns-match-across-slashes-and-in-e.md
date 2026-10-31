@@ -2,7 +2,7 @@
 id: 88
 slug: 'protective-permission-patterns-match-across-slashes-and-in-e'
 title: 'Protective permission patterns match across slashes and in every mode alike'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/protective-permission-patterns-match-across-slashes-and-in-e'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/112'
 blocked_by:
 reconciled: true
 ---
@@ -58,3 +58,12 @@ Permission patterns use `path.Match`, where `*` does not cross `/`. A deny rule 
 ### 2026-10-31
 
 Unchanged against origin/main tip 4f61322; PR 110 (change 87) touches the same package and will be rebased later.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: d7f30b2c80597fa3e05cbda5ec832bba1356d713
+ran_at:   2026-10-31T19:26:57Z
+<!-- docket:build-evidence:end -->
