@@ -66,6 +66,11 @@ func TestMatchesPermissive(t *testing.T) {
 		{"a redirect never satisfies a segment allow", []string{"bash:echo *"}, "echo x > out.txt", false},
 		{"a catastrophic segment declines the segment allow", []string{"bash:rm *"}, "rm -rf ~", false},
 		{"a benign segment under the same pattern still allows", []string{"bash:rm *"}, "rm x", true},
+		{"legacy first-token allow keeps the catastrophic floor", []string{"bash:rm"}, "rm -rf ~", false},
+		{"legacy first-token allow keeps the floor on the root", []string{"bash:rm"}, "rm -rf /", false},
+		{"legacy first-token allow keeps the floor on mkfs", []string{"bash:mkfs.ext4"}, "mkfs.ext4 /dev/sda1", false},
+		{"legacy bare wrapper allow does not approve a catastrophic inner command", []string{"bash:timeout"}, "timeout 5 rm -rf ~", false},
+		{"parser refusal keeps the legacy allow (documented boundary)", []string{"bash:sudo"}, "sudo ls", true},
 		{"no patterns never match", nil, "git status", false},
 	}
 	for _, tc := range cases {
@@ -183,5 +188,99 @@ func TestProtectiveRawSubjects(t *testing.T) {
 	}
 	if got := rawSubjects(Segment{Name: "rm", Args: []string{"x"}}); got != nil {
 		t.Errorf("rawSubjects with empty Raw = %v, want nil", got)
+	}
+}
+
+// TestSmartLegacyAllow_KeepsCatastrophicFloor: smart mode's legacy first-token
+// allow never approves a catastrophic segment (change 0093). With a human
+// bound the call prompts and the ask names the rules floor; a benign command
+// under the same rule still allows without a prompt. A command the parser
+// refuses keeps the legacy allow: there is no segment to judge, and the legacy
+// subject only ever saw the first word (pinned as the documented boundary).
+func TestSmartLegacyAllow_KeepsCatastrophicFloor(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := filepath.Join(base, "ws")
+	if err := os.Mkdir(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defer chdir(t, ws)()
+
+	cases := []struct {
+		allow      []string
+		cmd        string
+		wantPrompt bool
+		wantLayer  string
+	}{
+		{[]string{"bash:rm"}, "rm -rf ~", true, LayerRules},
+		{[]string{"bash:rm"}, "rm -rf /", true, LayerRules},
+		{[]string{"bash:rm"}, "rm -rf ..", true, LayerRules},
+		{[]string{"bash:rm"}, "rm x", false, LayerSmartConfig},
+		{[]string{"bash:mkfs.ext4"}, "mkfs.ext4 /dev/sda1", true, LayerRules},
+		{[]string{"bash:sudo"}, "sudo ls", false, LayerSmartConfig},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			approve, called := newApproveRecorder(false)
+			cfg := config.PermissionsConfig{Mode: "smart", AutoApprove: tc.allow}
+			g := New(cfg, newTestRegistry("bash"), approve,
+				WithWorkspaceRoot(ws), WithApprovalProvenance(DecidedByHuman))
+			ctx, rec := recordDecisions()
+			g.Execute(ctx, "bash", bashArgs(tc.cmd))
+			if *called != tc.wantPrompt {
+				t.Fatalf("smart %v on %q: prompted=%v, want %v", tc.allow, tc.cmd, *called, tc.wantPrompt)
+			}
+			if len(*rec) == 0 {
+				t.Fatalf("no decision recorded for %q", tc.cmd)
+			}
+			first := (*rec)[0]
+			wantVerdict := "allow"
+			if tc.wantPrompt {
+				wantVerdict = "ask"
+			}
+			if first.Verdict != wantVerdict || first.Layer != tc.wantLayer {
+				t.Fatalf("first decision for %q = %s/%s, want %s/%s (%+v)", tc.cmd, first.Verdict, first.Layer, wantVerdict, tc.wantLayer, first)
+			}
+			if tc.wantPrompt && first.Reason != "catastrophic command: "+tc.cmd {
+				t.Errorf("ask reason = %q, want %q", first.Reason, "catastrophic command: "+tc.cmd)
+			}
+		})
+	}
+}
+
+// TestPermissiveIgnoresRawSubjects: raw pre-peel subjects never widen an allow
+// (change 0093). "bash:timeout *" as an allow does not approve a wrapped rm in
+// either mode, and a bare "bash:timeout" never approves a catastrophic inner
+// command: smart mode prompts (the floor), auto mode denies (as it always did).
+func TestPermissiveIgnoresRawSubjects(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(cfg config.PermissionsConfig, cmd string) (prompted, denied bool) {
+		approve, called := newApproveRecorder(false)
+		g := New(cfg, newTestRegistry("bash"), approve, WithWorkspaceRoot(root))
+		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
+		return *called, res.Denied && !*called
+	}
+	smart := func(allow ...string) config.PermissionsConfig {
+		return config.PermissionsConfig{Mode: "smart", AutoApprove: allow}
+	}
+
+	// a/b is relative, so it resolves against the package directory, outside
+	// root: no auto-mode heuristic can allow it on its own evidence.
+	if p, _ := run(smart("bash:timeout *"), "timeout 5 rm -rf a/b"); !p {
+		t.Error("smart: bash:timeout * must not approve timeout 5 rm -rf a/b")
+	}
+	if p, _ := run(autoCfg(config.AutoConfig{}, []string{"bash:timeout *"}, nil), "timeout 5 rm -rf a/b"); !p {
+		t.Error("auto: bash:timeout * must not approve timeout 5 rm -rf a/b")
+	}
+	if p, _ := run(smart("bash:timeout"), "timeout 5 rm -rf ~"); !p {
+		t.Error("smart: bash:timeout must not approve timeout 5 rm -rf ~ (floor)")
+	}
+	if p, d := run(autoCfg(config.AutoConfig{}, []string{"bash:timeout"}, nil), "timeout 5 rm -rf ~"); p || !d {
+		t.Errorf("auto: bash:timeout on timeout 5 rm -rf ~: prompted=%v denied=%v, want a deny with no prompt", p, d)
 	}
 }

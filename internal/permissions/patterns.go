@@ -40,17 +40,24 @@ func protectivePattern(patterns []string, toolName, args string) (string, bool) 
 
 // matchesPermissive reports whether an allow pattern (auto_approve in smart
 // mode) admits a tool call (change 0088). The legacy {tool,
-// "bash:<firstToken>"} match is kept for compatibility, so nothing that
-// allowed before stops allowing. It additionally admits a bash command when
-// EVERY parsed segment matches strictly, through the same allSegmentsAllowed
-// auto mode uses (path.Match, opaque-arg and redirect guards, no allow_push),
-// so "bash:git *" means the same thing in both modes and never crosses '/'.
-// That segment path declines when any segment is catastrophic
-// (isDangerous against workspaceRoot): auto mode denies those before any
-// allow is consulted, and smart mode has no deny consumer, so without this
-// floor "bash:rm *" would silently approve `rm -rf ~`. The call asks instead.
+// "bash:<firstToken>"} match is kept for compatibility, and it additionally
+// admits a bash command when EVERY parsed segment matches strictly, through
+// the same allSegmentsAllowed auto mode uses (path.Match, opaque-arg and
+// redirect guards, no allow_push), so "bash:git *" means the same thing in
+// both modes and never crosses '/'.
+//
+// Since change 0093, no allow (legacy first-token or per-segment) admits a
+// command with a catastrophic segment (catastrophicSegment, isDangerous
+// against workspaceRoot): auto mode denies those before any allow is
+// consulted, and without this floor "bash:rm" would silently approve
+// `rm -rf ~`. A command the parser refuses keeps the legacy match: there is
+// no segment to judge, and "bash:sudo" in auto_approve is the operator's
+// explicit choice.
 func matchesPermissive(patterns []string, toolName, args, workspaceRoot string) bool {
 	if len(patterns) == 0 {
+		return false
+	}
+	if _, catastrophic := catastrophicSegment(toolName, args, workspaceRoot); catastrophic {
 		return false
 	}
 	for _, subj := range subjects(toolName, args) {
@@ -65,12 +72,31 @@ func matchesPermissive(patterns []string, toolName, args, workspaceRoot string) 
 	if err != nil || len(segments) == 0 {
 		return false
 	}
+	return allSegmentsAllowed(segments, patterns, false)
+}
+
+// catastrophicSegment reports whether a bash call parses into at least one
+// catastrophic segment (isDangerous against workspaceRoot) and returns the
+// command text for the decision reason (change 0093). It is the one floor
+// check smart mode's allow step (matchesPermissive) and the smart branch of
+// resolve share, so the two cannot disagree. A non-bash tool, or a command the
+// parser refuses (sudo, npx, xargs, a path-qualified argv0, an opaque command
+// word), is never catastrophic here: there is no segment to judge.
+func catastrophicSegment(toolName, args, workspaceRoot string) (string, bool) {
+	if toolName != "bash" {
+		return "", false
+	}
+	command := bashCommand(args)
+	segments, err := splitSegments(command)
+	if err != nil {
+		return "", false
+	}
 	for _, seg := range segments {
 		if isDangerous(seg, workspaceRoot) {
-			return false
+			return command, true
 		}
 	}
-	return allSegmentsAllowed(segments, patterns, false)
+	return "", false
 }
 
 // subjects returns the match candidates for a tool call. For bash it adds
