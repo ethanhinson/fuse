@@ -25,7 +25,8 @@ import (
 // Each Complete() call:
 //  1. Starts a per-call HITL relay server on a fresh Unix socket.
 //  2. Writes a temp MCP config JSON pointing to `fuse mcp-server`.
-//  3. Spawns `claude --print` with FUSE_HITL_SOCKET set in the environment.
+//  3. Spawns `claude --print` with FUSE_HITL_SOCKET set in the environment
+//     (plus FUSE_HITL_MODE=off when this process's gate runs at mode off).
 //  4. The claude subprocess spawns `fuse mcp-server`, which connects to the
 //     socket for each tool call needing approval.
 //  5. Returns CompletionResp with Claude's final text (ToolCalls is always
@@ -33,16 +34,24 @@ import (
 type CLIAdapter struct {
 	fuseExe string
 	approve permissions.Approver
+	modeOff bool
 	counter atomic.Uint64
 }
+
+// hitlModeEnv is the relay's mode fact. Only `off` is ever sent, and
+// `fuse mcp-server` honors it only alongside a relay socket.
+const hitlModeEnv = "FUSE_HITL_MODE"
 
 // newCLIAdapter returns a CLIAdapter. fuseExe is the path to this binary
 // (from os.Executable); approve is the HITL gate for the current turn. The
 // whole Approver is kept: its Answer feeds the per-call relay server and its
 // DecidedBy is passed to the mcp-server subprocess (FUSE_HITL_PROVENANCE) so
 // the subprocess's gate records the same provenance as this process's approver.
-func newCLIAdapter(fuseExe string, approve permissions.Approver) *CLIAdapter {
-	return &CLIAdapter{fuseExe: fuseExe, approve: approve}
+// modeOff is true when this process's gate runs at mode off (--approve-all, or a
+// session switched to off); it is relayed (FUSE_HITL_MODE) so the tool
+// subprocess runs at the same posture.
+func newCLIAdapter(fuseExe string, approve permissions.Approver, modeOff bool) *CLIAdapter {
+	return &CLIAdapter{fuseExe: fuseExe, approve: approve, modeOff: modeOff}
 }
 
 // cliJSONResult mirrors the --output-format json response from the claude CLI.
@@ -105,13 +114,28 @@ func (a *CLIAdapter) Complete(ctx context.Context, req model.CompletionReq) (mod
 }
 
 // subprocessEnv returns the claude subprocess environment: the inherited
-// environment plus the relay socket and the approver's provenance label, which
-// `fuse mcp-server` reads to label its socket client (human vs policy).
+// environment plus FUSE_HITL_SOCKET (the relay socket), FUSE_HITL_PROVENANCE
+// (the approver's provenance label, which `fuse mcp-server` reads to label its
+// socket client as human or policy), and FUSE_HITL_MODE=off when this process's
+// gate runs at mode off. Any inherited FUSE_HITL_MODE is dropped first.
 func (a *CLIAdapter) subprocessEnv(socketPath string) []string {
-	return append(os.Environ(),
+	parent := os.Environ()
+	env := make([]string, 0, len(parent)+3)
+	for _, e := range parent {
+		// The relayed mode is this process's decision, never an inherited one.
+		if strings.HasPrefix(e, hitlModeEnv+"=") {
+			continue
+		}
+		env = append(env, e)
+	}
+	env = append(env,
 		"FUSE_HITL_SOCKET="+socketPath,
 		"FUSE_HITL_PROVENANCE="+a.approve.DecidedBy,
 	)
+	if a.modeOff {
+		env = append(env, hitlModeEnv+"=off")
+	}
+	return env
 }
 
 // writeMCPConfig writes a temporary MCP config JSON that tells Claude to spawn

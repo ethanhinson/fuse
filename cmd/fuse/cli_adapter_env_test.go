@@ -24,7 +24,7 @@ func TestCLIAdapterPassesApproverProvenance(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			env := newCLIAdapter("fuse", tc.appr).subprocessEnv("/tmp/x.sock")
+			env := newCLIAdapter("fuse", tc.appr, false).subprocessEnv("/tmp/x.sock")
 			var gotSock, gotProv bool
 			for _, e := range env {
 				if e == "FUSE_HITL_SOCKET=/tmp/x.sock" {
