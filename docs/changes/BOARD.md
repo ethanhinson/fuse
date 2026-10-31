@@ -1,20 +1,20 @@
 # Backlog
 
-**91 changes** — 🟢 3 in progress · 🔵 1 built · 🟣 1 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
+**91 changes** — 🟢 2 in progress · 🔵 2 built · 🟣 1 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
 
-## 🟢 In progress (3)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
 | [0090](active/0090-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo.md) | Turn and token budgets are enforced in hosted interactive loops | `high` | `fix` | [spec](../superpowers/specs/2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md) | `fix/turn-and-token-budgets-are-enforced-in-hosted-interactive-lo` | building |
-| [0087](active/0087-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h.md) | Explicit ask rules are honored: prompt a human, deny when no human is bound | `high` | `fix` | [spec](../superpowers/specs/2026-10-31-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h-design.md) | `fix/explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (1)
+## 🔵 Built (2)
 
 | # | Title | Priority | Type | PR | State |
 |---|-------|----------|------|----|-------|
 | [0089](active/0089-static-credential-mcp-servers-authenticate-and-every-loop-re.md) | Static-credential MCP servers authenticate, and every loop reports its MCP servers | `medium` | `fix` | [#109](https://github.com/ethanhinson/fuse/pull/109) | awaiting merge |
+| [0087](active/0087-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h.md) | Explicit ask rules are honored: prompt a human, deny when no human is bound | `high` | `fix` | [#110](https://github.com/ethanhinson/fuse/pull/110) | awaiting merge |
 
 ## 🟣 Groomed (1)
 

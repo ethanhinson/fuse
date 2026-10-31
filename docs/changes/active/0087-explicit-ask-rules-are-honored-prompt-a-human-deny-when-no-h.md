@@ -2,7 +2,7 @@
 id: 87
 slug: 'explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h'
 title: 'Explicit ask rules are honored: prompt a human, deny when no human is bound'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/110'
 blocked_by:
 reconciled: true
 ---
@@ -59,3 +59,12 @@ In auto mode a `permissions.auto.ask` or `always_prompt` match returns the same 
 ### 2026-10-31
 
 Unchanged against origin/main 4f61322: rules.go evalRules and gate.go resolveAuto still conflate explicit ask with no-rule-matched.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 15b5f6797b9cbdca326f13bccd4f2c29dc318317
+ran_at:   2026-10-31T18:42:18Z
+<!-- docket:build-evidence:end -->
