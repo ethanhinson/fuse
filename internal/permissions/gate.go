@@ -675,9 +675,19 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 	}
 
 	// 2. Deterministic rules. Deny is terminal; allow is a positive auto-approve.
-	switch evalRules(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt, g.workspaceRoot) {
+	rv, askPattern := evalRulesDetail(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt, g.workspaceRoot)
+	switch rv {
 	case VerdictDeny:
 		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + command, nil
+	case VerdictAskExplicit:
+		// An operator-written ask is its own verdict: it never falls through to
+		// the safelist, heuristics or classifier. With a human bound it prompts
+		// like any ask; with only a policy stand-in it is denied (the stand-in
+		// would otherwise auto-approve what the operator asked to be asked about).
+		if g.approvalProvenance == DecidedByPolicy {
+			return VerdictDeny, LayerRules, "matched ask rule " + askPattern + "; no approver bound", nil
+		}
+		return VerdictAsk, LayerRules, "matched ask rule " + askPattern, nil
 	case VerdictAllow:
 		return VerdictAllow, LayerRules, "", nil
 	}

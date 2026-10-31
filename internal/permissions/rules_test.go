@@ -62,14 +62,14 @@ func TestEvalRules_Precedence(t *testing.T) {
 			cmd:         "git status",
 			auto:        AutoConfig{Ask: []string{"bash:git status"}},
 			autoApprove: []string{"bash:git *"},
-			want:        VerdictAsk,
+			want:        VerdictAskExplicit,
 		},
 		{
 			desc:         "ask pattern from alwaysPrompt forces ask over an allow rule",
 			cmd:          "git status",
 			autoApprove:  []string{"bash:git *"},
 			alwaysPrompt: []string{"bash:git status"},
-			want:         VerdictAsk,
+			want:         VerdictAskExplicit,
 		},
 		{
 			desc:        "deny wins even when an ask pattern also matches",
@@ -100,7 +100,7 @@ func TestEvalRules_Precedence(t *testing.T) {
 			cmd:          "git push origin main",
 			auto:         AutoConfig{AllowPush: true},
 			alwaysPrompt: []string{"bash:git push*"},
-			want:         VerdictAsk,
+			want:         VerdictAskExplicit,
 		},
 		{
 			desc: "bare curl is no longer a rules deny — falls through to the heuristic/classifier (0068)",
@@ -380,7 +380,7 @@ func TestEvalRules_RedirectTargetsReachTighteningPatterns(t *testing.T) {
 			cmd:          "echo secrets > .git/hooks/pre-commit",
 			autoApprove:  []string{"bash:*"},
 			alwaysPrompt: []string{"bash:* >*.git/hooks/*"},
-			want:         VerdictAsk,
+			want:         VerdictAskExplicit,
 		},
 		{
 			desc: "an append redirect is reachable too",
