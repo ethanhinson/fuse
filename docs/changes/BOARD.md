@@ -1,19 +1,14 @@
 # Backlog
 
-**93 changes** — 🟢 2 in progress · 🟣 1 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 79 done · 🗑️ 6 killed
+**93 changes** — 🟢 3 in progress · 🟡 2 proposed · ⚪ 3 deferred · ✅ 79 done · 🗑️ 6 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (3)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
+| [0092](active/0092-smart-mode-honors-always-prompt-with-no-human-approver-bound.md) | Smart mode honors always_prompt with no human approver bound | `medium` | `fix` | [spec](../superpowers/specs/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md) | `fix/smart-mode-honors-always-prompt-with-no-human-approver-bound` | building |
 | [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | [spec](../superpowers/specs/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md) | `fix/workflows-activate-per-spawn-in-every-host-enforcing-pools-a` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🟣 Groomed (1)
-
-| # | Title | Priority | Type | Spec | Readiness |
-|---|-------|----------|------|------|-----------|
-| [0092](active/0092-smart-mode-honors-always-prompt-with-no-human-approver-bound.md) | Smart mode honors always_prompt with no human approver bound | `medium` | `fix` | [spec](../superpowers/specs/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md) | build-ready |
 
 ## 🟡 Proposed (2)
 

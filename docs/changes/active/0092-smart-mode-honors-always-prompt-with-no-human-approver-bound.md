@@ -2,7 +2,7 @@
 id: 92
 slug: 'smart-mode-honors-always-prompt-with-no-human-approver-bound'
 title: 'Smart mode honors always_prompt with no human approver bound'
-status: 'proposed'
+status: 'in-progress'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/smart-mode-honors-always-prompt-with-no-human-approver-bound'
 pr:
 blocked_by:
 reconciled: false
