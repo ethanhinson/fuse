@@ -14,7 +14,7 @@ related: [94, 96]
 discovered_from: [96]
 adrs: [71]
 spec: 'docs/superpowers/specs/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md](../../superpowers/specs/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md) |
+| Plan | [2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec.md](../../superpowers/plans/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec.md) |
 | ADRs | [ADR-0071](../../adrs/0071-commands-the-parser-refuses-are-never-answered-by-a-policy-s.md) |
 <!-- docket:artifacts:end -->
 
