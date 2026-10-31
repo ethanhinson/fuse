@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/permission-deny-reasons-bound-and-redact-the-command-they-ec'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -49,3 +49,9 @@ Every rules, floor, heuristic and unparseable deny reason echoes the full shell 
 
 - Changing tool.call event payloads.
 - Provenance semantics.
+
+## Reconcile log
+
+### 2026-10-31
+
+Unchanged against main eb16b8a; spec holds.
