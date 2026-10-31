@@ -1,18 +1,13 @@
 # Backlog
 
-**86 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 1 proposed · ⚪ 3 deferred · ✅ 74 done · 🗑️ 6 killed
+**86 changes** — 🟢 2 in progress · 🟡 1 proposed · ⚪ 3 deferred · ✅ 74 done · 🗑️ 6 killed
 
-## 🟢 In progress (1)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
+| [0086](active/0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md) | Loop server advertises its capabilities - models, skills, ceilings | `high` | `feat` | [spec](../superpowers/specs/2026-10-31-loop-server-advertises-its-capabilities-models-skills-ceilin-design.md) | `feat/loop-server-advertises-its-capabilities-models-skills-ceilin` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🟣 Groomed (1)
-
-| # | Title | Priority | Type | Spec | Readiness |
-|---|-------|----------|------|------|-----------|
-| [0086](active/0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md) | Loop server advertises its capabilities - models, skills, ceilings | `high` | `feat` | [spec](../superpowers/specs/2026-10-31-loop-server-advertises-its-capabilities-models-skills-ceilin-design.md) | build-ready |
 
 ## 🟡 Proposed (1)
 

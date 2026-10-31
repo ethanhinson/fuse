@@ -2,7 +2,7 @@
 id: 86
 slug: 'loop-server-advertises-its-capabilities-models-skills-ceilin'
 title: 'Loop server advertises its capabilities - models, skills, ceilings'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/loop-server-advertises-its-capabilities-models-skills-ceilin'
 pr:
 blocked_by:
 reconciled: false
