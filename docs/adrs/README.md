@@ -63,6 +63,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0061](0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md) — A loop runs a client HarnessSpec layered over the operator config, rebuilt from its recorded spec (Accepted) ← change #85 · relates to ADR-0006, ADR-0033, ADR-0047, ADR-0060
 - [ADR-0062](0062-getcapabilities-advertises-from-the-enforcement-code-and-car.md) — GetCapabilities advertises from the enforcement code and carries a wire tenant for spoof refusal (Accepted) ← change #86 · relates to ADR-0060, ADR-0061
 - [ADR-0063](0063-max-turns-is-a-per-exchange-cap-in-interactive-loops.md) — max_turns is a per-exchange cap in interactive loops (Accepted) ← change #90
+- [ADR-0064](0064-explicit-ask-rules-are-their-own-verdict-prompt-a-human-deny.md) — Explicit ask rules are their own verdict: prompt a human, deny when no human approver is bound (Accepted) ← change #87 · relates to ADR-0005, ADR-0049, ADR-0061
 
 ## Superseded / Reversed
 
