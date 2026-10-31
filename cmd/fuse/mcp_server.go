@@ -57,8 +57,7 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 		markPolicyApproval()
 	}
 
-	gate := permissions.New(cfg.Permissions, toolReg, approve,
-		permissions.WithApprovalProvenance(gateApprovalProvenance))
+	gate := buildMCPServerGate(cfg, toolReg, approve)
 	srv := mcp.NewServer(os.Stdin, os.Stdout, toolReg, gate)
 
 	// Live-reload the tool catalog on config change and push fuse://tools updates
@@ -72,6 +71,21 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 		return 1
 	}
 	return 0
+}
+
+// buildMCPServerGate constructs the headless mcp-server's permission gate,
+// scoped like every other binding's gate (change 0093): the workspace root is
+// the server's cwd and the write roots are the session scratch dir plus the
+// trusted permissions.auto.write_roots. The root is bound once for the
+// process, which is correct: the config-reload path rebuilds tools in place
+// and never the gate, and the server's cwd does not move. The binding has no
+// model registry, so it gets no classifier (unchanged). runMCPServer and its
+// test share this function so the test proves the binding's own construction.
+func buildMCPServerGate(cfg config.Config, toolReg *tools.Registry, approve permissions.ApprovalFunc) *permissions.PermissionGate {
+	return permissions.New(cfg.Permissions, toolReg, approve,
+		permissions.WithApprovalProvenance(gateApprovalProvenance),
+		permissions.WithWorkspaceRoot(workspaceRoot()),
+		permissions.WithWriteRoots(gateWriteRoots(cfg)))
 }
 
 // mcpServerToolSet builds the native tool set the MCP server exposes for a given
