@@ -2,12 +2,12 @@
 id: 85
 slug: 'start-a-loop-from-a-harnessspec'
 title: 'Start a loop from a HarnessSpec'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-10-30'
-updated: '2026-10-30'
+updated: '2026-10-31'
 depends_on: []
 stacked_on:
 related: [84]
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-30-start-a-loop-from-a-harnessspec-design.md](../../superpowers/specs/2026-10-30-start-a-loop-from-a-harnessspec-design.md) |
+| Spec (merged) | [2026-10-30-start-a-loop-from-a-harnessspec-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-10-30-start-a-loop-from-a-harnessspec-design.md) |
 | Plan | [2026-10-30-start-a-loop-from-a-harnessspec-plan.md](../../superpowers/plans/2026-10-30-start-a-loop-from-a-harnessspec-plan.md) |
 | Results | [2026-10-30-start-a-loop-from-a-harnessspec-results.md](../../results/2026-10-30-start-a-loop-from-a-harnessspec-results.md) |
 | ADRs | [ADR-0006](../../adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md), [ADR-0060](../../adrs/0060-harnessspec-proto-is-the-portable-harness-definition-client.md), [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md) |

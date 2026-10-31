@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0085 — Start a loop from a HarnessSpec](../../changes/active/0085-start-a-loop-from-a-harnessspec.md)**
+> ↩ **[Change 0085 — Start a loop from a HarnessSpec](../../changes/archive/2026-10-31-0085-start-a-loop-from-a-harnessspec.md)**
 <!-- docket:backlink:end -->
 
 # Start a loop from a HarnessSpec - implementation plan
