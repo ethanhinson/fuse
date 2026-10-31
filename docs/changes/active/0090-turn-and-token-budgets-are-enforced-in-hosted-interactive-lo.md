@@ -14,7 +14,7 @@ related: [86]
 discovered_from: []
 adrs: [61]
 spec: 'docs/superpowers/specs/2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-10-31-turn-and-token-budgets-hosted-interactive.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md](../../superpowers/specs/2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md) |
+| Plan | [2026-10-31-turn-and-token-budgets-hosted-interactive.md](../../superpowers/plans/2026-10-31-turn-and-token-budgets-hosted-interactive.md) |
 | ADRs | [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md) |
 <!-- docket:artifacts:end -->
 
