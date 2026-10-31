@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0087 — Explicit ask rules are honored: prompt a human, deny when no human is bound](../changes/active/0087-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h.md)**
+> ↩ **[Change 0087 — Explicit ask rules are honored: prompt a human, deny when no human is bound](../changes/archive/2026-10-31-0087-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h.md)**
 <!-- docket:backlink:end -->
 
 # Explicit ask rules are honored - results
