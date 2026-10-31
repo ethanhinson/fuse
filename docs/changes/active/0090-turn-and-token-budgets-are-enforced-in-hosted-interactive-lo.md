@@ -12,7 +12,7 @@ depends_on: []
 stacked_on:
 related: [86]
 discovered_from: []
-adrs: [61]
+adrs: [61, 63]
 spec: 'docs/superpowers/specs/2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md'
 plan: 'docs/superpowers/plans/2026-10-31-turn-and-token-budgets-hosted-interactive.md'
 results:
@@ -32,7 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md](../../superpowers/specs/2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md) |
 | Plan | [2026-10-31-turn-and-token-budgets-hosted-interactive.md](../../superpowers/plans/2026-10-31-turn-and-token-budgets-hosted-interactive.md) |
-| ADRs | [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md) |
+| ADRs | [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md), [ADR-0063](../../adrs/0063-max-turns-is-a-per-exchange-cap-in-interactive-loops.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
