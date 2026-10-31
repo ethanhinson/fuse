@@ -119,6 +119,69 @@ func (b *remoteBackend) send(ctx context.Context, id LoopID, input string, opts 
 	return mapConnectError(err)
 }
 
+// capabilities calls GetCapabilities for this Client's tenant. Unimplemented
+// means the server does not advertise; any other failure maps like every call.
+func (b *remoteBackend) capabilities(ctx context.Context) (Capabilities, error) {
+	resp, err := b.client.GetCapabilities(ctx, connect.NewRequest(&loopv1.GetCapabilitiesRequest{Tenant: b.tenant}))
+	if err != nil {
+		if connect.CodeOf(err) == connect.CodeUnimplemented {
+			return Capabilities{}, ErrCapabilitiesUnsupported
+		}
+		return Capabilities{}, mapConnectError(err)
+	}
+	return fromProtoCapabilities(resp.Msg), nil
+}
+
+// fromProtoCapabilities maps the wire answer to the public types, copying
+// every slice so the result never aliases the response message.
+func fromProtoCapabilities(m *loopv1.GetCapabilitiesResponse) Capabilities {
+	out := Capabilities{
+		SecretRefs:       append([]string(nil), m.GetSecretRefs()...),
+		SpecMCPAuthKinds: append([]harnessv1.McpAuthType(nil), m.GetSpecMcpAuthKinds()...),
+		Server: ServerInfo{
+			Version:         m.GetServer().GetVersion(),
+			DigestAlgorithm: m.GetServer().GetDigestAlgorithm(),
+		},
+	}
+	for _, pm := range m.GetModels() {
+		out.Models = append(out.Models, ModelInfo{
+			Alias:                  pm.GetAlias(),
+			GatewayID:              pm.GetGatewayId(),
+			MaxOutputTokens:        int(pm.GetMaxOutputTokens()),
+			ContextWindow:          int(pm.GetContextWindow()),
+			ContextWindowIsDefault: pm.GetContextWindowIsDefault(),
+			Persona:                pm.GetPersona(),
+			IsDefault:              pm.GetIsDefault(),
+			Label:                  pm.GetLabel(),
+			Description:            pm.GetDescription(),
+			Tags:                   append([]string(nil), pm.GetTags()...),
+		})
+	}
+	for _, s := range m.GetSkills() {
+		out.Skills = append(out.Skills, SkillInfo{Name: s.GetName(), Description: s.GetDescription()})
+	}
+	for _, c := range m.GetCeilings() {
+		out.Ceilings = append(out.Ceilings, Ceiling{
+			FieldPath:   c.GetFieldPath(),
+			OperatorSet: c.GetOperatorSet(),
+			Value:       c.GetValue().GetNumberValue(),
+			Direction:   fromProtoDirection(c.GetDirection()),
+		})
+	}
+	return out
+}
+
+func fromProtoDirection(d loopv1.CeilingDirection) CeilingDirection {
+	switch d {
+	case loopv1.CeilingDirection_CEILING_DIRECTION_MAX:
+		return CeilingMax
+	case loopv1.CeilingDirection_CEILING_DIRECTION_MIN:
+		return CeilingMin
+	default:
+		return 0
+	}
+}
+
 // observe opens the server-stream Observe(fromSeq) and pumps its frames onto a client
 // channel: it SKIPS keepalive frames (they carry no Seq), tracks Seq, and maps each
 // proto Event to an sdk Event. The server already performs subscribe-before-replay +

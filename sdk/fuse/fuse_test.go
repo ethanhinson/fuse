@@ -42,6 +42,10 @@ func (s *stubBackend) observe(ctx context.Context, id LoopID, from Seq) (<-chan 
 	return s.obsCh, s.obsUnsub, s.obsErr
 }
 
+func (s *stubBackend) capabilities(context.Context) (Capabilities, error) {
+	return Capabilities{}, ErrCapabilitiesUnsupported
+}
+
 // newTestClient builds a Client over a stub backend (mirrors how NewLocal/NewRemote
 // wrap a backend).
 func newTestClient(b backend) *Client { return &Client{backend: b} }
