@@ -13,7 +13,7 @@ stacked_on:
 related: [87, 92]
 discovered_from: [92]
 adrs: [66]
-spec:
+spec: 'docs/superpowers/specs/2026-10-31-approval-provenance-is-per-gate-not-per-process-design.md'
 plan:
 results:
 auto_groomable:
@@ -30,6 +30,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-10-31-approval-provenance-is-per-gate-not-per-process-design.md](../../superpowers/specs/2026-10-31-approval-provenance-is-per-gate-not-per-process-design.md) |
 | ADRs | [ADR-0066](../../adrs/0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md) |
 <!-- docket:artifacts:end -->
 
