@@ -153,8 +153,8 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
 		childSpawner := makeSpawner(childNode, childNode.Depth)
 		wirePipelineTool(childToolReg,
-			makePipelineRunFn(childSpawner, bb, sched, childNode),
-			makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW),
+			makePipelineRunFn(childSpawner, bb, sched, childNode, nil),
+			makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW, nil),
 			opts.Tools)
 
 		r := tui.NewRenderer(stdout, verbose)
@@ -219,8 +219,8 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
 	rootPipeSpawner := makeSpawner(rootNode, 0)
 	wirePipelineTool(toolReg,
-		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode),
-		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW),
+		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode, nil),
+		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW, nil),
 		nil)
 
 	return runtime.Deps{
@@ -374,8 +374,8 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
 		childSpawner := makeSpawner(childNode, childNode.Depth)
 		wirePipelineTool(childToolReg,
-			makePipelineRunFn(childSpawner, bb, sched, childNode),
-			makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW),
+			makePipelineRunFn(childSpawner, bb, sched, childNode, nil),
+			makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW, nil),
 			effectiveTools)
 
 		label := childNode.Label
@@ -459,8 +459,8 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
 	rootPipeSpawner := makeSpawner(rootNode, 0)
 	wirePipelineTool(toolReg,
-		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode),
-		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW),
+		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode, nil),
+		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW, nil),
 		nil)
 
 	return runtime.Deps{
@@ -637,8 +637,8 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
 		childSpawner := makeSpawner(childNode, childNode.Depth)
 		wirePipelineTool(childToolReg,
-			makePipelineRunFn(childSpawner, bb, sched, childNode),
-			makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW),
+			makePipelineRunFn(childSpawner, bb, sched, childNode, nil),
+			makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW, nil),
 			opts.Tools)
 
 		r := tui.NewNodeRenderer(childNode, childTree)
@@ -742,8 +742,8 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
 	rootPipeSpawner := makeSpawner(rootNode, 0)
 	wirePipelineTool(toolReg,
-		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode),
-		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW),
+		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode, nil),
+		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW, nil),
 		nil)
 
 	return runtime.Deps{

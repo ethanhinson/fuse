@@ -396,8 +396,8 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 				pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
 				childSpawner := makeSpawner(childNode, childNode.Depth)
 				wirePipelineTool(childToolReg,
-					makePipelineRunFn(childSpawner, bb, sched, childNode),
-					makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, nil),
+					makePipelineRunFn(childSpawner, bb, sched, childNode, nil),
+					makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, nil, nil),
 					opts.Tools)
 
 				childModelID := opts.ModelID
@@ -453,8 +453,8 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, loopToolReg)
 			rootPipeSpawner := makeSpawner(rootNode, 0)
 			wirePipelineTool(loopToolReg,
-				makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode),
-				makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, nil),
+				makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode, nil),
+				makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, nil, nil),
 				nil)
 
 			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, systemBlock, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, nil, observer)

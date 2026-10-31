@@ -670,11 +670,13 @@ func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *a
 // (which holds a slot), the pipeline spawns step children from the same pool, so
 // a caller that keeps its slot while blocked on those children deadlocks under
 // slot pressure (learning: slot-cap-yield-while-blocked-on-children).
-func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode) tools.PipelineRunFunc {
+//
+// With a workflow argument (change 0091) the steps run under a fresh
+// coordinator node that roots that workflow, through runWF; the argument
+// governs and overwrites the definition's advisory workflow field. A nil runWF
+// (a context with no workflow scope) refuses a workflow request.
+func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, runWF workflowRunner) tools.PipelineRunFunc {
 	return func(ctx context.Context, definition []byte, workflow string) (string, error) {
-		if workflow != "" {
-			return "", fmt.Errorf("workflow %q: workflow pipelines are not available in this context", workflow)
-		}
 		p, err := pipeline.Parse(definition)
 		if err != nil {
 			return "", fmt.Errorf("parse: %w", err)
@@ -683,13 +685,41 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agen
 		if err := pipeline.Validate(p, pipeline.Caps{}); err != nil {
 			return "", fmt.Errorf("validate: %w", err)
 		}
+		if workflow != "" && runWF == nil {
+			return "", workflowPipelinesUnavailable(workflow)
+		}
 		sched.YieldSlot(node)
-		st, _ := pipeline.Run(ctx, p, spawner, bb)
+		line, rerr := runPipelineSteps(ctx, p, spawner, bb, workflow, runWF)
 		if !sched.UnyieldSlot(ctx, node) {
 			return "", ctx.Err()
 		}
+		if rerr != nil {
+			return "", rerr
+		}
+		return line, nil
+	}
+}
+
+// workflowPipelinesUnavailable is the refusal for a workflow pipeline in a
+// context that wired no workflow runner.
+func workflowPipelinesUnavailable(workflow string) error {
+	return fmt.Errorf("workflow %q: workflow pipelines are not available in this context", workflow)
+}
+
+// runPipelineSteps runs p's steps and renders the terminal status line. With no
+// workflow the steps are children of spawner's node, exactly as before change
+// 0091; with one they run under runWF's coordinator, and p.Workflow records it.
+// The caller owns the slot yield around this call.
+func runPipelineSteps(ctx context.Context, p *pipeline.Pipeline, spawner *agent.Spawner, bb *agent.Blackboard, workflow string, runWF workflowRunner) (string, error) {
+	if workflow == "" {
+		st, _ := pipeline.Run(ctx, p, spawner, bb)
 		return pipelineStatusLine(p.Name, st), nil
 	}
+	p.Workflow = workflow
+	return runWF(ctx, "pipeline "+p.Name, workflow, func(ctx context.Context, steps *agent.Spawner) (string, error) {
+		st, _ := pipeline.Run(ctx, p, steps, bb)
+		return pipelineStatusLine(p.Name, st), nil
+	})
 }
 
 // makePipelineSynthFn returns the synthesis seam (change 0026): it synthesizes a
@@ -698,7 +728,12 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agen
 // here — headless there is no interactive confirmer, so a synthesized-and-run
 // pipeline proceeds regardless (documented deviation); the flag is plumbed for a
 // future gate. workers/toolNames form the synthesis palette.
-func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, cfg config.Config, workers, toolNames []string, traceW io.Writer) tools.PipelineSynthFunc {
+//
+// With a workflow argument (change 0091) an unknown name is refused before any
+// spawn, the palette's workers narrow to that workflow's, and the synthesized
+// steps run under runWF's coordinator (the synthesis child itself still runs
+// from the caller's spawner). A nil runWF refuses a workflow request.
+func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, cfg config.Config, workers, toolNames []string, traceW io.Writer, runWF workflowRunner) tools.PipelineSynthFunc {
 	caps := pipeline.Caps{
 		MaxSteps:    cfg.Pipeline.Synthesis.MaxSteps,
 		MaxFanout:   cfg.Pipeline.Synthesis.MaxFanout,
@@ -707,8 +742,22 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 		RequirePool: true,
 	}
 	return func(ctx context.Context, goal string, confirm bool, workflow string) (string, error) {
+		palette := workers
 		if workflow != "" {
-			return "", fmt.Errorf("workflow %q: workflow pipelines are not available in this context", workflow)
+			if runWF == nil {
+				return "", workflowPipelinesUnavailable(workflow)
+			}
+			wf, ok := cfg.Workflows[workflow]
+			if !ok {
+				return "", unknownWorkflowErr(workflow, sortedWorkflowNames(cfg.Workflows))
+			}
+			palette = sortedWorkerNames(wf)
+		}
+		synthCaps := caps
+		if workflow != "" {
+			// The argument supplies the pool and overwrites p.Workflow below, so a
+			// synthesized plan that omits the advisory field is not a rejection.
+			synthCaps.RequirePool = false
 		}
 		// Yield the calling node's slot around the whole operation (see
 		// makePipelineRunFn): the synthesis child AND the step children spawn from
@@ -716,12 +765,16 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 		// them deadlocks under slot pressure
 		// (learning: slot-cap-yield-while-blocked-on-children).
 		sched.YieldSlot(node)
-		p, err := pipeline.Synthesize(ctx, goal, pipeline.SynthContext{Workers: workers, Tools: toolNames}, spawner, caps)
+		p, err := pipeline.Synthesize(ctx, goal, pipeline.SynthContext{Workers: palette, Tools: toolNames}, spawner, synthCaps)
 		if err != nil {
 			if !sched.UnyieldSlot(ctx, node) {
 				return "", ctx.Err()
 			}
 			return "", fmt.Errorf("synthesize: %w", err)
+		}
+		if workflow != "" {
+			// Recorded before publishing so pipeline.plan shows the governing workflow.
+			p.Workflow = workflow
 		}
 		// Publish the generated DAG so it is inspectable before/while it runs.
 		if plan, merr := json.Marshal(p); merr == nil {
@@ -735,12 +788,35 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 		}
 		// confirm gate is a no-op headless (no interactive confirmer wired): proceed.
 		_ = confirm
-		st, _ := pipeline.Run(ctx, p, spawner, bb)
+		line, rerr := runPipelineSteps(ctx, p, spawner, bb, workflow, runWF)
 		if !sched.UnyieldSlot(ctx, node) {
 			return "", ctx.Err()
 		}
-		return pipelineStatusLine(p.Name, st), nil
+		if rerr != nil {
+			return "", rerr
+		}
+		return line, nil
 	}
+}
+
+// sortedWorkflowNames returns the configured workflow names, sorted.
+func sortedWorkflowNames(wfs map[string]config.WorkflowConfig) []string {
+	out := make([]string, 0, len(wfs))
+	for n := range wfs {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sortedWorkerNames returns wf's worker names, sorted (nil when it has none).
+func sortedWorkerNames(wf config.WorkflowConfig) []string {
+	var out []string
+	for n := range wf.Workers {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // pipelineSynthPalette derives the synthesis palette from the resolved config

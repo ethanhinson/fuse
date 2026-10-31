@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -61,15 +60,7 @@ func (a *workflowActivation) pool() agent.WorkflowPool {
 // (for the spawn tool's enum), or nil when the workflow defines no workers
 // (freeform spawns).
 func (a *workflowActivation) workerNames() []string {
-	if len(a.cfg.Workers) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(a.cfg.Workers))
-	for n := range a.cfg.Workers {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
+	return sortedWorkerNames(a.cfg)
 }
 
 // resolveWorkerTools returns the effective tool allowlist for a spawn inside the
@@ -201,12 +192,7 @@ type childPlan struct {
 
 // names returns the configured workflow names, sorted.
 func (s *workflowScope) names() []string {
-	out := make([]string, 0, len(s.workflows))
-	for n := range s.workflows {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
+	return sortedWorkflowNames(s.workflows)
 }
 
 // check refuses a workflow name that is not configured, listing the ones that
@@ -215,8 +201,15 @@ func (s *workflowScope) check(name string) error {
 	if _, ok := s.workflows[name]; ok {
 		return nil
 	}
+	return unknownWorkflowErr(name, s.names())
+}
+
+// unknownWorkflowErr is the one refusal text for a workflow name that is not
+// configured, shared by workflowScope.check and the pipeline synthesis seam.
+// names is the sorted list of configured workflows.
+func unknownWorkflowErr(name string, names []string) error {
 	list := "none configured"
-	if names := s.names(); len(names) > 0 {
+	if len(names) > 0 {
 		list = strings.Join(names, ", ")
 	}
 	return fmt.Errorf("unknown workflow %q (available: %s)", name, list)
@@ -385,4 +378,45 @@ func (s *workflowScope) prepareChild(opts agent.SpawnOpts, child *agent.AgentNod
 		plan.model = act.cfg.Workers[opts.Worker].Model
 	}
 	return plan, nil
+}
+
+// workflowRunner runs fn with a spawner rooted at a fresh coordinator node that
+// roots workflow (change 0091): the pipeline_run workflow path. label names the
+// coordinator node; fn's steps spawner makes every step a child of it, so the
+// steps queue into, count against and resolve workers from that workflow.
+type workflowRunner func(ctx context.Context, label, workflow string, fn func(ctx context.Context, steps *agent.Spawner) (string, error)) (string, error)
+
+// runner returns the workflowRunner for pipelines started at parent. The
+// coordinator is one ordinary spawn of parent (so it is admitted into parent's
+// pool and counts against the tree-global max_spawns), marked as the workflow
+// root; its builder runs no model and only drives fn. A workflow requested from
+// inside a workflow subtree is refused by the Spawner (agent.ErrNestedWorkflow),
+// and an unknown name is refused before any node exists.
+func (s *workflowScope) runner(makeSpawner func(*agent.AgentNode, int) *agent.Spawner, parent *agent.AgentNode) workflowRunner {
+	sched := s.tree.Scheduler()
+	return func(ctx context.Context, label, workflow string, fn func(ctx context.Context, steps *agent.Spawner) (string, error)) (string, error) {
+		if err := s.check(workflow); err != nil {
+			return "", err
+		}
+		coord := makeSpawner(parent, parent.Depth).WithBuilder(func(ctx context.Context, _ agent.SpawnOpts, node *agent.AgentNode, _ *agent.AgentTree) (string, error) {
+			if _, err := s.activateWorkflow(node); err != nil {
+				return "", err
+			}
+			// The coordinator runs no model: it must not hold its scheduler slot
+			// while its steps queue for one, or the run deadlocks under
+			// max_concurrent (learning slot-cap-yield-while-blocked-on-children).
+			sched.YieldSlot(node)
+			out, err := fn(ctx, makeSpawner(node, node.Depth))
+			if !sched.UnyieldSlot(ctx, node) {
+				return "", ctx.Err()
+			}
+			return out, err
+		})
+		h, err := coord.Spawn(ctx, agent.SpawnOpts{Label: label, Task: label, Workflow: workflow})
+		if err != nil {
+			return "", err
+		}
+		d := h.Wait()
+		return d.Result, d.Err
+	}
 }
