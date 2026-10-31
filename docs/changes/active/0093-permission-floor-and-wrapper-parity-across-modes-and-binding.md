@@ -8,12 +8,12 @@ type: 'fix'
 deliverable: 'pr'
 created: '2026-10-31'
 updated: '2026-10-31'
-depends_on: []
+depends_on: [92]
 stacked_on:
 related: [87, 88, 92]
 discovered_from: [88]
 adrs: [5, 49, 65]
-spec:
+spec: 'docs/superpowers/specs/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md'
 plan:
 results:
 auto_groomable:
@@ -30,6 +30,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md](../../superpowers/specs/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md) |
 | ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0049](../../adrs/0049-allowlist-admission-on-deterministic-allow-paths.md), [ADR-0065](../../adrs/0065-permission-patterns-match-by-consumer-generous-for-protectiv.md) |
 <!-- docket:artifacts:end -->
 
