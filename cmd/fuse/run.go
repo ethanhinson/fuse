@@ -677,7 +677,12 @@ func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *a
 // coordinator node that roots that workflow, through runWF; the argument
 // governs and overwrites the definition's advisory workflow field. A nil runWF
 // (a context with no workflow scope) refuses a workflow request.
-func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, runWF workflowRunner) tools.PipelineRunFunc {
+//
+// A step that names a worker needs a workflow to bind it: the argument, the
+// definition's field, or the workflow governing node (through governing). With
+// none, the pipeline is refused before any step spawns and before the slot
+// yield (agent.ErrWorkerOutsideWorkflow).
+func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, runWF workflowRunner, governing workflowLookup) tools.PipelineRunFunc {
 	return func(ctx context.Context, definition []byte, workflow string) (string, error) {
 		p, err := pipeline.Parse(definition)
 		if err != nil {
@@ -694,6 +699,9 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agen
 		if workflow != "" && runWF == nil {
 			return "", workflowPipelinesUnavailable(workflow)
 		}
+		if err := refuseUnboundWorkerSteps(p, workflow, node, governing); err != nil {
+			return "", err
+		}
 		sched.YieldSlot(node)
 		line, rerr := runPipelineSteps(ctx, p, spawner, bb, workflow, runWF)
 		if !sched.UnyieldSlot(ctx, node) {
@@ -704,6 +712,26 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agen
 		}
 		return line, nil
 	}
+}
+
+// refuseUnboundWorkerSteps refuses a pipeline whose steps name a worker that
+// no workflow will govern: no workflow argument or definition field, and node
+// outside every workflow subtree. It runs before any step spawns.
+func refuseUnboundWorkerSteps(p *pipeline.Pipeline, workflow string, node *agent.AgentNode, governing workflowLookup) error {
+	if workflow != "" {
+		return nil
+	}
+	if governing != nil {
+		if _, ok := governing(node.ID); ok {
+			return nil
+		}
+	}
+	for _, s := range p.Steps {
+		if s.Worker != "" {
+			return fmt.Errorf("%w: step %q names worker %q but no workflow is active; pass workflow or set the definition's workflow field", agent.ErrWorkerOutsideWorkflow, s.Name, s.Worker)
+		}
+	}
+	return nil
 }
 
 // resolvePipelineWorkflow merges the pipeline_run tool argument with the
@@ -747,13 +775,19 @@ func runPipelineSteps(ctx context.Context, p *pipeline.Pipeline, spawner *agent.
 // pipeline.plan (best-effort trace alongside), then runs it. confirm is advisory
 // here — headless there is no interactive confirmer, so a synthesized-and-run
 // pipeline proceeds regardless (documented deviation); the flag is plumbed for a
-// future gate. workers/toolNames form the synthesis palette.
+// future gate. toolNames are the synthesis palette's tools.
+//
+// The palette's workers are computed per call: the argument's workflow workers,
+// else the workers of the workflow governing node (through governing), else
+// none, so the synthesizer is only offered workers something can bind.
 //
 // With a workflow argument (change 0091) an unknown name is refused before any
-// spawn, the palette's workers narrow to that workflow's, and the synthesized
-// steps run under runWF's coordinator (the synthesis child itself still runs
-// from the caller's spawner). A nil runWF refuses a workflow request.
-func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, cfg config.Config, workers, toolNames []string, traceW io.Writer, runWF workflowRunner) tools.PipelineSynthFunc {
+// spawn and the synthesized steps run under runWF's coordinator (the synthesis
+// child itself still runs from the caller's spawner). A nil runWF refuses a
+// workflow request. A synthesized plan whose steps name a worker that no
+// workflow will govern is refused after synthesis (pipeline.plan is already
+// published) but before any step spawns (agent.ErrWorkerOutsideWorkflow).
+func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, cfg config.Config, toolNames []string, traceW io.Writer, runWF workflowRunner, governing workflowLookup) tools.PipelineSynthFunc {
 	caps := pipeline.Caps{
 		MaxSteps:    cfg.Pipeline.Synthesis.MaxSteps,
 		MaxFanout:   cfg.Pipeline.Synthesis.MaxFanout,
@@ -762,7 +796,12 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 		RequirePool: true,
 	}
 	return func(ctx context.Context, goal string, confirm bool, workflow string) (string, error) {
-		palette := workers
+		var palette []string
+		if workflow == "" && governing != nil {
+			if wf, ok := governing(node.ID); ok {
+				palette = sortedWorkerNames(wf)
+			}
+		}
 		if workflow != "" {
 			if runWF == nil {
 				return "", workflowPipelinesUnavailable(workflow)
@@ -820,6 +859,12 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 		if workflow == "" && runWF != nil {
 			workflow = p.Workflow
 		}
+		if err := refuseUnboundWorkerSteps(p, workflow, node, governing); err != nil {
+			if !sched.UnyieldSlot(ctx, node) {
+				return "", ctx.Err()
+			}
+			return "", err
+		}
 		line, rerr := runPipelineSteps(ctx, p, spawner, bb, workflow, runWF)
 		if !sched.UnyieldSlot(ctx, node) {
 			return "", ctx.Err()
@@ -854,7 +899,8 @@ func sortedWorkerNames(wf config.WorkflowConfig) []string {
 // pipelineSynthPalette derives the synthesis palette from the resolved config
 // and the root tool registry: the worker types declared across all workflows and
 // the currently-registered tool names. Both are advisory context the synthesizer
-// draws from (change 0026).
+// draws from (change 0026). The shared wiring (loopWiring.wirePipeline) uses
+// only its tool names: the synthesis seam computes its worker palette per call.
 func pipelineSynthPalette(cfg config.Config, reg *tools.Registry) (workers, toolNames []string) {
 	seen := map[string]bool{}
 	for _, wf := range cfg.Workflows {

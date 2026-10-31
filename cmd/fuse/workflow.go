@@ -293,6 +293,19 @@ func (s *workflowScope) activationOf(nodeID string) (*workflowActivation, string
 	return act, rootID
 }
 
+// workflowLookup reports the workflow governing nodeID, if any. A nil lookup
+// means the context has no workflow scope: every node is outside a workflow.
+type workflowLookup func(nodeID string) (config.WorkflowConfig, bool)
+
+// governing is the scope's workflowLookup.
+func (s *workflowScope) governing(nodeID string) (config.WorkflowConfig, bool) {
+	act, _ := s.activationOf(nodeID)
+	if act == nil {
+		return config.WorkflowConfig{}, false
+	}
+	return act.cfg, true
+}
+
 // backstop returns the workflow spawn backstop for a spawner at parent. It is
 // lazy: each call resolves the governing activation afresh and delegates to
 // backstopFor, so a spawner built before its subtree activated still enforces

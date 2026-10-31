@@ -75,12 +75,12 @@ func (w loopWiring) rootTools(reg *tools.Registry, rootNode *agent.AgentNode) {
 // read before pipeline_run is registered, matching the order before change 0091.
 func (w loopWiring) wirePipeline(reg *tools.Registry, node *agent.AgentNode, requested []string) {
 	sched := w.tree.Scheduler()
-	workers, toolNames := pipelineSynthPalette(w.cfg, reg)
+	_, toolNames := pipelineSynthPalette(w.cfg, reg)
 	sp := w.makeSpawner(node, node.Depth)
 	run := w.scope.runner(w.makeSpawner, node)
 	t := tools.NewPipelineRunTool(
-		makePipelineRunFn(sp, w.bb, sched, node, run),
-		makePipelineSynthFn(sp, w.bb, sched, node, w.cfg, workers, toolNames, w.traceW, run),
+		makePipelineRunFn(sp, w.bb, sched, node, run, w.scope.governing),
+		makePipelineSynthFn(sp, w.bb, sched, node, w.cfg, toolNames, w.traceW, run, w.scope.governing),
 	)
 	if act, _ := w.scope.activationOf(node.ID); act == nil && pipelineWorkflowFits(node) {
 		t = t.WithWorkflows(w.scope.names())

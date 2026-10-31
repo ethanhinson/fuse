@@ -359,7 +359,7 @@ func TestPipelineRunFnWorkflowUsesRunner(t *testing.T) {
 	h := newWiringHarness(t)
 	sched := h.tree.Scheduler()
 	sp := h.makeSpawner(h.root, 0)
-	runFn := makePipelineRunFn(sp, h.w.bb, sched, h.root, h.w.scope.runner(h.makeSpawner, h.root))
+	runFn := makePipelineRunFn(sp, h.w.bb, sched, h.root, h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing)
 	line, err := runFn(ctx, []byte(wiringPipelineDef), "wf")
 	if err != nil {
 		t.Fatalf("workflow pipeline: %v", err)
@@ -374,7 +374,7 @@ func TestPipelineRunFnWorkflowUsesRunner(t *testing.T) {
 
 	plain := newWiringHarness(t)
 	plainFn := makePipelineRunFn(plain.makeSpawner(plain.root, 0), plain.w.bb, plain.tree.Scheduler(), plain.root,
-		plain.w.scope.runner(plain.makeSpawner, plain.root))
+		plain.w.scope.runner(plain.makeSpawner, plain.root), plain.w.scope.governing)
 	line, err = plainFn(ctx, []byte(wiringPlainPipelineDef), "")
 	if err != nil || line != "pipeline p: completed" {
 		t.Fatalf("plain pipeline = %q, %v; want completed", line, err)
@@ -383,7 +383,7 @@ func TestPipelineRunFnWorkflowUsesRunner(t *testing.T) {
 		t.Fatalf("plain pipeline created %d coordinator nodes, want 0", n)
 	}
 
-	none := makePipelineRunFn(sp, h.w.bb, sched, h.root, nil)
+	none := makePipelineRunFn(sp, h.w.bb, sched, h.root, nil, nil)
 	if _, err := none(ctx, []byte(wiringPipelineDef), "wf"); err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("nil runner err = %v, want not available", err)
 	}
@@ -404,7 +404,7 @@ func TestPipelineSynthFnWorkflowUsesRunner(t *testing.T) {
 	sched := h.tree.Scheduler()
 	sp := h.makeSpawner(h.root, 0)
 	run := h.w.scope.runner(h.makeSpawner, h.root)
-	synth := makePipelineSynthFn(sp, h.w.bb, sched, h.root, h.cfg, []string{"other", "reader"}, nil, nil, run)
+	synth := makePipelineSynthFn(sp, h.w.bb, sched, h.root, h.cfg, nil, nil, run, h.w.scope.governing)
 
 	if _, err := synth(ctx, "goal", false, "nope"); err == nil || err.Error() != `unknown workflow "nope" (available: wf)` {
 		t.Fatalf("unknown workflow err = %v, want the scope's refusal text", err)
@@ -457,7 +457,7 @@ func TestPipelineSynthFnRefusesNestedWorkflowBeforeSynthesis(t *testing.T) {
 	lead := h.lead()
 	sp := h.makeSpawner(lead.node, lead.node.Depth)
 	run := h.w.scope.runner(h.makeSpawner, lead.node)
-	synth := makePipelineSynthFn(sp, h.w.bb, h.tree.Scheduler(), lead.node, h.cfg, []string{"reader"}, nil, nil, run)
+	synth := makePipelineSynthFn(sp, h.w.bb, h.tree.Scheduler(), lead.node, h.cfg, nil, nil, run, h.w.scope.governing)
 
 	if _, err := synth(ctx, "goal", false, "wf"); !errors.Is(err, agent.ErrNestedWorkflow) {
 		t.Fatalf("nested synthesis err = %v, want ErrNestedWorkflow", err)
@@ -467,6 +467,160 @@ func TestPipelineSynthFnRefusesNestedWorkflowBeforeSynthesis(t *testing.T) {
 	}
 	if _, ok := h.w.bb.Get(pipelinePlanKey); ok {
 		t.Fatal("nested synthesis published pipeline.plan")
+	}
+}
+
+// TestPipelineRunFnRefusesWorkerStepsOutsideWorkflow pins that an authored
+// pipeline whose steps name a worker is refused when no workflow will govern
+// them (no argument, no definition field, caller outside every workflow
+// subtree), before any step spawns, and that every governed form still runs.
+func TestPipelineRunFnRefusesWorkerStepsOutsideWorkflow(t *testing.T) {
+	ctx := context.Background()
+	h := newWiringHarness(t)
+	runFn := makePipelineRunFn(h.makeSpawner(h.root, 0), h.w.bb, h.tree.Scheduler(), h.root,
+		h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing)
+
+	before := len(h.tree.SnapshotAll())
+	slots := h.tree.Scheduler().Snapshot().SlotsInUse
+	_, err := runFn(ctx, []byte(wiringPipelineDef), "")
+	if !errors.Is(err, agent.ErrWorkerOutsideWorkflow) {
+		t.Fatalf("outside-workflow worker pipeline err = %v, want ErrWorkerOutsideWorkflow", err)
+	}
+	if !strings.Contains(err.Error(), `step "s1" names worker "reader"`) || !strings.Contains(err.Error(), "pass workflow") {
+		t.Fatalf("refusal %q does not name the step and worker and say to pass workflow", err)
+	}
+	if n := len(h.tree.SnapshotAll()); n != before {
+		t.Fatalf("refused pipeline created %d nodes, want 0", n-before)
+	}
+	h.mu.Lock()
+	seen := len(h.seen)
+	h.mu.Unlock()
+	if seen != 0 {
+		t.Fatalf("refused pipeline reached the child builder %d times, want 0", seen)
+	}
+	if got := h.tree.Scheduler().Snapshot().SlotsInUse; got != slots {
+		t.Fatalf("refused pipeline left SlotsInUse %d, want %d", got, slots)
+	}
+
+	if line, err := runFn(ctx, []byte(wiringPipelineDef), "wf"); err != nil || line != "pipeline p: completed" {
+		t.Fatalf("workflow argument pipeline = %q, %v; want completed", line, err)
+	}
+	const defWithWorkflow = "name: p\nworkflow: wf\nsteps:\n  - name: s1\n    worker: reader\n    prompt: hi\n"
+	if line, err := runFn(ctx, []byte(defWithWorkflow), ""); err != nil || line != "pipeline p: completed" {
+		t.Fatalf("definition-field pipeline = %q, %v; want completed", line, err)
+	}
+
+	// Inside the wf subtree the governing workflow binds the worker.
+	sub := newWiringHarness(t)
+	lead := sub.lead()
+	subFn := makePipelineRunFn(sub.makeSpawner(lead.node, lead.node.Depth), sub.w.bb, sub.tree.Scheduler(), lead.node,
+		sub.w.scope.runner(sub.makeSpawner, lead.node), sub.w.scope.governing)
+	if line, err := subFn(ctx, []byte(wiringPipelineDef), ""); err != nil || line != "pipeline p: completed" {
+		t.Fatalf("in-subtree worker pipeline = %q, %v; want completed", line, err)
+	}
+	steps := nodesLabelled(sub.tree, "s1")
+	if len(steps) != 1 {
+		t.Fatalf("in-subtree pipeline ran %d s1 steps, want 1", len(steps))
+	}
+	if got := schemaNames(sub.observed(steps[0].ID).reg); !containsAll(got, "read_file") || containsAll(got, "write_file") {
+		t.Fatalf("in-subtree step tools = %v, want the reader allowlist (read_file, no write_file)", got)
+	}
+
+	// A nil lookup is a context with no workflow scope: refused like outside.
+	nilFn := makePipelineRunFn(h.makeSpawner(h.root, 0), h.w.bb, h.tree.Scheduler(), h.root,
+		h.w.scope.runner(h.makeSpawner, h.root), nil)
+	if _, err := nilFn(ctx, []byte(wiringPipelineDef), ""); !errors.Is(err, agent.ErrWorkerOutsideWorkflow) {
+		t.Fatalf("nil lookup err = %v, want ErrWorkerOutsideWorkflow", err)
+	}
+}
+
+// containsAll reports whether got holds every name in want.
+func containsAll(got []string, want ...string) bool {
+	have := map[string]bool{}
+	for _, g := range got {
+		have[g] = true
+	}
+	for _, w := range want {
+		if !have[w] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestPipelineSynthPaletteOutsideWorkflowOffersNoWorkers pins the per-call
+// synthesis palette: no workers outside a workflow, the argument's workflow
+// workers with one, and the governing workflow's workers inside a subtree.
+func TestPipelineSynthPaletteOutsideWorkflowOffersNoWorkers(t *testing.T) {
+	ctx := context.Background()
+	h := newWiringHarness(t)
+	h.cfg.Workflows["other"] = config.WorkflowConfig{Workers: map[string]config.WorkerConfig{"writer": {Tools: []string{"write_file"}}}}
+	var prompt string
+	h.reply = func(opts agent.SpawnOpts) string {
+		if opts.Label != "synthesize" {
+			return ""
+		}
+		prompt = opts.SystemPrompt
+		return `{"name":"p","workflow":"wf","steps":[{"name":"s1","prompt":"hi"}]}`
+	}
+	sched := h.tree.Scheduler()
+	synth := makePipelineSynthFn(h.makeSpawner(h.root, 0), h.w.bb, sched, h.root, h.cfg, nil, nil,
+		h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing)
+
+	if _, err := synth(ctx, "goal", false, ""); err != nil {
+		t.Fatalf("root synthesis: %v", err)
+	}
+	if strings.Contains(prompt, "Available worker types:") {
+		t.Fatalf("root synthesis offered workers outside a workflow: %q", prompt)
+	}
+
+	prompt = ""
+	if _, err := synth(ctx, "goal", false, "wf"); err != nil {
+		t.Fatalf("wf synthesis: %v", err)
+	}
+	if !strings.Contains(prompt, "Available worker types: reader\n") || strings.Contains(prompt, "writer") {
+		t.Fatalf("wf synthesis palette = %q, want only reader", prompt)
+	}
+
+	prompt = ""
+	lead := h.lead()
+	sub := makePipelineSynthFn(h.makeSpawner(lead.node, lead.node.Depth), h.w.bb, sched, lead.node, h.cfg, nil, nil,
+		h.w.scope.runner(h.makeSpawner, lead.node), h.w.scope.governing)
+	// A synthesized plan naming wf inside the subtree is refused as nested
+	// (unchanged behavior); only the palette matters here.
+	_, _ = sub(ctx, "goal", false, "")
+	if !strings.Contains(prompt, "Available worker types: reader\n") || strings.Contains(prompt, "writer") {
+		t.Fatalf("in-subtree synthesis palette = %q, want only reader", prompt)
+	}
+}
+
+// TestPipelineSynthFnRefusesUnboundWorkerSteps pins that a synthesized plan whose
+// steps name a worker no workflow will govern is refused before any step
+// spawns, and that the caller's slot is given back.
+func TestPipelineSynthFnRefusesUnboundWorkerSteps(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	h := newWiringHarness(t)
+	h.reply = func(opts agent.SpawnOpts) string {
+		if opts.Label == "synthesize" {
+			return `{"name":"p","workflow":"wf","steps":[{"name":"s1","worker":"reader","prompt":"hi"}]}`
+		}
+		return ""
+	}
+	synth := makePipelineSynthFn(h.makeSpawner(h.root, 0), h.w.bb, h.tree.Scheduler(), h.root, h.cfg, nil, nil, nil, nil)
+
+	_, err := synth(ctx, "goal", false, "")
+	if !errors.Is(err, agent.ErrWorkerOutsideWorkflow) || !strings.Contains(err.Error(), `step "s1"`) {
+		t.Fatalf("unbound synthesized worker err = %v, want ErrWorkerOutsideWorkflow naming s1", err)
+	}
+	if n := len(nodesLabelled(h.tree, "s1")); n != 0 {
+		t.Fatalf("refused synthesis spawned %d step children, want 0", n)
+	}
+	if n := len(nodesLabelled(h.tree, "synthesize")); n != 1 {
+		t.Fatalf("synthesize nodes = %d, want 1", n)
+	}
+	if _, err := synth(ctx, "goal", false, ""); !errors.Is(err, agent.ErrWorkerOutsideWorkflow) {
+		t.Fatalf("second call err = %v, want the same refusal (slot was given back)", err)
 	}
 }
 
