@@ -14,7 +14,7 @@ related: [90, 91]
 discovered_from: [91]
 adrs: [67]
 spec: 'docs/superpowers/specs/2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor-design.md](../../superpowers/specs/2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor-design.md) |
+| Plan | [2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor.md](../../superpowers/plans/2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor.md) |
 | ADRs | [ADR-0067](../../adrs/0067-workflows-activate-per-spawn-do-not-nest-and-root-at-a-coord.md) |
 <!-- docket:artifacts:end -->
 
