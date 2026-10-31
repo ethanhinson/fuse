@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/smart-mode-honors-always-prompt-with-no-human-approver-bound'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -49,3 +49,9 @@ Explicit ask rules now deny in auto mode when no human approver is bound, but in
 - Glob matching semantics.
 - A client-visible approval protocol.
 - Other smart-mode behavior.
+
+## Reconcile log
+
+### 2026-10-31
+
+Unchanged against origin/main tip; dependencies 87 and 88 are merged and the spec holds.
