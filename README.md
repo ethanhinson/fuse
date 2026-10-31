@@ -387,6 +387,11 @@ The probe answers approvals with a policy stand-in: an `always_prompt` or
 `auto.ask` match, and in smart mode a catastrophic command, is denied with the
 pattern in the reason. Move the pattern to `auto_approve` or drop the rule to
 let it run.
+A command the permission parser refuses (`sudo`, `npx`, `xargs`, a
+path-qualified binary, `env` with non-inert assignments) is denied the same way,
+with `unparseable command denied; no approver bound: <command>`: the probe
+cannot run one unless it runs in smart mode with a first-token `auto_approve`
+rule naming it, such as `bash:sudo`.
 
 It prints the spawn tree (root + one node per facet, with status), the census
 of searches and fetches, every unique search query and fetched URL, and the
