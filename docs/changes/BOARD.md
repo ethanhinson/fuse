@@ -1,18 +1,12 @@
 # Backlog
 
-**86 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 1 proposed · ⚪ 3 deferred · ✅ 74 done · 🗑️ 6 killed
+**86 changes** — 🟢 1 in progress · 🟡 1 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🔵 Built (1)
-
-| # | Title | Priority | Type | PR | State |
-|---|-------|----------|------|----|-------|
-| [0086](active/0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md) | Loop server advertises its capabilities - models, skills, ceilings | `high` | `feat` | [#108](https://github.com/ethanhinson/fuse/pull/108) | awaiting merge |
 
 ## 🟡 Proposed (1)
 
@@ -35,17 +29,17 @@ graph TD
   0063 --> 0074
   0081
   0083
-  0086
   0012:::done
   0052:::done
   0063:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (80)</summary>
+<details><summary>✅🗑️ Archive — done + killed (81)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0086](archive/2026-10-31-0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md) | Loop server advertises its capabilities - models, skills, ceilings | 2026-10-31 |
 | [0085](archive/2026-10-31-0085-start-a-loop-from-a-harnessspec.md) | Start a loop from a HarnessSpec | 2026-10-31 |
 | [0084](archive/2026-10-30-0084-harnessspec-proto-and-public-validator.md) | HarnessSpec proto and public validator | 2026-10-30 |
 | [0076](archive/2026-09-17-0076-fuse-server-helm-chart-compose-stack.md) | fuse server deployment — a docker-compose stack and a Helm chart over the released image (not an operator) | 2026-09-17 |
@@ -60,7 +54,6 @@ graph TD
 | [0063](archive/2026-08-21-0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | 2026-08-21 |
 | [0073](archive/2026-08-20-0073-one-shot-default-model.md) | One-shot honors models.default when --model is unset | 2026-08-20 |
 | [0072](archive/2026-08-20-0072-docker-subcommand-classification.md) | Docker subcommand classification — read-only forms auto-approve; the rest reach the classifier instead of dying at the parse floor | 2026-08-20 |
-| [0070](archive/2026-08-20-0070-auto-mode-shell-parse-widening.md) | Auto-mode shell-parse widening — env-prefixes, wrappers, control flow, redirects, opaque args | 2026-08-20 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -72,6 +65,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 59 done |
+| [2026-08](archive/) | 60 done |
 
 </details>

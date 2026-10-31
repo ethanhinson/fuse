@@ -2,7 +2,7 @@
 id: 86
 slug: 'loop-server-advertises-its-capabilities-models-skills-ceilin'
 title: 'Loop server advertises its capabilities - models, skills, ceilings'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-loop-server-advertises-its-capabilities-models-skills-ceilin-design.md](../../superpowers/specs/2026-10-31-loop-server-advertises-its-capabilities-models-skills-ceilin-design.md) |
+| Spec (merged) | [2026-10-31-loop-server-advertises-its-capabilities-models-skills-ceilin-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-10-31-loop-server-advertises-its-capabilities-models-skills-ceilin-design.md) |
 | Plan | [2026-10-30-loop-server-advertises-its-capabilities-models-skills-ceilin.md](../../superpowers/plans/2026-10-30-loop-server-advertises-its-capabilities-models-skills-ceilin.md) |
 | Results | [2026-10-31-loop-server-advertises-its-capabilities-models-skills-ceilin-results.md](../../results/2026-10-31-loop-server-advertises-its-capabilities-models-skills-ceilin-results.md) |
 | ADRs | [ADR-0060](../../adrs/0060-harnessspec-proto-is-the-portable-harness-definition-client.md), [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md), [ADR-0062](../../adrs/0062-getcapabilities-advertises-from-the-enforcement-code-and-car.md) |

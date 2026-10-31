@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0086 — Loop server advertises its capabilities - models, skills, ceilings](../../changes/active/0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md)**
+> ↩ **[Change 0086 — Loop server advertises its capabilities - models, skills, ceilings](../../changes/archive/2026-10-31-0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md)**
 <!-- docket:backlink:end -->
 
 # Loop Server Capability Discovery Implementation Plan
