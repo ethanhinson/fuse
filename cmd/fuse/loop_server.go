@@ -5,7 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"regexp"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/ethanhinson/fuse/internal/agent"
@@ -352,6 +356,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			// one-shot, shell, research-probe, and mcp-server bindings do not, and
 			// deliberately pass no hooks rather than emitting into a NoopStore.
 			if loopToolReg != nil {
+				emitMCPServerEvents(store, tree.RootID(), loopManagers, loopToolReg)
 				loopToolReg.Register(tools.NewBash(sb, sandbox.WithPoolHooks(
 					tools.SandboxEventHooks(store, tree.RootID()))))
 				// The admission gate (change 0077) and the substrate-health emitter
@@ -488,4 +493,70 @@ func loopServerPrincipal(lc runtime.LoopConfig) loopauth.Principal {
 		subject = "local"
 	}
 	return loopauth.Principal{Tenant: event.NormalizeTenant(lc.Tenant), Subject: subject}
+}
+
+// emitMCPServerEvents appends one mcp.server event per MCP server the loop's
+// manager holds (change 0089), right after loop.harness. A server that failed to
+// connect is reported connected=false with its error; the loop continues without
+// it. Payloads never carry a credential. A resumed loop rebuilds its manager and
+// re-dials, so it records a fresh report of the servers' current state. Tools are
+// the names exposed to the model (mcp:<server>/<tool>).
+func emitMCPServerEvents(store event.EventStore, rootID string, managers *sync.Map, reg *tools.Registry) {
+	v, ok := managers.Load(reg)
+	if !ok {
+		return
+	}
+	mgr, ok := v.(*mcp.Manager)
+	if !ok || mgr == nil {
+		return
+	}
+	statuses := mgr.Status()
+	sort.Slice(statuses, func(i, j int) bool { return statuses[i].Name < statuses[j].Name })
+	for _, st := range statuses {
+		toolNames := make([]string, 0, len(st.Tools))
+		for _, tn := range st.Tools {
+			toolNames = append(toolNames, mcp.QualifiedToolName(st.Name, tn))
+		}
+		sort.Strings(toolNames)
+		payload, err := event.MarshalPayload(event.MCPServerPayload{
+			Name: st.Name, Transport: st.Transport, AuthType: st.AuthType,
+			Connected: st.Connected, Error: redactMCPError(st.Error), Tools: toolNames,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "loop-server: marshal mcp.server %q: %v\n", st.Name, err)
+			continue
+		}
+		if err := store.Append(event.Event{NodeID: rootID, Kind: event.KindMCPServer, Payload: payload}); err != nil {
+			fmt.Fprintf(os.Stderr, "loop-server: record mcp.server %q: %v\n", st.Name, err)
+		}
+	}
+}
+
+var urlInMessage = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s"'<>]+`)
+
+// redactMCPError strips URL userinfo and query strings from a connection error
+// before it is persisted: net/http errors embed the full request URL, which can
+// carry credentials. Every URL found in the message is rebuilt without them.
+func redactMCPError(msg string) string {
+	return urlInMessage.ReplaceAllStringFunc(msg, func(raw string) string {
+		trail := ""
+		for len(raw) > 0 && strings.ContainsRune(".,;:)]}", rune(raw[len(raw)-1])) {
+			trail = string(raw[len(raw)-1]) + trail
+			raw = raw[:len(raw)-1]
+		}
+		u, err := url.Parse(raw)
+		if err != nil {
+			if i := strings.IndexAny(raw, "?#"); i >= 0 {
+				raw = raw[:i]
+			}
+			if i := strings.Index(raw, "://"); i >= 0 {
+				if at := strings.LastIndex(raw[i+3:], "@"); at >= 0 {
+					raw = raw[:i+3] + raw[i+3+at+1:]
+				}
+			}
+			return raw + trail
+		}
+		u.User, u.RawQuery, u.Fragment, u.ForceQuery = nil, "", "", false
+		return u.String() + trail
+	})
 }
