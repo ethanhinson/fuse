@@ -790,6 +790,8 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 				return nil, nil, "", err
 			}
 			a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
+			// The runtime wires the root usage sink and call gate (inproc.go);
+			// wiring them here too would count the root's tokens twice.
 			if humanBus != nil {
 				a.SetHumanInjector(agent.NewHumanInjector(rootNode.ID, humanBus))
 			}
