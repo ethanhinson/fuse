@@ -2,7 +2,7 @@
 id: 94
 slug: 'approval-provenance-is-per-gate-not-per-process'
 title: 'Approval provenance is per gate, not per process'
-status: 'implemented'
+status: 'done'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-approval-provenance-is-per-gate-not-per-process-design.md](../../superpowers/specs/2026-10-31-approval-provenance-is-per-gate-not-per-process-design.md) |
+| Spec (merged) | [2026-10-31-approval-provenance-is-per-gate-not-per-process-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-10-31-approval-provenance-is-per-gate-not-per-process-design.md) |
 | Plan | [2026-10-31-approval-provenance-is-per-gate-not-per-process.md](../../superpowers/plans/2026-10-31-approval-provenance-is-per-gate-not-per-process.md) |
 | Results | [2026-10-31-approval-provenance-is-per-gate-not-per-process-results.md](../../results/2026-10-31-approval-provenance-is-per-gate-not-per-process-results.md) |
 | ADRs | [ADR-0066](../../adrs/0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md), [ADR-0070](../../adrs/0070-approval-provenance-is-per-gate-explicit-ask-rules-supersede.md) |

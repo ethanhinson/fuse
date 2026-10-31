@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0094 — Approval provenance is per gate, not per process](../../changes/active/0094-approval-provenance-is-per-gate-not-per-process.md)**
+> ↩ **[Change 0094 — Approval provenance is per gate, not per process](../../changes/archive/2026-10-31-0094-approval-provenance-is-per-gate-not-per-process.md)**
 <!-- docket:backlink:end -->
 
 # Approval provenance is per gate, not per process - Implementation Plan
