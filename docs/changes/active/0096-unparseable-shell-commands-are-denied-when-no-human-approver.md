@@ -14,7 +14,7 @@ related: [87, 92, 93, 94]
 discovered_from: [93]
 adrs: [66, 68]
 spec: 'docs/superpowers/specs/2026-10-31-unparseable-shell-commands-are-denied-when-no-human-approver-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-10-31-unparseable-shell-commands-are-denied-when-no-human-approver.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-unparseable-shell-commands-are-denied-when-no-human-approver-design.md](../../superpowers/specs/2026-10-31-unparseable-shell-commands-are-denied-when-no-human-approver-design.md) |
+| Plan | [2026-10-31-unparseable-shell-commands-are-denied-when-no-human-approver.md](../../superpowers/plans/2026-10-31-unparseable-shell-commands-are-denied-when-no-human-approver.md) |
 | ADRs | [ADR-0066](../../adrs/0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md), [ADR-0068](../../adrs/0068-catastrophic-floor-is-a-rules-layer-decision-in-smart-mode-a.md) |
 <!-- docket:artifacts:end -->
 
