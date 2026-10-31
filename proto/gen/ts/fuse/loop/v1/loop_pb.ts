@@ -456,6 +456,9 @@ export const SkillInfoSchema: GenMessage<SkillInfo> = /*@__PURE__*/
   messageDesc(file_fuse_loop_v1_loop, 10);
 
 /**
+ * The operator limit one tighten-only spec field is held to. The limit is
+ * strict: a spec value equal to value is refused, not accepted.
+ *
  * @generated from message fuse.loop.v1.Ceiling
  */
 export type Ceiling = Message<"fuse.loop.v1.Ceiling"> & {
@@ -518,6 +521,8 @@ export const ServerInfoSchema: GenMessage<ServerInfo> = /*@__PURE__*/
   messageDesc(file_fuse_loop_v1_loop, 12);
 
 /**
+ * Ceilings are strict: a spec value equal to the ceiling's value is refused.
+ *
  * @generated from enum fuse.loop.v1.CeilingDirection
  */
 export enum CeilingDirection {
@@ -527,14 +532,14 @@ export enum CeilingDirection {
   UNSPECIFIED = 0,
 
   /**
-   * a spec may only lower the value
+   * A spec value must be strictly below the ceiling's value; equal is refused.
    *
    * @generated from enum value: CEILING_DIRECTION_MAX = 1;
    */
   MAX = 1,
 
   /**
-   * a spec may only raise the value
+   * A spec value must be strictly above the ceiling's value; equal is refused.
    *
    * @generated from enum value: CEILING_DIRECTION_MIN = 2;
    */

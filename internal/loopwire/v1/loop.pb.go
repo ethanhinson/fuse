@@ -36,12 +36,15 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Ceilings are strict: a spec value equal to the ceiling's value is refused.
 type CeilingDirection int32
 
 const (
 	CeilingDirection_CEILING_DIRECTION_UNSPECIFIED CeilingDirection = 0
-	CeilingDirection_CEILING_DIRECTION_MAX         CeilingDirection = 1 // a spec may only lower the value
-	CeilingDirection_CEILING_DIRECTION_MIN         CeilingDirection = 2 // a spec may only raise the value
+	// A spec value must be strictly below the ceiling's value; equal is refused.
+	CeilingDirection_CEILING_DIRECTION_MAX CeilingDirection = 1
+	// A spec value must be strictly above the ceiling's value; equal is refused.
+	CeilingDirection_CEILING_DIRECTION_MIN CeilingDirection = 2
 )
 
 // Enum value maps for CeilingDirection.
@@ -890,6 +893,8 @@ func (x *SkillInfo) GetDescription() string {
 	return ""
 }
 
+// The operator limit one tighten-only spec field is held to. The limit is
+// strict: a spec value equal to value is refused, not accepted.
 type Ceiling struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// fuse.harness.v1.Violation.field_path vocabulary.

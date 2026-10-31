@@ -157,12 +157,17 @@ message SkillInfo {
   string description = 2;
 }
 
+// Ceilings are strict: a spec value equal to the ceiling's value is refused.
 enum CeilingDirection {
   CEILING_DIRECTION_UNSPECIFIED = 0;
-  CEILING_DIRECTION_MAX = 1; // a spec may only lower the value
-  CEILING_DIRECTION_MIN = 2; // a spec may only raise the value
+  // A spec value must be strictly below the ceiling's value; equal is refused.
+  CEILING_DIRECTION_MAX = 1;
+  // A spec value must be strictly above the ceiling's value; equal is refused.
+  CEILING_DIRECTION_MIN = 2;
 }
 
+// The operator limit one tighten-only spec field is held to. The limit is
+// strict: a spec value equal to value is refused, not accepted.
 message Ceiling {
   // fuse.harness.v1.Violation.field_path vocabulary.
   string field_path = 1;

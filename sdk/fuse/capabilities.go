@@ -65,15 +65,18 @@ type SkillInfo struct {
 type CeilingDirection int
 
 const (
-	// CeilingMax means a spec may only lower the value.
+	// CeilingMax means a spec value must be strictly below the ceiling's
+	// Value; a value equal to it is refused.
 	CeilingMax CeilingDirection = iota + 1
-	// CeilingMin means a spec may only raise the value.
+	// CeilingMin means a spec value must be strictly above the ceiling's
+	// Value; a value equal to it is refused.
 	CeilingMin
 )
 
 // Ceiling is the operator limit one tighten-only spec field is held to.
 // FieldPath is in harness.Violation.FieldPath vocabulary, so a refusal from
-// StartLoop names the same path.
+// StartLoop names the same path. The limit is strict: a spec value equal to
+// Value is refused, so keep it strictly inside the limit in Direction.
 type Ceiling struct {
 	// FieldPath names the spec field.
 	FieldPath string

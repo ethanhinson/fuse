@@ -84,8 +84,9 @@ server will accept:
 - Build a model picker from `Models` (`Alias`, `Label`, `Description`, `Tags`,
   `IsDefault`, `ContextWindow`).
 - Reference only the listed `Skills` and `SecretRefs`.
-- Keep each tighten-only field at or under its `Ceiling` (`FieldPath`,
-  `Value`, `Direction`), and leave it unset when `OperatorSet` is false.
+- Keep each tighten-only field strictly below its `Ceiling`'s `Value`
+  (`FieldPath`, `Value`, `Direction`; a value equal to it is refused), and
+  leave it unset when `OperatorSet` is false.
 
 A local client or an older server returns `ErrCapabilitiesUnsupported`.
 

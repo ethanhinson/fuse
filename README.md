@@ -563,7 +563,9 @@ The service is four RPCs:
     default flag, and the optional `label` / `description` / `tags`
   - installed skills
   - one ceiling per tighten-only field, keyed by the refusal field path
-    (`operator_set: false` means a spec cannot set that field)
+    (`operator_set: false` means a spec cannot set that field). Ceilings are
+    strict: a spec value must be strictly below the ceiling's value, and a
+    value equal to it is refused
   - `secret_ref` names for the tenant, names only (a host-restricted secret
     still resolves only for its hosts)
   - spec MCP auth kinds
