@@ -83,8 +83,9 @@ var dangerousNames = map[string]bool{
 //   - otherwise ask: an action no rule admits fails toward the human.
 //
 // Deny and ask patterns are protective: they match with matchProtective
-// (whose '*' spans '/') against each segment's argv, each segment's head, and
-// the whole command string (protectiveHit). Allow is permissive: per segment
+// (whose '*' spans '/') against each segment's argv, each segment's head, each
+// segment's raw pre-peel text (rawSubjects, change 0093), and the whole command
+// string (protectiveHit). Allow is permissive: per segment
 // only, with path.Match, so a whole-string allow can never rescue a dangerous
 // segment and an allow's '/' containment holds (change 0088).
 func evalRules(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []string, workspaceRoot string) Verdict {
@@ -580,16 +581,65 @@ func isSafeSed(args []string) bool {
 // against the segment head "bash:<argv0>", so a rule written in the legacy
 // first-word shape ("bash:git") means the same thing in every mode (change
 // 0088). The permissive consumer never sees the head: a bare "bash:git" allow
-// must not approve every git invocation in auto mode.
+// must not approve every git invocation in auto mode. The protective consumer
+// also sees the raw, pre-peel subjects (rawSubjects, change 0093); the
+// permissive consumer sees only the parsed subject.
 func matchesSegment(kind patternConsumer, patterns []string, seg Segment) bool {
-	if matchesSubjects(kind, patterns, segmentSubject(seg)) {
-		return true
+	if kind != consumerProtective {
+		return matchesSubjects(kind, patterns, segmentSubject(seg))
 	}
-	return kind == consumerProtective && matchesSubjects(kind, patterns, "bash:"+seg.Name)
+	for _, subj := range protectiveSegmentSubjects(seg) {
+		if matchesSubjects(kind, patterns, subj) {
+			return true
+		}
+	}
+	return false
+}
+
+// protectiveSegmentSubjects returns every subject a protective pattern is
+// matched against for one segment, in match order: the parsed subject
+// ("bash:<argv0> <args>"), the head ("bash:<argv0>"), then the command as
+// written before wrappers were peeled (rawSubjects). Only protective
+// consumers use this list (change 0093).
+func protectiveSegmentSubjects(seg Segment) []string {
+	return append([]string{segmentSubject(seg), "bash:" + seg.Name}, rawSubjects(seg)...)
+}
+
+// rawSubjects returns the pre-peel subjects for a segment (change 0093):
+// "bash:<rawHead>" and "bash:<rawText>", where rawText is seg.Raw with its
+// whitespace collapsed and rawHead is its first word. The parser peels
+// timeout, nice, stdbuf, nohup, time, env and bash -c before naming the
+// segment, so without these a rule naming the wrapper ("bash:timeout*",
+// "bash:nice *") could never fire in auto mode. Nothing is returned when Raw
+// is empty or rawText equals the parsed subject's text (nothing was peeled);
+// rawHead is left out when it equals the head already matched.
+//
+// These subjects are PROTECTIVE ONLY. A permissive (auto_approve) match must
+// never see them: "bash:timeout" would otherwise approve "timeout 5 rm -rf
+// a/b", and "bash:timeout *" would admit what the strict per-segment rule
+// rejects (ADR-0005, ADR-0065). Raw keeps quoting as written, so it can
+// differ from the parsed text even when nothing was peeled; that only ever
+// gives a protective rule more text to match, which is the direction
+// protective rules err.
+func rawSubjects(seg Segment) []string {
+	fields := strings.Fields(seg.Raw)
+	if len(fields) == 0 {
+		return nil
+	}
+	rawText := strings.Join(fields, " ")
+	if "bash:"+rawText == segmentSubject(seg) {
+		return nil
+	}
+	var out []string
+	if fields[0] != seg.Name {
+		out = append(out, "bash:"+fields[0])
+	}
+	return append(out, "bash:"+rawText)
 }
 
 // protectiveHit reports whether any protective pattern matches the parsed
-// command: per segment (full subject and head) or against the whole command.
+// command: per segment (full subject, head and raw pre-peel subjects) or
+// against the whole command.
 // It is the boolean wrapper over protectiveHitPattern that the deny call site
 // in evalRules uses.
 func protectiveHit(patterns []string, segments []Segment) bool {
@@ -598,8 +648,9 @@ func protectiveHit(patterns []string, segments []Segment) bool {
 }
 
 // protectiveHitPattern is the single protective matcher: it walks the same
-// subjects protectiveHit always did (each segment's subject, each segment's
-// "bash:<argv0>" head, then the whole command) with matchProtective and
+// subjects protectiveHit always did (each segment's subject, its
+// "bash:<argv0>" head, and its raw pre-peel subjects (rawSubjects), then the
+// whole command) with matchProtective and
 // returns the first pattern that matched, so an explicit ask can name it.
 // It is the ONE protective subject rule; auto mode (evalRules) and smart mode
 // (protectivePattern) both call it, so the two modes cannot drift apart
@@ -609,11 +660,10 @@ func protectiveHitPattern(patterns []string, segments []Segment) (string, bool) 
 		return "", false
 	}
 	for _, seg := range segments {
-		if pat, ok := firstProtectiveMatch(patterns, segmentSubject(seg)); ok {
-			return pat, true
-		}
-		if pat, ok := firstProtectiveMatch(patterns, "bash:"+seg.Name); ok {
-			return pat, true
+		for _, subj := range protectiveSegmentSubjects(seg) {
+			if pat, ok := firstProtectiveMatch(patterns, subj); ok {
+				return pat, true
+			}
 		}
 	}
 	return firstProtectiveMatch(patterns, wholeSubject(segments))

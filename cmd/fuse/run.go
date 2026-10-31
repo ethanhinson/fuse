@@ -376,7 +376,7 @@ func autoModeOptions(cfg config.Config, reg *model.Registry, traceW io.Writer) [
 	// Give the classifier the session's writable geography so its pending-call
 	// prompt can distinguish "inside the workspace" from "outside" (#0069).
 	// These are deliberately the SAME inputs the gate is scoped with —
-	// WithWorkspaceRoot(workspaceRoot()) just below and WithWriteRoots(
+	// WithWorkspaceRoot(workspaceRoot()) and WithWriteRoots(
 	// gateWriteRoots(cfg)) in buildGate — which together form the gate's
 	// allowedRoots(). Naming only workspace+scratch here would tell the
 	// classifier a narrower geography than the gate enforces, so a configured
@@ -385,7 +385,6 @@ func autoModeOptions(cfg config.Config, reg *model.Registry, traceW io.Writer) [
 	cls = cls.WithWorkspaceContext(workspaceRoot(), gateWriteRoots(cfg))
 	return []permissions.Option{
 		permissions.WithClassifier(cls),
-		permissions.WithWorkspaceRoot(workspaceRoot()),
 		permissions.WithInteractive(stdinIsTerminal()),
 	}
 }
@@ -422,6 +421,9 @@ func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.A
 	// config write_roots. Applied unconditionally (outside autoModeOptions) so
 	// degraded auto mode — no constructible classifier — still scopes them.
 	opts = append(opts, permissions.WithWriteRoots(gateWriteRoots(cfg)))
+	// The workspace root is likewise unconditional: it drives the rules-layer
+	// floor (rm -rf <ancestor>), which must hold with no gateway/classifier.
+	opts = append(opts, permissions.WithWorkspaceRoot(workspaceRoot()))
 	if sm != nil {
 		opts = append(opts, permissions.WithSessionMode(sm))
 	}

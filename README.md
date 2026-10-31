@@ -252,7 +252,13 @@ Protective patterns (`always_prompt`, `auto.deny`, `auto.ask`) are also
 matched against the segment head `bash:<argv0>` and against the whole command,
 and their `*` matches any run of characters **including `/`**, so
 `deny: ["bash:rm *"]` denies `rm -rf a/b` and `ask: ["bash:npm publish*"]`
-matches `npm publish ./pkg/dir`. A matching `always_prompt` or
+matches `npm publish ./pkg/dir`. Protective patterns also match the command as written, before wrappers such as
+`timeout`, `nice`, `env` and `bash -c` are peeled, so a rule naming the wrapper
+fires in every mode for wrapper forms the shell parser accepts (`timeout`,
+`nice`, `nohup`, `time`, `stdbuf`, `env` with inert assignments, `bash -c`).
+Commands the parser refuses (`sudo`, path-qualified argv0, `env` with non-inert
+assignments) are not matched by wrapper-named protective rules in auto mode,
+which asks for them instead. A matching `always_prompt` or
 `auto.ask` rule is final in smart and auto mode alike: it prompts a human when
 one is bound, and when the binding has no human (the loop servers, the headless
 mcp-server, piped stdin) it is denied with the matched pattern in the reason
@@ -264,9 +270,13 @@ match on its own. `?` matches one character and `[...]` classes work as in a
 shell glob; a malformed pattern matches nothing. "Every mode alike" covers
 these segment, whole-command, and head subjects. Smart mode additionally keeps
 its legacy subjects for `always_prompt` and `auto_approve`, the bare tool name
-and the raw first token of the command (so `bash:git` still approves any
-command that starts with `git`), which auto mode does not use; no existing
-smart-mode rule changes meaning. Protective rules match generously because they only ever tighten;
+and the raw first token of the command (so `bash:git` still approves
+a command that starts with `git`, subject to the exceptions below), which auto
+mode does not use; apart from those exceptions no existing smart-mode rule
+changes meaning. In smart mode a catastrophic segment (one the parser accepts)
+is never approved by an allow rule: smart mode prompts when a human is bound and
+denies at the rules layer when only a policy stand-in is bound, and an `rm` or
+`dd` with an unresolved shell expansion no longer matches a first-token allow. Protective rules match generously because they only ever tighten;
 allow rules match strictly because a match grants permission.
 
 **Trust boundary.** The permission-*loosening* keys — `mode`, `session_allow`,

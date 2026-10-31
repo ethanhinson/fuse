@@ -530,7 +530,8 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	// (prompt-all, smart fallthrough) and is refined by the auto pipeline.
 	// askReason carries the layer's own explanation when it has one (the
 	// web_fetch floor, see fetchFloorAskReason; an explicit ask rule in auto
-	// mode; a smart-mode always_prompt match, see explicitAskReason); ""
+	// mode; a smart-mode always_prompt match, see explicitAskReason; a
+	// smart-mode catastrophic command, see catastrophicAskPrefix); ""
 	// everywhere else leaves the event exactly as it was.
 	askLayer := LayerHuman
 	askReason := ""
@@ -566,27 +567,46 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	}
 
 	if mode == ModeSmart {
-		// always_prompt is an explicit ask (change 0092): it demotes even
-		// safe-list entries, and like auto mode's it is its own verdict. With a
-		// human bound it prompts and the ask event names the rule; with only a
-		// policy stand-in it is denied at the rules layer, byte-for-byte the
-		// auto-mode outcome, instead of being answered by the stand-in.
-		pat, demoted := protectivePattern(g.cfg.AlwaysPrompt, name, args)
-		switch {
-		case !demoted:
-			// auto_approve config patterns promote beyond the safe list.
-			if matchesPermissive(g.cfg.AutoApprove, name, args, g.workspaceRoot) || onSafeList(name) {
-				g.emitDecision(ctx, mode, name, args, "allow", LayerSmartConfig, "", "", nil)
-				policy.AutoApprove = true
-				return policy, nil
+		// The catastrophic floor is a rules-layer decision in every mode
+		// (change 0093). Auto mode denies these in evalRules before any rule is
+		// read; smart mode checks them here, before always_prompt and before any
+		// allow, so no auto_approve rule (legacy first-token or per-segment) can
+		// approve one. In smart mode, a policy stand-in never approves a
+		// catastrophic command the parser accepts: it is denied at the rules
+		// layer (auto mode's own floor is separate). Commands the parser
+		// refuses keep their prior behavior. With a human bound, the human keeps
+		// the last word: the call prompts and the ask event names the floor.
+		if command, catastrophic := catastrophicSegment(name, args, g.workspaceRoot); catastrophic {
+			if g.approvalProvenance == DecidedByPolicy {
+				reason := catastrophicFloorDenyPrefix + command
+				g.emitDecision(ctx, mode, name, args, "deny", LayerRules, reason, g.approvalProvenance, nil)
+				return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerRules}, nil
 			}
-		case g.approvalProvenance == DecidedByPolicy:
-			reason := explicitAskReason(pat, true)
-			g.emitDecision(ctx, mode, name, args, "deny", LayerRules, reason, g.approvalProvenance, nil)
-			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerRules}, nil
-		default:
 			askLayer = LayerRules
-			askReason = explicitAskReason(pat, false)
+			askReason = catastrophicAskPrefix + command
+		} else {
+			// always_prompt is an explicit ask (change 0092): it demotes even
+			// safe-list entries, and like auto mode's it is its own verdict. With a
+			// human bound it prompts and the ask event names the rule; with only a
+			// policy stand-in it is denied at the rules layer, byte-for-byte the
+			// auto-mode outcome, instead of being answered by the stand-in.
+			pat, demoted := protectivePattern(g.cfg.AlwaysPrompt, name, args)
+			switch {
+			case !demoted:
+				// auto_approve config patterns promote beyond the safe list.
+				if matchesPermissive(g.cfg.AutoApprove, name, args, g.workspaceRoot) || onSafeList(name) {
+					g.emitDecision(ctx, mode, name, args, "allow", LayerSmartConfig, "", "", nil)
+					policy.AutoApprove = true
+					return policy, nil
+				}
+			case g.approvalProvenance == DecidedByPolicy:
+				reason := explicitAskReason(pat, true)
+				g.emitDecision(ctx, mode, name, args, "deny", LayerRules, reason, g.approvalProvenance, nil)
+				return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerRules}, nil
+			default:
+				askLayer = LayerRules
+				askReason = explicitAskReason(pat, false)
+			}
 		}
 	}
 
@@ -617,6 +637,15 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 
 // explicitAskDenyPrefix opens the reason of every explicit-ask outcome.
 const explicitAskDenyPrefix = "matched ask rule "
+
+// catastrophicFloorDenyPrefix opens the reason of a smart-mode catastrophic
+// deny under a policy stand-in (change 0093). Auto mode's floor keeps its own
+// "denied by auto-mode rules layer: " reason.
+const catastrophicFloorDenyPrefix = "catastrophic command denied by rules floor: "
+
+// catastrophicAskPrefix opens the ask reason when a human is prompted for a
+// catastrophic command in smart mode (change 0093).
+const catastrophicAskPrefix = "catastrophic command: "
 
 // explicitAskReason renders the reason for an explicit-ask outcome in every
 // mode that evaluates operator rules (auto: auto.ask and always_prompt; smart:

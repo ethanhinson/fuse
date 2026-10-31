@@ -34,6 +34,14 @@ var protectiveParityRows = []struct {
 	{"class plus star", "bash:rm -[rR]f *", "rm -Rf a/b", []string{"bash:rm -Rf a/*"}, true},
 	{"question mark matches a slash", "bash:rm -rf a?b", "rm -rf a/b", []string{"bash:rm -rf a/*"}, true},
 	{"whole-command pattern", "bash:git status*rm -rf a/*", "git status && rm -rf a/b", []string{"bash:git status", "bash:rm -rf a/*"}, true},
+	// Raw pre-peel subjects (change 0093): a protective rule naming a peeled
+	// wrapper fires in both modes; the peeled subject still matches too.
+	{"wrapper glob matches the command as written", "bash:timeout*", "timeout 5 rm x", []string{"bash:rm x"}, true},
+	{"wrapper with argument text matches", "bash:nice *", "nice -n 5 make", []string{"bash:make"}, true},
+	{"env wrapper with an inert assignment matches", "bash:env *", "env TZ=UTC make", []string{"bash:make"}, true},
+	{"dash-c wrapper matches the outer call", "bash:bash *", `bash -c "make"`, []string{"bash:make"}, true},
+	{"wrapper rule reaches a later segment", "bash:timeout*", "git status && timeout 5 rm x", []string{"bash:git status", "bash:rm x"}, true},
+	{"peeled subject still matches under a wrapper", "bash:rm *", "timeout 5 rm x", []string{"bash:rm x"}, true},
 	{"unrelated pattern misses", "bash:rm *", "mv a/b c/d", []string{"bash:mv a/* c/*"}, false},
 	{"malformed pattern matches nothing", "bash:rm [", "rm -rf a/b", []string{"bash:rm -rf a/*"}, false},
 }

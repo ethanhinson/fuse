@@ -3,6 +3,7 @@ package permissions
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -478,6 +479,7 @@ func TestSmartMode_AllowPatternsStayStrict(t *testing.T) {
 		{"git status && rm -rf /", []string{"bash:git *"}, true},
 		{"rm build/../x", []string{"bash:rm build/*"}, true},
 		{"go test ./...", []string{"bash:go"}, false}, // legacy fixture, unchanged
+		{"rm -rf $HOME", []string{"bash:rm"}, true},   // change 0093: opaque rm operand declines the legacy allow
 	}
 	for _, tc := range cases {
 		t.Run(tc.cmd, func(t *testing.T) {
@@ -489,6 +491,71 @@ func TestSmartMode_AllowPatternsStayStrict(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSmartMode_PolicyStandIn_DeniesCatastrophic: with only a policy stand-in
+// bound, a catastrophic command in smart mode is denied at the rules layer
+// whether or not an allow rule names it (change 0093). The stand-in is never
+// consulted. Benign commands keep their existing outcome.
+func TestSmartMode_PolicyStandIn_DeniesCatastrophic(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := filepath.Join(base, "ws")
+	if err := os.Mkdir(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defer chdir(t, ws)()
+
+	newGate := func(allow []string) (*PermissionGate, *bool) {
+		approve, called := newApproveRecorder(true)
+		g := New(config.PermissionsConfig{Mode: "smart", AutoApprove: allow}, newTestRegistry("bash"), approve,
+			WithWorkspaceRoot(ws), WithApprovalProvenance(DecidedByPolicy))
+		return g, called
+	}
+
+	for _, allow := range [][]string{nil, {"bash:rm"}} {
+		for _, cmd := range []string{"rm -rf ~", "rm -rf /", "rm -rf ..", "mkfs.ext4 /dev/sda1"} {
+			t.Run(fmt.Sprintf("%v/%s", allow, cmd), func(t *testing.T) {
+				g, called := newGate(allow)
+				ctx, rec := recordDecisions()
+				res := g.Execute(ctx, "bash", bashArgs(cmd))
+				if !res.Denied {
+					t.Fatalf("want a deny; res=%+v decisions=%+v", res, *rec)
+				}
+				if *called {
+					t.Fatal("the policy stand-in must never be consulted for a catastrophic command")
+				}
+				if len(*rec) != 1 {
+					t.Fatalf("want exactly one decision; got %+v", *rec)
+				}
+				d := (*rec)[0]
+				if d.Verdict != "deny" || d.Layer != LayerRules || d.DecidedBy != DecidedByPolicy || d.Mode != "smart" ||
+					!strings.HasPrefix(d.Reason, "catastrophic command denied by rules floor:") {
+					t.Fatalf("want deny/rules/policy/smart with the floor reason; got %+v", d)
+				}
+			})
+		}
+	}
+
+	t.Run("benign with allow", func(t *testing.T) {
+		g, called := newGate([]string{"bash:rm"})
+		ctx, rec := recordDecisions()
+		g.Execute(ctx, "bash", bashArgs("rm x"))
+		if *called || len(*rec) != 1 || (*rec)[0].Verdict != "allow" || (*rec)[0].Layer != LayerSmartConfig {
+			t.Fatalf("rm x under bash:rm must allow at smart_config without the stand-in; called=%v decisions=%+v", *called, *rec)
+		}
+	})
+	t.Run("benign without allow", func(t *testing.T) {
+		g, called := newGate(nil)
+		ctx, rec := recordDecisions()
+		g.Execute(ctx, "bash", bashArgs("rm x"))
+		last := (*rec)[len(*rec)-1]
+		if !*called || last.Verdict != "allow" || last.Layer != LayerHuman {
+			t.Fatalf("rm x with no allow must be answered by the stand-in at human; called=%v decisions=%+v", *called, *rec)
+		}
+	})
 }
 
 // TestSmartMode_AlwaysPrompt_HumanPrompts: with a human bound, a smart-mode
