@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/protective-permission-patterns-match-across-slashes-and-in-e'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -50,3 +50,9 @@ Permission patterns use `path.Match`, where `*` does not cross `/`. A deny rule 
 - The explicit-ask verdict and headless policy (separate change).
 - Changing default rule sets.
 - Regex or other new pattern syntax.
+
+## Reconcile log
+
+### 2026-10-31
+
+Unchanged against origin/main tip 4f61322; PR 110 (change 87) touches the same package and will be rebased later.
