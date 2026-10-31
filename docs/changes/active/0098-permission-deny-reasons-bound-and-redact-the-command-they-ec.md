@@ -10,10 +10,10 @@ created: '2026-10-31'
 updated: '2026-10-31'
 depends_on: []
 stacked_on:
-related: [96, 97]
+related: [94, 96]
 discovered_from: [96]
 adrs: [71]
-spec:
+spec: 'docs/superpowers/specs/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md'
 plan:
 results:
 auto_groomable:
@@ -30,6 +30,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md](../../superpowers/specs/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md) |
 | ADRs | [ADR-0071](../../adrs/0071-commands-the-parser-refuses-are-never-answered-by-a-policy-s.md) |
 <!-- docket:artifacts:end -->
 
