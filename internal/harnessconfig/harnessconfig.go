@@ -76,6 +76,16 @@ var (
 	}
 )
 
+// AuthTypeToConfig is the config auth string for an MCP auth enum value: ""
+// (none) for UNSPECIFIED, the mapped name otherwise; ok false if unmapped.
+func AuthTypeToConfig(t harnessv1.McpAuthType) (string, bool) {
+	if t == harnessv1.McpAuthType_MCP_AUTH_TYPE_UNSPECIFIED {
+		return "", true
+	}
+	s, ok := authToConfig[t]
+	return s, ok
+}
+
 func invert[K comparable, V comparable](m map[K]V) map[V]K {
 	out := make(map[V]K, len(m))
 	for k, v := range m {

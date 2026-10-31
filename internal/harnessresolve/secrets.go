@@ -51,12 +51,8 @@ func (s configSecrets) ResolveSecret(_ context.Context, tenant, name, destinatio
 	if !ok {
 		return "", ErrSecretUnavailable
 	}
-	t := string(event.NormalizeTenant(event.TenantID(tenant)))
-	allowed := e.Tenants
-	if len(allowed) == 0 {
-		allowed = []string{string(event.DefaultTenant)}
-	}
-	if !slices.Contains(allowed, t) {
+	v, ok := available(e, tenant)
+	if !ok {
 		return "", ErrSecretUnavailable
 	}
 	if len(e.Hosts) > 0 {
@@ -65,18 +61,43 @@ func (s configSecrets) ResolveSecret(_ context.Context, tenant, name, destinatio
 			return "", ErrSecretUnavailable
 		}
 	}
+	return v, nil
+}
+
+// SecretNames lists the names available to tenant, unsorted: names only,
+// never values or sources.
+func (s configSecrets) SecretNames(_ context.Context, tenant string) []string {
+	var out []string
+	for name, e := range s.byName {
+		if _, ok := available(e, tenant); ok {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// available is the tenant rule and source read every resolution applies.
+// ResolveSecret adds the destination-host rule on top; SecretNames lists by
+// this rule alone, so a host-restricted name is listed but still resolves only
+// for a destination on its hosts list.
+func available(e config.SecretSourceConfig, tenant string) (string, bool) {
+	t := string(event.NormalizeTenant(event.TenantID(tenant)))
+	allowed := e.Tenants
+	if len(allowed) == 0 {
+		allowed = []string{string(event.DefaultTenant)}
+	}
+	if !slices.Contains(allowed, t) {
+		return "", false
+	}
 	var v string
 	if e.Env != "" {
 		v = os.Getenv(e.Env)
 	} else {
 		b, err := os.ReadFile(e.File)
 		if err != nil {
-			return "", ErrSecretUnavailable
+			return "", false
 		}
 		v = strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
 	}
-	if v == "" {
-		return "", ErrSecretUnavailable
-	}
-	return v, nil
+	return v, v != ""
 }

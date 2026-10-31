@@ -166,8 +166,7 @@ func (r Resolver) resolveSecrets(ctx context.Context, tenant string, spec *harne
 func operatorOnlyProblems(spec *harnessv1.HarnessSpec) []harnessconfig.Problem {
 	var out []harnessconfig.Problem
 	for i, s := range spec.GetMcpServers() {
-		switch t := s.GetAuth().GetType(); t {
-		case harnessv1.McpAuthType_MCP_AUTH_TYPE_OAUTH2, harnessv1.McpAuthType_MCP_AUTH_TYPE_IDENTITY, harnessv1.McpAuthType_MCP_AUTH_TYPE_OAUTH_EXCHANGE:
+		if t := s.GetAuth().GetType(); !specAuthAllowed(t) {
 			out = append(out, harnessconfig.Problem{
 				FieldPath: fmt.Sprintf("mcp_servers[%d].auth.type", i),
 				Message:   fmt.Sprintf("auth type %s is configured by the server operator only; use none, bearer or static in a harness spec", t),
