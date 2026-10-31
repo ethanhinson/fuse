@@ -70,6 +70,15 @@ func TestMatchesPermissive(t *testing.T) {
 		{"legacy first-token allow keeps the floor on the root", []string{"bash:rm"}, "rm -rf /", false},
 		{"legacy first-token allow keeps the floor on mkfs", []string{"bash:mkfs.ext4"}, "mkfs.ext4 /dev/sda1", false},
 		{"legacy bare wrapper allow does not approve a catastrophic inner command", []string{"bash:timeout"}, "timeout 5 rm -rf ~", false},
+		{"legacy first-token allow declines an opaque rm operand", []string{"bash:rm"}, "rm -rf $HOME", false},
+		{"legacy first-token allow declines a quoted opaque rm operand", []string{"bash:rm"}, `rm -rf "$HOME"`, false},
+		{"legacy first-token allow declines an ANSI-C quoted rm operand", []string{"bash:rm"}, `rm -rf $'\x2f'`, false},
+		{"legacy first-token allow declines an opaque rm word that may split into flags", []string{"bash:rm"}, "rm $ARGS", false},
+		{"legacy first-token allow declines an opaque dd operand", []string{"bash:dd"}, "dd if=img of=$DEV", false},
+		{"legacy bare wrapper allow declines an opaque inner rm operand", []string{"bash:timeout"}, "timeout 5 rm -rf $HOME", false},
+		{"legacy first-token allow keeps a literal rm", []string{"bash:rm"}, "rm x", true},
+		{"legacy first-token allow keeps a literal dd", []string{"bash:dd"}, "dd if=a of=b", true},
+		{"legacy first-token allow keeps an opaque operand on a non-destroying command", []string{"bash:git"}, `git commit -m "$MSG"`, true},
 		{"parser refusal keeps the legacy allow (documented boundary)", []string{"bash:sudo"}, "sudo ls", true},
 		{"no patterns never match", nil, "git status", false},
 	}
@@ -282,5 +291,52 @@ func TestPermissiveIgnoresRawSubjects(t *testing.T) {
 	}
 	if p, d := run(autoCfg(config.AutoConfig{}, []string{"bash:timeout"}, nil), "timeout 5 rm -rf ~"); p || !d {
 		t.Errorf("auto: bash:timeout on timeout 5 rm -rf ~: prompted=%v denied=%v, want a deny with no prompt", p, d)
+	}
+}
+
+// TestSmartFloor_PrecedesAllowAndAlwaysPrompt pins the smart-mode order for a
+// catastrophic command (change 0093): the floor is checked before any allow and
+// before always_prompt. With no allow rule and a human bound, `rm -rf /` asks
+// at the rules layer with the floor reason. With an always_prompt rule that
+// also matches, the floor still names the outcome under both provenances: a
+// human is asked with the floor reason, and a policy stand-in is denied with
+// the floor deny reason, never the always_prompt one.
+func TestSmartFloor_PrecedesAllowAndAlwaysPrompt(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const cmd = "rm -rf /"
+	cases := []struct {
+		desc         string
+		alwaysPrompt []string
+		provenance   string
+		wantPrompt   bool
+		wantVerdict  string
+		wantReason   string
+	}{
+		{"no allow, human", nil, DecidedByHuman, true, "ask", "catastrophic command: " + cmd},
+		{"always_prompt, human", []string{"bash:rm *"}, DecidedByHuman, true, "ask", "catastrophic command: " + cmd},
+		{"always_prompt, policy", []string{"bash:rm *"}, DecidedByPolicy, false, "deny", "catastrophic command denied by rules floor: " + cmd},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			approve, called := newApproveRecorder(false)
+			cfg := config.PermissionsConfig{Mode: "smart", AlwaysPrompt: tc.alwaysPrompt}
+			g := New(cfg, newTestRegistry("bash"), approve,
+				WithWorkspaceRoot(root), WithApprovalProvenance(tc.provenance))
+			ctx, rec := recordDecisions()
+			g.Execute(ctx, "bash", bashArgs(cmd))
+			if *called != tc.wantPrompt {
+				t.Fatalf("prompted=%v, want %v (decisions=%+v)", *called, tc.wantPrompt, *rec)
+			}
+			if len(*rec) == 0 {
+				t.Fatal("no decision recorded")
+			}
+			first := (*rec)[0]
+			if first.Verdict != tc.wantVerdict || first.Layer != LayerRules || first.Reason != tc.wantReason {
+				t.Fatalf("first decision = %s/%s %q, want %s/%s %q", first.Verdict, first.Layer, first.Reason, tc.wantVerdict, LayerRules, tc.wantReason)
+			}
+		})
 	}
 }

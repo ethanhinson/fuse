@@ -53,6 +53,15 @@ func protectivePattern(patterns []string, toolName, args string) (string, bool) 
 // `rm -rf ~`. A command the parser refuses keeps the legacy match: there is
 // no segment to judge, and "bash:sudo" in auto_approve is the operator's
 // explicit choice.
+//
+// The floor alone does not close the legacy allow (change 0093): isDangerous
+// skips an opaque rm operand, because it cannot prove `rm -rf $HOME` is
+// catastrophic. Auto mode never approves that shape (allSegmentsAllowed
+// declines any opaque arg and the scoping layer asks), so a parsed command with
+// an unprovableDestructive segment declines the legacy allow too and reaches
+// the human. The guard is narrower than allSegmentsAllowed's: an opaque
+// operand on a command that cannot destroy a machine (`git commit -m "$MSG"`
+// under "bash:git") keeps its legacy allow.
 func matchesPermissive(patterns []string, toolName, args, workspaceRoot string) bool {
 	if len(patterns) == 0 {
 		return false
@@ -60,19 +69,45 @@ func matchesPermissive(patterns []string, toolName, args, workspaceRoot string) 
 	if _, catastrophic := catastrophicSegment(toolName, args, workspaceRoot); catastrophic {
 		return false
 	}
+	var segments []Segment
+	parsed := false
+	if toolName == "bash" {
+		var err error
+		segments, err = splitSegments(bashCommand(args))
+		parsed = err == nil
+	}
+	if parsed {
+		for _, seg := range segments {
+			if unprovableDestructive(seg) {
+				return false
+			}
+		}
+	}
 	for _, subj := range subjects(toolName, args) {
 		if matchesSubjects(consumerPermissive, patterns, subj) {
 			return true
 		}
 	}
-	if toolName != "bash" {
-		return false
-	}
-	segments, err := splitSegments(bashCommand(args))
-	if err != nil || len(segments) == 0 {
+	if !parsed || len(segments) == 0 {
 		return false
 	}
 	return allSegmentsAllowed(segments, patterns, false)
+}
+
+// unprovableDestructive reports whether a segment is a catastrophe-capable
+// command (rm or dd, the two shape-based cases isDangerous judges by operand)
+// carrying an opaque argument (change 0093). isCatastrophicRm skips an opaque
+// word rather than resolve it, and isDdToDevice only sees a literal of=/dev/
+// prefix, so `rm -rf $HOME`, `rm -rf $'\x2f'` and `dd of=$DEV` are not
+// provably catastrophic; they are not provably safe either. Any opaque rm word
+// counts, not only an operand: an unquoted `$ARGS` can split into `-rf /`. The
+// name-only catastrophic commands (mkfs, mkfs.*, shutdown and the rest of
+// dangerousNames) are floored by isDangerous whatever their arguments.
+func unprovableDestructive(seg Segment) bool {
+	if seg.Name != "rm" && seg.Name != "dd" {
+		return false
+	}
+	return seg.hasOpaqueArg()
 }
 
 // catastrophicSegment reports whether a bash call parses into at least one

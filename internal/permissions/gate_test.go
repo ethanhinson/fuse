@@ -479,6 +479,7 @@ func TestSmartMode_AllowPatternsStayStrict(t *testing.T) {
 		{"git status && rm -rf /", []string{"bash:git *"}, true},
 		{"rm build/../x", []string{"bash:rm build/*"}, true},
 		{"go test ./...", []string{"bash:go"}, false}, // legacy fixture, unchanged
+		{"rm -rf $HOME", []string{"bash:rm"}, true},   // change 0093: opaque rm operand declines the legacy allow
 	}
 	for _, tc := range cases {
 		t.Run(tc.cmd, func(t *testing.T) {
