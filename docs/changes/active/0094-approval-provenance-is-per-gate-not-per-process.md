@@ -2,7 +2,7 @@
 id: 94
 slug: 'approval-provenance-is-per-gate-not-per-process'
 title: 'Approval provenance is per gate, not per process'
-status: 'proposed'
+status: 'in-progress'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/approval-provenance-is-per-gate-not-per-process'
 pr:
 blocked_by:
 reconciled: false
