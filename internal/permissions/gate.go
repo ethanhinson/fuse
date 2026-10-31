@@ -593,9 +593,10 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		// allow, so no auto_approve rule (legacy first-token or per-segment) can
 		// approve one. In smart mode, a policy stand-in never approves a
 		// catastrophic command the parser accepts: it is denied at the rules
-		// layer (auto mode's own floor is separate). Commands the parser
-		// refuses keep their prior behavior. With a human bound, the human keeps
-		// the last word: the call prompts and the ask event names the floor.
+		// layer (auto mode's own floor is separate). A command the parser
+		// refuses is never catastrophic here; it is handled after the allow step
+		// below (change 0096). With a human bound, the human keeps the last
+		// word: the call prompts and the ask event names the floor.
 		if command, catastrophic := catastrophicSegment(name, args, g.workspaceRoot); catastrophic {
 			if g.approvalProvenance == DecidedByPolicy {
 				reason := catastrophicFloorDenyPrefix + command
@@ -618,6 +619,21 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 					g.emitDecision(ctx, mode, name, args, "allow", LayerSmartConfig, "", "", nil)
 					policy.AutoApprove = true
 					return policy, nil
+				}
+				// A command the parser refuses (change 0096) has no segment for
+				// any layer to judge, so only a human may answer it. With a policy
+				// stand-in it is denied at the rules layer; with a human bound it
+				// prompts and the ask event names the parse layer, as in auto
+				// mode. The legacy allow just above still admits it when the
+				// operator named it (auto_approve: ["bash:sudo"]), the boundary
+				// change 0093 pinned.
+				if command, unparseable := unparseableBash(name, args); unparseable {
+					if g.approvalProvenance == DecidedByPolicy {
+						reason := unparseableDenyPrefix + command
+						g.emitDecision(ctx, mode, name, args, "deny", LayerRules, reason, g.approvalProvenance, nil)
+						return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerRules}, nil
+					}
+					askLayer = LayerParse
 				}
 			case g.approvalProvenance == DecidedByPolicy:
 				reason := explicitAskReason(pat, true)

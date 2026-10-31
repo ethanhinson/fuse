@@ -189,3 +189,78 @@ func TestAutoMode_Unparseable_ProtectiveRulesSeeRawText(t *testing.T) {
 		})
 	}
 }
+
+// smartUnparseableRun runs one smart-mode gate over a stub registry and
+// returns whether the call was denied and every decision it emitted.
+func smartUnparseableRun(t *testing.T, autoApprove, alwaysPrompt []string, a Approver, cmd string) (bool, []Decision) {
+	t.Helper()
+	ctx, rec := recordDecisions()
+	cfg := config.PermissionsConfig{Mode: "smart", AutoApprove: autoApprove, AlwaysPrompt: alwaysPrompt}
+	g := New(cfg, newTestRegistry("bash"), a, WithWorkspaceRoot(t.TempDir()))
+	res := g.Execute(ctx, "bash", bashArgs(cmd))
+	return res.Denied, *rec
+}
+
+// TestSmartMode_Unparseable_PolicyDenies: in smart mode (the default) a
+// policy stand-in never answers a command the parser refuses (change 0096).
+// The legacy first-token allow keeps admitting it (ADR-0068's pinned
+// boundary), always_prompt keeps its own deny, and a parseable command no rule
+// names keeps the headless ask-then-allow posture.
+func TestSmartMode_Unparseable_PolicyDenies(t *testing.T) {
+	for _, cmd := range []string{"sudo rm -rf /", "/bin/rm -rf /"} {
+		t.Run("no rules denies "+cmd, func(t *testing.T) {
+			denied, ds := smartUnparseableRun(t, nil, nil, Policy(failIfCalled(t)), cmd)
+			if !denied || len(ds) != 1 {
+				t.Fatalf("want one deny, got denied=%v %+v", denied, ds)
+			}
+			d := ds[0]
+			if d.Verdict != "deny" || d.Layer != LayerRules || d.DecidedBy != DecidedByPolicy || d.Mode != "smart" ||
+				d.Reason != unparseableDenyPrefix+cmd {
+				t.Errorf("want deny/rules/policy/smart with the unparseable reason, got %+v", d)
+			}
+		})
+	}
+	t.Run("legacy first-token allow still admits it", func(t *testing.T) {
+		denied, ds := smartUnparseableRun(t, []string{"bash:sudo"}, nil, Policy(failIfCalled(t)), "sudo ls")
+		if denied || len(ds) != 1 || ds[0].Verdict != "allow" || ds[0].Layer != LayerSmartConfig {
+			t.Fatalf("want one allow at the smart_config layer, got denied=%v %+v", denied, ds)
+		}
+	})
+	t.Run("always_prompt keeps its explicit-ask deny", func(t *testing.T) {
+		denied, ds := smartUnparseableRun(t, nil, []string{"bash:sudo*"}, Policy(failIfCalled(t)), "sudo ls")
+		if !denied || len(ds) != 1 || ds[0].Layer != LayerRules || ds[0].DecidedBy != DecidedByPolicy ||
+			ds[0].Reason != "matched ask rule bash:sudo*; no approver bound" {
+			t.Fatalf("want the explicit-ask policy deny naming bash:sudo*, got denied=%v %+v", denied, ds)
+		}
+	})
+	t.Run("a parseable unmatched command keeps the headless posture", func(t *testing.T) {
+		approve, called := newApproveRecorder(true)
+		denied, ds := smartUnparseableRun(t, nil, nil, Policy(approve), "make build")
+		if denied || !*called || len(ds) != 2 {
+			t.Fatalf("want ask then allow by the stand-in, got denied=%v called=%v %+v", denied, *called, ds)
+		}
+		if ds[0].Verdict != "ask" || ds[0].Layer != LayerHuman || ds[0].Reason != "" {
+			t.Errorf("want ask/human with no reason, got %+v", ds[0])
+		}
+		if ds[1].Verdict != "allow" || ds[1].Layer != LayerHuman || ds[1].DecidedBy != DecidedByPolicy {
+			t.Errorf("want allow/human/policy, got %+v", ds[1])
+		}
+	})
+}
+
+// TestSmartMode_Unparseable_HumanAsksAtParseLayer: with a human bound, a
+// refused command still prompts, and the smart-mode ask now names the parse
+// layer, as auto mode's does (change 0096).
+func TestSmartMode_Unparseable_HumanAsksAtParseLayer(t *testing.T) {
+	approve, called := newApproveRecorder(true)
+	denied, ds := smartUnparseableRun(t, nil, nil, Human(approve), "sudo ls")
+	if denied || !*called || len(ds) != 2 {
+		t.Fatalf("want ask then the human's allow, got denied=%v called=%v %+v", denied, *called, ds)
+	}
+	if ds[0].Verdict != "ask" || ds[0].Layer != LayerParse || ds[0].Reason != "" || ds[0].Mode != "smart" {
+		t.Errorf("want ask/parse/smart with no reason, got %+v", ds[0])
+	}
+	if ds[1].Verdict != "allow" || ds[1].Layer != LayerHuman || ds[1].DecidedBy != DecidedByHuman {
+		t.Errorf("want allow/human/human, got %+v", ds[1])
+	}
+}

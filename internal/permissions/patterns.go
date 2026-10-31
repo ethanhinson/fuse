@@ -149,6 +149,20 @@ func catastrophicSegment(toolName, args, workspaceRoot string) (string, bool) {
 	return "", false
 }
 
+// unparseableBash reports whether a tool call is a bash command the shell
+// parser refuses, and returns the command for the decision reason (change
+// 0096). An empty command parses (to no segments), so it is never reported.
+func unparseableBash(toolName, args string) (string, bool) {
+	if toolName != "bash" {
+		return "", false
+	}
+	command := bashCommand(args)
+	if _, err := splitSegments(command); err != nil {
+		return command, true
+	}
+	return "", false
+}
+
 // subjects returns the match candidates for a tool call. For bash it adds
 // "bash:<firstToken>" so patterns like "git push" work.
 func subjects(toolName, args string) []string {
