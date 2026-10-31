@@ -844,6 +844,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	maxTokens := effectiveMaxTokens(mc, cfg)
 	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
+	a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
