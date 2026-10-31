@@ -62,13 +62,3 @@ A client that starts loops from a HarnessSpec has to guess what the server suppo
 
 Unchanged against main ae9c8d7; related #84 and #85 are merged and archived, so the spec layering and tighten-only options it builds on are present.
 
-## Run halted
-
-### 2026-10-31
-
-Build role halted at plan Task 1: the docket-build-standard worker returned BLOCKED.
-
-- Cause: the build-task contract requires every test command to run under `timeout --kill-after=10s 10m` (or `gtimeout`). Neither binary is on PATH on this machine (GNU coreutils not installed), so the worker could not run its focused tests.
-- Remedy: install a timeout wrapper (for example `brew install coreutils`, which provides `gtimeout`), then resume this change by id through the run tracker (`run.start implement-next --resume 86`, then `change.resume-halted --acknowledge-quiescent`).
-- State left: feature worktree /Users/ethanhinson/dev/fuse/.worktrees/loop-server-advertises-its-capabilities-models-skills-ceilin at HEAD 6aafbe1 (spec commit only), with uncommitted Task 1 RED tests: internal/config/models_metadata_test.go (new), internal/configcheck/configcheck_test.go, internal/harnessconfig/harnessconfig_test.go, internal/tui/models_editor_test.go. A resumed worker should keep them and continue at Task 1 Step 3.
-- Plan attached; reconcile done (unchanged). No commits beyond the spec copy; no gate run; no evidence.

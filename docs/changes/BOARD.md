@@ -6,7 +6,7 @@
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0086](active/0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md) | Loop server advertises its capabilities - models, skills, ceilings | `high` | `feat` | [spec](../superpowers/specs/2026-10-31-loop-server-advertises-its-capabilities-models-skills-ceilin-design.md) | `feat/loop-server-advertises-its-capabilities-models-skills-ceilin` | building |
+| [0086](active/0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md) | Loop server advertises its capabilities - models, skills, ceilings | `high` | `feat` | [spec](../superpowers/specs/2026-10-31-loop-server-advertises-its-capabilities-models-skills-ceilin-design.md) | `feat/loop-server-advertises-its-capabilities-models-skills-ceilin` | run halted — needs you |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
 ## 🟡 Proposed (1)
