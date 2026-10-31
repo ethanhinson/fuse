@@ -2,7 +2,7 @@
 id: 93
 slug: 'permission-floor-and-wrapper-parity-across-modes-and-binding'
 title: 'Permission floor and wrapper parity across modes and bindings'
-status: 'implemented'
+status: 'done'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md](../../superpowers/specs/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md) |
+| Spec (merged) | [2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md) |
 | Plan | [2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding.md](../../superpowers/plans/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding.md) |
 | Results | [2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-results.md](../../results/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-results.md) |
 | ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0049](../../adrs/0049-allowlist-admission-on-deterministic-allow-paths.md), [ADR-0065](../../adrs/0065-permission-patterns-match-by-consumer-generous-for-protectiv.md), [ADR-0068](../../adrs/0068-catastrophic-floor-is-a-rules-layer-decision-in-smart-mode-a.md) |

@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0093 — Permission floor and wrapper parity across modes and bindings](../../changes/active/0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md)**
+> ↩ **[Change 0093 — Permission floor and wrapper parity across modes and bindings](../../changes/archive/2026-10-31-0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md)**
 <!-- docket:backlink:end -->
 
 # Permission floor and wrapper parity across modes and bindings - Implementation Plan
