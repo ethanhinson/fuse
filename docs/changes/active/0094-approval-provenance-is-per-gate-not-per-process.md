@@ -2,7 +2,7 @@
 id: 94
 slug: 'approval-provenance-is-per-gate-not-per-process'
 title: 'Approval provenance is per gate, not per process'
-status: 'in-progress'
+status: 'implemented'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/approval-provenance-is-per-gate-not-per-process'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/118'
 blocked_by:
 reconciled: true
 ---
@@ -57,3 +57,12 @@ Approval provenance (human vs policy) is a process-wide mark while the approver 
 ### 2026-10-31
 
 Unchanged against origin/main 3539cd2: PR #116 (floor and wrapper parity) is on main, 0087-0093 merged; the spec's cited code sites hold with small offsets.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 7126c0917a11b711a6d544e3d225aef040a8ed6d
+ran_at:   2026-10-31T22:18:39Z
+<!-- docket:build-evidence:end -->

@@ -1,25 +1,25 @@
 # Backlog
 
-**96 changes** — 🟢 2 in progress · 🔵 1 built · 🟡 2 proposed · ⚪ 3 deferred · ✅ 82 done · 🗑️ 6 killed
+**96 changes** — 🟢 1 in progress · 🔵 2 built · 🟡 2 proposed · ⚪ 3 deferred · ✅ 82 done · 🗑️ 6 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0094](active/0094-approval-provenance-is-per-gate-not-per-process.md) | Approval provenance is per gate, not per process | `medium` | `fix` | [spec](../superpowers/specs/2026-10-31-approval-provenance-is-per-gate-not-per-process-design.md) | `fix/approval-provenance-is-per-gate-not-per-process` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (1)
+## 🔵 Built (2)
 
 | # | Title | Priority | Type | PR | State |
 |---|-------|----------|------|----|-------|
 | [0095](active/0095-workers-must-declare-tools-and-worker-requires-an-active-wor.md) | Workers must declare tools, and worker requires an active workflow | `medium` | `fix` | [#117](https://github.com/ethanhinson/fuse/pull/117) | awaiting merge |
+| [0094](active/0094-approval-provenance-is-per-gate-not-per-process.md) | Approval provenance is per gate, not per process | `medium` | `fix` | [#118](https://github.com/ethanhinson/fuse/pull/118) | awaiting merge |
 
 ## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0096](active/0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | `high` | `fix` | ⏳ waiting on #94 — not yet built |
+| [0096](active/0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | `high` | `fix` | ⏳ waiting on #94 — needs your merge |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
