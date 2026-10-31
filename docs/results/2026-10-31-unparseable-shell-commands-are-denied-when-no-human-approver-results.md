@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0096 — Unparseable shell commands are denied when no human approver is bound](../changes/active/0096-unparseable-shell-commands-are-denied-when-no-human-approver.md)**
+> ↩ **[Change 0096 — Unparseable shell commands are denied when no human approver is bound](../changes/archive/2026-10-31-0096-unparseable-shell-commands-are-denied-when-no-human-approver.md)**
 <!-- docket:backlink:end -->
 
 # Unparseable shell commands are denied when no human approver is bound - Results

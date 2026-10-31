@@ -1,18 +1,12 @@
 # Backlog
 
-**98 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 84 done · 🗑️ 6 killed
+**98 changes** — 🟢 1 in progress · 🟡 3 proposed · ⚪ 3 deferred · ✅ 85 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🔵 Built (1)
-
-| # | Title | Priority | Type | PR | State |
-|---|-------|----------|------|----|-------|
-| [0096](active/0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | `high` | `fix` | [#119](https://github.com/ethanhinson/fuse/pull/119) | awaiting merge |
 
 ## 🟡 Proposed (3)
 
@@ -37,20 +31,19 @@ graph TD
   0063 --> 0074
   0081
   0083
-  0094 --> 0096
   0097
   0098
   0012:::done
   0052:::done
   0063:::done
-  0094:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (90)</summary>
+<details><summary>✅🗑️ Archive — done + killed (91)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0096](archive/2026-10-31-0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | 2026-10-31 |
 | [0095](archive/2026-10-31-0095-workers-must-declare-tools-and-worker-requires-an-active-wor.md) | Workers must declare tools, and worker requires an active workflow | 2026-10-31 |
 | [0094](archive/2026-10-31-0094-approval-provenance-is-per-gate-not-per-process.md) | Approval provenance is per gate, not per process | 2026-10-31 |
 | [0093](archive/2026-10-31-0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md) | Permission floor and wrapper parity across modes and bindings | 2026-10-31 |
@@ -65,7 +58,6 @@ graph TD
 | [0084](archive/2026-10-30-0084-harnessspec-proto-and-public-validator.md) | HarnessSpec proto and public validator | 2026-10-30 |
 | [0076](archive/2026-09-17-0076-fuse-server-helm-chart-compose-stack.md) | fuse server deployment — a docker-compose stack and a Helm chart over the released image (not an operator) | 2026-09-17 |
 | [0075](archive/2026-09-17-0075-paas-remote-sandbox-substrate-adr.md) | PaaS/remote sandbox substrate — the provision/attach/teardown seam ADR, with a Kubernetes warm-Pod handler as first implementation | 2026-09-17 |
-| [0082](archive/2026-09-13-0082-build-release-pipeline.md) | build/release pipeline — tag-driven GoReleaser releases (multi-platform archives + GHCR image + curl installer) so users adopt fuse without a Go toolchain | 2026-09-13 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -77,7 +69,7 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-09](archive/) | 4 done |
+| [2026-09](archive/) | 5 done |
 | [2026-08](archive/) | 65 done |
 
 </details>
