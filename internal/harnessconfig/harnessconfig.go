@@ -409,6 +409,20 @@ func FromConfig(cfg config.Config) (*harnessv1.HarnessSpec, []Omission) {
 			Id: mc.ID, MaxTokens: num("models."+alias+".max_tokens", mc.MaxTokens), ContextWindow: num("models."+alias+".context_window", mc.ContextWindow),
 			Persona: mc.Persona, SystemPrefix: mc.SystemPrefix,
 		}
+		// Advertising metadata is the operator's catalogue; HarnessSpec has no
+		// field for it.
+		if mc.Label != "" {
+			omit("models."+alias+".label", reasonOperator)
+		}
+		if mc.Description != "" {
+			omit("models."+alias+".description", reasonOperator)
+		}
+		if len(mc.Tags) > 0 {
+			omit("models."+alias+".tags", reasonOperator)
+		}
+		if mc.Advertise != nil {
+			omit("models."+alias+".advertise", reasonOperator)
+		}
 	}
 	if m.DefaultAlias != "" || len(m.Entries) > 0 {
 		s.Models = m
