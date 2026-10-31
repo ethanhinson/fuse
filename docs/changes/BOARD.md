@@ -1,6 +1,6 @@
 # Backlog
 
-**89 changes** — 🟢 1 in progress · 🟣 2 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
+**89 changes** — 🟢 1 in progress · 🟣 3 groomed · 🟡 1 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
@@ -8,18 +8,18 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟣 Groomed (2)
+## 🟣 Groomed (3)
 
 | # | Title | Priority | Type | Spec | Readiness |
 |---|-------|----------|------|------|-----------|
+| [0089](active/0089-static-credential-mcp-servers-authenticate-and-every-loop-re.md) | Static-credential MCP servers authenticate, and every loop reports its MCP servers | `medium` | `fix` | [spec](../superpowers/specs/2026-10-31-static-credential-mcp-servers-authenticate-and-every-loop-re-design.md) | build-ready |
 | [0088](active/0088-protective-permission-patterns-match-across-slashes-and-in-e.md) | Protective permission patterns match across slashes and in every mode alike | `high` | `fix` | [spec](../superpowers/specs/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md) | build-ready |
 | [0087](active/0087-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h.md) | Explicit ask rules are honored: prompt a human, deny when no human is bound | `high` | `fix` | [spec](../superpowers/specs/2026-10-31-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h-design.md) | build-ready |
 
-## 🟡 Proposed (2)
+## 🟡 Proposed (1)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0089](active/0089-static-credential-mcp-servers-authenticate-and-every-loop-re.md) | Static-credential MCP servers authenticate, and every loop reports its MCP servers | `medium` | `fix` | needs-grooming |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)

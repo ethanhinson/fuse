@@ -13,7 +13,7 @@ stacked_on:
 related: [85, 86]
 discovered_from: []
 adrs: [61, 62]
-spec:
+spec: 'docs/superpowers/specs/2026-10-31-static-credential-mcp-servers-authenticate-and-every-loop-re-design.md'
 plan:
 results:
 auto_groomable:
@@ -30,6 +30,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-10-31-static-credential-mcp-servers-authenticate-and-every-loop-re-design.md](../../superpowers/specs/2026-10-31-static-credential-mcp-servers-authenticate-and-every-loop-re-design.md) |
 | ADRs | [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md), [ADR-0062](../../adrs/0062-getcapabilities-advertises-from-the-enforcement-code-and-car.md) |
 <!-- docket:artifacts:end -->
 
