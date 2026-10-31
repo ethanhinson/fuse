@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/turn-and-token-budgets-are-enforced-in-hosted-interactive-lo'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -51,3 +51,9 @@ Interactive loops set max turns to 0 unconditionally, so a spec's `max_turns` is
 - Workflow pool activation (separate change; it builds on this).
 - The local TUI orchestrator side-channel's turn handling.
 - Cost-based budgets.
+
+## Reconcile log
+
+### 2026-10-31
+
+Unchanged against origin/main; spec line references re-checked at build time.
