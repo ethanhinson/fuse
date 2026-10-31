@@ -219,7 +219,7 @@ func TestDenyHint_Wording(t *testing.T) {
 		if h == "" {
 			t.Errorf("layer %q: empty hint", l)
 		}
-		if strings.ContainsRune(h, '—') {
+		if strings.ContainsRune(h, '\u2014') {
 			t.Errorf("layer %q: hint contains an em dash: %q", l, h)
 		}
 		if !ownRemedy[l] && !strings.Contains(h, "retrying the identical call will fail") {
