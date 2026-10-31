@@ -1,6 +1,6 @@
 # Backlog
 
-**97 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 2 proposed · ⚪ 3 deferred · ✅ 84 done · 🗑️ 6 killed
+**98 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 84 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|----|-------|
 | [0096](active/0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | `high` | `fix` | [#119](https://github.com/ethanhinson/fuse/pull/119) | awaiting merge |
 
-## 🟡 Proposed (2)
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0098](active/0098-permission-deny-reasons-bound-and-redact-the-command-they-ec.md) | Permission deny reasons bound and redact the command they echo | `medium` | `fix` | needs-grooming |
 | [0097](active/0097-approve-all-carries-across-the-cli-model-relay-and-policy-de.md) | Approve-all carries across the CLI-model relay, and policy denials say who denied | `low` | `fix` | needs-grooming |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
@@ -38,6 +39,7 @@ graph TD
   0083
   0094 --> 0096
   0097
+  0098
   0012:::done
   0052:::done
   0063:::done
