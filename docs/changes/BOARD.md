@@ -1,6 +1,6 @@
 # Backlog
 
-**95 changes** — 🟢 1 in progress · 🔵 2 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 80 done · 🗑️ 6 killed
+**96 changes** — 🟢 1 in progress · 🔵 2 built · 🟡 4 proposed · ⚪ 3 deferred · ✅ 80 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
@@ -15,10 +15,11 @@
 | [0093](active/0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md) | Permission floor and wrapper parity across modes and bindings | `medium` | `fix` | [#116](https://github.com/ethanhinson/fuse/pull/116) | awaiting merge |
 | [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | [#115](https://github.com/ethanhinson/fuse/pull/115) | awaiting merge |
 
-## 🟡 Proposed (3)
+## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0096](active/0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | `high` | `fix` | needs-grooming |
 | [0095](active/0095-workers-must-declare-tools-and-worker-requires-an-active-wor.md) | Workers must declare tools, and worker requires an active workflow | `medium` | `fix` | needs-grooming |
 | [0094](active/0094-approval-provenance-is-per-gate-not-per-process.md) | Approval provenance is per gate, not per process | `medium` | `fix` | needs-grooming |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
@@ -42,6 +43,7 @@ graph TD
   0092 --> 0093
   0094
   0095
+  0096
   0012:::done
   0052:::done
   0063:::done

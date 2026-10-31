@@ -1,0 +1,51 @@
+---
+id: 96
+slug: 'unparseable-shell-commands-are-denied-when-no-human-approver'
+title: 'Unparseable shell commands are denied when no human approver is bound'
+status: 'proposed'
+priority: 'high'
+type: 'fix'
+deliverable: 'pr'
+created: '2026-10-31'
+updated: '2026-10-31'
+depends_on: []
+stacked_on:
+related: [87, 92, 93, 94]
+discovered_from: [93]
+adrs: [66, 68]
+spec:
+plan:
+results:
+auto_groomable:
+hold:
+branch_prefix:
+branch:
+pr:
+blocked_by:
+reconciled: false
+---
+
+## Artifacts
+
+<!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| ADRs | [ADR-0066](../../adrs/0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md), [ADR-0068](../../adrs/0068-catastrophic-floor-is-a-rules-layer-decision-in-smart-mode-a.md) |
+<!-- docket:artifacts:end -->
+
+## Why
+
+Shell commands the parser refuses (for example `sudo rm -rf /`, `/bin/rm -rf /`, or a non-inert `env` prefix) cannot be matched against deny rules, the destructive-command floor or explicit ask rules. In auto mode they become an ask, and in smart mode no segment matches; under a policy stand-in (hosted loop servers, headless MCP server, piped-stdin one-shot) that ask is approved. So the most dangerous commands are the ones that slip past every protective layer when no person is present. Protective rules naming a wrapper also miss these forms in auto mode.
+
+## What changes
+
+- Under policy provenance, an unparseable shell command is a rules-layer deny with a clear reason, in auto and smart mode alike.
+- With a human approver bound, it still prompts.
+- Protective rules (deny, ask, always_prompt) are also matched against the raw command text for unparseable commands in auto mode, as smart mode already does.
+- ADR extending the explicit-ask rule to unparseable commands.
+- Tests for each form, including an end-to-end hosted-loop test.
+
+## Out of scope
+
+- Extending the shell parser to accept more forms.
+- A client-visible approval protocol.
