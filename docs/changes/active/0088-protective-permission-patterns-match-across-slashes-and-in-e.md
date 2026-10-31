@@ -13,7 +13,7 @@ stacked_on:
 related: [86]
 discovered_from: []
 adrs: [5, 49]
-spec:
+spec: 'docs/superpowers/specs/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md'
 plan:
 results:
 auto_groomable:
@@ -30,6 +30,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md](../../superpowers/specs/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md) |
 | ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0049](../../adrs/0049-allowlist-admission-on-deterministic-allow-paths.md) |
 <!-- docket:artifacts:end -->
 
