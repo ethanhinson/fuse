@@ -188,6 +188,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		a.SetObserver(observer)
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 		a.SetUsageSink(childNode.UpdateTokens) // the agent owns usage accounting (change 0090)
+		a.SetCallGate(func() error { return sched.TokenQuotaDenied(childNode.ID) })
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044),
 		// the single choke point — no per-site emission here.
 		msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
@@ -273,7 +274,6 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// symmetric, inert here.
 			a.SetEventSink(store)
 			a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
-			a.SetUsageSink(rootNode.UpdateTokens) // the agent owns usage accounting (change 0090)
 			return a, childBuilder, mid, nil
 		},
 	}, oneShotMCPClose
@@ -424,6 +424,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		a.SetObserver(observer)
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 		a.SetUsageSink(childNode.UpdateTokens) // the agent owns usage accounting (change 0090)
+		a.SetCallGate(func() error { return sched.TokenQuotaDenied(childNode.ID) })
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044).
 		msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 		// Raw run error → Spawner spawn.done (change 0044): matches the
@@ -511,7 +512,6 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 			// Event stream wiring (change 0043/0046): symmetric with the child sites.
 			a.SetEventSink(store)
 			a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
-			a.SetUsageSink(rootNode.UpdateTokens) // the agent owns usage accounting (change 0090)
 			return a, childBuilder, mid, nil
 		},
 	}
@@ -684,6 +684,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		a.SetObserver(observer)
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
 		a.SetUsageSink(childNode.UpdateTokens) // the agent owns usage accounting (change 0090)
+		a.SetCallGate(func() error { return sched.TokenQuotaDenied(childNode.ID) })
 
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044), the
 		// single choke point every spawn passes through. The direct sessLog.Write
@@ -794,7 +795,6 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 			}
 			a.SetEventSink(storeHolder.get())
 			a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
-			a.SetUsageSink(rootNode.UpdateTokens) // the agent owns usage accounting (change 0090)
 			return a, childBuilder, modelID, nil
 		},
 	}

@@ -1,6 +1,6 @@
 # Turn and token budgets in hosted interactive loops
 
-Change 0090 — Turn and token budgets are enforced in hosted interactive loops
+Change 0090 - Turn and token budgets are enforced in hosted interactive loops
 
 ## Problem
 

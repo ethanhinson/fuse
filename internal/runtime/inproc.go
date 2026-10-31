@@ -688,7 +688,10 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	a.SetObserver(obs)
 	a.SetEventSink(store)
 	a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
+	// The runtime owns the root's usage sink and call gate (it holds the tree);
+	// children are wired in their builders.
 	a.SetUsageSink(rootNode.UpdateTokens) // the agent owns usage accounting (change 0090)
+	a.SetCallGate(func() error { return tree.Scheduler().TokenQuotaDenied(rootNode.ID) })
 
 	lp := &loop{
 		id:         rootID,

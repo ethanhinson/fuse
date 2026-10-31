@@ -420,14 +420,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// reason max_turns instead of ending the session; the next message gets a
 	// fresh allowance.
 	exchangeTurns := 0
-	for turn := 0; (a.interactive && a.humanInjector != nil) || a.maxTurns <= 0 || turn < a.maxTurns; turn++ {
-		if a.interactive && a.maxTurns > 0 && a.humanInjector != nil && exchangeTurns >= a.maxTurns {
+	for turn := 0; (a.interactive && a.humanInjector.hasBus()) || a.maxTurns <= 0 || turn < a.maxTurns; turn++ {
+		if a.interactive && a.maxTurns > 0 && a.humanInjector.hasBus() && exchangeTurns >= a.maxTurns {
 			a.emit(event.KindLoopParked, turn, event.LoopParkedPayload{Turn: turn, Reason: "max_turns"})
 			if werr := a.humanInjector.Wait(ctx); werr != nil {
 				// Teardown of a parked conversation ends cleanly, as the normal park does.
-				if cerr := ctx.Err(); cerr != nil {
-					return messages, cerr
-				}
 				return messages, nil
 			}
 			exchangeTurns = 0
@@ -451,6 +448,31 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			// rebuilds this user turn identically. Emitted at THIS turn (unlike the seed,
 			// which is turn 0) so replay order matches conversation order.
 			a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content, Source: pd.Source, ReqSeqs: pd.ReqSeqs})
+		}
+
+		// Per-call token gate: a spent session or pool token budget stops the model
+		// being called at all, whether or not the loop can spawn. Non-interactive
+		// loops end with ErrTokenQuotaExhausted; an interactive loop with a bus parks
+		// (reason session_tokens) and stays attached, re-checking on every wake. The
+		// counters are append-only, so a parked loop never calls the model again.
+		for a.callGate != nil {
+			gerr := a.callGate()
+			if gerr == nil {
+				break
+			}
+			if !(a.interactive && a.humanInjector.hasBus()) {
+				a.emit(event.KindError, turn, event.ErrorPayload{Err: gerr.Error(), Turn: turn})
+				return messages, gerr
+			}
+			a.emit(event.KindLoopParked, turn, event.LoopParkedPayload{Turn: turn, Reason: "session_tokens"})
+			if werr := a.humanInjector.Wait(ctx); werr != nil {
+				return messages, nil
+			}
+			// Consume the message that woke us so the next Wait blocks again.
+			if hm, pd, ok := a.humanInjector.pollDetail(); ok {
+				messages = append(messages, hm)
+				a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content, Source: pd.Source, ReqSeqs: pd.ReqSeqs})
+			}
 		}
 
 		estimate := lastUsage + messagesSize(messages[accounted:])/bytesPerToken

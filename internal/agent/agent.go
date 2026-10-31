@@ -109,6 +109,9 @@ type Agent struct {
 	// usageSink receives each model call's token usage; the agent owns usage
 	// accounting so every host (not only the TUI renderer) feeds the tree (change 0090).
 	usageSink func(in, out int)
+	// callGate, when set, is consulted before every model call; a non-nil error
+	// stops the call (token ceilings). See loop.go.
+	callGate func() error
 	// maxTurnsExplicit is true when the turn cap came from the spec/operator
 	// config rather than a binding's headless backstop (change 0090).
 	maxTurnsExplicit bool
@@ -263,6 +266,10 @@ func (a *Agent) SetMaxTurns(n int) { a.maxTurns = n }
 // Bindings wire it to the agent's tree node (AgentNode.UpdateTokens) so session and
 // pool token ceilings trip in every host, not only under the TUI renderer.
 func (a *Agent) SetUsageSink(f func(in, out int)) { a.usageSink = f }
+
+// SetCallGate installs a check run before every model call. A non-nil error
+// refuses the call: non-interactive loops end with it, interactive loops park.
+func (a *Agent) SetCallGate(f func() error) { a.callGate = f }
 
 // DefaultToolTimeout bounds a single leaf tool call when no explicit timeout is
 // configured. Chosen to comfortably cover slow-but-legitimate work (large web
