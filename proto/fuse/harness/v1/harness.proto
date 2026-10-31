@@ -597,11 +597,18 @@ message Pool {
   }];
 }
 
-// Worker is a typed worker: a tool allowlist and an optional model pin.
+// Worker is a typed worker: a tool allowlist (its whole tool set) and an
+// optional model pin.
 message Worker {
-  // Tool allowlist. Omitting spawn_agent makes the worker unable to nest.
+  // Tool allowlist: the worker's whole tool set. It must name at least one tool
+  // and inherits nothing from the parent. A worker-bound child always receives
+  // the five blackboard tools in addition, and it can nest exactly when the
+  // allowlist names spawn_agent.
   repeated string tools = 1 [
-    (buf.validate.field).repeated.items.string.min_len = 1,
+    (buf.validate.field).repeated = {
+      min_items: 1
+      items: {string: {min_len: 1}}
+    },
     (fuse.harness.v1.ui) = {
       label: "Tools"
       widget: WIDGET_LIST

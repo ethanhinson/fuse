@@ -79,5 +79,10 @@
       {"fieldPath": "research.custom.headers", "ruleId": "fuse.headers.credential_literal"},
       {"fieldPath": "research.custom.headers[\"Accept\"].literal", "ruleId": "fuse.literal.reserved_prefix"}
     ]
+  },
+  {
+    "name": "worker without tools",
+    "spec": {"workflows": {"wf": {"workers": {"reader": {}, "ok": {"tools": ["read_file"]}}}}},
+    "want": [{"fieldPath": "workflows[\"wf\"].workers[\"reader\"].tools", "ruleId": "repeated.min_items"}]
   }
 ]

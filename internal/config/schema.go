@@ -516,9 +516,11 @@ type ProviderThroughput struct {
 	TokensPerMinute   int `yaml:"tokens_per_minute"`
 }
 
-// WorkerConfig is a typed worker: a tool allowlist (a worker whose allowlist
-// omits spawn_agent structurally cannot nest) and an optional model pin
-// (empty ⇒ inherit the parent's model).
+// WorkerConfig is a typed worker: a tool allowlist and an optional model pin
+// (empty: inherit the parent's model). The allowlist is the worker's whole tool
+// set: it must name at least one tool and inherits nothing from the parent. A
+// worker-bound child also always receives the five blackboard tools, and it can
+// nest exactly when its allowlist names spawn_agent.
 type WorkerConfig struct {
 	Tools []string `yaml:"tools"`
 	Model string   `yaml:"model"`

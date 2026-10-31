@@ -136,7 +136,7 @@ func TestPipelineGatewayAuthored(t *testing.T) {
 	spawner := plChildSpawner(tree, rootNode, adapter)
 
 	tool := tools.NewPipelineRunTool(
-		makePipelineRunFn(spawner, bb, tree.Scheduler(), rootNode, nil),
+		makePipelineRunFn(spawner, bb, tree.Scheduler(), rootNode, nil, nil),
 		makePipelineSynthFn(spawner, bb, tree.Scheduler(), rootNode, config.Default(), nil, nil, nil, nil),
 	)
 
@@ -209,7 +209,7 @@ func TestPipelineRunYieldsSlotUnderTightCap(t *testing.T) {
 		agent.WithNode(rootNode),
 		agent.WithSpawnDepth(0),
 		agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, _ *agent.AgentTree) (string, error) {
-			runFn := makePipelineRunFn(depth1Spawner(childNode), bb, sched, childNode, nil)
+			runFn := makePipelineRunFn(depth1Spawner(childNode), bb, sched, childNode, nil, nil)
 			return runFn(ctx, []byte(authoredChainYAML), "")
 		}),
 	)
@@ -295,8 +295,8 @@ func TestPipelineGatewaySynthesized(t *testing.T) {
 	// Config with a small attempt budget; RequirePool is set by makePipelineSynthFn.
 	cfg := config.Default()
 	tool := tools.NewPipelineRunTool(
-		makePipelineRunFn(spawner, bb, tree.Scheduler(), rootNode, nil),
-		makePipelineSynthFn(spawner, bb, tree.Scheduler(), rootNode, cfg, []string{"facet-researcher"}, []string{"read_file"}, nil, nil),
+		makePipelineRunFn(spawner, bb, tree.Scheduler(), rootNode, nil, nil),
+		makePipelineSynthFn(spawner, bb, tree.Scheduler(), rootNode, cfg, []string{"read_file"}, nil, nil, nil),
 	)
 
 	args, _ := json.Marshal(map[string]any{"goal": "produce a synthesized report"})

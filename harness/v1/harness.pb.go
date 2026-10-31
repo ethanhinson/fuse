@@ -1397,10 +1397,14 @@ func (x *Pool) GetTokens() uint32 {
 	return 0
 }
 
-// Worker is a typed worker: a tool allowlist and an optional model pin.
+// Worker is a typed worker: a tool allowlist (its whole tool set) and an
+// optional model pin.
 type Worker struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Tool allowlist. Omitting spawn_agent makes the worker unable to nest.
+	// Tool allowlist: the worker's whole tool set. It must name at least one tool
+	// and inherits nothing from the parent. A worker-bound child always receives
+	// the five blackboard tools in addition, and it can nest exactly when the
+	// allowlist names spawn_agent.
 	Tools []string `protobuf:"bytes,1,rep,name=tools,proto3" json:"tools,omitempty"`
 	// Model alias; empty inherits the parent's model.
 	Model         string `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
@@ -2366,9 +2370,9 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\tmax_depth\x18\x03 \x01(\rB\x13\xa2\x9f\x19\x0f\n" +
 	"\tMax depth\x18\x03(\x01R\bmaxDepth\x12-\n" +
 	"\x06tokens\x18\x04 \x01(\rB\x15\xa2\x9f\x19\x11\n" +
-	"\vToken quota\x18\x03(\x01R\x06tokens\"f\n" +
-	"\x06Worker\x12/\n" +
-	"\x05tools\x18\x01 \x03(\tB\x19\xbaH\t\x92\x01\x06\"\x04r\x02\x10\x01\xa2\x9f\x19\t\n" +
+	"\vToken quota\x18\x03(\x01R\x06tokens\"h\n" +
+	"\x06Worker\x121\n" +
+	"\x05tools\x18\x01 \x03(\tB\x1b\xbaH\v\x92\x01\b\b\x01\"\x04r\x02\x10\x01\xa2\x9f\x19\t\n" +
 	"\x05Tools\x18\x06R\x05tools\x12+\n" +
 	"\x05model\x18\x02 \x01(\tB\x15\xbaH\x05r\x03\x18\x80\x01\xa2\x9f\x19\t\n" +
 	"\x05Model\x18\tR\x05model\"\xc2\x03\n" +
