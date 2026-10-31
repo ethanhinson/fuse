@@ -383,20 +383,26 @@ func (s *workflowScope) prepareChild(opts agent.SpawnOpts, child *agent.AgentNod
 // workflowRunner runs fn with a spawner rooted at a fresh coordinator node that
 // roots workflow (change 0091): the pipeline_run workflow path. label names the
 // coordinator node; fn's steps spawner makes every step a child of it, so the
-// steps queue into, count against and resolve workers from that workflow.
+// steps queue into, count against and resolve workers from that workflow. A nil
+// fn only admits: it returns the up-front refusal (unknown, nested or too deep),
+// or nil, and spawns nothing, so a caller can refuse before doing other work.
 type workflowRunner func(ctx context.Context, label, workflow string, fn func(ctx context.Context, steps *agent.Spawner) (string, error)) (string, error)
 
 // runner returns the workflowRunner for pipelines started at parent. The
 // coordinator is one ordinary spawn of parent (so it is admitted into parent's
 // pool and counts against the tree-global max_spawns), marked as the workflow
-// root; its builder runs no model and only drives fn. A workflow requested from
-// inside a workflow subtree is refused by the Spawner (agent.ErrNestedWorkflow),
-// and an unknown name is refused before any node exists.
+// root; its builder runs no model and only drives fn. An unknown name, a
+// workflow requested from inside a workflow subtree (agent.ErrNestedWorkflow) and
+// a parent too deep for the steps (agent.ErrMaxDepthExceeded) are all refused
+// before any node exists (admitPipeline).
 func (s *workflowScope) runner(makeSpawner func(*agent.AgentNode, int) *agent.Spawner, parent *agent.AgentNode) workflowRunner {
 	sched := s.tree.Scheduler()
 	return func(ctx context.Context, label, workflow string, fn func(ctx context.Context, steps *agent.Spawner) (string, error)) (string, error) {
-		if err := s.check(workflow); err != nil {
+		if err := s.admitPipeline(parent, workflow); err != nil {
 			return "", err
+		}
+		if fn == nil {
+			return "", nil
 		}
 		coord := makeSpawner(parent, parent.Depth).WithBuilder(func(ctx context.Context, _ agent.SpawnOpts, node *agent.AgentNode, _ *agent.AgentTree) (string, error) {
 			if _, err := s.activateWorkflow(node); err != nil {
@@ -419,4 +425,32 @@ func (s *workflowScope) runner(makeSpawner func(*agent.AgentNode, int) *agent.Sp
 		d := h.Wait()
 		return d.Result, d.Err
 	}
+}
+
+// admitPipeline refuses a workflow pipeline at parent before any node exists:
+// an unknown workflow, one requested inside a workflow subtree (workflows do not
+// nest), or one whose steps (coordinator at parent.Depth+1, steps one below)
+// would exceed agent.MaxDepth.
+func (s *workflowScope) admitPipeline(parent *agent.AgentNode, workflow string) error {
+	if err := s.check(workflow); err != nil {
+		return err
+	}
+	if rootID := s.tree.WorkflowRootOf(parent.ID); rootID != "" {
+		active := ""
+		if n := s.tree.Node(rootID); n != nil {
+			active = n.Snapshot().WorkflowRoot
+		}
+		return fmt.Errorf("%w: cannot start workflow %q inside workflow %q", agent.ErrNestedWorkflow, workflow, active)
+	}
+	if !pipelineWorkflowFits(parent) {
+		return fmt.Errorf("%w: workflow %q pipeline at depth %d would run its steps at depth %d (max %d)",
+			agent.ErrMaxDepthExceeded, workflow, parent.Depth, parent.Depth+2, agent.MaxDepth)
+	}
+	return nil
+}
+
+// pipelineWorkflowFits reports whether a workflow pipeline started at node has
+// room for its coordinator and steps under agent.MaxDepth.
+func pipelineWorkflowFits(node *agent.AgentNode) bool {
+	return node.Depth+2 <= agent.MaxDepth
 }

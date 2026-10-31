@@ -752,6 +752,12 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 				return "", unknownWorkflowErr(workflow, sortedWorkflowNames(cfg.Workflows))
 			}
 			palette = sortedWorkerNames(wf)
+			// Admit before synthesizing, as the authored path does before any
+			// spawn: a nested or too-deep request spawns no synthesis child,
+			// spends no quota and publishes no pipeline.plan.
+			if _, err := runWF(ctx, "", workflow, nil); err != nil {
+				return "", err
+			}
 		}
 		synthCaps := caps
 		if workflow != "" {

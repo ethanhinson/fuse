@@ -436,3 +436,90 @@ func TestPipelineSynthFnWorkflowUsesRunner(t *testing.T) {
 		t.Fatalf("nil runner synthesis err = %v, want not available", err)
 	}
 }
+
+// TestPipelineSynthFnRefusesNestedWorkflowBeforeSynthesis pins that a workflow
+// synthesis requested from inside a workflow subtree is refused up front, like
+// the authored path: no synthesis child is spawned and no pipeline.plan is
+// published.
+func TestPipelineSynthFnRefusesNestedWorkflowBeforeSynthesis(t *testing.T) {
+	ctx := context.Background()
+	h := newWiringHarness(t)
+	h.reply = func(opts agent.SpawnOpts) string {
+		if opts.Label == "synthesize" {
+			return `{"name":"p","steps":[{"name":"s1","worker":"reader","prompt":"hi"}]}`
+		}
+		return ""
+	}
+	lead := h.lead()
+	sp := h.makeSpawner(lead.node, lead.node.Depth)
+	run := h.w.scope.runner(h.makeSpawner, lead.node)
+	synth := makePipelineSynthFn(sp, h.w.bb, h.tree.Scheduler(), lead.node, h.cfg, []string{"reader"}, nil, nil, run)
+
+	if _, err := synth(ctx, "goal", false, "wf"); !errors.Is(err, agent.ErrNestedWorkflow) {
+		t.Fatalf("nested synthesis err = %v, want ErrNestedWorkflow", err)
+	}
+	if n := len(nodesLabelled(h.tree, "synthesize")); n != 0 {
+		t.Fatalf("nested synthesis spawned %d synthesis children, want 0", n)
+	}
+	if _, ok := h.w.bb.Get(pipelinePlanKey); ok {
+		t.Fatal("nested synthesis published pipeline.plan")
+	}
+}
+
+// deepNode spawns a plain (workflow-free) chain under the root until a node at
+// depth exists, and returns it.
+func (h *wiringHarness) deepNode(depth int) *agent.AgentNode {
+	h.t.Helper()
+	n := h.root
+	for n.Depth < depth {
+		n = h.spawn(n, agent.SpawnOpts{Label: "hop", Task: "t"}).node
+	}
+	return n
+}
+
+// TestRunnerRefusesTooDeepWorkflowPipeline pins the up-front depth refusal: a
+// workflow pipeline whose steps would sit beyond agent.MaxDepth creates no
+// coordinator and never runs fn, and pipeline_run there omits `workflow`.
+func TestRunnerRefusesTooDeepWorkflowPipeline(t *testing.T) {
+	ctx := context.Background()
+	h := newWiringHarness(t)
+	deep := h.deepNode(agent.MaxDepth - 1)
+	called := false
+	_, err := h.w.scope.runner(h.makeSpawner, deep)(ctx, "pipeline deep", "wf", func(context.Context, *agent.Spawner) (string, error) {
+		called = true
+		return "", nil
+	})
+	if !errors.Is(err, agent.ErrMaxDepthExceeded) || !strings.Contains(err.Error(), `workflow "wf"`) {
+		t.Fatalf("too-deep runner err = %v, want a workflow ErrMaxDepthExceeded refusal", err)
+	}
+	if called {
+		t.Fatal("too-deep runner ran fn")
+	}
+	if n := len(nodesLabelled(h.tree, "pipeline deep")); n != 0 {
+		t.Fatalf("too-deep runner created %d coordinator nodes, want 0", n)
+	}
+	reg := tools.NewRegistry()
+	h.w.wirePipeline(reg, deep, nil)
+	if _, ok := toolProps(t, reg, "pipeline_run")["workflow"]; ok {
+		t.Fatal("pipeline_run at a too-deep node advertises a workflow property")
+	}
+
+	// One level shallower the steps fit at MaxDepth: the runner admits it.
+	ok := h.deepNode(agent.MaxDepth - 2)
+	out, err := h.w.scope.runner(h.makeSpawner, ok)(ctx, "pipeline fits", "wf", func(ctx context.Context, steps *agent.Spawner) (string, error) {
+		hd, err := steps.Spawn(ctx, agent.SpawnOpts{Label: "s1", Task: "t", Worker: "reader"})
+		if err != nil {
+			return "", err
+		}
+		d := hd.Wait()
+		return d.Result, d.Err
+	})
+	if err != nil || out != "ok" {
+		t.Fatalf("fitting runner = %q, %v; want the step result", out, err)
+	}
+	reg = tools.NewRegistry()
+	h.w.wirePipeline(reg, ok, nil)
+	if _, has := toolProps(t, reg, "pipeline_run")["workflow"]; !has {
+		t.Fatal("pipeline_run at a fitting depth lacks the workflow property")
+	}
+}

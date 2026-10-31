@@ -70,7 +70,8 @@ func (w loopWiring) rootTools(reg *tools.Registry, rootNode *agent.AgentNode) {
 // wirePipeline registers node's pipeline_run on reg, bound to node's own spawner
 // and to the scope's workflow runner, honoring an explicit subset that omits it.
 // Outside every workflow subtree it advertises the workflows a pipeline may
-// root; inside one it does not (workflows do not nest). The synthesis palette is
+// root; inside one it does not (workflows do not nest), nor where the steps
+// would exceed agent.MaxDepth. The synthesis palette is
 // read before pipeline_run is registered, matching the order before change 0091.
 func (w loopWiring) wirePipeline(reg *tools.Registry, node *agent.AgentNode, requested []string) {
 	sched := w.tree.Scheduler()
@@ -81,7 +82,7 @@ func (w loopWiring) wirePipeline(reg *tools.Registry, node *agent.AgentNode, req
 		makePipelineRunFn(sp, w.bb, sched, node, run),
 		makePipelineSynthFn(sp, w.bb, sched, node, w.cfg, workers, toolNames, w.traceW, run),
 	)
-	if act, _ := w.scope.activationOf(node.ID); act == nil {
+	if act, _ := w.scope.activationOf(node.ID); act == nil && pipelineWorkflowFits(node) {
 		t = t.WithWorkflows(w.scope.names())
 	}
 	wireBuiltPipelineTool(reg, t, requested)
