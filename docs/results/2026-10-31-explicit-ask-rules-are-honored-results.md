@@ -8,7 +8,7 @@
 
 ## Outcome
 
-An explicit auto-mode ask rule (`auto.ask` or `always_prompt` match) is now its own verdict, `VerdictAskExplicit`. It skips the safelist, heuristics and classifier. With a human approver bound it prompts; with only a policy stand-in (hosted loop servers, `--approve-all`, headless mcp-server) it is denied at layer `rules` with reason `matched ask rule <pattern>; no approver bound`. "No rule matched" is unchanged. Recorded as ADR-0064.
+An explicit auto-mode ask rule (`auto.ask` or `always_prompt` match) is now its own verdict, `VerdictAskExplicit`. It skips the safelist, heuristics and classifier. With a human approver bound it prompts; with only a policy stand-in (hosted loop servers, headless mcp-server, the piped-stdin one-shot; `--approve-all` is mode off and never reaches rules) it is denied at layer `rules` with reason `matched ask rule <pattern>; no approver bound`. "No rule matched" is unchanged. Recorded as ADR-0064.
 
 ## Human actions and testing
 
