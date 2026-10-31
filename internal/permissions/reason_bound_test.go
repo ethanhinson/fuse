@@ -185,3 +185,35 @@ func TestApproverDenyReason(t *testing.T) {
 		})
 	}
 }
+
+// TestDenyHint_Wording pins that the rules-layer hint describes the rules and
+// that every hint is non-empty, dash-free, and warns about identical retries
+// unless the layer names its own remedy.
+func TestDenyHint_Wording(t *testing.T) {
+	rules := denyHint(LayerRules)
+	if !strings.Contains(rules, "blocked by the permission rules") || strings.Contains(rules, "catastrophic") {
+		t.Fatalf("rules hint = %q", rules)
+	}
+	ownRemedy := map[string]bool{
+		LayerHeuristic: true, LayerEditScope: true, LayerFetchFloor: true,
+		LayerValve: true, LayerMediation: true,
+	}
+	layers := []string{
+		LayerMediation, LayerDisabled, LayerModeOff, LayerCache, LayerParse,
+		LayerRules, LayerSafelist, LayerHeuristic, LayerClassifier,
+		LayerFetchFloor, LayerEditScope, LayerValve, LayerHuman,
+		LayerSmartConfig, "",
+	}
+	for _, l := range layers {
+		h := denyHint(l)
+		if h == "" {
+			t.Errorf("layer %q: empty hint", l)
+		}
+		if strings.ContainsRune(h, '—') {
+			t.Errorf("layer %q: hint contains an em dash: %q", l, h)
+		}
+		if !ownRemedy[l] && !strings.Contains(h, "retrying the identical call will fail") {
+			t.Errorf("layer %q: hint lacks retry warning: %q", l, h)
+		}
+	}
+}
