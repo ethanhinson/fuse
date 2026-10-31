@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/approval-provenance-is-per-gate-not-per-process'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -49,3 +49,9 @@ Approval provenance (human vs policy) is a process-wide mark while the approver 
 
 - A client-visible approval protocol.
 - Matching semantics.
+
+## Reconcile log
+
+### 2026-10-31
+
+Unchanged against origin/main 3539cd2: PR #116 (floor and wrapper parity) is on main, 0087-0093 merged; the spec's cited code sites hold with small offsets.
