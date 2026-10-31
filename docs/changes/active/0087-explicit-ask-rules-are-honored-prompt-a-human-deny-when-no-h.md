@@ -2,7 +2,7 @@
 id: 87
 slug: 'explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h'
 title: 'Explicit ask rules are honored: prompt a human, deny when no human is bound'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h'
 pr:
 blocked_by:
 reconciled: false
