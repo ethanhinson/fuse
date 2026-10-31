@@ -66,15 +66,14 @@ func TestHostedBindingDeniesExplicitAskRule(t *testing.T) {
 // TestLoopServerDeniesExplicitAskRuleEndToEnd runs the production loop-server
 // runtime against a scripted gateway whose model asks for a command matching an
 // operator auto.ask rule. With no human bound the call must be denied at the
-// rules layer (visible in the durable event stream) and the command must not run.
+// rules layer, visible in the durable event stream. The harness binds no
+// sandbox, so bash could not run here either way; the decision event is the
+// proof, and TestHostedBindingDeniesExplicitAskRule covers non-execution on a real one.
 func TestLoopServerDeniesExplicitAskRuleEndToEnd(t *testing.T) {
 	prev := gateApprovalProvenance
 	t.Cleanup(func() { gateApprovalProvenance = prev })
 	markPolicyApproval()
 
-	dir := t.TempDir()
-	t.Chdir(dir)
-	sentinel := filepath.Join(dir, "ran")
 	args, _ := json.Marshal(map[string]string{"command": "touch ran"})
 	callArgs, _ := json.Marshal(string(args))
 	toolCall := `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"bash","arguments":` + string(callArgs) + `}}]}}]}`
@@ -125,8 +124,5 @@ permissions:
 	}
 	if !found {
 		t.Fatalf("no permission.decision deny/rules naming bash:touch*; events=%d", len(evs))
-	}
-	if _, err := os.Stat(sentinel); err == nil {
-		t.Fatalf("denied command was executed: %s exists", sentinel)
 	}
 }
