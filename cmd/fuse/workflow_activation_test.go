@@ -80,7 +80,11 @@ type call struct {
 // toolCallsReply is a chat completion carrying calls as parallel tool calls. The
 // arguments are built only through json.Marshal and embedded once (learning
 // scripted-gateway-double-double-escapes-tool-args).
-func toolCallsReply(calls ...call) string {
+func toolCallsReply(calls ...call) string { return toolCallsReplyUsage(0, 0, calls...) }
+
+// toolCallsReplyUsage is toolCallsReply reporting in prompt and out completion
+// tokens; zero for both omits the usage object.
+func toolCallsReplyUsage(in, out int, calls ...call) string {
 	type fn struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
@@ -94,17 +98,25 @@ func toolCallsReply(calls ...call) string {
 	for i, c := range calls {
 		tcs = append(tcs, tc{ID: fmt.Sprintf("c%d", i), Type: "function", Function: fn{Name: c.name, Arguments: argsJSON(c.args)}})
 	}
-	b, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]any{
-		"role": "assistant", "content": "", "tool_calls": tcs,
-	}}}})
-	return string(b)
+	return completionReply(map[string]any{"role": "assistant", "content": "", "tool_calls": tcs}, in, out)
 }
 
 // textReply is a plain-text chat completion.
-func textReply(s string) string {
-	b, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]any{
-		"role": "assistant", "content": s,
-	}}}})
+func textReply(s string) string { return textReplyUsage(s, 0, 0) }
+
+// textReplyUsage is textReply reporting in prompt and out completion tokens.
+func textReplyUsage(s string, in, out int) string {
+	return completionReply(map[string]any{"role": "assistant", "content": s}, in, out)
+}
+
+// completionReply wraps message as a one-choice chat completion, adding a
+// top-level usage object only when a token count is non-zero.
+func completionReply(message map[string]any, in, out int) string {
+	body := map[string]any{"choices": []any{map[string]any{"message": message}}}
+	if in != 0 || out != 0 {
+		body["usage"] = map[string]any{"prompt_tokens": in, "completion_tokens": out}
+	}
+	b, _ := json.Marshal(body)
 	return string(b)
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/agent"
@@ -67,6 +68,19 @@ func TestResolveWorkerTools_CannotWidenBeyondAllowlist(t *testing.T) {
 func TestResolveWorkerTools_UnknownWorkerErrors(t *testing.T) {
 	if _, err := resolveWorkerTools(researchWF(), "nonesuch", nil); err == nil {
 		t.Fatal("expected error for unknown worker")
+	}
+}
+
+func TestResolveWorkerTools_EmptyAllowlistErrors(t *testing.T) {
+	wf := config.WorkflowConfig{Workers: map[string]config.WorkerConfig{"reader": {}}}
+	for _, req := range [][]string{nil, {"read_file"}} {
+		got, err := resolveWorkerTools(wf, "reader", req)
+		if got != nil {
+			t.Errorf("requested %v: got %v, want a nil slice", req, got)
+		}
+		if err == nil || !strings.Contains(err.Error(), `worker "reader" declares no tools`) {
+			t.Errorf("requested %v: err = %v, want declares no tools", req, err)
+		}
 	}
 }
 

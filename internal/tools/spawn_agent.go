@@ -205,7 +205,7 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 		props["worker"] = map[string]any{
 			"type":        "string",
 			"enum":        enum,
-			"description": "Workflow worker type for the child. Its allowlist defines the child's tools; a worker without spawn_agent cannot itself spawn.",
+			"description": "Workflow worker type for the child. Its allowlist is the child's whole tool set (plus the blackboard tools); a worker whose allowlist omits spawn_agent cannot itself spawn.",
 		}
 	}
 	// Outside a workflow subtree, offer a `workflow` param enumerating the

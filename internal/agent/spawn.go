@@ -34,6 +34,11 @@ var ErrWorkflowQuotaExhausted = errors.New("agent: workflow spawn quota exhauste
 // active workflow subtree (change 0091): workflows do not nest.
 var ErrNestedWorkflow = errors.New("agent: nested workflow activation refused")
 
+// ErrWorkerOutsideWorkflow refuses a worker named where no workflow is active
+// (change 0095): a worker resolves only against a workflow, so outside one the
+// name has no meaning and is refused rather than ignored.
+var ErrWorkerOutsideWorkflow = errors.New("agent: worker requires an active workflow")
+
 // ErrTokenQuotaExhausted is returned by the spawn backstop when a spawn would
 // proceed past a hard TOKEN quota — either the workflow pool's lifetime token
 // quota (pool.tokens) for the spawning node's subtree, or the global session

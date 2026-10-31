@@ -110,10 +110,28 @@ max_turns: 4
 throughput: {requests_per_minute: 6000}
 `
 
-// runHosted starts one spec loop on the production loop-server factory over a
-// routed gateway and waits for it, returning the gateway, the raw bodies and
+// runHosted starts one wfSpec loop on the production loop-server factory over
+// a routed gateway and waits for it, returning the gateway, the raw bodies and
 // the loop's tree.
 func runHosted(t *testing.T, route func(task string, turn int, c gatewayCall) string) (*routedGateway, *rawCapture, *agent.AgentTree) {
+	t.Helper()
+	r := runHostedSpec(t, wfSpec(), route)
+	return r.gw, r.raw, r.tree
+}
+
+// hostedRun is one finished hosted loop: the gateway, the raw bodies, the
+// loop's tree, and the runtime and loop id for reading its durable history.
+type hostedRun struct {
+	gw     *routedGateway
+	raw    *rawCapture
+	tree   *agent.AgentTree
+	rt     runtime.Runtime
+	loopID string
+}
+
+// runHostedSpec starts one loop for spec on the production loop-server factory
+// over a routed gateway and waits for it.
+func runHostedSpec(t *testing.T, spec *harnessv1.HarnessSpec, route func(task string, turn int, c gatewayCall) string) hostedRun {
 	t.Helper()
 	gw := &routedGateway{route: route}
 	raw := &rawCapture{next: gw}
@@ -121,7 +139,7 @@ func runHosted(t *testing.T, route func(task string, turn int, c gatewayCall) st
 	capture := &treeCapture{inner: host}
 	deps.Harness = capture
 	rt := runtime.New(deps)
-	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "ROOT-TASK", Harness: wfSpec()})
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "ROOT-TASK", Harness: spec})
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
@@ -130,7 +148,7 @@ func runHosted(t *testing.T, route func(task string, turn int, c gatewayCall) st
 	if tree == nil {
 		t.Fatal("the loop's BuildAgent never ran")
 	}
-	return gw, raw, tree
+	return hostedRun{gw: gw, raw: raw, tree: tree, rt: rt, loopID: h.ID()}
 }
 
 // turnRequest returns the request for marker that carries exactly turn
@@ -271,6 +289,7 @@ func TestHostedWorkflowRefusals(t *testing.T) {
 			return toolCallsReply(
 				call{name: "spawn_agent", args: map[string]any{"label": "bad", "task": "BAD-TASK", "workflow": "nope"}},
 				call{name: "spawn_agent", args: map[string]any{"label": "lead", "task": "LEAD-TASK", "workflow": "wf"}},
+				call{name: "spawn_agent", args: map[string]any{"label": "w", "task": "W-TASK", "worker": "reader"}},
 			)
 		case strings.Contains(task, "LEAD-TASK") && turn == 0:
 			return toolCallsReply(
@@ -281,23 +300,96 @@ func TestHostedWorkflowRefusals(t *testing.T) {
 		return textReply("done")
 	})
 
-	if r := toolResults(turnRequest(t, gw, "ROOT-TASK", 1)); countContaining(r, `unknown workflow "nope"`) != 1 {
-		t.Fatalf("root turn-1 results lack the unknown-workflow refusal: %q", r)
+	root1 := toolResults(turnRequest(t, gw, "ROOT-TASK", 1))
+	if countContaining(root1, `unknown workflow "nope"`) != 1 {
+		t.Fatalf("root turn-1 results lack the unknown-workflow refusal: %q", root1)
+	}
+	if countContaining(root1, `worker "reader" named outside any workflow; pass workflow`) != 1 {
+		t.Fatalf("root turn-1 results lack exactly one outside-workflow worker refusal: %q", root1)
 	}
 	lead1 := toolResults(turnRequest(t, gw, "LEAD-TASK", 1))
 	if countContaining(lead1, `unknown worker "unknown"`) != 1 || countContaining(lead1, "nested workflow activation refused") != 1 {
 		t.Fatalf("lead turn-1 results lack the worker and nesting refusals: %q", lead1)
 	}
-	for _, marker := range []string{"BAD-TASK", "U-TASK", "N-TASK"} {
+	for _, marker := range []string{"BAD-TASK", "U-TASK", "N-TASK", "W-TASK"} {
 		if n := len(gw.callsFor(marker)); n != 0 {
 			t.Fatalf("%s requests = %d, want 0", marker, n)
 		}
 	}
 	for _, v := range tree.SnapshotAll() {
 		switch v.Label {
-		case "bad", "u", "n":
+		case "bad", "u", "n", "w":
 			t.Fatalf("a refused spawn created node %q", v.Label)
 		}
+	}
+}
+
+// pool.tokens on the hosted binding: once the workflow subtree's spend reaches
+// the pool, the call gate refuses the next model call of every node in that
+// subtree (the reader and the lead that roots it) before it reaches the
+// gateway, while the root outside the workflow keeps running.
+func TestHostedWorkflowTokenPoolRefusesWorkerModelCall(t *testing.T) {
+	spec := &harnessv1.HarnessSpec{Workflows: map[string]*harnessv1.Workflow{
+		"wf": {Pool: &harnessv1.Pool{Total: 3, Tokens: 100}, Workers: map[string]*harnessv1.Worker{"reader": {Tools: []string{"read_file"}}}},
+	}}
+	r := runHostedSpec(t, spec, func(task string, turn int, _ gatewayCall) string {
+		switch {
+		case strings.Contains(task, "ROOT-TASK") && turn == 0:
+			return toolCallsReply(call{name: "spawn_agent", args: map[string]any{"label": "lead", "task": "LEAD-TASK", "workflow": "wf"}})
+		case strings.Contains(task, "ROOT-TASK"):
+			return textReply("root done")
+		case strings.Contains(task, "LEAD-TASK") && turn == 0:
+			return toolCallsReply(call{name: "spawn_agent", args: map[string]any{"label": "r0", "task": "READ-TASK", "worker": "reader"}})
+		case strings.Contains(task, "LEAD-TASK"):
+			return textReply("lead done")
+		case strings.Contains(task, "READ-TASK") && turn == 0:
+			return toolCallsReplyUsage(80, 40, call{name: "blackboard_write", args: map[string]any{"key": "k", "value": "v"}})
+		}
+		return textReply("read done")
+	})
+	gw, tree := r.gw, r.tree
+
+	// 1. The reader's second model call never reaches the gateway.
+	if n := len(gw.callsFor("READ-TASK")); n != 1 {
+		t.Fatalf("reader requests = %d, want 1 (spend 120 >= pool.tokens 100 refuses the second call)", n)
+	}
+	// 2. The lead roots the workflow; its call gate counts the reader's spend.
+	if n := len(gw.callsFor("LEAD-TASK")); n != 1 {
+		t.Fatalf("lead requests = %d, want 1 (the subtree spend refuses its turn-1 call)", n)
+	}
+	// 3. The root sits outside the subtree quota and sees the lead fail.
+	root1 := toolResults(turnRequest(t, gw, "ROOT-TASK", 1))
+	if len(root1) != 1 || !strings.HasPrefix(root1[0], "spawn_agent:") || !strings.Contains(root1[0], "workflow 120/100 tokens used") {
+		t.Fatalf("root turn-1 results = %q, want one spawn_agent error carrying workflow 120/100 tokens used", root1)
+	}
+
+	lead := nodeLabelled(t, tree, "lead")
+	reader := nodeLabelled(t, tree, "r0")
+
+	// 4. The durable history records the refusal on both nodes.
+	events, err := r.rt.Attach(context.Background(), "", r.loopID, 0)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	refused := map[string]bool{}
+	for _, e := range events {
+		if e.Kind == event.KindError && strings.Contains(string(e.Payload), "tokens used") {
+			refused[e.NodeID] = true
+		}
+	}
+	if !refused[reader.ID] || !refused[lead.ID] {
+		t.Fatalf("durable token refusals: reader %v lead %v, want both (events by node: %v)", refused[reader.ID], refused[lead.ID], refused)
+	}
+
+	// 5. The tree accounts the spend against the lead's registered pool.
+	if got := tree.SubtreeTokens(lead.ID); got != 120 {
+		t.Fatalf("SubtreeTokens(lead) = %d, want 120", got)
+	}
+	if pool, ok := tree.Scheduler().Pool(lead.ID); !ok || pool.Tokens != 100 {
+		t.Fatalf("lead pool = %+v (registered %v), want Tokens 100", pool, ok)
+	}
+	if reader.Status != agent.StatusError {
+		t.Fatalf("reader status = %v, want %v", reader.Status, agent.StatusError)
 	}
 }
 

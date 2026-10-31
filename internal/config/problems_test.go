@@ -152,3 +152,50 @@ func TestFromYAMLParseErrorNamesSource(t *testing.T) {
 		t.Fatalf("FromYAML error = %v", err)
 	}
 }
+
+// TestProblems_WorkerWithoutTools pins that a workflow worker with an empty
+// allowlist is refused: a worker inherits nothing from its parent.
+func TestProblems_WorkerWithoutTools(t *testing.T) {
+	const msg = "must name at least one tool (a worker inherits nothing; omit spawn_agent to keep it from nesting)"
+
+	cfg := Default()
+	cfg.Workflows["wf"] = WorkflowConfig{Workers: map[string]WorkerConfig{"reader": {Model: "house"}}}
+	ps := cfg.Problems()
+	if len(ps) != 1 {
+		t.Fatalf("want 1 problem, got %d: %+v", len(ps), ps)
+	}
+	if ps[0].Path != "workflows.wf.workers.reader.tools" || ps[0].Message != msg {
+		t.Fatalf("unexpected problem: %+v", ps[0])
+	}
+	if err := cfg.Validate(); err == nil || err.Error() != "config: workflows.wf.workers.reader.tools "+msg {
+		t.Fatalf("unexpected Validate error: %v", err)
+	}
+
+	cfg = Default()
+	cfg.Workflows["b"] = WorkflowConfig{Workers: map[string]WorkerConfig{"z": {}}}
+	cfg.Workflows["a"] = WorkflowConfig{Workers: map[string]WorkerConfig{"y": {}, "x": {Tools: []string{"read_file"}}}}
+	ps = cfg.Problems()
+	if len(ps) != 2 || ps[0].Path != "workflows.a.workers.y.tools" || ps[1].Path != "workflows.b.workers.z.tools" {
+		t.Fatalf("want sorted two problems, got %+v", ps)
+	}
+
+	cfg = Default()
+	cfg.Workflows["wf"] = WorkflowConfig{Workers: map[string]WorkerConfig{"reader": {Tools: []string{}}}}
+	if ps = cfg.Problems(); len(ps) != 1 || ps[0].Path != "workflows.wf.workers.reader.tools" {
+		t.Fatalf("empty non-nil tools not reported: %+v", ps)
+	}
+
+	c, err := FromYAML([]byte("workflows:\n  research:\n    workers:\n      facet-researcher: {model: x}\n"), "test")
+	if err != nil {
+		t.Fatalf("FromYAML: %v", err)
+	}
+	found := false
+	for _, p := range c.Problems() {
+		if p.Path == "workflows.research.workers.facet-researcher.tools" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("override over defaults not reported: %+v", c.Problems())
+	}
+}

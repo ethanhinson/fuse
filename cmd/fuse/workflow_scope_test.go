@@ -205,14 +205,53 @@ func TestPrepareChildResolvesWorkerInSubtree(t *testing.T) {
 	}
 }
 
-func TestPrepareChildIgnoresWorkerOutsideWorkflow(t *testing.T) {
+func TestPrepareChildRefusesWorkerOutsideWorkflow(t *testing.T) {
+	// Spawner.Spawn directly (the pipeline-step path): a worker named where no
+	// workflow is active is refused, not ignored.
 	h := newScopeHarness(t, scopeWF())
 	p := h.spawn(h.root, agent.SpawnOpts{Label: "x", Task: "t", Worker: "reader", Tools: []string{"bash"}})
-	if p.err != nil {
-		t.Fatalf("prepareChild: %v", p.err)
+	if !errors.Is(p.err, agent.ErrWorkerOutsideWorkflow) {
+		t.Fatalf("prepareChild err = %v, want ErrWorkerOutsideWorkflow", p.err)
 	}
-	if p.plan.bound || !reflect.DeepEqual(p.plan.tools, []string{"bash"}) || p.plan.model != "" {
-		t.Fatalf("plan = %+v, want opts.Tools unchanged and unbound", p.plan)
+	if !strings.Contains(p.err.Error(), "pass workflow") {
+		t.Fatalf("prepareChild err = %q, want it to say pass workflow", p.err)
+	}
+}
+
+func TestCheckRequest_WorkerOutsideWorkflowRefused(t *testing.T) {
+	h := newScopeHarness(t, scopeWF())
+
+	err := h.scope.checkRequest(h.root, "", "reader")
+	if !errors.Is(err, agent.ErrWorkerOutsideWorkflow) {
+		t.Fatalf("checkRequest(root, \"\", reader) = %v, want ErrWorkerOutsideWorkflow", err)
+	}
+	if want := `worker "reader" named outside any workflow; pass workflow (available: wf)`; !strings.Contains(err.Error(), want) {
+		t.Fatalf("checkRequest err = %q, want it to contain %q", err, want)
+	}
+
+	if err := h.scope.checkRequest(h.root, "wf", "reader"); err != nil {
+		t.Fatalf("checkRequest(root, wf, reader) = %v, want nil", err)
+	}
+
+	lead := h.lead()
+	if err := h.scope.checkRequest(lead, "", "reader"); err != nil {
+		t.Fatalf("checkRequest(lead, \"\", reader) = %v, want nil inside the subtree", err)
+	}
+
+	none := newScopeHarness(t, nil)
+	err = none.scope.checkRequest(none.root, "", "reader")
+	if !errors.Is(err, agent.ErrWorkerOutsideWorkflow) || !strings.Contains(err.Error(), "(available: none configured)") {
+		t.Fatalf("checkRequest with no workflows = %v, want ErrWorkerOutsideWorkflow listing none configured", err)
+	}
+
+	// Through the spawn func: the refusal is a tool error that creates no node.
+	before := len(h.tree.SnapshotAll())
+	_, err = h.scope.spawnFunc(h.spawner(h.root), h.root)(context.Background(), tools.SpawnRequest{Label: "x", Task: "t", Worker: "reader"})
+	if !errors.Is(err, agent.ErrWorkerOutsideWorkflow) || !strings.Contains(err.Error(), "pass workflow (available: wf)") {
+		t.Fatalf("spawnFunc(Worker reader at root) = %v, want ErrWorkerOutsideWorkflow", err)
+	}
+	if after := len(h.tree.SnapshotAll()); after != before {
+		t.Fatalf("node count %d -> %d, want the refusal to create no node", before, after)
 	}
 }
 
