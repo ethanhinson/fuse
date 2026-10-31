@@ -8,9 +8,13 @@ syntax = "proto3";
 // field (identity enforcement is #0049). The per-kind payload shapes are NOT
 // re-modeled here: payload stays raw JSON bytes (#50 owns SDK ergonomics), and
 // kind stays a string to avoid lock-stepping a proto enum with internal/event.Kind.
+// GetCapabilities is the read-only discovery call: it tells a client which models,
+// skills, tighten-only ceilings, secret names and spec MCP auth types the server
+// will accept before it composes a HarnessSpec.
 package fuse.loop.v1;
 
 import "fuse/harness/v1/harness.proto";
+import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/ethanhinson/fuse/internal/loopwire/v1;loopv1";
@@ -26,6 +30,12 @@ service LoopService {
   // Observe streams history since from_seq then live events; a reconnecting client
   // re-opens it from its last-seen seq (the WS-era Attach/HTTP-replay role).
   rpc Observe(ObserveRequest) returns (stream ObserveEvent);
+  // GetCapabilities advertises what this server accepts in a StartLoop harness
+  // spec: models, skills, tighten-only ceilings, the caller's resolvable secret
+  // names and the MCP auth types a spec-declared server may use. Read-only; it
+  // starts no loop. Same auth as StartLoop. A server with no capability source
+  // answers Unimplemented rather than an empty but plausible answer.
+  rpc GetCapabilities(GetCapabilitiesRequest) returns (GetCapabilitiesResponse);
 }
 
 message StartLoopRequest {
@@ -98,4 +108,73 @@ message Event {
   int32 turn = 6;
   string kind = 7;
   bytes payload = 8;
+}
+
+message GetCapabilitiesRequest {
+  // Same pass-through as StartLoopRequest.tenant: when set it must equal the
+  // authenticated tenant (else PermissionDenied). The answer is always filtered
+  // by the authenticated tenant, never by this field.
+  string tenant = 1;
+}
+
+message GetCapabilitiesResponse {
+  // Models a server-mode loop can run, by alias. cli/ routes and entries the
+  // operator hid (advertise: false) are left out.
+  repeated ModelInfo models = 1;
+  // Skills a spec's skills[].name may reference.
+  repeated SkillInfo skills = 2;
+  // One per tighten-only HarnessSpec field; for a field under a map
+  // (workflows), one per key the operator defines.
+  repeated Ceiling ceilings = 3;
+  // Secret names that resolve for the caller's tenant: names only. A name the
+  // operator restricted to hosts is still listed, and still resolves only for
+  // those hosts.
+  repeated string secret_refs = 4;
+  // Auth types a spec-declared MCP server may use; UNSPECIFIED means none.
+  repeated fuse.harness.v1.McpAuthType spec_mcp_auth_kinds = 5;
+  ServerInfo server = 6;
+}
+
+message ModelInfo {
+  string alias = 1;
+  string gateway_id = 2;
+  uint32 max_output_tokens = 3; // 0: left to the gateway
+  // Effective window: the runtime default when the registry entry sets 0,
+  // with context_window_is_default set.
+  uint32 context_window = 4;
+  bool context_window_is_default = 5;
+  string persona = 6;
+  bool is_default = 7;
+  // Optional operator metadata. Well-known tags: tools, vision, reasoning,
+  // long-context; other strings pass through.
+  string label = 8;
+  string description = 9;
+  repeated string tags = 10;
+}
+
+message SkillInfo {
+  string name = 1;
+  string description = 2;
+}
+
+enum CeilingDirection {
+  CEILING_DIRECTION_UNSPECIFIED = 0;
+  CEILING_DIRECTION_MAX = 1; // a spec may only lower the value
+  CEILING_DIRECTION_MIN = 2; // a spec may only raise the value
+}
+
+message Ceiling {
+  // fuse.harness.v1.Violation.field_path vocabulary.
+  string field_path = 1;
+  // false: the operator left it unset, so a spec cannot set it at all.
+  bool operator_set = 2;
+  // The operator's effective value; present only when operator_set.
+  google.protobuf.Value value = 3;
+  CeilingDirection direction = 4;
+}
+
+message ServerInfo {
+  string version = 1;
+  // Algorithm id StartLoopResponse.harness_digest is prefixed with ("sha256").
+  string digest_algorithm = 2;
 }

@@ -10,6 +10,9 @@
 // field (identity enforcement is #0049). The per-kind payload shapes are NOT
 // re-modeled here: payload stays raw JSON bytes (#50 owns SDK ergonomics), and
 // kind stays a string to avoid lock-stepping a proto enum with internal/event.Kind.
+// GetCapabilities is the read-only discovery call: it tells a client which models,
+// skills, tighten-only ceilings, secret names and spec MCP auth types the server
+// will accept before it composes a HarnessSpec.
 package loopv1connect
 
 import (
@@ -47,6 +50,9 @@ const (
 	LoopServiceSendProcedure = "/fuse.loop.v1.LoopService/Send"
 	// LoopServiceObserveProcedure is the fully-qualified name of the LoopService's Observe RPC.
 	LoopServiceObserveProcedure = "/fuse.loop.v1.LoopService/Observe"
+	// LoopServiceGetCapabilitiesProcedure is the fully-qualified name of the LoopService's
+	// GetCapabilities RPC.
+	LoopServiceGetCapabilitiesProcedure = "/fuse.loop.v1.LoopService/GetCapabilities"
 )
 
 // LoopServiceClient is a client for the fuse.loop.v1.LoopService service.
@@ -58,6 +64,12 @@ type LoopServiceClient interface {
 	// Observe streams history since from_seq then live events; a reconnecting client
 	// re-opens it from its last-seen seq (the WS-era Attach/HTTP-replay role).
 	Observe(context.Context, *connect.Request[v1.ObserveRequest]) (*connect.ServerStreamForClient[v1.ObserveEvent], error)
+	// GetCapabilities advertises what this server accepts in a StartLoop harness
+	// spec: models, skills, tighten-only ceilings, the caller's resolvable secret
+	// names and the MCP auth types a spec-declared server may use. Read-only; it
+	// starts no loop. Same auth as StartLoop. A server with no capability source
+	// answers Unimplemented rather than an empty but plausible answer.
+	GetCapabilities(context.Context, *connect.Request[v1.GetCapabilitiesRequest]) (*connect.Response[v1.GetCapabilitiesResponse], error)
 }
 
 // NewLoopServiceClient constructs a client for the fuse.loop.v1.LoopService service. By default, it
@@ -89,14 +101,21 @@ func NewLoopServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(loopServiceMethods.ByName("Observe")),
 			connect.WithClientOptions(opts...),
 		),
+		getCapabilities: connect.NewClient[v1.GetCapabilitiesRequest, v1.GetCapabilitiesResponse](
+			httpClient,
+			baseURL+LoopServiceGetCapabilitiesProcedure,
+			connect.WithSchema(loopServiceMethods.ByName("GetCapabilities")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // loopServiceClient implements LoopServiceClient.
 type loopServiceClient struct {
-	startLoop *connect.Client[v1.StartLoopRequest, v1.StartLoopResponse]
-	send      *connect.Client[v1.SendRequest, v1.SendResponse]
-	observe   *connect.Client[v1.ObserveRequest, v1.ObserveEvent]
+	startLoop       *connect.Client[v1.StartLoopRequest, v1.StartLoopResponse]
+	send            *connect.Client[v1.SendRequest, v1.SendResponse]
+	observe         *connect.Client[v1.ObserveRequest, v1.ObserveEvent]
+	getCapabilities *connect.Client[v1.GetCapabilitiesRequest, v1.GetCapabilitiesResponse]
 }
 
 // StartLoop calls fuse.loop.v1.LoopService.StartLoop.
@@ -114,6 +133,11 @@ func (c *loopServiceClient) Observe(ctx context.Context, req *connect.Request[v1
 	return c.observe.CallServerStream(ctx, req)
 }
 
+// GetCapabilities calls fuse.loop.v1.LoopService.GetCapabilities.
+func (c *loopServiceClient) GetCapabilities(ctx context.Context, req *connect.Request[v1.GetCapabilitiesRequest]) (*connect.Response[v1.GetCapabilitiesResponse], error) {
+	return c.getCapabilities.CallUnary(ctx, req)
+}
+
 // LoopServiceHandler is an implementation of the fuse.loop.v1.LoopService service.
 type LoopServiceHandler interface {
 	// StartLoop constructs and drives one agent loop, returning its loop_id.
@@ -123,6 +147,12 @@ type LoopServiceHandler interface {
 	// Observe streams history since from_seq then live events; a reconnecting client
 	// re-opens it from its last-seen seq (the WS-era Attach/HTTP-replay role).
 	Observe(context.Context, *connect.Request[v1.ObserveRequest], *connect.ServerStream[v1.ObserveEvent]) error
+	// GetCapabilities advertises what this server accepts in a StartLoop harness
+	// spec: models, skills, tighten-only ceilings, the caller's resolvable secret
+	// names and the MCP auth types a spec-declared server may use. Read-only; it
+	// starts no loop. Same auth as StartLoop. A server with no capability source
+	// answers Unimplemented rather than an empty but plausible answer.
+	GetCapabilities(context.Context, *connect.Request[v1.GetCapabilitiesRequest]) (*connect.Response[v1.GetCapabilitiesResponse], error)
 }
 
 // NewLoopServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -150,6 +180,12 @@ func NewLoopServiceHandler(svc LoopServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(loopServiceMethods.ByName("Observe")),
 		connect.WithHandlerOptions(opts...),
 	)
+	loopServiceGetCapabilitiesHandler := connect.NewUnaryHandler(
+		LoopServiceGetCapabilitiesProcedure,
+		svc.GetCapabilities,
+		connect.WithSchema(loopServiceMethods.ByName("GetCapabilities")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/fuse.loop.v1.LoopService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case LoopServiceStartLoopProcedure:
@@ -158,6 +194,8 @@ func NewLoopServiceHandler(svc LoopServiceHandler, opts ...connect.HandlerOption
 			loopServiceSendHandler.ServeHTTP(w, r)
 		case LoopServiceObserveProcedure:
 			loopServiceObserveHandler.ServeHTTP(w, r)
+		case LoopServiceGetCapabilitiesProcedure:
+			loopServiceGetCapabilitiesHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -177,4 +215,8 @@ func (UnimplementedLoopServiceHandler) Send(context.Context, *connect.Request[v1
 
 func (UnimplementedLoopServiceHandler) Observe(context.Context, *connect.Request[v1.ObserveRequest], *connect.ServerStream[v1.ObserveEvent]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("fuse.loop.v1.LoopService.Observe is not implemented"))
+}
+
+func (UnimplementedLoopServiceHandler) GetCapabilities(context.Context, *connect.Request[v1.GetCapabilitiesRequest]) (*connect.Response[v1.GetCapabilitiesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("fuse.loop.v1.LoopService.GetCapabilities is not implemented"))
 }
