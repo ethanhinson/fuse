@@ -4,10 +4,15 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"connectrpc.com/connect"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -16,6 +21,9 @@ import (
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/capabilities"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/loopconnect"
+	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
+	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
 	"github.com/ethanhinson/fuse/internal/runtime"
 )
 
@@ -324,5 +332,60 @@ func TestLoopServerHostAdvertisesItsCapabilities(t *testing.T) {
 	}
 	if len(c.Ceilings) == 0 || len(c.SpecMCPAuthKinds) == 0 {
 		t.Errorf("ceilings %v or spec MCP auth kinds %v are empty", c.Ceilings, c.SpecMCPAuthKinds)
+	}
+}
+
+// TestLoopCapabilitySourceFromProductionDeps proves the composition root takes
+// its GetCapabilities source from the deps' harness host, and refuses deps that
+// carry none instead of serving an RPC that always answers Unimplemented.
+func TestLoopCapabilitySourceFromProductionDeps(t *testing.T) {
+	_, host := capsHost(t)
+	src, err := loopCapabilitySource(runtime.Deps{Harness: host})
+	if err != nil {
+		t.Fatalf("loopCapabilitySource(host) error = %v", err)
+	}
+	if src != loopconnect.CapabilitySource(host) {
+		t.Errorf("loopCapabilitySource returned %v, want the harness host", src)
+	}
+	if _, err := loopCapabilitySource(runtime.Deps{}); err == nil {
+		t.Error("loopCapabilitySource(empty deps) = nil error, want a refusal")
+	}
+}
+
+// TestServeNetMountsTheCapabilitySource proves serveNetWithOptions hands its
+// capability source to the Connect handler, so GetCapabilities answers over the
+// wire with the host's models and ceilings.
+func TestServeNetMountsTheCapabilitySource(t *testing.T) {
+	rt, host := capsHost(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- serveNetWithOptions(ctx, ln, rt, nil, nil, nil, nil, serveNetOptions{capabilities: host})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	client := loopv1connect.NewLoopServiceClient(http.DefaultClient, "http://"+ln.Addr().String())
+	req := &loopv1.GetCapabilitiesRequest{Tenant: string(event.DefaultTenant)}
+	var resp *connect.Response[loopv1.GetCapabilitiesResponse]
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		resp, err = client.GetCapabilities(ctx, connect.NewRequest(req))
+		if err == nil || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("GetCapabilities: %v", err)
+	}
+	if len(resp.Msg.Models) == 0 || len(resp.Msg.Ceilings) == 0 {
+		t.Errorf("GetCapabilities models %v or ceilings %v are empty", resp.Msg.Models, resp.Msg.Ceilings)
 	}
 }
