@@ -1,0 +1,55 @@
+---
+id: 86
+slug: 'loop-server-advertises-its-capabilities-models-skills-ceilin'
+title: 'Loop server advertises its capabilities - models, skills, ceilings'
+status: 'proposed'
+priority: 'high'
+type: 'feat'
+deliverable: 'pr'
+created: '2026-10-31'
+updated: '2026-10-31'
+depends_on: []
+stacked_on:
+related: [84, 85]
+discovered_from: []
+adrs: [60, 61]
+spec:
+plan:
+results:
+auto_groomable:
+hold:
+branch_prefix:
+branch:
+pr:
+blocked_by:
+reconciled: false
+---
+
+## Artifacts
+
+<!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| ADRs | [ADR-0060](../../adrs/0060-harnessspec-proto-is-the-portable-harness-definition-client.md), [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md) |
+<!-- docket:artifacts:end -->
+
+## Why
+
+A client that starts loops from a HarnessSpec has to guess what the server supports: which models it routes, which skills are installed, which tighten-only ceilings the operator set, which secret refs resolve. Every wrong guess is a StartLoop refusal. Models are free text because nothing lists them. A discovery RPC lets clients build model pickers and pre-flight a spec instead of finding out by being refused.
+
+## What changes
+
+- New authenticated, read-only `LoopService.GetCapabilities` RPC with the same auth as StartLoop.
+- It returns advertised models: alias, gateway id, context window, max output, persona, default flag, and optional operator label, description and tags.
+- It also returns installed skills, the effective ceiling for each tighten-only field (keyed by violation field path), the secret ref names that resolve for the caller's tenant, the MCP auth kinds a spec may use, and the server version and digest algorithm.
+- Model config entries gain optional `label`, `description`, `tags` and `advertise` keys.
+- The public Go SDK remote client gains `Capabilities(ctx)`.
+- A golden test proves the advertised answer matches what StartLoop accepts and refuses.
+
+## Out of scope
+
+- Live gateway queries for model capabilities or pricing.
+- A dry-run validate RPC.
+- Changing tighten-only semantics for fields the operator leaves unset.
+- The ignored StartLoop `model` field and the `static` MCP auth dial failure.
+- Showing the new metadata in the TUI.

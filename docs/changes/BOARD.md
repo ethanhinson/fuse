@@ -1,6 +1,6 @@
 # Backlog
 
-**85 changes** — 🟢 1 in progress · 🟡 1 proposed · ⚪ 3 deferred · ✅ 74 done · 🗑️ 6 killed
+**86 changes** — 🟢 1 in progress · 🟡 2 proposed · ⚪ 3 deferred · ✅ 74 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
@@ -8,10 +8,11 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟡 Proposed (1)
+## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0086](active/0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md) | Loop server advertises its capabilities - models, skills, ceilings | `high` | `feat` | needs-grooming |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
@@ -29,6 +30,7 @@ graph TD
   0063 --> 0074
   0081
   0083
+  0086
   0012:::done
   0052:::done
   0063:::done
