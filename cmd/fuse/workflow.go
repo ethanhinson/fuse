@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"sort"
+	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/ethanhinson/fuse/internal/agent"
@@ -53,8 +57,9 @@ func (a *workflowActivation) pool() agent.WorkflowPool {
 	}
 }
 
-// workerNames returns the workflow's worker names (for the spawn tool's enum),
-// or nil when the workflow defines no workers (freeform spawns).
+// workerNames returns the workflow's worker names, sorted for a stable schema
+// (for the spawn tool's enum), or nil when the workflow defines no workers
+// (freeform spawns).
 func (a *workflowActivation) workerNames() []string {
 	if len(a.cfg.Workers) == 0 {
 		return nil
@@ -63,6 +68,7 @@ func (a *workflowActivation) workerNames() []string {
 	for n := range a.cfg.Workers {
 		names = append(names, n)
 	}
+	sort.Strings(names)
 	return names
 }
 
@@ -159,4 +165,224 @@ func quotaWarningFor(tree *agent.AgentTree, nodeID string) tools.QuotaFunc {
 	return func() string {
 		return tree.Scheduler().TokenQuotaWarning(nodeID)
 	}
+}
+
+// workflowScope is one loop's workflow activation state (change 0091). Every
+// binding builds one per agent tree; activations are keyed by the workflow-root
+// node id, so two roots of the same workflow each get their own pool and quota.
+//
+// The activation (and so its atomic `reserved` quota counter) is created at most
+// once per root, under mu, and every later lookup for any node in that subtree
+// returns the same pointer. That single-instance rule is what lets the backstop
+// hold pool.total across every spawner the subtree builds.
+type workflowScope struct {
+	tree      *agent.AgentTree
+	workflows map[string]config.WorkflowConfig
+	mu        sync.Mutex
+	active    map[string]*workflowActivation
+}
+
+// newWorkflowScope returns the activation scope for tree over the configured
+// workflows (nil or empty = no workflow can activate).
+func newWorkflowScope(tree *agent.AgentTree, workflows map[string]config.WorkflowConfig) *workflowScope {
+	return &workflowScope{
+		tree:      tree,
+		workflows: workflows,
+		active:    map[string]*workflowActivation{},
+	}
+}
+
+// childPlan is the workflow-resolved shape of one child spawn.
+type childPlan struct {
+	tools []string // effective tool list (nil = inherit all)
+	model string   // worker model pin, "" when none
+	bound bool     // a worker was selected inside a workflow
+}
+
+// names returns the configured workflow names, sorted.
+func (s *workflowScope) names() []string {
+	out := make([]string, 0, len(s.workflows))
+	for n := range s.workflows {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// check refuses a workflow name that is not configured, listing the ones that
+// are so the model can self-correct.
+func (s *workflowScope) check(name string) error {
+	if _, ok := s.workflows[name]; ok {
+		return nil
+	}
+	list := "none configured"
+	if names := s.names(); len(names) > 0 {
+		list = strings.Join(names, ", ")
+	}
+	return fmt.Errorf("unknown workflow %q (available: %s)", name, list)
+}
+
+// activateWorkflow activates the workflow node roots (its WorkflowRoot marker):
+// it registers the pool with the scheduler and records the activation. It is
+// idempotent per node id, so concurrent or repeated calls share one activation
+// and one quota counter.
+func (s *workflowScope) activateWorkflow(node *agent.AgentNode) (*workflowActivation, error) {
+	if node == nil {
+		return nil, fmt.Errorf("activate workflow: no node")
+	}
+	name := node.Snapshot().WorkflowRoot
+	if name == "" {
+		return nil, fmt.Errorf("activate workflow: node %s is not a workflow root", node.ID)
+	}
+	if err := s.check(name); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if act, ok := s.active[node.ID]; ok {
+		return act, nil
+	}
+	act := &workflowActivation{name: name, cfg: s.workflows[name], rootDepth: node.Depth}
+	// Registered under mu so no lookup can observe the activation before its pool.
+	s.tree.Scheduler().RegisterPool(node.ID, act.pool())
+	s.active[node.ID] = act
+	return act, nil
+}
+
+// activateRoot is the one root-level activation (the research probe): it marks
+// node as the root of name and activates it. It must run before node runs or is
+// visible to any reader, matching AgentNode.WorkflowRoot's create-once invariant
+// (the field is written here without the node lock).
+func (s *workflowScope) activateRoot(node *agent.AgentNode, name string) (*workflowActivation, error) {
+	if err := s.check(name); err != nil {
+		return nil, err
+	}
+	node.WorkflowRoot = name
+	return s.activateWorkflow(node)
+}
+
+// activationOf returns the activation governing nodeID and its workflow-root id,
+// or (nil, "") outside every workflow subtree. A root that is marked but not yet
+// activated (a path that skipped prepareChild) is activated lazily here, so its
+// pool and quota still hold; a root that cannot activate yields (nil, "").
+func (s *workflowScope) activationOf(nodeID string) (*workflowActivation, string) {
+	rootID := s.tree.WorkflowRootOf(nodeID)
+	if rootID == "" {
+		return nil, ""
+	}
+	s.mu.Lock()
+	act, ok := s.active[rootID]
+	s.mu.Unlock()
+	if ok {
+		return act, rootID
+	}
+	act, err := s.activateWorkflow(s.tree.Node(rootID))
+	if err != nil {
+		return nil, ""
+	}
+	return act, rootID
+}
+
+// backstop returns the workflow spawn backstop for a spawner at parent. It is
+// lazy: each call resolves the governing activation afresh and delegates to
+// backstopFor, so a spawner built before its subtree activated still enforces
+// the pool, and every backstop for one root shares that activation's counter.
+// Outside a workflow it never refuses.
+func (s *workflowScope) backstop(parent *agent.AgentNode) func(newDepth int) error {
+	return func(newDepth int) error {
+		act, rootID := s.activationOf(parent.ID)
+		if act == nil {
+			return nil
+		}
+		if bs := backstopFor(s.tree, act, rootID); bs != nil {
+			return bs(newDepth)
+		}
+		return nil
+	}
+}
+
+// budget returns the spawn tool's BudgetFunc for node: the tighter of the
+// workflow total and the global budget inside a workflow, else the global one.
+func (s *workflowScope) budget(node *agent.AgentNode) tools.BudgetFunc {
+	act, rootID := s.activationOf(node.ID)
+	return budgetFor(s.tree, act, rootID)
+}
+
+// spawnTool builds node's spawn_agent around fn. Inside a workflow subtree it
+// advertises that workflow's workers; outside it advertises the configured
+// workflows a child may root (decision: workflows do not nest, so `workflow` is
+// never offered inside a subtree).
+func (s *workflowScope) spawnTool(fn tools.SpawnFunc, node *agent.AgentNode) *tools.SpawnAgentTool {
+	t := tools.NewSpawnAgentToolWithBudget(fn, s.budget(node)).
+		WithQuotaWarning(quotaWarningFor(s.tree, node.ID))
+	if act, _ := s.activationOf(node.ID); act != nil {
+		return t.WithWorkers(act.workerNames())
+	}
+	return t.WithWorkflows(s.names())
+}
+
+// checkRequest validates a spawn request's workflow and worker names before any
+// node exists or any quota is spent. A worker resolves against the requested
+// workflow when one is named, else against the parent's governing workflow;
+// outside every workflow a worker is ignored (as before). A nested activation is
+// left to the Spawner (agent.ErrNestedWorkflow).
+func (s *workflowScope) checkRequest(parent *agent.AgentNode, workflow, worker string) error {
+	if workflow != "" {
+		if err := s.check(workflow); err != nil {
+			return err
+		}
+		if worker != "" {
+			if _, ok := s.workflows[workflow].Workers[worker]; !ok {
+				return fmt.Errorf("unknown worker %q", worker)
+			}
+		}
+		return nil
+	}
+	if worker == "" {
+		return nil
+	}
+	if act, _ := s.activationOf(parent.ID); act != nil {
+		if _, ok := act.cfg.Workers[worker]; !ok {
+			return fmt.Errorf("unknown worker %q", worker)
+		}
+	}
+	return nil
+}
+
+// spawnFunc is spawnFuncFrom with the request validated first, so an unknown
+// workflow or worker is a tool error that creates no node and spends no quota.
+func (s *workflowScope) spawnFunc(sp *agent.Spawner, parent *agent.AgentNode) tools.SpawnFunc {
+	inner := spawnFuncFrom(sp, s.tree.Scheduler(), parent)
+	return func(ctx context.Context, req tools.SpawnRequest) (tools.SpawnHandle, error) {
+		if err := s.checkRequest(parent, req.Workflow, req.Worker); err != nil {
+			return nil, err
+		}
+		return inner(ctx, req)
+	}
+}
+
+// prepareChild is the child builder's first step: it activates the workflow a
+// workflow-root child roots, then resolves the child's tools and model pin
+// against the governing workflow. Outside every workflow the requested subset
+// passes through unchanged and any worker is ignored. It repeats the name checks
+// for paths that call Spawner.Spawn directly (pipeline steps).
+func (s *workflowScope) prepareChild(opts agent.SpawnOpts, child *agent.AgentNode) (childPlan, error) {
+	if opts.Workflow != "" {
+		if _, err := s.activateWorkflow(child); err != nil {
+			return childPlan{}, err
+		}
+	}
+	act, _ := s.activationOf(child.ID)
+	if act == nil {
+		return childPlan{tools: opts.Tools}, nil
+	}
+	rt, err := resolveWorkerTools(act.cfg, opts.Worker, opts.Tools)
+	if err != nil {
+		return childPlan{}, err
+	}
+	plan := childPlan{tools: rt, bound: opts.Worker != ""}
+	if plan.bound {
+		plan.model = act.cfg.Workers[opts.Worker].Model
+	}
+	return plan, nil
 }

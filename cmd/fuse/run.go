@@ -649,6 +649,7 @@ func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *a
 			ModelID:      req.Model,
 			Tools:        req.Tools,
 			Worker:       req.Worker,
+			Workflow:     req.Workflow,
 			Expects:      req.Expects,
 		}
 		handle, herr := spawner.Spawn(ctx, opts)
