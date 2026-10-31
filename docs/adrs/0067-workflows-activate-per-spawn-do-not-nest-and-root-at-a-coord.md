@@ -2,7 +2,7 @@
 id: 67
 slug: 'workflows-activate-per-spawn-do-not-nest-and-root-at-a-coord'
 title: 'Workflows activate per spawn, do not nest, and root at a coordinator for pipelines'
-status: 'Accepted'
+status: 'Superseded by ADR-0069'
 date: '2026-10-31'
 supersedes: []
 reverses: []
