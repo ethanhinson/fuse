@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/workers-must-declare-tools-and-worker-requires-an-active-wor'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -49,3 +49,9 @@ Now that workflows activate in every host, two silent footguns reach every bindi
 
 - A separate inherit-all flag for workers.
 - New pool limits or scheduler policy.
+
+## Reconcile log
+
+### 2026-10-31
+
+Unchanged against origin/main 3539cd2 (per-spawn activation, PR 115, merged).
