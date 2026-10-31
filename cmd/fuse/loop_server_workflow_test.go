@@ -348,3 +348,58 @@ func TestHostedPipelineRunWithWorkflowBindsStageWorkers(t *testing.T) {
 		t.Fatalf("coordinator children = %d, want 1", nSteps)
 	}
 }
+
+// A definition that names its workflow activates it when the pipeline_run tool
+// argument is absent: step worker: names bind to that workflow's workers.
+func TestHostedPipelineRunDefinitionWorkflowActivates(t *testing.T) {
+	gw, _, tree := runHosted(t, func(task string, turn int, _ gatewayCall) string {
+		switch {
+		case strings.Contains(task, "ROOT-TASK") && turn == 0:
+			return toolCallsReply(call{name: "pipeline_run", args: map[string]any{
+				"definition": "name: p\nworkflow: wf\nsteps:\n  - name: s1\n    worker: reader\n    prompt: STEP-TASK\n",
+			}})
+		case strings.Contains(task, "STEP-TASK"):
+			return textReply("step done")
+		}
+		return textReply("root done")
+	})
+
+	steps := gw.callsFor("STEP-TASK")
+	if len(steps) != 1 {
+		t.Fatalf("step requests = %d, want 1", len(steps))
+	}
+	if got := sortedToolNames(steps[0]); !reflect.DeepEqual(got, readerSchema) {
+		t.Fatalf("step tools = %v, want exactly the reader allowlist plus blackboard tools %v", got, readerSchema)
+	}
+	if coord := nodeLabelled(t, tree, "pipeline p"); coord.WorkflowRoot != "wf" {
+		t.Fatalf("coordinator WorkflowRoot = %q, want wf", coord.WorkflowRoot)
+	}
+}
+
+// An argument and a definition that name different workflows is a tool error;
+// nothing is spawned.
+func TestHostedPipelineRunWorkflowConflictIsToolError(t *testing.T) {
+	gw, _, tree := runHosted(t, func(task string, turn int, _ gatewayCall) string {
+		switch {
+		case strings.Contains(task, "ROOT-TASK") && turn == 0:
+			return toolCallsReply(call{name: "pipeline_run", args: map[string]any{
+				"workflow":   "wf",
+				"definition": "name: p\nworkflow: other\nsteps:\n  - name: s1\n    worker: reader\n    prompt: STEP-TASK\n",
+			}})
+		}
+		return textReply("root done")
+	})
+
+	r := toolResults(turnRequest(t, gw, "ROOT-TASK", 1))
+	if countContaining(r, `"wf"`) != 1 || countContaining(r, `"other"`) != 1 || countContaining(r, "conflict") != 1 {
+		t.Fatalf("root turn-1 results lack a conflict error naming both workflows: %q", r)
+	}
+	if n := len(gw.callsFor("STEP-TASK")); n != 0 {
+		t.Fatalf("step requests = %d, want 0", n)
+	}
+	for _, v := range tree.SnapshotAll() {
+		if v.Label == "pipeline p" {
+			t.Fatal("a conflicting request created a coordinator node")
+		}
+	}
+}

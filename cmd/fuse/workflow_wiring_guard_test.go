@@ -14,7 +14,9 @@ import (
 
 // sharedWiringFiles are the files that DEFINE the shared child and root wiring
 // (change 0091). Every other non-test file is a composition root and must reach
-// the per-child tool plumbing only through loopWiring.
+// the per-child tool plumbing only through loopWiring. A new composition root
+// must either add its file here (if it legitimately defines shared wiring) or
+// go through loopWiring; otherwise the guard below fails it.
 var sharedWiringFiles = map[string]bool{
 	"loop_wiring.go": true,
 	"workflow.go":    true,

@@ -685,6 +685,10 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agen
 		if err := pipeline.Validate(p, pipeline.Caps{}); err != nil {
 			return "", fmt.Errorf("validate: %w", err)
 		}
+		workflow, err = resolvePipelineWorkflow(workflow, p.Workflow)
+		if err != nil {
+			return "", err
+		}
 		if workflow != "" && runWF == nil {
 			return "", workflowPipelinesUnavailable(workflow)
 		}
@@ -698,6 +702,20 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agen
 		}
 		return line, nil
 	}
+}
+
+// resolvePipelineWorkflow merges the pipeline_run tool argument with the
+// definition's own workflow field. The definition activates its workflow when
+// the argument is absent; the argument wins only when they agree; a conflict is
+// an error, so step worker: names are never silently ignored.
+func resolvePipelineWorkflow(arg, def string) (string, error) {
+	switch {
+	case arg == "":
+		return def, nil
+	case def == "" || def == arg:
+		return arg, nil
+	}
+	return "", fmt.Errorf("workflow conflict: tool argument names %q but the definition names %q", arg, def)
 }
 
 // workflowPipelinesUnavailable is the refusal for a workflow pipeline in a
@@ -794,6 +812,12 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 		}
 		// confirm gate is a no-op headless (no interactive confirmer wired): proceed.
 		_ = confirm
+		// A synthesized plan that names a workflow runs under it even without an
+		// argument, so its step worker: names are honoured. A context with no
+		// workflow scope (nil runWF) keeps the pre-0091 ungoverned behaviour.
+		if workflow == "" && runWF != nil {
+			workflow = p.Workflow
+		}
 		line, rerr := runPipelineSteps(ctx, p, spawner, bb, workflow, runWF)
 		if !sched.UnyieldSlot(ctx, node) {
 			return "", ctx.Err()
