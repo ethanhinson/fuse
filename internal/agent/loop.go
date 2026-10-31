@@ -44,8 +44,9 @@ const returnResultCap = 2
 // the delta appended since is estimated at bytes/4, so the estimate resets to
 // ground truth every turn and error never compounds.
 const (
-	// defaultContextWindow is used when the model config doesn't set one.
-	defaultContextWindow = 128_000
+	// DefaultContextWindow is used when the model config does not set one. The
+	// loop server advertises it as a model's effective context window.
+	DefaultContextWindow = 128_000
 	bytesPerToken        = 4
 	// pruneThresholdPct: prune when the estimated request exceeds this
 	// percentage of the context window.
@@ -386,7 +387,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 
 	window := a.ContextWindow
 	if window <= 0 {
-		window = defaultContextWindow
+		window = DefaultContextWindow
 	}
 	budget := window * pruneThresholdPct / 100
 

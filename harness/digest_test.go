@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"strings"
 	"testing"
 
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
@@ -19,5 +20,14 @@ func TestDigestIsStableAndContentAddressed(t *testing.T) {
 	}
 	if Digest(nil) != Digest(&harnessv1.HarnessSpec{}) {
 		t.Fatal("nil and empty spec differ")
+	}
+}
+
+func TestDigestAlgorithmIsExportedAndPrefixesDigest(t *testing.T) {
+	if DigestAlgorithm != "sha256" {
+		t.Fatalf("DigestAlgorithm = %q, want sha256", DigestAlgorithm)
+	}
+	if d := Digest(nil); !strings.HasPrefix(d, DigestAlgorithm+":") {
+		t.Fatalf("Digest(nil) = %q, want prefix %q", d, DigestAlgorithm+":")
 	}
 }
