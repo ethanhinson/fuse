@@ -378,7 +378,8 @@ export type ModelInfo = Message<"fuse.loop.v1.ModelInfo"> & {
   gatewayId: string;
 
   /**
-   * 0: left to the gateway
+   * Effective output cap: the server's top-level max_tokens when the registry
+   * entry sets 0. 0 only when neither the entry nor the server sets a cap.
    *
    * @generated from field: uint32 max_output_tokens = 3;
    */

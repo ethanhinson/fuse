@@ -722,10 +722,12 @@ func (x *GetCapabilitiesResponse) GetServer() *ServerInfo {
 }
 
 type ModelInfo struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Alias           string                 `protobuf:"bytes,1,opt,name=alias,proto3" json:"alias,omitempty"`
-	GatewayId       string                 `protobuf:"bytes,2,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
-	MaxOutputTokens uint32                 `protobuf:"varint,3,opt,name=max_output_tokens,json=maxOutputTokens,proto3" json:"max_output_tokens,omitempty"` // 0: left to the gateway
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Alias     string                 `protobuf:"bytes,1,opt,name=alias,proto3" json:"alias,omitempty"`
+	GatewayId string                 `protobuf:"bytes,2,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
+	// Effective output cap: the server's top-level max_tokens when the registry
+	// entry sets 0. 0 only when neither the entry nor the server sets a cap.
+	MaxOutputTokens uint32 `protobuf:"varint,3,opt,name=max_output_tokens,json=maxOutputTokens,proto3" json:"max_output_tokens,omitempty"`
 	// Effective window: the runtime default when the registry entry sets 0,
 	// with context_window_is_default set.
 	ContextWindow          uint32 `protobuf:"varint,4,opt,name=context_window,json=contextWindow,proto3" json:"context_window,omitempty"`

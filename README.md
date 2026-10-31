@@ -559,7 +559,8 @@ The service is four RPCs:
   spoof, see above).
 - `GetCapabilities` - unary and read-only, with the same authentication as
   `StartLoop`. It starts no loop. For the authenticated tenant it returns:
-  - models: alias, gateway id, effective context window, max output, persona,
+  - models: alias, gateway id, effective context window, effective max output
+    (the entry's `max_tokens`, else the top-level `max_tokens`), persona,
     default flag, and the optional `label` / `description` / `tags`
   - installed skills
   - one ceiling per tighten-only field, keyed by the refusal field path

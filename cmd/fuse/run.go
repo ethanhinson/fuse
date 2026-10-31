@@ -459,10 +459,7 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 		adapter = adapter.WithTraceLabel(traceW, traceLabel)
 	}
 	permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
-	maxTokens := mc.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = cfg.MaxTokens
-	}
+	maxTokens := effectiveMaxTokens(mc, cfg)
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
@@ -795,6 +792,15 @@ func contains(s []string, v string) bool {
 
 // buildAgentCore resolves alias and constructs an Agent bound to renderer r,
 // returning the resolved gateway model id.
+// effectiveMaxTokens is the output cap a gateway-backed agent runs with: the
+// registry entry's max_tokens, else the operator's top-level max_tokens.
+func effectiveMaxTokens(mc model.ModelConfig, cfg config.Config) int {
+	if mc.MaxTokens != 0 {
+		return mc.MaxTokens
+	}
+	return cfg.MaxTokens
+}
+
 func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, string, error) {
 	mc, err := reg.Resolve(alias)
 	if err != nil {
@@ -833,10 +839,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		adapter = adapter.WithTraceLabel(traceW, traceLabel)
 	}
 	permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
-	maxTokens := mc.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = cfg.MaxTokens
-	}
+	maxTokens := effectiveMaxTokens(mc, cfg)
 	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.ContextWindow = mc.ContextWindow

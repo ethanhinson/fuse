@@ -37,7 +37,8 @@ type Model struct {
 	Alias string
 	// GatewayID is the gateway route the alias resolves to.
 	GatewayID string
-	// MaxOutputTokens is the entry's output cap; 0 means the gateway's own.
+	// MaxOutputTokens is the effective output cap: the server's fallback when
+	// the entry sets 0. It is 0 only when neither sets a cap.
 	MaxOutputTokens int
 	// ContextWindow is the effective window: the runtime default when the
 	// entry sets 0.
@@ -99,8 +100,10 @@ type Server struct {
 // Models lists, sorted by alias, the registry entries a server-mode loop can
 // run: every entry except cli/ routes (a local interactive adapter a headless
 // server cannot drive) and entries the operator hid. defaultContextWindow
-// fills an entry whose ContextWindow is 0.
-func Models(reg *model.Registry, defaultContextWindow int) []Model {
+// fills an entry whose ContextWindow is 0, and defaultMaxOutputTokens (the
+// operator's top-level max_tokens) an entry whose MaxTokens is 0, so each
+// advertised value is the one a loop runs with.
+func Models(reg *model.Registry, defaultContextWindow, defaultMaxOutputTokens int) []Model {
 	if reg == nil {
 		return nil
 	}
@@ -113,7 +116,7 @@ func Models(reg *model.Registry, defaultContextWindow int) []Model {
 		m := Model{
 			Alias:           e.Alias,
 			GatewayID:       mc.ID,
-			MaxOutputTokens: max(mc.MaxTokens, 0),
+			MaxOutputTokens: mc.MaxTokens,
 			ContextWindow:   mc.ContextWindow,
 			Persona:         mc.Persona,
 			IsDefault:       e.Alias == reg.Default,
@@ -121,6 +124,10 @@ func Models(reg *model.Registry, defaultContextWindow int) []Model {
 			Description:     mc.Description,
 			Tags:            slices.Clone(mc.Tags),
 		}
+		if m.MaxOutputTokens == 0 {
+			m.MaxOutputTokens = defaultMaxOutputTokens
+		}
+		m.MaxOutputTokens = max(m.MaxOutputTokens, 0)
 		if m.ContextWindow <= 0 {
 			m.ContextWindow, m.ContextWindowIsDefault = defaultContextWindow, true
 		}

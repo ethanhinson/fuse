@@ -33,9 +33,10 @@ const capsOperator = `
 models:
   default: fast
   fast: {id: cloud/fast, label: Fast, tags: [tools]}
-  house: {id: cloud/house}
+  house: {id: cloud/house, max_tokens: 2048}
   quiet: {id: cloud/quiet, advertise: false}
 max_turns: 2
+max_tokens: 9000
 agents: {queue_bound: 4, tool_timeout_seconds: 120}
 throughput: {requests_per_minute: 6000, tokens_per_minute: 900000}
 pipeline: {synthesis: {max_steps: 20, max_fanout: 8}}
@@ -299,6 +300,20 @@ func TestLoopServerHostAdvertisesItsCapabilities(t *testing.T) {
 	}
 	if _, ok := models["house"]; !ok {
 		t.Errorf("models %+v do not list house", c.Models)
+	}
+	// The advertised output cap is the one a loop runs with: the entry's
+	// max_tokens, else the operator's top-level max_tokens.
+	for alias, want := range map[string]int{"fast": 9000, "house": 2048} {
+		if got := models[alias].MaxOutputTokens; got != want {
+			t.Errorf("%s max output = %d, want %d", alias, got, want)
+		}
+		mc, err := host.operator.reg.Resolve(alias)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if run := effectiveMaxTokens(mc, host.operator.cfg); run != models[alias].MaxOutputTokens {
+			t.Errorf("%s advertised max output %d, but a loop runs with %d", alias, models[alias].MaxOutputTokens, run)
+		}
 	}
 	for _, hidden := range []string{"quiet", "claude-max"} {
 		if _, ok := models[hidden]; ok {

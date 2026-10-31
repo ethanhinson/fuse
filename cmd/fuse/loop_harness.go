@@ -61,7 +61,7 @@ func (h *loopServerHost) resolver() harnessresolve.Resolver {
 func (h *loopServerHost) Capabilities(ctx context.Context, tenant event.TenantID) (capabilities.Capabilities, error) {
 	r := h.resolver()
 	return capabilities.Capabilities{
-		Models:           capabilities.Models(h.operator.reg, agent.DefaultContextWindow),
+		Models:           capabilities.Models(h.operator.reg, agent.DefaultContextWindow, h.operator.cfg.MaxTokens),
 		Skills:           capabilities.Skills(h.skills),
 		Ceilings:         r.Ceilings(),
 		SecretRefs:       r.SecretRefs(ctx, string(tenant)),

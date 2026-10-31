@@ -33,7 +33,9 @@ type ModelInfo struct {
 	Alias string
 	// GatewayID is the gateway route the alias resolves to.
 	GatewayID string
-	// MaxOutputTokens is the entry's output cap; 0 means the gateway's own.
+	// MaxOutputTokens is the effective output cap: the server's top-level
+	// max_tokens when the entry sets none. It is 0 only when neither the entry
+	// nor the server sets a cap.
 	MaxOutputTokens int
 	// ContextWindow is the effective window: the runtime default when the
 	// entry sets none.

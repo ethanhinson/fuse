@@ -24,8 +24,30 @@ func TestModelsListsWhatTheServerCanRun(t *testing.T) {
 		{Alias: "fast", GatewayID: "cloud/fast", MaxOutputTokens: 4096, ContextWindow: 128_000, ContextWindowIsDefault: true,
 			Persona: "coding", IsDefault: true, Label: "Fast", Description: "d", Tags: []string{"tools", "custom"}},
 	}
-	if got := Models(reg, 128_000); !reflect.DeepEqual(got, want) {
+	if got := Models(reg, 128_000, 16384); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Models =\n %+v\nwant\n %+v", got, want)
+	}
+}
+
+// TestModelsAdvertisesTheEffectiveOutputCap pins that an entry without its
+// own max_tokens advertises the server's fallback, the cap a loop runs with,
+// and that 0 is advertised only when neither sets one.
+func TestModelsAdvertisesTheEffectiveOutputCap(t *testing.T) {
+	reg := model.NewRegistry("own", map[string]model.ModelConfig{
+		"own":     {ID: "cloud/own", MaxTokens: 2048},
+		"inherit": {ID: "cloud/inherit"},
+	})
+	got := map[string]int{}
+	for _, m := range Models(reg, 1, 9000) {
+		got[m.Alias] = m.MaxOutputTokens
+	}
+	if got["own"] != 2048 || got["inherit"] != 9000 {
+		t.Fatalf("max output = %v, want own 2048 and inherit 9000", got)
+	}
+	for _, m := range Models(reg, 1, 0) {
+		if m.Alias == "inherit" && m.MaxOutputTokens != 0 {
+			t.Fatalf("inherit with no server cap = %d, want 0", m.MaxOutputTokens)
+		}
 	}
 }
 
@@ -33,7 +55,7 @@ func TestModelsDoesNotAliasRegistryTags(t *testing.T) {
 	reg := model.NewRegistry("a", map[string]model.ModelConfig{
 		"a": {ID: "cloud/a", Tags: []string{"tools"}},
 	})
-	got := Models(reg, 1)
+	got := Models(reg, 1, 1)
 	if len(got) != 1 || len(got[0].Tags) != 1 {
 		t.Fatalf("Models = %+v", got)
 	}
@@ -48,7 +70,7 @@ func TestModelsDoesNotAliasRegistryTags(t *testing.T) {
 }
 
 func TestModelsNilRegistry(t *testing.T) {
-	if got := Models(nil, 1); len(got) != 0 {
+	if got := Models(nil, 1, 1); len(got) != 0 {
 		t.Fatalf("Models(nil) = %+v, want empty", got)
 	}
 }
