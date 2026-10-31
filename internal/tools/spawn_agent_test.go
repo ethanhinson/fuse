@@ -373,3 +373,54 @@ func TestSpawnAgentTool_HandleErrorIsErrorResult(t *testing.T) {
 		t.Errorf("error result should be prefixed spawn_agent:, got:\n%s", res.Output)
 	}
 }
+
+// --- change 0091: workflow param ---
+
+func TestSpawnAgentWorkflowParamAdvertisesNames(t *testing.T) {
+	tool := NewSpawnAgentTool(okSpawn("x")).WithWorkflows([]string{"wf", "research"})
+	props := tool.Parameters()["properties"].(map[string]any)
+	w, ok := props["workflow"].(map[string]any)
+	if !ok {
+		t.Fatal("workflow param should be present when workflows are configured")
+	}
+	enum, ok := w["enum"].([]any)
+	if !ok || len(enum) != 2 || enum[0] != "research" || enum[1] != "wf" {
+		t.Fatalf("workflow enum = %v, want [research wf]", w["enum"])
+	}
+	desc, _ := w["description"].(string)
+	if !strings.Contains(desc, "research") || !strings.Contains(desc, "wf") {
+		t.Errorf("workflow description missing names: %q", desc)
+	}
+	if d := tool.Description(); !strings.Contains(d, "research") || !strings.Contains(d, "wf") {
+		t.Errorf("Description missing workflow names: %q", d)
+	}
+}
+
+func TestSpawnAgentNoWorkflowsNoParam(t *testing.T) {
+	tool := NewSpawnAgentTool(okSpawn("x"))
+	props := tool.Parameters()["properties"].(map[string]any)
+	if _, ok := props["workflow"]; ok {
+		t.Error("workflow param must be absent when no workflows are configured")
+	}
+	want := "Spawn a child agent to execute a subtask concurrently. " +
+		"The child runs to completion and returns its findings as prose."
+	if got := tool.Description(); got != want {
+		t.Errorf("Description changed without workflows:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestSpawnAgentForwardsWorkflow(t *testing.T) {
+	var got SpawnRequest
+	spawn := func(_ context.Context, req SpawnRequest) (SpawnHandle, error) {
+		got = req
+		return fakeHandle{res: SpawnResult{Result: "ok"}}, nil
+	}
+	tool := NewSpawnAgentTool(spawn)
+	res := tool.Execute(context.Background(), `{"label":"l","task":"t","workflow":"wf"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if got.Workflow != "wf" {
+		t.Errorf("SpawnRequest.Workflow = %q, want wf", got.Workflow)
+	}
+}
