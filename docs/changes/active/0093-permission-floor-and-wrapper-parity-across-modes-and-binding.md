@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/permission-floor-and-wrapper-parity-across-modes-and-binding'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -49,3 +49,9 @@ Three remaining mode and binding gaps in permission matching: a bare first-token
 
 - Changing allow glob semantics.
 - New permission modes or default rule sets.
+
+## Reconcile log
+
+### 2026-10-31
+
+Unchanged against origin/main tip; dependency 92 is merged.
