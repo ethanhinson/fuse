@@ -76,6 +76,16 @@ var (
 	}
 )
 
+// AuthTypeToConfig is the config auth string for an MCP auth enum value: ""
+// (none) for UNSPECIFIED, the mapped name otherwise; ok false if unmapped.
+func AuthTypeToConfig(t harnessv1.McpAuthType) (string, bool) {
+	if t == harnessv1.McpAuthType_MCP_AUTH_TYPE_UNSPECIFIED {
+		return "", true
+	}
+	s, ok := authToConfig[t]
+	return s, ok
+}
+
 func invert[K comparable, V comparable](m map[K]V) map[V]K {
 	out := make(map[V]K, len(m))
 	for k, v := range m {
@@ -408,6 +418,20 @@ func FromConfig(cfg config.Config) (*harnessv1.HarnessSpec, []Omission) {
 		m.Entries[alias] = &harnessv1.Model{
 			Id: mc.ID, MaxTokens: num("models."+alias+".max_tokens", mc.MaxTokens), ContextWindow: num("models."+alias+".context_window", mc.ContextWindow),
 			Persona: mc.Persona, SystemPrefix: mc.SystemPrefix,
+		}
+		// Advertising metadata is the operator's catalogue; HarnessSpec has no
+		// field for it.
+		if mc.Label != "" {
+			omit("models."+alias+".label", reasonOperator)
+		}
+		if mc.Description != "" {
+			omit("models."+alias+".description", reasonOperator)
+		}
+		if len(mc.Tags) > 0 {
+			omit("models."+alias+".tags", reasonOperator)
+		}
+		if mc.Advertise != nil {
+			omit("models."+alias+".advertise", reasonOperator)
 		}
 	}
 	if m.DefaultAlias != "" || len(m.Entries) > 0 {

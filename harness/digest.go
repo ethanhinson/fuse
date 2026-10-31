@@ -37,8 +37,12 @@ func Encode(spec *harnessv1.HarnessSpec) []byte {
 	return b
 }
 
-// DigestBytes is "sha256:" and the hex SHA-256 of an encoded spec.
+// DigestAlgorithm is the digest algorithm id that prefixes every Digest. It is
+// the id GetCapabilities advertises for harness spec digests.
+const DigestAlgorithm = "sha256"
+
+// DigestBytes is DigestAlgorithm, ":", and the hex SHA-256 of an encoded spec.
 func DigestBytes(b []byte) string {
 	sum := sha256.Sum256(b)
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return DigestAlgorithm + ":" + hex.EncodeToString(sum[:])
 }

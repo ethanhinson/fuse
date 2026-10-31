@@ -12,6 +12,14 @@ type ModelConfig struct {
 	ContextWindow int // model context size in tokens; 0 = harness default (128k)
 	Persona       string
 	SystemPrefix  string // prepended before the persona system prompt; for model-specific directives
+	// Operator display metadata advertised by GetCapabilities; nothing else
+	// reads it.
+	Label       string
+	Description string
+	Tags        []string
+	// Hidden comes from config `advertise: false`. Its zero value means
+	// advertised, so DefaultRegistry needs no change.
+	Hidden bool
 }
 
 // Registry maps model aliases to their resolved gateway configuration.

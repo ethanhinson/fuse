@@ -9,6 +9,7 @@ package configcheck
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -26,6 +27,8 @@ func Registry(cfg config.Config) *model.Registry {
 		reg.Set(alias, model.ModelConfig{
 			ID: mc.ID, MaxTokens: mc.MaxTokens, ContextWindow: mc.ContextWindow,
 			Persona: mc.Persona, SystemPrefix: mc.SystemPrefix,
+			Label: mc.Label, Description: mc.Description, Tags: slices.Clone(mc.Tags),
+			Hidden: mc.Advertise != nil && !*mc.Advertise,
 		})
 	}
 	return reg

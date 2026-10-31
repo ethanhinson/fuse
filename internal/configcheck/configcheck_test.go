@@ -1,6 +1,7 @@
 package configcheck
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -63,5 +64,29 @@ func TestProblemsCombinesStructuralAndModelRefs(t *testing.T) {
 	}
 	if len(Problems(config.Default())) != 0 {
 		t.Fatal("default config must be clean")
+	}
+}
+
+func TestRegistryCarriesModelMetadata(t *testing.T) {
+	no := false
+	cfg := config.Default()
+	cfg.Models.Entries = map[string]config.ModelConfig{
+		"fast":   {ID: "cloud/fast", Label: "Fast coder", Description: "Cheap", Tags: []string{"tools", "vision"}},
+		"hidden": {ID: "cloud/hidden", Advertise: &no},
+	}
+	reg := Registry(cfg)
+	fast, err := reg.Resolve("fast")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fast.Label != "Fast coder" || fast.Description != "Cheap" || !reflect.DeepEqual(fast.Tags, []string{"tools", "vision"}) || fast.Hidden {
+		t.Fatalf("fast = %+v", fast)
+	}
+	hidden, err := reg.Resolve("hidden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hidden.Hidden {
+		t.Fatalf("hidden = %+v, want Hidden", hidden)
 	}
 }

@@ -1,9 +1,10 @@
 // Package loopconnect is the Connect/protobuf transport edge for the networked loop-
 // control binding (change 0055, fuse.loop.v1) — successor to the JSON-over-WebSocket
 // wire (#48, ADR-0032 superseded). It implements loopv1connect.LoopServiceHandler
-// over a runtime.Runtime: StartLoop / Send (unary) and Observe (server-streaming
-// history-then-live). It is a pure adapter — it imports internal/runtime,
-// internal/event, the generated loopwire stubs and the public harness types (for a
+// over a runtime.Runtime: StartLoop / Send / GetCapabilities (unary) and Observe
+// (server-streaming history-then-live). It is a pure adapter - it imports internal/runtime,
+// internal/event, the generated loopwire stubs, the internal/capabilities answer
+// types and the public harness types (for a
 // refused spec's violations, change 0085), and NEVER a renderer, TUI,
 // MCP tool registry, or CLI type. Its "no approval gate" (auto-approve) policy is the
 // composition root's choice, not a property of the Runtime seam.
@@ -63,6 +64,10 @@ type Handler struct {
 	// keepalive is the idle Observe heartbeat interval (Task 4). Zero uses the
 	// package default (defaultKeepalive); a test injects a short interval.
 	keepalive time.Duration
+
+	// caps answers GetCapabilities. Nil means the RPC answers Unimplemented; the
+	// composition root injects it via WithCapabilities.
+	caps CapabilitySource
 }
 
 // compile-time assertion that Handler satisfies the generated service interface.

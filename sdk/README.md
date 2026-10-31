@@ -25,6 +25,7 @@ func (c *Client) Send(ctx, id LoopID, input string) error
 func (c *Client) Interrupt(ctx, id LoopID, input string) error            // Send that cancels the loop's current step so the message lands now
 func (c *Client) SendWith(ctx, id LoopID, input string, SendOptions) error // Interrupt, and/or Source: SourceHuman | SourceOrchestrator
 func (c *Client) Observe(ctx, id LoopID, fromSeq Seq) (<-chan Event, func(), error)
+func (c *Client) Capabilities(ctx) (Capabilities, error)              // what this tenant may use in a spec
 
 func IsCompletion(e Event) bool   // true on the loop.parked completion event
 
@@ -45,7 +46,7 @@ type LoopID = string
 ```
 
 Sentinel errors: `ErrUnauthenticated`, `ErrPermissionDenied`, `ErrLoopNotFound`, `ErrLoopFinished`,
-`ErrHarnessUnsupported`.
+`ErrHarnessUnsupported`, `ErrCapabilitiesUnsupported`.
 
 ## Start a loop from a harness spec
 
@@ -74,6 +75,27 @@ if errors.As(err, &bad) {
 
 The spec and its digest (`harness.Digest`) are the first event of the loop's stream
 (`loop.harness`), so a resume on any server replica rebuilds the same harness.
+
+### Pre-flighting a spec
+
+Call `Capabilities(ctx)` before `StartLoop` to check a spec against what the
+server will accept:
+
+- Build a model picker from `Models` (`Alias`, `Label`, `Description`, `Tags`,
+  `IsDefault`, `ContextWindow`).
+- Reference only the listed `Skills` and `SecretRefs`.
+- Keep each tighten-only field strictly below its `Ceiling`'s `Value`
+  (`FieldPath`, `Value`, `Direction`; a value equal to it is refused), and
+  leave it unset when `OperatorSet` is false.
+
+A local client or an older server returns `ErrCapabilitiesUnsupported`.
+
+```go
+caps, err := client.Capabilities(ctx)
+if errors.Is(err, fuse.ErrCapabilitiesUnsupported) {
+    // no pre-flight available; StartLoop still enforces every limit
+}
+```
 
 ## Remote backend (hosted fuse over the Connect wire)
 

@@ -266,10 +266,16 @@ func (m ShellModel) saveModelForm() (bool, tea.Model, tea.Cmd) {
 		ContextWindow: ctxWin,
 		Persona:       strings.TrimSpace(f.persona),
 	}
-	// On edit, preserve the system prefix the form does not expose.
+	// On edit, preserve the system prefix and advertising metadata the form
+	// does not expose. Dropping Hidden would silently re-advertise a hidden
+	// model.
 	if f.editing {
 		if prev, err := m.reg.Resolve(f.origAlias); err == nil {
 			mc.SystemPrefix = prev.SystemPrefix
+			mc.Label = prev.Label
+			mc.Description = prev.Description
+			mc.Tags = prev.Tags
+			mc.Hidden = prev.Hidden
 		}
 	}
 
@@ -324,13 +330,21 @@ func (m ShellModel) deleteSelectedModel() (bool, tea.Model, tea.Cmd) {
 // toConfigModel converts a registry ModelConfig into the config package's
 // equivalent for persistence.
 func toConfigModel(mc model.ModelConfig) config.ModelConfig {
-	return config.ModelConfig{
+	out := config.ModelConfig{
 		ID:            mc.ID,
 		MaxTokens:     mc.MaxTokens,
 		ContextWindow: mc.ContextWindow,
 		Persona:       mc.Persona,
 		SystemPrefix:  mc.SystemPrefix,
+		Label:         mc.Label,
+		Description:   mc.Description,
+		Tags:          mc.Tags,
 	}
+	if mc.Hidden {
+		no := false
+		out.Advertise = &no
+	}
+	return out
 }
 
 // parseNonNegative parses an optional integer field: empty means zero (the

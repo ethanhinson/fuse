@@ -6,9 +6,12 @@ import (
 	"reflect"
 
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
+	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/capabilities"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/harnessresolve"
+	"github.com/ethanhinson/fuse/internal/loopconnect"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/skills"
@@ -28,22 +31,46 @@ import (
 // resolved settings, so the root agent, subagents, workflows and pipeline
 // pools are all built from the loop's config rather than the process config.
 func (h *loopServerHost) ResolveHarness(ctx context.Context, tenant event.TenantID, spec *harnessv1.HarnessSpec) (runtime.LoopFactory, error) {
-	resolver := harnessresolve.Resolver{
-		Base:    h.operator.cfg,
-		Secrets: harnessresolve.ConfigSecrets(h.operator.cfg.LoopServer.Secrets),
-	}
-	if h.skills != nil {
-		resolver.Skills = func(name string) bool {
-			_, ok := h.skills.Lookup(name)
-			return ok
-		}
-	}
-	res, err := resolver.Resolve(ctx, string(tenant), spec)
+	res, err := h.resolver().Resolve(ctx, string(tenant), spec)
 	if err != nil {
 		return runtime.LoopFactory{}, err
 	}
 	return h.factory(h.settingsFor(res)), nil
 }
+
+// resolver is the one Resolver this server layers specs with: ResolveHarness
+// enforces through it and Capabilities advertises from it.
+func (h *loopServerHost) resolver() harnessresolve.Resolver {
+	r := harnessresolve.Resolver{
+		Base:    h.operator.cfg,
+		Secrets: harnessresolve.ConfigSecrets(h.operator.cfg.LoopServer.Secrets),
+	}
+	if h.skills != nil {
+		r.Skills = func(name string) bool {
+			_, ok := h.skills.Lookup(name)
+			return ok
+		}
+	}
+	return r
+}
+
+// Capabilities implements loopconnect.CapabilitySource. Every part reads what
+// StartLoop enforces against: the operator registry, the installed skill set
+// ResolveHarness looks skill names up in, and resolver() for the ceilings,
+// secret names and spec MCP auth kinds.
+func (h *loopServerHost) Capabilities(ctx context.Context, tenant event.TenantID) (capabilities.Capabilities, error) {
+	r := h.resolver()
+	return capabilities.Capabilities{
+		Models:           capabilities.Models(h.operator.reg, agent.DefaultContextWindow, h.operator.cfg.MaxTokens),
+		Skills:           capabilities.Skills(h.skills),
+		Ceilings:         r.Ceilings(),
+		SecretRefs:       r.SecretRefs(ctx, string(tenant)),
+		SpecMCPAuthKinds: harnessresolve.SpecMCPAuthKinds(),
+		Server:           capabilities.ServerInfo(),
+	}, nil
+}
+
+var _ loopconnect.CapabilitySource = (*loopServerHost)(nil)
 
 // settingsFor derives one loop's construction settings from its resolved spec.
 func (h *loopServerHost) settingsFor(res harnessresolve.Resolved) loopSettings {

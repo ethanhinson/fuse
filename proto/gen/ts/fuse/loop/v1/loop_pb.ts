@@ -10,20 +10,23 @@
 // field (identity enforcement is #0049). The per-kind payload shapes are NOT
 // re-modeled here: payload stays raw JSON bytes (#50 owns SDK ergonomics), and
 // kind stays a string to avoid lock-stepping a proto enum with internal/event.Kind.
+// GetCapabilities is the read-only discovery call: it tells a client which models,
+// skills, tighten-only ceilings, secret names and spec MCP auth types the server
+// will accept before it composes a HarnessSpec.
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
-import type { HarnessSpec } from "../../harness/v1/harness_pb.js";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { HarnessSpec, McpAuthType } from "../../harness/v1/harness_pb.js";
 import { file_fuse_harness_v1_harness } from "../../harness/v1/harness_pb.js";
-import type { Timestamp } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { Timestamp, Value } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_struct, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file fuse/loop/v1/loop.proto.
  */
 export const file_fuse_loop_v1_loop: GenFile = /*@__PURE__*/
-  fileDesc("ChdmdXNlL2xvb3AvdjEvbG9vcC5wcm90bxIMZnVzZS5sb29wLnYxIqABChBTdGFydExvb3BSZXF1ZXN0EgwKBHRhc2sYASABKAkSDQoFbW9kZWwYAiABKAkSDgoGdGVuYW50GAMgASgJEhMKC2ludGVyYWN0aXZlGAQgASgIEhsKE29yY2hlc3RyYXRlX2xvb3BfaWQYBSABKAkSLQoHaGFybmVzcxgGIAEoCzIcLmZ1c2UuaGFybmVzcy52MS5IYXJuZXNzU3BlYyI8ChFTdGFydExvb3BSZXNwb25zZRIPCgdsb29wX2lkGAEgASgJEhYKDmhhcm5lc3NfZGlnZXN0GAIgASgJImAKC1NlbmRSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSDQoFaW5wdXQYAiABKAkSDgoGdGVuYW50GAMgASgJEhEKCWludGVycnVwdBgEIAEoCBIOCgZzb3VyY2UYBSABKAkiDgoMU2VuZFJlc3BvbnNlIkMKDk9ic2VydmVSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSEAoIZnJvbV9zZXEYAiABKAQSDgoGdGVuYW50GAMgASgJIlIKDE9ic2VydmVFdmVudBIiCgVldmVudBgBIAEoCzITLmZ1c2UubG9vcC52MS5FdmVudBILCgNnYXAYAiABKAgSEQoJa2VlcGFsaXZlGAMgASgIIpwBCgVFdmVudBILCgNzZXEYASABKAQSJgoCdHMYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB25vZGVfaWQYAyABKAkSEQoJcGFyZW50X2lkGAQgASgJEg0KBWRlcHRoGAUgASgFEgwKBHR1cm4YBiABKAUSDAoEa2luZBgHIAEoCRIPCgdwYXlsb2FkGAggASgMMuEBCgtMb29wU2VydmljZRJMCglTdGFydExvb3ASHi5mdXNlLmxvb3AudjEuU3RhcnRMb29wUmVxdWVzdBofLmZ1c2UubG9vcC52MS5TdGFydExvb3BSZXNwb25zZRI9CgRTZW5kEhkuZnVzZS5sb29wLnYxLlNlbmRSZXF1ZXN0GhouZnVzZS5sb29wLnYxLlNlbmRSZXNwb25zZRJFCgdPYnNlcnZlEhwuZnVzZS5sb29wLnYxLk9ic2VydmVSZXF1ZXN0GhouZnVzZS5sb29wLnYxLk9ic2VydmVFdmVudDABQjlaN2dpdGh1Yi5jb20vZXRoYW5oaW5zb24vZnVzZS9pbnRlcm5hbC9sb29wd2lyZS92MTtsb29wdjFiBnByb3RvMw", [file_fuse_harness_v1_harness, file_google_protobuf_timestamp]);
+  fileDesc("ChdmdXNlL2xvb3AvdjEvbG9vcC5wcm90bxIMZnVzZS5sb29wLnYxIqABChBTdGFydExvb3BSZXF1ZXN0EgwKBHRhc2sYASABKAkSDQoFbW9kZWwYAiABKAkSDgoGdGVuYW50GAMgASgJEhMKC2ludGVyYWN0aXZlGAQgASgIEhsKE29yY2hlc3RyYXRlX2xvb3BfaWQYBSABKAkSLQoHaGFybmVzcxgGIAEoCzIcLmZ1c2UuaGFybmVzcy52MS5IYXJuZXNzU3BlYyI8ChFTdGFydExvb3BSZXNwb25zZRIPCgdsb29wX2lkGAEgASgJEhYKDmhhcm5lc3NfZGlnZXN0GAIgASgJImAKC1NlbmRSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSDQoFaW5wdXQYAiABKAkSDgoGdGVuYW50GAMgASgJEhEKCWludGVycnVwdBgEIAEoCBIOCgZzb3VyY2UYBSABKAkiDgoMU2VuZFJlc3BvbnNlIkMKDk9ic2VydmVSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSEAoIZnJvbV9zZXEYAiABKAQSDgoGdGVuYW50GAMgASgJIlIKDE9ic2VydmVFdmVudBIiCgVldmVudBgBIAEoCzITLmZ1c2UubG9vcC52MS5FdmVudBILCgNnYXAYAiABKAgSEQoJa2VlcGFsaXZlGAMgASgIIpwBCgVFdmVudBILCgNzZXEYASABKAQSJgoCdHMYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB25vZGVfaWQYAyABKAkSEQoJcGFyZW50X2lkGAQgASgJEg0KBWRlcHRoGAUgASgFEgwKBHR1cm4YBiABKAUSDAoEa2luZBgHIAEoCRIPCgdwYXlsb2FkGAggASgMIigKFkdldENhcGFiaWxpdGllc1JlcXVlc3QSDgoGdGVuYW50GAEgASgJIo4CChdHZXRDYXBhYmlsaXRpZXNSZXNwb25zZRInCgZtb2RlbHMYASADKAsyFy5mdXNlLmxvb3AudjEuTW9kZWxJbmZvEicKBnNraWxscxgCIAMoCzIXLmZ1c2UubG9vcC52MS5Ta2lsbEluZm8SJwoIY2VpbGluZ3MYAyADKAsyFS5mdXNlLmxvb3AudjEuQ2VpbGluZxITCgtzZWNyZXRfcmVmcxgEIAMoCRI5ChNzcGVjX21jcF9hdXRoX2tpbmRzGAUgAygOMhwuZnVzZS5oYXJuZXNzLnYxLk1jcEF1dGhUeXBlEigKBnNlcnZlchgGIAEoCzIYLmZ1c2UubG9vcC52MS5TZXJ2ZXJJbmZvItsBCglNb2RlbEluZm8SDQoFYWxpYXMYASABKAkSEgoKZ2F0ZXdheV9pZBgCIAEoCRIZChFtYXhfb3V0cHV0X3Rva2VucxgDIAEoDRIWCg5jb250ZXh0X3dpbmRvdxgEIAEoDRIhChljb250ZXh0X3dpbmRvd19pc19kZWZhdWx0GAUgASgIEg8KB3BlcnNvbmEYBiABKAkSEgoKaXNfZGVmYXVsdBgHIAEoCBINCgVsYWJlbBgIIAEoCRITCgtkZXNjcmlwdGlvbhgJIAEoCRIMCgR0YWdzGAogAygJIi4KCVNraWxsSW5mbxIMCgRuYW1lGAEgASgJEhMKC2Rlc2NyaXB0aW9uGAIgASgJIo0BCgdDZWlsaW5nEhIKCmZpZWxkX3BhdGgYASABKAkSFAoMb3BlcmF0b3Jfc2V0GAIgASgIEiUKBXZhbHVlGAMgASgLMhYuZ29vZ2xlLnByb3RvYnVmLlZhbHVlEjEKCWRpcmVjdGlvbhgEIAEoDjIeLmZ1c2UubG9vcC52MS5DZWlsaW5nRGlyZWN0aW9uIjcKClNlcnZlckluZm8SDwoHdmVyc2lvbhgBIAEoCRIYChBkaWdlc3RfYWxnb3JpdGhtGAIgASgJKmsKEENlaWxpbmdEaXJlY3Rpb24SIQodQ0VJTElOR19ESVJFQ1RJT05fVU5TUEVDSUZJRUQQABIZChVDRUlMSU5HX0RJUkVDVElPTl9NQVgQARIZChVDRUlMSU5HX0RJUkVDVElPTl9NSU4QAjLBAgoLTG9vcFNlcnZpY2USTAoJU3RhcnRMb29wEh4uZnVzZS5sb29wLnYxLlN0YXJ0TG9vcFJlcXVlc3QaHy5mdXNlLmxvb3AudjEuU3RhcnRMb29wUmVzcG9uc2USPQoEU2VuZBIZLmZ1c2UubG9vcC52MS5TZW5kUmVxdWVzdBoaLmZ1c2UubG9vcC52MS5TZW5kUmVzcG9uc2USRQoHT2JzZXJ2ZRIcLmZ1c2UubG9vcC52MS5PYnNlcnZlUmVxdWVzdBoaLmZ1c2UubG9vcC52MS5PYnNlcnZlRXZlbnQwARJeCg9HZXRDYXBhYmlsaXRpZXMSJC5mdXNlLmxvb3AudjEuR2V0Q2FwYWJpbGl0aWVzUmVxdWVzdBolLmZ1c2UubG9vcC52MS5HZXRDYXBhYmlsaXRpZXNSZXNwb25zZUI5WjdnaXRodWIuY29tL2V0aGFuaGluc29uL2Z1c2UvaW50ZXJuYWwvbG9vcHdpcmUvdjE7bG9vcHYxYgZwcm90bzM", [file_fuse_harness_v1_harness, file_google_protobuf_struct, file_google_protobuf_timestamp]);
 
 /**
  * @generated from message fuse.loop.v1.StartLoopRequest
@@ -284,6 +287,273 @@ export const EventSchema: GenMessage<Event> = /*@__PURE__*/
   messageDesc(file_fuse_loop_v1_loop, 6);
 
 /**
+ * @generated from message fuse.loop.v1.GetCapabilitiesRequest
+ */
+export type GetCapabilitiesRequest = Message<"fuse.loop.v1.GetCapabilitiesRequest"> & {
+  /**
+   * Same pass-through as StartLoopRequest.tenant: when set it must equal the
+   * authenticated tenant (else PermissionDenied). The answer is always filtered
+   * by the authenticated tenant, never by this field.
+   *
+   * @generated from field: string tenant = 1;
+   */
+  tenant: string;
+};
+
+/**
+ * Describes the message fuse.loop.v1.GetCapabilitiesRequest.
+ * Use `create(GetCapabilitiesRequestSchema)` to create a new message.
+ */
+export const GetCapabilitiesRequestSchema: GenMessage<GetCapabilitiesRequest> = /*@__PURE__*/
+  messageDesc(file_fuse_loop_v1_loop, 7);
+
+/**
+ * @generated from message fuse.loop.v1.GetCapabilitiesResponse
+ */
+export type GetCapabilitiesResponse = Message<"fuse.loop.v1.GetCapabilitiesResponse"> & {
+  /**
+   * Models a server-mode loop can run, by alias. cli/ routes and entries the
+   * operator hid (advertise: false) are left out.
+   *
+   * @generated from field: repeated fuse.loop.v1.ModelInfo models = 1;
+   */
+  models: ModelInfo[];
+
+  /**
+   * Skills a spec's skills[].name may reference.
+   *
+   * @generated from field: repeated fuse.loop.v1.SkillInfo skills = 2;
+   */
+  skills: SkillInfo[];
+
+  /**
+   * One per tighten-only HarnessSpec field; for a field under a map
+   * (workflows), one per key the operator defines.
+   *
+   * @generated from field: repeated fuse.loop.v1.Ceiling ceilings = 3;
+   */
+  ceilings: Ceiling[];
+
+  /**
+   * Secret names that resolve for the caller's tenant: names only. A name the
+   * operator restricted to hosts is still listed, and still resolves only for
+   * those hosts.
+   *
+   * @generated from field: repeated string secret_refs = 4;
+   */
+  secretRefs: string[];
+
+  /**
+   * Auth types a spec-declared MCP server may use; UNSPECIFIED means none.
+   *
+   * @generated from field: repeated fuse.harness.v1.McpAuthType spec_mcp_auth_kinds = 5;
+   */
+  specMcpAuthKinds: McpAuthType[];
+
+  /**
+   * @generated from field: fuse.loop.v1.ServerInfo server = 6;
+   */
+  server?: ServerInfo | undefined;
+};
+
+/**
+ * Describes the message fuse.loop.v1.GetCapabilitiesResponse.
+ * Use `create(GetCapabilitiesResponseSchema)` to create a new message.
+ */
+export const GetCapabilitiesResponseSchema: GenMessage<GetCapabilitiesResponse> = /*@__PURE__*/
+  messageDesc(file_fuse_loop_v1_loop, 8);
+
+/**
+ * @generated from message fuse.loop.v1.ModelInfo
+ */
+export type ModelInfo = Message<"fuse.loop.v1.ModelInfo"> & {
+  /**
+   * @generated from field: string alias = 1;
+   */
+  alias: string;
+
+  /**
+   * @generated from field: string gateway_id = 2;
+   */
+  gatewayId: string;
+
+  /**
+   * Effective output cap: the server's top-level max_tokens when the registry
+   * entry sets 0. 0 only when neither the entry nor the server sets a cap.
+   *
+   * @generated from field: uint32 max_output_tokens = 3;
+   */
+  maxOutputTokens: number;
+
+  /**
+   * Effective window: the runtime default when the registry entry sets 0,
+   * with context_window_is_default set.
+   *
+   * @generated from field: uint32 context_window = 4;
+   */
+  contextWindow: number;
+
+  /**
+   * @generated from field: bool context_window_is_default = 5;
+   */
+  contextWindowIsDefault: boolean;
+
+  /**
+   * @generated from field: string persona = 6;
+   */
+  persona: string;
+
+  /**
+   * @generated from field: bool is_default = 7;
+   */
+  isDefault: boolean;
+
+  /**
+   * Optional operator metadata. Well-known tags: tools, vision, reasoning,
+   * long-context; other strings pass through.
+   *
+   * @generated from field: string label = 8;
+   */
+  label: string;
+
+  /**
+   * @generated from field: string description = 9;
+   */
+  description: string;
+
+  /**
+   * @generated from field: repeated string tags = 10;
+   */
+  tags: string[];
+};
+
+/**
+ * Describes the message fuse.loop.v1.ModelInfo.
+ * Use `create(ModelInfoSchema)` to create a new message.
+ */
+export const ModelInfoSchema: GenMessage<ModelInfo> = /*@__PURE__*/
+  messageDesc(file_fuse_loop_v1_loop, 9);
+
+/**
+ * @generated from message fuse.loop.v1.SkillInfo
+ */
+export type SkillInfo = Message<"fuse.loop.v1.SkillInfo"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string description = 2;
+   */
+  description: string;
+};
+
+/**
+ * Describes the message fuse.loop.v1.SkillInfo.
+ * Use `create(SkillInfoSchema)` to create a new message.
+ */
+export const SkillInfoSchema: GenMessage<SkillInfo> = /*@__PURE__*/
+  messageDesc(file_fuse_loop_v1_loop, 10);
+
+/**
+ * The operator limit one tighten-only spec field is held to. The limit is
+ * strict: a spec value equal to value is refused, not accepted.
+ *
+ * @generated from message fuse.loop.v1.Ceiling
+ */
+export type Ceiling = Message<"fuse.loop.v1.Ceiling"> & {
+  /**
+   * fuse.harness.v1.Violation.field_path vocabulary.
+   *
+   * @generated from field: string field_path = 1;
+   */
+  fieldPath: string;
+
+  /**
+   * false: the operator left it unset, so a spec cannot set it at all.
+   *
+   * @generated from field: bool operator_set = 2;
+   */
+  operatorSet: boolean;
+
+  /**
+   * The operator's effective value; present only when operator_set.
+   *
+   * @generated from field: google.protobuf.Value value = 3;
+   */
+  value?: Value | undefined;
+
+  /**
+   * @generated from field: fuse.loop.v1.CeilingDirection direction = 4;
+   */
+  direction: CeilingDirection;
+};
+
+/**
+ * Describes the message fuse.loop.v1.Ceiling.
+ * Use `create(CeilingSchema)` to create a new message.
+ */
+export const CeilingSchema: GenMessage<Ceiling> = /*@__PURE__*/
+  messageDesc(file_fuse_loop_v1_loop, 11);
+
+/**
+ * @generated from message fuse.loop.v1.ServerInfo
+ */
+export type ServerInfo = Message<"fuse.loop.v1.ServerInfo"> & {
+  /**
+   * @generated from field: string version = 1;
+   */
+  version: string;
+
+  /**
+   * Algorithm id StartLoopResponse.harness_digest is prefixed with ("sha256").
+   *
+   * @generated from field: string digest_algorithm = 2;
+   */
+  digestAlgorithm: string;
+};
+
+/**
+ * Describes the message fuse.loop.v1.ServerInfo.
+ * Use `create(ServerInfoSchema)` to create a new message.
+ */
+export const ServerInfoSchema: GenMessage<ServerInfo> = /*@__PURE__*/
+  messageDesc(file_fuse_loop_v1_loop, 12);
+
+/**
+ * Ceilings are strict: a spec value equal to the ceiling's value is refused.
+ *
+ * @generated from enum fuse.loop.v1.CeilingDirection
+ */
+export enum CeilingDirection {
+  /**
+   * @generated from enum value: CEILING_DIRECTION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * A spec value must be strictly below the ceiling's value; equal is refused.
+   *
+   * @generated from enum value: CEILING_DIRECTION_MAX = 1;
+   */
+  MAX = 1,
+
+  /**
+   * A spec value must be strictly above the ceiling's value; equal is refused.
+   *
+   * @generated from enum value: CEILING_DIRECTION_MIN = 2;
+   */
+  MIN = 2,
+}
+
+/**
+ * Describes the enum fuse.loop.v1.CeilingDirection.
+ */
+export const CeilingDirectionSchema: GenEnum<CeilingDirection> = /*@__PURE__*/
+  enumDesc(file_fuse_loop_v1_loop, 0);
+
+/**
  * LoopService is the networked loop-control surface. Unary + server-streaming only
  * (no bidi): Observe(from_seq) subsumes both live tail and Attach/HTTP-replay
  * catch-up, so a reconnecting client re-opens Observe from its last-seen seq.
@@ -321,6 +591,20 @@ export const LoopService: GenService<{
     methodKind: "server_streaming";
     input: typeof ObserveRequestSchema;
     output: typeof ObserveEventSchema;
+  },
+  /**
+   * GetCapabilities advertises what this server accepts in a StartLoop harness
+   * spec: models, skills, tighten-only ceilings, the caller's resolvable secret
+   * names and the MCP auth types a spec-declared server may use. Read-only; it
+   * starts no loop. Same auth as StartLoop. A server with no capability source
+   * answers Unimplemented rather than an empty but plausible answer.
+   *
+   * @generated from rpc fuse.loop.v1.LoopService.GetCapabilities
+   */
+  getCapabilities: {
+    methodKind: "unary";
+    input: typeof GetCapabilitiesRequestSchema;
+    output: typeof GetCapabilitiesResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_fuse_loop_v1_loop, 0);

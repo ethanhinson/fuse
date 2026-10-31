@@ -25,6 +25,14 @@ type ModelConfig struct {
 	ContextWindow int    `yaml:"context_window"` // model context size in tokens; 0 = harness default
 	Persona       string `yaml:"persona"`
 	SystemPrefix  string `yaml:"system_prefix"` // prepended before persona prompt (e.g. "/no_think" for Qwen3)
+	// Operator display metadata advertised by GetCapabilities (change 0086);
+	// nothing else reads it. Well-known tags: tools, vision, reasoning,
+	// long-context; other strings pass through.
+	Label       string   `yaml:"label,omitempty"`
+	Description string   `yaml:"description,omitempty"`
+	Tags        []string `yaml:"tags,omitempty"`
+	// Advertise false hides the entry from GetCapabilities; nil means advertised.
+	Advertise *bool `yaml:"advertise,omitempty"`
 }
 
 // ModelsConfig holds the default model alias and all named entries.

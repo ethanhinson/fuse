@@ -49,6 +49,12 @@ func (b *localBackend) send(ctx context.Context, id LoopID, input string, opts S
 	return runtime.SendOrSteer(ctx, b.rt, b.tenant, id, input, runtime.SteerOpts{Interrupt: opts.Interrupt, Source: opts.Source})
 }
 
+// capabilities always fails: an in-process runtime has no operator to
+// advertise.
+func (b *localBackend) capabilities(context.Context) (Capabilities, error) {
+	return Capabilities{}, ErrCapabilitiesUnsupported
+}
+
 // observe implements the wire's history-then-live contract over the seam, porting
 // internal/loopconnect.(*Handler).Observe's discipline VERBATIM in intent:
 //

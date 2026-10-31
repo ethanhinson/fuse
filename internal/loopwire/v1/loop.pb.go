@@ -12,6 +12,9 @@
 // field (identity enforcement is #0049). The per-kind payload shapes are NOT
 // re-modeled here: payload stays raw JSON bytes (#50 owns SDK ergonomics), and
 // kind stays a string to avoid lock-stepping a proto enum with internal/event.Kind.
+// GetCapabilities is the read-only discovery call: it tells a client which models,
+// skills, tighten-only ceilings, secret names and spec MCP auth types the server
+// will accept before it composes a HarnessSpec.
 
 package loopv1
 
@@ -19,6 +22,7 @@ import (
 	v1 "github.com/ethanhinson/fuse/harness/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	structpb "google.golang.org/protobuf/types/known/structpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -31,6 +35,58 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
+
+// Ceilings are strict: a spec value equal to the ceiling's value is refused.
+type CeilingDirection int32
+
+const (
+	CeilingDirection_CEILING_DIRECTION_UNSPECIFIED CeilingDirection = 0
+	// A spec value must be strictly below the ceiling's value; equal is refused.
+	CeilingDirection_CEILING_DIRECTION_MAX CeilingDirection = 1
+	// A spec value must be strictly above the ceiling's value; equal is refused.
+	CeilingDirection_CEILING_DIRECTION_MIN CeilingDirection = 2
+)
+
+// Enum value maps for CeilingDirection.
+var (
+	CeilingDirection_name = map[int32]string{
+		0: "CEILING_DIRECTION_UNSPECIFIED",
+		1: "CEILING_DIRECTION_MAX",
+		2: "CEILING_DIRECTION_MIN",
+	}
+	CeilingDirection_value = map[string]int32{
+		"CEILING_DIRECTION_UNSPECIFIED": 0,
+		"CEILING_DIRECTION_MAX":         1,
+		"CEILING_DIRECTION_MIN":         2,
+	}
+)
+
+func (x CeilingDirection) Enum() *CeilingDirection {
+	p := new(CeilingDirection)
+	*p = x
+	return p
+}
+
+func (x CeilingDirection) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CeilingDirection) Descriptor() protoreflect.EnumDescriptor {
+	return file_fuse_loop_v1_loop_proto_enumTypes[0].Descriptor()
+}
+
+func (CeilingDirection) Type() protoreflect.EnumType {
+	return &file_fuse_loop_v1_loop_proto_enumTypes[0]
+}
+
+func (x CeilingDirection) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CeilingDirection.Descriptor instead.
+func (CeilingDirection) EnumDescriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{0}
+}
 
 type StartLoopRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
@@ -525,11 +581,451 @@ func (x *Event) GetPayload() []byte {
 	return nil
 }
 
+type GetCapabilitiesRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Same pass-through as StartLoopRequest.tenant: when set it must equal the
+	// authenticated tenant (else PermissionDenied). The answer is always filtered
+	// by the authenticated tenant, never by this field.
+	Tenant        string `protobuf:"bytes,1,opt,name=tenant,proto3" json:"tenant,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetCapabilitiesRequest) Reset() {
+	*x = GetCapabilitiesRequest{}
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetCapabilitiesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetCapabilitiesRequest) ProtoMessage() {}
+
+func (x *GetCapabilitiesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetCapabilitiesRequest.ProtoReflect.Descriptor instead.
+func (*GetCapabilitiesRequest) Descriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *GetCapabilitiesRequest) GetTenant() string {
+	if x != nil {
+		return x.Tenant
+	}
+	return ""
+}
+
+type GetCapabilitiesResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Models a server-mode loop can run, by alias. cli/ routes and entries the
+	// operator hid (advertise: false) are left out.
+	Models []*ModelInfo `protobuf:"bytes,1,rep,name=models,proto3" json:"models,omitempty"`
+	// Skills a spec's skills[].name may reference.
+	Skills []*SkillInfo `protobuf:"bytes,2,rep,name=skills,proto3" json:"skills,omitempty"`
+	// One per tighten-only HarnessSpec field; for a field under a map
+	// (workflows), one per key the operator defines.
+	Ceilings []*Ceiling `protobuf:"bytes,3,rep,name=ceilings,proto3" json:"ceilings,omitempty"`
+	// Secret names that resolve for the caller's tenant: names only. A name the
+	// operator restricted to hosts is still listed, and still resolves only for
+	// those hosts.
+	SecretRefs []string `protobuf:"bytes,4,rep,name=secret_refs,json=secretRefs,proto3" json:"secret_refs,omitempty"`
+	// Auth types a spec-declared MCP server may use; UNSPECIFIED means none.
+	SpecMcpAuthKinds []v1.McpAuthType `protobuf:"varint,5,rep,packed,name=spec_mcp_auth_kinds,json=specMcpAuthKinds,proto3,enum=fuse.harness.v1.McpAuthType" json:"spec_mcp_auth_kinds,omitempty"`
+	Server           *ServerInfo      `protobuf:"bytes,6,opt,name=server,proto3" json:"server,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *GetCapabilitiesResponse) Reset() {
+	*x = GetCapabilitiesResponse{}
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetCapabilitiesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetCapabilitiesResponse) ProtoMessage() {}
+
+func (x *GetCapabilitiesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetCapabilitiesResponse.ProtoReflect.Descriptor instead.
+func (*GetCapabilitiesResponse) Descriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *GetCapabilitiesResponse) GetModels() []*ModelInfo {
+	if x != nil {
+		return x.Models
+	}
+	return nil
+}
+
+func (x *GetCapabilitiesResponse) GetSkills() []*SkillInfo {
+	if x != nil {
+		return x.Skills
+	}
+	return nil
+}
+
+func (x *GetCapabilitiesResponse) GetCeilings() []*Ceiling {
+	if x != nil {
+		return x.Ceilings
+	}
+	return nil
+}
+
+func (x *GetCapabilitiesResponse) GetSecretRefs() []string {
+	if x != nil {
+		return x.SecretRefs
+	}
+	return nil
+}
+
+func (x *GetCapabilitiesResponse) GetSpecMcpAuthKinds() []v1.McpAuthType {
+	if x != nil {
+		return x.SpecMcpAuthKinds
+	}
+	return nil
+}
+
+func (x *GetCapabilitiesResponse) GetServer() *ServerInfo {
+	if x != nil {
+		return x.Server
+	}
+	return nil
+}
+
+type ModelInfo struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Alias     string                 `protobuf:"bytes,1,opt,name=alias,proto3" json:"alias,omitempty"`
+	GatewayId string                 `protobuf:"bytes,2,opt,name=gateway_id,json=gatewayId,proto3" json:"gateway_id,omitempty"`
+	// Effective output cap: the server's top-level max_tokens when the registry
+	// entry sets 0. 0 only when neither the entry nor the server sets a cap.
+	MaxOutputTokens uint32 `protobuf:"varint,3,opt,name=max_output_tokens,json=maxOutputTokens,proto3" json:"max_output_tokens,omitempty"`
+	// Effective window: the runtime default when the registry entry sets 0,
+	// with context_window_is_default set.
+	ContextWindow          uint32 `protobuf:"varint,4,opt,name=context_window,json=contextWindow,proto3" json:"context_window,omitempty"`
+	ContextWindowIsDefault bool   `protobuf:"varint,5,opt,name=context_window_is_default,json=contextWindowIsDefault,proto3" json:"context_window_is_default,omitempty"`
+	Persona                string `protobuf:"bytes,6,opt,name=persona,proto3" json:"persona,omitempty"`
+	IsDefault              bool   `protobuf:"varint,7,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
+	// Optional operator metadata. Well-known tags: tools, vision, reasoning,
+	// long-context; other strings pass through.
+	Label         string   `protobuf:"bytes,8,opt,name=label,proto3" json:"label,omitempty"`
+	Description   string   `protobuf:"bytes,9,opt,name=description,proto3" json:"description,omitempty"`
+	Tags          []string `protobuf:"bytes,10,rep,name=tags,proto3" json:"tags,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ModelInfo) Reset() {
+	*x = ModelInfo{}
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModelInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModelInfo) ProtoMessage() {}
+
+func (x *ModelInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModelInfo.ProtoReflect.Descriptor instead.
+func (*ModelInfo) Descriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ModelInfo) GetAlias() string {
+	if x != nil {
+		return x.Alias
+	}
+	return ""
+}
+
+func (x *ModelInfo) GetGatewayId() string {
+	if x != nil {
+		return x.GatewayId
+	}
+	return ""
+}
+
+func (x *ModelInfo) GetMaxOutputTokens() uint32 {
+	if x != nil {
+		return x.MaxOutputTokens
+	}
+	return 0
+}
+
+func (x *ModelInfo) GetContextWindow() uint32 {
+	if x != nil {
+		return x.ContextWindow
+	}
+	return 0
+}
+
+func (x *ModelInfo) GetContextWindowIsDefault() bool {
+	if x != nil {
+		return x.ContextWindowIsDefault
+	}
+	return false
+}
+
+func (x *ModelInfo) GetPersona() string {
+	if x != nil {
+		return x.Persona
+	}
+	return ""
+}
+
+func (x *ModelInfo) GetIsDefault() bool {
+	if x != nil {
+		return x.IsDefault
+	}
+	return false
+}
+
+func (x *ModelInfo) GetLabel() string {
+	if x != nil {
+		return x.Label
+	}
+	return ""
+}
+
+func (x *ModelInfo) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *ModelInfo) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
+type SkillInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SkillInfo) Reset() {
+	*x = SkillInfo{}
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SkillInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SkillInfo) ProtoMessage() {}
+
+func (x *SkillInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SkillInfo.ProtoReflect.Descriptor instead.
+func (*SkillInfo) Descriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *SkillInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SkillInfo) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+// The operator limit one tighten-only spec field is held to. The limit is
+// strict: a spec value equal to value is refused, not accepted.
+type Ceiling struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// fuse.harness.v1.Violation.field_path vocabulary.
+	FieldPath string `protobuf:"bytes,1,opt,name=field_path,json=fieldPath,proto3" json:"field_path,omitempty"`
+	// false: the operator left it unset, so a spec cannot set it at all.
+	OperatorSet bool `protobuf:"varint,2,opt,name=operator_set,json=operatorSet,proto3" json:"operator_set,omitempty"`
+	// The operator's effective value; present only when operator_set.
+	Value         *structpb.Value  `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	Direction     CeilingDirection `protobuf:"varint,4,opt,name=direction,proto3,enum=fuse.loop.v1.CeilingDirection" json:"direction,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Ceiling) Reset() {
+	*x = Ceiling{}
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Ceiling) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Ceiling) ProtoMessage() {}
+
+func (x *Ceiling) ProtoReflect() protoreflect.Message {
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Ceiling.ProtoReflect.Descriptor instead.
+func (*Ceiling) Descriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *Ceiling) GetFieldPath() string {
+	if x != nil {
+		return x.FieldPath
+	}
+	return ""
+}
+
+func (x *Ceiling) GetOperatorSet() bool {
+	if x != nil {
+		return x.OperatorSet
+	}
+	return false
+}
+
+func (x *Ceiling) GetValue() *structpb.Value {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *Ceiling) GetDirection() CeilingDirection {
+	if x != nil {
+		return x.Direction
+	}
+	return CeilingDirection_CEILING_DIRECTION_UNSPECIFIED
+}
+
+type ServerInfo struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Version string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	// Algorithm id StartLoopResponse.harness_digest is prefixed with ("sha256").
+	DigestAlgorithm string `protobuf:"bytes,2,opt,name=digest_algorithm,json=digestAlgorithm,proto3" json:"digest_algorithm,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ServerInfo) Reset() {
+	*x = ServerInfo{}
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServerInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServerInfo) ProtoMessage() {}
+
+func (x *ServerInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServerInfo.ProtoReflect.Descriptor instead.
+func (*ServerInfo) Descriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ServerInfo) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *ServerInfo) GetDigestAlgorithm() string {
+	if x != nil {
+		return x.DigestAlgorithm
+	}
+	return ""
+}
+
 var File_fuse_loop_v1_loop_proto protoreflect.FileDescriptor
 
 const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\n" +
-	"\x17fuse/loop/v1/loop.proto\x12\ffuse.loop.v1\x1a\x1dfuse/harness/v1/harness.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xde\x01\n" +
+	"\x17fuse/loop/v1/loop.proto\x12\ffuse.loop.v1\x1a\x1dfuse/harness/v1/harness.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xde\x01\n" +
 	"\x10StartLoopRequest\x12\x12\n" +
 	"\x04task\x18\x01 \x01(\tR\x04task\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x16\n" +
@@ -563,11 +1059,53 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\x05depth\x18\x05 \x01(\x05R\x05depth\x12\x12\n" +
 	"\x04turn\x18\x06 \x01(\x05R\x04turn\x12\x12\n" +
 	"\x04kind\x18\a \x01(\tR\x04kind\x12\x18\n" +
-	"\apayload\x18\b \x01(\fR\apayload2\xe1\x01\n" +
+	"\apayload\x18\b \x01(\fR\apayload\"0\n" +
+	"\x16GetCapabilitiesRequest\x12\x16\n" +
+	"\x06tenant\x18\x01 \x01(\tR\x06tenant\"\xce\x02\n" +
+	"\x17GetCapabilitiesResponse\x12/\n" +
+	"\x06models\x18\x01 \x03(\v2\x17.fuse.loop.v1.ModelInfoR\x06models\x12/\n" +
+	"\x06skills\x18\x02 \x03(\v2\x17.fuse.loop.v1.SkillInfoR\x06skills\x121\n" +
+	"\bceilings\x18\x03 \x03(\v2\x15.fuse.loop.v1.CeilingR\bceilings\x12\x1f\n" +
+	"\vsecret_refs\x18\x04 \x03(\tR\n" +
+	"secretRefs\x12K\n" +
+	"\x13spec_mcp_auth_kinds\x18\x05 \x03(\x0e2\x1c.fuse.harness.v1.McpAuthTypeR\x10specMcpAuthKinds\x120\n" +
+	"\x06server\x18\x06 \x01(\v2\x18.fuse.loop.v1.ServerInfoR\x06server\"\xd3\x02\n" +
+	"\tModelInfo\x12\x14\n" +
+	"\x05alias\x18\x01 \x01(\tR\x05alias\x12\x1d\n" +
+	"\n" +
+	"gateway_id\x18\x02 \x01(\tR\tgatewayId\x12*\n" +
+	"\x11max_output_tokens\x18\x03 \x01(\rR\x0fmaxOutputTokens\x12%\n" +
+	"\x0econtext_window\x18\x04 \x01(\rR\rcontextWindow\x129\n" +
+	"\x19context_window_is_default\x18\x05 \x01(\bR\x16contextWindowIsDefault\x12\x18\n" +
+	"\apersona\x18\x06 \x01(\tR\apersona\x12\x1d\n" +
+	"\n" +
+	"is_default\x18\a \x01(\bR\tisDefault\x12\x14\n" +
+	"\x05label\x18\b \x01(\tR\x05label\x12 \n" +
+	"\vdescription\x18\t \x01(\tR\vdescription\x12\x12\n" +
+	"\x04tags\x18\n" +
+	" \x03(\tR\x04tags\"A\n" +
+	"\tSkillInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\"\xb7\x01\n" +
+	"\aCeiling\x12\x1d\n" +
+	"\n" +
+	"field_path\x18\x01 \x01(\tR\tfieldPath\x12!\n" +
+	"\foperator_set\x18\x02 \x01(\bR\voperatorSet\x12,\n" +
+	"\x05value\x18\x03 \x01(\v2\x16.google.protobuf.ValueR\x05value\x12<\n" +
+	"\tdirection\x18\x04 \x01(\x0e2\x1e.fuse.loop.v1.CeilingDirectionR\tdirection\"Q\n" +
+	"\n" +
+	"ServerInfo\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\x12)\n" +
+	"\x10digest_algorithm\x18\x02 \x01(\tR\x0fdigestAlgorithm*k\n" +
+	"\x10CeilingDirection\x12!\n" +
+	"\x1dCEILING_DIRECTION_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15CEILING_DIRECTION_MAX\x10\x01\x12\x19\n" +
+	"\x15CEILING_DIRECTION_MIN\x10\x022\xc1\x02\n" +
 	"\vLoopService\x12L\n" +
 	"\tStartLoop\x12\x1e.fuse.loop.v1.StartLoopRequest\x1a\x1f.fuse.loop.v1.StartLoopResponse\x12=\n" +
 	"\x04Send\x12\x19.fuse.loop.v1.SendRequest\x1a\x1a.fuse.loop.v1.SendResponse\x12E\n" +
-	"\aObserve\x12\x1c.fuse.loop.v1.ObserveRequest\x1a\x1a.fuse.loop.v1.ObserveEvent0\x01B9Z7github.com/ethanhinson/fuse/internal/loopwire/v1;loopv1b\x06proto3"
+	"\aObserve\x12\x1c.fuse.loop.v1.ObserveRequest\x1a\x1a.fuse.loop.v1.ObserveEvent0\x01\x12^\n" +
+	"\x0fGetCapabilities\x12$.fuse.loop.v1.GetCapabilitiesRequest\x1a%.fuse.loop.v1.GetCapabilitiesResponseB9Z7github.com/ethanhinson/fuse/internal/loopwire/v1;loopv1b\x06proto3"
 
 var (
 	file_fuse_loop_v1_loop_proto_rawDescOnce sync.Once
@@ -581,33 +1119,52 @@ func file_fuse_loop_v1_loop_proto_rawDescGZIP() []byte {
 	return file_fuse_loop_v1_loop_proto_rawDescData
 }
 
-var file_fuse_loop_v1_loop_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_fuse_loop_v1_loop_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_fuse_loop_v1_loop_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_fuse_loop_v1_loop_proto_goTypes = []any{
-	(*StartLoopRequest)(nil),      // 0: fuse.loop.v1.StartLoopRequest
-	(*StartLoopResponse)(nil),     // 1: fuse.loop.v1.StartLoopResponse
-	(*SendRequest)(nil),           // 2: fuse.loop.v1.SendRequest
-	(*SendResponse)(nil),          // 3: fuse.loop.v1.SendResponse
-	(*ObserveRequest)(nil),        // 4: fuse.loop.v1.ObserveRequest
-	(*ObserveEvent)(nil),          // 5: fuse.loop.v1.ObserveEvent
-	(*Event)(nil),                 // 6: fuse.loop.v1.Event
-	(*v1.HarnessSpec)(nil),        // 7: fuse.harness.v1.HarnessSpec
-	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
+	(CeilingDirection)(0),           // 0: fuse.loop.v1.CeilingDirection
+	(*StartLoopRequest)(nil),        // 1: fuse.loop.v1.StartLoopRequest
+	(*StartLoopResponse)(nil),       // 2: fuse.loop.v1.StartLoopResponse
+	(*SendRequest)(nil),             // 3: fuse.loop.v1.SendRequest
+	(*SendResponse)(nil),            // 4: fuse.loop.v1.SendResponse
+	(*ObserveRequest)(nil),          // 5: fuse.loop.v1.ObserveRequest
+	(*ObserveEvent)(nil),            // 6: fuse.loop.v1.ObserveEvent
+	(*Event)(nil),                   // 7: fuse.loop.v1.Event
+	(*GetCapabilitiesRequest)(nil),  // 8: fuse.loop.v1.GetCapabilitiesRequest
+	(*GetCapabilitiesResponse)(nil), // 9: fuse.loop.v1.GetCapabilitiesResponse
+	(*ModelInfo)(nil),               // 10: fuse.loop.v1.ModelInfo
+	(*SkillInfo)(nil),               // 11: fuse.loop.v1.SkillInfo
+	(*Ceiling)(nil),                 // 12: fuse.loop.v1.Ceiling
+	(*ServerInfo)(nil),              // 13: fuse.loop.v1.ServerInfo
+	(*v1.HarnessSpec)(nil),          // 14: fuse.harness.v1.HarnessSpec
+	(*timestamppb.Timestamp)(nil),   // 15: google.protobuf.Timestamp
+	(v1.McpAuthType)(0),             // 16: fuse.harness.v1.McpAuthType
+	(*structpb.Value)(nil),          // 17: google.protobuf.Value
 }
 var file_fuse_loop_v1_loop_proto_depIdxs = []int32{
-	7, // 0: fuse.loop.v1.StartLoopRequest.harness:type_name -> fuse.harness.v1.HarnessSpec
-	6, // 1: fuse.loop.v1.ObserveEvent.event:type_name -> fuse.loop.v1.Event
-	8, // 2: fuse.loop.v1.Event.ts:type_name -> google.protobuf.Timestamp
-	0, // 3: fuse.loop.v1.LoopService.StartLoop:input_type -> fuse.loop.v1.StartLoopRequest
-	2, // 4: fuse.loop.v1.LoopService.Send:input_type -> fuse.loop.v1.SendRequest
-	4, // 5: fuse.loop.v1.LoopService.Observe:input_type -> fuse.loop.v1.ObserveRequest
-	1, // 6: fuse.loop.v1.LoopService.StartLoop:output_type -> fuse.loop.v1.StartLoopResponse
-	3, // 7: fuse.loop.v1.LoopService.Send:output_type -> fuse.loop.v1.SendResponse
-	5, // 8: fuse.loop.v1.LoopService.Observe:output_type -> fuse.loop.v1.ObserveEvent
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	14, // 0: fuse.loop.v1.StartLoopRequest.harness:type_name -> fuse.harness.v1.HarnessSpec
+	7,  // 1: fuse.loop.v1.ObserveEvent.event:type_name -> fuse.loop.v1.Event
+	15, // 2: fuse.loop.v1.Event.ts:type_name -> google.protobuf.Timestamp
+	10, // 3: fuse.loop.v1.GetCapabilitiesResponse.models:type_name -> fuse.loop.v1.ModelInfo
+	11, // 4: fuse.loop.v1.GetCapabilitiesResponse.skills:type_name -> fuse.loop.v1.SkillInfo
+	12, // 5: fuse.loop.v1.GetCapabilitiesResponse.ceilings:type_name -> fuse.loop.v1.Ceiling
+	16, // 6: fuse.loop.v1.GetCapabilitiesResponse.spec_mcp_auth_kinds:type_name -> fuse.harness.v1.McpAuthType
+	13, // 7: fuse.loop.v1.GetCapabilitiesResponse.server:type_name -> fuse.loop.v1.ServerInfo
+	17, // 8: fuse.loop.v1.Ceiling.value:type_name -> google.protobuf.Value
+	0,  // 9: fuse.loop.v1.Ceiling.direction:type_name -> fuse.loop.v1.CeilingDirection
+	1,  // 10: fuse.loop.v1.LoopService.StartLoop:input_type -> fuse.loop.v1.StartLoopRequest
+	3,  // 11: fuse.loop.v1.LoopService.Send:input_type -> fuse.loop.v1.SendRequest
+	5,  // 12: fuse.loop.v1.LoopService.Observe:input_type -> fuse.loop.v1.ObserveRequest
+	8,  // 13: fuse.loop.v1.LoopService.GetCapabilities:input_type -> fuse.loop.v1.GetCapabilitiesRequest
+	2,  // 14: fuse.loop.v1.LoopService.StartLoop:output_type -> fuse.loop.v1.StartLoopResponse
+	4,  // 15: fuse.loop.v1.LoopService.Send:output_type -> fuse.loop.v1.SendResponse
+	6,  // 16: fuse.loop.v1.LoopService.Observe:output_type -> fuse.loop.v1.ObserveEvent
+	9,  // 17: fuse.loop.v1.LoopService.GetCapabilities:output_type -> fuse.loop.v1.GetCapabilitiesResponse
+	14, // [14:18] is the sub-list for method output_type
+	10, // [10:14] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_fuse_loop_v1_loop_proto_init() }
@@ -620,13 +1177,14 @@ func file_fuse_loop_v1_loop_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_fuse_loop_v1_loop_proto_rawDesc), len(file_fuse_loop_v1_loop_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   7,
+			NumEnums:      1,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_fuse_loop_v1_loop_proto_goTypes,
 		DependencyIndexes: file_fuse_loop_v1_loop_proto_depIdxs,
+		EnumInfos:         file_fuse_loop_v1_loop_proto_enumTypes,
 		MessageInfos:      file_fuse_loop_v1_loop_proto_msgTypes,
 	}.Build()
 	File_fuse_loop_v1_loop_proto = out.File

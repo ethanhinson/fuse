@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -299,6 +300,11 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintln(stderr, "tighten it; gateway, sandbox, auth and observability always come from here). An invalid")
 		fmt.Fprintln(stderr, "spec is refused with InvalidArgument listing every violation by field path.")
 		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "GetCapabilities lists, for the caller's tenant, the models this server routes, the")
+		fmt.Fprintln(stderr, "installed skills, the tighten-only ceilings, the secret_ref names that resolve, and the")
+		fmt.Fprintln(stderr, "auth kinds a spec-declared MCP server may use. advertise: false on models.<alias> hides")
+		fmt.Fprintln(stderr, "a model from the list; its label, description and tags are shown when set.")
+		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "On SIGTERM or Ctrl-C the server drains gracefully: /readyz starts answering 503")
 		fmt.Fprintln(stderr, "immediately (so a load balancer stops sending new work), in-flight requests get up")
 		fmt.Fprintf(stderr, "to --drain-timeout (default %s) to finish, and the server is then closed\n", defaultDrainTimeout)
@@ -369,6 +375,12 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintf(stderr, "loop-serve-net: %v\n", derr)
 		return 1
 	}
+	caps, cerr := loopCapabilitySource(deps)
+	if cerr != nil {
+		shutdownObservability()
+		fmt.Fprintf(stderr, "loop-serve-net: %v\n", cerr)
+		return 1
+	}
 	deps.LeaseTTL = loopLeaseTTL(cfg)
 	if obs.projection != nil && deps.DurableStore != nil {
 		store, ok := deps.DurableStore.(event.CommittedDurableStore)
@@ -408,7 +420,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	}()
 
 	if err := serveNetWithOptions(ctx, ln, rt, verifier, deps.Registry, deps.DurableStore, obs,
-		serveNetOptions{drainTimeout: *drainTimeout}); err != nil {
+		serveNetOptions{drainTimeout: *drainTimeout, capabilities: caps}); err != nil {
 		fmt.Fprintf(stderr, "loop-serve-net: %v\n", err)
 		return 1
 	}
@@ -462,6 +474,20 @@ type serveNetOptions struct {
 	// once Shutdown has begun the probe endpoint is by definition unreachable on a
 	// new connection. Production leaves it nil.
 	afterDraining func()
+
+	// capabilities answers GetCapabilities. runLoopServeNet always sets it;
+	// nil leaves the RPC Unimplemented.
+	capabilities loopconnect.CapabilitySource
+}
+
+// loopCapabilitySource is the GetCapabilities source for a loop server built
+// from deps: its harness host. A deps without one is a wiring bug, refused at
+// startup rather than served as an RPC that always answers Unimplemented.
+func loopCapabilitySource(deps runtime.Deps) (loopconnect.CapabilitySource, error) {
+	if src, ok := deps.Harness.(loopconnect.CapabilitySource); ok && src != nil {
+		return src, nil
+	}
+	return nil, errors.New("loop server deps carry no capability source")
 }
 
 func serveNetWithOptions(ctx context.Context, ln net.Listener, rt runtime.Runtime, verifier loopauth.Verifier, registry event.LoopRegistry, store event.DurableStore, obs *observabilityService, sopts serveNetOptions) error {
@@ -474,7 +500,7 @@ func serveNetWithOptions(ctx context.Context, ln net.Listener, rt runtime.Runtim
 	rd := newReadiness(store, verifier)
 	rd.register(mux)
 
-	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx).WithRegistry(registry)
+	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx).WithRegistry(registry).WithCapabilities(sopts.capabilities)
 	if obs != nil {
 		handler.WithObserver(obs.observer)
 	}

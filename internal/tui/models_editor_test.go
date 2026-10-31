@@ -148,7 +148,7 @@ func TestModelsEditorAddDuplicateRejected(t *testing.T) {
 func TestModelsEditorEditPreservesAliasAndUpdates(t *testing.T) {
 	reg := model.NewRegistry("alpha", map[string]model.ModelConfig{
 		"alpha": {ID: "prov/alpha"},
-		"beta":  {ID: "prov/beta", MaxTokens: 100, SystemPrefix: "/no_think"},
+		"beta":  {ID: "prov/beta", MaxTokens: 100, SystemPrefix: "/no_think", Label: "Beta", Description: "b", Tags: []string{"tools"}, Hidden: true},
 	})
 	m := editorShell(t, reg)
 	next, _ := m.openModelsEditor()
@@ -181,6 +181,24 @@ func TestModelsEditorEditPreservesAliasAndUpdates(t *testing.T) {
 	// SystemPrefix, which the form does not expose, is preserved.
 	if mc.SystemPrefix != "/no_think" {
 		t.Errorf("system prefix lost on edit: %q", mc.SystemPrefix)
+	}
+	// Advertising metadata, which the form does not expose either, is
+	// preserved; dropping Hidden would re-advertise the model.
+	if mc.Label != "Beta" || mc.Description != "b" || len(mc.Tags) != 1 || mc.Tags[0] != "tools" || !mc.Hidden {
+		t.Errorf("metadata lost on edit: %+v", mc)
+	}
+}
+
+func TestToConfigModelCarriesMetadata(t *testing.T) {
+	got := toConfigModel(model.ModelConfig{ID: "cloud/x", Label: "X", Description: "d", Tags: []string{"tools"}, Hidden: true})
+	if got.Label != "X" || got.Description != "d" || len(got.Tags) != 1 || got.Tags[0] != "tools" {
+		t.Fatalf("metadata = %+v", got)
+	}
+	if got.Advertise == nil || *got.Advertise {
+		t.Fatalf("Hidden: Advertise = %v, want pointer to false", got.Advertise)
+	}
+	if shown := toConfigModel(model.ModelConfig{ID: "cloud/y"}); shown.Advertise != nil {
+		t.Fatalf("not hidden: Advertise = %v, want nil", *shown.Advertise)
 	}
 }
 

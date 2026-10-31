@@ -166,8 +166,7 @@ func (r Resolver) resolveSecrets(ctx context.Context, tenant string, spec *harne
 func operatorOnlyProblems(spec *harnessv1.HarnessSpec) []harnessconfig.Problem {
 	var out []harnessconfig.Problem
 	for i, s := range spec.GetMcpServers() {
-		switch t := s.GetAuth().GetType(); t {
-		case harnessv1.McpAuthType_MCP_AUTH_TYPE_OAUTH2, harnessv1.McpAuthType_MCP_AUTH_TYPE_IDENTITY, harnessv1.McpAuthType_MCP_AUTH_TYPE_OAUTH_EXCHANGE:
+		if t := s.GetAuth().GetType(); !specAuthAllowed(t) {
 			out = append(out, harnessconfig.Problem{
 				FieldPath: fmt.Sprintf("mcp_servers[%d].auth.type", i),
 				Message:   fmt.Sprintf("auth type %s is configured by the server operator only; use none, bearer or static in a harness spec", t),
@@ -212,45 +211,18 @@ func (r Resolver) tightenProblems(refused []string) []harnessconfig.Problem {
 }
 
 // tightenField maps a refused config key (config.OverlaySpec's form) to its
-// spec field path and the operator's current value ("" when unset).
+// spec field path and the operator's current value ("" when unset). The value
+// is read through operatorLimit, the accessor Ceilings advertises from.
 func (r Resolver) tightenField(key string) (path, limit string) {
-	num := func(v int) string {
-		if v <= 0 {
-			return ""
-		}
-		return strconv.Itoa(v)
+	if v, set, _ := r.operatorLimit(key); set {
+		limit = strconv.FormatFloat(v, 'f', -1, 64) // 'f': 2000000 must not render as 2e+06
 	}
-	b := r.Base
 	if rest, ok := strings.CutPrefix(key, "workflows."); ok {
 		// workflows.<name>.pool.<field>; a workflow name cannot contain a dot
 		// (the spec's key pattern), so the last two segments are pool.<field>.
 		i := strings.LastIndex(rest, ".pool.")
 		name, field := rest[:i], rest[i+len(".pool."):]
-		p := b.Workflows[name].Pool
-		v := map[string]int{"concurrent": p.Concurrent, "total": p.Total, "max_depth": p.MaxDepth, "tokens": p.Tokens}[field]
-		return fmt.Sprintf("workflows[%s].pool.%s", strconv.Quote(name), field), num(v)
-	}
-	switch key {
-	case "agents.queue_bound":
-		if b.Agents.QueueBound > 0 {
-			limit = strconv.FormatFloat(b.Agents.QueueBound, 'g', -1, 64)
-		}
-	case "agents.tool_timeout_seconds":
-		limit = num(b.Agents.ToolTimeoutSeconds)
-	case "throughput.requests_per_minute":
-		limit = num(b.Throughput.RequestsPerMinute)
-	case "throughput.tokens_per_minute":
-		limit = num(b.Throughput.TokensPerMinute)
-	case "throughput.session_tokens":
-		limit = num(b.Throughput.SessionTokens)
-	case "pipeline.synthesis.max_steps":
-		limit = num(b.Pipeline.Synthesis.MaxSteps)
-	case "pipeline.synthesis.max_fanout":
-		limit = num(b.Pipeline.Synthesis.MaxFanout)
-	case "pipeline.synthesis.max_depth":
-		limit = num(b.Pipeline.Synthesis.MaxDepth)
-	case "pipeline.synthesis.max_attempts":
-		limit = num(b.Pipeline.Synthesis.MaxAttempts)
+		return fmt.Sprintf("workflows[%s].pool.%s", strconv.Quote(name), field), limit
 	}
 	return harnessconfig.SpecPath(key), limit
 }

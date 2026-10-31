@@ -87,6 +87,10 @@ var (
 	// the harness digest (that loop was started on the server's own config). A
 	// spec the runtime runs but refuses is a *harness.ValidationError instead.
 	ErrHarnessUnsupported = errors.New("fuse: runtime does not run harness specs")
+	// ErrCapabilitiesUnsupported is a Capabilities call on a runtime that does
+	// not advertise: always from NewLocal (an in-process runtime has no
+	// operator to advertise), and remotely on a connect Unimplemented.
+	ErrCapabilitiesUnsupported = errors.New("fuse: runtime does not advertise capabilities")
 )
 
 // backend is the unexported seam the two constructors satisfy; Client delegates every
@@ -96,6 +100,7 @@ type backend interface {
 	startLoop(ctx context.Context, cfg StartLoopConfig) (LoopID, error)
 	send(ctx context.Context, id LoopID, input string, opts SendOptions) error
 	observe(ctx context.Context, id LoopID, from Seq) (<-chan Event, func(), error)
+	capabilities(ctx context.Context) (Capabilities, error)
 }
 
 // Client is the public SDK handle. It is transport-agnostic: construct it with NewLocal

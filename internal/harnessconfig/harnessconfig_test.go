@@ -356,3 +356,24 @@ func TestFromConfigReportsUnrepresentableNumbersAndInertFields(t *testing.T) {
 		t.Errorf("out-of-range value carried: %d", spec.GetThroughput().GetSessionTokens())
 	}
 }
+
+func TestFromConfigOmitsModelMetadata(t *testing.T) {
+	no := false
+	cfg := config.Default()
+	cfg.Models.Entries = map[string]config.ModelConfig{
+		"fast": {ID: "cloud/fast", Label: "Fast", Description: "d", Tags: []string{"tools"}, Advertise: &no},
+	}
+	spec, omitted := FromConfig(cfg)
+	got := map[string]bool{}
+	for _, o := range omitted {
+		got[o.Path] = true
+	}
+	for _, k := range []string{"label", "description", "tags", "advertise"} {
+		if !got["models.fast."+k] {
+			t.Errorf("missing omission models.fast.%s; got %+v", k, omitted)
+		}
+	}
+	if id := spec.GetModels().GetEntries()["fast"].GetId(); id != "cloud/fast" {
+		t.Fatalf("spec id = %q", id)
+	}
+}
