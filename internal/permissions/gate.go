@@ -454,7 +454,7 @@ func (g *PermissionGate) Execute(ctx context.Context, name, args string) tools.R
 		}
 	}
 	if !policy.AutoApprove {
-		msg := "tool call denied by user"
+		msg := approverDenyReason(g.approvalProvenance)
 		if policy.DenyReason != "" {
 			msg = policy.DenyReason
 		}
@@ -660,8 +660,9 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		return ToolPolicy{Enabled: true}, err
 	}
 	if !approved {
-		g.emitDecision(ctx, mode, name, args, "deny", LayerHuman, "tool call denied by user", g.approvalProvenance, askClassifier)
-		return ToolPolicy{Enabled: true, AutoApprove: false, DenyLayer: LayerHuman}, nil
+		reason := approverDenyReason(g.approvalProvenance)
+		g.emitDecision(ctx, mode, name, args, "deny", LayerHuman, reason, g.approvalProvenance, askClassifier)
+		return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerHuman}, nil
 	}
 	if allowSession {
 		g.cache.Allow(name, args)
@@ -696,6 +697,16 @@ const catastrophicFloorDenyPrefix = "catastrophic command denied by rules floor:
 // catastrophicAskPrefix opens the ask reason when a human is prompted for a
 // catastrophic command in smart mode (change 0093).
 const catastrophicAskPrefix = "catastrophic command: "
+
+// approverDenyReason is the reason recorded and returned when the gate's
+// approver answers no. It names who answered so the sentence agrees with
+// decided_by, which stays the field to key on: a policy stand-in is not a user.
+func approverDenyReason(decidedBy string) string {
+	if decidedBy == DecidedByPolicy {
+		return "tool call denied by policy approver"
+	}
+	return "tool call denied by user"
+}
 
 // explicitAskReason renders the reason for an explicit-ask outcome in every
 // mode that evaluates operator rules (auto: auto.ask and always_prompt; smart:

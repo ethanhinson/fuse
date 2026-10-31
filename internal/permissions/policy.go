@@ -56,10 +56,11 @@ type ToolPolicy struct {
 	Enabled     bool
 	AutoApprove bool
 	// DenyReason, when non-empty, carries a layer-named explanation for an
-	// auto-mode denial (e.g. "denied by auto-mode rules layer: <cmd>"). It is
-	// empty for the legacy smart/off/prompt-all deny path, which surfaces the
-	// fixed "tool call denied by user" message. Execute prefers DenyReason when
-	// set. A deny is not an error: the model may retry with a different call.
+	// auto-mode denial (e.g. "denied by auto-mode rules layer: <cmd>"), or the
+	// approver-deny reason (approverDenyReason) when the approver answers no on
+	// the smart/off/prompt-all path. Execute prefers DenyReason when set and
+	// falls back to the approver-deny reason for any reason-less deny. A deny
+	// is not an error: the model may retry with a different call.
 	DenyReason string
 	// DenyLayer, set on every deny path (Layer* constants), names the pipeline
 	// layer that denied. Execute copies it onto the tools.Result so the agent

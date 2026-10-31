@@ -1,6 +1,7 @@
 package permissions
 
 import (
+	"context"
 	"os"
 	"regexp"
 	"strings"
@@ -137,5 +138,50 @@ func TestGateReasonsNeverEchoRawCommand(t *testing.T) {
 		if re.MatchString(line) {
 			t.Errorf("gate.go:%d concatenates a raw command into a reason: %s", i+1, strings.TrimSpace(line))
 		}
+	}
+}
+
+// TestApproverDenyReason pins that an approver deny names who answered, so the
+// reason sentence agrees with decided_by: a policy stand-in is not a user.
+func TestApproverDenyReason(t *testing.T) {
+	if got := approverDenyReason(DecidedByPolicy); got != "tool call denied by policy approver" {
+		t.Errorf("approverDenyReason(policy) = %q", got)
+	}
+	if got := approverDenyReason(DecidedByHuman); got != "tool call denied by user" {
+		t.Errorf("approverDenyReason(human) = %q", got)
+	}
+	if got := approverDenyReason(""); got != "tool call denied by user" {
+		t.Errorf("approverDenyReason(empty) = %q", got)
+	}
+
+	deny := func(context.Context, ApprovalRequest) (bool, bool, error) { return false, false, nil }
+	cases := []struct {
+		desc      string
+		approver  Approver
+		decidedBy string
+		reason    string
+	}{
+		{"human deny", Human(deny), DecidedByHuman, "tool call denied by user"},
+		{"policy deny", Policy(deny), DecidedByPolicy, "tool call denied by policy approver"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			ctx, rec := recordDecisions()
+			g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("bash"), tc.approver, WithWorkspaceRoot(t.TempDir()))
+			res := g.Execute(ctx, "bash", bashArgs("make build"))
+			if len(*rec) == 0 {
+				t.Fatal("no decisions recorded")
+			}
+			last := (*rec)[len(*rec)-1]
+			if last.Verdict != "deny" || last.Layer != LayerHuman || last.DecidedBy != tc.decidedBy || last.Reason != tc.reason {
+				t.Fatalf("last decision = %+v, want deny/%s/%s with reason %q", last, LayerHuman, tc.decidedBy, tc.reason)
+			}
+			if !strings.HasPrefix(res.Output, tc.reason) {
+				t.Errorf("output = %q, want prefix %q", res.Output, tc.reason)
+			}
+			if res.DenyLayer != LayerHuman {
+				t.Errorf("DenyLayer = %q, want %q", res.DenyLayer, LayerHuman)
+			}
+		})
 	}
 }

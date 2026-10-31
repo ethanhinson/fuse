@@ -294,8 +294,8 @@ func TestOrchestratorStandInIsPolicy(t *testing.T) {
 		t.Fatalf("orchestrator agent recorded no permission.decision events; events=%d", len(evs))
 	}
 	last := decisions[len(decisions)-1]
-	if last.Tool != "orch_probe" || last.Verdict != "deny" || last.Layer != permissions.LayerHuman || last.DecidedBy != permissions.DecidedByPolicy || last.Reason != "tool call denied by user" {
-		t.Fatalf("final decision = %+v, want orch_probe deny/%s/%s with reason %q", last, permissions.LayerHuman, permissions.DecidedByPolicy, "tool call denied by user")
+	if last.Tool != "orch_probe" || last.Verdict != "deny" || last.Layer != permissions.LayerHuman || last.DecidedBy != permissions.DecidedByPolicy || last.Reason != "tool call denied by policy approver" {
+		t.Fatalf("final decision = %+v, want orch_probe deny/%s/%s with reason %q", last, permissions.LayerHuman, permissions.DecidedByPolicy, "tool call denied by policy approver")
 	}
 
 	second := turnRequest(t, gw, "ORCH-TASK", 1)
