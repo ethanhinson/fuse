@@ -2,7 +2,7 @@
 id: 92
 slug: 'smart-mode-honors-always-prompt-with-no-human-approver-bound'
 title: 'Smart mode honors always_prompt with no human approver bound'
-status: 'in-progress'
+status: 'implemented'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/smart-mode-honors-always-prompt-with-no-human-approver-bound'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/114'
 blocked_by:
 reconciled: true
 ---
@@ -57,3 +57,12 @@ Explicit ask rules now deny in auto mode when no human approver is bound, but in
 ### 2026-10-31
 
 Unchanged against origin/main tip; dependencies 87 and 88 are merged and the spec holds.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: f728acbbe6acae5f33d1650ceafdb02198b4a8b2
+ran_at:   2026-10-31T20:35:38Z
+<!-- docket:build-evidence:end -->
