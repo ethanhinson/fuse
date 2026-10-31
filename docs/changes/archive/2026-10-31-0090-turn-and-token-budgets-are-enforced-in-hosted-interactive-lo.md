@@ -2,7 +2,7 @@
 id: 90
 slug: 'turn-and-token-budgets-are-enforced-in-hosted-interactive-lo'
 title: 'Turn and token budgets are enforced in hosted interactive loops'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md](../../superpowers/specs/2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md) |
+| Spec (merged) | [2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md) |
 | Plan | [2026-10-31-turn-and-token-budgets-hosted-interactive.md](../../superpowers/plans/2026-10-31-turn-and-token-budgets-hosted-interactive.md) |
 | Results | [2026-10-31-turn-and-token-budgets-hosted-interactive-results.md](../../results/2026-10-31-turn-and-token-budgets-hosted-interactive-results.md) |
 | ADRs | [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md), [ADR-0063](../../adrs/0063-max-turns-is-a-per-exchange-cap-in-interactive-loops.md) |

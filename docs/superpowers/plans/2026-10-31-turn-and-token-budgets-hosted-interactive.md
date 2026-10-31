@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0090 — Turn and token budgets are enforced in hosted interactive loops](../../changes/active/0090-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo.md)**
+> ↩ **[Change 0090 — Turn and token budgets are enforced in hosted interactive loops](../../changes/archive/2026-10-31-0090-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo.md)**
 <!-- docket:backlink:end -->
 
 # Turn and token budgets in hosted interactive loops - Plan

@@ -1,6 +1,6 @@
 # Backlog
 
-**93 changes** — 🟢 1 in progress · 🔵 3 built · 🟡 4 proposed · ⚪ 3 deferred · ✅ 76 done · 🗑️ 6 killed
+**93 changes** — 🟢 1 in progress · 🔵 2 built · 🟣 1 groomed · 🟡 3 proposed · ⚪ 3 deferred · ✅ 77 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
@@ -8,21 +8,25 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (3)
+## 🔵 Built (2)
 
 | # | Title | Priority | Type | PR | State |
 |---|-------|----------|------|----|-------|
-| [0090](active/0090-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo.md) | Turn and token budgets are enforced in hosted interactive loops | `high` | `fix` | [#111](https://github.com/ethanhinson/fuse/pull/111) | awaiting merge |
 | [0088](active/0088-protective-permission-patterns-match-across-slashes-and-in-e.md) | Protective permission patterns match across slashes and in every mode alike | `high` | `fix` | [#112](https://github.com/ethanhinson/fuse/pull/112) | awaiting merge |
 | [0087](active/0087-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h.md) | Explicit ask rules are honored: prompt a human, deny when no human is bound | `high` | `fix` | [#110](https://github.com/ethanhinson/fuse/pull/110) | awaiting merge |
 
-## 🟡 Proposed (4)
+## 🟣 Groomed (1)
+
+| # | Title | Priority | Type | Spec | Readiness |
+|---|-------|----------|------|------|-----------|
+| [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | [spec](../superpowers/specs/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md) | build-ready |
+
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0093](active/0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md) | Permission floor and wrapper parity across modes and bindings | `medium` | `fix` | ⏳ waiting on #92 — not yet built |
 | [0092](active/0092-smart-mode-honors-always-prompt-with-no-human-approver-bound.md) | Smart mode honors always_prompt with no human approver bound | `medium` | `fix` | ⏳ waiting on #87 — needs your merge |
-| [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | ⏳ waiting on #90 — needs your merge |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
@@ -42,7 +46,6 @@ graph TD
   0083
   0087
   0088
-  0090
   0090 --> 0091
   0087 --> 0092
   0088 --> 0092
@@ -50,13 +53,15 @@ graph TD
   0012:::done
   0052:::done
   0063:::done
+  0090:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (82)</summary>
+<details><summary>✅🗑️ Archive — done + killed (83)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0090](archive/2026-10-31-0090-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo.md) | Turn and token budgets are enforced in hosted interactive loops | 2026-10-31 |
 | [0089](archive/2026-10-31-0089-static-credential-mcp-servers-authenticate-and-every-loop-re.md) | Static-credential MCP servers authenticate, and every loop reports its MCP servers | 2026-10-31 |
 | [0086](archive/2026-10-31-0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md) | Loop server advertises its capabilities - models, skills, ceilings | 2026-10-31 |
 | [0085](archive/2026-10-31-0085-start-a-loop-from-a-harnessspec.md) | Start a loop from a HarnessSpec | 2026-10-31 |
@@ -71,7 +76,6 @@ graph TD
 | [0078](archive/2026-08-21-0078-slash-command-models-listing.md) | /models slash command + slash-menu column alignment | 2026-08-21 |
 | [0077](archive/2026-08-21-0077-sandbox-resource-limits-concurrency-ceiling.md) | sandbox resource limits — cgroup caps per container and a concurrency ceiling on in-flight Execs | 2026-08-21 |
 | [0063](archive/2026-08-21-0063-bash-container-substrate-env-scrub-off-switch.md) | bash container substrate + env-scrub + off-switch — the sandbox container behind a pluggable OCI runtime seam | 2026-08-21 |
-| [0073](archive/2026-08-20-0073-one-shot-default-model.md) | One-shot honors models.default when --model is unset | 2026-08-20 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -83,6 +87,6 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-08](archive/) | 61 done |
+| [2026-08](archive/) | 62 done |
 
 </details>
