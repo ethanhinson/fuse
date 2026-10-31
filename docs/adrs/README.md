@@ -64,6 +64,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0062](0062-getcapabilities-advertises-from-the-enforcement-code-and-car.md) — GetCapabilities advertises from the enforcement code and carries a wire tenant for spoof refusal (Accepted) ← change #86 · relates to ADR-0060, ADR-0061
 - [ADR-0063](0063-max-turns-is-a-per-exchange-cap-in-interactive-loops.md) — max_turns is a per-exchange cap in interactive loops (Accepted) ← change #90
 - [ADR-0064](0064-explicit-ask-rules-are-their-own-verdict-prompt-a-human-deny.md) — Explicit ask rules are their own verdict: prompt a human, deny when no human approver is bound (Accepted) ← change #87 · relates to ADR-0005, ADR-0049, ADR-0061
+- [ADR-0065](0065-permission-patterns-match-by-consumer-generous-for-protectiv.md) — Permission patterns match by consumer: generous for protective rules, strict for permissive rules (Accepted) ← change #88 · relates to ADR-0005, ADR-0049
 
 ## Superseded / Reversed
 
