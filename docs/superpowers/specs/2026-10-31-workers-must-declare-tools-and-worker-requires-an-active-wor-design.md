@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0095 — Workers must declare tools, and worker requires an active workflow](../../changes/active/0095-workers-must-declare-tools-and-worker-requires-an-active-wor.md)**
+> ↩ **[Change 0095 — Workers must declare tools, and worker requires an active workflow](../../changes/archive/2026-10-31-0095-workers-must-declare-tools-and-worker-requires-an-active-wor.md)**
 <!-- docket:backlink:end -->
 
 # Workers must declare tools, and worker requires an active workflow

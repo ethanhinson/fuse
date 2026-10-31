@@ -2,7 +2,7 @@
 id: 95
 slug: 'workers-must-declare-tools-and-worker-requires-an-active-wor'
 title: 'Workers must declare tools, and worker requires an active workflow'
-status: 'implemented'
+status: 'done'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor-design.md](../../superpowers/specs/2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor-design.md) |
+| Spec (merged) | [2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor-design.md) |
 | Plan | [2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor.md](../../superpowers/plans/2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor.md) |
 | Results | [2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor-results.md](../../results/2026-10-31-workers-must-declare-tools-and-worker-requires-an-active-wor-results.md) |
 | ADRs | [ADR-0067](../../adrs/0067-workflows-activate-per-spawn-do-not-nest-and-root-at-a-coord.md), [ADR-0069](../../adrs/0069-workers-declare-their-whole-tool-set-and-require-an-active-w.md) |
