@@ -2,7 +2,7 @@
 id: 95
 slug: 'workers-must-declare-tools-and-worker-requires-an-active-wor'
 title: 'Workers must declare tools, and worker requires an active workflow'
-status: 'in-progress'
+status: 'implemented'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/workers-must-declare-tools-and-worker-requires-an-active-wor'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/117'
 blocked_by:
 reconciled: true
 ---
@@ -57,3 +57,12 @@ Now that workflows activate in every host, two silent footguns reach every bindi
 ### 2026-10-31
 
 Unchanged against origin/main 3539cd2 (per-spawn activation, PR 115, merged).
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: a082df6ccc505218f5be1e169c7de1c1524aea96
+ran_at:   2026-10-31T22:10:07Z
+<!-- docket:build-evidence:end -->
