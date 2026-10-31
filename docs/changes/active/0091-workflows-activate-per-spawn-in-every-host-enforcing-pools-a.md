@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/workflows-activate-per-spawn-in-every-host-enforcing-pools-a'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -51,3 +51,9 @@ Workflow activation is only built by the research probe. In shell, one-shot and 
 - A spec-level root `workflow` field (it would change the portable spec).
 - New pool limits or scheduler policy.
 - Token pool budgets (enforced by the budgets change this builds on).
+
+## Reconcile log
+
+### 2026-10-31
+
+Unchanged against origin/main (7964f40); dependency 90 is merged.
