@@ -11,8 +11,14 @@ import (
 // smart and auto mode. witness is an allow set that approves cmd in BOTH
 // modes when no protective pattern is configured, so a prompt (or a deny)
 // proves the protective pattern fired. Every cmd is off the read-only
-// safelist, so no later auto-mode layer can mask a hit on this base (an
-// auto-mode ask is not terminal until change 0087).
+// safelist, but that alone does not stop a later auto-mode layer from masking
+// an ask on this base (an auto-mode ask is not terminal until change 0087):
+// classifyHeuristic can still allow a mutation whose targets sit inside the
+// workspace root. The ask survives here only because every cmd uses relative
+// paths (a/b, ./pkg/dir), which resolve against the test process cwd (the
+// package directory), and the gate's workspace root is a fresh t.TempDir()
+// outside it. A row whose targets resolved inside that root could be allowed
+// by the heuristic despite a protective ask hit.
 var protectiveParityRows = []struct {
 	desc    string
 	pattern string

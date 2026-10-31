@@ -251,15 +251,20 @@ parsed segment against `bash:<argv0> <args>`, for example `bash:rm -rf a/b`.
 Protective patterns (`always_prompt`, `auto.deny`, `auto.ask`) are also
 matched against the segment head `bash:<argv0>` and against the whole command,
 and their `*` matches any run of characters **including `/`**, so
-`deny: ["bash:rm *"]` denies `rm -rf a/b` and `ask: ["bash:cat*"]` asks for
-`cat dir/file`. Allow patterns (`auto_approve`) are strict: their `*` stops at
+`deny: ["bash:rm *"]` denies `rm -rf a/b` and `ask: ["bash:npm publish*"]`
+matches `npm publish ./pkg/dir`. In auto mode an ask from these rules is not
+yet final: a later layer (the read-only safelist or the heuristic classifier)
+can still allow the command, so prefer `deny` for anything that must never run
+unattended. Allow patterns (`auto_approve`) are strict: their `*` stops at
 `/`, so `bash:git *` does not approve `git clone https://host/repo` and
 `bash:rm build/*` does not approve `rm build/../x`, and every segment must
 match on its own. `?` matches one character and `[...]` classes work as in a
-shell glob; a malformed pattern matches nothing. Smart mode applies the same
-rule and also keeps its older first-word match (`bash:git` still approves any
-command that starts with `git`), so no existing smart-mode rule changes
-meaning. Protective rules match generously because they only ever tighten;
+shell glob; a malformed pattern matches nothing. "Every mode alike" covers
+these segment, whole-command, and head subjects. Smart mode additionally keeps
+its legacy subjects for `always_prompt` and `auto_approve`, the bare tool name
+and the raw first token of the command (so `bash:git` still approves any
+command that starts with `git`), which auto mode does not use; no existing
+smart-mode rule changes meaning. Protective rules match generously because they only ever tighten;
 allow rules match strictly because a match grants permission.
 
 **Trust boundary.** The permission-*loosening* keys — `mode`, `session_allow`,
