@@ -2,7 +2,7 @@
 id: 91
 slug: 'workflows-activate-per-spawn-in-every-host-enforcing-pools-a'
 title: 'Workflows activate per spawn in every host, enforcing pools and worker tools'
-status: 'in-progress'
+status: 'implemented'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/workflows-activate-per-spawn-in-every-host-enforcing-pools-a'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/115'
 blocked_by:
 reconciled: true
 ---
@@ -59,3 +59,12 @@ Workflow activation is only built by the research probe. In shell, one-shot and 
 ### 2026-10-31
 
 Unchanged against origin/main (7964f40); dependency 90 is merged.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 56a62339c742d9a16fd46770c21a27aa71a61c58
+ran_at:   2026-10-31T20:56:20Z
+<!-- docket:build-evidence:end -->
