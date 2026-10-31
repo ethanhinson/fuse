@@ -65,6 +65,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0063](0063-max-turns-is-a-per-exchange-cap-in-interactive-loops.md) — max_turns is a per-exchange cap in interactive loops (Accepted) ← change #90
 - [ADR-0065](0065-permission-patterns-match-by-consumer-generous-for-protectiv.md) — Permission patterns match by consumer: generous for protective rules, strict for permissive rules (Accepted) ← change #88 · relates to ADR-0005, ADR-0049
 - [ADR-0066](0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md) — Explicit ask rules are their own verdict in auto and smart mode: prompt a human, deny at the rules layer when only a policy stand-in is bound (Accepted) ← change #92 → supersedes ADR-0064 · relates to ADR-0005, ADR-0049, ADR-0061
+- [ADR-0067](0067-workflows-activate-per-spawn-do-not-nest-and-root-at-a-coord.md) — Workflows activate per spawn, do not nest, and root at a coordinator for pipelines (Accepted) ← change #91 · relates to ADR-0060, ADR-0061
 
 ## Superseded / Reversed
 

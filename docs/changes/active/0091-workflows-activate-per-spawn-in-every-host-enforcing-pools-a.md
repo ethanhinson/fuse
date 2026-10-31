@@ -12,7 +12,7 @@ depends_on: [90]
 stacked_on:
 related: [34, 86]
 discovered_from: []
-adrs: [60, 61]
+adrs: [60, 61, 67]
 spec: 'docs/superpowers/specs/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md'
 plan: 'docs/superpowers/plans/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md'
 results:
@@ -32,7 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md](../../superpowers/specs/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md) |
 | Plan | [2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md](../../superpowers/plans/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) |
-| ADRs | [ADR-0060](../../adrs/0060-harnessspec-proto-is-the-portable-harness-definition-client.md), [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md) |
+| ADRs | [ADR-0060](../../adrs/0060-harnessspec-proto-is-the-portable-harness-definition-client.md), [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md), [ADR-0067](../../adrs/0067-workflows-activate-per-spawn-do-not-nest-and-root-at-a-coord.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
