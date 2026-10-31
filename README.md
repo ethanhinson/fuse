@@ -252,7 +252,9 @@ Protective patterns (`always_prompt`, `auto.deny`, `auto.ask`) are also
 matched against the segment head `bash:<argv0>` and against the whole command,
 and their `*` matches any run of characters **including `/`**, so
 `deny: ["bash:rm *"]` denies `rm -rf a/b` and `ask: ["bash:npm publish*"]`
-matches `npm publish ./pkg/dir`. A matching `always_prompt` or
+matches `npm publish ./pkg/dir`. Protective patterns also match the command as written, before wrappers such as
+`timeout`, `nice`, `env` and `bash -c` are peeled, so a rule naming the wrapper
+fires in every mode. A matching `always_prompt` or
 `auto.ask` rule is final in smart and auto mode alike: it prompts a human when
 one is bound, and when the binding has no human (the loop servers, the headless
 mcp-server, piped stdin) it is denied with the matched pattern in the reason
