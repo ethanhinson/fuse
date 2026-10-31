@@ -2,7 +2,7 @@
 id: 86
 slug: 'loop-server-advertises-its-capabilities-models-skills-ceilin'
 title: 'Loop server advertises its capabilities - models, skills, ceilings'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/loop-server-advertises-its-capabilities-models-skills-ceilin'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/108'
 blocked_by:
 reconciled: true
 ---
@@ -63,3 +63,11 @@ A client that starts loops from a HarnessSpec has to guess what the server suppo
 
 Unchanged against main ae9c8d7; related #84 and #85 are merged and archived, so the spec layering and tighten-only options it builds on are present.
 
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: aa7e7bf6203560108c03ea105d72fc09dad305df
+ran_at:   2026-10-31T07:15:34Z
+<!-- docket:build-evidence:end -->
