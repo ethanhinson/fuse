@@ -569,10 +569,11 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		case VerdictDeny:
 			// A deny is not an error: return a non-auto-approve policy carrying
 			// the layer-named reason so the model can retry with a different call.
-			// A deny forced by a policy stand-in (explicit ask, no human bound)
-			// records the provenance so the trail shows why rules denied.
+			// A deny forced by a policy stand-in (an explicit ask or an
+			// unparseable command, no human bound) records the provenance so the
+			// trail shows why rules denied.
 			decidedBy := ""
-			if layer == LayerRules && strings.HasPrefix(reason, explicitAskDenyPrefix) {
+			if layer == LayerRules && policyForcedDeny(reason) {
 				decidedBy = g.approvalProvenance
 			}
 			g.emitDecision(ctx, mode, name, args, "deny", layer, reason, decidedBy, cls)
@@ -592,9 +593,10 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		// allow, so no auto_approve rule (legacy first-token or per-segment) can
 		// approve one. In smart mode, a policy stand-in never approves a
 		// catastrophic command the parser accepts: it is denied at the rules
-		// layer (auto mode's own floor is separate). Commands the parser
-		// refuses keep their prior behavior. With a human bound, the human keeps
-		// the last word: the call prompts and the ask event names the floor.
+		// layer (auto mode's own floor is separate). A command the parser
+		// refuses is never catastrophic here; it is handled after the allow step
+		// below (change 0096). With a human bound, the human keeps the last
+		// word: the call prompts and the ask event names the floor.
 		if command, catastrophic := catastrophicSegment(name, args, g.workspaceRoot); catastrophic {
 			if g.approvalProvenance == DecidedByPolicy {
 				reason := catastrophicFloorDenyPrefix + command
@@ -617,6 +619,21 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 					g.emitDecision(ctx, mode, name, args, "allow", LayerSmartConfig, "", "", nil)
 					policy.AutoApprove = true
 					return policy, nil
+				}
+				// A command the parser refuses (change 0096) has no segment for
+				// any layer to judge, so only a human may answer it. With a policy
+				// stand-in it is denied at the rules layer; with a human bound it
+				// prompts and the ask event names the parse layer, as in auto
+				// mode. The legacy allow just above still admits it when the
+				// operator named it (auto_approve: ["bash:sudo"]), the boundary
+				// change 0093 pinned.
+				if command, unparseable := unparseableBash(name, args); unparseable {
+					if g.approvalProvenance == DecidedByPolicy {
+						reason := unparseableDenyPrefix + command
+						g.emitDecision(ctx, mode, name, args, "deny", LayerRules, reason, g.approvalProvenance, nil)
+						return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerRules}, nil
+					}
+					askLayer = LayerParse
 				}
 			case g.approvalProvenance == DecidedByPolicy:
 				reason := explicitAskReason(pat, true)
@@ -657,6 +674,20 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 // explicitAskDenyPrefix opens the reason of every explicit-ask outcome.
 const explicitAskDenyPrefix = "matched ask rule "
 
+// unparseableDenyPrefix opens the reason when a command the parser refuses
+// reaches a gate with no human to ask (change 0096).
+const unparseableDenyPrefix = "unparseable command denied; no approver bound: "
+
+// policyForcedDeny reports whether a rules-layer deny reason is one only a
+// policy stand-in produces (an explicit ask, the smart-mode catastrophic floor,
+// or an unparseable command), so the decision records decided_by. A plain rule
+// deny ("denied by auto-mode rules layer: ...") keeps decided_by empty.
+func policyForcedDeny(reason string) bool {
+	return strings.HasPrefix(reason, explicitAskDenyPrefix) ||
+		strings.HasPrefix(reason, catastrophicFloorDenyPrefix) ||
+		strings.HasPrefix(reason, unparseableDenyPrefix)
+}
+
 // catastrophicFloorDenyPrefix opens the reason of a smart-mode catastrophic
 // deny under a policy stand-in (change 0093). Auto mode's floor keeps its own
 // "denied by auto-mode rules layer: " reason.
@@ -680,8 +711,10 @@ func explicitAskReason(pat string, policy bool) string {
 // resolveAuto runs the auto-mode pipeline and returns a Verdict plus, on a
 // deny, a layer-named denial reason (empty otherwise). Layer order:
 //
-//  1. Split segments (bash only). ErrUnparseable ⇒ ask (fail toward the human;
-//     an unparseable command is not routed to the classifier).
+//  1. Split segments (bash only). ErrUnparseable ⇒ evalUnparseable on the raw
+//     text: Deny ⇒ deny; AskExplicit ⇒ ask (human) or deny (policy); no hit ⇒
+//     ask at LayerParse (human) or deny at LayerRules (policy). An unparseable
+//     command never reaches the safelist, heuristics or classifier (change 0096).
 //  2. evalRules: Deny ⇒ deny (terminal); Allow ⇒ allow; Ask ⇒ continue;
 //     AskExplicit ⇒ ask (human) or deny (policy).
 //  3. allSegmentsReadOnlySafe ⇒ allow.
@@ -749,12 +782,28 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 
 	command := bashCommand(args)
 
-	// 1. Static floor: parse into segments. Unparseable fails toward the human.
-	// LayerParse makes these asks countable — they are the shapes change 0070
-	// (shell-parse widening) targets.
+	// 1. Static floor: parse into segments. A command the parser refuses has
+	// no segment for any later layer, so evalUnparseable matches the protective
+	// rules against its raw text (change 0096): a deny rule denies, an explicit
+	// ask rule is its own verdict as below. Only a human may answer the rest:
+	// with a policy stand-in bound it is denied at the rules layer, and with a
+	// human bound it is the countable LayerParse ask it has always been (the
+	// shapes change 0070 targets). Nothing after this step runs for it.
 	segments, err := splitSegments(command)
 	if err != nil {
-		return VerdictAsk, LayerParse, "", nil
+		uv, pat := evalUnparseable(command, g.cfg.Auto, g.cfg.AlwaysPrompt)
+		switch {
+		case uv == VerdictDeny:
+			return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + command, nil
+		case uv == VerdictAskExplicit && g.approvalProvenance == DecidedByPolicy:
+			return VerdictDeny, LayerRules, explicitAskReason(pat, true), nil
+		case uv == VerdictAskExplicit:
+			return VerdictAsk, LayerRules, explicitAskReason(pat, false), nil
+		case g.approvalProvenance == DecidedByPolicy:
+			return VerdictDeny, LayerRules, unparseableDenyPrefix + command, nil
+		default:
+			return VerdictAsk, LayerParse, "", nil
+		}
 	}
 
 	// 2. Deterministic rules. Deny is terminal; allow is a positive auto-approve.

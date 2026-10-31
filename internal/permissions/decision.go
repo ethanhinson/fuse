@@ -10,7 +10,7 @@ const (
 	LayerDisabled    = "disabled"     // permissions.disabled list
 	LayerModeOff     = "mode_off"     // mode: off auto-approve
 	LayerCache       = "cache"        // session approval-cache hit
-	LayerParse       = "parse"        // unparseable bash ⇒ fail-closed ask (the #0070 target)
+	LayerParse       = "parse"        // unparseable bash with a human bound ⇒ fail-closed ask (the #0070 target); a policy stand-in gets a rules deny (change 0096)
 	LayerRules       = "rules"        // deterministic rules (dangerous names, config deny/ask/allow)
 	LayerSafelist    = "safelist"     // built-in read-only safe list
 	LayerHeuristic   = "heuristic"    // egress boundary / workspace path scoping

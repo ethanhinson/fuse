@@ -340,3 +340,31 @@ func TestSmartFloor_PrecedesAllowAndAlwaysPrompt(t *testing.T) {
 		})
 	}
 }
+
+// TestRawCommandSubject_Normalises pins the one raw protective subject for a
+// command the parser refuses (change 0096): "bash:" plus the command's words
+// joined by single spaces, so smart and auto mode normalise identically.
+func TestRawCommandSubject_Normalises(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{"  sudo   ls\t", "bash:sudo ls", true},
+		{"sudo\nls", "bash:sudo ls", true},
+		{"/bin/rm -rf /", "bash:/bin/rm -rf /", true},
+		{"", "", false},
+		{"   ", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := rawCommandSubject(tc.in)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("rawCommandSubject(%q) = (%q, %v), want (%q, %v)", tc.in, got, ok, tc.want, tc.ok)
+		}
+	}
+	// protectivePattern goes through the same normalisation: a pattern written
+	// with single spaces reaches a refused command written with several.
+	if pat, hit := protectivePattern([]string{"bash:sudo ls"}, "bash", bashArgs("sudo   ls")); !hit || pat != "bash:sudo ls" {
+		t.Errorf("protectivePattern on a multi-space refused command = (%q, %v), want (bash:sudo ls, true)", pat, hit)
+	}
+}

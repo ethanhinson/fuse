@@ -256,9 +256,15 @@ matches `npm publish ./pkg/dir`. Protective patterns also match the command as w
 `timeout`, `nice`, `env` and `bash -c` are peeled, so a rule naming the wrapper
 fires in every mode for wrapper forms the shell parser accepts (`timeout`,
 `nice`, `nohup`, `time`, `stdbuf`, `env` with inert assignments, `bash -c`).
-Commands the parser refuses (`sudo`, path-qualified argv0, `env` with non-inert
-assignments) are not matched by wrapper-named protective rules in auto mode,
-which asks for them instead. A matching `always_prompt` or
+Commands the parser refuses (`sudo`, `npx`, `xargs`, a path-qualified argv0,
+`env` with non-inert assignments, `bash` without `-c`) are matched by protective
+rules against the command text as written in every mode. With a human approver
+bound they prompt; with only a policy stand-in (the loop servers, the headless
+mcp-server, the research probe, piped stdin) they are denied at the rules layer
+with `unparseable command denied; no approver bound: <command>`, or with the
+matching rule's reason when one fires. `auto_approve` never admits them in auto
+mode; in smart mode only a first-token `auto_approve` entry such as `bash:sudo`
+does. A matching `always_prompt` or
 `auto.ask` rule is final in smart and auto mode alike: it prompts a human when
 one is bound, and when the gate's approver is a policy stand-in (the loop servers, the headless
 mcp-server, the research probe, piped stdin, the orchestrator's deny stand-in) it is denied with the matched pattern in the reason
@@ -381,6 +387,11 @@ The probe answers approvals with a policy stand-in: an `always_prompt` or
 `auto.ask` match, and in smart mode a catastrophic command, is denied with the
 pattern in the reason. Move the pattern to `auto_approve` or drop the rule to
 let it run.
+A command the permission parser refuses (`sudo`, `npx`, `xargs`, a
+path-qualified binary, `env` with non-inert assignments) is denied the same way,
+with `unparseable command denied; no approver bound: <command>`: the probe
+cannot run one unless it runs in smart mode with a first-token `auto_approve`
+rule naming it, such as `bash:sudo`.
 
 It prints the spawn tree (root + one node per facet, with status), the census
 of searches and fetches, every unique search query and fetched URL, and the
@@ -481,6 +492,11 @@ Neither `loop-server` nor `loop-serve-net` has a human approver, so an operator
 denied with the pattern in the reason, in smart mode (the default) and auto mode
 alike, and the model sees that reason as the tool result. To let such a command
 run unattended, move its pattern to `auto_approve` or remove it.
+A command the permission parser refuses (`sudo`, `npx`, `xargs`, a
+path-qualified binary, `env` with non-inert assignments) is denied the same way,
+with `unparseable command denied; no approver bound: <command>`: a hosted loop
+cannot run one unless the loop runs in smart mode with a first-token
+`auto_approve` rule naming it, such as `bash:sudo`.
 
 ```sh
 fuse loop-serve-net --addr 127.0.0.1:8787
