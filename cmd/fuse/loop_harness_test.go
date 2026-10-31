@@ -39,6 +39,9 @@ type gatewayCall struct {
 type recordingGateway struct {
 	mu    sync.Mutex
 	calls []gatewayCall
+	// script, when set, replaces the default tool-call reply: request i gets
+	// script[i] (the last entry repeats). Each entry is a full response body.
+	script []string
 }
 
 func (g *recordingGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -46,9 +49,18 @@ func (g *recordingGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var c gatewayCall
 	_ = json.Unmarshal(body, &c)
 	g.mu.Lock()
+	idx := len(g.calls)
 	g.calls = append(g.calls, c)
+	script := g.script
 	g.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
+	if len(script) > 0 {
+		if idx >= len(script) {
+			idx = len(script) - 1
+		}
+		io.WriteString(w, script[idx])
+		return
+	}
 	io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"skill","arguments":"{\"name\":\"research\"}"}}]}}]}`)
 }
 

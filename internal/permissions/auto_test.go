@@ -729,7 +729,7 @@ func TestAutoMode_ExplicitAsk_PolicyStandInDenies(t *testing.T) {
 			}
 			var found bool
 			for _, d := range *rec {
-				if d.Verdict == "deny" && d.Layer == LayerRules && strings.Contains(d.Reason, tc.pat) {
+				if d.Verdict == "deny" && d.Layer == LayerRules && strings.Contains(d.Reason, tc.pat) && d.DecidedBy == DecidedByPolicy {
 					found = true
 				}
 			}

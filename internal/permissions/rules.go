@@ -651,12 +651,8 @@ func wholeSubject(segments []Segment) string {
 // glob semantics — the same engine as the legacy smart path, but here the
 // subject carries the full argv rather than only the first token.
 func matchesSubjects(patterns []string, subject string) bool {
-	for _, pat := range patterns {
-		if ok, _ := path.Match(pat, subject); ok {
-			return true
-		}
-	}
-	return false
+	_, ok := firstMatch(patterns, subject)
+	return ok
 }
 
 // readOnlyDockerSubcommands are docker subcommands with no mutating flag form:

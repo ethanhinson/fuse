@@ -1,6 +1,6 @@
 # Explicit ask rules are honored
 
-Change 0087 — Explicit ask rules are honored: prompt a human, deny when no human is bound
+Change 0087: Explicit ask rules are honored: prompt a human, deny when no human is bound
 
 ## Problem
 
@@ -11,7 +11,7 @@ Change 0087 — Explicit ask rules are honored: prompt a human, deny when no hum
 - Add a distinct verdict, `VerdictAskExplicit`, returned by `evalRules` for an explicit ask rule or always_prompt match, before the safelist step. `resolveAuto` returns `(VerdictAskExplicit, LayerRules, reason)` where the reason names the matched pattern.
 - `resolve` branches on the gate's approval provenance:
   - human approver: prompt exactly as an ask does today.
-  - policy stand-in (`DecidedByPolicy`: loop server, `--approve-all`, headless mcp-server): deny, layer `rules`, reason `matched ask rule <pattern>; no approver bound`. Precedent: the piped-stdin deny fallback in `cmd/fuse/approval.go`.
+  - policy stand-in (`DecidedByPolicy`: loop server, headless mcp-server, piped-stdin one-shot; not `--approve-all`, which is mode off and never reaches rules): deny, layer `rules`, reason `matched ask rule <pattern>; no approver bound`. Precedent: the piped-stdin deny fallback in `cmd/fuse/approval.go`.
 - "No rule matched" is unchanged (still `VerdictAsk`, still falls through, still policy-allowed when headless).
 - The `permission.decision` event carries the verdict, layer and reason; the tool result returned to the model carries the reason so the model can adapt.
 - Record an ADR: an explicit ask with no human approver bound is a deny, never an implicit allow.
