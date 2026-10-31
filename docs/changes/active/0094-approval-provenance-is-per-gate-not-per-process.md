@@ -12,7 +12,7 @@ depends_on: []
 stacked_on:
 related: [87, 92]
 discovered_from: [92]
-adrs: [66]
+adrs: [66, 70]
 spec: 'docs/superpowers/specs/2026-10-31-approval-provenance-is-per-gate-not-per-process-design.md'
 plan: 'docs/superpowers/plans/2026-10-31-approval-provenance-is-per-gate-not-per-process.md'
 results:
@@ -32,7 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-10-31-approval-provenance-is-per-gate-not-per-process-design.md](../../superpowers/specs/2026-10-31-approval-provenance-is-per-gate-not-per-process-design.md) |
 | Plan | [2026-10-31-approval-provenance-is-per-gate-not-per-process.md](../../superpowers/plans/2026-10-31-approval-provenance-is-per-gate-not-per-process.md) |
-| ADRs | [ADR-0066](../../adrs/0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md) |
+| ADRs | [ADR-0066](../../adrs/0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md), [ADR-0070](../../adrs/0070-approval-provenance-is-per-gate-explicit-ask-rules-supersede.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

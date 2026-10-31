@@ -64,9 +64,9 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0062](0062-getcapabilities-advertises-from-the-enforcement-code-and-car.md) — GetCapabilities advertises from the enforcement code and carries a wire tenant for spoof refusal (Accepted) ← change #86 · relates to ADR-0060, ADR-0061
 - [ADR-0063](0063-max-turns-is-a-per-exchange-cap-in-interactive-loops.md) — max_turns is a per-exchange cap in interactive loops (Accepted) ← change #90
 - [ADR-0065](0065-permission-patterns-match-by-consumer-generous-for-protectiv.md) — Permission patterns match by consumer: generous for protective rules, strict for permissive rules (Accepted) ← change #88 · relates to ADR-0005, ADR-0049
-- [ADR-0066](0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md) — Explicit ask rules are their own verdict in auto and smart mode: prompt a human, deny at the rules layer when only a policy stand-in is bound (Accepted) ← change #92 → supersedes ADR-0064 · relates to ADR-0005, ADR-0049, ADR-0061
 - [ADR-0068](0068-catastrophic-floor-is-a-rules-layer-decision-in-smart-mode-a.md) — Catastrophic floor is a rules-layer decision in smart mode and headless bindings; protective patterns match the command as written (Accepted) ← change #93 · relates to ADR-0005, ADR-0049, ADR-0065
 - [ADR-0069](0069-workers-declare-their-whole-tool-set-and-require-an-active-w.md) — Workers declare their whole tool set and require an active workflow (Accepted) ← change #95 → supersedes ADR-0067
+- [ADR-0070](0070-approval-provenance-is-per-gate-explicit-ask-rules-supersede.md) — Approval provenance is per gate; explicit ask rules (supersedes ADR-0066) (Accepted) ← change #94 → supersedes ADR-0066 · relates to ADR-0005, ADR-0049, ADR-0061
 
 ## Superseded / Reversed
 
@@ -75,6 +75,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0027](0027-runtime-owns-loop-eventstore-global-holder-bridge.md) — Runtime owns the loop event store as instance state; process-global holders kept as a single-loop compatibility bridge (Superseded by ADR-30) ← change #45 · relates to ADR-0025, ADR-0019, ADR-0016
 - [ADR-0032](0032-binding-3-websocket-session-http-replay-shared-dispatch.md) — Binding (Superseded by ADR-33) ← change #48 · relates to ADR-0028, ADR-0030, ADR-0031
 - [ADR-0064](0064-explicit-ask-rules-are-their-own-verdict-prompt-a-human-deny.md) — Explicit ask rules are their own verdict: prompt a human, deny when no human approver is bound (Superseded by ADR-0066) ← change #87 · relates to ADR-0005, ADR-0049, ADR-0061
+- [ADR-0066](0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md) — Explicit ask rules are their own verdict in auto and smart mode: prompt a human, deny at the rules layer when only a policy stand-in is bound (Superseded by ADR-0070) ← change #92 → supersedes ADR-0064 · relates to ADR-0005, ADR-0049, ADR-0061
 - [ADR-0067](0067-workflows-activate-per-spawn-do-not-nest-and-root-at-a-coord.md) — Workflows activate per spawn, do not nest, and root at a coordinator for pipelines (Superseded by ADR-0069) ← change #91 · relates to ADR-0060, ADR-0061
 
 ## Deprecated

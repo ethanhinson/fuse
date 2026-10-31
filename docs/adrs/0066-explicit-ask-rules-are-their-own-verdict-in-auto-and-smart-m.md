@@ -2,7 +2,7 @@
 id: 66
 slug: 'explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m'
 title: 'Explicit ask rules are their own verdict in auto and smart mode: prompt a human, deny at the rules layer when only a policy stand-in is bound'
-status: 'Accepted'
+status: 'Superseded by ADR-0070'
 date: '2026-10-31'
 supersedes: [64]
 reverses: []
