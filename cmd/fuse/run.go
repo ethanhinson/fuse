@@ -451,7 +451,10 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 			return nil, fmt.Errorf("cli adapter: resolve binary: %w", err)
 		}
 		permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
-		return agent.New(newCLIAdapter(fuseExe, approve), permGate, r, mc.ID, systemPrompt, maxTurns, 0), nil
+		// Same expression buildGate seeds the gate with, read once per build, so a
+		// live /mode off reaches the subprocess at the next turn as it reaches the gate.
+		cliAdapter := newCLIAdapter(fuseExe, approve, sessionGateMode(cfg, sm) == permissions.ModeOff)
+		return agent.New(cliAdapter, permGate, r, mc.ID, systemPrompt, maxTurns, 0), nil
 	}
 	adapter := gatewayAdapter(cfg, gate)
 	if traceW != nil {
@@ -987,7 +990,9 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		if err != nil {
 			return nil, "", fmt.Errorf("cli adapter: resolve binary: %w", err)
 		}
-		cliAdapter := newCLIAdapter(fuseExe, approve)
+		// Same expression buildGate seeds the gate with, read once per build, so a
+		// live /mode off reaches the subprocess at the next turn as it reaches the gate.
+		cliAdapter := newCLIAdapter(fuseExe, approve, sessionGateMode(cfg, sm) == permissions.ModeOff)
 		permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
 		// maxTokens is not forwarded to the CLI; Claude controls its own limits.

@@ -35,7 +35,7 @@ func TestMCPServerGateBindsWorkspaceRoot(t *testing.T) {
 				t.Fatalf("NewService: %v", err)
 			}
 			toolReg := defaultToolRegistry(svc, cfg.Research, nil)
-			gate := buildMCPServerGate(cfg, toolReg, permissions.AlwaysApprove)
+			gate := buildMCPServerGate(cfg, toolReg, cfg.Permissions, permissions.AlwaysApprove)
 
 			var decisions []permissions.Decision
 			ctx := permissions.WithDecisionSink(context.Background(), func(d permissions.Decision) {
@@ -76,7 +76,7 @@ func mcpWriteLayers(t *testing.T, target string) []permissions.Decision {
 	}
 	toolReg := defaultToolRegistry(svc, cfg.Research, nil)
 	deny := func(context.Context, permissions.ApprovalRequest) (bool, bool, error) { return false, false, nil }
-	gate := buildMCPServerGate(cfg, toolReg, permissions.Human(deny))
+	gate := buildMCPServerGate(cfg, toolReg, cfg.Permissions, permissions.Human(deny))
 	var decisions []permissions.Decision
 	ctx := permissions.WithDecisionSink(context.Background(), func(d permissions.Decision) {
 		decisions = append(decisions, d)

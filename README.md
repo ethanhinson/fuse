@@ -264,7 +264,7 @@ mcp-server, the research probe, piped stdin) they are denied at the rules layer
 with `unparseable command denied; no approver bound: <command>`, or with the
 matching rule's reason when one fires. `auto_approve` never admits them in auto
 mode; in smart mode only a first-token `auto_approve` entry such as `bash:sudo`
-does. A matching `always_prompt` or
+does. The command in every deny reason is trimmed, capped at 200 characters with "…", and has URL credentials replaced with `***@`, matching the decision event's `command` field. A matching `always_prompt` or
 `auto.ask` rule is final in smart and auto mode alike: it prompts a human when
 one is bound, and when the gate's approver is a policy stand-in (the loop servers, the headless
 mcp-server, the research probe, piped stdin, the orchestrator's deny stand-in) it is denied with the matched pattern in the reason
@@ -283,7 +283,9 @@ changes meaning. In smart mode a catastrophic segment (one the parser accepts)
 is never approved by an allow rule: smart mode prompts when a human is bound and
 denies at the rules layer when the gate's approver is a policy stand-in, and an `rm` or
 `dd` with an unresolved shell expansion no longer matches a first-token allow. Protective rules match generously because they only ever tighten;
-allow rules match strictly because a match grants permission. Provenance belongs to each gate's approver, so a child built with the always-approve stand-in inside an attended session is a policy gate, and `decided_by` on its `permission.decision` events says `policy`.
+allow rules match strictly because a match grants permission. Provenance belongs to each gate's approver, so a child built with the always-approve stand-in inside an attended session is a policy gate, and `decided_by` on its `permission.decision` events says `policy`. A policy stand-in that answers no is recorded as `tool call denied by policy approver`; a person who answers no is `tool call denied by user`.
+
+**`--approve-all` and `cli/` models.** `--approve-all` runs the session at mode off. With a `cli/` model, approve-all is carried to the `fuse mcp-server` tool subprocess, which runs with permissions off for that call. The relay environment is `FUSE_HITL_SOCKET`, `FUSE_HITL_PROVENANCE` and `FUSE_HITL_MODE`; `fuse mcp-server` honors `FUSE_HITL_MODE` only when `FUSE_HITL_SOCKET` is also set and only for the value `off`. That check tests only that the socket variable is non-empty, so `FUSE_HITL_MODE=off` is a permission-loosening path trusted from whoever controls the server's process environment; the parent fuse relay normally sets both.
 
 **Trust boundary.** The permission-*loosening* keys — `mode`, `session_allow`,
 `auto_approve`, and the entire `auto` block — are honored **only** from the
@@ -291,7 +293,11 @@ trusted `~/.fuse/config.yml`. A repo-plantable `.fuse.local.yml` cannot weaken
 the gate: those keys are ignored there (with a startup warning), so a checked-in
 file cannot flip a clone into `auto` mode or self-approve. Only the *tightening*
 keys `always_prompt` and `disabled` take effect from `.fuse.local.yml`. Set
-anything that grants trust in your own `~/.fuse/config.yml`.
+anything that grants trust in your own `~/.fuse/config.yml`. One loosening
+path does not come from config: `fuse mcp-server` runs at mode off when its
+environment has `FUSE_HITL_MODE=off` and any non-empty `FUSE_HITL_SOCKET`, so
+it trusts whoever controls that process environment (normally the parent fuse
+relay).
 
 **Per-project trust (`projects:`).** To grant "auto here, not there" you can key
 a `permissions:` subtree by **absolute project path** under a `projects:` map.

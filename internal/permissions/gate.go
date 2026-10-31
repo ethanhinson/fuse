@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -454,7 +455,7 @@ func (g *PermissionGate) Execute(ctx context.Context, name, args string) tools.R
 		}
 	}
 	if !policy.AutoApprove {
-		msg := "tool call denied by user"
+		msg := approverDenyReason(g.approvalProvenance)
 		if policy.DenyReason != "" {
 			msg = policy.DenyReason
 		}
@@ -599,12 +600,12 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		// word: the call prompts and the ask event names the floor.
 		if command, catastrophic := catastrophicSegment(name, args, g.workspaceRoot); catastrophic {
 			if g.approvalProvenance == DecidedByPolicy {
-				reason := catastrophicFloorDenyPrefix + command
+				reason := catastrophicFloorDenyPrefix + reasonCommand(command)
 				g.emitDecision(ctx, mode, name, args, "deny", LayerRules, reason, g.approvalProvenance, nil)
 				return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerRules}, nil
 			}
 			askLayer = LayerRules
-			askReason = catastrophicAskPrefix + command
+			askReason = catastrophicAskPrefix + reasonCommand(command)
 		} else {
 			// always_prompt is an explicit ask (change 0092): it demotes even
 			// safe-list entries, and like auto mode's it is its own verdict. With a
@@ -629,7 +630,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 				// change 0093 pinned.
 				if command, unparseable := unparseableBash(name, args); unparseable {
 					if g.approvalProvenance == DecidedByPolicy {
-						reason := unparseableDenyPrefix + command
+						reason := unparseableDenyPrefix + reasonCommand(command)
 						g.emitDecision(ctx, mode, name, args, "deny", LayerRules, reason, g.approvalProvenance, nil)
 						return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerRules}, nil
 					}
@@ -660,8 +661,9 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		return ToolPolicy{Enabled: true}, err
 	}
 	if !approved {
-		g.emitDecision(ctx, mode, name, args, "deny", LayerHuman, "tool call denied by user", g.approvalProvenance, askClassifier)
-		return ToolPolicy{Enabled: true, AutoApprove: false, DenyLayer: LayerHuman}, nil
+		reason := approverDenyReason(g.approvalProvenance)
+		g.emitDecision(ctx, mode, name, args, "deny", LayerHuman, reason, g.approvalProvenance, askClassifier)
+		return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerHuman}, nil
 	}
 	if allowSession {
 		g.cache.Allow(name, args)
@@ -696,6 +698,16 @@ const catastrophicFloorDenyPrefix = "catastrophic command denied by rules floor:
 // catastrophicAskPrefix opens the ask reason when a human is prompted for a
 // catastrophic command in smart mode (change 0093).
 const catastrophicAskPrefix = "catastrophic command: "
+
+// approverDenyReason is the reason recorded and returned when the gate's
+// approver answers no. It names who answered so the sentence agrees with
+// decided_by, which stays the field to key on: a policy stand-in is not a user.
+func approverDenyReason(decidedBy string) string {
+	if decidedBy == DecidedByPolicy {
+		return "tool call denied by policy approver"
+	}
+	return "tool call denied by user"
+}
 
 // explicitAskReason renders the reason for an explicit-ask outcome in every
 // mode that evaluates operator rules (auto: auto.ask and always_prompt; smart:
@@ -794,13 +806,13 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 		uv, pat := evalUnparseable(command, g.cfg.Auto, g.cfg.AlwaysPrompt)
 		switch {
 		case uv == VerdictDeny:
-			return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + command, nil
+			return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + reasonCommand(command), nil
 		case uv == VerdictAskExplicit && g.approvalProvenance == DecidedByPolicy:
 			return VerdictDeny, LayerRules, explicitAskReason(pat, true), nil
 		case uv == VerdictAskExplicit:
 			return VerdictAsk, LayerRules, explicitAskReason(pat, false), nil
 		case g.approvalProvenance == DecidedByPolicy:
-			return VerdictDeny, LayerRules, unparseableDenyPrefix + command, nil
+			return VerdictDeny, LayerRules, unparseableDenyPrefix + reasonCommand(command), nil
 		default:
 			return VerdictAsk, LayerParse, "", nil
 		}
@@ -810,7 +822,7 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 	rv, askPattern := evalRulesDetail(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt, g.workspaceRoot)
 	switch rv {
 	case VerdictDeny:
-		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + command, nil
+		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + reasonCommand(command), nil
 	case VerdictAskExplicit:
 		// An operator-written ask is its own verdict: it never falls through to
 		// the safelist, heuristics or classifier. With a human bound it prompts
@@ -835,7 +847,7 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 	// 4. Heuristics: egress boundary / path scoping. Ask ⇒ continue to classifier.
 	switch classifyHeuristic(segments, g.allowedRoots()) {
 	case VerdictDeny:
-		return VerdictDeny, LayerHeuristic, "denied by auto-mode heuristic layer: " + command, nil
+		return VerdictDeny, LayerHeuristic, "denied by auto-mode heuristic layer: " + reasonCommand(command), nil
 	case VerdictAllow:
 		return VerdictAllow, LayerHeuristic, "", nil
 	}
@@ -1117,7 +1129,7 @@ func prefixedApprove(label string, fn ApprovalFunc) ApprovalFunc {
 // plus the classifier's own rationale when it gave one, retained for the
 // audit trail.
 func classifierDenyReason(operand, modelReason string) string {
-	r := "denied by auto-mode classifier: " + operand
+	r := "denied by auto-mode classifier: " + reasonCommand(operand)
 	if modelReason != "" {
 		r += " (" + modelReason + ")"
 	}
@@ -1125,23 +1137,41 @@ func classifierDenyReason(operand, modelReason string) string {
 }
 
 // commandPreview builds the bounded command field for a permission.decision
-// event: the bash command truncated to 200 chars, or a truncated raw-args
-// preview for other tools. Never full args — tool.call already carries them,
-// and the decision stream must stay small (event-stream hygiene, change 0067).
-// The preview is additionally scrubbed of URL userinfo (user:password@host):
-// decision events are a logged, exported audit record, and a credential-bearing
-// web_fetch URL must not put the secret on that record (results follow-up #2).
+// event: the bash command, or the raw args for other tools, passed through
+// boundText. Never full args - tool.call already carries them, and the
+// decision stream must stay small (event-stream hygiene, change 0067).
+// Decision events are a logged, exported audit record, so a credential-bearing
+// URL must not put the secret on that record (results follow-up #2).
 func commandPreview(name, args string) string {
 	s := args
 	if name == "bash" {
 		s = bashCommand(args)
 	}
+	return boundText(s)
+}
+
+// boundText is the one bounding rule for command text a decision record may
+// carry: trimmed, URL userinfo replaced with "***@", and capped at 200 bytes
+// with a trailing "…". The cut backs off to a rune boundary so a multi-byte
+// character straddling byte 200 is dropped whole, never split into invalid
+// UTF-8.
+func boundText(s string) string {
 	s = strings.TrimSpace(redactURLUserinfo(s))
 	if len(s) > 200 {
-		s = s[:200] + "…"
+		cut := 200
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + "…"
 	}
 	return s
 }
+
+// reasonCommand is the command text every deny or ask reason that echoes a
+// command uses. It is boundText, the same rule as the structured preview, so
+// the prose Reason and the Command field beside it on a decision event can
+// never disagree about what the record may contain.
+func reasonCommand(command string) string { return boundText(command) }
 
 // urlUserinfoRE matches the userinfo section of a URL (scheme://user[:pass]@)
 // so previews can redact embedded credentials without disturbing the host.

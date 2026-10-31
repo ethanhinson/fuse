@@ -120,7 +120,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	verbose := fs.Bool("verbose", false, "render full tool args and output")
 	traceFile := fs.String("trace", "", "write raw gateway JSON to this file (- = stderr)")
 	controlSocket := fs.String("control", "", "serve a control socket at this path so the run can be steered (fuse steer / fuse orchestrate --socket PATH)")
-	approveAll := fs.Bool("approve-all", false, "auto-approve every tool call (scripted use; equivalent to mode: off for this run — a deliberate footgun)")
+	approveAll := fs.Bool("approve-all", false, "auto-approve every tool call (scripted use; equivalent to mode: off for this run, also for a cli/ model's tool subprocess - a deliberate footgun)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}

@@ -65,7 +65,7 @@ func TestAutoMode_Unparseable_PolicyDenies(t *testing.T) {
 			if d.Verdict != "deny" || d.Layer != LayerRules || d.DecidedBy != DecidedByPolicy || d.Mode != "auto" {
 				t.Errorf("want deny/rules/policy/auto, got %+v", d)
 			}
-			if want := unparseableDenyPrefix + r.cmd; d.Reason != want {
+			if want := unparseableDenyPrefix + reasonCommand(r.cmd); d.Reason != want {
 				t.Errorf("reason = %q, want %q", d.Reason, want)
 			}
 		})
