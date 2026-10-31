@@ -15,7 +15,7 @@ discovered_from: []
 adrs: [5, 49, 65]
 spec: 'docs/superpowers/specs/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md'
 plan: 'docs/superpowers/plans/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e.md'
-results:
+results: 'docs/results/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md](../../superpowers/specs/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md) |
 | Plan | [2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e.md](../../superpowers/plans/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e.md) |
+| Results | [2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-results.md](../../results/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-results.md) |
 | ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0049](../../adrs/0049-allowlist-admission-on-deterministic-allow-paths.md), [ADR-0065](../../adrs/0065-permission-patterns-match-by-consumer-generous-for-protectiv.md) |
 <!-- docket:artifacts:end -->
 
