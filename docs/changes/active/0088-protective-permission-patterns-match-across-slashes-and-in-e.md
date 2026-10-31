@@ -2,7 +2,7 @@
 id: 88
 slug: 'protective-permission-patterns-match-across-slashes-and-in-e'
 title: 'Protective permission patterns match across slashes and in every mode alike'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/protective-permission-patterns-match-across-slashes-and-in-e'
 pr:
 blocked_by:
 reconciled: false
