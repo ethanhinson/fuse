@@ -111,10 +111,6 @@ func TestHostedBindingDeniesCatastrophicInSmartMode(t *testing.T) {
 		Mode:        "smart",
 		AutoApprove: []string{"bash:rm"},
 	}}
-	// buildGate binds the workspace root through autoModeOptions, which only
-	// applies when a gateway is configured, as it is in every loop-server
-	// binding. Smart mode never consults the classifier, so this is never dialled.
-	cfg.Gateway.URL = "http://127.0.0.1:1"
 	svc, err := sandbox.NewService(sandbox.Config{Contained: false, Handler: sandbox.HandlerHost})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -270,5 +266,29 @@ permissions:
 	}
 	if !modelWasTold(gw, "catastrophic command denied by rules floor:") {
 		t.Fatal("model was not told the deny reason")
+	}
+}
+
+// TestGatewaylessGateStillCatchesAncestorDeletion proves the workspace root is
+// bound independently of classifier constructibility (no gateway URL).
+func TestGatewaylessGateStillCatchesAncestorDeletion(t *testing.T) {
+	prev := gateApprovalProvenance
+	t.Cleanup(func() { gateApprovalProvenance = prev })
+	markPolicyApproval()
+	_, ws := floorWorkspace(t)
+
+	cfg := config.Config{Permissions: config.PermissionsConfig{Mode: "auto"}}
+	svc, err := sandbox.NewService(sandbox.Config{Contained: false, Handler: sandbox.HandlerHost})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	toolReg := defaultToolRegistry(svc, cfg.Research, nil)
+	gate := buildGate(cfg, toolReg, permissions.AlwaysApprove, registryFromConfig(cfg), nil, nil)
+	res := gate.Execute(context.Background(), "bash", `{"command":"rm -rf .."}`)
+	if !res.Denied {
+		t.Fatalf("gateway-less gate must deny rm -rf ..; res=%+v", res)
+	}
+	if _, err := os.Stat(ws); err != nil {
+		t.Fatalf("workspace deleted: %v", err)
 	}
 }

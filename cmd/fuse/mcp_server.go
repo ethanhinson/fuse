@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -84,8 +85,29 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 func buildMCPServerGate(cfg config.Config, toolReg *tools.Registry, approve permissions.ApprovalFunc) *permissions.PermissionGate {
 	return permissions.New(cfg.Permissions, toolReg, approve,
 		permissions.WithApprovalProvenance(gateApprovalProvenance),
-		permissions.WithWorkspaceRoot(workspaceRoot()),
+		permissions.WithWorkspaceRoot(mcpServerWorkspaceRoot()),
 		permissions.WithWriteRoots(gateWriteRoots(cfg)))
+}
+
+// mcpServerWorkspaceRoot is workspaceRoot() unless the cwd is "/" or the user's
+// home directory. An MCP client often spawns the server with such a cwd, and
+// binding it as the workspace would make everything beneath it "in-root" for
+// auto-mode heuristics. In that case no root is bound (the catastrophic floor
+// still catches "/" and "~" themselves).
+func mcpServerWorkspaceRoot() string {
+	root := workspaceRoot()
+	if root == "" || root == string(filepath.Separator) {
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rh, err := filepath.EvalSymlinks(home); err == nil {
+			home = rh
+		}
+		if filepath.Clean(home) == root {
+			return ""
+		}
+	}
+	return root
 }
 
 // mcpServerToolSet builds the native tool set the MCP server exposes for a given
