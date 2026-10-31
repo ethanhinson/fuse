@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0091 — Workflows activate per spawn in every host, enforcing pools and worker tools](../../changes/active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md)**
+> ↩ **[Change 0091 — Workflows activate per spawn in every host, enforcing pools and worker tools](../../changes/archive/2026-10-31-0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md)**
 <!-- docket:backlink:end -->
 
 # Per-spawn workflow activation in every host

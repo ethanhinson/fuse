@@ -2,7 +2,7 @@
 id: 91
 slug: 'workflows-activate-per-spawn-in-every-host-enforcing-pools-a'
 title: 'Workflows activate per spawn in every host, enforcing pools and worker tools'
-status: 'implemented'
+status: 'done'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md](../../superpowers/specs/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md) |
+| Spec (merged) | [2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md) |
 | Plan | [2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md](../../superpowers/plans/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) |
 | Results | [2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-results.md](../../results/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-results.md) |
 | ADRs | [ADR-0060](../../adrs/0060-harnessspec-proto-is-the-portable-harness-definition-client.md), [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md), [ADR-0067](../../adrs/0067-workflows-activate-per-spawn-do-not-nest-and-root-at-a-coord.md) |
