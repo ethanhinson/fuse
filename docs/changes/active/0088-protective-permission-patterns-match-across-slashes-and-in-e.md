@@ -14,7 +14,7 @@ related: [86]
 discovered_from: []
 adrs: [5, 49]
 spec: 'docs/superpowers/specs/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md](../../superpowers/specs/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md) |
+| Plan | [2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e.md](../../superpowers/plans/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e.md) |
 | ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0049](../../adrs/0049-allowlist-admission-on-deterministic-allow-paths.md) |
 <!-- docket:artifacts:end -->
 
