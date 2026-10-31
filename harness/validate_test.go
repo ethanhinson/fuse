@@ -197,3 +197,29 @@ func TestServiceServesValidateHarness(t *testing.T) {
 		t.Fatalf("violations = %v", vs)
 	}
 }
+
+// TestValidate_WorkerWithoutTools: a worker's allowlist is its whole tool set,
+// so an empty one is refused once (shape wins over the semantic duplicate).
+func TestValidate_WorkerWithoutTools(t *testing.T) {
+	bad := &harnessv1.HarnessSpec{Workflows: map[string]*harnessv1.Workflow{
+		"wf": {Workers: map[string]*harnessv1.Worker{"reader": {}}},
+	}}
+	const path = `workflows["wf"].workers["reader"].tools`
+	for name, vs := range map[string][]harness.Violation{
+		"Validate":      harness.Validate(bad),
+		"ValidateShape": harness.ValidateShape(bad),
+	} {
+		if len(vs) != 1 || vs[0].FieldPath != path || vs[0].RuleID != "repeated.min_items" {
+			t.Errorf("%s = %+v, want one repeated.min_items at %s", name, vs, path)
+		}
+	}
+	ok := &harnessv1.HarnessSpec{Workflows: map[string]*harnessv1.Workflow{
+		"wf": {Workers: map[string]*harnessv1.Worker{"reader": {Tools: []string{"read_file"}}}},
+	}}
+	if vs := harness.Validate(ok); len(vs) != 0 {
+		t.Errorf("Validate(tooled) = %+v", vs)
+	}
+	if vs := harness.ValidateShape(ok); len(vs) != 0 {
+		t.Errorf("ValidateShape(tooled) = %+v", vs)
+	}
+}

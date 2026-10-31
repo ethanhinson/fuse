@@ -274,3 +274,31 @@ func TestResolveRefusesASecretSentToAnUnlistedHost(t *testing.T) {
 		t.Fatalf("unlisted host: %+v", vs)
 	}
 }
+
+func TestResolve_RefusesWorkerWithoutTools(t *testing.T) {
+	cases := []struct {
+		name string
+		wf   map[string]*harnessv1.Workflow
+		path string
+	}{
+		{"new workflow", map[string]*harnessv1.Workflow{
+			"wf": {Workers: map[string]*harnessv1.Worker{"reader": {}}},
+		}, `workflows["wf"].workers["reader"].tools`},
+		{"operator workflow restated", map[string]*harnessv1.Workflow{
+			"research": {Workers: map[string]*harnessv1.Worker{"facet-researcher": {}}},
+		}, `workflows["research"].workers["facet-researcher"].tools`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := &harnessv1.HarnessSpec{Workflows: tc.wf}
+			_, err := Resolver{Base: operator(t), Skills: installed("research")}.Resolve(context.Background(), "acme", spec)
+			if err == nil {
+				t.Fatal("Resolve accepted a worker without tools")
+			}
+			got := violations(t, err)
+			if len(got) != 1 || got[0].FieldPath != tc.path || got[0].RuleID != "repeated.min_items" {
+				t.Fatalf("violations = %+v, want one repeated.min_items at %s", got, tc.path)
+			}
+		})
+	}
+}
