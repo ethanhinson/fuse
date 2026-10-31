@@ -124,6 +124,9 @@ const (
 	// start (change 0089), one event per server (operator and spec), right after
 	// loop.harness. A server that failed to connect is reported with connected=false
 	// and its error; the loop continues without it. Never carries a credential.
+	// Emitted at EACH loop start, including a resume (which re-dials), so a
+	// stream may hold several events per server name; consumers take the latest
+	// event per server name.
 	KindMCPServer Kind = "mcp.server"
 )
 

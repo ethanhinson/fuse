@@ -1,6 +1,6 @@
 # Static-credential MCP auth and MCP server status events
 
-Change 0089 — Static-credential MCP servers authenticate, and every loop reports its MCP servers
+Change 0089: Static-credential MCP servers authenticate, and every loop reports its MCP servers
 
 ## Problem
 

@@ -33,6 +33,19 @@ type gatewayCall struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"messages"`
+	Tools []struct {
+		Function struct {
+			Name string `json:"name"`
+		} `json:"function"`
+	} `json:"tools"`
+}
+
+func (c gatewayCall) toolNames() []string {
+	var out []string
+	for _, t := range c.Tools {
+		out = append(out, t.Function.Name)
+	}
+	return out
 }
 
 // recordingGateway answers every request with a tool call (so a loop only stops
@@ -337,6 +350,8 @@ func mcpAuthFakeServer(t *testing.T) (*httptest.Server, func() []string) {
 		case "tools/list":
 			reply(`{"tools":[{"name":"echo","description":"echo","inputSchema":{"type":"object"}}]}`)
 		default:
+			// Intentional: notifications (e.g. notifications/initialized) and any
+			// other unknown method get a bodyless 202, as the spec allows.
 			w.WriteHeader(http.StatusAccepted)
 		}
 	}))
@@ -367,7 +382,7 @@ func TestEverySpecMCPAuthKindConnects(t *testing.T) {
 	t.Setenv("FUSE_TEST_MCP_TOKEN", "operator-held-token")
 	for _, kind := range harnessresolve.SpecMCPAuthKinds() {
 		t.Run(kind.String(), func(t *testing.T) {
-			rt, _, _ := harnessServer(t, harnessOperator+`
+			rt, gw, _ := harnessServer(t, harnessOperator+`
 loop_server:
   secrets:
     - {name: tok, env: FUSE_TEST_MCP_TOKEN}
@@ -396,13 +411,33 @@ loop_server:
 			if len(evs) != 1 {
 				t.Fatalf("mcp.server events = %+v", evs)
 			}
-			if !evs[0].Connected || evs[0].Error != "" || len(evs[0].Tools) != 1 {
-				t.Fatalf("server did not connect and list tools: %+v", evs[0])
+			if hist[1].Kind != event.KindMCPServer {
+				t.Errorf("second event = %s, want mcp.server right after loop.harness", hist[1].Kind)
+			}
+			if !evs[0].Connected || evs[0].Error != "" || len(evs[0].Tools) != 1 || evs[0].Tools[0] != "mcp:s/echo" {
+				t.Fatalf("server did not connect and list mcp:s/echo: %+v", evs[0])
+			}
+			calls := gw.snapshot()
+			if len(calls) == 0 {
+				t.Fatal("the gateway received no request")
+			}
+			found := false
+			for _, n := range calls[0].toolNames() {
+				found = found || n == "mcp:s/echo"
+			}
+			if !found {
+				t.Errorf("first gateway request tools = %v, want to include mcp:s/echo", calls[0].toolNames())
 			}
 			if evs[0].Name != "s" {
 				t.Errorf("name = %q", evs[0].Name)
 			}
-			if wantAuth != "" {
+			if wantAuth == "" {
+				for _, a := range auths() {
+					if a != "" {
+						t.Errorf("unauthenticated kind sent an Authorization header: %q", a)
+					}
+				}
+			} else {
 				seen := false
 				for _, a := range auths() {
 					seen = seen || a == wantAuth
@@ -423,7 +458,7 @@ loop_server:
 // TestUnreachableMCPServerIsReportedAndLoopContinues keeps skip-and-continue: a
 // server that cannot connect is reported connected=false and does not fail the loop.
 func TestUnreachableMCPServerIsReportedAndLoopContinues(t *testing.T) {
-	rt, _, _ := harnessServer(t, harnessOperator)
+	rt, gw, _ := harnessServer(t, harnessOperator)
 	turns := uint32(1)
 	spec := &harnessv1.HarnessSpec{MaxTurns: &turns, McpServers: []*harnessv1.McpServer{{
 		Name: "down", Transport: harnessv1.McpTransport_MCP_TRANSPORT_HTTP, Url: "http://127.0.0.1:1/mcp",
@@ -443,5 +478,28 @@ func TestUnreachableMCPServerIsReportedAndLoopContinues(t *testing.T) {
 	}
 	if hist[0].Kind != event.KindLoopHarness {
 		t.Errorf("first event = %s", hist[0].Kind)
+	}
+	if hist[1].Kind != event.KindMCPServer {
+		t.Errorf("second event = %s, want mcp.server", hist[1].Kind)
+	}
+	if n := len(gw.snapshot()); n < 1 {
+		t.Errorf("the loop made %d gateway requests, want >= 1 (it must continue past the dead server)", n)
+	}
+}
+
+func TestRedactMCPError(t *testing.T) {
+	cases := map[string]string{
+		`Post "https://user:pw@host.example/mcp?token=abc&x=1": dial tcp: refused`: `Post "https://host.example/mcp": dial tcp: refused`,
+		`get http://h/p?api_key=s3cret failed.`:                                    `get http://h/p failed.`,
+		`no url here`:                                                              `no url here`,
+	}
+	for in, want := range cases {
+		got := redactMCPError(in)
+		if got != want {
+			t.Errorf("redactMCPError(%q) = %q, want %q", in, got, want)
+		}
+		if strings.Contains(got, "pw@") || strings.Contains(got, "s3cret") || strings.Contains(got, "token=") {
+			t.Errorf("secret survived: %q", got)
+		}
 	}
 }

@@ -66,7 +66,11 @@ type MCPTool struct {
 	target toolidentity.Target
 }
 
-func (t *MCPTool) Name() string               { return "mcp:" + t.serverName + "/" + t.toolName }
+// QualifiedToolName is the name an MCP server's tool is exposed under to the
+// model: "mcp:<server>/<tool>".
+func QualifiedToolName(server, tool string) string { return "mcp:" + server + "/" + tool }
+
+func (t *MCPTool) Name() string               { return QualifiedToolName(t.serverName, t.toolName) }
 func (t *MCPTool) Description() string        { return t.description }
 func (t *MCPTool) Parameters() map[string]any { return t.inputSchema }
 
