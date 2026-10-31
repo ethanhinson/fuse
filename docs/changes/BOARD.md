@@ -1,6 +1,6 @@
 # Backlog
 
-**98 changes** — 🟢 1 in progress · 🟡 3 proposed · ⚪ 3 deferred · ✅ 85 done · 🗑️ 6 killed
+**98 changes** — 🟢 1 in progress · 🟡 2 proposed · ⚪ 3 deferred · ✅ 85 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -8,12 +8,11 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟡 Proposed (3)
+## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0098](active/0098-permission-deny-reasons-bound-and-redact-the-command-they-ec.md) | Permission deny reasons bound and redact the command they echo | `medium` | `fix` | needs-grooming |
-| [0097](active/0097-approve-all-carries-across-the-cli-model-relay-and-policy-de.md) | Approve-all carries across the CLI-model relay, and policy denials say who denied | `low` | `fix` | needs-grooming |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
@@ -31,7 +30,6 @@ graph TD
   0063 --> 0074
   0081
   0083
-  0097
   0098
   0012:::done
   0052:::done
@@ -39,10 +37,11 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (91)</summary>
+<details><summary>✅🗑️ Archive — done + killed (92)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0097](archive/2026-10-31-0097-approve-all-carries-across-the-cli-model-relay-and-policy-de.md) | Approve-all carries across the CLI-model relay, and policy denials say who denied | 2026-10-31 |
 | [0096](archive/2026-10-31-0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | 2026-10-31 |
 | [0095](archive/2026-10-31-0095-workers-must-declare-tools-and-worker-requires-an-active-wor.md) | Workers must declare tools, and worker requires an active workflow | 2026-10-31 |
 | [0094](archive/2026-10-31-0094-approval-provenance-is-per-gate-not-per-process.md) | Approval provenance is per gate, not per process | 2026-10-31 |

@@ -2,7 +2,7 @@
 id: 97
 slug: 'approve-all-carries-across-the-cli-model-relay-and-policy-de'
 title: 'Approve-all carries across the CLI-model relay, and policy denials say who denied'
-status: 'proposed'
+status: 'killed'
 priority: 'low'
 type: 'fix'
 deliverable: 'pr'
@@ -47,3 +47,7 @@ With a CLI-routed model, tools run in an MCP server subprocess that evaluates it
 
 - Changes to provenance semantics.
 - New approval protocols.
+
+## Why killed
+
+Duplicate: folded into change 98, which carries the approve-all relay posture and the policy-deny wording together with the bounded, redacted deny reasons.
