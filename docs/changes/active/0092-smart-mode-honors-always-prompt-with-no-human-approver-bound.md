@@ -8,12 +8,12 @@ type: 'fix'
 deliverable: 'pr'
 created: '2026-10-31'
 updated: '2026-10-31'
-depends_on: []
+depends_on: [87, 88]
 stacked_on:
 related: [87, 88]
 discovered_from: [87]
 adrs: [64]
-spec:
+spec: 'docs/superpowers/specs/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md'
 plan:
 results:
 auto_groomable:
@@ -30,6 +30,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md](../../superpowers/specs/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md) |
 | ADRs | [ADR-0064](../../adrs/0064-explicit-ask-rules-are-their-own-verdict-prompt-a-human-deny.md) |
 <!-- docket:artifacts:end -->
 

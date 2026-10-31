@@ -22,7 +22,7 @@
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0093](active/0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md) | Permission floor and wrapper parity across modes and bindings | `medium` | `fix` | needs-grooming |
-| [0092](active/0092-smart-mode-honors-always-prompt-with-no-human-approver-bound.md) | Smart mode honors always_prompt with no human approver bound | `medium` | `fix` | needs-grooming |
+| [0092](active/0092-smart-mode-honors-always-prompt-with-no-human-approver-bound.md) | Smart mode honors always_prompt with no human approver bound | `medium` | `fix` | ⏳ waiting on #87 — needs your merge |
 | [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | ⏳ waiting on #90 — needs your merge |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
@@ -46,7 +46,8 @@ graph TD
   0089
   0090
   0090 --> 0091
-  0092
+  0087 --> 0092
+  0088 --> 0092
   0093
   0012:::done
   0052:::done
