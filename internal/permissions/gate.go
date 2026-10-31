@@ -528,9 +528,10 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	// askLayer names the pipeline stage that routed this call to the human, so
 	// the pre-approval ask event says WHY a prompt appeared. Defaults to human
 	// (prompt-all, smart fallthrough) and is refined by the auto pipeline.
-	// askReason carries the layer's own explanation when it has one (today only
-	// the web_fetch floor does — see fetchFloorAskReason); "" everywhere else
-	// leaves the event exactly as it was.
+	// askReason carries the layer's own explanation when it has one (the
+	// web_fetch floor, see fetchFloorAskReason; an explicit ask rule in auto
+	// mode; a smart-mode always_prompt match, see explicitAskReason); ""
+	// everywhere else leaves the event exactly as it was.
 	askLayer := LayerHuman
 	askReason := ""
 	// askClassifier carries the classifier call metadata into the ask (and any
@@ -548,7 +549,13 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		case VerdictDeny:
 			// A deny is not an error: return a non-auto-approve policy carrying
 			// the layer-named reason so the model can retry with a different call.
-			g.emitDecision(ctx, mode, name, args, "deny", layer, reason, "", cls)
+			// A deny forced by a policy stand-in (explicit ask, no human bound)
+			// records the provenance so the trail shows why rules denied.
+			decidedBy := ""
+			if layer == LayerRules && strings.HasPrefix(reason, explicitAskDenyPrefix) {
+				decidedBy = g.approvalProvenance
+			}
+			g.emitDecision(ctx, mode, name, args, "deny", layer, reason, decidedBy, cls)
 			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: layer}, nil
 		default:
 			// VerdictAsk ⇒ fall through to the shared human-approval block below.
@@ -559,14 +566,27 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	}
 
 	if mode == ModeSmart {
-		// always_prompt demotes even safe-list entries — check first.
-		if !matchesAny(g.cfg.AlwaysPrompt, name, args) {
+		// always_prompt is an explicit ask (change 0092): it demotes even
+		// safe-list entries, and like auto mode's it is its own verdict. With a
+		// human bound it prompts and the ask event names the rule; with only a
+		// policy stand-in it is denied at the rules layer, byte-for-byte the
+		// auto-mode outcome, instead of being answered by the stand-in.
+		pat, demoted := protectivePattern(g.cfg.AlwaysPrompt, name, args)
+		switch {
+		case !demoted:
 			// auto_approve config patterns promote beyond the safe list.
-			if matchesAny(g.cfg.AutoApprove, name, args) || onSafeList(name) {
+			if matchesPermissive(g.cfg.AutoApprove, name, args, g.workspaceRoot) || onSafeList(name) {
 				g.emitDecision(ctx, mode, name, args, "allow", LayerSmartConfig, "", "", nil)
 				policy.AutoApprove = true
 				return policy, nil
 			}
+		case g.approvalProvenance == DecidedByPolicy:
+			reason := explicitAskReason(pat, true)
+			g.emitDecision(ctx, mode, name, args, "deny", LayerRules, reason, g.approvalProvenance, nil)
+			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerRules}, nil
+		default:
+			askLayer = LayerRules
+			askReason = explicitAskReason(pat, false)
 		}
 	}
 
@@ -595,12 +615,27 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	return policy, nil
 }
 
+// explicitAskDenyPrefix opens the reason of every explicit-ask outcome.
+const explicitAskDenyPrefix = "matched ask rule "
+
+// explicitAskReason renders the reason for an explicit-ask outcome in every
+// mode that evaluates operator rules (auto: auto.ask and always_prompt; smart:
+// always_prompt). policy is true when only a stand-in answers approvals, so
+// the ask is a deny. One helper keeps the two modes' reasons identical.
+func explicitAskReason(pat string, policy bool) string {
+	if policy {
+		return explicitAskDenyPrefix + pat + "; no approver bound"
+	}
+	return explicitAskDenyPrefix + pat
+}
+
 // resolveAuto runs the auto-mode pipeline and returns a Verdict plus, on a
 // deny, a layer-named denial reason (empty otherwise). Layer order:
 //
 //  1. Split segments (bash only). ErrUnparseable ⇒ ask (fail toward the human;
 //     an unparseable command is not routed to the classifier).
-//  2. evalRules: Deny ⇒ deny (terminal); Allow ⇒ allow; Ask ⇒ continue.
+//  2. evalRules: Deny ⇒ deny (terminal); Allow ⇒ allow; Ask ⇒ continue;
+//     AskExplicit ⇒ ask (human) or deny (policy).
 //  3. allSegmentsReadOnlySafe ⇒ allow.
 //  4. classifyHeuristic: Deny ⇒ deny; Allow ⇒ allow; Ask ⇒ continue.
 //  5. classifier (if wired): its verdict is final. If nil ⇒ ask (fail closed).
@@ -675,9 +710,22 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 	}
 
 	// 2. Deterministic rules. Deny is terminal; allow is a positive auto-approve.
-	switch evalRules(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt, g.workspaceRoot) {
+	rv, askPattern := evalRulesDetail(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt, g.workspaceRoot)
+	switch rv {
 	case VerdictDeny:
 		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + command, nil
+	case VerdictAskExplicit:
+		// An operator-written ask is its own verdict: it never falls through to
+		// the safelist, heuristics or classifier. With a human bound it prompts
+		// like any ask; with only a policy stand-in it is denied (the stand-in
+		// would otherwise auto-approve what the operator asked to be asked about).
+		// Bindings that reach this: loop servers, the headless mcp-server and the
+		// piped-stdin one-shot. Not --approve-all, which is mode off and returns
+		// at LayerModeOff before any rule is evaluated.
+		if g.approvalProvenance == DecidedByPolicy {
+			return VerdictDeny, LayerRules, explicitAskReason(askPattern, true), nil
+		}
+		return VerdictAsk, LayerRules, explicitAskReason(askPattern, false), nil
 	case VerdictAllow:
 		return VerdictAllow, LayerRules, "", nil
 	}

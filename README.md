@@ -194,13 +194,13 @@ research:
 permissions:
   mode: smart           # off | prompt-all | smart | auto (default: smart)
   session_allow: true   # whether the [s]ession "allow for this session" option appears
-  auto_approve: []      # per-segment allow patterns (see note below): "bash:git *", ...
-  always_prompt: []     # patterns demoted to always-prompt, e.g. "bash:git push*"
+  auto_approve: []      # per-segment allow patterns, strict glob (see below): "bash:git *", ...
+  always_prompt: []     # protective patterns demoted to always-prompt, e.g. "bash:git push*"
   disabled: []          # tool names fully disabled (never runnable), e.g. "web_fetch"
   auto:                 # auto-mode surface (only consulted when mode: auto)
     classifier_model: deepseek-flash   # alias that judges gray-area commands; NEVER a chat alias
-    deny: []            # extra always-deny per-segment patterns, e.g. "bash:npm publish*"
-    ask: []             # extra always-ask per-segment patterns (override an allow)
+    deny: []            # extra always-deny protective patterns, e.g. "bash:npm publish*"
+    ask: []             # extra always-ask protective patterns (override an allow)
     fetch_deny: []      # host-glob floor: matched web_fetch hosts are denied before
                         # the classifier is ever consulted, e.g. ["*.internal.example"]
     fetch_ask: []       # host-glob floor: matched web_fetch hosts are forced to a
@@ -245,6 +245,29 @@ the whole command. There is no way to whitelist a leading `git` into approving a
 trailing `rm`. Wrapping (`sh -c "rm x"`), command substitution (`$(...)` /
 backticks), env-assignment prefixes (`FOO=bar cmd`), and path-qualified argv0
 (`/usr/bin/rm`) all fail closed rather than slip past a prefix match.
+
+**How patterns match (every mode alike).** A bash command is matched per
+parsed segment against `bash:<argv0> <args>`, for example `bash:rm -rf a/b`.
+Protective patterns (`always_prompt`, `auto.deny`, `auto.ask`) are also
+matched against the segment head `bash:<argv0>` and against the whole command,
+and their `*` matches any run of characters **including `/`**, so
+`deny: ["bash:rm *"]` denies `rm -rf a/b` and `ask: ["bash:npm publish*"]`
+matches `npm publish ./pkg/dir`. A matching `always_prompt` or
+`auto.ask` rule is final in smart and auto mode alike: it prompts a human when
+one is bound, and when the binding has no human (the loop servers, the headless
+mcp-server, piped stdin) it is denied with the matched pattern in the reason
+(`matched ask rule <pattern>; no approver bound`). No later layer (the read-only
+safelist, smart mode's allow step, heuristics or classifier) can override it. Allow patterns (`auto_approve`) are strict: their `*` stops at
+`/`, so `bash:git *` does not approve `git clone https://host/repo` and
+`bash:rm build/*` does not approve `rm build/../x`, and every segment must
+match on its own. `?` matches one character and `[...]` classes work as in a
+shell glob; a malformed pattern matches nothing. "Every mode alike" covers
+these segment, whole-command, and head subjects. Smart mode additionally keeps
+its legacy subjects for `always_prompt` and `auto_approve`, the bare tool name
+and the raw first token of the command (so `bash:git` still approves any
+command that starts with `git`), which auto mode does not use; no existing
+smart-mode rule changes meaning. Protective rules match generously because they only ever tighten;
+allow rules match strictly because a match grants permission.
 
 **Trust boundary.** The permission-*loosening* keys — `mode`, `session_allow`,
 `auto_approve`, and the entire `auto` block — are honored **only** from the
@@ -437,6 +460,12 @@ autoscaler), and a steer or a chat message can reach any of them.
 [Connect](https://connectrpc.com) service (`fuse.loop.v1`, IDL in
 `proto/fuse/loop/v1/loop.proto`). It is browser-reachable over HTTP/2 with no
 proxy and speaks Connect, gRPC, and gRPC-Web (served over h2c):
+
+Neither `loop-server` nor `loop-serve-net` has a human approver, so an operator
+`always_prompt` or `auto.ask` rule cannot prompt anyone: a matching call is
+denied with the pattern in the reason, in smart mode (the default) and auto mode
+alike, and the model sees that reason as the tool result. To let such a command
+run unattended, move its pattern to `auto_approve` or remove it.
 
 ```sh
 fuse loop-serve-net --addr 127.0.0.1:8787

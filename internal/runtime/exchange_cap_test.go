@@ -38,18 +38,31 @@ func parkedReason(t *testing.T, ev event.Event) string {
 	return p.Reason
 }
 
-func nextParked(t *testing.T, evCh <-chan event.Event) event.Event {
+// nthParked returns the n-th (1-based) loop.parked event from the loop's durable
+// history. It reads history rather than a live Observe tail: the tail does not
+// replay events published before it subscribed, and a fast loop can park before
+// the test's subscription exists.
+func nthParked(t *testing.T, rt Runtime, loopID string, n int) event.Event {
 	t.Helper()
-	deadline := time.After(3 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for {
-		select {
-		case ev := <-evCh:
-			if ev.Kind == event.KindLoopParked {
-				return ev
-			}
-		case <-deadline:
-			t.Fatal("timed out waiting for loop.parked")
+		hist, err := rt.Attach(context.Background(), event.DefaultTenant, loopID, 0)
+		if err != nil {
+			t.Fatalf("Attach: %v", err)
 		}
+		seen := 0
+		for _, ev := range hist {
+			if ev.Kind == event.KindLoopParked {
+				seen++
+				if seen == n {
+					return ev
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for loop.parked #%d (saw %d)", n, seen)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -75,13 +88,8 @@ func TestInteractiveMaxTurnsIsPerExchange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
-	evCh, unsub, err := rt.Observe(ctx, event.DefaultTenant, h.ID())
-	if err != nil {
-		t.Fatalf("Observe: %v", err)
-	}
-	defer unsub()
 
-	ev := nextParked(t, evCh)
+	ev := nthParked(t, rt, h.ID(), 1)
 	if got := parkedReason(t, ev); got != "max_turns" {
 		t.Fatalf("reason = %q, want max_turns", got)
 	}
@@ -92,7 +100,7 @@ func TestInteractiveMaxTurnsIsPerExchange(t *testing.T) {
 	if err := rt.Send(ctx, event.DefaultTenant, h.ID(), "again"); err != nil {
 		t.Fatalf("Send after cap: %v", err)
 	}
-	ev = nextParked(t, evCh)
+	ev = nthParked(t, rt, h.ID(), 2)
 	if got := parkedReason(t, ev); got != "max_turns" {
 		t.Fatalf("second reason = %q, want max_turns", got)
 	}
@@ -180,12 +188,7 @@ func TestSessionTokenCeilingParksInteractiveLoop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
-	evCh, unsub, err := rt.Observe(ctx, event.DefaultTenant, h.ID())
-	if err != nil {
-		t.Fatalf("Observe: %v", err)
-	}
-	defer unsub()
-	if got := parkedReason(t, nextParked(t, evCh)); got != "session_tokens" {
+	if got := parkedReason(t, nthParked(t, rt, h.ID(), 1)); got != "session_tokens" {
 		t.Fatalf("reason = %q, want session_tokens", got)
 	}
 	if n := fake.calls.Load(); n != 2 {
@@ -200,7 +203,7 @@ func TestSessionTokenCeilingParksInteractiveLoop(t *testing.T) {
 	if err := rt.Send(ctx, event.DefaultTenant, h.ID(), "again"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if got := parkedReason(t, nextParked(t, evCh)); got != "session_tokens" {
+	if got := parkedReason(t, nthParked(t, rt, h.ID(), 2)); got != "session_tokens" {
 		t.Fatalf("second reason = %q, want session_tokens", got)
 	}
 	if n := fake.calls.Load(); n != 2 {
@@ -235,12 +238,7 @@ func TestCloseWhileParkedAtTurnCapEndsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}
-	evCh, unsub, err := rt.Observe(ctx, event.DefaultTenant, h.ID())
-	if err != nil {
-		t.Fatalf("Observe: %v", err)
-	}
-	defer unsub()
-	if got := parkedReason(t, nextParked(t, evCh)); got != "max_turns" {
+	if got := parkedReason(t, nthParked(t, rt, h.ID(), 1)); got != "max_turns" {
 		t.Fatalf("reason = %q, want max_turns", got)
 	}
 	if err := rt.(*inProcRuntime).Shutdown(context.Background()); err != nil {

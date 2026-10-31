@@ -123,6 +123,14 @@ func (s *FSEventStore) Append(e event.Event) error {
 func (s *FSEventStore) Subscribe() (<-chan event.Event, func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		// Close already closed every subscriber; one arriving after it would never
+		// be closed, so a consumer ranging over it would hang. Hand back a closed
+		// channel instead, matching event.NoopStore.
+		ch := make(chan event.Event)
+		close(ch)
+		return ch, func() {}
+	}
 	id := s.nextSub
 	s.nextSub++
 	sub := &subscriber{ch: make(chan event.Event, subBuffer)}

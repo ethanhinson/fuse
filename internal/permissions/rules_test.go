@@ -1,6 +1,7 @@
 package permissions
 
 import (
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,14 +63,14 @@ func TestEvalRules_Precedence(t *testing.T) {
 			cmd:         "git status",
 			auto:        AutoConfig{Ask: []string{"bash:git status"}},
 			autoApprove: []string{"bash:git *"},
-			want:        VerdictAsk,
+			want:        VerdictAskExplicit,
 		},
 		{
 			desc:         "ask pattern from alwaysPrompt forces ask over an allow rule",
 			cmd:          "git status",
 			autoApprove:  []string{"bash:git *"},
 			alwaysPrompt: []string{"bash:git status"},
-			want:         VerdictAsk,
+			want:         VerdictAskExplicit,
 		},
 		{
 			desc:        "deny wins even when an ask pattern also matches",
@@ -100,7 +101,7 @@ func TestEvalRules_Precedence(t *testing.T) {
 			cmd:          "git push origin main",
 			auto:         AutoConfig{AllowPush: true},
 			alwaysPrompt: []string{"bash:git push*"},
-			want:         VerdictAsk,
+			want:         VerdictAskExplicit,
 		},
 		{
 			desc: "bare curl is no longer a rules deny — falls through to the heuristic/classifier (0068)",
@@ -380,7 +381,7 @@ func TestEvalRules_RedirectTargetsReachTighteningPatterns(t *testing.T) {
 			cmd:          "echo secrets > .git/hooks/pre-commit",
 			autoApprove:  []string{"bash:*"},
 			alwaysPrompt: []string{"bash:* >*.git/hooks/*"},
-			want:         VerdictAsk,
+			want:         VerdictAskExplicit,
 		},
 		{
 			desc: "an append redirect is reachable too",
@@ -500,5 +501,92 @@ func TestIsSafeDocker(t *testing.T) {
 				t.Errorf("isSafeDocker(%q) = %v, want %v", tc.args, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestEvalRules_ProtectivePatternsCrossSlashes is change 0088's fail-open fix:
+// deny, ask and always_prompt patterns match with a glob whose '*' spans '/',
+// per segment, against the segment head, and against the whole command. Each
+// ask row carries a witness allow that WOULD approve the command, so an ask
+// verdict proves the protective pattern fired (the default is also ask).
+func TestEvalRules_ProtectivePatternsCrossSlashes(t *testing.T) {
+	cases := []struct {
+		desc         string
+		cmd          string
+		auto         AutoConfig
+		autoApprove  []string
+		alwaysPrompt []string
+		want         Verdict
+	}{
+		{desc: "deny bash:rm * denies an argument with a slash", cmd: "rm -rf a/b",
+			auto: AutoConfig{Deny: []string{"bash:rm *"}}, want: VerdictDeny},
+		{desc: "deny bash:rm * denies the slash segment of a compound", cmd: "rm -rf a/b && ls",
+			auto: AutoConfig{Deny: []string{"bash:rm *"}}, want: VerdictDeny},
+		{desc: "deny on the bare head bash:rm reaches every rm invocation", cmd: "rm -rf a/b",
+			auto: AutoConfig{Deny: []string{"bash:rm"}}, want: VerdictDeny},
+		{desc: "deny matches the head of a peeled wrapper", cmd: "timeout 5 rm -rf a/b",
+			auto: AutoConfig{Deny: []string{"bash:rm"}}, want: VerdictDeny},
+		{desc: "ask bash:cat* asks for cat dir/file over an allow", cmd: "cat dir/file",
+			auto: AutoConfig{Ask: []string{"bash:cat*"}}, autoApprove: []string{"bash:cat dir/*"}, want: VerdictAskExplicit},
+		{desc: "always_prompt bash:rm * asks over an allow", cmd: "rm -rf a/b",
+			autoApprove: []string{"bash:rm -rf a/*"}, alwaysPrompt: []string{"bash:rm *"}, want: VerdictAskExplicit},
+		{desc: "a whole-command protective pattern spans segment separators and slashes", cmd: "git status && rm -rf a/b",
+			auto: AutoConfig{Deny: []string{"bash:git status*rm -rf a/*"}}, want: VerdictDeny},
+		{desc: "an unrelated protective pattern still misses", cmd: "mv a/b c/d",
+			auto: AutoConfig{Deny: []string{"bash:rm *"}}, autoApprove: []string{"bash:mv a/* c/*"}, want: VerdictAllow},
+		{desc: "a malformed protective pattern matches nothing", cmd: "rm -rf a/b",
+			auto: AutoConfig{Deny: []string{"bash:rm ["}}, autoApprove: []string{"bash:rm -rf a/*"}, want: VerdictAllow},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			got := evalRules(segsFor(t, tc.cmd), tc.auto, tc.autoApprove, tc.alwaysPrompt, "")
+			if got != tc.want {
+				t.Errorf("evalRules(%q) = %v, want %v", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEvalRules_PermissivePatternsStayStrict pins the other half of change
+// 0088: auto_approve keeps path.Match, whose '*' does not cross '/', so the
+// containment a human wrote into an allow pattern still holds (ADR-0005,
+// ADR-0049). None of these may become VerdictAllow.
+func TestEvalRules_PermissivePatternsStayStrict(t *testing.T) {
+	cases := []struct {
+		desc        string
+		cmd         string
+		autoApprove []string
+	}{
+		{"bash:git * still misses a URL with slashes", "git clone https://x/y", []string{"bash:git *"}},
+		{"bash:git * does not launder a trailing rm (per segment)", "git status && rm -rf a/b", []string{"bash:git *"}},
+		{"bash:rm build/* does not admit a parent escape", "rm build/../x", []string{"bash:rm build/*"}},
+		{"bash:* does not cross a slash in an argument", "rm -rf a/b", []string{"bash:*"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			if got := evalRules(segsFor(t, tc.cmd), AutoConfig{}, tc.autoApprove, nil, ""); got == VerdictAllow {
+				t.Errorf("evalRules(%q) with allow %v = allow, want not allow", tc.cmd, tc.autoApprove)
+			}
+		})
+	}
+}
+
+// TestMatchesSubjects_PermissiveIsPathMatch pins the permissive engine to
+// path.Match byte for byte, so every existing allow decision is unchanged.
+// Each side gets its own production source: the old engine is path.Match
+// itself, not a copy of it.
+func TestMatchesSubjects_PermissiveIsPathMatch(t *testing.T) {
+	pats := []string{"bash:git *", "bash:rm build/*", "bash:*", "bash:go", "read_file", "bash:echo x >out.txt", "bash:rm ["}
+	subjects := []string{
+		"bash:git status", "bash:git clone https://x/y", "bash:rm build/out", "bash:rm build/../x",
+		"bash:rm -rf a/b", "bash:go", "read_file", "bash:echo x >out.txt", "bash:rm [",
+	}
+	for _, p := range pats {
+		for _, s := range subjects {
+			want, _ := path.Match(p, s)
+			if got := matchesSubjects(consumerPermissive, []string{p}, s); got != want {
+				t.Errorf("permissive matchesSubjects(%q, %q) = %v, path.Match = %v", p, s, got, want)
+			}
+		}
 	}
 }

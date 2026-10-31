@@ -293,3 +293,26 @@ func TestConcurrentAppendNoCorruption(t *testing.T) {
 		seen[e.Seq] = true
 	}
 }
+
+// A subscriber that arrives after Close must get a closed channel: Close has
+// already closed every subscriber it knew about, so a late one would otherwise
+// never be closed and a consumer ranging over it would hang.
+func TestSubscribeAfterCloseReturnsClosedChannel(t *testing.T) {
+	s, err := NewFSEventStore(t.TempDir(), "sess")
+	if err != nil {
+		t.Fatalf("NewFSEventStore: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	ch, cancel := s.Subscribe()
+	defer cancel()
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("received an event from a closed store")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Subscribe after Close returned a channel that never closes")
+	}
+}
