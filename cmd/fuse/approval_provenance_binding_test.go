@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/hitl"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/probe"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
@@ -233,5 +236,74 @@ func TestOrchestratorStandInIsPolicy(t *testing.T) {
 	}
 	if ag == nil {
 		t.Fatal("orchestrateCLIBuilder returned a nil agent")
+	}
+}
+
+// TestResearchProbeGatesArePolicy drives a research-probe child through the
+// production probe wiring. The probe binds its gates to AlwaysApprove, a policy
+// approver, so the child's explicit ask on bash:touch* is denied at the rules
+// layer with the policy-only "no approver bound" reason and the command never
+// runs. Assertions go through the gateway and the filesystem, not a context
+// sink, because the agent installs its own decision sink.
+func TestResearchProbeGatesArePolicy(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	t.Chdir(dir)
+	gw := &routedGateway{route: func(task string, turn int, _ gatewayCall) string {
+		if strings.Contains(task, "CHILD-TASK") && turn == 0 {
+			return toolCallsReply(call{name: "bash", args: map[string]any{"command": "touch ran"}})
+		}
+		return textReply("done")
+	}}
+	srv := httptest.NewServer(gw)
+	t.Cleanup(srv.Close)
+	cfg := config.Default()
+	cfg.Gateway.URL, cfg.Gateway.Key = srv.URL, "tkn"
+	cfg.Permissions.Mode = "auto"
+	cfg.Permissions.Auto.Ask = []string{"bash:touch*"}
+	svc, err := sandbox.NewService(sandbox.Config{Contained: false, Handler: sandbox.HandlerHost})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	reg := registryFromConfig(cfg)
+	toolReg := defaultToolRegistry(svc, cfg.Research, nil)
+	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
+	_ = buildResearchProbeRuntimeDeps(researchProbeDepsInput{
+		cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
+		logSink: probe.NewLog(),
+	})
+
+	res := toolReg.Execute(context.Background(), "spawn_agent",
+		argsJSON(map[string]any{"label": "w", "task": "CHILD-TASK"}))
+	if res.IsError || res.Denied {
+		t.Fatalf("spawn_agent = %+v, want a successful spawn", res)
+	}
+
+	first := turnRequest(t, gw, "CHILD-TASK", 0)
+	offered := false
+	var palette []string
+	for _, tl := range first.Tools {
+		palette = append(palette, tl.Function.Name)
+		if tl.Function.Name == "bash" {
+			offered = true
+		}
+	}
+	if !offered {
+		t.Fatalf("probe child palette = %v, want it to offer bash", palette)
+	}
+
+	second := turnRequest(t, gw, "CHILD-TASK", 1)
+	const want = "matched ask rule bash:touch*; no approver bound"
+	found := false
+	for _, m := range second.Messages {
+		if m.Role == "tool" && strings.Contains(m.Content, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("CHILD-TASK turn 1 messages = %+v, want a tool message containing %q", second.Messages, want)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "ran")); !os.IsNotExist(err) {
+		t.Fatalf("ran sentinel stat err = %v, want not-exist (the probe child must not run the command)", err)
 	}
 }
