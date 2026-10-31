@@ -2,7 +2,7 @@
 // control binding (change 0055, fuse.loop.v1) — successor to the JSON-over-WebSocket
 // wire (#48, ADR-0032 superseded). It implements loopv1connect.LoopServiceHandler
 // over a runtime.Runtime: StartLoop / Send / GetCapabilities (unary) and Observe
-// (server-streaming history-then-live). It is a pure adapter — it imports internal/runtime,
+// (server-streaming history-then-live). It is a pure adapter - it imports internal/runtime,
 // internal/event, the generated loopwire stubs, the internal/capabilities answer
 // types and the public harness types (for a
 // refused spec's violations, change 0085), and NEVER a renderer, TUI,
