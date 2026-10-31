@@ -28,6 +28,11 @@ const (
 	// VerdictDeny is a hard block from a deny/dangerous match. It wins over any
 	// allow rule and over any session grant.
 	VerdictDeny
+	// VerdictAskExplicit is an ask the operator wrote: a cfg.Ask or
+	// always_prompt pattern matched. Unlike the default VerdictAsk ("no rule
+	// admitted this"), it is its own verdict that skips the safelist,
+	// heuristics and classifier, and is denied when no human approver is bound.
+	VerdictAskExplicit
 )
 
 // String renders the verdict as its lowercase rule keyword.
@@ -39,6 +44,8 @@ func (v Verdict) String() string {
 		return "ask"
 	case VerdictDeny:
 		return "deny"
+	case VerdictAskExplicit:
+		return "ask-explicit"
 	default:
 		return "unknown"
 	}
@@ -79,41 +86,58 @@ var dangerousNames = map[string]bool{
 // command string; allow is matched per-segment only, so a whole-string allow
 // can never rescue a dangerous segment.
 func evalRules(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []string, workspaceRoot string) Verdict {
+	v, _ := evalRulesDetail(segments, cfg, autoApprove, alwaysPrompt, workspaceRoot)
+	return v
+}
+
+// evalRulesDetail is evalRules plus, for VerdictAskExplicit, the ask or
+// always_prompt pattern that matched (for the decision reason).
+func evalRulesDetail(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []string, workspaceRoot string) (Verdict, string) {
 	whole := wholeSubject(segments)
 
 	// 1. Deny wins globally.
 	for _, seg := range segments {
 		if isDangerous(seg, workspaceRoot) {
-			return VerdictDeny
+			return VerdictDeny, ""
 		}
 		if matchesSegment(cfg.Deny, seg) {
-			return VerdictDeny
+			return VerdictDeny, ""
 		}
 	}
 	if matchesSubjects(cfg.Deny, whole) {
-		return VerdictDeny
+		return VerdictDeny, ""
 	}
 
 	// 2. Ask beats allow.
 	askPatterns := append(append([]string(nil), cfg.Ask...), alwaysPrompt...)
 	for _, seg := range segments {
-		if matchesSegment(askPatterns, seg) {
-			return VerdictAsk
+		if pat, ok := firstMatch(askPatterns, segmentSubject(seg)); ok {
+			return VerdictAskExplicit, pat
 		}
 	}
-	if matchesSubjects(askPatterns, whole) {
-		return VerdictAsk
+	if pat, ok := firstMatch(askPatterns, whole); ok {
+		return VerdictAskExplicit, pat
 	}
 
 	// 3. Allow only when every segment independently matches an allow rule (or
 	// the config-opted git-push allowance, change 0068 — checked AFTER deny/ask
 	// so a config deny or always_prompt still beats allow_push).
 	if len(segments) > 0 && allSegmentsAllowed(segments, autoApprove, cfg.AllowPush) {
-		return VerdictAllow
+		return VerdictAllow, ""
 	}
 
 	// 4. Default: fail toward the human.
-	return VerdictAsk
+	return VerdictAsk, ""
+}
+
+// firstMatch returns the first pattern matching subject.
+func firstMatch(patterns []string, subject string) (string, bool) {
+	for _, pat := range patterns {
+		if ok, _ := path.Match(pat, subject); ok {
+			return pat, true
+		}
+	}
+	return "", false
 }
 
 // allSegmentsAllowed reports whether every segment matches an allow pattern —
@@ -627,12 +651,8 @@ func wholeSubject(segments []Segment) string {
 // glob semantics — the same engine as the legacy smart path, but here the
 // subject carries the full argv rather than only the first token.
 func matchesSubjects(patterns []string, subject string) bool {
-	for _, pat := range patterns {
-		if ok, _ := path.Match(pat, subject); ok {
-			return true
-		}
-	}
-	return false
+	_, ok := firstMatch(patterns, subject)
+	return ok
 }
 
 // readOnlyDockerSubcommands are docker subcommands with no mutating flag form:

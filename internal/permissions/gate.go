@@ -548,7 +548,13 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		case VerdictDeny:
 			// A deny is not an error: return a non-auto-approve policy carrying
 			// the layer-named reason so the model can retry with a different call.
-			g.emitDecision(ctx, mode, name, args, "deny", layer, reason, "", cls)
+			// A deny forced by a policy stand-in (explicit ask, no human bound)
+			// records the provenance so the trail shows why rules denied.
+			decidedBy := ""
+			if layer == LayerRules && strings.HasPrefix(reason, explicitAskDenyPrefix) {
+				decidedBy = g.approvalProvenance
+			}
+			g.emitDecision(ctx, mode, name, args, "deny", layer, reason, decidedBy, cls)
 			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: layer}, nil
 		default:
 			// VerdictAsk ⇒ fall through to the shared human-approval block below.
@@ -595,12 +601,16 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	return policy, nil
 }
 
+// explicitAskDenyPrefix opens the reason of every explicit-ask outcome.
+const explicitAskDenyPrefix = "matched ask rule "
+
 // resolveAuto runs the auto-mode pipeline and returns a Verdict plus, on a
 // deny, a layer-named denial reason (empty otherwise). Layer order:
 //
 //  1. Split segments (bash only). ErrUnparseable ⇒ ask (fail toward the human;
 //     an unparseable command is not routed to the classifier).
-//  2. evalRules: Deny ⇒ deny (terminal); Allow ⇒ allow; Ask ⇒ continue.
+//  2. evalRules: Deny ⇒ deny (terminal); Allow ⇒ allow; Ask ⇒ continue;
+//     AskExplicit ⇒ ask (human) or deny (policy).
 //  3. allSegmentsReadOnlySafe ⇒ allow.
 //  4. classifyHeuristic: Deny ⇒ deny; Allow ⇒ allow; Ask ⇒ continue.
 //  5. classifier (if wired): its verdict is final. If nil ⇒ ask (fail closed).
@@ -675,9 +685,22 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 	}
 
 	// 2. Deterministic rules. Deny is terminal; allow is a positive auto-approve.
-	switch evalRules(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt, g.workspaceRoot) {
+	rv, askPattern := evalRulesDetail(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt, g.workspaceRoot)
+	switch rv {
 	case VerdictDeny:
 		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + command, nil
+	case VerdictAskExplicit:
+		// An operator-written ask is its own verdict: it never falls through to
+		// the safelist, heuristics or classifier. With a human bound it prompts
+		// like any ask; with only a policy stand-in it is denied (the stand-in
+		// would otherwise auto-approve what the operator asked to be asked about).
+		// Bindings that reach this: loop servers, the headless mcp-server and the
+		// piped-stdin one-shot. Not --approve-all, which is mode off and returns
+		// at LayerModeOff before any rule is evaluated.
+		if g.approvalProvenance == DecidedByPolicy {
+			return VerdictDeny, LayerRules, explicitAskDenyPrefix + askPattern + "; no approver bound", nil
+		}
+		return VerdictAsk, LayerRules, explicitAskDenyPrefix + askPattern, nil
 	case VerdictAllow:
 		return VerdictAllow, LayerRules, "", nil
 	}
