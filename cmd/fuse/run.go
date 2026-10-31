@@ -461,6 +461,7 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 	maxTokens := effectiveMaxTokens(mc, cfg)
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
+	a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 	a.ContextWindow = mc.ContextWindow
 	a.LoopApproval = loopApprovalFor(approve, interactive)
 	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
@@ -828,6 +829,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
 		// maxTokens is not forwarded to the CLI; Claude controls its own limits.
 		a := agent.New(cliAdapter, permGate, r, mc.ID, systemPrompt, maxTurns, 0)
+		a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 		// Session observer (change 0061). SetObserver maps nil to NoopObserver, so
 		// a caller that does not opt in keeps today's behavior exactly.
 		a.SetObserver(observer)

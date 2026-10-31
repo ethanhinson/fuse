@@ -688,6 +688,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	a.SetObserver(obs)
 	a.SetEventSink(store)
 	a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
+	a.SetUsageSink(rootNode.UpdateTokens) // the agent owns usage accounting (change 0090)
 
 	lp := &loop{
 		id:         rootID,
@@ -723,10 +724,14 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// server-authoritative history. Only meaningful alongside the injector above. An
 	// interactive loop must run uncapped: each resumed exchange consumes real turns,
 	// so any finite per-run backstop the binding baked into the agent would end the
-	// whole conversation once total turns crossed it. Lift it here.
+	// whole conversation once total turns crossed it. The agent therefore treats
+	// maxTurns as a per-exchange cap when interactive (change 0090): the binding's
+	// value (unset => 0, uncapped) is kept, never baked in as a whole-run limit.
 	if interactive {
 		a.SetInteractive(true)
-		a.SetMaxTurns(0)
+		if !a.MaxTurnsExplicit() {
+			a.SetMaxTurns(0) // no configured cap: uncapped, not a headless backstop
+		}
 	}
 	// A resumed seed IS a durable-stream reconstruction, so suppress re-emitting
 	// KindUserInput for its user turns (change 0054): they already exist in the stream.

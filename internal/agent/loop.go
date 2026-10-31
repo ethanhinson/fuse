@@ -414,7 +414,22 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// a.maxTurns <= 0 means unlimited: the loop runs until the model stops
 	// calling tools, context is exhausted, or the doom-loop detector trips.
 	// A positive maxTurns caps the run and returns ErrMaxTurns. See change 0038.
-	for turn := 0; a.maxTurns <= 0 || turn < a.maxTurns; turn++ {
+	//
+	// In interactive mode maxTurns is a PER-EXCHANGE cap (change 0090): the turns
+	// that run in answer to one user message. On the cap the loop parks with
+	// reason max_turns instead of ending the session; the next message gets a
+	// fresh allowance.
+	exchangeTurns := 0
+	for turn := 0; a.interactive || a.maxTurns <= 0 || turn < a.maxTurns; turn++ {
+		if a.interactive && a.maxTurns > 0 && a.humanInjector != nil && exchangeTurns >= a.maxTurns {
+			a.emit(event.KindLoopParked, turn, event.LoopParkedPayload{Turn: turn, Reason: "max_turns"})
+			if werr := a.humanInjector.Wait(ctx); werr != nil {
+				a.emit(event.KindError, turn, event.ErrorPayload{Err: ErrMaxTurns.Error(), Turn: turn})
+				return messages, ErrMaxTurns
+			}
+			exchangeTurns = 0
+		}
+		exchangeTurns++
 		if err := ctx.Err(); err != nil {
 			a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
 			return messages, err
@@ -580,6 +595,9 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			FinishReason: resp.FinishReason,
 		})
 		a.renderer.Tokens(resp.InputTokens, resp.OutputTokens)
+		if a.usageSink != nil {
+			a.usageSink(resp.InputTokens, resp.OutputTokens)
+		}
 		// Only the prompt side of usage is trusted for the context estimate. The
 		// completion count includes reasoning tokens that never re-enter the
 		// conversation: a reasoning model can spend 110k tokens on a turn whose
@@ -617,8 +635,9 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 				a.emit(event.KindLoopParked, turn, event.LoopParkedPayload{Turn: turn, Content: resp.Content})
 				if werr := a.humanInjector.Wait(ctx); werr == nil {
 					// A message is pending; loop back so the top-of-turn Poll injects it.
-					// maxTurns is unlimited for an interactive loop (set by the binding),
-					// so the turn counter never caps a live conversation.
+					// A new exchange starts: maxTurns caps turns per exchange, so the
+					// allowance resets (change 0090).
+					exchangeTurns = 0
 					continue
 				}
 				// errNoBus or ctx cancellation: end the run like a normal terminal turn.

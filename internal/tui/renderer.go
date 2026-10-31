@@ -192,7 +192,7 @@ func (r *NodeRenderer) Errorf(format string, a ...any) {
 }
 
 func (r *NodeRenderer) Tokens(input, output int) {
-	r.node.UpdateTokens(input, output)
+	// Token counting is owned by the agent (Agent.SetUsageSink, change 0090).
 	r.node.AddEvent(agent.AgentEvent{
 		Kind:    agent.KindTokens,
 		Payload: map[string]any{"in": input, "out": output},

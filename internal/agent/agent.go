@@ -106,6 +106,12 @@ type Agent struct {
 	// bus is wired. False ⇒ byte-identical single-task run-to-completion (ADR-0016).
 	// Only meaningful with humanInjector set; a spawned child is never interactive.
 	interactive bool
+	// usageSink receives each model call's token usage; the agent owns usage
+	// accounting so every host (not only the TUI renderer) feeds the tree (change 0090).
+	usageSink func(in, out int)
+	// maxTurnsExplicit is true when the turn cap came from the spec/operator
+	// config rather than a binding's headless backstop (change 0090).
+	maxTurnsExplicit bool
 
 	// seeded, when true, marks that Run's seed history was reconstructed from a
 	// durable event stream that ALREADY contains those turns (change 0054 resume):
@@ -252,6 +258,11 @@ func (a *Agent) SetSeeded(v bool) { a.seeded = v }
 // enables interactive mode, independent of any per-turn backstop a one-shot binding
 // wants.
 func (a *Agent) SetMaxTurns(n int) { a.maxTurns = n }
+
+// SetUsageSink installs the callback that receives each model call's token usage.
+// Bindings wire it to the agent's tree node (AgentNode.UpdateTokens) so session and
+// pool token ceilings trip in every host, not only under the TUI renderer.
+func (a *Agent) SetUsageSink(f func(in, out int)) { a.usageSink = f }
 
 // DefaultToolTimeout bounds a single leaf tool call when no explicit timeout is
 // configured. Chosen to comfortably cover slow-but-legitimate work (large web
@@ -451,3 +462,11 @@ func New(m Completer, t ToolExecutor, r Renderer, modelID, systemPrompt string, 
 		observer:  observe.NoopObserver{},
 	}
 }
+
+// SetMaxTurnsExplicit records whether maxTurns was set by configuration (true) or is
+// a binding's default backstop (false). An interactive loop keeps an explicit cap as a
+// per-exchange limit and drops a backstop (change 0090).
+func (a *Agent) SetMaxTurnsExplicit(v bool) { a.maxTurnsExplicit = v }
+
+// MaxTurnsExplicit reports whether the turn cap was explicitly configured.
+func (a *Agent) MaxTurnsExplicit() bool { return a.maxTurnsExplicit }
