@@ -1538,3 +1538,34 @@ func TestSplitSegments_DockerParses(t *testing.T) {
 		}
 	}
 }
+
+// TestSplitSegments_DashCInnerRawIsOuterCall: every segment a peeled `bash -c`
+// script yields carries the OUTER call's source text as Raw (change 0093), so a
+// protective rule naming the wrapper ("bash:bash *") can reach the command as
+// written. Name and Args stay the inner command's own.
+func TestSplitSegments_DashCInnerRawIsOuterCall(t *testing.T) {
+	cases := []struct {
+		cmd   string
+		names []string
+	}{
+		{`bash -c "rm x && ls"`, []string{"rm", "ls"}},
+		{`sh -c "make"`, []string{"make"}},
+		{`timeout 5 bash -c "make"`, []string{"make"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			got := segsFor(t, tc.cmd)
+			if len(got) != len(tc.names) {
+				t.Fatalf("splitSegments(%q) = %d segments, want %d: %+v", tc.cmd, len(got), len(tc.names), got)
+			}
+			for i, seg := range got {
+				if seg.Name != tc.names[i] {
+					t.Errorf("segment %d Name = %q, want %q", i, seg.Name, tc.names[i])
+				}
+				if seg.Raw != tc.cmd {
+					t.Errorf("segment %d Raw = %q, want the outer call %q", i, seg.Raw, tc.cmd)
+				}
+			}
+		})
+	}
+}

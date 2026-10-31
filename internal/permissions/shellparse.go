@@ -955,7 +955,21 @@ peel:
 		if err != nil {
 			return ErrUnparseable
 		}
-		return collectStmts(script, file.Stmts, out)
+		// Every segment the script yields carries the OUTER call's source text
+		// as Raw (change 0093), so a protective rule naming the wrapper
+		// ("bash:bash *") can reach the command as written in every mode. Name
+		// and Args stay the inner command's own. A nested `bash -c` is
+		// overwritten again here by its own caller, so Raw always ends up as the
+		// outermost call.
+		first := len(*out)
+		if err := collectStmts(script, file.Stmts, out); err != nil {
+			return err
+		}
+		outer := rawSegment(src, call)
+		for i := first; i < len(*out); i++ {
+			(*out)[i].Raw = outer
+		}
+		return nil
 	}
 
 	// Any other arbitrary-arg wrapper as argv[0] fails closed.
