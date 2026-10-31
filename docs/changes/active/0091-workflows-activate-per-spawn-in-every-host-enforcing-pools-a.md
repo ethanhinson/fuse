@@ -13,7 +13,7 @@ stacked_on:
 related: [34, 86]
 discovered_from: []
 adrs: [60, 61]
-spec:
+spec: 'docs/superpowers/specs/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md'
 plan:
 results:
 auto_groomable:
@@ -30,6 +30,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md](../../superpowers/specs/2026-10-31-workflows-activate-per-spawn-in-every-host-enforcing-pools-a-design.md) |
 | ADRs | [ADR-0060](../../adrs/0060-harnessspec-proto-is-the-portable-harness-definition-client.md), [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md) |
 <!-- docket:artifacts:end -->
 
