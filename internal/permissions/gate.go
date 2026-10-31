@@ -562,7 +562,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		// always_prompt demotes even safe-list entries — check first.
 		if !matchesProtective(g.cfg.AlwaysPrompt, name, args) {
 			// auto_approve config patterns promote beyond the safe list.
-			if matchesPermissive(g.cfg.AutoApprove, name, args) || onSafeList(name) {
+			if matchesPermissive(g.cfg.AutoApprove, name, args, g.workspaceRoot) || onSafeList(name) {
 				g.emitDecision(ctx, mode, name, args, "allow", LayerSmartConfig, "", "", nil)
 				policy.AutoApprove = true
 				return policy, nil

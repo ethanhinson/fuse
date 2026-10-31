@@ -1,6 +1,13 @@
 package permissions
 
-import "testing"
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/ethanhinson/fuse/internal/config"
+)
 
 // TestMatchesProtective covers smart mode's always_prompt matcher (change
 // 0088): legacy {tool, bash:<firstToken>} subjects are kept, and the parsed
@@ -57,12 +64,51 @@ func TestMatchesPermissive(t *testing.T) {
 		{"strict: bash:rm build/* does not admit a parent escape", []string{"bash:rm build/*"}, "rm build/../x", false},
 		{"an opaque operand cannot satisfy a scoping allow", []string{"bash:git *"}, "git clone $URL", false},
 		{"a redirect never satisfies a segment allow", []string{"bash:echo *"}, "echo x > out.txt", false},
+		{"a catastrophic segment declines the segment allow", []string{"bash:rm *"}, "rm -rf ~", false},
+		{"a benign segment under the same pattern still allows", []string{"bash:rm *"}, "rm x", true},
 		{"no patterns never match", nil, "git status", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
-			if got := matchesPermissive(tc.patterns, "bash", bashArgs(tc.cmd)); got != tc.want {
+			if got := matchesPermissive(tc.patterns, "bash", bashArgs(tc.cmd), ""); got != tc.want {
 				t.Errorf("matchesPermissive(%v, %q) = %v, want %v", tc.patterns, tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSmartSegmentAllow_KeepsCatastrophicFloor checks that smart mode's
+// per-segment auto_approve path never silently approves a catastrophic
+// segment. auto mode denies these before any allow is consulted; smart mode
+// has no deny consumer, so the segment allow must decline and the call must
+// reach the human. A benign command under the same pattern still allows.
+func TestSmartSegmentAllow_KeepsCatastrophicFloor(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := filepath.Join(base, "ws")
+	if err := os.Mkdir(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	defer chdir(t, ws)()
+
+	cases := []struct {
+		cmd        string
+		wantPrompt bool
+	}{
+		{"rm -rf ~", true},
+		{"rm -rf ..", true},
+		{"rm x", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			approve, called := newApproveRecorder(false)
+			cfg := config.PermissionsConfig{Mode: "smart", AutoApprove: []string{"bash:rm *"}}
+			g := New(cfg, newTestRegistry("bash"), approve, WithWorkspaceRoot(ws))
+			g.Execute(context.Background(), "bash", bashArgs(tc.cmd))
+			if *called != tc.wantPrompt {
+				t.Errorf("smart bash:rm * on %q: prompted=%v, want %v", tc.cmd, *called, tc.wantPrompt)
 			}
 		})
 	}

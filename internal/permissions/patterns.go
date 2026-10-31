@@ -40,7 +40,11 @@ func matchesProtective(patterns []string, toolName, args string) bool {
 // EVERY parsed segment matches strictly, through the same allSegmentsAllowed
 // auto mode uses (path.Match, opaque-arg and redirect guards, no allow_push),
 // so "bash:git *" means the same thing in both modes and never crosses '/'.
-func matchesPermissive(patterns []string, toolName, args string) bool {
+// That segment path declines when any segment is catastrophic
+// (isDangerous against workspaceRoot): auto mode denies those before any
+// allow is consulted, and smart mode has no deny consumer, so without this
+// floor "bash:rm *" would silently approve `rm -rf ~`. The call asks instead.
+func matchesPermissive(patterns []string, toolName, args, workspaceRoot string) bool {
 	if len(patterns) == 0 {
 		return false
 	}
@@ -55,6 +59,11 @@ func matchesPermissive(patterns []string, toolName, args string) bool {
 	segments, err := splitSegments(bashCommand(args))
 	if err != nil || len(segments) == 0 {
 		return false
+	}
+	for _, seg := range segments {
+		if isDangerous(seg, workspaceRoot) {
+			return false
+		}
 	}
 	return allSegmentsAllowed(segments, patterns, false)
 }
