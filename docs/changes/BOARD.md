@@ -1,6 +1,6 @@
 # Backlog
 
-**91 changes** — 🟢 1 in progress · 🔵 3 built · 🟣 1 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
+**92 changes** — 🟢 1 in progress · 🔵 3 built · 🟣 1 groomed · 🟡 3 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
@@ -22,10 +22,11 @@
 |---|-------|----------|------|------|-----------|
 | [0088](active/0088-protective-permission-patterns-match-across-slashes-and-in-e.md) | Protective permission patterns match across slashes and in every mode alike | `high` | `fix` | [spec](../superpowers/specs/2026-10-31-protective-permission-patterns-match-across-slashes-and-in-e-design.md) | build-ready |
 
-## 🟡 Proposed (2)
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0092](active/0092-smart-mode-honors-always-prompt-with-no-human-approver-bound.md) | Smart mode honors always_prompt with no human approver bound | `medium` | `fix` | needs-grooming |
 | [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | ⏳ waiting on #90 — needs your merge |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
@@ -49,6 +50,7 @@ graph TD
   0089
   0090
   0090 --> 0091
+  0092
   0012:::done
   0052:::done
   0063:::done
