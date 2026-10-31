@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/loop-server-advertises-its-capabilities-models-skills-ceilin'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -54,3 +54,9 @@ A client that starts loops from a HarnessSpec has to guess what the server suppo
 - Changing tighten-only semantics for fields the operator leaves unset.
 - The ignored StartLoop `model` field and the `static` MCP auth dial failure.
 - Showing the new metadata in the TUI.
+
+## Reconcile log
+
+### 2026-10-31
+
+Unchanged against main ae9c8d7; related #84 and #85 are merged and archived, so the spec layering and tighten-only options it builds on are present.
