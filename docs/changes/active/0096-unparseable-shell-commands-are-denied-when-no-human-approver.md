@@ -2,7 +2,7 @@
 id: 96
 slug: 'unparseable-shell-commands-are-denied-when-no-human-approver'
 title: 'Unparseable shell commands are denied when no human approver is bound'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/unparseable-shell-commands-are-denied-when-no-human-approver'
 pr:
 blocked_by:
 reconciled: false
