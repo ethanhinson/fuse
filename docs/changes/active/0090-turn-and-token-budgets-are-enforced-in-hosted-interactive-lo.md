@@ -1,0 +1,52 @@
+---
+id: 90
+slug: 'turn-and-token-budgets-are-enforced-in-hosted-interactive-lo'
+title: 'Turn and token budgets are enforced in hosted interactive loops'
+status: 'proposed'
+priority: 'high'
+type: 'fix'
+deliverable: 'pr'
+created: '2026-10-31'
+updated: '2026-10-31'
+depends_on: []
+stacked_on:
+related: [86]
+discovered_from: []
+adrs: [61]
+spec:
+plan:
+results:
+auto_groomable:
+hold:
+branch_prefix:
+branch:
+pr:
+blocked_by:
+reconciled: false
+---
+
+## Artifacts
+
+<!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| ADRs | [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md) |
+<!-- docket:artifacts:end -->
+
+## Why
+
+Interactive loops set max turns to 0 unconditionally, so a spec's `max_turns` is dropped in chat loops. Token usage reaches the agent tree only through the TUI renderer, so `throughput.session_tokens` and pool token budgets never trip in any headless host. Budget settings that are accepted and recorded but not enforced are false safety.
+
+## What changes
+
+- In interactive loops, a set `max_turns` caps model turns per exchange (per user message). On the cap, the loop emits `loop.parked` with reason `max_turns` and parks; the conversation continues on the next message. Uncapped stays the default.
+- Non-interactive loops are unchanged.
+- The agent owns usage accounting through a usage sink that every binding wires to the tree node; the TUI renderer stops counting, so nothing is counted twice.
+- Session and pool token ceilings then trip in every host.
+- ADR for per-exchange max_turns.
+
+## Out of scope
+
+- Workflow pool activation (separate change; it builds on this).
+- The local TUI orchestrator side-channel's turn handling.
+- Cost-based budgets.
