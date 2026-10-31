@@ -1,0 +1,141 @@
+package permissions
+
+import (
+	"os"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/ethanhinson/fuse/internal/config"
+)
+
+// TestReasonCommand_BoundsAndRedacts pins the one bounding rule for command
+// text echoed in a reason, and that it matches the structured preview exactly.
+func TestReasonCommand_BoundsAndRedacts(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"curl https://u:p@h/x", "curl https://***@h/x"},
+		{strings.Repeat("a", 10001), strings.Repeat("a", 200) + "…"},
+		{"  ls  ", "ls"},
+		{"ls -la", "ls -la"},
+	}
+	for _, tc := range cases {
+		got := reasonCommand(tc.in)
+		if got != tc.want {
+			t.Errorf("reasonCommand(%.40q) = %.60q, want %.60q", tc.in, got, tc.want)
+		}
+		if prev := commandPreview("bash", bashArgs(tc.in)); got != prev {
+			t.Errorf("reasonCommand(%.40q) = %.60q drifted from commandPreview %.60q", tc.in, got, prev)
+		}
+	}
+}
+
+func TestClassifierDenyReason_BoundsOperand(t *testing.T) {
+	if got, want := classifierDenyReason("curl https://u:tok@h/x", "x"),
+		"denied by auto-mode classifier: curl https://***@h/x (x)"; got != want {
+		t.Errorf("classifierDenyReason = %q, want %q", got, want)
+	}
+	if got, want := classifierDenyReason(strings.Repeat("a", 5000), ""),
+		"denied by auto-mode classifier: "+strings.Repeat("a", 200)+"…"; got != want {
+		t.Errorf("classifierDenyReason over-length = %.80q..., want %.80q...", got, want)
+	}
+}
+
+// TestDenyReasons_UseBoundedCommand drives every reachable deny site that
+// echoes a command through Execute and asserts the recorded reason, and the
+// model-facing output built from it, carry only the bounded, redacted command.
+func TestDenyReasons_UseBoundedCommand(t *testing.T) {
+	long := "sudo " + strings.Repeat("a", 10000)
+	catastrophic := "rm -rf / " + strings.Repeat("x ", 2500)
+	smart := config.PermissionsConfig{Mode: "smart"}
+	rows := []struct {
+		desc     string
+		perms    config.PermissionsConfig
+		approver Approver
+		command  string
+		prefix   string
+		layer    string
+		url      bool
+	}{
+		{"auto unparseable over-length", autoCfg(config.AutoConfig{}, nil, nil), AlwaysApprove,
+			long, unparseableDenyPrefix, LayerRules, false},
+		{"auto parsed rules deny", autoCfg(config.AutoConfig{Deny: []string{"bash:curl*"}}, nil, nil), AlwaysApprove,
+			"curl https://u:tok@h/x", "denied by auto-mode rules layer: ", LayerRules, true},
+		{"auto unparseable rules deny", autoCfg(config.AutoConfig{Deny: []string{"bash:sudo*"}}, nil, nil), AlwaysApprove,
+			"sudo curl https://u:tok@h/x", "denied by auto-mode rules layer: ", LayerRules, true},
+		{"smart floor deny", smart, AlwaysApprove,
+			catastrophic, catastrophicFloorDenyPrefix, LayerRules, false},
+		{"smart unparseable deny", smart, AlwaysApprove,
+			long, unparseableDenyPrefix, LayerRules, false},
+	}
+	for _, row := range rows {
+		t.Run(row.desc, func(t *testing.T) {
+			ctx, rec := recordDecisions()
+			g := New(row.perms, newTestRegistry("bash"), row.approver, WithWorkspaceRoot(t.TempDir()))
+			res := g.Execute(ctx, "bash", bashArgs(row.command))
+			if len(*rec) != 1 || (*rec)[0].Verdict != "deny" || (*rec)[0].Layer != row.layer {
+				t.Fatalf("want one deny/%s decision, got %+v", row.layer, *rec)
+			}
+			d := (*rec)[0]
+			if !strings.HasPrefix(d.Reason, row.prefix) {
+				t.Errorf("reason %.80q lacks prefix %q", d.Reason, row.prefix)
+			}
+			if max := len(row.prefix) + 200 + len("…"); len(d.Reason) > max {
+				t.Errorf("reason length %d exceeds bound %d", len(d.Reason), max)
+			}
+			if strings.Contains(d.Reason, "tok") {
+				t.Errorf("reason leaks credential: %q", d.Reason)
+			}
+			if row.url && !strings.Contains(d.Reason, "***@") {
+				t.Errorf("reason missing redaction marker: %q", d.Reason)
+			}
+			if !res.Denied {
+				t.Fatalf("want denied result, got %+v", res)
+			}
+			suffix := "; " + denyHint(res.DenyLayer)
+			if !strings.HasSuffix(res.Output, suffix) {
+				t.Fatalf("output %.80q lacks deny hint suffix %q", res.Output, suffix)
+			}
+			if got := strings.TrimSuffix(res.Output, suffix); got != d.Reason {
+				t.Errorf("model-facing reason %.80q differs from recorded %.80q", got, d.Reason)
+			}
+		})
+	}
+
+	t.Run("human-bound smart floor ask is bounded", func(t *testing.T) {
+		ctx, rec := recordDecisions()
+		approve, _ := newApproveRecorder(false)
+		g := New(smart, newTestRegistry("bash"), Human(approve), WithWorkspaceRoot(t.TempDir()))
+		g.Execute(ctx, "bash", bashArgs(catastrophic))
+		if len(*rec) == 0 {
+			t.Fatal("no decision recorded")
+		}
+		d := (*rec)[0]
+		if d.Verdict != "ask" || d.Layer != LayerRules {
+			t.Fatalf("want first decision ask/rules, got %+v", d)
+		}
+		if !strings.HasPrefix(d.Reason, catastrophicAskPrefix) {
+			t.Errorf("reason %.80q lacks prefix %q", d.Reason, catastrophicAskPrefix)
+		}
+		if max := len(catastrophicAskPrefix) + 200 + len("…"); len(d.Reason) > max {
+			t.Errorf("ask reason length %d exceeds bound %d", len(d.Reason), max)
+		}
+	})
+}
+
+// TestGateReasonsNeverEchoRawCommand is a source guard: every reason in
+// gate.go that echoes a command must go through reasonCommand, so plain
+// concatenation of a raw command or operand is refused.
+func TestGateReasonsNeverEchoRawCommand(t *testing.T) {
+	src, err := os.ReadFile("gate.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`\+ (command|operand)\b`)
+	for i, line := range strings.Split(string(src), "\n") {
+		if re.MatchString(line) {
+			t.Errorf("gate.go:%d concatenates a raw command into a reason: %s", i+1, strings.TrimSpace(line))
+		}
+	}
+}
