@@ -2,7 +2,7 @@
 id: 98
 slug: 'permission-deny-reasons-bound-and-redact-the-command-they-ec'
 title: 'Permission deny reasons bound and redact the command they echo'
-status: 'proposed'
+status: 'in-progress'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/permission-deny-reasons-bound-and-redact-the-command-they-ec'
 pr:
 blocked_by:
 reconciled: false
