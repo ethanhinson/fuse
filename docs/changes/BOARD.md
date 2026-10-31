@@ -1,6 +1,6 @@
 # Backlog
 
-**92 changes** — 🟢 1 in progress · 🔵 4 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
+**93 changes** — 🟢 1 in progress · 🔵 4 built · 🟡 4 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
 
 ## 🟢 In progress (1)
 
@@ -17,10 +17,11 @@
 | [0088](active/0088-protective-permission-patterns-match-across-slashes-and-in-e.md) | Protective permission patterns match across slashes and in every mode alike | `high` | `fix` | [#112](https://github.com/ethanhinson/fuse/pull/112) | awaiting merge |
 | [0087](active/0087-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h.md) | Explicit ask rules are honored: prompt a human, deny when no human is bound | `high` | `fix` | [#110](https://github.com/ethanhinson/fuse/pull/110) | awaiting merge |
 
-## 🟡 Proposed (3)
+## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0093](active/0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md) | Permission floor and wrapper parity across modes and bindings | `medium` | `fix` | needs-grooming |
 | [0092](active/0092-smart-mode-honors-always-prompt-with-no-human-approver-bound.md) | Smart mode honors always_prompt with no human approver bound | `medium` | `fix` | needs-grooming |
 | [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | ⏳ waiting on #90 — needs your merge |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
@@ -46,6 +47,7 @@ graph TD
   0090
   0090 --> 0091
   0092
+  0093
   0012:::done
   0052:::done
   0063:::done

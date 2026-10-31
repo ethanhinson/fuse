@@ -1,0 +1,50 @@
+---
+id: 93
+slug: 'permission-floor-and-wrapper-parity-across-modes-and-binding'
+title: 'Permission floor and wrapper parity across modes and bindings'
+status: 'proposed'
+priority: 'medium'
+type: 'fix'
+deliverable: 'pr'
+created: '2026-10-31'
+updated: '2026-10-31'
+depends_on: []
+stacked_on:
+related: [87, 88, 92]
+discovered_from: [88]
+adrs: [5, 49, 65]
+spec:
+plan:
+results:
+auto_groomable:
+hold:
+branch_prefix:
+branch:
+pr:
+blocked_by:
+reconciled: false
+---
+
+## Artifacts
+
+<!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0049](../../adrs/0049-allowlist-admission-on-deterministic-allow-paths.md), [ADR-0065](../../adrs/0065-permission-patterns-match-by-consumer-generous-for-protectiv.md) |
+<!-- docket:artifacts:end -->
+
+## Why
+
+Three remaining mode and binding gaps in permission matching: a bare first-token smart allow such as `bash:rm` still approves `rm -rf ~` because the legacy first-token allow path has no destructive-command floor; protective rules naming a wrapper (`bash:timeout*`, `bash:nice *`) never fire in auto mode because auto matches the peeled segment; and the headless MCP server builds its gate without a workspace root, so the floor misses workspace ancestors such as `rm -rf ..`.
+
+## What changes
+
+- Apply the destructive-command floor to smart mode's legacy first-token allow path (a tightening; release note).
+- Add the raw pre-peel first token as a protective subject in auto mode, so wrapper-name deny and ask rules match in both modes.
+- Bind the workspace root on the headless MCP server gate.
+- Tests for each.
+
+## Out of scope
+
+- Changing allow glob semantics.
+- New permission modes or default rule sets.
