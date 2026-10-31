@@ -5,6 +5,7 @@ import (
 	"net"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -159,7 +160,28 @@ func (c Config) Problems() []Problem {
 		ps = append(ps, Problem{Path: "observability", Message: strings.TrimPrefix(err.Error(), "config: "), Err: err})
 	}
 
+	// A workflow worker's allowlist is its whole tool set: it inherits nothing
+	// from its parent, so an empty allowlist is a mistake, not "everything".
+	for _, wf := range sortedKeys(c.Workflows) {
+		workers := c.Workflows[wf].Workers
+		for _, w := range sortedKeys(workers) {
+			if len(workers[w].Tools) == 0 {
+				add("workflows."+wf+".workers."+w+".tools", "must name at least one tool (a worker inherits nothing; omit spawn_agent to keep it from nesting)")
+			}
+		}
+	}
+
 	return ps
+}
+
+// sortedKeys returns m's keys in sorted order.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // validateIssuers checks loop_server.issuers. Each problem names the issuer by
