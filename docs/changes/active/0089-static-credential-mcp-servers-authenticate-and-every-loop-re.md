@@ -2,7 +2,7 @@
 id: 89
 slug: 'static-credential-mcp-servers-authenticate-and-every-loop-re'
 title: 'Static-credential MCP servers authenticate, and every loop reports its MCP servers'
-status: 'proposed'
+status: 'in-progress'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/static-credential-mcp-servers-authenticate-and-every-loop-re'
 pr:
 blocked_by:
 reconciled: false
