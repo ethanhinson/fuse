@@ -571,8 +571,10 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 		// (change 0093). Auto mode denies these in evalRules before any rule is
 		// read; smart mode checks them here, before always_prompt and before any
 		// allow, so no auto_approve rule (legacy first-token or per-segment) can
-		// approve one. A policy stand-in never approves a catastrophic command:
-		// it is denied at the rules layer. With a human bound, the human keeps
+		// approve one. In smart mode, a policy stand-in never approves a
+		// catastrophic command the parser accepts: it is denied at the rules
+		// layer (auto mode's own floor is separate). Commands the parser
+		// refuses keep their prior behavior. With a human bound, the human keeps
 		// the last word: the call prompts and the ask event names the floor.
 		if command, catastrophic := catastrophicSegment(name, args, g.workspaceRoot); catastrophic {
 			if g.approvalProvenance == DecidedByPolicy {
