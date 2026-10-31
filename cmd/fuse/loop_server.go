@@ -495,7 +495,8 @@ func loopServerPrincipal(lc runtime.LoopConfig) loopauth.Principal {
 // emitMCPServerEvents appends one mcp.server event per MCP server the loop's
 // manager holds (change 0089), right after loop.harness. A server that failed to
 // connect is reported connected=false with its error; the loop continues without
-// it. Payloads never carry a credential.
+// it. Payloads never carry a credential. A resumed loop rebuilds its manager and
+// re-dials, so it records a fresh report of the servers' current state.
 func emitMCPServerEvents(store event.EventStore, rootID string, managers *sync.Map, reg *tools.Registry) {
 	v, ok := managers.Load(reg)
 	if !ok {
@@ -515,6 +516,7 @@ func emitMCPServerEvents(store event.EventStore, rootID string, managers *sync.M
 			Connected: st.Connected, Error: st.Error, Tools: toolNames,
 		})
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "loop-server: marshal mcp.server %q: %v\n", st.Name, err)
 			continue
 		}
 		if err := store.Append(event.Event{NodeID: rootID, Kind: event.KindMCPServer, Payload: payload}); err != nil {
