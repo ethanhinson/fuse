@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/static-credential-mcp-servers-authenticate-and-every-loop-re'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -50,3 +50,9 @@ An MCP server with auth type `static` is accepted by validation, layering and ca
 - A `required` flag that fails the loop when a server is down.
 - Per-loop tool names in GetCapabilities.
 - New auth kinds.
+
+## Reconcile log
+
+### 2026-10-31
+
+Unchanged against origin/main tip 4f61322.
