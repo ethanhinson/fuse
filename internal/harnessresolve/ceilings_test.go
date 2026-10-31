@@ -296,3 +296,22 @@ func TestTightenMessageRendersLargeLimitsPlainly(t *testing.T) {
 		t.Errorf("limit = %q, want 2000000", limit)
 	}
 }
+
+// configKeyFor is a test helper that maps a ceiling's spec field path to the config key
+// config.OverlaySpec refuses it under: workflows["x"].pool.f becomes
+// workflows.x.pool.f. Any other path is already the config key.
+func configKeyFor(fieldPath string) string {
+	rest, ok := strings.CutPrefix(fieldPath, "workflows[")
+	if !ok {
+		return fieldPath
+	}
+	end := strings.Index(rest, "].")
+	if end < 0 {
+		return fieldPath
+	}
+	name, err := strconv.Unquote(rest[:end])
+	if err != nil {
+		return fieldPath
+	}
+	return "workflows." + name + "." + rest[end+len("]."):]
+}
