@@ -17,7 +17,7 @@ func TestGate_WithSessionMode_LiveRead(t *testing.T) {
 	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
 		return true, false, nil
 	}
-	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("read_file"), approve,
+	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("read_file"), Human(approve),
 		WithSessionMode(sm))
 
 	if got := g.Mode(); got != ModeSmart {
@@ -37,7 +37,7 @@ func TestGate_HolderlessReadsSnapshot(t *testing.T) {
 	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
 		return true, false, nil
 	}
-	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("read_file"), approve)
+	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("read_file"), Human(approve))
 	if got := g.Mode(); got != ModeSmart {
 		t.Fatalf("holderless gate Mode() = %v, want ModeSmart", got)
 	}
@@ -61,7 +61,7 @@ func TestGate_WithSessionMode_MidTurnFlipAutoApproves(t *testing.T) {
 		prompted = true
 		return true, false, nil
 	}
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash", "read_file"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash", "read_file"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true),
 		WithSessionMode(sm))
 
@@ -94,7 +94,7 @@ func TestGate_WithSessionMode_ObservedTransition_ResetsValve(t *testing.T) {
 	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
 		return true, false, nil
 	}
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true),
 		WithSessionMode(sm))
 
@@ -124,7 +124,7 @@ func TestGate_WithSessionMode_EnteringAuto_LeavesValve(t *testing.T) {
 	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
 		return true, false, nil
 	}
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true),
 		WithSessionMode(sm))
 
@@ -154,7 +154,7 @@ func TestGate_WithSessionMode_ConcurrentFlipAndResolve(t *testing.T) {
 	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
 		return true, false, nil
 	}
-	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("read_file"), approve,
+	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("read_file"), Human(approve),
 		WithSessionMode(sm))
 
 	var wg sync.WaitGroup
@@ -181,7 +181,7 @@ func TestGate_SetMode_ThenResolve_NoDoubleReset(t *testing.T) {
 		return true, false, nil
 	}
 	// Holderless gate started in auto (SetMode is the mode surface here).
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash", "read_file"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash", "read_file"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true),
 		WithMode(ModeAuto))
 
@@ -212,7 +212,7 @@ func TestGate_CloneForChild_PropagatesHolder(t *testing.T) {
 	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
 		return true, false, nil
 	}
-	parent := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("read_file"), approve,
+	parent := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("read_file"), Human(approve),
 		WithSessionMode(sm))
 
 	child := parent.CloneForChild("worker")

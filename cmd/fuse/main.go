@@ -174,11 +174,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if *approveAll {
 		cfg.Permissions.Mode = "off"
 	}
-	if *approveAll || !oneShotInteractive {
-		// --approve-all and the piped-stdin deny fallback both answer without a
-		// human: label their LayerHuman decision events as policy-decided.
-		markPolicyApproval()
-	}
 	rootApprove := oneShotApprovalFunc(*approveAll, oneShotInteractive, os.Stdin, stderr)
 
 	// The turn/loop BUDGET posture is distinct from the approval channel:

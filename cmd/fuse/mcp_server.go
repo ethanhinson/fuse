@@ -49,13 +49,15 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 	defer closeEgress()
 	toolReg := defaultToolRegistry(sb, cfg.Research, nil) // native tools only; no skill tool in MCP server mode
 
-	var approve permissions.ApprovalFunc
+	var approve permissions.Approver
 	if socketPath := os.Getenv("FUSE_HITL_SOCKET"); socketPath != "" {
-		// The HITL relay forwards prompts to a human in the parent TUI.
+		// The HITL relay forwards prompts to a human in the parent TUI, so the
+		// socket approver is human provenance.
 		approve = hitl.ClientApprovalFunc(socketPath)
 	} else {
+		// Headless: AlwaysApprove is a policy approver, so explicit asks are
+		// denied at the rules layer rather than approved by the stand-in.
 		approve = permissions.AlwaysApprove
-		markPolicyApproval()
 	}
 
 	gate := buildMCPServerGate(cfg, toolReg, approve)
@@ -82,9 +84,8 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 // and never the gate, and the server's cwd does not move. The binding has no
 // model registry, so it gets no classifier (unchanged). runMCPServer and its
 // test share this function so the test proves the binding's own construction.
-func buildMCPServerGate(cfg config.Config, toolReg *tools.Registry, approve permissions.ApprovalFunc) *permissions.PermissionGate {
+func buildMCPServerGate(cfg config.Config, toolReg *tools.Registry, approve permissions.Approver) *permissions.PermissionGate {
 	return permissions.New(cfg.Permissions, toolReg, approve,
-		permissions.WithApprovalProvenance(gateApprovalProvenance),
 		permissions.WithWorkspaceRoot(mcpServerWorkspaceRoot()),
 		permissions.WithWriteRoots(gateWriteRoots(cfg)))
 }

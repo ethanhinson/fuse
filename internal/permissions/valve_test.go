@@ -83,7 +83,7 @@ func TestValve_TripInteractive_OneRecoveryPromptResetsAndContinues(t *testing.T)
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
 	cls := newTestClassifier(t, stub)
 	rec := &valvePromptRecorder{valveAnswer: true, perCallAnswer: true}
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), rec.approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(rec.approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true))
 
 	// First 3 gray-area calls each hit the classifier and get a deny (block).
@@ -135,7 +135,7 @@ func TestValve_TripInteractive_RejectionFallsBackToPerCallAsks(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
 	cls := newTestClassifier(t, stub)
 	rec := &valvePromptRecorder{valveAnswer: false, perCallAnswer: true}
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), rec.approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(rec.approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true))
 
 	for i := 0; i < 3; i++ {
@@ -172,7 +172,7 @@ func TestValve_ThreeConsecutiveBlocks_AbortsNonInteractive(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
 	cls := newTestClassifier(t, stub)
 	approve, called := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls)) // non-interactive (default)
 
 	for i := 0; i < 3; i++ {
@@ -218,7 +218,7 @@ func TestValve_NonBlockVerdictResetsConsecutive(t *testing.T) {
 	stub := &seqCompleter{replies: seq}
 	cls := newTestClassifierFrom(t, stub)
 	approve, called := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 
 	// Run the 6 scripted gray-area calls; each must reach the classifier because
@@ -259,7 +259,7 @@ func TestValve_TotalBlocks_TripsIndependentOfConsecutive(t *testing.T) {
 	stub := &seqCompleter{replies: seq}
 	cls := newTestClassifierFrom(t, stub)
 	approve, _ := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 
 	// After totalCalls alternating verdicts there are valveTotalLimit blocks
@@ -281,7 +281,7 @@ func TestValve_SharedAcrossCloneForChild(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
 	cls := newTestClassifier(t, stub)
 	approve, _ := newApproveRecorder(true)
-	parent := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+	parent := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 
 	child := parent.CloneForChild("worker")
@@ -321,7 +321,7 @@ func TestValve_InWorkspaceEditsDoNotAdvanceValve(t *testing.T) {
 	cls := newTestClassifier(t, stub)
 	approve, called := newApproveRecorder(true)
 	g := New(autoCfg(config.AutoConfig{}, nil, nil),
-		newTestRegistry("write_file", "edit_file"), approve,
+		newTestRegistry("write_file", "edit_file"), Human(approve),
 		WithWorkspaceRoot(root), WithClassifier(cls))
 
 	// Far more in-workspace edits than both the consecutive valve threshold (3)

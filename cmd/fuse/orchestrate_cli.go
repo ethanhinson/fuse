@@ -140,7 +140,9 @@ func runOrchestrate(args []string, cfg config.Config, reg *model.Registry, stdin
 	out := make(chan tea.Msg, 64)
 	target := newWireTarget(ctx, client, cf.loop)
 	orch := newShellOrchestrator(ctx, out, target, func(r agent.Renderer, orchTools *tools.Registry) (*agent.Agent, error) {
-		deny := func(context.Context, permissions.ApprovalRequest) (bool, bool, error) { return false, false, nil }
+		// No human answers this orchestrator: a policy stand-in that denies
+		// every prompt, so its denials record decided_by: policy.
+		deny := permissions.Policy(func(context.Context, permissions.ApprovalRequest) (bool, bool, error) { return false, false, nil })
 		return buildChildAgent(cfg, reg, alias, r, orchestrator.SystemPrompt(), orchTools, deny, nil,
 			"orchestrator", permissions.NewSessionMode(permissions.ModeSmart), true, rateGate, nil)
 	})

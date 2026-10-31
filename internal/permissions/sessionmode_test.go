@@ -64,7 +64,7 @@ func TestGate_SetMode_ObservedByResolve(t *testing.T) {
 		return true, false, nil
 	}
 	cfg := config.PermissionsConfig{Mode: "prompt-all"}
-	g := New(cfg, newTestRegistry("read_file"), approve)
+	g := New(cfg, newTestRegistry("read_file"), Human(approve))
 
 	// In prompt-all the safe-list tool prompts.
 	g.Execute(context.Background(), "read_file", `{}`)
@@ -92,7 +92,7 @@ func TestGate_CloneForChild_SnapshotsModeBeforeSetMode(t *testing.T) {
 		return true, false, nil
 	}
 	cfg := config.PermissionsConfig{Mode: "off"}
-	parent := New(cfg, newTestRegistry("read_file"), approve)
+	parent := New(cfg, newTestRegistry("read_file"), Human(approve))
 
 	child := parent.CloneForChild("worker")
 
@@ -122,7 +122,7 @@ func TestGate_SetMode_LeavingAuto_ResetsValve_ButCacheSurvives(t *testing.T) {
 	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
 		return true, true, nil // allow for session
 	}
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash", "read_file"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash", "read_file"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true))
 
 	// Seed a session-cache grant via the human path in smart-like flow: use a
@@ -169,7 +169,7 @@ func TestGate_SetMode_EnteringAuto_LeavesValveCounters(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"deny","reason":"x"}`}}
 	cls := newTestClassifier(t, stub)
 	approve, _ := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls), WithInteractive(true))
 
 	g.Execute(context.Background(), "bash", bashArgs(grayAreaCmd(0)))
@@ -191,7 +191,7 @@ func TestGate_ConcurrentSetModeResolve(t *testing.T) {
 	approve := func(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
 		return true, false, nil
 	}
-	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("read_file"), approve)
+	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("read_file"), Human(approve))
 
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {

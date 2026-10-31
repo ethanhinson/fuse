@@ -19,10 +19,6 @@ import (
 func TestMCPServerGateBindsWorkspaceRoot(t *testing.T) {
 	for _, mode := range []string{"auto", "smart"} {
 		t.Run(mode, func(t *testing.T) {
-			prev := gateApprovalProvenance
-			t.Cleanup(func() { gateApprovalProvenance = prev })
-			markPolicyApproval()
-
 			base, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
@@ -80,7 +76,7 @@ func mcpWriteLayers(t *testing.T, target string) []permissions.Decision {
 	}
 	toolReg := defaultToolRegistry(svc, cfg.Research, nil)
 	deny := func(context.Context, permissions.ApprovalRequest) (bool, bool, error) { return false, false, nil }
-	gate := buildMCPServerGate(cfg, toolReg, deny)
+	gate := buildMCPServerGate(cfg, toolReg, permissions.Human(deny))
 	var decisions []permissions.Decision
 	ctx := permissions.WithDecisionSink(context.Background(), func(d permissions.Decision) {
 		decisions = append(decisions, d)

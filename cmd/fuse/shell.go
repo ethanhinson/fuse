@@ -258,7 +258,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
 		// segmentSink is threaded per-loop (change 0046) rather than read from a global.
-		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, approve, traceW, "root", sessionMode, true, rateGate, segmentSink, obs.observer)
+		// approve is the TUI channel: a person answers it, so it is human provenance.
+		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, permissions.Human(approve), traceW, "root", sessionMode, true, rateGate, segmentSink, obs.observer)
 		if err != nil {
 			return nil, err
 		}
@@ -323,8 +324,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// The parent-channel approval func for children: same TUI channel as the
 	// root turn, wrapped per-child by PrefixApproval below so the human sees
 	// which subagent is asking. Enforces the configured mode instead of the old
-	// blanket-auto-approve bypass.
-	childBaseApprove := tui.NewTeaApprovalFunc(m.Channel())
+	// blanket-auto-approve bypass. A person answers the TUI channel, so it is a
+	// human approver.
+	childBaseApprove := permissions.Human(tui.NewTeaApprovalFunc(m.Channel()))
 
 	// Binding #1b (change 0045): the shell routes engine CONSTRUCTION and store
 	// ownership through the in-process Runtime's Deps seam. buildShellRuntimeDeps

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/permissions"
 )
 
 // TestLoopServeNetRefusesWhenDurableBackendFails pins the fix for a defect found
@@ -70,11 +71,11 @@ func TestLenientBuilderStillFallsBack(t *testing.T) {
 		t.Fatalf("config load: %v", err)
 	}
 	reg := registryFromConfig(cfg)
-	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil), "", nil, nil)
+	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil), "", permissions.Approver{}, nil)
 	if deps.DurableStore != nil || deps.Registry != nil {
 		t.Fatal("lenient builder must fall back to nil store/registry on a selector error")
 	}
-	if _, err := buildLoopServerRuntimeDepsStrict(nil, cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil), "", nil, nil, nil, nil); err == nil {
+	if _, err := buildLoopServerRuntimeDepsStrict(nil, cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil), "", permissions.Approver{}, nil, nil, nil); err == nil {
 		t.Fatal("strict builder must return the selector error")
 	}
 }

@@ -16,15 +16,11 @@ import (
 )
 
 // TestHostedBindingDeniesExplicitAskRule proves, at the composition root the
-// hosted loop servers share (buildGate under markPolicyApproval + AlwaysApprove),
+// hosted loop servers share (buildGate with AlwaysApprove, a policy approver),
 // that an explicit auto.ask rule is denied at the rules layer instead of being
 // allowed by the safelist or auto-approved by the stand-in, and that the command
 // never ran.
 func TestHostedBindingDeniesExplicitAskRule(t *testing.T) {
-	prev := gateApprovalProvenance
-	t.Cleanup(func() { gateApprovalProvenance = prev })
-	markPolicyApproval()
-
 	cfg := config.Config{Permissions: config.PermissionsConfig{
 		Mode: "auto",
 		Auto: config.AutoConfig{Ask: []string{"bash:touch*"}},
@@ -70,10 +66,6 @@ func TestHostedBindingDeniesExplicitAskRule(t *testing.T) {
 // sandbox, so bash could not run here either way; the decision event is the
 // proof, and TestHostedBindingDeniesExplicitAskRule covers non-execution on a real one.
 func TestLoopServerDeniesExplicitAskRuleEndToEnd(t *testing.T) {
-	prev := gateApprovalProvenance
-	t.Cleanup(func() { gateApprovalProvenance = prev })
-	markPolicyApproval()
-
 	args, _ := json.Marshal(map[string]string{"command": "touch ran"})
 	callArgs, _ := json.Marshal(string(args))
 	toolCall := `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"bash","arguments":` + string(callArgs) + `}}]}}]}`
@@ -128,15 +120,11 @@ permissions:
 }
 
 // TestHostedBindingDeniesAlwaysPromptInSmartMode proves, at the composition
-// root the hosted loop servers share (buildGate under markPolicyApproval +
-// AlwaysApprove), that a smart-mode always_prompt match is denied at the rules
-// layer instead of being answered by the policy stand-in, and that the command
-// never ran.
+// root the hosted loop servers share (buildGate with AlwaysApprove, a policy
+// approver), that a smart-mode always_prompt match is denied at the rules layer
+// instead of being answered by the policy stand-in, and that the command never
+// ran.
 func TestHostedBindingDeniesAlwaysPromptInSmartMode(t *testing.T) {
-	prev := gateApprovalProvenance
-	t.Cleanup(func() { gateApprovalProvenance = prev })
-	markPolicyApproval()
-
 	cfg := config.Config{Permissions: config.PermissionsConfig{
 		Mode:         "smart",
 		AlwaysPrompt: []string{"bash:touch*"},
@@ -186,10 +174,6 @@ func TestHostedBindingDeniesAlwaysPromptInSmartMode(t *testing.T) {
 // plus TestHostedBindingDeniesAlwaysPromptInSmartMode are the proof of
 // non-execution.
 func TestLoopServerDeniesAlwaysPromptEndToEnd(t *testing.T) {
-	prev := gateApprovalProvenance
-	t.Cleanup(func() { gateApprovalProvenance = prev })
-	markPolicyApproval()
-
 	args, _ := json.Marshal(map[string]string{"command": "touch ran"})
 	callArgs, _ := json.Marshal(string(args))
 	toolCall := `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"bash","arguments":` + string(callArgs) + `}}]}}]}`

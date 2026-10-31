@@ -20,38 +20,28 @@ func stdinIsTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
-// gateApprovalProvenance is the process-wide answer to "who answers approval
-// prompts in this binding" stamped on LayerHuman permission.decision events
-// (audit provenance). A fuse process is exactly one binding, so this is static
-// per process: each entry point that wires a policy stand-in (loop-serve's
-// AlwaysApprove, --approve-all, piped-stdin deny fallback, headless mcp-server)
-// downgrades it from the human default before gates are built.
-var gateApprovalProvenance = permissions.DecidedByHuman
-
-// markPolicyApproval records that this binding answers approvals by policy,
-// not by a reachable human.
-func markPolicyApproval() { gateApprovalProvenance = permissions.DecidedByPolicy }
-
 // oneShotApprovalFunc builds the approval fallback for the non-TUI entry points
 // (one-shot `fuse "<task>"` and its children). It replaces the removed
 // blanket-auto-approve bypass so a configured `ask`/prompt verdict is honored at
 // every entry point rather than silently auto-approved:
 //
 //   - approveAll ⇒ the explicit --approve-all opt-in: auto-approve every call
-//     (equivalent to mode: off for this run — the documented footgun).
+//     (equivalent to mode: off for this run — the documented footgun). Policy
+//     provenance: no human answers.
 //   - isTTY ⇒ a human is reachable: prompt y/N/a on the terminal, honoring
-//     session_allow via the "a" (always) answer.
+//     session_allow via the "a" (always) answer. Human provenance.
 //   - otherwise (piped stdin / CI) ⇒ deny-by-default with a structured error.
+//     Policy provenance: no human can answer.
 //
 // in/out are injected for testability; production passes os.Stdin / os.Stderr.
-func oneShotApprovalFunc(approveAll, isTTY bool, in io.Reader, out io.Writer) permissions.ApprovalFunc {
+func oneShotApprovalFunc(approveAll, isTTY bool, in io.Reader, out io.Writer) permissions.Approver {
 	if approveAll {
-		return autoApprove
+		return permissions.Policy(autoApprove)
 	}
 	if isTTY {
-		return terminalApproval(in, out)
+		return permissions.Human(terminalApproval(in, out))
 	}
-	return denyNonInteractive
+	return permissions.Policy(denyNonInteractive)
 }
 
 // autoApprove auto-approves every call without granting a session cache entry.

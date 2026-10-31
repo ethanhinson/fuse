@@ -76,14 +76,14 @@ func TestBuildGateReadsSessionModeAtConstruction(t *testing.T) {
 	toolReg := safeToolRegistry(t)
 	var prompted bool
 
-	g := buildGate(cfg, toolReg, approveAllFunc(&prompted), reg, nil, sm)
+	g := buildGate(cfg, toolReg, permissions.Human(approveAllFunc(&prompted)), reg, nil, sm)
 	if got := g.Mode(); got != permissions.ModeSmart {
 		t.Fatalf("gate built from smart session source: Mode() = %v, want ModeSmart", got)
 	}
 
 	// Flip the session source to auto; a newly built gate must construct at auto.
 	sm.Set(permissions.ModeAuto)
-	g2 := buildGate(cfg, toolReg, approveAllFunc(&prompted), reg, nil, sm)
+	g2 := buildGate(cfg, toolReg, permissions.Human(approveAllFunc(&prompted)), reg, nil, sm)
 	if got := g2.Mode(); got != permissions.ModeAuto {
 		t.Fatalf("after session flip to auto, newly built gate Mode() = %v, want ModeAuto", got)
 	}
@@ -124,7 +124,7 @@ func TestSessionModeFlipToAuto_NextGateAutoApprovesReadOnlyBash(t *testing.T) {
 	sm.Set(permissions.ModeAuto)
 
 	// Build the gate the way the next turn's startPrompt closure does.
-	g := buildGate(cfg, toolReg, approveAllFunc(&prompted), reg, nil, sm)
+	g := buildGate(cfg, toolReg, permissions.Human(approveAllFunc(&prompted)), reg, nil, sm)
 	if got := g.Mode(); got != permissions.ModeAuto {
 		t.Fatalf("after flip to auto, newly built gate Mode() = %v, want ModeAuto", got)
 	}
@@ -153,7 +153,7 @@ func TestBuildGate_MidTurnFlipBitesSameGate(t *testing.T) {
 	toolReg := safeToolRegistry(t)
 	var prompted bool
 
-	g := buildGate(cfg, toolReg, approveAllFunc(&prompted), reg, nil, sm)
+	g := buildGate(cfg, toolReg, permissions.Human(approveAllFunc(&prompted)), reg, nil, sm)
 	if got := g.Mode(); got != permissions.ModeSmart {
 		t.Fatalf("gate built at smart: Mode() = %v, want ModeSmart", got)
 	}
@@ -180,7 +180,7 @@ func TestBuildGateNilSessionModeDefaultsToConfig(t *testing.T) {
 	toolReg := safeToolRegistry(t)
 	var prompted bool
 
-	g := buildGate(cfg, toolReg, approveAllFunc(&prompted), reg, nil, nil)
+	g := buildGate(cfg, toolReg, permissions.Human(approveAllFunc(&prompted)), reg, nil, nil)
 	if got := g.Mode(); got != permissions.ModePromptAll {
 		t.Fatalf("nil session source: Mode() = %v, want ModePromptAll (from cfg)", got)
 	}

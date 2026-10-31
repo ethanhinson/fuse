@@ -38,7 +38,7 @@ func newProgressTestServer(t *testing.T, w *bytes.Buffer) *Server {
 	approve := func(context.Context, permissions.ApprovalRequest) (bool, bool, error) {
 		return true, false, nil
 	}
-	gate := permissions.New(config.PermissionsConfig{Mode: "off"}, reg, approve)
+	gate := permissions.New(config.PermissionsConfig{Mode: "off"}, reg, permissions.Human(approve))
 	return NewServer(bytes.NewReader(nil), w, reg, gate)
 }
 

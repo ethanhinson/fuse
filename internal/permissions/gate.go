@@ -37,8 +37,26 @@ type ApprovalRequest struct {
 // allowForSession, error). A cancelled context returns an error.
 type ApprovalFunc func(ctx context.Context, req ApprovalRequest) (approved bool, allowForSession bool, err error)
 
-// AlwaysApprove is an ApprovalFunc for non-interactive (one-shot) mode.
-func AlwaysApprove(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
+// Approver is who answers a gate's prompts: the function and its provenance.
+// A gate's provenance is its approver's and nothing else's, so a process can
+// hold human and policy approvers at once and each gate reports its own.
+type Approver struct {
+	Answer    ApprovalFunc
+	DecidedBy string // DecidedByHuman or DecidedByPolicy
+}
+
+// Human labels fn as a person at a prompt (the TUI channel, the one-shot
+// terminal prompt, the HITL socket client).
+func Human(fn ApprovalFunc) Approver { return Approver{Answer: fn, DecidedBy: DecidedByHuman} }
+
+// Policy labels fn as a stand-in that answers with no human present.
+func Policy(fn ApprovalFunc) Approver { return Approver{Answer: fn, DecidedBy: DecidedByPolicy} }
+
+// AlwaysApprove is the headless policy stand-in: it approves every prompt and
+// is policy provenance wherever it is bound.
+var AlwaysApprove = Policy(alwaysApprove)
+
+func alwaysApprove(_ context.Context, _ ApprovalRequest) (bool, bool, error) {
 	return true, false, nil
 }
 
@@ -91,10 +109,10 @@ type PermissionGate struct {
 
 	// approvalProvenance labels WHO answers g.approve for the audit trail on
 	// LayerHuman decision events: "human" when a person is at the prompt (TUI,
-	// one-shot on a TTY), "policy" when a binding-level stand-in answers with no
-	// human present (loop-serve AlwaysApprove, --approve-all, the non-interactive
-	// deny fallback). Defaults to "human" (the pre-existing implicit reading);
-	// set via WithApprovalProvenance at the binding that knows.
+	// one-shot on a TTY, the HITL socket client), "policy" when a stand-in
+	// answers with no human present (AlwaysApprove, --approve-all, the
+	// non-interactive deny fallback). It is set by New from the gate's approver,
+	// never changed after, and copied by CloneForChild.
 	approvalProvenance string
 
 	// valve is the per-session escalation counter shared across CloneForChild: a
@@ -243,21 +261,12 @@ func WithInteractive(interactive bool) Option {
 	return func(g *PermissionGate) { g.interactive = interactive }
 }
 
-// DecidedBy values for Decision.DecidedBy / WithApprovalProvenance: who
-// answers the gate's human-approval prompts in this binding.
+// DecidedBy values for Decision.DecidedBy and Approver.DecidedBy: who answers
+// the gate's human-approval prompts.
 const (
 	DecidedByHuman  = "human"
 	DecidedByPolicy = "policy"
 )
-
-// WithApprovalProvenance labels who answers this gate's approval prompts —
-// DecidedByHuman for a real person at a prompt, DecidedByPolicy for a
-// binding-level stand-in (AlwaysApprove, --approve-all, the non-interactive
-// deny fallback). It is stamped on LayerHuman decision events so an audit can
-// tell "a human approved this" from "the binding's policy approved this".
-func WithApprovalProvenance(p string) Option {
-	return func(g *PermissionGate) { g.approvalProvenance = p }
-}
 
 // WithMode overrides the gate's starting mode after it is seeded from cfg.Mode.
 // It is the per-turn-construction seam for the session-mode surface: a fresh
@@ -280,19 +289,29 @@ func WithSessionMode(sm *SessionMode) Option {
 	return func(g *PermissionGate) { g.sessionMode = sm }
 }
 
-// New builds a PermissionGate. approve is called when user input is needed;
-// pass AlwaysApprove for non-interactive (one-shot) sessions. Auto-mode
-// dependencies (a classifier, a workspace root) are supplied additively via
-// opts so existing three-argument callers compile and behave unchanged.
-func New(cfg config.PermissionsConfig, inner *tools.Registry, approve ApprovalFunc, opts ...Option) *PermissionGate {
+// New builds a PermissionGate. approve answers when user input is needed and
+// says who answers: the caller must build it with Human or Policy (or pass
+// AlwaysApprove, a policy approver, for headless sessions). There is no
+// default provenance; New panics on an approver with no Answer func or with a
+// DecidedBy that is neither DecidedByHuman nor DecidedByPolicy, because every
+// provenance check is "== DecidedByPolicy" and an unknown label would silently
+// behave as human. Auto-mode dependencies (a classifier, a workspace root) are
+// supplied additively via opts.
+func New(cfg config.PermissionsConfig, inner *tools.Registry, approve Approver, opts ...Option) *PermissionGate {
+	if approve.Answer == nil {
+		panic("permissions.New: approver has no Answer func; build it with permissions.Human or permissions.Policy")
+	}
+	if approve.DecidedBy != DecidedByHuman && approve.DecidedBy != DecidedByPolicy {
+		panic(fmt.Sprintf("permissions.New: approver provenance %q is not human or policy; build it with permissions.Human or permissions.Policy", approve.DecidedBy))
+	}
 	g := &PermissionGate{
 		mode:               ParseMode(cfg.Mode),
 		cfg:                cfg,
 		cache:              newApprovalCache(),
-		approve:            approve,
+		approve:            approve.Answer,
 		inner:              inner,
 		valve:              &escalationValve{},
-		approvalProvenance: DecidedByHuman,
+		approvalProvenance: approve.DecidedBy,
 	}
 	for _, opt := range opts {
 		opt(g)
@@ -611,8 +630,8 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	}
 
 	// Human approval required. The ask is emitted BEFORE g.approve runs so asks
-	// are countable regardless of the approval binding — an AlwaysApprove
-	// (headless) gate shows as back-to-back ask→allow events.
+	// are countable regardless of the gate's approver — an AlwaysApprove
+	// (headless policy) gate shows as back-to-back ask→allow events.
 	g.emitDecision(ctx, mode, name, args, "ask", askLayer, askReason, "", askClassifier)
 	req := ApprovalRequest{
 		ToolName: name,
@@ -1021,13 +1040,18 @@ func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
 	return child
 }
 
-// PrefixApproval wraps an ApprovalFunc so a child/subagent's prompts are
-// prefixed with [label] and routed through the same parent approval channel,
-// exactly like CloneForChild does internally. Entry points that build child
-// gates directly (rather than via CloneForChild) use this so subagent approvals
-// surface on the parent's channel instead of bypassing it.
-func PrefixApproval(label string, fn ApprovalFunc) ApprovalFunc {
-	return prefixedApprove(label, fn)
+// PrefixApproval wraps an Approver so a child/subagent's prompts are prefixed
+// with [label] and routed through the same parent approval channel, exactly
+// like CloneForChild does internally. The result keeps a's provenance. Entry
+// points that build child gates directly (rather than via CloneForChild) use
+// this so subagent approvals surface on the parent's channel instead of
+// bypassing it.
+func PrefixApproval(label string, a Approver) Approver {
+	if a.Answer == nil {
+		// Keep a missing func missing so New still rejects it.
+		return a
+	}
+	return Approver{Answer: prefixedApprove(label, a.Answer), DecidedBy: a.DecidedBy}
 }
 
 // prefixedApprove wraps an ApprovalFunc so that prompts are prefixed with

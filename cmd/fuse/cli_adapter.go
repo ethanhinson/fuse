@@ -37,9 +37,12 @@ type CLIAdapter struct {
 }
 
 // newCLIAdapter returns a CLIAdapter. fuseExe is the path to this binary
-// (from os.Executable); approve is the HITL gate for the current turn.
-func newCLIAdapter(fuseExe string, approve permissions.ApprovalFunc) *CLIAdapter {
-	return &CLIAdapter{fuseExe: fuseExe, approve: approve}
+// (from os.Executable); approve is the HITL gate for the current turn. Only its
+// Answer func is kept: the relay server it starts per call takes a bare func,
+// and the mcp-server subprocess on the other end labels its socket client
+// human regardless of approve's provenance.
+func newCLIAdapter(fuseExe string, approve permissions.Approver) *CLIAdapter {
+	return &CLIAdapter{fuseExe: fuseExe, approve: approve.Answer}
 }
 
 // cliJSONResult mirrors the --output-format json response from the claude CLI.

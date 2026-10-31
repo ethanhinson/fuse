@@ -73,7 +73,7 @@ const (
 	// (human prompts) not at all, so prompt frequency, the core auto-mode UX
 	// metric, could not be measured (change 0067). An ask is emitted BEFORE the
 	// approval func runs and the human outcome after it as a second layer=human
-	// event, so a headless AlwaysApprove binding shows as back-to-back ask→allow.
+	// event, so a gate whose approver is AlwaysApprove shows as back-to-back ask→allow.
 	KindPermissionDecision Kind = "permission.decision"
 	// KindSandboxAcquire records a bash execution context being checked out for a
 	// loop: which handler and container runtime backed it, whether a warm one was
@@ -430,9 +430,10 @@ type PermissionDecisionPayload struct {
 	Reason     string `json:"reason,omitempty"`
 	Mode       string `json:"mode"`
 	Command    string `json:"command,omitempty"`
-	// DecidedBy disambiguates human-layer outcomes: "human" (a person answered
-	// the prompt) or "policy" (a binding stand-in such as loop-serve's
-	// AlwaysApprove answered with no human present). Empty on other layers.
+	// DecidedBy disambiguates human-layer outcomes, taken from the gate's
+	// approver: "human" (a person answered the prompt) or "policy" (a stand-in
+	// such as AlwaysApprove answered with no human present). Empty on other
+	// layers except a rules-layer deny forced by a policy approver.
 	DecidedBy string `json:"decided_by,omitempty"`
 	// Classifier is present when the auto-mode classifier was consulted for
 	// this resolution: the audit record of which model judged and whether its

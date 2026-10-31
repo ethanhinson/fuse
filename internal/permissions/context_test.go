@@ -17,7 +17,7 @@ func TestClassifyOrAsk_ForwardsCtxUserMessages(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow","reason":"ok"}`}}
 	cls := newTestClassifier(t, stub)
 	approve, _ := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 
 	msgs := []model.Message{
@@ -62,7 +62,7 @@ func TestClassifyOrAsk_NilSafeWithoutCtxMessages(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow","reason":"ok"}`}}
 	cls := newTestClassifier(t, stub)
 	approve, _ := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 
 	// Bare context: never passed through WithUserMessages.
@@ -84,7 +84,7 @@ func TestClassifyWebFetch_ForwardsCtxUserMessages(t *testing.T) {
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow","reason":"ok"}`}}
 	cls := newTestClassifier(t, stub)
 	approve, _ := newApproveRecorder(true)
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 
 	msgs := []model.Message{

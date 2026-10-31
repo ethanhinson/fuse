@@ -99,11 +99,10 @@ func TestDecisionCarriesClassifierMetaAndReason(t *testing.T) {
 }
 
 func TestHumanDecisionCarriesProvenance(t *testing.T) {
-	// smart mode, non-safelisted tool ⇒ ask ⇒ AlwaysApprove answers. With the
-	// gate labeled policy-approved, the human-layer events must say "policy".
+	// smart mode, non-safelisted tool ⇒ ask ⇒ AlwaysApprove answers. It is a
+	// policy approver, so the human-layer events must say "policy".
 	ctx, rec := recordDecisions()
-	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("some_tool"), AlwaysApprove,
-		WithApprovalProvenance(DecidedByPolicy))
+	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("some_tool"), AlwaysApprove)
 	g.Execute(ctx, "some_tool", `{}`)
 
 	var ask, allow *Decision
@@ -125,9 +124,9 @@ func TestHumanDecisionCarriesProvenance(t *testing.T) {
 		t.Errorf("policy-approved allow must be labeled policy, got %+v", allow)
 	}
 
-	// Default (no option): the human posture.
+	// Human approver: the human posture.
 	ctx2, rec2 := recordDecisions()
-	g2 := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("some_tool"), AlwaysApprove)
+	g2 := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry("some_tool"), Human(AlwaysApprove.Answer))
 	g2.Execute(ctx2, "some_tool", `{}`)
 	for _, d := range *rec2 {
 		if d.Layer == LayerHuman && d.Verdict == "allow" && d.DecidedBy != DecidedByHuman {
