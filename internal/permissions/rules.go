@@ -75,33 +75,25 @@ var dangerousNames = map[string]bool{
 //     matched per-segment against the parsed argv — never the raw string.
 //   - otherwise ask: an action no rule admits fails toward the human.
 //
-// Deny and ask patterns are matched against each segment's argv AND the whole
-// command string; allow is matched per-segment only, so a whole-string allow
-// can never rescue a dangerous segment.
+// Deny and ask patterns are protective: they match with matchProtective
+// (whose '*' spans '/') against each segment's argv, each segment's head, and
+// the whole command string (protectiveHit). Allow is permissive: per segment
+// only, with path.Match, so a whole-string allow can never rescue a dangerous
+// segment and an allow's '/' containment holds (change 0088).
 func evalRules(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []string, workspaceRoot string) Verdict {
-	whole := wholeSubject(segments)
-
 	// 1. Deny wins globally.
 	for _, seg := range segments {
 		if isDangerous(seg, workspaceRoot) {
 			return VerdictDeny
 		}
-		if matchesSegment(cfg.Deny, seg) {
-			return VerdictDeny
-		}
 	}
-	if matchesSubjects(cfg.Deny, whole) {
+	if protectiveHit(cfg.Deny, segments) {
 		return VerdictDeny
 	}
 
 	// 2. Ask beats allow.
 	askPatterns := append(append([]string(nil), cfg.Ask...), alwaysPrompt...)
-	for _, seg := range segments {
-		if matchesSegment(askPatterns, seg) {
-			return VerdictAsk
-		}
-	}
-	if matchesSubjects(askPatterns, whole) {
+	if protectiveHit(askPatterns, segments) {
 		return VerdictAsk
 	}
 
@@ -151,7 +143,7 @@ func allSegmentsAllowed(segments []Segment, autoApprove []string, allowPush bool
 		if seg.hasOpaqueArg() {
 			return false
 		}
-		if matchesSegment(autoApprove, seg) {
+		if matchesSegment(consumerPermissive, autoApprove, seg) {
 			continue
 		}
 		if allowPush && isGitPush(seg) {
@@ -569,10 +561,34 @@ func isSafeSed(args []string) bool {
 }
 
 // matchesSegment matches patterns against a single segment's reconstructed
-// bash subject line (e.g. "bash:git status"), per-segment against the parsed
-// argv rather than the raw source text.
-func matchesSegment(patterns []string, seg Segment) bool {
-	return matchesSubjects(patterns, segmentSubject(seg))
+// bash subject line (e.g. "bash:git status"), per segment against the parsed
+// argv rather than the raw source text. A protective consumer is also matched
+// against the segment head "bash:<argv0>", so a rule written in the legacy
+// first-word shape ("bash:git") means the same thing in every mode (change
+// 0088). The permissive consumer never sees the head: a bare "bash:git" allow
+// must not approve every git invocation in auto mode.
+func matchesSegment(kind patternConsumer, patterns []string, seg Segment) bool {
+	if matchesSubjects(kind, patterns, segmentSubject(seg)) {
+		return true
+	}
+	return kind == consumerProtective && matchesSubjects(kind, patterns, "bash:"+seg.Name)
+}
+
+// protectiveHit reports whether any protective pattern matches the parsed
+// command: per segment (full subject and head) or against the whole command.
+// It is the ONE protective subject rule; auto mode (evalRules) and smart mode
+// (matchesProtective) both call it, so the two modes cannot drift apart
+// (change 0088).
+func protectiveHit(patterns []string, segments []Segment) bool {
+	if len(patterns) == 0 || len(segments) == 0 {
+		return false
+	}
+	for _, seg := range segments {
+		if matchesSegment(consumerProtective, patterns, seg) {
+			return true
+		}
+	}
+	return matchesSubjects(consumerProtective, patterns, wholeSubject(segments))
 }
 
 // segmentSubject reconstructs the "bash:<argv joined>" subject for a segment,
@@ -623,11 +639,30 @@ func wholeSubject(segments []Segment) string {
 	return "bash:" + strings.Join(lines, " ")
 }
 
-// matchesSubjects matches patterns against a single subject using path.Match
-// glob semantics — the same engine as the legacy smart path, but here the
-// subject carries the full argv rather than only the first token.
-func matchesSubjects(patterns []string, subject string) bool {
+// patternConsumer says which way a pattern match points (change 0088).
+// Protective consumers (auto.deny, auto.ask, always_prompt) only ever tighten,
+// so they match generously with matchProtective, whose '*' spans '/'.
+// The permissive consumer (auto_approve) turns a match into an authorization,
+// so it keeps path.Match, whose '*' stops at '/': that boundary is the
+// containment a human writing "bash:rm build/*" relies on (ADR-0005, ADR-0049).
+type patternConsumer int
+
+const (
+	consumerProtective patternConsumer = iota
+	consumerPermissive
+)
+
+// matchesSubjects matches patterns against a single subject with the engine
+// for the given consumer: matchProtective for protective, path.Match for
+// permissive. A malformed pattern matches nothing under either engine.
+func matchesSubjects(kind patternConsumer, patterns []string, subject string) bool {
 	for _, pat := range patterns {
+		if kind == consumerProtective {
+			if matchProtective(pat, subject) {
+				return true
+			}
+			continue
+		}
 		if ok, _ := path.Match(pat, subject); ok {
 			return true
 		}
