@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0098 — Permission deny reasons bound and redact the command they echo](../../changes/active/0098-permission-deny-reasons-bound-and-redact-the-command-they-ec.md)**
+> ↩ **[Change 0098 — Permission deny reasons bound and redact the command they echo](../../changes/archive/2026-10-31-0098-permission-deny-reasons-bound-and-redact-the-command-they-ec.md)**
 <!-- docket:backlink:end -->
 
 # Permission deny reasons bound and redact the command they echo - implementation plan

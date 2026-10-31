@@ -2,7 +2,7 @@
 id: 98
 slug: 'permission-deny-reasons-bound-and-redact-the-command-they-ec'
 title: 'Permission deny reasons bound and redact the command they echo'
-status: 'implemented'
+status: 'done'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md](../../superpowers/specs/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md) |
+| Spec (merged) | [2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md) |
 | Plan | [2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec.md](../../superpowers/plans/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec.md) |
 | Results | [2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-results.md](../../results/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-results.md) |
 | ADRs | [ADR-0071](../../adrs/0071-commands-the-parser-refuses-are-never-answered-by-a-policy-s.md) |
