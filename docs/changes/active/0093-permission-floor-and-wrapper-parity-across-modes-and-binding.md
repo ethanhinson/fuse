@@ -2,7 +2,7 @@
 id: 93
 slug: 'permission-floor-and-wrapper-parity-across-modes-and-binding'
 title: 'Permission floor and wrapper parity across modes and bindings'
-status: 'in-progress'
+status: 'implemented'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/permission-floor-and-wrapper-parity-across-modes-and-binding'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/116'
 blocked_by:
 reconciled: true
 ---
@@ -57,3 +57,12 @@ Three remaining mode and binding gaps in permission matching: a bare first-token
 ### 2026-10-31
 
 Unchanged against origin/main tip; dependency 92 is merged.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 0b63daafa31fe21fb3b044148aa21cd1da842aed
+ran_at:   2026-10-31T21:22:00Z
+<!-- docket:build-evidence:end -->

@@ -1,18 +1,18 @@
 # Backlog
 
-**95 changes** — 🟢 2 in progress · 🔵 1 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 80 done · 🗑️ 6 killed
+**95 changes** — 🟢 1 in progress · 🔵 2 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 80 done · 🗑️ 6 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0093](active/0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md) | Permission floor and wrapper parity across modes and bindings | `medium` | `fix` | [spec](../superpowers/specs/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md) | `fix/permission-floor-and-wrapper-parity-across-modes-and-binding` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (1)
+## 🔵 Built (2)
 
 | # | Title | Priority | Type | PR | State |
 |---|-------|----------|------|----|-------|
+| [0093](active/0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md) | Permission floor and wrapper parity across modes and bindings | `medium` | `fix` | [#116](https://github.com/ethanhinson/fuse/pull/116) | awaiting merge |
 | [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | [#115](https://github.com/ethanhinson/fuse/pull/115) | awaiting merge |
 
 ## 🟡 Proposed (3)
