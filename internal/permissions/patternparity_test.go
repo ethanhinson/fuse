@@ -143,3 +143,131 @@ func TestProtectivePatterns_SameVerdictInSmartAndAuto(t *testing.T) {
 		})
 	}
 }
+
+// unparseableProtectiveRows is the protective parity table for commands the
+// shell parser refuses (change 0096). Both modes match them on the raw
+// command text (rawCommandSubject) with the slash-spanning glob. They are not
+// protectiveParityRows: that table's witness must approve cmd in auto mode,
+// and auto mode has no allow for an unparseable command. smartWitness is the
+// smart-mode legacy first-token allow (the boundary ADR-0068 pinned); nil
+// means no allow in either mode. The stub registry means no row is executed.
+var unparseableProtectiveRows = []struct {
+	desc         string
+	pattern      string
+	cmd          string
+	smartWitness []string
+	hit          bool
+}{
+	{"wrapper glob reaches sudo as written", "bash:sudo*", "sudo ls", []string{"bash:sudo"}, true},
+	{"slash-spanning glob reaches a path-qualified argv0", "bash:/bin/*", "/bin/rm -rf /", []string{"bash:/bin/rm"}, true},
+	{"env rule reaches a non-inert assignment", "bash:env *", "env FOO=$(id) make", []string{"bash:env"}, true},
+	{"npx rule reaches npx", "bash:npx *", "npx create-x", []string{"bash:npx"}, true},
+	{"a rule naming the inner command does not reach a refused wrapper", "bash:rm *", "sudo rm -rf /", nil, false},
+}
+
+// TestProtectivePatterns_Unparseable_SameMatchInSmartAndAuto checks the
+// matcher layer: smart's protectivePattern and auto's evalUnparseable agree on
+// the hit, and on the pattern they name.
+func TestProtectivePatterns_Unparseable_SameMatchInSmartAndAuto(t *testing.T) {
+	for _, r := range unparseableProtectiveRows {
+		t.Run(r.desc, func(t *testing.T) {
+			if _, err := splitSegments(r.cmd); err == nil {
+				t.Fatalf("fixture %q must be refused by the parser", r.cmd)
+			}
+			smartPat, smart := protectivePattern([]string{r.pattern}, "bash", bashArgs(r.cmd))
+			askV, autoPat := evalUnparseable(r.cmd, config.AutoConfig{Ask: []string{r.pattern}}, nil)
+			auto := askV == VerdictAskExplicit
+			if smart != r.hit || auto != r.hit {
+				t.Fatalf("%q vs %q: smart=%v auto=%v, want %v in both", r.pattern, r.cmd, smart, auto, r.hit)
+			}
+			if r.hit && (smartPat != r.pattern || autoPat != r.pattern) {
+				t.Errorf("named patterns: smart=%q auto=%q, want %q", smartPat, autoPat, r.pattern)
+			}
+			if denyV, _ := evalUnparseable(r.cmd, config.AutoConfig{Deny: []string{r.pattern}}, nil); (denyV == VerdictDeny) != r.hit {
+				t.Errorf("auto.deny %q on %q: verdict %v, want deny=%v", r.pattern, r.cmd, denyV, r.hit)
+			}
+		})
+	}
+}
+
+// TestProtectivePatterns_Unparseable_SameVerdictInSmartAndAuto is the
+// end-to-end parity check through the real gate. Human bound: a hit is an
+// explicit ask at the rules layer naming the pattern in every rule slot of both
+// modes, a miss is the parse-layer ask; auto.deny denies without a prompt
+// exactly on a hit. Policy bound: both modes give one rules-layer deny decided
+// by policy with identical reasons, the explicit-ask reason on a hit and the
+// unparseable reason on a miss.
+func TestProtectivePatterns_Unparseable_SameVerdictInSmartAndAuto(t *testing.T) {
+	for _, r := range unparseableProtectiveRows {
+		t.Run(r.desc, func(t *testing.T) {
+			human := func(cfg config.PermissionsConfig) (Decision, bool) {
+				t.Helper()
+				ctx, rec := recordDecisions()
+				approve, called := newApproveRecorder(false)
+				g := New(cfg, newTestRegistry("bash"), Human(approve), WithWorkspaceRoot(t.TempDir()))
+				g.Execute(ctx, "bash", bashArgs(r.cmd))
+				if len(*rec) == 0 {
+					t.Fatalf("no decision recorded for %q", r.cmd)
+				}
+				return (*rec)[0], *called
+			}
+			policy := func(cfg config.PermissionsConfig) []Decision {
+				ctx, rec := recordDecisions()
+				g := New(cfg, newTestRegistry("bash"), AlwaysApprove, WithWorkspaceRoot(t.TempDir()))
+				g.Execute(ctx, "bash", bashArgs(r.cmd))
+				return *rec
+			}
+			smartCfg := func(alwaysPrompt []string) config.PermissionsConfig {
+				return config.PermissionsConfig{Mode: "smart", AutoApprove: r.smartWitness, AlwaysPrompt: alwaysPrompt}
+			}
+
+			if len(r.smartWitness) > 0 {
+				if d, prompted := human(smartCfg(nil)); prompted || d.Verdict != "allow" {
+					t.Fatalf("baseline: smart witness %v must approve %q without a prompt, got %+v", r.smartWitness, r.cmd, d)
+				}
+			}
+
+			wantLayer, wantReason := LayerParse, ""
+			if r.hit {
+				wantLayer, wantReason = LayerRules, explicitAskReason(r.pattern, false)
+			}
+			for _, slot := range []struct {
+				name string
+				cfg  config.PermissionsConfig
+			}{
+				{"smart always_prompt", smartCfg([]string{r.pattern})},
+				{"auto always_prompt", autoCfg(config.AutoConfig{}, nil, []string{r.pattern})},
+				{"auto.ask", autoCfg(config.AutoConfig{Ask: []string{r.pattern}}, nil, nil)},
+			} {
+				d, prompted := human(slot.cfg)
+				if !prompted || d.Verdict != "ask" || d.Layer != wantLayer || d.Reason != wantReason {
+					t.Errorf("%s: got %+v prompted=%v, want ask at %s with reason %q", slot.name, d, prompted, wantLayer, wantReason)
+				}
+			}
+
+			d, prompted := human(autoCfg(config.AutoConfig{Deny: []string{r.pattern}}, nil, nil))
+			if r.hit && (prompted || d.Verdict != "deny" || d.Layer != LayerRules || d.Reason != "denied by auto-mode rules layer: "+r.cmd) {
+				t.Errorf("auto.deny hit: got %+v prompted=%v, want a rules deny without a prompt", d, prompted)
+			}
+			if !r.hit && (!prompted || d.Layer != LayerParse) {
+				t.Errorf("auto.deny miss: got %+v prompted=%v, want the parse-layer ask", d, prompted)
+			}
+
+			wantPolicy := unparseableDenyPrefix + r.cmd
+			if r.hit {
+				wantPolicy = explicitAskReason(r.pattern, true)
+			}
+			smartD := policy(smartCfg([]string{r.pattern}))
+			autoD := policy(autoCfg(config.AutoConfig{}, nil, []string{r.pattern}))
+			for name, ds := range map[string][]Decision{"smart": smartD, "auto": autoD} {
+				if len(ds) != 1 || ds[0].Verdict != "deny" || ds[0].Layer != LayerRules || ds[0].DecidedBy != DecidedByPolicy {
+					t.Errorf("policy %s: want one rules deny decided by policy, got %+v", name, ds)
+					continue
+				}
+				if ds[0].Reason != wantPolicy {
+					t.Errorf("policy %s: reason %q, want %q", name, ds[0].Reason, wantPolicy)
+				}
+			}
+		})
+	}
+}
