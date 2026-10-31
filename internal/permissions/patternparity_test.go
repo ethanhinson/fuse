@@ -12,7 +12,7 @@ import (
 // modes when no protective pattern is configured, so a prompt (or a deny)
 // proves the protective pattern fired. Every cmd is off the read-only
 // safelist, but that alone does not stop a later auto-mode layer from masking
-// an ask on this base (an auto-mode ask is not terminal until change 0087):
+// a default ask (one no explicit rule produced, which is not terminal):
 // classifyHeuristic can still allow a mutation whose targets sit inside the
 // workspace root. The ask survives here only because every cmd uses relative
 // paths (a/b, ./pkg/dir), which resolve against the test process cwd (the
