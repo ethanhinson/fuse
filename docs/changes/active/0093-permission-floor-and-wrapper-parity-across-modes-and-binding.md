@@ -15,7 +15,7 @@ discovered_from: [88]
 adrs: [5, 49, 65, 68]
 spec: 'docs/superpowers/specs/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md'
 plan: 'docs/superpowers/plans/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding.md'
-results:
+results: 'docs/results/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md](../../superpowers/specs/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-design.md) |
 | Plan | [2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding.md](../../superpowers/plans/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding.md) |
+| Results | [2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-results.md](../../results/2026-10-31-permission-floor-and-wrapper-parity-across-modes-and-binding-results.md) |
 | ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0049](../../adrs/0049-allowlist-admission-on-deterministic-allow-paths.md), [ADR-0065](../../adrs/0065-permission-patterns-match-by-consumer-generous-for-protectiv.md), [ADR-0068](../../adrs/0068-catastrophic-floor-is-a-rules-layer-decision-in-smart-mode-a.md) |
 <!-- docket:artifacts:end -->
 
