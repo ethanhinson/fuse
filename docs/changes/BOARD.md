@@ -1,13 +1,18 @@
 # Backlog
 
-**98 changes** — 🟢 2 in progress · 🟡 1 proposed · ⚪ 3 deferred · ✅ 85 done · 🗑️ 7 killed
+**98 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 1 proposed · ⚪ 3 deferred · ✅ 85 done · 🗑️ 7 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0098](active/0098-permission-deny-reasons-bound-and-redact-the-command-they-ec.md) | Permission deny reasons bound and redact the command they echo | `medium` | `fix` | [spec](../superpowers/specs/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md) | `fix/permission-deny-reasons-bound-and-redact-the-command-they-ec` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
+
+## 🔵 Built (1)
+
+| # | Title | Priority | Type | PR | State |
+|---|-------|----------|------|----|-------|
+| [0098](active/0098-permission-deny-reasons-bound-and-redact-the-command-they-ec.md) | Permission deny reasons bound and redact the command they echo | `medium` | `fix` | [#120](https://github.com/ethanhinson/fuse/pull/120) | awaiting merge |
 
 ## 🟡 Proposed (1)
 

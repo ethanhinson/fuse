@@ -2,7 +2,7 @@
 id: 98
 slug: 'permission-deny-reasons-bound-and-redact-the-command-they-ec'
 title: 'Permission deny reasons bound and redact the command they echo'
-status: 'in-progress'
+status: 'implemented'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/permission-deny-reasons-bound-and-redact-the-command-they-ec'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/120'
 blocked_by:
 reconciled: true
 ---
@@ -57,3 +57,12 @@ Every rules, floor, heuristic and unparseable deny reason echoes the full shell 
 ### 2026-10-31
 
 Unchanged against main eb16b8a; spec holds.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: c13a9f5d24391b0afdf636909d97df7c17ac1725
+ran_at:   2026-10-31T23:40:27Z
+<!-- docket:build-evidence:end -->
