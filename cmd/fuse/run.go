@@ -670,7 +670,10 @@ func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *a
 // a caller that keeps its slot while blocked on those children deadlocks under
 // slot pressure (learning: slot-cap-yield-while-blocked-on-children).
 func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode) tools.PipelineRunFunc {
-	return func(ctx context.Context, definition []byte) (string, error) {
+	return func(ctx context.Context, definition []byte, workflow string) (string, error) {
+		if workflow != "" {
+			return "", fmt.Errorf("workflow %q: workflow pipelines are not available in this context", workflow)
+		}
 		p, err := pipeline.Parse(definition)
 		if err != nil {
 			return "", fmt.Errorf("parse: %w", err)
@@ -702,7 +705,10 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 		MaxAttempts: cfg.Pipeline.Synthesis.MaxAttempts,
 		RequirePool: true,
 	}
-	return func(ctx context.Context, goal string, confirm bool) (string, error) {
+	return func(ctx context.Context, goal string, confirm bool, workflow string) (string, error) {
+		if workflow != "" {
+			return "", fmt.Errorf("workflow %q: workflow pipelines are not available in this context", workflow)
+		}
 		// Yield the calling node's slot around the whole operation (see
 		// makePipelineRunFn): the synthesis child AND the step children spawn from
 		// the same pool, so a caller (depth≥1) that holds its slot while blocked on
@@ -774,8 +780,13 @@ func pipelineStatusLine(name string, st pipeline.Status) string {
 // consistently withholds shared-orchestration tools. Called at both the root and
 // every child builder of every agent entry point (change 0026).
 func wirePipelineTool(reg *tools.Registry, runFn tools.PipelineRunFunc, synthFn tools.PipelineSynthFunc, requested []string) {
+	wireBuiltPipelineTool(reg, tools.NewPipelineRunTool(runFn, synthFn), requested)
+}
+
+// wireBuiltPipelineTool applies wirePipelineTool's include rule to a built tool (change 0091).
+func wireBuiltPipelineTool(reg *tools.Registry, t *tools.PipelineRunTool, requested []string) {
 	if len(requested) == 0 || contains(requested, "pipeline_run") {
-		reg.Register(tools.NewPipelineRunTool(runFn, synthFn))
+		reg.Register(t)
 	} else {
 		reg.Unregister("pipeline_run")
 	}

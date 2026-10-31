@@ -10,8 +10,8 @@ import (
 // TestPipelineRunSchema asserts the advertised name and parameter surface.
 func TestPipelineRunSchema(t *testing.T) {
 	tool := NewPipelineRunTool(
-		func(context.Context, []byte) (string, error) { return "", nil },
-		func(context.Context, string, bool) (string, error) { return "", nil },
+		func(context.Context, []byte, string) (string, error) { return "", nil },
+		func(context.Context, string, bool, string) (string, error) { return "", nil },
 	)
 	if tool.Name() != "pipeline_run" {
 		t.Errorf("Name() = %q, want pipeline_run", tool.Name())
@@ -33,11 +33,11 @@ func TestPipelineRunSchema(t *testing.T) {
 func TestPipelineRunAuthoredRoutesToRunFn(t *testing.T) {
 	var gotDef []byte
 	tool := NewPipelineRunTool(
-		func(_ context.Context, def []byte) (string, error) {
+		func(_ context.Context, def []byte, _ string) (string, error) {
 			gotDef = def
 			return "pipeline chain: completed", nil
 		},
-		func(context.Context, string, bool) (string, error) {
+		func(context.Context, string, bool, string) (string, error) {
 			t.Fatal("synthFn must not be called for a {definition} request")
 			return "", nil
 		},
@@ -60,11 +60,11 @@ func TestPipelineRunSynthesizedRoutesToSynthFn(t *testing.T) {
 	var gotGoal string
 	var gotConfirm bool
 	tool := NewPipelineRunTool(
-		func(context.Context, []byte) (string, error) {
+		func(context.Context, []byte, string) (string, error) {
 			t.Fatal("runFn must not be called for a {goal} request")
 			return "", nil
 		},
-		func(_ context.Context, goal string, confirm bool) (string, error) {
+		func(_ context.Context, goal string, confirm bool, _ string) (string, error) {
 			gotGoal = goal
 			gotConfirm = confirm
 			return "pipeline synth-1: completed", nil
@@ -91,7 +91,7 @@ func TestPipelineRunConfirmDefaultsFalse(t *testing.T) {
 	var gotConfirm = true
 	tool := NewPipelineRunTool(
 		nil,
-		func(_ context.Context, _ string, confirm bool) (string, error) {
+		func(_ context.Context, _ string, confirm bool, _ string) (string, error) {
 			gotConfirm = confirm
 			return "ok", nil
 		},
@@ -109,8 +109,8 @@ func TestPipelineRunConfirmDefaultsFalse(t *testing.T) {
 // clear unsupported error (no registry in v1).
 func TestPipelineRunModeInference(t *testing.T) {
 	tool := NewPipelineRunTool(
-		func(context.Context, []byte) (string, error) { return "ran", nil },
-		func(context.Context, string, bool) (string, error) { return "synthed", nil },
+		func(context.Context, []byte, string) (string, error) { return "ran", nil },
+		func(context.Context, string, bool, string) (string, error) { return "synthed", nil },
 	)
 	cases := []struct {
 		name string
@@ -139,7 +139,7 @@ func TestPipelineRunModeInference(t *testing.T) {
 // an IsError result carrying the message.
 func TestPipelineRunSeamErrorSurfaces(t *testing.T) {
 	tool := NewPipelineRunTool(
-		func(context.Context, []byte) (string, error) {
+		func(context.Context, []byte, string) (string, error) {
 			return "", errors.New("validate: cycle detected")
 		},
 		nil,
@@ -154,3 +154,55 @@ func TestPipelineRunSeamErrorSurfaces(t *testing.T) {
 }
 
 var _ Tool = (*PipelineRunTool)(nil)
+
+// TestPipelineRunForwardsWorkflow asserts the optional `workflow` argument
+// crosses both seams (change 0091).
+func TestPipelineRunForwardsWorkflow(t *testing.T) {
+	var runWF, synthWF string
+	tool := NewPipelineRunTool(
+		func(_ context.Context, _ []byte, workflow string) (string, error) {
+			runWF = workflow
+			return "ok", nil
+		},
+		func(_ context.Context, _ string, _ bool, workflow string) (string, error) {
+			synthWF = workflow
+			return "ok", nil
+		},
+	)
+	if res := tool.Execute(context.Background(), `{"definition":"name: x","workflow":"wf"}`); res.IsError {
+		t.Fatalf("definition call errored: %q", res.Output)
+	}
+	if runWF != "wf" {
+		t.Errorf("run seam workflow = %q, want wf", runWF)
+	}
+	if res := tool.Execute(context.Background(), `{"goal":"g","workflow":"wf"}`); res.IsError {
+		t.Fatalf("goal call errored: %q", res.Output)
+	}
+	if synthWF != "wf" {
+		t.Errorf("synth seam workflow = %q, want wf", synthWF)
+	}
+}
+
+// TestPipelineRunWorkflowParamAdvertised asserts the `workflow` property is
+// advertised (with an enum of the configured names) only when names are set.
+func TestPipelineRunWorkflowParamAdvertised(t *testing.T) {
+	base := NewPipelineRunTool(nil, nil)
+	if _, ok := base.Parameters()["properties"].(map[string]any)["workflow"]; ok {
+		t.Fatal("workflow param must be absent without configured workflows")
+	}
+	tool := base.WithWorkflows([]string{"wf"})
+	w, ok := tool.Parameters()["properties"].(map[string]any)["workflow"].(map[string]any)
+	if !ok {
+		t.Fatal("workflow param should be present when workflows are configured")
+	}
+	enum, ok := w["enum"].([]any)
+	if !ok || len(enum) != 1 || enum[0] != "wf" {
+		t.Fatalf("workflow enum = %v, want [wf]", w["enum"])
+	}
+	if desc, _ := w["description"].(string); !strings.Contains(desc, "wf") {
+		t.Errorf("workflow description missing names: %q", desc)
+	}
+	if _, ok := base.Parameters()["properties"].(map[string]any)["workflow"]; ok {
+		t.Error("WithWorkflows must return a copy, not mutate the receiver")
+	}
+}

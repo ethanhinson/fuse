@@ -10,8 +10,8 @@ import (
 )
 
 // noopRunFn / noopSynthFn are inert seams for wiring-only assertions.
-func noopRunFn(context.Context, []byte) (string, error)         { return "", nil }
-func noopSynthFn(context.Context, string, bool) (string, error) { return "", nil }
+func noopRunFn(context.Context, []byte, string) (string, error)         { return "", nil }
+func noopSynthFn(context.Context, string, bool, string) (string, error) { return "", nil }
 
 // TestRootPipelineToolWired asserts wirePipelineTool with an empty subset (a full
 // clone, as the root always is) registers pipeline_run.

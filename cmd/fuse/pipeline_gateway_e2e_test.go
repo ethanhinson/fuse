@@ -210,7 +210,7 @@ func TestPipelineRunYieldsSlotUnderTightCap(t *testing.T) {
 		agent.WithSpawnDepth(0),
 		agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, _ *agent.AgentTree) (string, error) {
 			runFn := makePipelineRunFn(depth1Spawner(childNode), bb, sched, childNode)
-			return runFn(ctx, []byte(authoredChainYAML))
+			return runFn(ctx, []byte(authoredChainYAML), "")
 		}),
 	)
 

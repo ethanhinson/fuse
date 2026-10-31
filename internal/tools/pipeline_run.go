@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // PipelineRunFunc is the authored-pipeline seam (change 0026): it parses,
@@ -11,16 +13,18 @@ import (
 // terminal human-readable status line and writing pipeline.status to the
 // blackboard. The raw definition bytes (YAML or JSON) cross the seam so this
 // package never imports internal/pipeline — cmd/fuse supplies the closure that
-// calls pipeline.Parse/Validate/Run.
-type PipelineRunFunc func(ctx context.Context, definition []byte) (statusText string, err error)
+// calls pipeline.Parse/Validate/Run. workflow is the optional workflow the
+// pipeline's steps run under (change 0091); "" keeps today's behavior.
+type PipelineRunFunc func(ctx context.Context, definition []byte, workflow string) (statusText string, err error)
 
 // PipelineSynthFunc is the synthesized-pipeline seam (change 0026): it
 // synthesizes a pipeline from a natural-language goal (writing pipeline.plan and
 // a synthesis trace), then runs it, returning a terminal status line. confirm is
 // plumbed through for a future interactive gate; headless it is advisory (see the
 // wiring at cmd/fuse). The goal string crosses the seam so this package stays
-// free of internal/pipeline types.
-type PipelineSynthFunc func(ctx context.Context, goal string, confirm bool) (statusText string, err error)
+// free of internal/pipeline types. workflow is the optional workflow the
+// pipeline's steps run under (change 0091); "" keeps today's behavior.
+type PipelineSynthFunc func(ctx context.Context, goal string, confirm bool, workflow string) (statusText string, err error)
 
 // PipelineRunTool is the pipeline_run built-in tool: it runs a multi-step agent
 // pipeline either from a caller-authored definition or by synthesizing one from
@@ -29,12 +33,25 @@ type PipelineSynthFunc func(ctx context.Context, goal string, confirm bool) (sta
 type PipelineRunTool struct {
 	runFn   PipelineRunFunc
 	synthFn PipelineSynthFunc
+	// workflows, when non-empty, enumerates the configured workflow names in the
+	// `workflow` param schema (change 0091).
+	workflows []string
 }
 
 // NewPipelineRunTool constructs the tool with the authored-run and synthesis
 // seams. Either may be nil if the corresponding mode is unused in a given wiring.
 func NewPipelineRunTool(runFn PipelineRunFunc, synthFn PipelineSynthFunc) *PipelineRunTool {
 	return &PipelineRunTool{runFn: runFn, synthFn: synthFn}
+}
+
+// WithWorkflows returns a copy of the tool that advertises the given workflow
+// names (sorted) in its `workflow` param enum and description (change 0091).
+// An empty/nil list leaves the param absent.
+func (t *PipelineRunTool) WithWorkflows(names []string) *PipelineRunTool {
+	cp := *t
+	cp.workflows = append([]string(nil), names...)
+	sort.Strings(cp.workflows)
+	return &cp
 }
 
 // Name returns the tool name.
@@ -52,34 +69,48 @@ func (t *PipelineRunTool) Description() string {
 
 // Parameters returns the JSON schema for the tool input.
 func (t *PipelineRunTool) Parameters() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"definition": map[string]any{
-				"type": "string",
-				"description": "An authored pipeline definition as YAML or JSON (steps, " +
-					"dependencies, workers). Runs the pipeline directly with no synthesis. " +
-					"Mutually exclusive with `goal`.",
-			},
-			"goal": map[string]any{
-				"type": "string",
-				"description": "A natural-language objective. A pipeline is synthesized to " +
-					"achieve it (subject to the configured synthesis caps), its plan written " +
-					"to the pipeline.plan blackboard key, then run. Mutually exclusive with " +
-					"`definition`.",
-			},
-			"name": map[string]any{
-				"type": "string",
-				"description": "Reserved for a future registered-pipeline lookup by name. " +
-					"Not supported in this version (there is no pipeline registry yet).",
-			},
-			"confirm": map[string]any{
-				"type": "boolean",
-				"description": "For a synthesized pipeline, whether to proceed after " +
-					"synthesis. Defaults to false (headless-safe). Advisory when no " +
-					"interactive confirmer is wired.",
-			},
+	props := map[string]any{
+		"definition": map[string]any{
+			"type": "string",
+			"description": "An authored pipeline definition as YAML or JSON (steps, " +
+				"dependencies, workers). Runs the pipeline directly with no synthesis. " +
+				"Mutually exclusive with `goal`.",
 		},
+		"goal": map[string]any{
+			"type": "string",
+			"description": "A natural-language objective. A pipeline is synthesized to " +
+				"achieve it (subject to the configured synthesis caps), its plan written " +
+				"to the pipeline.plan blackboard key, then run. Mutually exclusive with " +
+				"`definition`.",
+		},
+		"name": map[string]any{
+			"type": "string",
+			"description": "Reserved for a future registered-pipeline lookup by name. " +
+				"Not supported in this version (there is no pipeline registry yet).",
+		},
+		"confirm": map[string]any{
+			"type": "boolean",
+			"description": "For a synthesized pipeline, whether to proceed after " +
+				"synthesis. Defaults to false (headless-safe). Advisory when no " +
+				"interactive confirmer is wired.",
+		},
+	}
+	if len(t.workflows) > 0 {
+		enum := make([]any, len(t.workflows))
+		for i, w := range t.workflows {
+			enum[i] = w
+		}
+		props["workflow"] = map[string]any{
+			"type": "string",
+			"enum": enum,
+			"description": "Optional workflow to run the pipeline under: " +
+				strings.Join(t.workflows, ", ") +
+				". Its steps' `worker` names resolve to that workflow's workers and its pool limits apply.",
+		}
+	}
+	return map[string]any{
+		"type":       "object",
+		"properties": props,
 	}
 }
 
@@ -88,6 +119,7 @@ type pipelineRunInput struct {
 	Goal       string `json:"goal"`
 	Name       string `json:"name"`
 	Confirm    bool   `json:"confirm"`
+	Workflow   string `json:"workflow"`
 }
 
 // Execute parses the args, infers the mode (exactly one of definition/goal), and
@@ -117,7 +149,7 @@ func (t *PipelineRunTool) Execute(ctx context.Context, args string) Result {
 		if t.runFn == nil {
 			return Result{IsError: true, Output: "pipeline_run: authored pipelines are not available in this context"}
 		}
-		status, err := t.runFn(ctx, []byte(in.Definition))
+		status, err := t.runFn(ctx, []byte(in.Definition), in.Workflow)
 		if err != nil {
 			return Result{IsError: true, Output: fmt.Sprintf("pipeline_run: %v", err)}
 		}
@@ -127,7 +159,7 @@ func (t *PipelineRunTool) Execute(ctx context.Context, args string) Result {
 	if t.synthFn == nil {
 		return Result{IsError: true, Output: "pipeline_run: pipeline synthesis is not available in this context"}
 	}
-	status, err := t.synthFn(ctx, in.Goal, in.Confirm)
+	status, err := t.synthFn(ctx, in.Goal, in.Confirm, in.Workflow)
 	if err != nil {
 		return Result{IsError: true, Output: fmt.Sprintf("pipeline_run: %v", err)}
 	}
