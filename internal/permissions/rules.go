@@ -28,6 +28,11 @@ const (
 	// VerdictDeny is a hard block from a deny/dangerous match. It wins over any
 	// allow rule and over any session grant.
 	VerdictDeny
+	// VerdictAskExplicit is an ask the operator wrote: a cfg.Ask or
+	// always_prompt pattern matched. Unlike the default VerdictAsk ("no rule
+	// admitted this"), it is its own verdict that skips the safelist,
+	// heuristics and classifier, and is denied when no human approver is bound.
+	VerdictAskExplicit
 )
 
 // String renders the verdict as its lowercase rule keyword.
@@ -39,6 +44,8 @@ func (v Verdict) String() string {
 		return "ask"
 	case VerdictDeny:
 		return "deny"
+	case VerdictAskExplicit:
+		return "ask-explicit"
 	default:
 		return "unknown"
 	}
@@ -81,31 +88,38 @@ var dangerousNames = map[string]bool{
 // only, with path.Match, so a whole-string allow can never rescue a dangerous
 // segment and an allow's '/' containment holds (change 0088).
 func evalRules(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []string, workspaceRoot string) Verdict {
+	v, _ := evalRulesDetail(segments, cfg, autoApprove, alwaysPrompt, workspaceRoot)
+	return v
+}
+
+// evalRulesDetail is evalRules plus, for VerdictAskExplicit, the ask or
+// always_prompt pattern that matched (for the decision reason).
+func evalRulesDetail(segments []Segment, cfg AutoConfig, autoApprove, alwaysPrompt []string, workspaceRoot string) (Verdict, string) {
 	// 1. Deny wins globally.
 	for _, seg := range segments {
 		if isDangerous(seg, workspaceRoot) {
-			return VerdictDeny
+			return VerdictDeny, ""
 		}
 	}
 	if protectiveHit(cfg.Deny, segments) {
-		return VerdictDeny
+		return VerdictDeny, ""
 	}
 
 	// 2. Ask beats allow.
 	askPatterns := append(append([]string(nil), cfg.Ask...), alwaysPrompt...)
-	if protectiveHit(askPatterns, segments) {
-		return VerdictAsk
+	if pat, ok := protectiveHitPattern(askPatterns, segments); ok {
+		return VerdictAskExplicit, pat
 	}
 
 	// 3. Allow only when every segment independently matches an allow rule (or
 	// the config-opted git-push allowance, change 0068 — checked AFTER deny/ask
 	// so a config deny or always_prompt still beats allow_push).
 	if len(segments) > 0 && allSegmentsAllowed(segments, autoApprove, cfg.AllowPush) {
-		return VerdictAllow
+		return VerdictAllow, ""
 	}
 
 	// 4. Default: fail toward the human.
-	return VerdictAsk
+	return VerdictAsk, ""
 }
 
 // allSegmentsAllowed reports whether every segment matches an allow pattern —
@@ -580,15 +594,37 @@ func matchesSegment(kind patternConsumer, patterns []string, seg Segment) bool {
 // (matchesProtective) both call it, so the two modes cannot drift apart
 // (change 0088).
 func protectiveHit(patterns []string, segments []Segment) bool {
+	_, ok := protectiveHitPattern(patterns, segments)
+	return ok
+}
+
+// protectiveHitPattern is the single protective matcher: it walks the same
+// subjects protectiveHit always did (each segment's subject, each segment's
+// "bash:<argv0>" head, then the whole command) with matchProtective and
+// returns the first pattern that matched, so an explicit ask can name it.
+func protectiveHitPattern(patterns []string, segments []Segment) (string, bool) {
 	if len(patterns) == 0 || len(segments) == 0 {
-		return false
+		return "", false
 	}
 	for _, seg := range segments {
-		if matchesSegment(consumerProtective, patterns, seg) {
-			return true
+		if pat, ok := firstProtectiveMatch(patterns, segmentSubject(seg)); ok {
+			return pat, true
+		}
+		if pat, ok := firstProtectiveMatch(patterns, "bash:"+seg.Name); ok {
+			return pat, true
 		}
 	}
-	return matchesSubjects(consumerProtective, patterns, wholeSubject(segments))
+	return firstProtectiveMatch(patterns, wholeSubject(segments))
+}
+
+// firstProtectiveMatch returns the first pattern matchProtective accepts.
+func firstProtectiveMatch(patterns []string, subject string) (string, bool) {
+	for _, pat := range patterns {
+		if matchProtective(pat, subject) {
+			return pat, true
+		}
+	}
+	return "", false
 }
 
 // segmentSubject reconstructs the "bash:<argv joined>" subject for a segment,

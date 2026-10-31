@@ -682,3 +682,135 @@ func TestAutoMode_DockerDenyPatternNowReachable(t *testing.T) {
 		t.Fatalf("a rules-layer deny must not route to the human approval func")
 	}
 }
+
+// Change 0087: an explicit ask/always_prompt match is its own verdict. It beats
+// the read-only safelist, prompts a human when one is bound, and is denied (not
+// auto-approved) when only a policy stand-in answers approvals.
+func TestAutoMode_ExplicitAsk_HumanPrompts(t *testing.T) {
+	approve, called := newApproveRecorder(true)
+	g := New(autoCfg(config.AutoConfig{Ask: []string{"bash:cat*"}}, nil, nil), newTestRegistry("bash"), approve,
+		WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByHuman))
+	res := g.Execute(context.Background(), "bash", bashArgs("cat x.txt"))
+	if !*called {
+		t.Fatalf("explicit ask with a human bound must prompt (safelist must not win); res=%+v", res)
+	}
+}
+
+func TestAutoMode_ExplicitAsk_AlwaysPromptHumanPrompts(t *testing.T) {
+	approve, called := newApproveRecorder(true)
+	g := New(autoCfg(config.AutoConfig{}, nil, []string{"bash:cat*"}), newTestRegistry("bash"), approve,
+		WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByHuman))
+	g.Execute(context.Background(), "bash", bashArgs("cat x.txt"))
+	if !*called {
+		t.Fatal("always_prompt match must prompt a human")
+	}
+}
+
+func TestAutoMode_ExplicitAsk_PolicyStandInDenies(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		auto config.AutoConfig
+		ap   []string
+		pat  string
+	}{
+		{"ask", config.AutoConfig{Ask: []string{"bash:cat*"}}, nil, "bash:cat*"},
+		{"always_prompt", config.AutoConfig{}, []string{"bash:cat*"}, "bash:cat*"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, rec := recordDecisions()
+			g := New(autoCfg(tc.auto, nil, tc.ap), newTestRegistry("bash"), AlwaysApprove,
+				WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByPolicy))
+			res := g.Execute(ctx, "bash", bashArgs("cat x.txt"))
+			if !res.IsError || !res.Denied {
+				t.Fatalf("explicit ask under a policy stand-in must deny; res=%+v", res)
+			}
+			if !strings.Contains(res.Output, "matched ask rule "+tc.pat) || !strings.Contains(res.Output, "no approver bound") {
+				t.Errorf("tool result must name the pattern: %q", res.Output)
+			}
+			var found bool
+			for _, d := range *rec {
+				if d.Verdict == "deny" && d.Layer == LayerRules && strings.Contains(d.Reason, tc.pat) && d.DecidedBy == DecidedByPolicy {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("want deny/rules decision naming pattern; got %+v", *rec)
+			}
+		})
+	}
+}
+
+// No rule matched is unchanged: a policy-allowed headless gate still allows.
+func TestAutoMode_NoRuleMatched_PolicyStillAllows(t *testing.T) {
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), AlwaysApprove,
+		WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByPolicy))
+	res := g.Execute(context.Background(), "bash", bashArgs("cat x.txt"))
+	if res.IsError && res.Denied {
+		t.Fatalf("no-rule-matched must keep its old path; res=%+v", res)
+	}
+}
+
+// A protective ask pattern must match an argument containing '/', and the
+// explicit-ask verdict must name the pattern that matched.
+func TestEvalRules_ExplicitAskMatchesAcrossSlashes(t *testing.T) {
+	segs := segsFor(t, "cat dir/file")
+	v, pat := evalRulesDetail(segs, config.AutoConfig{Ask: []string{"bash:cat*"}}, nil, nil, t.TempDir())
+	if v != VerdictAskExplicit || pat != "bash:cat*" {
+		t.Fatalf("ask bash:cat* vs cat dir/file = %v %q, want ask-explicit bash:cat*", v, pat)
+	}
+	v, pat = evalRulesDetail(segs, config.AutoConfig{}, nil, []string{"bash:cat*"}, t.TempDir())
+	if v != VerdictAskExplicit || pat != "bash:cat*" {
+		t.Fatalf("always_prompt = %v %q, want ask-explicit bash:cat*", v, pat)
+	}
+}
+
+func TestAutoMode_ExplicitAsk_SlashArg(t *testing.T) {
+	approve, called := newApproveRecorder(true)
+	g := New(autoCfg(config.AutoConfig{Ask: []string{"bash:cat*"}}, nil, nil), newTestRegistry("bash"), approve,
+		WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByHuman))
+	g.Execute(context.Background(), "bash", bashArgs("cat dir/file"))
+	if !*called {
+		t.Fatal("ask bash:cat* must prompt for cat dir/file")
+	}
+}
+
+func TestAutoMode_ExplicitAsk_SlashArgPolicyDenies(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		auto config.AutoConfig
+		ap   []string
+	}{
+		{"ask", config.AutoConfig{Ask: []string{"bash:cat*"}}, nil},
+		{"always_prompt", config.AutoConfig{}, []string{"bash:cat*"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, rec := recordDecisions()
+			g := New(autoCfg(tc.auto, nil, tc.ap), newTestRegistry("bash"), AlwaysApprove,
+				WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByPolicy))
+			res := g.Execute(ctx, "bash", bashArgs("cat dir/file"))
+			if !res.IsError || !res.Denied || !strings.Contains(res.Output, "bash:cat*") {
+				t.Fatalf("want policy deny naming pattern; res=%+v", res)
+			}
+			var found bool
+			for _, d := range *rec {
+				if d.Verdict == "deny" && d.Layer == LayerRules && strings.Contains(d.Reason, "bash:cat*") {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("want deny/rules decision naming pattern; got %+v", *rec)
+			}
+		})
+	}
+}
+
+func TestEvalRules_ProtectiveDenyAndStrictAllowStillHold(t *testing.T) {
+	v, _ := evalRulesDetail(segsFor(t, "rm -rf a/b"), config.AutoConfig{Deny: []string{"bash:rm *"}}, nil, nil, t.TempDir())
+	if v != VerdictDeny {
+		t.Fatalf("deny bash:rm * vs rm -rf a/b = %v, want deny", v)
+	}
+	v, _ = evalRulesDetail(segsFor(t, "git clone https://x/y"), config.AutoConfig{}, []string{"bash:git *"}, nil, t.TempDir())
+	if v == VerdictAllow {
+		t.Fatal("allow bash:git * must not approve git clone https://x/y")
+	}
+}

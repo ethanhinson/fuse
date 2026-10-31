@@ -190,14 +190,14 @@ func (s *Scheduler) sessionTokenCeiling() int {
 	return n
 }
 
-// tokenQuotaDenied reports the token-quota refusal for a spawn originating at
+// TokenQuotaDenied reports the token-quota refusal for a spawn originating at
 // nodeID, or nil when no token quota is exhausted. It is the call-time backstop
 // mirror of the token terms in Visible (change 0036): the session ceiling (a
 // global whole-tree term) and the spawning node's workflow pool.tokens quota (a
 // subtree term). The session term is checked first. A non-nil result carries the
 // ErrTokenQuotaExhausted identity, mirroring the budget backstop's discipline.
 // Race-safe: it only calls tree/scheduler methods that lock.
-func (s *Scheduler) tokenQuotaDenied(nodeID string) error {
+func (s *Scheduler) TokenQuotaDenied(nodeID string) error {
 	if s == nil {
 		return nil
 	}

@@ -121,8 +121,8 @@ func TestSpawnBackstopWorkflowTokenQuota(t *testing.T) {
 
 	// The scheduler's admission-quota check reports the exhausted token quota with
 	// the ErrTokenQuotaExhausted identity for the call-time backstop.
-	if err := sc.tokenQuotaDenied(a1); err == nil || !errors.Is(err, ErrTokenQuotaExhausted) {
-		t.Fatalf("tokenQuotaDenied(a1) = %v, want ErrTokenQuotaExhausted identity", err)
+	if err := sc.TokenQuotaDenied(a1); err == nil || !errors.Is(err, ErrTokenQuotaExhausted) {
+		t.Fatalf("TokenQuotaDenied(a1) = %v, want ErrTokenQuotaExhausted identity", err)
 	}
 }
 
@@ -132,8 +132,8 @@ func TestSpawnBackstopSessionTokenCeiling(t *testing.T) {
 	sc.SetSessionTokens(500)
 	tree.Node(a1).UpdateTokens(400, 200) // 600 >= 500
 
-	if err := sc.tokenQuotaDenied(a1); err == nil || !errors.Is(err, ErrTokenQuotaExhausted) {
-		t.Fatalf("tokenQuotaDenied under session ceiling = %v, want ErrTokenQuotaExhausted", err)
+	if err := sc.TokenQuotaDenied(a1); err == nil || !errors.Is(err, ErrTokenQuotaExhausted) {
+		t.Fatalf("TokenQuotaDenied under session ceiling = %v, want ErrTokenQuotaExhausted", err)
 	}
 }
 
@@ -206,7 +206,7 @@ func TestTokenQuotaDeniedNilBelow(t *testing.T) {
 	sc.SetSessionTokens(1000)
 	tree.Node(a1).UpdateTokens(100, 100) // 200, under both
 
-	if err := sc.tokenQuotaDenied(a1); err != nil {
-		t.Fatalf("tokenQuotaDenied below both quotas = %v, want nil", err)
+	if err := sc.TokenQuotaDenied(a1); err != nil {
+		t.Fatalf("TokenQuotaDenied below both quotas = %v, want nil", err)
 	}
 }

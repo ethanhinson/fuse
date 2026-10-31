@@ -572,6 +572,9 @@ func (h *HumanInjector) Wait(ctx context.Context) error {
 	return err
 }
 
+// hasBus reports whether the injector can actually park (non-nil with a bus).
+func (h *HumanInjector) hasBus() bool { return h != nil && h.bus != nil }
+
 // errNoBus signals HumanInjector.Wait was called without a bus (interactive mode is
 // only meaningful with human messaging wired); the loop treats it as "cannot park".
 var errNoBus = fmt.Errorf("agent: interactive loop has no human bus to await")

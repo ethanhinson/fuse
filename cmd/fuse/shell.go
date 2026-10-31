@@ -274,6 +274,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		// tagged with the root node identity.
 		ag.SetEventSink(eventStore)
 		ag.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
+		ag.SetUsageSink(rootNode.UpdateTokens) // the agent owns usage accounting (change 0090)
+		ag.SetCallGate(func() error { return sched.TokenQuotaDenied(rootNode.ID) })
 		return ag, nil
 	}
 

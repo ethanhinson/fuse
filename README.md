@@ -252,10 +252,10 @@ Protective patterns (`always_prompt`, `auto.deny`, `auto.ask`) are also
 matched against the segment head `bash:<argv0>` and against the whole command,
 and their `*` matches any run of characters **including `/`**, so
 `deny: ["bash:rm *"]` denies `rm -rf a/b` and `ask: ["bash:npm publish*"]`
-matches `npm publish ./pkg/dir`. In auto mode an ask from these rules is not
-yet final: a later layer (the read-only safelist or the heuristic classifier)
-can still allow the command, so prefer `deny` for anything that must never run
-unattended. Allow patterns (`auto_approve`) are strict: their `*` stops at
+matches `npm publish ./pkg/dir`. In auto mode a matching `ask` or
+`always_prompt` rule is final: it prompts a human when one is bound (and is
+denied when none is), and no later layer (the read-only safelist, heuristics or
+classifier) can override it. Allow patterns (`auto_approve`) are strict: their `*` stops at
 `/`, so `bash:git *` does not approve `git clone https://host/repo` and
 `bash:rm build/*` does not approve `rm build/../x`, and every segment must
 match on its own. `?` matches one character and `[...]` classes work as in a

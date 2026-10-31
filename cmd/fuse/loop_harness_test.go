@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,6 +33,19 @@ type gatewayCall struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"messages"`
+	Tools []struct {
+		Function struct {
+			Name string `json:"name"`
+		} `json:"function"`
+	} `json:"tools"`
+}
+
+func (c gatewayCall) toolNames() []string {
+	var out []string
+	for _, t := range c.Tools {
+		out = append(out, t.Function.Name)
+	}
+	return out
 }
 
 // recordingGateway answers every request with a tool call (so a loop only stops
@@ -39,6 +53,9 @@ type gatewayCall struct {
 type recordingGateway struct {
 	mu    sync.Mutex
 	calls []gatewayCall
+	// script, when set, replaces the default tool-call reply: request i gets
+	// script[i] (the last entry repeats). Each entry is a full response body.
+	script []string
 }
 
 func (g *recordingGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -46,9 +63,18 @@ func (g *recordingGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var c gatewayCall
 	_ = json.Unmarshal(body, &c)
 	g.mu.Lock()
+	idx := len(g.calls)
 	g.calls = append(g.calls, c)
+	script := g.script
 	g.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
+	if len(script) > 0 {
+		if idx >= len(script) {
+			idx = len(script) - 1
+		}
+		io.WriteString(w, script[idx])
+		return
+	}
 	io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"skill","arguments":"{\"name\":\"research\"}"}}]}}]}`)
 }
 
@@ -309,4 +335,183 @@ func TestLoopRateGateChainsOnlyWhenTheLoopDiffers(t *testing.T) {
 		t.Fatal("a loop limit on an unlimited server was dropped")
 	}
 	var _ model.RateGate = chainedRateGate{}
+}
+
+// mcpAuthFakeServer is a minimal streamable-HTTP MCP server exposing one tool
+// "echo". It records the Authorization header of each request.
+func mcpAuthFakeServer(t *testing.T) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var auths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		auths = append(auths, r.Header.Get("Authorization"))
+		mu.Unlock()
+		var req struct {
+			Method string          `json:"method"`
+			ID     json.RawMessage `json:"id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		reply := func(result string) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":%s}`, req.ID, result)
+		}
+		switch req.Method {
+		case "initialize":
+			reply(`{"protocolVersion":"2025-03-26","capabilities":{}}`)
+		case "tools/list":
+			reply(`{"tools":[{"name":"echo","description":"echo","inputSchema":{"type":"object"}}]}`)
+		default:
+			// Intentional: notifications (e.g. notifications/initialized) and any
+			// other unknown method get a bodyless 202, as the spec allows.
+			w.WriteHeader(http.StatusAccepted)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), auths...) }
+}
+
+func mcpServerEvents(t *testing.T, hist []event.Event) []event.MCPServerPayload {
+	t.Helper()
+	var out []event.MCPServerPayload
+	for _, e := range hist {
+		if e.Kind != event.KindMCPServer {
+			continue
+		}
+		var p event.MCPServerPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// TestEverySpecMCPAuthKindConnects is the golden for ADR-0062: every MCP auth
+// kind the server advertises to a spec must actually connect, send its
+// credential, and list tools, and the loop must report it as an mcp.server event.
+func TestEverySpecMCPAuthKindConnects(t *testing.T) {
+	t.Setenv("FUSE_TEST_MCP_TOKEN", "operator-held-token")
+	for _, kind := range harnessresolve.SpecMCPAuthKinds() {
+		t.Run(kind.String(), func(t *testing.T) {
+			rt, gw, _ := harnessServer(t, harnessOperator+`
+loop_server:
+  secrets:
+    - {name: tok, env: FUSE_TEST_MCP_TOKEN}
+`)
+			srv, auths := mcpAuthFakeServer(t)
+			auth := &harnessv1.McpAuth{Type: kind}
+			wantAuth := ""
+			if kind != harnessv1.McpAuthType_MCP_AUTH_TYPE_UNSPECIFIED {
+				auth.ClientSecretRef = "tok"
+				wantAuth = "Bearer operator-held-token"
+			}
+			turns := uint32(1)
+			spec := &harnessv1.HarnessSpec{MaxTurns: &turns, McpServers: []*harnessv1.McpServer{{
+				Name: "s", Transport: harnessv1.McpTransport_MCP_TRANSPORT_STREAMABLE_HTTP, Url: srv.URL, Auth: auth,
+			}}}
+			h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: spec})
+			if err != nil {
+				t.Fatalf("StartLoop: %v", err)
+			}
+			_, _ = h.Wait()
+			hist, err := rt.Attach(context.Background(), "", h.ID(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			evs := mcpServerEvents(t, hist)
+			if len(evs) != 1 {
+				t.Fatalf("mcp.server events = %+v", evs)
+			}
+			if hist[1].Kind != event.KindMCPServer {
+				t.Errorf("second event = %s, want mcp.server right after loop.harness", hist[1].Kind)
+			}
+			if !evs[0].Connected || evs[0].Error != "" || len(evs[0].Tools) != 1 || evs[0].Tools[0] != "mcp:s/echo" {
+				t.Fatalf("server did not connect and list mcp:s/echo: %+v", evs[0])
+			}
+			calls := gw.snapshot()
+			if len(calls) == 0 {
+				t.Fatal("the gateway received no request")
+			}
+			found := false
+			for _, n := range calls[0].toolNames() {
+				found = found || n == "mcp:s/echo"
+			}
+			if !found {
+				t.Errorf("first gateway request tools = %v, want to include mcp:s/echo", calls[0].toolNames())
+			}
+			if evs[0].Name != "s" {
+				t.Errorf("name = %q", evs[0].Name)
+			}
+			if wantAuth == "" {
+				for _, a := range auths() {
+					if a != "" {
+						t.Errorf("unauthenticated kind sent an Authorization header: %q", a)
+					}
+				}
+			} else {
+				seen := false
+				for _, a := range auths() {
+					seen = seen || a == wantAuth
+				}
+				if !seen {
+					t.Errorf("no request carried %q; saw %v", wantAuth, auths())
+				}
+			}
+			for _, e := range hist {
+				if e.Kind == event.KindMCPServer && strings.Contains(string(e.Payload), "operator-held-token") {
+					t.Fatal("mcp.server event holds the secret value")
+				}
+			}
+		})
+	}
+}
+
+// TestUnreachableMCPServerIsReportedAndLoopContinues keeps skip-and-continue: a
+// server that cannot connect is reported connected=false and does not fail the loop.
+func TestUnreachableMCPServerIsReportedAndLoopContinues(t *testing.T) {
+	rt, gw, _ := harnessServer(t, harnessOperator)
+	turns := uint32(1)
+	spec := &harnessv1.HarnessSpec{MaxTurns: &turns, McpServers: []*harnessv1.McpServer{{
+		Name: "down", Transport: harnessv1.McpTransport_MCP_TRANSPORT_HTTP, Url: "http://127.0.0.1:1/mcp",
+	}}}
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: spec})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	_, _ = h.Wait()
+	hist, err := rt.Attach(context.Background(), "", h.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evs := mcpServerEvents(t, hist)
+	if len(evs) != 1 || evs[0].Connected || evs[0].Error == "" {
+		t.Fatalf("want one disconnected mcp.server event with an error, got %+v", evs)
+	}
+	if hist[0].Kind != event.KindLoopHarness {
+		t.Errorf("first event = %s", hist[0].Kind)
+	}
+	if hist[1].Kind != event.KindMCPServer {
+		t.Errorf("second event = %s, want mcp.server", hist[1].Kind)
+	}
+	if n := len(gw.snapshot()); n < 1 {
+		t.Errorf("the loop made %d gateway requests, want >= 1 (it must continue past the dead server)", n)
+	}
+}
+
+func TestRedactMCPError(t *testing.T) {
+	cases := map[string]string{
+		`Post "https://user:pw@host.example/mcp?token=abc&x=1": dial tcp: refused`: `Post "https://host.example/mcp": dial tcp: refused`,
+		`get http://h/p?api_key=s3cret failed.`:                                    `get http://h/p failed.`,
+		`no url here`:                                                              `no url here`,
+	}
+	for in, want := range cases {
+		got := redactMCPError(in)
+		if got != want {
+			t.Errorf("redactMCPError(%q) = %q, want %q", in, got, want)
+		}
+		if strings.Contains(got, "pw@") || strings.Contains(got, "s3cret") || strings.Contains(got, "token=") {
+			t.Errorf("secret survived: %q", got)
+		}
+	}
 }

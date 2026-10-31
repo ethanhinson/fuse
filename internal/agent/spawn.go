@@ -347,7 +347,7 @@ func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (h AgentHandle, err
 		if s.node != nil {
 			nodeID = s.node.ID
 		}
-		if err := s.tree.Scheduler().tokenQuotaDenied(nodeID); err != nil {
+		if err := s.tree.Scheduler().TokenQuotaDenied(nodeID); err != nil {
 			return AgentHandle{}, err
 		}
 	}

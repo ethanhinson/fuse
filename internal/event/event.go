@@ -120,6 +120,14 @@ const (
 	// resolved value) and its content digest. Absent from a loop started without a
 	// spec.
 	KindLoopHarness Kind = "loop.harness"
+	// KindMCPServer records one configured MCP server's connection outcome at loop
+	// start (change 0089), one event per server (operator and spec), right after
+	// loop.harness. A server that failed to connect is reported with connected=false
+	// and its error; the loop continues without it. Never carries a credential.
+	// Emitted at EACH loop start, including a resume (which re-dials), so a
+	// stream may hold several events per server name; consumers take the latest
+	// event per server name.
+	KindMCPServer Kind = "mcp.server"
 )
 
 // Event is the stable envelope over every loop state transition. Payload is the
@@ -379,6 +387,9 @@ type ErrorPayload struct {
 type LoopParkedPayload struct {
 	Turn    int    `json:"turn"`
 	Content string `json:"content"`
+	// Reason is set when the park is not a normal exchange end: "max_turns" means
+	// the per-exchange turn cap was reached (change 0090).
+	Reason string `json:"reason,omitempty"`
 }
 
 // LoopHarnessPayload accompanies KindLoopHarness. SpecBytes is the
@@ -393,6 +404,17 @@ type LoopHarnessPayload struct {
 	Spec      json.RawMessage `json:"spec"`
 	SpecBytes []byte          `json:"spec_bytes"`
 	Digest    string          `json:"digest"`
+}
+
+// MCPServerPayload accompanies KindMCPServer. Tools are the tool names exposed
+// to the model. It never holds a secret.
+type MCPServerPayload struct {
+	Name      string   `json:"name"`
+	Transport string   `json:"transport"`
+	AuthType  string   `json:"auth_type"`
+	Connected bool     `json:"connected"`
+	Error     string   `json:"error,omitempty"`
+	Tools     []string `json:"tools"`
 }
 
 // PermissionDecisionPayload accompanies KindPermissionDecision. Command is a

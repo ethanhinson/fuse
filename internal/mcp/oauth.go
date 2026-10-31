@@ -309,7 +309,7 @@ func GetAccessToken(serverName, serverURL string, cfg config.MCPAuthConfig) (str
 	switch cfg.Type {
 	case "", "none":
 		return "", nil
-	case "bearer":
+	case "bearer", "static":
 		return cfg.ClientSecret, nil
 	case "oauth2":
 		return getOAuth2Token(serverName, serverURL, cfg)
