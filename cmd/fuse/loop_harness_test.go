@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -309,4 +310,138 @@ func TestLoopRateGateChainsOnlyWhenTheLoopDiffers(t *testing.T) {
 		t.Fatal("a loop limit on an unlimited server was dropped")
 	}
 	var _ model.RateGate = chainedRateGate{}
+}
+
+// mcpAuthFakeServer is a minimal streamable-HTTP MCP server exposing one tool
+// "echo". It records the Authorization header of each request.
+func mcpAuthFakeServer(t *testing.T) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var auths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		auths = append(auths, r.Header.Get("Authorization"))
+		mu.Unlock()
+		var req struct {
+			Method string          `json:"method"`
+			ID     json.RawMessage `json:"id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		reply := func(result string) {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":%s}`, req.ID, result)
+		}
+		switch req.Method {
+		case "initialize":
+			reply(`{"protocolVersion":"2025-03-26","capabilities":{}}`)
+		case "tools/list":
+			reply(`{"tools":[{"name":"echo","description":"echo","inputSchema":{"type":"object"}}]}`)
+		default:
+			w.WriteHeader(http.StatusAccepted)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), auths...) }
+}
+
+func mcpServerEvents(t *testing.T, hist []event.Event) []event.MCPServerPayload {
+	t.Helper()
+	var out []event.MCPServerPayload
+	for _, e := range hist {
+		if e.Kind != event.KindMCPServer {
+			continue
+		}
+		var p event.MCPServerPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// TestEverySpecMCPAuthKindConnects is the golden for ADR-0062: every MCP auth
+// kind the server advertises to a spec must actually connect, send its
+// credential, and list tools, and the loop must report it as an mcp.server event.
+func TestEverySpecMCPAuthKindConnects(t *testing.T) {
+	t.Setenv("FUSE_TEST_MCP_TOKEN", "operator-held-token")
+	for _, kind := range harnessresolve.SpecMCPAuthKinds() {
+		t.Run(kind.String(), func(t *testing.T) {
+			rt, _, _ := harnessServer(t, harnessOperator+`
+loop_server:
+  secrets:
+    - {name: tok, env: FUSE_TEST_MCP_TOKEN}
+`)
+			srv, auths := mcpAuthFakeServer(t)
+			auth := &harnessv1.McpAuth{Type: kind}
+			wantAuth := ""
+			if kind != harnessv1.McpAuthType_MCP_AUTH_TYPE_UNSPECIFIED {
+				auth.ClientSecretRef = "tok"
+				wantAuth = "Bearer operator-held-token"
+			}
+			turns := uint32(1)
+			spec := &harnessv1.HarnessSpec{MaxTurns: &turns, McpServers: []*harnessv1.McpServer{{
+				Name: "s", Transport: harnessv1.McpTransport_MCP_TRANSPORT_STREAMABLE_HTTP, Url: srv.URL, Auth: auth,
+			}}}
+			h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: spec})
+			if err != nil {
+				t.Fatalf("StartLoop: %v", err)
+			}
+			_, _ = h.Wait()
+			hist, err := rt.Attach(context.Background(), "", h.ID(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			evs := mcpServerEvents(t, hist)
+			if len(evs) != 1 {
+				t.Fatalf("mcp.server events = %+v", evs)
+			}
+			if !evs[0].Connected || evs[0].Error != "" || len(evs[0].Tools) != 1 {
+				t.Fatalf("server did not connect and list tools: %+v", evs[0])
+			}
+			if evs[0].Name != "s" {
+				t.Errorf("name = %q", evs[0].Name)
+			}
+			if wantAuth != "" {
+				seen := false
+				for _, a := range auths() {
+					seen = seen || a == wantAuth
+				}
+				if !seen {
+					t.Errorf("no request carried %q; saw %v", wantAuth, auths())
+				}
+			}
+			for _, e := range hist {
+				if e.Kind == event.KindMCPServer && strings.Contains(string(e.Payload), "operator-held-token") {
+					t.Fatal("mcp.server event holds the secret value")
+				}
+			}
+		})
+	}
+}
+
+// TestUnreachableMCPServerIsReportedAndLoopContinues keeps skip-and-continue: a
+// server that cannot connect is reported connected=false and does not fail the loop.
+func TestUnreachableMCPServerIsReportedAndLoopContinues(t *testing.T) {
+	rt, _, _ := harnessServer(t, harnessOperator)
+	turns := uint32(1)
+	spec := &harnessv1.HarnessSpec{MaxTurns: &turns, McpServers: []*harnessv1.McpServer{{
+		Name: "down", Transport: harnessv1.McpTransport_MCP_TRANSPORT_HTTP, Url: "http://127.0.0.1:1/mcp",
+	}}}
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: spec})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	_, _ = h.Wait()
+	hist, err := rt.Attach(context.Background(), "", h.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evs := mcpServerEvents(t, hist)
+	if len(evs) != 1 || evs[0].Connected || evs[0].Error == "" {
+		t.Fatalf("want one disconnected mcp.server event with an error, got %+v", evs)
+	}
+	if hist[0].Kind != event.KindLoopHarness {
+		t.Errorf("first event = %s", hist[0].Kind)
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"sync"
 
 	"github.com/ethanhinson/fuse/internal/agent"
@@ -352,6 +353,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			// one-shot, shell, research-probe, and mcp-server bindings do not, and
 			// deliberately pass no hooks rather than emitting into a NoopStore.
 			if loopToolReg != nil {
+				emitMCPServerEvents(store, tree.RootID(), loopManagers, loopToolReg)
 				loopToolReg.Register(tools.NewBash(sb, sandbox.WithPoolHooks(
 					tools.SandboxEventHooks(store, tree.RootID()))))
 				// The admission gate (change 0077) and the substrate-health emitter
@@ -488,4 +490,35 @@ func loopServerPrincipal(lc runtime.LoopConfig) loopauth.Principal {
 		subject = "local"
 	}
 	return loopauth.Principal{Tenant: event.NormalizeTenant(lc.Tenant), Subject: subject}
+}
+
+// emitMCPServerEvents appends one mcp.server event per MCP server the loop's
+// manager holds (change 0089), right after loop.harness. A server that failed to
+// connect is reported connected=false with its error; the loop continues without
+// it. Payloads never carry a credential.
+func emitMCPServerEvents(store event.EventStore, rootID string, managers *sync.Map, reg *tools.Registry) {
+	v, ok := managers.Load(reg)
+	if !ok {
+		return
+	}
+	mgr, ok := v.(*mcp.Manager)
+	if !ok || mgr == nil {
+		return
+	}
+	statuses := mgr.Status()
+	sort.Slice(statuses, func(i, j int) bool { return statuses[i].Name < statuses[j].Name })
+	for _, st := range statuses {
+		toolNames := append([]string{}, st.Tools...)
+		sort.Strings(toolNames)
+		payload, err := event.MarshalPayload(event.MCPServerPayload{
+			Name: st.Name, Transport: st.Transport, AuthType: st.AuthType,
+			Connected: st.Connected, Error: st.Error, Tools: toolNames,
+		})
+		if err != nil {
+			continue
+		}
+		if err := store.Append(event.Event{NodeID: rootID, Kind: event.KindMCPServer, Payload: payload}); err != nil {
+			fmt.Fprintf(os.Stderr, "loop-server: record mcp.server %q: %v\n", st.Name, err)
+		}
+	}
 }

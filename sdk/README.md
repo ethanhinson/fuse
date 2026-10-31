@@ -76,6 +76,11 @@ if errors.As(err, &bad) {
 The spec and its digest (`harness.Digest`) are the first event of the loop's stream
 (`loop.harness`), so a resume on any server replica rebuilds the same harness.
 
+Right after it, the loop records one `mcp.server` event per configured MCP server
+(name, transport, auth type, whether it connected, the error if not, and the tool
+names it exposes). A server that cannot connect is reported and skipped; the loop
+continues. No event carries a credential.
+
 ### Pre-flighting a spec
 
 Call `Capabilities(ctx)` before `StartLoop` to check a spec against what the
