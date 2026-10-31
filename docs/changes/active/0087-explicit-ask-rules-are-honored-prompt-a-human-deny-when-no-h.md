@@ -15,7 +15,7 @@ discovered_from: []
 adrs: [5, 49, 61, 64]
 spec: 'docs/superpowers/specs/2026-10-31-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h-design.md'
 plan: 'docs/superpowers/plans/2026-10-31-explicit-ask-rules-are-honored.md'
-results:
+results: 'docs/results/2026-10-31-explicit-ask-rules-are-honored-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-10-31-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h-design.md](../../superpowers/specs/2026-10-31-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h-design.md) |
 | Plan | [2026-10-31-explicit-ask-rules-are-honored.md](../../superpowers/plans/2026-10-31-explicit-ask-rules-are-honored.md) |
+| Results | [2026-10-31-explicit-ask-rules-are-honored-results.md](../../results/2026-10-31-explicit-ask-rules-are-honored-results.md) |
 | ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0049](../../adrs/0049-allowlist-admission-on-deterministic-allow-paths.md), [ADR-0061](../../adrs/0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md), [ADR-0064](../../adrs/0064-explicit-ask-rules-are-their-own-verdict-prompt-a-human-deny.md) |
 <!-- docket:artifacts:end -->
 
