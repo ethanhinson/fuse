@@ -552,11 +552,32 @@ function fuseLoopToken(secret: string, sub: string, tenant?: string): string {
 Mint a fresh token per call (or cache one for less than its lifetime). A
 long-running `Observe` stream is authenticated once, when it opens.
 
-The service is three RPCs:
+The service is four RPCs:
 
 - `StartLoop` / `Send` — unary. The authoritative tenant is the authenticated
   token's; the wire `tenant` field, when set, must match it (a mismatch is a
   spoof, see above).
+- `GetCapabilities` - unary and read-only, with the same authentication as
+  `StartLoop`. It starts no loop. For the authenticated tenant it returns:
+  - models: alias, gateway id, effective context window, max output, persona,
+    default flag, and the optional `label` / `description` / `tags`
+  - installed skills
+  - one ceiling per tighten-only field, keyed by the refusal field path
+    (`operator_set: false` means a spec cannot set that field)
+  - `secret_ref` names for the tenant, names only (a host-restricted secret
+    still resolves only for its hosts)
+  - spec MCP auth kinds
+  - server version and digest algorithm
+
+  `cli/` routes are never listed. Model entries carry optional display keys,
+  and `advertise: false` hides an entry from the listing:
+
+  ```yaml
+  models:
+    # Well-known tags: tools, vision, reasoning, long-context.
+    fast: {id: cloud/fast, label: Fast coder, description: Cheap and quick, tags: [tools, long-context]}
+    internal: {id: cloud/internal, advertise: false}
+  ```
 - `Observe(from_seq)` — server-streaming history-then-live: it replays durable
   history since `from_seq`, then live-tails, deduping the replay/live overlap at
   the watermark and flagging a `gap` when a sequence hole is detected. A
