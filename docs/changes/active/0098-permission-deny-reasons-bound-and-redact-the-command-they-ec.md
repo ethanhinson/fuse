@@ -15,7 +15,7 @@ discovered_from: [96]
 adrs: [71]
 spec: 'docs/superpowers/specs/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md'
 plan: 'docs/superpowers/plans/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec.md'
-results:
+results: 'docs/results/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md](../../superpowers/specs/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-design.md) |
 | Plan | [2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec.md](../../superpowers/plans/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec.md) |
+| Results | [2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-results.md](../../results/2026-10-31-permission-deny-reasons-bound-and-redact-the-command-they-ec-results.md) |
 | ADRs | [ADR-0071](../../adrs/0071-commands-the-parser-refuses-are-never-answered-by-a-policy-s.md) |
 <!-- docket:artifacts:end -->
 
