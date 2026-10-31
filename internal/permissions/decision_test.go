@@ -104,7 +104,7 @@ func TestDecisionSink_TerminalOutcomes(t *testing.T) {
 	t.Run("human deny is typed", func(t *testing.T) {
 		ctx, rec := recordDecisions()
 		deny := func(context.Context, ApprovalRequest) (bool, bool, error) { return false, false, nil }
-		g := New(config.PermissionsConfig{Mode: "prompt-all"}, newTestRegistry("bash"), deny)
+		g := New(config.PermissionsConfig{Mode: "prompt-all"}, newTestRegistry("bash"), Human(deny))
 		res := g.Execute(ctx, "bash", bashArgs("ls"))
 		if !res.Denied || res.DenyLayer != LayerHuman {
 			t.Fatalf("want typed human denial, got %+v", res)

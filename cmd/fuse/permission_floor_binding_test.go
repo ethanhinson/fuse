@@ -92,15 +92,11 @@ func modelWasTold(gw *recordingGateway, want string) bool {
 }
 
 // TestHostedBindingDeniesCatastrophicInSmartMode proves, at the composition
-// root the loop servers share (buildGate under markPolicyApproval +
-// AlwaysApprove), that a smart-mode legacy allow cannot approve a workspace
-// ancestor deletion (change 0093): it is denied at the rules layer and the
-// sentinel survives.
+// root the loop servers share (buildGate with AlwaysApprove, a policy
+// approver), that a smart-mode legacy allow cannot approve a workspace ancestor
+// deletion (change 0093): it is denied at the rules layer and the sentinel
+// survives.
 func TestHostedBindingDeniesCatastrophicInSmartMode(t *testing.T) {
-	prev := gateApprovalProvenance
-	t.Cleanup(func() { gateApprovalProvenance = prev })
-	markPolicyApproval()
-
 	_, ws := floorWorkspace(t)
 	keep := filepath.Join(ws, "keep")
 	if err := os.Mkdir(keep, 0o755); err != nil {
@@ -153,9 +149,6 @@ func TestHostedBindingDeniesCatastrophicInSmartMode(t *testing.T) {
 // could not run here either way; the decision events are the proof.
 func TestLoopServerDeniesWrapperRuleEndToEnd(t *testing.T) {
 	t.Run("auto deny", func(t *testing.T) {
-		prev := gateApprovalProvenance
-		t.Cleanup(func() { gateApprovalProvenance = prev })
-		markPolicyApproval()
 		floorWorkspace(t)
 
 		rt, gw, _ := harnessServer(t, harnessOperator+`
@@ -190,9 +183,6 @@ permissions:
 	})
 
 	t.Run("smart always_prompt", func(t *testing.T) {
-		prev := gateApprovalProvenance
-		t.Cleanup(func() { gateApprovalProvenance = prev })
-		markPolicyApproval()
 		floorWorkspace(t)
 
 		// "bash:timeout *" (with a space) misses smart mode's legacy
@@ -235,9 +225,6 @@ permissions:
 // TestHostedBindingDeniesCatastrophicInSmartMode are the proof of
 // non-execution.
 func TestLoopServerDeniesCatastrophicInSmartModeEndToEnd(t *testing.T) {
-	prev := gateApprovalProvenance
-	t.Cleanup(func() { gateApprovalProvenance = prev })
-	markPolicyApproval()
 	floorWorkspace(t)
 
 	rt, gw, _ := harnessServer(t, harnessOperator+`
@@ -272,9 +259,6 @@ permissions:
 // TestGatewaylessGateStillCatchesAncestorDeletion proves the workspace root is
 // bound independently of classifier constructibility (no gateway URL).
 func TestGatewaylessGateStillCatchesAncestorDeletion(t *testing.T) {
-	prev := gateApprovalProvenance
-	t.Cleanup(func() { gateApprovalProvenance = prev })
-	markPolicyApproval()
 	_, ws := floorWorkspace(t)
 
 	cfg := config.Config{Permissions: config.PermissionsConfig{Mode: "auto"}}

@@ -223,7 +223,8 @@ var newLoopServeNetObservability = newObservability
 // over a plain TCP listener; Connect and Connect's HTTP/1.1 fallback also work.
 //
 // Its documented policy is AUTO-APPROVE (permissions.AlwaysApprove): there is no human
-// on a TTY to gate tool calls over the network, exactly as binding #2. That is THIS
+// on a TTY to gate tool calls over the network, exactly as binding #2. AlwaysApprove
+// is a policy approver, so its gates are policy provenance. That is THIS
 // binding's CHOICE, wired here at the composition root (ADR-0028 stance: the
 // binding owns policy, the Runtime seam stays policy-free), not a property of the
 // Runtime seam.
@@ -320,7 +321,6 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	// Auto-approve is THIS binding's policy (documented, ADR-0028): headless networked
 	// loop control has no human on a TTY. It is not a property of the Runtime seam.
 	approve := permissions.AlwaysApprove
-	markPolicyApproval()
 
 	// Load skills + tools EXACTLY as runLoopServer does so the two bindings serve an
 	// identically-wired Runtime.

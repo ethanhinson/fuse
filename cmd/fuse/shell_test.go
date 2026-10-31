@@ -78,7 +78,7 @@ func TestShellModelBuilderWiring(t *testing.T) {
 	reg := model.DefaultRegistry()
 	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	var build tui.AgentBuilder = func(alias string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
-		return buildAgentWithRendererAndTrace(cfg, reg, alias, r, false, "", toolReg, approve, nil, "", nil, false, nil, nil, observe.NoopObserver{})
+		return buildAgentWithRendererAndTrace(cfg, reg, alias, r, false, "", toolReg, permissions.Human(approve), nil, "", nil, false, nil, nil, observe.NoopObserver{})
 	}
 	m := tui.NewShellModel(reg.Default, false, "dark", reg, nil, build, permissions.NewSessionMode(permissions.ModeSmart), true)
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})

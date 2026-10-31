@@ -74,7 +74,7 @@ func (h *eventStoreHolder) get() event.EventStore {
 // emit onto it (change 0046 — no process-global).
 func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias string,
 	toolReg *tools.Registry, tree *agent.AgentTree, stdout io.Writer, verbose bool, traceW io.Writer,
-	rootApprove permissions.ApprovalFunc, oneShotSystemBlock string, oneShotBudget bool,
+	rootApprove permissions.Approver, oneShotSystemBlock string, oneShotBudget bool,
 	rateGate model.RateGate, observer observe.Observer) (runtime.Deps, func()) {
 
 	sched := tree.Scheduler()
@@ -151,6 +151,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		var aerr error
 		// Subagent approvals route to the parent channel, prefixed so the
 		// human sees which child is asking (same posture as CloneForChild).
+		// PrefixApproval keeps the root approver's provenance.
 		childApprove := permissions.PrefixApproval(opts.Label, rootApprove)
 		// One-shot passes no session-mode source: gates default to
 		// cfg.Permissions.Mode exactly as before this seam.
@@ -280,8 +281,9 @@ type researchProbeDepsInput struct {
 // buildResearchProbeRuntimeDeps assembles runtime.Deps for the research-probe entry
 // point. It preserves the probe's unique wiring: MultiRenderer (tree node +
 // recorder), workflow activation (worker allowlists, pool backstop), AlwaysApprove
-// (headless). BaseDir is "" (NoopStore — the probe writes no event log). The
-// tree is supplied by the caller (Deps.Tree) so probe.Summarize still sees it after
+// (headless; a policy approver, so the probe's root and child gates are policy
+// provenance and deny explicit asks at the rules layer). BaseDir is ""
+// (NoopStore - the probe writes no event log). The tree is supplied by the caller (Deps.Tree) so probe.Summarize still sees it after
 // h.Wait(). Cloned child-builder site 3 of 4, wired through loopWiring (learning
 // patch-every-cloned-child-builder).
 //
@@ -351,7 +353,8 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		}
 		var a *agent.Agent
 		var aerr error
-		// research-probe is headless (no TTY, AlwaysApprove) ⇒ backstopped.
+		// research-probe is headless (no TTY, AlwaysApprove) ⇒ backstopped. Its
+		// gates are policy provenance: AlwaysApprove is a policy approver.
 		if opts.SystemPrompt != "" {
 			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false, rateGate, nil)
 		} else {
@@ -498,8 +501,8 @@ type shellDepsInput struct {
 	// childApprove is the per-child base approval func (the TUI channel); rootApprove
 	// is the build-seam approval used by BuildAgent for the root construction. In the
 	// wiring-assertion test both may be nil.
-	childApprove permissions.ApprovalFunc
-	rootApprove  permissions.ApprovalFunc
+	childApprove permissions.Approver
+	rootApprove  permissions.Approver
 	// observer is the session-shared observe.Observer built once in runShell
 	// (change 0061). Nil selects observe.NoopObserver{} — today's behavior.
 	observer observe.Observer

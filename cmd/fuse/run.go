@@ -147,20 +147,20 @@ func oneShotBudgetInteractive(tty, approveAll bool) bool {
 	return tty && !approveAll
 }
 
-// loopApprovalFor adapts an ApprovalFunc into the agent's doom-loop
+// loopApprovalFor adapts an Approver into the agent's doom-loop
 // force-through callback, but only in the interactive posture — a non-TTY run
 // has no human to answer, so a nil hook keeps the loop's abort-on-trip
 // behavior. The synthetic ApprovalRequest carries the "possible loop" preview
 // through the same channel a tool-call prompt uses. See change 0038.
-func loopApprovalFor(approve permissions.ApprovalFunc, interactive bool) func(context.Context, string) (bool, error) {
-	if !interactive || approve == nil {
+func loopApprovalFor(approve permissions.Approver, interactive bool) func(context.Context, string) (bool, error) {
+	if !interactive || approve.Answer == nil {
 		return nil
 	}
 	return func(ctx context.Context, preview string) (bool, error) {
 		// ToolName tags this as a loop check (not a real tool call) so the TUI
 		// labels the prompt and drops the meaningless session option; the
 		// session bool is discarded — "always for this loop" makes no sense.
-		approved, _, err := approve(ctx, permissions.ApprovalRequest{
+		approved, _, err := approve.Answer(ctx, permissions.ApprovalRequest{
 			ToolName: permissions.LoopApprovalToolName,
 			Preview:  preview,
 		})
@@ -309,7 +309,7 @@ func applyToolTimeout(a *agent.Agent, cfg config.Config) {
 // writes raw API request/response JSON to traceW (when non-nil), attributing
 // blocks to traceLabel. The caller owns traceW's lifecycle; share one
 // syncWriter across all agents of a session so concurrent blocks stay whole.
-func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, error) {
+func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.Approver, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
@@ -411,12 +411,9 @@ func sessionGateMode(cfg config.Config, sm *permissions.SessionMode) permissions
 // Centralizing construction here keeps the mode override and auto-mode wiring
 // consistent across every gate builder and gives tests a single seam to inspect
 // the constructed gate.
-func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.ApprovalFunc, reg *model.Registry, traceW io.Writer, sm *permissions.SessionMode) *permissions.PermissionGate {
+func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.Approver, reg *model.Registry, traceW io.Writer, sm *permissions.SessionMode) *permissions.PermissionGate {
 	opts := autoModeOptions(cfg, reg, traceW)
 	opts = append(opts, permissions.WithMode(sessionGateMode(cfg, sm)))
-	// Audit provenance (0069 follow-up): label who answers this binding's
-	// approval prompts on LayerHuman decision events.
-	opts = append(opts, permissions.WithApprovalProvenance(gateApprovalProvenance))
 	// Extra write roots (change 0068): the per-session scratch dir + trusted
 	// config write_roots. Applied unconditionally (outside autoModeOptions) so
 	// degraded auto mode — no constructible classifier — still scopes them.
@@ -439,7 +436,7 @@ func buildGate(cfg config.Config, toolReg *tools.Registry, approve permissions.A
 
 // buildChildAgent builds an agent with an explicitly provided system prompt,
 // bypassing persona composition. Used when spawn_agent sets system_prompt.
-func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.ApprovalFunc, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink) (*agent.Agent, error) {
+func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, systemPrompt string, toolReg *tools.Registry, approve permissions.Approver, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
@@ -968,7 +965,7 @@ func effectiveMaxTokens(mc model.ModelConfig, cfg config.Config) int {
 	return cfg.MaxTokens
 }
 
-func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.ApprovalFunc, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, string, error) {
+func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.Approver, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, string, error) {
 	mc, err := reg.Resolve(alias)
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)

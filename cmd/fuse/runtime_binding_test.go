@@ -15,6 +15,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/permissions"
 )
 
 // TestOneShotRuntimeParity drives the REAL one-shot binary (run([]string{...}))
@@ -124,9 +125,12 @@ func TestBuildShellRuntimeDeps(t *testing.T) {
 	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 
+	// The shell binds the TUI channel, a human approver. Building the root agent
+	// builds its gate, which needs a labelled approver; nothing here calls it.
+	shellApprove := permissions.Human(permissions.AlwaysApprove.Answer)
 	deps := buildShellRuntimeDeps(shellDepsInput{
 		cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
-		verbose: false, skillBlock: "block", childApprove: nil, rootApprove: nil,
+		verbose: false, skillBlock: "block", childApprove: shellApprove, rootApprove: shellApprove,
 	})
 	if deps.BuildAgent == nil {
 		t.Fatal("BuildAgent is nil")

@@ -8,6 +8,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -64,7 +65,7 @@ func TestOneShotBudgetPostureUnderApproveAll(t *testing.T) {
 			}
 			// The doom-loop hook must be nil in the headless posture: a trip
 			// aborts rather than routing to auto-approve.
-			hook := loopApprovalFor(autoApprove, got)
+			hook := loopApprovalFor(permissions.Policy(autoApprove), got)
 			if tt.wantPosture && hook == nil {
 				t.Error("interactive posture must wire a loop force-through hook")
 			}

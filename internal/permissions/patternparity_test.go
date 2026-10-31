@@ -75,7 +75,7 @@ func TestProtectivePatterns_SameVerdictInSmartAndAuto(t *testing.T) {
 		t.Run(r.desc, func(t *testing.T) {
 			run := func(cfg config.PermissionsConfig) (prompted, failed bool) {
 				approve, called := newApproveRecorder(false)
-				g := New(cfg, newTestRegistry("bash"), approve, WithWorkspaceRoot(t.TempDir()))
+				g := New(cfg, newTestRegistry("bash"), Human(approve), WithWorkspaceRoot(t.TempDir()))
 				res := g.Execute(context.Background(), "bash", bashArgs(r.cmd))
 				return *called, res.IsError
 			}
@@ -112,7 +112,7 @@ func TestProtectivePatterns_SameVerdictInSmartAndAuto(t *testing.T) {
 			policyRun := func(cfg config.PermissionsConfig) []Decision {
 				ctx, rec := recordDecisions()
 				g := New(cfg, newTestRegistry("bash"), AlwaysApprove,
-					WithWorkspaceRoot(t.TempDir()), WithApprovalProvenance(DecidedByPolicy))
+					WithWorkspaceRoot(t.TempDir()))
 				g.Execute(ctx, "bash", bashArgs(r.cmd))
 				return *rec
 			}

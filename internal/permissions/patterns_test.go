@@ -119,7 +119,7 @@ func TestSmartSegmentAllow_KeepsCatastrophicFloor(t *testing.T) {
 		t.Run(tc.cmd, func(t *testing.T) {
 			approve, called := newApproveRecorder(false)
 			cfg := config.PermissionsConfig{Mode: "smart", AutoApprove: []string{"bash:rm *"}}
-			g := New(cfg, newTestRegistry("bash"), approve, WithWorkspaceRoot(ws))
+			g := New(cfg, newTestRegistry("bash"), Human(approve), WithWorkspaceRoot(ws))
 			g.Execute(context.Background(), "bash", bashArgs(tc.cmd))
 			if *called != tc.wantPrompt {
 				t.Errorf("smart bash:rm * on %q: prompted=%v, want %v", tc.cmd, *called, tc.wantPrompt)
@@ -234,8 +234,8 @@ func TestSmartLegacyAllow_KeepsCatastrophicFloor(t *testing.T) {
 		t.Run(tc.cmd, func(t *testing.T) {
 			approve, called := newApproveRecorder(false)
 			cfg := config.PermissionsConfig{Mode: "smart", AutoApprove: tc.allow}
-			g := New(cfg, newTestRegistry("bash"), approve,
-				WithWorkspaceRoot(ws), WithApprovalProvenance(DecidedByHuman))
+			g := New(cfg, newTestRegistry("bash"), Human(approve),
+				WithWorkspaceRoot(ws))
 			ctx, rec := recordDecisions()
 			g.Execute(ctx, "bash", bashArgs(tc.cmd))
 			if *called != tc.wantPrompt {
@@ -270,7 +270,7 @@ func TestPermissiveIgnoresRawSubjects(t *testing.T) {
 	}
 	run := func(cfg config.PermissionsConfig, cmd string) (prompted, denied bool) {
 		approve, called := newApproveRecorder(false)
-		g := New(cfg, newTestRegistry("bash"), approve, WithWorkspaceRoot(root))
+		g := New(cfg, newTestRegistry("bash"), Human(approve), WithWorkspaceRoot(root))
 		res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 		return *called, res.Denied && !*called
 	}
@@ -323,8 +323,8 @@ func TestSmartFloor_PrecedesAllowAndAlwaysPrompt(t *testing.T) {
 		t.Run(tc.desc, func(t *testing.T) {
 			approve, called := newApproveRecorder(false)
 			cfg := config.PermissionsConfig{Mode: "smart", AlwaysPrompt: tc.alwaysPrompt}
-			g := New(cfg, newTestRegistry("bash"), approve,
-				WithWorkspaceRoot(root), WithApprovalProvenance(tc.provenance))
+			g := New(cfg, newTestRegistry("bash"), Approver{Answer: approve, DecidedBy: tc.provenance},
+				WithWorkspaceRoot(root))
 			ctx, rec := recordDecisions()
 			g.Execute(ctx, "bash", bashArgs(cmd))
 			if *called != tc.wantPrompt {

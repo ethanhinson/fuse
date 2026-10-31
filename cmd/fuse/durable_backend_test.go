@@ -9,6 +9,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/permissions"
 )
 
 // TestSelectDurableBackendReturnsFSStore proves the untagged selector wires a durable
@@ -58,7 +59,7 @@ func TestBuildLoopServerDepsWiresDurableSeam(t *testing.T) {
 	}
 	reg := registryFromConfig(cfg)
 	deps := buildLoopServerRuntimeDeps(nil, cfg, reg, reg.Default,
-		defaultToolRegistry(nil, cfg.Research, nil), spawnAgentBlock, nil, sessionRateGate(cfg))
+		defaultToolRegistry(nil, cfg.Research, nil), spawnAgentBlock, permissions.Approver{}, sessionRateGate(cfg))
 	if deps.DurableStore == nil {
 		t.Fatal("buildLoopServerRuntimeDeps left Deps.DurableStore nil (durable seam not wired)")
 	}
@@ -97,7 +98,7 @@ func TestStrictBuilderNamesTheFilesystemRemedy(t *testing.T) {
 	}
 	cfg := config.Default()
 	reg := registryFromConfig(cfg)
-	_, err := buildLoopServerRuntimeDepsStrict(nil, cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil), "", nil, nil, nil, nil)
+	_, err := buildLoopServerRuntimeDepsStrict(nil, cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil), "", permissions.Approver{}, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "can be created and written") || strings.Contains(err.Error(), "Postgres") {
 		t.Fatalf("err = %v", err)
 	}

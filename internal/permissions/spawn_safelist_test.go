@@ -19,7 +19,7 @@ func TestSpawnAgent_AutoApprovesWithoutPrompt(t *testing.T) {
 				prompted = true
 				return true, false, nil
 			}
-			g := New(config.PermissionsConfig{Mode: mode}, newTestRegistry("spawn_agent"), approve)
+			g := New(config.PermissionsConfig{Mode: mode}, newTestRegistry("spawn_agent"), Human(approve))
 			res := g.Execute(context.Background(), "spawn_agent", `{"task":"do a thing","label":"worker"}`)
 			if res.IsError {
 				t.Fatalf("spawn_agent errored: %s", res.Output)

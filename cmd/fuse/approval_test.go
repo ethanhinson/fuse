@@ -20,7 +20,7 @@ func sampleReq() permissions.ApprovalRequest {
 // error message, and never silently approves.
 func TestOneShotApproval_NonTTYDenies(t *testing.T) {
 	fn := oneShotApprovalFunc(false /*approveAll*/, false /*isTTY*/, strings.NewReader(""), &strings.Builder{})
-	approved, session, err := fn(context.Background(), sampleReq())
+	approved, session, err := fn.Answer(context.Background(), sampleReq())
 	if approved {
 		t.Fatal("non-TTY one-shot must not auto-approve")
 	}
@@ -38,7 +38,7 @@ func TestOneShotApproval_NonTTYDenies(t *testing.T) {
 // --approve-all restores auto-approve for scripted use, regardless of TTY.
 func TestOneShotApproval_ApproveAllAutoApproves(t *testing.T) {
 	fn := oneShotApprovalFunc(true /*approveAll*/, false /*isTTY*/, strings.NewReader(""), &strings.Builder{})
-	approved, _, err := fn(context.Background(), sampleReq())
+	approved, _, err := fn.Answer(context.Background(), sampleReq())
 	if err != nil {
 		t.Fatalf("--approve-all must not error: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestOneShotApproval_ApproveAllAutoApproves(t *testing.T) {
 func TestOneShotApproval_TTYPromptApproves(t *testing.T) {
 	var out strings.Builder
 	fn := oneShotApprovalFunc(false, true /*isTTY*/, strings.NewReader("y\n"), &out)
-	approved, _, err := fn(context.Background(), sampleReq())
+	approved, _, err := fn.Answer(context.Background(), sampleReq())
 	if err != nil {
 		t.Fatalf("TTY prompt errored: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestOneShotApproval_TTYPromptApproves(t *testing.T) {
 func TestOneShotApproval_TTYPromptDenies(t *testing.T) {
 	var out strings.Builder
 	fn := oneShotApprovalFunc(false, true, strings.NewReader("n\n"), &out)
-	approved, _, err := fn(context.Background(), sampleReq())
+	approved, _, err := fn.Answer(context.Background(), sampleReq())
 	if err != nil {
 		t.Fatalf("TTY deny should not error: %v", err)
 	}
@@ -82,11 +82,34 @@ func TestOneShotApproval_TTYPromptDenies(t *testing.T) {
 func TestOneShotApproval_TTYSessionAllow(t *testing.T) {
 	var out strings.Builder
 	fn := oneShotApprovalFunc(false, true, strings.NewReader("a\n"), &out)
-	approved, session, err := fn(context.Background(), sampleReq())
+	approved, session, err := fn.Answer(context.Background(), sampleReq())
 	if err != nil {
 		t.Fatalf("session-allow errored: %v", err)
 	}
 	if !approved || !session {
 		t.Fatalf("'a' must approve for session: approved=%v session=%v", approved, session)
+	}
+}
+
+// TestOneShotApprovalFuncProvenance pins who answers each one-shot approver:
+// --approve-all and the piped-stdin deny fallback are policy (no human), the
+// terminal prompt is human.
+func TestOneShotApprovalFuncProvenance(t *testing.T) {
+	if got := oneShotApprovalFunc(true, true, strings.NewReader(""), &strings.Builder{}).DecidedBy; got != permissions.DecidedByPolicy {
+		t.Errorf("--approve-all DecidedBy = %q, want policy", got)
+	}
+	if got := oneShotApprovalFunc(false, true, strings.NewReader(""), &strings.Builder{}).DecidedBy; got != permissions.DecidedByHuman {
+		t.Errorf("TTY prompt DecidedBy = %q, want human", got)
+	}
+	piped := oneShotApprovalFunc(false, false, strings.NewReader(""), &strings.Builder{})
+	if piped.DecidedBy != permissions.DecidedByPolicy {
+		t.Errorf("piped-stdin DecidedBy = %q, want policy", piped.DecidedBy)
+	}
+	approved, _, err := piped.Answer(context.Background(), permissions.ApprovalRequest{Preview: "x"})
+	if approved {
+		t.Error("piped-stdin approver must not approve")
+	}
+	if err == nil || !strings.Contains(err.Error(), "non-interactive") {
+		t.Errorf("piped-stdin approver error = %v, want one naming non-interactive", err)
 	}
 }

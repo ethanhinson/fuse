@@ -49,14 +49,7 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 	defer closeEgress()
 	toolReg := defaultToolRegistry(sb, cfg.Research, nil) // native tools only; no skill tool in MCP server mode
 
-	var approve permissions.ApprovalFunc
-	if socketPath := os.Getenv("FUSE_HITL_SOCKET"); socketPath != "" {
-		// The HITL relay forwards prompts to a human in the parent TUI.
-		approve = hitl.ClientApprovalFunc(socketPath)
-	} else {
-		approve = permissions.AlwaysApprove
-		markPolicyApproval()
-	}
+	approve := mcpServerApprover(os.Getenv("FUSE_HITL_SOCKET"), os.Getenv("FUSE_HITL_PROVENANCE"))
 
 	gate := buildMCPServerGate(cfg, toolReg, approve)
 	srv := mcp.NewServer(os.Stdin, os.Stdout, toolReg, gate)
@@ -74,6 +67,24 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 	return 0
 }
 
+// mcpServerApprover picks the mcp-server's approver. With no socket it is the
+// headless AlwaysApprove policy stand-in. With a socket it dials the parent;
+// the parent says who answers on its end via provenance (FUSE_HITL_PROVENANCE):
+// unset means an older parent that only relayed to a human, so human; "human"
+// is human; anything else (including "policy" and unknown values) is policy,
+// the fail-safe, because a policy-labeled approver denies explicit asks at the
+// rules layer instead of letting a stand-in approve them.
+func mcpServerApprover(socketPath, provenance string) permissions.Approver {
+	if socketPath == "" {
+		return permissions.AlwaysApprove
+	}
+	client := hitl.ClientApprovalFunc(socketPath)
+	if provenance == "" || provenance == permissions.DecidedByHuman {
+		return client
+	}
+	return permissions.Policy(client.Answer)
+}
+
 // buildMCPServerGate constructs the headless mcp-server's permission gate,
 // scoped like every other binding's gate (change 0093): the workspace root is
 // the server's cwd and the write roots are the session scratch dir plus the
@@ -82,9 +93,8 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 // and never the gate, and the server's cwd does not move. The binding has no
 // model registry, so it gets no classifier (unchanged). runMCPServer and its
 // test share this function so the test proves the binding's own construction.
-func buildMCPServerGate(cfg config.Config, toolReg *tools.Registry, approve permissions.ApprovalFunc) *permissions.PermissionGate {
+func buildMCPServerGate(cfg config.Config, toolReg *tools.Registry, approve permissions.Approver) *permissions.PermissionGate {
 	return permissions.New(cfg.Permissions, toolReg, approve,
-		permissions.WithApprovalProvenance(gateApprovalProvenance),
 		permissions.WithWorkspaceRoot(mcpServerWorkspaceRoot()),
 		permissions.WithWriteRoots(gateWriteRoots(cfg)))
 }

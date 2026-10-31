@@ -49,15 +49,16 @@ func (discardRenderer) Tokens(int, int)                 {}
 // runLoopServer implements the `fuse loop-server` subcommand (binding #2): a
 // headless stdio JSON-RPC 2.0 loop-control server backed by the in-process Runtime.
 // Its documented policy is AUTO-APPROVE (permissions.AlwaysApprove): there is no
-// human on a TTY to gate tool calls. That is a binding CHOICE wired here at the
-// composition root, not a property of the policy-free Runtime seam. Unlike the CLI
+// human on a TTY to gate tool calls. AlwaysApprove is a policy approver, so its
+// gates are policy provenance and deny explicit asks at the rules layer. That is
+// a binding CHOICE wired here at the composition root, not a property of the
+// policy-free Runtime seam. Unlike the CLI
 // bindings it wires a REAL fsstore (BaseDir = session.DefaultLogDir()) so
 // loop.observe / loop.attach have durable history to replay on reconnect.
 func runLoopServer(_ []string, cfg config.Config, reg *model.Registry, _ io.Writer, stderr io.Writer) int {
 	// Auto-approve is THIS binding's policy (documented): headless loop control has
 	// no human on a TTY. It is not a property of the Runtime seam.
 	approve := permissions.AlwaysApprove
-	markPolicyApproval()
 
 	skillSet, serr := skills.LoadWithEmbedded(skills.DefaultDirs())
 	if serr != nil {
@@ -103,10 +104,11 @@ func runLoopServer(_ []string, cfg config.Config, reg *model.Registry, _ io.Writ
 //
 // It differs from the CLI bindings in three documented ways: (1) the renderer is a
 // discardRenderer (no display), (2) permissions.AlwaysApprove is the auto-approve
-// binding policy (no human on a TTY), and (3) BaseDir = session.DefaultLogDir() opens
+// binding policy (no human on a TTY; a policy approver, so its gates are policy
+// provenance), and (3) BaseDir = session.DefaultLogDir() opens
 // a REAL fsstore per loop so observe/attach have durable history.
 func buildLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
-	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
+	toolReg *tools.Registry, systemBlock string, rootApprove permissions.Approver,
 	rateGate model.RateGate) runtime.Deps {
 	return buildLoopServerRuntimeDepsWithObserver(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observe.NoopObserver{})
 }
@@ -128,7 +130,7 @@ var selectDurableBackendFn = selectDurableBackend
 // the server and the dev Postgres StatefulSet start concurrently, the first pod
 // lost the race, and none of its loops ever reached the database.
 func buildLoopServerRuntimeDepsWithObserver(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
-	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
+	toolReg *tools.Registry, systemBlock string, rootApprove permissions.Approver,
 	rateGate model.RateGate, observer observe.Observer) runtime.Deps {
 	durableStore, durableReg, derr := selectDurableBackendFn(cfg)
 	if derr != nil {
@@ -144,7 +146,7 @@ func buildLoopServerRuntimeDepsWithObserver(sb *sandbox.Service, cfg config.Conf
 // refusal is a restart until the database is up, which is the correct convergence;
 // under Compose `depends_on: service_healthy` means it never fires.
 func buildLoopServerRuntimeDepsStrict(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
-	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
+	toolReg *tools.Registry, systemBlock string, rootApprove permissions.Approver,
 	rateGate model.RateGate, observer observe.Observer, skillSet *skills.Set) (runtime.Deps, error) {
 	durableStore, durableReg, derr := selectDurableBackendFn(cfg)
 	var fsErr fsBackendError
@@ -171,7 +173,7 @@ func buildLoopServerRuntimeDepsStrict(sb *sandbox.Service, cfg config.Config, re
 // server's. skillSet is the set of skills installed on the server, which a spec's
 // skill references resolve against (nil: none).
 func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *model.Registry, modelAlias string,
-	toolReg *tools.Registry, systemBlock string, rootApprove permissions.ApprovalFunc,
+	toolReg *tools.Registry, systemBlock string, rootApprove permissions.Approver,
 	rateGate model.RateGate, observer observe.Observer,
 	durableStore event.DurableStore, durableReg event.LoopRegistry, skillSet *skills.Set) runtime.Deps {
 	if observer == nil {
@@ -266,7 +268,7 @@ type loopSettings struct {
 // server's own loop settings (the operator floor for harness specs).
 type loopServerHost struct {
 	sb          *sandbox.Service
-	rootApprove permissions.ApprovalFunc
+	rootApprove permissions.Approver
 	observer    observe.Observer
 	skills      *skills.Set
 	operator    loopSettings
@@ -398,7 +400,8 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 				var a *agent.Agent
 				var aerr error
 				// loop-server is headless (no TTY, AlwaysApprove) ⇒ subagent approvals
-				// auto-approve too. No segment sink installed (nil).
+				// auto-approve too, and PrefixApproval keeps the policy provenance, so
+				// child gates deny explicit asks. No segment sink installed (nil).
 				childApprove := permissions.PrefixApproval(opts.Label, rootApprove)
 				if opts.SystemPrompt != "" {
 					a, aerr = buildChildAgent(cfg, reg, childModelID, discardRenderer{}, opts.SystemPrompt, childToolReg, childApprove, nil, opts.Label, nil, false, rateGate, nil)

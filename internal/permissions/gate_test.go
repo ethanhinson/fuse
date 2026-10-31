@@ -39,7 +39,7 @@ func TestModeOff_AlwaysAutoApproves(t *testing.T) {
 		return true, false, nil
 	}
 	cfg := config.PermissionsConfig{Mode: "off"}
-	g := New(cfg, newTestRegistry("bash"), approve)
+	g := New(cfg, newTestRegistry("bash"), Human(approve))
 	res := g.Execute(context.Background(), "bash", `{"command":"rm -rf /"}`)
 	if res.IsError {
 		t.Fatalf("expected success in off mode, got: %s", res.Output)
@@ -56,7 +56,7 @@ func TestSafeListAutoApproves(t *testing.T) {
 		return false, false, nil
 	}
 	cfg := config.PermissionsConfig{Mode: "smart"}
-	g := New(cfg, newTestRegistry("read_file", "list_directory", "codeindex_callers"), approve)
+	g := New(cfg, newTestRegistry("read_file", "list_directory", "codeindex_callers"), Human(approve))
 
 	for _, name := range []string{"read_file", "list_directory", "codeindex_callers"} {
 		res := g.Execute(context.Background(), name, `{}`)
@@ -81,7 +81,7 @@ func TestBlackboardToolsAutoApprove(t *testing.T) {
 		"blackboard_write", "blackboard_read", "blackboard_wait",
 		"blackboard_keys", "blackboard_delete",
 	}
-	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry(names...), approve)
+	g := New(config.PermissionsConfig{Mode: "smart"}, newTestRegistry(names...), Human(approve))
 	for _, name := range names {
 		if res := g.Execute(context.Background(), name, `{}`); res.IsError {
 			t.Errorf("blackboard tool %q returned error: %s", name, res.Output)
@@ -102,7 +102,7 @@ func TestBlackboardWriteDemotableViaAlwaysPrompt(t *testing.T) {
 		return true, false, nil
 	}
 	cfg := config.PermissionsConfig{Mode: "smart", AlwaysPrompt: []string{"blackboard_write"}}
-	g := New(cfg, newTestRegistry("blackboard_write"), approve)
+	g := New(cfg, newTestRegistry("blackboard_write"), Human(approve))
 	g.Execute(context.Background(), "blackboard_write", `{}`)
 	if !prompted {
 		t.Fatal("always_prompt should re-enable the approval prompt for blackboard_write")
@@ -119,7 +119,7 @@ func TestAlwaysPromptDemotesSafeList(t *testing.T) {
 		Mode:         "smart",
 		AlwaysPrompt: []string{"read_file"},
 	}
-	g := New(cfg, newTestRegistry("read_file"), approve)
+	g := New(cfg, newTestRegistry("read_file"), Human(approve))
 	g.Execute(context.Background(), "read_file", `{}`)
 	if !prompted {
 		t.Fatal("always_prompt should have triggered approval for read_file")
@@ -136,7 +136,7 @@ func TestAutoApprovePatternPromotes(t *testing.T) {
 		Mode:        "smart",
 		AutoApprove: []string{"bash:go"},
 	}
-	g := New(cfg, newTestRegistry("bash"), approve)
+	g := New(cfg, newTestRegistry("bash"), Human(approve))
 	res := g.Execute(context.Background(), "bash", `{"command":"go test ./..."}`)
 	if res.IsError {
 		t.Fatalf("auto_approve pattern should have approved: %s", res.Output)
@@ -163,7 +163,7 @@ func TestDenialReturnsError(t *testing.T) {
 		return false, false, nil
 	}
 	cfg := config.PermissionsConfig{Mode: "smart"}
-	g := New(cfg, newTestRegistry("bash"), approve)
+	g := New(cfg, newTestRegistry("bash"), Human(approve))
 	res := g.Execute(context.Background(), "bash", `{"command":"rm -rf /tmp/x"}`)
 	if !res.IsError {
 		t.Fatal("denied tool call should return error result")
@@ -177,7 +177,7 @@ func TestSessionCacheSkipsSubsequentPrompts(t *testing.T) {
 		return true, true, nil // allow for session
 	}
 	cfg := config.PermissionsConfig{Mode: "smart"}
-	g := New(cfg, newTestRegistry("bash"), approve)
+	g := New(cfg, newTestRegistry("bash"), Human(approve))
 
 	args := `{"command":"rm -rf /tmp/build"}`
 	for i := 0; i < 3; i++ {
@@ -268,7 +268,7 @@ func TestResolveAuto_WebFetchFallthroughToClassifier(t *testing.T) {
 	cls := newTestClassifier(t, stub)
 	approve, called := newApproveRecorder(true)
 	// Non-interactive so a tripped valve aborts rather than falling to the human.
-	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), approve,
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("web_fetch"), Human(approve),
 		WithWorkspaceRoot(t.TempDir()), WithClassifier(cls))
 
 	// example.com is a fallthrough host: not SSRF, not in any config list, not
@@ -417,7 +417,7 @@ func TestPromptAll_PromptsEvenSafeTools(t *testing.T) {
 		return true, false, nil
 	}
 	cfg := config.PermissionsConfig{Mode: "prompt-all"}
-	g := New(cfg, newTestRegistry("read_file"), approve)
+	g := New(cfg, newTestRegistry("read_file"), Human(approve))
 	g.Execute(context.Background(), "read_file", `{}`)
 	if !prompted {
 		t.Fatal("prompt-all mode should prompt even for safe-list tools")
@@ -455,7 +455,7 @@ func TestSmartMode_SlashBearingAlwaysPromptDemotes(t *testing.T) {
 		AutoApprove:  []string{"bash:rm"},
 		AlwaysPrompt: []string{"bash:rm *"},
 	}
-	g := New(cfg, newTestRegistry("bash"), approve)
+	g := New(cfg, newTestRegistry("bash"), Human(approve))
 	res := g.Execute(context.Background(), "bash", bashArgs("rm -rf a/b"))
 	if !*called {
 		t.Fatal("always_prompt bash:rm * must demote rm -rf a/b to a prompt in smart mode")
@@ -484,7 +484,7 @@ func TestSmartMode_AllowPatternsStayStrict(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.cmd, func(t *testing.T) {
 			approve, called := newApproveRecorder(false)
-			g := New(config.PermissionsConfig{Mode: "smart", AutoApprove: tc.autoApprove}, newTestRegistry("bash"), approve)
+			g := New(config.PermissionsConfig{Mode: "smart", AutoApprove: tc.autoApprove}, newTestRegistry("bash"), Human(approve))
 			g.Execute(context.Background(), "bash", bashArgs(tc.cmd))
 			if *called != tc.wantPrompt {
 				t.Errorf("smart %q with allow %v: prompted=%v, want %v", tc.cmd, tc.autoApprove, *called, tc.wantPrompt)
@@ -510,8 +510,8 @@ func TestSmartMode_PolicyStandIn_DeniesCatastrophic(t *testing.T) {
 
 	newGate := func(allow []string) (*PermissionGate, *bool) {
 		approve, called := newApproveRecorder(true)
-		g := New(config.PermissionsConfig{Mode: "smart", AutoApprove: allow}, newTestRegistry("bash"), approve,
-			WithWorkspaceRoot(ws), WithApprovalProvenance(DecidedByPolicy))
+		g := New(config.PermissionsConfig{Mode: "smart", AutoApprove: allow}, newTestRegistry("bash"), Policy(approve),
+			WithWorkspaceRoot(ws))
 		return g, called
 	}
 
@@ -563,7 +563,7 @@ func TestSmartMode_PolicyStandIn_DeniesCatastrophic(t *testing.T) {
 func TestSmartMode_AlwaysPrompt_HumanPrompts(t *testing.T) {
 	cfg := config.PermissionsConfig{Mode: "smart", AlwaysPrompt: []string{"bash:cat*"}}
 	approve, called := newApproveRecorder(true)
-	g := New(cfg, newTestRegistry("bash"), approve, WithApprovalProvenance(DecidedByHuman))
+	g := New(cfg, newTestRegistry("bash"), Human(approve))
 	ctx, rec := recordDecisions()
 	res := g.Execute(ctx, "bash", bashArgs("cat x.txt"))
 	if res.IsError {
@@ -610,7 +610,7 @@ func TestSmartMode_AlwaysPrompt_PolicyStandInDenies(t *testing.T) {
 				t.Errorf("approver must not be called under a policy stand-in")
 				return true, false, nil
 			}
-			g := New(cfg, newTestRegistry("bash", "web_fetch"), approve, WithApprovalProvenance(DecidedByPolicy))
+			g := New(cfg, newTestRegistry("bash", "web_fetch"), Policy(approve))
 			ctx, rec := recordDecisions()
 			res := g.Execute(ctx, row.tool, row.args)
 			if !res.IsError || !res.Denied {
@@ -636,7 +636,7 @@ func TestSmartMode_AlwaysPrompt_PolicyStandInDenies(t *testing.T) {
 func TestSmartMode_PolicyStandIn_UnmatchedStillAllows(t *testing.T) {
 	t.Run("stand-in answers", func(t *testing.T) {
 		cfg := config.PermissionsConfig{Mode: "smart"}
-		g := New(cfg, newTestRegistry("bash"), AlwaysApprove, WithApprovalProvenance(DecidedByPolicy))
+		g := New(cfg, newTestRegistry("bash"), AlwaysApprove)
 		ctx, rec := recordDecisions()
 		res := g.Execute(ctx, "bash", bashArgs("make build"))
 		if res.IsError || res.Denied {
@@ -651,7 +651,7 @@ func TestSmartMode_PolicyStandIn_UnmatchedStillAllows(t *testing.T) {
 	t.Run("auto_approve promotes", func(t *testing.T) {
 		cfg := config.PermissionsConfig{Mode: "smart", AutoApprove: []string{"bash:git"}}
 		approve, called := newApproveRecorder(true)
-		g := New(cfg, newTestRegistry("bash"), approve, WithApprovalProvenance(DecidedByPolicy))
+		g := New(cfg, newTestRegistry("bash"), Policy(approve))
 		ctx, rec := recordDecisions()
 		res := g.Execute(ctx, "bash", bashArgs("git status"))
 		if res.IsError || *called {

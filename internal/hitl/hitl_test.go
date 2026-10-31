@@ -28,7 +28,7 @@ func TestRoundTrip(t *testing.T) {
 	defer srv.Close()
 
 	client := ClientApprovalFunc(sock)
-	approved, session, err := client(context.Background(), permissions.ApprovalRequest{
+	approved, session, err := client.Answer(context.Background(), permissions.ApprovalRequest{
 		ToolName: "bash", Args: `{"command":"ls"}`, Preview: "ls",
 	})
 	if err != nil {
@@ -50,7 +50,7 @@ func TestClientDialTimeout(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := client(context.Background(), permissions.ApprovalRequest{ToolName: "x"})
+		_, _, err := client.Answer(context.Background(), permissions.ApprovalRequest{ToolName: "x"})
 		done <- err
 	}()
 	select {
@@ -82,7 +82,7 @@ func TestClientContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := client(ctx, permissions.ApprovalRequest{ToolName: "x"})
+		_, _, err := client.Answer(ctx, permissions.ApprovalRequest{ToolName: "x"})
 		done <- err
 	}()
 
@@ -103,7 +103,7 @@ func TestClientContextCancel(t *testing.T) {
 // errors: a garbage request must be logged, not swallowed.
 func TestServerLogsDecodeError(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "hitl.sock")
-	srv, err := NewServer(sock, permissions.AlwaysApprove)
+	srv, err := NewServer(sock, permissions.AlwaysApprove.Answer)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -148,4 +148,17 @@ func (s *syncBuffer) String() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.buf.String()
+}
+
+// TestClientApprovalFuncProvenance pins who answers each client approver: an
+// empty socket path is the policy stand-in, a socket is a human in the parent
+// TUI.
+func TestClientApprovalFuncProvenance(t *testing.T) {
+	if got := ClientApprovalFunc("").DecidedBy; got != permissions.DecidedByPolicy {
+		t.Errorf(`ClientApprovalFunc("").DecidedBy = %q, want policy`, got)
+	}
+	sock := filepath.Join(t.TempDir(), "hitl.sock")
+	if got := ClientApprovalFunc(sock).DecidedBy; got != permissions.DecidedByHuman {
+		t.Errorf("ClientApprovalFunc(sock).DecidedBy = %q, want human", got)
+	}
 }

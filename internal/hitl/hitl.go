@@ -59,7 +59,7 @@ type Server struct {
 
 // NewServer creates and starts a Server at socketPath. approve is called
 // (blocking) for each inbound request; pass tui.NewTeaApprovalFunc in shell
-// mode or permissions.AlwaysApprove for non-interactive sessions.
+// mode or permissions.AlwaysApprove.Answer for non-interactive sessions.
 func NewServer(socketPath string, approve permissions.ApprovalFunc) (*Server, error) {
 	_ = os.Remove(socketPath) // clean up any leftover socket from a prior crash
 	ln, err := net.Listen("unix", socketPath)
@@ -135,15 +135,17 @@ func (s *Server) logf(format string, args ...any) {
 	fmt.Fprintf(s.errLog, format+"\n", args...)
 }
 
-// ClientApprovalFunc returns a permissions.ApprovalFunc that dials socketPath,
+// ClientApprovalFunc returns a permissions.Approver that dials socketPath,
 // sends the request, and returns the parent's decision. Used inside
-// fuse mcp-server to relay approvals back to the parent TUI.
-// If socketPath is empty the function always approves.
-func ClientApprovalFunc(socketPath string) permissions.ApprovalFunc {
+// fuse mcp-server to relay approvals back to the parent TUI, so a socket
+// approver is human provenance (a person in the parent TUI answers). An empty
+// socketPath returns permissions.AlwaysApprove, the policy stand-in that
+// approves every prompt with no human present.
+func ClientApprovalFunc(socketPath string) permissions.Approver {
 	if socketPath == "" {
 		return permissions.AlwaysApprove
 	}
-	return func(ctx context.Context, req permissions.ApprovalRequest) (bool, bool, error) {
+	return permissions.Human(func(ctx context.Context, req permissions.ApprovalRequest) (bool, bool, error) {
 		// Bound dialing so a missing/dead server surfaces promptly instead of
 		// blocking. Honor the caller's context for cancellation too.
 		d := net.Dialer{Timeout: dialDeadline}
@@ -184,5 +186,5 @@ func ClientApprovalFunc(socketPath string) permissions.ApprovalFunc {
 			return false, false, fmt.Errorf("hitl: %s", resp.ErrMsg)
 		}
 		return resp.Approved, resp.AllowForSession, nil
-	}
+	})
 }

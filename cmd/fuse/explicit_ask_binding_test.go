@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/permissions"
@@ -16,15 +17,11 @@ import (
 )
 
 // TestHostedBindingDeniesExplicitAskRule proves, at the composition root the
-// hosted loop servers share (buildGate under markPolicyApproval + AlwaysApprove),
+// hosted loop servers share (buildGate with AlwaysApprove, a policy approver),
 // that an explicit auto.ask rule is denied at the rules layer instead of being
 // allowed by the safelist or auto-approved by the stand-in, and that the command
 // never ran.
 func TestHostedBindingDeniesExplicitAskRule(t *testing.T) {
-	prev := gateApprovalProvenance
-	t.Cleanup(func() { gateApprovalProvenance = prev })
-	markPolicyApproval()
-
 	cfg := config.Config{Permissions: config.PermissionsConfig{
 		Mode: "auto",
 		Auto: config.AutoConfig{Ask: []string{"bash:touch*"}},
@@ -70,10 +67,6 @@ func TestHostedBindingDeniesExplicitAskRule(t *testing.T) {
 // sandbox, so bash could not run here either way; the decision event is the
 // proof, and TestHostedBindingDeniesExplicitAskRule covers non-execution on a real one.
 func TestLoopServerDeniesExplicitAskRuleEndToEnd(t *testing.T) {
-	prev := gateApprovalProvenance
-	t.Cleanup(func() { gateApprovalProvenance = prev })
-	markPolicyApproval()
-
 	args, _ := json.Marshal(map[string]string{"command": "touch ran"})
 	callArgs, _ := json.Marshal(string(args))
 	toolCall := `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"bash","arguments":` + string(callArgs) + `}}]}}]}`
@@ -128,15 +121,11 @@ permissions:
 }
 
 // TestHostedBindingDeniesAlwaysPromptInSmartMode proves, at the composition
-// root the hosted loop servers share (buildGate under markPolicyApproval +
-// AlwaysApprove), that a smart-mode always_prompt match is denied at the rules
-// layer instead of being answered by the policy stand-in, and that the command
-// never ran.
+// root the hosted loop servers share (buildGate with AlwaysApprove, a policy
+// approver), that a smart-mode always_prompt match is denied at the rules layer
+// instead of being answered by the policy stand-in, and that the command never
+// ran.
 func TestHostedBindingDeniesAlwaysPromptInSmartMode(t *testing.T) {
-	prev := gateApprovalProvenance
-	t.Cleanup(func() { gateApprovalProvenance = prev })
-	markPolicyApproval()
-
 	cfg := config.Config{Permissions: config.PermissionsConfig{
 		Mode:         "smart",
 		AlwaysPrompt: []string{"bash:touch*"},
@@ -186,10 +175,6 @@ func TestHostedBindingDeniesAlwaysPromptInSmartMode(t *testing.T) {
 // plus TestHostedBindingDeniesAlwaysPromptInSmartMode are the proof of
 // non-execution.
 func TestLoopServerDeniesAlwaysPromptEndToEnd(t *testing.T) {
-	prev := gateApprovalProvenance
-	t.Cleanup(func() { gateApprovalProvenance = prev })
-	markPolicyApproval()
-
 	args, _ := json.Marshal(map[string]string{"command": "touch ran"})
 	callArgs, _ := json.Marshal(string(args))
 	toolCall := `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"bash","arguments":` + string(callArgs) + `}}]}}]}`
@@ -259,5 +244,90 @@ permissions:
 	}
 	if !told {
 		t.Fatalf("model was not told the deny reason; messages=%+v", calls[1].Messages)
+	}
+}
+
+// TestLoopServerChildGateIsPolicyEndToEnd runs the production loop-server
+// runtime against a scripted gateway whose root spawns a child that asks for a
+// command matching an operator auto.ask rule. The child's gate is cloned from
+// the root's policy approver, so the call must be denied at the rules layer
+// with decided_by policy, visible in the durable event stream, and the child
+// model must be told why. The harness binds no sandbox, so bash could not run
+// here either way; the decision event plus
+// TestHumanAttendedRunWithAlwaysApproveChild and TestResearchProbeGatesArePolicy
+// are the proof of non-execution. harnessServerWith never marked the process as
+// policy-approved, so before approval provenance moved onto the gate's approver
+// the child gate was labelled human and this test failed.
+func TestLoopServerChildGateIsPolicyEndToEnd(t *testing.T) {
+	gw := &routedGateway{route: func(task string, turn int, _ gatewayCall) string {
+		switch {
+		case strings.Contains(task, "ROOT-TASK") && turn == 0:
+			return toolCallsReply(call{name: "spawn_agent", args: map[string]any{"label": "w", "task": "CHILD-TASK"}})
+		case strings.Contains(task, "ROOT-TASK"):
+			return textReply("root done")
+		case strings.Contains(task, "CHILD-TASK") && turn == 0:
+			return toolCallsReply(call{name: "bash", args: map[string]any{"command": "touch ran"}})
+		case strings.Contains(task, "CHILD-TASK"):
+			return textReply("child done")
+		}
+		return textReply("unscripted")
+	}}
+	raw := &rawCapture{next: gw}
+	deps, host := harnessServerWith(t, hostedOperatorYAML+"permissions:\n  mode: auto\n  auto:\n    ask: [\"bash:touch*\"]\n", raw)
+	capture := &treeCapture{inner: host}
+	deps.Harness = capture
+	rt := runtime.New(deps)
+
+	ctx := context.Background()
+	// An empty spec routes the loop through the production harness resolver
+	// (so treeCapture sees its tree) without changing any operator setting.
+	h, err := rt.StartLoop(ctx, runtime.LoopConfig{Task: "ROOT-TASK", Harness: &harnessv1.HarnessSpec{}})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	_, _ = h.Wait()
+	// Durable history only: folding in a live tail can double-count.
+	hist, err := rt.Attach(ctx, event.DefaultTenant, h.ID(), 0)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	tree := capture.last()
+	if tree == nil {
+		t.Fatal("the loop's BuildAgent never ran")
+	}
+	child := nodeLabelled(t, tree, "w")
+
+	var denies []event.PermissionDecisionPayload
+	for _, ev := range hist {
+		if ev.Kind != event.KindPermissionDecision || ev.NodeID != child.ID {
+			continue
+		}
+		var d event.PermissionDecisionPayload
+		if json.Unmarshal(ev.Payload, &d) != nil {
+			continue
+		}
+		if d.Verdict == "allow" {
+			t.Fatalf("the child must not be allowed anything here; got %+v", d)
+		}
+		if d.Verdict == "deny" {
+			denies = append(denies, d)
+		}
+	}
+	if len(denies) != 1 {
+		t.Fatalf("want exactly one child deny decision; got %+v", denies)
+	}
+	d := denies[0]
+	if d.Layer != permissions.LayerRules || d.DecidedBy != permissions.DecidedByPolicy || !strings.Contains(d.Reason, "bash:touch*") {
+		t.Fatalf("want child deny/rules/policy naming bash:touch*; got %+v", d)
+	}
+
+	var told bool
+	for _, m := range turnRequest(t, gw, "CHILD-TASK", 1).Messages {
+		if m.Role == "tool" && strings.Contains(m.Content, "matched ask rule bash:touch*") {
+			told = true
+		}
+	}
+	if !told {
+		t.Fatal("child model was not told the deny reason")
 	}
 }

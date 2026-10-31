@@ -17,7 +17,7 @@ func newTestServer(reg *tools.Registry) *Server {
 	approve := func(context.Context, permissions.ApprovalRequest) (bool, bool, error) {
 		return true, false, nil
 	}
-	gate := permissions.New(config.PermissionsConfig{Mode: "off"}, reg, approve)
+	gate := permissions.New(config.PermissionsConfig{Mode: "off"}, reg, permissions.Human(approve))
 	return &Server{reg: reg, gate: gate}
 }
 
@@ -65,7 +65,7 @@ func TestHandleCallDisabledToolIsNotToolNotFound(t *testing.T) {
 	}
 	// Tool is registered but disabled — the gate returns an isError result, and
 	// the server must NOT reclassify that as -32900 (not-found).
-	gate := permissions.New(config.PermissionsConfig{Mode: "smart", Disabled: []string{"echo"}}, reg, approve)
+	gate := permissions.New(config.PermissionsConfig{Mode: "smart", Disabled: []string{"echo"}}, reg, permissions.Human(approve))
 	s := &Server{reg: reg, gate: gate}
 	resp := s.dispatch(context.Background(), callReq(t, "echo"))
 	if resp.Error != nil {

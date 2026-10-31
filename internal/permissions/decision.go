@@ -18,7 +18,7 @@ const (
 	LayerFetchFloor  = "fetch_floor"  // web_fetch static host floor (SSRF/blocklist/config)
 	LayerEditScope   = "edit_scope"   // write_file/edit_file workspace path scoping
 	LayerValve       = "valve"        // escalation-valve pause
-	LayerHuman       = "human"        // human approval outcome (or its AlwaysApprove stand-in)
+	LayerHuman       = "human"        // the gate's approver answered (a person, or a policy stand-in)
 	LayerSmartConfig = "smart_config" // smart-mode safe-list/config auto-approve
 )
 
@@ -33,10 +33,11 @@ type Decision struct {
 	Reason  string
 	Mode    string
 	Command string
-	// DecidedBy disambiguates LayerHuman outcomes for the audit trail: "human"
-	// when a real person answered the prompt, "policy" when a binding-level
-	// stand-in (AlwaysApprove, the non-interactive deny fallback) answered with
-	// no human present. Empty on non-human layers.
+	// DecidedBy disambiguates LayerHuman outcomes for the audit trail, taken
+	// from the gate's approver: "human" when a real person answered the prompt,
+	// "policy" when a stand-in (AlwaysApprove, the non-interactive deny
+	// fallback) answered with no human present. Empty on non-human layers
+	// except a rules-layer deny forced by a policy approver.
 	DecidedBy string
 	// Classifier carries the call metadata when the classifier was consulted
 	// for this resolution (including an ask that then fell to the human), so a
