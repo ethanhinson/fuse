@@ -12,8 +12,10 @@ import (
 // then the one shared protective subject rule (protectiveHitPattern: each
 // parsed segment, its head, its raw pre-peel text, and the whole command) with
 // the slash-spanning glob. A command the parser refuses is matched on its raw
-// text instead, so a protective rule still reaches it. Returning the pattern
-// lets a smart-mode deny name the rule exactly as the auto-mode reason does.
+// text (rawCommandSubject) instead, so a protective rule still reaches it;
+// auto mode's evalUnparseable uses the same subject (change 0096). Returning
+// the pattern lets a smart-mode deny name the rule exactly as the auto-mode
+// reason does.
 func protectivePattern(patterns []string, toolName, args string) (string, bool) {
 	if len(patterns) == 0 {
 		return "", false
@@ -29,13 +31,26 @@ func protectivePattern(patterns []string, toolName, args string) (string, bool) 
 	command := bashCommand(args)
 	segments, err := splitSegments(command)
 	if err != nil {
-		raw := strings.TrimSpace(command)
-		if raw == "" {
+		subj, ok := rawCommandSubject(command)
+		if !ok {
 			return "", false
 		}
-		return firstProtectiveMatch(patterns, "bash:"+raw)
+		return firstProtectiveMatch(patterns, subj)
 	}
 	return protectiveHitPattern(patterns, segments)
+}
+
+// rawCommandSubject is the one protective subject for a bash command the
+// parser refuses (change 0096): "bash:" plus the command's words joined by
+// single spaces. Smart mode (protectivePattern) and auto mode
+// (evalUnparseable) both use it, so the two modes normalise identically. It
+// reports false for an empty or all-whitespace command.
+func rawCommandSubject(command string) (string, bool) {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return "", false
+	}
+	return "bash:" + strings.Join(fields, " "), true
 }
 
 // matchesPermissive reports whether an allow pattern (auto_approve in smart

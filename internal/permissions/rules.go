@@ -123,6 +123,30 @@ func evalRulesDetail(segments []Segment, cfg AutoConfig, autoApprove, alwaysProm
 	return VerdictAsk, ""
 }
 
+// evalUnparseable is the rules layer for a bash command the parser refuses
+// (change 0096). There are no segments, so the protective rules are matched
+// against the raw command text (rawCommandSubject) with matchProtective, whose
+// star spans '/': deny first (cfg.Deny gives VerdictDeny), then ask (cfg.Ask,
+// then alwaysPrompt, gives VerdictAskExplicit and the matched pattern), else
+// the default VerdictAsk. There is no allow step: an unparseable command has no
+// segment to satisfy allSegmentsAllowed, so no permissive rule admits it in
+// auto mode. A rule naming the inner command ("bash:rm *") does not reach
+// "sudo rm -rf /": raw matching is not a peel.
+func evalUnparseable(command string, cfg AutoConfig, alwaysPrompt []string) (Verdict, string) {
+	subj, ok := rawCommandSubject(command)
+	if !ok {
+		return VerdictAsk, ""
+	}
+	if _, hit := firstProtectiveMatch(cfg.Deny, subj); hit {
+		return VerdictDeny, ""
+	}
+	askPatterns := append(append([]string(nil), cfg.Ask...), alwaysPrompt...)
+	if pat, hit := firstProtectiveMatch(askPatterns, subj); hit {
+		return VerdictAskExplicit, pat
+	}
+	return VerdictAsk, ""
+}
+
 // allSegmentsAllowed reports whether every segment matches an allow pattern —
 // or is a git push under the trusted allow_push opt-in (change 0068). An empty
 // segment set is not allowed by omission (the caller guards len>0).

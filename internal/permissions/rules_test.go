@@ -590,3 +590,43 @@ func TestMatchesSubjects_PermissiveIsPathMatch(t *testing.T) {
 		}
 	}
 }
+
+// TestEvalUnparseable_DenyBeatsAsk: a deny rule wins over an ask rule on the
+// raw text of a command the parser refuses (change 0096).
+func TestEvalUnparseable_DenyBeatsAsk(t *testing.T) {
+	cfg := config.AutoConfig{Deny: []string{"bash:sudo*"}, Ask: []string{"bash:sudo*"}}
+	if v, _ := evalUnparseable("sudo ls", cfg, []string{"bash:sudo*"}); v != VerdictDeny {
+		t.Fatalf("evalUnparseable = %v, want deny", v)
+	}
+}
+
+// TestEvalUnparseable_Precedence covers the rest of the raw-text rules layer:
+// ask then always_prompt (in that order) name their pattern, the matcher spans
+// '/', a rule naming the inner command does not peel a refused wrapper, and
+// with no hit the verdict is the default ask (never allow).
+func TestEvalUnparseable_Precedence(t *testing.T) {
+	cases := []struct {
+		desc         string
+		cfg          config.AutoConfig
+		alwaysPrompt []string
+		cmd          string
+		want         Verdict
+		wantPattern  string
+	}{
+		{"no rules is the default ask", config.AutoConfig{}, nil, "sudo ls", VerdictAsk, ""},
+		{"auto.ask matches the raw text", config.AutoConfig{Ask: []string{"bash:sudo*"}}, nil, "sudo ls", VerdictAskExplicit, "bash:sudo*"},
+		{"always_prompt matches the raw text", config.AutoConfig{}, []string{"bash:env *"}, "env FOO=$(id) make", VerdictAskExplicit, "bash:env *"},
+		{"auto.ask is consulted before always_prompt", config.AutoConfig{Ask: []string{"bash:npx *"}}, []string{"bash:npx*"}, "npx create-x", VerdictAskExplicit, "bash:npx *"},
+		{"the protective star spans a slash", config.AutoConfig{Ask: []string{"bash:/bin/*"}}, nil, "/bin/rm -rf /", VerdictAskExplicit, "bash:/bin/*"},
+		{"a deny naming the inner command does not peel the wrapper", config.AutoConfig{Deny: []string{"bash:rm *"}}, nil, "sudo rm -rf /", VerdictAsk, ""},
+		{"an empty command matches nothing", config.AutoConfig{Deny: []string{"bash:*"}}, nil, "   ", VerdictAsk, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			got, pat := evalUnparseable(tc.cmd, tc.cfg, tc.alwaysPrompt)
+			if got != tc.want || pat != tc.wantPattern {
+				t.Errorf("evalUnparseable(%q) = (%v, %q), want (%v, %q)", tc.cmd, got, pat, tc.want, tc.wantPattern)
+			}
+		})
+	}
+}
