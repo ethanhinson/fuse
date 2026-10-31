@@ -2,7 +2,7 @@
 id: 64
 slug: 'explicit-ask-rules-are-their-own-verdict-prompt-a-human-deny'
 title: 'Explicit ask rules are their own verdict: prompt a human, deny when no human approver is bound'
-status: 'Accepted'
+status: 'Superseded by ADR-0066'
 date: '2026-10-31'
 supersedes: []
 reverses: []

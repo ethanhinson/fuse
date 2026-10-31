@@ -63,8 +63,8 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0061](0061-a-loop-runs-a-client-harnessspec-layered-over-the-operator-c.md) — A loop runs a client HarnessSpec layered over the operator config, rebuilt from its recorded spec (Accepted) ← change #85 · relates to ADR-0006, ADR-0033, ADR-0047, ADR-0060
 - [ADR-0062](0062-getcapabilities-advertises-from-the-enforcement-code-and-car.md) — GetCapabilities advertises from the enforcement code and carries a wire tenant for spoof refusal (Accepted) ← change #86 · relates to ADR-0060, ADR-0061
 - [ADR-0063](0063-max-turns-is-a-per-exchange-cap-in-interactive-loops.md) — max_turns is a per-exchange cap in interactive loops (Accepted) ← change #90
-- [ADR-0064](0064-explicit-ask-rules-are-their-own-verdict-prompt-a-human-deny.md) — Explicit ask rules are their own verdict: prompt a human, deny when no human approver is bound (Accepted) ← change #87 · relates to ADR-0005, ADR-0049, ADR-0061
 - [ADR-0065](0065-permission-patterns-match-by-consumer-generous-for-protectiv.md) — Permission patterns match by consumer: generous for protective rules, strict for permissive rules (Accepted) ← change #88 · relates to ADR-0005, ADR-0049
+- [ADR-0066](0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md) — Explicit ask rules are their own verdict in auto and smart mode: prompt a human, deny at the rules layer when only a policy stand-in is bound (Accepted) ← change #92 → supersedes ADR-0064 · relates to ADR-0005, ADR-0049, ADR-0061
 
 ## Superseded / Reversed
 
@@ -72,6 +72,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0022](0022-human-message-bus-per-node-queue-async-router.md) — Human messages ride one substrate — a per-node blackboard queue, self-pulled at turn boundaries, with an async advisory router and completion-hook bubbling (Superseded by ADR-59) ← change #51 · relates to ADR-0007, ADR-0016, ADR-0021, ADR-0023
 - [ADR-0027](0027-runtime-owns-loop-eventstore-global-holder-bridge.md) — Runtime owns the loop event store as instance state; process-global holders kept as a single-loop compatibility bridge (Superseded by ADR-30) ← change #45 · relates to ADR-0025, ADR-0019, ADR-0016
 - [ADR-0032](0032-binding-3-websocket-session-http-replay-shared-dispatch.md) — Binding (Superseded by ADR-33) ← change #48 · relates to ADR-0028, ADR-0030, ADR-0031
+- [ADR-0064](0064-explicit-ask-rules-are-their-own-verdict-prompt-a-human-deny.md) — Explicit ask rules are their own verdict: prompt a human, deny when no human approver is bound (Superseded by ADR-0066) ← change #87 · relates to ADR-0005, ADR-0049, ADR-0061
 
 ## Deprecated
 
