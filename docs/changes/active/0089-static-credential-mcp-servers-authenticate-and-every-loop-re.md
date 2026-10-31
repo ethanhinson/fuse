@@ -2,7 +2,7 @@
 id: 89
 slug: 'static-credential-mcp-servers-authenticate-and-every-loop-re'
 title: 'Static-credential MCP servers authenticate, and every loop reports its MCP servers'
-status: 'in-progress'
+status: 'implemented'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/static-credential-mcp-servers-authenticate-and-every-loop-re'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/109'
 blocked_by:
 reconciled: true
 ---
@@ -58,3 +58,12 @@ An MCP server with auth type `static` is accepted by validation, layering and ca
 ### 2026-10-31
 
 Unchanged against origin/main tip 4f61322.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 2bea75ddc0469aadb756ecc53178c9ff01231a83
+ran_at:   2026-10-31T18:42:53Z
+<!-- docket:build-evidence:end -->
