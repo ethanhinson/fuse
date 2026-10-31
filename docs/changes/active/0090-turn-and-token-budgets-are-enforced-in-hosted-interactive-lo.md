@@ -2,7 +2,7 @@
 id: 90
 slug: 'turn-and-token-budgets-are-enforced-in-hosted-interactive-lo'
 title: 'Turn and token budgets are enforced in hosted interactive loops'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/turn-and-token-budgets-are-enforced-in-hosted-interactive-lo'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/111'
 blocked_by:
 reconciled: true
 ---
@@ -59,3 +59,12 @@ Interactive loops set max turns to 0 unconditionally, so a spec's `max_turns` is
 ### 2026-10-31
 
 Unchanged against origin/main; spec line references re-checked at build time.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: dbb16fc656bf41c32525b3dca746ebeccc7dcc15
+ran_at:   2026-10-31T18:46:17Z
+<!-- docket:build-evidence:end -->

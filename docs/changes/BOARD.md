@@ -1,18 +1,18 @@
 # Backlog
 
-**91 changes** — 🟢 2 in progress · 🔵 2 built · 🟣 1 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
+**91 changes** — 🟢 1 in progress · 🔵 3 built · 🟣 1 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 75 done · 🗑️ 6 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0090](active/0090-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo.md) | Turn and token budgets are enforced in hosted interactive loops | `high` | `fix` | [spec](../superpowers/specs/2026-10-31-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo-design.md) | `fix/turn-and-token-budgets-are-enforced-in-hosted-interactive-lo` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (2)
+## 🔵 Built (3)
 
 | # | Title | Priority | Type | PR | State |
 |---|-------|----------|------|----|-------|
+| [0090](active/0090-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo.md) | Turn and token budgets are enforced in hosted interactive loops | `high` | `fix` | [#111](https://github.com/ethanhinson/fuse/pull/111) | awaiting merge |
 | [0089](active/0089-static-credential-mcp-servers-authenticate-and-every-loop-re.md) | Static-credential MCP servers authenticate, and every loop reports its MCP servers | `medium` | `fix` | [#109](https://github.com/ethanhinson/fuse/pull/109) | awaiting merge |
 | [0087](active/0087-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h.md) | Explicit ask rules are honored: prompt a human, deny when no human is bound | `high` | `fix` | [#110](https://github.com/ethanhinson/fuse/pull/110) | awaiting merge |
 
@@ -26,7 +26,7 @@
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | ⏳ waiting on #90 — not yet built |
+| [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | ⏳ waiting on #90 — needs your merge |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
