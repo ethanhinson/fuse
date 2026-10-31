@@ -15,7 +15,7 @@ discovered_from: [87]
 adrs: [64, 66]
 spec: 'docs/superpowers/specs/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md'
 plan: 'docs/superpowers/plans/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound.md'
-results:
+results: 'docs/results/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md](../../superpowers/specs/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md) |
 | Plan | [2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound.md](../../superpowers/plans/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound.md) |
+| Results | [2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-results.md](../../results/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-results.md) |
 | ADRs | [ADR-0064](../../adrs/0064-explicit-ask-rules-are-their-own-verdict-prompt-a-human-deny.md), [ADR-0066](../../adrs/0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md) |
 <!-- docket:artifacts:end -->
 
