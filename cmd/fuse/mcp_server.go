@@ -30,6 +30,8 @@ const mcpServerConfigDebounce = 200 * time.Millisecond
 // If FUSE_HITL_SOCKET is set, tool-approval requests are relayed to the parent
 // Fuse process (which holds the TUI) via that Unix socket. If unset, all tools
 // are auto-approved — safe for use in MCP config without a parent process.
+// With FUSE_HITL_MODE=off and a socket, the gate runs at mode off: the parent
+// runs at mode off and relays that posture (see relayPermissions).
 //
 // The server also exposes a fuse://tools resource (change 0021): a client can
 // resources/read the live tool catalog and resources/subscribe to be pushed a
@@ -49,9 +51,10 @@ func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) 
 	defer closeEgress()
 	toolReg := defaultToolRegistry(sb, cfg.Research, nil) // native tools only; no skill tool in MCP server mode
 
-	approve := mcpServerApprover(os.Getenv("FUSE_HITL_SOCKET"), os.Getenv("FUSE_HITL_PROVENANCE"))
+	sock := os.Getenv("FUSE_HITL_SOCKET")
+	approve := mcpServerApprover(sock, os.Getenv("FUSE_HITL_PROVENANCE"))
 
-	gate := buildMCPServerGate(cfg, toolReg, approve)
+	gate := buildMCPServerGate(cfg, toolReg, relayPermissions(cfg.Permissions, sock, os.Getenv(hitlModeEnv)), approve)
 	srv := mcp.NewServer(os.Stdin, os.Stdout, toolReg, gate)
 
 	// Live-reload the tool catalog on config change and push fuse://tools updates
@@ -93,10 +96,27 @@ func mcpServerApprover(socketPath, provenance string) permissions.Approver {
 // and never the gate, and the server's cwd does not move. The binding has no
 // model registry, so it gets no classifier (unchanged). runMCPServer and its
 // test share this function so the test proves the binding's own construction.
-func buildMCPServerGate(cfg config.Config, toolReg *tools.Registry, approve permissions.Approver) *permissions.PermissionGate {
-	return permissions.New(cfg.Permissions, toolReg, approve,
+// perms is cfg.Permissions after relayPermissions; the config-watch reload
+// rebuilds tools and never the gate, so the relayed mode holds for the
+// subprocess lifetime (one model call).
+func buildMCPServerGate(cfg config.Config, toolReg *tools.Registry, perms config.PermissionsConfig, approve permissions.Approver) *permissions.PermissionGate {
+	return permissions.New(perms, toolReg, approve,
 		permissions.WithWorkspaceRoot(mcpServerWorkspaceRoot()),
 		permissions.WithWriteRoots(gateWriteRoots(cfg)))
+}
+
+// relayPermissions returns the permissions the mcp-server gate is built with.
+// A parent fuse at mode off (--approve-all, or a session switched to off)
+// relays FUSE_HITL_MODE=off to its cli/ model's tool subprocess, which then
+// runs at the posture the parent promised. It is honored only with the
+// parent's relay socket, so an editor-launched standalone mcp-server cannot be
+// switched off by an environment variable alone, and only for "off"; every
+// other value leaves p unchanged.
+func relayPermissions(p config.PermissionsConfig, socketPath, relayMode string) config.PermissionsConfig {
+	if socketPath != "" && relayMode == "off" {
+		p.Mode = "off"
+	}
+	return p
 }
 
 // mcpServerWorkspaceRoot is workspaceRoot() unless the cwd is "/" or the user's

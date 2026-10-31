@@ -125,7 +125,7 @@ func TestMCPServerGateProvenanceFollowsSocket(t *testing.T) {
 	toolReg := defaultToolRegistry(svc, cfg.Research, nil)
 
 	t.Run("no socket is policy", func(t *testing.T) {
-		gate := buildMCPServerGate(cfg, toolReg, hitl.ClientApprovalFunc(""))
+		gate := buildMCPServerGate(cfg, toolReg, cfg.Permissions, hitl.ClientApprovalFunc(""))
 		var decisions []permissions.Decision
 		ctx := permissions.WithDecisionSink(context.Background(), func(d permissions.Decision) {
 			decisions = append(decisions, d)
@@ -166,7 +166,7 @@ func TestMCPServerGateProvenanceFollowsSocket(t *testing.T) {
 			}
 			t.Cleanup(srv.Close)
 
-			gate := buildMCPServerGate(cfg, toolReg, mcpServerApprover(sockPath, prov))
+			gate := buildMCPServerGate(cfg, toolReg, cfg.Permissions, mcpServerApprover(sockPath, prov))
 			var decisions []permissions.Decision
 			ctx := permissions.WithDecisionSink(context.Background(), func(d permissions.Decision) {
 				decisions = append(decisions, d)
@@ -202,7 +202,7 @@ func TestMCPServerGateProvenanceFollowsSocket(t *testing.T) {
 		}
 		t.Cleanup(srv.Close)
 
-		gate := buildMCPServerGate(cfg, toolReg, mcpServerApprover(sockPath, ""))
+		gate := buildMCPServerGate(cfg, toolReg, cfg.Permissions, mcpServerApprover(sockPath, ""))
 		var decisions []permissions.Decision
 		ctx := permissions.WithDecisionSink(context.Background(), func(d permissions.Decision) {
 			decisions = append(decisions, d)
