@@ -30,6 +30,10 @@ var ErrSpawnBudgetExhausted = errors.New("agent: spawn budget exhausted")
 // overshot within a turn.
 var ErrWorkflowQuotaExhausted = errors.New("agent: workflow spawn quota exhausted")
 
+// ErrNestedWorkflow refuses a workflow activation requested from inside an
+// active workflow subtree (change 0091): workflows do not nest.
+var ErrNestedWorkflow = errors.New("agent: nested workflow activation refused")
+
 // ErrTokenQuotaExhausted is returned by the spawn backstop when a spawn would
 // proceed past a hard TOKEN quota — either the workflow pool's lifetime token
 // quota (pool.tokens) for the spawning node's subtree, or the global session
@@ -59,6 +63,11 @@ type SpawnOpts struct {
 	// Worker names a workflow worker type (change 0034); empty for freeform
 	// spawns. The child builder resolves it to the worker's tool allowlist.
 	Worker string
+	// Workflow names a workflow the child becomes the ROOT of (change 0091). The
+	// Spawner marks the new node's WorkflowRoot at creation; the binding's child
+	// builder registers the pool. Empty for every other spawn. Refused from inside
+	// an active workflow subtree (ErrNestedWorkflow).
+	Workflow string
 	// Expects, when non-nil, is a JSON Schema (a decoded schema document, e.g.
 	// map[string]any) the parent wants the child's final result to conform to
 	// (change 0024). It is an asymmetric hint, not a constraint: the spawner
@@ -299,6 +308,16 @@ func NewSpawner(opts ...Option) *Spawner {
 	return s
 }
 
+// WithBuilder returns a copy of the Spawner whose children run through fn
+// instead (change 0091). Tree, node, depth, backstop, bus, store and observer
+// are shared; the receiver is unchanged. Spawner holds no lock and no
+// per-instance mutable state, so a shallow copy is safe.
+func (s *Spawner) WithBuilder(fn ChildBuilder) *Spawner {
+	cp := *s
+	cp.buildChild = fn
+	return &cp
+}
+
 // Spawn creates a child agent running locally in a goroutine.
 func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (h AgentHandle, err error) {
 	ctx, span := s.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationSpawn, Name: "child", Fields: []observe.Field{{Key: "worker", Value: opts.Worker}}})
@@ -320,6 +339,17 @@ func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (h AgentHandle, err
 	newDepth := s.depth + 1
 	if newDepth > MaxDepth {
 		return AgentHandle{}, fmt.Errorf("%w: depth %d > %d", ErrMaxDepthExceeded, newDepth, MaxDepth)
+	}
+	// Nested-workflow refusal (change 0091): a workflow activation requested from
+	// inside an active workflow subtree is refused before any node exists.
+	if opts.Workflow != "" && s.tree != nil && s.node != nil {
+		if rootID := s.tree.WorkflowRootOf(s.node.ID); rootID != "" {
+			active := ""
+			if n := s.tree.Node(rootID); n != nil {
+				active = n.Snapshot().WorkflowRoot
+			}
+			return AgentHandle{}, fmt.Errorf("%w: cannot start workflow %q inside workflow %q", ErrNestedWorkflow, opts.Workflow, active)
+		}
 	}
 	// Tree-global spawn budget backstop. The injected budget line should make
 	// this rare; the refusal makes runaway fan-out impossible. Only enforced
@@ -372,8 +402,10 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int, spa
 	// Slot admission goes through the scheduler (change 0036); a nil tree (a
 	// Spawner used without one) has no scheduler and thus no cap. The child queues
 	// into its parent's pool — the parent's workflow root, or "" for the implicit
-	// session pool (a freshly-spawned child never carries its own workflow-root
-	// label, so it inherits the parent's, matching the Spawn-time Admit check).
+	// session pool. A workflow-root child (SpawnOpts.Workflow, change 0091) does
+	// carry its own workflow-root label, but it still queues into its parent's
+	// pool: poolID is derived from s.node (the spawner), never from the new node,
+	// matching the Spawn-time Admit check.
 	var sched *Scheduler
 	poolID := ""
 	if s.tree != nil {
@@ -424,6 +456,7 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int, spa
 		Status:        StatusPending,
 		Depth:         depth,
 		SpawnedInTurn: spawnedInTurn,
+		WorkflowRoot:  opts.Workflow,
 	}
 	doneCh := make(chan SpawnDone, 1)
 	childCtx, cancel := context.WithCancel(ctx)

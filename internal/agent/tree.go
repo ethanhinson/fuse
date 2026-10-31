@@ -116,9 +116,10 @@ type AgentNode struct {
 	TokensIn  int
 	TokensOut int
 	// WorkflowRoot names the workflow this node is the ROOT of, when non-empty.
-	// Set when a workflow-bound skill activates on this node; its whole subtree
-	// is then governed by that workflow's pool. Empty on every other node. It is
-	// set once at node creation and never mutated, so it needs no lock. (0034)
+	// Set at node creation from SpawnOpts.Workflow (change 0091), or on a
+	// not-yet-running root by the research probe; its whole subtree is then
+	// governed by that workflow's pool. Empty on every other node. It is never
+	// mutated after that, so it needs no lock. (0034)
 	WorkflowRoot string
 	Events       []AgentEvent
 	// Turns records one TurnMark per conversational turn, append-ordered, and is
