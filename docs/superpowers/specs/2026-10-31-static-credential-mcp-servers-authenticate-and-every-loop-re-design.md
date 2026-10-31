@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0089 — Static-credential MCP servers authenticate, and every loop reports its MCP servers](../../changes/active/0089-static-credential-mcp-servers-authenticate-and-every-loop-re.md)**
+> ↩ **[Change 0089 — Static-credential MCP servers authenticate, and every loop reports its MCP servers](../../changes/archive/2026-10-31-0089-static-credential-mcp-servers-authenticate-and-every-loop-re.md)**
 <!-- docket:backlink:end -->
 
 # Static-credential MCP auth and MCP server status events
