@@ -67,6 +67,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0068](0068-catastrophic-floor-is-a-rules-layer-decision-in-smart-mode-a.md) — Catastrophic floor is a rules-layer decision in smart mode and headless bindings; protective patterns match the command as written (Accepted) ← change #93 · relates to ADR-0005, ADR-0049, ADR-0065
 - [ADR-0069](0069-workers-declare-their-whole-tool-set-and-require-an-active-w.md) — Workers declare their whole tool set and require an active workflow (Accepted) ← change #95 → supersedes ADR-0067
 - [ADR-0070](0070-approval-provenance-is-per-gate-explicit-ask-rules-supersede.md) — Approval provenance is per gate; explicit ask rules (supersedes ADR-0066) (Accepted) ← change #94 → supersedes ADR-0066 · relates to ADR-0005, ADR-0049, ADR-0061
+- [ADR-0071](0071-commands-the-parser-refuses-are-never-answered-by-a-policy-s.md) — Commands the parser refuses are never answered by a policy stand-in (Accepted) ← change #96 · relates to ADR-0070, ADR-0068
 
 ## Superseded / Reversed
 
