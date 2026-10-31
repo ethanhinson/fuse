@@ -1,6 +1,6 @@
 # Backlog
 
-**94 changes** — 🟢 2 in progress · 🔵 1 built · 🟡 2 proposed · ⚪ 3 deferred · ✅ 80 done · 🗑️ 6 killed
+**95 changes** — 🟢 2 in progress · 🔵 1 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 80 done · 🗑️ 6 killed
 
 ## 🟢 In progress (2)
 
@@ -15,10 +15,11 @@
 |---|-------|----------|------|----|-------|
 | [0091](active/0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | `medium` | `fix` | [#115](https://github.com/ethanhinson/fuse/pull/115) | awaiting merge |
 
-## 🟡 Proposed (2)
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0095](active/0095-workers-must-declare-tools-and-worker-requires-an-active-wor.md) | Workers must declare tools, and worker requires an active workflow | `medium` | `fix` | needs-grooming |
 | [0094](active/0094-approval-provenance-is-per-gate-not-per-process.md) | Approval provenance is per gate, not per process | `medium` | `fix` | needs-grooming |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
@@ -40,6 +41,7 @@ graph TD
   0090 --> 0091
   0092 --> 0093
   0094
+  0095
   0012:::done
   0052:::done
   0063:::done
