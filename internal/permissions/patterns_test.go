@@ -37,8 +37,8 @@ func TestMatchesProtective(t *testing.T) {
 			if tc.tool == "bash" {
 				args = bashArgs(tc.cmd)
 			}
-			if got := matchesProtective(tc.patterns, tc.tool, args); got != tc.want {
-				t.Errorf("matchesProtective(%v, %q, %q) = %v, want %v", tc.patterns, tc.tool, tc.cmd, got, tc.want)
+			if _, got := protectivePattern(tc.patterns, tc.tool, args); got != tc.want {
+				t.Errorf("protectivePattern(%v, %q, %q) = %v, want %v", tc.patterns, tc.tool, tc.cmd, got, tc.want)
 			}
 		})
 	}
@@ -111,5 +111,27 @@ func TestSmartSegmentAllow_KeepsCatastrophicFloor(t *testing.T) {
 				t.Errorf("smart bash:rm * on %q: prompted=%v, want %v", tc.cmd, *called, tc.wantPrompt)
 			}
 		})
+	}
+}
+
+// TestProtectiveMatch_NamesTheFirstHit: the protective matcher returns the
+// first pattern that hits, through both the parsed-segment and raw-args entry
+// points (change 0092), so a deny reason can name it.
+func TestProtectiveMatch_NamesTheFirstHit(t *testing.T) {
+	pats := []string{"bash:mv *", "bash:rm *"}
+	if pat, ok := protectiveHitPattern(pats, segsFor(t, "rm -rf a/b")); !ok || pat != "bash:rm *" {
+		t.Fatalf("protectiveHitPattern = %q %v, want bash:rm * true", pat, ok)
+	}
+	if pat, ok := protectivePattern(pats, "bash", bashArgs("rm -rf a/b")); !ok || pat != "bash:rm *" {
+		t.Fatalf("protectivePattern = %q %v, want bash:rm * true", pat, ok)
+	}
+	if pat, ok := protectivePattern([]string{"web_fetch"}, "web_fetch", `{"url":"https://example.com"}`); !ok || pat != "web_fetch" {
+		t.Fatalf("tool-name subject = %q %v, want web_fetch true", pat, ok)
+	}
+	if pat, ok := protectivePattern([]string{"bash:/usr/bin/rm *"}, "bash", bashArgs("/usr/bin/rm -rf a/b")); !ok || pat != "bash:/usr/bin/rm *" {
+		t.Fatalf("raw-text subject = %q %v, want bash:/usr/bin/rm * true", pat, ok)
+	}
+	if pat, ok := protectivePattern(pats, "bash", bashArgs("ls")); ok || pat != "" {
+		t.Fatalf("miss = %q %v, want \"\" false", pat, ok)
 	}
 }

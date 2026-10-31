@@ -39,12 +39,12 @@ var protectiveParityRows = []struct {
 }
 
 // TestProtectivePatterns_SameMatchInSmartAndAuto checks the matcher layer:
-// smart's matchesProtective (raw JSON args) and auto's protectiveHit (parsed
+// smart's protectivePattern (raw JSON args) and auto's protectiveHit (parsed
 // segments) agree with each other and with the expected hit.
 func TestProtectivePatterns_SameMatchInSmartAndAuto(t *testing.T) {
 	for _, r := range protectiveParityRows {
 		t.Run(r.desc, func(t *testing.T) {
-			smart := matchesProtective([]string{r.pattern}, "bash", bashArgs(r.cmd))
+			_, smart := protectivePattern([]string{r.pattern}, "bash", bashArgs(r.cmd))
 			auto := protectiveHit([]string{r.pattern}, segsFor(t, r.cmd))
 			if smart != r.hit || auto != r.hit {
 				t.Errorf("%q vs %q: smart=%v auto=%v, want %v in both", r.pattern, r.cmd, smart, auto, r.hit)

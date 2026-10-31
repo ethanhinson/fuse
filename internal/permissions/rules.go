@@ -591,7 +591,7 @@ func matchesSegment(kind patternConsumer, patterns []string, seg Segment) bool {
 // protectiveHit reports whether any protective pattern matches the parsed
 // command: per segment (full subject and head) or against the whole command.
 // It is the ONE protective subject rule; auto mode (evalRules) and smart mode
-// (matchesProtective) both call it, so the two modes cannot drift apart
+// (protectivePattern) both call it, so the two modes cannot drift apart
 // (change 0088).
 func protectiveHit(patterns []string, segments []Segment) bool {
 	_, ok := protectiveHitPattern(patterns, segments)

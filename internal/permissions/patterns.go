@@ -5,32 +5,37 @@ import (
 	"strings"
 )
 
-// matchesProtective reports whether any protective pattern (always_prompt in
-// smart mode) matches a tool call (change 0088). It keeps the legacy
-// {tool, "bash:<firstToken>"} subjects, so no rule that demoted a call before
-// stops demoting it, and adds the one shared protective subject rule
-// (protectiveHit: each parsed segment, its head, and the whole command) with
-// the slash-spanning glob. A command the parser refuses is matched on its raw
-// text instead, so a protective rule still reaches it.
-func matchesProtective(patterns []string, toolName, args string) bool {
+// protectivePattern returns the first protective pattern (always_prompt in
+// smart mode) that matches a tool call, and whether one did (changes 0088,
+// 0092). Subject order is unchanged: the legacy {tool, "bash:<firstToken>"}
+// subjects first, so no rule that demoted a call before stops demoting it,
+// then the one shared protective subject rule (protectiveHitPattern: each
+// parsed segment, its head, and the whole command) with the slash-spanning
+// glob. A command the parser refuses is matched on its raw text instead, so a
+// protective rule still reaches it. Returning the pattern lets a smart-mode
+// deny name the rule exactly as the auto-mode reason does.
+func protectivePattern(patterns []string, toolName, args string) (string, bool) {
 	if len(patterns) == 0 {
-		return false
+		return "", false
 	}
 	for _, subj := range subjects(toolName, args) {
-		if matchesSubjects(consumerProtective, patterns, subj) {
-			return true
+		if pat, ok := firstProtectiveMatch(patterns, subj); ok {
+			return pat, true
 		}
 	}
 	if toolName != "bash" {
-		return false
+		return "", false
 	}
 	command := bashCommand(args)
 	segments, err := splitSegments(command)
 	if err != nil {
 		raw := strings.TrimSpace(command)
-		return raw != "" && matchesSubjects(consumerProtective, patterns, "bash:"+raw)
+		if raw == "" {
+			return "", false
+		}
+		return firstProtectiveMatch(patterns, "bash:"+raw)
 	}
-	return protectiveHit(patterns, segments)
+	return protectiveHitPattern(patterns, segments)
 }
 
 // matchesPermissive reports whether an allow pattern (auto_approve in smart
