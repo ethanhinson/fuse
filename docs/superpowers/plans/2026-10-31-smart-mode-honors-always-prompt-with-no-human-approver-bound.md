@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0092 — Smart mode honors always_prompt with no human approver bound](../../changes/active/0092-smart-mode-honors-always-prompt-with-no-human-approver-bound.md)**
+> ↩ **[Change 0092 — Smart mode honors always_prompt with no human approver bound](../../changes/archive/2026-10-31-0092-smart-mode-honors-always-prompt-with-no-human-approver-bound.md)**
 <!-- docket:backlink:end -->
 
 # Smart mode honors always_prompt with no human approver bound - Implementation Plan

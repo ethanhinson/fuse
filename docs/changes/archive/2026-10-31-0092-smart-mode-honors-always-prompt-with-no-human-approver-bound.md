@@ -2,7 +2,7 @@
 id: 92
 slug: 'smart-mode-honors-always-prompt-with-no-human-approver-bound'
 title: 'Smart mode honors always_prompt with no human approver bound'
-status: 'implemented'
+status: 'done'
 priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md](../../superpowers/specs/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md) |
+| Spec (merged) | [2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-design.md) |
 | Plan | [2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound.md](../../superpowers/plans/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound.md) |
 | Results | [2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-results.md](../../results/2026-10-31-smart-mode-honors-always-prompt-with-no-human-approver-bound-results.md) |
 | ADRs | [ADR-0064](../../adrs/0064-explicit-ask-rules-are-their-own-verdict-prompt-a-human-deny.md), [ADR-0066](../../adrs/0066-explicit-ask-rules-are-their-own-verdict-in-auto-and-smart-m.md) |
