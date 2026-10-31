@@ -139,13 +139,7 @@ func runOrchestrate(args []string, cfg config.Config, reg *model.Registry, stdin
 	rateGate := sessionRateGate(cfg)
 	out := make(chan tea.Msg, 64)
 	target := newWireTarget(ctx, client, cf.loop)
-	orch := newShellOrchestrator(ctx, out, target, func(r agent.Renderer, orchTools *tools.Registry) (*agent.Agent, error) {
-		// No human answers this orchestrator: a policy stand-in that denies
-		// every prompt, so its denials record decided_by: policy.
-		deny := permissions.Policy(func(context.Context, permissions.ApprovalRequest) (bool, bool, error) { return false, false, nil })
-		return buildChildAgent(cfg, reg, alias, r, orchestrator.SystemPrompt(), orchTools, deny, nil,
-			"orchestrator", permissions.NewSessionMode(permissions.ModeSmart), true, rateGate, nil)
-	})
+	orch := newShellOrchestrator(ctx, out, target, orchestrateCLIBuilder(cfg, reg, alias, rateGate))
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -181,6 +175,25 @@ func runOrchestrate(args []string, cfg config.Config, reg *model.Registry, stdin
 	stop()
 	wg.Wait()
 	return 0
+}
+
+// orchestrateCLIMode is the permission mode of the `fuse orchestrate`
+// orchestrator's gate.
+const orchestrateCLIMode = permissions.ModeSmart
+
+// orchestrateCLIApprover is the `fuse orchestrate` orchestrator's approver: a
+// policy stand-in that denies every prompt. No human answers it, so its
+// denials record decided_by: policy.
+var orchestrateCLIApprover = permissions.Policy(func(context.Context, permissions.ApprovalRequest) (bool, bool, error) {
+	return false, false, nil
+})
+
+// orchestrateCLIBuilder builds the orchestrator agent for `fuse orchestrate`.
+func orchestrateCLIBuilder(cfg config.Config, reg *model.Registry, alias string, rateGate model.RateGate) func(agent.Renderer, *tools.Registry) (*agent.Agent, error) {
+	return func(r agent.Renderer, orchTools *tools.Registry) (*agent.Agent, error) {
+		return buildChildAgent(cfg, reg, alias, r, orchestrator.SystemPrompt(), orchTools, orchestrateCLIApprover, nil,
+			"orchestrator", permissions.NewSessionMode(orchestrateCLIMode), true, rateGate, nil)
+	}
 }
 
 // drainOrchestratorMsgs prints whatever the printer goroutine has not yet taken, so the
