@@ -260,8 +260,8 @@ Commands the parser refuses (`sudo`, path-qualified argv0, `env` with non-inert
 assignments) are not matched by wrapper-named protective rules in auto mode,
 which asks for them instead. A matching `always_prompt` or
 `auto.ask` rule is final in smart and auto mode alike: it prompts a human when
-one is bound, and when the binding has no human (the loop servers, the headless
-mcp-server, piped stdin) it is denied with the matched pattern in the reason
+one is bound, and when the gate's approver is a policy stand-in (the loop servers, the headless
+mcp-server, the research probe, piped stdin, the orchestrator's deny stand-in) it is denied with the matched pattern in the reason
 (`matched ask rule <pattern>; no approver bound`). No later layer (the read-only
 safelist, smart mode's allow step, heuristics or classifier) can override it. Allow patterns (`auto_approve`) are strict: their `*` stops at
 `/`, so `bash:git *` does not approve `git clone https://host/repo` and
@@ -275,9 +275,9 @@ a command that starts with `git`, subject to the exceptions below), which auto
 mode does not use; apart from those exceptions no existing smart-mode rule
 changes meaning. In smart mode a catastrophic segment (one the parser accepts)
 is never approved by an allow rule: smart mode prompts when a human is bound and
-denies at the rules layer when only a policy stand-in is bound, and an `rm` or
+denies at the rules layer when the gate's approver is a policy stand-in, and an `rm` or
 `dd` with an unresolved shell expansion no longer matches a first-token allow. Protective rules match generously because they only ever tighten;
-allow rules match strictly because a match grants permission.
+allow rules match strictly because a match grants permission. Provenance belongs to each gate's approver, so a child built with the always-approve stand-in inside an attended session is a policy gate, and `decided_by` on its `permission.decision` events says `policy`.
 
 **Trust boundary.** The permission-*loosening* keys — `mode`, `session_allow`,
 `auto_approve`, and the entire `auto` block — are honored **only** from the
@@ -376,6 +376,11 @@ gateway — headless and fully recorded, then prints an inspectable digest:
 export TAVILY_API_KEY=...        # or BRAVE_SEARCH_API_KEY
 fuse research-probe --model kimi "What is Litestream and how does it back up SQLite?"
 ```
+
+The probe answers approvals with a policy stand-in: an `always_prompt` or
+`auto.ask` match, and in smart mode a catastrophic command, is denied with the
+pattern in the reason. Move the pattern to `auto_approve` or drop the rule to
+let it run.
 
 It prints the spawn tree (root + one node per facet, with status), the census
 of searches and fetches, every unique search query and fetched URL, and the
