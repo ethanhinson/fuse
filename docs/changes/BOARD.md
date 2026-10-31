@@ -1,13 +1,18 @@
 # Backlog
 
-**97 changes** — 🟢 2 in progress · 🟡 2 proposed · ⚪ 3 deferred · ✅ 84 done · 🗑️ 6 killed
+**97 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 2 proposed · ⚪ 3 deferred · ✅ 84 done · 🗑️ 6 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0096](active/0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | `high` | `fix` | [spec](../superpowers/specs/2026-10-31-unparseable-shell-commands-are-denied-when-no-human-approver-design.md) | `fix/unparseable-shell-commands-are-denied-when-no-human-approver` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
+
+## 🔵 Built (1)
+
+| # | Title | Priority | Type | PR | State |
+|---|-------|----------|------|----|-------|
+| [0096](active/0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | `high` | `fix` | [#119](https://github.com/ethanhinson/fuse/pull/119) | awaiting merge |
 
 ## 🟡 Proposed (2)
 

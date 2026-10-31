@@ -2,7 +2,7 @@
 id: 96
 slug: 'unparseable-shell-commands-are-denied-when-no-human-approver'
 title: 'Unparseable shell commands are denied when no human approver is bound'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/unparseable-shell-commands-are-denied-when-no-human-approver'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/119'
 blocked_by:
 reconciled: true
 ---
@@ -58,3 +58,12 @@ Shell commands the parser refuses (for example `sudo rm -rf /`, `/bin/rm -rf /`,
 ### 2026-10-31
 
 Reconciled against main 1d30374 (0094 merged: permissions.Approver{Answer,DecidedBy}; the gate's provenance is g.approvalProvenance, set from approve.DecidedBy). gate.go resolveAuto/resolve structure and line ranges match the spec; scope unchanged. The ADR relates to ADR-0070 (which supersedes ADR-0066) and ADR-0068.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 5b858391c7db6e21cdc8129a54c401eab60b946d
+ran_at:   2026-10-31T23:03:30Z
+<!-- docket:build-evidence:end -->
