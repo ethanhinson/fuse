@@ -194,13 +194,13 @@ research:
 permissions:
   mode: smart           # off | prompt-all | smart | auto (default: smart)
   session_allow: true   # whether the [s]ession "allow for this session" option appears
-  auto_approve: []      # per-segment allow patterns (see note below): "bash:git *", ...
-  always_prompt: []     # patterns demoted to always-prompt, e.g. "bash:git push*"
+  auto_approve: []      # per-segment allow patterns, strict glob (see below): "bash:git *", ...
+  always_prompt: []     # protective patterns demoted to always-prompt, e.g. "bash:git push*"
   disabled: []          # tool names fully disabled (never runnable), e.g. "web_fetch"
   auto:                 # auto-mode surface (only consulted when mode: auto)
     classifier_model: deepseek-flash   # alias that judges gray-area commands; NEVER a chat alias
-    deny: []            # extra always-deny per-segment patterns, e.g. "bash:npm publish*"
-    ask: []             # extra always-ask per-segment patterns (override an allow)
+    deny: []            # extra always-deny protective patterns, e.g. "bash:npm publish*"
+    ask: []             # extra always-ask protective patterns (override an allow)
     fetch_deny: []      # host-glob floor: matched web_fetch hosts are denied before
                         # the classifier is ever consulted, e.g. ["*.internal.example"]
     fetch_ask: []       # host-glob floor: matched web_fetch hosts are forced to a
@@ -245,6 +245,22 @@ the whole command. There is no way to whitelist a leading `git` into approving a
 trailing `rm`. Wrapping (`sh -c "rm x"`), command substitution (`$(...)` /
 backticks), env-assignment prefixes (`FOO=bar cmd`), and path-qualified argv0
 (`/usr/bin/rm`) all fail closed rather than slip past a prefix match.
+
+**How patterns match (every mode alike).** A bash command is matched per
+parsed segment against `bash:<argv0> <args>`, for example `bash:rm -rf a/b`.
+Protective patterns (`always_prompt`, `auto.deny`, `auto.ask`) are also
+matched against the segment head `bash:<argv0>` and against the whole command,
+and their `*` matches any run of characters **including `/`**, so
+`deny: ["bash:rm *"]` denies `rm -rf a/b` and `ask: ["bash:cat*"]` asks for
+`cat dir/file`. Allow patterns (`auto_approve`) are strict: their `*` stops at
+`/`, so `bash:git *` does not approve `git clone https://host/repo` and
+`bash:rm build/*` does not approve `rm build/../x`, and every segment must
+match on its own. `?` matches one character and `[...]` classes work as in a
+shell glob; a malformed pattern matches nothing. Smart mode applies the same
+rule and also keeps its older first-word match (`bash:git` still approves any
+command that starts with `git`), so no existing smart-mode rule changes
+meaning. Protective rules match generously because they only ever tighten;
+allow rules match strictly because a match grants permission.
 
 **Trust boundary.** The permission-*loosening* keys — `mode`, `session_allow`,
 `auto_approve`, and the entire `auto` block — are honored **only** from the
