@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -51,3 +51,9 @@ In auto mode a `permissions.auto.ask` or `always_prompt` match returns the same 
 - A client-visible approval protocol for hosted loops.
 - Glob matching semantics (separate change).
 - Safelist content or new permission modes.
+
+## Reconcile log
+
+### 2026-10-31
+
+Unchanged against origin/main 4f61322: rules.go evalRules and gate.go resolveAuto still conflate explicit ask with no-rule-matched.
