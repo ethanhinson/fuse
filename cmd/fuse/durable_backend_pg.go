@@ -24,9 +24,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
-	"github.com/ethanhinson/fuse/internal/event/fsstore"
 	"github.com/ethanhinson/fuse/internal/event/pgstore"
-	"github.com/ethanhinson/fuse/internal/session"
 )
 
 // pgDSN returns the configured Postgres DSN (FUSE_PG_DSN, else DATABASE_URL), or ""
@@ -51,6 +49,9 @@ func selectDurableBackend(cfg config.Config) (event.DurableStore, event.LoopRegi
 		}
 		return s, s, nil
 	}
-	s := fsstore.NewDurableFSStore(session.DefaultLogDir())
+	s, err := newFSDurableBackend()
+	if err != nil {
+		return nil, nil, err
+	}
 	return s, s, nil
 }

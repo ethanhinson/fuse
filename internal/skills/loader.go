@@ -154,3 +154,25 @@ func (s *Set) SystemPromptBlock() string {
 	b.WriteString("not an optional reference.")
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// Only returns a new Set holding just the named skills, in the order named;
+// names this set does not hold and repeats are skipped. A loop started from a
+// harness spec that lists skills sees only those (change 0085). A nil set
+// yields an empty one.
+func (s *Set) Only(names []string) *Set {
+	out := &Set{}
+	if s == nil {
+		return out
+	}
+	seen := map[string]bool{}
+	for _, n := range names {
+		if seen[n] {
+			continue
+		}
+		if sk, ok := s.Lookup(n); ok {
+			seen[n] = true
+			out.skills = append(out.skills, sk)
+		}
+	}
+	return out
+}

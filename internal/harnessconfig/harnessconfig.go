@@ -99,8 +99,9 @@ var (
 // ToConfig is total over shape errors: an undefined enum number or an
 // out-of-range value is carried or dropped, never rejected, because shape is
 // protovalidate's job (github.com/ethanhinson/fuse/harness runs both).
-// SkillRefs have no config.Config counterpart yet (skills are resolved from
-// operator skill_paths today) and are not mapped.
+// SkillRefs have no config.Config counterpart and are not mapped: a server
+// resolves them against its installed skills (internal/harnessresolve, change
+// 0085).
 func ToConfig(spec *harnessv1.HarnessSpec, secrets SecretResolver) (config.Config, error) {
 	if secrets == nil {
 		secrets = PlaceholderSecrets

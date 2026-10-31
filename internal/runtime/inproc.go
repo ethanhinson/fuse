@@ -136,6 +136,12 @@ type Deps struct {
 	// Ignored for non-interactive loops (they own their run to completion and are not
 	// connection-pinned in a way this changes).
 	IdleTTL time.Duration
+
+	// Harness, when non-nil, lets a loop run a client-supplied harness spec
+	// (LoopConfig.Harness, change 0085): it resolves the spec into that loop's own
+	// LoopFactory. Nil: a LoopConfig carrying a spec is refused with
+	// ErrHarnessUnsupported, and every loop is built from the collaborators above.
+	Harness HarnessResolver
 }
 
 // defaultLeaseTTL is the owner-liveness lease duration used when Deps.LeaseTTL is zero.
@@ -366,6 +372,18 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 // launchLoop is the shared construction + run-goroutine wiring behind StartLoop and
 // Resume. opts is the small delta between them (see launchOpts).
 func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts launchOpts) (LoopHandle, error) {
+	// A loop with a harness spec (change 0085) is resolved FIRST, before any span,
+	// tree, store, registry record or event exists: an invalid spec creates
+	// nothing, and the caller gets the resolver's error (its violations) as is.
+	factory, err := r.resolveHarness(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	newToolRegistry, buildAgent, maxConcurrent := r.deps.NewToolRegistry, r.deps.BuildAgent, r.deps.MaxConcurrent
+	if factory != nil {
+		newToolRegistry, buildAgent, maxConcurrent = factory.NewToolRegistry, factory.BuildAgent, factory.MaxConcurrent
+	}
+
 	// A RESUME does NOT start a second fuse.loop.run (change 0071, spec D2): the
 	// session root already exists — and, since it ends at the first park, has already
 	// been EXPORTED — in the trace of the process that first ran this loop_id. Minting
@@ -445,9 +463,17 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// idle reaper's parent — leaks for the life of the process. The success path never
 	// calls this: sessionCancel is handed to the reaper and to the run-completion
 	// goroutine, which are the only things allowed to end a live session.
+	// liveKey is set once the loop is recorded live in the durable registry. A
+	// launch that fails after that point flips it back to not-live, so no replica
+	// treats a loop that never ran as live elsewhere until its lease expires.
+	var liveKey *event.StreamKey
+	var liveOwner string
 	failLaunch := func() {
 		if sessionCancel != nil {
 			sessionCancel()
+		}
+		if liveKey != nil {
+			_ = r.deps.Registry.SetLive(context.Background(), *liveKey, false, liveOwner)
 		}
 		end(observe.OutcomeError)
 	}
@@ -458,7 +484,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	if tree == nil {
 		// opts.rootID pins the id on a resume so the re-parked loop keeps its original
 		// loop_id (empty ⇒ a fresh id for a normal start).
-		tree = agent.NewAgentTreeWithRootID(cfg.ModelID, cfg.ModelID, r.deps.MaxConcurrent, opts.rootID)
+		tree = agent.NewAgentTreeWithRootID(cfg.ModelID, cfg.ModelID, maxConcurrent, opts.rootID)
 	}
 	rootID := tree.RootID()
 	rootNode := tree.Node(rootID)
@@ -561,6 +587,24 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 			failLaunch()
 			return nil, fmt.Errorf("runtime: register loop: %w", err)
 		}
+		liveKey, liveOwner = &key, rootID
+	}
+
+	// Record the harness this loop runs (change 0085) as its stream's first event,
+	// before the agent can emit anything: a resume on any replica rebuilds the loop
+	// from this record. A resume does not record again - the stream already has it.
+	if cfg.Harness != nil && !opts.resume {
+		ev, herr := harnessEvent(rootID, cfg.Harness)
+		if herr == nil {
+			herr = store.Append(ev)
+		}
+		if herr != nil {
+			if c, ok := store.(interface{ Close() error }); ok {
+				_ = c.Close()
+			}
+			failLaunch()
+			return nil, fmt.Errorf("runtime: record harness: %w", herr)
+		}
 	}
 
 	var toolReg *tools.Registry
@@ -578,8 +622,8 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		}
 		toolReg = tools.NewRegistry()
 		orchestrator.Register(toolReg, &runtimeTarget{rt: r, tenant: tenant, loopID: cfg.Orchestrate})
-	} else if r.deps.NewToolRegistry != nil {
-		toolReg = r.deps.NewToolRegistry()
+	} else if newToolRegistry != nil {
+		toolReg = newToolRegistry()
 	} else {
 		toolReg = tools.NewRegistry()
 	}
@@ -587,7 +631,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// BuildAgent is the per-loop factory: it binds the root agent AND the loop's
 	// child-builder to THIS loop's own store + tree (change 0046 de-globalization).
 	// The store flows in as a value, so N concurrent loops never share one.
-	a, buildChild, _, err := r.deps.BuildAgent(store, tree, cfg.ModelID, toolReg)
+	a, buildChild, _, err := buildAgent(store, tree, cfg.ModelID, toolReg)
 	if err != nil {
 		if c, ok := store.(interface{ Close() error }); ok {
 			_ = c.Close()
@@ -922,6 +966,16 @@ func (r *inProcRuntime) Observe(ctx context.Context, tenant event.TenantID, loop
 // store (the cold cross-process reattach path — the 0047 fix).
 func (r *inProcRuntime) Attach(ctx context.Context, tenant event.TenantID, loopID string, from event.Seq) ([]event.Event, error) {
 	if lp := r.loopCache(tenant, loopID); lp != nil {
+		// With the shared durable store, read it under the CALLER's context. The
+		// cached loop's own sink is bound to the loop's session context, which has
+		// ended once an interactive session finishes (idle reap, shutdown), so
+		// replaying through it would fail with context.Canceled exactly when a
+		// client reconnects to read the history.
+		// The sink is otherwise the same (it still opens the store replay span).
+		if r.deps.DurableStore != nil {
+			sink := &durableSink{store: r.deps.DurableStore, key: lp.key, ctx: ctx, observer: r.deps.Observer}
+			return sink.Replay(from)
+		}
 		return lp.store.Replay(from)
 	}
 	_, key, err := r.resolveDurable(ctx, tenant, loopID)
@@ -986,11 +1040,19 @@ func (r *inProcRuntime) Resume(ctx context.Context, tenant event.TenantID, loopI
 	if err != nil {
 		return nil, fmt.Errorf("runtime: resume reconstruct: %w", err)
 	}
+	// A loop started from a harness spec is rebuilt from the spec it recorded
+	// (change 0085), re-resolved over this replica's operator config, so every
+	// replica revives the same harness rather than its process config.
+	spec, err := harnessFromEvents(events)
+	if err != nil {
+		return nil, fmt.Errorf("runtime: resume: %w", err)
+	}
 
 	cfg := LoopConfig{
 		ModelID:     modelFromEvents(events),
 		Tenant:      event.NormalizeTenant(tenant),
 		Interactive: true,
+		Harness:     spec,
 	}
 	// The replayed stream is also where the resumed session's TRACE identity comes from
 	// (change 0071): every event carries the durable carrier of the session that emitted

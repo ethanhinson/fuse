@@ -13,6 +13,8 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { HarnessSpec } from "../../harness/v1/harness_pb.js";
+import { file_fuse_harness_v1_harness } from "../../harness/v1/harness_pb.js";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { Message } from "@bufbuild/protobuf";
@@ -21,7 +23,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file fuse/loop/v1/loop.proto.
  */
 export const file_fuse_loop_v1_loop: GenFile = /*@__PURE__*/
-  fileDesc("ChdmdXNlL2xvb3AvdjEvbG9vcC5wcm90bxIMZnVzZS5sb29wLnYxInEKEFN0YXJ0TG9vcFJlcXVlc3QSDAoEdGFzaxgBIAEoCRINCgVtb2RlbBgCIAEoCRIOCgZ0ZW5hbnQYAyABKAkSEwoLaW50ZXJhY3RpdmUYBCABKAgSGwoTb3JjaGVzdHJhdGVfbG9vcF9pZBgFIAEoCSIkChFTdGFydExvb3BSZXNwb25zZRIPCgdsb29wX2lkGAEgASgJImAKC1NlbmRSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSDQoFaW5wdXQYAiABKAkSDgoGdGVuYW50GAMgASgJEhEKCWludGVycnVwdBgEIAEoCBIOCgZzb3VyY2UYBSABKAkiDgoMU2VuZFJlc3BvbnNlIkMKDk9ic2VydmVSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSEAoIZnJvbV9zZXEYAiABKAQSDgoGdGVuYW50GAMgASgJIlIKDE9ic2VydmVFdmVudBIiCgVldmVudBgBIAEoCzITLmZ1c2UubG9vcC52MS5FdmVudBILCgNnYXAYAiABKAgSEQoJa2VlcGFsaXZlGAMgASgIIpwBCgVFdmVudBILCgNzZXEYASABKAQSJgoCdHMYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB25vZGVfaWQYAyABKAkSEQoJcGFyZW50X2lkGAQgASgJEg0KBWRlcHRoGAUgASgFEgwKBHR1cm4YBiABKAUSDAoEa2luZBgHIAEoCRIPCgdwYXlsb2FkGAggASgMMuEBCgtMb29wU2VydmljZRJMCglTdGFydExvb3ASHi5mdXNlLmxvb3AudjEuU3RhcnRMb29wUmVxdWVzdBofLmZ1c2UubG9vcC52MS5TdGFydExvb3BSZXNwb25zZRI9CgRTZW5kEhkuZnVzZS5sb29wLnYxLlNlbmRSZXF1ZXN0GhouZnVzZS5sb29wLnYxLlNlbmRSZXNwb25zZRJFCgdPYnNlcnZlEhwuZnVzZS5sb29wLnYxLk9ic2VydmVSZXF1ZXN0GhouZnVzZS5sb29wLnYxLk9ic2VydmVFdmVudDABQjlaN2dpdGh1Yi5jb20vZXRoYW5oaW5zb24vZnVzZS9pbnRlcm5hbC9sb29wd2lyZS92MTtsb29wdjFiBnByb3RvMw", [file_google_protobuf_timestamp]);
+  fileDesc("ChdmdXNlL2xvb3AvdjEvbG9vcC5wcm90bxIMZnVzZS5sb29wLnYxIqABChBTdGFydExvb3BSZXF1ZXN0EgwKBHRhc2sYASABKAkSDQoFbW9kZWwYAiABKAkSDgoGdGVuYW50GAMgASgJEhMKC2ludGVyYWN0aXZlGAQgASgIEhsKE29yY2hlc3RyYXRlX2xvb3BfaWQYBSABKAkSLQoHaGFybmVzcxgGIAEoCzIcLmZ1c2UuaGFybmVzcy52MS5IYXJuZXNzU3BlYyI8ChFTdGFydExvb3BSZXNwb25zZRIPCgdsb29wX2lkGAEgASgJEhYKDmhhcm5lc3NfZGlnZXN0GAIgASgJImAKC1NlbmRSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSDQoFaW5wdXQYAiABKAkSDgoGdGVuYW50GAMgASgJEhEKCWludGVycnVwdBgEIAEoCBIOCgZzb3VyY2UYBSABKAkiDgoMU2VuZFJlc3BvbnNlIkMKDk9ic2VydmVSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSEAoIZnJvbV9zZXEYAiABKAQSDgoGdGVuYW50GAMgASgJIlIKDE9ic2VydmVFdmVudBIiCgVldmVudBgBIAEoCzITLmZ1c2UubG9vcC52MS5FdmVudBILCgNnYXAYAiABKAgSEQoJa2VlcGFsaXZlGAMgASgIIpwBCgVFdmVudBILCgNzZXEYASABKAQSJgoCdHMYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB25vZGVfaWQYAyABKAkSEQoJcGFyZW50X2lkGAQgASgJEg0KBWRlcHRoGAUgASgFEgwKBHR1cm4YBiABKAUSDAoEa2luZBgHIAEoCRIPCgdwYXlsb2FkGAggASgMMuEBCgtMb29wU2VydmljZRJMCglTdGFydExvb3ASHi5mdXNlLmxvb3AudjEuU3RhcnRMb29wUmVxdWVzdBofLmZ1c2UubG9vcC52MS5TdGFydExvb3BSZXNwb25zZRI9CgRTZW5kEhkuZnVzZS5sb29wLnYxLlNlbmRSZXF1ZXN0GhouZnVzZS5sb29wLnYxLlNlbmRSZXNwb25zZRJFCgdPYnNlcnZlEhwuZnVzZS5sb29wLnYxLk9ic2VydmVSZXF1ZXN0GhouZnVzZS5sb29wLnYxLk9ic2VydmVFdmVudDABQjlaN2dpdGh1Yi5jb20vZXRoYW5oaW5zb24vZnVzZS9pbnRlcm5hbC9sb29wd2lyZS92MTtsb29wdjFiBnByb3RvMw", [file_fuse_harness_v1_harness, file_google_protobuf_timestamp]);
 
 /**
  * @generated from message fuse.loop.v1.StartLoopRequest
@@ -56,6 +58,18 @@ export type StartLoopRequest = Message<"fuse.loop.v1.StartLoopRequest"> & {
    * @generated from field: string orchestrate_loop_id = 5;
    */
   orchestrateLoopId: string;
+
+  /**
+   * harness, when set, is the harness this loop runs (change 0085): the server
+   * layers it over its own trusted config, which stays the floor - fields marked
+   * tighten_only may only tighten the server's values, and operator-only surfaces
+   * always come from the server. An invalid spec fails with InvalidArgument whose
+   * single detail is a fuse.harness.v1.ValidateHarnessResponse listing every
+   * violation, and no loop is created. Unset: the server's config, as before.
+   *
+   * @generated from field: fuse.harness.v1.HarnessSpec harness = 6;
+   */
+  harness?: HarnessSpec | undefined;
 };
 
 /**
@@ -73,6 +87,17 @@ export type StartLoopResponse = Message<"fuse.loop.v1.StartLoopResponse"> & {
    * @generated from field: string loop_id = 1;
    */
   loopId: string;
+
+  /**
+   * harness_digest acknowledges the request's harness (change 0085): the content
+   * digest of the spec the loop runs and recorded (sha256 of its deterministic
+   * encoding, as harness.Digest computes it). Empty when the request carried no
+   * spec. A client that sent a spec and gets no digest back is talking to a server
+   * that predates harness specs and ran the loop on its own config instead.
+   *
+   * @generated from field: string harness_digest = 2;
+   */
+  harnessDigest: string;
 };
 
 /**

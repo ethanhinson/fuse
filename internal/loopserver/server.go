@@ -1,6 +1,7 @@
 // Package loopserver is binding #2: a dedicated JSON-RPC 2.0 server that exposes
 // loop control (loop.start / loop.send / loop.observe) over a runtime.Runtime. It
-// is a pure adapter — it imports internal/runtime and internal/event only, and
+// is a pure adapter - it imports internal/runtime and internal/event, plus the
+// public harness types a loop.start may carry (change 0085), and
 // NEVER a renderer, TUI, MCP tool registry, or CLI type (Decision Note D-2). Its
 // "no approval gate" (auto-approve) policy is a binding choice wired by the
 // composition root, not a property of the Runtime seam.
@@ -24,6 +25,10 @@ import (
 	"fmt"
 	"io"
 
+	"google.golang.org/protobuf/encoding/protojson"
+
+	"github.com/ethanhinson/fuse/harness"
+	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/runtime"
 )
@@ -116,8 +121,28 @@ func (s *Server) handleStart(ctx context.Context, r req) resp {
 	if err := json.Unmarshal(r.Params, &p); err != nil {
 		return s.errResp(r.ID, codeInvalidParams, "invalid params: "+err.Error())
 	}
-	h, err := s.rt.StartLoop(ctx, runtime.LoopConfig{Task: p.Task, ModelID: p.Model, Interactive: p.Interactive, Orchestrate: p.Orchestrate})
+	var spec *harnessv1.HarnessSpec
+	if len(p.Harness) > 0 && string(p.Harness) != "null" {
+		spec = &harnessv1.HarnessSpec{}
+		if err := protojson.Unmarshal(p.Harness, spec); err != nil {
+			return s.errResp(r.ID, codeInvalidParams, "invalid params: harness: "+err.Error())
+		}
+	}
+	h, err := s.rt.StartLoop(ctx, runtime.LoopConfig{Task: p.Task, ModelID: p.Model, Interactive: p.Interactive, Orchestrate: p.Orchestrate, Harness: spec})
 	if err != nil {
+		var ve *harness.ValidationError
+		if errors.As(err, &ve) {
+			data := harnessErrorData{Violations: make([]harnessViolation, 0, len(ve.Violations))}
+			for _, v := range ve.Violations {
+				data.Violations = append(data.Violations, harnessViolation{FieldPath: v.FieldPath, Message: v.Message, RuleID: v.RuleID})
+			}
+			out := s.errResp(r.ID, codeInvalidParams, ve.Error())
+			out.Error.Data = data
+			return out
+		}
+		if errors.Is(err, runtime.ErrHarnessUnsupported) {
+			return s.errResp(r.ID, codeInvalidParams, err.Error())
+		}
 		if errors.Is(err, runtime.ErrLoopFinished) || errors.Is(err, runtime.ErrLoopNotFound) {
 			// An orchestrate target that is gone or unknown: a client-addressable
 			// condition, like a stale loop_id on loop.send.

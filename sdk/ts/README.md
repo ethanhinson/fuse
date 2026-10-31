@@ -60,6 +60,25 @@ await client.sendWith(loopId, "also add tests", { source: "orchestrator" });
 const orch = await client.startLoop({ task: "tell me what it is doing", model: "m", orchestrate: loopId });
 ```
 
+Running a loop with its own harness (a `fuse.harness.v1` `HarnessSpec`, layered over the
+server's config, which stays the floor):
+
+```ts
+import { createClient, FuseHarnessError } from "@fuse/sdk";
+
+try {
+  await client.startLoop({
+    task: "triage the backlog",
+    model: "",
+    harness: { models: { defaultAlias: "glm" }, maxTurns: 5, skills: [{ name: "research" }] },
+  });
+} catch (err) {
+  if (err instanceof FuseHarnessError) {
+    for (const v of err.violations) console.log(v.fieldPath, v.message, v.ruleId);
+  }
+}
+```
+
 `observe(loopId, fromSeq?)` is an **async iterable over domain events**. It:
 
 - **skips keepalive frames** (`frame.keepalive || !frame.event`);

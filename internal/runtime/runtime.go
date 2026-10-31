@@ -14,6 +14,7 @@ package runtime
 import (
 	"context"
 
+	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -152,6 +153,14 @@ type LoopConfig struct {
 	// the ordinary Send and Observe. It implies Interactive. ModelID picks the
 	// orchestrator's own model, independent of the target's.
 	Orchestrate string
+
+	// Harness, when non-nil, is the harness this loop runs (change 0085): the
+	// runtime hands it to Deps.Harness, which validates it, layers it over the
+	// binding's trusted config, and returns the factory this loop is built with
+	// (root agent, subagents, workflows and pools alike). The spec is recorded in
+	// the loop's durable stream (loop.harness) so a resume rebuilds the same
+	// harness. Nil keeps today's behavior: the Deps collaborators build the loop.
+	Harness *harnessv1.HarnessSpec
 
 	// LoopID is the loop's own id (the tree RootID), set by the runtime just before it
 	// calls Deps.LoopContext - callers starting a loop leave it empty. It lets the

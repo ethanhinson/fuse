@@ -28,7 +28,12 @@ func (c *Client) Observe(ctx, id LoopID, fromSeq Seq) (<-chan Event, func(), err
 
 func IsCompletion(e Event) bool   // true on the loop.parked completion event
 
-type StartLoopConfig struct { Task, Model string; Interactive bool; Orchestrate LoopID } // Orchestrate: watch and steer that loop
+type StartLoopConfig struct {
+    Task, Model string
+    Interactive bool
+    Orchestrate LoopID                 // watch and steer that loop
+    Harness     *harnessv1.HarnessSpec // run this harness (layered over the server's config)
+}
 type Credentials     struct { Token, Tenant string }
 
 // Event / Seq / Kind / LoopID are aliases of internal/event types so callers
@@ -39,7 +44,36 @@ type Kind  = event.Kind
 type LoopID = string
 ```
 
-Sentinel errors: `ErrUnauthenticated`, `ErrPermissionDenied`, `ErrLoopNotFound`, `ErrLoopFinished`.
+Sentinel errors: `ErrUnauthenticated`, `ErrPermissionDenied`, `ErrLoopNotFound`, `ErrLoopFinished`,
+`ErrHarnessUnsupported`.
+
+## Start a loop from a harness spec
+
+`StartLoopConfig.Harness` carries a `fuse.harness.v1` `HarnessSpec`
+(`github.com/ethanhinson/fuse/harness/v1`) so the loop runs that harness instead of the
+server's config. The server's trusted config stays the floor: fields marked `tighten_only`
+may only tighten the server's values, and operator-only settings (gateway, sandbox,
+observability, auth) always come from the server. Skill names resolve against the skills
+installed on the server; `secret_ref` names resolve through the server operator's
+`loop_server.secrets` allowlist for your tenant.
+
+```go
+turns := uint32(5)
+id, err := c.StartLoop(ctx, fuse.StartLoopConfig{Task: "triage the backlog", Harness: &harnessv1.HarnessSpec{
+    Models:   &harnessv1.Models{DefaultAlias: "glm"},
+    MaxTurns: &turns,
+    Skills:   []*harnessv1.SkillRef{{Name: "research"}},
+}})
+var bad *harness.ValidationError
+if errors.As(err, &bad) {
+    for _, v := range bad.Violations {
+        fmt.Println(v.FieldPath, v.Message, v.RuleID) // e.g. skills[0].name ... fuse.skill_ref
+    }
+}
+```
+
+The spec and its digest (`harness.Digest`) are the first event of the loop's stream
+(`loop.harness`), so a resume on any server replica rebuilds the same harness.
 
 ## Remote backend (hosted fuse over the Connect wire)
 

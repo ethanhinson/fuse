@@ -112,6 +112,14 @@ const (
 	// refusal is deliberately separate from sandbox.health{acquire_failed} so a
 	// load event never pages an operator watching for a broken substrate.
 	KindSandboxAdmission Kind = "sandbox.admission"
+	// KindLoopHarness records the harness spec a loop was started with (change
+	// 0085), once, before the agent runs. It is what makes a loop that runs a
+	// client-supplied harness durable: a resume on any replica rebuilds the loop
+	// from this record instead of from whatever the process config happens to be.
+	// The payload carries the spec exactly as supplied (secret NAMES only, never a
+	// resolved value) and its content digest. Absent from a loop started without a
+	// spec.
+	KindLoopHarness Kind = "loop.harness"
 )
 
 // Event is the stable envelope over every loop state transition. Payload is the
@@ -371,6 +379,20 @@ type ErrorPayload struct {
 type LoopParkedPayload struct {
 	Turn    int    `json:"turn"`
 	Content string `json:"content"`
+}
+
+// LoopHarnessPayload accompanies KindLoopHarness. SpecBytes is the
+// fuse.harness.v1 HarnessSpec exactly as the client supplied it, in the
+// deterministic protobuf encoding (base64 in JSON); Digest is "sha256:<hex>" over
+// those bytes (harness.Digest). A resume verifies the digest over the bytes and
+// rebuilds from them, so the record survives a replica on another protobuf or
+// schema version (unknown fields are kept). Spec is the same spec as protojson,
+// for people and tools reading the stream. It names secrets but never holds
+// their values.
+type LoopHarnessPayload struct {
+	Spec      json.RawMessage `json:"spec"`
+	SpecBytes []byte          `json:"spec_bytes"`
+	Digest    string          `json:"digest"`
 }
 
 // PermissionDecisionPayload accompanies KindPermissionDecision. Command is a

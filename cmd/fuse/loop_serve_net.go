@@ -277,6 +277,12 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintln(stderr, "        tenants: [_default]    # tenants this issuer may assert; empty ⇒ only _default")
 		fmt.Fprintln(stderr, "        max_ttl: 1h            # refuse tokens whose exp - iat is longer; default 1h")
 		fmt.Fprintln(stderr, "        observability_operator: false # granted to every principal of this issuer")
+		fmt.Fprintln(stderr, "    secrets:                   # secrets a client's harness spec may reference by name")
+		fmt.Fprintln(stderr, "      - name: search-key       # the secret_ref name a spec uses")
+		fmt.Fprintln(stderr, "        env: SEARCH_KEY        # or file: /run/secrets/search-key (exactly one)")
+		fmt.Fprintln(stderr, "        tenants: [acme]        # tenants allowed to use it; empty => only _default")
+		fmt.Fprintln(stderr, "        hosts: [api.example.com] # hostnames it may be sent to; empty => wherever the spec says,")
+		fmt.Fprintln(stderr, "                               # which discloses the value to every allowed tenant")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "A static token is looked up first. Otherwise the bearer value is read as a compact")
 		fmt.Fprintln(stderr, "JWS (header alg exactly HS256) from the issuer named by its iss claim, with claims")
@@ -287,6 +293,11 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintln(stderr, "With neither loop_server.auth nor loop_server.issuers configured, a built-in dev")
 		fmt.Fprintf(stderr, "token %q (tenant _default) is used so local development works; a\n", devToken)
 		fmt.Fprintln(stderr, "bearer token is still required on the wire.")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "A StartLoop may carry a fuse.harness.v1 HarnessSpec: the loop then runs that harness,")
+		fmt.Fprintln(stderr, "layered over this server's config, which stays the floor (tighten-only fields may only")
+		fmt.Fprintln(stderr, "tighten it; gateway, sandbox, auth and observability always come from here). An invalid")
+		fmt.Fprintln(stderr, "spec is refused with InvalidArgument listing every violation by field path.")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "On SIGTERM or Ctrl-C the server drains gracefully: /readyz starts answering 503")
 		fmt.Fprintln(stderr, "immediately (so a load balancer stops sending new work), in-flight requests get up")
@@ -352,7 +363,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	// STRICT: a configured-but-unreachable Postgres refuses to start rather than
 	// silently serving — and reporting Ready — on a store that loses every loop at
 	// the next restart. See buildLoopServerRuntimeDepsStrict.
-	deps, derr := buildLoopServerRuntimeDepsStrict(sb, cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), obs.observer)
+	deps, derr := buildLoopServerRuntimeDepsStrict(sb, cfg, reg, reg.Default, toolReg, systemBlock, approve, sessionRateGate(cfg), obs.observer, skillSet)
 	if derr != nil {
 		shutdownObservability()
 		fmt.Fprintf(stderr, "loop-serve-net: %v\n", derr)

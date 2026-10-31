@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -61,5 +64,41 @@ func TestBuildLoopServerDepsWiresDurableSeam(t *testing.T) {
 	}
 	if deps.Registry == nil {
 		t.Fatal("buildLoopServerRuntimeDeps left Deps.Registry nil (durable seam not wired)")
+	}
+}
+
+// TestFSDurableBackendIsReadyOnAFreshHost guards first start: the filesystem store
+// only created its sessions directory on the first event, while /readyz pings that
+// directory, so a fresh host reported not-ready forever - a load balancer never sent
+// it the first request that would have created the directory.
+func TestFSDurableBackendIsReadyOnAFreshHost(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	store, _, err := selectDurableBackend(config.Config{})
+	if err != nil {
+		t.Fatalf("selectDurableBackend: %v", err)
+	}
+	p, ok := store.(event.Pinger)
+	if !ok {
+		t.Fatal("the filesystem store is not a Pinger")
+	}
+	if err := p.Ping(context.Background()); err != nil {
+		t.Fatalf("a fresh host is not ready: %v", err)
+	}
+}
+
+// TestStrictBuilderNamesTheFilesystemRemedy: a sessions directory that cannot
+// be created is reported as a filesystem problem, not as a Postgres one.
+func TestStrictBuilderNamesTheFilesystemRemedy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	// A regular file where ~/.fuse must be a directory makes MkdirAll fail.
+	if err := os.WriteFile(filepath.Join(home, ".fuse"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	reg := registryFromConfig(cfg)
+	_, err := buildLoopServerRuntimeDepsStrict(nil, cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil), "", nil, nil, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "can be created and written") || strings.Contains(err.Error(), "Postgres") {
+		t.Fatalf("err = %v", err)
 	}
 }

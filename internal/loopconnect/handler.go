@@ -3,7 +3,8 @@
 // wire (#48, ADR-0032 superseded). It implements loopv1connect.LoopServiceHandler
 // over a runtime.Runtime: StartLoop / Send (unary) and Observe (server-streaming
 // history-then-live). It is a pure adapter — it imports internal/runtime,
-// internal/event, and the generated loopwire stubs only, and NEVER a renderer, TUI,
+// internal/event, the generated loopwire stubs and the public harness types (for a
+// refused spec's violations, change 0085), and NEVER a renderer, TUI,
 // MCP tool registry, or CLI type. Its "no approval gate" (auto-approve) policy is the
 // composition root's choice, not a property of the Runtime seam.
 //
@@ -22,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/ethanhinson/fuse/harness"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopauth"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
@@ -185,9 +187,13 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		Subject:     p.Subject,
 		Interactive: m.Interactive,
 		Orchestrate: m.OrchestrateLoopId,
+		Harness:     m.Harness,
 	})
 	if err != nil {
 		apiOutcome = observeotel.OutcomeFromError(ctx, err)
+		if cerr := harnessError(err); cerr != nil {
+			return nil, cerr
+		}
 		if errors.Is(err, runtime.ErrLoopNotFound) || errors.Is(err, runtime.ErrLoopFinished) {
 			// The orchestrate target is not a loop the caller can steer: a client
 			// error, not a server fault.
@@ -206,11 +212,35 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 			return nil, aerr
 		}
 	}
-	resp := connect.NewResponse(&loopv1.StartLoopResponse{LoopId: handle.ID()})
+	out := &loopv1.StartLoopResponse{LoopId: handle.ID()}
+	if m.Harness != nil {
+		out.HarnessDigest = harness.Digest(m.Harness)
+	}
+	resp := connect.NewResponse(out)
 	if id := observeotel.TraceID(ctx); id != "" {
 		resp.Header().Set("Fuse-Trace-Id", id)
 	}
 	return resp, nil
+}
+
+// harnessError maps a refused harness spec (change 0085) to its Connect error:
+// InvalidArgument carrying every violation as one ValidateHarnessResponse
+// detail - the message HarnessService.ValidateHarness returns, so a client
+// renders both identically - or Unimplemented when this server's runtime does
+// not run specs. Any other error returns nil.
+func harnessError(err error) *connect.Error {
+	var ve *harness.ValidationError
+	if errors.As(err, &ve) {
+		cerr := connect.NewError(connect.CodeInvalidArgument, ve)
+		if detail, derr := connect.NewErrorDetail(ve.Proto()); derr == nil {
+			cerr.AddDetail(detail)
+		}
+		return cerr
+	}
+	if errors.Is(err, runtime.ErrHarnessUnsupported) {
+		return connect.NewError(connect.CodeUnimplemented, err)
+	}
+	return nil
 }
 
 // recordOwner sets Owner = subject on the just-created loop's record via a Resolve-

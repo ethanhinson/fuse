@@ -24,6 +24,7 @@ import {
 } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
 import { timestampDate } from "@bufbuild/protobuf/wkt";
+import type { MessageInitShape } from "@bufbuild/protobuf";
 
 // The generated stub lives in the sibling `proto` workspace, which exposes no exports
 // map, so it is imported by relative path (matching the smoke client's import_extension=js
@@ -37,6 +38,11 @@ import {
 // and validateHarnessShape. Exported as a namespace so its message names (Context, Model,
 // Violation, ...) never collide with the loop client's own exports.
 export * as harness from "./harness.js";
+import {
+  HarnessSpecSchema,
+  ValidateHarnessResponseSchema,
+} from "../../../proto/gen/ts/fuse/harness/v1/harness_pb.js";
+import type { HarnessViolation } from "./harness.js";
 
 /** Credentials presented on every request: a bearer token and the tenant field. */
 export interface Credentials {
@@ -70,6 +76,56 @@ export interface StartLoopArgs {
    * `interactive`.
    */
   orchestrate?: string;
+  /**
+   * The harness this loop runs (change 0085): the server layers it over its own trusted
+   * config, which stays the floor. A spec the server refuses rejects with a
+   * {@link FuseHarnessError} listing every violation; a server that cannot run specs
+   * rejects with a {@link FuseHarnessUnsupportedError}. Omitted: the server's config.
+   */
+  harness?: MessageInitShape<typeof HarnessSpecSchema>;
+}
+
+/**
+ * FuseHarnessError is thrown by {@link Client.startLoop} when the server refuses the
+ * harness spec (change 0085): `violations` lists every problem with the field path a form
+ * places it against and the rule id that fired, the same form
+ * `harness.validateHarnessShape` and `HarnessService.ValidateHarness` report.
+ */
+export class FuseHarnessError extends Error {
+  readonly violations: HarnessViolation[];
+  constructor(message: string, violations: HarnessViolation[]) {
+    super(message);
+    this.name = "FuseHarnessError";
+    this.violations = violations;
+  }
+}
+
+/**
+ * FuseHarnessUnsupportedError is thrown by {@link Client.startLoop} when a harness spec was
+ * sent but the server does not run specs: it answered Unimplemented, or it predates harness
+ * specs and started the loop on its own config (no harness digest in the response).
+ */
+export class FuseHarnessUnsupportedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FuseHarnessUnsupportedError";
+  }
+}
+
+// harnessErrorOf returns a FuseHarnessError when `err` is the server refusing a harness
+// spec: InvalidArgument carrying a fuse.harness.v1.ValidateHarnessResponse detail.
+function harnessErrorOf(err: unknown): FuseHarnessError | undefined {
+  if (!(err instanceof ConnectError) || err.code !== Code.InvalidArgument) {
+    return undefined;
+  }
+  const [detail] = err.findDetails(ValidateHarnessResponseSchema);
+  if (!detail) {
+    return undefined;
+  }
+  return new FuseHarnessError(
+    err.rawMessage,
+    detail.violations.map((v) => ({ fieldPath: v.fieldPath, message: v.message, ruleId: v.ruleId })),
+  );
 }
 
 /**
@@ -287,14 +343,27 @@ export function createClient(options: ClientOptions): Client {
 
   return {
     async startLoop(args: StartLoopArgs): Promise<{ loopId: string }> {
-      const resp = await wire.startLoop({
-        task: args.task,
-        model: args.model,
-        interactive: args.interactive ?? false,
-        orchestrateLoopId: args.orchestrate ?? "",
-        tenant,
-      });
-      return { loopId: resp.loopId };
+      try {
+        const resp = await wire.startLoop({
+          task: args.task,
+          model: args.model,
+          interactive: args.interactive ?? false,
+          orchestrateLoopId: args.orchestrate ?? "",
+          harness: args.harness,
+          tenant,
+        });
+        if (args.harness !== undefined && resp.harnessDigest === "") {
+          throw new FuseHarnessUnsupportedError(
+            `fuse: loop ${resp.loopId} was started without the harness spec (the server predates harness specs)`,
+          );
+        }
+        return { loopId: resp.loopId };
+      } catch (err) {
+        if (args.harness !== undefined && err instanceof ConnectError && err.code === Code.Unimplemented) {
+          throw new FuseHarnessUnsupportedError(`fuse: the server does not run harness specs: ${err.rawMessage}`);
+        }
+        throw harnessErrorOf(err) ?? err;
+      }
     },
 
     async send(loopId: string, input: string): Promise<void> {

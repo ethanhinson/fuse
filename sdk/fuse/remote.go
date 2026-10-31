@@ -2,10 +2,14 @@ package fuse
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 
 	"connectrpc.com/connect"
 
+	"github.com/ethanhinson/fuse/harness"
+	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/event"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
@@ -86,9 +90,20 @@ func (b *remoteBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (Loo
 		Tenant:            b.tenant,
 		Interactive:       cfg.Interactive,
 		OrchestrateLoopId: cfg.Orchestrate,
+		Harness:           cfg.Harness,
 	}))
 	if err != nil {
+		// Unimplemented means "harness specs unsupported" only for a StartLoop that
+		// carried one; anywhere else it is a routing problem the caller should see.
+		if cfg.Harness != nil && connect.CodeOf(err) == connect.CodeUnimplemented {
+			return "", ErrHarnessUnsupported
+		}
 		return "", mapConnectError(err)
+	}
+	// A server that predates harness specs drops the field and runs the loop on its
+	// own config; only a server that ran the spec acknowledges it with its digest.
+	if cfg.Harness != nil && resp.Msg.HarnessDigest == "" {
+		return "", fmt.Errorf("%w: loop %s was started without it (the server predates harness specs)", ErrHarnessUnsupported, resp.Msg.LoopId)
 	}
 	return resp.Msg.LoopId, nil
 }
@@ -193,6 +208,21 @@ func mapConnectError(err error) error {
 		return ErrLoopNotFound
 	case connect.CodeFailedPrecondition:
 		return ErrLoopFinished
+	case connect.CodeInvalidArgument:
+		// A refused harness spec (change 0085) carries its violations as one
+		// ValidateHarnessResponse detail; surface them as the same
+		// *harness.ValidationError the local backend returns.
+		var cerr *connect.Error
+		if errors.As(err, &cerr) {
+			for _, d := range cerr.Details() {
+				if m, derr := d.Value(); derr == nil {
+					if resp, ok := m.(*harnessv1.ValidateHarnessResponse); ok {
+						return harness.ValidationErrorFromProto(resp)
+					}
+				}
+			}
+		}
+		return err
 	default:
 		return err
 	}

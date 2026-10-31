@@ -37,9 +37,10 @@ func (b *localBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (Loop
 		Tenant:      b.tenant,
 		Interactive: cfg.Interactive,
 		Orchestrate: cfg.Orchestrate,
+		Harness:     cfg.Harness,
 	})
 	if err != nil {
-		return "", err
+		return "", mapSeamError(err)
 	}
 	return h.ID(), nil
 }
@@ -134,7 +135,11 @@ func mapSeamError(err error) error {
 		return ErrLoopNotFound
 	case errors.Is(err, runtime.ErrLoopFinished):
 		return ErrLoopFinished
+	case errors.Is(err, runtime.ErrHarnessUnsupported):
+		return ErrHarnessUnsupported
 	default:
+		// Anything else passes through unchanged, so a refused harness spec stays
+		// reachable with errors.As(err, **harness.ValidationError).
 		return err
 	}
 }

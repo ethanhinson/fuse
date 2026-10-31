@@ -240,11 +240,40 @@ type AuthTokenConfig struct {
 //     a new user of that service needs no config change or restart here. They
 //     are checked after Auth. Configuring issuers (with or without Auth) turns
 //     the dev-token fallback off.
+//   - Secrets is the operator's allowlist of secrets a harness spec may
+//     reference by name (change 0085): each maps a name to an environment
+//     variable or a file on this host and names the tenants allowed to use it.
+//     With none configured every secret_ref in a spec is refused.
 type LoopServerConfig struct {
-	Auth     []AuthTokenConfig `yaml:"auth"`
-	Issuers  []IssuerConfig    `yaml:"issuers"`
-	LeaseTTL string            `yaml:"lease_ttl"`
+	Auth     []AuthTokenConfig    `yaml:"auth"`
+	Issuers  []IssuerConfig       `yaml:"issuers"`
+	LeaseTTL string               `yaml:"lease_ttl"`
+	Secrets  []SecretSourceConfig `yaml:"secrets"`
 }
+
+// SecretSourceConfig is one entry of loop_server.secrets (change 0085): the
+// source of a secret a harness spec names in a secret_ref field. Exactly one of
+// Env (an environment variable of the fuse server process) or File (an absolute
+// path on its host; one trailing newline is trimmed) holds the value. Tenants
+// lists the tenants whose loops may reference it; empty means only the default
+// tenant, the same rule as an issuer's tenants. Hosts binds the secret to its
+// destinations: the URL of the spec field that carries it (the MCP server's url,
+// or research.custom.url) must have one of these hostnames. Without Hosts the
+// spec chooses where the value is sent, so allowing a tenant to use the secret
+// discloses the value to that tenant. Operator-only: it is part of the
+// trusted-only loop_server block, and a spec can never express it.
+type SecretSourceConfig struct {
+	Name    string   `yaml:"name"`
+	Env     string   `yaml:"env"`
+	File    string   `yaml:"file"`
+	Tenants []string `yaml:"tenants"`
+	Hosts   []string `yaml:"hosts"`
+}
+
+// SecretRefPattern is the shape of a secret name, the same pattern
+// fuse.harness.v1 applies to every secret_ref field, so an operator can only
+// declare a name a spec is able to reference.
+const SecretRefPattern = `^[A-Za-z0-9][A-Za-z0-9_./-]*$`
 
 // DefaultIssuerMaxTTL is the longest token lifetime (exp - iat) an issuer
 // accepts when its max_ttl is unset.
