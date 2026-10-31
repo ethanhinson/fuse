@@ -270,7 +270,7 @@ func TestResearchProbeBindingHonorsSuppliedObserver(t *testing.T) {
 
 	deps := buildResearchProbeRuntimeDeps(researchProbeDepsInput{
 		cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
-		act: nil, rootID: tree.RootID(), logSink: probe.NewLog(), traceW: nil,
+		logSink: probe.NewLog(), traceW: nil,
 		rateGate: nil, observer: rec,
 	})
 	assertBindingObservesRootAndChild(t, deps, rec, tree, reg.Default, toolReg)
@@ -329,7 +329,7 @@ func TestBindingsDefaultToNoopObserver(t *testing.T) {
 		{"research-probe", func(toolReg *tools.Registry, tree *agent.AgentTree) runtime.Deps {
 			return buildResearchProbeRuntimeDeps(researchProbeDepsInput{
 				cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
-				rootID: tree.RootID(), logSink: probe.NewLog(), observer: nil,
+				logSink: probe.NewLog(), observer: nil,
 			})
 		}},
 		{"shell", func(toolReg *tools.Registry, tree *agent.AgentTree) runtime.Deps {

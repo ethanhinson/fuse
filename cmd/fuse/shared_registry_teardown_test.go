@@ -96,7 +96,7 @@ func TestSharedRegistryBindingsDoNotCloseAnotherLoopsSubstrate(t *testing.T) {
 		{"research-probe", func(toolReg *tools.Registry, tree *agent.AgentTree) runtime.Deps {
 			return buildResearchProbeRuntimeDeps(researchProbeDepsInput{
 				cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
-				rootID: tree.RootID(), logSink: probe.NewLog(),
+				logSink: probe.NewLog(),
 			})
 		}},
 	}

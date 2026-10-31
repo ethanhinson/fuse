@@ -120,45 +120,30 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		})
 	}
 
+	// Per-loop workflow scope and shared tool wiring (change 0091): workflows
+	// activate per spawn, and the child and root tools (worker allowlist, scoped
+	// spawn_agent, blackboard, pipeline_run) all come from loopWiring.
+	scope := newWorkflowScope(tree, cfg.Workflows)
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
-	makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
-		return spawnFuncFrom(makeSpawner(parentNode, depth), sched, parentNode)
-	}
-	// childBuilder is the loop's per-child runner (cloned child-builder site 1 of 3,
-	// learning patch-every-cloned-child-builder). It is BOTH the ChildBuilder every
-	// makeSpawner wires (so the root's spawn_agent tool fan-out is unchanged) AND the
-	// child-builder BuildAgent returns to the Runtime for its own Spawner (change 0046
-	// retired the separate Deps.BuildChild field). Extracted to a named var so the same
-	// closure backs both.
+	wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope, traceW: traceW,
+		makeSpawner: func(p *agent.AgentNode, d int) *agent.Spawner { return makeSpawner(p, d) }}
+	// childBuilder is the loop's per-child runner (cloned child-builder site 1 of 4,
+	// wired through loopWiring; learning patch-every-cloned-child-builder). It is BOTH
+	// the ChildBuilder every makeSpawner wires (so the root's spawn_agent tool fan-out
+	// is unchanged) AND the child-builder BuildAgent returns to the Runtime for its own
+	// Spawner (change 0046 retired the separate Deps.BuildChild field). Extracted to a
+	// named var so the same closure backs both.
 	childBuilder := func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
-		childToolReg, terr := childToolRegistry(toolReg, opts.Tools)
+		childToolReg, workerModel, terr := wiring.childTools(toolReg, opts, childNode)
 		if terr != nil {
 			return "", terr
 		}
-		if childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(opts.Tools) {
-			// Depth strip (static): a child at MaxDepth can never spawn.
-			// Folded-in fix (change 0034): a parent that omits spawn_agent
-			// from its requested tools subset withholds it from the child.
-			// Either way, drop any copy inherited from the parent's registry.
-			childToolReg.Unregister("spawn_agent")
-		} else {
-			childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget).
-				WithQuotaWarning(quotaWarningFor(tree, childNode.ID)))
-		}
-		// Blackboard tools bound to the child's provenance — always wired
-		// (not spawn-gated), honoring an explicit subset that omits them.
-		wireChildBlackboard(childToolReg, bb, childNode, opts.Tools)
-		// pipeline_run bound to the child's own spawner — always wired unless
-		// an explicit subset omits it (mirrors the blackboard wiring). (0026)
-		pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
-		childSpawner := makeSpawner(childNode, childNode.Depth)
-		wirePipelineTool(childToolReg,
-			makePipelineRunFn(childSpawner, bb, sched, childNode, nil),
-			makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW, nil),
-			opts.Tools)
 
 		r := tui.NewRenderer(stdout, verbose)
 		modelID := opts.ModelID
+		if modelID == "" {
+			modelID = workerModel // worker model pin (change 0034), now every binding
+		}
 		if modelID == "" {
 			modelID = modelAlias
 		}
@@ -208,20 +193,14 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// point that emits spawn.start/spawn.done onto the loop's own store.
 			agent.WithEventStore(storeHolder.get()),
 			agent.WithObserver(observer),
+			// Workflow pool backstop (change 0091): lazy, so a spawner built before
+			// its subtree activated still enforces pool.total and max_depth.
+			agent.WithSpawnBackstop(scope.backstop(parentNode)),
 			agent.WithChildBuilder(childBuilder),
 		)
 	}
-	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
-		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
-	// Root-node-wired blackboard tools (provenance = rootNode).
-	wireRootBlackboard(toolReg, bb, rootNode)
-	// Root pipeline_run bound to the root spawner (provenance = rootNode). (0026)
-	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
-	rootPipeSpawner := makeSpawner(rootNode, 0)
-	wirePipelineTool(toolReg,
-		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode, nil),
-		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW, nil),
-		nil)
+	// Root spawn_agent, blackboard and pipeline_run (provenance = rootNode).
+	wiring.rootTools(toolReg, rootNode)
 
 	return runtime.Deps{
 		// The Runtime installs Deps.Observer on the root agent it builds and on the
@@ -280,16 +259,16 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 }
 
 // researchProbeDepsInput carries the research-probe binding's wiring into its Deps
-// builder (many params — a struct keeps the call site readable). act is the optional
-// research workflow activation; logSink is the shared probe recorder Log.
+// builder (many params - a struct keeps the call site readable). scope is the
+// loop's workflow scope (the probe activates research on its root through it); nil
+// builds a fresh one over cfg.Workflows. logSink is the shared probe recorder Log.
 type researchProbeDepsInput struct {
 	cfg      config.Config
 	reg      *model.Registry
 	alias    string
 	toolReg  *tools.Registry
 	tree     *agent.AgentTree
-	act      *workflowActivation
-	rootID   string
+	scope    *workflowScope
 	logSink  *probe.Log
 	traceW   io.Writer
 	rateGate model.RateGate
@@ -303,7 +282,8 @@ type researchProbeDepsInput struct {
 // recorder), workflow activation (worker allowlists, pool backstop), AlwaysApprove
 // (headless). BaseDir is "" (NoopStore — the probe writes no event log). The
 // tree is supplied by the caller (Deps.Tree) so probe.Summarize still sees it after
-// h.Wait(). Cloned child-builder site 3 of 3 (learning patch-every-cloned-child-builder).
+// h.Wait(). Cloned child-builder site 3 of 4, wired through loopWiring (learning
+// patch-every-cloned-child-builder).
 //
 // MCP attach choice (change #59, Task 5): the research-probe deliberately does NOT
 // attach an MCP manager. It is a bounded web-research fan-out over a fixed,
@@ -316,7 +296,7 @@ type researchProbeDepsInput struct {
 // documented exception, not an accidental omission.
 func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 	cfg, reg, alias := in.cfg, in.reg, in.alias
-	toolReg, tree, act, rootID := in.toolReg, in.tree, in.act, in.rootID
+	toolReg, tree := in.toolReg, in.tree
 	logSink, traceW, rateGate := in.logSink, in.traceW, in.rateGate
 
 	sched := tree.Scheduler()
@@ -332,51 +312,24 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		observer = observe.NoopObserver{}
 	}
 
-	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
-	makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
-		return spawnFuncFrom(makeSpawner(parentNode, depth), sched, parentNode)
+	// Per-loop workflow scope (change 0091). runResearchProbe passes the scope it
+	// activated research on the root through; a caller without one gets a fresh
+	// scope, so workflows still activate per spawn.
+	scope := in.scope
+	if scope == nil {
+		scope = newWorkflowScope(tree, cfg.Workflows)
 	}
+	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
+	wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope, traceW: traceW,
+		makeSpawner: func(p *agent.AgentNode, d int) *agent.Spawner { return makeSpawner(p, d) }}
 	childBuilder := func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
-		// Resolve the effective tool list: inside a workflow a selected worker's
-		// allowlist is authoritative (opts.Tools may only narrow it); outside,
-		// opts.Tools is the freeform subset. (change 0034)
-		effectiveTools := opts.Tools
-		if act != nil {
-			rt, rerr := resolveWorkerTools(act.cfg, opts.Worker, opts.Tools)
-			if rerr != nil {
-				return "", rerr
-			}
-			effectiveTools = rt
-		}
-		childToolReg, terr := childToolRegistry(toolReg, effectiveTools)
+		// The shared wiring resolves the effective tool list: inside a workflow a
+		// selected worker's allowlist is authoritative (opts.Tools may only narrow
+		// it); outside, opts.Tools is the freeform subset (change 0034).
+		childToolReg, workerModel, terr := wiring.childTools(toolReg, opts, childNode)
 		if terr != nil {
 			return "", terr
 		}
-		if childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(effectiveTools) {
-			// Depth strip (static): a child at MaxDepth can never spawn.
-			// Folded-in fix (change 0034): a parent (or worker allowlist)
-			// that omits spawn_agent withholds it from the child.
-			childToolReg.Unregister("spawn_agent")
-		} else {
-			spawnTool := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), budgetFor(tree, act, rootID)).
-				WithQuotaWarning(quotaWarningFor(tree, childNode.ID))
-			if act != nil {
-				spawnTool = spawnTool.WithWorkers(act.workerNames())
-			}
-			childToolReg.Register(spawnTool)
-		}
-		// Blackboard tools bound to the child's provenance — always wired
-		// (not spawn-gated), honoring an explicit subset that omits them.
-		// effectiveTools is the list childToolRegistry actually built from.
-		wireChildBlackboard(childToolReg, bb, childNode, effectiveTools)
-		// pipeline_run bound to the child's own spawner — always wired unless
-		// an explicit subset omits it (mirrors the blackboard wiring). (0026)
-		pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
-		childSpawner := makeSpawner(childNode, childNode.Depth)
-		wirePipelineTool(childToolReg,
-			makePipelineRunFn(childSpawner, bb, sched, childNode, nil),
-			makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW, nil),
-			effectiveTools)
 
 		label := childNode.Label
 		if label == "" {
@@ -390,10 +343,8 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		modelID := opts.ModelID
 		// A worker's optional model pin applies when the caller did not
 		// pick a model explicitly (change 0034).
-		if modelID == "" && act != nil && opts.Worker != "" {
-			if w, ok := act.cfg.Workers[opts.Worker]; ok && w.Model != "" {
-				modelID = w.Model
-			}
+		if modelID == "" {
+			modelID = workerModel
 		}
 		if modelID == "" {
 			modelID = alias
@@ -418,7 +369,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		// scope wins.
 		a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 		a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
-		// Event stream wiring (change 0043/0046) — cloned child-builder site 3 of 3:
+		// Event stream wiring (change 0043/0046) - cloned child-builder site 3 of 4:
 		// the child emits onto the loop's own store via the per-loop holder.
 		a.SetEventSink(storeHolder.get())
 		a.SetObserver(observer)
@@ -437,7 +388,8 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 			agent.WithTree(tree),
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(depth),
-			agent.WithSpawnBackstop(backstopFor(tree, act, rootID)),
+			// Workflow pool backstop (change 0091), resolved lazily per spawn.
+			agent.WithSpawnBackstop(scope.backstop(parentNode)),
 			// Spawn lifecycle events (change 0044/0046): emitted by the Spawner choke
 			// point onto the loop's own store.
 			agent.WithEventStore(storeHolder.get()),
@@ -445,23 +397,11 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 			agent.WithChildBuilder(childBuilder),
 		)
 	}
-	rootSpawn := tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), budgetFor(tree, act, rootID)).
-		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID))
-	if act != nil {
-		// The root offers the workflow's typed workers so the model selects a
-		// facet-researcher per facet instead of hand-assembling a toolset.
-		rootSpawn = rootSpawn.WithWorkers(act.workerNames())
-	}
-	toolReg.Register(rootSpawn)
-	// Root-node-wired blackboard tools (provenance = rootNode).
-	wireRootBlackboard(toolReg, bb, rootNode)
-	// Root pipeline_run bound to the root spawner (provenance = rootNode). (0026)
-	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
-	rootPipeSpawner := makeSpawner(rootNode, 0)
-	wirePipelineTool(toolReg,
-		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode, nil),
-		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW, nil),
-		nil)
+	// Root spawn_agent, blackboard and pipeline_run (provenance = rootNode). When
+	// the root roots research, its spawn_agent offers the workflow's typed workers
+	// so the model selects a facet-researcher per facet instead of hand-assembling
+	// a toolset.
+	wiring.rootTools(toolReg, rootNode)
 
 	return runtime.Deps{
 		// The Runtime installs Deps.Observer on the root agent it builds and on the
@@ -566,7 +506,8 @@ type shellDepsInput struct {
 }
 
 // buildShellRuntimeDeps assembles runtime.Deps for the interactive shell. It wires
-// the child-builder closure (cloned child-builder site 2 of 3), registers the root's
+// the child-builder closure (cloned child-builder site 2 of 4, wired through
+// loopWiring), registers the root's
 // spawn_agent / blackboard / pipeline tools on toolReg (side effect the TUI relies
 // on), and seeds the per-loop store holder from the shell's OWN event store (the shell
 // owns its store lifecycle because the TUI — not StartLoop — drives turns, change
@@ -602,44 +543,24 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		observer = observe.NoopObserver{}
 	}
 
+	// Per-loop workflow scope and shared tool wiring (change 0091).
+	scope := newWorkflowScope(tree, cfg.Workflows)
 	var makeSpawner func(parentNode *agent.AgentNode, parentDepth int) *agent.Spawner
-	makeSpawnFunc := func(parentNode *agent.AgentNode, parentDepth int) tools.SpawnFunc {
-		return spawnFuncFrom(makeSpawner(parentNode, parentDepth), sched, parentNode)
-	}
+	wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope, traceW: traceW,
+		makeSpawner: func(p *agent.AgentNode, d int) *agent.Spawner { return makeSpawner(p, d) }}
 	childBuilder := func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
 		// Register a human-typeable @handle for this child (auto-derived from
 		// its label, collision-disambiguated) so the human can address it.
 		if handleReg != nil {
 			handleReg.Register(childNode.ID, opts.Label)
 		}
-		// Child-specific tool registry (clone or subset); unknown tool
-		// names fail the spawn so the model can self-correct.
-		childToolReg, terr := childToolRegistry(toolReg, opts.Tools)
+		// Child-specific tool registry (clone, subset or worker allowlist) with the
+		// child-bound spawn_agent, blackboard and pipeline_run; unknown tool, worker
+		// or workflow names fail the spawn so the model can self-correct.
+		childToolReg, workerModel, terr := wiring.childTools(toolReg, opts, childNode)
 		if terr != nil {
 			return "", terr
 		}
-		if childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(opts.Tools) {
-			// Depth strip (static): a child at MaxDepth can never spawn.
-			// Folded-in fix (change 0034): a parent that omits spawn_agent
-			// from its requested tools subset withholds it from the child.
-			// Either way, drop any copy inherited via Clone()/Subset().
-			childToolReg.Unregister("spawn_agent")
-		} else {
-			// Replace spawn_agent with one wired to the child's spawner.
-			childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget).
-				WithQuotaWarning(quotaWarningFor(tree, childNode.ID)))
-		}
-		// Blackboard tools bound to the child's provenance — always wired
-		// (not spawn-gated), honoring an explicit subset that omits them.
-		wireChildBlackboard(childToolReg, bb, childNode, opts.Tools)
-		// pipeline_run bound to the child's own spawner — always wired unless
-		// an explicit subset omits it (mirrors the blackboard wiring). (0026)
-		pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
-		childSpawner := makeSpawner(childNode, childNode.Depth)
-		wirePipelineTool(childToolReg,
-			makePipelineRunFn(childSpawner, bb, sched, childNode, nil),
-			makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, traceW, nil),
-			opts.Tools)
 
 		r := tui.NewNodeRenderer(childNode, childTree)
 		// Child agents inherit the parent's permission config and route their
@@ -649,6 +570,9 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		childApprove := permissions.PrefixApproval(opts.Label, in.childApprove)
 
 		modelAlias := opts.ModelID
+		if modelAlias == "" {
+			modelAlias = workerModel // worker model pin (change 0034), now every binding
+		}
 		if modelAlias == "" {
 			modelAlias = alias
 		}
@@ -729,22 +653,15 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 			// point onto the shell's own store via the per-loop holder.
 			agent.WithEventStore(storeHolder.get()),
 			agent.WithObserver(observer),
+			// Workflow pool backstop (change 0091), resolved lazily per spawn.
+			agent.WithSpawnBackstop(scope.backstop(parentNode)),
 			agent.WithChildBuilder(childBuilder),
 		)
 	}
 
-	// Register spawn_agent in the tool registry before any agent runs.
-	toolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
-		WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
-	// Root-node-wired blackboard tools (provenance = rootNode).
-	wireRootBlackboard(toolReg, bb, rootNode)
-	// Root pipeline_run bound to the root spawner (provenance = rootNode). (0026)
-	rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, toolReg)
-	rootPipeSpawner := makeSpawner(rootNode, 0)
-	wirePipelineTool(toolReg,
-		makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode, nil),
-		makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, traceW, nil),
-		nil)
+	// Register the root spawn_agent, blackboard and pipeline_run tools in the tool
+	// registry before any agent runs (provenance = rootNode).
+	wiring.rootTools(toolReg, rootNode)
 
 	return runtime.Deps{
 		// The Runtime installs Deps.Observer on the root agent it builds and on the
