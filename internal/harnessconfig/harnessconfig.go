@@ -23,6 +23,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -742,9 +743,13 @@ var credentialHeaderRE = regexp.MustCompile(credentialHeaderPattern)
 func credentialHeader(name string) bool { return credentialHeaderRE.MatchString(name) }
 
 // SpecPath translates a config key path (as config.Problem.Path reports it)
-// into the HarnessSpec field path a form places the error against. It returns
-// "" when the config key has no spec field (an operator-only surface), so a
-// caller never points a client at a field it cannot see.
+// into the HarnessSpec field path a form places the error against. A map
+// field's key renders as ["<key>"] (Go-quoted), the shape protovalidate
+// reports, and the walk continues into the map value's message, so
+// workflows.wf.workers.reader.tools becomes
+// workflows["wf"].workers["reader"].tools. It returns "" when the config key
+// has no spec field (an operator-only surface), so a caller never points a
+// client at a field it cannot see.
 func SpecPath(configPath string) string {
 	p := configPath
 	if p == "models.default" {
@@ -752,19 +757,36 @@ func SpecPath(configPath string) string {
 	}
 	md := (&harnessv1.HarnessSpec{}).ProtoReflect().Descriptor()
 	parts := strings.Split(p, ".")
-	for i, part := range parts {
-		fd := md.Fields().ByName(protoreflect.Name(part))
+	var b strings.Builder
+	for i := 0; i < len(parts); i++ {
+		fd := md.Fields().ByName(protoreflect.Name(parts[i]))
 		if fd == nil {
 			return ""
 		}
-		if i < len(parts)-1 {
-			if fd.Message() == nil || fd.IsMap() || fd.IsList() {
+		if i > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(parts[i])
+		last := i == len(parts)-1
+		switch {
+		case last:
+			return b.String()
+		case fd.IsMap():
+			i++ // the next part is the map key
+			b.WriteString("[" + strconv.Quote(parts[i]) + "]")
+			if i == len(parts)-1 {
+				return b.String()
+			}
+			if md = fd.MapValue().Message(); md == nil {
 				return ""
 			}
+		case fd.IsList() || fd.Message() == nil:
+			return ""
+		default:
 			md = fd.Message()
 		}
 	}
-	return p
+	return b.String()
 }
 
 func ptr[T any](v T) *T { return &v }

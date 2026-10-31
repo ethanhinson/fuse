@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
@@ -216,13 +215,6 @@ func (r Resolver) tightenProblems(refused []string) []harnessconfig.Problem {
 func (r Resolver) tightenField(key string) (path, limit string) {
 	if v, set, _ := r.operatorLimit(key); set {
 		limit = strconv.FormatFloat(v, 'f', -1, 64) // 'f': 2000000 must not render as 2e+06
-	}
-	if rest, ok := strings.CutPrefix(key, "workflows."); ok {
-		// workflows.<name>.pool.<field>; a workflow name cannot contain a dot
-		// (the spec's key pattern), so the last two segments are pool.<field>.
-		i := strings.LastIndex(rest, ".pool.")
-		name, field := rest[:i], rest[i+len(".pool."):]
-		return fmt.Sprintf("workflows[%s].pool.%s", strconv.Quote(name), field), limit
 	}
 	return harnessconfig.SpecPath(key), limit
 }

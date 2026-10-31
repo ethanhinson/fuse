@@ -274,6 +274,55 @@ func TestSpecPath(t *testing.T) {
 	}
 }
 
+// TestSpecPath_WalksMaps pins that a map field's key renders as ["<key>"],
+// the shape protovalidate reports, and that the walk continues into the map
+// value's message.
+func TestSpecPath_WalksMaps(t *testing.T) {
+	cases := map[string]string{
+		"workflows.wf.workers.reader.tools":                 `workflows["wf"].workers["reader"].tools`,
+		"workflows.wf.pool.total":                           `workflows["wf"].pool.total`,
+		"workflows.research.workers.facet-researcher.model": `workflows["research"].workers["facet-researcher"].model`,
+		"models.entries.fast.id":                            `models.entries["fast"].id`,
+		`workflows.a"b.pool.total`:                          `workflows["a\"b"].pool.total`,
+		"workflows.wf":                                      `workflows["wf"]`,
+		"workflows.wf.workers":                              `workflows["wf"].workers`,
+		"workflows":                                         "workflows",
+		"workflows.wf.nope":                                 "",
+		"workflows.wf.workers.reader.nope":                  "",
+		"workflows.wf.workers.reader.tools.extra":           "",
+		"models.default":                                    "models.default_alias",
+	}
+	for in, want := range cases {
+		if got := SpecPath(in); got != want {
+			t.Errorf("SpecPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+	// Every map field in HarnessSpec has a message value, so there is no
+	// scalar-valued map to prove the walk stops at its key; this check fails
+	// if one is added, so the case can be written then.
+	var walk func(md protoreflect.MessageDescriptor, seen map[protoreflect.FullName]bool)
+	walk = func(md protoreflect.MessageDescriptor, seen map[protoreflect.FullName]bool) {
+		if seen[md.FullName()] {
+			return
+		}
+		seen[md.FullName()] = true
+		fs := md.Fields()
+		for i := 0; i < fs.Len(); i++ {
+			fd := fs.Get(i)
+			if fd.IsMap() {
+				if fd.MapValue().Message() == nil {
+					t.Errorf("%s is a scalar-valued map: add a SpecPath case that stops at its key", fd.FullName())
+					continue
+				}
+				walk(fd.MapValue().Message(), seen)
+			} else if fd.Message() != nil {
+				walk(fd.Message(), seen)
+			}
+		}
+	}
+	walk((&harnessv1.HarnessSpec{}).ProtoReflect().Descriptor(), map[protoreflect.FullName]bool{})
+}
+
 // TestSpecCannotExpressOperatorSurfaces walks the whole HarnessSpec descriptor
 // and fails if any operator-only key exists anywhere in it. This is the trust
 // boundary, encoded in the type (ADR-0006, ADR-0060).
