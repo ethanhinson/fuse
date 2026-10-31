@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/unparseable-shell-commands-are-denied-when-no-human-approver'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -50,3 +50,9 @@ Shell commands the parser refuses (for example `sudo rm -rf /`, `/bin/rm -rf /`,
 
 - Extending the shell parser to accept more forms.
 - A client-visible approval protocol.
+
+## Reconcile log
+
+### 2026-10-31
+
+Reconciled against main 1d30374 (0094 merged: permissions.Approver{Answer,DecidedBy}; the gate's provenance is g.approvalProvenance, set from approve.DecidedBy). gate.go resolveAuto/resolve structure and line ranges match the spec; scope unchanged. The ADR relates to ADR-0070 (which supersedes ADR-0066) and ADR-0068.
