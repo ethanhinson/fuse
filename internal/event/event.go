@@ -387,6 +387,9 @@ type ErrorPayload struct {
 type LoopParkedPayload struct {
 	Turn    int    `json:"turn"`
 	Content string `json:"content"`
+	// Reason is set when the park is not a normal exchange end: "max_turns" means
+	// the per-exchange turn cap was reached (change 0090).
+	Reason string `json:"reason,omitempty"`
 }
 
 // LoopHarnessPayload accompanies KindLoopHarness. SpecBytes is the

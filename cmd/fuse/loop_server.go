@@ -424,6 +424,8 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 				a.SetEventSink(store)
 				a.SetObserver(observer)
 				a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
+				a.SetUsageSink(childNode.UpdateTokens) // the agent owns usage accounting (change 0090)
+				a.SetCallGate(func() error { return sched.TokenQuotaDenied(childNode.ID) })
 				// spawn.start / spawn.done are emitted by the Spawner choke point (change 0044).
 				msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 				// Report the RAW run error to the Spawner's spawn.done event (change 0044) so

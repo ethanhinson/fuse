@@ -187,6 +187,8 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		a.SetEventSink(storeHolder.get())
 		a.SetObserver(observer)
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
+		a.SetUsageSink(childNode.UpdateTokens) // the agent owns usage accounting (change 0090)
+		a.SetCallGate(func() error { return sched.TokenQuotaDenied(childNode.ID) })
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044),
 		// the single choke point — no per-site emission here.
 		msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
@@ -421,6 +423,8 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		a.SetEventSink(storeHolder.get())
 		a.SetObserver(observer)
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
+		a.SetUsageSink(childNode.UpdateTokens) // the agent owns usage accounting (change 0090)
+		a.SetCallGate(func() error { return sched.TokenQuotaDenied(childNode.ID) })
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044).
 		msgs, rerr := a.Run(ctx, []model.Message{{Role: "user", Content: opts.Task}})
 		// Raw run error → Spawner spawn.done (change 0044): matches the
@@ -679,6 +683,8 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		a.SetEventSink(storeHolder.get())
 		a.SetObserver(observer)
 		a.SetNodeIdentity(childNode.ID, childNode.ParentID, childNode.Depth)
+		a.SetUsageSink(childNode.UpdateTokens) // the agent owns usage accounting (change 0090)
+		a.SetCallGate(func() error { return sched.TokenQuotaDenied(childNode.ID) })
 
 		// spawn.start / spawn.done are emitted by the Spawner (change 0044), the
 		// single choke point every spawn passes through. The direct sessLog.Write
@@ -784,6 +790,8 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 				return nil, nil, "", err
 			}
 			a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
+			// The runtime wires the root usage sink and call gate (inproc.go);
+			// wiring them here too would count the root's tokens twice.
 			if humanBus != nil {
 				a.SetHumanInjector(agent.NewHumanInjector(rootNode.ID, humanBus))
 			}
