@@ -1,6 +1,6 @@
 # Backlog
 
-**93 changes** — 🟢 2 in progress · 🔵 1 built · 🟡 2 proposed · ⚪ 3 deferred · ✅ 79 done · 🗑️ 6 killed
+**94 changes** — 🟢 2 in progress · 🔵 1 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 79 done · 🗑️ 6 killed
 
 ## 🟢 In progress (2)
 
@@ -15,10 +15,11 @@
 |---|-------|----------|------|----|-------|
 | [0092](active/0092-smart-mode-honors-always-prompt-with-no-human-approver-bound.md) | Smart mode honors always_prompt with no human approver bound | `medium` | `fix` | [#114](https://github.com/ethanhinson/fuse/pull/114) | awaiting merge |
 
-## 🟡 Proposed (2)
+## 🟡 Proposed (3)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0094](active/0094-approval-provenance-is-per-gate-not-per-process.md) | Approval provenance is per gate, not per process | `medium` | `fix` | needs-grooming |
 | [0093](active/0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md) | Permission floor and wrapper parity across modes and bindings | `medium` | `fix` | ⏳ waiting on #92 — needs your merge |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
@@ -41,6 +42,7 @@ graph TD
   0087 --> 0092
   0088 --> 0092
   0092 --> 0093
+  0094
   0012:::done
   0052:::done
   0063:::done
