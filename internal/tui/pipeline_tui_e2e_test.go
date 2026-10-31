@@ -77,7 +77,7 @@ func TestTUI_PipelineRunRoundTrip(t *testing.T) {
 	)
 
 	// runFn: parse + validate (authored path, no synthesis caps) + run.
-	runFn := func(ctx context.Context, def []byte) (string, error) {
+	runFn := func(ctx context.Context, def []byte, _ string) (string, error) {
 		p, err := pipeline.Parse(def)
 		if err != nil {
 			return "", err

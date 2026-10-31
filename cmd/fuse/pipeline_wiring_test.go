@@ -10,8 +10,8 @@ import (
 )
 
 // noopRunFn / noopSynthFn are inert seams for wiring-only assertions.
-func noopRunFn(context.Context, []byte) (string, error)         { return "", nil }
-func noopSynthFn(context.Context, string, bool) (string, error) { return "", nil }
+func noopRunFn(context.Context, []byte, string) (string, error)         { return "", nil }
+func noopSynthFn(context.Context, string, bool, string) (string, error) { return "", nil }
 
 // TestRootPipelineToolWired asserts wirePipelineTool with an empty subset (a full
 // clone, as the root always is) registers pipeline_run.
@@ -62,21 +62,19 @@ func TestChildPipelineToolPresentWhenSubsetIncludes(t *testing.T) {
 }
 
 // TestEveryAgentEntryPointWiresPipeline is the regression net (learning
-// patch-every-cloned-child-builder): every agent entry point (a file with a
-// child-builder closure) must call BOTH wirePipelineTool at the root and inside
-// its child builder. Dropping either call from any entry point — or adding a new
-// entry point that forgets it — fails here. The marker is grepped, never a frozen
-// list.
+// patch-every-cloned-child-builder): every agent entry point must wire
+// pipeline_run at BOTH the root and inside its child builder. Since change 0091
+// every binding does that through loopWiring, so a file holding N child-builder
+// closures must call .childTools( and .rootTools( at least N times, and
+// loop_wiring.go must wire pipeline_run from both (w.wirePipeline in childTools
+// and rootTools, registered through wireBuiltPipelineTool). Dropping either path,
+// or adding an entry point that bypasses loopWiring, fails here. The marker is
+// grepped, never a frozen list.
 func TestEveryAgentEntryPointWiresPipeline(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Since change 0045 (binding #1) the three cloned child builders are consolidated
-	// as three child-builder CLOSURES through one runtime.Deps seam in
-	// runtime_binding.go: count closures, not files. Each of the three builders wires
-	// pipeline_run at BOTH the root and inside the child builder, so a file holding N
-	// child-builder closures must have >= 2*N wirePipelineTool calls.
 	sites := 0
 	for _, e := range entries {
 		f := e.Name()
@@ -93,13 +91,23 @@ func TestEveryAgentEntryPointWiresPipeline(t *testing.T) {
 			continue
 		}
 		sites += n
-		// Two calls are expected per builder: one at the root, one in the child
-		// builder — so require at least 2*n occurrences of the helper.
-		if strings.Count(s, "wirePipelineTool(") < 2*n {
-			t.Errorf("%s holds %d child-builder closures but has fewer than %d wirePipelineTool calls — a builder omits root or child pipeline wiring", f, n, 2*n)
+		if strings.Count(s, ".childTools(") < n || strings.Count(s, ".rootTools(") < n {
+			t.Errorf("%s holds %d child-builder closures but does not reach .childTools( and .rootTools( for each - a builder omits root or child pipeline wiring", f, n)
 		}
 	}
-	if sites < 3 {
-		t.Errorf("expected >=3 child-builder closures with WithChildBuilder, found %d — re-check the marker", sites)
+	if sites < 4 {
+		t.Errorf("expected >=4 child-builder closures with WithChildBuilder, found %d - re-check the marker", sites)
+	}
+	src, err := os.ReadFile("loop_wiring.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lw := string(src)
+	// One call in childTools, one in rootTools.
+	if got := strings.Count(lw, "w.wirePipeline("); got < 2 {
+		t.Errorf("loop_wiring.go calls w.wirePipeline( %d times, want >= 2 (child and root)", got)
+	}
+	if !strings.Contains(lw, "wireBuiltPipelineTool(") {
+		t.Error("loop_wiring.go never registers pipeline_run through wireBuiltPipelineTool")
 	}
 }

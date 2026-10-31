@@ -85,9 +85,18 @@ func (g *recordingGateway) snapshot() []gatewayCall {
 }
 
 // harnessServer builds the production loop-server runtime (the deps
-// loop-serve-net uses) over a scripted gateway, with an operator config and two
+// loop-serve-net uses) over a recording gateway, with an operator config and two
 // installed skills: the embedded research skill and a user skill "notes".
 func harnessServer(t *testing.T, operatorYAML string) (runtime.Runtime, *recordingGateway, *loopServerHost) {
+	t.Helper()
+	gw := &recordingGateway{}
+	deps, host := harnessServerWith(t, operatorYAML, gw)
+	return runtime.New(deps), gw, host
+}
+
+// harnessServerWith builds the production loop-server deps over gw, with the
+// same operator config and installed skills as harnessServer.
+func harnessServerWith(t *testing.T, operatorYAML string, gw http.Handler) (runtime.Deps, *loopServerHost) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -98,7 +107,6 @@ func harnessServer(t *testing.T, operatorYAML string) (runtime.Runtime, *recordi
 	if err := os.WriteFile(filepath.Join(notes, "SKILL.md"), []byte("---\nname: notes\ndescription: take notes\n---\nTake notes.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	gw := &recordingGateway{}
 	srv := httptest.NewServer(gw)
 	t.Cleanup(srv.Close)
 
@@ -116,7 +124,7 @@ func harnessServer(t *testing.T, operatorYAML string) (runtime.Runtime, *recordi
 	deps := assembleLoopServerRuntimeDeps(nil, cfg, reg, reg.Default, toolReg, rootSystemBlock(cfg, skillSet),
 		permissions.AlwaysApprove, sessionRateGate(cfg), observe.NoopObserver{}, nil, nil, skillSet)
 	deps.BaseDir = t.TempDir()
-	return runtime.New(deps), gw, deps.Harness.(*loopServerHost)
+	return deps, deps.Harness.(*loopServerHost)
 }
 
 const harnessOperator = `

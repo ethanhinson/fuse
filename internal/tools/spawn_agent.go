@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // SpawnRequest carries the model-supplied spawn arguments across the tools→agent
@@ -20,6 +22,9 @@ type SpawnRequest struct {
 	// spawns and outside a workflow. When set, the child's registry is built
 	// from that worker's allowlist (the Tools subset may only narrow it).
 	Worker string
+	// Workflow names a configured workflow the child becomes the root of
+	// (change 0091). Empty for an ordinary spawn.
+	Workflow string
 	// Expects, when non-nil, is a JSON Schema (a decoded object) describing the
 	// shape the child's final result should take (change 0024). The agent seam
 	// injects it into the child's system prompt and validates the child's output
@@ -91,6 +96,9 @@ type SpawnAgentTool struct {
 	// `worker` param schema so the model picks a typed worker instead of
 	// hand-assembling a toolset (change 0034). Empty outside a workflow subtree.
 	workers []string
+	// workflows, when non-empty, enumerates the configured workflow names in the
+	// `workflow` param schema (change 0091). Empty inside a workflow subtree.
+	workflows []string
 }
 
 // NewSpawnAgentTool creates a spawn_agent tool with the given spawn function
@@ -117,6 +125,16 @@ func (t *SpawnAgentTool) WithWorkers(names []string) *SpawnAgentTool {
 	return &cp
 }
 
+// WithWorkflows returns a copy of the tool that advertises the given workflow
+// names (sorted) in its `workflow` param enum and description (change 0091).
+// An empty/nil list leaves the param absent.
+func (t *SpawnAgentTool) WithWorkflows(names []string) *SpawnAgentTool {
+	cp := *t
+	cp.workflows = append([]string(nil), names...)
+	sort.Strings(cp.workflows)
+	return &cp
+}
+
 // WithQuotaWarning returns a copy of the tool that appends the token-quota
 // warning line (change 0036) supplied by quota to each successful spawn result.
 // The line is computed fresh at result time and empty until a hard token quota
@@ -134,8 +152,14 @@ func (t *SpawnAgentTool) Name() string { return "spawn_agent" }
 
 // Description returns the tool description shown to the model.
 func (t *SpawnAgentTool) Description() string {
-	return "Spawn a child agent to execute a subtask concurrently. " +
+	base := "Spawn a child agent to execute a subtask concurrently. " +
 		"The child runs to completion and returns its findings as prose."
+	if len(t.workflows) > 0 {
+		base += " Pass `workflow` to run the child as the root of a configured workflow (" +
+			strings.Join(t.workflows, ", ") +
+			"); its subtree is then governed by that workflow's pool and typed workers."
+	}
+	return base
 }
 
 // Parameters returns the JSON schema for the tool input.
@@ -184,6 +208,21 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 			"description": "Workflow worker type for the child. Its allowlist defines the child's tools; a worker without spawn_agent cannot itself spawn.",
 		}
 	}
+	// Outside a workflow subtree, offer a `workflow` param enumerating the
+	// configured workflows the child may root (change 0091).
+	if len(t.workflows) > 0 {
+		enum := make([]any, len(t.workflows))
+		for i, w := range t.workflows {
+			enum[i] = w
+		}
+		props["workflow"] = map[string]any{
+			"type": "string",
+			"enum": enum,
+			"description": "Optional workflow the child becomes the root of: " +
+				strings.Join(t.workflows, ", ") +
+				". Its pool limits and typed workers then govern the child's subtree. Not allowed inside a workflow.",
+		}
+	}
 	return map[string]any{
 		"type":       "object",
 		"properties": props,
@@ -198,6 +237,7 @@ type spawnAgentInput struct {
 	Tools        []string `json:"tools"`
 	Model        string   `json:"model"`
 	Worker       string   `json:"worker"`
+	Workflow     string   `json:"workflow"`
 }
 
 // Execute parses the input, spawns a child agent, and blocks until it completes.
@@ -217,6 +257,7 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, args string) Result {
 		Model:        input.Model,
 		Tools:        input.Tools,
 		Worker:       input.Worker,
+		Workflow:     input.Workflow,
 	}
 	// Freeform model-driven spawns are prose-only: the tool no longer accepts an
 	// `expects` schema, so req.Expects stays zero here and any `expects` key in the

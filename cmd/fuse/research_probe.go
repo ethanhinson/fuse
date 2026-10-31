@@ -125,20 +125,18 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	rootNode := tree.Node(tree.RootID())
 
 	// research-probe IS a research root: activate the research workflow on the
-	// root node so its whole subtree is governed by the workflow pool and its
-	// typed workers (change 0034). Absent a research workflow (config disabled
-	// it) act stays nil and behavior is the pre-0034 freeform fan-out.
-	var act *workflowActivation
-	if wf, ok := cfg.Workflows["research"]; ok {
-		rootNode.WorkflowRoot = "research"
-		act = &workflowActivation{name: "research", cfg: wf, rootDepth: rootNode.Depth}
-		// Register the pool policy with the scheduler at activation (change 0036).
-		// Task 1 stores it; the fair queue and unified visibility predicate consume
-		// it. The 0034 strip/backstop paths still enforce the pool for now, so this
-		// is behavior-preserving.
-		sched.RegisterPool(rootNode.ID, act.pool())
+	// root node through the loop's workflow scope (change 0091), so its whole
+	// subtree is governed by the workflow pool and its typed workers (change
+	// 0034) and the pool is registered with the scheduler (change 0036). Absent a
+	// research workflow (config disabled it) the root stays outside every
+	// workflow and behavior is the pre-0034 freeform fan-out.
+	scope := newWorkflowScope(tree, cfg.Workflows)
+	if _, ok := cfg.Workflows["research"]; ok {
+		if _, err := scope.activateRoot(rootNode, "research"); err != nil {
+			fmt.Fprintf(stderr, "research-probe: %v\n", err)
+			return 1
+		}
 	}
-	rootID := tree.RootID()
 
 	// Binding #1b (change 0045): the research-probe path drives the engine through
 	// the in-process Runtime. buildResearchProbeRuntimeDeps holds the spawn factory,
@@ -155,7 +153,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 
 	deps := buildResearchProbeRuntimeDeps(researchProbeDepsInput{
 		cfg: cfg, reg: reg, alias: alias, toolReg: toolReg, tree: tree,
-		act: act, rootID: rootID, logSink: logSink, traceW: traceW, rateGate: rateGate,
+		scope: scope, logSink: logSink, traceW: traceW, rateGate: rateGate,
 		observer: obs.observer,
 	})
 	rt := runtime.New(deps)

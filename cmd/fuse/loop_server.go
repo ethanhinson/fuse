@@ -372,35 +372,26 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			// One blackboard per loop, shared by every agent in that loop's tree (change 0023).
 			bb := agent.NewBlackboard(tree)
 
+			// Per-loop workflow scope and shared tool wiring (change 0091): cfg is this
+			// loop's resolved config, so spec-supplied workflows activate per spawn here
+			// exactly as in the local bindings. traceW is nil (no trace on loop-server).
+			scope := newWorkflowScope(tree, cfg.Workflows)
 			var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
-			makeSpawnFunc := func(parentNode *agent.AgentNode, depth int) tools.SpawnFunc {
-				return spawnFuncFrom(makeSpawner(parentNode, depth), sched, parentNode)
-			}
-			// childBuilder is the loop's per-child runner, bound to this loop's tree/store.
+			wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope,
+				makeSpawner: func(p *agent.AgentNode, d int) *agent.Spawner { return makeSpawner(p, d) }}
+			// childBuilder is the loop's per-child runner, bound to this loop's tree/store
+			// (cloned child-builder site 4 of 4, wired through loopWiring; learning
+			// patch-every-cloned-child-builder).
 			childBuilder := func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
-				childToolReg, terr := childToolRegistry(loopToolReg, opts.Tools)
+				childToolReg, workerModel, terr := wiring.childTools(loopToolReg, opts, childNode)
 				if terr != nil {
 					return "", terr
 				}
-				if childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(opts.Tools) {
-					childToolReg.Unregister("spawn_agent")
-				} else {
-					childToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(childNode, childNode.Depth), sched.SpawnBudget).
-						WithQuotaWarning(quotaWarningFor(tree, childNode.ID)))
-				}
-				// Blackboard tools bound to the child's provenance — always wired (not
-				// spawn-gated), honoring an explicit subset that omits them.
-				wireChildBlackboard(childToolReg, bb, childNode, opts.Tools)
-				// pipeline_run bound to the child's own spawner — always wired unless an
-				// explicit subset omits it (mirrors the blackboard wiring). (0026)
-				pipeChildWorkers, pipeChildTools := pipelineSynthPalette(cfg, childToolReg)
-				childSpawner := makeSpawner(childNode, childNode.Depth)
-				wirePipelineTool(childToolReg,
-					makePipelineRunFn(childSpawner, bb, sched, childNode),
-					makePipelineSynthFn(childSpawner, bb, sched, childNode, cfg, pipeChildWorkers, pipeChildTools, nil),
-					opts.Tools)
 
 				childModelID := opts.ModelID
+				if childModelID == "" {
+					childModelID = workerModel // worker model pin (change 0034), now every binding
+				}
 				if childModelID == "" {
 					childModelID = modelAlias
 				}
@@ -442,20 +433,13 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 					// point onto THIS loop's own store.
 					agent.WithEventStore(store),
 					agent.WithObserver(observer),
+					// Workflow pool backstop (change 0091), resolved lazily per spawn.
+					agent.WithSpawnBackstop(scope.backstop(parentNode)),
 					agent.WithChildBuilder(childBuilder),
 				)
 			}
-			loopToolReg.Register(tools.NewSpawnAgentToolWithBudget(makeSpawnFunc(rootNode, 0), sched.SpawnBudget).
-				WithQuotaWarning(quotaWarningFor(tree, rootNode.ID)))
-			// Root-node-wired blackboard tools (provenance = rootNode).
-			wireRootBlackboard(loopToolReg, bb, rootNode)
-			// Root pipeline_run bound to the root spawner (provenance = rootNode). (0026)
-			rootPipeWorkers, rootPipeTools := pipelineSynthPalette(cfg, loopToolReg)
-			rootPipeSpawner := makeSpawner(rootNode, 0)
-			wirePipelineTool(loopToolReg,
-				makePipelineRunFn(rootPipeSpawner, bb, sched, rootNode),
-				makePipelineSynthFn(rootPipeSpawner, bb, sched, rootNode, cfg, rootPipeWorkers, rootPipeTools, nil),
-				nil)
+			// Root spawn_agent, blackboard and pipeline_run (provenance = rootNode).
+			wiring.rootTools(loopToolReg, rootNode)
 
 			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, systemBlock, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, nil, observer)
 			if err != nil {

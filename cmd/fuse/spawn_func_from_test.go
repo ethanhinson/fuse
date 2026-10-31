@@ -98,3 +98,27 @@ func TestSpawnFuncFromWiredToToolPreservesModelContract(t *testing.T) {
 		t.Fatalf("model-facing output = %q, want the child's prose verbatim", res.Output)
 	}
 }
+
+// TestSpawnFuncFromForwardsWorkflow (change 0091): the adapter forwards the
+// request's workflow to the Spawner, which marks the child as that workflow's
+// root at creation.
+func TestSpawnFuncFromForwardsWorkflow(t *testing.T) {
+	tree := agent.NewAgentTree("root", "m")
+	rootNode := tree.Node(tree.RootID())
+	got := make(chan string, 1)
+	spawner := agent.NewSpawner(
+		agent.WithTree(tree), agent.WithNode(rootNode), agent.WithSpawnDepth(0),
+		agent.WithChildBuilder(func(ctx context.Context, opts agent.SpawnOpts, node *agent.AgentNode, _ *agent.AgentTree) (string, error) {
+			got <- opts.Workflow + "|" + node.Snapshot().WorkflowRoot
+			return "ok", nil
+		}),
+	)
+	handle, err := spawnFuncFrom(spawner, tree.Scheduler(), rootNode)(context.Background(), tools.SpawnRequest{Label: "lead", Task: "t", Workflow: "wf"})
+	if err != nil {
+		t.Fatalf("spawnFuncFrom: %v", err)
+	}
+	handle.WaitResult()
+	if s := <-got; s != "wf|wf" {
+		t.Fatalf("opts.Workflow|node.WorkflowRoot = %q, want wf|wf", s)
+	}
+}

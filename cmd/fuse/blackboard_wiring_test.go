@@ -155,24 +155,19 @@ func sortedKeys(m map[string]bool) []string {
 
 // TestEveryAgentEntryPointWiresBlackboard is the regression net the spec asked
 // for: the blackboard tool must be wired at every agent entry point (root +
-// child builder). The child-builder closures and root registration live inline
-// in three files, so a helper-level registry test cannot catch a site that
-// simply never calls the wiring. This test enumerates the entry-point sources by
-// grepping the tree for the child-builder marker (never a frozen list — learning
-// patch-every-cloned-child-builder) and asserts each such file calls BOTH
-// wireRootBlackboard and wireChildBlackboard. Dropping either call from any
-// entry point — or adding a fourth entry point that forgets the wiring — fails
-// here.
+// child builder). Since change 0091 every binding wires its root and child tools
+// through loopWiring, so a helper-level registry test cannot catch a site that
+// simply bypasses it. This test enumerates the entry-point sources by grepping
+// the tree for the child-builder marker (never a frozen list - learning
+// patch-every-cloned-child-builder) and asserts each such file reaches
+// .childTools( and .rootTools( once per closure, and that loop_wiring.go calls
+// BOTH wireChildBlackboard and wireRootBlackboard. Dropping either call, or
+// adding an entry point that bypasses loopWiring, fails here.
 func TestEveryAgentEntryPointWiresBlackboard(t *testing.T) {
 	entries, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Since change 0045 (binding #1) the three cloned child builders are consolidated
-	// as three child-builder CLOSURES through one runtime.Deps seam in
-	// runtime_binding.go, so we count closures (agent.WithChildBuilder occurrences)
-	// across all non-test files rather than one-per-file. A file that contains ANY
-	// child-builder closure must call BOTH wireRootBlackboard and wireChildBlackboard.
 	sites := 0
 	for _, f := range entries {
 		if strings.HasSuffix(f, "_test.go") {
@@ -189,17 +184,29 @@ func TestEveryAgentEntryPointWiresBlackboard(t *testing.T) {
 			continue
 		}
 		sites += n
-		if !strings.Contains(s, "wireRootBlackboard(") {
-			t.Errorf("%s builds an agent (WithChildBuilder) but never calls wireRootBlackboard — root blackboard wiring missing", f)
+		if strings.Count(s, ".rootTools(") < n {
+			t.Errorf("%s builds an agent (WithChildBuilder) but does not call .rootTools( per closure - root blackboard wiring missing", f)
 		}
-		if !strings.Contains(s, "wireChildBlackboard(") {
-			t.Errorf("%s builds an agent (WithChildBuilder) but never calls wireChildBlackboard — child blackboard wiring missing", f)
+		if strings.Count(s, ".childTools(") < n {
+			t.Errorf("%s builds an agent (WithChildBuilder) but does not call .childTools( per closure - child blackboard wiring missing", f)
 		}
 	}
 	// Guard against the marker changing out from under the test (which would make it
-	// silently pass by finding zero sites). Today there are three child-builder
-	// closures: one-shot, shell, research-probe — all in runtime_binding.go.
-	if sites < 3 {
-		t.Errorf("expected >=3 child-builder closures with WithChildBuilder, found %d — re-check the marker", sites)
+	// silently pass by finding zero sites). Today there are four child-builder
+	// closures: one-shot, shell, research-probe (runtime_binding.go) and the
+	// loop-server factory (loop_server.go).
+	if sites < 4 {
+		t.Errorf("expected >=4 child-builder closures with WithChildBuilder, found %d - re-check the marker", sites)
+	}
+	src, err := os.ReadFile("loop_wiring.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lw := string(src)
+	if !strings.Contains(lw, "wireRootBlackboard(") {
+		t.Error("loop_wiring.go never calls wireRootBlackboard - root blackboard wiring missing")
+	}
+	if !strings.Contains(lw, "wireChildBlackboard(") {
+		t.Error("loop_wiring.go never calls wireChildBlackboard - child blackboard wiring missing")
 	}
 }

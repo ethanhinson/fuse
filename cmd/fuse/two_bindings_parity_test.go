@@ -100,12 +100,11 @@ func runResearchProbeSideForParity(t *testing.T, cfg config.Config, reg *model.R
 	sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
 	sched.SetQueueBound(cfg.Agents.QueueBound)
 	sched.SetSessionTokens(cfg.Throughput.SessionTokens)
-	rootID := tree.RootID()
 	logSink := probe.NewLog()
 
 	deps := buildResearchProbeRuntimeDeps(researchProbeDepsInput{
 		cfg: cfg, reg: reg, alias: alias, toolReg: defaultToolRegistry(nil, cfg.Research, nil),
-		tree: tree, act: nil, rootID: rootID, logSink: logSink, traceW: nil, rateGate: sessionRateGate(cfg),
+		tree: tree, logSink: logSink, traceW: nil, rateGate: sessionRateGate(cfg),
 	})
 	// Override the production NoopStore with a real temp fsstore so the durable
 	// stream is readable; the wiring under test is unchanged.
