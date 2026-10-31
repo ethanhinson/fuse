@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/ethanhinson/fuse/internal/config"
 )
@@ -20,9 +21,18 @@ func TestReasonCommand_BoundsAndRedacts(t *testing.T) {
 		{strings.Repeat("a", 10001), strings.Repeat("a", 200) + "…"},
 		{"  ls  ", "ls"},
 		{"ls -la", "ls -la"},
+		// A 3-byte rune at bytes 199-201 straddles the cap: the cut backs off
+		// to the rune start rather than splitting it.
+		{strings.Repeat("a", 199) + "€" + "bbb", strings.Repeat("a", 199) + "…"},
 	}
 	for _, tc := range cases {
 		got := reasonCommand(tc.in)
+		if !utf8.ValidString(got) {
+			t.Errorf("reasonCommand(%.40q) = %q is not valid UTF-8", tc.in, got)
+		}
+		if body := strings.TrimSuffix(got, "…"); len(body) > 200 {
+			t.Errorf("reasonCommand(%.40q) body is %d bytes, want at most 200", tc.in, len(body))
+		}
 		if got != tc.want {
 			t.Errorf("reasonCommand(%.40q) = %.60q, want %.60q", tc.in, got, tc.want)
 		}

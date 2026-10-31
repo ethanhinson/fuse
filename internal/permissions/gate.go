@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -1151,11 +1152,17 @@ func commandPreview(name, args string) string {
 
 // boundText is the one bounding rule for command text a decision record may
 // carry: trimmed, URL userinfo replaced with "***@", and capped at 200 bytes
-// with a trailing "…".
+// with a trailing "…". The cut backs off to a rune boundary so a multi-byte
+// character straddling byte 200 is dropped whole, never split into invalid
+// UTF-8.
 func boundText(s string) string {
 	s = strings.TrimSpace(redactURLUserinfo(s))
 	if len(s) > 200 {
-		s = s[:200] + "…"
+		cut := 200
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + "…"
 	}
 	return s
 }

@@ -108,10 +108,12 @@ func buildMCPServerGate(cfg config.Config, toolReg *tools.Registry, perms config
 // relayPermissions returns the permissions the mcp-server gate is built with.
 // A parent fuse at mode off (--approve-all, or a session switched to off)
 // relays FUSE_HITL_MODE=off to its cli/ model's tool subprocess, which then
-// runs at the posture the parent promised. It is honored only with the
-// parent's relay socket, so an editor-launched standalone mcp-server cannot be
-// switched off by an environment variable alone, and only for "off"; every
-// other value leaves p unchanged.
+// runs at the posture the parent promised. It is honored only when
+// FUSE_HITL_SOCKET is also set, and only for "off"; every other value leaves p
+// unchanged. The socket check tests only that the variable is non-empty, not
+// that a parent is listening, so this is a loosening path trusted from
+// whoever controls the server's process environment (normally the parent
+// fuse relay, which sets both variables).
 func relayPermissions(p config.PermissionsConfig, socketPath, relayMode string) config.PermissionsConfig {
 	if socketPath != "" && relayMode == "off" {
 		p.Mode = "off"
