@@ -14,9 +14,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/loopsecret"
 )
 
 // connectHTTPClient is the minimal HTTP surface the remote backend dials with. It
@@ -58,6 +60,28 @@ type StartLoopConfig struct {
 	// errors.As) listing every violation with its field path; a runtime that does
 	// not run specs fails with ErrHarnessUnsupported. Nil: the runtime's config.
 	Harness *harnessv1.HarnessSpec
+	// Secrets carries values for Harness's secret_ref names (change 0102). They
+	// are loop-scoped and held in memory only: the runtime uses them to resolve
+	// this loop's harness, never records them, and never logs them or puts them
+	// in an error. An operator loop_server.secrets entry for the tenant takes
+	// precedence; otherwise an entry resolves its name only for a destination
+	// whose hostname is in its Hosts. Remotely this needs the secrets:inline
+	// scope. At most 32 entries, each value at most 16 KiB. Ignored when Harness
+	// is nil. A resumed loop no longer has them.
+	Secrets []LoopSecret
+}
+
+// LoopSecret is one loop-scoped value for a harness secret_ref: Name is the
+// secret_ref name, Value the credential, and Hosts the hostnames it may be sent
+// to. It is never recorded, and every rendering of it (fmt, slog, JSON) prints
+// the value as [REDACTED].
+type LoopSecret = loopsecret.Secret
+
+// WithSecrets returns a copy of c with s appended to its Secrets. The receiver
+// is never mutated, and the copy never shares Secrets storage with it.
+func (c StartLoopConfig) WithSecrets(s ...LoopSecret) StartLoopConfig {
+	c.Secrets = append(slices.Clone(c.Secrets), s...)
+	return c
 }
 
 // Credentials is the per-Client identity: the bearer token presented on every remote
