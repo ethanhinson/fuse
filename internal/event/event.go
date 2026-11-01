@@ -128,6 +128,15 @@ const (
 	// stream may hold several events per server name; consumers take the latest
 	// event per server name.
 	KindMCPServer Kind = "mcp.server"
+	// KindLoopPrincipal records the credential that started the loop. It is
+	// recorded once at a networked StartLoop, right after loop.harness (first
+	// when there is no spec), and never on resume. It holds identity and audit
+	// claims only, never token material. It is absent for loops started without
+	// an authenticated principal (stdio binding, local CLI).
+	KindLoopPrincipal Kind = "loop.principal"
+	// KindToolIdentityMinted records one delegated tool-identity token minted for
+	// a call made by this loop. It never holds the token.
+	KindToolIdentityMinted Kind = "tool.identity.minted"
 )
 
 // Event is the stable envelope over every loop state transition. Payload is the
@@ -415,6 +424,25 @@ type MCPServerPayload struct {
 	Connected bool     `json:"connected"`
 	Error     string   `json:"error,omitempty"`
 	Tools     []string `json:"tools"`
+}
+
+// LoopPrincipalPayload accompanies KindLoopPrincipal. Scopes is always a JSON
+// array; an empty array means the credential was unrestricted.
+type LoopPrincipalPayload struct {
+	Subject  string   `json:"subject"`
+	ClientID string   `json:"client_id"`
+	Issuer   string   `json:"issuer"`
+	Scopes   []string `json:"scopes"` // [] = unrestricted
+	TokenID  string   `json:"token_id"`
+}
+
+// ToolIdentityMintedPayload accompanies KindToolIdentityMinted. Scope is the
+// target scopes joined by one space.
+type ToolIdentityMintedPayload struct {
+	Subject  string `json:"subject"`
+	Audience string `json:"audience"`
+	Scope    string `json:"scope"` // space-separated
+	LoopID   string `json:"loop_id"`
 }
 
 // PermissionDecisionPayload accompanies KindPermissionDecision. Command is a
