@@ -2,7 +2,7 @@
 id: 100
 slug: 'scoped-principals-rpc-scopes-harness-digest-pin-and-principa'
 title: 'Scoped principals: RPC scopes, harness digest pin and principal record on every loop'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md](../../superpowers/specs/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md) |
+| Spec (merged) | [2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md) |
 | Plan | [2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md](../../superpowers/plans/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) |
 | Results | [2026-11-01-scoped-principals-results.md](../../results/2026-11-01-scoped-principals-results.md) |
 | ADRs | [ADR-0075](../../adrs/0075-scoped-principals-scopes-are-a-token-claim-enforced-at-the-c.md) |

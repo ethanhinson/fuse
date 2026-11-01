@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0100 — Scoped principals: RPC scopes, harness digest pin and principal record on every loop](../../changes/active/0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md)**
+> ↩ **[Change 0100 — Scoped principals: RPC scopes, harness digest pin and principal record on every loop](../../changes/archive/2026-11-01-0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md)**
 <!-- docket:backlink:end -->
 
 # Scoped principals: RPC scopes, harness digest pin, principal record - Implementation Plan
