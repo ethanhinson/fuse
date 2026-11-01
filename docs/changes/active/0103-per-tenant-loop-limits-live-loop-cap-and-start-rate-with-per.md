@@ -14,7 +14,7 @@ related: []
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-01-per-tenant-loop-limits.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md](../../superpowers/specs/2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md) |
+| Plan | [2026-11-01-per-tenant-loop-limits.md](../../superpowers/plans/2026-11-01-per-tenant-loop-limits.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
