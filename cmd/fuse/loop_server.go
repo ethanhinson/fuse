@@ -186,13 +186,17 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 	// per-principal tokens from the ctx principal at Execute time, not from any manager
 	// state. The complete-mediation TargetMediator reaches each loop's gate separately via
 	// buildGate → buildTargetMediator(cfg) inside buildAgentCore, so we discard it here.
-	mcpOpts, _ := mcpAttach(cfg, os.Stderr)
+	// The broker records each delegated mint into mintAudit, which appends a
+	// tool.identity.minted event to the stream of the loop the token was minted for.
+	mintAudit := newLoopMintAudit()
+	mcpOpts, _ := mcpAttachAudited(cfg, os.Stderr, mintAudit)
 
 	host := &loopServerHost{
 		sb:          sb,
 		rootApprove: rootApprove,
 		observer:    observer,
 		skills:      skillSet,
+		mintAudit:   mintAudit,
 		operator: loopSettings{
 			cfg:         cfg,
 			reg:         reg,
@@ -227,7 +231,8 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 		// construction.
 		// It also stamps the loop's own id (toolidentity.WithLoop), which the delegation
 		// token carries as loop_id, so the downstream service knows which conversation a
-		// call comes from, not only whose.
+		// call comes from, not only whose. The same loop id routes the broker's audit
+		// record of each mint to that loop's stream (loopMintAudit).
 		LoopContext: func(ctx context.Context, lc runtime.LoopConfig) context.Context {
 			ctx = toolidentity.WithPrincipal(ctx, loopServerPrincipal(lc))
 			if lc.LoopID != "" {
@@ -281,6 +286,12 @@ type loopServerHost struct {
 	// completion. sync.Map because NewToolRegistry (StartLoop goroutine) and LoopTeardown
 	// (run-completion goroutine) touch it from different goroutines for concurrent loops.
 	loopManagers sync.Map // *tools.Registry -> *mcp.Manager
+
+	// mintAudit is the tool-identity broker's audit sink for every loop this
+	// host runs, operator and harness-spec loops alike: each delegated token
+	// minted for a loop becomes a tool.identity.minted event in that loop's own
+	// stream. BuildAgent binds a loop to its store; teardown unbinds it.
+	mintAudit *loopMintAudit
 }
 
 // teardown releases what a loop's NewToolRegistry attached to its registry.
@@ -288,6 +299,8 @@ func (h *loopServerHost) teardown(loopReg *tools.Registry) {
 	if v, ok := h.loopManagers.LoadAndDelete(loopReg); ok {
 		v.(*mcp.Manager).Close()
 	}
+	// Stop routing mint audit records to this loop's store.
+	h.mintAudit.unbind(loopReg)
 	// Release THIS loop's own bash sandbox pool (change 0063): its warm
 	// Runners and its reaper goroutine must not outlive the loop that
 	// created them. It runs on the completion goroutine AND on the
@@ -301,6 +314,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 	sb, cfg, reg, modelAlias, toolReg, systemBlock := h.sb, s.cfg, s.reg, s.modelAlias, s.toolReg, s.systemBlock
 	rootApprove, rateGate, observer, mcpOpts := h.rootApprove, s.rateGate, h.observer, s.mcpOpts
 	loopManagers := &h.loopManagers
+	mintAudit := h.mintAudit
 	return runtime.LoopFactory{
 		MaxConcurrent: cfg.Agents.MaxConcurrent,
 		// The per-loop tool registry is built fresh per loop from the same source as the
@@ -358,6 +372,10 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			// one-shot, shell, research-probe, and mcp-server bindings do not, and
 			// deliberately pass no hooks rather than emitting into a NoopStore.
 			if loopToolReg != nil {
+				// Route the broker's mint audit records for this loop (keyed by its
+				// root id, which is the loop id) to this loop's own store, before any
+				// tool can run. teardown unbinds it.
+				mintAudit.bind(loopToolReg, tree.RootID(), store)
 				emitMCPServerEvents(store, tree.RootID(), loopManagers, loopToolReg)
 				loopToolReg.Register(tools.NewBash(sb, sandbox.WithPoolHooks(
 					tools.SandboxEventHooks(store, tree.RootID()))))
