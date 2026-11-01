@@ -453,3 +453,64 @@ func TestLoopSecretValueIsNeverRecorded(t *testing.T) {
 	}
 	assertGatewayNeverSaw(t, s.gw, e2eValue)
 }
+
+// TestLoopScopedSecretLoopCannotBeResumed: a loop whose spec depends on
+// loop-scoped secrets cannot be resumed, because resume re-resolves the
+// recorded spec without them. On the production loop-server deps with a
+// durable store, an interactive loop started with a loop-scoped secret parks
+// and is reaped (no longer live); a replica over the same store then fails to
+// Resume it with the unresolved secret_ref at its own field: nothing dials the
+// MCP server, and no error text holds the value.
+func TestLoopScopedSecretLoopCannotBeResumed(t *testing.T) {
+	const value = "cr-RESUME-SENTINEL"
+	gw := &recordingGateway{script: []string{`{"choices":[{"message":{"role":"assistant","content":"done"}}]}`}}
+	deps, _ := harnessServerWith(t, harnessOperator, gw)
+	store := fsstore.NewDurableFSStore(t.TempDir())
+	deps.DurableStore, deps.Registry = store, store
+	deps.IdleTTL = 150 * time.Millisecond
+	rt := runtime.New(deps)
+	srv, auths := mcpAuthFakeServer(t)
+
+	ctx := context.Background()
+	h, err := rt.StartLoop(ctx, runtime.LoopConfig{
+		Task: "go", Interactive: true, Harness: loopSecretSpec(srv.URL),
+		Secrets: []loopsecret.Secret{{Name: "my-token", Value: value, Hosts: []string{"127.0.0.1"}}},
+	})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	if !sawBearer(auths(), value) {
+		t.Fatalf("the start did not send the loop-scoped secret; saw %v", auths())
+	}
+	// Force a non-live state: with nothing observing and no Send, the idle
+	// reaper ends the parked loop and the runtime no longer holds it.
+	done := make(chan struct{})
+	go func() { _, _ = h.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the interactive loop was not reaped")
+	}
+
+	// A replica over the same store holds no live copy of the loop, so its
+	// Resume rehydrates from the durable record.
+	replica := runtime.New(deps)
+	before := len(auths())
+	_, err = replica.Resume(ctx, "", h.ID())
+	var ve *harness.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("Resume err = %v, want a ValidationError", err)
+	}
+	if len(ve.Violations) != 1 {
+		t.Fatalf("violations = %+v, want exactly one", ve.Violations)
+	}
+	if v := ve.Violations[0]; v.FieldPath != "mcp_servers[0].auth.client_secret_ref" || v.RuleID != harness.RuleSecretRef {
+		t.Fatalf("violation = %s %s, want mcp_servers[0].auth.client_secret_ref %s", v.FieldPath, v.RuleID, harness.RuleSecretRef)
+	}
+	if strings.Contains(err.Error(), value) {
+		t.Fatal("the resume refusal echoes the secret value")
+	}
+	if n := len(auths()) - before; n != 0 {
+		t.Fatalf("the MCP server got %d requests for a refused resume", n)
+	}
+}

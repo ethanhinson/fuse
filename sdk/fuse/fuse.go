@@ -67,7 +67,8 @@ type StartLoopConfig struct {
 	// precedence; otherwise an entry resolves its name only for a destination
 	// whose hostname is in its Hosts. Remotely this needs the secrets:inline
 	// scope. At most 32 entries, each value at most 16 KiB. Ignored when Harness
-	// is nil. A resumed loop no longer has them.
+	// is nil. A loop whose spec depends on loop-scoped secrets cannot be
+	// resumed, because resume re-resolves the spec without them.
 	Secrets []LoopSecret
 }
 

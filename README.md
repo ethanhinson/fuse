@@ -754,7 +754,8 @@ The service is four RPCs:
   entry for the tenant wins over a client entry of the same name. An entry resolves
   only for a destination whose hostname is in its `hosts`, which is required. At most
   32 entries are accepted, 16 KiB per value. They are ignored without a harness spec,
-  a resumed loop no longer has them, and `GetCapabilities` never lists them.
+  and `GetCapabilities` never lists them. A loop whose spec depends on loop-scoped
+  secrets cannot be resumed, because resume re-resolves the spec without them.
 - `Observe(from_seq)` — server-streaming history-then-live: it replays durable
   history since `from_seq`, then live-tails, deduping the replay/live overlap at
   the watermark and flagging a `gap` when a sequence hole is detected. A

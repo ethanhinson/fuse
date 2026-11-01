@@ -83,7 +83,8 @@ export type StartLoopRequest = Message<"fuse.loop.v1.StartLoopRequest"> & {
    * here; otherwise an entry resolves its name only for a destination whose
    * hostname is in its hosts. Requires the secrets:inline scope. At most 32
    * entries, each value at most 16 KiB (InvalidArgument otherwise). Ignored
-   * when harness is unset. A resumed loop no longer has them.
+   * when harness is unset. A loop whose spec depends on loop-scoped secrets
+   * cannot be resumed, because resume re-resolves the spec without them.
    *
    * @generated from field: repeated fuse.loop.v1.LoopSecret secrets = 7;
    */

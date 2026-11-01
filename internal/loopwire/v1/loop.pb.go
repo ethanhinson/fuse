@@ -114,7 +114,8 @@ type StartLoopRequest struct {
 	// here; otherwise an entry resolves its name only for a destination whose
 	// hostname is in its hosts. Requires the secrets:inline scope. At most 32
 	// entries, each value at most 16 KiB (InvalidArgument otherwise). Ignored
-	// when harness is unset. A resumed loop no longer has them.
+	// when harness is unset. A loop whose spec depends on loop-scoped secrets
+	// cannot be resumed, because resume re-resolves the spec without them.
 	Secrets       []*LoopSecret `protobuf:"bytes,7,rep,name=secrets,proto3" json:"secrets,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
