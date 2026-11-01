@@ -1,6 +1,6 @@
 # Backlog
 
-**103 changes** — 🟢 2 in progress · 🔵 1 built · 🟣 1 groomed · 🟡 3 proposed · ⚪ 3 deferred · ✅ 86 done · 🗑️ 7 killed
+**103 changes** — 🟢 2 in progress · 🟣 2 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 87 done · 🗑️ 7 killed
 
 ## 🟢 In progress (2)
 
@@ -9,24 +9,18 @@
 | [0101](active/0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md) | `feat/operator-spec-policy-mcp-host-allowlist-private-network-deny` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (1)
-
-| # | Title | Priority | Type | PR | State |
-|---|-------|----------|------|----|-------|
-| [0099](active/0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md) | Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes | `high` | `feat` | [#121](https://github.com/ethanhinson/fuse/pull/121) | awaiting merge |
-
-## 🟣 Groomed (1)
+## 🟣 Groomed (2)
 
 | # | Title | Priority | Type | Spec | Readiness |
 |---|-------|----------|------|------|-----------|
 | [0103](active/0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | `medium` | `feat` | [spec](../superpowers/specs/2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md) | build-ready |
+| [0100](active/0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md) | build-ready |
 
-## 🟡 Proposed (3)
+## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0102](active/0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | `high` | `feat` | ⏳ waiting on #100 — not yet built |
-| [0100](active/0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | `high` | `feat` | ⏳ waiting on #99 — needs your merge |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
@@ -44,7 +38,6 @@ graph TD
   0063 --> 0074
   0081
   0083
-  0099
   0099 --> 0100
   0101
   0100 --> 0102
@@ -53,13 +46,15 @@ graph TD
   0012:::done
   0052:::done
   0063:::done
+  0099:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (93)</summary>
+<details><summary>✅🗑️ Archive — done + killed (94)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0099](archive/2026-11-01-0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md) | Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes | 2026-11-01 |
 | [0098](archive/2026-10-31-0098-permission-deny-reasons-bound-and-redact-the-command-they-ec.md) | Permission deny reasons bound and redact the command they echo | 2026-10-31 |
 | [0097](archive/2026-10-31-0097-approve-all-carries-across-the-cli-model-relay-and-policy-de.md) | Approve-all carries across the CLI-model relay, and policy denials say who denied | 2026-10-31 |
 | [0096](archive/2026-10-31-0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | 2026-10-31 |
@@ -75,7 +70,6 @@ graph TD
 | [0086](archive/2026-10-31-0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md) | Loop server advertises its capabilities - models, skills, ceilings | 2026-10-31 |
 | [0085](archive/2026-10-31-0085-start-a-loop-from-a-harnessspec.md) | Start a loop from a HarnessSpec | 2026-10-31 |
 | [0084](archive/2026-10-30-0084-harnessspec-proto-and-public-validator.md) | HarnessSpec proto and public validator | 2026-10-30 |
-| [0076](archive/2026-09-17-0076-fuse-server-helm-chart-compose-stack.md) | fuse server deployment — a docker-compose stack and a Helm chart over the released image (not an operator) | 2026-09-17 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -87,7 +81,7 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-09](archive/) | 6 done |
+| [2026-09](archive/) | 7 done |
 | [2026-08](archive/) | 65 done |
 
 </details>

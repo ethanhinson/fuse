@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0099 — Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes](../../changes/active/0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md)**
+> ↩ **[Change 0099 — Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes](../../changes/archive/2026-11-01-0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md)**
 <!-- docket:backlink:end -->
 
 # Trusted issuers JWKS plan

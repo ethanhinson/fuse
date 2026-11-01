@@ -2,7 +2,7 @@
 id: 99
 slug: 'trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti'
 title: 'Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md](../../superpowers/specs/2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md) |
+| Spec (merged) | [2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md) |
 | Plan | [2026-11-01-trusted-issuers-jwks.md](../../superpowers/plans/2026-11-01-trusted-issuers-jwks.md) |
 | Results | [2026-11-01-trusted-issuers-jwks-results.md](../../results/2026-11-01-trusted-issuers-jwks-results.md) |
 | ADRs | [ADR-0072](../../adrs/0072-trusted-issuers-may-use-asymmetric-jwks-keys-tenant-prefixes.md) |
