@@ -994,7 +994,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		// live /mode off reaches the subprocess at the next turn as it reaches the gate.
 		cliAdapter := newCLIAdapter(fuseExe, approve, sessionGateMode(cfg, sm) == permissions.ModeOff)
 		permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
-		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
+		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, "", extra)
 		// maxTokens is not forwarded to the CLI; Claude controls its own limits.
 		a := agent.New(cliAdapter, permGate, r, mc.ID, systemPrompt, maxTurns, 0)
 		a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
@@ -1010,7 +1010,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	}
 	permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 	maxTokens := effectiveMaxTokens(mc, cfg)
-	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
+	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, "", extra)
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 	a.ContextWindow = mc.ContextWindow

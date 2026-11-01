@@ -22,12 +22,12 @@ func TestComposeSystemPrompt(t *testing.T) {
 	base := PersonaPrompt("coding")
 
 	// No prefix, no extra: returns just the persona prompt.
-	if got := ComposeSystemPrompt("coding", "", ""); got != base {
+	if got := ComposeSystemPrompt("coding", "", "", ""); got != base {
 		t.Errorf("expected base prompt, got %q", got)
 	}
 
 	// With prefix: prefix is prepended before persona prompt.
-	prefixed := ComposeSystemPrompt("coding", "/no_think", "")
+	prefixed := ComposeSystemPrompt("coding", "/no_think", "", "")
 	if !strings.HasPrefix(prefixed, "/no_think\n") {
 		t.Error("prefixed prompt should start with the prefix directive")
 	}
@@ -37,11 +37,53 @@ func TestComposeSystemPrompt(t *testing.T) {
 
 	// With extra: persona prompt is prepended, extra appended.
 	extra := "## Skills\n- /foo"
-	composed := ComposeSystemPrompt("coding", "", extra)
+	composed := ComposeSystemPrompt("coding", "", "", extra)
 	if !strings.HasPrefix(composed, base) {
 		t.Error("composed prompt should start with persona prompt")
 	}
 	if !strings.HasSuffix(composed, extra) {
 		t.Error("composed prompt should end with extra block")
+	}
+}
+
+func TestComposeSystemPromptInstructionsOrder(t *testing.T) {
+	got := ComposeSystemPrompt("coding", "/no_think", "You are a release-notes writer.", "## Skills\n- /foo")
+	want := "/no_think\n" + PersonaPrompt("coding") + "\n\nYou are a release-notes writer.\n\n## Skills\n- /foo"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestComposeSystemPromptInstructionsWithoutExtra(t *testing.T) {
+	if got, want := ComposeSystemPrompt("research", "", "BRIEF", ""), PersonaPrompt("research")+"\n\nBRIEF"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestComposeSystemPromptBlankInstructionsAreAbsent(t *testing.T) {
+	for _, p := range []string{"coding", "research", "reasoning", "general", "nope"} {
+		for _, pre := range []string{"", "/no_think"} {
+			for _, ex := range []string{"", "## Skills\n- /foo"} {
+				want := ComposeSystemPrompt(p, pre, "", ex)
+				for _, ins := range []string{"   ", "\n\t\n"} {
+					if got := ComposeSystemPrompt(p, pre, ins, ex); got != want {
+						t.Fatalf("%s|%s|%q|%q: got %q, want %q", p, pre, ins, ex, got, want)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestComposeSystemPromptTrimsInstructions(t *testing.T) {
+	got := ComposeSystemPrompt("coding", "", "\n  BRIEF\n\n", "X")
+	if want := PersonaPrompt("coding") + "\n\nBRIEF\n\nX"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestAgentSystemPromptGetter(t *testing.T) {
+	if got := New(nil, nil, nil, "m", "SYS", 1, 0).SystemPrompt(); got != "SYS" {
+		t.Fatalf("SystemPrompt() = %q", got)
 	}
 }

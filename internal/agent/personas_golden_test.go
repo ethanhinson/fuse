@@ -15,7 +15,7 @@ const composeGoldenPath = "testdata/compose_golden.json"
 // composeNoInstructions is the single call into ComposeSystemPrompt this golden
 // test makes, so a signature change touches one line here.
 func composeNoInstructions(persona, prefix, extra string) string {
-	return ComposeSystemPrompt(persona, prefix, extra)
+	return ComposeSystemPrompt(persona, prefix, "", extra)
 }
 
 // composeGoldenCases returns every persona (plus an unknown name) crossed with
