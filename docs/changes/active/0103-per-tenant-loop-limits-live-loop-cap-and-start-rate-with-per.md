@@ -12,7 +12,7 @@ depends_on: []
 stacked_on:
 related: []
 discovered_from: []
-adrs: []
+adrs: [74]
 spec: 'docs/superpowers/specs/2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md'
 plan: 'docs/superpowers/plans/2026-11-01-per-tenant-loop-limits.md'
 results: 'docs/results/2026-11-01-per-tenant-loop-limits-results.md'
@@ -33,6 +33,7 @@ reconciled: true
 | Spec | [2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md](../../superpowers/specs/2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md) |
 | Plan | [2026-11-01-per-tenant-loop-limits.md](../../superpowers/plans/2026-11-01-per-tenant-loop-limits.md) |
 | Results | [2026-11-01-per-tenant-loop-limits-results.md](../../results/2026-11-01-per-tenant-loop-limits-results.md) |
+| ADRs | [ADR-0074](../../adrs/0074-per-tenant-loop-limits-enforced-at-the-connect-edge.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
