@@ -2,7 +2,7 @@
 id: 99
 slug: 'trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti'
 title: 'Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/121'
 blocked_by:
 reconciled: true
 ---
@@ -58,3 +58,12 @@ token scopes or any new claim (F2); revocation lists or introspection; OIDC disc
 ### 2026-11-01
 
 Unchanged against origin/main tip 3567c07: loopauth/issuer.go is still HS256-only, toolIdentityTenantKeys still eager, IssuerConfig has no jwks fields.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 9f0283b2127192fbbf15fa19b74f2c5be711e367
+ran_at:   2026-11-01T04:04:53Z
+<!-- docket:build-evidence:end -->
