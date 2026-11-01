@@ -42,6 +42,14 @@ import (
 // pass-through, unenforced typed field on every RPC (identity is #0049): the tenant
 // string maps to event.TenantID and is threaded to the seam call, never dropped
 // (cache-over-tenant-scoped-source-reassert-key-on-hit).
+//
+// Each RPC requires one token scope when the authenticated principal carries a
+// scope set (an empty set is unrestricted): StartLoop needs loop:start, Send needs
+// loop:send, Observe needs loop:observe and GetCapabilities needs
+// capabilities:read. An explicitly granted loop:admin also satisfies Send and
+// Observe and lifts the owner check within the principal's tenant. The scope
+// check is the first check each RPC runs, before the tenant check and before the
+// runtime is touched.
 type Handler struct {
 	rt       runtime.Runtime
 	observer observe.Observer
@@ -127,6 +135,25 @@ func (h *Handler) WithLimits(l *tenantlimit.Limiter) *Handler {
 	return h
 }
 
+// requireScope refuses a request whose authenticated principal is not allowed
+// scope. alsoSatisfiedBy names scopes that satisfy the requirement when
+// EXPLICITLY granted (loop:admin for Send/Observe); an unrestricted principal
+// already passes through Allows. No principal (an un-intercepted path) means no
+// check, as for the owner rule. The refusal names the canonical scope.
+func requireScope(ctx context.Context, scope string, alsoSatisfiedBy ...string) *connect.Error {
+	p, ok := PrincipalFrom(ctx)
+	if !ok || p.Allows(scope) {
+		return nil
+	}
+	for _, s := range alsoSatisfiedBy {
+		if p.Grants(s) {
+			return nil
+		}
+	}
+	return connect.NewError(connect.CodePermissionDenied,
+		fmt.Errorf("loopconnect: token lacks scope %q", scope))
+}
+
 // effectiveTenant resolves the authoritative tenant for a request and rejects a
 // tenant spoof. When a Principal is present (the interceptor authenticated the
 // request), the principal's tenant is authoritative and the wire tenant, if non-
@@ -146,11 +173,14 @@ func (h *Handler) effectiveTenant(ctx context.Context, wireTenant string) (event
 	return p.Tenant, p, true, nil
 }
 
-// authorizeLoop enforces per-loop ownership for Send/Observe. It runs only when a
-// registry AND a principal are present. It resolves the (tenant, loop) record —
-// ErrLoopUnknown collapses to CodeNotFound (cross-tenant misses land here because the
-// resolve is tenant-scoped), and a record owned by a different subject is
-// CodePermissionDenied. An owner-less record (Owner == "") imposes no constraint.
+// authorizeLoop enforces per-loop ownership for Send/Observe (and a StartLoop
+// orchestrate target). It runs only when a registry AND a principal are present. It
+// resolves the (tenant, loop) record — ErrLoopUnknown collapses to CodeNotFound
+// (cross-tenant misses land here because the resolve is tenant-scoped), and a record
+// owned by a different subject is CodePermissionDenied. An owner-less record
+// (Owner == "") imposes no constraint. A principal explicitly granted loop:admin
+// skips ONLY the owner comparison: the tenant-scoped resolve still runs, so a loop in
+// another tenant stays NotFound. An unrestricted principal is never treated as admin.
 func (h *Handler) authorizeLoop(ctx context.Context, tenant event.TenantID, loopID string, p loopauth.Principal, havePrincipal bool) *connect.Error {
 	if h.registry == nil || !havePrincipal {
 		return nil
@@ -162,7 +192,7 @@ func (h *Handler) authorizeLoop(ctx context.Context, tenant event.TenantID, loop
 		}
 		return connect.NewError(connect.CodeInternal, err)
 	}
-	if rec.Owner != "" && rec.Owner != p.Subject {
+	if rec.Owner != "" && rec.Owner != p.Subject && !p.Grants(loopauth.ScopeLoopAdmin) {
 		return connect.NewError(connect.CodePermissionDenied,
 			errors.New("loopconnect: loop is owned by a different subject"))
 	}
@@ -173,11 +203,17 @@ func (h *Handler) authorizeLoop(ctx context.Context, tenant event.TenantID, loop
 // A StartLoop seam error maps to CodeInternal (loop construction/drive failure is a
 // server-side condition here). When authenticated, the principal's tenant is
 // authoritative (a mismatching wire tenant is a spoof → CodePermissionDenied) and the
-// principal's subject is recorded as the loop's Owner right after creation.
+// principal's subject is recorded as the loop's Owner right after creation. A scoped
+// principal needs loop:start; loop:admin does not satisfy it (it only lifts the owner
+// check on an orchestrate target).
 func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.StartLoopRequest]) (*connect.Response[loopv1.StartLoopResponse], error) {
 	ctx, apiSpan := h.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "start_loop"})
 	apiOutcome := observe.OutcomeSuccess
 	defer func() { apiSpan.End(apiOutcome) }()
+	if aerr := requireScope(ctx, loopauth.ScopeLoopStart); aerr != nil {
+		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
+		return nil, aerr
+	}
 	m := req.Msg
 	tenant, p, havePrincipal, aerr := h.effectiveTenant(ctx, m.Tenant)
 	if aerr != nil {
@@ -328,11 +364,16 @@ func (h *Handler) recordOwner(ctx context.Context, tenant event.TenantID, loopID
 // Send injects human input at the loop's next turn boundary. It maps the two client-
 // addressable seam sentinels: an unknown loop → CodeNotFound, a finished loop →
 // CodeFailedPrecondition (the loop exists but no longer accepts input). Any other
-// error → CodeInternal.
+// error → CodeInternal. A scoped principal needs loop:send, or an explicit
+// loop:admin (which also lifts the owner check within the tenant).
 func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequest]) (*connect.Response[loopv1.SendResponse], error) {
 	ctx, apiSpan := h.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "send"})
 	apiOutcome := observe.OutcomeSuccess
 	defer func() { apiSpan.End(apiOutcome) }()
+	if aerr := requireScope(ctx, loopauth.ScopeLoopSend, loopauth.ScopeLoopAdmin); aerr != nil {
+		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
+		return nil, aerr
+	}
 	m := req.Msg
 	tenant, p, havePrincipal, aerr := h.effectiveTenant(ctx, m.Tenant)
 	if aerr != nil {

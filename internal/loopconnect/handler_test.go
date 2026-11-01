@@ -20,8 +20,9 @@ import (
 // --- fakeRuntime: a scripted runtime.Runtime double (no live model) --------------
 
 type fakeRuntime struct {
-	startID  string
-	startErr error
+	startID    string
+	startErr   error
+	startCalls int // StartLoop seam calls (a refused request must leave it 0)
 
 	sendErr error
 
@@ -50,6 +51,7 @@ type fakeRuntime struct {
 }
 
 func (f *fakeRuntime) StartLoop(ctx context.Context, cfg runtime.LoopConfig) (runtime.LoopHandle, error) {
+	f.startCalls++
 	f.sawStartCfg = cfg
 	f.sawStartCtxErr = ctx.Err()
 	if f.startErr != nil {

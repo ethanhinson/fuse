@@ -7,6 +7,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/loopauth"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/observe"
 	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
@@ -54,6 +55,9 @@ func (h *Handler) keepaliveInterval() time.Duration {
 // While idle (no live event within the keepalive interval), the stream emits a bare
 // keepalive:true frame (no event) so a parked loop's stream survives a gateway idle
 // timeout; the client ignores keepalives for dedup (they carry no Seq).
+//
+// A scoped principal needs loop:observe, or an explicit loop:admin (which also lifts
+// the owner check within the tenant). The scope is checked before anything else.
 func (h *Handler) Observe(ctx context.Context, req *connect.Request[loopv1.ObserveRequest], stream *connect.ServerStream[loopv1.ObserveEvent]) (err error) {
 	ctx, apiSpan := h.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "observe"})
 	defer func() {
@@ -69,10 +73,14 @@ func (h *Handler) Observe(ctx context.Context, req *connect.Request[loopv1.Obser
 	m := req.Msg
 
 	// 0) Authorize at the edge BEFORE any subscribe/replay work. The principal was
-	//    stashed on ctx by the interceptor's WrapStreamingHandler. Tenant-spoof is
+	//    stashed on ctx by the interceptor's WrapStreamingHandler. A missing token
+	//    scope is PermissionDenied (checked first). Tenant-spoof is
 	//    PermissionDenied; a tenant-scoped resolve miss is NotFound (this collapses
 	//    cross-tenant access); a different-owner record is PermissionDenied. With no
 	//    principal/registry this is a no-op and the wire tenant is used as today.
+	if aerr := requireScope(ctx, loopauth.ScopeLoopObserve, loopauth.ScopeLoopAdmin); aerr != nil {
+		return aerr
+	}
 	tenant, p, havePrincipal, aerr := h.effectiveTenant(ctx, m.Tenant)
 	if aerr != nil {
 		return aerr
