@@ -152,6 +152,8 @@ type urlKeys struct {
 	keys        map[string]issuerKey
 	fetchedAt   time.Time
 	unknownLast time.Time
+	lastAttempt time.Time
+	inflight    bool
 }
 
 func newURLKeys(url string, refresh time.Duration, client *http.Client, now func() time.Time) *urlKeys {
@@ -159,13 +161,18 @@ func newURLKeys(url string, refresh time.Duration, client *http.Client, now func
 		refresh = DefaultJWKSRefresh
 	}
 	if client == nil {
-		client = &http.Client{Timeout: jwksFetchTimeout}
+		client = &http.Client{Timeout: jwksFetchTimeout, CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse // a redirect could downgrade https to http
+		}}
 	}
 	return &urlKeys{url: url, refresh: refresh, client: client, now: now}
 }
 
-func (u *urlKeys) fetch(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, jwksFetchTimeout)
+// fetch downloads and parses the document without holding the lock, then swaps
+// the key set in. It runs on a detached context so a caller's short deadline or
+// disconnect cannot be used to make refreshes fail.
+func (u *urlKeys) fetch() error {
+	ctx, cancel := context.WithTimeout(context.Background(), jwksFetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.url, nil)
 	if err != nil {
@@ -201,32 +208,56 @@ func (u *urlKeys) fetch(ctx context.Context) error {
 			keys[k.kid] = k
 		}
 	}
+	if len(keys) == 0 {
+		return errors.New("jwks fetch: document has no usable keys")
+	}
+	u.mu.Lock()
 	u.keys = keys
 	u.fetchedAt = u.now()
+	u.mu.Unlock()
 	return nil
 }
 
-func (u *urlKeys) lookup(ctx context.Context, kid string) (issuerKey, bool) {
+// attempt runs one fetch, recording the attempt time whether or not it
+// succeeds. Callers hold no lock.
+func (u *urlKeys) attempt() {
 	u.mu.Lock()
-	defer u.mu.Unlock()
+	u.lastAttempt = u.now()
+	u.mu.Unlock()
+	_ = u.fetch() // failure keeps the cached document
+}
+
+func (u *urlKeys) lookup(_ context.Context, kid string) (issuerKey, bool) {
+	u.mu.Lock()
 	now := u.now()
-	fetched := false
-	if u.keys == nil || now.Sub(u.fetchedAt) >= u.refresh {
-		_ = u.fetch(ctx) // failure keeps the cached document
-		fetched = true
-	}
-	if k, ok := u.keys[kid]; ok {
-		return k, true
-	}
-	if now.Sub(u.unknownLast) >= jwksUnknownKidInterval {
-		u.unknownLast = now
-		if !fetched {
-			_ = u.fetch(ctx)
-		}
+	if u.inflight {
 		k, ok := u.keys[kid]
+		u.mu.Unlock()
+		return k, ok // stale-while-revalidate: use the cache, never queue
+	}
+	// A refresh is due when the document is older than refresh AND the last
+	// attempt (even a failed one) is older than refresh.
+	stale := u.keys == nil || (now.Sub(u.fetchedAt) >= u.refresh && now.Sub(u.lastAttempt) >= u.refresh)
+	_, known := u.keys[kid]
+	unknown := !known && now.Sub(u.unknownLast) >= jwksUnknownKidInterval
+	if !stale && !unknown {
+		k, ok := u.keys[kid]
+		u.mu.Unlock()
 		return k, ok
 	}
-	return issuerKey{}, false
+	if unknown {
+		u.unknownLast = now
+	}
+	u.inflight = true
+	u.mu.Unlock()
+
+	u.attempt()
+
+	u.mu.Lock()
+	u.inflight = false
+	k, ok := u.keys[kid]
+	u.mu.Unlock()
+	return k, ok
 }
 
 func (u *urlKeys) kids() []string {

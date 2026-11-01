@@ -168,3 +168,35 @@ func TestJWKSURLInitialFetchFailureFatal(t *testing.T) {
 		t.Fatal("want startup error when no document can be fetched")
 	}
 }
+
+func TestJWKSURLFailedRefreshIsRateLimited(t *testing.T) {
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	b, _ := json.Marshal(map[string]any{"keys": []JWK{ecJWK("a", k)}})
+	var hits atomic.Int32
+	var fail atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if fail.Load() {
+			http.Error(w, "down", 500)
+			return
+		}
+		w.Write(b)
+	}))
+	defer srv.Close()
+	v, err := NewIssuerVerifier([]Issuer{{Name: "cms", JWKSURL: srv.URL, Audience: "fuse-loop", MaxTTL: time.Hour,
+		Tenants: []event.TenantID{event.DefaultTenant}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := testNow
+	v.now = func() time.Time { return now }
+	fail.Store(true)
+	now = now.Add(10 * time.Minute)
+	before := hits.Load()
+	for i := 0; i < 20; i++ {
+		v.verify(mintES256(t, "a", goodClaims(), k))
+	}
+	if d := hits.Load() - before; d > 1 {
+		t.Fatalf("%d fetches during an outage, want <= 1", d)
+	}
+}

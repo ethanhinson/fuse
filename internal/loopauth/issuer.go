@@ -156,10 +156,7 @@ func NewIssuerVerifier(issuers []Issuer) (*IssuerVerifier, error) {
 			ks = staticKeys(parsed)
 		case is.JWKSURL != "":
 			uk := newURLKeys(is.JWKSURL, is.JWKSRefresh, is.HTTPClient, v.nowFn)
-			ctx, cancel := context.WithTimeout(context.Background(), jwksFetchTimeout)
-			err := uk.fetch(ctx)
-			cancel()
-			if err != nil {
+			if err := uk.fetch(); err != nil {
 				return nil, fmt.Errorf("loopauth: issuer %q: initial jwks fetch failed: %w", is.Name, err)
 			}
 			ks = uk
