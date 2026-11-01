@@ -239,9 +239,14 @@ func TestIssuerTokenWithoutScopeIsUnrestricted(t *testing.T) {
 	}
 }
 
-// A present-but-empty scope claim is refused rather than read as
-// unrestricted, and a non-string scope, harness_digest, azp or jti fails claim
-// decoding. Every refusal is the uniform ErrInvalidToken with a zero Principal.
+// jsonNull is a claim value that marshals to a literal JSON null (a nil value
+// passed to with deletes the key instead, which tests absence).
+var jsonNull = json.RawMessage("null")
+
+// A present-but-empty or null scope claim, and a present null or empty
+// harness_digest, is refused rather than read as unrestricted or unpinned, and
+// a non-string scope, harness_digest, azp or jti fails claim decoding. Every
+// refusal is the uniform ErrInvalidToken with a zero Principal.
 func TestIssuerTokenRefusesBadScopeAndAuditClaims(t *testing.T) {
 	v := newTestIssuerVerifier(t)
 	good := goodClaims()
@@ -253,7 +258,10 @@ func TestIssuerTokenRefusesBadScopeAndAuditClaims(t *testing.T) {
 		{"scope empty", with(good, "scope", ""), "scope"},
 		{"scope whitespace only", with(good, "scope", "   "), "scope"},
 		{"scope array", with(good, "scope", []string{"loop:start"}), "malformed claims"},
+		{"scope null", with(good, "scope", jsonNull), "scope"},
 		{"harness_digest number", with(good, "harness_digest", 7), "malformed claims"},
+		{"harness_digest null", with(good, "harness_digest", jsonNull), "harness_digest"},
+		{"harness_digest empty", with(good, "harness_digest", ""), "harness_digest"},
 		{"azp bool", with(good, "azp", true), "malformed claims"},
 		{"jti object", with(good, "jti", map[string]any{}), "malformed claims"},
 	}

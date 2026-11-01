@@ -93,14 +93,13 @@ func (b bearerInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 func (b bearerInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
 	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
 		tok, err := b.resolve(ctx)
-		conn := next(ctx, spec)
 		if err != nil {
-			// Nothing has been sent yet (connect sends on the first Send); release
-			// the underlying conn and fail every operation with the provider error.
-			_ = conn.CloseRequest()
-			_ = conn.CloseResponse()
-			return failedStreamConn{StreamingClientConn: conn, err: err}
+			// The inner conn is never created: in connect-go even closing an
+			// unsent conn issues a real (header-less) HTTP request, which could
+			// block and would reach the server without credentials.
+			return newFailedStreamConn(spec, err)
 		}
+		conn := next(ctx, spec)
 		setRequestHeaders(ctx, conn.RequestHeader(), tok)
 		return conn
 	}
@@ -108,16 +107,29 @@ func (b bearerInterceptor) WrapStreamingClient(next connect.StreamingClientFunc)
 
 // failedStreamConn is a stream whose bearer token could not be obtained: every
 // send, receive and close returns err, so the stream open fails without a request
-// ever reaching the server. Spec, Peer and headers delegate to the (closed) conn.
+// ever being made. It stands alone (no inner conn); Spec answers from the call and
+// the header maps are empty but writable, as callers merge request headers in.
 type failedStreamConn struct {
-	connect.StreamingClientConn
-	err error
+	spec       connect.Spec
+	err        error
+	reqHeader  http.Header
+	respHeader http.Header
+	trailer    http.Header
 }
 
-func (f failedStreamConn) Send(any) error       { return f.err }
-func (f failedStreamConn) Receive(any) error    { return f.err }
-func (f failedStreamConn) CloseRequest() error  { return f.err }
-func (f failedStreamConn) CloseResponse() error { return f.err }
+func newFailedStreamConn(spec connect.Spec, err error) failedStreamConn {
+	return failedStreamConn{spec: spec, err: err, reqHeader: http.Header{}, respHeader: http.Header{}, trailer: http.Header{}}
+}
+
+func (f failedStreamConn) Spec() connect.Spec           { return f.spec }
+func (f failedStreamConn) Peer() connect.Peer           { return connect.Peer{} }
+func (f failedStreamConn) Send(any) error               { return f.err }
+func (f failedStreamConn) RequestHeader() http.Header   { return f.reqHeader }
+func (f failedStreamConn) CloseRequest() error          { return f.err }
+func (f failedStreamConn) Receive(any) error            { return f.err }
+func (f failedStreamConn) ResponseHeader() http.Header  { return f.respHeader }
+func (f failedStreamConn) ResponseTrailer() http.Header { return f.trailer }
+func (f failedStreamConn) CloseResponse() error         { return f.err }
 
 func (b bearerInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return next // client-side interceptor: no server leg.

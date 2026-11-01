@@ -210,10 +210,13 @@ type issuerClaims struct {
 	Nbf    *json.Number    `json:"nbf"`
 	Tenant *string         `json:"tenant"`
 	// Scope is the optional RFC 8693 space-separated scope list. Absent means
-	// unrestricted; present but empty after splitting is refused.
-	Scope *string `json:"scope"`
+	// unrestricted; present but null, or empty after splitting, is refused.
+	// Kept raw so a present null is told apart from absence.
+	Scope json.RawMessage `json:"scope"`
 	// HarnessDigest optionally pins the token to one harness spec digest.
-	HarnessDigest string `json:"harness_digest"`
+	// Absent means unpinned; present but null or empty is refused. Kept raw for
+	// the same reason as Scope.
+	HarnessDigest json.RawMessage `json:"harness_digest"`
 	// Azp is the optional authorized party (OAuth client id), audit only.
 	Azp string `json:"azp"`
 	// Jti is the optional token id, audit only.
@@ -364,14 +367,32 @@ func (v *IssuerVerifier) verifyCtx(ctx context.Context, token string) (Principal
 		return Principal{}, fmt.Errorf("issuer may not assert tenant %q", tenant)
 	}
 
-	// A present scope claim that names nothing is refused: read as "no scope",
-	// "the issuer allowed nothing" would silently become "everything allowed".
+	// A present scope claim that names nothing (null, or empty after
+	// splitting) is refused: read as "no scope", "the issuer allowed nothing"
+	// would silently become "everything allowed".
 	var scopes Scopes
 	if c.Scope != nil {
-		scopes = ParseScopes(*c.Scope)
+		raw, err := presentStringClaim(c.Scope, "scope")
+		if err != nil {
+			return Principal{}, err
+		}
+		scopes = ParseScopes(raw)
 		if scopes.Empty() {
 			return Principal{}, errors.New("scope claim is present but empty")
 		}
+	}
+	// Likewise a present harness_digest that pins nothing is refused rather
+	// than read as unpinned.
+	var digest string
+	if c.HarnessDigest != nil {
+		d, err := presentStringClaim(c.HarnessDigest, "harness_digest")
+		if err != nil {
+			return Principal{}, err
+		}
+		if d == "" {
+			return Principal{}, errors.New("harness_digest claim is present but empty")
+		}
+		digest = d
 	}
 
 	return Principal{
@@ -379,11 +400,25 @@ func (v *IssuerVerifier) verifyCtx(ctx context.Context, token string) (Principal
 		Subject:               c.Sub,
 		ObservabilityOperator: is.ObservabilityOperator,
 		Scopes:                scopes,
-		HarnessDigest:         c.HarnessDigest,
+		HarnessDigest:         digest,
 		ClientID:              c.Azp,
 		Issuer:                is.Name,
 		TokenID:               c.Jti,
 	}, nil
+}
+
+// presentStringClaim decodes an optional claim known to be present. A literal
+// null is refused (it is present, so it cannot mean "absent"), and a non-string
+// value is malformed like any other mistyped claim.
+func presentStringClaim(raw json.RawMessage, name string) (string, error) {
+	if string(raw) == "null" {
+		return "", fmt.Errorf("%s claim is present but null", name)
+	}
+	var v string
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", errors.New("malformed claims")
+	}
+	return v, nil
 }
 
 // audienceContains reports whether a JWT "aud" claim names want. Per RFC 7519

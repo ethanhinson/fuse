@@ -3,8 +3,10 @@ package fuse
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -177,5 +179,39 @@ func TestStaticTokenUnchanged(t *testing.T) {
 	got := rec.got()
 	if len(got) != 2 || got[0] != "Bearer t" || got[1] != "Bearer t" {
 		t.Fatalf("recorded %q, want [Bearer t Bearer t]", got)
+	}
+}
+
+// A provider error on a stream must not put anything on the wire: no HTTP
+// request at all, not even an unauthenticated one with an empty body. The server
+// handler is wrapped so raw hits are counted below connect's own decoding.
+func TestTokenProviderErrorSendsNoHTTPForStream(t *testing.T) {
+	rec := &headerRecorder{}
+	_, h := loopv1connect.NewLoopServiceHandler(rec)
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		h.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	errBoom := errors.New("boom")
+	c := NewRemote(srv.URL, Credentials{TokenProvider: func(context.Context) (string, error) {
+		return "", errBoom
+	}})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ch, unsub, err := c.Observe(ctx, "loop-1", 0)
+	if unsub != nil {
+		defer unsub()
+	}
+	if !errors.Is(err, errBoom) {
+		if ch != nil {
+			drain(t, ch)
+		}
+		t.Fatalf("Observe err = %v, want errors.Is errBoom", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Fatalf("server saw %d raw HTTP requests on a provider error, want 0", n)
 	}
 }
