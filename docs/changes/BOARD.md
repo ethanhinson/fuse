@@ -1,6 +1,6 @@
 # Backlog
 
-**110 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 8 proposed · ⚪ 3 deferred · ✅ 90 done · 🗑️ 7 killed
+**111 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 9 proposed · ⚪ 3 deferred · ✅ 90 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|----|-------|
 | [0102](active/0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | `high` | `feat` | [#125](https://github.com/ethanhinson/fuse/pull/125) | awaiting merge |
 
-## 🟡 Proposed (8)
+## 🟡 Proposed (9)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
 | [0110](active/0110-mark-loopsecret-value-debug-redact-once-protobuf-go-honours.md) | Mark LoopSecret.value debug_redact once protobuf-go honours it | `low` | `feat` | needs-grooming |
 | [0109](active/0109-type-based-guard-that-no-wire-request-carrying-secrets-is-ev.md) | Type-based guard that no wire request carrying secrets is ever formatted | `low` | `feat` | needs-grooming |
 | [0108](active/0108-send-surfaces-a-resume-refusal-instead-of-loop-finished.md) | Send surfaces a resume refusal instead of loop finished | `medium` | `fix` | needs-grooming |
@@ -51,6 +52,7 @@ graph TD
   0108
   0109
   0110
+  0111
   0012:::done
   0052:::done
   0063:::done
