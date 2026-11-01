@@ -3,11 +3,14 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ethanhinson/fuse/internal/loopauth"
 )
 
 // validModes is the set of permission modes ParseMode understands. It is checked
@@ -202,10 +205,44 @@ func validateIssuers(issuers []IssuerConfig) error {
 			return fmt.Errorf("config: %s: issuer %q is already declared by loop_server.issuers[%d]", where, is.Issuer, prev)
 		}
 		seen[is.Issuer] = i
-		if is.SigningKey == "" {
-			return fmt.Errorf("config: %s: signing_key is required", where)
+		sources := 0
+		if is.SigningKey != "" {
+			sources++
 		}
-		if len(is.SigningKey) < MinIssuerSigningKeyBytes {
+		if len(is.JWKS) > 0 {
+			sources++
+		}
+		if is.JWKSURL != "" {
+			sources++
+		}
+		if sources == 0 {
+			return fmt.Errorf("config: %s: signing_key is required (or jwks / jwks_url for asymmetric keys)", where)
+		}
+		if sources > 1 {
+			return fmt.Errorf("config: %s: exactly one of signing_key, jwks, jwks_url may be set", where)
+		}
+		for _, j := range is.JWKS {
+			if _, err := loopauth.ParseJWK(loopauth.JWK{Kid: j.Kid, Kty: j.Kty, Crv: j.Crv, X: j.X, Y: j.Y}); err != nil {
+				return fmt.Errorf("config: %s: jwks: %v", where, err)
+			}
+		}
+		if is.JWKSURL != "" {
+			u, err := url.Parse(is.JWKSURL)
+			if err != nil || u.Host == "" {
+				return fmt.Errorf("config: %s: jwks_url %q is not a valid URL", where, is.JWKSURL)
+			}
+			loopback := u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback()
+			if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
+				return fmt.Errorf("config: %s: jwks_url must be https (http is allowed only for localhost/loopback)", where)
+			}
+		}
+		if d, err := is.JWKSRefreshDuration(); err != nil || d < 0 {
+			return fmt.Errorf("config: %s: jwks_refresh %q is not a valid duration", where, is.JWKSRefresh)
+		}
+		if is.TenantPrefix != "" && !loopauth.ValidTenantID(is.TenantPrefix) {
+			return fmt.Errorf("config: %s: tenant_prefix %q must be lowercase letters, digits, '-' or '_'", where, is.TenantPrefix)
+		}
+		if is.SigningKey != "" && len(is.SigningKey) < MinIssuerSigningKeyBytes {
 			return fmt.Errorf("config: %s: signing_key must be at least %d bytes for HS256, got %d", where, MinIssuerSigningKeyBytes, len(is.SigningKey))
 		}
 		if strings.TrimSpace(is.Audience) == "" {

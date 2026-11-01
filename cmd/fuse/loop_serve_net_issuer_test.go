@@ -16,6 +16,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopauth"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
+	"github.com/ethanhinson/fuse/internal/toolidentity"
 )
 
 const issuerTestKey = "cms-shared-secret-at-least-32-bytes-long"
@@ -182,5 +183,36 @@ func TestToolIdentityTenantKeysIncludeIssuerTenants(t *testing.T) {
 		if len(keys[tenant]) == 0 {
 			t.Fatalf("no tool-identity key for issuer tenant %q (keys: %v)", tenant, keysOf(keys))
 		}
+	}
+}
+
+// TestPrefixTenantLazyToolIdentityKey: a tenant admitted only by tenant_prefix
+// has no entry in the eager key map, yet the STS derives its key on first use,
+// and a token minted for team-42 verifies under team-42's key and not team-43's.
+func TestPrefixTenantLazyToolIdentityKey(t *testing.T) {
+	cfg := issuerTestConfig()
+	cfg.LoopServer.Issuers[0].TenantPrefix = "team-"
+	cfg.ToolIdentity.SigningKey = "raw-key-value"
+	if _, ok := toolIdentityTenantKeys(cfg)["team-42"]; ok {
+		t.Fatal("prefix tenant unexpectedly in the eager map")
+	}
+	sts, err := toolidentity.NewBuiltinSTS(toolidentity.BuiltinSTSConfig{
+		TenantKeys: toolIdentityTenantKeys(cfg),
+		DeriveKey: func(tn event.TenantID) []byte {
+			return deriveTenantKey([]byte(cfg.ToolIdentity.SigningKey), tn)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := sts.Exchange(context.Background(), toolidentity.ExchangeRequest{Tenant: "team-42", Subject: "u", Audience: "mcp"})
+	if err != nil {
+		t.Fatalf("exchange for prefix tenant: %v", err)
+	}
+	if err := sts.Verify("team-42", res.Token); err != nil {
+		t.Fatalf("verify under team-42: %v", err)
+	}
+	if err := sts.Verify("team-43", res.Token); err == nil {
+		t.Fatal("token for team-42 verified under team-43's key")
 	}
 }

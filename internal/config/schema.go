@@ -299,7 +299,9 @@ const MinIssuerSigningKeyBytes = 32
 // what a static auth entry would give.
 //
 //   - Issuer must equal the token's "iss" and be unique across issuers.
-//   - SigningKey is the HS256 shared secret, at least 32 bytes.
+//   - Exactly one of SigningKey (HS256 shared secret, at least 32 bytes), JWKS
+//     (inline public JWKs; tokens are ES256/EdDSA selected by kid) or JWKSURL.
+//   - TenantPrefix accepts tenants starting with it in addition to Tenants.
 //   - Audience must equal the token's "aud" (or be one of its entries).
 //   - Tenants are the tenants this issuer may assert. A token naming any other
 //     tenant is refused. Empty means only _default.
@@ -308,12 +310,37 @@ const MinIssuerSigningKeyBytes = 32
 //   - ObservabilityOperator grants observability_operator to every principal
 //     this issuer produces. No token claim can grant it.
 type IssuerConfig struct {
-	Issuer                string   `yaml:"issuer"`
-	SigningKey            string   `yaml:"signing_key"`
+	Issuer     string `yaml:"issuer"`
+	SigningKey string `yaml:"signing_key"`
+	// JWKS is an inline list of public keys (kty EC crv P-256, or OKP crv Ed25519).
+	JWKS []IssuerJWK `yaml:"jwks"`
+	// JWKSURL is an https URL of a JWKS document (http only for loopback).
+	JWKSURL string `yaml:"jwks_url"`
+	// JWKSRefresh is the JWKS cache lifetime as a Go duration; empty means 5m.
+	JWKSRefresh string `yaml:"jwks_refresh"`
+	// TenantPrefix additionally accepts any valid tenant id starting with it.
+	TenantPrefix          string   `yaml:"tenant_prefix"`
 	Audience              string   `yaml:"audience"`
 	Tenants               []string `yaml:"tenants"`
 	MaxTTL                string   `yaml:"max_ttl"`
 	ObservabilityOperator bool     `yaml:"observability_operator"`
+}
+
+// IssuerJWK is one public key of an issuer's inline jwks list.
+type IssuerJWK struct {
+	Kid string `yaml:"kid"`
+	Kty string `yaml:"kty"`
+	Crv string `yaml:"crv"`
+	X   string `yaml:"x"`
+	Y   string `yaml:"y"`
+}
+
+// JWKSRefreshDuration resolves JWKSRefresh; zero means the default (5m).
+func (i IssuerConfig) JWKSRefreshDuration() (time.Duration, error) {
+	if i.JWKSRefresh == "" {
+		return 0, nil
+	}
+	return time.ParseDuration(i.JWKSRefresh)
 }
 
 // MaxTTLDuration resolves MaxTTL, applying DefaultIssuerMaxTTL when unset. The

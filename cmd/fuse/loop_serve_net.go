@@ -149,17 +149,39 @@ func loopIssuers(cfg config.Config) (*loopauth.IssuerVerifier, error) {
 				tenants = append(tenants, event.NormalizeTenant(event.TenantID(t)))
 			}
 		}
+		refresh, err := ic.JWKSRefreshDuration()
+		if err != nil {
+			return nil, fmt.Errorf("loop_server.issuers %q: jwks_refresh: %w", ic.Issuer, err)
+		}
+		var jwks []loopauth.JWK
+		for _, j := range ic.JWKS {
+			jwks = append(jwks, loopauth.JWK{Kid: j.Kid, Kty: j.Kty, Crv: j.Crv, X: j.X, Y: j.Y})
+		}
 		issuers = append(issuers, loopauth.Issuer{
 			Name:                  ic.Issuer,
 			Key:                   []byte(ic.SigningKey),
+			JWKS:                  jwks,
+			JWKSURL:               ic.JWKSURL,
+			JWKSRefresh:           refresh,
+			TenantPrefix:          ic.TenantPrefix,
 			Audience:              ic.Audience,
 			Tenants:               tenants,
 			MaxTTL:                maxTTL,
 			ObservabilityOperator: ic.ObservabilityOperator,
 		})
 	}
-	return loopauth.NewIssuerVerifier(issuers)
+	v, err := loopauth.NewIssuerVerifier(issuers)
+	if err != nil {
+		return nil, err
+	}
+	for _, ks := range v.KeySummaries() {
+		fmt.Fprintf(issuerLogWriter, "loop-serve-net: issuer %q loaded %d key(s): %v\n", ks.Issuer, len(ks.Kids), ks.Kids)
+	}
+	return v, nil
 }
+
+// issuerLogWriter receives the startup line naming each JWK issuer's loaded kids.
+var issuerLogWriter io.Writer = os.Stderr
 
 // loopLeaseTTL resolves the owner-liveness lease TTL for binding #3 from
 // cfg.LoopServer.LeaseTTL. An empty/unset value returns 0 so runtime.Deps applies
@@ -274,7 +296,11 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintln(stderr, "        observability_operator: false # required for global logging reload/reopen")
 		fmt.Fprintln(stderr, "    issuers:                   # trusted services that mint short-lived per-user tokens")
 		fmt.Fprintln(stderr, "      - issuer: cms            # must equal the token's iss claim")
-		fmt.Fprintln(stderr, "        signing_key: <secret>  # HS256 shared secret, at least 32 bytes")
+		fmt.Fprintln(stderr, "        signing_key: <secret>  # HS256 shared secret, at least 32 bytes; or exactly one of:")
+		fmt.Fprintln(stderr, "        # jwks: [{kid: a, kty: EC, crv: P-256, x: ..., y: ...}]  # public keys; tokens are ES256/EdDSA, selected by kid")
+		fmt.Fprintln(stderr, "        # jwks_url: https://issuer.example/jwks.json            # fetched at startup, cached")
+		fmt.Fprintln(stderr, "        # jwks_refresh: 5m           # JWKS cache lifetime (unknown kid refetches at most once a minute)")
+		fmt.Fprintln(stderr, "        # tenant_prefix: team-       # also accept any tenant id starting with this prefix")
 		fmt.Fprintln(stderr, "        audience: fuse-loop    # must equal the token's aud claim")
 		fmt.Fprintln(stderr, "        tenants: [_default]    # tenants this issuer may assert; empty ⇒ only _default")
 		fmt.Fprintln(stderr, "        max_ttl: 1h            # refuse tokens whose exp - iat is longer; default 1h")
