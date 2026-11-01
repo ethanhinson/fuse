@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/scoped-principals-rpc-scopes-harness-digest-pin-and-principa'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -51,3 +51,9 @@ a `Principal` is `{Tenant, Subject, ObservabilityOperator}`, so every bearer a h
 ## Out of scope
 
 `jti` replay cache or revocation; scope-based narrowing of the HarnessSpec (model or MCP allowlists are F3); per-loop ACLs beyond owner/admin; SDK token refresh loops; TS SDK parity (file as later).
+
+## Reconcile log
+
+### 2026-11-01
+
+Unchanged against origin/main tip 736e994; dependency 99 is done.
