@@ -424,7 +424,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 				if opts.SystemPrompt != "" {
 					a, aerr = buildChildAgent(cfg, reg, childModelID, discardRenderer{}, opts.SystemPrompt, childToolReg, childApprove, nil, opts.Label, nil, false, rateGate, nil)
 				} else {
-					a, _, aerr = buildAgentCore(cfg, reg, childModelID, discardRenderer{}, systemBlock, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, nil, observer)
+					a, _, aerr = buildAgentCore(cfg, reg, childModelID, discardRenderer{}, systemBlock, "" /* subagents never get the harness instructions */, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, nil, observer)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -462,7 +462,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			// Root spawn_agent, blackboard and pipeline_run (provenance = rootNode).
 			wiring.rootTools(loopToolReg, rootNode)
 
-			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, systemBlock, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, nil, observer)
+			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, systemBlock, cfg.Instructions, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, nil, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}
