@@ -1,13 +1,18 @@
 # Backlog
 
-**112 changes** — 🟢 2 in progress · 🟡 9 proposed · ⚪ 3 deferred · ✅ 91 done · 🗑️ 7 killed
+**112 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 9 proposed · ⚪ 3 deferred · ✅ 91 done · 🗑️ 7 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0112](active/0112-harness-instructions-a-free-text-task-brief-composed-into-th.md) | Harness instructions: a free-text task brief composed into the system prompt | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md) | `feat/harness-instructions-a-free-text-task-brief-composed-into-th` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
+
+## 🔵 Built (1)
+
+| # | Title | Priority | Type | PR | State |
+|---|-------|----------|------|----|-------|
+| [0112](active/0112-harness-instructions-a-free-text-task-brief-composed-into-th.md) | Harness instructions: a free-text task brief composed into the system prompt | `high` | `feat` | [#126](https://github.com/ethanhinson/fuse/pull/126) | awaiting merge |
 
 ## 🟡 Proposed (9)
 

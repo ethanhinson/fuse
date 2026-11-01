@@ -2,7 +2,7 @@
 id: 112
 slug: 'harness-instructions-a-free-text-task-brief-composed-into-th'
 title: 'Harness instructions: a free-text task brief composed into the system prompt'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/harness-instructions-a-free-text-task-brief-composed-into-th'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/126'
 blocked_by:
 reconciled: true
 ---
@@ -57,3 +57,12 @@ Per-worker instructions, templated variables in instructions, and prompt-injecti
 ### 2026-11-01
 
 Unchanged against main f24f0c1. ComposeSystemPrompt (internal/agent/personas.go) still has exactly two call sites, both in cmd/fuse/run.go buildAgentCore; the loop server reaches agents through that chokepoint. harness.proto has no instructions field yet. Plan must ensure worker/sub-agent builds do not receive the harness instructions.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 7707c8982bce4eba4c68b2e24c514bba5d2ad25b
+ran_at:   2026-11-01T19:59:19Z
+<!-- docket:build-evidence:end -->
