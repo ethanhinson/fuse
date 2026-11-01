@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0102 — Loop-scoped secret values on StartLoop, host-bound and never recorded](../../changes/active/0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md)**
+> ↩ **[Change 0102 — Loop-scoped secret values on StartLoop, host-bound and never recorded](../../changes/archive/2026-11-01-0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md)**
 <!-- docket:backlink:end -->
 
 # Loop-scoped secret values on StartLoop, host-bound and never recorded - Implementation Plan

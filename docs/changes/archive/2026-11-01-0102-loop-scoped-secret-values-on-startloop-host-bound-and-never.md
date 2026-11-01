@@ -2,7 +2,7 @@
 id: 102
 slug: 'loop-scoped-secret-values-on-startloop-host-bound-and-never'
 title: 'Loop-scoped secret values on StartLoop, host-bound and never recorded'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md](../../superpowers/specs/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md) |
+| Spec (merged) | [2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md) |
 | Plan | [2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never.md](../../superpowers/plans/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) |
 | Results | [2026-11-01-loop-scoped-secret-values-on-startloop-results.md](../../results/2026-11-01-loop-scoped-secret-values-on-startloop-results.md) |
 | ADRs | [ADR-0076](../../adrs/0076-loop-scoped-secret-values-are-host-bound-memory-only-and-nev.md) |
