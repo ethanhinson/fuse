@@ -2,7 +2,7 @@
 id: 101
 slug: 'operator-spec-policy-mcp-host-allowlist-private-network-deny'
 title: 'Operator spec policy: MCP host allowlist, private-network deny, registry-only models'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/operator-spec-policy-mcp-host-allowlist-private-network-deny'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/122'
 blocked_by:
 reconciled: true
 ---
@@ -58,3 +58,12 @@ routing `web_fetch` through the same policy (it has its own floor); per-tenant p
 ### 2026-11-01
 
 Unchanged against origin/main 3567c07; code paths (harnessresolve.Resolve, config.LoopServerConfig, GetCapabilitiesResponse) match the spec.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: c1c437019a62e1326b95f201afadd69b65592547
+ran_at:   2026-11-01T04:17:18Z
+<!-- docket:build-evidence:end -->

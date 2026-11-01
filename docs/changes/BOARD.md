@@ -1,14 +1,19 @@
 # Backlog
 
-**103 changes** — 🟢 3 in progress · 🟣 1 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 87 done · 🗑️ 7 killed
+**103 changes** — 🟢 2 in progress · 🔵 1 built · 🟣 1 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 87 done · 🗑️ 7 killed
 
-## 🟢 In progress (3)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0101](active/0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md) | `feat/operator-spec-policy-mcp-host-allowlist-private-network-deny` | building |
 | [0100](active/0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md) | `feat/scoped-principals-rpc-scopes-harness-digest-pin-and-principa` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
+
+## 🔵 Built (1)
+
+| # | Title | Priority | Type | PR | State |
+|---|-------|----------|------|----|-------|
+| [0101](active/0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | `high` | `feat` | [#122](https://github.com/ethanhinson/fuse/pull/122) | awaiting merge |
 
 ## 🟣 Groomed (1)
 
@@ -20,7 +25,7 @@
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0102](active/0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | `high` | `feat` | ⏳ waiting on #100 — not yet built |
+| [0102](active/0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | `high` | `feat` | ⏳ waiting on #101 — needs your merge |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
