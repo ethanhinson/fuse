@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -221,5 +222,34 @@ func TestValidate_WorkerWithoutTools(t *testing.T) {
 	}
 	if vs := harness.ValidateShape(ok); len(vs) != 0 {
 		t.Errorf("ValidateShape(tooled) = %+v", vs)
+	}
+}
+
+// TestValidateInstructionsLength pins the 16384-character limit on the task
+// brief: it counts characters, not bytes. The config check flags the same
+// path, so an over-long brief also proves the shape violation wins and the
+// field is reported once.
+func TestValidateInstructionsLength(t *testing.T) {
+	for name, text := range map[string]string{
+		"ascii at limit":     strings.Repeat("a", 16384),
+		"multibyte at limit": strings.Repeat("\u00e9", 16384), // 16384 characters, 32768 bytes
+	} {
+		if vs := harness.Validate(&harnessv1.HarnessSpec{Instructions: text}); len(vs) != 0 {
+			t.Errorf("%s: unexpected violations %+v", name, vs)
+		}
+	}
+	got := byPath(t, harness.Validate(&harnessv1.HarnessSpec{Instructions: strings.Repeat("a", 16385)}))
+	if len(got) != 1 {
+		t.Fatalf("got %d violations, want 1: %+v", len(got), got)
+	}
+	v, ok := got["instructions"]
+	if !ok {
+		t.Fatalf("no violation at instructions: %+v", got)
+	}
+	if v.RuleID != "string.max_len" {
+		t.Errorf("rule = %q, want string.max_len", v.RuleID)
+	}
+	if v.Message == "" {
+		t.Error("empty message")
 	}
 }

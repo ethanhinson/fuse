@@ -119,7 +119,7 @@ func TestBuildAgentCoreInstallsObserver(t *testing.T) {
 	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	rec := &recordingObserver{}
 
-	a, _, err := buildAgentCore(cfg, reg, reg.Default, tui.NewRenderer(io.Discard, false), "", nil, "root",
+	a, _, err := buildAgentCore(cfg, reg, reg.Default, tui.NewRenderer(io.Discard, false), "", "", nil, "root",
 		toolReg, permissions.AlwaysApprove, nil, false, nil, nil, rec)
 	if err != nil {
 		t.Fatalf("buildAgentCore: %v", err)
@@ -145,7 +145,7 @@ func TestBuildAgentWithRendererAndTraceForwardsObserver(t *testing.T) {
 	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	rec := &recordingObserver{}
 
-	a, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, tui.NewRenderer(io.Discard, false), false, "",
+	a, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, tui.NewRenderer(io.Discard, false), false, "", "",
 		toolReg, permissions.AlwaysApprove, nil, "root", nil, false, nil, nil, rec)
 	if err != nil {
 		t.Fatalf("buildAgentWithRendererAndTrace: %v", err)
@@ -378,14 +378,14 @@ func TestChildConstructorsNilObserverStaysNoop(t *testing.T) {
 	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	r := tui.NewRenderer(io.Discard, false)
 
-	core, _, err := buildAgentCore(cfg, reg, reg.Default, r, "", nil, "child",
+	core, _, err := buildAgentCore(cfg, reg, reg.Default, r, "", "", nil, "child",
 		toolReg, permissions.AlwaysApprove, nil, false, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildAgentCore: %v", err)
 	}
 	assertNoop(t, "buildAgentCore(nil observer) agent observer", observerOf(t, core))
 
-	wrapped, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, r, false, "",
+	wrapped, err := buildAgentWithRendererAndTrace(cfg, reg, reg.Default, r, false, "", "",
 		toolReg, permissions.AlwaysApprove, nil, "child", nil, false, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildAgentWithRendererAndTrace: %v", err)

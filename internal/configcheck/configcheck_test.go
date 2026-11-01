@@ -2,6 +2,7 @@ package configcheck
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -88,5 +89,19 @@ func TestRegistryCarriesModelMetadata(t *testing.T) {
 	}
 	if !hidden.Hidden {
 		t.Fatalf("hidden = %+v, want Hidden", hidden)
+	}
+}
+
+func TestProblemsFlagsOverlongInstructions(t *testing.T) {
+	cfg := config.Default()
+	cfg.Instructions = strings.Repeat("a", config.MaxInstructionsChars+1)
+	found := false
+	for _, p := range Problems(cfg) {
+		if p.Path == "instructions" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("expected a problem at instructions")
 	}
 }

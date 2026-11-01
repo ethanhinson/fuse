@@ -93,6 +93,24 @@ names it exposes). A server that cannot connect is reported and skipped; the loo
 continues. No event carries a credential. The event is emitted at each loop start,
 including a resume, so consumers should take the latest event per server name.
 
+### Instructions
+
+`HarnessSpec.Instructions` is a free-text task brief for the loop's main agent. The
+runtime composes the main agent's system prompt in this order: the system prefix, the
+persona prompt, the instructions, then the runtime's own blocks. Only the main agent
+sees them; subagents and workers keep their own prompts. The limit is 16384 characters
+(a longer value fails with a `string.max_len` violation at `instructions`). Instructions
+are part of the spec digest, and a spec's instructions replace the server config's
+`instructions` for that loop. See `examples/harness/release-notes.json` for a full spec.
+
+```go
+id, err := c.StartLoop(ctx, fuse.StartLoopConfig{Task: "write the release notes", Harness: &harnessv1.HarnessSpec{
+    Models:       &harnessv1.Models{DefaultAlias: "glm"},
+    MaxTurns:     &turns,
+    Instructions: "You are a release-notes writer.",
+}})
+```
+
 ### Pre-flighting a spec
 
 Call `Capabilities(ctx)` before `StartLoop` to check a spec against what the

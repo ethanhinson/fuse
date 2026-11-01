@@ -37,11 +37,18 @@ func PersonaPrompt(persona string) string {
 //
 //	prefix (model-specific directive, e.g. "/no_think")
 //	persona base prompt
+//	instructions (the harness's task brief; main agent only)
 //	extra block (e.g. skill listing from shell mode)
-func ComposeSystemPrompt(persona, prefix, extra string) string {
+//
+// Blocks are separated by a blank line. Blank instructions add nothing, so the
+// result is then identical to a prompt composed without them.
+func ComposeSystemPrompt(persona, prefix, instructions, extra string) string {
 	base := PersonaPrompt(persona)
 	if prefix != "" {
 		base = prefix + "\n" + base
+	}
+	if ins := strings.TrimSpace(instructions); ins != "" {
+		base += "\n\n" + ins
 	}
 	if extra == "" {
 		return base

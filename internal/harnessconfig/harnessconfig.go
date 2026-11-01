@@ -315,6 +315,7 @@ func toDocument(s *harnessv1.HarnessSpec, secrets SecretResolver) (doc, error) {
 		root["max_turns"] = s.GetMaxTurns()
 	}
 	root.set("max_tokens", s.GetMaxTokens())
+	root.set("instructions", s.GetInstructions())
 
 	r := s.GetResearch()
 	rs := doc{}
@@ -658,6 +659,9 @@ func FromConfig(cfg config.Config) (*harnessv1.HarnessSpec, []Omission) {
 	}
 	if cfg.MaxTokens != def.MaxTokens {
 		s.MaxTokens = num("max_tokens", cfg.MaxTokens)
+	}
+	if cfg.Instructions != def.Instructions {
+		s.Instructions = cfg.Instructions
 	}
 
 	r, dr := cfg.Research, def.Research

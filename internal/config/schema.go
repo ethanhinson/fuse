@@ -501,11 +501,20 @@ type OrchestratorConfig struct {
 	Model string `yaml:"model"`
 }
 
+// MaxInstructionsChars caps the top-level `instructions` brief, counted in
+// characters (runes), not bytes. It matches the `max_len` on
+// HarnessSpec.instructions.
+const MaxInstructionsChars = 16384
+
 // Config is the fully resolved fuse configuration.
 type Config struct {
-	Gateway    Gateway
-	Models     ModelsConfig
-	SkillPaths []string
+	// Instructions is the main agent's task brief, composed after the persona
+	// prompt. Empty leaves the system prompt unchanged. It is not a permission,
+	// so it is honored from every layer, .fuse.local.yml included.
+	Instructions string
+	Gateway      Gateway
+	Models       ModelsConfig
+	SkillPaths   []string
 	// MaxTurns is a pointer so an omitted `max_turns` (nil) is distinguishable
 	// from an explicit `max_turns: 0`. nil = unset ⇒ the call site applies the
 	// context-aware backstop (unlimited in the interactive shell, 100 headless);
@@ -662,12 +671,13 @@ type AgentsConfig struct {
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
 type rawConfig struct {
-	Gateway     Gateway                `yaml:"gateway"`
-	Models      map[string]interface{} `yaml:"models"`
-	SkillPaths  []string               `yaml:"skill_paths"`
-	MaxTurns    *int                   `yaml:"max_turns"`
-	MaxTokens   int                    `yaml:"max_tokens"`
-	Permissions rawPermissionsConfig   `yaml:"permissions"`
+	Gateway      Gateway                `yaml:"gateway"`
+	Models       map[string]interface{} `yaml:"models"`
+	SkillPaths   []string               `yaml:"skill_paths"`
+	MaxTurns     *int                   `yaml:"max_turns"`
+	MaxTokens    int                    `yaml:"max_tokens"`
+	Instructions string                 `yaml:"instructions"`
+	Permissions  rawPermissionsConfig   `yaml:"permissions"`
 	// Orchestrator is the steering side-channel's model choice (trusted-only).
 	Orchestrator OrchestratorConfig `yaml:"orchestrator"`
 	MCPServers   []MCPServerConfig  `yaml:"mcp_servers"`

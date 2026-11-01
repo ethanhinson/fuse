@@ -309,12 +309,14 @@ func applyToolTimeout(a *agent.Agent, cfg config.Config) {
 // writes raw API request/response JSON to traceW (when non-nil), attributing
 // blocks to traceLabel. The caller owns traceW's lifecycle; share one
 // syncWriter across all agents of a session so concurrent blocks stay whole.
-func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra string, toolReg *tools.Registry, approve permissions.Approver, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, error) {
+// instructions is forwarded to buildAgentCore unchanged: root builds pass
+// cfg.Instructions, child builds pass "".
+func buildAgentWithRendererAndTrace(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, verbose bool, extra, instructions string, toolReg *tools.Registry, approve permissions.Approver, traceW io.Writer, traceLabel string, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, error) {
 	if alias == "" {
 		alias = reg.Default
 	}
 	_ = verbose
-	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, traceW, traceLabel, toolReg, approve, sm, interactive, gate, segSink, observer)
+	a, _, err := buildAgentCore(cfg, reg, alias, r, extra, instructions, traceW, traceLabel, toolReg, approve, sm, interactive, gate, segSink, observer)
 	return a, err
 }
 
@@ -957,8 +959,6 @@ func contains(s []string, v string) bool {
 	return false
 }
 
-// buildAgentCore resolves alias and constructs an Agent bound to renderer r,
-// returning the resolved gateway model id.
 // effectiveMaxTokens is the output cap a gateway-backed agent runs with: the
 // registry entry's max_tokens, else the operator's top-level max_tokens.
 func effectiveMaxTokens(mc model.ModelConfig, cfg config.Config) int {
@@ -968,7 +968,12 @@ func effectiveMaxTokens(mc model.ModelConfig, cfg config.Config) int {
 	return cfg.MaxTokens
 }
 
-func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.Approver, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, string, error) {
+// buildAgentCore resolves alias and constructs an Agent bound to renderer r,
+// returning the resolved gateway model id. instructions is the harness's task
+// brief, composed after the persona prompt and before extra. It is an explicit
+// parameter so every call site decides: root builds pass cfg.Instructions,
+// child builds pass "" (subagents and workers keep their own prompts).
+func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agent.Renderer, extra, instructions string, traceW io.Writer, traceLabel string, toolReg *tools.Registry, approve permissions.Approver, sm *permissions.SessionMode, interactive bool, gate model.RateGate, segSink agent.SegmentSink, observer observe.Observer) (*agent.Agent, string, error) {
 	mc, err := reg.Resolve(alias)
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
@@ -994,7 +999,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		// live /mode off reaches the subprocess at the next turn as it reaches the gate.
 		cliAdapter := newCLIAdapter(fuseExe, approve, sessionGateMode(cfg, sm) == permissions.ModeOff)
 		permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
-		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
+		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, instructions, extra)
 		// maxTokens is not forwarded to the CLI; Claude controls its own limits.
 		a := agent.New(cliAdapter, permGate, r, mc.ID, systemPrompt, maxTurns, 0)
 		a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
@@ -1010,7 +1015,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	}
 	permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 	maxTokens := effectiveMaxTokens(mc, cfg)
-	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, extra)
+	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, instructions, extra)
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 	a.ContextWindow = mc.ContextWindow

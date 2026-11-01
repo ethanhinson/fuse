@@ -259,7 +259,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
 		// segmentSink is threaded per-loop (change 0046) rather than read from a global.
 		// approve is the TUI channel: a person answers it, so it is human provenance.
-		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, toolReg, permissions.Human(approve), traceW, "root", sessionMode, true, rateGate, segmentSink, obs.observer)
+		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, cfg.Instructions, toolReg, permissions.Human(approve), traceW, "root", sessionMode, true, rateGate, segmentSink, obs.observer)
 		if err != nil {
 			return nil, err
 		}

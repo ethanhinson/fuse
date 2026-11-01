@@ -124,7 +124,7 @@ func TestBuildChildAgentCLIModeFollowsGate(t *testing.T) {
 				check(t, a, tc.wantOff)
 			})
 			t.Run("buildAgentCore", func(t *testing.T) {
-				a, _, err := buildAgentCore(cfg, reg, "c", discardRenderer{}, "", nil, "root", tools.NewRegistry(), permissions.AlwaysApprove, tc.sm(), false, nil, nil, observe.NoopObserver{})
+				a, _, err := buildAgentCore(cfg, reg, "c", discardRenderer{}, "", "", nil, "root", tools.NewRegistry(), permissions.AlwaysApprove, tc.sm(), false, nil, nil, observe.NoopObserver{})
 				if err != nil {
 					t.Fatalf("buildAgentCore: %v", err)
 				}

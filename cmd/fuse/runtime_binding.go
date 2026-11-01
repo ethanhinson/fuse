@@ -161,7 +161,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// Observer is installed by a.SetObserver(observer) below, not here —
 			// keeps this branch symmetric with the buildChildAgent branch above,
 			// which takes no observer at all.
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil, nil)
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, "" /* subagents never get the harness instructions */, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -244,7 +244,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// child-builder/spawner closures above emit onto THIS loop's store (change
 			// 0046). One-shot is single-loop-per-process; the holder is instance state.
 			storeHolder.set(store)
-			a, mid, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate, nil, observer)
+			a, mid, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, cfg.Instructions, traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate, nil, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}
@@ -361,7 +361,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 			// Observer is installed by a.SetObserver(observer) below, not here —
 			// keeps this branch symmetric with the buildChildAgent branch above,
 			// which takes no observer at all.
-			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, nil)
+			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, "" /* subagents never get the harness instructions */, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -444,7 +444,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 				tui.NewNodeRenderer(rootNode, tree),
 				logSink.Recorder("root"),
 			)
-			a, mid, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate, nil, observer)
+			a, mid, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, cfg.Instructions, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate, nil, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}
@@ -590,7 +590,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 			// Observer is installed by a.SetObserver(observer) below, not here —
 			// keeps this branch symmetric with the buildChildAgent branch above,
 			// which takes no observer at all.
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink, nil)
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, "" /* subagents never get the harness instructions */, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -705,7 +705,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 			if store != nil {
 				storeHolder.set(store)
 			}
-			a, err := buildAgentWithRendererAndTrace(cfg, reg, alias, tui.NewRenderer(io.Discard, verbose), verbose, skillBlock, reg2, in.rootApprove, traceW, "root", sessionMode, true, rateGate, in.segmentSink, observer)
+			a, err := buildAgentWithRendererAndTrace(cfg, reg, alias, tui.NewRenderer(io.Discard, verbose), verbose, skillBlock, cfg.Instructions, reg2, in.rootApprove, traceW, "root", sessionMode, true, rateGate, in.segmentSink, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}

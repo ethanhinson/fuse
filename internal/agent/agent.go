@@ -235,6 +235,9 @@ func (a *Agent) SetExpects(schema map[string]any, sink *ExpectsSink) {
 // SetSystemPrompt replaces the agent's system prompt. Set once at build time, before Run.
 func (a *Agent) SetSystemPrompt(p string) { a.systemPrompt = p }
 
+// SystemPrompt returns the agent's current system prompt.
+func (a *Agent) SystemPrompt() string { return a.systemPrompt }
+
 // SetHumanInjector wires the per-node human-message injector (ADR-0022). Passing
 // nil is a no-op (the field stays nil). Set once at build time, before Run.
 func (a *Agent) SetHumanInjector(inj *HumanInjector) { a.humanInjector = inj }
