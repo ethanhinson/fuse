@@ -48,6 +48,30 @@ skill_paths: [/srv/skills]
 	}
 }
 
+// TestOverlayInstructions: a spec's instructions replace the operator's; a
+// spec without instructions keeps them.
+func TestOverlayInstructions(t *testing.T) {
+	base := config.Default()
+	base.Instructions = "operator"
+	got, _, err := Overlay(base, &harnessv1.HarnessSpec{Instructions: "spec"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Instructions != "spec" {
+		t.Errorf("with spec instructions = %q, want spec", got.Instructions)
+	}
+	got, _, err = Overlay(base, &harnessv1.HarnessSpec{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Instructions != "operator" {
+		t.Errorf("without spec instructions = %q, want operator", got.Instructions)
+	}
+	if base.Instructions != "operator" {
+		t.Errorf("base mutated: %q", base.Instructions)
+	}
+}
+
 func TestSemanticProblemsUsesSpecPaths(t *testing.T) {
 	cfg := config.Default()
 	cfg.Models.Default = "ghost"

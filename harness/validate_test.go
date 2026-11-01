@@ -226,7 +226,9 @@ func TestValidate_WorkerWithoutTools(t *testing.T) {
 }
 
 // TestValidateInstructionsLength pins the 16384-character limit on the task
-// brief: it counts characters, not bytes.
+// brief: it counts characters, not bytes. The config check flags the same
+// path, so an over-long brief also proves the shape violation wins and the
+// field is reported once.
 func TestValidateInstructionsLength(t *testing.T) {
 	for name, text := range map[string]string{
 		"ascii at limit":     strings.Repeat("a", 16384),

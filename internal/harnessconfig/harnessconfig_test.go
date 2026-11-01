@@ -15,6 +15,10 @@ import (
 	"github.com/ethanhinson/fuse/internal/config"
 )
 
+// tricky is a task brief that a naive YAML rendering would mangle: a
+// "key: value" line, a leading "#", a list marker, mixed quotes and a tab.
+const tricky = "You are a release-notes writer.\nKey: value pairs stay literal.\n# not a comment\n- not a list\n  indented 'single' and \"double\" quotes\ttab"
+
 // fullSpec sets every client-settable field to a NON-default value, so a
 // spec -> config -> spec round trip must reproduce it exactly.
 func fullSpec() *harnessv1.HarnessSpec {
@@ -68,9 +72,10 @@ func fullSpec() *harnessv1.HarnessSpec {
 				ClassifierBatchSize: 5, BorderlineLo: 0.2, BorderlineHi: 0.5,
 			},
 		},
-		Pipeline:  &harnessv1.Pipeline{Synthesis: &harnessv1.PipelineSynthesis{MaxSteps: 20, MaxFanout: 5, MaxDepth: 2, MaxAttempts: 2}},
-		MaxTurns:  &turns,
-		MaxTokens: 8192,
+		Pipeline:     &harnessv1.Pipeline{Synthesis: &harnessv1.PipelineSynthesis{MaxSteps: 20, MaxFanout: 5, MaxDepth: 2, MaxAttempts: 2}},
+		MaxTurns:     &turns,
+		MaxTokens:    8192,
+		Instructions: tricky,
 		Research: &harnessv1.Research{
 			Provider: harnessv1.ResearchProvider_RESEARCH_PROVIDER_CUSTOM, MaxQueries: 3, MaxResults: 4, MaxContentKb: 20, RespectRobots: &f,
 			Custom: &harnessv1.CustomSearchProvider{
@@ -157,6 +162,43 @@ func TestToConfigSecretRefs(t *testing.T) {
 	}
 }
 
+func TestToConfigMapsInstructions(t *testing.T) {
+	cfg, err := ToConfig(&harnessv1.HarnessSpec{Instructions: tricky}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Instructions != tricky {
+		t.Fatalf("instructions = %q, want %q", cfg.Instructions, tricky)
+	}
+}
+
+func TestFromConfigCarriesInstructions(t *testing.T) {
+	cfg := config.Default()
+	cfg.Instructions = tricky
+	spec, omitted := FromConfig(cfg)
+	if len(omitted) != 0 {
+		t.Fatalf("unexpected omissions: %+v", omitted)
+	}
+	if spec.GetInstructions() != tricky {
+		t.Fatalf("instructions = %q, want %q", spec.GetInstructions(), tricky)
+	}
+	cfg.Instructions = ""
+	if spec, _ := FromConfig(cfg); spec.GetInstructions() != "" {
+		t.Fatalf("empty instructions became %q", spec.GetInstructions())
+	}
+}
+
+// TestInstructionsLimitMatchesProto pins config.MaxInstructionsChars to the
+// string.max_len rule on HarnessSpec.instructions, so the config check and the
+// spec validator enforce the same limit.
+func TestInstructionsLimitMatchesProto(t *testing.T) {
+	fd := (&harnessv1.HarnessSpec{}).ProtoReflect().Descriptor().Fields().ByName("instructions")
+	rules := proto.GetExtension(fd.Options(), validate.E_Field).(*validate.FieldRules)
+	if got := rules.GetString().GetMaxLen(); got != uint64(config.MaxInstructionsChars) {
+		t.Fatalf("proto max_len = %d, config.MaxInstructionsChars = %d", got, config.MaxInstructionsChars)
+	}
+}
+
 func TestRoundTripSpecConfigSpec(t *testing.T) {
 	spec := fullSpec()
 	cfg, err := ToConfig(spec, nil)
@@ -195,6 +237,9 @@ context:
 pipeline: {synthesis: {max_steps: 7}}
 research: {provider: brave, respect_robots: false, custom: {results_path: hits}}
 orchestrator: {model: glm}
+instructions: |
+  You are a code reviewer.
+  Flag: correctness first.
 `), "fixture")
 	if err != nil {
 		t.Fatal(err)
