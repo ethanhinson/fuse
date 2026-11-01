@@ -17,6 +17,7 @@ import (
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/loopsecret"
 	"github.com/ethanhinson/fuse/internal/model"
 )
 
@@ -161,6 +162,13 @@ type LoopConfig struct {
 	// the loop's durable stream (loop.harness) so a resume rebuilds the same
 	// harness. Nil keeps today's behavior: the Deps collaborators build the loop.
 	Harness *harnessv1.HarnessSpec
+
+	// Secrets are the loop-scoped secret values the request carried (change
+	// 0102). The runtime never reads them: it hands them to Deps.Harness on the
+	// resolution context only (loopsecret.WithSecrets) and drops them right
+	// after, so Deps.LoopContext, the loop and its stream never hold them.
+	// Ignored without a Harness. A resumed loop has none.
+	Secrets []loopsecret.Secret
 
 	// Principal, when non-nil, is the authenticated credential that started this
 	// loop, recorded as the loop.principal event right after loop.harness. It is a

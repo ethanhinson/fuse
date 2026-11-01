@@ -13,6 +13,7 @@ import (
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/loopsecret"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -52,6 +53,8 @@ type LoopFactory struct {
 
 // resolveHarness returns the loop factory for cfg's harness spec, or nil when
 // the loop has none (the Deps collaborators apply, exactly as before 0085).
+// cfg.Secrets (change 0102) reach the resolver on its call's context only
+// (loopsecret.WithSecrets); the wrapped context never leaves this call.
 func (r *inProcRuntime) resolveHarness(ctx context.Context, cfg LoopConfig) (*LoopFactory, error) {
 	if cfg.Harness == nil {
 		return nil, nil
@@ -59,7 +62,7 @@ func (r *inProcRuntime) resolveHarness(ctx context.Context, cfg LoopConfig) (*Lo
 	if r.deps.Harness == nil {
 		return nil, ErrHarnessUnsupported
 	}
-	f, err := r.deps.Harness.ResolveHarness(ctx, event.NormalizeTenant(cfg.Tenant), cfg.Harness)
+	f, err := r.deps.Harness.ResolveHarness(loopsecret.WithSecrets(ctx, cfg.Secrets), event.NormalizeTenant(cfg.Tenant), cfg.Harness)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: harness: %w", err)
 	}
