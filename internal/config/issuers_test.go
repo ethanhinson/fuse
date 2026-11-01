@@ -171,3 +171,31 @@ func TestValidateIssuersJWKSSources(t *testing.T) {
 		t.Fatal("bad tenant_prefix accepted")
 	}
 }
+
+// TestLoopServerSpecPolicyIgnoredFromUntrustedLocal asserts a repo-plantable
+// .fuse.local.yml cannot switch off the spec policy's private-network floor.
+func TestLoopServerSpecPolicyIgnoredFromUntrustedLocal(t *testing.T) {
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+	local := "loop_server:\n  spec_policy: {deny_private_networks: false, models: any}\n"
+	if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.LoopServer.SpecPolicy.DenyPrivate() {
+		t.Fatalf("untrusted spec_policy must be dropped, got %+v", c.LoopServer.SpecPolicy)
+	}
+	if !strings.Contains(warnings(), "loop_server") {
+		t.Errorf("expected a warning naming loop_server, got: %q", warnings())
+	}
+}

@@ -140,3 +140,17 @@ func TestSpecPolicyLoadsOnlyFromTrustedConfig(t *testing.T) {
 		t.Errorf("policy = %+v", p)
 	}
 }
+
+func TestSpecPolicyRegistryOnlyAcceptsAdvertisedBuiltins(t *testing.T) {
+	r := policyResolver(t, config.SpecPolicyConfig{Models: config.SpecModelsRegistryOnly})
+	spec := &harnessv1.HarnessSpec{Models: &harnessv1.Models{Entries: map[string]*harnessv1.Model{
+		"b": {Id: "cloud/deepseek-v4-flash"}, "c": {Id: "cli/claude"},
+	}}}
+	got := refusedPaths(t, r, spec)
+	if _, bad := got[`models.entries["b"].id`]; bad {
+		t.Errorf("advertised built-in refused: %v", got)
+	}
+	if got[`models.entries["c"].id`] == "" {
+		t.Errorf("cli/ id accepted: %v", got)
+	}
+}

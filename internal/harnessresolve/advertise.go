@@ -2,9 +2,11 @@ package harnessresolve
 
 import (
 	"context"
+	"slices"
 	"sort"
 
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
+	"github.com/ethanhinson/fuse/internal/capabilities"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/harnessconfig"
 )
@@ -48,4 +50,13 @@ func (r Resolver) SecretRefs(ctx context.Context, tenant string) []string {
 	names := l.SecretNames(ctx, tenant)
 	sort.Strings(names)
 	return names
+}
+
+// SpecPolicyOf maps the operator's spec policy to its advertisement.
+func SpecPolicyOf(p config.SpecPolicyConfig) capabilities.SpecPolicy {
+	return capabilities.SpecPolicy{
+		MCPHosts:            slices.Clone(p.MCPHosts),
+		DenyPrivateNetworks: p.DenyPrivate(),
+		ModelsRegistryOnly:  p.RegistryOnly(),
+	}
 }

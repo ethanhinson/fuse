@@ -12,7 +12,9 @@ import (
 
 	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
+	"github.com/ethanhinson/fuse/internal/capabilities"
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/configcheck"
 	"github.com/ethanhinson/fuse/internal/harnessconfig"
 )
 
@@ -73,14 +75,13 @@ func policyProblem(path, msg string) harnessconfig.Problem {
 	return harnessconfig.Problem{FieldPath: path, Message: msg, RuleID: harness.RuleOperatorOnly}
 }
 
-// registryGatewayIDs is the set of gateway ids of the advertised operator
-// registry entries: the same set GetCapabilities lists.
+// registryGatewayIDs is the set of gateway ids GetCapabilities lists: the
+// same registry and the same filters (capabilities.Models), so what is
+// advertised is what is enforced.
 func registryGatewayIDs(cfg config.Config) map[string]bool {
 	out := map[string]bool{}
-	for _, e := range cfg.Models.Entries {
-		if e.Advertise == nil || *e.Advertise {
-			out[e.ID] = true
-		}
+	for _, m := range capabilities.Models(configcheck.Registry(cfg), 0, 0) {
+		out[m.GatewayID] = true
 	}
 	return out
 }

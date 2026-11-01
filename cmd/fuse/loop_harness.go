@@ -66,7 +66,7 @@ func (h *loopServerHost) Capabilities(ctx context.Context, tenant event.TenantID
 		Ceilings:         r.Ceilings(),
 		SecretRefs:       r.SecretRefs(ctx, string(tenant)),
 		SpecMCPAuthKinds: harnessresolve.SpecMCPAuthKinds(),
-		SpecPolicy:       capabilities.SpecPolicyOf(h.operator.cfg.LoopServer.SpecPolicy),
+		SpecPolicy:       harnessresolve.SpecPolicyOf(h.operator.cfg.LoopServer.SpecPolicy),
 		Server:           capabilities.ServerInfo(),
 	}, nil
 }

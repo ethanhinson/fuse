@@ -10,7 +10,6 @@ import (
 
 	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
-	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/version"
@@ -172,13 +171,4 @@ func Skills(set *skills.Set) []Skill {
 // ServerInfo reports this build's version and spec digest algorithm.
 func ServerInfo() Server {
 	return Server{Version: version.Version, DigestAlgorithm: harness.DigestAlgorithm}
-}
-
-// SpecPolicyOf maps the operator's spec policy to its advertisement.
-func SpecPolicyOf(p config.SpecPolicyConfig) SpecPolicy {
-	return SpecPolicy{
-		MCPHosts:            slices.Clone(p.MCPHosts),
-		DenyPrivateNetworks: p.DenyPrivate(),
-		ModelsRegistryOnly:  p.RegistryOnly(),
-	}
 }
