@@ -26,6 +26,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/skills"
+	"github.com/ethanhinson/fuse/internal/tenantlimit"
 )
 
 // devToken is the built-in bearer token synthesized when loop_server.auth is
@@ -311,6 +312,15 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintln(stderr, "        tenants: [acme]        # tenants allowed to use it; empty => only _default")
 		fmt.Fprintln(stderr, "        hosts: [api.example.com] # hostnames it may be sent to; empty => wherever the spec says,")
 		fmt.Fprintln(stderr, "                               # which discloses the value to every allowed tenant")
+		fmt.Fprintln(stderr, "    limits:                    # per-tenant loop limits; 0 or omitted => unlimited")
+		fmt.Fprintln(stderr, "      default: {max_live_loops: 20, starts_per_minute: 60}")
+		fmt.Fprintln(stderr, "      tenants:")
+		fmt.Fprintln(stderr, "        big: {max_live_loops: 100}   # per axis: a set value replaces the default")
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, "A StartLoop beyond a tenant's limit fails ResourceExhausted naming the limit; the")
+		fmt.Fprintln(stderr, "start-rate refusal carries Retry-After (whole seconds). Rate counters are per process,")
+		fmt.Fprintln(stderr, "while the live-loop count reads the shared registry. GetCapabilities reports the")
+		fmt.Fprintln(stderr, "caller's limits.")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "A static token is looked up first. Otherwise the bearer value is read as a compact")
 		fmt.Fprintln(stderr, "JWS (header alg exactly HS256) from the issuer named by its iss claim, with claims")
@@ -329,8 +339,9 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "GetCapabilities lists, for the caller's tenant, the models this server routes, the")
 		fmt.Fprintln(stderr, "installed skills, the tighten-only ceilings, the secret_ref names that resolve, and the")
-		fmt.Fprintln(stderr, "auth kinds a spec-declared MCP server may use. advertise: false on models.<alias> hides")
-		fmt.Fprintln(stderr, "a model from the list; its label, description and tags are shown when set.")
+		fmt.Fprintln(stderr, "auth kinds a spec-declared MCP server may use, and the tenant's loop limits.")
+		fmt.Fprintln(stderr, "advertise: false on models.<alias> hides a model from the list; its label, description")
+		fmt.Fprintln(stderr, "and tags are shown when set.")
 		fmt.Fprintln(stderr)
 		fmt.Fprintln(stderr, "On SIGTERM or Ctrl-C the server drains gracefully: /readyz starts answering 503")
 		fmt.Fprintln(stderr, "immediately (so a load balancer stops sending new work), in-flight requests get up")
@@ -417,6 +428,17 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 		deps.DurableStore = projectingDurableStore{CommittedDurableStore: store, projection: obs.projection}
 	}
 	rt := runtime.New(deps)
+	limiter, lerr := loopTenantLimiter(cfg, deps.Registry, time.Now)
+	if lerr != nil {
+		shutdownObservability()
+		fmt.Fprintf(stderr, "loop-serve-net: limits: %v\n", lerr)
+		return 1
+	}
+	if limiter != nil {
+		d := cfg.LoopServer.Limits.Default
+		fmt.Fprintf(stderr, "loop-serve-net: per-tenant loop limits on (default max_live_loops=%d starts_per_minute=%d, 0 = unlimited; %d tenant overrides)\n",
+			d.MaxLiveLoops, d.StartsPerMinute, len(cfg.LoopServer.Limits.Tenants))
+	}
 
 	ln, err := netListen("tcp", *addr)
 	if err != nil {
@@ -446,7 +468,7 @@ func runLoopServeNet(args []string, cfg config.Config, reg *model.Registry, stdo
 	}()
 
 	if err := serveNetWithOptions(ctx, ln, rt, verifier, deps.Registry, deps.DurableStore, obs,
-		serveNetOptions{drainTimeout: *drainTimeout, capabilities: caps}); err != nil {
+		serveNetOptions{drainTimeout: *drainTimeout, capabilities: caps, limits: limiter}); err != nil {
 		fmt.Fprintf(stderr, "loop-serve-net: %v\n", err)
 		return 1
 	}
@@ -504,6 +526,35 @@ type serveNetOptions struct {
 	// capabilities answers GetCapabilities. runLoopServeNet always sets it;
 	// nil leaves the RPC Unimplemented.
 	capabilities loopconnect.CapabilitySource
+
+	// limits enforces per-tenant loop limits on StartLoop and fills the
+	// GetCapabilities advertisement. nil is unlimited.
+	limits *tenantlimit.Limiter
+}
+
+// loopTenantLimiter builds the per-tenant loop limiter (change 0103) from
+// loop_server.limits, counting live loops in the durable registry. No limit
+// configured: nil (the edge's unlimited fast path). A cap with no registry to
+// count is refused rather than served inert.
+func loopTenantLimiter(cfg config.Config, reg event.LoopRegistry, now func() time.Time) (*tenantlimit.Limiter, error) {
+	src := cfg.LoopServer.Limits
+	tcfg := tenantlimit.Config{
+		Default: tenantlimit.Limits{MaxLiveLoops: src.Default.MaxLiveLoops, StartsPerMinute: src.Default.StartsPerMinute},
+	}
+	if len(src.Tenants) > 0 {
+		tcfg.Tenants = make(map[string]tenantlimit.Limits, len(src.Tenants))
+		for k, v := range src.Tenants {
+			tcfg.Tenants[k] = tenantlimit.Limits{MaxLiveLoops: v.MaxLiveLoops, StartsPerMinute: v.StartsPerMinute}
+		}
+	}
+	if !tcfg.Any() {
+		return nil, nil
+	}
+	var count tenantlimit.LiveCounter
+	if reg != nil {
+		count = tenantlimit.RegistryCounter(reg, now)
+	}
+	return tenantlimit.New(tcfg, count, now)
 }
 
 // loopCapabilitySource is the GetCapabilities source for a loop server built
@@ -526,7 +577,7 @@ func serveNetWithOptions(ctx context.Context, ln net.Listener, rt runtime.Runtim
 	rd := newReadiness(store, verifier)
 	rd.register(mux)
 
-	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx).WithRegistry(registry).WithCapabilities(sopts.capabilities)
+	handler := loopconnect.NewHandler(rt).WithBaseContext(ctx).WithRegistry(registry).WithCapabilities(sopts.capabilities).WithLimits(sopts.limits)
 	if obs != nil {
 		handler.WithObserver(obs.observer)
 	}
