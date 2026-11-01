@@ -15,7 +15,7 @@ discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md'
 plan: 'docs/superpowers/plans/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th.md'
-results:
+results: 'docs/results/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md](../../superpowers/specs/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md) |
 | Plan | [2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th.md](../../superpowers/plans/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th.md) |
+| Results | [2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-results.md](../../results/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-results.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
