@@ -160,11 +160,12 @@ it is the reference, and every non-obvious one carries its reasoning inline.
 ### Config is a Secret, not a ConfigMap
 
 The chart renders `.Values.config` (plus `auth.tokens`, layered in as `loop_server.auth`; the
-rest of `config.loop_server`, such as `lease_ttl` and `issuers`, is kept) into a
+rest of `config.loop_server`, such as `lease_ttl`, `issuers`, and `limits`, is kept) into a
 **Secret**, mounted by `subPath` at `/home/nonroot/.fuse/config.yml` — the trusted home file
 (ADR-0006). It is a Secret because `loop_server.auth`, `observability`, and `tool_identity` are
 honored from *that file and nowhere else*. Set `config.existingSecret` to supply your own
-instead (it must carry a `config.yml` key); the chart then renders none of its own.
+instead (it must carry a `config.yml` key); the chart then renders none of its own. With several
+replicas, the `limits` start rate applies per pod (the live-loop cap is shared).
 
 The Deployment carries a **checksum annotation over the rendered config**, so changing the
 Secret rolls the pods. When `config.existingSecret` is set the checksum cannot see inside the
