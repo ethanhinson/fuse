@@ -2,7 +2,7 @@
 id: 102
 slug: 'loop-scoped-secret-values-on-startloop-host-bound-and-never'
 title: 'Loop-scoped secret values on StartLoop, host-bound and never recorded'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/loop-scoped-secret-values-on-startloop-host-bound-and-never'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/125'
 blocked_by:
 reconciled: true
 ---
@@ -58,3 +58,12 @@ a pluggable remote `SecretResolver` (file as later); secrets for `Send`; rotatio
 ### 2026-11-01
 
 Unchanged against main 728079e. Deps 0100 (secrets:inline constant) and 0101 are merged. Refinements: loop-scoped values travel from the Connect edge to the resolver through a small leaf package (runtime seam stays auth-free); ConfigSecrets-first precedence with loop-scoped fallback; GetCapabilities fields 7/8 untouched.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 24c04aab41cbc473b86fef7ae47825e704155105
+ran_at:   2026-11-01T06:07:45Z
+<!-- docket:build-evidence:end -->
