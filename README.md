@@ -374,6 +374,18 @@ agents:
                         # value is clamped back to the default.
 ```
 
+### The `instructions` config key
+
+```yaml
+instructions: |
+  You are a code reviewer. Flag correctness problems first, then style.
+```
+
+The text is added to the main agent's system prompt after the persona prompt; subagents
+keep their own prompts. It is read from `~/.fuse/config.yml` and `.fuse.local.yml`, and
+the local file wins. It may be at most 16384 characters, and a harness spec's
+`instructions` replaces it for that loop.
+
 ### Observing the research flow — `research-probe`
 
 The research flow is emergent and prompt-driven: the model diversifies a

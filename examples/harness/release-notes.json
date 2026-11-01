@@ -1,0 +1,5 @@
+{
+  "models": {"defaultAlias": "fast", "entries": {"fast": {"id": "cloud/deepseek-v4-flash", "persona": "general"}}},
+  "maxTurns": 20,
+  "instructions": "You are a release-notes writer.\nRead the merged changes since the last tag and write one line per user-visible change, grouped under Added, Changed and Fixed.\nSkip internal refactors and test-only changes.\nKeep each line under 100 characters."
+}
