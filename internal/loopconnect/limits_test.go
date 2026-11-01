@@ -365,3 +365,86 @@ func TestLimitErrorMapping(t *testing.T) {
 		})
 	}
 }
+
+// resumableRuntime is registeringRuntime plus the seam's resume behavior: Send
+// to a loop the registry holds not-live fails ErrLoopFinished, and Resume marks
+// it live again (as the real runtime's Resume re-registers the revived loop).
+type resumableRuntime struct {
+	*registeringRuntime
+
+	mu      sync.Mutex
+	resumes int
+}
+
+func (r *resumableRuntime) Send(ctx context.Context, tenant event.TenantID, loopID, _ string) error {
+	rec, err := r.reg.Resolve(ctx, event.StreamKey{Tenant: tenant, Loop: event.LoopID(loopID)})
+	if err != nil {
+		return runtime.ErrLoopNotFound
+	}
+	if !rec.Live {
+		return runtime.ErrLoopFinished
+	}
+	return nil
+}
+
+func (r *resumableRuntime) Resume(ctx context.Context, tenant event.TenantID, loopID string) (runtime.LoopHandle, error) {
+	r.mu.Lock()
+	r.resumes++
+	r.mu.Unlock()
+	if err := r.reg.SetLive(ctx, event.StreamKey{Tenant: tenant, Loop: event.LoopID(loopID)}, true, "node"); err != nil {
+		return nil, err
+	}
+	return fakeHandle{id: loopID}, nil
+}
+
+func (r *resumableRuntime) resumeCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.resumes
+}
+
+func sendAs(client loopv1connect.LoopServiceClient, token, loopID string) error {
+	_, err := client.Send(context.Background(), bearer(connect.NewRequest(&loopv1.SendRequest{LoopId: loopID, Input: "hi"}), token))
+	return err
+}
+
+// A Send that would resume a finished loop is a start for the live-loop cap: a
+// tenant at its cap cannot exceed it by resuming, while a Send to a loop that is
+// still live is never refused and takes no slot.
+func TestSendResumeAdmittedByLiveCap(t *testing.T) {
+	clk := newLimitClock()
+	reg := newFakeRegistry()
+	rt := &resumableRuntime{registeringRuntime: newRegisteringRuntime(reg, clk)}
+	lim := newTestLimiter(t, tenantlimit.Config{Default: tenantlimit.Limits{MaxLiveLoops: 2}}, reg, clk)
+	client := newLimitServer(t, rt, reg, lim, limitVerifier())
+
+	reaped := mustStart(t, client, "tok-a")
+	live := mustStart(t, client, "tok-a")
+	if err := reg.SetLive(context.Background(), event.StreamKey{Tenant: "a", Loop: event.LoopID(reaped)}, false, "node"); err != nil {
+		t.Fatalf("SetLive: %v", err)
+	}
+	other := mustStart(t, client, "tok-a") // back at the cap of 2 live
+
+	refusal(t, sendAs(client, "tok-a", reaped), "max_live_loops")
+	if got := rt.resumeCount(); got != 0 {
+		t.Fatalf("refused resume reached the runtime: %d resumes", got)
+	}
+
+	// Sends to live loops are untouched by the cap, repeatedly.
+	for i := 0; i < 3; i++ {
+		if err := sendAs(client, "tok-a", live); err != nil {
+			t.Fatalf("Send to live loop at cap: %v", err)
+		}
+	}
+
+	// A freed slot lets the resume through.
+	if err := reg.SetLive(context.Background(), event.StreamKey{Tenant: "a", Loop: event.LoopID(other)}, false, "node"); err != nil {
+		t.Fatalf("SetLive: %v", err)
+	}
+	if err := sendAs(client, "tok-a", reaped); err != nil {
+		t.Fatalf("Send resuming under the cap: %v", err)
+	}
+	if got := rt.resumeCount(); got != 1 {
+		t.Fatalf("resumes = %d, want 1", got)
+	}
+}

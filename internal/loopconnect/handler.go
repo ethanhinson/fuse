@@ -353,7 +353,20 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 	// resume call. Resume is tenant-scoped (ADR-0034); if it cannot revive the loop
 	// (genuinely unknown, or live on another instance), the retry's error falls through
 	// to the mapping below unchanged.
+	//
+	// Reviving a loop makes it live again, so the resume is admitted by the
+	// per-tenant limits exactly as a StartLoop is (change 0103): a tenant at its
+	// cap cannot exceed it by resuming. Only this resume path is admitted; a Send
+	// to a loop that is still live never reaches here, so it is never refused and
+	// takes no slot. The reservation is held until the handler returns.
 	if errors.Is(err, runtime.ErrLoopFinished) {
+		release, lerr := h.limits.Admit(ctx, tenant)
+		if lerr != nil {
+			cerr := limitError(lerr)
+			apiOutcome = observeotel.OutcomeFromError(ctx, cerr)
+			return nil, cerr
+		}
+		defer release()
 		if _, rerr := h.rt.Resume(ctx, tenant, m.LoopId); rerr == nil {
 			err = runtime.SendOrSteer(ctx, h.rt, tenant, m.LoopId, m.Input, opts)
 		}

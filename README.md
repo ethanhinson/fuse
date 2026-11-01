@@ -658,7 +658,10 @@ loop_server:
 - **Scope.** The start rate is counted per server process (with several replicas
   it applies per pod); the live-loop cap counts the tenant's live loops in the
   shared loop registry, so it holds across replicas.
-- A `Send` that resumes a finished loop is not refused by these limits.
+- **Resumes.** A `Send` that resumes a finished loop is admitted like a start:
+  it spends a start token and may fail `ResourceExhausted` when the tenant is at
+  its live-loop cap. A `Send` to a loop that is still live is never refused and
+  takes no slot.
 
 Like `auth` and `issuers`, `limits` is honored only from `~/.fuse/config.yml`.
 
@@ -666,8 +669,9 @@ The service is four RPCs:
 
 - `StartLoop` / `Send` — unary. The authoritative tenant is the authenticated
   token's; the wire `tenant` field, when set, must match it (a mismatch is a
-  spoof, see above). `StartLoop` may fail `ResourceExhausted` when the tenant
-  is over its loop limits (see Per-tenant loop limits).
+  spoof, see above). `StartLoop`, and a `Send` that resumes a finished loop,
+  may fail `ResourceExhausted` when the tenant is over its loop limits (see
+  Per-tenant loop limits).
 - `GetCapabilities` - unary and read-only, with the same authentication as
   `StartLoop`. It starts no loop. For the authenticated tenant it returns:
   - models: alias, gateway id, effective context window, effective max output
