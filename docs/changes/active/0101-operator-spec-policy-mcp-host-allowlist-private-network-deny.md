@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/operator-spec-policy-mcp-host-allowlist-private-network-deny'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -49,3 +49,9 @@ ADR-0061 made the operator config a tighten-only floor, but two client-settable 
 ## Out of scope
 
 routing `web_fetch` through the same policy (it has its own floor); per-tenant policies; DNS rebinding protection beyond one-time resolution (file as later); changing the default for `models` away from `any`.
+
+## Reconcile log
+
+### 2026-11-01
+
+Unchanged against origin/main 3567c07; code paths (harnessresolve.Resolve, config.LoopServerConfig, GetCapabilitiesResponse) match the spec.
