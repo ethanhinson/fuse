@@ -71,6 +71,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0072](0072-trusted-issuers-may-use-asymmetric-jwks-keys-tenant-prefixes.md) — Trusted issuers may use asymmetric JWKS keys, tenant prefixes and lazy tenant keys (Accepted) ← change #99
 - [ADR-0073](0073-operator-only-spec-policy-floor-for-client-harness-egress-an.md) — Operator-only spec policy floor for client harness egress and models (Accepted) ← change #101 · relates to ADR-0061
 - [ADR-0074](0074-per-tenant-loop-limits-enforced-at-the-connect-edge.md) — Per-tenant loop limits enforced at the Connect edge (Accepted) ← change #103
+- [ADR-0075](0075-scoped-principals-scopes-are-a-token-claim-enforced-at-the-c.md) — Scoped principals: scopes are a token claim enforced at the Connect edge (Accepted) ← change #100
 
 ## Superseded / Reversed
 

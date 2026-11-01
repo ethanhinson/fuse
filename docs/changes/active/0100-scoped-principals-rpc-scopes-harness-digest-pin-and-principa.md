@@ -12,7 +12,7 @@ depends_on: [99]
 stacked_on:
 related: []
 discovered_from: []
-adrs: []
+adrs: [75]
 spec: 'docs/superpowers/specs/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md'
 plan: 'docs/superpowers/plans/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md'
 results: 'docs/results/2026-11-01-scoped-principals-results.md'
@@ -33,6 +33,7 @@ reconciled: true
 | Spec | [2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md](../../superpowers/specs/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md) |
 | Plan | [2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md](../../superpowers/plans/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) |
 | Results | [2026-11-01-scoped-principals-results.md](../../results/2026-11-01-scoped-principals-results.md) |
+| ADRs | [ADR-0075](../../adrs/0075-scoped-principals-scopes-are-a-token-claim-enforced-at-the-c.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
