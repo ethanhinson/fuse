@@ -1,6 +1,6 @@
 # Backlog
 
-**107 changes** — 🟢 1 in progress · 🔵 2 built · 🟡 6 proposed · ⚪ 3 deferred · ✅ 88 done · 🗑️ 7 killed
+**107 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 6 proposed · ⚪ 3 deferred · ✅ 89 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -8,11 +8,10 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (2)
+## 🔵 Built (1)
 
 | # | Title | Priority | Type | PR | State |
 |---|-------|----------|------|----|-------|
-| [0103](active/0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | `medium` | `feat` | [#123](https://github.com/ethanhinson/fuse/pull/123) | awaiting merge |
 | [0100](active/0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | `high` | `feat` | [#124](https://github.com/ethanhinson/fuse/pull/124) | awaiting merge |
 
 ## 🟡 Proposed (6)
@@ -44,7 +43,6 @@ graph TD
   0099 --> 0100
   0100 --> 0102
   0101 --> 0102
-  0103
   0104
   0105
   0106
@@ -57,10 +55,11 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (95)</summary>
+<details><summary>✅🗑️ Archive — done + killed (96)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0103](archive/2026-11-01-0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | 2026-11-01 |
 | [0101](archive/2026-11-01-0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | 2026-11-01 |
 | [0099](archive/2026-11-01-0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md) | Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes | 2026-11-01 |
 | [0098](archive/2026-10-31-0098-permission-deny-reasons-bound-and-redact-the-command-they-ec.md) | Permission deny reasons bound and redact the command they echo | 2026-10-31 |
@@ -76,7 +75,6 @@ graph TD
 | [0088](archive/2026-10-31-0088-protective-permission-patterns-match-across-slashes-and-in-e.md) | Protective permission patterns match across slashes and in every mode alike | 2026-10-31 |
 | [0087](archive/2026-10-31-0087-explicit-ask-rules-are-honored-prompt-a-human-deny-when-no-h.md) | Explicit ask rules are honored: prompt a human, deny when no human is bound | 2026-10-31 |
 | [0086](archive/2026-10-31-0086-loop-server-advertises-its-capabilities-models-skills-ceilin.md) | Loop server advertises its capabilities - models, skills, ceilings | 2026-10-31 |
-| [0085](archive/2026-10-31-0085-start-a-loop-from-a-harnessspec.md) | Start a loop from a HarnessSpec | 2026-10-31 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -88,7 +86,7 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-10](archive/) | 1 done |
+| [2026-10](archive/) | 2 done |
 | [2026-09](archive/) | 7 done |
 | [2026-08](archive/) | 65 done |
 

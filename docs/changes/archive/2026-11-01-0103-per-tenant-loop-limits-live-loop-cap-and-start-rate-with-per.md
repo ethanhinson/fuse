@@ -2,7 +2,7 @@
 id: 103
 slug: 'per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per'
 title: 'Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides'
-status: 'implemented'
+status: 'done'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md](../../superpowers/specs/2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md) |
+| Spec (merged) | [2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md) |
 | Plan | [2026-11-01-per-tenant-loop-limits.md](../../superpowers/plans/2026-11-01-per-tenant-loop-limits.md) |
 | Results | [2026-11-01-per-tenant-loop-limits-results.md](../../results/2026-11-01-per-tenant-loop-limits-results.md) |
 | ADRs | [ADR-0074](../../adrs/0074-per-tenant-loop-limits-enforced-at-the-connect-edge.md) |

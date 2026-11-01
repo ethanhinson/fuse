@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0103 — Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides](../../changes/active/0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md)**
+> ↩ **[Change 0103 — Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides](../../changes/archive/2026-11-01-0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md)**
 <!-- docket:backlink:end -->
 
 # Per-tenant loop limits - Implementation Plan
