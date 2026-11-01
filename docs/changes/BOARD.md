@@ -1,6 +1,6 @@
 # Backlog
 
-**99 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 1 proposed · ⚪ 3 deferred · ✅ 86 done · 🗑️ 7 killed
+**100 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 86 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|------|-----------|
 | [0099](active/0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md) | Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md) | build-ready |
 
-## 🟡 Proposed (1)
+## 🟡 Proposed (2)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0100](active/0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | `high` | `feat` | needs-grooming |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
@@ -36,6 +37,7 @@ graph TD
   0081
   0083
   0099
+  0100
   0012:::done
   0052:::done
   0063:::done
