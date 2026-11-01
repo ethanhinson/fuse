@@ -52,6 +52,9 @@ type BuiltinSTSConfig struct {
 	Issuer     string
 	TTL        time.Duration
 	TenantKeys map[event.TenantID][]byte
+	// DeriveKey, when set, supplies the key for a tenant absent from TenantKeys
+	// (lazy derivation), so any tenant a verifier can produce has a key.
+	DeriveKey func(event.TenantID) []byte
 }
 
 // BuiltinSTS is fuse's minimal built-in Security Token Service: it mints
@@ -63,6 +66,20 @@ type BuiltinSTS struct {
 	issuer string
 	ttl    time.Duration
 	keys   map[event.TenantID][]byte
+	derive func(event.TenantID) []byte
+}
+
+// keyFor returns the tenant's key: configured first, else lazily derived.
+func (s *BuiltinSTS) keyFor(tenant event.TenantID) ([]byte, bool) {
+	if k, ok := s.keys[tenant]; ok {
+		return k, true
+	}
+	if s.derive != nil {
+		if k := s.derive(tenant); len(k) > 0 {
+			return k, true
+		}
+	}
+	return nil, false
 }
 
 // ErrTenantNotConfigured is returned when a tenant has no signing key — the STS
@@ -90,13 +107,13 @@ func NewBuiltinSTS(cfg BuiltinSTSConfig) (*BuiltinSTS, error) {
 		copy(kc, v)
 		keys[event.NormalizeTenant(k)] = kc
 	}
-	return &BuiltinSTS{issuer: issuer, ttl: ttl, keys: keys}, nil
+	return &BuiltinSTS{issuer: issuer, ttl: ttl, keys: keys, derive: cfg.DeriveKey}, nil
 }
 
 // Exchange mints a delegation token. It fails closed for an unconfigured tenant.
 func (s *BuiltinSTS) Exchange(_ context.Context, req ExchangeRequest) (ExchangeResult, error) {
 	tenant := event.NormalizeTenant(req.Tenant)
-	key, ok := s.keys[tenant]
+	key, ok := s.keyFor(tenant)
 	if !ok {
 		return ExchangeResult{}, fmt.Errorf("%w: %q", ErrTenantNotConfigured, tenant)
 	}
@@ -143,7 +160,7 @@ func (s *BuiltinSTS) Exchange(_ context.Context, req ExchangeRequest) (ExchangeR
 // unexpired. It is used by fuse's own downstream verification and by tests; a
 // real external resource server verifies with the shared key out of band.
 func (s *BuiltinSTS) Verify(tenant event.TenantID, token string) error {
-	key, ok := s.keys[event.NormalizeTenant(tenant)]
+	key, ok := s.keyFor(event.NormalizeTenant(tenant))
 	if !ok {
 		return ErrTenantNotConfigured
 	}

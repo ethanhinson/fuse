@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,8 +34,21 @@ type Issuer struct {
 	// Name must equal the token's "iss" claim. It is also how a token selects
 	// which issuer verifies it.
 	Name string
-	// Key is the HS256 shared secret.
+	// Key is the HS256 shared secret. Exactly one of Key, JWKS and JWKSURL is set.
 	Key []byte
+	// JWKS is an inline list of public keys (EC P-256 or Ed25519); tokens are
+	// ES256 or EdDSA and select their key by the JOSE "kid" header.
+	JWKS []JWK
+	// JWKSURL is an https URL of a JWKS document, fetched at construction and
+	// cached (see JWKSRefresh); a fetch failure at construction is an error.
+	JWKSURL string
+	// JWKSRefresh is the JWKS cache lifetime; zero means DefaultJWKSRefresh.
+	JWKSRefresh time.Duration
+	// HTTPClient fetches JWKSURL; nil means a client with a 10s timeout.
+	HTTPClient *http.Client
+	// TenantPrefix accepts any valid tenant id starting with it, in addition
+	// to Tenants.
+	TenantPrefix string
 	// Audience must equal the token's "aud" claim (or be one of its entries when
 	// "aud" is an array).
 	Audience string
@@ -64,11 +79,45 @@ const maxIssuerTokenBytes = 8 << 10
 type IssuerVerifier struct {
 	issuers map[string]issuerEntry
 	now     func() time.Time
+	nowFn   func() time.Time // late-bound view of now, for JWKS caches
+}
+
+func oneKeySource(is Issuer) bool {
+	n := 0
+	if len(is.Key) > 0 {
+		n++
+	}
+	if len(is.JWKS) > 0 {
+		n++
+	}
+	if is.JWKSURL != "" {
+		n++
+	}
+	return n == 1
 }
 
 type issuerEntry struct {
 	Issuer
 	tenants map[event.TenantID]bool
+	keys    keySource // nil for a shared-secret (HS256) issuer
+}
+
+// KeySummary names one issuer's loaded verification keys, for the startup log.
+type KeySummary struct {
+	Issuer string
+	Kids   []string
+}
+
+// KeySummaries lists the key ids loaded for each JWK issuer, ordered by name.
+func (v *IssuerVerifier) KeySummaries() []KeySummary {
+	var out []KeySummary
+	for name, e := range v.issuers {
+		if e.keys != nil {
+			out = append(out, KeySummary{Issuer: name, Kids: e.keys.kids()})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Issuer < out[j].Issuer })
+	return out
 }
 
 // NewIssuerVerifier builds an IssuerVerifier. It refuses an empty name, an
@@ -78,12 +127,13 @@ type issuerEntry struct {
 // is the last line for callers that build issuers in code.
 func NewIssuerVerifier(issuers []Issuer) (*IssuerVerifier, error) {
 	v := &IssuerVerifier{issuers: make(map[string]issuerEntry, len(issuers)), now: time.Now}
+	v.nowFn = func() time.Time { return v.now() }
 	for i, is := range issuers {
 		switch {
 		case is.Name == "":
 			return nil, fmt.Errorf("loopauth: issuer %d has an empty name", i)
-		case len(is.Key) == 0:
-			return nil, fmt.Errorf("loopauth: issuer %q has an empty signing key", is.Name)
+		case !oneKeySource(is):
+			return nil, fmt.Errorf("loopauth: issuer %q needs exactly one of a signing key, jwks or jwks_url", is.Name)
 		case is.Audience == "":
 			return nil, fmt.Errorf("loopauth: issuer %q has an empty audience", is.Name)
 		case is.MaxTTL <= 0:
@@ -96,10 +146,28 @@ func NewIssuerVerifier(issuers []Issuer) (*IssuerVerifier, error) {
 		for _, t := range is.Tenants {
 			tenants[event.NormalizeTenant(t)] = true
 		}
+		var ks keySource
+		switch {
+		case len(is.JWKS) > 0:
+			parsed, err := parseJWKs(is.JWKS)
+			if err != nil {
+				return nil, fmt.Errorf("loopauth: issuer %q: %w", is.Name, err)
+			}
+			ks = staticKeys(parsed)
+		case is.JWKSURL != "":
+			uk := newURLKeys(is.JWKSURL, is.JWKSRefresh, is.HTTPClient, v.nowFn)
+			ctx, cancel := context.WithTimeout(context.Background(), jwksFetchTimeout)
+			err := uk.fetch(ctx)
+			cancel()
+			if err != nil {
+				return nil, fmt.Errorf("loopauth: issuer %q: initial jwks fetch failed: %w", is.Name, err)
+			}
+			ks = uk
+		}
 		key := make([]byte, len(is.Key))
 		copy(key, is.Key)
 		is.Key = key
-		v.issuers[is.Name] = issuerEntry{Issuer: is, tenants: tenants}
+		v.issuers[is.Name] = issuerEntry{Issuer: is, tenants: tenants, keys: ks}
 	}
 	return v, nil
 }
@@ -108,8 +176,8 @@ func NewIssuerVerifier(issuers []Issuer) (*IssuerVerifier, error) {
 // reason, is ErrInvalidToken: the Connect edge puts the error text on the wire,
 // and a caller holding a bad token must not learn whether the issuer exists, the
 // signature matched, or which claim was wrong.
-func (v *IssuerVerifier) Verify(_ context.Context, token string) (Principal, error) {
-	p, err := v.verify(token)
+func (v *IssuerVerifier) Verify(ctx context.Context, token string) (Principal, error) {
+	p, err := v.verifyCtx(ctx, token)
 	if err != nil {
 		return Principal{}, ErrInvalidToken
 	}
@@ -121,6 +189,7 @@ func (v *IssuerVerifier) Verify(_ context.Context, token string) (Principal, err
 // section 4.1.11 requires refusing a token that names one.
 type issuerHeader struct {
 	Alg  *string         `json:"alg"`
+	Kid  *string         `json:"kid"`
 	Crit json.RawMessage `json:"crit"`
 }
 
@@ -139,6 +208,10 @@ type issuerClaims struct {
 // been looked up and that issuer's key has verified the signature. Only "iss"
 // is read before that, and only to pick the key.
 func (v *IssuerVerifier) verify(token string) (Principal, error) {
+	return v.verifyCtx(context.Background(), token)
+}
+
+func (v *IssuerVerifier) verifyCtx(ctx context.Context, token string) (Principal, error) {
 	if token == "" || len(token) > maxIssuerTokenBytes {
 		return Principal{}, errors.New("token empty or too large")
 	}
@@ -155,11 +228,11 @@ func (v *IssuerVerifier) verify(token string) (Principal, error) {
 	if err := json.Unmarshal(hdrBytes, &hdr); err != nil {
 		return Principal{}, errors.New("malformed header")
 	}
-	// Exactly HS256. "none", RS256/ES256 (whose "public key" an attacker could
-	// try to pass off as the HMAC secret), a missing alg and case variants are
-	// all refused before any key is touched.
-	if hdr.Alg == nil || *hdr.Alg != "HS256" {
-		return Principal{}, errors.New("alg is not HS256")
+	// Only HS256, ES256 and EdDSA exist here. "none", RS256, a missing alg and
+	// case variants are refused before any key is touched; which of the three is
+	// acceptable depends on the issuer's key type, checked below.
+	if hdr.Alg == nil || (*hdr.Alg != "HS256" && *hdr.Alg != "ES256" && *hdr.Alg != "EdDSA") {
+		return Principal{}, errors.New("alg is not supported")
 	}
 	if len(hdr.Crit) > 0 {
 		return Principal{}, errors.New("crit header is not supported")
@@ -184,10 +257,33 @@ func (v *IssuerVerifier) verify(token string) (Principal, error) {
 	if err != nil {
 		return Principal{}, errors.New("malformed signature encoding")
 	}
-	mac := hmac.New(sha256.New, is.Key)
-	mac.Write([]byte(parts[0] + "." + parts[1]))
-	if subtle.ConstantTimeCompare(mac.Sum(nil), sig) != 1 {
-		return Principal{}, errors.New("signature mismatch")
+	signingInput := parts[0] + "." + parts[1]
+	if is.keys == nil {
+		// Shared-secret issuer: HS256 only, and an asymmetric alg is never
+		// reinterpreted against the secret.
+		if *hdr.Alg != "HS256" {
+			return Principal{}, errors.New("alg does not match key type")
+		}
+		mac := hmac.New(sha256.New, is.Key)
+		mac.Write([]byte(signingInput))
+		if subtle.ConstantTimeCompare(mac.Sum(nil), sig) != 1 {
+			return Principal{}, errors.New("signature mismatch")
+		}
+	} else {
+		if hdr.Kid == nil || *hdr.Kid == "" {
+			return Principal{}, errors.New("kid missing")
+		}
+		key, ok := is.keys.lookup(ctx, *hdr.Kid)
+		if !ok {
+			return Principal{}, errors.New("unknown kid")
+		}
+		if key.alg != *hdr.Alg {
+			return Principal{}, errors.New("alg does not match key type")
+		}
+		sum := sha256.Sum256([]byte(signingInput))
+		if !key.verifySig(signingInput, sum[:], sig) {
+			return Principal{}, errors.New("signature mismatch")
+		}
 	}
 
 	// The signature holds; from here the payload is the issuer's word.
@@ -242,7 +338,7 @@ func (v *IssuerVerifier) verify(token string) (Principal, error) {
 	if c.Tenant != nil {
 		tenant = event.NormalizeTenant(event.TenantID(*c.Tenant))
 	}
-	if !is.tenants[tenant] {
+	if !is.tenants[tenant] && !(is.TenantPrefix != "" && strings.HasPrefix(string(tenant), is.TenantPrefix) && ValidTenantID(string(tenant))) {
 		return Principal{}, fmt.Errorf("issuer may not assert tenant %q", tenant)
 	}
 

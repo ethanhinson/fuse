@@ -229,6 +229,11 @@ func newToolIdentityBroker(cfg config.Config) (toolidentity.CredentialSource, st
 		Issuer:     "fuse",
 		TTL:        ttl,
 		TenantKeys: toolIdentityTenantKeys(cfg),
+		// Any tenant a verifier can produce (an issuer's tenant_prefix admits
+		// tenants no config names) derives its key on first use.
+		DeriveKey: func(t event.TenantID) []byte {
+			return deriveTenantKey([]byte(cfg.ToolIdentity.SigningKey), t)
+		},
 	})
 	if err != nil {
 		return nil, fmt.Sprintf("tool_identity: building the built-in STS failed: %v", err)

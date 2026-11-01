@@ -595,6 +595,18 @@ the same `Unauthenticated` error with no detail. Configuring any issuer also
 turns off the built-in dev token. Like `auth`, `issuers` is honored only from
 `~/.fuse/config.yml`.
 
+Instead of a shared `signing_key`, an issuer may hold asymmetric keys, so the
+server never sees the private key and rotation needs no restart. Set exactly one
+of `signing_key`, `jwks` (inline public JWKs: `kid` plus EC P-256 or Ed25519
+`kty`/`crv`/`x`/`y`) or `jwks_url` (an https JWKS document, cached and refetched
+every `jwks_refresh`, default `5m`, and at most once a minute on an unknown
+`kid`). Tokens then carry a `kid` header and `alg` `ES256` (EC) or `EdDSA`
+(Ed25519); an `alg` that does not match the key type, a missing or unknown `kid`
+and `alg: none` are all refused. `tenant_prefix: team-` additionally accepts any
+valid tenant id (lowercase letters, digits, `-`, `_`) that starts with the
+prefix, so a service creating tenants on demand needs no config change; the
+tool-identity signing key for each such tenant is derived on first use.
+
 Minting a token in TypeScript (Node, no library needed):
 
 ```ts

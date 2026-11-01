@@ -154,3 +154,20 @@ loop_server:
 		t.Errorf("expected a warning naming loop_server, got: %q", warnings())
 	}
 }
+
+func TestValidateIssuersJWKSSources(t *testing.T) {
+	both := []IssuerConfig{{Issuer: "cms", Audience: "a", SigningKey: strings.Repeat("k", 32), JWKSURL: "https://x/jwks"}}
+	err := validateIssuers(both)
+	if err == nil || !strings.Contains(err.Error(), `("cms")`) {
+		t.Fatalf("both sources: want error naming issuer, got %v", err)
+	}
+	if err := validateIssuers([]IssuerConfig{{Issuer: "cms", Audience: "a", JWKSURL: "http://example.com/jwks"}}); err == nil {
+		t.Fatal("non-https jwks_url accepted")
+	}
+	if err := validateIssuers([]IssuerConfig{{Issuer: "cms", Audience: "a", JWKSURL: "http://localhost:9/jwks", TenantPrefix: "team-"}}); err != nil {
+		t.Fatalf("loopback http jwks_url refused: %v", err)
+	}
+	if err := validateIssuers([]IssuerConfig{{Issuer: "cms", Audience: "a", JWKSURL: "https://x/jwks", TenantPrefix: "Team"}}); err == nil {
+		t.Fatal("bad tenant_prefix accepted")
+	}
+}
