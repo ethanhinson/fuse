@@ -8,12 +8,12 @@ type: 'feat'
 deliverable: 'pr'
 created: '2026-11-01'
 updated: '2026-11-01'
-depends_on: []
+depends_on: [100, 101]
 stacked_on:
 related: []
 discovered_from: []
 adrs: []
-spec:
+spec: 'docs/superpowers/specs/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md'
 plan:
 results:
 auto_groomable:
@@ -28,6 +28,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md](../../superpowers/specs/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
