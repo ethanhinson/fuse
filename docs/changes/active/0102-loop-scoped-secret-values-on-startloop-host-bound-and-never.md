@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/loop-scoped-secret-values-on-startloop-host-bound-and-never'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -49,3 +49,9 @@ a networked server resolves `secret_ref` names only from the operator's `loop_se
 ## Out of scope
 
 a pluggable remote `SecretResolver` (file as later); secrets for `Send`; rotation during a loop; encrypting values at rest (there is no rest).
+
+## Reconcile log
+
+### 2026-11-01
+
+Unchanged against main 728079e. Deps 0100 (secrets:inline constant) and 0101 are merged. Refinements: loop-scoped values travel from the Connect edge to the resolver through a small leaf package (runtime seam stays auth-free); ConfigSecrets-first precedence with loop-scoped fallback; GetCapabilities fields 7/8 untouched.
