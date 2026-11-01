@@ -531,6 +531,7 @@ loop_server:
     - token: s3cr3t-bob
       tenant: acme
       subject: bob
+      scopes: [loop:observe]  # optional; omitted means unrestricted
 ```
 
 Each principal resolves to a `tenant` (the isolation boundary every store/registry
@@ -543,6 +544,35 @@ op is keyed by) and a `subject` (recorded as a loop's owner). Authorization is t
   tenant's loop exists).
 - **Cross-owner** — a same-tenant caller that is not the loop's recorded owner is
   rejected `PermissionDenied`.
+
+#### Scopes
+
+A token may carry scopes (`scopes:` on a static entry, the `scope` claim on an
+issuer token). Each RPC requires one:
+
+| RPC | Required scope |
+| --- | --- |
+| `StartLoop` | `loop:start` |
+| `Send` | `loop:send` (or `loop:admin`) |
+| `Observe` | `loop:observe` (or `loop:admin`) |
+| `GetCapabilities` | `capabilities:read` |
+
+- `loop:admin` acts on any loop in the token's tenant regardless of owner
+  (cross-tenant is still `NotFound`). It is never implied by an unrestricted token.
+- `secrets:inline` is reserved.
+- No scopes means unrestricted. An unknown scope name is ignored but still
+  restricts the token. An explicitly empty scope (`scope: ""`, `scopes: []`) is refused.
+- A refusal is `PermissionDenied` naming the missing scope.
+
+**Harness digest pin.** A token with `harness_digest: sha256:<hex>` (the
+`harness_digest` `StartLoop` returns, `harness.Digest`) can only start a loop
+whose spec has exactly that digest. No spec or a different spec is
+`PermissionDenied`, and nothing is created.
+
+**Audit records.** Every networked `StartLoop` appends `loop.principal`
+(`subject`, `client_id`, `issuer`, `scopes`, `token_id`) right after
+`loop.harness`. Each delegated tool token mint appends `tool.identity.minted`
+(`subject`, `audience`, `scope`, `loop_id`). Neither event holds a token.
 
 The **lease TTL** is the owner-liveness window: the owning instance renews the
 lease while a loop is live, and a loop whose lease has expired is treated as
@@ -587,6 +617,10 @@ The bearer token is a compact JWS. fuse refuses it unless all of this holds:
 | `iat`, `exp` | both required; `exp` in the future, `iat` at most 30s in the future, `exp - iat` at most `max_ttl` |
 | `nbf` | optional; honored when present |
 | `tenant` | optional, default `_default`; must be in the issuer's `tenants` |
+| `scope` | optional space-separated string of scopes (see Scopes); a non-string or empty value is refused |
+| `harness_digest` | optional string; pins `StartLoop` to that harness digest |
+| `azp` | optional string, recorded as `client_id` |
+| `jti` | optional string, recorded as `token_id`; not a replay cache |
 
 The result is the same `{tenant, subject}` principal a static entry gives, so
 ownership and tenant checks work unchanged. A token cannot grant
@@ -615,6 +649,7 @@ import { createHmac } from "node:crypto";
 function fuseLoopToken(secret: string, sub: string, tenant?: string): string {
   const b64 = (v: object) => Buffer.from(JSON.stringify(v)).toString("base64url");
   const now = Math.floor(Date.now() / 1000);
+  // Optional: add scope: "loop:start loop:observe" to restrict the token.
   const claims = { iss: "cms", sub, aud: "fuse-loop", iat: now, exp: now + 300, ...(tenant ? { tenant } : {}) };
   const input = `${b64({ alg: "HS256", typ: "JWT" })}.${b64(claims)}`;
   return `${input}.${createHmac("sha256", secret).update(input).digest("base64url")}`;
