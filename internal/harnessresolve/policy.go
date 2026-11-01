@@ -96,7 +96,7 @@ func checkURL(ctx context.Context, pol config.SpecPolicyConfig, raw string) stri
 	if err != nil || u.Hostname() == "" {
 		return "is not an absolute URL with a host"
 	}
-	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	host := canonicalHost(u.Hostname())
 	switch u.Scheme {
 	case "https":
 	case "http":
@@ -139,7 +139,7 @@ func checkURL(ctx context.Context, pol config.SpecPolicyConfig, raw string) stri
 // is a subdomain of suffix. Patterns match case-insensitively.
 func hostMatchesAny(host string, patterns []string) bool {
 	for _, p := range patterns {
-		p = strings.ToLower(strings.TrimSuffix(p, "."))
+		p = canonicalHost(p)
 		if suffix, ok := strings.CutPrefix(p, "*."); ok {
 			if strings.HasSuffix(host, "."+suffix) {
 				return true
