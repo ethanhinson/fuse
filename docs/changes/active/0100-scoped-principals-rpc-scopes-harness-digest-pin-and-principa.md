@@ -2,7 +2,7 @@
 id: 100
 slug: 'scoped-principals-rpc-scopes-harness-digest-pin-and-principa'
 title: 'Scoped principals: RPC scopes, harness digest pin and principal record on every loop'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/scoped-principals-rpc-scopes-harness-digest-pin-and-principa'
 pr:
 blocked_by:
 reconciled: false
