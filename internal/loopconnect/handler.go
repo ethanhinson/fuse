@@ -220,6 +220,24 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
 		return nil, aerr
 	}
+	// A token pinned to one harness spec digest may start only that spec. The
+	// compare is exact string equality against harness.Digest (no
+	// normalization), so a malformed pin fails closed. It runs before the
+	// runtime is touched, so a refused request registers nothing.
+	if havePrincipal && p.HarnessDigest != "" {
+		if m.Harness == nil {
+			aerr := connect.NewError(connect.CodePermissionDenied,
+				fmt.Errorf("loopconnect: token is pinned to harness %s; the request carries no harness", p.HarnessDigest))
+			apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
+			return nil, aerr
+		}
+		if got := harness.Digest(m.Harness); got != p.HarnessDigest {
+			aerr := connect.NewError(connect.CodePermissionDenied,
+				fmt.Errorf("loopconnect: harness digest %s does not match the token's pin %s", got, p.HarnessDigest))
+			apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
+			return nil, aerr
+		}
+	}
 	// Orchestrating another loop is acting on it: the caller must be allowed to
 	// drive that loop, by the same ownership rule Send and Observe apply.
 	if m.OrchestrateLoopId != "" {
