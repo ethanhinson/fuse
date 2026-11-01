@@ -14,7 +14,7 @@ related: []
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-01-trusted-issuers-jwks.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md](../../superpowers/specs/2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md) |
+| Plan | [2026-11-01-trusted-issuers-jwks.md](../../superpowers/plans/2026-11-01-trusted-issuers-jwks.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
