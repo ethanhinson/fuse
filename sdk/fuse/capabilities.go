@@ -27,6 +27,19 @@ type Capabilities struct {
 	SpecPolicy SpecPolicy
 	// Server identifies the server build.
 	Server ServerInfo
+	// Limits are the tenant's effective loop limits on this server, 0 meaning
+	// unlimited. A StartLoop beyond them fails, and the rate refusal tells the
+	// caller when to retry.
+	Limits Limits
+}
+
+// Limits are a tenant's effective loop limits; 0 in a field means unlimited.
+type Limits struct {
+	// MaxLiveLoops is how many loops the tenant may have live at once.
+	MaxLiveLoops int
+	// StartsPerMinute is how many StartLoop calls the tenant may make per
+	// minute.
+	StartsPerMinute int
 }
 
 // SpecPolicy is what a server holds a spec to besides the ceilings.

@@ -147,6 +147,10 @@ func fromProtoCapabilities(m *loopv1.GetCapabilitiesResponse) Capabilities {
 			Version:         m.GetServer().GetVersion(),
 			DigestAlgorithm: m.GetServer().GetDigestAlgorithm(),
 		},
+		Limits: Limits{
+			MaxLiveLoops:    int(m.GetLimits().GetMaxLiveLoops()),
+			StartsPerMinute: int(m.GetLimits().GetStartsPerMinute()),
+		},
 	}
 	for _, pm := range m.GetModels() {
 		out.Models = append(out.Models, ModelInfo{
