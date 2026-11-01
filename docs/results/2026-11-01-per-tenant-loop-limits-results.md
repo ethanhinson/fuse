@@ -21,8 +21,9 @@
 
 ## Known issues and follow-ups
 
-- **Live-loop cap counts the tenant's whole registry history.** When it occurs: every `StartLoop` for a tenant with a cap lists all of its registry records under that tenant's admission lock (fsstore also holds its store-wide lock). Practical impact: admission latency grows with history. Confirmed. Workaround: none. Next action: add a count query to the registry stores. Backlog verdict: No existing change fits (checked 3).
+- **Live-loop cap counts the tenant's whole registry history.** When it occurs: every `StartLoop` for a tenant with a cap lists all of its registry records under that tenant's admission lock (fsstore also holds its store-wide lock). Practical impact: admission latency grows with history. Confirmed. Workaround: none. Next action: add a count query to the registry stores. Backlog verdict: tracked by change 0106.
 - **A start in flight can be counted twice.** When it occurs: while a loop is registered but its start has not returned, it counts once in the registry and once as a reservation, so concurrent starts can be refused slightly below the cap (fail-closed, no `Retry-After`). Practical impact: rare over-refusal. Confirmed. Next action: key reservations by loop id. Backlog verdict: No existing change fits (checked 3).
-- **Per-tenant buckets and locks are never evicted.** Practical impact: one small entry per distinct authenticated tenant for the process lifetime. Confirmed, minor. Next action: evict idle entries. Backlog verdict: No existing change fits (checked 3).
+- **Per-tenant buckets and locks are never evicted.** Practical impact: one small entry per distinct authenticated tenant for the process lifetime. Confirmed, minor. Next action: evict idle entries. Backlog verdict: tracked by change 0107.
+- ADR-0074's "concurrent starts cannot overshoot the cap" holds within a process only; across replicas the live-loop cap is a soft bound (overshoot bounded by the replica count).
 - A resuming `Send` also spends a start-rate token, and a tenant at its cap sending to a finished, unresumable loop gets `ResourceExhausted` rather than `FailedPrecondition`.
 - The plan was authored inline because `superpowers:writing-plans` is unavailable here.
