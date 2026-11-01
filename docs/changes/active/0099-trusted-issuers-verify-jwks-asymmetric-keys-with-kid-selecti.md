@@ -15,7 +15,7 @@ discovered_from: []
 adrs: [72]
 spec: 'docs/superpowers/specs/2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md'
 plan: 'docs/superpowers/plans/2026-11-01-trusted-issuers-jwks.md'
-results:
+results: 'docs/results/2026-11-01-trusted-issuers-jwks-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md](../../superpowers/specs/2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md) |
 | Plan | [2026-11-01-trusted-issuers-jwks.md](../../superpowers/plans/2026-11-01-trusted-issuers-jwks.md) |
+| Results | [2026-11-01-trusted-issuers-jwks-results.md](../../results/2026-11-01-trusted-issuers-jwks-results.md) |
 | ADRs | [ADR-0072](../../adrs/0072-trusted-issuers-may-use-asymmetric-jwks-keys-tenant-prefixes.md) |
 <!-- docket:artifacts:end -->
 
