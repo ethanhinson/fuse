@@ -17,6 +17,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/loopauth"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
+	"github.com/ethanhinson/fuse/internal/tenantlimit"
 )
 
 // With no capability source wired, the RPC exists and answers Unimplemented,
@@ -123,6 +124,11 @@ func TestGetCapabilitiesMapsEveryField(t *testing.T) {
 		},
 		SpecPolicy: &loopv1.SpecPolicy{McpHosts: []string{"*.example.com"}, DenyPrivateNetworks: true, ModelsRegistryOnly: true},
 		Server:     &loopv1.ServerInfo{Version: "v1.2.3", DigestAlgorithm: "sha256"},
+		Limits:     &loopv1.TenantLimits{},
+	}
+	// spec_policy (7) and limits (8) are both advertised side by side.
+	if resp.Msg.GetSpecPolicy() == nil || resp.Msg.GetLimits() == nil {
+		t.Fatalf("spec_policy and limits must both be present: %v", resp.Msg)
 	}
 	if !proto.Equal(resp.Msg, want) {
 		t.Fatalf("response mismatch:\n got %v\nwant %v", resp.Msg, want)
@@ -212,5 +218,56 @@ func TestToProtoCapabilitiesClampsAndCopies(t *testing.T) {
 	if got.Models[0].Tags[0] != "tools" || got.SecretRefs[0] != "S" ||
 		got.SpecMcpAuthKinds[0] != harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER {
 		t.Fatalf("mapped answer aliases the caller's slices: %v", got)
+	}
+}
+
+// GetCapabilities reports the caller's effective limits from the limiter that
+// enforces them: the default with the caller's per-axis override applied.
+func TestGetCapabilitiesReportsTenantLimits(t *testing.T) {
+	lim, err := tenantlimit.New(tenantlimit.Config{
+		Default: tenantlimit.Limits{MaxLiveLoops: 2, StartsPerMinute: 3},
+		Tenants: map[string]tenantlimit.Limits{"big": {MaxLiveLoops: 10}},
+	}, func(context.Context, event.TenantID) (int, error) { return 0, nil }, nil)
+	if err != nil {
+		t.Fatalf("tenantlimit.New: %v", err)
+	}
+	src := &fakeCaps{answer: fullAnswer()}
+	_, h := loopv1connect.NewLoopServiceHandler(
+		NewHandler(&fakeRuntime{}).WithCapabilities(src).WithLimits(lim),
+		connect.WithInterceptors(NewAuthInterceptor(limitVerifier())))
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	client := loopv1connect.NewLoopServiceClient(srv.Client(), srv.URL)
+
+	for token, want := range map[string]*loopv1.TenantLimits{
+		"tok-big": {MaxLiveLoops: 10, StartsPerMinute: 3},
+		"tok-a":   {MaxLiveLoops: 2, StartsPerMinute: 3},
+	} {
+		resp, err := client.GetCapabilities(context.Background(),
+			bearer(connect.NewRequest(&loopv1.GetCapabilitiesRequest{}), token))
+		if err != nil {
+			t.Fatalf("GetCapabilities as %s: %v", token, err)
+		}
+		if !proto.Equal(resp.Msg.GetLimits(), want) {
+			t.Fatalf("limits as %s = %v, want %v", token, resp.Msg.GetLimits(), want)
+		}
+		// spec_policy (field 7) and limits (field 8) travel together.
+		if sp := resp.Msg.GetSpecPolicy(); sp == nil || !sp.GetModelsRegistryOnly() || len(sp.GetMcpHosts()) != 1 {
+			t.Fatalf("spec_policy as %s = %v, want the advertised policy alongside limits", token, sp)
+		}
+	}
+}
+
+// With no limiter the limits are always present and all zero, so a client never
+// has to tell "absent" from "unlimited".
+func TestGetCapabilitiesLimitsZeroWithoutLimiter(t *testing.T) {
+	resp, err := capsServer(t, &fakeCaps{answer: fullAnswer()}, testVerifier()).GetCapabilities(context.Background(),
+		bearer(connect.NewRequest(&loopv1.GetCapabilitiesRequest{}), testToken))
+	if err != nil {
+		t.Fatalf("GetCapabilities: %v", err)
+	}
+	l := resp.Msg.Limits
+	if l == nil || l.MaxLiveLoops != 0 || l.StartsPerMinute != 0 {
+		t.Fatalf("limits = %v, want present and all zero", l)
 	}
 }

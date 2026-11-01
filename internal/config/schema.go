@@ -252,6 +252,10 @@ type AuthTokenConfig struct {
 //     reference by name (change 0085): each maps a name to an environment
 //     variable or a file on this host and names the tenants allowed to use it.
 //     With none configured every secret_ref in a spec is refused.
+//   - Limits bounds, per tenant, how many loops a tenant keeps alive and how
+//     fast it starts them (change 0103). A default block applies to every
+//     tenant and per-tenant entries override it axis by axis. Zero (or no
+//     block) means unlimited.
 type LoopServerConfig struct {
 	Auth     []AuthTokenConfig    `yaml:"auth"`
 	Issuers  []IssuerConfig       `yaml:"issuers"`
@@ -260,6 +264,7 @@ type LoopServerConfig struct {
 	// SpecPolicy is the operator's floor on what a client's harness spec may
 	// point at (change 0101). Operator-only, like the rest of the block.
 	SpecPolicy SpecPolicyConfig `yaml:"spec_policy"`
+	Limits     LoopLimitsConfig `yaml:"limits"`
 }
 
 // Spec policy model modes.
@@ -302,6 +307,32 @@ func (p SpecPolicyConfig) RegistryOnly() bool { return p.Models == SpecModelsReg
 
 func (p SpecPolicyConfig) isZero() bool {
 	return len(p.MCPHosts) == 0 && p.DenyPrivateNetworks == nil && len(p.AllowHTTPHosts) == 0 && p.Models == ""
+
+}
+
+// LoopLimitsConfig is loop_server.limits (change 0103): per-tenant bounds on
+// how many loops a tenant keeps alive and how fast it starts them. Default
+// applies to every tenant; Tenants overrides it per tenant id, axis by axis
+// (an override axis > 0 replaces the default axis, 0 or omitted inherits it).
+// Zero everywhere means unlimited. Operator-only, trusted-file only.
+type LoopLimitsConfig struct {
+	Default LoopLimitConfig            `yaml:"default"`
+	Tenants map[string]LoopLimitConfig `yaml:"tenants"`
+}
+
+// LoopLimitConfig is one tenant's limits. 0 on an axis means unlimited
+// (in Default) or inherit-the-default (in a Tenants override).
+type LoopLimitConfig struct {
+	MaxLiveLoops    int `yaml:"max_live_loops"`
+	StartsPerMinute int `yaml:"starts_per_minute"`
+}
+
+// Configured reports whether the block carries anything: a non-zero default
+// axis, or any Tenants entry at all. An all-zero Tenants entry still counts so
+// the loader keeps the block and validation sees a bad tenant key.
+func (l LoopLimitsConfig) Configured() bool {
+	return l.Default != (LoopLimitConfig{}) || len(l.Tenants) > 0
+
 }
 
 // SecretSourceConfig is one entry of loop_server.secrets (change 0085): the

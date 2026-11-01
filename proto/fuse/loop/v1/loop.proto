@@ -24,6 +24,7 @@ option go_package = "github.com/ethanhinson/fuse/internal/loopwire/v1;loopv1";
 // catch-up, so a reconnecting client re-opens Observe from its last-seen seq.
 service LoopService {
   // StartLoop constructs and drives one agent loop, returning its loop_id.
+  // A start beyond the tenant's loop limits fails RESOURCE_EXHAUSTED.
   rpc StartLoop(StartLoopRequest) returns (StartLoopResponse);
   // Send injects human input at the loop's next turn boundary.
   rpc Send(SendRequest) returns (SendResponse);
@@ -135,6 +136,10 @@ message GetCapabilitiesResponse {
   ServerInfo server = 6;
   // The operator's floor on a spec's own URLs and model ids.
   SpecPolicy spec_policy = 7;
+  // The caller's tenant's effective loop limits (loop_server.limits, change
+  // 0103): the default with this tenant's overrides applied. 0 means unlimited.
+  // Always set; all-zero when the server configures no limits.
+  TenantLimits limits = 8;
 }
 
 // SpecPolicy is what StartLoop holds a client's spec to besides the
@@ -198,4 +203,15 @@ message ServerInfo {
   string version = 1;
   // Algorithm id StartLoopResponse.harness_digest is prefixed with ("sha256").
   string digest_algorithm = 2;
+}
+
+// TenantLimits bounds one tenant's loops on this server. A StartLoop beyond
+// either limit fails with RESOURCE_EXHAUSTED; the rate refusal carries a
+// Retry-After header in seconds. Rate counters are per server process.
+message TenantLimits {
+  // Most loops the tenant may have live at once (0: unlimited).
+  uint32 max_live_loops = 1;
+  // Most StartLoop calls per minute, as a token bucket with one minute of burst
+  // (0: unlimited).
+  uint32 starts_per_minute = 2;
 }

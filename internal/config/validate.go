@@ -179,6 +179,7 @@ func (c Config) Problems() []Problem {
 	if err := validateSecrets(c.LoopServer.Secrets); err != nil {
 		ps = append(ps, Problem{Path: "loop_server.secrets", Message: strings.TrimPrefix(err.Error(), "config: "), Err: err})
 	}
+	ps = append(ps, limitProblems(c.LoopServer.Limits)...)
 	if err := validateObservability(c.Observability); err != nil {
 		ps = append(ps, Problem{Path: "observability", Message: strings.TrimPrefix(err.Error(), "config: "), Err: err})
 	}
@@ -194,6 +195,32 @@ func (c Config) Problems() []Problem {
 		}
 	}
 
+	return ps
+}
+
+// limitProblems checks loop_server.limits (change 0103): no negative axis, and
+// every override key is a tenant id a principal can actually carry.
+func limitProblems(l LoopLimitsConfig) []Problem {
+	var ps []Problem
+	axes := func(prefix string, v LoopLimitConfig) {
+		if v.MaxLiveLoops < 0 {
+			ps = append(ps, Problem{Path: prefix + ".max_live_loops", Message: fmt.Sprintf("must be >= 0, got %d", v.MaxLiveLoops)})
+		}
+		if v.StartsPerMinute < 0 {
+			ps = append(ps, Problem{Path: prefix + ".starts_per_minute", Message: fmt.Sprintf("must be >= 0, got %d", v.StartsPerMinute)})
+		}
+	}
+	axes("loop_server.limits.default", l.Default)
+	for _, k := range sortedKeys(l.Tenants) {
+		if k != "_default" && !loopauth.ValidTenantID(k) {
+			ps = append(ps, Problem{
+				Path:    "loop_server.limits.tenants",
+				Message: fmt.Sprintf("tenant %q must be _default or lowercase letters, digits, '-' or '_' (starting alphanumeric)", k),
+			})
+			continue
+		}
+		axes("loop_server.limits.tenants."+k, l.Tenants[k])
+	}
 	return ps
 }
 

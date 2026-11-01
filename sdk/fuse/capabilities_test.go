@@ -15,6 +15,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/capabilities"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopconnect"
+	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
 )
 
@@ -131,5 +132,19 @@ func TestLocalCapabilitiesUnsupported(t *testing.T) {
 	c := NewLocal(&fakeRuntime{}, Credentials{Tenant: "acme"})
 	if _, err := c.Capabilities(context.Background()); !errors.Is(err, ErrCapabilitiesUnsupported) {
 		t.Errorf("local Capabilities err = %v, want ErrCapabilitiesUnsupported", err)
+	}
+}
+
+// TestFromProtoCapabilitiesLimits: the tenant's loop limits map through, and an
+// absent limits message maps to the zero value (unlimited).
+func TestFromProtoCapabilitiesLimits(t *testing.T) {
+	got := fromProtoCapabilities(&loopv1.GetCapabilitiesResponse{
+		Limits: &loopv1.TenantLimits{MaxLiveLoops: 4, StartsPerMinute: 9},
+	})
+	if want := (Limits{MaxLiveLoops: 4, StartsPerMinute: 9}); got.Limits != want {
+		t.Errorf("Limits = %+v, want %+v", got.Limits, want)
+	}
+	if got := fromProtoCapabilities(&loopv1.GetCapabilitiesResponse{}); got.Limits != (Limits{}) {
+		t.Errorf("nil Limits = %+v, want zero", got.Limits)
 	}
 }

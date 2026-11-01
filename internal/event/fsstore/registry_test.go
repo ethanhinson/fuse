@@ -2,8 +2,10 @@ package fsstore
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/event"
@@ -77,4 +79,66 @@ func TestFSStoreConformance(t *testing.T) {
 		t.Cleanup(func() { _ = s.Close() })
 		return s, s
 	})
+}
+
+// TestFSListConcurrentWithRegisterAndAppend: List reads sidecars without the
+// store-wide lock; run under -race with writers registering loops, flipping
+// liveness and appending, every List must decode whole records.
+func TestFSListConcurrentWithRegisterAndAppend(t *testing.T) {
+	s := NewDurableFSStore(t.TempDir())
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+
+	const loops = 20
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < loops; i++ {
+			k := event.StreamKey{Tenant: "acme", Loop: event.LoopID(fmt.Sprintf("L%d", i))}
+			if err := s.Register(ctx, event.LoopRecord{Key: k, OwnerNodeID: "nodeA", Live: true}); err != nil {
+				t.Errorf("Register: %v", err)
+				return
+			}
+			if err := s.Append(ctx, k, event.Event{Kind: event.KindTurnStart}); err != nil {
+				t.Errorf("Append: %v", err)
+				return
+			}
+			if err := s.SetLive(ctx, k, false, "nodeA"); err != nil {
+				t.Errorf("SetLive: %v", err)
+				return
+			}
+		}
+		close(done)
+	}()
+	for r := 0; r < 4; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				recs, err := s.List(ctx, "acme")
+				if err != nil {
+					t.Errorf("List: %v", err)
+					return
+				}
+				for _, rec := range recs {
+					if rec.OwnerNodeID != "nodeA" || rec.CreatedAt.IsZero() {
+						t.Errorf("torn record: %+v", rec)
+						return
+					}
+				}
+				select {
+				case <-done:
+					return
+				default:
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	recs, err := s.List(ctx, "acme")
+	if err != nil || len(recs) != loops {
+		t.Fatalf("final List = %d records, err %v; want %d", len(recs), err, loops)
+	}
 }

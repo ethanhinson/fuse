@@ -56,6 +56,10 @@ func (h *Handler) GetCapabilities(ctx context.Context, req *connect.Request[loop
 	if err != nil {
 		return fail(connect.NewError(connect.CodeInternal, err))
 	}
+	// The limits come from the limiter StartLoop enforces, never the source,
+	// so the advertisement cannot disagree with a refusal (change 0103).
+	lim := h.limits.For(tenant)
+	c.Limits = capabilities.Limits{MaxLiveLoops: lim.MaxLiveLoops, StartsPerMinute: lim.StartsPerMinute}
 	resp := connect.NewResponse(toProtoCapabilities(c))
 	if id := observeotel.TraceID(ctx); id != "" {
 		resp.Header().Set("Fuse-Trace-Id", id)
@@ -75,6 +79,12 @@ func toProtoCapabilities(c capabilities.Capabilities) *loopv1.GetCapabilitiesRes
 			ModelsRegistryOnly:  c.SpecPolicy.ModelsRegistryOnly,
 		},
 		Server: &loopv1.ServerInfo{Version: c.Server.Version, DigestAlgorithm: c.Server.DigestAlgorithm},
+		// Always set (all zero when unlimited), so a client never has to tell
+		// "absent" from "unlimited".
+		Limits: &loopv1.TenantLimits{
+			MaxLiveLoops:    clampUint32(c.Limits.MaxLiveLoops),
+			StartsPerMinute: clampUint32(c.Limits.StartsPerMinute),
+		},
 	}
 	for _, m := range c.Models {
 		out.Models = append(out.Models, &loopv1.ModelInfo{

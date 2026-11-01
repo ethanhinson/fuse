@@ -659,10 +659,16 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	// dropped and named in the aggregated permission warning (ADR-0006).
 	// loop_server.issuers is the same surface: an issuer's signing key mints
 	// tokens for any subject in its tenants.
-	if len(raw.LoopServer.Auth) > 0 || len(raw.LoopServer.Issuers) > 0 || raw.LoopServer.LeaseTTL != "" || len(raw.LoopServer.Secrets) > 0 || !raw.LoopServer.SpecPolicy.isZero() {
+	// loop_server.limits (change 0103) is operator policy, not a credential, but
+	// it lives in the same trusted-only block: a repo file must neither loosen
+	// nor tighten a tenant's loop limits.
+	if len(raw.LoopServer.Auth) > 0 || len(raw.LoopServer.Issuers) > 0 || raw.LoopServer.LeaseTTL != "" || len(raw.LoopServer.Secrets) > 0 || !raw.LoopServer.SpecPolicy.isZero() || raw.LoopServer.Limits.Configured() {
 		if trusted {
 			if !raw.LoopServer.SpecPolicy.isZero() {
 				c.LoopServer.SpecPolicy = raw.LoopServer.SpecPolicy
+			}
+			if raw.LoopServer.Limits.Configured() {
+				c.LoopServer.Limits = raw.LoopServer.Limits
 			}
 			// loop_server.secrets (change 0085) names the host secrets a harness
 			// spec may reference: a credential surface like the rest of the block.

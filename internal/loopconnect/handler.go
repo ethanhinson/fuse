@@ -4,7 +4,8 @@
 // over a runtime.Runtime: StartLoop / Send / GetCapabilities (unary) and Observe
 // (server-streaming history-then-live). It is a pure adapter - it imports internal/runtime,
 // internal/event, the generated loopwire stubs, the internal/capabilities answer
-// types and the public harness types (for a
+// types, the internal/tenantlimit per-tenant loop limiter (change 0103) and the
+// public harness types (for a
 // refused spec's violations, change 0085), and NEVER a renderer, TUI,
 // MCP tool registry, or CLI type. Its "no approval gate" (auto-approve) policy is the
 // composition root's choice, not a property of the Runtime seam.
@@ -17,6 +18,8 @@ package loopconnect
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -32,6 +35,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/observe"
 	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
 	"github.com/ethanhinson/fuse/internal/runtime"
+	"github.com/ethanhinson/fuse/internal/tenantlimit"
 )
 
 // Handler adapts a runtime.Runtime to the generated LoopServiceHandler. Tenant is a
@@ -68,6 +72,13 @@ type Handler struct {
 	// caps answers GetCapabilities. Nil means the RPC answers Unimplemented; the
 	// composition root injects it via WithCapabilities.
 	caps CapabilitySource
+
+	// limits is the per-tenant loop limiter (change 0103) StartLoop admits
+	// against and GetCapabilities advertises from, so the advertisement and the
+	// enforcement read one source. Nil means unlimited: the fast path, and
+	// GetCapabilities reports zeros. The composition root injects it via
+	// WithLimits.
+	limits *tenantlimit.Limiter
 }
 
 // compile-time assertion that Handler satisfies the generated service interface.
@@ -103,6 +114,15 @@ func (h *Handler) WithBaseContext(ctx context.Context) *Handler {
 func (h *Handler) WithRegistry(r event.LoopRegistry) *Handler {
 	if r != nil {
 		h.registry = r
+	}
+	return h
+}
+
+// WithLimits injects the per-tenant loop limiter StartLoop enforces and
+// GetCapabilities reports. A nil limiter keeps unlimited. Chainable.
+func (h *Handler) WithLimits(l *tenantlimit.Limiter) *Handler {
+	if l != nil {
+		h.limits = l
 	}
 	return h
 }
@@ -172,6 +192,18 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 			return nil, aerr
 		}
 	}
+	// Per-tenant limits (change 0103) apply after authentication and the spoof
+	// and orchestrate checks, so an unauthenticated or refused caller spends
+	// nothing, and before the seam, so a refused start creates no loop. The
+	// reservation is held until this handler returns, on every path, so a
+	// failed start never leaks a slot.
+	release, lerr := h.limits.Admit(ctx, tenant)
+	if lerr != nil {
+		cerr := limitError(lerr)
+		apiOutcome = observeotel.OutcomeFromError(ctx, cerr)
+		return nil, cerr
+	}
+	defer release()
 	loopBase := h.baseCtx
 	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
 		loopBase = trace.ContextWithSpanContext(loopBase, sc)
@@ -206,6 +238,9 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	// The loop is registered live now, so the in-flight reservation would count
+	// it twice; drop it here (release is idempotent, the defer covers errors).
+	release()
 	// Record ownership. The seam's StartLoop already Registered the record (with
 	// OwnerNodeID + Live) under StreamKey{tenant, handle.ID()}; we Resolve-then-
 	// Register so setting Owner preserves OwnerNodeID/Live/CreatedAt (Register is an
@@ -226,6 +261,31 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		resp.Header().Set("Fuse-Trace-Id", id)
 	}
 	return resp, nil
+}
+
+// limitError maps an Admit failure: a limit refusal is ResourceExhausted
+// naming the limit, with Retry-After (whole seconds, rounded up) for the rate
+// axis; a caller that gave up while waiting for the tenant's admission lock gets
+// its own context code; any other failure means the live loops could not be
+// counted and is Unavailable (fail closed: the start does not proceed).
+func limitError(err error) *connect.Error {
+	var refused *tenantlimit.RefusedError
+	if errors.As(err, &refused) {
+		cerr := connect.NewError(connect.CodeResourceExhausted, err)
+		if refused.RetryAfter > 0 {
+			secs := max(int(math.Ceil(refused.RetryAfter.Seconds())), 1)
+			cerr.Meta().Set("Retry-After", strconv.Itoa(secs))
+		}
+		return cerr
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return connect.NewError(connect.CodeCanceled, err)
+	case errors.Is(err, context.DeadlineExceeded):
+		return connect.NewError(connect.CodeDeadlineExceeded, err)
+	}
+	// A failed registry count is a store outage the client can retry, not a bug.
+	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("loopconnect: cannot count live loops: %w", err))
 }
 
 // harnessError maps a refused harness spec (change 0085) to its Connect error:
@@ -297,8 +357,23 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 	// resume call. Resume is tenant-scoped (ADR-0034); if it cannot revive the loop
 	// (genuinely unknown, or live on another instance), the retry's error falls through
 	// to the mapping below unchanged.
+	//
+	// Reviving a loop makes it live again, so the resume is admitted by the
+	// per-tenant limits exactly as a StartLoop is (change 0103): a tenant at its
+	// cap cannot exceed it by resuming. Only this resume path is admitted; a Send
+	// to a loop that is still live never reaches here, so it is never refused and
+	// takes no slot. The reservation is held until the handler returns.
 	if errors.Is(err, runtime.ErrLoopFinished) {
+		release, lerr := h.limits.Admit(ctx, tenant)
+		if lerr != nil {
+			cerr := limitError(lerr)
+			apiOutcome = observeotel.OutcomeFromError(ctx, cerr)
+			return nil, cerr
+		}
+		defer release()
 		if _, rerr := h.rt.Resume(ctx, tenant, m.LoopId); rerr == nil {
+			// Registered live again: drop the in-flight reservation (idempotent).
+			release()
 			err = runtime.SendOrSteer(ctx, h.rt, tenant, m.LoopId, m.Input, opts)
 		}
 	}

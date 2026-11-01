@@ -630,11 +630,57 @@ function fuseLoopToken(secret: string, sub: string, tenant?: string): string {
 Mint a fresh token per call (or cache one for less than its lifetime). A
 long-running `Observe` stream is authenticated once, when it opens.
 
+#### Per-tenant loop limits
+
+`loop_server.limits` bounds how many loops each tenant keeps alive and how fast
+it starts new ones:
+
+```yaml
+loop_server:
+  limits:
+    default:                  # applies to every tenant
+      max_live_loops: 20      # live (not finished) loops per tenant
+      starts_per_minute: 30   # StartLoop attempts per tenant per minute
+    tenants:
+      team-big:
+        max_live_loops: 200   # overrides only this axis; starts_per_minute inherits 30
+```
+
+- **Zero means unlimited.** An omitted or `0` axis in `default` is unlimited.
+- **Overrides are per axis.** A tenant entry's axis above zero replaces the
+  default's; `0` or omitted inherits it. An override therefore cannot unset one
+  axis back to unlimited: use a large value instead.
+- **Refusals.** A start over either limit fails with `ResourceExhausted`; a rate
+  refusal carries a `Retry-After` hint for when the next start token is due.
+- **Check order.** The start rate is checked before the live-loop cap, and every
+  authenticated start attempt spends a start token, including one the cap then
+  refuses.
+- **Scope.** The start rate is counted per server process (with several replicas
+  it applies per pod). The live-loop cap counts the tenant's live loops in the
+  shared loop registry: it is exact within one process and a soft bound across
+  replicas, where concurrent starts on different replicas can overshoot it by at
+  most the replica count.
+- **Registry scans.** Each cap check scans the tenant's registry records, so
+  `max_live_loops` alone leaves those scans unthrottled. Set `starts_per_minute`
+  as well to bound them.
+- **Crashed replicas.** Loops owned by a replica that crashed still count
+  against the cap until their lease expires (`lease_ttl`, default 30s).
+- **Tenant keys.** `limits.tenants` keys are exact tenant ids; there is no prefix
+  or pattern form.
+- **Resumes.** A `Send` that resumes a finished loop is admitted like a start:
+  it spends a start token and may fail `ResourceExhausted` when the tenant is at
+  its live-loop cap. A `Send` to a loop that is still live is never refused and
+  takes no slot.
+
+Like `auth` and `issuers`, `limits` is honored only from `~/.fuse/config.yml`.
+
 The service is four RPCs:
 
 - `StartLoop` / `Send` — unary. The authoritative tenant is the authenticated
   token's; the wire `tenant` field, when set, must match it (a mismatch is a
-  spoof, see above).
+  spoof, see above). `StartLoop`, and a `Send` that resumes a finished loop,
+  may fail `ResourceExhausted` when the tenant is over its loop limits (see
+  Per-tenant loop limits).
 - `GetCapabilities` - unary and read-only, with the same authentication as
   `StartLoop`. It starts no loop. For the authenticated tenant it returns:
   - models: alias, gateway id, effective context window, effective max output
@@ -649,6 +695,8 @@ The service is four RPCs:
     still resolves only for its hosts)
   - spec MCP auth kinds
   - server version and digest algorithm
+  - `limits`: the caller's effective `max_live_loops` and `starts_per_minute`
+    (0 means unlimited)
 
   `cli/` routes are never listed. Model entries carry optional display keys,
   and `advertise: false` hides an entry from the listing:

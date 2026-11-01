@@ -58,6 +58,7 @@ const (
 // LoopServiceClient is a client for the fuse.loop.v1.LoopService service.
 type LoopServiceClient interface {
 	// StartLoop constructs and drives one agent loop, returning its loop_id.
+	// A start beyond the tenant's loop limits fails RESOURCE_EXHAUSTED.
 	StartLoop(context.Context, *connect.Request[v1.StartLoopRequest]) (*connect.Response[v1.StartLoopResponse], error)
 	// Send injects human input at the loop's next turn boundary.
 	Send(context.Context, *connect.Request[v1.SendRequest]) (*connect.Response[v1.SendResponse], error)
@@ -141,6 +142,7 @@ func (c *loopServiceClient) GetCapabilities(ctx context.Context, req *connect.Re
 // LoopServiceHandler is an implementation of the fuse.loop.v1.LoopService service.
 type LoopServiceHandler interface {
 	// StartLoop constructs and drives one agent loop, returning its loop_id.
+	// A start beyond the tenant's loop limits fails RESOURCE_EXHAUSTED.
 	StartLoop(context.Context, *connect.Request[v1.StartLoopRequest]) (*connect.Response[v1.StartLoopResponse], error)
 	// Send injects human input at the loop's next turn boundary.
 	Send(context.Context, *connect.Request[v1.SendRequest]) (*connect.Response[v1.SendResponse], error)

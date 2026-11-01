@@ -31,6 +31,19 @@ type Capabilities struct {
 	SpecPolicy SpecPolicy
 	// Server identifies the server build.
 	Server Server
+	// Limits are the tenant's effective loop limits (0 = unlimited). The
+	// source does not fill them; the Connect edge does, from the limiter that
+	// enforces them (change 0103), so both read one source.
+	Limits Limits
+}
+
+// Limits are one tenant's effective loop limits on this server. 0 on a field
+// means unlimited.
+type Limits struct {
+	// MaxLiveLoops is the most loops the tenant may have live at once.
+	MaxLiveLoops int
+	// StartsPerMinute is the most StartLoop calls per minute.
+	StartsPerMinute int
 }
 
 // SpecPolicy is the advertised part of loop_server.spec_policy.

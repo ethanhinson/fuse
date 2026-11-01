@@ -124,6 +124,10 @@ loop_server:
 	if !slices.Equal(resp.Msg.SecretRefs, []string{"caps-key"}) {
 		t.Errorf("tenant-a secret refs = %v, want [caps-key]", resp.Msg.SecretRefs)
 	}
+	// No loop_server.limits block: the limits are always advertised, as zeros.
+	if l := resp.Msg.GetLimits(); l == nil || l.GetMaxLiveLoops() != 0 || l.GetStartsPerMinute() != 0 {
+		t.Errorf("limits without a limits block = %v, want present and all zero", l)
+	}
 
 	sdkB := fuse.NewRemote(base, fuse.Credentials{Token: "tok-b", Tenant: "tenant-b"}, fuse.WithHTTPClient(h2cClient()))
 	b, err := sdkB.Capabilities(context.Background())
