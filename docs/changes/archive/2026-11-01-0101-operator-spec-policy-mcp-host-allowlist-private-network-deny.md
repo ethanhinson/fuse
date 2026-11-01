@@ -2,7 +2,7 @@
 id: 101
 slug: 'operator-spec-policy-mcp-host-allowlist-private-network-deny'
 title: 'Operator spec policy: MCP host allowlist, private-network deny, registry-only models'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md](../../superpowers/specs/2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md) |
+| Spec (merged) | [2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md) |
 | Plan | [2026-10-31-operator-spec-policy.md](../../superpowers/plans/2026-10-31-operator-spec-policy.md) |
 | Results | [2026-10-31-operator-spec-policy-mcp-host-allowlist-private-network-deny-results.md](../../results/2026-10-31-operator-spec-policy-mcp-host-allowlist-private-network-deny-results.md) |
 | ADRs | [ADR-0073](../../adrs/0073-operator-only-spec-policy-floor-for-client-harness-egress-an.md) |

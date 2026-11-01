@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0101 — Operator spec policy: MCP host allowlist, private-network deny, registry-only models](../../changes/active/0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md)**
+> ↩ **[Change 0101 — Operator spec policy: MCP host allowlist, private-network deny, registry-only models](../../changes/archive/2026-11-01-0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md)**
 <!-- docket:backlink:end -->
 
 # Operator spec policy implementation plan
