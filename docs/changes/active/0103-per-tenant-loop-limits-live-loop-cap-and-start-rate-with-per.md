@@ -2,7 +2,7 @@
 id: 103
 slug: 'per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per'
 title: 'Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides'
-status: 'proposed'
+status: 'in-progress'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per'
 pr:
 blocked_by:
 reconciled: false

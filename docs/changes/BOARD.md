@@ -1,11 +1,12 @@
 # Backlog
 
-**103 changes** — 🟢 2 in progress · 🔵 1 built · 🟣 1 groomed · 🟡 2 proposed · ⚪ 3 deferred · ✅ 87 done · 🗑️ 7 killed
+**103 changes** — 🟢 3 in progress · 🔵 1 built · 🟡 2 proposed · ⚪ 3 deferred · ✅ 87 done · 🗑️ 7 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (3)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
+| [0103](active/0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | `medium` | `feat` | [spec](../superpowers/specs/2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md) | `feat/per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per` | building |
 | [0100](active/0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md) | `feat/scoped-principals-rpc-scopes-harness-digest-pin-and-principa` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
@@ -14,12 +15,6 @@
 | # | Title | Priority | Type | PR | State |
 |---|-------|----------|------|----|-------|
 | [0101](active/0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | `high` | `feat` | [#122](https://github.com/ethanhinson/fuse/pull/122) | awaiting merge |
-
-## 🟣 Groomed (1)
-
-| # | Title | Priority | Type | Spec | Readiness |
-|---|-------|----------|------|------|-----------|
-| [0103](active/0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | `medium` | `feat` | [spec](../superpowers/specs/2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md) | build-ready |
 
 ## 🟡 Proposed (2)
 
