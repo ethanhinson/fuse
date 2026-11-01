@@ -230,6 +230,40 @@ grant pod-create rights to a server that cannot use them. There is no Kubernetes
 configure in this chart version; do not hand-set `sandbox.kubernetes.minVersion` hoping to unlock
 it.
 
+## Spec policy: what a client's harness spec may point at
+
+A client of a networked server supplies a harness spec, and that spec can name
+MCP servers, a custom search URL and model ids. `loop_server.spec_policy` in the
+operator config (`~/.fuse/config.yml`; ignored from repo-local files) is the
+floor those values are held to. `GetCapabilities` advertises `mcp_hosts`,
+`deny_private_networks` and `models_registry_only`, and `StartLoop` reports a
+violation (`fuse.operator_only`) at the offending field. The public
+`harness.Service.ValidateHarness` is not server-aware and does not apply the policy.
+
+```yaml
+loop_server:
+  spec_policy:
+    mcp_hosts: ["*.example.com"]   # empty = any public host
+    deny_private_networks: true    # default true
+    allow_http_hosts: [localhost]  # hosts where http:// is accepted; else https only
+    models: registry-only          # any (default) | registry-only
+```
+
+- `mcp_hosts` patterns are exact hostnames or `*.suffix` (subdomains only). It
+  covers `mcp_servers[*].url` and `research.custom.url`.
+- `allow_http_hosts` accepts the same exact or `*.suffix` patterns.
+- `deny_private_networks` refuses loopback, link-local, RFC-1918, unique-local,
+  CGNAT (`100.64.0.0/10`) and NAT64 (`64:ff9b::/96`) addresses, hostnames
+  resolving to them (lookups share one 2-second timeout per spec; a failed
+  lookup is a refusal, worded the same as a private host), and `localhost`,
+  `.local`, `.internal` and `.home.arpa` names. Resolution happens once at validation, so it is not DNS
+  rebinding protection.
+- `models: registry-only` requires each spec `models.entries[*].id` to equal the
+  gateway id of an advertised registry model.
+- MCP servers in the operator's own config are exempt.
+- Local development: `allow_http_hosts: [localhost]` plus
+  `deny_private_networks: false`.
+
 ## Scaling, rolling updates, and the mid-turn caveat
 
 Replicas are stateless in the sense that matters: loops live in Postgres, and ownership is a

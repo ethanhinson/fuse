@@ -659,8 +659,11 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	// dropped and named in the aggregated permission warning (ADR-0006).
 	// loop_server.issuers is the same surface: an issuer's signing key mints
 	// tokens for any subject in its tenants.
-	if len(raw.LoopServer.Auth) > 0 || len(raw.LoopServer.Issuers) > 0 || raw.LoopServer.LeaseTTL != "" || len(raw.LoopServer.Secrets) > 0 {
+	if len(raw.LoopServer.Auth) > 0 || len(raw.LoopServer.Issuers) > 0 || raw.LoopServer.LeaseTTL != "" || len(raw.LoopServer.Secrets) > 0 || !raw.LoopServer.SpecPolicy.isZero() {
 		if trusted {
+			if !raw.LoopServer.SpecPolicy.isZero() {
+				c.LoopServer.SpecPolicy = raw.LoopServer.SpecPolicy
+			}
 			// loop_server.secrets (change 0085) names the host secrets a harness
 			// spec may reference: a credential surface like the rest of the block.
 			if len(raw.LoopServer.Secrets) > 0 {

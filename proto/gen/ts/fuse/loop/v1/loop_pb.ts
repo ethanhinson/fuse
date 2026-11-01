@@ -26,7 +26,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file fuse/loop/v1/loop.proto.
  */
 export const file_fuse_loop_v1_loop: GenFile = /*@__PURE__*/
-  fileDesc("ChdmdXNlL2xvb3AvdjEvbG9vcC5wcm90bxIMZnVzZS5sb29wLnYxIqABChBTdGFydExvb3BSZXF1ZXN0EgwKBHRhc2sYASABKAkSDQoFbW9kZWwYAiABKAkSDgoGdGVuYW50GAMgASgJEhMKC2ludGVyYWN0aXZlGAQgASgIEhsKE29yY2hlc3RyYXRlX2xvb3BfaWQYBSABKAkSLQoHaGFybmVzcxgGIAEoCzIcLmZ1c2UuaGFybmVzcy52MS5IYXJuZXNzU3BlYyI8ChFTdGFydExvb3BSZXNwb25zZRIPCgdsb29wX2lkGAEgASgJEhYKDmhhcm5lc3NfZGlnZXN0GAIgASgJImAKC1NlbmRSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSDQoFaW5wdXQYAiABKAkSDgoGdGVuYW50GAMgASgJEhEKCWludGVycnVwdBgEIAEoCBIOCgZzb3VyY2UYBSABKAkiDgoMU2VuZFJlc3BvbnNlIkMKDk9ic2VydmVSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSEAoIZnJvbV9zZXEYAiABKAQSDgoGdGVuYW50GAMgASgJIlIKDE9ic2VydmVFdmVudBIiCgVldmVudBgBIAEoCzITLmZ1c2UubG9vcC52MS5FdmVudBILCgNnYXAYAiABKAgSEQoJa2VlcGFsaXZlGAMgASgIIpwBCgVFdmVudBILCgNzZXEYASABKAQSJgoCdHMYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB25vZGVfaWQYAyABKAkSEQoJcGFyZW50X2lkGAQgASgJEg0KBWRlcHRoGAUgASgFEgwKBHR1cm4YBiABKAUSDAoEa2luZBgHIAEoCRIPCgdwYXlsb2FkGAggASgMIigKFkdldENhcGFiaWxpdGllc1JlcXVlc3QSDgoGdGVuYW50GAEgASgJIo4CChdHZXRDYXBhYmlsaXRpZXNSZXNwb25zZRInCgZtb2RlbHMYASADKAsyFy5mdXNlLmxvb3AudjEuTW9kZWxJbmZvEicKBnNraWxscxgCIAMoCzIXLmZ1c2UubG9vcC52MS5Ta2lsbEluZm8SJwoIY2VpbGluZ3MYAyADKAsyFS5mdXNlLmxvb3AudjEuQ2VpbGluZxITCgtzZWNyZXRfcmVmcxgEIAMoCRI5ChNzcGVjX21jcF9hdXRoX2tpbmRzGAUgAygOMhwuZnVzZS5oYXJuZXNzLnYxLk1jcEF1dGhUeXBlEigKBnNlcnZlchgGIAEoCzIYLmZ1c2UubG9vcC52MS5TZXJ2ZXJJbmZvItsBCglNb2RlbEluZm8SDQoFYWxpYXMYASABKAkSEgoKZ2F0ZXdheV9pZBgCIAEoCRIZChFtYXhfb3V0cHV0X3Rva2VucxgDIAEoDRIWCg5jb250ZXh0X3dpbmRvdxgEIAEoDRIhChljb250ZXh0X3dpbmRvd19pc19kZWZhdWx0GAUgASgIEg8KB3BlcnNvbmEYBiABKAkSEgoKaXNfZGVmYXVsdBgHIAEoCBINCgVsYWJlbBgIIAEoCRITCgtkZXNjcmlwdGlvbhgJIAEoCRIMCgR0YWdzGAogAygJIi4KCVNraWxsSW5mbxIMCgRuYW1lGAEgASgJEhMKC2Rlc2NyaXB0aW9uGAIgASgJIo0BCgdDZWlsaW5nEhIKCmZpZWxkX3BhdGgYASABKAkSFAoMb3BlcmF0b3Jfc2V0GAIgASgIEiUKBXZhbHVlGAMgASgLMhYuZ29vZ2xlLnByb3RvYnVmLlZhbHVlEjEKCWRpcmVjdGlvbhgEIAEoDjIeLmZ1c2UubG9vcC52MS5DZWlsaW5nRGlyZWN0aW9uIjcKClNlcnZlckluZm8SDwoHdmVyc2lvbhgBIAEoCRIYChBkaWdlc3RfYWxnb3JpdGhtGAIgASgJKmsKEENlaWxpbmdEaXJlY3Rpb24SIQodQ0VJTElOR19ESVJFQ1RJT05fVU5TUEVDSUZJRUQQABIZChVDRUlMSU5HX0RJUkVDVElPTl9NQVgQARIZChVDRUlMSU5HX0RJUkVDVElPTl9NSU4QAjLBAgoLTG9vcFNlcnZpY2USTAoJU3RhcnRMb29wEh4uZnVzZS5sb29wLnYxLlN0YXJ0TG9vcFJlcXVlc3QaHy5mdXNlLmxvb3AudjEuU3RhcnRMb29wUmVzcG9uc2USPQoEU2VuZBIZLmZ1c2UubG9vcC52MS5TZW5kUmVxdWVzdBoaLmZ1c2UubG9vcC52MS5TZW5kUmVzcG9uc2USRQoHT2JzZXJ2ZRIcLmZ1c2UubG9vcC52MS5PYnNlcnZlUmVxdWVzdBoaLmZ1c2UubG9vcC52MS5PYnNlcnZlRXZlbnQwARJeCg9HZXRDYXBhYmlsaXRpZXMSJC5mdXNlLmxvb3AudjEuR2V0Q2FwYWJpbGl0aWVzUmVxdWVzdBolLmZ1c2UubG9vcC52MS5HZXRDYXBhYmlsaXRpZXNSZXNwb25zZUI5WjdnaXRodWIuY29tL2V0aGFuaGluc29uL2Z1c2UvaW50ZXJuYWwvbG9vcHdpcmUvdjE7bG9vcHYxYgZwcm90bzM", [file_fuse_harness_v1_harness, file_google_protobuf_struct, file_google_protobuf_timestamp]);
+  fileDesc("ChdmdXNlL2xvb3AvdjEvbG9vcC5wcm90bxIMZnVzZS5sb29wLnYxIqABChBTdGFydExvb3BSZXF1ZXN0EgwKBHRhc2sYASABKAkSDQoFbW9kZWwYAiABKAkSDgoGdGVuYW50GAMgASgJEhMKC2ludGVyYWN0aXZlGAQgASgIEhsKE29yY2hlc3RyYXRlX2xvb3BfaWQYBSABKAkSLQoHaGFybmVzcxgGIAEoCzIcLmZ1c2UuaGFybmVzcy52MS5IYXJuZXNzU3BlYyI8ChFTdGFydExvb3BSZXNwb25zZRIPCgdsb29wX2lkGAEgASgJEhYKDmhhcm5lc3NfZGlnZXN0GAIgASgJImAKC1NlbmRSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSDQoFaW5wdXQYAiABKAkSDgoGdGVuYW50GAMgASgJEhEKCWludGVycnVwdBgEIAEoCBIOCgZzb3VyY2UYBSABKAkiDgoMU2VuZFJlc3BvbnNlIkMKDk9ic2VydmVSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSEAoIZnJvbV9zZXEYAiABKAQSDgoGdGVuYW50GAMgASgJIlIKDE9ic2VydmVFdmVudBIiCgVldmVudBgBIAEoCzITLmZ1c2UubG9vcC52MS5FdmVudBILCgNnYXAYAiABKAgSEQoJa2VlcGFsaXZlGAMgASgIIpwBCgVFdmVudBILCgNzZXEYASABKAQSJgoCdHMYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB25vZGVfaWQYAyABKAkSEQoJcGFyZW50X2lkGAQgASgJEg0KBWRlcHRoGAUgASgFEgwKBHR1cm4YBiABKAUSDAoEa2luZBgHIAEoCRIPCgdwYXlsb2FkGAggASgMIigKFkdldENhcGFiaWxpdGllc1JlcXVlc3QSDgoGdGVuYW50GAEgASgJIr0CChdHZXRDYXBhYmlsaXRpZXNSZXNwb25zZRInCgZtb2RlbHMYASADKAsyFy5mdXNlLmxvb3AudjEuTW9kZWxJbmZvEicKBnNraWxscxgCIAMoCzIXLmZ1c2UubG9vcC52MS5Ta2lsbEluZm8SJwoIY2VpbGluZ3MYAyADKAsyFS5mdXNlLmxvb3AudjEuQ2VpbGluZxITCgtzZWNyZXRfcmVmcxgEIAMoCRI5ChNzcGVjX21jcF9hdXRoX2tpbmRzGAUgAygOMhwuZnVzZS5oYXJuZXNzLnYxLk1jcEF1dGhUeXBlEigKBnNlcnZlchgGIAEoCzIYLmZ1c2UubG9vcC52MS5TZXJ2ZXJJbmZvEi0KC3NwZWNfcG9saWN5GAcgASgLMhguZnVzZS5sb29wLnYxLlNwZWNQb2xpY3kiXAoKU3BlY1BvbGljeRIRCgltY3BfaG9zdHMYASADKAkSHQoVZGVueV9wcml2YXRlX25ldHdvcmtzGAIgASgIEhwKFG1vZGVsc19yZWdpc3RyeV9vbmx5GAMgASgIItsBCglNb2RlbEluZm8SDQoFYWxpYXMYASABKAkSEgoKZ2F0ZXdheV9pZBgCIAEoCRIZChFtYXhfb3V0cHV0X3Rva2VucxgDIAEoDRIWCg5jb250ZXh0X3dpbmRvdxgEIAEoDRIhChljb250ZXh0X3dpbmRvd19pc19kZWZhdWx0GAUgASgIEg8KB3BlcnNvbmEYBiABKAkSEgoKaXNfZGVmYXVsdBgHIAEoCBINCgVsYWJlbBgIIAEoCRITCgtkZXNjcmlwdGlvbhgJIAEoCRIMCgR0YWdzGAogAygJIi4KCVNraWxsSW5mbxIMCgRuYW1lGAEgASgJEhMKC2Rlc2NyaXB0aW9uGAIgASgJIo0BCgdDZWlsaW5nEhIKCmZpZWxkX3BhdGgYASABKAkSFAoMb3BlcmF0b3Jfc2V0GAIgASgIEiUKBXZhbHVlGAMgASgLMhYuZ29vZ2xlLnByb3RvYnVmLlZhbHVlEjEKCWRpcmVjdGlvbhgEIAEoDjIeLmZ1c2UubG9vcC52MS5DZWlsaW5nRGlyZWN0aW9uIjcKClNlcnZlckluZm8SDwoHdmVyc2lvbhgBIAEoCRIYChBkaWdlc3RfYWxnb3JpdGhtGAIgASgJKmsKEENlaWxpbmdEaXJlY3Rpb24SIQodQ0VJTElOR19ESVJFQ1RJT05fVU5TUEVDSUZJRUQQABIZChVDRUlMSU5HX0RJUkVDVElPTl9NQVgQARIZChVDRUlMSU5HX0RJUkVDVElPTl9NSU4QAjLBAgoLTG9vcFNlcnZpY2USTAoJU3RhcnRMb29wEh4uZnVzZS5sb29wLnYxLlN0YXJ0TG9vcFJlcXVlc3QaHy5mdXNlLmxvb3AudjEuU3RhcnRMb29wUmVzcG9uc2USPQoEU2VuZBIZLmZ1c2UubG9vcC52MS5TZW5kUmVxdWVzdBoaLmZ1c2UubG9vcC52MS5TZW5kUmVzcG9uc2USRQoHT2JzZXJ2ZRIcLmZ1c2UubG9vcC52MS5PYnNlcnZlUmVxdWVzdBoaLmZ1c2UubG9vcC52MS5PYnNlcnZlRXZlbnQwARJeCg9HZXRDYXBhYmlsaXRpZXMSJC5mdXNlLmxvb3AudjEuR2V0Q2FwYWJpbGl0aWVzUmVxdWVzdBolLmZ1c2UubG9vcC52MS5HZXRDYXBhYmlsaXRpZXNSZXNwb25zZUI5WjdnaXRodWIuY29tL2V0aGFuaGluc29uL2Z1c2UvaW50ZXJuYWwvbG9vcHdpcmUvdjE7bG9vcHYxYgZwcm90bzM", [file_fuse_harness_v1_harness, file_google_protobuf_struct, file_google_protobuf_timestamp]);
 
 /**
  * @generated from message fuse.loop.v1.StartLoopRequest
@@ -354,6 +354,13 @@ export type GetCapabilitiesResponse = Message<"fuse.loop.v1.GetCapabilitiesRespo
    * @generated from field: fuse.loop.v1.ServerInfo server = 6;
    */
   server?: ServerInfo | undefined;
+
+  /**
+   * The operator's floor on a spec's own URLs and model ids.
+   *
+   * @generated from field: fuse.loop.v1.SpecPolicy spec_policy = 7;
+   */
+  specPolicy?: SpecPolicy | undefined;
 };
 
 /**
@@ -362,6 +369,43 @@ export type GetCapabilitiesResponse = Message<"fuse.loop.v1.GetCapabilitiesRespo
  */
 export const GetCapabilitiesResponseSchema: GenMessage<GetCapabilitiesResponse> = /*@__PURE__*/
   messageDesc(file_fuse_loop_v1_loop, 8);
+
+/**
+ * SpecPolicy is what StartLoop holds a client's spec to besides the
+ * tighten-only ceilings.
+ *
+ * @generated from message fuse.loop.v1.SpecPolicy
+ */
+export type SpecPolicy = Message<"fuse.loop.v1.SpecPolicy"> & {
+  /**
+   * Hostname patterns an MCP server or research.custom URL host must match
+   * ("*.example.com" matches subdomains); empty allows any public host.
+   *
+   * @generated from field: repeated string mcp_hosts = 1;
+   */
+  mcpHosts: string[];
+
+  /**
+   * Loopback, link-local, private and unique-local destinations are refused.
+   *
+   * @generated from field: bool deny_private_networks = 2;
+   */
+  denyPrivateNetworks: boolean;
+
+  /**
+   * A spec's model ids must be gateway ids of the models listed above.
+   *
+   * @generated from field: bool models_registry_only = 3;
+   */
+  modelsRegistryOnly: boolean;
+};
+
+/**
+ * Describes the message fuse.loop.v1.SpecPolicy.
+ * Use `create(SpecPolicySchema)` to create a new message.
+ */
+export const SpecPolicySchema: GenMessage<SpecPolicy> = /*@__PURE__*/
+  messageDesc(file_fuse_loop_v1_loop, 9);
 
 /**
  * @generated from message fuse.loop.v1.ModelInfo
@@ -432,7 +476,7 @@ export type ModelInfo = Message<"fuse.loop.v1.ModelInfo"> & {
  * Use `create(ModelInfoSchema)` to create a new message.
  */
 export const ModelInfoSchema: GenMessage<ModelInfo> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 9);
+  messageDesc(file_fuse_loop_v1_loop, 10);
 
 /**
  * @generated from message fuse.loop.v1.SkillInfo
@@ -454,7 +498,7 @@ export type SkillInfo = Message<"fuse.loop.v1.SkillInfo"> & {
  * Use `create(SkillInfoSchema)` to create a new message.
  */
 export const SkillInfoSchema: GenMessage<SkillInfo> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 10);
+  messageDesc(file_fuse_loop_v1_loop, 11);
 
 /**
  * The operator limit one tighten-only spec field is held to. The limit is
@@ -495,7 +539,7 @@ export type Ceiling = Message<"fuse.loop.v1.Ceiling"> & {
  * Use `create(CeilingSchema)` to create a new message.
  */
 export const CeilingSchema: GenMessage<Ceiling> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 11);
+  messageDesc(file_fuse_loop_v1_loop, 12);
 
 /**
  * @generated from message fuse.loop.v1.ServerInfo
@@ -519,7 +563,7 @@ export type ServerInfo = Message<"fuse.loop.v1.ServerInfo"> & {
  * Use `create(ServerInfoSchema)` to create a new message.
  */
 export const ServerInfoSchema: GenMessage<ServerInfo> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 12);
+  messageDesc(file_fuse_loop_v1_loop, 13);
 
 /**
  * Ceilings are strict: a spec value equal to the ceiling's value is refused.

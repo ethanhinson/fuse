@@ -71,6 +71,7 @@ func (r Resolver) Resolve(ctx context.Context, tenant string, spec *harnessv1.Ha
 	values, secretProblems := r.resolveSecrets(ctx, tenant, spec)
 	skills, skillProblems := r.resolveSkills(spec)
 	skillProblems = append(skillProblems, operatorOnlyProblems(spec)...)
+	skillProblems = append(skillProblems, r.specPolicyProblems(ctx, spec)...)
 
 	var mapped []harnessconfig.Problem
 	cfg, refused, err := harnessconfig.Overlay(r.Base, spec, func(name string) (string, error) {

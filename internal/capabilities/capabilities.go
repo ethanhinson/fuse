@@ -27,8 +27,21 @@ type Capabilities struct {
 	SecretRefs []string
 	// SpecMCPAuthKinds are the MCP auth kinds a spec may use.
 	SpecMCPAuthKinds []harnessv1.McpAuthType
+	// SpecPolicy is the operator's floor on a spec's URLs and model ids.
+	SpecPolicy SpecPolicy
 	// Server identifies the server build.
 	Server Server
+}
+
+// SpecPolicy is the advertised part of loop_server.spec_policy.
+type SpecPolicy struct {
+	// MCPHosts are the hostname patterns a spec URL host must match; empty
+	// means any public host.
+	MCPHosts []string
+	// DenyPrivateNetworks refuses private-network destinations.
+	DenyPrivateNetworks bool
+	// ModelsRegistryOnly limits a spec's model ids to the registry.
+	ModelsRegistryOnly bool
 }
 
 // Model is one routable model as a client sees it.

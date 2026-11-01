@@ -77,3 +77,24 @@ func TestValidateAllModesAccepted(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateSpecPolicyHostPatterns(t *testing.T) {
+	for _, h := range []string{"https://a.example.com", "a.example.com:8443", "a.example.com/x", "*"} {
+		cfg := Default()
+		cfg.LoopServer.SpecPolicy.MCPHosts = []string{h}
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("mcp_hosts %q accepted", h)
+		}
+		cfg = Default()
+		cfg.LoopServer.SpecPolicy.AllowHTTPHosts = []string{h}
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("allow_http_hosts %q accepted", h)
+		}
+	}
+	cfg := Default()
+	cfg.LoopServer.SpecPolicy.MCPHosts = []string{"a.example.com", "*.example.org"}
+	cfg.LoopServer.SpecPolicy.AllowHTTPHosts = []string{"localhost"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid patterns rejected: %v", err)
+	}
+}

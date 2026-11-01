@@ -115,6 +115,10 @@ func harnessServerWith(t *testing.T, operatorYAML string, gw http.Handler) (runt
 		t.Fatal(err)
 	}
 	cfg.Gateway.URL, cfg.Gateway.Key = srv.URL, "tkn"
+	// These tests point specs at loopback httptest servers and unresolvable
+	// example hosts; the spec policy has its own tests (change 0101).
+	noDeny := false
+	cfg.LoopServer.SpecPolicy = config.SpecPolicyConfig{DenyPrivateNetworks: &noDeny, AllowHTTPHosts: []string{"127.0.0.1"}}
 	reg := registryFromConfig(cfg)
 	skillSet, err := skills.LoadWithEmbedded(skills.DefaultDirs())
 	if err != nil {
