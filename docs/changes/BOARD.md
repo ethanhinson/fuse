@@ -18,7 +18,7 @@
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0100](active/0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | `high` | `feat` | needs-grooming |
+| [0100](active/0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | `high` | `feat` | ⏳ waiting on #99 — not yet built |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
@@ -37,7 +37,7 @@ graph TD
   0081
   0083
   0099
-  0100
+  0099 --> 0100
   0012:::done
   0052:::done
   0063:::done
