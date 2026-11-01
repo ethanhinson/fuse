@@ -67,6 +67,13 @@ type StartLoopConfig struct {
 type Credentials struct {
 	Token  string
 	Tenant string
+	// TokenProvider, when set, is called on every request (each unary call and
+	// each stream open) for the bearer token, and Token is ignored. It lets a
+	// client present short-lived issuer tokens. An error fails that request
+	// before it is sent. There is no caching or refresh loop: cache inside the
+	// provider if needed. A provider that returns "" sends no Authorization
+	// header, as an empty Token does. The local backend ignores it.
+	TokenProvider func(ctx context.Context) (string, error)
 }
 
 // Sentinel errors the SDK maps transport/seam failures to, so a caller matches a
