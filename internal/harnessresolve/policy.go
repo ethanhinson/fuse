@@ -16,10 +16,11 @@ import (
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/configcheck"
 	"github.com/ethanhinson/fuse/internal/harnessconfig"
+	"github.com/ethanhinson/fuse/internal/netguard"
 )
 
-// resolveTimeout bounds the one hostname resolution deny_private_networks does
-// per URL (change 0101).
+// resolveTimeout bounds all the hostname resolutions deny_private_networks does
+// for one spec (change 0101).
 const resolveTimeout = 2 * time.Second
 
 // lookupIP resolves a hostname for the private-network check. A variable so
@@ -42,6 +43,8 @@ var lookupIP = func(ctx context.Context, host string) ([]net.IP, error) {
 // RuleOperatorOnly at the spec field path.
 func (r Resolver) specPolicyProblems(ctx context.Context, spec *harnessv1.HarnessSpec) []harnessconfig.Problem {
 	pol := r.Base.LoopServer.SpecPolicy
+	ctx, cancel := context.WithTimeout(ctx, resolveTimeout)
+	defer cancel()
 	var out []harnessconfig.Problem
 	for i, s := range spec.GetMcpServers() {
 		if msg := checkURL(ctx, pol, s.GetUrl()); msg != "" {
@@ -107,24 +110,25 @@ func checkURL(ctx context.Context, pol config.SpecPolicyConfig, raw string) stri
 		return "host is not allowed by this server"
 	}
 	if pol.DenyPrivate() {
+		// One message for private, unresolvable and unresolved-to-private hosts,
+		// so the refusal is not an oracle for which names exist.
+		const refused = "host is not reachable on a public network, which this server requires"
 		if privateName(host) {
-			return "host is on a private network, which this server does not allow"
+			return refused
 		}
 		if ip := net.ParseIP(host); ip != nil {
-			if privateIP(ip) {
-				return "host is on a private network, which this server does not allow"
+			if netguard.Private(ip) {
+				return refused
 			}
 			return ""
 		}
-		rctx, cancel := context.WithTimeout(ctx, resolveTimeout)
-		defer cancel()
-		ips, err := lookupIP(rctx, host)
+		ips, err := lookupIP(ctx, host)
 		if err != nil || len(ips) == 0 {
-			return "host could not be resolved"
+			return refused
 		}
 		for _, ip := range ips {
-			if privateIP(ip) {
-				return "host is on a private network, which this server does not allow"
+			if netguard.Private(ip) {
+				return refused
 			}
 		}
 	}
@@ -151,10 +155,6 @@ func hostMatchesAny(host string, patterns []string) bool {
 
 func privateName(host string) bool {
 	return host == "localhost" || strings.HasSuffix(host, ".localhost") ||
-		strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal")
-}
-
-func privateIP(ip net.IP) bool {
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
-		ip.IsUnspecified() || ip.IsInterfaceLocalMulticast()
+		strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") ||
+		strings.HasSuffix(host, ".home.arpa")
 }

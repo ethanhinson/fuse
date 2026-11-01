@@ -157,6 +157,20 @@ func (c Config) Problems() []Problem {
 		add("loop_server.spec_policy.models", "must be %q or %q, got %q", SpecModelsAny, SpecModelsRegistryOnly, c.LoopServer.SpecPolicy.Models)
 	}
 
+	for _, f := range []struct {
+		field string
+		hosts []string
+	}{
+		{"loop_server.spec_policy.mcp_hosts", c.LoopServer.SpecPolicy.MCPHosts},
+		{"loop_server.spec_policy.allow_http_hosts", c.LoopServer.SpecPolicy.AllowHTTPHosts},
+	} {
+		for _, h := range f.hosts {
+			if h == "*" || strings.ContainsAny(h, "/:") {
+				add(f.field, "%q must be a hostname or *.suffix pattern, without a scheme, port or path", h)
+			}
+		}
+	}
+
 	// The issuer and observability checks are operator-only surfaces and stop at
 	// their first problem; each is reported under its block's path.
 	if err := validateIssuers(c.LoopServer.Issuers); err != nil {

@@ -277,10 +277,11 @@ const (
 //   - MCPHosts are hostname patterns ("*.example.com" matches subdomains only)
 //     an MCP server or research.custom URL host must match; empty allows any.
 //   - DenyPrivateNetworks refuses loopback, link-local, RFC-1918 and
-//     unique-local addresses, hostnames resolving to them, and the localhost,
-//     .local and .internal names. Nil means true.
-//   - AllowHTTPHosts are hosts where http:// is accepted; every other URL must
-//     be https.
+//     unique-local, CGNAT (100.64.0.0/10) and NAT64 (64:ff9b::/96) addresses,
+//     hostnames resolving to them, and the localhost, .local, .internal and
+//     .home.arpa names. Nil means true.
+//   - AllowHTTPHosts are hosts where http:// is accepted (same patterns as
+//     MCPHosts); every other URL must be https.
 //   - Models is "any" (default) or "registry-only".
 //
 // Operator-configured MCP servers are exempt: they are the operator's own.

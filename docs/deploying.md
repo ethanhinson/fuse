@@ -251,10 +251,12 @@ loop_server:
 
 - `mcp_hosts` patterns are exact hostnames or `*.suffix` (subdomains only). It
   covers `mcp_servers[*].url` and `research.custom.url`.
-- `deny_private_networks` refuses loopback, link-local, RFC-1918 and
-  unique-local addresses, hostnames resolving to them (one lookup, 2-second
-  timeout; a failed lookup is a refusal), and `localhost`, `.local` and
-  `.internal` names. Resolution happens once at validation, so it is not DNS
+- `allow_http_hosts` accepts the same exact or `*.suffix` patterns.
+- `deny_private_networks` refuses loopback, link-local, RFC-1918, unique-local,
+  CGNAT (`100.64.0.0/10`) and NAT64 (`64:ff9b::/96`) addresses, hostnames
+  resolving to them (lookups share one 2-second timeout per spec; a failed
+  lookup is a refusal, worded the same as a private host), and `localhost`,
+  `.local`, `.internal` and `.home.arpa` names. Resolution happens once at validation, so it is not DNS
   rebinding protection.
 - `models: registry-only` requires each spec `models.entries[*].id` to equal the
   gateway id of an advertised registry model.

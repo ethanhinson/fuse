@@ -64,6 +64,16 @@ func TestSpecPolicyDefaultDeniesPrivateNetworks(t *testing.T) {
 	}
 }
 
+func TestSpecPolicyDeniesCGNATAndNAT64(t *testing.T) {
+	r := policyResolver(t, config.SpecPolicyConfig{})
+	got := refusedPaths(t, r, mcpSpec("https://100.64.0.1/", "https://100.100.100.200/", "https://[64:ff9b::a00:5]/", "https://nas.home.arpa/"))
+	for _, p := range []string{"mcp_servers[0].url", "mcp_servers[1].url", "mcp_servers[2].url", "mcp_servers[3].url"} {
+		if got[p] != "fuse.operator_only" {
+			t.Errorf("%s not refused: %v", p, got)
+		}
+	}
+}
+
 func TestSpecPolicyHostAllowlistAppliesToMCPAndResearch(t *testing.T) {
 	r := policyResolver(t, config.SpecPolicyConfig{MCPHosts: []string{"*.example.com"}})
 	spec := mcpSpec("https://api.example.com/", "https://example.org/")
