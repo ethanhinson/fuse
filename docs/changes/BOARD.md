@@ -1,6 +1,6 @@
 # Backlog
 
-**104 changes** — 🟢 3 in progress · 🔵 1 built · 🟡 3 proposed · ⚪ 3 deferred · ✅ 87 done · 🗑️ 7 killed
+**105 changes** — 🟢 3 in progress · 🔵 1 built · 🟡 4 proposed · ⚪ 3 deferred · ✅ 87 done · 🗑️ 7 killed
 
 ## 🟢 In progress (3)
 
@@ -16,10 +16,11 @@
 |---|-------|----------|------|----|-------|
 | [0101](active/0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | `high` | `feat` | [#122](https://github.com/ethanhinson/fuse/pull/122) | awaiting merge |
 
-## 🟡 Proposed (3)
+## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0105](active/0105-pin-spec-mcp-server-dials-to-the-addresses-checked-at-startl.md) | Pin spec MCP server dials to the addresses checked at StartLoop | `medium` | `fix` | needs-grooming |
 | [0104](active/0104-server-aware-validateharness-on-the-loop-service.md) | Server-aware ValidateHarness on the loop service | `medium` | `feat` | needs-grooming |
 | [0102](active/0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | `high` | `feat` | ⏳ waiting on #101 — needs your merge |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
@@ -45,6 +46,7 @@ graph TD
   0101 --> 0102
   0103
   0104
+  0105
   0012:::done
   0052:::done
   0063:::done
