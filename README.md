@@ -753,7 +753,8 @@ The service is four RPCs:
   memory only and are never recorded or logged. An operator `loop_server.secrets`
   entry for the tenant wins over a client entry of the same name. An entry resolves
   only for a destination whose hostname is in its `hosts`, which is required. At most
-  32 entries are accepted, 16 KiB per value. They are ignored without a harness spec,
+  32 entries are accepted, 16 KiB per value, 253 bytes per name, and 16 hosts per
+  entry of 253 bytes each; each host must be a bare hostname. They are ignored without a harness spec,
   and `GetCapabilities` never lists them. A loop whose spec depends on loop-scoped
   secrets cannot be resumed, because resume re-resolves the spec without them.
 - `Observe(from_seq)` — server-streaming history-then-live: it replays durable

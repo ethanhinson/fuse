@@ -90,6 +90,49 @@ func TestCheckLimits(t *testing.T) {
 	}
 }
 
+func TestCheckLimitsBoundsNamesAndHosts(t *testing.T) {
+	atLimit := Secret{
+		Name:  strings.Repeat("n", MaxNameBytes),
+		Value: "v",
+		Hosts: make([]string, MaxHostsPerSecret),
+	}
+	for j := range atLimit.Hosts {
+		atLimit.Hosts[j] = strings.Repeat("h", MaxHostBytes)
+	}
+	if err := CheckLimits([]Secret{atLimit}); err != nil {
+		t.Fatalf("an entry at every limit should pass: %v", err)
+	}
+
+	ok := Secret{Name: "ok", Value: sentinel, Hosts: []string{"h.test"}}
+	cases := []struct {
+		name string
+		s    Secret
+		want []string
+	}{
+		{"long name", Secret{Name: strings.Repeat("n", MaxNameBytes+1), Value: sentinel, Hosts: []string{"h.test"}},
+			[]string{"secrets[1].name", "254", "253"}},
+		{"too many hosts", Secret{Name: "many", Value: sentinel, Hosts: make([]string, MaxHostsPerSecret+1)},
+			[]string{"secrets[1].hosts", "17", "16"}},
+		{"long host", Secret{Name: "longhost", Value: sentinel, Hosts: []string{"h.test", strings.Repeat("h", MaxHostBytes+1)}},
+			[]string{"secrets[1].hosts[1]", "254", "253"}},
+	}
+	for _, c := range cases {
+		err := CheckLimits([]Secret{ok, c.s})
+		if err == nil {
+			t.Fatalf("%s: want an error", c.name)
+		}
+		msg := err.Error()
+		for _, w := range c.want {
+			if !strings.Contains(msg, w) {
+				t.Errorf("%s: error %q should name %q", c.name, msg, w)
+			}
+		}
+		if strings.Contains(msg, sentinel) || strings.Contains(msg, "nnnn") || strings.Contains(msg, "hhhh") {
+			t.Errorf("%s: error echoes a value, name or host: %q", c.name, msg)
+		}
+	}
+}
+
 func TestContextRoundTrip(t *testing.T) {
 	if got := From(context.Background()); got != nil {
 		t.Fatalf("From(empty ctx) = %v, want nil", got)

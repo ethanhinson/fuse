@@ -68,17 +68,34 @@ const (
 	MaxSecrets = 32
 	// MaxValueBytes is the longest value, in bytes, one entry may carry.
 	MaxValueBytes = 16 << 10
+	// MaxNameBytes is the longest name, in bytes, one entry may carry.
+	MaxNameBytes = 253
+	// MaxHostsPerSecret is the most hosts one entry may list.
+	MaxHostsPerSecret = 16
+	// MaxHostBytes is the longest host, in bytes, one entry may list.
+	MaxHostBytes = 253
 )
 
 // CheckLimits reports the first wire-limit violation in ss, or nil. Its message
-// names only counts, indexes and byte lengths, never a value.
+// names only counts, indexes and byte lengths, never a value, name or host.
 func CheckLimits(ss []Secret) error {
 	if len(ss) > MaxSecrets {
 		return fmt.Errorf("%d secrets exceeds the limit of %d", len(ss), MaxSecrets)
 	}
 	for i, s := range ss {
+		if len(s.Name) > MaxNameBytes {
+			return fmt.Errorf("secrets[%d].name is %d bytes, over the limit of %d", i, len(s.Name), MaxNameBytes)
+		}
 		if len(s.Value) > MaxValueBytes {
 			return fmt.Errorf("secrets[%d].value is %d bytes, over the limit of %d", i, len(s.Value), MaxValueBytes)
+		}
+		if len(s.Hosts) > MaxHostsPerSecret {
+			return fmt.Errorf("secrets[%d].hosts lists %d hosts, over the limit of %d", i, len(s.Hosts), MaxHostsPerSecret)
+		}
+		for j, h := range s.Hosts {
+			if len(h) > MaxHostBytes {
+				return fmt.Errorf("secrets[%d].hosts[%d] is %d bytes, over the limit of %d", i, j, len(h), MaxHostBytes)
+			}
 		}
 	}
 	return nil

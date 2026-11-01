@@ -2,6 +2,7 @@ package harnessresolve
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -105,6 +106,37 @@ func TestLoopSecretFallsBackWithoutAnOperatorResolver(t *testing.T) {
 	}
 	if res.Config.MCPServers[0].Auth.ClientSecret != loopValue {
 		t.Fatal("the loop secret was not used without an operator resolver")
+	}
+}
+
+func TestLoopSecretHostsMustBeBareHostnames(t *testing.T) {
+	const v = "host-SENTINEL"
+	bad := []string{"mcp.acme.test:443", "https://x", "*.acme.test", "a b.test", "tab\t.test", "a/b"}
+	var ss []loopsecret.Secret
+	for i, h := range bad {
+		ss = append(ss, loopsecret.Secret{Name: fmt.Sprintf("s%d", i), Value: v, Hosts: []string{"ok.test", h}})
+	}
+	_, err := Resolver{Base: operator(t)}.Resolve(withLoop(ss...), "acme", &harnessv1.HarnessSpec{})
+	got := violations(t, err)
+	if len(got) != len(bad) {
+		t.Fatalf("got %d violations, want %d: %+v", len(got), len(bad), got)
+	}
+	for i, vi := range got {
+		if want := fmt.Sprintf("secrets[%d].hosts[1]", i); vi.FieldPath != want {
+			t.Errorf("violation %d path = %q, want %q", i, vi.FieldPath, want)
+		}
+		if vi.RuleID != harness.RuleSecretRef {
+			t.Errorf("violation %d rule = %q", i, vi.RuleID)
+		}
+		if vi.Message != "must be a bare hostname (no scheme, port, path, wildcard or whitespace)" {
+			t.Errorf("violation %d message = %q", i, vi.Message)
+		}
+		if strings.Contains(vi.Message, v) {
+			t.Errorf("a loop secret value leaked into %q", vi.Message)
+		}
+	}
+	if strings.Contains(err.Error(), v) {
+		t.Fatalf("a loop secret value leaked into the error: %v", err)
 	}
 }
 

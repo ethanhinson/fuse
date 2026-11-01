@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
+	"unicode"
 
 	"github.com/ethanhinson/fuse/harness"
 	"github.com/ethanhinson/fuse/internal/config"
@@ -47,8 +49,15 @@ func loopSecrets(ss []loopsecret.Secret) (map[string]loopsecret.Secret, []harnes
 			valid = false
 		}
 		for j, h := range s.Hosts {
-			if h == "" {
+			switch {
+			case h == "":
 				add(fmt.Sprintf("secrets[%d].hosts[%d]", i, j), "must not be empty")
+				valid = false
+			case strings.ContainsAny(h, ":/*") || strings.ContainsFunc(h, unicode.IsSpace):
+				// A scheme, port, path, wildcard or space never matches a
+				// destination's hostname, so the entry would silently never
+				// resolve; refuse it, as config does for operator hosts.
+				add(fmt.Sprintf("secrets[%d].hosts[%d]", i, j), "must be a bare hostname (no scheme, port, path, wildcard or whitespace)")
 				valid = false
 			}
 		}
