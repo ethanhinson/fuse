@@ -1,6 +1,6 @@
 # Backlog
 
-**99 changes** — 🟢 1 in progress · 🟡 2 proposed · ⚪ 3 deferred · ✅ 86 done · 🗑️ 7 killed
+**99 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 1 proposed · ⚪ 3 deferred · ✅ 86 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -8,11 +8,16 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟡 Proposed (2)
+## 🟣 Groomed (1)
+
+| # | Title | Priority | Type | Spec | Readiness |
+|---|-------|----------|------|------|-----------|
+| [0099](active/0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md) | Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md) | build-ready |
+
+## 🟡 Proposed (1)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0099](active/0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md) | Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes | `high` | `feat` | needs-grooming |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
 ## ⚪ Deferred (3)
