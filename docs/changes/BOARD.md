@@ -1,14 +1,19 @@
 # Backlog
 
-**105 changes** — 🟢 3 in progress · 🟡 4 proposed · ⚪ 3 deferred · ✅ 88 done · 🗑️ 7 killed
+**105 changes** — 🟢 2 in progress · 🔵 1 built · 🟡 4 proposed · ⚪ 3 deferred · ✅ 88 done · 🗑️ 7 killed
 
-## 🟢 In progress (3)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0103](active/0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | `medium` | `feat` | [spec](../superpowers/specs/2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md) | `feat/per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per` | building |
 | [0100](active/0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md) | `feat/scoped-principals-rpc-scopes-harness-digest-pin-and-principa` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
+
+## 🔵 Built (1)
+
+| # | Title | Priority | Type | PR | State |
+|---|-------|----------|------|----|-------|
+| [0103](active/0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | `medium` | `feat` | [#123](https://github.com/ethanhinson/fuse/pull/123) | awaiting merge |
 
 ## 🟡 Proposed (4)
 

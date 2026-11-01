@@ -2,7 +2,7 @@
 id: 103
 slug: 'per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per'
 title: 'Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides'
-status: 'in-progress'
+status: 'implemented'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/123'
 blocked_by:
 reconciled: true
 ---
@@ -57,3 +57,12 @@ spend quotas (tokens per tenant per day); per-subject limits; distributed rate l
 ### 2026-11-01
 
 Unchanged against origin/main 736e994.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 175702148023ab6f90c3176329fbbc7b4dd7ef57
+ran_at:   2026-11-01T04:51:21Z
+<!-- docket:build-evidence:end -->
