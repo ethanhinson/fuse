@@ -115,14 +115,14 @@ type StartLoopRequest struct {
 	// names only), and never logs them or puts them in an error. An operator
 	// loop_server.secrets entry for the tenant takes precedence over an entry
 	// here; otherwise the value resolves only for a destination whose hostname
-	// is listed in its hosts. This checks the declared destination only:
-	// transport-level redirect and endpoint host checks are not part of this
-	// binding. Requires the secrets:inline scope. At most 32
-	// entries, each value at most 16 KiB, each name at most 253 bytes, and at
-	// most 16 hosts per entry of at most 253 bytes each (InvalidArgument
-	// otherwise). Each host must be a bare hostname. Ignored when harness is
-	// unset. A loop whose spec depends on loop-scoped secrets
-	// cannot be resumed, because resume re-resolves the spec without them.
+	// is listed in its hosts; the client also refuses an SSE endpoint event that
+	// names another host and any redirect to another host or from https to http.
+	// Requires the secrets:inline scope. At most 32 entries, each value at most
+	// 16 KiB, each name at most 253 bytes, and at most 16 hosts per entry of at
+	// most 253 bytes each (InvalidArgument otherwise). Each host must be a bare
+	// hostname. Ignored when harness is unset. A loop whose spec depends on
+	// loop-scoped secrets cannot be resumed, because resume re-resolves the spec
+	// without them.
 	Secrets       []*LoopSecret `protobuf:"bytes,7,rep,name=secrets,proto3" json:"secrets,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -218,9 +218,8 @@ type LoopSecret struct {
 	// value is the secret itself. Never recorded, logged or echoed.
 	Value string `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
 	// hosts are the hostnames for which the value resolves; required. The value
-	// resolves only for a destination whose hostname is listed here; this does
-	// not bind the transport (redirect and endpoint host checks are not
-	// performed by this field).
+	// resolves only for a destination whose hostname is listed here, and the
+	// client refuses cross-host endpoint moves and redirects.
 	Hosts         []string `protobuf:"bytes,3,rep,name=hosts,proto3" json:"hosts,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

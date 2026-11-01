@@ -82,7 +82,8 @@ func TestStartLoopRequestCarriesSecrets(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if !proto.Equal(in, out) {
-		t.Fatalf("round trip mismatch: got %v want %v", out, in)
+		// Never format the messages: they carry a secret value in clear.
+		t.Fatalf("round trip mismatch: task %q/%q, %d/%d secrets", out.GetTask(), in.GetTask(), len(out.GetSecrets()), len(in.GetSecrets()))
 	}
 
 	if n := (&loopv1.StartLoopRequest{}).ProtoReflect().Descriptor().Fields().ByName("secrets").Number(); n != 7 {

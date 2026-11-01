@@ -2,9 +2,12 @@ package research
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -314,4 +317,60 @@ func contains(haystack, needle string) bool {
 		}
 	}
 	return false
+}
+
+func TestCustomSearchRefusesCrossHostRedirect(t *testing.T) {
+	var mu sync.Mutex
+	var leaked []string
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		leaked = append(leaked, r.Header.Get("X-Api-Key"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer second.Close()
+	_, port, _ := net.SplitHostPort(second.Listener.Addr().String())
+
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://localhost:"+port+"/search", http.StatusFound)
+	}))
+	defer first.Close()
+
+	cfg := defaultCustomConfig(first.URL) // 127.0.0.1; the target is localhost
+	cfg.Headers = map[string]string{"X-Api-Key": "sekret-value"}
+	p := NewCustomProvider(cfg)
+	p.client = NewClient("custom", newCustomHTTPClient(http.DefaultTransport))
+	p.client.RetryBackoff = time.Millisecond
+
+	_, err := p.Search(context.Background(), "q", 3)
+	if err == nil || !strings.Contains(err.Error(), "status 302") {
+		t.Fatalf("err = %v, want a status 302 failure", err)
+	}
+	if strings.Contains(err.Error(), "sekret-value") {
+		t.Fatalf("error leaks the header value: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(leaked) != 0 {
+		t.Fatalf("redirect target saw the custom header: %q", leaked)
+	}
+}
+
+func TestCustomSearchFollowsSameHostRedirect(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/moved", http.StatusFound)
+	})
+	mux.HandleFunc("/moved", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"results":[{"title":"T","url":"https://t.example","content":"c"}]}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	p := NewCustomProvider(defaultCustomConfig(srv.URL))
+	p.client = NewClient("custom", newCustomHTTPClient(http.DefaultTransport))
+	res, err := p.Search(context.Background(), "q", 3)
+	if err != nil || len(res) != 1 {
+		t.Fatalf("res = %v err = %v, want the same-host redirect followed", res, err)
+	}
 }

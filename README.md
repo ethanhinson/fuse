@@ -752,12 +752,15 @@ The service is four RPCs:
   `StartLoop` to satisfy its harness spec's `secret_ref` names. Values are kept in
   memory only and are never recorded or logged. An operator `loop_server.secrets`
   entry for the tenant wins over a client entry of the same name. The value resolves
-  only for a destination whose hostname is listed in its `hosts`, which is required;
-  transport-level redirect and endpoint host checks are not part of this binding. At most
-  32 entries are accepted, 16 KiB per value, 253 bytes per name, and 16 hosts per
-  entry of 253 bytes each; each host must be a bare hostname. They are ignored without a harness spec,
-  and `GetCapabilities` never lists them. A loop whose spec depends on loop-scoped
-  secrets cannot be resumed, because resume re-resolves the spec without them.
+  only for a destination whose hostname is listed in its `hosts`, which is required,
+  and the MCP and custom research clients refuse an SSE endpoint event that names
+  another host and any redirect to another host or from https to http, so the value is
+  never sent past the listed hosts. At most 32 entries are accepted, 16 KiB per value,
+  253 bytes per name, and 16 hosts per entry of 253 bytes each; each host must be a
+  bare hostname. They are ignored without a harness spec, and `GetCapabilities` never
+  lists them. A loop whose spec depends on loop-scoped secrets cannot be resumed,
+  because resume re-resolves the spec without them: the client's `Send` fails with
+  `FailedPrecondition` ("loop finished").
 - `Observe(from_seq)` — server-streaming history-then-live: it replays durable
   history since `from_seq`, then live-tails, deduping the replay/live overlap at
   the watermark and flagging a `gap` when a sequence hole is detected. A

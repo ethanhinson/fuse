@@ -70,7 +70,7 @@ func newStreamableHTTPClient(name, baseURL, token string, auth config.MCPAuthCon
 	return &StreamableHTTPClient{
 		name:        name,
 		baseURL:     baseURL,
-		http:        &http.Client{Timeout: 0}, // per-call ctx governs deadlines
+		http:        &http.Client{Timeout: 0, CheckRedirect: refuseRedirect}, // per-call ctx governs deadlines
 		auth:        auth,
 		bearerToken: token,
 	}, nil

@@ -3,6 +3,7 @@ package research
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/netguard"
 )
 
 // CustomHTTPProvider is a SearchProvider backed by any user-configured JSON
@@ -30,7 +32,25 @@ type CustomHTTPProvider struct {
 func NewCustomProvider(cfg config.CustomProviderConfig) *CustomHTTPProvider {
 	return &CustomHTTPProvider{
 		cfg:    cfg,
-		client: NewClient("custom", nil),
+		client: NewClient("custom", newCustomHTTPClient(newResearchTransport())),
+	}
+}
+
+// newCustomHTTPClient is the custom provider's own client. It sends operator
+// headers, one of which may carry a secret, so it refuses a redirect to another
+// host or from https to http: Go would forward those headers to any target.
+func newCustomHTTPClient(rt http.RoundTripper) *http.Client {
+	return &http.Client{
+		Transport: rt,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) > 0 && netguard.MovesHost(via[0].URL, req.URL) {
+				return http.ErrUseLastResponse
+			}
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			return nil
+		},
 	}
 }
 

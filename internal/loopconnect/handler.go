@@ -229,12 +229,13 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 	// Loop-scoped secret values need their own scope; an unrestricted principal
 	// passes as for every scope. The limits apply before anything else is spent,
 	// and no refusal ever names a value.
-	secrets := loopSecrets(m.GetSecrets())
-	if len(secrets) > 0 {
+	var secrets []loopsecret.Secret
+	if len(m.GetSecrets()) > 0 {
 		if aerr := requireScope(ctx, loopauth.ScopeSecretsInline); aerr != nil {
 			apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
 			return nil, aerr
 		}
+		secrets = loopSecrets(m.GetSecrets())
 		if err := loopsecret.CheckLimits(secrets); err != nil {
 			cerr := connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("loopconnect: %w", err))
 			apiOutcome = observeotel.OutcomeFromError(ctx, cerr)

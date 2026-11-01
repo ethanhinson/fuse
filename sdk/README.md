@@ -78,8 +78,9 @@ The spec and its digest (`harness.Digest`) are the first event of the loop's str
 
 A client can also send loop-scoped secret values for the spec's `secret_ref` names
 (the token needs the `secrets:inline` scope). Each value resolves only for the listed
-hosts, lives in server memory only, is never recorded, and is gone after a resume. An
-operator secret of the same name wins.
+hosts, lives in server memory only, and is never recorded. An operator secret of the
+same name wins. A loop whose spec depends on a loop-scoped secret cannot be resumed
+(`Send` fails with `FailedPrecondition`, "loop finished"), because the value is gone.
 
 ```go
 id, err := c.StartLoop(ctx, fuse.StartLoopConfig{Task: "triage the backlog", Harness: spec}.

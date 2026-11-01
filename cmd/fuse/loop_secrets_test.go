@@ -403,6 +403,9 @@ func TestLoopSecretValueIsNeverRecorded(t *testing.T) {
 		if !strings.Contains(string(b), "my-token") {
 			t.Fatalf("error detail %d does not name the ref; the detail is not the host-rule violation: %s", i, b)
 		}
+		if !strings.Contains(string(b), "127.0.0.1") {
+			t.Fatalf("error detail %d does not name the rejected host: %s", i, b)
+		}
 	}
 
 	// Stop the server so every buffered write has landed before the grep.

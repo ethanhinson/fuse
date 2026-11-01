@@ -24,8 +24,12 @@ const (
 // defaultResearchClient bounds connection setup and the wait for response
 // headers. The per-attempt deadline in Do governs total request time; this
 // client deliberately sets no overall Client.Timeout of its own.
-var defaultResearchClient = &http.Client{
-	Transport: &http.Transport{
+var defaultResearchClient = &http.Client{Transport: newResearchTransport()}
+
+// newResearchTransport returns the connection settings shared by every
+// research client.
+func newResearchTransport() *http.Transport {
+	return &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
@@ -36,7 +40,7 @@ var defaultResearchClient = &http.Client{
 		ExpectContinueTimeout: 1 * time.Second,
 		MaxIdleConnsPerHost:   8,
 		IdleConnTimeout:       90 * time.Second,
-	},
+	}
 }
 
 // Client is a bounded, retrying HTTP doer shared by the search providers and

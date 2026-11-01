@@ -72,6 +72,8 @@ func loopSecrets(ss []loopsecret.Secret) (map[string]loopsecret.Secret, []harnes
 // the reference's destination. It names the destination's canonical hostname
 // (the spec's own choice) and never the value.
 func loopHostProblem(ref secretRef) harnessconfig.Problem {
+	// An unparsable destination never reaches here: shape validation refuses
+	// it earlier, so the empty host is only a defensive fallback.
 	var host string
 	if u, err := url.Parse(ref.destination); err == nil {
 		host = canonicalHost(u.Hostname())

@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/netguard"
 )
 
 // ErrSecretUnavailable is the one error a SecretResolver returns for a name it
@@ -103,7 +104,7 @@ func available(e config.SecretSourceConfig, tenant string) (string, bool) {
 // trailing root dot. The operator secret hosts rule, the loop-scoped secret
 // hosts rule and the spec policy all match through it, so no two layers can
 // disagree on a spelling.
-func canonicalHost(h string) string { return strings.ToLower(strings.TrimSuffix(h, ".")) }
+func canonicalHost(h string) string { return netguard.CanonicalHost(h) }
 
 // destinationAllowed reports whether destination's hostname is one of hosts.
 // An unparsable destination, an empty hostname or an empty hosts list is never
