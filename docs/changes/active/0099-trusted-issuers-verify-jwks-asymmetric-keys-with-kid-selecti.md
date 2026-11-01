@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -49,3 +49,9 @@ reconciled: false
 ## Out of scope
 
 token scopes or any new claim (F2); revocation lists or introspection; OIDC discovery (`/.well-known/openid-configuration`); mTLS; rotating the tool-identity root key.
+
+## Reconcile log
+
+### 2026-11-01
+
+Unchanged against origin/main tip 3567c07: loopauth/issuer.go is still HS256-only, toolIdentityTenantKeys still eager, IssuerConfig has no jwks fields.
