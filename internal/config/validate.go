@@ -171,6 +171,23 @@ func (c Config) Problems() []Problem {
 		}
 	}
 
+	// loop_server.auth[].scopes narrows a static token to specific RPCs. Omitted
+	// (nil) means unrestricted; an explicitly empty list must not silently become
+	// "everything allowed", and each entry must be one scope name (a
+	// space-joined string would otherwise canonicalize into several). Unknown
+	// names are fine: they are ignored but still restrict. The token itself is
+	// never echoed.
+	for i, a := range c.LoopServer.Auth {
+		if a.Scopes != nil && len(a.Scopes) == 0 {
+			add(fmt.Sprintf("loop_server.auth[%d].scopes", i), "is empty; omit scopes for an unrestricted token or name at least one scope")
+		}
+		for j, sc := range a.Scopes {
+			if sc == "" || strings.ContainsAny(sc, " \t\r\n") {
+				add(fmt.Sprintf("loop_server.auth[%d].scopes[%d]", i, j), "%q is not a single scope name", sc)
+			}
+		}
+	}
+
 	// The issuer and observability checks are operator-only surfaces and stop at
 	// their first problem; each is reported under its block's path.
 	if err := validateIssuers(c.LoopServer.Issuers); err != nil {

@@ -111,6 +111,9 @@ func buildLoopVerifier(cfg config.Config) (loopauth.Verifier, bool, error) {
 			Tenant:                event.NormalizeTenant(event.TenantID(a.Tenant)),
 			Subject:               a.Subject,
 			ObservabilityOperator: a.ObservabilityOperator,
+			// Canonicalized once, here at the trusted edge; nil/omitted stays
+			// unrestricted (config validation refuses an explicit empty list).
+			Scopes: loopauth.NewScopes(a.Scopes...),
 		}
 	}
 	issuers, err := loopIssuers(cfg)

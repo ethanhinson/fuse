@@ -221,11 +221,19 @@ type PipelineConfig struct {
 // because a case-insensitive volume would hand "Acme" and "acme" one directory;
 // a dot-leading id is refused because its workspace tree would be hidden from
 // an operator listing the parent. See internal/tools/sandbox.tenantDirName.
+//
+// Scopes is OPTIONAL and narrows the token to specific RPCs. Omitted means
+// unrestricted (every RPC the principal is otherwise authorized for). Names come
+// from the loopauth scope vocabulary (for example loop:start, loop:send,
+// loop:observe, loop:admin). An unknown name is ignored but still restricts:
+// a non-empty list grants only the scopes it names. An explicitly empty list
+// (`scopes: []`) is a validation problem rather than a silent "unrestricted".
 type AuthTokenConfig struct {
-	Token                 string `yaml:"token"`
-	Tenant                string `yaml:"tenant"`
-	Subject               string `yaml:"subject"`
-	ObservabilityOperator bool   `yaml:"observability_operator"`
+	Token                 string   `yaml:"token"`
+	Tenant                string   `yaml:"tenant"`
+	Subject               string   `yaml:"subject"`
+	ObservabilityOperator bool     `yaml:"observability_operator"`
+	Scopes                []string `yaml:"scopes"`
 }
 
 // LoopServerConfig configures the networked Connect/protobuf loop-control binding
