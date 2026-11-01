@@ -33,10 +33,22 @@ func WithHTTPClient(c connectHTTPClient) Option {
 	return func(o *options) { o.httpClient = c }
 }
 
+// WithTokenProvider supplies the bearer token per request (each unary call and each
+// stream open) instead of Credentials.Token, which is then ignored. It lets a client
+// present short-lived issuer tokens. A provider error fails that request before
+// anything is sent. There is no caching or refresh loop: cache inside the provider if
+// needed. A provider that returns "" sends no Authorization header, as an empty Token
+// does. It is an Option rather than a Credentials field so Credentials stays
+// comparable. The local backend ignores it.
+func WithTokenProvider(p func(context.Context) (string, error)) Option {
+	return func(o *options) { o.tokenProvider = p }
+}
+
 // NewRemote builds a Client that dials the loop service at baseURL. creds.Token is sent
 // as "Authorization: Bearer <token>" on every request and creds.Tenant is set on every
 // request message (a wrong token → ErrUnauthenticated; a tenant that mismatches the
-// token's principal → ErrPermissionDenied).
+// token's principal → ErrPermissionDenied). When WithTokenProvider is given it supplies
+// the token instead, once per request, and creds.Token is ignored.
 func NewRemote(baseURL string, creds Credentials, opts ...Option) *Client {
 	o := newOptions(opts...)
 	var httpClient connect.HTTPClient = http.DefaultClient
@@ -44,40 +56,91 @@ func NewRemote(baseURL string, creds Credentials, opts ...Option) *Client {
 		httpClient = o.httpClient
 	}
 	client := loopv1connect.NewLoopServiceClient(httpClient, baseURL,
-		connect.WithInterceptors(bearerInterceptor{token: creds.Token}))
+		connect.WithInterceptors(bearerInterceptor{token: creds.Token, provider: o.tokenProvider}))
 	return &Client{backend: &remoteBackend{client: client, tenant: creds.Tenant}}
 }
 
 // bearerInterceptor sets "Authorization: Bearer <token>" on every unary and streaming
 // request. An empty token sets no header (which the server's Verifier maps to
-// ErrInvalidToken → Unauthenticated, so missing and invalid fail closed alike).
-type bearerInterceptor struct{ token string }
-
-func (b bearerInterceptor) set(h http.Header) {
-	if b.token != "" {
-		h.Set("Authorization", "Bearer "+b.token)
-	}
+// ErrInvalidToken → Unauthenticated, so missing and invalid fail closed alike). With a
+// provider, the token is fetched per request and a provider error fails that request
+// before anything is sent.
+type bearerInterceptor struct {
+	token    string
+	provider func(context.Context) (string, error)
 }
 
-func (b bearerInterceptor) setContext(ctx context.Context, h http.Header) {
-	b.set(h)
+// resolve returns the token for one request: the provider's answer when set,
+// otherwise the static token.
+func (b bearerInterceptor) resolve(ctx context.Context) (string, error) {
+	if b.provider == nil {
+		return b.token, nil
+	}
+	tok, err := b.provider(ctx)
+	if err != nil {
+		return "", fmt.Errorf("fuse: token provider: %w", err)
+	}
+	return tok, nil
+}
+
+func setRequestHeaders(ctx context.Context, h http.Header, token string) {
+	if token != "" {
+		h.Set("Authorization", "Bearer "+token)
+	}
 	observeotel.Inject(ctx, h)
 }
 
 func (b bearerInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		b.setContext(ctx, req.Header())
+		tok, err := b.resolve(ctx)
+		if err != nil {
+			return nil, err
+		}
+		setRequestHeaders(ctx, req.Header(), tok)
 		return next(ctx, req)
 	}
 }
 
 func (b bearerInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
 	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
+		tok, err := b.resolve(ctx)
+		if err != nil {
+			// The inner conn is never created: in connect-go even closing an
+			// unsent conn issues a real (header-less) HTTP request, which could
+			// block and would reach the server without credentials.
+			return newFailedStreamConn(spec, err)
+		}
 		conn := next(ctx, spec)
-		b.setContext(ctx, conn.RequestHeader())
+		setRequestHeaders(ctx, conn.RequestHeader(), tok)
 		return conn
 	}
 }
+
+// failedStreamConn is a stream whose bearer token could not be obtained: every
+// send, receive and close returns err, so the stream open fails without a request
+// ever being made. It stands alone (no inner conn); Spec answers from the call and
+// the header maps are empty but writable, as callers merge request headers in.
+type failedStreamConn struct {
+	spec       connect.Spec
+	err        error
+	reqHeader  http.Header
+	respHeader http.Header
+	trailer    http.Header
+}
+
+func newFailedStreamConn(spec connect.Spec, err error) failedStreamConn {
+	return failedStreamConn{spec: spec, err: err, reqHeader: http.Header{}, respHeader: http.Header{}, trailer: http.Header{}}
+}
+
+func (f failedStreamConn) Spec() connect.Spec           { return f.spec }
+func (f failedStreamConn) Peer() connect.Peer           { return connect.Peer{} }
+func (f failedStreamConn) Send(any) error               { return f.err }
+func (f failedStreamConn) RequestHeader() http.Header   { return f.reqHeader }
+func (f failedStreamConn) CloseRequest() error          { return f.err }
+func (f failedStreamConn) Receive(any) error            { return f.err }
+func (f failedStreamConn) ResponseHeader() http.Header  { return f.respHeader }
+func (f failedStreamConn) ResponseTrailer() http.Header { return f.trailer }
+func (f failedStreamConn) CloseResponse() error         { return f.err }
 
 func (b bearerInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return next // client-side interceptor: no server leg.

@@ -36,12 +36,14 @@ type AuditRecord struct {
 	Scopes   []string
 	Tier     string // "oauth" | "static"
 	ActChain string
+	// Loop is the loop the call came from, read from LoopFrom(ctx); empty when none.
+	Loop string
 }
 
 // String renders the audit record without any secret.
 func (r AuditRecord) String() string {
-	return fmt.Sprintf("credential mint subject=%s tenant=%s target=%s audience=%s tier=%s scopes=%v act=%s",
-		r.Subject, r.Tenant, r.Target, r.Audience, r.Tier, r.Scopes, r.ActChain)
+	return fmt.Sprintf("credential mint subject=%s tenant=%s target=%s audience=%s tier=%s scopes=%v act=%s loop=%s",
+		r.Subject, r.Tenant, r.Target, r.Audience, r.Tier, r.Scopes, r.ActChain, r.Loop)
 }
 
 // AuditSink receives one AuditRecord per credential resolution. Implementations
@@ -91,6 +93,7 @@ func (b *Broker) CredentialFor(ctx context.Context, p loopauth.Principal, t Targ
 	if !t.Valid() {
 		return Credential{}, fmt.Errorf("%w: %q (tier=%d)", ErrUndeclaredTarget, t.Name, t.Tier)
 	}
+	loop, _ := LoopFrom(ctx)
 
 	switch t.Tier {
 	case TierStatic:
@@ -100,7 +103,7 @@ func (b *Broker) CredentialFor(ctx context.Context, p loopauth.Principal, t Targ
 		}
 		b.emit(AuditRecord{
 			Subject: p.Subject, Tenant: p.Tenant, Target: t.Name,
-			Audience: t.Audience, Scopes: t.Scopes, Tier: "static",
+			Audience: t.Audience, Scopes: t.Scopes, Tier: "static", Loop: loop,
 		})
 		return NewCredential(sc.Scheme, sc.Token, false), nil
 
@@ -108,7 +111,6 @@ func (b *Broker) CredentialFor(ctx context.Context, p loopauth.Principal, t Targ
 		if b.exch == nil {
 			return Credential{}, errors.New("toolidentity: no token exchanger configured for an OAuth-tier target")
 		}
-		loop, _ := LoopFrom(ctx)
 		res, err := b.exch.Exchange(ctx, ExchangeRequest{
 			Tenant:   p.Tenant,
 			Subject:  p.Subject,
@@ -122,7 +124,7 @@ func (b *Broker) CredentialFor(ctx context.Context, p loopauth.Principal, t Targ
 		}
 		b.emit(AuditRecord{
 			Subject: p.Subject, Tenant: p.Tenant, Target: t.Name,
-			Audience: t.Audience, Scopes: t.Scopes, Tier: "oauth", ActChain: res.ActChain,
+			Audience: t.Audience, Scopes: t.Scopes, Tier: "oauth", ActChain: res.ActChain, Loop: loop,
 		})
 		return NewCredential("Bearer", res.Token, true), nil
 	}

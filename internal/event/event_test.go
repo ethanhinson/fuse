@@ -35,6 +35,8 @@ func TestKindWireValues(t *testing.T) {
 		KindSandboxAdmission:   "sandbox.admission",
 		KindLoopHarness:        "loop.harness",
 		KindMCPServer:          "mcp.server",
+		KindLoopPrincipal:      "loop.principal",
+		KindToolIdentityMinted: "tool.identity.minted",
 	}
 	for k, want := range cases {
 		if string(k) != want {
@@ -284,4 +286,42 @@ func TestSandboxPayloadsArePayloadFree(t *testing.T) {
 			}
 		}
 	}
+}
+
+func payloadKeys(t *testing.T, v any) map[string]any {
+	t.Helper()
+	raw, err := MarshalPayload(v)
+	if err != nil {
+		t.Fatalf("MarshalPayload: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return m
+}
+
+func assertExactKeys(t *testing.T, m map[string]any, want ...string) {
+	t.Helper()
+	if len(m) != len(want) {
+		t.Fatalf("keys = %v, want exactly %v", m, want)
+	}
+	for _, k := range want {
+		if _, ok := m[k]; !ok {
+			t.Fatalf("missing key %q in %v", k, m)
+		}
+	}
+}
+
+func TestLoopPrincipalPayloadShape(t *testing.T) {
+	m := payloadKeys(t, LoopPrincipalPayload{Subject: "s", ClientID: "c", Issuer: "i", Scopes: []string{}, TokenID: "t"})
+	assertExactKeys(t, m, "subject", "client_id", "issuer", "scopes", "token_id")
+	if _, ok := m["scopes"].([]any); !ok {
+		t.Fatalf("scopes = %#v, want JSON array", m["scopes"])
+	}
+}
+
+func TestToolIdentityMintedPayloadShape(t *testing.T) {
+	m := payloadKeys(t, ToolIdentityMintedPayload{Subject: "s", Audience: "a", Scope: "x y", LoopID: "l"})
+	assertExactKeys(t, m, "subject", "audience", "scope", "loop_id")
 }

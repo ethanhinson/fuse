@@ -36,8 +36,18 @@ import (
 //   - mediator is non-nil exactly when an identity-propagating server is declared
 //     (buildTargetMediator's gate), independent of whether a signing key resolved —
 //     an identity server with no key still declares a target the mediator gates.
+//
+// mcpAttach wires no audit sink. A binding that records each delegated mint
+// (the loop-server host, into the loop's own stream) calls mcpAttachAudited.
 func mcpAttach(cfg config.Config, w io.Writer) (mcpOpts []mcp.ManagerOption, mediator permissions.Option) {
-	if src, reason := buildToolIdentitySource(cfg); src != nil {
+	return mcpAttachAudited(cfg, w, nil)
+}
+
+// mcpAttachAudited is mcpAttach with the tool-identity broker's audit sink: a
+// non-nil audit receives one toolidentity.AuditRecord per credential the
+// broker resolves for this binding's MCP servers.
+func mcpAttachAudited(cfg config.Config, w io.Writer, audit toolidentity.AuditSink) (mcpOpts []mcp.ManagerOption, mediator permissions.Option) {
+	if src, reason := buildToolIdentitySourceAudited(cfg, audit); src != nil {
 		mcpOpts = append(mcpOpts, mcp.WithCredentialSource(src))
 		logToolIdentityPosture(w, cfg, true, "")
 	} else if reason != "" {
@@ -151,7 +161,15 @@ func isHTTPTransport(transport string) bool {
 // whose auth type is bearer/oauth2/static contributes its resolved static token
 // to the broker so a mixed config (some identity, some legacy) works — the legacy
 // servers keep presenting their identity-free credential.
+//
+// It wires no audit sink; buildToolIdentitySourceAudited takes one.
 func buildToolIdentitySource(cfg config.Config) (toolidentity.CredentialSource, string) {
+	return buildToolIdentitySourceAudited(cfg, nil)
+}
+
+// buildToolIdentitySourceAudited is buildToolIdentitySource with the broker's
+// audit sink (nil: none).
+func buildToolIdentitySourceAudited(cfg config.Config, audit toolidentity.AuditSink) (toolidentity.CredentialSource, string) {
 	anyIdentity := false
 	for _, s := range cfg.MCPServers {
 		if s.IsIdentityPropagating() {
@@ -180,7 +198,7 @@ func buildToolIdentitySource(cfg config.Config) (toolidentity.CredentialSource, 
 		return nil, "an MCP server declares an identity/oauth-exchange auth type but tool_identity.signing_key is unset in ~/.fuse/config.yml — identity-propagating servers cannot mint downstream tokens and will fail closed"
 	}
 
-	return newToolIdentityBroker(cfg)
+	return newToolIdentityBroker(cfg, audit)
 }
 
 // newToolIdentityBroker builds THE credential source this binary mints delegated
@@ -208,9 +226,14 @@ func buildToolIdentitySource(cfg config.Config) (toolidentity.CredentialSource, 
 // listener's principal, the MCP manager passes the loop's. So one long-lived
 // source serves every loop without carrying any loop's identity.
 //
+// audit receives one record per credential the broker resolves; nil records
+// nothing. A typed nil (a nil *loopMintAudit passed as an AuditSink) is a
+// non-nil interface the broker will call, so a sink type must tolerate a nil
+// receiver; loopMintAudit does.
+//
 // The reason string is non-empty only when construction FAILED; the source is
 // then nil and the caller must fail closed.
-func newToolIdentityBroker(cfg config.Config) (toolidentity.CredentialSource, string) {
+func newToolIdentityBroker(cfg config.Config, audit toolidentity.AuditSink) (toolidentity.CredentialSource, string) {
 	ttl := 5 * time.Minute
 	if cfg.ToolIdentity.TTL != "" {
 		if d, err := time.ParseDuration(cfg.ToolIdentity.TTL); err == nil && d > 0 {
@@ -251,7 +274,7 @@ func newToolIdentityBroker(cfg config.Config) (toolidentity.CredentialSource, st
 		}
 	}
 
-	return toolidentity.NewBroker(sts, static, nil), ""
+	return toolidentity.NewBroker(sts, static, audit), ""
 }
 
 // toolIdentityTenantKeys builds the STS per-tenant signing-key map (change #59). It

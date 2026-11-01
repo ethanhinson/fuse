@@ -78,6 +78,9 @@ const maxIssuerTokenBytes = 8 << 10
 // IssuerVerifier verifies compact JWS bearer tokens against a fixed set of
 // trusted issuers. Its issuer set is fixed at construction; JWKS-backed issuers
 // refresh their key caches internally. It is safe for concurrent use.
+//
+// Beyond the required claims, a token may carry the optional "scope",
+// "harness_digest", "azp" and "jti" claims; see Verify.
 type IssuerVerifier struct {
 	issuers map[string]issuerEntry
 	now     func() time.Time
@@ -171,7 +174,13 @@ func NewIssuerVerifier(issuers []Issuer) (*IssuerVerifier, error) {
 	return v, nil
 }
 
-// Verify resolves an issuer token to its Principal. Every failure, whatever the
+// Verify resolves an issuer token to its Principal. Four optional claims are
+// read onto it: "scope" (space-separated; absent means unrestricted, present but
+// empty is refused) becomes Scopes, "harness_digest" becomes HarnessDigest,
+// "azp" becomes ClientID and "jti" becomes TokenID; each must be a JSON string
+// when present. Issuer is always the verifying issuer's trusted Name.
+//
+// Every failure, whatever the
 // reason, is ErrInvalidToken: the Connect edge puts the error text on the wire,
 // and a caller holding a bad token must not learn whether the issuer exists, the
 // signature matched, or which claim was wrong.
@@ -200,6 +209,18 @@ type issuerClaims struct {
 	Exp    *json.Number    `json:"exp"`
 	Nbf    *json.Number    `json:"nbf"`
 	Tenant *string         `json:"tenant"`
+	// Scope is the optional RFC 8693 space-separated scope list. Absent means
+	// unrestricted; present but null, or empty after splitting, is refused.
+	// Kept raw so a present null is told apart from absence.
+	Scope json.RawMessage `json:"scope"`
+	// HarnessDigest optionally pins the token to one harness spec digest.
+	// Absent means unpinned; present but null or empty is refused. Kept raw for
+	// the same reason as Scope.
+	HarnessDigest json.RawMessage `json:"harness_digest"`
+	// Azp is the optional authorized party (OAuth client id), audit only.
+	Azp string `json:"azp"`
+	// Jti is the optional token id, audit only.
+	Jti string `json:"jti"`
 }
 
 // verify is Verify with the reason kept, for tests. Order matters: nothing in
@@ -346,11 +367,58 @@ func (v *IssuerVerifier) verifyCtx(ctx context.Context, token string) (Principal
 		return Principal{}, fmt.Errorf("issuer may not assert tenant %q", tenant)
 	}
 
+	// A present scope claim that names nothing (null, or empty after
+	// splitting) is refused: read as "no scope", "the issuer allowed nothing"
+	// would silently become "everything allowed".
+	var scopes Scopes
+	if c.Scope != nil {
+		raw, err := presentStringClaim(c.Scope, "scope")
+		if err != nil {
+			return Principal{}, err
+		}
+		scopes = ParseScopes(raw)
+		if scopes.Empty() {
+			return Principal{}, errors.New("scope claim is present but empty")
+		}
+	}
+	// Likewise a present harness_digest that pins nothing is refused rather
+	// than read as unpinned.
+	var digest string
+	if c.HarnessDigest != nil {
+		d, err := presentStringClaim(c.HarnessDigest, "harness_digest")
+		if err != nil {
+			return Principal{}, err
+		}
+		if d == "" {
+			return Principal{}, errors.New("harness_digest claim is present but empty")
+		}
+		digest = d
+	}
+
 	return Principal{
 		Tenant:                tenant,
 		Subject:               c.Sub,
 		ObservabilityOperator: is.ObservabilityOperator,
+		Scopes:                scopes,
+		HarnessDigest:         digest,
+		ClientID:              c.Azp,
+		Issuer:                is.Name,
+		TokenID:               c.Jti,
 	}, nil
+}
+
+// presentStringClaim decodes an optional claim known to be present. A literal
+// null is refused (it is present, so it cannot mean "absent"), and a non-string
+// value is malformed like any other mistyped claim.
+func presentStringClaim(raw json.RawMessage, name string) (string, error) {
+	if string(raw) == "null" {
+		return "", fmt.Errorf("%s claim is present but null", name)
+	}
+	var v string
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return "", errors.New("malformed claims")
+	}
+	return v, nil
 }
 
 // audienceContains reports whether a JWT "aud" claim names want. Per RFC 7519

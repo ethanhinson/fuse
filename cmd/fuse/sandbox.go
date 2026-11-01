@@ -575,7 +575,8 @@ func buildEgressCredentialSource(appCfg config.Config, egress sandbox.Egress) (t
 		return nil, fmt.Sprintf("%d egress.allow entr%s declare a `credential:` audience but tool_identity.signing_key is unset in ~/.fuse/config.yml — no delegated token can be minted, so every request to those destinations is REFUSED",
 			declared, plural(declared))
 	}
-	src, reason := newToolIdentityBroker(appCfg)
+	// No audit sink: the egress proxy's mints are not recorded in a loop stream.
+	src, reason := newToolIdentityBroker(appCfg, nil)
 	if reason != "" {
 		return nil, reason + " — egress entries declaring a `credential:` audience are REFUSED"
 	}

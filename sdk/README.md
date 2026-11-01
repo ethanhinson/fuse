@@ -150,3 +150,19 @@ wrong token → `ErrUnauthenticated`, a tenant that mismatches the authenticated
 `ErrPermissionDenied`. The SDK defines only the *seam* — the auth **mechanism and enforcement** are
 owned by change 0049 at the server edge; the local backend carries the tenant through the runtime
 seam (no token).
+
+### Short-lived tokens (`WithTokenProvider`)
+
+Pass `fuse.WithTokenProvider` to `NewRemote` to fetch the bearer token per request (each unary
+call and each stream open); `Token` is then ignored:
+
+```go
+c := fuse.NewRemote(url, fuse.Credentials{Tenant: "acme"},
+	fuse.WithTokenProvider(func(ctx context.Context) (string, error) { return mint(ctx) }),
+)
+```
+
+A provider error fails that request before anything is sent. There is no caching
+or refresh loop; cache inside the provider if needed. A provider returning `""`
+sends no `Authorization` header, like an empty `Token`. The provider is an option, not a `Credentials` field, so
+`Credentials` stays comparable. The local backend ignores it.

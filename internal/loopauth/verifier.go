@@ -39,6 +39,20 @@ type Principal struct {
 	// operations. Tenant principals do not receive it implicitly; trusted verifier
 	// configuration must grant it.
 	ObservabilityOperator bool
+	// Scopes narrows which RPCs this principal may call. Empty is unrestricted.
+	// It is set only by a trusted verifier (issuer `scope` claim or static
+	// `scopes` config), never from a request.
+	Scopes Scopes
+	// HarnessDigest, when set, pins StartLoop: the request must carry a harness
+	// spec whose digest is exactly this value.
+	HarnessDigest string
+	// ClientID is the JWT `azp` (authorized party). Audit only.
+	ClientID string
+	// Issuer is the trusted issuer that verified the token. Audit only; empty for
+	// static tokens.
+	Issuer string
+	// TokenID is the JWT `jti`. Audit only; it is not used for replay detection.
+	TokenID string
 }
 
 // Verifier resolves a bearer token to the Principal it names. It is the pluggable

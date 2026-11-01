@@ -100,6 +100,10 @@ func TestDispatchLoopStartReturnsLoopID(t *testing.T) {
 	if fr.startCfg.Task != "hi" || fr.startCfg.ModelID != "cloud/x" {
 		t.Fatalf("StartLoop cfg = %+v, want Task=hi ModelID=cloud/x", fr.startCfg)
 	}
+	// The stdio binding never carries a principal record: no token, no loop.principal.
+	if fr.startCfg.Principal != nil {
+		t.Fatalf("StartLoop cfg.Principal = %+v, want nil on the stdio binding", fr.startCfg.Principal)
+	}
 	// Interactive defaults false when the param is omitted — binding #2 (stdio) never
 	// sets it, so its loops stay single-task run-to-completion.
 	if fr.startCfg.Interactive {

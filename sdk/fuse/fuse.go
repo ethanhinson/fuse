@@ -172,6 +172,9 @@ type options struct {
 	// httpClient overrides the connect.HTTPClient the remote backend dials with (set
 	// via WithHTTPClient). nil ⇒ the backend's default (an h2c-capable http.Client).
 	httpClient connectHTTPClient
+	// tokenProvider supplies the bearer token per request (set via WithTokenProvider).
+	// nil ⇒ the static Credentials.Token.
+	tokenProvider func(context.Context) (string, error)
 }
 
 func newOptions(opts ...Option) options {

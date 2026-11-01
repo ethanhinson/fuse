@@ -92,8 +92,10 @@ func (h *loopServerHost) settingsFor(res harnessresolve.Resolved) loopSettings {
 
 	// The loop's MCP attach options follow its resolved MCP servers. The identity
 	// posture was already logged once for the server's own config at startup, so
-	// a per-loop resolution logs nothing.
-	mcpOpts, _ := mcpAttach(cfg, io.Discard)
+	// a per-loop resolution logs nothing. The host's mint audit sink rides along,
+	// so a harness-spec loop's delegated mints reach its own stream exactly like
+	// an operator loop's.
+	mcpOpts, _ := mcpAttachAudited(cfg, io.Discard, h.mintAudit)
 
 	return loopSettings{
 		cfg:         cfg,

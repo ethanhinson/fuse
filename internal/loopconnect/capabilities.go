@@ -11,6 +11,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/capabilities"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/loopauth"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/observe"
 	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
@@ -37,6 +38,7 @@ func (h *Handler) WithCapabilities(s CapabilitySource) *Handler {
 // StartLoop. The source is asked only after both checks pass, and always for
 // the authenticated tenant. Until a source is wired it answers Unimplemented,
 // so a client never mistakes an empty answer for a server that accepts nothing.
+// A scoped principal needs capabilities:read, checked before the tenant.
 func (h *Handler) GetCapabilities(ctx context.Context, req *connect.Request[loopv1.GetCapabilitiesRequest]) (*connect.Response[loopv1.GetCapabilitiesResponse], error) {
 	ctx, apiSpan := h.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "get_capabilities"})
 	apiOutcome := observe.OutcomeSuccess
@@ -44,6 +46,9 @@ func (h *Handler) GetCapabilities(ctx context.Context, req *connect.Request[loop
 	fail := func(err *connect.Error) (*connect.Response[loopv1.GetCapabilitiesResponse], error) {
 		apiOutcome = observeotel.OutcomeFromError(ctx, err)
 		return nil, err
+	}
+	if aerr := requireScope(ctx, loopauth.ScopeCapabilitiesRead); aerr != nil {
+		return fail(aerr)
 	}
 	tenant, _, _, aerr := h.effectiveTenant(ctx, req.Msg.Tenant)
 	if aerr != nil {

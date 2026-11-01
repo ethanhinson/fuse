@@ -99,14 +99,14 @@ func TestIssuerTokenAccepted(t *testing.T) {
 		claims map[string]any
 		want   Principal
 	}{
-		{"tenant omitted is _default", goodClaims(), Principal{Tenant: event.DefaultTenant, Subject: "user-42"}},
-		{"allowed named tenant", with(goodClaims(), "tenant", "acme"), Principal{Tenant: "acme", Subject: "user-42"}},
-		{"empty tenant is _default", with(goodClaims(), "tenant", ""), Principal{Tenant: event.DefaultTenant, Subject: "user-42"}},
-		{"aud as array", with(goodClaims(), "aud", []string{"other", "fuse-loop"}), Principal{Tenant: event.DefaultTenant, Subject: "user-42"}},
-		{"iat slightly ahead within skew", with(goodClaims(), "iat", testNow.Add(IssuerClockSkew-time.Second).Unix()), Principal{Tenant: event.DefaultTenant, Subject: "user-42"}},
-		{"lifetime exactly max_ttl", with(goodClaims(), "iat", testNow.Add(-time.Minute).Unix(), "exp", testNow.Add(59*time.Minute).Unix()), Principal{Tenant: event.DefaultTenant, Subject: "user-42"}},
-		{"fractional NumericDate", with(goodClaims(), "exp", float64(testNow.Unix())+30.5), Principal{Tenant: event.DefaultTenant, Subject: "user-42"}},
-		{"nbf in the past", with(goodClaims(), "nbf", testNow.Add(-time.Minute).Unix()), Principal{Tenant: event.DefaultTenant, Subject: "user-42"}},
+		{"tenant omitted is _default", goodClaims(), Principal{Tenant: event.DefaultTenant, Subject: "user-42", Issuer: "cms"}},
+		{"allowed named tenant", with(goodClaims(), "tenant", "acme"), Principal{Tenant: "acme", Subject: "user-42", Issuer: "cms"}},
+		{"empty tenant is _default", with(goodClaims(), "tenant", ""), Principal{Tenant: event.DefaultTenant, Subject: "user-42", Issuer: "cms"}},
+		{"aud as array", with(goodClaims(), "aud", []string{"other", "fuse-loop"}), Principal{Tenant: event.DefaultTenant, Subject: "user-42", Issuer: "cms"}},
+		{"iat slightly ahead within skew", with(goodClaims(), "iat", testNow.Add(IssuerClockSkew-time.Second).Unix()), Principal{Tenant: event.DefaultTenant, Subject: "user-42", Issuer: "cms"}},
+		{"lifetime exactly max_ttl", with(goodClaims(), "iat", testNow.Add(-time.Minute).Unix(), "exp", testNow.Add(59*time.Minute).Unix()), Principal{Tenant: event.DefaultTenant, Subject: "user-42", Issuer: "cms"}},
+		{"fractional NumericDate", with(goodClaims(), "exp", float64(testNow.Unix())+30.5), Principal{Tenant: event.DefaultTenant, Subject: "user-42", Issuer: "cms"}},
+		{"nbf in the past", with(goodClaims(), "nbf", testNow.Add(-time.Minute).Unix()), Principal{Tenant: event.DefaultTenant, Subject: "user-42", Issuer: "cms"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -196,6 +196,93 @@ func TestIssuerTokenRefused(t *testing.T) {
 	}
 }
 
+// The optional scope, harness_digest, azp and jti claims land on the
+// Principal, scopes canonicalized (deduplicated, sorted), and Issuer is the
+// verifying issuer's trusted Name.
+func TestIssuerTokenCarriesScopesAndAuditClaims(t *testing.T) {
+	v := newTestIssuerVerifier(t)
+	claims := with(goodClaims(), "scope", "loop:start loop:observe loop:start", "harness_digest", "sha256:abc", "azp", "client-1", "jti", "x")
+	got, err := v.Verify(context.Background(), mint(hs256(), claims, testKey))
+	if err != nil {
+		_, reason := v.verify(mint(hs256(), claims, testKey))
+		t.Fatalf("Verify: %v (reason: %v)", err, reason)
+	}
+	want := Principal{
+		Tenant:        event.DefaultTenant,
+		Subject:       "user-42",
+		Scopes:        NewScopes("loop:observe", "loop:start"),
+		HarnessDigest: "sha256:abc",
+		ClientID:      "client-1",
+		Issuer:        "cms",
+		TokenID:       "x",
+	}
+	if got != want {
+		t.Fatalf("principal = %+v, want %+v", got, want)
+	}
+}
+
+// No scope claim means unrestricted (empty Scopes), and no digest pin.
+func TestIssuerTokenWithoutScopeIsUnrestricted(t *testing.T) {
+	v := newTestIssuerVerifier(t)
+	got, err := v.Verify(context.Background(), mint(hs256(), goodClaims(), testKey))
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if got.Scopes != "" || !got.Scopes.Empty() {
+		t.Fatalf("Scopes = %q, want empty (unrestricted)", got.Scopes)
+	}
+	if got.HarnessDigest != "" {
+		t.Fatalf("HarnessDigest = %q, want empty", got.HarnessDigest)
+	}
+	if got.Issuer != "cms" {
+		t.Fatalf("Issuer = %q, want cms", got.Issuer)
+	}
+}
+
+// jsonNull is a claim value that marshals to a literal JSON null (a nil value
+// passed to with deletes the key instead, which tests absence).
+var jsonNull = json.RawMessage("null")
+
+// A present-but-empty or null scope claim, and a present null or empty
+// harness_digest, is refused rather than read as unrestricted or unpinned, and
+// a non-string scope, harness_digest, azp or jti fails claim decoding. Every
+// refusal is the uniform ErrInvalidToken with a zero Principal.
+func TestIssuerTokenRefusesBadScopeAndAuditClaims(t *testing.T) {
+	v := newTestIssuerVerifier(t)
+	good := goodClaims()
+	cases := []struct {
+		name   string
+		claims map[string]any
+		reason string
+	}{
+		{"scope empty", with(good, "scope", ""), "scope"},
+		{"scope whitespace only", with(good, "scope", "   "), "scope"},
+		{"scope array", with(good, "scope", []string{"loop:start"}), "malformed claims"},
+		{"scope null", with(good, "scope", jsonNull), "scope"},
+		{"harness_digest number", with(good, "harness_digest", 7), "malformed claims"},
+		{"harness_digest null", with(good, "harness_digest", jsonNull), "harness_digest"},
+		{"harness_digest empty", with(good, "harness_digest", ""), "harness_digest"},
+		{"azp bool", with(good, "azp", true), "malformed claims"},
+		{"jti object", with(good, "jti", map[string]any{}), "malformed claims"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := mint(hs256(), tc.claims, testKey)
+			p, err := v.Verify(context.Background(), tok)
+			if err != ErrInvalidToken {
+				t.Fatalf("Verify err = %v, want exactly ErrInvalidToken", err)
+			}
+			if p != (Principal{}) {
+				t.Fatalf("refused token still returned principal %+v", p)
+			}
+			_, reason := v.verify(tok)
+			if reason == nil || !strings.Contains(reason.Error(), tc.reason) {
+				t.Fatalf("refusal reason = %v, want it to mention %q", reason, tc.reason)
+			}
+		})
+	}
+}
+
 // An issuer's token cannot claim the observability operator grant; only the
 // issuer's trusted config entry can give it.
 func TestIssuerObservabilityOperatorComesFromConfigOnly(t *testing.T) {
@@ -268,7 +355,7 @@ func TestFirstOfStaticThenIssuer(t *testing.T) {
 		t.Fatalf("static token: %+v, %v", p, err)
 	}
 	p, err = v.Verify(context.Background(), mint(hs256(), goodClaims(), testKey))
-	if err != nil || p != (Principal{Tenant: event.DefaultTenant, Subject: "user-42"}) {
+	if err != nil || p != (Principal{Tenant: event.DefaultTenant, Subject: "user-42", Issuer: "cms"}) {
 		t.Fatalf("issuer token: %+v, %v", p, err)
 	}
 	for _, bad := range []string{"", "nope", mint(hs256(), goodClaims(), otherKey)} {

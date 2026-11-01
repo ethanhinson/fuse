@@ -183,3 +183,55 @@ func TestBroker_PassesLoopFromContext(t *testing.T) {
 		t.Fatalf("loop_id = %v without a loop on the context", got)
 	}
 }
+
+// Every audit record names the loop the mint was for, at both tiers; no loop on the
+// context leaves it empty.
+func TestBrokerAuditCarriesLoop(t *testing.T) {
+	audit := &recordingAudit{}
+	static := map[string]StaticCredential{"legacy": {Scheme: "Bearer", Token: "legacy-static-token"}}
+	b := testBroker(t, static, audit)
+	p := loopauth.Principal{Tenant: "tenantA", Subject: "alice"}
+	oauth := Target{Name: "srv", Audience: "https://api.example.com", Tier: TierOAuth}
+	ctx := WithLoop(context.Background(), "loop-1")
+
+	if _, err := b.CredentialFor(ctx, p, oauth); err != nil {
+		t.Fatalf("oauth: %v", err)
+	}
+	if _, err := b.CredentialFor(ctx, p, Target{Name: "legacy", Tier: TierStatic}); err != nil {
+		t.Fatalf("static: %v", err)
+	}
+	if _, err := b.CredentialFor(context.Background(), p, oauth); err != nil {
+		t.Fatalf("no loop: %v", err)
+	}
+	if len(audit.records) != 3 {
+		t.Fatalf("want 3 records, got %d", len(audit.records))
+	}
+	if r := audit.records[0]; r.Loop != "loop-1" || r.Tier != "oauth" {
+		t.Fatalf("oauth record = %+v", r)
+	}
+	if r := audit.records[1]; r.Loop != "loop-1" || r.Tier != "static" {
+		t.Fatalf("static record = %+v", r)
+	}
+	if r := audit.records[2]; r.Loop != "" {
+		t.Fatalf("no-loop record Loop = %q", r.Loop)
+	}
+}
+
+// The rendered audit line names the loop and never the minted token.
+func TestAuditRecordStringHasNoToken(t *testing.T) {
+	audit := &recordingAudit{}
+	b := testBroker(t, nil, audit)
+	p := loopauth.Principal{Tenant: "tenantA", Subject: "alice"}
+	cred, err := b.CredentialFor(WithLoop(context.Background(), "loop-1"), p,
+		Target{Name: "srv", Audience: "https://api.example.com", Tier: TierOAuth})
+	if err != nil {
+		t.Fatalf("CredentialFor: %v", err)
+	}
+	s := audit.records[0].String()
+	if !strings.Contains(s, "loop=loop-1") {
+		t.Fatalf("audit line missing loop: %s", s)
+	}
+	if strings.Contains(s, cred.rawTokenForTest()) {
+		t.Fatal("audit line leaked the token")
+	}
+}
