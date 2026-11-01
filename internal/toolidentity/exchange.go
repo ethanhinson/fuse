@@ -82,8 +82,9 @@ func (s *BuiltinSTS) keyFor(tenant event.TenantID) ([]byte, bool) {
 	return nil, false
 }
 
-// ErrTenantNotConfigured is returned when a tenant has no signing key — the STS
-// fails closed rather than minting with an empty or shared key.
+// ErrTenantNotConfigured is returned when a tenant has no signing key and no
+// DeriveKey is configured — the STS fails closed rather than minting with an
+// empty or shared key.
 var ErrTenantNotConfigured = errors.New("toolidentity: tenant has no configured signing key")
 
 // NewBuiltinSTS builds the STS. TTL defaults to 5 minutes when unset; at least
@@ -110,7 +111,8 @@ func NewBuiltinSTS(cfg BuiltinSTSConfig) (*BuiltinSTS, error) {
 	return &BuiltinSTS{issuer: issuer, ttl: ttl, keys: keys, derive: cfg.DeriveKey}, nil
 }
 
-// Exchange mints a delegation token. It fails closed for an unconfigured tenant.
+// Exchange mints a delegation token. Without a DeriveKey it fails closed for an
+// unconfigured tenant.
 func (s *BuiltinSTS) Exchange(_ context.Context, req ExchangeRequest) (ExchangeResult, error) {
 	tenant := event.NormalizeTenant(req.Tenant)
 	key, ok := s.keyFor(tenant)

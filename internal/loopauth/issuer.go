@@ -20,7 +20,8 @@ import (
 )
 
 // Issuer is one trusted token issuer: a separate service (for example a CMS that
-// signs its own users in) that holds a shared HS256 secret with fuse and mints
+// signs its own users in) that either shares an HS256 secret with fuse or publishes asymmetric keys
+// (inline jwks or a jwks_url), and mints
 // short-lived bearer tokens naming the subject per request. It is the mirror
 // image of the delegation tokens fuse itself mints toward MCP servers
 // (internal/toolidentity): there fuse signs and a downstream verifies, here a
@@ -74,8 +75,9 @@ const IssuerClockSkew = 30 * time.Second
 // are a few hundred bytes.
 const maxIssuerTokenBytes = 8 << 10
 
-// IssuerVerifier verifies compact HS256 JWS bearer tokens against a fixed set of
-// trusted issuers. It is read-only after construction and safe for concurrent use.
+// IssuerVerifier verifies compact JWS bearer tokens against a fixed set of
+// trusted issuers. Its issuer set is fixed at construction; JWKS-backed issuers
+// refresh their key caches internally. It is safe for concurrent use.
 type IssuerVerifier struct {
 	issuers map[string]issuerEntry
 	now     func() time.Time
@@ -267,6 +269,11 @@ func (v *IssuerVerifier) verifyCtx(ctx context.Context, token string) (Principal
 			return Principal{}, errors.New("signature mismatch")
 		}
 	} else {
+		// A key-set issuer never takes HS256; refuse it before the kid lookup
+		// so an unauthenticated token cannot spend the unknown-kid refetch budget.
+		if *hdr.Alg == "HS256" {
+			return Principal{}, errors.New("alg does not match key type")
+		}
 		if hdr.Kid == nil || *hdr.Kid == "" {
 			return Principal{}, errors.New("kid missing")
 		}
