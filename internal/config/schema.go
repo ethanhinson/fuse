@@ -257,6 +257,50 @@ type LoopServerConfig struct {
 	Issuers  []IssuerConfig       `yaml:"issuers"`
 	LeaseTTL string               `yaml:"lease_ttl"`
 	Secrets  []SecretSourceConfig `yaml:"secrets"`
+	// SpecPolicy is the operator's floor on what a client's harness spec may
+	// point at (change 0101). Operator-only, like the rest of the block.
+	SpecPolicy SpecPolicyConfig `yaml:"spec_policy"`
+}
+
+// Spec policy model modes.
+const (
+	// SpecModelsAny lets a spec name any gateway model id (the default).
+	SpecModelsAny = "any"
+	// SpecModelsRegistryOnly limits a spec's model ids to the gateway ids of
+	// the operator's advertised registry models.
+	SpecModelsRegistryOnly = "registry-only"
+)
+
+// SpecPolicyConfig is loop_server.spec_policy (change 0101): the egress and
+// model floor applied to every client-supplied harness spec.
+//
+//   - MCPHosts are hostname patterns ("*.example.com" matches subdomains only)
+//     an MCP server or research.custom URL host must match; empty allows any.
+//   - DenyPrivateNetworks refuses loopback, link-local, RFC-1918 and
+//     unique-local addresses, hostnames resolving to them, and the localhost,
+//     .local and .internal names. Nil means true.
+//   - AllowHTTPHosts are hosts where http:// is accepted; every other URL must
+//     be https.
+//   - Models is "any" (default) or "registry-only".
+//
+// Operator-configured MCP servers are exempt: they are the operator's own.
+type SpecPolicyConfig struct {
+	MCPHosts            []string `yaml:"mcp_hosts"`
+	DenyPrivateNetworks *bool    `yaml:"deny_private_networks"`
+	AllowHTTPHosts      []string `yaml:"allow_http_hosts"`
+	Models              string   `yaml:"models"`
+}
+
+// DenyPrivate resolves DenyPrivateNetworks, defaulting to true.
+func (p SpecPolicyConfig) DenyPrivate() bool {
+	return p.DenyPrivateNetworks == nil || *p.DenyPrivateNetworks
+}
+
+// RegistryOnly reports whether spec model ids are limited to the registry.
+func (p SpecPolicyConfig) RegistryOnly() bool { return p.Models == SpecModelsRegistryOnly }
+
+func (p SpecPolicyConfig) isZero() bool {
+	return len(p.MCPHosts) == 0 && p.DenyPrivateNetworks == nil && len(p.AllowHTTPHosts) == 0 && p.Models == ""
 }
 
 // SecretSourceConfig is one entry of loop_server.secrets (change 0085): the

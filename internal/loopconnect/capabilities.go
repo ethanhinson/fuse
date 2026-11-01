@@ -69,7 +69,12 @@ func toProtoCapabilities(c capabilities.Capabilities) *loopv1.GetCapabilitiesRes
 	out := &loopv1.GetCapabilitiesResponse{
 		SecretRefs:       slices.Clone(c.SecretRefs),
 		SpecMcpAuthKinds: slices.Clone(c.SpecMCPAuthKinds),
-		Server:           &loopv1.ServerInfo{Version: c.Server.Version, DigestAlgorithm: c.Server.DigestAlgorithm},
+		SpecPolicy: &loopv1.SpecPolicy{
+			McpHosts:            slices.Clone(c.SpecPolicy.MCPHosts),
+			DenyPrivateNetworks: c.SpecPolicy.DenyPrivateNetworks,
+			ModelsRegistryOnly:  c.SpecPolicy.ModelsRegistryOnly,
+		},
+		Server: &loopv1.ServerInfo{Version: c.Server.Version, DigestAlgorithm: c.Server.DigestAlgorithm},
 	}
 	for _, m := range c.Models {
 		out.Models = append(out.Models, &loopv1.ModelInfo{

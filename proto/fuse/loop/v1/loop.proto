@@ -133,6 +133,20 @@ message GetCapabilitiesResponse {
   // Auth types a spec-declared MCP server may use; UNSPECIFIED means none.
   repeated fuse.harness.v1.McpAuthType spec_mcp_auth_kinds = 5;
   ServerInfo server = 6;
+  // The operator's floor on a spec's own URLs and model ids.
+  SpecPolicy spec_policy = 7;
+}
+
+// SpecPolicy is what StartLoop holds a client's spec to besides the
+// tighten-only ceilings.
+message SpecPolicy {
+  // Hostname patterns an MCP server or research.custom URL host must match
+  // ("*.example.com" matches subdomains); empty allows any public host.
+  repeated string mcp_hosts = 1;
+  // Loopback, link-local, private and unique-local destinations are refused.
+  bool deny_private_networks = 2;
+  // A spec's model ids must be gateway ids of the models listed above.
+  bool models_registry_only = 3;
 }
 
 message ModelInfo {

@@ -645,8 +645,10 @@ type GetCapabilitiesResponse struct {
 	// Auth types a spec-declared MCP server may use; UNSPECIFIED means none.
 	SpecMcpAuthKinds []v1.McpAuthType `protobuf:"varint,5,rep,packed,name=spec_mcp_auth_kinds,json=specMcpAuthKinds,proto3,enum=fuse.harness.v1.McpAuthType" json:"spec_mcp_auth_kinds,omitempty"`
 	Server           *ServerInfo      `protobuf:"bytes,6,opt,name=server,proto3" json:"server,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// The operator's floor on a spec's own URLs and model ids.
+	SpecPolicy    *SpecPolicy `protobuf:"bytes,7,opt,name=spec_policy,json=specPolicy,proto3" json:"spec_policy,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetCapabilitiesResponse) Reset() {
@@ -721,6 +723,79 @@ func (x *GetCapabilitiesResponse) GetServer() *ServerInfo {
 	return nil
 }
 
+func (x *GetCapabilitiesResponse) GetSpecPolicy() *SpecPolicy {
+	if x != nil {
+		return x.SpecPolicy
+	}
+	return nil
+}
+
+// SpecPolicy is what StartLoop holds a client's spec to besides the
+// tighten-only ceilings.
+type SpecPolicy struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Hostname patterns an MCP server or research.custom URL host must match
+	// ("*.example.com" matches subdomains); empty allows any public host.
+	McpHosts []string `protobuf:"bytes,1,rep,name=mcp_hosts,json=mcpHosts,proto3" json:"mcp_hosts,omitempty"`
+	// Loopback, link-local, private and unique-local destinations are refused.
+	DenyPrivateNetworks bool `protobuf:"varint,2,opt,name=deny_private_networks,json=denyPrivateNetworks,proto3" json:"deny_private_networks,omitempty"`
+	// A spec's model ids must be gateway ids of the models listed above.
+	ModelsRegistryOnly bool `protobuf:"varint,3,opt,name=models_registry_only,json=modelsRegistryOnly,proto3" json:"models_registry_only,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *SpecPolicy) Reset() {
+	*x = SpecPolicy{}
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpecPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpecPolicy) ProtoMessage() {}
+
+func (x *SpecPolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpecPolicy.ProtoReflect.Descriptor instead.
+func (*SpecPolicy) Descriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *SpecPolicy) GetMcpHosts() []string {
+	if x != nil {
+		return x.McpHosts
+	}
+	return nil
+}
+
+func (x *SpecPolicy) GetDenyPrivateNetworks() bool {
+	if x != nil {
+		return x.DenyPrivateNetworks
+	}
+	return false
+}
+
+func (x *SpecPolicy) GetModelsRegistryOnly() bool {
+	if x != nil {
+		return x.ModelsRegistryOnly
+	}
+	return false
+}
+
 type ModelInfo struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	Alias     string                 `protobuf:"bytes,1,opt,name=alias,proto3" json:"alias,omitempty"`
@@ -745,7 +820,7 @@ type ModelInfo struct {
 
 func (x *ModelInfo) Reset() {
 	*x = ModelInfo{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[9]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -757,7 +832,7 @@ func (x *ModelInfo) String() string {
 func (*ModelInfo) ProtoMessage() {}
 
 func (x *ModelInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[9]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -770,7 +845,7 @@ func (x *ModelInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModelInfo.ProtoReflect.Descriptor instead.
 func (*ModelInfo) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{9}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ModelInfo) GetAlias() string {
@@ -853,7 +928,7 @@ type SkillInfo struct {
 
 func (x *SkillInfo) Reset() {
 	*x = SkillInfo{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[10]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -865,7 +940,7 @@ func (x *SkillInfo) String() string {
 func (*SkillInfo) ProtoMessage() {}
 
 func (x *SkillInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[10]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -878,7 +953,7 @@ func (x *SkillInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SkillInfo.ProtoReflect.Descriptor instead.
 func (*SkillInfo) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{10}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SkillInfo) GetName() string {
@@ -912,7 +987,7 @@ type Ceiling struct {
 
 func (x *Ceiling) Reset() {
 	*x = Ceiling{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[11]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -924,7 +999,7 @@ func (x *Ceiling) String() string {
 func (*Ceiling) ProtoMessage() {}
 
 func (x *Ceiling) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[11]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -937,7 +1012,7 @@ func (x *Ceiling) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ceiling.ProtoReflect.Descriptor instead.
 func (*Ceiling) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{11}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Ceiling) GetFieldPath() string {
@@ -979,7 +1054,7 @@ type ServerInfo struct {
 
 func (x *ServerInfo) Reset() {
 	*x = ServerInfo{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[12]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -991,7 +1066,7 @@ func (x *ServerInfo) String() string {
 func (*ServerInfo) ProtoMessage() {}
 
 func (x *ServerInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[12]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1004,7 +1079,7 @@ func (x *ServerInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerInfo.ProtoReflect.Descriptor instead.
 func (*ServerInfo) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{12}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ServerInfo) GetVersion() string {
@@ -1061,7 +1136,7 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\x04kind\x18\a \x01(\tR\x04kind\x12\x18\n" +
 	"\apayload\x18\b \x01(\fR\apayload\"0\n" +
 	"\x16GetCapabilitiesRequest\x12\x16\n" +
-	"\x06tenant\x18\x01 \x01(\tR\x06tenant\"\xce\x02\n" +
+	"\x06tenant\x18\x01 \x01(\tR\x06tenant\"\x89\x03\n" +
 	"\x17GetCapabilitiesResponse\x12/\n" +
 	"\x06models\x18\x01 \x03(\v2\x17.fuse.loop.v1.ModelInfoR\x06models\x12/\n" +
 	"\x06skills\x18\x02 \x03(\v2\x17.fuse.loop.v1.SkillInfoR\x06skills\x121\n" +
@@ -1069,7 +1144,14 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\vsecret_refs\x18\x04 \x03(\tR\n" +
 	"secretRefs\x12K\n" +
 	"\x13spec_mcp_auth_kinds\x18\x05 \x03(\x0e2\x1c.fuse.harness.v1.McpAuthTypeR\x10specMcpAuthKinds\x120\n" +
-	"\x06server\x18\x06 \x01(\v2\x18.fuse.loop.v1.ServerInfoR\x06server\"\xd3\x02\n" +
+	"\x06server\x18\x06 \x01(\v2\x18.fuse.loop.v1.ServerInfoR\x06server\x129\n" +
+	"\vspec_policy\x18\a \x01(\v2\x18.fuse.loop.v1.SpecPolicyR\n" +
+	"specPolicy\"\x8f\x01\n" +
+	"\n" +
+	"SpecPolicy\x12\x1b\n" +
+	"\tmcp_hosts\x18\x01 \x03(\tR\bmcpHosts\x122\n" +
+	"\x15deny_private_networks\x18\x02 \x01(\bR\x13denyPrivateNetworks\x120\n" +
+	"\x14models_registry_only\x18\x03 \x01(\bR\x12modelsRegistryOnly\"\xd3\x02\n" +
 	"\tModelInfo\x12\x14\n" +
 	"\x05alias\x18\x01 \x01(\tR\x05alias\x12\x1d\n" +
 	"\n" +
@@ -1120,7 +1202,7 @@ func file_fuse_loop_v1_loop_proto_rawDescGZIP() []byte {
 }
 
 var file_fuse_loop_v1_loop_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_fuse_loop_v1_loop_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_fuse_loop_v1_loop_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_fuse_loop_v1_loop_proto_goTypes = []any{
 	(CeilingDirection)(0),           // 0: fuse.loop.v1.CeilingDirection
 	(*StartLoopRequest)(nil),        // 1: fuse.loop.v1.StartLoopRequest
@@ -1132,39 +1214,41 @@ var file_fuse_loop_v1_loop_proto_goTypes = []any{
 	(*Event)(nil),                   // 7: fuse.loop.v1.Event
 	(*GetCapabilitiesRequest)(nil),  // 8: fuse.loop.v1.GetCapabilitiesRequest
 	(*GetCapabilitiesResponse)(nil), // 9: fuse.loop.v1.GetCapabilitiesResponse
-	(*ModelInfo)(nil),               // 10: fuse.loop.v1.ModelInfo
-	(*SkillInfo)(nil),               // 11: fuse.loop.v1.SkillInfo
-	(*Ceiling)(nil),                 // 12: fuse.loop.v1.Ceiling
-	(*ServerInfo)(nil),              // 13: fuse.loop.v1.ServerInfo
-	(*v1.HarnessSpec)(nil),          // 14: fuse.harness.v1.HarnessSpec
-	(*timestamppb.Timestamp)(nil),   // 15: google.protobuf.Timestamp
-	(v1.McpAuthType)(0),             // 16: fuse.harness.v1.McpAuthType
-	(*structpb.Value)(nil),          // 17: google.protobuf.Value
+	(*SpecPolicy)(nil),              // 10: fuse.loop.v1.SpecPolicy
+	(*ModelInfo)(nil),               // 11: fuse.loop.v1.ModelInfo
+	(*SkillInfo)(nil),               // 12: fuse.loop.v1.SkillInfo
+	(*Ceiling)(nil),                 // 13: fuse.loop.v1.Ceiling
+	(*ServerInfo)(nil),              // 14: fuse.loop.v1.ServerInfo
+	(*v1.HarnessSpec)(nil),          // 15: fuse.harness.v1.HarnessSpec
+	(*timestamppb.Timestamp)(nil),   // 16: google.protobuf.Timestamp
+	(v1.McpAuthType)(0),             // 17: fuse.harness.v1.McpAuthType
+	(*structpb.Value)(nil),          // 18: google.protobuf.Value
 }
 var file_fuse_loop_v1_loop_proto_depIdxs = []int32{
-	14, // 0: fuse.loop.v1.StartLoopRequest.harness:type_name -> fuse.harness.v1.HarnessSpec
+	15, // 0: fuse.loop.v1.StartLoopRequest.harness:type_name -> fuse.harness.v1.HarnessSpec
 	7,  // 1: fuse.loop.v1.ObserveEvent.event:type_name -> fuse.loop.v1.Event
-	15, // 2: fuse.loop.v1.Event.ts:type_name -> google.protobuf.Timestamp
-	10, // 3: fuse.loop.v1.GetCapabilitiesResponse.models:type_name -> fuse.loop.v1.ModelInfo
-	11, // 4: fuse.loop.v1.GetCapabilitiesResponse.skills:type_name -> fuse.loop.v1.SkillInfo
-	12, // 5: fuse.loop.v1.GetCapabilitiesResponse.ceilings:type_name -> fuse.loop.v1.Ceiling
-	16, // 6: fuse.loop.v1.GetCapabilitiesResponse.spec_mcp_auth_kinds:type_name -> fuse.harness.v1.McpAuthType
-	13, // 7: fuse.loop.v1.GetCapabilitiesResponse.server:type_name -> fuse.loop.v1.ServerInfo
-	17, // 8: fuse.loop.v1.Ceiling.value:type_name -> google.protobuf.Value
-	0,  // 9: fuse.loop.v1.Ceiling.direction:type_name -> fuse.loop.v1.CeilingDirection
-	1,  // 10: fuse.loop.v1.LoopService.StartLoop:input_type -> fuse.loop.v1.StartLoopRequest
-	3,  // 11: fuse.loop.v1.LoopService.Send:input_type -> fuse.loop.v1.SendRequest
-	5,  // 12: fuse.loop.v1.LoopService.Observe:input_type -> fuse.loop.v1.ObserveRequest
-	8,  // 13: fuse.loop.v1.LoopService.GetCapabilities:input_type -> fuse.loop.v1.GetCapabilitiesRequest
-	2,  // 14: fuse.loop.v1.LoopService.StartLoop:output_type -> fuse.loop.v1.StartLoopResponse
-	4,  // 15: fuse.loop.v1.LoopService.Send:output_type -> fuse.loop.v1.SendResponse
-	6,  // 16: fuse.loop.v1.LoopService.Observe:output_type -> fuse.loop.v1.ObserveEvent
-	9,  // 17: fuse.loop.v1.LoopService.GetCapabilities:output_type -> fuse.loop.v1.GetCapabilitiesResponse
-	14, // [14:18] is the sub-list for method output_type
-	10, // [10:14] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	16, // 2: fuse.loop.v1.Event.ts:type_name -> google.protobuf.Timestamp
+	11, // 3: fuse.loop.v1.GetCapabilitiesResponse.models:type_name -> fuse.loop.v1.ModelInfo
+	12, // 4: fuse.loop.v1.GetCapabilitiesResponse.skills:type_name -> fuse.loop.v1.SkillInfo
+	13, // 5: fuse.loop.v1.GetCapabilitiesResponse.ceilings:type_name -> fuse.loop.v1.Ceiling
+	17, // 6: fuse.loop.v1.GetCapabilitiesResponse.spec_mcp_auth_kinds:type_name -> fuse.harness.v1.McpAuthType
+	14, // 7: fuse.loop.v1.GetCapabilitiesResponse.server:type_name -> fuse.loop.v1.ServerInfo
+	10, // 8: fuse.loop.v1.GetCapabilitiesResponse.spec_policy:type_name -> fuse.loop.v1.SpecPolicy
+	18, // 9: fuse.loop.v1.Ceiling.value:type_name -> google.protobuf.Value
+	0,  // 10: fuse.loop.v1.Ceiling.direction:type_name -> fuse.loop.v1.CeilingDirection
+	1,  // 11: fuse.loop.v1.LoopService.StartLoop:input_type -> fuse.loop.v1.StartLoopRequest
+	3,  // 12: fuse.loop.v1.LoopService.Send:input_type -> fuse.loop.v1.SendRequest
+	5,  // 13: fuse.loop.v1.LoopService.Observe:input_type -> fuse.loop.v1.ObserveRequest
+	8,  // 14: fuse.loop.v1.LoopService.GetCapabilities:input_type -> fuse.loop.v1.GetCapabilitiesRequest
+	2,  // 15: fuse.loop.v1.LoopService.StartLoop:output_type -> fuse.loop.v1.StartLoopResponse
+	4,  // 16: fuse.loop.v1.LoopService.Send:output_type -> fuse.loop.v1.SendResponse
+	6,  // 17: fuse.loop.v1.LoopService.Observe:output_type -> fuse.loop.v1.ObserveEvent
+	9,  // 18: fuse.loop.v1.LoopService.GetCapabilities:output_type -> fuse.loop.v1.GetCapabilitiesResponse
+	15, // [15:19] is the sub-list for method output_type
+	11, // [11:15] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_fuse_loop_v1_loop_proto_init() }
@@ -1178,7 +1262,7 @@ func file_fuse_loop_v1_loop_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_fuse_loop_v1_loop_proto_rawDesc), len(file_fuse_loop_v1_loop_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
+	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/version"
@@ -27,8 +28,21 @@ type Capabilities struct {
 	SecretRefs []string
 	// SpecMCPAuthKinds are the MCP auth kinds a spec may use.
 	SpecMCPAuthKinds []harnessv1.McpAuthType
+	// SpecPolicy is the operator's floor on a spec's URLs and model ids.
+	SpecPolicy SpecPolicy
 	// Server identifies the server build.
 	Server Server
+}
+
+// SpecPolicy is the advertised part of loop_server.spec_policy.
+type SpecPolicy struct {
+	// MCPHosts are the hostname patterns a spec URL host must match; empty
+	// means any public host.
+	MCPHosts []string
+	// DenyPrivateNetworks refuses private-network destinations.
+	DenyPrivateNetworks bool
+	// ModelsRegistryOnly limits a spec's model ids to the registry.
+	ModelsRegistryOnly bool
 }
 
 // Model is one routable model as a client sees it.
@@ -158,4 +172,13 @@ func Skills(set *skills.Set) []Skill {
 // ServerInfo reports this build's version and spec digest algorithm.
 func ServerInfo() Server {
 	return Server{Version: version.Version, DigestAlgorithm: harness.DigestAlgorithm}
+}
+
+// SpecPolicyOf maps the operator's spec policy to its advertisement.
+func SpecPolicyOf(p config.SpecPolicyConfig) SpecPolicy {
+	return SpecPolicy{
+		MCPHosts:            slices.Clone(p.MCPHosts),
+		DenyPrivateNetworks: p.DenyPrivate(),
+		ModelsRegistryOnly:  p.RegistryOnly(),
+	}
 }

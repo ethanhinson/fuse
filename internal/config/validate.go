@@ -151,6 +151,12 @@ func (c Config) Problems() []Problem {
 		}
 	}
 
+	switch c.LoopServer.SpecPolicy.Models {
+	case "", SpecModelsAny, SpecModelsRegistryOnly:
+	default:
+		add("loop_server.spec_policy.models", "must be %q or %q, got %q", SpecModelsAny, SpecModelsRegistryOnly, c.LoopServer.SpecPolicy.Models)
+	}
+
 	// The issuer and observability checks are operator-only surfaces and stop at
 	// their first problem; each is reported under its block's path.
 	if err := validateIssuers(c.LoopServer.Issuers); err != nil {

@@ -86,7 +86,8 @@ func fullAnswer() capabilities.Capabilities {
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER,
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_STATIC,
 		},
-		Server: capabilities.Server{Version: "v1.2.3", DigestAlgorithm: "sha256"},
+		SpecPolicy: capabilities.SpecPolicy{MCPHosts: []string{"*.example.com"}, DenyPrivateNetworks: true, ModelsRegistryOnly: true},
+		Server:     capabilities.Server{Version: "v1.2.3", DigestAlgorithm: "sha256"},
 	}
 }
 
@@ -120,7 +121,8 @@ func TestGetCapabilitiesMapsEveryField(t *testing.T) {
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER,
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_STATIC,
 		},
-		Server: &loopv1.ServerInfo{Version: "v1.2.3", DigestAlgorithm: "sha256"},
+		SpecPolicy: &loopv1.SpecPolicy{McpHosts: []string{"*.example.com"}, DenyPrivateNetworks: true, ModelsRegistryOnly: true},
+		Server:     &loopv1.ServerInfo{Version: "v1.2.3", DigestAlgorithm: "sha256"},
 	}
 	if !proto.Equal(resp.Msg, want) {
 		t.Fatalf("response mismatch:\n got %v\nwant %v", resp.Msg, want)

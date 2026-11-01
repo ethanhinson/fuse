@@ -138,6 +138,11 @@ func fromProtoCapabilities(m *loopv1.GetCapabilitiesResponse) Capabilities {
 	out := Capabilities{
 		SecretRefs:       append([]string(nil), m.GetSecretRefs()...),
 		SpecMCPAuthKinds: append([]harnessv1.McpAuthType(nil), m.GetSpecMcpAuthKinds()...),
+		SpecPolicy: SpecPolicy{
+			MCPHosts:            append([]string(nil), m.GetSpecPolicy().GetMcpHosts()...),
+			DenyPrivateNetworks: m.GetSpecPolicy().GetDenyPrivateNetworks(),
+			ModelsRegistryOnly:  m.GetSpecPolicy().GetModelsRegistryOnly(),
+		},
 		Server: ServerInfo{
 			Version:         m.GetServer().GetVersion(),
 			DigestAlgorithm: m.GetServer().GetDigestAlgorithm(),

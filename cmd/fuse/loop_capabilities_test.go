@@ -348,6 +348,10 @@ func TestLoopServerHostAdvertisesItsCapabilities(t *testing.T) {
 	if len(c.Ceilings) == 0 || len(c.SpecMCPAuthKinds) == 0 {
 		t.Errorf("ceilings %v or spec MCP auth kinds %v are empty", c.Ceilings, c.SpecMCPAuthKinds)
 	}
+	// The fixture operator turns private-network denial off (see harnessServer).
+	if c.SpecPolicy.DenyPrivateNetworks || c.SpecPolicy.ModelsRegistryOnly || len(c.SpecPolicy.MCPHosts) != 0 {
+		t.Errorf("spec policy = %+v, want the fixture's: private networks allowed, nothing else", c.SpecPolicy)
+	}
 }
 
 // TestLoopCapabilitySourceFromProductionDeps proves the composition root takes
