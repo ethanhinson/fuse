@@ -475,7 +475,9 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	if raw.MaxTokens != 0 {
 		c.MaxTokens = raw.MaxTokens
 	}
-	if raw.Instructions != "" {
+	// Whitespace-only instructions count as unset, as prompt composition
+	// treats them, so they never silently clear an inherited brief.
+	if strings.TrimSpace(raw.Instructions) != "" {
 		c.Instructions = raw.Instructions
 	}
 	if len(raw.SkillPaths) > 0 {

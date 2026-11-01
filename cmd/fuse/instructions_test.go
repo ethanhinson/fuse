@@ -168,6 +168,17 @@ func TestLoopServerOperatorInstructionsAndSpecOverride(t *testing.T) {
 	}
 }
 
+// TestLoopServerWhitespaceSpecKeepsOperatorInstructions: a spec whose
+// instructions are whitespace-only counts as unset, so the operator's brief
+// still reaches the root prompt.
+func TestLoopServerWhitespaceSpecKeepsOperatorInstructions(t *testing.T) {
+	op := harnessOperator + "instructions: OPERATOR-BRIEF\n"
+	rt, gw, _ := harnessServer(t, op)
+	turns := uint32(1)
+	sys := loopRootSystem(t, rt, gw, &harnessv1.HarnessSpec{MaxTurns: &turns, Instructions: "  \n\t "})
+	assertInOrder(t, sys, defaultPersonaPrompt(t, op), "OPERATOR-BRIEF", "- research")
+}
+
 // TestLoopServerBlankInstructionsMatchGolden: whitespace-only instructions
 // leave the root system message byte for byte as it is today.
 func TestLoopServerBlankInstructionsMatchGolden(t *testing.T) {

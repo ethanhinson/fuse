@@ -99,3 +99,29 @@ func TestProblemsInstructionsLength(t *testing.T) {
 		t.Fatalf("Problems = %+v, want none", ps)
 	}
 }
+
+// TestInstructionsWhitespaceLayerKeepsInherited: a layer whose instructions
+// are whitespace-only counts as unset, matching prompt composition, so it never
+// silently clears an inherited brief.
+func TestInstructionsWhitespaceLayerKeepsInherited(t *testing.T) {
+	writeInstructionsLayers(t, "instructions: \"  \\n\\t \"\n")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Instructions != "home" {
+		t.Errorf("Instructions = %q, want home", c.Instructions)
+	}
+}
+
+func TestOverlaySpecWhitespaceInstructionsKeepsOperator(t *testing.T) {
+	base := Default()
+	base.Instructions = "operator"
+	c, _, err := OverlaySpec(base, []byte("instructions: \"  \\n\\t \"\n"), "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Instructions != "operator" {
+		t.Errorf("Instructions = %q, want operator", c.Instructions)
+	}
+}
