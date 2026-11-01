@@ -14,7 +14,7 @@ related: []
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md](../../superpowers/specs/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md) |
+| Plan | [2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never.md](../../superpowers/plans/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
