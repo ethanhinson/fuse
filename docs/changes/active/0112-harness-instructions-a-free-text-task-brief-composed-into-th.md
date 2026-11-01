@@ -14,7 +14,7 @@ related: []
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md](../../superpowers/specs/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md) |
+| Plan | [2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th.md](../../superpowers/plans/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
