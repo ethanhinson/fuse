@@ -12,6 +12,8 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/ethanhinson/fuse/harness"
+	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopauth"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
@@ -447,4 +449,42 @@ func TestSendResumeAdmittedByLiveCap(t *testing.T) {
 	if got := rt.resumeCount(); got != 1 {
 		t.Fatalf("resumes = %d, want 1", got)
 	}
+}
+
+// A request refused by scope or by the harness digest pin must not spend the
+// tenant's start-rate token: with starts_per_minute: 1, the refusals leave the
+// one token for a valid start, and only a second valid start is rate-limited.
+func TestStartLoopScopeAndDigestRefusalsSpendNoStartToken(t *testing.T) {
+	one, two := uint32(1), uint32(2)
+	spec := &harnessv1.HarnessSpec{MaxTurns: &one}
+	variant := &harnessv1.HarnessSpec{MaxTurns: &two}
+	clk := newLimitClock()
+	reg := newFakeRegistry()
+	rt := newRegisteringRuntime(reg, clk)
+	lim := newTestLimiter(t, tenantlimit.Config{Default: tenantlimit.Limits{StartsPerMinute: 1}}, reg, clk)
+	v := tokenVerifier{tokens: map[string]loopauth.Principal{
+		"pinned":   {Tenant: "a", Subject: "alice", HarnessDigest: harness.Digest(spec)},
+		"observer": {Tenant: "a", Subject: "alice", Scopes: loopauth.NewScopes(loopauth.ScopeLoopObserve)},
+		"unscoped": {Tenant: "a", Subject: "alice"},
+	}}
+	client := newLimitServer(t, rt, reg, lim, v)
+	start := func(tok string, h *harnessv1.HarnessSpec, tenant string) error {
+		_, err := client.StartLoop(context.Background(),
+			bearer(connect.NewRequest(&loopv1.StartLoopRequest{Task: "t", Harness: h, Tenant: tenant}), tok))
+		return err
+	}
+
+	if got := connect.CodeOf(start("observer", nil, "")); got != connect.CodePermissionDenied {
+		t.Fatalf("scope refusal code = %v", got)
+	}
+	if got := connect.CodeOf(start("pinned", variant, "")); got != connect.CodePermissionDenied {
+		t.Fatalf("digest refusal code = %v", got)
+	}
+	if got := connect.CodeOf(start("unscoped", nil, "b")); got != connect.CodePermissionDenied {
+		t.Fatalf("tenant spoof code = %v", got)
+	}
+	if err := start("pinned", spec, ""); err != nil {
+		t.Fatalf("valid start after refusals was not admitted: %v", err)
+	}
+	refusal(t, start("unscoped", nil, ""), "starts_per_minute")
 }
