@@ -15,7 +15,7 @@ discovered_from: []
 adrs: [73]
 spec: 'docs/superpowers/specs/2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md'
 plan: 'docs/superpowers/plans/2026-10-31-operator-spec-policy.md'
-results:
+results: 'docs/results/2026-10-31-operator-spec-policy-mcp-host-allowlist-private-network-deny-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md](../../superpowers/specs/2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md) |
 | Plan | [2026-10-31-operator-spec-policy.md](../../superpowers/plans/2026-10-31-operator-spec-policy.md) |
+| Results | [2026-10-31-operator-spec-policy-mcp-host-allowlist-private-network-deny-results.md](../../results/2026-10-31-operator-spec-policy-mcp-host-allowlist-private-network-deny-results.md) |
 | ADRs | [ADR-0073](../../adrs/0073-operator-only-spec-policy-floor-for-client-harness-egress-an.md) |
 <!-- docket:artifacts:end -->
 
