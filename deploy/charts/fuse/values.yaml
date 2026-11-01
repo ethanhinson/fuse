@@ -135,6 +135,7 @@ auth:
   #     tenant: "_default"              # REQUIRED; the tenant this token acts as
   #     subject: "ci"                   # optional; identity in logs and traces
   #     observability_operator: false   # optional; grants the admin routes
+  #     scopes: [loop:observe]           # optional; omitted = unrestricted (see README Scopes)
   #
   # These land in a Kubernetes Secret, which is base64, NOT encryption. Anyone
   # with get-secrets in this namespace can read them, and so can anyone who can
