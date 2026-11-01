@@ -2,7 +2,7 @@
 id: 99
 slug: 'trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti'
 title: 'Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti'
 pr:
 blocked_by:
 reconciled: false
