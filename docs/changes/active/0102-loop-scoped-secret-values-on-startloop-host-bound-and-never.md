@@ -15,7 +15,7 @@ discovered_from: []
 adrs: [76]
 spec: 'docs/superpowers/specs/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md'
 plan: 'docs/superpowers/plans/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never.md'
-results:
+results: 'docs/results/2026-11-01-loop-scoped-secret-values-on-startloop-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md](../../superpowers/specs/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md) |
 | Plan | [2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never.md](../../superpowers/plans/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) |
+| Results | [2026-11-01-loop-scoped-secret-values-on-startloop-results.md](../../results/2026-11-01-loop-scoped-secret-values-on-startloop-results.md) |
 | ADRs | [ADR-0076](../../adrs/0076-loop-scoped-secret-values-are-host-bound-memory-only-and-nev.md) |
 <!-- docket:artifacts:end -->
 
