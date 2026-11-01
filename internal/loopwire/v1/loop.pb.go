@@ -646,7 +646,11 @@ type GetCapabilitiesResponse struct {
 	SpecMcpAuthKinds []v1.McpAuthType `protobuf:"varint,5,rep,packed,name=spec_mcp_auth_kinds,json=specMcpAuthKinds,proto3,enum=fuse.harness.v1.McpAuthType" json:"spec_mcp_auth_kinds,omitempty"`
 	Server           *ServerInfo      `protobuf:"bytes,6,opt,name=server,proto3" json:"server,omitempty"`
 	// The operator's floor on a spec's own URLs and model ids.
-	SpecPolicy    *SpecPolicy `protobuf:"bytes,7,opt,name=spec_policy,json=specPolicy,proto3" json:"spec_policy,omitempty"`
+	SpecPolicy *SpecPolicy `protobuf:"bytes,7,opt,name=spec_policy,json=specPolicy,proto3" json:"spec_policy,omitempty"`
+	// The caller's tenant's effective loop limits (loop_server.limits, change
+	// 0103): the default with this tenant's overrides applied. 0 means unlimited.
+	// Always set; all-zero when the server configures no limits.
+	Limits        *TenantLimits `protobuf:"bytes,8,opt,name=limits,proto3" json:"limits,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -726,6 +730,13 @@ func (x *GetCapabilitiesResponse) GetServer() *ServerInfo {
 func (x *GetCapabilitiesResponse) GetSpecPolicy() *SpecPolicy {
 	if x != nil {
 		return x.SpecPolicy
+	}
+	return nil
+}
+
+func (x *GetCapabilitiesResponse) GetLimits() *TenantLimits {
+	if x != nil {
+		return x.Limits
 	}
 	return nil
 }
@@ -1096,6 +1107,64 @@ func (x *ServerInfo) GetDigestAlgorithm() string {
 	return ""
 }
 
+// TenantLimits bounds one tenant's loops on this server. A StartLoop beyond
+// either limit fails with RESOURCE_EXHAUSTED; the rate refusal carries a
+// Retry-After header in seconds. Rate counters are per server process.
+type TenantLimits struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Most loops the tenant may have live at once (0: unlimited).
+	MaxLiveLoops uint32 `protobuf:"varint,1,opt,name=max_live_loops,json=maxLiveLoops,proto3" json:"max_live_loops,omitempty"`
+	// Most StartLoop calls per minute, as a token bucket with one minute of burst
+	// (0: unlimited).
+	StartsPerMinute uint32 `protobuf:"varint,2,opt,name=starts_per_minute,json=startsPerMinute,proto3" json:"starts_per_minute,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *TenantLimits) Reset() {
+	*x = TenantLimits{}
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TenantLimits) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TenantLimits) ProtoMessage() {}
+
+func (x *TenantLimits) ProtoReflect() protoreflect.Message {
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TenantLimits.ProtoReflect.Descriptor instead.
+func (*TenantLimits) Descriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *TenantLimits) GetMaxLiveLoops() uint32 {
+	if x != nil {
+		return x.MaxLiveLoops
+	}
+	return 0
+}
+
+func (x *TenantLimits) GetStartsPerMinute() uint32 {
+	if x != nil {
+		return x.StartsPerMinute
+	}
+	return 0
+}
+
 var File_fuse_loop_v1_loop_proto protoreflect.FileDescriptor
 
 const file_fuse_loop_v1_loop_proto_rawDesc = "" +
@@ -1136,7 +1205,7 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\x04kind\x18\a \x01(\tR\x04kind\x12\x18\n" +
 	"\apayload\x18\b \x01(\fR\apayload\"0\n" +
 	"\x16GetCapabilitiesRequest\x12\x16\n" +
-	"\x06tenant\x18\x01 \x01(\tR\x06tenant\"\x89\x03\n" +
+	"\x06tenant\x18\x01 \x01(\tR\x06tenant\"\xbd\x03\n" +
 	"\x17GetCapabilitiesResponse\x12/\n" +
 	"\x06models\x18\x01 \x03(\v2\x17.fuse.loop.v1.ModelInfoR\x06models\x12/\n" +
 	"\x06skills\x18\x02 \x03(\v2\x17.fuse.loop.v1.SkillInfoR\x06skills\x121\n" +
@@ -1146,7 +1215,8 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\x13spec_mcp_auth_kinds\x18\x05 \x03(\x0e2\x1c.fuse.harness.v1.McpAuthTypeR\x10specMcpAuthKinds\x120\n" +
 	"\x06server\x18\x06 \x01(\v2\x18.fuse.loop.v1.ServerInfoR\x06server\x129\n" +
 	"\vspec_policy\x18\a \x01(\v2\x18.fuse.loop.v1.SpecPolicyR\n" +
-	"specPolicy\"\x8f\x01\n" +
+	"specPolicy\x122\n" +
+	"\x06limits\x18\b \x01(\v2\x1a.fuse.loop.v1.TenantLimitsR\x06limits\"\x8f\x01\n" +
 	"\n" +
 	"SpecPolicy\x12\x1b\n" +
 	"\tmcp_hosts\x18\x01 \x03(\tR\bmcpHosts\x122\n" +
@@ -1178,7 +1248,10 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\n" +
 	"ServerInfo\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12)\n" +
-	"\x10digest_algorithm\x18\x02 \x01(\tR\x0fdigestAlgorithm*k\n" +
+	"\x10digest_algorithm\x18\x02 \x01(\tR\x0fdigestAlgorithm\"`\n" +
+	"\fTenantLimits\x12$\n" +
+	"\x0emax_live_loops\x18\x01 \x01(\rR\fmaxLiveLoops\x12*\n" +
+	"\x11starts_per_minute\x18\x02 \x01(\rR\x0fstartsPerMinute*k\n" +
 	"\x10CeilingDirection\x12!\n" +
 	"\x1dCEILING_DIRECTION_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15CEILING_DIRECTION_MAX\x10\x01\x12\x19\n" +
@@ -1202,7 +1275,7 @@ func file_fuse_loop_v1_loop_proto_rawDescGZIP() []byte {
 }
 
 var file_fuse_loop_v1_loop_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_fuse_loop_v1_loop_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_fuse_loop_v1_loop_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_fuse_loop_v1_loop_proto_goTypes = []any{
 	(CeilingDirection)(0),           // 0: fuse.loop.v1.CeilingDirection
 	(*StartLoopRequest)(nil),        // 1: fuse.loop.v1.StartLoopRequest
@@ -1219,36 +1292,38 @@ var file_fuse_loop_v1_loop_proto_goTypes = []any{
 	(*SkillInfo)(nil),               // 12: fuse.loop.v1.SkillInfo
 	(*Ceiling)(nil),                 // 13: fuse.loop.v1.Ceiling
 	(*ServerInfo)(nil),              // 14: fuse.loop.v1.ServerInfo
-	(*v1.HarnessSpec)(nil),          // 15: fuse.harness.v1.HarnessSpec
-	(*timestamppb.Timestamp)(nil),   // 16: google.protobuf.Timestamp
-	(v1.McpAuthType)(0),             // 17: fuse.harness.v1.McpAuthType
-	(*structpb.Value)(nil),          // 18: google.protobuf.Value
+	(*TenantLimits)(nil),            // 15: fuse.loop.v1.TenantLimits
+	(*v1.HarnessSpec)(nil),          // 16: fuse.harness.v1.HarnessSpec
+	(*timestamppb.Timestamp)(nil),   // 17: google.protobuf.Timestamp
+	(v1.McpAuthType)(0),             // 18: fuse.harness.v1.McpAuthType
+	(*structpb.Value)(nil),          // 19: google.protobuf.Value
 }
 var file_fuse_loop_v1_loop_proto_depIdxs = []int32{
-	15, // 0: fuse.loop.v1.StartLoopRequest.harness:type_name -> fuse.harness.v1.HarnessSpec
+	16, // 0: fuse.loop.v1.StartLoopRequest.harness:type_name -> fuse.harness.v1.HarnessSpec
 	7,  // 1: fuse.loop.v1.ObserveEvent.event:type_name -> fuse.loop.v1.Event
-	16, // 2: fuse.loop.v1.Event.ts:type_name -> google.protobuf.Timestamp
+	17, // 2: fuse.loop.v1.Event.ts:type_name -> google.protobuf.Timestamp
 	11, // 3: fuse.loop.v1.GetCapabilitiesResponse.models:type_name -> fuse.loop.v1.ModelInfo
 	12, // 4: fuse.loop.v1.GetCapabilitiesResponse.skills:type_name -> fuse.loop.v1.SkillInfo
 	13, // 5: fuse.loop.v1.GetCapabilitiesResponse.ceilings:type_name -> fuse.loop.v1.Ceiling
-	17, // 6: fuse.loop.v1.GetCapabilitiesResponse.spec_mcp_auth_kinds:type_name -> fuse.harness.v1.McpAuthType
+	18, // 6: fuse.loop.v1.GetCapabilitiesResponse.spec_mcp_auth_kinds:type_name -> fuse.harness.v1.McpAuthType
 	14, // 7: fuse.loop.v1.GetCapabilitiesResponse.server:type_name -> fuse.loop.v1.ServerInfo
 	10, // 8: fuse.loop.v1.GetCapabilitiesResponse.spec_policy:type_name -> fuse.loop.v1.SpecPolicy
-	18, // 9: fuse.loop.v1.Ceiling.value:type_name -> google.protobuf.Value
-	0,  // 10: fuse.loop.v1.Ceiling.direction:type_name -> fuse.loop.v1.CeilingDirection
-	1,  // 11: fuse.loop.v1.LoopService.StartLoop:input_type -> fuse.loop.v1.StartLoopRequest
-	3,  // 12: fuse.loop.v1.LoopService.Send:input_type -> fuse.loop.v1.SendRequest
-	5,  // 13: fuse.loop.v1.LoopService.Observe:input_type -> fuse.loop.v1.ObserveRequest
-	8,  // 14: fuse.loop.v1.LoopService.GetCapabilities:input_type -> fuse.loop.v1.GetCapabilitiesRequest
-	2,  // 15: fuse.loop.v1.LoopService.StartLoop:output_type -> fuse.loop.v1.StartLoopResponse
-	4,  // 16: fuse.loop.v1.LoopService.Send:output_type -> fuse.loop.v1.SendResponse
-	6,  // 17: fuse.loop.v1.LoopService.Observe:output_type -> fuse.loop.v1.ObserveEvent
-	9,  // 18: fuse.loop.v1.LoopService.GetCapabilities:output_type -> fuse.loop.v1.GetCapabilitiesResponse
-	15, // [15:19] is the sub-list for method output_type
-	11, // [11:15] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	15, // 9: fuse.loop.v1.GetCapabilitiesResponse.limits:type_name -> fuse.loop.v1.TenantLimits
+	19, // 10: fuse.loop.v1.Ceiling.value:type_name -> google.protobuf.Value
+	0,  // 11: fuse.loop.v1.Ceiling.direction:type_name -> fuse.loop.v1.CeilingDirection
+	1,  // 12: fuse.loop.v1.LoopService.StartLoop:input_type -> fuse.loop.v1.StartLoopRequest
+	3,  // 13: fuse.loop.v1.LoopService.Send:input_type -> fuse.loop.v1.SendRequest
+	5,  // 14: fuse.loop.v1.LoopService.Observe:input_type -> fuse.loop.v1.ObserveRequest
+	8,  // 15: fuse.loop.v1.LoopService.GetCapabilities:input_type -> fuse.loop.v1.GetCapabilitiesRequest
+	2,  // 16: fuse.loop.v1.LoopService.StartLoop:output_type -> fuse.loop.v1.StartLoopResponse
+	4,  // 17: fuse.loop.v1.LoopService.Send:output_type -> fuse.loop.v1.SendResponse
+	6,  // 18: fuse.loop.v1.LoopService.Observe:output_type -> fuse.loop.v1.ObserveEvent
+	9,  // 19: fuse.loop.v1.LoopService.GetCapabilities:output_type -> fuse.loop.v1.GetCapabilitiesResponse
+	16, // [16:20] is the sub-list for method output_type
+	12, // [12:16] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_fuse_loop_v1_loop_proto_init() }
@@ -1262,7 +1337,7 @@ func file_fuse_loop_v1_loop_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_fuse_loop_v1_loop_proto_rawDesc), len(file_fuse_loop_v1_loop_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
