@@ -1,6 +1,6 @@
 # Backlog
 
-**105 changes** — 🟢 2 in progress · 🔵 1 built · 🟡 4 proposed · ⚪ 3 deferred · ✅ 88 done · 🗑️ 7 killed
+**106 changes** — 🟢 2 in progress · 🔵 1 built · 🟡 5 proposed · ⚪ 3 deferred · ✅ 88 done · 🗑️ 7 killed
 
 ## 🟢 In progress (2)
 
@@ -15,10 +15,11 @@
 |---|-------|----------|------|----|-------|
 | [0103](active/0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | `medium` | `feat` | [#123](https://github.com/ethanhinson/fuse/pull/123) | awaiting merge |
 
-## 🟡 Proposed (4)
+## 🟡 Proposed (5)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0106](active/0106-loop-registry-live-count-method-for-the-per-tenant-live-loop.md) | Loop registry live-count method for the per-tenant live-loop cap | `medium` | `feat` | needs-grooming |
 | [0105](active/0105-pin-spec-mcp-server-dials-to-the-addresses-checked-at-startl.md) | Pin spec MCP server dials to the addresses checked at StartLoop | `medium` | `fix` | needs-grooming |
 | [0104](active/0104-server-aware-validateharness-on-the-loop-service.md) | Server-aware ValidateHarness on the loop service | `medium` | `feat` | needs-grooming |
 | [0102](active/0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | `high` | `feat` | ⏳ waiting on #100 — not yet built |
@@ -45,6 +46,7 @@ graph TD
   0103
   0104
   0105
+  0106
   0012:::done
   0052:::done
   0063:::done
