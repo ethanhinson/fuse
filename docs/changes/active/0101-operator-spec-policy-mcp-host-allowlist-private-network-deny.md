@@ -14,7 +14,7 @@ related: []
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-10-31-operator-spec-policy.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md](../../superpowers/specs/2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md) |
+| Plan | [2026-10-31-operator-spec-policy.md](../../superpowers/plans/2026-10-31-operator-spec-policy.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
