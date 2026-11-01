@@ -3,6 +3,7 @@ package loopconnect
 import (
 	"context"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -225,5 +226,46 @@ func TestScopeNoPrincipalPathUnchanged(t *testing.T) {
 	}
 	if resp.Msg.LoopId != "loop-1" || rt.startCalls != 1 {
 		t.Fatalf("loop id = %q, seam calls = %d; want loop-1 and 1", resp.Msg.LoopId, rt.startCalls)
+	}
+}
+
+func TestStartLoopThreadsPrincipalRecord(t *testing.T) {
+	cases := []struct {
+		name   string
+		p      loopauth.Principal
+		scopes []string
+	}{
+		{"scoped", loopauth.Principal{Tenant: "acme", Subject: "alice", ClientID: "client-1", Issuer: "cms", TokenID: "x",
+			Scopes: loopauth.NewScopes("loop:start", "loop:observe")}, []string{"loop:observe", "loop:start"}},
+		{"unrestricted", loopauth.Principal{Tenant: "acme", Subject: "alice", ClientID: "client-1", Issuer: "cms", TokenID: "x"}, []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &fakeRuntime{startID: "loop-1"}
+			h := NewHandler(rt)
+			_, handler := loopv1connect.NewLoopServiceHandler(h,
+				connect.WithInterceptors(NewAuthInterceptor(tokenVerifier{tokens: map[string]loopauth.Principal{"tok": tc.p}})))
+			srv := httptest.NewServer(handler)
+			t.Cleanup(srv.Close)
+			client := loopv1connect.NewLoopServiceClient(srv.Client(), srv.URL)
+			if _, err := client.StartLoop(context.Background(), bearer(connect.NewRequest(&loopv1.StartLoopRequest{Task: "t", Tenant: "acme"}), "tok")); err != nil {
+				t.Fatalf("StartLoop: %v", err)
+			}
+			want := &event.LoopPrincipalPayload{Subject: "alice", ClientID: "client-1", Issuer: "cms", Scopes: tc.scopes, TokenID: "x"}
+			got := rt.sawStartCfg.Principal
+			if !reflect.DeepEqual(got, want) || got.Scopes == nil {
+				t.Fatalf("Principal = %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestStartLoopNoPrincipalNoRecord(t *testing.T) {
+	rt := &fakeRuntime{startID: "loop-1"}
+	if _, err := newTestServer(t, rt).StartLoop(context.Background(), connect.NewRequest(&loopv1.StartLoopRequest{Task: "t"})); err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	if rt.sawStartCfg.Principal != nil {
+		t.Fatalf("Principal = %+v, want nil without an interceptor", rt.sawStartCfg.Principal)
 	}
 }

@@ -265,6 +265,13 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 	// Launch under the LOOP-LIFETIME context, NOT the per-request ctx (which connect
 	// cancels the moment this unary RPC returns — that would kill the loop before its
 	// first turn). See Handler.baseCtx.
+	// The principal record (loop.principal) is built only from the verified token's
+	// identity fields; never the harness digest or anything else token-derived.
+	var principalRec *event.LoopPrincipalPayload
+	if havePrincipal {
+		principalRec = &event.LoopPrincipalPayload{Subject: p.Subject, ClientID: p.ClientID,
+			Issuer: p.Issuer, Scopes: p.Scopes.List(), TokenID: p.TokenID}
+	}
 	handle, err := h.rt.StartLoop(loopBase, runtime.LoopConfig{
 		Task:    m.Task,
 		ModelID: m.Model,
@@ -279,6 +286,7 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		Interactive: m.Interactive,
 		Orchestrate: m.OrchestrateLoopId,
 		Harness:     m.Harness,
+		Principal:   principalRec,
 	})
 	if err != nil {
 		apiOutcome = observeotel.OutcomeFromError(ctx, err)
