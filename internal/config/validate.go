@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ethanhinson/fuse/internal/loopauth"
 )
@@ -96,6 +97,9 @@ func (c Config) Problems() []Problem {
 	// checked below.
 	if c.MaxTokens < 0 {
 		add("max_tokens", "must be >= 0, got %d", c.MaxTokens)
+	}
+	if n := utf8.RuneCountInString(c.Instructions); n > MaxInstructionsChars {
+		add("instructions", "must be at most %d characters, got %d", MaxInstructionsChars, n)
 	}
 	if c.MaxTurns != nil && *c.MaxTurns < 0 {
 		add("max_turns", "must be >= 0 (0 = unlimited), got %d", *c.MaxTurns)

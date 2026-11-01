@@ -475,6 +475,9 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	if raw.MaxTokens != 0 {
 		c.MaxTokens = raw.MaxTokens
 	}
+	if raw.Instructions != "" {
+		c.Instructions = raw.Instructions
+	}
 	if len(raw.SkillPaths) > 0 {
 		c.SkillPaths = raw.SkillPaths
 	}
