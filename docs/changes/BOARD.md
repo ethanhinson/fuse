@@ -1,6 +1,6 @@
 # Backlog
 
-**102 changes** — 🟢 1 in progress · 🟣 2 groomed · 🟡 3 proposed · ⚪ 3 deferred · ✅ 86 done · 🗑️ 7 killed
+**103 changes** — 🟢 1 in progress · 🟣 2 groomed · 🟡 4 proposed · ⚪ 3 deferred · ✅ 86 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -15,10 +15,11 @@
 | [0101](active/0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md) | build-ready |
 | [0099](active/0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md) | Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti-design.md) | build-ready |
 
-## 🟡 Proposed (3)
+## 🟡 Proposed (4)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0103](active/0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | `medium` | `feat` | needs-grooming |
 | [0102](active/0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | `high` | `feat` | ⏳ waiting on #100 — not yet built |
 | [0100](active/0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | `high` | `feat` | ⏳ waiting on #99 — not yet built |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
@@ -43,6 +44,7 @@ graph TD
   0101
   0100 --> 0102
   0101 --> 0102
+  0103
   0012:::done
   0052:::done
   0063:::done
