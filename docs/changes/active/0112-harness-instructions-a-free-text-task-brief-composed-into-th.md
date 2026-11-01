@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/harness-instructions-a-free-text-task-brief-composed-into-th'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -49,3 +49,9 @@ A harness spec can choose a persona (`Model.persona`, a named built-in style suc
 ## Out of scope
 
 Per-worker instructions, templated variables in instructions, and prompt-injection filtering of instructions (they are author-controlled, like the rest of the spec).
+
+## Reconcile log
+
+### 2026-11-01
+
+Unchanged against main f24f0c1. ComposeSystemPrompt (internal/agent/personas.go) still has exactly two call sites, both in cmd/fuse/run.go buildAgentCore; the loop server reaches agents through that chokepoint. harness.proto has no instructions field yet. Plan must ensure worker/sub-agent builds do not receive the harness instructions.
