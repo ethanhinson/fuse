@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0112 — Harness instructions: a free-text task brief composed into the system prompt](../../changes/active/0112-harness-instructions-a-free-text-task-brief-composed-into-th.md)**
+> ↩ **[Change 0112 — Harness instructions: a free-text task brief composed into the system prompt](../../changes/archive/2026-11-01-0112-harness-instructions-a-free-text-task-brief-composed-into-th.md)**
 <!-- docket:backlink:end -->
 
 # Harness instructions: a free-text task brief composed into the system prompt

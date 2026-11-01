@@ -1,18 +1,12 @@
 # Backlog
 
-**112 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 9 proposed · ⚪ 3 deferred · ✅ 91 done · 🗑️ 7 killed
+**112 changes** — 🟢 1 in progress · 🟡 9 proposed · ⚪ 3 deferred · ✅ 92 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🔵 Built (1)
-
-| # | Title | Priority | Type | PR | State |
-|---|-------|----------|------|----|-------|
-| [0112](active/0112-harness-instructions-a-free-text-task-brief-composed-into-th.md) | Harness instructions: a free-text task brief composed into the system prompt | `high` | `feat` | [#126](https://github.com/ethanhinson/fuse/pull/126) | awaiting merge |
 
 ## 🟡 Proposed (9)
 
@@ -51,17 +45,17 @@ graph TD
   0109
   0110
   0111
-  0112
   0012:::done
   0052:::done
   0063:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (98)</summary>
+<details><summary>✅🗑️ Archive — done + killed (99)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0112](archive/2026-11-01-0112-harness-instructions-a-free-text-task-brief-composed-into-th.md) | Harness instructions: a free-text task brief composed into the system prompt | 2026-11-01 |
 | [0103](archive/2026-11-01-0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | 2026-11-01 |
 | [0102](archive/2026-11-01-0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | 2026-11-01 |
 | [0101](archive/2026-11-01-0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | 2026-11-01 |
@@ -77,7 +71,6 @@ graph TD
 | [0091](archive/2026-10-31-0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | 2026-10-31 |
 | [0090](archive/2026-10-31-0090-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo.md) | Turn and token budgets are enforced in hosted interactive loops | 2026-10-31 |
 | [0089](archive/2026-10-31-0089-static-credential-mcp-servers-authenticate-and-every-loop-re.md) | Static-credential MCP servers authenticate, and every loop reports its MCP servers | 2026-10-31 |
-| [0088](archive/2026-10-31-0088-protective-permission-patterns-match-across-slashes-and-in-e.md) | Protective permission patterns match across slashes and in every mode alike | 2026-10-31 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -89,7 +82,7 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-10](archive/) | 4 done |
+| [2026-10](archive/) | 5 done |
 | [2026-09](archive/) | 7 done |
 | [2026-08](archive/) | 65 done |
 

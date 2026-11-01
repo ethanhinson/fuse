@@ -2,7 +2,7 @@
 id: 112
 slug: 'harness-instructions-a-free-text-task-brief-composed-into-th'
 title: 'Harness instructions: a free-text task brief composed into the system prompt'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md](../../superpowers/specs/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md) |
+| Spec (merged) | [2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md) |
 | Plan | [2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th.md](../../superpowers/plans/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th.md) |
 | Results | [2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-results.md](../../results/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-results.md) |
 <!-- docket:artifacts:end -->
