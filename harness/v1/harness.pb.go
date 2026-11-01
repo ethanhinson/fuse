@@ -483,7 +483,14 @@ type HarnessSpec struct {
 	// Per-turn output token ceiling. 0: runtime default.
 	MaxTokens uint32 `protobuf:"varint,12,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
 	// Research mode settings.
-	Research      *Research `protobuf:"bytes,13,opt,name=research,proto3" json:"research,omitempty"`
+	Research *Research `protobuf:"bytes,13,opt,name=research,proto3" json:"research,omitempty"`
+	// Free-text task brief: what this harness's agent is for and how it should
+	// work. Composed into the main agent's system prompt after the persona
+	// prompt and before the runtime's own blocks (skills, spawn guidance). It
+	// applies to the root agent only: subagents and workers keep their own
+	// prompts, and an orchestrator loop keeps the orchestrator prompt. Empty
+	// leaves the system prompt unchanged.
+	Instructions  string `protobuf:"bytes,14,opt,name=instructions,proto3" json:"instructions,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -607,6 +614,13 @@ func (x *HarnessSpec) GetResearch() *Research {
 		return x.Research
 	}
 	return nil
+}
+
+func (x *HarnessSpec) GetInstructions() string {
+	if x != nil {
+		return x.Instructions
+	}
+	return ""
 }
 
 // Models holds model aliases and the default alias.
@@ -2215,7 +2229,7 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\n" +
 	"field_path\x18\x01 \x01(\tR\tfieldPath\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x17\n" +
-	"\arule_id\x18\x03 \x01(\tR\x06ruleId\"\x9f\x0f\n" +
+	"\arule_id\x18\x03 \x01(\tR\x06ruleId\"\x86\x11\n" +
 	"\vHarnessSpec\x12\xa6\x01\n" +
 	"\x06models\x18\x01 \x01(\v2\x17.fuse.harness.v1.ModelsBu\xa2\x9f\x19q\n" +
 	"\x06Models\x12gModel aliases this harness can use and the default one. Aliases extend the runtime's built-in registry.R\x06models\x12\x9b\x01\n" +
@@ -2250,7 +2264,9 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\x11Max output tokens\x12:Per-turn output token ceiling. 0 uses the runtime default.\x18\x03R\tmaxTokens\x12E\n" +
 	"\bresearch\x18\r \x01(\v2\x19.fuse.harness.v1.ResearchB\x0e\xa2\x9f\x19\n" +
 	"\n" +
-	"\bResearchR\bresearch\x1aW\n" +
+	"\bResearchR\bresearch\x12\xe4\x01\n" +
+	"\finstructions\x18\x0e \x01(\tB\xbf\x01\xbaH\x06r\x04\x18\x80\x80\x01\xa2\x9f\x19\xb1\x01\n" +
+	"\fInstructions\x12\x9e\x01What this agent is for and how it should work. Added to the system prompt after the persona. Applies to the main agent only; subagents keep their own prompts.\x18\x02R\finstructions\x1aW\n" +
 	"\x0eWorkflowsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12/\n" +
 	"\x05value\x18\x02 \x01(\v2\x19.fuse.harness.v1.WorkflowR\x05value:\x028\x01B\f\n" +

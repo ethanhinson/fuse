@@ -159,6 +159,21 @@ message HarnessSpec {
 
   // Research mode settings.
   Research research = 13 [(fuse.harness.v1.ui) = {label: "Research"}];
+
+  // Free-text task brief: what this harness's agent is for and how it should
+  // work. Composed into the main agent's system prompt after the persona
+  // prompt and before the runtime's own blocks (skills, spawn guidance). It
+  // applies to the root agent only: subagents and workers keep their own
+  // prompts, and an orchestrator loop keeps the orchestrator prompt. Empty
+  // leaves the system prompt unchanged.
+  string instructions = 14 [
+    (buf.validate.field).string.max_len = 16384,
+    (fuse.harness.v1.ui) = {
+      label: "Instructions"
+      help: "What this agent is for and how it should work. Added to the system prompt after the persona. Applies to the main agent only; subagents keep their own prompts."
+      widget: WIDGET_TEXTAREA
+    }
+  ];
 }
 
 // Models holds model aliases and the default alias.

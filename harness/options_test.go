@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -124,4 +125,40 @@ func TestEnumValuesHaveDisplayNames(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestInstructionsFieldContract pins the wire contract of the free-text task
+// brief: field number, kind, form metadata and the length rule.
+func TestInstructionsFieldContract(t *testing.T) {
+	fd := (&harnessv1.HarnessSpec{}).ProtoReflect().Descriptor().Fields().ByName("instructions")
+	if fd == nil {
+		t.Fatal("HarnessSpec has no instructions field")
+	}
+	if fd.Number() != 14 {
+		t.Errorf("number = %d, want 14", fd.Number())
+	}
+	if fd.Kind() != protoreflect.StringKind {
+		t.Errorf("kind = %v, want string", fd.Kind())
+	}
+	ui := fieldUI(fd)
+	if ui == nil {
+		t.Fatal("instructions has no ui option")
+	}
+	if ui.GetLabel() != "Instructions" {
+		t.Errorf("label = %q", ui.GetLabel())
+	}
+	if ui.GetWidget() != harnessv1.Widget_WIDGET_TEXTAREA {
+		t.Errorf("widget = %v, want WIDGET_TEXTAREA", ui.GetWidget())
+	}
+	const help = "What this agent is for and how it should work. Added to the system prompt after the persona. Applies to the main agent only; subagents keep their own prompts."
+	if ui.GetHelp() != help {
+		t.Errorf("help = %q, want %q", ui.GetHelp(), help)
+	}
+	rules, ok := proto.GetExtension(fd.Options(), validate.E_Field).(*validate.FieldRules)
+	if !ok || rules == nil {
+		t.Fatal("instructions has no buf.validate field rules")
+	}
+	if got := rules.GetString().GetMaxLen(); got != 16384 {
+		t.Errorf("string.max_len = %d, want 16384", got)
+	}
 }
