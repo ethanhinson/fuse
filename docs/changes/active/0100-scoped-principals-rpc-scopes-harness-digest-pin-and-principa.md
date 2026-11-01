@@ -14,7 +14,7 @@ related: []
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md](../../superpowers/specs/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa-design.md) |
+| Plan | [2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md](../../superpowers/plans/2026-11-01-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
