@@ -379,6 +379,10 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	if err != nil {
 		return nil, err
 	}
+	// Loop-scoped secret values (change 0102) are memory-only and exist for
+	// resolution alone: nothing past this point (Deps.LoopContext, the loop, its
+	// stream) may hold them. cfg is this call's own copy.
+	cfg.Secrets = nil
 	newToolRegistry, buildAgent, maxConcurrent := r.deps.NewToolRegistry, r.deps.BuildAgent, r.deps.MaxConcurrent
 	if factory != nil {
 		newToolRegistry, buildAgent, maxConcurrent = factory.NewToolRegistry, factory.BuildAgent, factory.MaxConcurrent

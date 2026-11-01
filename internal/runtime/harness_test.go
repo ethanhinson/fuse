@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +19,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/event/fsstore"
+	"github.com/ethanhinson/fuse/internal/loopsecret"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
@@ -30,12 +34,15 @@ type fakeHarness struct {
 	completer agent.Completer
 	built     int
 	regs      int
+	// sawSecrets is loopsecret.From(ctx) at each ResolveHarness call (change 0102).
+	sawSecrets [][]loopsecret.Secret
 }
 
-func (f *fakeHarness) ResolveHarness(_ context.Context, tenant event.TenantID, spec *harnessv1.HarnessSpec) (LoopFactory, error) {
+func (f *fakeHarness) ResolveHarness(ctx context.Context, tenant event.TenantID, spec *harnessv1.HarnessSpec) (LoopFactory, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, spec)
 	f.tenants = append(f.tenants, tenant)
+	f.sawSecrets = append(f.sawSecrets, loopsecret.From(ctx))
 	f.mu.Unlock()
 	if f.err != nil {
 		return LoopFactory{}, f.err
@@ -323,5 +330,120 @@ func TestFailedHarnessRecordLeavesTheLoopNotLive(t *testing.T) {
 	}
 	if _, _, built, _ := fh.snapshot(); built != 0 {
 		t.Fatal("an agent was built for a loop whose harness was not recorded")
+	}
+}
+
+// loopSecretSentinel is a loop-scoped secret value that must reach the harness
+// resolver and nothing else (change 0102).
+const loopSecretSentinel = "rt-SENTINEL"
+
+func loopSecretsForTest() []loopsecret.Secret {
+	return []loopsecret.Secret{{Name: "my-token", Value: loopSecretSentinel, Hosts: []string{"mcp.acme.test"}}}
+}
+
+// loopContextProbe is a Deps.LoopContext hook recording what it saw: the
+// LoopConfig's Secrets and any loop secrets on the loop-lifetime context.
+type loopContextProbe struct {
+	mu     sync.Mutex
+	called bool
+	cfgSec []loopsecret.Secret
+	ctxSec []loopsecret.Secret
+}
+
+func (p *loopContextProbe) hook(ctx context.Context, cfg LoopConfig) context.Context {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.called = true
+	p.cfgSec = cfg.Secrets
+	p.ctxSec = loopsecret.From(ctx)
+	return ctx
+}
+
+func TestStartLoopHandsLoopSecretsToTheResolverOnly(t *testing.T) {
+	ss := loopSecretsForTest()
+	fh := &fakeHarness{completer: &scriptedCompleter{}}
+	probe := &loopContextProbe{}
+	hits := 0
+	rt := New(Deps{
+		MaxConcurrent:  1,
+		InMemoryEvents: true,
+		Harness:        fh,
+		LoopContext:    probe.hook,
+		BuildAgent:     processBuild(t, &scriptedCompleter{}, &hits),
+	})
+	ctx := context.Background()
+	h, err := rt.StartLoop(ctx, LoopConfig{Task: "hi", Tenant: "acme", Harness: testSpec(), Secrets: ss})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	if _, err := h.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+
+	fh.mu.Lock()
+	saw := append([][]loopsecret.Secret(nil), fh.sawSecrets...)
+	fh.mu.Unlock()
+	if len(saw) != 1 || !reflect.DeepEqual(saw[0], ss) {
+		t.Fatalf("resolver saw loop secrets %d time(s); want exactly the request's secrets once", len(saw))
+	}
+
+	probe.mu.Lock()
+	called, cfgSec, ctxSec := probe.called, probe.cfgSec, probe.ctxSec
+	probe.mu.Unlock()
+	if !called {
+		t.Fatal("Deps.LoopContext was never called")
+	}
+	if cfgSec != nil {
+		t.Fatalf("Deps.LoopContext saw %d loop secret(s) on its LoopConfig; want none", len(cfgSec))
+	}
+	if ctxSec != nil {
+		t.Fatalf("Deps.LoopContext saw %d loop secret(s) on its context; want none", len(ctxSec))
+	}
+
+	evs, err := rt.Attach(ctx, "acme", h.ID(), 0)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	if len(evs) == 0 {
+		t.Fatal("Attach returned no events")
+	}
+	for _, e := range evs {
+		if strings.Contains(string(e.Payload), loopSecretSentinel) {
+			t.Fatalf("event %s records a loop secret value", e.Kind)
+		}
+	}
+}
+
+func TestLoopSecretsWithoutHarnessAreDropped(t *testing.T) {
+	fh := &fakeHarness{completer: &scriptedCompleter{}}
+	probe := &loopContextProbe{}
+	hits := 0
+	rt := New(Deps{MaxConcurrent: 1, Harness: fh, LoopContext: probe.hook, BuildAgent: processBuild(t, &scriptedCompleter{}, &hits)})
+	h, err := rt.StartLoop(context.Background(), LoopConfig{Task: "hi", Secrets: loopSecretsForTest()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if calls, _, _, _ := fh.snapshot(); len(calls) != 0 || hits != 1 {
+		t.Fatalf("resolver calls = %d, deps BuildAgent hits = %d", len(calls), hits)
+	}
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	if !probe.called {
+		t.Fatal("Deps.LoopContext was never called")
+	}
+	if probe.cfgSec != nil || probe.ctxSec != nil {
+		t.Fatalf("Deps.LoopContext saw loop secrets (cfg %d, ctx %d); want none", len(probe.cfgSec), len(probe.ctxSec))
+	}
+}
+
+func TestLoopConfigNeverPrintsASecretValue(t *testing.T) {
+	cfg := LoopConfig{Task: "hi", Secrets: loopSecretsForTest()}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		if out := fmt.Sprintf(verb, cfg); strings.Contains(out, loopSecretSentinel) {
+			t.Fatalf("%s of a LoopConfig printed a loop secret value: %s", verb, out)
+		}
 	}
 }

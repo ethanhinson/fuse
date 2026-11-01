@@ -1,9 +1,28 @@
 // Package netguard holds the one private-address predicate shared by the
 // web_fetch permission floor and the loop server's spec policy, so the two
-// cannot drift apart.
+// cannot drift apart. It also holds the one host spelling and the one
+// same-host rule that credential-bearing HTTP clients enforce at the transport.
 package netguard
 
-import "net"
+import (
+	"net"
+	"net/url"
+	"strings"
+)
+
+// CanonicalHost is the one spelling every host rule compares: lower case, no
+// trailing root dot.
+func CanonicalHost(h string) string { return strings.ToLower(strings.TrimSuffix(h, ".")) }
+
+// MovesHost reports whether a request to next would leave the host a
+// credential was bound to for from: a different canonical hostname, or an
+// https to http downgrade. Ports are not part of the host.
+func MovesHost(from, next *url.URL) bool {
+	if CanonicalHost(from.Hostname()) != CanonicalHost(next.Hostname()) {
+		return true
+	}
+	return strings.EqualFold(from.Scheme, "https") && !strings.EqualFold(next.Scheme, "https")
+}
 
 var (
 	// cgnat is 100.64.0.0/10 (RFC 6598), which includes the 100.100.100.200

@@ -9,10 +9,13 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ethanhinson/fuse/internal/netguard"
 )
 
 // httpClient implements mcpConn over HTTP/SSE transport (MCP 2024-11-05).
@@ -54,7 +57,7 @@ func newHTTPClient(name, baseURL, bearerToken string) (*httpClient, error) {
 		req.Header.Set("Authorization", "Bearer "+bearerToken)
 	}
 
-	hc := &http.Client{Timeout: 0} // no global timeout; per-call contexts handle timeouts
+	hc := &http.Client{Timeout: 0, CheckRedirect: refuseRedirect} // no global timeout; per-call contexts handle timeouts
 	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("mcp http %q: SSE connect: %w", name, err)
@@ -82,6 +85,13 @@ func newHTTPClient(name, baseURL, bearerToken string) (*httpClient, error) {
 		}
 	}
 
+	// The bearer token rides every POST to the endpoint, so the endpoint must
+	// stay on the host the token was bound to.
+	if err := checkEndpointHost(baseURL, messagesURL); err != nil {
+		resp.Body.Close()
+		return nil, fmt.Errorf("mcp http %q: %w", name, err)
+	}
+
 	c := &httpClient{
 		name:        name,
 		bearerToken: bearerToken,
@@ -93,6 +103,31 @@ func newHTTPClient(name, baseURL, bearerToken string) (*httpClient, error) {
 	}
 	go c.readSSEPump()
 	return c, nil
+}
+
+// refuseRedirect turns a 3xx into an ordinary non-200 failure: Go would
+// otherwise carry the Authorization header to same-host and subdomain targets.
+func refuseRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+// checkEndpointHost refuses an SSE endpoint event that names another host than
+// the declared base URL, or downgrades https to http. The URL may be named in
+// the error; the token never is.
+func checkEndpointHost(baseURL, endpoint string) error {
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("parse base url: %w", err)
+	}
+	ep, err := url.Parse(endpoint)
+	if err != nil {
+		return fmt.Errorf("endpoint event is not a URL: %w", err)
+	}
+	if !ep.IsAbs() {
+		return nil
+	}
+	if netguard.MovesHost(base, ep) {
+		return fmt.Errorf("endpoint event names another host (%q)", endpoint)
+	}
+	return nil
 }
 
 // readEndpointEvent reads lines from an SSE stream until it finds an "endpoint" event.

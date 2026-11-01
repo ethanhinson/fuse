@@ -26,9 +26,13 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file fuse/loop/v1/loop.proto.
  */
 export const file_fuse_loop_v1_loop: GenFile = /*@__PURE__*/
-  fileDesc("ChdmdXNlL2xvb3AvdjEvbG9vcC5wcm90bxIMZnVzZS5sb29wLnYxIqABChBTdGFydExvb3BSZXF1ZXN0EgwKBHRhc2sYASABKAkSDQoFbW9kZWwYAiABKAkSDgoGdGVuYW50GAMgASgJEhMKC2ludGVyYWN0aXZlGAQgASgIEhsKE29yY2hlc3RyYXRlX2xvb3BfaWQYBSABKAkSLQoHaGFybmVzcxgGIAEoCzIcLmZ1c2UuaGFybmVzcy52MS5IYXJuZXNzU3BlYyI8ChFTdGFydExvb3BSZXNwb25zZRIPCgdsb29wX2lkGAEgASgJEhYKDmhhcm5lc3NfZGlnZXN0GAIgASgJImAKC1NlbmRSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSDQoFaW5wdXQYAiABKAkSDgoGdGVuYW50GAMgASgJEhEKCWludGVycnVwdBgEIAEoCBIOCgZzb3VyY2UYBSABKAkiDgoMU2VuZFJlc3BvbnNlIkMKDk9ic2VydmVSZXF1ZXN0Eg8KB2xvb3BfaWQYASABKAkSEAoIZnJvbV9zZXEYAiABKAQSDgoGdGVuYW50GAMgASgJIlIKDE9ic2VydmVFdmVudBIiCgVldmVudBgBIAEoCzITLmZ1c2UubG9vcC52MS5FdmVudBILCgNnYXAYAiABKAgSEQoJa2VlcGFsaXZlGAMgASgIIpwBCgVFdmVudBILCgNzZXEYASABKAQSJgoCdHMYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEg8KB25vZGVfaWQYAyABKAkSEQoJcGFyZW50X2lkGAQgASgJEg0KBWRlcHRoGAUgASgFEgwKBHR1cm4YBiABKAUSDAoEa2luZBgHIAEoCRIPCgdwYXlsb2FkGAggASgMIigKFkdldENhcGFiaWxpdGllc1JlcXVlc3QSDgoGdGVuYW50GAEgASgJIukCChdHZXRDYXBhYmlsaXRpZXNSZXNwb25zZRInCgZtb2RlbHMYASADKAsyFy5mdXNlLmxvb3AudjEuTW9kZWxJbmZvEicKBnNraWxscxgCIAMoCzIXLmZ1c2UubG9vcC52MS5Ta2lsbEluZm8SJwoIY2VpbGluZ3MYAyADKAsyFS5mdXNlLmxvb3AudjEuQ2VpbGluZxITCgtzZWNyZXRfcmVmcxgEIAMoCRI5ChNzcGVjX21jcF9hdXRoX2tpbmRzGAUgAygOMhwuZnVzZS5oYXJuZXNzLnYxLk1jcEF1dGhUeXBlEigKBnNlcnZlchgGIAEoCzIYLmZ1c2UubG9vcC52MS5TZXJ2ZXJJbmZvEi0KC3NwZWNfcG9saWN5GAcgASgLMhguZnVzZS5sb29wLnYxLlNwZWNQb2xpY3kSKgoGbGltaXRzGAggASgLMhouZnVzZS5sb29wLnYxLlRlbmFudExpbWl0cyJcCgpTcGVjUG9saWN5EhEKCW1jcF9ob3N0cxgBIAMoCRIdChVkZW55X3ByaXZhdGVfbmV0d29ya3MYAiABKAgSHAoUbW9kZWxzX3JlZ2lzdHJ5X29ubHkYAyABKAgi2wEKCU1vZGVsSW5mbxINCgVhbGlhcxgBIAEoCRISCgpnYXRld2F5X2lkGAIgASgJEhkKEW1heF9vdXRwdXRfdG9rZW5zGAMgASgNEhYKDmNvbnRleHRfd2luZG93GAQgASgNEiEKGWNvbnRleHRfd2luZG93X2lzX2RlZmF1bHQYBSABKAgSDwoHcGVyc29uYRgGIAEoCRISCgppc19kZWZhdWx0GAcgASgIEg0KBWxhYmVsGAggASgJEhMKC2Rlc2NyaXB0aW9uGAkgASgJEgwKBHRhZ3MYCiADKAkiLgoJU2tpbGxJbmZvEgwKBG5hbWUYASABKAkSEwoLZGVzY3JpcHRpb24YAiABKAkijQEKB0NlaWxpbmcSEgoKZmllbGRfcGF0aBgBIAEoCRIUCgxvcGVyYXRvcl9zZXQYAiABKAgSJQoFdmFsdWUYAyABKAsyFi5nb29nbGUucHJvdG9idWYuVmFsdWUSMQoJZGlyZWN0aW9uGAQgASgOMh4uZnVzZS5sb29wLnYxLkNlaWxpbmdEaXJlY3Rpb24iNwoKU2VydmVySW5mbxIPCgd2ZXJzaW9uGAEgASgJEhgKEGRpZ2VzdF9hbGdvcml0aG0YAiABKAkiQQoMVGVuYW50TGltaXRzEhYKDm1heF9saXZlX2xvb3BzGAEgASgNEhkKEXN0YXJ0c19wZXJfbWludXRlGAIgASgNKmsKEENlaWxpbmdEaXJlY3Rpb24SIQodQ0VJTElOR19ESVJFQ1RJT05fVU5TUEVDSUZJRUQQABIZChVDRUlMSU5HX0RJUkVDVElPTl9NQVgQARIZChVDRUlMSU5HX0RJUkVDVElPTl9NSU4QAjLBAgoLTG9vcFNlcnZpY2USTAoJU3RhcnRMb29wEh4uZnVzZS5sb29wLnYxLlN0YXJ0TG9vcFJlcXVlc3QaHy5mdXNlLmxvb3AudjEuU3RhcnRMb29wUmVzcG9uc2USPQoEU2VuZBIZLmZ1c2UubG9vcC52MS5TZW5kUmVxdWVzdBoaLmZ1c2UubG9vcC52MS5TZW5kUmVzcG9uc2USRQoHT2JzZXJ2ZRIcLmZ1c2UubG9vcC52MS5PYnNlcnZlUmVxdWVzdBoaLmZ1c2UubG9vcC52MS5PYnNlcnZlRXZlbnQwARJeCg9HZXRDYXBhYmlsaXRpZXMSJC5mdXNlLmxvb3AudjEuR2V0Q2FwYWJpbGl0aWVzUmVxdWVzdBolLmZ1c2UubG9vcC52MS5HZXRDYXBhYmlsaXRpZXNSZXNwb25zZUI5WjdnaXRodWIuY29tL2V0aGFuaGluc29uL2Z1c2UvaW50ZXJuYWwvbG9vcHdpcmUvdjE7bG9vcHYxYgZwcm90bzM", [file_fuse_harness_v1_harness, file_google_protobuf_struct, file_google_protobuf_timestamp]);
+  fileDesc("ChdmdXNlL2xvb3AvdjEvbG9vcC5wcm90bxIMZnVzZS5sb29wLnYxIssBChBTdGFydExvb3BSZXF1ZXN0EgwKBHRhc2sYASABKAkSDQoFbW9kZWwYAiABKAkSDgoGdGVuYW50GAMgASgJEhMKC2ludGVyYWN0aXZlGAQgASgIEhsKE29yY2hlc3RyYXRlX2xvb3BfaWQYBSABKAkSLQoHaGFybmVzcxgGIAEoCzIcLmZ1c2UuaGFybmVzcy52MS5IYXJuZXNzU3BlYxIpCgdzZWNyZXRzGAcgAygLMhguZnVzZS5sb29wLnYxLkxvb3BTZWNyZXQiOAoKTG9vcFNlY3JldBIMCgRuYW1lGAEgASgJEg0KBXZhbHVlGAIgASgJEg0KBWhvc3RzGAMgAygJIjwKEVN0YXJ0TG9vcFJlc3BvbnNlEg8KB2xvb3BfaWQYASABKAkSFgoOaGFybmVzc19kaWdlc3QYAiABKAkiYAoLU2VuZFJlcXVlc3QSDwoHbG9vcF9pZBgBIAEoCRINCgVpbnB1dBgCIAEoCRIOCgZ0ZW5hbnQYAyABKAkSEQoJaW50ZXJydXB0GAQgASgIEg4KBnNvdXJjZRgFIAEoCSIOCgxTZW5kUmVzcG9uc2UiQwoOT2JzZXJ2ZVJlcXVlc3QSDwoHbG9vcF9pZBgBIAEoCRIQCghmcm9tX3NlcRgCIAEoBBIOCgZ0ZW5hbnQYAyABKAkiUgoMT2JzZXJ2ZUV2ZW50EiIKBWV2ZW50GAEgASgLMhMuZnVzZS5sb29wLnYxLkV2ZW50EgsKA2dhcBgCIAEoCBIRCglrZWVwYWxpdmUYAyABKAginAEKBUV2ZW50EgsKA3NlcRgBIAEoBBImCgJ0cxgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHbm9kZV9pZBgDIAEoCRIRCglwYXJlbnRfaWQYBCABKAkSDQoFZGVwdGgYBSABKAUSDAoEdHVybhgGIAEoBRIMCgRraW5kGAcgASgJEg8KB3BheWxvYWQYCCABKAwiKAoWR2V0Q2FwYWJpbGl0aWVzUmVxdWVzdBIOCgZ0ZW5hbnQYASABKAki6QIKF0dldENhcGFiaWxpdGllc1Jlc3BvbnNlEicKBm1vZGVscxgBIAMoCzIXLmZ1c2UubG9vcC52MS5Nb2RlbEluZm8SJwoGc2tpbGxzGAIgAygLMhcuZnVzZS5sb29wLnYxLlNraWxsSW5mbxInCghjZWlsaW5ncxgDIAMoCzIVLmZ1c2UubG9vcC52MS5DZWlsaW5nEhMKC3NlY3JldF9yZWZzGAQgAygJEjkKE3NwZWNfbWNwX2F1dGhfa2luZHMYBSADKA4yHC5mdXNlLmhhcm5lc3MudjEuTWNwQXV0aFR5cGUSKAoGc2VydmVyGAYgASgLMhguZnVzZS5sb29wLnYxLlNlcnZlckluZm8SLQoLc3BlY19wb2xpY3kYByABKAsyGC5mdXNlLmxvb3AudjEuU3BlY1BvbGljeRIqCgZsaW1pdHMYCCABKAsyGi5mdXNlLmxvb3AudjEuVGVuYW50TGltaXRzIlwKClNwZWNQb2xpY3kSEQoJbWNwX2hvc3RzGAEgAygJEh0KFWRlbnlfcHJpdmF0ZV9uZXR3b3JrcxgCIAEoCBIcChRtb2RlbHNfcmVnaXN0cnlfb25seRgDIAEoCCLbAQoJTW9kZWxJbmZvEg0KBWFsaWFzGAEgASgJEhIKCmdhdGV3YXlfaWQYAiABKAkSGQoRbWF4X291dHB1dF90b2tlbnMYAyABKA0SFgoOY29udGV4dF93aW5kb3cYBCABKA0SIQoZY29udGV4dF93aW5kb3dfaXNfZGVmYXVsdBgFIAEoCBIPCgdwZXJzb25hGAYgASgJEhIKCmlzX2RlZmF1bHQYByABKAgSDQoFbGFiZWwYCCABKAkSEwoLZGVzY3JpcHRpb24YCSABKAkSDAoEdGFncxgKIAMoCSIuCglTa2lsbEluZm8SDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCSKNAQoHQ2VpbGluZxISCgpmaWVsZF9wYXRoGAEgASgJEhQKDG9wZXJhdG9yX3NldBgCIAEoCBIlCgV2YWx1ZRgDIAEoCzIWLmdvb2dsZS5wcm90b2J1Zi5WYWx1ZRIxCglkaXJlY3Rpb24YBCABKA4yHi5mdXNlLmxvb3AudjEuQ2VpbGluZ0RpcmVjdGlvbiI3CgpTZXJ2ZXJJbmZvEg8KB3ZlcnNpb24YASABKAkSGAoQZGlnZXN0X2FsZ29yaXRobRgCIAEoCSJBCgxUZW5hbnRMaW1pdHMSFgoObWF4X2xpdmVfbG9vcHMYASABKA0SGQoRc3RhcnRzX3Blcl9taW51dGUYAiABKA0qawoQQ2VpbGluZ0RpcmVjdGlvbhIhCh1DRUlMSU5HX0RJUkVDVElPTl9VTlNQRUNJRklFRBAAEhkKFUNFSUxJTkdfRElSRUNUSU9OX01BWBABEhkKFUNFSUxJTkdfRElSRUNUSU9OX01JThACMsECCgtMb29wU2VydmljZRJMCglTdGFydExvb3ASHi5mdXNlLmxvb3AudjEuU3RhcnRMb29wUmVxdWVzdBofLmZ1c2UubG9vcC52MS5TdGFydExvb3BSZXNwb25zZRI9CgRTZW5kEhkuZnVzZS5sb29wLnYxLlNlbmRSZXF1ZXN0GhouZnVzZS5sb29wLnYxLlNlbmRSZXNwb25zZRJFCgdPYnNlcnZlEhwuZnVzZS5sb29wLnYxLk9ic2VydmVSZXF1ZXN0GhouZnVzZS5sb29wLnYxLk9ic2VydmVFdmVudDABEl4KD0dldENhcGFiaWxpdGllcxIkLmZ1c2UubG9vcC52MS5HZXRDYXBhYmlsaXRpZXNSZXF1ZXN0GiUuZnVzZS5sb29wLnYxLkdldENhcGFiaWxpdGllc1Jlc3BvbnNlQjlaN2dpdGh1Yi5jb20vZXRoYW5oaW5zb24vZnVzZS9pbnRlcm5hbC9sb29wd2lyZS92MTtsb29wdjFiBnByb3RvMw", [file_fuse_harness_v1_harness, file_google_protobuf_struct, file_google_protobuf_timestamp]);
 
 /**
+ * StartLoopRequest carries loop-scoped secret values in clear (secrets). Never
+ * format or log this message: its generated String(), prototext and protojson
+ * renderings print every value.
+ *
  * @generated from message fuse.loop.v1.StartLoopRequest
  */
 export type StartLoopRequest = Message<"fuse.loop.v1.StartLoopRequest"> & {
@@ -73,6 +77,26 @@ export type StartLoopRequest = Message<"fuse.loop.v1.StartLoopRequest"> & {
    * @generated from field: fuse.harness.v1.HarnessSpec harness = 6;
    */
   harness?: HarnessSpec | undefined;
+
+  /**
+   * secrets carries values for the harness spec's secret_ref names (change
+   * 0102). They are loop-scoped and in memory only: the server uses them to
+   * resolve this request's harness, never records them (loop.harness keeps
+   * names only), and never logs them or puts them in an error. An operator
+   * loop_server.secrets entry for the tenant takes precedence over an entry
+   * here; otherwise the value resolves only for a destination whose hostname
+   * is listed in its hosts; the client also refuses an SSE endpoint event that
+   * names another host and any redirect to another host or from https to http.
+   * Requires the secrets:inline scope. At most 32 entries, each value at most
+   * 16 KiB, each name at most 253 bytes, and at most 16 hosts per entry of at
+   * most 253 bytes each (InvalidArgument otherwise). Each host must be a bare
+   * hostname. Ignored when harness is unset. A loop whose spec depends on
+   * loop-scoped secrets cannot be resumed, because resume re-resolves the spec
+   * without them.
+   *
+   * @generated from field: repeated fuse.loop.v1.LoopSecret secrets = 7;
+   */
+  secrets: LoopSecret[];
 };
 
 /**
@@ -81,6 +105,46 @@ export type StartLoopRequest = Message<"fuse.loop.v1.StartLoopRequest"> & {
  */
 export const StartLoopRequestSchema: GenMessage<StartLoopRequest> = /*@__PURE__*/
   messageDesc(file_fuse_loop_v1_loop, 0);
+
+/**
+ * LoopSecret is one loop-scoped secret value (see StartLoopRequest.secrets).
+ * Never format or log this message: its generated String(), prototext and
+ * protojson renderings print the value in clear.
+ *
+ * @generated from message fuse.loop.v1.LoopSecret
+ */
+export type LoopSecret = Message<"fuse.loop.v1.LoopSecret"> & {
+  /**
+   * name is the secret_ref name the harness spec uses (same shape as
+   * loop_server.secrets names).
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * value is the secret itself. Never recorded, logged or echoed.
+   *
+   * @generated from field: string value = 2;
+   */
+  value: string;
+
+  /**
+   * hosts are the hostnames for which the value resolves; required. The value
+   * resolves only for a destination whose hostname is listed here, and the
+   * client refuses cross-host endpoint moves and redirects.
+   *
+   * @generated from field: repeated string hosts = 3;
+   */
+  hosts: string[];
+};
+
+/**
+ * Describes the message fuse.loop.v1.LoopSecret.
+ * Use `create(LoopSecretSchema)` to create a new message.
+ */
+export const LoopSecretSchema: GenMessage<LoopSecret> = /*@__PURE__*/
+  messageDesc(file_fuse_loop_v1_loop, 1);
 
 /**
  * @generated from message fuse.loop.v1.StartLoopResponse
@@ -108,7 +172,7 @@ export type StartLoopResponse = Message<"fuse.loop.v1.StartLoopResponse"> & {
  * Use `create(StartLoopResponseSchema)` to create a new message.
  */
 export const StartLoopResponseSchema: GenMessage<StartLoopResponse> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 1);
+  messageDesc(file_fuse_loop_v1_loop, 2);
 
 /**
  * @generated from message fuse.loop.v1.SendRequest
@@ -154,7 +218,7 @@ export type SendRequest = Message<"fuse.loop.v1.SendRequest"> & {
  * Use `create(SendRequestSchema)` to create a new message.
  */
 export const SendRequestSchema: GenMessage<SendRequest> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 2);
+  messageDesc(file_fuse_loop_v1_loop, 3);
 
 /**
  * @generated from message fuse.loop.v1.SendResponse
@@ -167,7 +231,7 @@ export type SendResponse = Message<"fuse.loop.v1.SendResponse"> & {
  * Use `create(SendResponseSchema)` to create a new message.
  */
 export const SendResponseSchema: GenMessage<SendResponse> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 3);
+  messageDesc(file_fuse_loop_v1_loop, 4);
 
 /**
  * @generated from message fuse.loop.v1.ObserveRequest
@@ -194,7 +258,7 @@ export type ObserveRequest = Message<"fuse.loop.v1.ObserveRequest"> & {
  * Use `create(ObserveRequestSchema)` to create a new message.
  */
 export const ObserveRequestSchema: GenMessage<ObserveRequest> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 4);
+  messageDesc(file_fuse_loop_v1_loop, 5);
 
 /**
  * ObserveEvent carries either a domain event or a keepalive/gap marker frame.
@@ -229,7 +293,7 @@ export type ObserveEvent = Message<"fuse.loop.v1.ObserveEvent"> & {
  * Use `create(ObserveEventSchema)` to create a new message.
  */
 export const ObserveEventSchema: GenMessage<ObserveEvent> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 5);
+  messageDesc(file_fuse_loop_v1_loop, 6);
 
 /**
  * Event mirrors internal/event.Event at the transport edge. payload is raw JSON
@@ -284,7 +348,7 @@ export type Event = Message<"fuse.loop.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 6);
+  messageDesc(file_fuse_loop_v1_loop, 7);
 
 /**
  * @generated from message fuse.loop.v1.GetCapabilitiesRequest
@@ -305,7 +369,7 @@ export type GetCapabilitiesRequest = Message<"fuse.loop.v1.GetCapabilitiesReques
  * Use `create(GetCapabilitiesRequestSchema)` to create a new message.
  */
 export const GetCapabilitiesRequestSchema: GenMessage<GetCapabilitiesRequest> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 7);
+  messageDesc(file_fuse_loop_v1_loop, 8);
 
 /**
  * @generated from message fuse.loop.v1.GetCapabilitiesResponse
@@ -377,7 +441,7 @@ export type GetCapabilitiesResponse = Message<"fuse.loop.v1.GetCapabilitiesRespo
  * Use `create(GetCapabilitiesResponseSchema)` to create a new message.
  */
 export const GetCapabilitiesResponseSchema: GenMessage<GetCapabilitiesResponse> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 8);
+  messageDesc(file_fuse_loop_v1_loop, 9);
 
 /**
  * SpecPolicy is what StartLoop holds a client's spec to besides the
@@ -414,7 +478,7 @@ export type SpecPolicy = Message<"fuse.loop.v1.SpecPolicy"> & {
  * Use `create(SpecPolicySchema)` to create a new message.
  */
 export const SpecPolicySchema: GenMessage<SpecPolicy> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 9);
+  messageDesc(file_fuse_loop_v1_loop, 10);
 
 /**
  * @generated from message fuse.loop.v1.ModelInfo
@@ -485,7 +549,7 @@ export type ModelInfo = Message<"fuse.loop.v1.ModelInfo"> & {
  * Use `create(ModelInfoSchema)` to create a new message.
  */
 export const ModelInfoSchema: GenMessage<ModelInfo> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 10);
+  messageDesc(file_fuse_loop_v1_loop, 11);
 
 /**
  * @generated from message fuse.loop.v1.SkillInfo
@@ -507,7 +571,7 @@ export type SkillInfo = Message<"fuse.loop.v1.SkillInfo"> & {
  * Use `create(SkillInfoSchema)` to create a new message.
  */
 export const SkillInfoSchema: GenMessage<SkillInfo> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 11);
+  messageDesc(file_fuse_loop_v1_loop, 12);
 
 /**
  * The operator limit one tighten-only spec field is held to. The limit is
@@ -548,7 +612,7 @@ export type Ceiling = Message<"fuse.loop.v1.Ceiling"> & {
  * Use `create(CeilingSchema)` to create a new message.
  */
 export const CeilingSchema: GenMessage<Ceiling> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 12);
+  messageDesc(file_fuse_loop_v1_loop, 13);
 
 /**
  * @generated from message fuse.loop.v1.ServerInfo
@@ -572,7 +636,7 @@ export type ServerInfo = Message<"fuse.loop.v1.ServerInfo"> & {
  * Use `create(ServerInfoSchema)` to create a new message.
  */
 export const ServerInfoSchema: GenMessage<ServerInfo> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 13);
+  messageDesc(file_fuse_loop_v1_loop, 14);
 
 /**
  * TenantLimits bounds one tenant's loops on this server. A StartLoop beyond
@@ -603,7 +667,7 @@ export type TenantLimits = Message<"fuse.loop.v1.TenantLimits"> & {
  * Use `create(TenantLimitsSchema)` to create a new message.
  */
 export const TenantLimitsSchema: GenMessage<TenantLimits> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 14);
+  messageDesc(file_fuse_loop_v1_loop, 15);
 
 /**
  * Ceilings are strict: a spec value equal to the ceiling's value is refused.

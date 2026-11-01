@@ -28,6 +28,9 @@ func scopeTokens() map[string]loopauth.Principal {
 		"caps":      {Tenant: "acme", Subject: "alice", Scopes: loopauth.NewScopes(loopauth.ScopeCapabilitiesRead)},
 		"none":      {Tenant: "acme", Subject: "alice"},
 		"junk":      {Tenant: "acme", Subject: "alice", Scopes: loopauth.NewScopes("foo:bar")},
+		"start-inline": {Tenant: "acme", Subject: "alice",
+			Scopes: loopauth.NewScopes(loopauth.ScopeLoopStart, loopauth.ScopeSecretsInline)},
+		"inline-only": {Tenant: "acme", Subject: "alice", Scopes: loopauth.NewScopes(loopauth.ScopeSecretsInline)},
 	}
 }
 
@@ -66,6 +69,14 @@ func newScopeFixture(t *testing.T) *scopeFixture {
 func (f *scopeFixture) start(token, orchestrate string) error {
 	_, err := f.client.StartLoop(context.Background(), bearer(connect.NewRequest(&loopv1.StartLoopRequest{
 		Task: "t", Tenant: "acme", OrchestrateLoopId: orchestrate,
+	}), token))
+	return err
+}
+
+// startWithSecrets is start carrying loop-scoped secret values.
+func (f *scopeFixture) startWithSecrets(token string, ss []*loopv1.LoopSecret) error {
+	_, err := f.client.StartLoop(context.Background(), bearer(connect.NewRequest(&loopv1.StartLoopRequest{
+		Task: "t", Tenant: "acme", Secrets: ss,
 	}), token))
 	return err
 }

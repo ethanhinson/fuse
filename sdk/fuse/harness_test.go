@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -16,6 +17,7 @@ import (
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopconnect"
+	"github.com/ethanhinson/fuse/internal/loopsecret"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
 	"github.com/ethanhinson/fuse/internal/runtime"
@@ -69,6 +71,53 @@ func TestStartLoopCarriesTheHarnessSpec(t *testing.T) {
 				t.Fatalf("err = %v, want ErrHarnessUnsupported", err)
 			}
 		})
+	}
+}
+
+// TestStartLoopCarriesLoopSecrets drives both backends: loop-scoped secrets set
+// with WithSecrets reach the runtime seam's LoopConfig unchanged. The remote path
+// goes through the real loopconnect.Handler, whose dev verifier principal is
+// unrestricted and so holds secrets:inline.
+func TestStartLoopCarriesLoopSecrets(t *testing.T) {
+	backends := map[string]func(f *fakeRuntime) *Client{
+		"local": func(f *fakeRuntime) *Client {
+			return NewLocal(f, Credentials{Tenant: string(event.DefaultTenant)})
+		},
+		"remote": func(f *fakeRuntime) *Client {
+			return NewRemote(remoteFakeServer(t, f, devVerifier()), Credentials{Token: "good-tok", Tenant: string(event.DefaultTenant)})
+		},
+	}
+	for name, mk := range backends {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeRuntime{startID: "loop-s"}
+			c := mk(f)
+			cfg := StartLoopConfig{Task: "t", Harness: sdkSpec()}.WithSecrets(LoopSecret{Name: "my-token", Value: "sdk-v", Hosts: []string{"mcp.acme.test"}})
+			if _, err := c.StartLoop(context.Background(), cfg); err != nil {
+				t.Fatalf("StartLoop: %v", err)
+			}
+			want := []loopsecret.Secret{{Name: "my-token", Value: "sdk-v", Hosts: []string{"mcp.acme.test"}}}
+			if !reflect.DeepEqual(f.sawStartCfg.Secrets, want) {
+				t.Fatalf("Secrets = %#v, want %#v", f.sawStartCfg.Secrets, want)
+			}
+		})
+	}
+}
+
+func TestStartLoopConfigWithSecretsAppendsWithoutMutating(t *testing.T) {
+	a := LoopSecret{Name: "a", Value: "va", Hosts: []string{"a.test"}}
+	b := LoopSecret{Name: "b", Value: "vb", Hosts: []string{"b.test"}}
+	base := StartLoopConfig{Task: "t"}.WithSecrets(a)
+	two := base.WithSecrets(b)
+	if !reflect.DeepEqual(two.Secrets, []LoopSecret{a, b}) {
+		t.Fatalf("two.Secrets = %#v", two.Secrets)
+	}
+	if !reflect.DeepEqual(base.Secrets, []LoopSecret{a}) {
+		t.Fatalf("receiver mutated: base.Secrets = %#v", base.Secrets)
+	}
+	// A sibling built from the same receiver must not share backing storage.
+	other := base.WithSecrets(LoopSecret{Name: "c", Value: "vc", Hosts: []string{"c.test"}})
+	if two.Secrets[1].Name != "b" || other.Secrets[1].Name != "c" {
+		t.Fatalf("siblings share storage: two=%#v other=%#v", two.Secrets, other.Secrets)
 	}
 }
 

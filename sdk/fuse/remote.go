@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"connectrpc.com/connect"
 
@@ -154,6 +155,7 @@ func (b *remoteBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (Loo
 		Interactive:       cfg.Interactive,
 		OrchestrateLoopId: cfg.Orchestrate,
 		Harness:           cfg.Harness,
+		Secrets:           toWireSecrets(cfg.Secrets),
 	}))
 	if err != nil {
 		// Unimplemented means "harness specs unsupported" only for a StartLoop that
@@ -361,4 +363,17 @@ func mapConnectError(err error) error {
 	default:
 		return err
 	}
+}
+
+// toWireSecrets converts loop-scoped secrets to their wire form; nil for none,
+// so a request without secrets never carries the field.
+func toWireSecrets(ss []LoopSecret) []*loopv1.LoopSecret {
+	if len(ss) == 0 {
+		return nil
+	}
+	out := make([]*loopv1.LoopSecret, len(ss))
+	for i, s := range ss {
+		out[i] = &loopv1.LoopSecret{Name: s.Name, Value: s.Value, Hosts: slices.Clone(s.Hosts)}
+	}
+	return out
 }

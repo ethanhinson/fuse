@@ -8,6 +8,8 @@ import (
 	"connectrpc.com/connect"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 // TestGeneratedStubsCompileAndShape proves the committed proto stubs build and the
@@ -58,5 +60,43 @@ func TestGeneratedStubsCompileAndShape(t *testing.T) {
 	}
 	if connect.CodeOf(stream.Err()) != connect.CodeUnimplemented {
 		t.Fatalf("Observe err code = %v, want Unimplemented", connect.CodeOf(stream.Err()))
+	}
+}
+
+// TestStartLoopRequestCarriesSecrets pins the loop-scoped secrets wire contract:
+// StartLoopRequest.secrets (field 7) round-trips repeated LoopSecret entries whose
+// name/value/hosts are fields 1/2/3.
+func TestStartLoopRequestCarriesSecrets(t *testing.T) {
+	in := &loopv1.StartLoopRequest{
+		Task: "t",
+		Secrets: []*loopv1.LoopSecret{
+			{Name: "my-token", Value: "v", Hosts: []string{"mcp.acme.test"}},
+		},
+	}
+	b, err := proto.Marshal(in)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	out := &loopv1.StartLoopRequest{}
+	if err := proto.Unmarshal(b, out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !proto.Equal(in, out) {
+		// Never format the messages: they carry a secret value in clear.
+		t.Fatalf("round trip mismatch: task %q/%q, %d/%d secrets", out.GetTask(), in.GetTask(), len(out.GetSecrets()), len(in.GetSecrets()))
+	}
+
+	if n := (&loopv1.StartLoopRequest{}).ProtoReflect().Descriptor().Fields().ByName("secrets").Number(); n != 7 {
+		t.Fatalf("StartLoopRequest.secrets field number = %d, want 7", n)
+	}
+	fields := (&loopv1.LoopSecret{}).ProtoReflect().Descriptor().Fields()
+	for name, want := range map[string]int32{"name": 1, "value": 2, "hosts": 3} {
+		f := fields.ByName(protoreflect.Name(name))
+		if f == nil {
+			t.Fatalf("LoopSecret has no field %q", name)
+		}
+		if got := int32(f.Number()); got != want {
+			t.Fatalf("LoopSecret.%s field number = %d, want %d", name, got, want)
+		}
 	}
 }

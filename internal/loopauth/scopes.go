@@ -19,8 +19,8 @@ const (
 	ScopeLoopAdmin = "loop:admin"
 	// ScopeCapabilitiesRead authorizes reading the server's capabilities.
 	ScopeCapabilitiesRead = "capabilities:read"
-	// ScopeSecretsInline authorizes inline secrets on a request. It is defined
-	// here and enforced by a later change.
+	// ScopeSecretsInline authorizes inline secrets on a request. The loopconnect
+	// StartLoop handler enforces it for StartLoopRequest.secrets.
 	ScopeSecretsInline = "secrets:inline"
 )
 

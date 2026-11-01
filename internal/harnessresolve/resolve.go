@@ -12,10 +12,17 @@
 // the server's SecretResolver - and every violation is reported with its spec
 // field path in one *harness.ValidationError.
 //
-// A resolved Config holds resolved secret VALUES. It lives only in memory for
-// the loop it was resolved for: never log it, persist it, or put it in an
-// error. What a loop records durably is the spec (secret names only) and its
-// Digest.
+// A request may also carry loop-scoped secret values (change 0102) for its
+// secret_ref names, each bound to the hostnames it may be sent to. They reach
+// Resolve on its context (loopsecret.WithSecrets / loopsecret.From), never in
+// the spec. The operator's SecretResolver always takes precedence: a
+// loop-scoped value is used only for a name the operator refuses, and only for
+// a destination whose hostname the entry lists.
+//
+// A resolved Config holds resolved secret VALUES, operator or loop-scoped. It
+// lives only in memory for the loop it was resolved for: never log it, persist
+// it, or put it in an error. What a loop records durably is the spec (secret
+// names only) and its Digest.
 package harnessresolve
 
 import (
@@ -28,6 +35,7 @@ import (
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/harnessconfig"
+	"github.com/ethanhinson/fuse/internal/loopsecret"
 )
 
 // Resolver resolves specs over one server's operator config.
@@ -125,36 +133,72 @@ func secretRefs(spec *harnessv1.HarnessSpec) []secretRef {
 	return out
 }
 
-// resolveSecrets resolves every secret_ref for its destination. A reference
-// that does not resolve is a violation at its field, with one fixed message
-// whatever the cause, so a client cannot probe which secrets exist or where
-// they may be sent. The overlay later looks values up by name, so a name that
-// resolved for one destination and failed for another is a violation either way.
+// resolveSecrets resolves every secret_ref for its destination. The operator's
+// SecretResolver is asked first and its value always wins. Only when it refuses
+// is the request's loop-scoped secret of that name (change 0102, read from ctx
+// with loopsecret.From) used, and only for a destination whose hostname its
+// hosts list. A reference that resolves from neither is a violation at its
+// field: a loop secret whose hosts do not list the destination says so, naming
+// the destination's hostname; otherwise one fixed message whatever the cause,
+// so a client cannot probe which operator secrets exist or where they may be
+// sent. Every invalid loop secret entry is a violation at its request path.
+//
+// The overlay later looks values up by name, so a name that resolved for one
+// destination and failed for another is a violation either way, and so is a
+// name resolved from the operator for one reference and from a loop secret for
+// another: either value would otherwise reach the other reference's
+// destination. The returned values (operator or loop-scoped) live in memory
+// only, like the Config they are resolved into.
 func (r Resolver) resolveSecrets(ctx context.Context, tenant string, spec *harnessv1.HarnessSpec) (map[string]string, []harnessconfig.Problem) {
+	loop, entryProblems := loopSecrets(loopsecret.From(ctx))
 	values := map[string]string{}
 	failed := map[string]bool{}
+	fromOperator := map[string]bool{}
+	fromLoop := map[string]bool{}
+	refs := secretRefs(spec)
 	var problems []harnessconfig.Problem
-	for _, ref := range secretRefs(spec) {
+	for _, ref := range refs {
 		var v string
 		err := ErrSecretUnavailable
 		if r.Secrets != nil {
 			v, err = r.Secrets.ResolveSecret(ctx, tenant, ref.name, ref.destination)
 		}
-		if err != nil {
-			failed[ref.name] = true
+		if err == nil {
+			fromOperator[ref.name] = true
+			values[ref.name] = v
+			continue
+		}
+		ls, ok := loop[ref.name]
+		switch {
+		case ok && destinationAllowed(ls.Hosts, ref.destination):
+			fromLoop[ref.name] = true
+			values[ref.name] = ls.Value
+			continue
+		case ok:
+			problems = append(problems, loopHostProblem(ref))
+		default:
 			problems = append(problems, harnessconfig.Problem{
 				FieldPath: ref.path,
 				Message:   fmt.Sprintf("secret %q is not available to this tenant", ref.name),
 				RuleID:    harness.RuleSecretRef,
 			})
-			continue
 		}
-		values[ref.name] = v
+		failed[ref.name] = true
+	}
+	for _, ref := range refs {
+		if fromOperator[ref.name] && fromLoop[ref.name] {
+			failed[ref.name] = true
+			problems = append(problems, harnessconfig.Problem{
+				FieldPath: ref.path,
+				Message:   fmt.Sprintf("secret %q resolves from the server for some references and from a loop secret for others; every reference to one name must resolve from the same source", ref.name),
+				RuleID:    harness.RuleSecretRef,
+			})
+		}
 	}
 	for name := range failed {
 		delete(values, name)
 	}
-	return values, problems
+	return values, append(problems, entryProblems...)
 }
 
 // operatorOnlyProblems reports spec values only the server's operator may

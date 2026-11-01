@@ -76,6 +76,17 @@ if errors.As(err, &bad) {
 The spec and its digest (`harness.Digest`) are the first event of the loop's stream
 (`loop.harness`), so a resume on any server replica rebuilds the same harness.
 
+A client can also send loop-scoped secret values for the spec's `secret_ref` names
+(the token needs the `secrets:inline` scope). Each value resolves only for the listed
+hosts, lives in server memory only, and is never recorded. An operator secret of the
+same name wins. A loop whose spec depends on a loop-scoped secret cannot be resumed
+(`Send` fails with `FailedPrecondition`, "loop finished"), because the value is gone.
+
+```go
+id, err := c.StartLoop(ctx, fuse.StartLoopConfig{Task: "triage the backlog", Harness: spec}.
+    WithSecrets(fuse.LoopSecret{Name: "my-token", Value: tok, Hosts: []string{"mcp.acme.test"}}))
+```
+
 Right after it, the loop records one `mcp.server` event per configured MCP server
 (name, transport, auth type, whether it connected, the error if not, and the tool
 names it exposes). A server that cannot connect is reported and skipped; the loop

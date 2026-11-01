@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/netguard"
 )
 
 // ErrSecretUnavailable is the one error a SecretResolver returns for a name it
@@ -55,11 +56,8 @@ func (s configSecrets) ResolveSecret(_ context.Context, tenant, name, destinatio
 	if !ok {
 		return "", ErrSecretUnavailable
 	}
-	if len(e.Hosts) > 0 {
-		u, err := url.Parse(destination)
-		if err != nil || !slices.ContainsFunc(e.Hosts, func(h string) bool { return strings.EqualFold(h, u.Hostname()) }) {
-			return "", ErrSecretUnavailable
-		}
+	if len(e.Hosts) > 0 && !destinationAllowed(e.Hosts, destination) {
+		return "", ErrSecretUnavailable
 	}
 	return v, nil
 }
@@ -100,4 +98,25 @@ func available(e config.SecretSourceConfig, tenant string) (string, bool) {
 		v = strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
 	}
 	return v, v != ""
+}
+
+// canonicalHost is the one spelling every host rule compares: lower case, no
+// trailing root dot. The operator secret hosts rule, the loop-scoped secret
+// hosts rule and the spec policy all match through it, so no two layers can
+// disagree on a spelling.
+func canonicalHost(h string) string { return netguard.CanonicalHost(h) }
+
+// destinationAllowed reports whether destination's hostname is one of hosts.
+// An unparsable destination, an empty hostname or an empty hosts list is never
+// allowed.
+func destinationAllowed(hosts []string, destination string) bool {
+	u, err := url.Parse(destination)
+	if err != nil {
+		return false
+	}
+	host := canonicalHost(u.Hostname())
+	if host == "" {
+		return false
+	}
+	return slices.ContainsFunc(hosts, func(h string) bool { return canonicalHost(h) == host })
 }

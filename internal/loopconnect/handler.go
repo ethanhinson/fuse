@@ -4,7 +4,8 @@
 // over a runtime.Runtime: StartLoop / Send / GetCapabilities (unary) and Observe
 // (server-streaming history-then-live). It is a pure adapter - it imports internal/runtime,
 // internal/event, the generated loopwire stubs, the internal/capabilities answer
-// types, the internal/tenantlimit per-tenant loop limiter (change 0103) and the
+// types, the internal/tenantlimit per-tenant loop limiter (change 0103), the
+// internal/loopsecret in-memory secret values (change 0102) and the
 // public harness types (for a
 // refused spec's violations, change 0085), and NEVER a renderer, TUI,
 // MCP tool registry, or CLI type. Its "no approval gate" (auto-approve) policy is the
@@ -20,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"time"
 
@@ -30,6 +32,7 @@ import (
 	"github.com/ethanhinson/fuse/harness"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopauth"
+	"github.com/ethanhinson/fuse/internal/loopsecret"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 	"github.com/ethanhinson/fuse/internal/loopwire/v1/loopv1connect"
 	"github.com/ethanhinson/fuse/internal/observe"
@@ -206,6 +209,14 @@ func (h *Handler) authorizeLoop(ctx context.Context, tenant event.TenantID, loop
 // principal's subject is recorded as the loop's Owner right after creation. A scoped
 // principal needs loop:start; loop:admin does not satisfy it (it only lifts the owner
 // check on an orchestrate target).
+//
+// A request carrying loop-scoped secret values (change 0102) also needs
+// secrets:inline (an unrestricted principal passes, as for every scope), and the
+// secrets must be within loopsecret's wire limits (CodeInvalidArgument
+// otherwise). Both checks run right after loop:start, before the tenant, pin,
+// orchestrate and tenant-limit checks, so a refused request spends nothing. No
+// refusal ever names a secret value. The values go to the runtime in
+// LoopConfig.Secrets and nowhere else.
 func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.StartLoopRequest]) (*connect.Response[loopv1.StartLoopResponse], error) {
 	ctx, apiSpan := h.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "start_loop"})
 	apiOutcome := observe.OutcomeSuccess
@@ -215,6 +226,22 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		return nil, aerr
 	}
 	m := req.Msg
+	// Loop-scoped secret values need their own scope; an unrestricted principal
+	// passes as for every scope. The limits apply before anything else is spent,
+	// and no refusal ever names a value.
+	var secrets []loopsecret.Secret
+	if len(m.GetSecrets()) > 0 {
+		if aerr := requireScope(ctx, loopauth.ScopeSecretsInline); aerr != nil {
+			apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
+			return nil, aerr
+		}
+		secrets = loopSecrets(m.GetSecrets())
+		if err := loopsecret.CheckLimits(secrets); err != nil {
+			cerr := connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("loopconnect: %w", err))
+			apiOutcome = observeotel.OutcomeFromError(ctx, cerr)
+			return nil, cerr
+		}
+	}
 	tenant, p, havePrincipal, aerr := h.effectiveTenant(ctx, m.Tenant)
 	if aerr != nil {
 		apiOutcome = observeotel.OutcomeFromError(ctx, aerr)
@@ -286,6 +313,7 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		Interactive: m.Interactive,
 		Orchestrate: m.OrchestrateLoopId,
 		Harness:     m.Harness,
+		Secrets:     secrets,
 		Principal:   principalRec,
 	})
 	if err != nil {
@@ -323,6 +351,19 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		resp.Header().Set("Fuse-Trace-Id", id)
 	}
 	return resp, nil
+}
+
+// loopSecrets converts the wire secrets to the runtime's in-memory form, nil for
+// none. Hosts are copied so the result shares nothing with the request message.
+func loopSecrets(in []*loopv1.LoopSecret) []loopsecret.Secret {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]loopsecret.Secret, len(in))
+	for i, s := range in {
+		out[i] = loopsecret.Secret{Name: s.GetName(), Value: s.GetValue(), Hosts: slices.Clone(s.GetHosts())}
+	}
+	return out
 }
 
 // limitError maps an Admit failure: a limit refusal is ResourceExhausted

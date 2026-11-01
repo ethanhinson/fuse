@@ -38,6 +38,7 @@ func (b *localBackend) startLoop(ctx context.Context, cfg StartLoopConfig) (Loop
 		Interactive: cfg.Interactive,
 		Orchestrate: cfg.Orchestrate,
 		Harness:     cfg.Harness,
+		Secrets:     cfg.Secrets,
 	})
 	if err != nil {
 		return "", mapSeamError(err)
