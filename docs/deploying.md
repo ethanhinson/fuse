@@ -165,7 +165,11 @@ rest of `config.loop_server`, such as `lease_ttl`, `issuers`, and `limits`, is k
 (ADR-0006). It is a Secret because `loop_server.auth`, `observability`, and `tool_identity` are
 honored from *that file and nowhere else*. Set `config.existingSecret` to supply your own
 instead (it must carry a `config.yml` key); the chart then renders none of its own. With several
-replicas, the `limits` start rate applies per pod (the live-loop cap is shared).
+replicas, the `limits` start rate applies per pod. The live-loop cap is exact within one process
+and a soft bound across replicas (overshoot is bounded by the replica count). `max_live_loops`
+alone leaves registry scans unthrottled, so set `starts_per_minute` too. Loops owned by a crashed
+replica count against the cap until `lease_ttl` (default 30s) elapses. `limits.tenants` keys are
+exact tenant ids, with no prefix form.
 
 The Deployment carries a **checksum annotation over the rendered config**, so changing the
 Secret rolls the pods. When `config.existingSecret` is set the checksum cannot see inside the

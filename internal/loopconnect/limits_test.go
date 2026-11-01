@@ -296,7 +296,7 @@ func TestStartLoopSpoofCheckedBeforeLimits(t *testing.T) {
 	mustStart(t, client, "tok-a")
 }
 
-func TestStartLoopCountErrorIsInternal(t *testing.T) {
+func TestStartLoopCountErrorIsUnavailable(t *testing.T) {
 	clk := newLimitClock()
 	base := newFakeRegistry()
 	reg := listErrRegistry{base}
@@ -305,8 +305,8 @@ func TestStartLoopCountErrorIsInternal(t *testing.T) {
 	client := newLimitServer(t, rt, reg, lim, limitVerifier())
 
 	_, err := startAs(client, "tok-a")
-	if got := connect.CodeOf(err); got != connect.CodeInternal {
-		t.Fatalf("count error code = %v, want Internal (err=%v)", got, err)
+	if got := connect.CodeOf(err); got != connect.CodeUnavailable {
+		t.Fatalf("count error code = %v, want Unavailable (err=%v)", got, err)
 	}
 	if got := rt.startCount(); got != 0 {
 		t.Fatalf("runtime called %d times despite an unreadable count", got)
@@ -348,7 +348,7 @@ func TestLimitErrorMapping(t *testing.T) {
 		{"rate fractional", &tenantlimit.RefusedError{Tenant: "a", Axis: tenantlimit.AxisStartRate, Limit: 7, RetryAfter: 1500 * time.Millisecond}, connect.CodeResourceExhausted, "2"},
 		{"canceled", context.Canceled, connect.CodeCanceled, ""},
 		{"deadline", fmt.Errorf("wrapped: %w", context.DeadlineExceeded), connect.CodeDeadlineExceeded, ""},
-		{"count", fmt.Errorf("tenantlimit: count live loops for %q: %w", "a", errors.New("boom")), connect.CodeInternal, ""},
+		{"count", fmt.Errorf("tenantlimit: count live loops for %q: %w", "a", errors.New("boom")), connect.CodeUnavailable, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

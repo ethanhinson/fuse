@@ -186,7 +186,8 @@ func (l *Limiter) For(tenant event.TenantID) Limits {
 func noop() {}
 
 // Admit decides whether the tenant may start one more loop. The rate is checked
-// first (in memory, so a hammering client cannot drive registry reads), and
+// first (in memory, so when a start rate is configured a hammering client
+// cannot drive registry reads), and
 // every call that reaches it spends a start token, even one the cap then
 // refuses. The cap counts live loops plus this process's in-flight starts under
 // a per-tenant lock, so concurrent starts cannot both take the last slot.

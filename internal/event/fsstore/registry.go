@@ -190,9 +190,10 @@ func (s *FSDurableStore) List(ctx context.Context, tenant event.TenantID) ([]eve
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	// No s.mu: sidecar writes are tmp-file + rename, so a lock-free read sees
+	// either the old or the new record, never a torn one, and List only ever
+	// opens loop.json (never the loop-*.json.tmp staging files). Holding the
+	// store-wide lock across the directory scan would stall every append.
 	nt := event.NormalizeTenant(tenant)
 	tenantDir := filepath.Join(s.baseDir, string(nt))
 	entries, err := os.ReadDir(tenantDir)

@@ -238,6 +238,9 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		}
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	// The loop is registered live now, so the in-flight reservation would count
+	// it twice; drop it here (release is idempotent, the defer covers errors).
+	release()
 	// Record ownership. The seam's StartLoop already Registered the record (with
 	// OwnerNodeID + Live) under StreamKey{tenant, handle.ID()}; we Resolve-then-
 	// Register so setting Owner preserves OwnerNodeID/Live/CreatedAt (Register is an
@@ -264,7 +267,7 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 // naming the limit, with Retry-After (whole seconds, rounded up) for the rate
 // axis; a caller that gave up while waiting for the tenant's admission lock gets
 // its own context code; any other failure means the live loops could not be
-// counted and is Internal (fail closed: the start does not proceed).
+// counted and is Unavailable (fail closed: the start does not proceed).
 func limitError(err error) *connect.Error {
 	var refused *tenantlimit.RefusedError
 	if errors.As(err, &refused) {
@@ -281,7 +284,8 @@ func limitError(err error) *connect.Error {
 	case errors.Is(err, context.DeadlineExceeded):
 		return connect.NewError(connect.CodeDeadlineExceeded, err)
 	}
-	return connect.NewError(connect.CodeInternal, fmt.Errorf("loopconnect: cannot count live loops: %w", err))
+	// A failed registry count is a store outage the client can retry, not a bug.
+	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("loopconnect: cannot count live loops: %w", err))
 }
 
 // harnessError maps a refused harness spec (change 0085) to its Connect error:
@@ -368,6 +372,8 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 		}
 		defer release()
 		if _, rerr := h.rt.Resume(ctx, tenant, m.LoopId); rerr == nil {
+			// Registered live again: drop the in-flight reservation (idempotent).
+			release()
 			err = runtime.SendOrSteer(ctx, h.rt, tenant, m.LoopId, m.Input, opts)
 		}
 	}

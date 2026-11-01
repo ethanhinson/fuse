@@ -126,6 +126,10 @@ func TestGetCapabilitiesMapsEveryField(t *testing.T) {
 		Server:     &loopv1.ServerInfo{Version: "v1.2.3", DigestAlgorithm: "sha256"},
 		Limits:     &loopv1.TenantLimits{},
 	}
+	// spec_policy (7) and limits (8) are both advertised side by side.
+	if resp.Msg.GetSpecPolicy() == nil || resp.Msg.GetLimits() == nil {
+		t.Fatalf("spec_policy and limits must both be present: %v", resp.Msg)
+	}
 	if !proto.Equal(resp.Msg, want) {
 		t.Fatalf("response mismatch:\n got %v\nwant %v", resp.Msg, want)
 	}
@@ -246,6 +250,10 @@ func TestGetCapabilitiesReportsTenantLimits(t *testing.T) {
 		}
 		if !proto.Equal(resp.Msg.GetLimits(), want) {
 			t.Fatalf("limits as %s = %v, want %v", token, resp.Msg.GetLimits(), want)
+		}
+		// spec_policy (field 7) and limits (field 8) travel together.
+		if sp := resp.Msg.GetSpecPolicy(); sp == nil || !sp.GetModelsRegistryOnly() || len(sp.GetMcpHosts()) != 1 {
+			t.Fatalf("spec_policy as %s = %v, want the advertised policy alongside limits", token, sp)
 		}
 	}
 }

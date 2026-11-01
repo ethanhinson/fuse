@@ -656,8 +656,17 @@ loop_server:
   authenticated start attempt spends a start token, including one the cap then
   refuses.
 - **Scope.** The start rate is counted per server process (with several replicas
-  it applies per pod); the live-loop cap counts the tenant's live loops in the
-  shared loop registry, so it holds across replicas.
+  it applies per pod). The live-loop cap counts the tenant's live loops in the
+  shared loop registry: it is exact within one process and a soft bound across
+  replicas, where concurrent starts on different replicas can overshoot it by at
+  most the replica count.
+- **Registry scans.** Each cap check scans the tenant's registry records, so
+  `max_live_loops` alone leaves those scans unthrottled. Set `starts_per_minute`
+  as well to bound them.
+- **Crashed replicas.** Loops owned by a replica that crashed still count
+  against the cap until their lease expires (`lease_ttl`, default 30s).
+- **Tenant keys.** `limits.tenants` keys are exact tenant ids; there is no prefix
+  or pattern form.
 - **Resumes.** A `Send` that resumes a finished loop is admitted like a start:
   it spends a start token and may fail `ResourceExhausted` when the tenant is at
   its live-loop cap. A `Send` to a loop that is still live is never refused and

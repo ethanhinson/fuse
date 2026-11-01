@@ -264,7 +264,7 @@ type LoopServerConfig struct {
 	// SpecPolicy is the operator's floor on what a client's harness spec may
 	// point at (change 0101). Operator-only, like the rest of the block.
 	SpecPolicy SpecPolicyConfig `yaml:"spec_policy"`
-	Limits   LoopLimitsConfig     `yaml:"limits"`
+	Limits     LoopLimitsConfig `yaml:"limits"`
 }
 
 // Spec policy model modes.
@@ -309,7 +309,6 @@ func (p SpecPolicyConfig) isZero() bool {
 	return len(p.MCPHosts) == 0 && p.DenyPrivateNetworks == nil && len(p.AllowHTTPHosts) == 0 && p.Models == ""
 
 }
-
 
 // LoopLimitsConfig is loop_server.limits (change 0103): per-tenant bounds on
 // how many loops a tenant keeps alive and how fast it starts them. Default
