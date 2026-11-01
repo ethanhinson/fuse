@@ -751,8 +751,9 @@ The service is four RPCs:
   Loop-scoped secrets: a client may send `secrets: [{name, value, hosts}]` with
   `StartLoop` to satisfy its harness spec's `secret_ref` names. Values are kept in
   memory only and are never recorded or logged. An operator `loop_server.secrets`
-  entry for the tenant wins over a client entry of the same name. An entry resolves
-  only for a destination whose hostname is in its `hosts`, which is required. At most
+  entry for the tenant wins over a client entry of the same name. The value resolves
+  only for a destination whose hostname is listed in its `hosts`, which is required;
+  transport-level redirect and endpoint host checks are not part of this binding. At most
   32 entries are accepted, 16 KiB per value, 253 bytes per name, and 16 hosts per
   entry of 253 bytes each; each host must be a bare hostname. They are ignored without a harness spec,
   and `GetCapabilities` never lists them. A loop whose spec depends on loop-scoped

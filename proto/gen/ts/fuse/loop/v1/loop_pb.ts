@@ -29,6 +29,10 @@ export const file_fuse_loop_v1_loop: GenFile = /*@__PURE__*/
   fileDesc("ChdmdXNlL2xvb3AvdjEvbG9vcC5wcm90bxIMZnVzZS5sb29wLnYxIssBChBTdGFydExvb3BSZXF1ZXN0EgwKBHRhc2sYASABKAkSDQoFbW9kZWwYAiABKAkSDgoGdGVuYW50GAMgASgJEhMKC2ludGVyYWN0aXZlGAQgASgIEhsKE29yY2hlc3RyYXRlX2xvb3BfaWQYBSABKAkSLQoHaGFybmVzcxgGIAEoCzIcLmZ1c2UuaGFybmVzcy52MS5IYXJuZXNzU3BlYxIpCgdzZWNyZXRzGAcgAygLMhguZnVzZS5sb29wLnYxLkxvb3BTZWNyZXQiOAoKTG9vcFNlY3JldBIMCgRuYW1lGAEgASgJEg0KBXZhbHVlGAIgASgJEg0KBWhvc3RzGAMgAygJIjwKEVN0YXJ0TG9vcFJlc3BvbnNlEg8KB2xvb3BfaWQYASABKAkSFgoOaGFybmVzc19kaWdlc3QYAiABKAkiYAoLU2VuZFJlcXVlc3QSDwoHbG9vcF9pZBgBIAEoCRINCgVpbnB1dBgCIAEoCRIOCgZ0ZW5hbnQYAyABKAkSEQoJaW50ZXJydXB0GAQgASgIEg4KBnNvdXJjZRgFIAEoCSIOCgxTZW5kUmVzcG9uc2UiQwoOT2JzZXJ2ZVJlcXVlc3QSDwoHbG9vcF9pZBgBIAEoCRIQCghmcm9tX3NlcRgCIAEoBBIOCgZ0ZW5hbnQYAyABKAkiUgoMT2JzZXJ2ZUV2ZW50EiIKBWV2ZW50GAEgASgLMhMuZnVzZS5sb29wLnYxLkV2ZW50EgsKA2dhcBgCIAEoCBIRCglrZWVwYWxpdmUYAyABKAginAEKBUV2ZW50EgsKA3NlcRgBIAEoBBImCgJ0cxgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHbm9kZV9pZBgDIAEoCRIRCglwYXJlbnRfaWQYBCABKAkSDQoFZGVwdGgYBSABKAUSDAoEdHVybhgGIAEoBRIMCgRraW5kGAcgASgJEg8KB3BheWxvYWQYCCABKAwiKAoWR2V0Q2FwYWJpbGl0aWVzUmVxdWVzdBIOCgZ0ZW5hbnQYASABKAki6QIKF0dldENhcGFiaWxpdGllc1Jlc3BvbnNlEicKBm1vZGVscxgBIAMoCzIXLmZ1c2UubG9vcC52MS5Nb2RlbEluZm8SJwoGc2tpbGxzGAIgAygLMhcuZnVzZS5sb29wLnYxLlNraWxsSW5mbxInCghjZWlsaW5ncxgDIAMoCzIVLmZ1c2UubG9vcC52MS5DZWlsaW5nEhMKC3NlY3JldF9yZWZzGAQgAygJEjkKE3NwZWNfbWNwX2F1dGhfa2luZHMYBSADKA4yHC5mdXNlLmhhcm5lc3MudjEuTWNwQXV0aFR5cGUSKAoGc2VydmVyGAYgASgLMhguZnVzZS5sb29wLnYxLlNlcnZlckluZm8SLQoLc3BlY19wb2xpY3kYByABKAsyGC5mdXNlLmxvb3AudjEuU3BlY1BvbGljeRIqCgZsaW1pdHMYCCABKAsyGi5mdXNlLmxvb3AudjEuVGVuYW50TGltaXRzIlwKClNwZWNQb2xpY3kSEQoJbWNwX2hvc3RzGAEgAygJEh0KFWRlbnlfcHJpdmF0ZV9uZXR3b3JrcxgCIAEoCBIcChRtb2RlbHNfcmVnaXN0cnlfb25seRgDIAEoCCLbAQoJTW9kZWxJbmZvEg0KBWFsaWFzGAEgASgJEhIKCmdhdGV3YXlfaWQYAiABKAkSGQoRbWF4X291dHB1dF90b2tlbnMYAyABKA0SFgoOY29udGV4dF93aW5kb3cYBCABKA0SIQoZY29udGV4dF93aW5kb3dfaXNfZGVmYXVsdBgFIAEoCBIPCgdwZXJzb25hGAYgASgJEhIKCmlzX2RlZmF1bHQYByABKAgSDQoFbGFiZWwYCCABKAkSEwoLZGVzY3JpcHRpb24YCSABKAkSDAoEdGFncxgKIAMoCSIuCglTa2lsbEluZm8SDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCSKNAQoHQ2VpbGluZxISCgpmaWVsZF9wYXRoGAEgASgJEhQKDG9wZXJhdG9yX3NldBgCIAEoCBIlCgV2YWx1ZRgDIAEoCzIWLmdvb2dsZS5wcm90b2J1Zi5WYWx1ZRIxCglkaXJlY3Rpb24YBCABKA4yHi5mdXNlLmxvb3AudjEuQ2VpbGluZ0RpcmVjdGlvbiI3CgpTZXJ2ZXJJbmZvEg8KB3ZlcnNpb24YASABKAkSGAoQZGlnZXN0X2FsZ29yaXRobRgCIAEoCSJBCgxUZW5hbnRMaW1pdHMSFgoObWF4X2xpdmVfbG9vcHMYASABKA0SGQoRc3RhcnRzX3Blcl9taW51dGUYAiABKA0qawoQQ2VpbGluZ0RpcmVjdGlvbhIhCh1DRUlMSU5HX0RJUkVDVElPTl9VTlNQRUNJRklFRBAAEhkKFUNFSUxJTkdfRElSRUNUSU9OX01BWBABEhkKFUNFSUxJTkdfRElSRUNUSU9OX01JThACMsECCgtMb29wU2VydmljZRJMCglTdGFydExvb3ASHi5mdXNlLmxvb3AudjEuU3RhcnRMb29wUmVxdWVzdBofLmZ1c2UubG9vcC52MS5TdGFydExvb3BSZXNwb25zZRI9CgRTZW5kEhkuZnVzZS5sb29wLnYxLlNlbmRSZXF1ZXN0GhouZnVzZS5sb29wLnYxLlNlbmRSZXNwb25zZRJFCgdPYnNlcnZlEhwuZnVzZS5sb29wLnYxLk9ic2VydmVSZXF1ZXN0GhouZnVzZS5sb29wLnYxLk9ic2VydmVFdmVudDABEl4KD0dldENhcGFiaWxpdGllcxIkLmZ1c2UubG9vcC52MS5HZXRDYXBhYmlsaXRpZXNSZXF1ZXN0GiUuZnVzZS5sb29wLnYxLkdldENhcGFiaWxpdGllc1Jlc3BvbnNlQjlaN2dpdGh1Yi5jb20vZXRoYW5oaW5zb24vZnVzZS9pbnRlcm5hbC9sb29wd2lyZS92MTtsb29wdjFiBnByb3RvMw", [file_fuse_harness_v1_harness, file_google_protobuf_struct, file_google_protobuf_timestamp]);
 
 /**
+ * StartLoopRequest carries loop-scoped secret values in clear (secrets). Never
+ * format or log this message: its generated String(), prototext and protojson
+ * renderings print every value.
+ *
  * @generated from message fuse.loop.v1.StartLoopRequest
  */
 export type StartLoopRequest = Message<"fuse.loop.v1.StartLoopRequest"> & {
@@ -80,8 +84,10 @@ export type StartLoopRequest = Message<"fuse.loop.v1.StartLoopRequest"> & {
    * resolve this request's harness, never records them (loop.harness keeps
    * names only), and never logs them or puts them in an error. An operator
    * loop_server.secrets entry for the tenant takes precedence over an entry
-   * here; otherwise an entry resolves its name only for a destination whose
-   * hostname is in its hosts. Requires the secrets:inline scope. At most 32
+   * here; otherwise the value resolves only for a destination whose hostname
+   * is listed in its hosts. This checks the declared destination only:
+   * transport-level redirect and endpoint host checks are not part of this
+   * binding. Requires the secrets:inline scope. At most 32
    * entries, each value at most 16 KiB, each name at most 253 bytes, and at
    * most 16 hosts per entry of at most 253 bytes each (InvalidArgument
    * otherwise). Each host must be a bare hostname. Ignored when harness is
@@ -102,6 +108,8 @@ export const StartLoopRequestSchema: GenMessage<StartLoopRequest> = /*@__PURE__*
 
 /**
  * LoopSecret is one loop-scoped secret value (see StartLoopRequest.secrets).
+ * Never format or log this message: its generated String(), prototext and
+ * protojson renderings print the value in clear.
  *
  * @generated from message fuse.loop.v1.LoopSecret
  */
@@ -122,7 +130,10 @@ export type LoopSecret = Message<"fuse.loop.v1.LoopSecret"> & {
   value: string;
 
   /**
-   * hosts are the hostnames the value may be sent to; required.
+   * hosts are the hostnames for which the value resolves; required. The value
+   * resolves only for a destination whose hostname is listed here; this does
+   * not bind the transport (redirect and endpoint host checks are not
+   * performed by this field).
    *
    * @generated from field: repeated string hosts = 3;
    */

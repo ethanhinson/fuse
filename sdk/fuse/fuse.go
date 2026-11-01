@@ -66,8 +66,9 @@ type StartLoopConfig struct {
 	// in an error. An operator loop_server.secrets entry for the tenant takes
 	// precedence; otherwise an entry resolves its name only for a destination
 	// whose hostname is in its Hosts. Remotely this needs the secrets:inline
-	// scope. At most 32 entries, each value at most 16 KiB. Ignored when Harness
-	// is nil. A loop whose spec depends on loop-scoped secrets cannot be
+	// scope. A remote server's StartLoop enforces at most 32 entries, each value
+	// at most 16 KiB, plus its own name and host bounds; the local backend does
+	// not enforce these limits. Ignored when Harness is nil. A loop whose spec depends on loop-scoped secrets cannot be
 	// resumed, because resume re-resolves the spec without them.
 	Secrets []LoopSecret
 }
