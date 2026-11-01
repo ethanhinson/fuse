@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -48,3 +48,9 @@ throughput limits (`throughput.*`) are per loop; nothing bounds how many loops o
 ## Out of scope
 
 spend quotas (tokens per tenant per day); per-subject limits; distributed rate limiting across processes; limits as token claims (file as later).
+
+## Reconcile log
+
+### 2026-11-01
+
+Unchanged against origin/main 736e994.
