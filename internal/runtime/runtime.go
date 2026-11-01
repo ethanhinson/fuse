@@ -162,6 +162,12 @@ type LoopConfig struct {
 	// harness. Nil keeps today's behavior: the Deps collaborators build the loop.
 	Harness *harnessv1.HarnessSpec
 
+	// Principal, when non-nil, is the authenticated credential that started this
+	// loop, recorded as the loop.principal event right after loop.harness. It is a
+	// plain event payload, not an auth type: the runtime seam never imports auth
+	// (ADR-0030). The Connect edge sets it; the stdio and local bindings leave it nil.
+	Principal *event.LoopPrincipalPayload
+
 	// LoopID is the loop's own id (the tree RootID), set by the runtime just before it
 	// calls Deps.LoopContext - callers starting a loop leave it empty. It lets the
 	// composition root stamp the loop onto the run context (toolidentity.WithLoop), so a

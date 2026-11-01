@@ -607,6 +607,24 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		}
 	}
 
+	// Record the credential that started this loop right after its harness, so
+	// the stream says who started it. Like the harness record, a failure fails
+	// the launch (an unattributed loop never runs), and a resume does not record
+	// again.
+	if cfg.Principal != nil && !opts.resume {
+		ev, perr := principalEvent(rootID, cfg.Principal)
+		if perr == nil {
+			perr = store.Append(ev)
+		}
+		if perr != nil {
+			if c, ok := store.(interface{ Close() error }); ok {
+				_ = c.Close()
+			}
+			failLaunch()
+			return nil, fmt.Errorf("runtime: record principal: %w", perr)
+		}
+	}
+
 	var toolReg *tools.Registry
 	if cfg.Orchestrate != "" {
 		// An orchestrator holds ONLY the watch-and-steer tools - never the binding's

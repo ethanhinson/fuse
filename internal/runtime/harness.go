@@ -84,6 +84,21 @@ func harnessEvent(rootID string, spec *harnessv1.HarnessSpec) (event.Event, erro
 	return event.Event{NodeID: rootID, Kind: event.KindLoopHarness, Payload: payload}, nil
 }
 
+// principalEvent is the loop.principal record of p: a copy of it with a nil
+// Scopes normalized to an empty slice, so the recorded scopes are always a JSON
+// array ([] meaning the credential was unrestricted).
+func principalEvent(rootID string, p *event.LoopPrincipalPayload) (event.Event, error) {
+	rec := *p
+	if rec.Scopes == nil {
+		rec.Scopes = []string{}
+	}
+	payload, err := event.MarshalPayload(rec)
+	if err != nil {
+		return event.Event{}, fmt.Errorf("runtime: encode principal record: %w", err)
+	}
+	return event.Event{NodeID: rootID, Kind: event.KindLoopPrincipal, Payload: payload}, nil
+}
+
 // harnessFromEvents recovers the harness spec a loop was started with from its
 // durable stream: the recorded bytes, after checking the recorded digest over
 // them. It returns nil for a loop started without one. A record that does not
