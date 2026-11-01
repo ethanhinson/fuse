@@ -4,7 +4,8 @@
 // over a runtime.Runtime: StartLoop / Send / GetCapabilities (unary) and Observe
 // (server-streaming history-then-live). It is a pure adapter - it imports internal/runtime,
 // internal/event, the generated loopwire stubs, the internal/capabilities answer
-// types and the public harness types (for a
+// types, the internal/tenantlimit per-tenant loop limiter (change 0103) and the
+// public harness types (for a
 // refused spec's violations, change 0085), and NEVER a renderer, TUI,
 // MCP tool registry, or CLI type. Its "no approval gate" (auto-approve) policy is the
 // composition root's choice, not a property of the Runtime seam.
@@ -17,6 +18,8 @@ package loopconnect
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"strconv"
 	"time"
 
@@ -32,6 +35,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/observe"
 	observeotel "github.com/ethanhinson/fuse/internal/observe/otel"
 	"github.com/ethanhinson/fuse/internal/runtime"
+	"github.com/ethanhinson/fuse/internal/tenantlimit"
 )
 
 // Handler adapts a runtime.Runtime to the generated LoopServiceHandler. Tenant is a
@@ -68,6 +72,13 @@ type Handler struct {
 	// caps answers GetCapabilities. Nil means the RPC answers Unimplemented; the
 	// composition root injects it via WithCapabilities.
 	caps CapabilitySource
+
+	// limits is the per-tenant loop limiter (change 0103) StartLoop admits
+	// against and GetCapabilities advertises from, so the advertisement and the
+	// enforcement read one source. Nil means unlimited: the fast path, and
+	// GetCapabilities reports zeros. The composition root injects it via
+	// WithLimits.
+	limits *tenantlimit.Limiter
 }
 
 // compile-time assertion that Handler satisfies the generated service interface.
@@ -103,6 +114,15 @@ func (h *Handler) WithBaseContext(ctx context.Context) *Handler {
 func (h *Handler) WithRegistry(r event.LoopRegistry) *Handler {
 	if r != nil {
 		h.registry = r
+	}
+	return h
+}
+
+// WithLimits injects the per-tenant loop limiter StartLoop enforces and
+// GetCapabilities reports. A nil limiter keeps unlimited. Chainable.
+func (h *Handler) WithLimits(l *tenantlimit.Limiter) *Handler {
+	if l != nil {
+		h.limits = l
 	}
 	return h
 }
@@ -172,6 +192,18 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 			return nil, aerr
 		}
 	}
+	// Per-tenant limits (change 0103) apply after authentication and the spoof
+	// and orchestrate checks, so an unauthenticated or refused caller spends
+	// nothing, and before the seam, so a refused start creates no loop. The
+	// reservation is held until this handler returns, on every path, so a
+	// failed start never leaks a slot.
+	release, lerr := h.limits.Admit(ctx, tenant)
+	if lerr != nil {
+		cerr := limitError(lerr)
+		apiOutcome = observeotel.OutcomeFromError(ctx, cerr)
+		return nil, cerr
+	}
+	defer release()
 	loopBase := h.baseCtx
 	if sc := trace.SpanContextFromContext(ctx); sc.IsValid() {
 		loopBase = trace.ContextWithSpanContext(loopBase, sc)
@@ -226,6 +258,30 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		resp.Header().Set("Fuse-Trace-Id", id)
 	}
 	return resp, nil
+}
+
+// limitError maps an Admit failure: a limit refusal is ResourceExhausted
+// naming the limit, with Retry-After (whole seconds, rounded up) for the rate
+// axis; a caller that gave up while waiting for the tenant's admission lock gets
+// its own context code; any other failure means the live loops could not be
+// counted and is Internal (fail closed: the start does not proceed).
+func limitError(err error) *connect.Error {
+	var refused *tenantlimit.RefusedError
+	if errors.As(err, &refused) {
+		cerr := connect.NewError(connect.CodeResourceExhausted, err)
+		if refused.RetryAfter > 0 {
+			secs := max(int(math.Ceil(refused.RetryAfter.Seconds())), 1)
+			cerr.Meta().Set("Retry-After", strconv.Itoa(secs))
+		}
+		return cerr
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return connect.NewError(connect.CodeCanceled, err)
+	case errors.Is(err, context.DeadlineExceeded):
+		return connect.NewError(connect.CodeDeadlineExceeded, err)
+	}
+	return connect.NewError(connect.CodeInternal, fmt.Errorf("loopconnect: cannot count live loops: %w", err))
 }
 
 // harnessError maps a refused harness spec (change 0085) to its Connect error:
