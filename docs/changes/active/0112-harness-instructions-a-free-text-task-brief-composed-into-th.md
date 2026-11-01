@@ -2,7 +2,7 @@
 id: 112
 slug: 'harness-instructions-a-free-text-task-brief-composed-into-th'
 title: 'Harness instructions: a free-text task brief composed into the system prompt'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/harness-instructions-a-free-text-task-brief-composed-into-th'
 pr:
 blocked_by:
 reconciled: false
