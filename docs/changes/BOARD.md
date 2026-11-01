@@ -1,6 +1,6 @@
 # Backlog
 
-**107 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 5 proposed · ⚪ 3 deferred · ✅ 90 done · 🗑️ 7 killed
+**108 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 6 proposed · ⚪ 3 deferred · ✅ 90 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|----|-------|
 | [0102](active/0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | `high` | `feat` | [#125](https://github.com/ethanhinson/fuse/pull/125) | awaiting merge |
 
-## 🟡 Proposed (5)
+## 🟡 Proposed (6)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0108](active/0108-send-surfaces-a-resume-refusal-instead-of-loop-finished.md) | Send surfaces a resume refusal instead of loop finished | `medium` | `fix` | needs-grooming |
 | [0107](active/0107-evict-idle-per-tenant-limiter-buckets-and-admission-locks.md) | Evict idle per-tenant limiter buckets and admission locks | `low` | `fix` | needs-grooming |
 | [0106](active/0106-loop-registry-live-count-method-for-the-per-tenant-live-loop.md) | Loop registry live-count method for the per-tenant live-loop cap | `medium` | `feat` | needs-grooming |
 | [0105](active/0105-pin-spec-mcp-server-dials-to-the-addresses-checked-at-startl.md) | Pin spec MCP server dials to the addresses checked at StartLoop | `medium` | `fix` | needs-grooming |
@@ -45,6 +46,7 @@ graph TD
   0105
   0106
   0107
+  0108
   0012:::done
   0052:::done
   0063:::done
