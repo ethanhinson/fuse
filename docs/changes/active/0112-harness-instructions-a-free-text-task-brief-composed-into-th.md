@@ -13,7 +13,7 @@ stacked_on:
 related: []
 discovered_from: []
 adrs: []
-spec:
+spec: 'docs/superpowers/specs/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md'
 plan:
 results:
 auto_groomable:
@@ -28,6 +28,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md](../../superpowers/specs/2026-11-01-harness-instructions-a-free-text-task-brief-composed-into-th-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
