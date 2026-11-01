@@ -1,18 +1,13 @@
 # Backlog
 
-**107 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 5 proposed · ⚪ 3 deferred · ✅ 90 done · 🗑️ 7 killed
+**107 changes** — 🟢 2 in progress · 🟡 5 proposed · ⚪ 3 deferred · ✅ 90 done · 🗑️ 7 killed
 
-## 🟢 In progress (1)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
+| [0102](active/0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md) | `feat/loop-scoped-secret-values-on-startloop-host-bound-and-never` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🟣 Groomed (1)
-
-| # | Title | Priority | Type | Spec | Readiness |
-|---|-------|----------|------|------|-----------|
-| [0102](active/0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-loop-scoped-secret-values-on-startloop-host-bound-and-never-design.md) | build-ready |
 
 ## 🟡 Proposed (5)
 

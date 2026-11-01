@@ -2,7 +2,7 @@
 id: 102
 slug: 'loop-scoped-secret-values-on-startloop-host-bound-and-never'
 title: 'Loop-scoped secret values on StartLoop, host-bound and never recorded'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/loop-scoped-secret-values-on-startloop-host-bound-and-never'
 pr:
 blocked_by:
 reconciled: false
