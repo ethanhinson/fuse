@@ -2,7 +2,7 @@
 id: 100
 slug: 'scoped-principals-rpc-scopes-harness-digest-pin-and-principa'
 title: 'Scoped principals: RPC scopes, harness digest pin and principal record on every loop'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/scoped-principals-rpc-scopes-harness-digest-pin-and-principa'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/124'
 blocked_by:
 reconciled: true
 ---
@@ -59,3 +59,12 @@ a `Principal` is `{Tenant, Subject, ObservabilityOperator}`, so every bearer a h
 ### 2026-11-01
 
 Unchanged against origin/main tip 736e994; dependency 99 is done.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 846edfa8de428fd86bd7a090e577fbad20ed5bfe
+ran_at:   2026-11-01T05:02:24Z
+<!-- docket:build-evidence:end -->
