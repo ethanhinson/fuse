@@ -1,11 +1,12 @@
 # Backlog
 
-**103 changes** — 🟢 1 in progress · 🔵 1 built · 🟣 2 groomed · 🟡 3 proposed · ⚪ 3 deferred · ✅ 86 done · 🗑️ 7 killed
+**103 changes** — 🟢 2 in progress · 🔵 1 built · 🟣 1 groomed · 🟡 3 proposed · ⚪ 3 deferred · ✅ 86 done · 🗑️ 7 killed
 
-## 🟢 In progress (1)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
+| [0101](active/0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md) | `feat/operator-spec-policy-mcp-host-allowlist-private-network-deny` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
 ## 🔵 Built (1)
@@ -14,12 +15,11 @@
 |---|-------|----------|------|----|-------|
 | [0099](active/0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md) | Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes | `high` | `feat` | [#121](https://github.com/ethanhinson/fuse/pull/121) | awaiting merge |
 
-## 🟣 Groomed (2)
+## 🟣 Groomed (1)
 
 | # | Title | Priority | Type | Spec | Readiness |
 |---|-------|----------|------|------|-----------|
 | [0103](active/0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | `medium` | `feat` | [spec](../superpowers/specs/2026-11-01-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per-design.md) | build-ready |
-| [0101](active/0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | `high` | `feat` | [spec](../superpowers/specs/2026-11-01-operator-spec-policy-mcp-host-allowlist-private-network-deny-design.md) | build-ready |
 
 ## 🟡 Proposed (3)
 

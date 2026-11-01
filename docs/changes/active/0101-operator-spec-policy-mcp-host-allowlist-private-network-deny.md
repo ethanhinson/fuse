@@ -2,7 +2,7 @@
 id: 101
 slug: 'operator-spec-policy-mcp-host-allowlist-private-network-deny'
 title: 'Operator spec policy: MCP host allowlist, private-network deny, registry-only models'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/operator-spec-policy-mcp-host-allowlist-private-network-deny'
 pr:
 blocked_by:
 reconciled: false
