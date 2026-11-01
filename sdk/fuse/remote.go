@@ -33,10 +33,21 @@ func WithHTTPClient(c connectHTTPClient) Option {
 	return func(o *options) { o.httpClient = c }
 }
 
+// WithTokenProvider supplies the bearer token per request (each unary call and each
+// stream open) instead of Credentials.Token, which is then ignored. It lets a client
+// present short-lived issuer tokens. A provider error fails that request before
+// anything is sent. There is no caching or refresh loop: cache inside the provider if
+// needed. A provider that returns "" sends no Authorization header, as an empty Token
+// does. It is an Option rather than a Credentials field so Credentials stays
+// comparable. The local backend ignores it.
+func WithTokenProvider(p func(context.Context) (string, error)) Option {
+	return func(o *options) { o.tokenProvider = p }
+}
+
 // NewRemote builds a Client that dials the loop service at baseURL. creds.Token is sent
 // as "Authorization: Bearer <token>" on every request and creds.Tenant is set on every
 // request message (a wrong token → ErrUnauthenticated; a tenant that mismatches the
-// token's principal → ErrPermissionDenied). When creds.TokenProvider is set it supplies
+// token's principal → ErrPermissionDenied). When WithTokenProvider is given it supplies
 // the token instead, once per request, and creds.Token is ignored.
 func NewRemote(baseURL string, creds Credentials, opts ...Option) *Client {
 	o := newOptions(opts...)
@@ -45,7 +56,7 @@ func NewRemote(baseURL string, creds Credentials, opts ...Option) *Client {
 		httpClient = o.httpClient
 	}
 	client := loopv1connect.NewLoopServiceClient(httpClient, baseURL,
-		connect.WithInterceptors(bearerInterceptor{token: creds.Token, provider: creds.TokenProvider}))
+		connect.WithInterceptors(bearerInterceptor{token: creds.Token, provider: o.tokenProvider}))
 	return &Client{backend: &remoteBackend{client: client, tenant: creds.Tenant}}
 }
 

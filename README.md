@@ -560,14 +560,18 @@ issuer token). Each RPC requires one:
 - `loop:admin` acts on any loop in the token's tenant regardless of owner
   (cross-tenant is still `NotFound`). It is never implied by an unrestricted token.
 - `secrets:inline` is reserved.
-- No scopes means unrestricted. An unknown scope name is ignored but still
-  restricts the token. An explicitly empty scope (`scope: ""`, `scopes: []`) is refused.
+- No scopes means unrestricted. An unknown scope name in a token claim is ignored but
+  still restricts the token; an unknown name in a static `scopes:` entry is a config
+  validation error. An explicitly empty scope (`scope: ""`, `scopes: []`) is refused.
+  The `scope` claim must be a space-separated string; the JSON array form is refused.
 - A refusal is `PermissionDenied` naming the missing scope.
 
 **Harness digest pin.** A token with `harness_digest: sha256:<hex>` (the
 `harness_digest` `StartLoop` returns, `harness.Digest`) can only start a loop
 whose spec has exactly that digest. No spec or a different spec is
-`PermissionDenied`, and nothing is created.
+`PermissionDenied`, and nothing is created. The pin is checked on `StartLoop` only: a
+pinned token without a scope can still `Send` to and `Observe` loops its subject owns,
+so pair `harness_digest` with `scope: loop:start` for a start-only credential.
 
 **Audit records.** Every networked `StartLoop` appends `loop.principal`
 (`subject`, `client_id`, `issuer`, `scopes`, `token_id`) right after

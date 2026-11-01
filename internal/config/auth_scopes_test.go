@@ -57,7 +57,8 @@ func TestAuthTokenScopesValidation(t *testing.T) {
 		{"explicit empty", []string{}, "loop_server.auth[0].scopes", "omit scopes for an unrestricted token"},
 		{"whitespace entry", []string{"loop:start loop:send"}, "loop_server.auth[0].scopes[0]", "is not a single scope name"},
 		{"empty entry", []string{""}, "loop_server.auth[0].scopes[0]", "is not a single scope name"},
-		{"unknown ignored", []string{"loop:observe", "unknown:thing"}, "", ""},
+		{"unknown refused", []string{"loop:observe", "unknown:thing"}, "loop_server.auth[0].scopes[1]", "is not a known scope"},
+		{"all known", []string{"loop:start", "loop:send", "loop:observe", "loop:admin", "capabilities:read"}, "", ""},
 		{"omitted", nil, "", ""},
 	}
 	for _, tc := range cases {

@@ -294,3 +294,22 @@ func TestLoopPrincipalEventEndToEnd(t *testing.T) {
 		t.Fatalf("loop.principal = %+v, want %+v", principals[0], want)
 	}
 }
+
+// A static loop_server.auth token records issuer "static" so audit can tell it
+// apart from a trusted issuer's principal.
+func TestStaticTokenPrincipalIssuerIsStatic(t *testing.T) {
+	cfg := config.Config{LoopServer: config.LoopServerConfig{Auth: []config.AuthTokenConfig{
+		{Token: "tok-static", Tenant: "acme", Subject: "alice"},
+	}}}
+	v, _, err := buildLoopVerifier(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := v.Verify(context.Background(), "tok-static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Issuer != "static" {
+		t.Fatalf("Issuer = %q, want static", p.Issuer)
+	}
+}

@@ -88,7 +88,7 @@ func TestTokenProviderCalledPerRequest(t *testing.T) {
 		calls++
 		return tok, nil
 	}
-	c := NewRemote(base, Credentials{Token: "static", TokenProvider: provider})
+	c := NewRemote(base, Credentials{Token: "static"}, WithTokenProvider(provider))
 	ctx := context.Background()
 
 	for i := 0; i < 2; i++ {
@@ -115,7 +115,7 @@ func TestTokenProviderCalledPerRequest(t *testing.T) {
 	}
 	for _, v := range got {
 		if v == "Bearer static" {
-			t.Fatalf("static Token was sent although TokenProvider is set: %q", got)
+			t.Fatalf("static Token was sent although WithTokenProvider is set: %q", got)
 		}
 	}
 }
@@ -123,9 +123,9 @@ func TestTokenProviderCalledPerRequest(t *testing.T) {
 func TestTokenProviderErrorFailsRequest(t *testing.T) {
 	rec, base := newHeaderRecorderServer(t)
 	errBoom := errors.New("boom")
-	c := NewRemote(base, Credentials{TokenProvider: func(context.Context) (string, error) {
+	c := NewRemote(base, Credentials{}, WithTokenProvider(func(context.Context) (string, error) {
 		return "", errBoom
-	}})
+	}))
 	ctx := context.Background()
 
 	if _, err := c.Capabilities(ctx); !errors.Is(err, errBoom) {
@@ -151,9 +151,9 @@ func TestTokenProviderErrorFailsRequest(t *testing.T) {
 
 func TestTokenProviderEmptySendsNoHeader(t *testing.T) {
 	rec, base := newHeaderRecorderServer(t)
-	c := NewRemote(base, Credentials{Token: "static", TokenProvider: func(context.Context) (string, error) {
+	c := NewRemote(base, Credentials{Token: "static"}, WithTokenProvider(func(context.Context) (string, error) {
 		return "", nil
-	}})
+	}))
 	if _, err := c.Capabilities(context.Background()); err != nil {
 		t.Fatalf("Capabilities: %v", err)
 	}
@@ -196,9 +196,9 @@ func TestTokenProviderErrorSendsNoHTTPForStream(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	errBoom := errors.New("boom")
-	c := NewRemote(srv.URL, Credentials{TokenProvider: func(context.Context) (string, error) {
+	c := NewRemote(srv.URL, Credentials{}, WithTokenProvider(func(context.Context) (string, error) {
 		return "", errBoom
-	}})
+	}))
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	ch, unsub, err := c.Observe(ctx, "loop-1", 0)
@@ -213,5 +213,14 @@ func TestTokenProviderErrorSendsNoHTTPForStream(t *testing.T) {
 	}
 	if n := hits.Load(); n != 0 {
 		t.Fatalf("server saw %d raw HTTP requests on a provider error, want 0", n)
+	}
+}
+
+// Credentials must stay comparable (usable as a map key, ==): the token provider
+// is an Option, never a Credentials field.
+func TestCredentialsComparable(t *testing.T) {
+	m := map[Credentials]int{{Token: "a", Tenant: "t"}: 1}
+	if m[Credentials{Token: "a", Tenant: "t"}] != 1 {
+		t.Fatal("Credentials is not usable as a map key")
 	}
 }

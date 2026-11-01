@@ -108,8 +108,11 @@ func buildLoopVerifier(cfg config.Config) (loopauth.Verifier, bool, error) {
 			// already grant. Operators wanting two isolated principals must
 			// name two distinct tenants — as they must already, for their
 			// events to be distinguishable at all.
-			Tenant:                event.NormalizeTenant(event.TenantID(a.Tenant)),
-			Subject:               a.Subject,
+			Tenant:  event.NormalizeTenant(event.TenantID(a.Tenant)),
+			Subject: a.Subject,
+			// "static" marks a loop_server.auth token in the loop.principal
+			// audit record, so it is distinguishable from a trusted issuer.
+			Issuer:                "static",
 			ObservabilityOperator: a.ObservabilityOperator,
 			// Canonicalized once, here at the trusted edge; nil/omitted stays
 			// unrestricted (config validation refuses an explicit empty list).
@@ -122,7 +125,7 @@ func buildLoopVerifier(cfg config.Config) (loopauth.Verifier, bool, error) {
 	}
 	usedDefault := false
 	if len(tokens) == 0 && issuers == nil {
-		tokens[devToken] = loopauth.Principal{Tenant: event.DefaultTenant, Subject: "dev", ObservabilityOperator: true}
+		tokens[devToken] = loopauth.Principal{Tenant: event.DefaultTenant, Subject: "dev", Issuer: "static", ObservabilityOperator: true}
 		usedDefault = true
 	}
 	static := loopauth.NewStaticVerifier(tokens)

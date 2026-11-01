@@ -174,8 +174,9 @@ func (c Config) Problems() []Problem {
 	// loop_server.auth[].scopes narrows a static token to specific RPCs. Omitted
 	// (nil) means unrestricted; an explicitly empty list must not silently become
 	// "everything allowed", and each entry must be one scope name (a
-	// space-joined string would otherwise canonicalize into several). Unknown
-	// names are fine: they are ignored but still restrict. The token itself is
+	// space-joined string would otherwise canonicalize into several). A name
+	// outside the known vocabulary is refused: a typo would otherwise leave the
+	// token silently unable to do what the operator meant. The token itself is
 	// never echoed.
 	for i, a := range c.LoopServer.Auth {
 		if a.Scopes != nil && len(a.Scopes) == 0 {
@@ -184,6 +185,8 @@ func (c Config) Problems() []Problem {
 		for j, sc := range a.Scopes {
 			if sc == "" || strings.ContainsAny(sc, " \t\r\n") {
 				add(fmt.Sprintf("loop_server.auth[%d].scopes[%d]", i, j), "%q is not a single scope name", sc)
+			} else if !knownScopes[sc] {
+				add(fmt.Sprintf("loop_server.auth[%d].scopes[%d]", i, j), "%q is not a known scope (want one of loop:start, loop:send, loop:observe, loop:admin, capabilities:read, secrets:inline)", sc)
 			}
 		}
 	}
@@ -239,6 +242,16 @@ func limitProblems(l LoopLimitsConfig) []Problem {
 		axes("loop_server.limits.tenants."+k, l.Tenants[k])
 	}
 	return ps
+}
+
+// knownScopes is the scope vocabulary a static token may name.
+var knownScopes = map[string]bool{
+	loopauth.ScopeLoopStart:        true,
+	loopauth.ScopeLoopSend:         true,
+	loopauth.ScopeLoopObserve:      true,
+	loopauth.ScopeLoopAdmin:        true,
+	loopauth.ScopeCapabilitiesRead: true,
+	loopauth.ScopeSecretsInline:    true,
 }
 
 // sortedKeys returns m's keys in sorted order.
