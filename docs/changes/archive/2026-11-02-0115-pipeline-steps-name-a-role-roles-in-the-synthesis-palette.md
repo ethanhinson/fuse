@@ -2,7 +2,7 @@
 id: 115
 slug: 'pipeline-steps-name-a-role-roles-in-the-synthesis-palette'
 title: 'Pipeline steps name a role; roles in the synthesis palette'
-status: 'implemented'
+status: 'done'
 priority: 'low'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-design.md](../../superpowers/specs/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-design.md) |
+| Spec (merged) | [2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-design.md) |
 | Plan | [2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md](../../superpowers/plans/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md) |
 | Results | [2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-results.md](../../results/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-results.md) |
 <!-- docket:artifacts:end -->

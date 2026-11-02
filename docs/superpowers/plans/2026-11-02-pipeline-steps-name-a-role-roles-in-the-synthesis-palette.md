@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0115 — Pipeline steps name a role; roles in the synthesis palette](../../changes/active/0115-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md)**
+> ↩ **[Change 0115 — Pipeline steps name a role; roles in the synthesis palette](../../changes/archive/2026-11-02-0115-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md)**
 <!-- docket:backlink:end -->
 
 # Pipeline steps name a role; roles in the synthesis palette: implementation plan
