@@ -1,0 +1,19 @@
+{
+  "models": {"defaultAlias": "fast", "entries": {"fast": {"id": "cloud/deepseek-v4-flash", "persona": "coding"}}},
+  "instructions": "You lead code reviews. Split a large change into parts and hand each part to a reviewer.",
+  "roles": {
+    "reviewer": {
+      "description": "Reviews one part of a change for correctness, then style.",
+      "instructions": "You review the files you are given. Report correctness problems first, each with a file and line. Then list style issues briefly.",
+      "tools": ["read_file", "grep", "list_directory"]
+    },
+    "researcher": {
+      "description": "Looks up library documentation and prior decisions.",
+      "instructions": "Find the documentation or design note that answers the question. Quote the relevant passage and give its source.",
+      "tools": ["web_fetch", "read_file"]
+    }
+  },
+  "workflows": {
+    "review": {"skill": "review", "roles": ["reviewer"]}
+  }
+}

@@ -103,3 +103,80 @@ func TestCombineShapeWinsAndSorts(t *testing.T) {
 		t.Fatalf("Combine =\n %+v\nwant\n %+v", got, want)
 	}
 }
+
+// TestSemanticProblemsRoles: an unresolved workflow role lands on the spec
+// field path of the list element, as the config fuse.config rule.
+func TestSemanticProblemsRoles(t *testing.T) {
+	cfg := config.Default()
+	cfg.Roles = map[string]config.RoleConfig{"a": {Description: "A."}}
+	cfg.Workflows["wf"] = config.WorkflowConfig{Skill: "wf", Roles: []string{"a", "ghost"}}
+	var found bool
+	for _, p := range SemanticProblems(cfg) {
+		if p.FieldPath == `workflows["wf"].roles[1]` && p.RuleID == RuleConfig {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no unresolved-role problem on workflows[\"wf\"].roles[1]: %+v", SemanticProblems(cfg))
+	}
+}
+
+// TestOverlayRoles: spec roles join the operator's, and a spec workflow's role
+// list is applied, with nothing refused.
+func TestOverlayRoles(t *testing.T) {
+	base := config.Default()
+	base.Roles = map[string]config.RoleConfig{"ops": {Description: "Operator role."}}
+	spec := &harnessv1.HarnessSpec{
+		Roles:     map[string]*harnessv1.Role{"reviewer": {Description: "Reviews.", Tools: []string{"read_file"}}},
+		Workflows: map[string]*harnessv1.Workflow{"review": {Skill: "review", Roles: []string{"reviewer"}}},
+	}
+	got, refused, err := Overlay(base, spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refused) != 0 {
+		t.Errorf("refused = %v", refused)
+	}
+	if got.Roles["ops"].Description != "Operator role." {
+		t.Errorf("operator role lost: %+v", got.Roles)
+	}
+	if r := got.Roles["reviewer"]; r.Description != "Reviews." || !reflect.DeepEqual(r.Tools, []string{"read_file"}) {
+		t.Errorf("spec role = %+v", r)
+	}
+	if w := got.Workflows["review"]; !reflect.DeepEqual(w.Roles, []string{"reviewer"}) {
+		t.Errorf("workflow roles = %v", w.Roles)
+	}
+	if _, ok := base.Roles["reviewer"]; ok {
+		t.Errorf("base mutated: %+v", base.Roles)
+	}
+}
+
+// TestSemanticProblemsRoleNamesAndTools: a role name or tool item the shape
+// rules would reject is caught on the config side too, and lands on the spec
+// field path: the map key for a plain bad name, the roles field for a name
+// that cannot be addressed as one path part, the list element for a tool.
+func TestSemanticProblemsRoleNamesAndTools(t *testing.T) {
+	cases := map[string]struct {
+		roles map[string]config.RoleConfig
+		want  string
+	}{
+		"uppercase name": {map[string]config.RoleConfig{"Reviewer": {Description: "R."}}, `roles["Reviewer"]`},
+		"dotted name":    {map[string]config.RoleConfig{"a.b": {Description: "R."}}, "roles"},
+		"empty tool":     {map[string]config.RoleConfig{"a": {Description: "R.", Tools: []string{""}}}, `roles["a"].tools[0]`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Roles = tc.roles
+			var found bool
+			for _, p := range SemanticProblems(cfg) {
+				if p.FieldPath == tc.want && p.RuleID == RuleConfig {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("no problem on %s: %+v", tc.want, SemanticProblems(cfg))
+			}
+		})
+	}
+}

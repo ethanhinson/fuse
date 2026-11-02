@@ -2,6 +2,7 @@ package harness_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -251,5 +252,135 @@ func TestValidateInstructionsLength(t *testing.T) {
 	}
 	if v.Message == "" {
 		t.Error("empty message")
+	}
+}
+
+// TestValidateShapeRoles pins the shape rules on named roles: a required
+// description of at most 512 characters, instructions of at most 16384
+// characters, at most 32 roles under the workflow key pattern, and non-empty
+// tool names (an empty tool list inherits and is valid).
+func TestValidateShapeRoles(t *testing.T) {
+	type want struct{ path, rule string }
+	manyRoles := func(n int) map[string]*harnessv1.Role {
+		out := map[string]*harnessv1.Role{}
+		for i := 0; i < n; i++ {
+			out[fmt.Sprintf("r%02d", i)] = &harnessv1.Role{Description: "d"}
+		}
+		return out
+	}
+	one := func(r *harnessv1.Role) map[string]*harnessv1.Role { return map[string]*harnessv1.Role{"a": r} }
+	cases := []struct {
+		name  string
+		roles map[string]*harnessv1.Role
+		want  []want
+	}{
+		{"missing description", one(&harnessv1.Role{}), []want{{`roles["a"].description`, "string.min_len"}}},
+		{"description too long", one(&harnessv1.Role{Description: strings.Repeat("a", 513)}), []want{{`roles["a"].description`, "string.max_len"}}},
+		{"multibyte description at limit", one(&harnessv1.Role{Description: strings.Repeat("é", 512)}), nil},
+		{"instructions too long", one(&harnessv1.Role{Description: "d", Instructions: strings.Repeat("a", 16385)}), []want{{`roles["a"].instructions`, "string.max_len"}}},
+		{"multibyte instructions at limit", one(&harnessv1.Role{Description: "d", Instructions: strings.Repeat("é", 16384)}), nil},
+		{"too many roles", manyRoles(33), []want{{"roles", "map.max_pairs"}}},
+		{"roles at limit", manyRoles(32), nil},
+		{"bad key", map[string]*harnessv1.Role{"Bad Key": {Description: "d"}}, []want{{`roles["Bad Key"]`, "string.pattern"}}},
+		{"empty tool name", one(&harnessv1.Role{Description: "d", Tools: []string{""}}), []want{{`roles["a"].tools[0]`, "string.min_len"}}},
+		{"no tools inherits", one(&harnessv1.Role{Description: "d", Tools: nil}), nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := byPath(t, harness.ValidateShape(&harnessv1.HarnessSpec{Roles: tc.roles}))
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d violations, want %d: %+v", len(got), len(tc.want), got)
+			}
+			for _, w := range tc.want {
+				v, ok := got[w.path]
+				if !ok {
+					t.Fatalf("no violation at %s: %+v", w.path, got)
+				}
+				if v.RuleID != w.rule {
+					t.Errorf("%s rule = %q, want %q", w.path, v.RuleID, w.rule)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateRolesAccepted checks that a spec with well-formed roles, and a
+// workflow naming a defined role, validates cleanly end to end.
+func TestValidateRolesAccepted(t *testing.T) {
+	spec := &harnessv1.HarnessSpec{
+		Models: &harnessv1.Models{Entries: map[string]*harnessv1.Model{"fast": {Id: "cloud/fast-1", MaxTokens: 4096}}},
+		Roles: map[string]*harnessv1.Role{
+			"reviewer": {
+				Description:  "Reviews a change for correctness.",
+				Instructions: "Read the diff and report problems.",
+				Tools:        []string{"read_file"},
+				Model:        "fast",
+			},
+			"researcher": {Description: "Looks things up."},
+		},
+		Workflows: map[string]*harnessv1.Workflow{"review": {Skill: "review", Roles: []string{"reviewer"}}},
+	}
+	if vs := harness.Validate(spec); len(vs) != 0 {
+		t.Fatalf("Validate = %+v", vs)
+	}
+}
+
+// TestValidateRolesRejected checks that each bad role field is reported exactly
+// once, at its spec field path, through the full shape plus semantic verdict.
+func TestValidateRolesRejected(t *testing.T) {
+	manyRoles := func(n int) map[string]*harnessv1.Role {
+		out := map[string]*harnessv1.Role{}
+		for i := 0; i < n; i++ {
+			out[fmt.Sprintf("r%02d", i)] = &harnessv1.Role{Description: "d"}
+		}
+		return out
+	}
+	one := func(r *harnessv1.Role) map[string]*harnessv1.Role { return map[string]*harnessv1.Role{"a": r} }
+	cases := []struct {
+		name      string
+		spec      *harnessv1.HarnessSpec
+		path      string
+		rule      string
+		msgSubstr string
+	}{
+		{"missing description", &harnessv1.HarnessSpec{Roles: one(&harnessv1.Role{})}, `roles["a"].description`, "string.min_len", ""},
+		{"whitespace-only description", &harnessv1.HarnessSpec{Roles: one(&harnessv1.Role{Description: "   "})}, `roles["a"].description`, harness.RuleConfig, "required"},
+		{"description too long", &harnessv1.HarnessSpec{Roles: one(&harnessv1.Role{Description: strings.Repeat("a", 513)})}, `roles["a"].description`, "string.max_len", ""},
+		{"instructions too long", &harnessv1.HarnessSpec{Roles: one(&harnessv1.Role{Description: "d", Instructions: strings.Repeat("a", 16385)})}, `roles["a"].instructions`, "string.max_len", ""},
+		{"too many roles", &harnessv1.HarnessSpec{Roles: manyRoles(33)}, "roles", "map.max_pairs", ""},
+		{"bad key", &harnessv1.HarnessSpec{Roles: map[string]*harnessv1.Role{"Bad Key": {Description: "d"}}}, `roles["Bad Key"]`, "string.pattern", ""},
+		{"unresolved workflow role", &harnessv1.HarnessSpec{
+			Roles:     one(&harnessv1.Role{Description: "d"}),
+			Workflows: map[string]*harnessv1.Workflow{"wf": {Skill: "review", Roles: []string{"a", "ghost"}}},
+		}, `workflows["wf"].roles[1]`, harness.RuleConfig, "ghost"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := byPath(t, harness.Validate(tc.spec))
+			if len(got) != 1 {
+				t.Fatalf("got %d violations, want 1: %+v", len(got), got)
+			}
+			v, ok := got[tc.path]
+			if !ok {
+				t.Fatalf("no violation at %s: %+v", tc.path, got)
+			}
+			if v.RuleID != tc.rule {
+				t.Errorf("%s rule = %q, want %q", tc.path, v.RuleID, tc.rule)
+			}
+			if !strings.Contains(v.Message, tc.msgSubstr) {
+				t.Errorf("%s message = %q, want it to contain %q", tc.path, v.Message, tc.msgSubstr)
+			}
+		})
+	}
+}
+
+// TestValidateRolesDoNotResolveToolsOrModels checks that a role's tools and
+// model are carried as written: validation does not resolve them.
+func TestValidateRolesDoNotResolveToolsOrModels(t *testing.T) {
+	spec := &harnessv1.HarnessSpec{Roles: map[string]*harnessv1.Role{
+		"a": {Description: "d", Tools: []string{"no_such_tool"}, Model: "no-such-alias"},
+	}}
+	if vs := harness.Validate(spec); len(vs) != 0 {
+		t.Fatalf("Validate = %+v", vs)
 	}
 }

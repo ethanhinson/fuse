@@ -490,7 +490,14 @@ type HarnessSpec struct {
 	// applies to the root agent only: subagents and workers keep their own
 	// prompts, and an orchestrator loop keeps the orchestrator prompt. Empty
 	// leaves the system prompt unchanged.
-	Instructions  string `protobuf:"bytes,14,opt,name=instructions,proto3" json:"instructions,omitempty"`
+	Instructions string `protobuf:"bytes,14,opt,name=instructions,proto3" json:"instructions,omitempty"`
+	// Named helper definitions. A role says who a helper is: a description the
+	// main agent reads when choosing whom to hand work to, a brief for the
+	// helper's system prompt, and optionally a tool set and a model. A workflow
+	// says how a big job is divided up, and lists the roles that may take part
+	// in it. Defining roles does not change how a loop runs yet: the runtime
+	// validates and records them, and later changes hand them to subagents.
+	Roles         map[string]*Role `protobuf:"bytes,15,rep,name=roles,proto3" json:"roles,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -621,6 +628,13 @@ func (x *HarnessSpec) GetInstructions() string {
 		return x.Instructions
 	}
 	return ""
+}
+
+func (x *HarnessSpec) GetRoles() map[string]*Role {
+	if x != nil {
+		return x.Roles
+	}
+	return nil
 }
 
 // Models holds model aliases and the default alias.
@@ -1282,7 +1296,10 @@ type Workflow struct {
 	// Subtree spawn pool.
 	Pool *Pool `protobuf:"bytes,2,opt,name=pool,proto3" json:"pool,omitempty"`
 	// Worker name -> worker definition.
-	Workers       map[string]*Worker `protobuf:"bytes,3,rep,name=workers,proto3" json:"workers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Workers map[string]*Worker `protobuf:"bytes,3,rep,name=workers,proto3" json:"workers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Names of the top-level roles that may take part in this workflow. Every
+	// name must be defined under HarnessSpec.roles, and no name may repeat.
+	Roles         []string `protobuf:"bytes,4,rep,name=roles,proto3" json:"roles,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1334,6 +1351,13 @@ func (x *Workflow) GetPool() *Pool {
 func (x *Workflow) GetWorkers() map[string]*Worker {
 	if x != nil {
 		return x.Workers
+	}
+	return nil
+}
+
+func (x *Workflow) GetRoles() []string {
+	if x != nil {
+		return x.Roles
 	}
 	return nil
 }
@@ -1470,6 +1494,84 @@ func (x *Worker) GetModel() string {
 	return ""
 }
 
+// Role is a named, reusable helper definition.
+type Role struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// What the main agent reads when deciding whom to hand work to. A blank
+	// (whitespace-only) description is rejected by semantic validation.
+	Description string `protobuf:"bytes,1,opt,name=description,proto3" json:"description,omitempty"`
+	// The helper's brief, composed into its system prompt.
+	Instructions string `protobuf:"bytes,2,opt,name=instructions,proto3" json:"instructions,omitempty"`
+	// Empty: the helper inherits the main agent's tool set. Non-empty: the
+	// helper's whole tool set, under the same rules as Worker.tools: it can only
+	// narrow, the blackboard tools are always added, and the helper can nest
+	// exactly when the list names spawn_agent. Names are not checked against the
+	// runtime's tools at validation time (tool sets are dynamic).
+	Tools []string `protobuf:"bytes,3,rep,name=tools,proto3" json:"tools,omitempty"`
+	// Model alias; empty inherits the main agent's model.
+	Model         string `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Role) Reset() {
+	*x = Role{}
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Role) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Role) ProtoMessage() {}
+
+func (x *Role) ProtoReflect() protoreflect.Message {
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Role.ProtoReflect.Descriptor instead.
+func (*Role) Descriptor() ([]byte, []int) {
+	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *Role) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *Role) GetInstructions() string {
+	if x != nil {
+		return x.Instructions
+	}
+	return ""
+}
+
+func (x *Role) GetTools() []string {
+	if x != nil {
+		return x.Tools
+	}
+	return nil
+}
+
+func (x *Role) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
 // Throughput is the turn-level rate and quota surface. 0 = unlimited.
 type Throughput struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1487,7 +1589,7 @@ type Throughput struct {
 
 func (x *Throughput) Reset() {
 	*x = Throughput{}
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[16]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1499,7 +1601,7 @@ func (x *Throughput) String() string {
 func (*Throughput) ProtoMessage() {}
 
 func (x *Throughput) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[16]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1512,7 +1614,7 @@ func (x *Throughput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Throughput.ProtoReflect.Descriptor instead.
 func (*Throughput) Descriptor() ([]byte, []int) {
-	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{16}
+	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Throughput) GetRequestsPerMinute() uint32 {
@@ -1556,7 +1658,7 @@ type ProviderThroughput struct {
 
 func (x *ProviderThroughput) Reset() {
 	*x = ProviderThroughput{}
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[17]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1568,7 +1670,7 @@ func (x *ProviderThroughput) String() string {
 func (*ProviderThroughput) ProtoMessage() {}
 
 func (x *ProviderThroughput) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[17]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1581,7 +1683,7 @@ func (x *ProviderThroughput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderThroughput.ProtoReflect.Descriptor instead.
 func (*ProviderThroughput) Descriptor() ([]byte, []int) {
-	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{17}
+	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ProviderThroughput) GetRequestsPerMinute() uint32 {
@@ -1611,7 +1713,7 @@ type Context struct {
 
 func (x *Context) Reset() {
 	*x = Context{}
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[18]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1623,7 +1725,7 @@ func (x *Context) String() string {
 func (*Context) ProtoMessage() {}
 
 func (x *Context) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[18]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1636,7 +1738,7 @@ func (x *Context) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Context.ProtoReflect.Descriptor instead.
 func (*Context) Descriptor() ([]byte, []int) {
-	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{18}
+	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Context) GetSummarization() *Summarization {
@@ -1670,7 +1772,7 @@ type Summarization struct {
 
 func (x *Summarization) Reset() {
 	*x = Summarization{}
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[19]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1682,7 +1784,7 @@ func (x *Summarization) String() string {
 func (*Summarization) ProtoMessage() {}
 
 func (x *Summarization) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[19]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1695,7 +1797,7 @@ func (x *Summarization) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Summarization.ProtoReflect.Descriptor instead.
 func (*Summarization) Descriptor() ([]byte, []int) {
-	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{19}
+	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *Summarization) GetEnabled() bool {
@@ -1749,7 +1851,7 @@ type Relevance struct {
 
 func (x *Relevance) Reset() {
 	*x = Relevance{}
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[20]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1761,7 +1863,7 @@ func (x *Relevance) String() string {
 func (*Relevance) ProtoMessage() {}
 
 func (x *Relevance) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[20]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1774,7 +1876,7 @@ func (x *Relevance) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Relevance.ProtoReflect.Descriptor instead.
 func (*Relevance) Descriptor() ([]byte, []int) {
-	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{20}
+	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *Relevance) GetHeuristic() bool {
@@ -1837,7 +1939,7 @@ type Pipeline struct {
 
 func (x *Pipeline) Reset() {
 	*x = Pipeline{}
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[21]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1849,7 +1951,7 @@ func (x *Pipeline) String() string {
 func (*Pipeline) ProtoMessage() {}
 
 func (x *Pipeline) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[21]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1862,7 +1964,7 @@ func (x *Pipeline) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Pipeline.ProtoReflect.Descriptor instead.
 func (*Pipeline) Descriptor() ([]byte, []int) {
-	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{21}
+	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *Pipeline) GetSynthesis() *PipelineSynthesis {
@@ -1889,7 +1991,7 @@ type PipelineSynthesis struct {
 
 func (x *PipelineSynthesis) Reset() {
 	*x = PipelineSynthesis{}
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[22]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1901,7 +2003,7 @@ func (x *PipelineSynthesis) String() string {
 func (*PipelineSynthesis) ProtoMessage() {}
 
 func (x *PipelineSynthesis) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[22]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1914,7 +2016,7 @@ func (x *PipelineSynthesis) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PipelineSynthesis.ProtoReflect.Descriptor instead.
 func (*PipelineSynthesis) Descriptor() ([]byte, []int) {
-	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{22}
+	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *PipelineSynthesis) GetMaxSteps() uint32 {
@@ -1966,7 +2068,7 @@ type Research struct {
 
 func (x *Research) Reset() {
 	*x = Research{}
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[23]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1978,7 +2080,7 @@ func (x *Research) String() string {
 func (*Research) ProtoMessage() {}
 
 func (x *Research) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[23]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1991,7 +2093,7 @@ func (x *Research) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Research.ProtoReflect.Descriptor instead.
 func (*Research) Descriptor() ([]byte, []int) {
-	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{23}
+	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *Research) GetProvider() ResearchProvider {
@@ -2057,7 +2159,7 @@ type CustomSearchProvider struct {
 
 func (x *CustomSearchProvider) Reset() {
 	*x = CustomSearchProvider{}
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[24]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2069,7 +2171,7 @@ func (x *CustomSearchProvider) String() string {
 func (*CustomSearchProvider) ProtoMessage() {}
 
 func (x *CustomSearchProvider) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[24]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2082,7 +2184,7 @@ func (x *CustomSearchProvider) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CustomSearchProvider.ProtoReflect.Descriptor instead.
 func (*CustomSearchProvider) Descriptor() ([]byte, []int) {
-	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{24}
+	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *CustomSearchProvider) GetUrl() string {
@@ -2143,7 +2245,7 @@ type HeaderValue struct {
 
 func (x *HeaderValue) Reset() {
 	*x = HeaderValue{}
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[25]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2155,7 +2257,7 @@ func (x *HeaderValue) String() string {
 func (*HeaderValue) ProtoMessage() {}
 
 func (x *HeaderValue) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_harness_v1_harness_proto_msgTypes[25]
+	mi := &file_fuse_harness_v1_harness_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2168,7 +2270,7 @@ func (x *HeaderValue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeaderValue.ProtoReflect.Descriptor instead.
 func (*HeaderValue) Descriptor() ([]byte, []int) {
-	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{25}
+	return file_fuse_harness_v1_harness_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *HeaderValue) GetValue() isHeaderValue_Value {
@@ -2229,7 +2331,7 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\n" +
 	"field_path\x18\x01 \x01(\tR\tfieldPath\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x17\n" +
-	"\arule_id\x18\x03 \x01(\tR\x06ruleId\"\x86\x11\n" +
+	"\arule_id\x18\x03 \x01(\tR\x06ruleId\"\xc7\x13\n" +
 	"\vHarnessSpec\x12\xa6\x01\n" +
 	"\x06models\x18\x01 \x01(\v2\x17.fuse.harness.v1.ModelsBu\xa2\x9f\x19q\n" +
 	"\x06Models\x12gModel aliases this harness can use and the default one. Aliases extend the runtime's built-in registry.R\x06models\x12\x9b\x01\n" +
@@ -2266,10 +2368,16 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\n" +
 	"\bResearchR\bresearch\x12\xe4\x01\n" +
 	"\finstructions\x18\x0e \x01(\tB\xbf\x01\xbaH\x06r\x04\x18\x80\x80\x01\xa2\x9f\x19\xb1\x01\n" +
-	"\fInstructions\x12\x9e\x01What this agent is for and how it should work. Added to the system prompt after the persona. Applies to the main agent only; subagents keep their own prompts.\x18\x02R\finstructions\x1aW\n" +
+	"\fInstructions\x12\x9e\x01What this agent is for and how it should work. Added to the system prompt after the persona. Applies to the main agent only; subagents keep their own prompts.\x18\x02R\finstructions\x12\xed\x01\n" +
+	"\x05roles\x18\x0f \x03(\v2'.fuse.harness.v1.HarnessSpec.RolesEntryB\xad\x01\xbaH$\x9a\x01!\x10 \"\x1dr\x1b\x10\x01\x18@2\x15^[a-z0-9][a-z0-9_-]*$\xa2\x9f\x19\x81\x01\n" +
+	"\x05Roles\x12xNamed helpers the main agent can hand work to. A role says who a helper is; a workflow says how a big job is divided up.R\x05roles\x1aW\n" +
 	"\x0eWorkflowsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12/\n" +
-	"\x05value\x18\x02 \x01(\v2\x19.fuse.harness.v1.WorkflowR\x05value:\x028\x01B\f\n" +
+	"\x05value\x18\x02 \x01(\v2\x19.fuse.harness.v1.WorkflowR\x05value:\x028\x01\x1aO\n" +
+	"\n" +
+	"RolesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
+	"\x05value\x18\x02 \x01(\v2\x15.fuse.harness.v1.RoleR\x05value:\x028\x01B\f\n" +
 	"\n" +
 	"_max_turns\"\xdd\x03\n" +
 	"\x06Models\x12\x85\x01\n" +
@@ -2363,7 +2471,7 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\vQueue bound\x12>Per-pool pending-queue multiplier. 0 uses the runtime default.\x18\x03(\x01R\n" +
 	"queueBound\x12R\n" +
 	"\x14tool_timeout_seconds\x18\x04 \x01(\rB \xa2\x9f\x19\x1c\n" +
-	"\x16Tool timeout (seconds)\x18\x03(\x01R\x12toolTimeoutSeconds\"\xd5\x02\n" +
+	"\x16Tool timeout (seconds)\x18\x03(\x01R\x12toolTimeoutSeconds\"\xe2\x03\n" +
 	"\bWorkflow\x12E\n" +
 	"\x05skill\x18\x01 \x01(\tB/\xbaH\x1f\xd8\x01\x01r\x1a\x18\x80\x012\x15^[a-z0-9][a-z0-9_-]*$\xa2\x9f\x19\t\n" +
 	"\x05Skill\x18\x01R\x05skill\x125\n" +
@@ -2371,7 +2479,9 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\xa2\x9f\x19\x06\n" +
 	"\x04PoolR\x04pool\x12v\n" +
 	"\aworkers\x18\x03 \x03(\v2&.fuse.harness.v1.Workflow.WorkersEntryB4\xbaH\"\x9a\x01\x1f\"\x1dr\x1b\x10\x01\x18@2\x15^[a-z0-9][a-z0-9_-]*$\xa2\x9f\x19\v\n" +
-	"\aWorkers\x18\aR\aworkers\x1aS\n" +
+	"\aWorkers\x18\aR\aworkers\x12\x8a\x01\n" +
+	"\x05roles\x18\x04 \x03(\tBt\xbaH\x05\x92\x01\x02\x18\x01\xa2\x9f\x19h\n" +
+	"\x05Roles\x12]Roles that may take part in this workflow. Each must be defined under roles, and listed once.\x18\x06R\x05roles\x1aS\n" +
 	"\fWorkersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
 	"\x05value\x18\x02 \x01(\v2\x17.fuse.harness.v1.WorkerR\x05value:\x028\x01\"\xc4\x01\n" +
@@ -2391,7 +2501,16 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\x05tools\x18\x01 \x03(\tB\x1b\xbaH\v\x92\x01\b\b\x01\"\x04r\x02\x10\x01\xa2\x9f\x19\t\n" +
 	"\x05Tools\x18\x06R\x05tools\x12+\n" +
 	"\x05model\x18\x02 \x01(\tB\x15\xbaH\x05r\x03\x18\x80\x01\xa2\x9f\x19\t\n" +
-	"\x05Model\x18\tR\x05model\"\xc2\x03\n" +
+	"\x05Model\x18\tR\x05model\"\xc6\x04\n" +
+	"\x04Role\x12~\n" +
+	"\vdescription\x18\x01 \x01(\tB\\\xbaH\ar\x05\x10\x01\x18\x80\x04\xa2\x9f\x19N\n" +
+	"\vDescription\x12=What the main agent reads when deciding whom to hand work to.\x18\x01R\vdescription\x12r\n" +
+	"\finstructions\x18\x02 \x01(\tBN\xbaH\x06r\x04\x18\x80\x80\x01\xa2\x9f\x19A\n" +
+	"\fInstructions\x12/The helper's brief, added to its system prompt.\x18\x02R\finstructions\x12\xe3\x01\n" +
+	"\x05tools\x18\x03 \x03(\tB\xcc\x01\xbaH\t\x92\x01\x06\"\x04r\x02\x10\x01\xa2\x9f\x19\xbb\x01\n" +
+	"\x05Tools\x12\xaf\x01Leave empty to inherit the main agent's tools. Otherwise this is the helper's whole tool set: it can only narrow, and the helper can nest only when the list names spawn_agent.\x18\x06R\x05tools\x12d\n" +
+	"\x05model\x18\x04 \x01(\tBN\xbaH\x05r\x03\x18\x80\x01\xa2\x9f\x19B\n" +
+	"\x05Model\x127Model alias. Leave empty to use the main agent's model.\x18\tR\x05model\"\xc2\x03\n" +
 	"\n" +
 	"Throughput\x12M\n" +
 	"\x13requests_per_minute\x18\x01 \x01(\rB\x1d\xa2\x9f\x19\x19\n" +
@@ -2560,7 +2679,7 @@ func file_fuse_harness_v1_harness_proto_rawDescGZIP() []byte {
 }
 
 var file_fuse_harness_v1_harness_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_fuse_harness_v1_harness_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_fuse_harness_v1_harness_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
 var file_fuse_harness_v1_harness_proto_goTypes = []any{
 	(McpTransport)(0),               // 0: fuse.harness.v1.McpTransport
 	(McpAuthType)(0),                // 1: fuse.harness.v1.McpAuthType
@@ -2582,21 +2701,23 @@ var file_fuse_harness_v1_harness_proto_goTypes = []any{
 	(*Workflow)(nil),                // 17: fuse.harness.v1.Workflow
 	(*Pool)(nil),                    // 18: fuse.harness.v1.Pool
 	(*Worker)(nil),                  // 19: fuse.harness.v1.Worker
-	(*Throughput)(nil),              // 20: fuse.harness.v1.Throughput
-	(*ProviderThroughput)(nil),      // 21: fuse.harness.v1.ProviderThroughput
-	(*Context)(nil),                 // 22: fuse.harness.v1.Context
-	(*Summarization)(nil),           // 23: fuse.harness.v1.Summarization
-	(*Relevance)(nil),               // 24: fuse.harness.v1.Relevance
-	(*Pipeline)(nil),                // 25: fuse.harness.v1.Pipeline
-	(*PipelineSynthesis)(nil),       // 26: fuse.harness.v1.PipelineSynthesis
-	(*Research)(nil),                // 27: fuse.harness.v1.Research
-	(*CustomSearchProvider)(nil),    // 28: fuse.harness.v1.CustomSearchProvider
-	(*HeaderValue)(nil),             // 29: fuse.harness.v1.HeaderValue
-	nil,                             // 30: fuse.harness.v1.HarnessSpec.WorkflowsEntry
-	nil,                             // 31: fuse.harness.v1.Models.EntriesEntry
-	nil,                             // 32: fuse.harness.v1.Workflow.WorkersEntry
-	nil,                             // 33: fuse.harness.v1.Throughput.ProvidersEntry
-	nil,                             // 34: fuse.harness.v1.CustomSearchProvider.HeadersEntry
+	(*Role)(nil),                    // 20: fuse.harness.v1.Role
+	(*Throughput)(nil),              // 21: fuse.harness.v1.Throughput
+	(*ProviderThroughput)(nil),      // 22: fuse.harness.v1.ProviderThroughput
+	(*Context)(nil),                 // 23: fuse.harness.v1.Context
+	(*Summarization)(nil),           // 24: fuse.harness.v1.Summarization
+	(*Relevance)(nil),               // 25: fuse.harness.v1.Relevance
+	(*Pipeline)(nil),                // 26: fuse.harness.v1.Pipeline
+	(*PipelineSynthesis)(nil),       // 27: fuse.harness.v1.PipelineSynthesis
+	(*Research)(nil),                // 28: fuse.harness.v1.Research
+	(*CustomSearchProvider)(nil),    // 29: fuse.harness.v1.CustomSearchProvider
+	(*HeaderValue)(nil),             // 30: fuse.harness.v1.HeaderValue
+	nil,                             // 31: fuse.harness.v1.HarnessSpec.WorkflowsEntry
+	nil,                             // 32: fuse.harness.v1.HarnessSpec.RolesEntry
+	nil,                             // 33: fuse.harness.v1.Models.EntriesEntry
+	nil,                             // 34: fuse.harness.v1.Workflow.WorkersEntry
+	nil,                             // 35: fuse.harness.v1.Throughput.ProvidersEntry
+	nil,                             // 36: fuse.harness.v1.CustomSearchProvider.HeadersEntry
 }
 var file_fuse_harness_v1_harness_proto_depIdxs = []int32{
 	7,  // 0: fuse.harness.v1.ValidateHarnessRequest.spec:type_name -> fuse.harness.v1.HarnessSpec
@@ -2607,38 +2728,40 @@ var file_fuse_harness_v1_harness_proto_depIdxs = []int32{
 	13, // 5: fuse.harness.v1.HarnessSpec.permissions:type_name -> fuse.harness.v1.Permissions
 	15, // 6: fuse.harness.v1.HarnessSpec.orchestrator:type_name -> fuse.harness.v1.Orchestrator
 	16, // 7: fuse.harness.v1.HarnessSpec.agents:type_name -> fuse.harness.v1.Agents
-	30, // 8: fuse.harness.v1.HarnessSpec.workflows:type_name -> fuse.harness.v1.HarnessSpec.WorkflowsEntry
-	20, // 9: fuse.harness.v1.HarnessSpec.throughput:type_name -> fuse.harness.v1.Throughput
-	22, // 10: fuse.harness.v1.HarnessSpec.context:type_name -> fuse.harness.v1.Context
-	25, // 11: fuse.harness.v1.HarnessSpec.pipeline:type_name -> fuse.harness.v1.Pipeline
-	27, // 12: fuse.harness.v1.HarnessSpec.research:type_name -> fuse.harness.v1.Research
-	31, // 13: fuse.harness.v1.Models.entries:type_name -> fuse.harness.v1.Models.EntriesEntry
-	0,  // 14: fuse.harness.v1.McpServer.transport:type_name -> fuse.harness.v1.McpTransport
-	12, // 15: fuse.harness.v1.McpServer.auth:type_name -> fuse.harness.v1.McpAuth
-	1,  // 16: fuse.harness.v1.McpAuth.type:type_name -> fuse.harness.v1.McpAuthType
-	2,  // 17: fuse.harness.v1.Permissions.mode:type_name -> fuse.harness.v1.PermissionMode
-	14, // 18: fuse.harness.v1.Permissions.auto:type_name -> fuse.harness.v1.AutoPermissions
-	18, // 19: fuse.harness.v1.Workflow.pool:type_name -> fuse.harness.v1.Pool
-	32, // 20: fuse.harness.v1.Workflow.workers:type_name -> fuse.harness.v1.Workflow.WorkersEntry
-	33, // 21: fuse.harness.v1.Throughput.providers:type_name -> fuse.harness.v1.Throughput.ProvidersEntry
-	23, // 22: fuse.harness.v1.Context.summarization:type_name -> fuse.harness.v1.Summarization
-	24, // 23: fuse.harness.v1.Context.relevance:type_name -> fuse.harness.v1.Relevance
-	26, // 24: fuse.harness.v1.Pipeline.synthesis:type_name -> fuse.harness.v1.PipelineSynthesis
-	3,  // 25: fuse.harness.v1.Research.provider:type_name -> fuse.harness.v1.ResearchProvider
-	28, // 26: fuse.harness.v1.Research.custom:type_name -> fuse.harness.v1.CustomSearchProvider
-	34, // 27: fuse.harness.v1.CustomSearchProvider.headers:type_name -> fuse.harness.v1.CustomSearchProvider.HeadersEntry
-	17, // 28: fuse.harness.v1.HarnessSpec.WorkflowsEntry.value:type_name -> fuse.harness.v1.Workflow
-	9,  // 29: fuse.harness.v1.Models.EntriesEntry.value:type_name -> fuse.harness.v1.Model
-	19, // 30: fuse.harness.v1.Workflow.WorkersEntry.value:type_name -> fuse.harness.v1.Worker
-	21, // 31: fuse.harness.v1.Throughput.ProvidersEntry.value:type_name -> fuse.harness.v1.ProviderThroughput
-	29, // 32: fuse.harness.v1.CustomSearchProvider.HeadersEntry.value:type_name -> fuse.harness.v1.HeaderValue
-	4,  // 33: fuse.harness.v1.HarnessService.ValidateHarness:input_type -> fuse.harness.v1.ValidateHarnessRequest
-	5,  // 34: fuse.harness.v1.HarnessService.ValidateHarness:output_type -> fuse.harness.v1.ValidateHarnessResponse
-	34, // [34:35] is the sub-list for method output_type
-	33, // [33:34] is the sub-list for method input_type
-	33, // [33:33] is the sub-list for extension type_name
-	33, // [33:33] is the sub-list for extension extendee
-	0,  // [0:33] is the sub-list for field type_name
+	31, // 8: fuse.harness.v1.HarnessSpec.workflows:type_name -> fuse.harness.v1.HarnessSpec.WorkflowsEntry
+	21, // 9: fuse.harness.v1.HarnessSpec.throughput:type_name -> fuse.harness.v1.Throughput
+	23, // 10: fuse.harness.v1.HarnessSpec.context:type_name -> fuse.harness.v1.Context
+	26, // 11: fuse.harness.v1.HarnessSpec.pipeline:type_name -> fuse.harness.v1.Pipeline
+	28, // 12: fuse.harness.v1.HarnessSpec.research:type_name -> fuse.harness.v1.Research
+	32, // 13: fuse.harness.v1.HarnessSpec.roles:type_name -> fuse.harness.v1.HarnessSpec.RolesEntry
+	33, // 14: fuse.harness.v1.Models.entries:type_name -> fuse.harness.v1.Models.EntriesEntry
+	0,  // 15: fuse.harness.v1.McpServer.transport:type_name -> fuse.harness.v1.McpTransport
+	12, // 16: fuse.harness.v1.McpServer.auth:type_name -> fuse.harness.v1.McpAuth
+	1,  // 17: fuse.harness.v1.McpAuth.type:type_name -> fuse.harness.v1.McpAuthType
+	2,  // 18: fuse.harness.v1.Permissions.mode:type_name -> fuse.harness.v1.PermissionMode
+	14, // 19: fuse.harness.v1.Permissions.auto:type_name -> fuse.harness.v1.AutoPermissions
+	18, // 20: fuse.harness.v1.Workflow.pool:type_name -> fuse.harness.v1.Pool
+	34, // 21: fuse.harness.v1.Workflow.workers:type_name -> fuse.harness.v1.Workflow.WorkersEntry
+	35, // 22: fuse.harness.v1.Throughput.providers:type_name -> fuse.harness.v1.Throughput.ProvidersEntry
+	24, // 23: fuse.harness.v1.Context.summarization:type_name -> fuse.harness.v1.Summarization
+	25, // 24: fuse.harness.v1.Context.relevance:type_name -> fuse.harness.v1.Relevance
+	27, // 25: fuse.harness.v1.Pipeline.synthesis:type_name -> fuse.harness.v1.PipelineSynthesis
+	3,  // 26: fuse.harness.v1.Research.provider:type_name -> fuse.harness.v1.ResearchProvider
+	29, // 27: fuse.harness.v1.Research.custom:type_name -> fuse.harness.v1.CustomSearchProvider
+	36, // 28: fuse.harness.v1.CustomSearchProvider.headers:type_name -> fuse.harness.v1.CustomSearchProvider.HeadersEntry
+	17, // 29: fuse.harness.v1.HarnessSpec.WorkflowsEntry.value:type_name -> fuse.harness.v1.Workflow
+	20, // 30: fuse.harness.v1.HarnessSpec.RolesEntry.value:type_name -> fuse.harness.v1.Role
+	9,  // 31: fuse.harness.v1.Models.EntriesEntry.value:type_name -> fuse.harness.v1.Model
+	19, // 32: fuse.harness.v1.Workflow.WorkersEntry.value:type_name -> fuse.harness.v1.Worker
+	22, // 33: fuse.harness.v1.Throughput.ProvidersEntry.value:type_name -> fuse.harness.v1.ProviderThroughput
+	30, // 34: fuse.harness.v1.CustomSearchProvider.HeadersEntry.value:type_name -> fuse.harness.v1.HeaderValue
+	4,  // 35: fuse.harness.v1.HarnessService.ValidateHarness:input_type -> fuse.harness.v1.ValidateHarnessRequest
+	5,  // 36: fuse.harness.v1.HarnessService.ValidateHarness:output_type -> fuse.harness.v1.ValidateHarnessResponse
+	36, // [36:37] is the sub-list for method output_type
+	35, // [35:36] is the sub-list for method input_type
+	35, // [35:35] is the sub-list for extension type_name
+	35, // [35:35] is the sub-list for extension extendee
+	0,  // [0:35] is the sub-list for field type_name
 }
 
 func init() { file_fuse_harness_v1_harness_proto_init() }
@@ -2649,10 +2772,10 @@ func file_fuse_harness_v1_harness_proto_init() {
 	file_fuse_harness_v1_options_proto_init()
 	file_fuse_harness_v1_harness_proto_msgTypes[3].OneofWrappers = []any{}
 	file_fuse_harness_v1_harness_proto_msgTypes[9].OneofWrappers = []any{}
-	file_fuse_harness_v1_harness_proto_msgTypes[19].OneofWrappers = []any{}
 	file_fuse_harness_v1_harness_proto_msgTypes[20].OneofWrappers = []any{}
-	file_fuse_harness_v1_harness_proto_msgTypes[23].OneofWrappers = []any{}
-	file_fuse_harness_v1_harness_proto_msgTypes[25].OneofWrappers = []any{
+	file_fuse_harness_v1_harness_proto_msgTypes[21].OneofWrappers = []any{}
+	file_fuse_harness_v1_harness_proto_msgTypes[24].OneofWrappers = []any{}
+	file_fuse_harness_v1_harness_proto_msgTypes[26].OneofWrappers = []any{
 		(*HeaderValue_Literal)(nil),
 		(*HeaderValue_SecretRef)(nil),
 	}
@@ -2662,7 +2785,7 @@ func file_fuse_harness_v1_harness_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_fuse_harness_v1_harness_proto_rawDesc), len(file_fuse_harness_v1_harness_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   31,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

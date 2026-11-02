@@ -22,6 +22,7 @@ import (
 	"math"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -258,9 +259,21 @@ func toDocument(s *harnessv1.HarnessSpec, secrets SecretResolver) (doc, error) {
 			workers[wn] = wd
 		}
 		d.set("workers", workers)
+		d.set("roles", w.GetRoles())
 		workflows[name] = d
 	}
 	root.set("workflows", workflows)
+
+	roles := doc{}
+	for name, r := range s.GetRoles() {
+		rd := doc{}
+		rd.set("description", r.GetDescription())
+		rd.set("instructions", r.GetInstructions())
+		rd.set("tools", r.GetTools())
+		rd.set("model", r.GetModel())
+		roles[name] = rd
+	}
+	root.set("roles", roles)
 
 	tp := s.GetThroughput()
 	through := doc{}
@@ -562,12 +575,23 @@ func FromConfig(cfg config.Config) (*harnessv1.HarnessSpec, []Omission) {
 				out.Workers[wn] = &harnessv1.Worker{Tools: wk.Tools, Model: wk.Model}
 			}
 		}
+		if !builtin || !slices.Equal(w.Roles, dw.Roles) {
+			out.Roles = w.Roles
+		}
 		if !builtin || !isZero(out) {
 			if s.Workflows == nil {
 				s.Workflows = map[string]*harnessv1.Workflow{}
 			}
 			s.Workflows[name] = out
 		}
+	}
+
+	// Roles: there are no built-in roles, so every configured role is carried.
+	for name, r := range cfg.Roles {
+		if s.Roles == nil {
+			s.Roles = map[string]*harnessv1.Role{}
+		}
+		s.Roles[name] = &harnessv1.Role{Description: r.Description, Instructions: r.Instructions, Tools: r.Tools, Model: r.Model}
 	}
 
 	t := cfg.Throughput
@@ -751,9 +775,13 @@ func credentialHeader(name string) bool { return credentialHeaderRE.MatchString(
 // field's key renders as ["<key>"] (Go-quoted), the shape protovalidate
 // reports, and the walk continues into the map value's message, so
 // workflows.wf.workers.reader.tools becomes
-// workflows["wf"].workers["reader"].tools. It returns "" when the config key
-// has no spec field (an operator-only surface), so a caller never points a
-// client at a field it cannot see.
+// workflows["wf"].workers["reader"].tools. A list index (name[N]) is kept as
+// [N] on a list field, and the walk continues into a list of messages, so
+// workflows.wf.roles[1] becomes workflows["wf"].roles[1] and
+// mcp_servers[2].url stays mcp_servers[2].url. It returns "" when the config
+// key has no spec field (an operator-only surface, an index on a non-list, or
+// a field below a scalar list element), so a caller never points a client at
+// a field it cannot see.
 func SpecPath(configPath string) string {
 	p := configPath
 	if p == "models.default" {
@@ -763,7 +791,11 @@ func SpecPath(configPath string) string {
 	parts := strings.Split(p, ".")
 	var b strings.Builder
 	for i := 0; i < len(parts); i++ {
-		fd := md.Fields().ByName(protoreflect.Name(parts[i]))
+		name, index := parts[i], ""
+		if m := indexedPart.FindStringSubmatch(parts[i]); m != nil {
+			name, index = m[1], m[2]
+		}
+		fd := md.Fields().ByName(protoreflect.Name(name))
 		if fd == nil {
 			return ""
 		}
@@ -772,6 +804,19 @@ func SpecPath(configPath string) string {
 		}
 		b.WriteString(parts[i])
 		last := i == len(parts)-1
+		if index != "" {
+			// An indexed part names one element of a list field.
+			switch {
+			case !fd.IsList():
+				return ""
+			case last:
+				return b.String()
+			case fd.Message() == nil:
+				return "" // a scalar list element has no fields
+			}
+			md = fd.Message()
+			continue
+		}
 		switch {
 		case last:
 			return b.String()
@@ -792,6 +837,9 @@ func SpecPath(configPath string) string {
 	}
 	return b.String()
 }
+
+// indexedPart matches a config path part that indexes a list, as name[N].
+var indexedPart = regexp.MustCompile(`^([a-z_]+)\[(\d+)\]$`)
 
 func ptr[T any](v T) *T { return &v }
 

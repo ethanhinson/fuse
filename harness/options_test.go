@@ -162,3 +162,114 @@ func TestInstructionsFieldContract(t *testing.T) {
 		t.Errorf("string.max_len = %d, want 16384", got)
 	}
 }
+
+// TestRolesFieldContract pins the wire contract of named roles: the map on
+// HarnessSpec, the Role message's fields and Workflow.roles.
+func TestRolesFieldContract(t *testing.T) {
+	rulesOf := func(fd protoreflect.FieldDescriptor) *validate.FieldRules {
+		t.Helper()
+		rules, ok := proto.GetExtension(fd.Options(), validate.E_Field).(*validate.FieldRules)
+		if !ok || rules == nil {
+			t.Fatalf("%s has no buf.validate field rules", fd.FullName())
+		}
+		return rules
+	}
+	field := func(md protoreflect.MessageDescriptor, name string, number protoreflect.FieldNumber) protoreflect.FieldDescriptor {
+		t.Helper()
+		fd := md.Fields().ByName(protoreflect.Name(name))
+		if fd == nil {
+			t.Fatalf("%s has no %s field", md.FullName(), name)
+		}
+		if fd.Number() != number {
+			t.Errorf("%s number = %d, want %d", fd.FullName(), fd.Number(), number)
+		}
+		if fieldUI(fd) == nil {
+			t.Fatalf("%s has no ui option", fd.FullName())
+		}
+		return fd
+	}
+
+	roles := field((&harnessv1.HarnessSpec{}).ProtoReflect().Descriptor(), "roles", 15)
+	if !roles.IsMap() {
+		t.Fatal("HarnessSpec.roles is not a map")
+	}
+	if got := roles.MapValue().Message().FullName(); got != "fuse.harness.v1.Role" {
+		t.Errorf("roles value = %s, want fuse.harness.v1.Role", got)
+	}
+	if got := fieldUI(roles).GetLabel(); got != "Roles" {
+		t.Errorf("roles label = %q", got)
+	}
+	m := rulesOf(roles).GetMap()
+	if m.GetMaxPairs() != 32 {
+		t.Errorf("roles map.max_pairs = %d, want 32", m.GetMaxPairs())
+	}
+	keys := m.GetKeys().GetString()
+	if keys.GetMinLen() != 1 || keys.GetMaxLen() != 64 || keys.GetPattern() != "^[a-z0-9][a-z0-9_-]*$" {
+		t.Errorf("roles key rules = %v", keys)
+	}
+
+	role := (&harnessv1.Role{}).ProtoReflect().Descriptor()
+
+	desc := field(role, "description", 1)
+	if desc.Kind() != protoreflect.StringKind {
+		t.Errorf("description kind = %v", desc.Kind())
+	}
+	if s := rulesOf(desc).GetString(); s.GetMinLen() != 1 || s.GetMaxLen() != 512 {
+		t.Errorf("description rules = %v, want min_len 1 max_len 512", s)
+	}
+	if got := fieldUI(desc).GetLabel(); got != "Description" {
+		t.Errorf("description label = %q", got)
+	}
+	const descHelp = "What the main agent reads when deciding whom to hand work to."
+	if got := fieldUI(desc).GetHelp(); got != descHelp {
+		t.Errorf("description help = %q, want %q", got, descHelp)
+	}
+
+	instr := field(role, "instructions", 2)
+	if instr.Kind() != protoreflect.StringKind {
+		t.Errorf("instructions kind = %v", instr.Kind())
+	}
+	if got := rulesOf(instr).GetString().GetMaxLen(); got != 16384 {
+		t.Errorf("instructions max_len = %d, want 16384", got)
+	}
+	if got := fieldUI(instr).GetWidget(); got != harnessv1.Widget_WIDGET_TEXTAREA {
+		t.Errorf("instructions widget = %v, want WIDGET_TEXTAREA", got)
+	}
+
+	tools := field(role, "tools", 3)
+	if !tools.IsList() || tools.Kind() != protoreflect.StringKind {
+		t.Errorf("tools is not repeated string")
+	}
+	rep := rulesOf(tools).GetRepeated()
+	if rep.GetMinItems() != 0 {
+		t.Errorf("tools min_items = %d, want 0", rep.GetMinItems())
+	}
+	if got := rep.GetItems().GetString().GetMinLen(); got != 1 {
+		t.Errorf("tools item min_len = %d, want 1", got)
+	}
+	if got := fieldUI(tools).GetWidget(); got != harnessv1.Widget_WIDGET_LIST {
+		t.Errorf("tools widget = %v, want WIDGET_LIST", got)
+	}
+
+	model := field(role, "model", 4)
+	if model.Kind() != protoreflect.StringKind {
+		t.Errorf("model kind = %v", model.Kind())
+	}
+	if got := rulesOf(model).GetString().GetMaxLen(); got != 128 {
+		t.Errorf("model max_len = %d, want 128", got)
+	}
+	if got := fieldUI(model).GetWidget(); got != harnessv1.Widget_WIDGET_MODEL_ALIAS {
+		t.Errorf("model widget = %v, want WIDGET_MODEL_ALIAS", got)
+	}
+
+	wfRoles := field((&harnessv1.Workflow{}).ProtoReflect().Descriptor(), "roles", 4)
+	if !wfRoles.IsList() || wfRoles.Kind() != protoreflect.StringKind {
+		t.Errorf("Workflow.roles is not repeated string")
+	}
+	if got := fieldUI(wfRoles).GetLabel(); got != "Roles" {
+		t.Errorf("Workflow.roles label = %q", got)
+	}
+	if got := fieldUI(wfRoles).GetWidget(); got != harnessv1.Widget_WIDGET_LIST {
+		t.Errorf("Workflow.roles widget = %v, want WIDGET_LIST", got)
+	}
+}

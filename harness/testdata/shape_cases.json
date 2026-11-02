@@ -84,5 +84,29 @@
     "name": "worker without tools",
     "spec": {"workflows": {"wf": {"workers": {"reader": {}, "ok": {"tools": ["read_file"]}}}}},
     "want": [{"fieldPath": "workflows[\"wf\"].workers[\"reader\"].tools", "ruleId": "repeated.min_items"}]
+  },
+  {
+    "name": "roles shapes",
+    "spec": {
+      "roles": {
+        "Bad Key": {"description": "d"},
+        "blanktool": {"description": "d", "tools": [""]},
+        "nodesc": {"instructions": "x"}
+      },
+      "workflows": {"wf": {"roles": ["ghost"]}}
+    },
+    "want": [
+      {"fieldPath": "roles[\"Bad Key\"]", "ruleId": "string.pattern"},
+      {"fieldPath": "roles[\"blanktool\"].tools[0]", "ruleId": "string.min_len"},
+      {"fieldPath": "roles[\"nodesc\"].description", "ruleId": "string.min_len"}
+    ]
+  },
+  {
+    "name": "workflow roles must be unique",
+    "spec": {
+      "roles": {"reviewer": {"description": "d"}},
+      "workflows": {"wf": {"roles": ["reviewer", "reviewer"]}}
+    },
+    "want": [{"fieldPath": "workflows[\"wf\"].roles", "ruleId": "repeated.unique"}]
   }
 ]
