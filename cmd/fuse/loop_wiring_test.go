@@ -641,7 +641,7 @@ func TestPipelineSynthPaletteOutsideWorkflowOffersNoWorkers(t *testing.T) {
 	if _, err := synth(ctx, "goal", false, "wf"); err != nil {
 		t.Fatalf("wf synthesis: %v", err)
 	}
-	if !strings.Contains(prompt, "Available worker types: reader\n") || strings.Contains(prompt, "writer") {
+	if !strings.Contains(prompt, "Available worker types: reader\n") || strings.Contains(synthWorkerLine(prompt), "writer") {
 		t.Fatalf("wf synthesis palette = %q, want only reader", prompt)
 	}
 
@@ -652,9 +652,21 @@ func TestPipelineSynthPaletteOutsideWorkflowOffersNoWorkers(t *testing.T) {
 	// A synthesized plan naming wf inside the subtree is refused as nested
 	// (unchanged behavior); only the palette matters here.
 	_, _ = sub(ctx, "goal", false, "")
-	if !strings.Contains(prompt, "Available worker types: reader\n") || strings.Contains(prompt, "writer") {
+	if !strings.Contains(prompt, "Available worker types: reader\n") || strings.Contains(synthWorkerLine(prompt), "writer") {
 		t.Fatalf("in-subtree synthesis palette = %q, want only reader", prompt)
 	}
+}
+
+// synthWorkerLine is the synthesis prompt's worker palette line, or "" when it
+// has none. The harness also defines a writer role, which the role palette
+// lists, so a worker-palette check looks only at this line.
+func synthWorkerLine(prompt string) string {
+	for _, line := range strings.Split(prompt, "\n") {
+		if strings.HasPrefix(line, "Available worker types:") {
+			return line
+		}
+	}
+	return ""
 }
 
 // TestPipelineSynthFnRefusesUnboundWorkerSteps pins that a synthesized plan whose
@@ -819,5 +831,61 @@ func TestPipelineRunFnRefusesBadRoleSteps(t *testing.T) {
 	if _, err := noRoles(ctx, []byte("name: p\nsteps:\n  - name: s1\n    role: reviewer\n    prompt: x\n"), ""); err == nil ||
 		!strings.Contains(err.Error(), `unknown role "reviewer" (available: none configured)`) {
 		t.Fatalf("no-roles err = %v, want unknown role", err)
+	}
+}
+
+// TestPipelineSynthRolePalette (change 0115): the synthesis prompt lists the
+// roles a step may take: every defined role outside a workflow, the
+// workflow's offered roles with one, and none at all when no roles are defined.
+func TestPipelineSynthRolePalette(t *testing.T) {
+	ctx := context.Background()
+	h := newWiringHarness(t)
+	var prompt string
+	h.reply = func(opts agent.SpawnOpts) string {
+		if opts.Label != "synthesize" {
+			return ""
+		}
+		prompt = opts.SystemPrompt
+		// Root synthesis requires a pool (RequirePool), so the plan names wf.
+		return `{"name":"p","workflow":"wf","steps":[{"name":"s1","role":"writer","prompt":"hi"}]}`
+	}
+	sched := h.tree.Scheduler()
+	run := h.w.scope.runner(h.makeSpawner, h.root)
+	synth := makePipelineSynthFn(h.makeSpawner(h.root, 0), h.w.bb, sched, h.root, h.cfg, nil, nil, run, h.w.scope.governing)
+
+	if line, err := synth(ctx, "goal", false, ""); err != nil || line != "pipeline p: completed" {
+		t.Fatalf("root role synthesis = %q, %v; want completed", line, err)
+	}
+	if !strings.Contains(prompt, "- reviewer — Reviews code.\n- writer — Writes prose.\n") {
+		t.Fatalf("root palette lacks both roles: %q", prompt)
+	}
+
+	wf := h.cfg.Workflows["wf"]
+	wf.Roles = []string{"writer"}
+	h.cfg.Workflows["wf"] = wf
+	synth = makePipelineSynthFn(h.makeSpawner(h.root, 0), h.w.bb, sched, h.root, h.cfg, nil, nil, run, h.w.scope.governing)
+	prompt = ""
+	if _, err := synth(ctx, "goal", false, "wf"); err != nil {
+		t.Fatalf("wf role synthesis: %v", err)
+	}
+	if !strings.Contains(prompt, "- writer — Writes prose.\n") || strings.Contains(prompt, "- reviewer") {
+		t.Fatalf("wf palette = %q, want only writer", prompt)
+	}
+
+	none := h.cfg
+	none.Roles = nil
+	h.reply = func(opts agent.SpawnOpts) string {
+		if opts.Label != "synthesize" {
+			return ""
+		}
+		prompt = opts.SystemPrompt
+		return `{"name":"p","workflow":"wf","steps":[{"name":"s1","prompt":"hi"}]}`
+	}
+	prompt = ""
+	if _, err := makePipelineSynthFn(h.makeSpawner(h.root, 0), h.w.bb, sched, h.root, none, nil, nil, run, h.w.scope.governing)(ctx, "goal", false, ""); err != nil {
+		t.Fatalf("no-roles synthesis: %v", err)
+	}
+	if strings.Contains(prompt, "Available roles") || strings.Contains(prompt, `"role"`) {
+		t.Fatalf("no-roles synthesis prompt mentions roles: %q", prompt)
 	}
 }

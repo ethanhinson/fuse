@@ -800,6 +800,8 @@ func runPipelineSteps(ctx context.Context, p *pipeline.Pipeline, spawner *agent.
 // The palette's workers are computed per call: the argument's workflow workers,
 // else the workers of the workflow governing node (through governing), else
 // none, so the synthesizer is only offered workers something can bind.
+// The role palette is computed per call the same way (change 0115): the
+// argument's or governing workflow's offered roles, else every defined role.
 //
 // With a workflow argument (change 0091) an unknown name is refused before any
 // spawn and the synthesized steps run under runWF's coordinator (the synthesis
@@ -817,9 +819,11 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 	}
 	return func(ctx context.Context, goal string, confirm bool, workflow string) (string, error) {
 		var palette []string
+		var wfCfg *config.WorkflowConfig
 		if workflow == "" && governing != nil {
 			if wf, ok := governing(node.ID); ok {
 				palette = sortedWorkerNames(wf)
+				wfCfg = &wf
 			}
 		}
 		if workflow != "" {
@@ -831,6 +835,7 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 				return "", unknownWorkflowErr(workflow, sortedWorkflowNames(cfg.Workflows))
 			}
 			palette = sortedWorkerNames(wf)
+			wfCfg = &wf
 			// Admit before synthesizing, as the authored path does before any
 			// spawn: a nested or too-deep request spawns no synthesis child,
 			// spends no quota and publishes no pipeline.plan.
@@ -850,7 +855,7 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 		// them deadlocks under slot pressure
 		// (learning: slot-cap-yield-while-blocked-on-children).
 		sched.YieldSlot(node)
-		p, err := pipeline.Synthesize(ctx, goal, pipeline.SynthContext{Workers: palette, Tools: toolNames}, spawner, synthCaps)
+		p, err := pipeline.Synthesize(ctx, goal, pipeline.SynthContext{Workers: palette, Roles: synthRolePalette(cfg.Roles, wfCfg), Tools: toolNames}, spawner, synthCaps)
 		if err != nil {
 			if !sched.UnyieldSlot(ctx, node) {
 				return "", ctx.Err()
@@ -916,11 +921,28 @@ func sortedWorkerNames(wf config.WorkflowConfig) []string {
 	return out
 }
 
+// synthRolePalette is the synthesis role palette (change 0115): the roles a
+// step may take, as name and description, sorted. Outside a workflow (wf nil)
+// it is every defined role; with one, the roles that workflow offers. Nil when
+// none, so the synthesis prompt is unchanged without roles.
+func synthRolePalette(roles map[string]config.RoleConfig, wf *config.WorkflowConfig) []pipeline.SynthRole {
+	names := sortedRoleNames(roles)
+	if wf != nil {
+		names = workflowRoleNames(roles, *wf)
+	}
+	var out []pipeline.SynthRole
+	for _, n := range names {
+		out = append(out, pipeline.SynthRole{Name: n, Description: roles[n].Description})
+	}
+	return out
+}
+
 // pipelineSynthPalette derives the synthesis palette from the resolved config
 // and the root tool registry: the worker types declared across all workflows and
 // the currently-registered tool names. Both are advisory context the synthesizer
 // draws from (change 0026). The shared wiring (loopWiring.wirePipeline) uses
-// only its tool names: the synthesis seam computes its worker palette per call.
+// only its tool names: its worker list is unused there, and the synthesis seam
+// computes both the worker and role palettes per call (makePipelineSynthFn).
 func pipelineSynthPalette(cfg config.Config, reg *tools.Registry) (workers, toolNames []string) {
 	seen := map[string]bool{}
 	for _, wf := range cfg.Workflows {
