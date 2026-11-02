@@ -2,7 +2,7 @@
 id: 114
 slug: 'spawn-agent-picks-a-role-role-enum-with-descriptions-role-br'
 title: 'spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/spawn-agent-picks-a-role-role-enum-with-descriptions-role-br'
 pr:
 blocked_by:
 reconciled: false
