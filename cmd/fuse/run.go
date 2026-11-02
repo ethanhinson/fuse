@@ -691,10 +691,16 @@ func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *a
 // definition's field, or the workflow governing node (through governing). With
 // none, the pipeline is refused before any step spawns and before the slot
 // yield (agent.ErrWorkerOutsideWorkflow).
-func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, runWF workflowRunner, governing workflowLookup) tools.PipelineRunFunc {
+//
+// roles is every defined role name, sorted; a step naming any other role is
+// refused as a parse error (change 0115). Nil means no roles are defined.
+func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, runWF workflowRunner, governing workflowLookup, roles []string) tools.PipelineRunFunc {
 	return func(ctx context.Context, definition []byte, workflow string) (string, error) {
 		p, err := pipeline.Parse(definition)
 		if err != nil {
+			return "", fmt.Errorf("parse: %w", err)
+		}
+		if err := pipeline.CheckRoles(p, roles); err != nil {
 			return "", fmt.Errorf("parse: %w", err)
 		}
 		// Authored path: structural validation only (no synthesis caps).
@@ -726,6 +732,11 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agen
 // refuseUnboundWorkerSteps refuses a pipeline whose steps name a worker that
 // no workflow will govern: no workflow argument or definition field, and node
 // outside every workflow subtree. It runs before any step spawns.
+//
+// Role steps are not refused here, because roles are global (change 0115).
+// Whether a workflow offers a role is enforced when the step spawns, by
+// workflowScope.prepareChild (checkRole), the same as for any direct
+// Spawner.Spawn.
 func refuseUnboundWorkerSteps(p *pipeline.Pipeline, workflow string, node *agent.AgentNode, governing workflowLookup) error {
 	if workflow != "" {
 		return nil
