@@ -150,3 +150,33 @@ func TestOverlayRoles(t *testing.T) {
 		t.Errorf("base mutated: %+v", base.Roles)
 	}
 }
+
+// TestSemanticProblemsRoleNamesAndTools: a role name or tool item the shape
+// rules would reject is caught on the config side too, and lands on the spec
+// field path: the map key for a plain bad name, the roles field for a name
+// that cannot be addressed as one path part, the list element for a tool.
+func TestSemanticProblemsRoleNamesAndTools(t *testing.T) {
+	cases := map[string]struct {
+		roles map[string]config.RoleConfig
+		want  string
+	}{
+		"uppercase name": {map[string]config.RoleConfig{"Reviewer": {Description: "R."}}, `roles["Reviewer"]`},
+		"dotted name":    {map[string]config.RoleConfig{"a.b": {Description: "R."}}, "roles"},
+		"empty tool":     {map[string]config.RoleConfig{"a": {Description: "R.", Tools: []string{""}}}, `roles["a"].tools[0]`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Roles = tc.roles
+			var found bool
+			for _, p := range SemanticProblems(cfg) {
+				if p.FieldPath == tc.want && p.RuleID == RuleConfig {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("no problem on %s: %+v", tc.want, SemanticProblems(cfg))
+			}
+		})
+	}
+}

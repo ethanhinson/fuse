@@ -510,6 +510,13 @@ const MaxInstructionsChars = 16384
 // on HarnessSpec.roles.
 const MaxRoles = 32
 
+// MaxRoleNameChars and RoleNamePattern are the rules on a role's name (its
+// key under roles). They match the map key rules on HarnessSpec.roles.
+const (
+	MaxRoleNameChars = 64
+	RoleNamePattern  = `^[a-z0-9][a-z0-9_-]*$`
+)
+
 // MaxRoleDescriptionChars caps a role description, counted in characters.
 // It matches the max_len on Role.description.
 const MaxRoleDescriptionChars = 512

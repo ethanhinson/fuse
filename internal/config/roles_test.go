@@ -212,6 +212,20 @@ func TestProblemsRoles(t *testing.T) {
 			c.Roles = map[string]RoleConfig{"a": {Description: "d"}, "b": {Description: "e", Instructions: "brief"}}
 			c.Workflows["wf"] = WorkflowConfig{Skill: "wf", Roles: []string{"b"}}
 		}, "", ""},
+		{"uppercase role name", func(c *Config) { c.Roles = map[string]RoleConfig{"Reviewer": {Description: "d"}} }, "roles.Reviewer", "^[a-z0-9][a-z0-9_-]*$"},
+		{"leading dash role name", func(c *Config) { c.Roles = map[string]RoleConfig{"-a": {Description: "d"}} }, "roles.-a", "must match"},
+		{"dotted role name maps to roles", func(c *Config) { c.Roles = map[string]RoleConfig{"a.b": {Description: "d"}} }, "roles", `"a.b"`},
+		{"empty role name maps to roles", func(c *Config) { c.Roles = map[string]RoleConfig{"": {Description: "d"}} }, "roles", "must match"},
+		{"role name too long", func(c *Config) {
+			c.Roles = map[string]RoleConfig{strings.Repeat("a", 65): {Description: "d"}}
+		}, "roles." + strings.Repeat("a", 65), "64"},
+		{"role name at limit", func(c *Config) {
+			c.Roles = map[string]RoleConfig{strings.Repeat("a", 64): {Description: "d"}}
+		}, "", ""},
+		{"role name with underscore and dash", func(c *Config) { c.Roles = map[string]RoleConfig{"0_a-b": {Description: "d"}} }, "", ""},
+		{"empty tool name", func(c *Config) {
+			c.Roles = map[string]RoleConfig{"a": {Description: "d", Tools: []string{"read_file", ""}}}
+		}, "roles.a.tools[1]", "empty"},
 		{"unknown tool and model are not resolved", func(c *Config) {
 			c.Roles = map[string]RoleConfig{"a": {Description: "d", Tools: []string{"no_such_tool"}, Model: "no-such-alias"}}
 		}, "", ""},

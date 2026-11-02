@@ -227,6 +227,22 @@ func (c Config) Problems() []Problem {
 	}
 	for _, name := range sortedKeys(c.Roles) {
 		r := c.Roles[name]
+		if !roleNameRE.MatchString(name) || len(name) > MaxRoleNameChars {
+			// A name that is empty or holds a dot cannot be addressed as one
+			// path part, so it is reported on the roles field itself. The
+			// role's other fields are not checked until its name is valid.
+			path := "roles." + name
+			if name == "" || strings.Contains(name, ".") {
+				path = "roles"
+			}
+			add(path, "role name %q must match %s and be at most %d characters", name, RoleNamePattern, MaxRoleNameChars)
+			continue
+		}
+		for i, tool := range r.Tools {
+			if tool == "" {
+				add(fmt.Sprintf("roles.%s.tools[%d]", name, i), "must not be empty: name a tool, or omit tools to inherit the main agent's")
+			}
+		}
 		if strings.TrimSpace(r.Description) == "" {
 			add("roles."+name+".description", "is required: what the main agent reads when deciding whom to hand work to")
 		} else if n := utf8.RuneCountInString(r.Description); n > MaxRoleDescriptionChars {
@@ -246,6 +262,9 @@ func (c Config) Problems() []Problem {
 
 	return ps
 }
+
+// roleNameRE is RoleNamePattern compiled.
+var roleNameRE = regexp.MustCompile(RoleNamePattern)
 
 // limitProblems checks loop_server.limits (change 0103): no negative axis, and
 // every override key is a tenant id a principal can actually carry.

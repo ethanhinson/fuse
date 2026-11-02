@@ -548,6 +548,13 @@ func TestRoleLimitsMatchProto(t *testing.T) {
 	if got := rulesOf(roles).GetMap().GetMaxPairs(); got != uint64(config.MaxRoles) {
 		t.Errorf("roles max_pairs = %d, config.MaxRoles = %d", got, config.MaxRoles)
 	}
+	keys := rulesOf(roles).GetMap().GetKeys().GetString()
+	if got := keys.GetMaxLen(); got != uint64(config.MaxRoleNameChars) {
+		t.Errorf("roles key max_len = %d, config.MaxRoleNameChars = %d", got, config.MaxRoleNameChars)
+	}
+	if got := keys.GetPattern(); got != config.RoleNamePattern {
+		t.Errorf("roles key pattern = %q, config.RoleNamePattern = %q", got, config.RoleNamePattern)
+	}
 	role := (&harnessv1.Role{}).ProtoReflect().Descriptor().Fields()
 	if got := rulesOf(role.ByName("description")).GetString().GetMaxLen(); got != uint64(config.MaxRoleDescriptionChars) {
 		t.Errorf("role description max_len = %d, config.MaxRoleDescriptionChars = %d", got, config.MaxRoleDescriptionChars)
