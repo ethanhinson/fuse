@@ -121,7 +121,10 @@ type AgentNode struct {
 	// governed by that workflow's pool. Empty on every other node. It is never
 	// mutated after that, so it needs no lock. (0034)
 	WorkflowRoot string
-	Events       []AgentEvent
+	// Role is the role this node was spawned as, if any (0114). Set at node
+	// creation from SpawnOpts.Role and never mutated after, so it needs no lock.
+	Role   string
+	Events []AgentEvent
 	// Turns records one TurnMark per conversational turn, append-ordered, and is
 	// written only by AgentTree.BeginTurn/EndTurn on the ROOT node — child nodes
 	// leave it empty. Guarded by mu like the rest of the mutable state; UI code
@@ -205,6 +208,7 @@ type NodeView struct {
 	TokensIn     int
 	TokensOut    int
 	WorkflowRoot string // the workflow this node roots, if any (0034)
+	Role         string // the role this node was spawned as, if any (0114)
 	// Turns is a defensive copy of the node's conversational turn marks, taken
 	// under the node lock: a consumer cannot mutate node state through it, and
 	// the slice header cannot race a concurrent BeginTurn append. Empty for every
@@ -231,6 +235,7 @@ func (n *AgentNode) Snapshot() NodeView {
 		TokensIn:      n.TokensIn,
 		TokensOut:     n.TokensOut,
 		WorkflowRoot:  n.WorkflowRoot,
+		Role:          n.Role,
 		Turns:         append([]TurnMark(nil), n.Turns...),
 		SpawnedInTurn: n.SpawnedInTurn,
 	}

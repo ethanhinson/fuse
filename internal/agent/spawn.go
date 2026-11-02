@@ -73,6 +73,10 @@ type SpawnOpts struct {
 	// builder registers the pool. Empty for every other spawn. Refused from inside
 	// an active workflow subtree (ErrNestedWorkflow).
 	Workflow string
+	// Role names a top-level role (change 0114); empty for every other spawn.
+	// The binding's child builder resolves it to the role's brief, tool set and
+	// model.
+	Role string
 	// Expects, when non-nil, is a JSON Schema (a decoded schema document, e.g.
 	// map[string]any) the parent wants the child's final result to conform to
 	// (change 0024). It is an asymmetric hint, not a constraint: the spawner
@@ -325,7 +329,11 @@ func (s *Spawner) WithBuilder(fn ChildBuilder) *Spawner {
 
 // Spawn creates a child agent running locally in a goroutine.
 func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (h AgentHandle, err error) {
-	ctx, span := s.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationSpawn, Name: "child", Fields: []observe.Field{{Key: "worker", Value: opts.Worker}}})
+	fields := []observe.Field{{Key: "worker", Value: opts.Worker}}
+	if opts.Role != "" {
+		fields = append(fields, observe.Field{Key: "role", Value: opts.Role})
+	}
+	ctx, span := s.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationSpawn, Name: "child", Fields: fields})
 	async := false
 	defer func() {
 		if async {
@@ -462,6 +470,7 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int, spa
 		Depth:         depth,
 		SpawnedInTurn: spawnedInTurn,
 		WorkflowRoot:  opts.Workflow,
+		Role:          opts.Role,
 	}
 	doneCh := make(chan SpawnDone, 1)
 	childCtx, cancel := context.WithCancel(ctx)
@@ -676,6 +685,7 @@ func (s *Spawner) emitSpawnStart(node *AgentNode, task string) {
 		ChildNodeID: node.ID,
 		Label:       node.Label,
 		Task:        task,
+		Role:        node.Role,
 	})
 	if err != nil {
 		return
