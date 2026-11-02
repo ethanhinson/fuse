@@ -2,6 +2,7 @@ package harness_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -251,5 +252,54 @@ func TestValidateInstructionsLength(t *testing.T) {
 	}
 	if v.Message == "" {
 		t.Error("empty message")
+	}
+}
+
+// TestValidateShapeRoles pins the shape rules on named roles: a required
+// description of at most 512 characters, instructions of at most 16384
+// characters, at most 32 roles under the workflow key pattern, and non-empty
+// tool names (an empty tool list inherits and is valid).
+func TestValidateShapeRoles(t *testing.T) {
+	type want struct{ path, rule string }
+	manyRoles := func(n int) map[string]*harnessv1.Role {
+		out := map[string]*harnessv1.Role{}
+		for i := 0; i < n; i++ {
+			out[fmt.Sprintf("r%02d", i)] = &harnessv1.Role{Description: "d"}
+		}
+		return out
+	}
+	one := func(r *harnessv1.Role) map[string]*harnessv1.Role { return map[string]*harnessv1.Role{"a": r} }
+	cases := []struct {
+		name  string
+		roles map[string]*harnessv1.Role
+		want  []want
+	}{
+		{"missing description", one(&harnessv1.Role{}), []want{{`roles["a"].description`, "string.min_len"}}},
+		{"description too long", one(&harnessv1.Role{Description: strings.Repeat("a", 513)}), []want{{`roles["a"].description`, "string.max_len"}}},
+		{"multibyte description at limit", one(&harnessv1.Role{Description: strings.Repeat("é", 512)}), nil},
+		{"instructions too long", one(&harnessv1.Role{Description: "d", Instructions: strings.Repeat("a", 16385)}), []want{{`roles["a"].instructions`, "string.max_len"}}},
+		{"multibyte instructions at limit", one(&harnessv1.Role{Description: "d", Instructions: strings.Repeat("é", 16384)}), nil},
+		{"too many roles", manyRoles(33), []want{{"roles", "map.max_pairs"}}},
+		{"roles at limit", manyRoles(32), nil},
+		{"bad key", map[string]*harnessv1.Role{"Bad Key": {Description: "d"}}, []want{{`roles["Bad Key"]`, "string.pattern"}}},
+		{"empty tool name", one(&harnessv1.Role{Description: "d", Tools: []string{""}}), []want{{`roles["a"].tools[0]`, "string.min_len"}}},
+		{"no tools inherits", one(&harnessv1.Role{Description: "d", Tools: nil}), nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := byPath(t, harness.ValidateShape(&harnessv1.HarnessSpec{Roles: tc.roles}))
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d violations, want %d: %+v", len(got), len(tc.want), got)
+			}
+			for _, w := range tc.want {
+				v, ok := got[w.path]
+				if !ok {
+					t.Fatalf("no violation at %s: %+v", w.path, got)
+				}
+				if v.RuleID != w.rule {
+					t.Errorf("%s rule = %q, want %q", w.path, v.RuleID, w.rule)
+				}
+			}
+		})
 	}
 }

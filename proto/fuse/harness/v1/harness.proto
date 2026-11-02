@@ -174,6 +174,29 @@ message HarnessSpec {
       widget: WIDGET_TEXTAREA
     }
   ];
+
+  // Named helper definitions. A role says who a helper is: a description the
+  // main agent reads when choosing whom to hand work to, a brief for the
+  // helper's system prompt, and optionally a tool set and a model. A workflow
+  // says how a big job is divided up, and lists the roles that may take part
+  // in it. Defining roles does not change how a loop runs yet: the runtime
+  // validates and records them, and later changes hand them to subagents.
+  map<string, Role> roles = 15 [
+    (buf.validate.field).map = {
+      max_pairs: 32
+      keys: {
+        string: {
+          min_len: 1
+          max_len: 64
+          pattern: "^[a-z0-9][a-z0-9_-]*$"
+        }
+      }
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Roles"
+      help: "Named helpers the main agent can hand work to. A role says who a helper is; a workflow says how a big job is divided up."
+    }
+  ];
 }
 
 // Models holds model aliases and the default alias.
@@ -582,6 +605,13 @@ message Workflow {
       widget: WIDGET_KEY_VALUE
     }
   ];
+  // Names of the top-level roles that may take part in this workflow. Every
+  // name must be defined under HarnessSpec.roles.
+  repeated string roles = 4 [(fuse.harness.v1.ui) = {
+    label: "Roles"
+    help: "Roles that may take part in this workflow. Each must be defined under roles."
+    widget: WIDGET_LIST
+  }];
 }
 
 // Pool is a workflow subtree's spawn policy. 0 = that brake off.
@@ -634,6 +664,57 @@ message Worker {
     (buf.validate.field).string.max_len = 128,
     (fuse.harness.v1.ui) = {
       label: "Model"
+      widget: WIDGET_MODEL_ALIAS
+    }
+  ];
+}
+
+// Role is a named, reusable helper definition.
+message Role {
+  // What the main agent reads when deciding whom to hand work to.
+  string description = 1 [
+    (buf.validate.field).string = {
+      min_len: 1
+      max_len: 512
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Description"
+      help: "What the main agent reads when deciding whom to hand work to."
+      widget: WIDGET_TEXT
+    }
+  ];
+  // The helper's brief, composed into its system prompt.
+  string instructions = 2 [
+    (buf.validate.field).string.max_len = 16384,
+    (fuse.harness.v1.ui) = {
+      label: "Instructions"
+      help: "The helper's brief, added to its system prompt."
+      widget: WIDGET_TEXTAREA
+    }
+  ];
+  // Empty: the helper inherits the main agent's tool set. Non-empty: the
+  // helper's whole tool set, under the same rules as Worker.tools: it can only
+  // narrow, the blackboard tools are always added, and the helper can nest
+  // exactly when the list names spawn_agent. Names are not checked against the
+  // runtime's tools at validation time (tool sets are dynamic).
+  repeated string tools = 3 [
+    (buf.validate.field).repeated = {
+      items: {
+        string: {min_len: 1}
+      }
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Tools"
+      help: "Leave empty to inherit the main agent's tools. Otherwise this is the helper's whole tool set: it can only narrow, and the helper can nest only when the list names spawn_agent."
+      widget: WIDGET_LIST
+    }
+  ];
+  // Model alias; empty inherits the main agent's model.
+  string model = 4 [
+    (buf.validate.field).string.max_len = 128,
+    (fuse.harness.v1.ui) = {
+      label: "Model"
+      help: "Model alias. Leave empty to use the main agent's model."
       widget: WIDGET_MODEL_ALIAS
     }
   ];

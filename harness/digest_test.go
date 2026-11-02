@@ -69,8 +69,46 @@ func rolelessSpec() *harnessv1.HarnessSpec {
 // TestDigestOfRolelessSpecIsPinned pins today's digest of a spec without
 // roles. Adding roles to the schema must not move it.
 func TestDigestOfRolelessSpecIsPinned(t *testing.T) {
-	const want = "sha256:350d50f5cdf104c50481eb73b47c9f8a4fda9990ca0364530fcafcf058065e59"
-	if got := Digest(rolelessSpec()); got != want {
-		t.Fatalf("Digest(rolelessSpec()) = %s, want %s", got, want)
+	if got := Digest(rolelessSpec()); got != rolelessDigest {
+		t.Fatalf("Digest(rolelessSpec()) = %s, want %s", got, rolelessDigest)
+	}
+}
+
+// rolelessDigest is the digest of rolelessSpec, captured before roles existed
+// in the schema.
+const rolelessDigest = "sha256:350d50f5cdf104c50481eb73b47c9f8a4fda9990ca0364530fcafcf058065e59"
+
+// rolesSpec is rolelessSpec with two roles defined.
+func rolesSpec() *harnessv1.HarnessSpec {
+	s := rolelessSpec()
+	s.Roles = map[string]*harnessv1.Role{
+		"reviewer":   {Description: "Reviews diffs.", Instructions: "Be strict.", Tools: []string{"read_file"}, Model: "fast"},
+		"researcher": {Description: "Finds facts.", Instructions: "Cite sources."},
+	}
+	return s
+}
+
+// TestDigestCoversRoles pins that roles and workflow role lists are part of the
+// digest, and that empty ones are not encoded, so a spec without roles keeps
+// its digest.
+func TestDigestCoversRoles(t *testing.T) {
+	empty := rolelessSpec()
+	empty.Roles = map[string]*harnessv1.Role{}
+	empty.Workflows["review"].Roles = []string{}
+	if got := Digest(empty); got != rolelessDigest {
+		t.Errorf("Digest(empty roles) = %s, want %s", got, rolelessDigest)
+	}
+
+	a, b := rolesSpec(), rolesSpec()
+	b.Roles["reviewer"].Instructions = "Be lenient."
+	if Digest(a) == Digest(b) {
+		t.Error("specs differing only in a role's instructions share a digest")
+	}
+
+	c, d := rolesSpec(), rolesSpec()
+	c.Workflows["review"].Roles = []string{"reviewer"}
+	d.Workflows["review"].Roles = []string{"researcher"}
+	if Digest(c) == Digest(d) {
+		t.Error("specs differing only in a workflow's roles share a digest")
 	}
 }
