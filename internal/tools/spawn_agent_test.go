@@ -478,3 +478,73 @@ func TestSpawnAgentSchemaGolden(t *testing.T) {
 		})
 	}
 }
+
+// --- change 0114: role param ---
+
+// TestSpawnAgentNoRolesNoParam pins that WithRoles(nil) changes nothing: every
+// no-roles golden stays byte-identical.
+func TestSpawnAgentNoRolesNoParam(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		tool *SpawnAgentTool
+	}{
+		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x")).WithRoles(nil)},
+		{"testdata/spawn_agent_schema_workflows.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkflows([]string{"wf", "research"}).WithRoles(nil)},
+		{"testdata/spawn_agent_schema_workers.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkers([]string{"reader"}).WithRoles(nil)},
+		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x")).WithRoles([]RoleOption{})},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			want, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := schemaGolden(t, tc.tool); !bytes.Equal(got, want) {
+				t.Errorf("WithRoles(nil) changed the schema for %s:\n got: %s\nwant: %s", tc.file, got, want)
+			}
+		})
+	}
+}
+
+func TestSpawnAgentWithRolesAddsEnumAndLines(t *testing.T) {
+	plain := NewSpawnAgentTool(okSpawn("x"))
+	tool := plain.WithRoles([]RoleOption{
+		{"writer", "Writes prose."},
+		{"reviewer", "Reviews code\nfor bugs."},
+	})
+	props := tool.Parameters()["properties"].(map[string]any)
+	r, ok := props["role"].(map[string]any)
+	if !ok {
+		t.Fatal("role param should be present when roles are configured")
+	}
+	if r["type"] != "string" {
+		t.Errorf("role type = %v, want string", r["type"])
+	}
+	enum, ok := r["enum"].([]any)
+	if !ok || len(enum) != 2 || enum[0] != "reviewer" || enum[1] != "writer" {
+		t.Fatalf("role enum = %v, want [reviewer writer]", r["enum"])
+	}
+	desc, _ := r["description"].(string)
+	rev := strings.Index(desc, "\n- reviewer — Reviews code for bugs.")
+	wri := strings.Index(desc, "\n- writer — Writes prose.")
+	if rev < 0 || wri < 0 || rev > wri {
+		t.Errorf("role description lines missing or out of order: %q", desc)
+	}
+	if got, want := tool.Description(), plain.Description(); got != want {
+		t.Errorf("Description changed with roles:\n got %q\nwant %q", got, want)
+	}
+	if _, ok := plain.Parameters()["properties"].(map[string]any)["role"]; ok {
+		t.Error("WithRoles must not mutate the receiver")
+	}
+}
+
+func TestSpawnAgentForwardsRole(t *testing.T) {
+	var got SpawnRequest
+	tool := NewSpawnAgentTool(captureSpawn(&got))
+	res := tool.Execute(context.Background(), `{"label":"c","task":"t","role":"reviewer"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if got.Role != "reviewer" {
+		t.Errorf("SpawnRequest.Role = %q, want reviewer", got.Role)
+	}
+}
