@@ -2,6 +2,10 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -135,5 +139,94 @@ func TestSynthesizeMalformedReplyReasks(t *testing.T) {
 	}
 	if p.Name != "synth" {
 		t.Fatalf("expected recovered pipeline, got %+v", p)
+	}
+}
+
+var updateSynthGolden = flag.Bool("update-synth-golden", false, "rewrite the no-roles synthesis goldens")
+
+// synthNoRolesContext is the palette the no-roles goldens are captured with.
+var synthNoRolesContext = SynthContext{Workers: []string{"searcher", "ranker"}, Tools: []string{"read_file", "web_search"}}
+
+func checkSynthGolden(t *testing.T, name string, got []byte) {
+	t.Helper()
+	path := filepath.Join("testdata", name)
+	if *updateSynthGolden {
+		if err := os.MkdirAll("testdata", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, got, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden (run with -update-synth-golden to create it): %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("%s changed:\n got: %q\nwant: %q", name, got, want)
+	}
+}
+
+// TestSynthesisNoRolesGolden: with no roles, the synthesis system prompt and
+// the Expects schema stay byte-identical to before roles.
+func TestSynthesisNoRolesGolden(t *testing.T) {
+	checkSynthGolden(t, "synth_prompt_noroles.golden", []byte(synthesisSystemPrompt(synthNoRolesContext)))
+	b, err := json.MarshalIndent(pipelineJSONSchema(nil), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkSynthGolden(t, "synth_schema_noroles.golden", append(b, '\n'))
+}
+
+// TestSynthesisPromptListsRoles: with roles, the prompt lists each role as
+// "name — description" (description on one line) and the schema description
+// and Expects schema gain the role field.
+func TestSynthesisPromptListsRoles(t *testing.T) {
+	sc := synthNoRolesContext
+	sc.Roles = []SynthRole{{Name: "reviewer", Description: "Reviews code\nfor bugs."}, {Name: "writer", Description: "Writes prose."}}
+	got := synthesisSystemPrompt(sc)
+	for _, want := range []string{
+		"Available roles (set a step's role to one of these instead of worker):\n- reviewer — Reviews code for bugs.\n- writer — Writes prose.\n",
+		`"role": string (one of the available roles; never together with worker),`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, got)
+		}
+	}
+	props := pipelineJSONSchema([]string{"reviewer", "writer"})["properties"].(map[string]any)["steps"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+	if _, ok := props["role"]; !ok {
+		t.Fatal("Expects schema lacks the role field with roles defined")
+	}
+}
+
+// TestSynthesizeReasksOnUnknownRole: a synthesized step naming a role outside
+// the palette is rejected and fed back; a corrected reply is accepted.
+func TestSynthesizeReasksOnUnknownRole(t *testing.T) {
+	bad := `{"name":"p","workflow":"w","steps":[{"name":"a","role":"ghost","prompt":"go"}]}`
+	good := `{"name":"p","workflow":"w","steps":[{"name":"a","role":"reviewer","prompt":"go"}]}`
+	var calls int32
+	var saw string
+	sp := scriptedSpawner(t, []string{bad, good}, &saw, &calls)
+	sc := SynthContext{Roles: []SynthRole{{Name: "reviewer", Description: "Reviews."}}}
+	p, err := Synthesize(context.Background(), "goal", sc, sp, Caps{})
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if p.Steps[0].Role != "reviewer" || atomic.LoadInt32(&calls) != 2 {
+		t.Fatalf("got role %q after %d calls, want reviewer after 2", p.Steps[0].Role, calls)
+	}
+	if !strings.Contains(saw, `unknown role "ghost" (available: reviewer)`) {
+		t.Fatalf("re-ask did not feed back the unknown role: %q", saw)
+	}
+}
+
+// TestSynthesizeNoRolesRefusesRoleStep: with no roles defined, a synthesized
+// role step is an unknown role (re-asked, then a loud failure at the cap).
+func TestSynthesizeNoRolesRefusesRoleStep(t *testing.T) {
+	bad := `{"name":"p","workflow":"w","steps":[{"name":"a","role":"ghost","prompt":"go"}]}`
+	sp := scriptedSpawner(t, []string{bad}, nil, nil)
+	_, err := Synthesize(context.Background(), "goal", SynthContext{}, sp, Caps{MaxAttempts: 2})
+	if err == nil || !strings.Contains(err.Error(), `unknown role "ghost" (available: none configured)`) {
+		t.Fatalf("err = %v, want the unknown-role failure", err)
 	}
 }

@@ -9,11 +9,20 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 )
 
+// SynthRole is one role a synthesized pipeline may assign a step to: its name
+// and the description the synthesizer chooses by.
+type SynthRole struct {
+	Name        string
+	Description string
+}
+
 // SynthContext carries the palette a synthesized pipeline may draw from: the
-// available worker types and tool names. Both are advisory context injected into
-// the synthesis prompt.
+// available worker types, roles and tool names. All are advisory context
+// injected into the synthesis prompt; a step naming a role outside Roles is
+// rejected and re-asked.
 type SynthContext struct {
 	Workers []string
+	Roles   []SynthRole
 	Tools   []string
 }
 
@@ -34,7 +43,8 @@ func Synthesize(ctx context.Context, goal string, sc SynthContext, sp *agent.Spa
 		attempts = defaultSynthAttempts
 	}
 
-	schema := pipelineJSONSchema()
+	roleNames := synthRoleNames(sc.Roles)
+	schema := pipelineJSONSchema(roleNames)
 	baseSystem := synthesisSystemPrompt(sc)
 
 	var lastErr error
@@ -63,6 +73,10 @@ func Synthesize(ctx context.Context, goal string, sc SynthContext, sp *agent.Spa
 			lastErr = perr
 			continue
 		}
+		if rerr := CheckRoles(p, roleNames); rerr != nil {
+			lastErr = rerr
+			continue
+		}
 		if verr := Validate(p, caps); verr != nil {
 			lastErr = verr
 			continue
@@ -70,6 +84,18 @@ func Synthesize(ctx context.Context, goal string, sc SynthContext, sp *agent.Spa
 		return p, nil
 	}
 	return nil, fmt.Errorf("pipeline: synthesis failed after %d attempt(s): %w", attempts, lastErr)
+}
+
+// synthRoleNames returns the palette's role names in palette order.
+func synthRoleNames(roles []SynthRole) []string {
+	if len(roles) == 0 {
+		return nil
+	}
+	out := make([]string, len(roles))
+	for i, r := range roles {
+		out[i] = r.Name
+	}
+	return out
 }
 
 // synthResult extracts the child's structured value (when it matched the schema)
@@ -105,12 +131,18 @@ func synthesisSystemPrompt(sc SynthContext) string {
 	b.WriteString("You are a pipeline synthesizer. Produce a single JSON object describing a ")
 	b.WriteString("deterministic DAG pipeline that accomplishes the user's goal.\n\n")
 	b.WriteString("The pipeline JSON schema:\n")
-	b.WriteString(pipelineSchemaDescription())
+	b.WriteString(pipelineSchemaDescription(len(sc.Roles) > 0))
 	b.WriteString("\n")
 	if len(sc.Workers) > 0 {
 		b.WriteString("Available worker types: ")
 		b.WriteString(strings.Join(sc.Workers, ", "))
 		b.WriteString("\n")
+	}
+	if len(sc.Roles) > 0 {
+		b.WriteString("Available roles (set a step's role to one of these instead of worker):\n")
+		for _, r := range sc.Roles {
+			b.WriteString("- " + r.Name + " — " + strings.Join(strings.Fields(r.Description), " ") + "\n")
+		}
 	}
 	if len(sc.Tools) > 0 {
 		b.WriteString("Available tools: ")
@@ -122,9 +154,22 @@ func synthesisSystemPrompt(sc SynthContext) string {
 }
 
 // pipelineSchemaDescription is a compact human/LLM-readable description of the
-// pipeline shape, embedded in the synthesis system prompt.
-func pipelineSchemaDescription() string {
-	return `{
+// pipeline shape, embedded in the synthesis system prompt. withRoles adds the
+// step's role field after its worker field; without it the text is unchanged.
+func pipelineSchemaDescription(withRoles bool) string {
+	if !withRoles {
+		return pipelineSchemaText
+	}
+	return strings.Replace(pipelineSchemaText, schemaWorkerLine, schemaWorkerLine+schemaRoleLine, 1)
+}
+
+const (
+	schemaWorkerLine = `      "worker": string (one of the available worker types),` + "\n"
+	schemaRoleLine   = `      "role": string (one of the available roles; never together with worker),` + "\n"
+)
+
+// pipelineSchemaText is the role-free pipeline shape description.
+const pipelineSchemaText = `{
   "name": string,
   "workflow": string (optional workflow pool),
   "steps": [
@@ -143,11 +188,12 @@ func pipelineSchemaDescription() string {
   ]
 }
 The graph must be acyclic over depends_on and goto edges; every depends_on/goto/default must name a real step.`
-}
 
 // pipelineJSONSchema returns a JSON Schema (as a decoded map) for the Pipeline
 // shape, used as the spawn's Expects so the child is asked for conforming JSON.
-func pipelineJSONSchema() map[string]any {
+// A non-empty roles adds the step's role field; without roles the schema is
+// unchanged.
+func pipelineJSONSchema(roles []string) map[string]any {
 	stepProps := map[string]any{
 		"name":       map[string]any{"type": "string"},
 		"worker":     map[string]any{"type": "string"},
@@ -158,6 +204,9 @@ func pipelineJSONSchema() map[string]any {
 		"fanout":     map[string]any{"type": "integer"},
 		"on_error":   map[string]any{"type": "string"},
 		"default":    map[string]any{"type": "string"},
+	}
+	if len(roles) > 0 {
+		stepProps["role"] = map[string]any{"type": "string"}
 	}
 	return map[string]any{
 		"type": "object",
