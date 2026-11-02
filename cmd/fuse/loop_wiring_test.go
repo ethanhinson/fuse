@@ -889,3 +889,35 @@ func TestPipelineSynthRolePalette(t *testing.T) {
 		t.Fatalf("no-roles synthesis prompt mentions roles: %q", prompt)
 	}
 }
+
+// pipelineRunDescription returns the description of reg's pipeline_run.
+func pipelineRunDescription(t *testing.T, reg *tools.Registry) string {
+	t.Helper()
+	for _, tl := range reg.Tools() {
+		if tl.Name() == "pipeline_run" {
+			return tl.Description()
+		}
+	}
+	t.Fatal("registry has no pipeline_run")
+	return ""
+}
+
+// TestWirePipelineAdvertisesRoles: pipeline_run's description lists the roles
+// offered at the node, and is byte-identical to the role-free tool when no
+// roles are defined.
+func TestWirePipelineAdvertisesRoles(t *testing.T) {
+	h := newWiringHarness(t)
+	reg := tools.NewRegistry()
+	h.w.wirePipeline(reg, h.root, nil)
+	if d := pipelineRunDescription(t, reg); !strings.Contains(d, "\n- reviewer — Reviews code.") || !strings.Contains(d, "\n- writer — Writes prose.") {
+		t.Fatalf("root pipeline_run description lacks the roles: %q", d)
+	}
+
+	plain := newWiringHarness(t)
+	plain.w.scope = newWorkflowScope(plain.tree, plain.cfg.Workflows, nil)
+	reg = tools.NewRegistry()
+	plain.w.wirePipeline(reg, plain.root, nil)
+	if got, want := pipelineRunDescription(t, reg), tools.NewPipelineRunTool(nil, nil).Description(); got != want {
+		t.Fatalf("no-roles pipeline_run description changed:\n got %q\nwant %q", got, want)
+	}
+}
