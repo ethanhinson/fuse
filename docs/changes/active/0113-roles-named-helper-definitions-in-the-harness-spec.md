@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/roles-named-helper-definitions-in-the-harness-spec'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -49,3 +49,9 @@ A harness spec cannot say who a subagent is. Instructions brief only the main ag
 ## Out of scope
 
 Runtime use of roles (spawn_agent and pipelines are follow-ups). Deprecating workers. Changing the built-in research workflow. Per-role limits. Validating role tool names or model aliases.
+
+## Reconcile log
+
+### 2026-11-02
+
+Unchanged against main 58f1e92: HarnessSpec field 15 and Workflow field 4 still free; no roles concept exists yet.
