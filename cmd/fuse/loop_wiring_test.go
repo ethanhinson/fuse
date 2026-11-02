@@ -202,8 +202,8 @@ func TestRoleChildToolsReviewerBound(t *testing.T) {
 	if rev.plan.instructions != "REVIEWER-BRIEF" {
 		t.Fatalf("reviewer instructions = %q, want REVIEWER-BRIEF", rev.plan.instructions)
 	}
-	if rev.plan.role != "reviewer" {
-		t.Fatalf("reviewer plan role = %q, want reviewer", rev.plan.role)
+	if rev.node.Role != "reviewer" {
+		t.Fatalf("reviewer node role = %q, want reviewer", rev.node.Role)
 	}
 }
 
@@ -224,15 +224,16 @@ func TestRoleChildToolsWriterInherits(t *testing.T) {
 	if writer.plan.model != "" {
 		t.Fatalf("writer model pin = %q, want none", writer.plan.model)
 	}
-	if plain.plan.instructions != "" || plain.plan.role != "" {
+	if plain.plan.instructions != "" || plain.node.Role != "" {
 		t.Fatalf("plain child plan = %+v, want no brief and no role", plain.plan)
 	}
 }
 
-// TestRoleCallModelWins: childTools hands every site the role's model pin as
-// plan.model; the site's precedence (opts.ModelID, then plan.model, then the
-// binding alias) is covered end to end by the role parity test.
-func TestRoleCallModelWins(t *testing.T) {
+// TestRolePlanCarriesPinWhenCallNamesModel: even when the spawn call names its
+// own model, childTools still hands the site the role's pin as plan.model; it
+// is the site that applies opts.ModelID ahead of plan.model (and the binding
+// alias after), and that end-to-end precedence is covered by role_parity_test.go.
+func TestRolePlanCarriesPinWhenCallNamesModel(t *testing.T) {
 	h := newWiringHarness(t)
 	rev := h.spawn(h.root, agent.SpawnOpts{Label: "rev", Task: "t", Role: "reviewer", ModelID: "call"})
 	if rev.plan.model != "rmodel" {

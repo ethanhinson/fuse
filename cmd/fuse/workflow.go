@@ -202,7 +202,6 @@ type childPlan struct {
 	model        string   // worker or role model pin, "" when none
 	bound        bool     // a worker or a role with a non-empty tool set was selected
 	instructions string   // the role brief for the child's instructions slot, "" when none
-	role         string   // the chosen role name, "" when none
 }
 
 // roleNames returns every defined role name, sorted.
@@ -535,8 +534,9 @@ func (s *workflowScope) spawnFunc(sp *agent.Spawner, parent *agent.AgentNode) to
 // (agent.ErrWorkerOutsideWorkflow). It repeats the name checks for paths that
 // call Spawner.Spawn directly (pipeline steps). A role child (change 0114) is
 // checked against its parent's offered roles before any activation, and its
-// plan carries the role's tools, model pin, brief and name. A role child that
-// roots a workflow is checked against that workflow's offered roles instead.
+// plan carries the role's tools, model pin and brief (the node's Role comes
+// from opts.Role at creation). A role child that roots a workflow is checked against
+// that workflow's offered roles instead.
 func (s *workflowScope) prepareChild(opts agent.SpawnOpts, child *agent.AgentNode) (childPlan, error) {
 	if opts.Role != "" {
 		if err := s.checkRole(child.ParentID, opts.Workflow, opts.Role, opts.SystemPrompt, opts.Worker); err != nil {
@@ -554,7 +554,7 @@ func (s *workflowScope) prepareChild(opts agent.SpawnOpts, child *agent.AgentNod
 		if err != nil {
 			return childPlan{}, err
 		}
-		return childPlan{tools: rt, bound: bound, model: role.Model, instructions: role.Instructions, role: opts.Role}, nil
+		return childPlan{tools: rt, bound: bound, model: role.Model, instructions: role.Instructions}, nil
 	}
 	act, _ := s.activationOf(child.ID)
 	if act == nil {

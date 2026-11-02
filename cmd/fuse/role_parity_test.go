@@ -229,14 +229,26 @@ func TestRoleParityAcrossChildBuilders(t *testing.T) {
 
 // TestRoleParityTableCoversEveryChildBuilder keeps the parity table in step
 // with the code: one row per child-builder site, plus one for the loop
-// server's second role source (operator config and harness spec).
+// server's second role source (operator config and harness spec). A builder
+// installs through either entry point, agent.WithChildBuilder( or a spawner's
+// .WithBuilder(, so both are counted.
 func TestRoleParityTableCoversEveryChildBuilder(t *testing.T) {
-	count := 0
+	// workflowScope.runner's pipeline coordinator is the one known .WithBuilder(
+	// site without a row: it builds a model-less coordinator node that runs the
+	// pipeline steps itself and never takes a role, so there is nothing to
+	// route. Any other .WithBuilder( is a new child-builder site.
+	const modelLessWithBuilderSites = 1
+	childBuilders, withBuilders := 0, 0
 	for _, src := range nonTestGoFiles(t) {
-		count += strings.Count(src, "agent.WithChildBuilder(")
+		childBuilders += strings.Count(src, "agent.WithChildBuilder(")
+		withBuilders += strings.Count(src, ".WithBuilder(")
 	}
+	if withBuilders < modelLessWithBuilderSites {
+		t.Fatalf(".WithBuilder( appears %d times, want at least the %d model-less coordinator site; update this guard", withBuilders, modelLessWithBuilderSites)
+	}
+	count := childBuilders + withBuilders - modelLessWithBuilderSites
 	if count > 4 {
-		t.Fatalf("agent.WithChildBuilder( appears %d times: a new child-builder site exists; add a row to the role parity table", count)
+		t.Fatalf("child-builder entry points (agent.WithChildBuilder( and .WithBuilder() name %d role-taking child-builder sites, want at most 4: a new child-builder site exists; add a row to the role parity table", count)
 	}
 	if rows := len(roleParityRows()); rows != count+1 {
 		t.Fatalf("role parity table has %d rows, want %d (one per child-builder site, plus the loop server's spec source)", rows, count+1)

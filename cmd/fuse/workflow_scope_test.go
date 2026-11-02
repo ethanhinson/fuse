@@ -604,7 +604,7 @@ func TestPrepareChildRolePlan(t *testing.T) {
 	h := newScopeHarnessRoles(t, scopeWF(), roles)
 
 	p := h.spawn(h.root, agent.SpawnOpts{Label: "r", Task: "t", Role: "reviewer"})
-	want := childPlan{tools: []string{"read_file", "grep"}, bound: true, model: "rmodel", instructions: "REVIEWER-BRIEF", role: "reviewer"}
+	want := childPlan{tools: []string{"read_file", "grep"}, bound: true, model: "rmodel", instructions: "REVIEWER-BRIEF"}
 	if p.err != nil || !reflect.DeepEqual(p.plan, want) {
 		t.Fatalf("reviewer plan = %+v, %v; want %+v", p.plan, p.err, want)
 	}
@@ -615,7 +615,7 @@ func TestPrepareChildRolePlan(t *testing.T) {
 	}
 
 	p = h.spawn(h.root, agent.SpawnOpts{Label: "w", Task: "t", Role: "writer"})
-	want = childPlan{instructions: "WRITER-BRIEF", role: "writer"}
+	want = childPlan{instructions: "WRITER-BRIEF"}
 	if p.err != nil || !reflect.DeepEqual(p.plan, want) {
 		t.Fatalf("writer plan = %+v, %v; want %+v", p.plan, p.err, want)
 	}
@@ -697,7 +697,7 @@ func TestRoleWithWorkflowCheckedAgainstThatWorkflow(t *testing.T) {
 	if err := h.scope.checkRequest(h.root, tools.SpawnRequest{Role: "writer", Workflow: "wf"}); err != nil {
 		t.Fatalf("checkRequest(writer, wf) = %v, want nil", err)
 	}
-	if p := h.spawn(h.root, agent.SpawnOpts{Label: "w", Task: "t", Role: "writer", Workflow: "wf"}); p.err != nil || p.plan.role != "writer" {
+	if p := h.spawn(h.root, agent.SpawnOpts{Label: "w", Task: "t", Role: "writer", Workflow: "wf"}); p.err != nil || p.node.Role != "writer" {
 		t.Fatalf("prepareChild(writer, wf) = %+v, %v; want writer plan", p.plan, p.err)
 	}
 
@@ -706,7 +706,7 @@ func TestRoleWithWorkflowCheckedAgainstThatWorkflow(t *testing.T) {
 		if err := h.scope.checkRequest(h.root, tools.SpawnRequest{Role: r, Workflow: "open"}); err != nil {
 			t.Fatalf("checkRequest(%s, open) = %v, want nil", r, err)
 		}
-		if p := h.spawn(h.root, agent.SpawnOpts{Label: r, Task: "t", Role: r, Workflow: "open"}); p.err != nil || p.plan.role != r {
+		if p := h.spawn(h.root, agent.SpawnOpts{Label: r, Task: "t", Role: r, Workflow: "open"}); p.err != nil || p.node.Role != r {
 			t.Fatalf("prepareChild(%s, open) = %+v, %v; want %s plan", r, p.plan, p.err, r)
 		}
 	}
