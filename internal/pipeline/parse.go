@@ -32,6 +32,7 @@ func looksLikeJSON(data []byte) bool {
 type wireStep struct {
 	Name       string      `yaml:"name" json:"name"`
 	Worker     string      `yaml:"worker" json:"worker"`
+	Role       string      `yaml:"role" json:"role"`
 	Prompt     string      `yaml:"prompt" json:"prompt"`
 	Inputs     []string    `yaml:"inputs" json:"inputs"`
 	Outputs    []string    `yaml:"outputs" json:"outputs"`
@@ -71,6 +72,9 @@ func fromWire(w wirePipeline) (*Pipeline, error) {
 	p := &Pipeline{Name: w.Name, Workflow: w.Workflow}
 	p.Steps = make([]Step, 0, len(w.Steps))
 	for _, ws := range w.Steps {
+		if ws.Role != "" && ws.Worker != "" {
+			return nil, fmt.Errorf("pipeline: step %q: role %q and worker %q cannot be combined; name one", ws.Name, ws.Role, ws.Worker)
+		}
 		policy, err := parseOnError(ws.OnError, ws.Name)
 		if err != nil {
 			return nil, err
@@ -78,6 +82,7 @@ func fromWire(w wirePipeline) (*Pipeline, error) {
 		p.Steps = append(p.Steps, Step{
 			Name:       ws.Name,
 			Worker:     ws.Worker,
+			Role:       ws.Role,
 			Prompt:     ws.Prompt,
 			Inputs:     ws.Inputs,
 			Outputs:    ws.Outputs,
@@ -90,6 +95,28 @@ func fromWire(w wirePipeline) (*Pipeline, error) {
 		})
 	}
 	return p, nil
+}
+
+// CheckRoles refuses a pipeline whose step names a role outside known (change
+// 0115). known lists the defined role names in the order the error should show
+// them; empty means no role is defined, so any role step is refused. A step
+// with no role always passes. Roles are global, so this needs no workflow.
+func CheckRoles(p *Pipeline, known []string) error {
+	set := make(map[string]bool, len(known))
+	for _, k := range known {
+		set[k] = true
+	}
+	for _, s := range p.Steps {
+		if s.Role == "" || set[s.Role] {
+			continue
+		}
+		list := "none configured"
+		if len(known) > 0 {
+			list = strings.Join(known, ", ")
+		}
+		return fmt.Errorf("pipeline: step %q: unknown role %q (available: %s)", s.Name, s.Role, list)
+	}
+	return nil
 }
 
 // rawExpects captures the `expects` JSON Schema from either format as raw JSON

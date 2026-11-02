@@ -22,8 +22,12 @@ type Pipeline struct {
 // resolving Inputs from the blackboard into the Prompt and writing results to
 // Outputs, then routes to the next step via Conditions/Default.
 type Step struct {
-	Name    string   `yaml:"name" json:"name"`
-	Worker  string   `yaml:"worker,omitempty" json:"worker,omitempty"`
+	Name   string `yaml:"name" json:"name"`
+	Worker string `yaml:"worker,omitempty" json:"worker,omitempty"`
+	// Role names a top-level role (change 0115): the step's child is built from
+	// the role's brief, tool set and model exactly as a spawn_agent role child.
+	// Mutually exclusive with Worker. Unlike a worker, a role needs no workflow.
+	Role    string   `yaml:"role,omitempty" json:"role,omitempty"`
 	Prompt  string   `yaml:"prompt,omitempty" json:"prompt,omitempty"`
 	Inputs  []string `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	Outputs []string `yaml:"outputs,omitempty" json:"outputs,omitempty"`
