@@ -46,3 +46,31 @@ func TestDigestCoversInstructions(t *testing.T) {
 		t.Errorf("Digest(empty spec) = %s, want %s", got, empty)
 	}
 }
+
+// rolelessSpec is a fixed, realistic spec that uses no roles.
+func rolelessSpec() *harnessv1.HarnessSpec {
+	return &harnessv1.HarnessSpec{
+		Models: &harnessv1.Models{
+			DefaultAlias: "fast",
+			Entries:      map[string]*harnessv1.Model{"fast": {Id: "cloud/fast-1"}},
+		},
+		Instructions: "Review the change.",
+		MaxTokens:    4096,
+		Workflows: map[string]*harnessv1.Workflow{
+			"review": {
+				Skill:   "review",
+				Pool:    &harnessv1.Pool{Concurrent: 2, Total: 4},
+				Workers: map[string]*harnessv1.Worker{"reader": {Tools: []string{"read_file"}}},
+			},
+		},
+	}
+}
+
+// TestDigestOfRolelessSpecIsPinned pins today's digest of a spec without
+// roles. Adding roles to the schema must not move it.
+func TestDigestOfRolelessSpecIsPinned(t *testing.T) {
+	const want = "sha256:350d50f5cdf104c50481eb73b47c9f8a4fda9990ca0364530fcafcf058065e59"
+	if got := Digest(rolelessSpec()); got != want {
+		t.Fatalf("Digest(rolelessSpec()) = %s, want %s", got, want)
+	}
+}
