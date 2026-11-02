@@ -14,7 +14,7 @@ related: [112]
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-design.md](../../superpowers/specs/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-design.md) |
+| Plan | [2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md](../../superpowers/plans/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
