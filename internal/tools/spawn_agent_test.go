@@ -1,7 +1,12 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -422,5 +427,54 @@ func TestSpawnAgentForwardsWorkflow(t *testing.T) {
 	}
 	if got.Workflow != "wf" {
 		t.Errorf("SpawnRequest.Workflow = %q, want wf", got.Workflow)
+	}
+}
+
+var updateGolden = flag.Bool("update-golden", false, "rewrite internal/tools golden files")
+
+// schemaGolden renders a tool's model-facing surface (description + parameters)
+// as stable, indented JSON. encoding/json sorts map keys, so the bytes are stable.
+func schemaGolden(t *testing.T, tool *SpawnAgentTool) []byte {
+	t.Helper()
+	b, err := json.MarshalIndent(map[string]any{
+		"description": tool.Description(),
+		"parameters":  tool.Parameters(),
+	}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(b, '\n')
+}
+
+// TestSpawnAgentSchemaGolden pins the spawn_agent schema and description byte
+// for byte for each shape a binding builds without roles: plain, outside a
+// workflow (workflow enum), and inside one (worker enum).
+func TestSpawnAgentSchemaGolden(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		tool *SpawnAgentTool
+	}{
+		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x"))},
+		{"testdata/spawn_agent_schema_workflows.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkflows([]string{"wf", "research"})},
+		{"testdata/spawn_agent_schema_workers.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkers([]string{"reader"})},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			got := schemaGolden(t, tc.tool)
+			if *updateGolden {
+				if err := os.MkdirAll(filepath.Dir(tc.file), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(tc.file, got, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Errorf("spawn_agent schema differs from %s:\n got: %s\nwant: %s", tc.file, got, want)
+			}
+		})
 	}
 }

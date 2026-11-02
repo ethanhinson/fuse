@@ -325,3 +325,16 @@ func TestToolIdentityMintedPayloadShape(t *testing.T) {
 	m := payloadKeys(t, ToolIdentityMintedPayload{Subject: "s", Audience: "a", Scope: "x y", LoopID: "l"})
 	assertExactKeys(t, m, "subject", "audience", "scope", "loop_id")
 }
+
+// TestSpawnStartPayloadJSONWithoutRole pins the wire bytes of a spawn.start
+// payload that names no role: adding the role field must not change them.
+func TestSpawnStartPayloadJSONWithoutRole(t *testing.T) {
+	b, err := json.Marshal(SpawnStartPayload{ChildNodeID: "n2", Label: "researcher", Task: "do it"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"child_node_id":"n2","label":"researcher","task":"do it"}`
+	if string(b) != want {
+		t.Fatalf("spawn.start JSON = %s, want %s", b, want)
+	}
+}
