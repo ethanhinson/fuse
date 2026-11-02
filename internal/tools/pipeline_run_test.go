@@ -1,8 +1,13 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"flag"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -204,5 +209,90 @@ func TestPipelineRunWorkflowParamAdvertised(t *testing.T) {
 	}
 	if _, ok := base.Parameters()["properties"].(map[string]any)["workflow"]; ok {
 		t.Error("WithWorkflows must return a copy, not mutate the receiver")
+	}
+}
+
+var updatePipelineGolden = flag.Bool("update-pipeline-golden", false, "rewrite the pipeline_run goldens")
+
+func pipelineRunGolden(t *testing.T, tool *PipelineRunTool) []byte {
+	t.Helper()
+	b, err := json.MarshalIndent(map[string]any{"description": tool.Description(), "parameters": tool.Parameters()}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(b, '\n')
+}
+
+// TestPipelineRunSchemaGolden (change 0115): with no roles the pipeline_run
+// description and schema stay byte-identical, with and without workflows.
+func TestPipelineRunSchemaGolden(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		tool *PipelineRunTool
+	}{
+		{"testdata/pipeline_run_schema.golden", NewPipelineRunTool(nil, nil)},
+		{"testdata/pipeline_run_schema_workflows.golden", NewPipelineRunTool(nil, nil).WithWorkflows([]string{"wf"})},
+	} {
+		got := pipelineRunGolden(t, tc.tool)
+		if *updatePipelineGolden {
+			if err := os.WriteFile(tc.file, got, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		want, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatalf("read golden (run with -update-pipeline-golden to create it): %v", err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s changed:\n got: %s\nwant: %s", tc.file, got, want)
+		}
+	}
+}
+
+// TestPipelineRunNoRolesUnchanged: WithRoles(nil) and WithRoles(empty) leave
+// every no-roles golden byte-identical.
+func TestPipelineRunNoRolesUnchanged(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		tool *PipelineRunTool
+	}{
+		{"testdata/pipeline_run_schema.golden", NewPipelineRunTool(nil, nil).WithRoles(nil)},
+		{"testdata/pipeline_run_schema.golden", NewPipelineRunTool(nil, nil).WithRoles([]RoleOption{})},
+		{"testdata/pipeline_run_schema_workflows.golden", NewPipelineRunTool(nil, nil).WithWorkflows([]string{"wf"}).WithRoles(nil)},
+	} {
+		want, err := os.ReadFile(tc.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := pipelineRunGolden(t, tc.tool); !bytes.Equal(got, want) {
+			t.Errorf("WithRoles(none) changed %s:\n got: %s\nwant: %s", tc.file, got, want)
+		}
+	}
+}
+
+// TestPipelineRunWithRolesMentionsRole: with roles the description names the
+// step `role` field and lists each role on one line, sorted; params are unchanged.
+func TestPipelineRunWithRolesMentionsRole(t *testing.T) {
+	plain := NewPipelineRunTool(nil, nil)
+	tool := plain.WithRoles([]RoleOption{{"writer", "Writes prose."}, {"reviewer", "Reviews code\nfor bugs."}})
+	desc := tool.Description()
+	if !strings.HasPrefix(desc, plain.Description()) {
+		t.Fatalf("role paragraph must extend, not replace, the description: %q", desc)
+	}
+	for _, want := range []string{"`role`", "`worker`", "With `workflow`, a step's role must be one that workflow offers."} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("description lacks %q: %q", want, desc)
+		}
+	}
+	rev := strings.Index(desc, "\n- reviewer — Reviews code for bugs.")
+	wri := strings.Index(desc, "\n- writer — Writes prose.")
+	if rev < 0 || wri < 0 || rev > wri {
+		t.Errorf("role lines missing or out of order: %q", desc)
+	}
+	if !reflect.DeepEqual(tool.Parameters(), plain.Parameters()) {
+		t.Error("WithRoles changed the parameters")
+	}
+	if plain.Description() != NewPipelineRunTool(nil, nil).Description() {
+		t.Error("WithRoles must not mutate the receiver")
 	}
 }

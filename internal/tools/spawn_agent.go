@@ -152,15 +152,19 @@ func (t *SpawnAgentTool) WithWorkflows(names []string) *SpawnAgentTool {
 // to a single line. An empty/nil list leaves the param absent.
 func (t *SpawnAgentTool) WithRoles(opts []RoleOption) *SpawnAgentTool {
 	cp := *t
-	cp.roles = nil
-	for _, o := range opts {
-		cp.roles = append(cp.roles, RoleOption{
-			Name:        o.Name,
-			Description: strings.Join(strings.Fields(o.Description), " "),
-		})
-	}
-	sort.Slice(cp.roles, func(i, j int) bool { return cp.roles[i].Name < cp.roles[j].Name })
+	cp.roles = normalizeRoleOptions(opts)
 	return &cp
+}
+
+// normalizeRoleOptions returns opts sorted by name with each description
+// collapsed to a single line; nil for an empty list.
+func normalizeRoleOptions(opts []RoleOption) []RoleOption {
+	var out []RoleOption
+	for _, o := range opts {
+		out = append(out, RoleOption{Name: o.Name, Description: strings.Join(strings.Fields(o.Description), " ")})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // WithQuotaWarning returns a copy of the tool that appends the token-quota
@@ -260,12 +264,16 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 			enum[i] = r.Name
 			lines.WriteString("\n- " + r.Name + " — " + r.Description)
 		}
+		note := ""
+		if len(t.workflows) > 0 {
+			note = " With `workflow`, the role must be one that workflow offers."
+		}
 		props["role"] = map[string]any{
 			"type": "string",
 			"enum": enum,
 			"description": "Optional named role for the child. The role supplies the child's system prompt, " +
 				"and its tool set and model when it defines them (tools may only narrow a role's tool set; " +
-				"model overrides its model). Do not pass system_prompt or worker with a role. Roles:" +
+				"model overrides its model). Do not pass system_prompt or worker with a role." + note + " Roles:" +
 				lines.String(),
 		}
 	}
