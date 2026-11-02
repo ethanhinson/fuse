@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0114 — spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt](../../changes/active/0114-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md)**
+> ↩ **[Change 0114 — spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt](../../changes/archive/2026-11-02-0114-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md)**
 <!-- docket:backlink:end -->
 
 # spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt

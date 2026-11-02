@@ -2,7 +2,7 @@
 id: 114
 slug: 'spawn-agent-picks-a-role-role-enum-with-descriptions-role-br'
 title: 'spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-design.md](../../superpowers/specs/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-design.md) |
+| Spec (merged) | [2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-design.md) |
 | Plan | [2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md](../../superpowers/plans/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md) |
 | Results | [2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-results.md](../../results/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-results.md) |
 <!-- docket:artifacts:end -->
