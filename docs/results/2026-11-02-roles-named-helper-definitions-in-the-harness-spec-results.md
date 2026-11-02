@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0113 — Roles: named helper definitions in the harness spec](../changes/active/0113-roles-named-helper-definitions-in-the-harness-spec.md)**
+> ↩ **[Change 0113 — Roles: named helper definitions in the harness spec](../changes/archive/2026-11-02-0113-roles-named-helper-definitions-in-the-harness-spec.md)**
 <!-- docket:backlink:end -->
 
 # Roles: named helper definitions in the harness spec — results

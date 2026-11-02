@@ -2,7 +2,7 @@
 id: 113
 slug: 'roles-named-helper-definitions-in-the-harness-spec'
 title: 'Roles: named helper definitions in the harness spec'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-02-roles-named-helper-definitions-in-the-harness-spec-design.md](../../superpowers/specs/2026-11-02-roles-named-helper-definitions-in-the-harness-spec-design.md) |
+| Spec (merged) | [2026-11-02-roles-named-helper-definitions-in-the-harness-spec-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-02-roles-named-helper-definitions-in-the-harness-spec-design.md) |
 | Plan | [2026-11-02-roles-named-helper-definitions-in-the-harness-spec.md](../../superpowers/plans/2026-11-02-roles-named-helper-definitions-in-the-harness-spec.md) |
 | Results | [2026-11-02-roles-named-helper-definitions-in-the-harness-spec-results.md](../../results/2026-11-02-roles-named-helper-definitions-in-the-harness-spec-results.md) |
 <!-- docket:artifacts:end -->

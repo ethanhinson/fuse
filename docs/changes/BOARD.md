@@ -1,6 +1,6 @@
 # Backlog
 
-**115 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 11 proposed · ⚪ 3 deferred · ✅ 92 done · 🗑️ 7 killed
+**115 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 10 proposed · ⚪ 3 deferred · ✅ 93 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -8,18 +8,17 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (1)
+## 🟣 Groomed (1)
 
-| # | Title | Priority | Type | PR | State |
-|---|-------|----------|------|----|-------|
-| [0113](active/0113-roles-named-helper-definitions-in-the-harness-spec.md) | Roles: named helper definitions in the harness spec | `high` | `feat` | [#127](https://github.com/ethanhinson/fuse/pull/127) | awaiting merge |
+| # | Title | Priority | Type | Spec | Readiness |
+|---|-------|----------|------|------|-----------|
+| [0114](active/0114-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md) | spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt | `high` | `feat` | [spec](../superpowers/specs/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-design.md) | build-ready |
 
-## 🟡 Proposed (11)
+## 🟡 Proposed (10)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0115](active/0115-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md) | Pipeline steps name a role; roles in the synthesis palette | `low` | `feat` | ⏳ waiting on #114 — not yet built |
-| [0114](active/0114-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md) | spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt | `high` | `feat` | ⏳ waiting on #113 — needs your merge |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
 | [0110](active/0110-mark-loopsecret-value-debug-redact-once-protobuf-go-honours.md) | Mark LoopSecret.value debug_redact once protobuf-go honours it | `low` | `feat` | needs-grooming |
 | [0109](active/0109-type-based-guard-that-no-wire-request-carrying-secrets-is-ev.md) | Type-based guard that no wire request carrying secrets is ever formatted | `low` | `feat` | needs-grooming |
@@ -53,19 +52,20 @@ graph TD
   0109
   0110
   0111
-  0113
   0113 --> 0114
   0114 --> 0115
   0012:::done
   0052:::done
   0063:::done
+  0113:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (99)</summary>
+<details><summary>✅🗑️ Archive — done + killed (100)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0113](archive/2026-11-02-0113-roles-named-helper-definitions-in-the-harness-spec.md) | Roles: named helper definitions in the harness spec | 2026-11-02 |
 | [0112](archive/2026-11-01-0112-harness-instructions-a-free-text-task-brief-composed-into-th.md) | Harness instructions: a free-text task brief composed into the system prompt | 2026-11-01 |
 | [0103](archive/2026-11-01-0103-per-tenant-loop-limits-live-loop-cap-and-start-rate-with-per.md) | Per-tenant loop limits: live-loop cap and start rate with per-tenant overrides | 2026-11-01 |
 | [0102](archive/2026-11-01-0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | 2026-11-01 |
@@ -81,7 +81,6 @@ graph TD
 | [0092](archive/2026-10-31-0092-smart-mode-honors-always-prompt-with-no-human-approver-bound.md) | Smart mode honors always_prompt with no human approver bound | 2026-10-31 |
 | [0091](archive/2026-10-31-0091-workflows-activate-per-spawn-in-every-host-enforcing-pools-a.md) | Workflows activate per spawn in every host, enforcing pools and worker tools | 2026-10-31 |
 | [0090](archive/2026-10-31-0090-turn-and-token-budgets-are-enforced-in-hosted-interactive-lo.md) | Turn and token budgets are enforced in hosted interactive loops | 2026-10-31 |
-| [0089](archive/2026-10-31-0089-static-credential-mcp-servers-authenticate-and-every-loop-re.md) | Static-credential MCP servers authenticate, and every loop reports its MCP servers | 2026-10-31 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -93,7 +92,7 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-10](archive/) | 5 done |
+| [2026-10](archive/) | 6 done |
 | [2026-09](archive/) | 7 done |
 | [2026-08](archive/) | 65 done |
 
