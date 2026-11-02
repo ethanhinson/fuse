@@ -25,23 +25,25 @@ type loopWiring struct {
 	traceW io.Writer
 }
 
-// childTools builds childNode's registry from base and returns its worker model pin.
+// childTools builds childNode's registry from base and returns the child's plan:
+// its model pin (worker or role) and, for a role spawn, the role brief every
+// child builder passes in the instructions slot (change 0114).
 //
 // The workflow scope resolves the child's plan first (activating the workflow a
 // workflow-root child roots, then applying the governing workflow's worker
-// allowlist). The rest is the shape every cloned child builder carried before
-// change 0091: the tools subset, the depth and subset spawn_agent strip, the
-// child-bound blackboard and pipeline_run. The one difference is decision 3: a
-// worker-bound child always gets the five blackboard tools, whatever its
-// allowlist names.
-func (w loopWiring) childTools(base *tools.Registry, opts agent.SpawnOpts, childNode *agent.AgentNode) (*tools.Registry, string, error) {
+// allowlist or the chosen role's tool set). The rest is the shape every cloned
+// child builder carried before change 0091: the tools subset, the depth and
+// subset spawn_agent strip, the child-bound blackboard and pipeline_run. The one
+// difference is decision 3: a bound child (a worker, or a role with a non-empty
+// tool set) always gets the five blackboard tools, whatever its tool list names.
+func (w loopWiring) childTools(base *tools.Registry, opts agent.SpawnOpts, childNode *agent.AgentNode) (*tools.Registry, childPlan, error) {
 	plan, err := w.scope.prepareChild(opts, childNode)
 	if err != nil {
-		return nil, "", err
+		return nil, childPlan{}, err
 	}
 	reg, err := childToolRegistry(base, plan.tools)
 	if err != nil {
-		return nil, "", err
+		return nil, childPlan{}, err
 	}
 	if childNode.Depth >= agent.MaxDepth || !shouldWireChildSpawn(plan.tools) {
 		// Depth strip (static): a child at MaxDepth can never spawn. Subset
@@ -53,11 +55,11 @@ func (w loopWiring) childTools(base *tools.Registry, opts agent.SpawnOpts, child
 	}
 	bbReq := plan.tools
 	if plan.bound {
-		bbReq = nil // worker-bound: the allowlist plus the always-wired blackboard tools
+		bbReq = nil // worker- or role-bound: the tool set plus the always-wired blackboard tools
 	}
 	wireChildBlackboard(reg, w.bb, childNode, bbReq)
 	w.wirePipeline(reg, childNode, plan.tools)
-	return reg, plan.model, nil
+	return reg, plan, nil
 }
 
 // rootTools registers rootNode's spawn_agent, blackboard and pipeline_run on reg.

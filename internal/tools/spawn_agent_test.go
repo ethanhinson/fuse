@@ -1,7 +1,12 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -422,5 +427,124 @@ func TestSpawnAgentForwardsWorkflow(t *testing.T) {
 	}
 	if got.Workflow != "wf" {
 		t.Errorf("SpawnRequest.Workflow = %q, want wf", got.Workflow)
+	}
+}
+
+var updateGolden = flag.Bool("update-golden", false, "rewrite internal/tools golden files")
+
+// schemaGolden renders a tool's model-facing surface (description + parameters)
+// as stable, indented JSON. encoding/json sorts map keys, so the bytes are stable.
+func schemaGolden(t *testing.T, tool *SpawnAgentTool) []byte {
+	t.Helper()
+	b, err := json.MarshalIndent(map[string]any{
+		"description": tool.Description(),
+		"parameters":  tool.Parameters(),
+	}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return append(b, '\n')
+}
+
+// TestSpawnAgentSchemaGolden pins the spawn_agent schema and description byte
+// for byte for each shape a binding builds without roles: plain, outside a
+// workflow (workflow enum), and inside one (worker enum).
+func TestSpawnAgentSchemaGolden(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		tool *SpawnAgentTool
+	}{
+		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x"))},
+		{"testdata/spawn_agent_schema_workflows.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkflows([]string{"wf", "research"})},
+		{"testdata/spawn_agent_schema_workers.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkers([]string{"reader"})},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			got := schemaGolden(t, tc.tool)
+			if *updateGolden {
+				if err := os.MkdirAll(filepath.Dir(tc.file), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(tc.file, got, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Errorf("spawn_agent schema differs from %s:\n got: %s\nwant: %s", tc.file, got, want)
+			}
+		})
+	}
+}
+
+// --- change 0114: role param ---
+
+// TestSpawnAgentNoRolesNoParam pins that WithRoles(nil) changes nothing: every
+// no-roles golden stays byte-identical.
+func TestSpawnAgentNoRolesNoParam(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		tool *SpawnAgentTool
+	}{
+		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x")).WithRoles(nil)},
+		{"testdata/spawn_agent_schema_workflows.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkflows([]string{"wf", "research"}).WithRoles(nil)},
+		{"testdata/spawn_agent_schema_workers.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkers([]string{"reader"}).WithRoles(nil)},
+		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x")).WithRoles([]RoleOption{})},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			want, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := schemaGolden(t, tc.tool); !bytes.Equal(got, want) {
+				t.Errorf("WithRoles(nil) changed the schema for %s:\n got: %s\nwant: %s", tc.file, got, want)
+			}
+		})
+	}
+}
+
+func TestSpawnAgentWithRolesAddsEnumAndLines(t *testing.T) {
+	plain := NewSpawnAgentTool(okSpawn("x"))
+	tool := plain.WithRoles([]RoleOption{
+		{"writer", "Writes prose."},
+		{"reviewer", "Reviews code\nfor bugs."},
+	})
+	props := tool.Parameters()["properties"].(map[string]any)
+	r, ok := props["role"].(map[string]any)
+	if !ok {
+		t.Fatal("role param should be present when roles are configured")
+	}
+	if r["type"] != "string" {
+		t.Errorf("role type = %v, want string", r["type"])
+	}
+	enum, ok := r["enum"].([]any)
+	if !ok || len(enum) != 2 || enum[0] != "reviewer" || enum[1] != "writer" {
+		t.Fatalf("role enum = %v, want [reviewer writer]", r["enum"])
+	}
+	desc, _ := r["description"].(string)
+	rev := strings.Index(desc, "\n- reviewer — Reviews code for bugs.")
+	wri := strings.Index(desc, "\n- writer — Writes prose.")
+	if rev < 0 || wri < 0 || rev > wri {
+		t.Errorf("role description lines missing or out of order: %q", desc)
+	}
+	if got, want := tool.Description(), plain.Description(); got != want {
+		t.Errorf("Description changed with roles:\n got %q\nwant %q", got, want)
+	}
+	if _, ok := plain.Parameters()["properties"].(map[string]any)["role"]; ok {
+		t.Error("WithRoles must not mutate the receiver")
+	}
+}
+
+func TestSpawnAgentForwardsRole(t *testing.T) {
+	var got SpawnRequest
+	tool := NewSpawnAgentTool(captureSpawn(&got))
+	res := tool.Execute(context.Background(), `{"label":"c","task":"t","role":"reviewer"}`)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", res.Output)
+	}
+	if got.Role != "reviewer" {
+		t.Errorf("SpawnRequest.Role = %q, want reviewer", got.Role)
 	}
 }

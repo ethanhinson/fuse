@@ -3,10 +3,13 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/event"
+	"github.com/ethanhinson/fuse/internal/observe"
 )
 
 // TestSpawnerEmitsSpawnStartDone is the change-0044 gate: the Spawner is the
@@ -217,4 +220,121 @@ func TestSpawnerNoEventStoreIsInert(t *testing.T) {
 		t.Fatalf("wait = %+v, want result=ok err=nil", got)
 	}
 	_ = time.Now
+}
+
+// TestSpawnerStampsRole: a role spawn stamps the role name on the tree node and
+// the spawn.start payload; a spawn without a role leaves both empty.
+func TestSpawnerStampsRole(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		role string
+	}{{"role", "reviewer"}, {"no role", ""}} {
+		t.Run(tc.name, func(t *testing.T) {
+			tree := NewAgentTree("root", "m")
+			rec := &recordingStore{}
+			s := NewSpawner(
+				WithTree(tree),
+				WithNode(tree.Node(tree.RootID())),
+				WithSpawnDepth(0),
+				WithEventStore(rec),
+				WithChildBuilder(func(ctx context.Context, opts SpawnOpts, node *AgentNode, _ *AgentTree) (string, error) {
+					return "ok", nil
+				}),
+			)
+			h, err := s.Spawn(context.Background(), SpawnOpts{Label: "rev", Task: "t", Role: tc.role})
+			if err != nil {
+				t.Fatalf("spawn: %v", err)
+			}
+			if done := h.Wait(); done.Err != nil {
+				t.Fatalf("child err: %v", done.Err)
+			}
+			if got := tree.Node(h.NodeID).Snapshot().Role; got != tc.role {
+				t.Fatalf("node Role = %q, want %q", got, tc.role)
+			}
+			rec.mu.Lock()
+			evs := append([]event.Event(nil), rec.events...)
+			rec.mu.Unlock()
+			var found bool
+			for _, ev := range evs {
+				if ev.Kind != event.KindSpawnStart {
+					continue
+				}
+				found = true
+				var sp event.SpawnStartPayload
+				if err := json.Unmarshal(ev.Payload, &sp); err != nil {
+					t.Fatalf("spawn.start payload: %v", err)
+				}
+				if sp.Role != tc.role {
+					t.Fatalf("spawn.start Role = %q, want %q", sp.Role, tc.role)
+				}
+			}
+			if !found {
+				t.Fatal("no spawn.start event emitted")
+			}
+		})
+	}
+}
+
+// descriptorRecorder is an observe.Observer double that records every
+// descriptor it is asked to start and hands back an inert handle.
+type descriptorRecorder struct {
+	mu    sync.Mutex
+	descs []observe.Descriptor
+}
+
+func (r *descriptorRecorder) Start(ctx context.Context, d observe.Descriptor) (context.Context, observe.Handle) {
+	r.mu.Lock()
+	r.descs = append(r.descs, d)
+	r.mu.Unlock()
+	return ctx, noopHandle{}
+}
+
+type noopHandle struct{}
+
+func (noopHandle) End(observe.Outcome, ...observe.Field) {}
+
+// TestSpawnSpanCarriesRoleOnlyWhenSet: the spawn span gains a role attribute
+// for a role spawn and keeps exactly its worker attribute otherwise.
+func TestSpawnSpanCarriesRoleOnlyWhenSet(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		role string
+		want []observe.Field
+	}{
+		{"role", "reviewer", []observe.Field{{Key: "worker", Value: ""}, {Key: "role", Value: "reviewer"}}},
+		{"no role", "", []observe.Field{{Key: "worker", Value: ""}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tree := NewAgentTree("root", "m")
+			obs := &descriptorRecorder{}
+			s := NewSpawner(
+				WithTree(tree),
+				WithNode(tree.Node(tree.RootID())),
+				WithSpawnDepth(0),
+				WithObserver(obs),
+				WithChildBuilder(func(ctx context.Context, opts SpawnOpts, node *AgentNode, _ *AgentTree) (string, error) {
+					return "ok", nil
+				}),
+			)
+			h, err := s.Spawn(context.Background(), SpawnOpts{Label: "rev", Task: "t", Role: tc.role})
+			if err != nil {
+				t.Fatalf("spawn: %v", err)
+			}
+			h.Wait()
+			obs.mu.Lock()
+			defer obs.mu.Unlock()
+			var spawn *observe.Descriptor
+			for i := range obs.descs {
+				if obs.descs[i].Kind == observe.OperationSpawn {
+					spawn = &obs.descs[i]
+				}
+			}
+			if spawn == nil {
+				t.Fatal("no spawn descriptor recorded")
+			}
+			if !reflect.DeepEqual(spawn.Fields, tc.want) {
+				t.Fatalf("spawn fields = %v, want %v", spawn.Fields, tc.want)
+			}
+		})
+	}
 }

@@ -25,6 +25,8 @@ type SpawnRequest struct {
 	// Workflow names a configured workflow the child becomes the root of
 	// (change 0091). Empty for an ordinary spawn.
 	Workflow string
+	// Role names a top-level role (change 0114). Empty for an ordinary spawn.
+	Role string
 	// Expects, when non-nil, is a JSON Schema (a decoded object) describing the
 	// shape the child's final result should take (change 0024). The agent seam
 	// injects it into the child's system prompt and validates the child's output
@@ -32,6 +34,13 @@ type SpawnRequest struct {
 	// the freeform spawn_agent tool never populates this — it is prose-only for the
 	// model. Only the pipeline/code path sets it (via agent.SpawnOpts.Expects).
 	Expects any
+}
+
+// RoleOption is one role the spawn tool offers (change 0114): its name and the
+// one-line description the model reads when choosing whom to hand work to.
+type RoleOption struct {
+	Name        string
+	Description string
 }
 
 // SpawnResult is the tools-visible completion of a spawned child agent: the prose
@@ -99,6 +108,9 @@ type SpawnAgentTool struct {
 	// workflows, when non-empty, enumerates the configured workflow names in the
 	// `workflow` param schema (change 0091). Empty inside a workflow subtree.
 	workflows []string
+	// roles, when non-empty, enumerates the offered roles in the `role` param
+	// schema, one description line each (change 0114). Sorted by name.
+	roles []RoleOption
 }
 
 // NewSpawnAgentTool creates a spawn_agent tool with the given spawn function
@@ -132,6 +144,22 @@ func (t *SpawnAgentTool) WithWorkflows(names []string) *SpawnAgentTool {
 	cp := *t
 	cp.workflows = append([]string(nil), names...)
 	sort.Strings(cp.workflows)
+	return &cp
+}
+
+// WithRoles returns a copy of the tool that advertises the given roles in its
+// `role` param enum (change 0114), sorted by name, each description collapsed
+// to a single line. An empty/nil list leaves the param absent.
+func (t *SpawnAgentTool) WithRoles(opts []RoleOption) *SpawnAgentTool {
+	cp := *t
+	cp.roles = nil
+	for _, o := range opts {
+		cp.roles = append(cp.roles, RoleOption{
+			Name:        o.Name,
+			Description: strings.Join(strings.Fields(o.Description), " "),
+		})
+	}
+	sort.Slice(cp.roles, func(i, j int) bool { return cp.roles[i].Name < cp.roles[j].Name })
 	return &cp
 }
 
@@ -223,6 +251,24 @@ func (t *SpawnAgentTool) Parameters() map[string]any {
 				". Its pool limits and typed workers then govern the child's subtree. Not allowed inside a workflow.",
 		}
 	}
+	// Offer a `role` param enumerating the roles available here, one
+	// description line per role (change 0114).
+	if len(t.roles) > 0 {
+		enum := make([]any, len(t.roles))
+		var lines strings.Builder
+		for i, r := range t.roles {
+			enum[i] = r.Name
+			lines.WriteString("\n- " + r.Name + " — " + r.Description)
+		}
+		props["role"] = map[string]any{
+			"type": "string",
+			"enum": enum,
+			"description": "Optional named role for the child. The role supplies the child's system prompt, " +
+				"and its tool set and model when it defines them (tools may only narrow a role's tool set; " +
+				"model overrides its model). Do not pass system_prompt or worker with a role. Roles:" +
+				lines.String(),
+		}
+	}
 	return map[string]any{
 		"type":       "object",
 		"properties": props,
@@ -238,6 +284,7 @@ type spawnAgentInput struct {
 	Model        string   `json:"model"`
 	Worker       string   `json:"worker"`
 	Workflow     string   `json:"workflow"`
+	Role         string   `json:"role"`
 }
 
 // Execute parses the input, spawns a child agent, and blocks until it completes.
@@ -258,6 +305,7 @@ func (t *SpawnAgentTool) Execute(ctx context.Context, args string) Result {
 		Tools:        input.Tools,
 		Worker:       input.Worker,
 		Workflow:     input.Workflow,
+		Role:         input.Role,
 	}
 	// Freeform model-driven spawns are prose-only: the tool no longer accepts an
 	// `expects` schema, so req.Expects stays zero here and any `expects` key in the

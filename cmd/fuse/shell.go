@@ -330,7 +330,7 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 
 	// Binding #1b (change 0045): the shell routes engine CONSTRUCTION and store
 	// ownership through the in-process Runtime's Deps seam. buildShellRuntimeDeps
-	// wires the child-builder closure (cloned child-builder site 2 of 3) and
+	// wires the child-builder closure (cloned child-builder site 2 of 4) and
 	// registers the root's spawn_agent / blackboard / pipeline tools on toolReg — a
 	// behavior-preserving relocation of the block that lived here. The TUI keeps
 	// ownership of rendering + turn cadence (via the build seam above), human

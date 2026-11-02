@@ -1,0 +1,42 @@
+{
+  "description": "Spawn a child agent to execute a subtask concurrently. The child runs to completion and returns its findings as prose.",
+  "parameters": {
+    "properties": {
+      "label": {
+        "description": "Short human label shown in the agent tree (required).",
+        "type": "string"
+      },
+      "model": {
+        "description": "Optional model ID (defaults to the parent's model).",
+        "type": "string"
+      },
+      "system_prompt": {
+        "description": "Optional system prompt override; fully replaces the inherited one.",
+        "type": "string"
+      },
+      "task": {
+        "description": "The child agent's task prompt (required).",
+        "type": "string"
+      },
+      "tools": {
+        "description": "Optional subset of parent tools to give the child. IMPORTANT: a non-empty subset that omits the blackboard_* tools WITHHOLDS shared-memory access from the child — it then cannot read or write the shared blackboard. If you are spawning children to collaborate through the blackboard (debate, ensemble, producer/consumer), either omit this field (the child inherits all tools) or include the blackboard_* tools you need (e.g. blackboard_write, blackboard_read, blackboard_keys) in the subset.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "worker": {
+        "description": "Workflow worker type for the child. Its allowlist is the child's whole tool set (plus the blackboard tools); a worker whose allowlist omits spawn_agent cannot itself spawn.",
+        "enum": [
+          "reader"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "label",
+      "task"
+    ],
+    "type": "object"
+  }
+}

@@ -130,7 +130,7 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 	// 0034) and the pool is registered with the scheduler (change 0036). Absent a
 	// research workflow (config disabled it) the root stays outside every
 	// workflow and behavior is the pre-0034 freeform fan-out.
-	scope := newWorkflowScope(tree, cfg.Workflows)
+	scope := newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
 	if _, ok := cfg.Workflows["research"]; ok {
 		if _, err := scope.activateRoot(rootNode, "research"); err != nil {
 			fmt.Fprintf(stderr, "research-probe: %v\n", err)

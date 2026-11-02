@@ -48,12 +48,18 @@ type scopeHarness struct {
 
 func newScopeHarness(t *testing.T, wfs map[string]config.WorkflowConfig) *scopeHarness {
 	t.Helper()
+	return newScopeHarnessRoles(t, wfs, nil)
+}
+
+// newScopeHarnessRoles is newScopeHarness with top-level roles defined.
+func newScopeHarnessRoles(t *testing.T, wfs map[string]config.WorkflowConfig, roles map[string]config.RoleConfig) *scopeHarness {
+	t.Helper()
 	tree := agent.NewAgentTreeWithConcurrency("m", "m", 4)
 	return &scopeHarness{
 		t:     t,
 		tree:  tree,
 		root:  tree.Node(tree.RootID()),
-		scope: newWorkflowScope(tree, wfs),
+		scope: newWorkflowScope(tree, wfs, roles),
 	}
 }
 
@@ -113,7 +119,7 @@ func TestScopeNamesSortedAndCheck(t *testing.T) {
 	wfs := scopeWF()
 	wfs["alpha"] = config.WorkflowConfig{}
 	wfs["research"] = config.WorkflowConfig{}
-	s := newWorkflowScope(tree, wfs)
+	s := newWorkflowScope(tree, wfs, nil)
 	if got, want := s.names(), []string{"alpha", "research", "wf"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("names() = %v, want %v", got, want)
 	}
@@ -121,13 +127,13 @@ func TestScopeNamesSortedAndCheck(t *testing.T) {
 		t.Fatalf("check(wf) = %v, want nil", err)
 	}
 
-	one := newWorkflowScope(tree, scopeWF())
+	one := newWorkflowScope(tree, scopeWF(), nil)
 	err := one.check("nope")
 	if err == nil || err.Error() != `unknown workflow "nope" (available: wf)` {
 		t.Fatalf("check(nope) = %v, want the unknown-workflow listing", err)
 	}
 
-	none := newWorkflowScope(tree, nil)
+	none := newWorkflowScope(tree, nil, nil)
 	err = none.check("nope")
 	if err == nil || err.Error() != `unknown workflow "nope" (available: none configured)` {
 		t.Fatalf("check with no workflows = %v, want (none configured)", err)
@@ -221,7 +227,7 @@ func TestPrepareChildRefusesWorkerOutsideWorkflow(t *testing.T) {
 func TestCheckRequest_WorkerOutsideWorkflowRefused(t *testing.T) {
 	h := newScopeHarness(t, scopeWF())
 
-	err := h.scope.checkRequest(h.root, "", "reader")
+	err := h.scope.checkRequest(h.root, tools.SpawnRequest{Worker: "reader"})
 	if !errors.Is(err, agent.ErrWorkerOutsideWorkflow) {
 		t.Fatalf("checkRequest(root, \"\", reader) = %v, want ErrWorkerOutsideWorkflow", err)
 	}
@@ -229,17 +235,17 @@ func TestCheckRequest_WorkerOutsideWorkflowRefused(t *testing.T) {
 		t.Fatalf("checkRequest err = %q, want it to contain %q", err, want)
 	}
 
-	if err := h.scope.checkRequest(h.root, "wf", "reader"); err != nil {
+	if err := h.scope.checkRequest(h.root, tools.SpawnRequest{Workflow: "wf", Worker: "reader"}); err != nil {
 		t.Fatalf("checkRequest(root, wf, reader) = %v, want nil", err)
 	}
 
 	lead := h.lead()
-	if err := h.scope.checkRequest(lead, "", "reader"); err != nil {
+	if err := h.scope.checkRequest(lead, tools.SpawnRequest{Worker: "reader"}); err != nil {
 		t.Fatalf("checkRequest(lead, \"\", reader) = %v, want nil inside the subtree", err)
 	}
 
 	none := newScopeHarness(t, nil)
-	err = none.scope.checkRequest(none.root, "", "reader")
+	err = none.scope.checkRequest(none.root, tools.SpawnRequest{Worker: "reader"})
 	if !errors.Is(err, agent.ErrWorkerOutsideWorkflow) || !strings.Contains(err.Error(), "(available: none configured)") {
 		t.Fatalf("checkRequest with no workflows = %v, want ErrWorkerOutsideWorkflow listing none configured", err)
 	}
@@ -393,7 +399,7 @@ func TestScopeSpawnToolAdvertisesByPosition(t *testing.T) {
 func TestActivateRootMarksRoot(t *testing.T) {
 	tree := agent.NewAgentTreeWithConcurrency("m", "m", 4)
 	root := tree.Node(tree.RootID())
-	s := newWorkflowScope(tree, scopeWF())
+	s := newWorkflowScope(tree, scopeWF(), nil)
 
 	if _, err := s.activateRoot(root, "nope"); err == nil || !strings.Contains(err.Error(), `unknown workflow "nope"`) {
 		t.Fatalf("activateRoot(nope) = %v, want unknown workflow", err)
@@ -499,5 +505,209 @@ func TestScopeActivateWorkflowIsIdempotent(t *testing.T) {
 	}
 	if err := bs(lead.Depth + 1); !errors.Is(err, agent.ErrWorkflowQuotaExhausted) {
 		t.Fatalf("after re-activation backstop = %v, want the spent quota still refused", err)
+	}
+}
+
+// scopeRoles is the role fixture (change 0114): reviewer has its own tool set
+// and a model pin; writer inherits the parent's tools.
+func scopeRoles() map[string]config.RoleConfig {
+	return map[string]config.RoleConfig{
+		"reviewer": {Description: "Reviews code.", Instructions: "REVIEWER-BRIEF", Tools: []string{"read_file", "grep"}, Model: "rmodel"},
+		"writer":   {Description: "Writes prose."},
+	}
+}
+
+// scopeWFWithWriter is scopeWF whose wf offers only the writer role.
+func scopeWFWithWriter() map[string]config.WorkflowConfig {
+	wfs := scopeWF()
+	wf := wfs["wf"]
+	wf.Roles = []string{"writer"}
+	wfs["wf"] = wf
+	return wfs
+}
+
+func TestCheckRequestRefusesRoleMisuse(t *testing.T) {
+	roles := scopeRoles()
+	w := roles["writer"]
+	w.Instructions = "WRITER-BRIEF"
+	roles["writer"] = w
+	h := newScopeHarnessRoles(t, scopeWFWithWriter(), roles)
+	lead := h.lead()
+
+	cases := []struct {
+		name   string
+		parent *agent.AgentNode
+		req    tools.SpawnRequest
+		want   []string
+	}{
+		{"role+system_prompt", h.root, tools.SpawnRequest{Role: "reviewer", SystemPrompt: "x"},
+			[]string{"a role supplies the system prompt; drop system_prompt or the role"}},
+		{"role+worker", lead, tools.SpawnRequest{Role: "writer", Worker: "reader"},
+			[]string{`role "writer" and worker "reader" cannot be combined; pass one`}},
+		{"unknown", h.root, tools.SpawnRequest{Role: "ghost"},
+			[]string{`unknown role "ghost" (available: reviewer, writer)`}},
+		{"widening", h.root, tools.SpawnRequest{Role: "reviewer", Tools: []string{"read_file", "bash"}},
+			[]string{`role "reviewer" does not permit tool "bash"`}},
+		{"not offered", lead, tools.SpawnRequest{Role: "reviewer"},
+			[]string{`role "reviewer" is not available in workflow "wf" (available: writer)`}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			before := len(h.tree.SnapshotAll())
+			err := h.scope.checkRequest(c.parent, c.req)
+			if err == nil {
+				t.Fatalf("checkRequest(%+v) = nil, want refusal", c.req)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Fatalf("checkRequest err = %q, want it to contain %q", err, w)
+				}
+			}
+			// Through the spawn func as well: a tool error, no node.
+			c.req.Label, c.req.Task = "x", "t"
+			if _, err := h.scope.spawnFunc(h.spawner(c.parent), c.parent)(context.Background(), c.req); err == nil {
+				t.Fatalf("spawnFunc(%+v) = nil error, want refusal", c.req)
+			}
+			if after := len(h.tree.SnapshotAll()); after != before {
+				t.Fatalf("node count %d -> %d, want the refusal to create no node", before, after)
+			}
+		})
+	}
+
+	for _, ok := range []struct {
+		parent *agent.AgentNode
+		req    tools.SpawnRequest
+	}{
+		{h.root, tools.SpawnRequest{Role: "reviewer"}},
+		{h.root, tools.SpawnRequest{Role: "reviewer", Tools: []string{"grep"}}},
+		{lead, tools.SpawnRequest{Role: "writer"}},
+	} {
+		if err := h.scope.checkRequest(ok.parent, ok.req); err != nil {
+			t.Fatalf("checkRequest(%+v) = %v, want nil", ok.req, err)
+		}
+	}
+}
+
+func TestCheckRequestUnknownRoleWithNoRolesConfigured(t *testing.T) {
+	h := newScopeHarness(t, scopeWF())
+	err := h.scope.checkRequest(h.root, tools.SpawnRequest{Role: "x"})
+	if err == nil || !strings.Contains(err.Error(), `unknown role "x" (available: none configured)`) {
+		t.Fatalf("checkRequest(role x, no roles) = %v, want none configured", err)
+	}
+}
+
+func TestPrepareChildRolePlan(t *testing.T) {
+	roles := scopeRoles()
+	w := roles["writer"]
+	w.Instructions = "WRITER-BRIEF"
+	roles["writer"] = w
+	h := newScopeHarnessRoles(t, scopeWF(), roles)
+
+	p := h.spawn(h.root, agent.SpawnOpts{Label: "r", Task: "t", Role: "reviewer"})
+	want := childPlan{tools: []string{"read_file", "grep"}, bound: true, model: "rmodel", instructions: "REVIEWER-BRIEF"}
+	if p.err != nil || !reflect.DeepEqual(p.plan, want) {
+		t.Fatalf("reviewer plan = %+v, %v; want %+v", p.plan, p.err, want)
+	}
+
+	p = h.spawn(h.root, agent.SpawnOpts{Label: "r2", Task: "t", Role: "reviewer", Tools: []string{"grep"}})
+	if p.err != nil || !reflect.DeepEqual(p.plan.tools, []string{"grep"}) || !p.plan.bound {
+		t.Fatalf("reviewer narrowed plan = %+v, %v; want tools [grep], bound", p.plan, p.err)
+	}
+
+	p = h.spawn(h.root, agent.SpawnOpts{Label: "w", Task: "t", Role: "writer"})
+	want = childPlan{instructions: "WRITER-BRIEF"}
+	if p.err != nil || !reflect.DeepEqual(p.plan, want) {
+		t.Fatalf("writer plan = %+v, %v; want %+v", p.plan, p.err, want)
+	}
+
+	p = h.spawn(h.root, agent.SpawnOpts{Label: "w2", Task: "t", Role: "writer", Tools: []string{"read_file"}})
+	if p.err != nil || !reflect.DeepEqual(p.plan.tools, []string{"read_file"}) || p.plan.bound {
+		t.Fatalf("writer narrowed plan = %+v, %v; want tools [read_file], unbound", p.plan, p.err)
+	}
+
+	// Defense in depth for paths that call Spawner.Spawn directly.
+	p = h.spawn(h.root, agent.SpawnOpts{Label: "x", Task: "t", Role: "reviewer", SystemPrompt: "x"})
+	if p.err == nil || !strings.Contains(p.err.Error(), "a role supplies the system prompt") {
+		t.Fatalf("prepareChild(role+system_prompt) err = %v, want refusal", p.err)
+	}
+}
+
+func TestSpawnToolAdvertisesOfferedRoles(t *testing.T) {
+	fn := func(context.Context, tools.SpawnRequest) (tools.SpawnHandle, error) { return nil, nil }
+	h := newScopeHarnessRoles(t, scopeWFWithWriter(), scopeRoles())
+	lead := h.lead()
+
+	enumOf := func(node *agent.AgentNode) any {
+		t.Helper()
+		r, ok := spawnToolProps(t, h.scope.spawnTool(fn, node))["role"].(map[string]any)
+		if !ok {
+			t.Fatalf("spawn_agent at %s lacks a role property", node.ID)
+		}
+		return r["enum"]
+	}
+	if got := enumOf(h.root); !reflect.DeepEqual(got, []any{"reviewer", "writer"}) {
+		t.Fatalf("root role enum = %#v, want [reviewer writer]", got)
+	}
+	if got := enumOf(lead); !reflect.DeepEqual(got, []any{"writer"}) {
+		t.Fatalf("lead role enum = %#v, want [writer]", got)
+	}
+
+	none := newScopeHarness(t, scopeWF())
+	if _, ok := spawnToolProps(t, none.scope.spawnTool(fn, none.root))["role"]; ok {
+		t.Fatal("spawn_agent advertises role with no roles defined")
+	}
+}
+
+// A spawn naming both a role and a workflow creates that workflow's lead, which
+// sits inside the workflow's subtree: the role is checked against the named
+// workflow's offered roles, not the (workflow-less) parent's.
+func TestRoleWithWorkflowCheckedAgainstThatWorkflow(t *testing.T) {
+	wfs := scopeWFWithWriter()
+	wfs["open"] = config.WorkflowConfig{Pool: config.PoolConfig{Total: 2}}
+	h := newScopeHarnessRoles(t, wfs, scopeRoles())
+
+	// Not listed by wf: refused up front, with no node and no activation.
+	before := len(h.tree.SnapshotAll())
+	err := h.scope.checkRequest(h.root, tools.SpawnRequest{Role: "reviewer", Workflow: "wf"})
+	want := `role "reviewer" is not available in workflow "wf" (available: writer)`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("checkRequest(reviewer, wf) = %v, want %q", err, want)
+	}
+	if _, err := h.scope.spawnFunc(h.spawner(h.root), h.root)(context.Background(),
+		tools.SpawnRequest{Label: "x", Task: "t", Role: "reviewer", Workflow: "wf"}); err == nil {
+		t.Fatal("spawnFunc(reviewer, wf) = nil error, want refusal")
+	}
+	if after := len(h.tree.SnapshotAll()); after != before {
+		t.Fatalf("node count %d -> %d, want the refusal to create no node", before, after)
+	}
+
+	// Defense in depth: the direct Spawner.Spawn path refuses too, before activating.
+	p := h.spawn(h.root, agent.SpawnOpts{Label: "x", Task: "t", Role: "reviewer", Workflow: "wf"})
+	if p.err == nil || !strings.Contains(p.err.Error(), want) {
+		t.Fatalf("prepareChild(reviewer, wf) err = %v, want %q", p.err, want)
+	}
+	h.scope.mu.Lock()
+	_, activated := h.scope.active[p.node.ID]
+	h.scope.mu.Unlock()
+	if activated {
+		t.Fatal("refused role+workflow child activated the workflow")
+	}
+
+	// Listed by wf: accepted.
+	if err := h.scope.checkRequest(h.root, tools.SpawnRequest{Role: "writer", Workflow: "wf"}); err != nil {
+		t.Fatalf("checkRequest(writer, wf) = %v, want nil", err)
+	}
+	if p := h.spawn(h.root, agent.SpawnOpts{Label: "w", Task: "t", Role: "writer", Workflow: "wf"}); p.err != nil || p.node.Role != "writer" {
+		t.Fatalf("prepareChild(writer, wf) = %+v, %v; want writer plan", p.plan, p.err)
+	}
+
+	// A workflow listing no roles offers every defined role.
+	for _, r := range []string{"reviewer", "writer"} {
+		if err := h.scope.checkRequest(h.root, tools.SpawnRequest{Role: r, Workflow: "open"}); err != nil {
+			t.Fatalf("checkRequest(%s, open) = %v, want nil", r, err)
+		}
+		if p := h.spawn(h.root, agent.SpawnOpts{Label: r, Task: "t", Role: r, Workflow: "open"}); p.err != nil || p.node.Role != r {
+			t.Fatalf("prepareChild(%s, open) = %+v, %v; want %s plan", r, p.plan, p.err, r)
+		}
 	}
 }

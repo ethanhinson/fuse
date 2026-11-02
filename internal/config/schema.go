@@ -524,8 +524,9 @@ const MaxRoleDescriptionChars = 512
 // RoleConfig is a named, reusable helper definition: a description the main
 // agent reads when choosing whom to hand work to, a brief for the helper's
 // system prompt, and optionally a tool set (empty: inherit the parent's) and
-// a model alias (empty: inherit the parent's). The runtime does not use roles
-// yet; they are parsed, validated and carried through harness specs.
+// a model alias (empty: inherit the parent's). The main agent picks a role
+// through spawn_agent's `role` parameter; the child is built from the role's
+// brief, tools and model (change 0114).
 type RoleConfig struct {
 	Description  string   `yaml:"description"`
 	Instructions string   `yaml:"instructions"`

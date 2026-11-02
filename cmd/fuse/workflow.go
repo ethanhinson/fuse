@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -176,25 +177,152 @@ func quotaWarningFor(tree *agent.AgentTree, nodeID string) tools.QuotaFunc {
 type workflowScope struct {
 	tree      *agent.AgentTree
 	workflows map[string]config.WorkflowConfig
-	mu        sync.Mutex
-	active    map[string]*workflowActivation
+	// roles are the top-level role definitions (change 0114), keyed by name.
+	roles  map[string]config.RoleConfig
+	mu     sync.Mutex
+	active map[string]*workflowActivation
 }
 
 // newWorkflowScope returns the activation scope for tree over the configured
-// workflows (nil or empty = no workflow can activate).
-func newWorkflowScope(tree *agent.AgentTree, workflows map[string]config.WorkflowConfig) *workflowScope {
+// workflows (nil or empty = no workflow can activate) and top-level roles (nil
+// or empty = no role can be chosen). roles is positional on purpose: every
+// composition root must pass its config's roles or an explicit nil.
+func newWorkflowScope(tree *agent.AgentTree, workflows map[string]config.WorkflowConfig, roles map[string]config.RoleConfig) *workflowScope {
 	return &workflowScope{
 		tree:      tree,
 		workflows: workflows,
+		roles:     roles,
 		active:    map[string]*workflowActivation{},
 	}
 }
 
-// childPlan is the workflow-resolved shape of one child spawn.
+// childPlan is the workflow- and role-resolved shape of one child spawn.
 type childPlan struct {
-	tools []string // effective tool list (nil = inherit all, only for a freeform spawn: a bound worker always has a non-empty allowlist)
-	model string   // worker model pin, "" when none
-	bound bool     // a worker was selected inside a workflow
+	tools        []string // effective tool list (nil = inherit all, only when unbound: a bound child always has a non-empty set)
+	model        string   // worker or role model pin, "" when none
+	bound        bool     // a worker or a role with a non-empty tool set was selected
+	instructions string   // the role brief for the child's instructions slot, "" when none
+}
+
+// roleNames returns every defined role name, sorted.
+func (s *workflowScope) roleNames() []string {
+	out := make([]string, 0, len(s.roles))
+	for n := range s.roles {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// offeredRoles returns the role names a spawner at nodeID is offered: the
+// governing workflow's roles when it lists any, else every defined role
+// (change 0114). Sorted.
+func (s *workflowScope) offeredRoles(nodeID string) []string {
+	if act, _ := s.activationOf(nodeID); act != nil {
+		return s.workflowRoles(act.cfg)
+	}
+	return s.roleNames()
+}
+
+// workflowRoles returns the role names offered inside a workflow configured as
+// cfg: its listed roles that are defined, or every defined role when it lists
+// none. Sorted.
+func (s *workflowScope) workflowRoles(cfg config.WorkflowConfig) []string {
+	if len(cfg.Roles) == 0 {
+		return s.roleNames()
+	}
+	out := make([]string, 0, len(cfg.Roles))
+	for _, n := range cfg.Roles {
+		if _, ok := s.roles[n]; ok {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// roleOptions returns the spawn tool's role enum for a spawner at nodeID.
+func (s *workflowScope) roleOptions(nodeID string) []tools.RoleOption {
+	names := s.offeredRoles(nodeID)
+	opts := make([]tools.RoleOption, 0, len(names))
+	for _, n := range names {
+		opts = append(opts, tools.RoleOption{Name: n, Description: s.roles[n].Description})
+	}
+	return opts
+}
+
+// checkRole refuses a role request a spawner at parentID may not make, before
+// any node exists: a role with system_prompt or worker, an unknown role, or a
+// role the child's workflow does not offer. When the request names a workflow
+// the child is that workflow's lead and sits inside its subtree, so the offered
+// set is that workflow's; otherwise it is the parent's, since that is the
+// schema the parent saw. An unknown workflow name is left to the workflow check.
+func (s *workflowScope) checkRole(parentID, workflow, role, systemPrompt, worker string) error {
+	if systemPrompt != "" {
+		return fmt.Errorf("a role supplies the system prompt; drop system_prompt or the role")
+	}
+	if worker != "" {
+		return fmt.Errorf("role %q and worker %q cannot be combined; pass one", role, worker)
+	}
+	if _, ok := s.roles[role]; !ok {
+		return unknownRoleErr(role, s.roleNames())
+	}
+	var offered []string
+	name := ""
+	if workflow != "" {
+		offered, name = s.workflowRoles(s.workflows[workflow]), workflow
+	} else {
+		offered = s.offeredRoles(parentID)
+		if act, _ := s.activationOf(parentID); act != nil {
+			name = act.name
+		}
+	}
+	for _, n := range offered {
+		if n == role {
+			return nil
+		}
+	}
+	list := "none"
+	if len(offered) > 0 {
+		list = strings.Join(offered, ", ")
+	}
+	return fmt.Errorf("role %q is not available in workflow %q (available: %s)", role, name, list)
+}
+
+// resolveRoleTools returns a role child's tool list and whether it is bound
+// (change 0114). A non-empty role.Tools is the child's whole tool set and the
+// requested subset may only narrow it (bound: the blackboard tools are added).
+// An empty role.Tools inherits: the requested subset passes through unchanged,
+// exactly as for a freeform spawn (not bound).
+func resolveRoleTools(name string, role config.RoleConfig, requested []string) ([]string, bool, error) {
+	if len(role.Tools) == 0 {
+		return requested, false, nil
+	}
+	if len(requested) == 0 {
+		return append([]string(nil), role.Tools...), true, nil
+	}
+	allow := map[string]bool{}
+	for _, t := range role.Tools {
+		allow[t] = true
+	}
+	out := make([]string, 0, len(requested))
+	for _, r := range requested {
+		if !allow[r] {
+			return nil, false, fmt.Errorf("role %q does not permit tool %q", name, r)
+		}
+		out = append(out, r)
+	}
+	return out, true, nil
+}
+
+// unknownRoleErr is the one refusal text for a role name that is not defined.
+// names is the sorted list of defined roles.
+func unknownRoleErr(name string, names []string) error {
+	list := "none configured"
+	if len(names) > 0 {
+		list = strings.Join(names, ", ")
+	}
+	return fmt.Errorf("unknown role %q (available: %s)", name, list)
 }
 
 // names returns the configured workflow names, sorted.
@@ -334,23 +462,35 @@ func (s *workflowScope) budget(node *agent.AgentNode) tools.BudgetFunc {
 // spawnTool builds node's spawn_agent around fn. Inside a workflow subtree it
 // advertises that workflow's workers; outside it advertises the configured
 // workflows a child may root (decision: workflows do not nest, so `workflow` is
-// never offered inside a subtree).
+// never offered inside a subtree). Both advertise the roles offered at node.
 func (s *workflowScope) spawnTool(fn tools.SpawnFunc, node *agent.AgentNode) *tools.SpawnAgentTool {
 	t := tools.NewSpawnAgentToolWithBudget(fn, s.budget(node)).
-		WithQuotaWarning(quotaWarningFor(s.tree, node.ID))
+		WithQuotaWarning(quotaWarningFor(s.tree, node.ID)).
+		WithRoles(s.roleOptions(node.ID))
 	if act, _ := s.activationOf(node.ID); act != nil {
 		return t.WithWorkers(act.workerNames())
 	}
 	return t.WithWorkflows(s.names())
 }
 
-// checkRequest validates a spawn request's workflow and worker names before any
-// node exists or any quota is spent. A worker resolves against the requested
+// checkRequest validates a spawn request's role, workflow and worker names
+// before any node exists or any quota is spent. A role is checked first
+// (checkRole, then its tool narrowing); roles are global, so a role passes the
+// outside-every-workflow refusal that applies to a worker. A worker resolves against the requested
 // workflow when one is named, else against the parent's governing workflow;
 // outside every workflow a worker is refused (agent.ErrWorkerOutsideWorkflow),
 // since it has nothing to resolve against. A nested activation is left to the
 // Spawner (agent.ErrNestedWorkflow).
-func (s *workflowScope) checkRequest(parent *agent.AgentNode, workflow, worker string) error {
+func (s *workflowScope) checkRequest(parent *agent.AgentNode, req tools.SpawnRequest) error {
+	if req.Role != "" {
+		if err := s.checkRole(parent.ID, req.Workflow, req.Role, req.SystemPrompt, req.Worker); err != nil {
+			return err
+		}
+		if _, _, err := resolveRoleTools(req.Role, s.roles[req.Role], req.Tools); err != nil {
+			return err
+		}
+	}
+	workflow, worker := req.Workflow, req.Worker
 	if workflow != "" {
 		if err := s.check(workflow); err != nil {
 			return err
@@ -380,7 +520,7 @@ func (s *workflowScope) checkRequest(parent *agent.AgentNode, workflow, worker s
 func (s *workflowScope) spawnFunc(sp *agent.Spawner, parent *agent.AgentNode) tools.SpawnFunc {
 	inner := spawnFuncFrom(sp, s.tree.Scheduler(), parent)
 	return func(ctx context.Context, req tools.SpawnRequest) (tools.SpawnHandle, error) {
-		if err := s.checkRequest(parent, req.Workflow, req.Worker); err != nil {
+		if err := s.checkRequest(parent, req); err != nil {
 			return nil, err
 		}
 		return inner(ctx, req)
@@ -392,12 +532,29 @@ func (s *workflowScope) spawnFunc(sp *agent.Spawner, parent *agent.AgentNode) to
 // against the governing workflow. Outside every workflow the requested subset
 // passes through unchanged and a named worker is refused
 // (agent.ErrWorkerOutsideWorkflow). It repeats the name checks for paths that
-// call Spawner.Spawn directly (pipeline steps).
+// call Spawner.Spawn directly (pipeline steps). A role child (change 0114) is
+// checked against its parent's offered roles before any activation, and its
+// plan carries the role's tools, model pin and brief (the node's Role comes
+// from opts.Role at creation). A role child that roots a workflow is checked against
+// that workflow's offered roles instead.
 func (s *workflowScope) prepareChild(opts agent.SpawnOpts, child *agent.AgentNode) (childPlan, error) {
+	if opts.Role != "" {
+		if err := s.checkRole(child.ParentID, opts.Workflow, opts.Role, opts.SystemPrompt, opts.Worker); err != nil {
+			return childPlan{}, err
+		}
+	}
 	if opts.Workflow != "" {
 		if _, err := s.activateWorkflow(child); err != nil {
 			return childPlan{}, err
 		}
+	}
+	if opts.Role != "" {
+		role := s.roles[opts.Role]
+		rt, bound, err := resolveRoleTools(opts.Role, role, opts.Tools)
+		if err != nil {
+			return childPlan{}, err
+		}
+		return childPlan{tools: rt, bound: bound, model: role.Model, instructions: role.Instructions}, nil
 	}
 	act, _ := s.activationOf(child.ID)
 	if act == nil {

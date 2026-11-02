@@ -395,7 +395,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			// Per-loop workflow scope and shared tool wiring (change 0091): cfg is this
 			// loop's resolved config, so spec-supplied workflows activate per spawn here
 			// exactly as in the local bindings. traceW is nil (no trace on loop-server).
-			scope := newWorkflowScope(tree, cfg.Workflows)
+			scope := newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
 			var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
 			wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope,
 				makeSpawner: func(p *agent.AgentNode, d int) *agent.Spawner { return makeSpawner(p, d) }}
@@ -403,14 +403,14 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			// (cloned child-builder site 4 of 4, wired through loopWiring; learning
 			// patch-every-cloned-child-builder).
 			childBuilder := func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
-				childToolReg, workerModel, terr := wiring.childTools(loopToolReg, opts, childNode)
+				childToolReg, cp, terr := wiring.childTools(loopToolReg, opts, childNode)
 				if terr != nil {
 					return "", terr
 				}
 
 				childModelID := opts.ModelID
 				if childModelID == "" {
-					childModelID = workerModel // worker model pin (change 0034), now every binding
+					childModelID = cp.model // worker or role model pin (changes 0034, 0114)
 				}
 				if childModelID == "" {
 					childModelID = modelAlias
@@ -424,7 +424,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 				if opts.SystemPrompt != "" {
 					a, aerr = buildChildAgent(cfg, reg, childModelID, discardRenderer{}, opts.SystemPrompt, childToolReg, childApprove, nil, opts.Label, nil, false, rateGate, nil)
 				} else {
-					a, _, aerr = buildAgentCore(cfg, reg, childModelID, discardRenderer{}, systemBlock, "" /* subagents never get the harness instructions */, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, nil, observer)
+					a, _, aerr = buildAgentCore(cfg, reg, childModelID, discardRenderer{}, systemBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, nil, observer)
 				}
 				if aerr != nil {
 					return "", aerr

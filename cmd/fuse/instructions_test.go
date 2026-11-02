@@ -269,7 +269,7 @@ func TestLocalRootsGetInstructionsChildrenDoNot(t *testing.T) {
 		}},
 		{"research-probe", func(t *testing.T, cfg config.Config, toolReg *tools.Registry, tree *agent.AgentTree) (runtime.Deps, map[string]any) {
 			reg := registryFromConfig(cfg)
-			scope := newWorkflowScope(tree, cfg.Workflows)
+			scope := newWorkflowScope(tree, cfg.Workflows, nil)
 			return buildResearchProbeRuntimeDeps(researchProbeDepsInput{
 				cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
 				scope: scope, logSink: probe.NewLog(),

@@ -133,9 +133,15 @@ type hostedRun struct {
 // over a routed gateway and waits for it.
 func runHostedSpec(t *testing.T, spec *harnessv1.HarnessSpec, route func(task string, turn int, c gatewayCall) string) hostedRun {
 	t.Helper()
+	return runHostedSpecWith(t, hostedOperatorYAML, spec, route)
+}
+
+// runHostedSpecWith is runHostedSpec over the given operator config.
+func runHostedSpecWith(t *testing.T, operatorYAML string, spec *harnessv1.HarnessSpec, route func(task string, turn int, c gatewayCall) string) hostedRun {
+	t.Helper()
 	gw := &routedGateway{route: route}
 	raw := &rawCapture{next: gw}
-	deps, host := harnessServerWith(t, hostedOperatorYAML, raw)
+	deps, host := harnessServerWith(t, operatorYAML, raw)
 	capture := &treeCapture{inner: host}
 	deps.Harness = capture
 	rt := runtime.New(deps)

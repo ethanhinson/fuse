@@ -410,10 +410,17 @@ letters, digits, `-` and `_`. A non-empty `tools` list is the helper's whole too
 can only narrow it; the helper can start its own helpers only when the list names
 `spawn_agent`. Tool names and model aliases are not checked when the config is loaded.
 Every name in a workflow's `roles` must be defined under `roles`. Roles are read from
-`~/.fuse/config.yml` and from a harness spec, not from `.fuse.local.yml`. Defining roles
-does not change how an agent runs yet; this release validates and carries them. See
+`~/.fuse/config.yml` and from a harness spec, not from `.fuse.local.yml`. See
 [`examples/harness/review-team.json`](examples/harness/review-team.json) for a harness
 spec with two roles.
+
+When roles are defined, `spawn_agent` offers a `role` parameter that lists each role's
+description. Outside a workflow every role is offered; inside one, the workflow's `roles`
+are offered (every role when it lists none). The role's instructions become the helper's
+brief, in the place the top-level `instructions` takes for the main agent. A non-empty
+`tools` list is the helper's whole tool set plus the blackboard tools, and the call's
+`tools` may only narrow it. The call's `model` wins over the role's. `role` cannot be
+combined with `system_prompt` or `worker`.
 
 ### Observing the research flow — `research-probe`
 

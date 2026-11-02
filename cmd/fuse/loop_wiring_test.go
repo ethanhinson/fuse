@@ -22,6 +22,7 @@ type built struct {
 	node  *agent.AgentNode
 	reg   *tools.Registry
 	model string
+	plan  childPlan
 	err   error
 }
 
@@ -53,6 +54,10 @@ func newWiringHarnessN(t *testing.T, slots int) *wiringHarness {
 	t.Helper()
 	cfg := config.Default()
 	cfg.Workflows = scopeWF()
+	cfg.Roles = scopeRoles()
+	writer := cfg.Roles["writer"]
+	writer.Instructions = "WRITER-BRIEF"
+	cfg.Roles["writer"] = writer
 	tree := agent.NewAgentTreeWithConcurrency("m", "m", slots)
 	h := &wiringHarness{
 		t:    t,
@@ -61,7 +66,7 @@ func newWiringHarnessN(t *testing.T, slots int) *wiringHarness {
 		tree: tree,
 		root: tree.Node(tree.RootID()),
 	}
-	scope := newWorkflowScope(tree, cfg.Workflows)
+	scope := newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
 	h.w = loopWiring{
 		cfg:         cfg,
 		tree:        tree,
@@ -73,9 +78,9 @@ func newWiringHarnessN(t *testing.T, slots int) *wiringHarness {
 }
 
 func (h *wiringHarness) builder(_ context.Context, opts agent.SpawnOpts, node *agent.AgentNode, _ *agent.AgentTree) (string, error) {
-	reg, model, err := h.w.childTools(h.base, opts, node)
+	reg, plan, err := h.w.childTools(h.base, opts, node)
 	h.mu.Lock()
-	h.seen = append(h.seen, built{node: node, reg: reg, model: model, err: err})
+	h.seen = append(h.seen, built{node: node, reg: reg, model: plan.model, plan: plan, err: err})
 	h.mu.Unlock()
 	if err != nil {
 		return "", err
@@ -175,6 +180,64 @@ func TestChildToolsWorkerBoundSchemaIsAllowlistPlusBlackboard(t *testing.T) {
 	}
 	if reader.model != "pin" {
 		t.Fatalf("worker model pin = %q, want pin", reader.model)
+	}
+}
+
+// TestRoleChildToolsReviewerBound: a role with a non-empty tool set is the
+// child's whole tool set plus the five blackboard tools (bound), with no
+// spawn_agent or pipeline_run, and its plan carries the brief and model pin
+// every child builder applies (change 0114).
+func TestRoleChildToolsReviewerBound(t *testing.T) {
+	h := newWiringHarness(t)
+	rev := h.spawn(h.root, agent.SpawnOpts{Label: "rev", Task: "t", Role: "reviewer"})
+
+	want := append(append([]string(nil), blackboardNames...), "grep", "read_file")
+	sort.Strings(want)
+	if got := schemaNames(rev.reg); !reflect.DeepEqual(got, want) {
+		t.Fatalf("reviewer schema = %v, want %v", got, want)
+	}
+	if rev.plan.model != "rmodel" || rev.model != "rmodel" {
+		t.Fatalf("reviewer model pin = %q (plan %q), want rmodel", rev.model, rev.plan.model)
+	}
+	if rev.plan.instructions != "REVIEWER-BRIEF" {
+		t.Fatalf("reviewer instructions = %q, want REVIEWER-BRIEF", rev.plan.instructions)
+	}
+	if rev.node.Role != "reviewer" {
+		t.Fatalf("reviewer node role = %q, want reviewer", rev.node.Role)
+	}
+}
+
+// TestRoleChildToolsWriterInherits: a role with no tool set inherits exactly
+// what a plain child gets under the same binding (nothing added, nothing
+// withheld), and its plan carries the brief with no model pin (change 0114).
+func TestRoleChildToolsWriterInherits(t *testing.T) {
+	h := newWiringHarness(t)
+	plain := h.spawn(h.root, agent.SpawnOpts{Label: "plain", Task: "t"})
+	writer := h.spawn(h.root, agent.SpawnOpts{Label: "writer", Task: "t", Role: "writer"})
+
+	if got, want := schemaNames(writer.reg), schemaNames(plain.reg); !reflect.DeepEqual(got, want) {
+		t.Fatalf("writer schema = %v, want the plain child's %v", got, want)
+	}
+	if writer.plan.instructions != "WRITER-BRIEF" {
+		t.Fatalf("writer instructions = %q, want WRITER-BRIEF", writer.plan.instructions)
+	}
+	if writer.plan.model != "" {
+		t.Fatalf("writer model pin = %q, want none", writer.plan.model)
+	}
+	if plain.plan.instructions != "" || plain.node.Role != "" {
+		t.Fatalf("plain child plan = %+v, want no brief and no role", plain.plan)
+	}
+}
+
+// TestRolePlanCarriesPinWhenCallNamesModel: even when the spawn call names its
+// own model, childTools still hands the site the role's pin as plan.model; it
+// is the site that applies opts.ModelID ahead of plan.model (and the binding
+// alias after), and that end-to-end precedence is covered by role_parity_test.go.
+func TestRolePlanCarriesPinWhenCallNamesModel(t *testing.T) {
+	h := newWiringHarness(t)
+	rev := h.spawn(h.root, agent.SpawnOpts{Label: "rev", Task: "t", Role: "reviewer", ModelID: "call"})
+	if rev.plan.model != "rmodel" {
+		t.Fatalf("plan.model = %q, want the role pin rmodel (the site applies opts.ModelID first)", rev.plan.model)
 	}
 }
 

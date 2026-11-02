@@ -351,6 +351,7 @@ type SpawnStartPayload struct {
 	ChildNodeID string `json:"child_node_id"`
 	Label       string `json:"label,omitempty"`
 	Task        string `json:"task,omitempty"`
+	Role        string `json:"role,omitempty"`
 }
 
 // SpawnDonePayload carries everything the session-log projection needs to

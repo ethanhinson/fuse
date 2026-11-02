@@ -41,17 +41,27 @@ func rootSystemBlock(cfg config.Config, skillSet *skills.Set) string {
 		b.WriteString(skillSet.SystemPromptBlock())
 	}
 	if !toolDisabled(cfg, "spawn_agent") {
-		b.WriteString(spawnAgentBlock)
+		b.WriteString(spawnGuidance(cfg))
 	}
 	return b.String()
+}
+
+// spawnGuidance is the parallel-subagents block plus, when cfg defines roles,
+// the role-preference sentence. With no roles it is spawnAgentBlock exactly.
+func spawnGuidance(cfg config.Config) string {
+	if len(cfg.Roles) == 0 {
+		return spawnAgentBlock
+	}
+	return spawnAgentBlock + spawnRoleHint
 }
 
 // withoutUnavailableSpawnBlock strips the parallel-subagents block from an
 // agent's extra prompt when that agent cannot call spawn_agent: the tool is
 // disabled by policy, or absent from the registry this agent was built with
 // (a child's registry has it unregistered). The block is a fixed constant, so
-// an exact-substring removal is precise; extra without the block is returned
-// unchanged.
+// an exact-substring removal is precise; the role-preference sentence that
+// follows it when roles exist is removed with it. extra without the block is
+// returned unchanged.
 func withoutUnavailableSpawnBlock(extra string, cfg config.Config, toolReg *tools.Registry) string {
 	if !strings.Contains(extra, spawnAgentBlock) {
 		return extra
@@ -59,5 +69,6 @@ func withoutUnavailableSpawnBlock(extra string, cfg config.Config, toolReg *tool
 	if !toolDisabled(cfg, "spawn_agent") && toolReg != nil && toolReg.Has("spawn_agent") {
 		return extra
 	}
+	extra = strings.ReplaceAll(extra, spawnAgentBlock+spawnRoleHint, "")
 	return strings.ReplaceAll(extra, spawnAgentBlock, "")
 }
