@@ -1,6 +1,6 @@
 # Backlog
 
-**114 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 10 proposed · ⚪ 3 deferred · ✅ 92 done · 🗑️ 7 killed
+**115 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 11 proposed · ⚪ 3 deferred · ✅ 92 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|------|-----------|
 | [0113](active/0113-roles-named-helper-definitions-in-the-harness-spec.md) | Roles: named helper definitions in the harness spec | `high` | `feat` | [spec](../superpowers/specs/2026-11-02-roles-named-helper-definitions-in-the-harness-spec-design.md) | build-ready |
 
-## 🟡 Proposed (10)
+## 🟡 Proposed (11)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0115](active/0115-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md) | Pipeline steps name a role; roles in the synthesis palette | `low` | `feat` | ⏳ waiting on #114 — not yet built |
 | [0114](active/0114-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md) | spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt | `high` | `feat` | ⏳ waiting on #113 — not yet built |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
 | [0110](active/0110-mark-loopsecret-value-debug-redact-once-protobuf-go-honours.md) | Mark LoopSecret.value debug_redact once protobuf-go honours it | `low` | `feat` | needs-grooming |
@@ -54,6 +55,7 @@ graph TD
   0111
   0113
   0113 --> 0114
+  0114 --> 0115
   0012:::done
   0052:::done
   0063:::done
