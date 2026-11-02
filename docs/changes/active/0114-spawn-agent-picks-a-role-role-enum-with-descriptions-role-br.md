@@ -15,7 +15,7 @@ discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-design.md'
 plan: 'docs/superpowers/plans/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md'
-results:
+results: 'docs/results/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-design.md](../../superpowers/specs/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-design.md) |
 | Plan | [2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md](../../superpowers/plans/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md) |
+| Results | [2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-results.md](../../results/2026-11-02-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br-results.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
