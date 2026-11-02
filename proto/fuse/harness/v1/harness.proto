@@ -606,12 +606,15 @@ message Workflow {
     }
   ];
   // Names of the top-level roles that may take part in this workflow. Every
-  // name must be defined under HarnessSpec.roles.
-  repeated string roles = 4 [(fuse.harness.v1.ui) = {
-    label: "Roles"
-    help: "Roles that may take part in this workflow. Each must be defined under roles."
-    widget: WIDGET_LIST
-  }];
+  // name must be defined under HarnessSpec.roles, and no name may repeat.
+  repeated string roles = 4 [
+    (buf.validate.field).repeated.unique = true,
+    (fuse.harness.v1.ui) = {
+      label: "Roles"
+      help: "Roles that may take part in this workflow. Each must be defined under roles, and listed once."
+      widget: WIDGET_LIST
+    }
+  ];
 }
 
 // Pool is a workflow subtree's spawn policy. 0 = that brake off.

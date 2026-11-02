@@ -208,6 +208,10 @@ func TestProblemsRoles(t *testing.T) {
 			c.Roles = map[string]RoleConfig{"a": {Description: "d"}}
 			c.Workflows["wf"] = WorkflowConfig{Skill: "wf", Roles: []string{"a", "ghost"}}
 		}, "workflows.wf.roles[1]", `"ghost"`},
+		{"duplicate workflow role", func(c *Config) {
+			c.Roles = map[string]RoleConfig{"a": {Description: "d"}, "b": {Description: "e"}}
+			c.Workflows["wf"] = WorkflowConfig{Skill: "wf", Roles: []string{"a", "b", "a"}}
+		}, "workflows.wf.roles[2]", "duplicate"},
 		{"valid two-role config", func(c *Config) {
 			c.Roles = map[string]RoleConfig{"a": {Description: "d"}, "b": {Description: "e", Instructions: "brief"}}
 			c.Workflows["wf"] = WorkflowConfig{Skill: "wf", Roles: []string{"b"}}

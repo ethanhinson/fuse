@@ -253,7 +253,13 @@ func (c Config) Problems() []Problem {
 		}
 	}
 	for _, wf := range sortedKeys(c.Workflows) {
+		seen := map[string]bool{}
 		for i, name := range c.Workflows[wf].Roles {
+			if seen[name] {
+				add(fmt.Sprintf("workflows.%s.roles[%d]", wf, i), "%q is a duplicate: list each role once", name)
+				continue
+			}
+			seen[name] = true
 			if _, ok := c.Roles[name]; !ok {
 				add(fmt.Sprintf("workflows.%s.roles[%d]", wf, i), "%q is not a defined role (define it under roles)", name)
 			}

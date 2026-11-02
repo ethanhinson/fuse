@@ -100,5 +100,13 @@
       {"fieldPath": "roles[\"blanktool\"].tools[0]", "ruleId": "string.min_len"},
       {"fieldPath": "roles[\"nodesc\"].description", "ruleId": "string.min_len"}
     ]
+  },
+  {
+    "name": "workflow roles must be unique",
+    "spec": {
+      "roles": {"reviewer": {"description": "d"}},
+      "workflows": {"wf": {"roles": ["reviewer", "reviewer"]}}
+    },
+    "want": [{"fieldPath": "workflows[\"wf\"].roles", "ruleId": "repeated.unique"}]
   }
 ]

@@ -1298,7 +1298,7 @@ type Workflow struct {
 	// Worker name -> worker definition.
 	Workers map[string]*Worker `protobuf:"bytes,3,rep,name=workers,proto3" json:"workers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Names of the top-level roles that may take part in this workflow. Every
-	// name must be defined under HarnessSpec.roles.
+	// name must be defined under HarnessSpec.roles, and no name may repeat.
 	Roles         []string `protobuf:"bytes,4,rep,name=roles,proto3" json:"roles,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2470,7 +2470,7 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\vQueue bound\x12>Per-pool pending-queue multiplier. 0 uses the runtime default.\x18\x03(\x01R\n" +
 	"queueBound\x12R\n" +
 	"\x14tool_timeout_seconds\x18\x04 \x01(\rB \xa2\x9f\x19\x1c\n" +
-	"\x16Tool timeout (seconds)\x18\x03(\x01R\x12toolTimeoutSeconds\"\xc8\x03\n" +
+	"\x16Tool timeout (seconds)\x18\x03(\x01R\x12toolTimeoutSeconds\"\xe2\x03\n" +
 	"\bWorkflow\x12E\n" +
 	"\x05skill\x18\x01 \x01(\tB/\xbaH\x1f\xd8\x01\x01r\x1a\x18\x80\x012\x15^[a-z0-9][a-z0-9_-]*$\xa2\x9f\x19\t\n" +
 	"\x05Skill\x18\x01R\x05skill\x125\n" +
@@ -2478,9 +2478,9 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\xa2\x9f\x19\x06\n" +
 	"\x04PoolR\x04pool\x12v\n" +
 	"\aworkers\x18\x03 \x03(\v2&.fuse.harness.v1.Workflow.WorkersEntryB4\xbaH\"\x9a\x01\x1f\"\x1dr\x1b\x10\x01\x18@2\x15^[a-z0-9][a-z0-9_-]*$\xa2\x9f\x19\v\n" +
-	"\aWorkers\x18\aR\aworkers\x12q\n" +
-	"\x05roles\x18\x04 \x03(\tB[\xa2\x9f\x19W\n" +
-	"\x05Roles\x12LRoles that may take part in this workflow. Each must be defined under roles.\x18\x06R\x05roles\x1aS\n" +
+	"\aWorkers\x18\aR\aworkers\x12\x8a\x01\n" +
+	"\x05roles\x18\x04 \x03(\tBt\xbaH\x05\x92\x01\x02\x18\x01\xa2\x9f\x19h\n" +
+	"\x05Roles\x12]Roles that may take part in this workflow. Each must be defined under roles, and listed once.\x18\x06R\x05roles\x1aS\n" +
 	"\fWorkersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
 	"\x05value\x18\x02 \x01(\v2\x17.fuse.harness.v1.WorkerR\x05value:\x028\x01\"\xc4\x01\n" +
