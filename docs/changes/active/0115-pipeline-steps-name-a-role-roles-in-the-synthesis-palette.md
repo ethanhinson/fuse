@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/pipeline-steps-name-a-role-roles-in-the-synthesis-palette'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -49,3 +49,9 @@ Pipeline steps can name a workflow worker, but not a role. Once spawn_agent pick
 ## Out of scope
 
 Pipeline scheduling or limit changes. Making roles mandatory in pipelines.
+
+## Reconcile log
+
+### 2026-11-02
+
+Unchanged against main 15d827c (0114 merged; reuse its role resolution in cmd/fuse/workflow.go). Fold in 0114 reviewer nit: spawn_agent role param description notes that with workflow, the role must be one that workflow offers.
