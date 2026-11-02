@@ -674,7 +674,8 @@ message Worker {
 
 // Role is a named, reusable helper definition.
 message Role {
-  // What the main agent reads when deciding whom to hand work to.
+  // What the main agent reads when deciding whom to hand work to. A blank
+  // (whitespace-only) description is rejected by semantic validation.
   string description = 1 [
     (buf.validate.field).string = {
       min_len: 1

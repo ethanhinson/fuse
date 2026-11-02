@@ -753,7 +753,8 @@ export const WorkerSchema: GenMessage<Worker> = /*@__PURE__*/
  */
 export type Role = Message<"fuse.harness.v1.Role"> & {
   /**
-   * What the main agent reads when deciding whom to hand work to.
+   * What the main agent reads when deciding whom to hand work to. A blank
+   * (whitespace-only) description is rejected by semantic validation.
    *
    * @generated from field: string description = 1;
    */

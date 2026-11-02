@@ -344,6 +344,7 @@ func TestValidateRolesRejected(t *testing.T) {
 		msgSubstr string
 	}{
 		{"missing description", &harnessv1.HarnessSpec{Roles: one(&harnessv1.Role{})}, `roles["a"].description`, "string.min_len", ""},
+		{"whitespace-only description", &harnessv1.HarnessSpec{Roles: one(&harnessv1.Role{Description: "   "})}, `roles["a"].description`, harness.RuleConfig, "required"},
 		{"description too long", &harnessv1.HarnessSpec{Roles: one(&harnessv1.Role{Description: strings.Repeat("a", 513)})}, `roles["a"].description`, "string.max_len", ""},
 		{"instructions too long", &harnessv1.HarnessSpec{Roles: one(&harnessv1.Role{Description: "d", Instructions: strings.Repeat("a", 16385)})}, `roles["a"].instructions`, "string.max_len", ""},
 		{"too many roles", &harnessv1.HarnessSpec{Roles: manyRoles(33)}, "roles", "map.max_pairs", ""},

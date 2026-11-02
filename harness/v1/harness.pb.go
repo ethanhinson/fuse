@@ -1497,7 +1497,8 @@ func (x *Worker) GetModel() string {
 // Role is a named, reusable helper definition.
 type Role struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// What the main agent reads when deciding whom to hand work to.
+	// What the main agent reads when deciding whom to hand work to. A blank
+	// (whitespace-only) description is rejected by semantic validation.
 	Description string `protobuf:"bytes,1,opt,name=description,proto3" json:"description,omitempty"`
 	// The helper's brief, composed into its system prompt.
 	Instructions string `protobuf:"bytes,2,opt,name=instructions,proto3" json:"instructions,omitempty"`
