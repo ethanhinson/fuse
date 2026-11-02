@@ -134,7 +134,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 	// Spawner (change 0046 retired the separate Deps.BuildChild field). Extracted to a
 	// named var so the same closure backs both.
 	childBuilder := func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
-		childToolReg, workerModel, terr := wiring.childTools(toolReg, opts, childNode)
+		childToolReg, cp, terr := wiring.childTools(toolReg, opts, childNode)
 		if terr != nil {
 			return "", terr
 		}
@@ -142,7 +142,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		r := tui.NewRenderer(stdout, verbose)
 		modelID := opts.ModelID
 		if modelID == "" {
-			modelID = workerModel // worker model pin (change 0034), now every binding
+			modelID = cp.model // worker or role model pin (changes 0034, 0114)
 		}
 		if modelID == "" {
 			modelID = modelAlias
@@ -161,7 +161,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// Observer is installed by a.SetObserver(observer) below, not here —
 			// keeps this branch symmetric with the buildChildAgent branch above,
 			// which takes no observer at all.
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, "" /* subagents never get the harness instructions */, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil, nil)
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -328,7 +328,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		// The shared wiring resolves the effective tool list: inside a workflow a
 		// selected worker's allowlist is authoritative (opts.Tools may only narrow
 		// it); outside, opts.Tools is the freeform subset (change 0034).
-		childToolReg, workerModel, terr := wiring.childTools(toolReg, opts, childNode)
+		childToolReg, cp, terr := wiring.childTools(toolReg, opts, childNode)
 		if terr != nil {
 			return "", terr
 		}
@@ -343,10 +343,10 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		)
 
 		modelID := opts.ModelID
-		// A worker's optional model pin applies when the caller did not
-		// pick a model explicitly (change 0034).
+		// A worker or role model pin applies when the caller did not pick a
+		// model explicitly (changes 0034, 0114).
 		if modelID == "" {
-			modelID = workerModel
+			modelID = cp.model // worker or role model pin (changes 0034, 0114)
 		}
 		if modelID == "" {
 			modelID = alias
@@ -361,7 +361,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 			// Observer is installed by a.SetObserver(observer) below, not here —
 			// keeps this branch symmetric with the buildChildAgent branch above,
 			// which takes no observer at all.
-			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, "" /* subagents never get the harness instructions */, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, nil)
+			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -560,7 +560,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		// Child-specific tool registry (clone, subset or worker allowlist) with the
 		// child-bound spawn_agent, blackboard and pipeline_run; unknown tool, worker
 		// or workflow names fail the spawn so the model can self-correct.
-		childToolReg, workerModel, terr := wiring.childTools(toolReg, opts, childNode)
+		childToolReg, cp, terr := wiring.childTools(toolReg, opts, childNode)
 		if terr != nil {
 			return "", terr
 		}
@@ -574,7 +574,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 
 		modelAlias := opts.ModelID
 		if modelAlias == "" {
-			modelAlias = workerModel // worker model pin (change 0034), now every binding
+			modelAlias = cp.model // worker or role model pin (changes 0034, 0114)
 		}
 		if modelAlias == "" {
 			modelAlias = alias
@@ -590,7 +590,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 			// Observer is installed by a.SetObserver(observer) below, not here —
 			// keeps this branch symmetric with the buildChildAgent branch above,
 			// which takes no observer at all.
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, "" /* subagents never get the harness instructions */, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink, nil)
+			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink, nil)
 		}
 		if aerr != nil {
 			return "", aerr
