@@ -2,7 +2,7 @@
 id: 115
 slug: 'pipeline-steps-name-a-role-roles-in-the-synthesis-palette'
 title: 'Pipeline steps name a role; roles in the synthesis palette'
-status: 'in-progress'
+status: 'implemented'
 priority: 'low'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/pipeline-steps-name-a-role-roles-in-the-synthesis-palette'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/129'
 blocked_by:
 reconciled: true
 ---
@@ -57,3 +57,12 @@ Pipeline scheduling or limit changes. Making roles mandatory in pipelines.
 ### 2026-11-02
 
 Unchanged against main 15d827c (0114 merged; reuse its role resolution in cmd/fuse/workflow.go). Fold in 0114 reviewer nit: spawn_agent role param description notes that with workflow, the role must be one that workflow offers.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: f0e7946691c8f197d66c4b3594444a975da60c62
+ran_at:   2026-11-02T08:34:28Z
+<!-- docket:build-evidence:end -->
