@@ -692,15 +692,24 @@ func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *a
 // none, the pipeline is refused before any step spawns and before the slot
 // yield (agent.ErrWorkerOutsideWorkflow).
 //
-// roles is every defined role name, sorted; a step naming any other role is
-// refused as a parse error (change 0115). Nil means no roles are defined.
-func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, runWF workflowRunner, governing workflowLookup, roles []string) tools.PipelineRunFunc {
+// scope supplies the role definitions and workflow configs (change 0115); nil
+// means no roles are defined. A step naming an undefined role is refused as a
+// parse error; a step naming a role the steps' workflow (the resolved
+// argument or definition field, else the one governing node) does not offer
+// is refused too. Both refusals come before the slot yield and any spawn, so a
+// hopeless step never fails mid-run after upstream steps spent quota.
+func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, runWF workflowRunner, governing workflowLookup, scope *workflowScope) tools.PipelineRunFunc {
+	var roles map[string]config.RoleConfig
+	var workflows map[string]config.WorkflowConfig
+	if scope != nil {
+		roles, workflows = scope.roles, scope.workflows
+	}
 	return func(ctx context.Context, definition []byte, workflow string) (string, error) {
 		p, err := pipeline.Parse(definition)
 		if err != nil {
 			return "", fmt.Errorf("parse: %w", err)
 		}
-		if err := pipeline.CheckRoles(p, roles); err != nil {
+		if err := pipeline.CheckRoles(p, sortedRoleNames(roles)); err != nil {
 			return "", fmt.Errorf("parse: %w", err)
 		}
 		// Authored path: structural validation only (no synthesis caps).
@@ -715,6 +724,9 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agen
 			return "", workflowPipelinesUnavailable(workflow)
 		}
 		if err := refuseUnboundWorkerSteps(p, workflow, node, governing); err != nil {
+			return "", err
+		}
+		if err := refuseUnofferedRoleSteps(p, roles, workflows, workflow, node, governing); err != nil {
 			return "", err
 		}
 		sched.YieldSlot(node)
@@ -733,10 +745,10 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agen
 // no workflow will govern: no workflow argument or definition field, and node
 // outside every workflow subtree. It runs before any step spawns.
 //
-// Role steps are not refused here, because roles are global (change 0115).
-// Whether a workflow offers a role is enforced when the step spawns, by
-// workflowScope.prepareChild (checkRole), the same as for any direct
-// Spawner.Spawn.
+// Role steps are not refused here, because roles are global (change 0115):
+// a role step needs no workflow to bind it. Whether the steps' workflow offers
+// a role is checked before any spawn by refuseUnofferedRoleSteps (and enforced
+// again when the step spawns, by workflowScope.prepareChild's checkRole).
 func refuseUnboundWorkerSteps(p *pipeline.Pipeline, workflow string, node *agent.AgentNode, governing workflowLookup) error {
 	if workflow != "" {
 		return nil
@@ -750,6 +762,44 @@ func refuseUnboundWorkerSteps(p *pipeline.Pipeline, workflow string, node *agent
 		if s.Worker != "" {
 			return fmt.Errorf("%w: step %q names worker %q but no workflow is active; pass workflow or set the definition's workflow field", agent.ErrWorkerOutsideWorkflow, s.Name, s.Worker)
 		}
+	}
+	return nil
+}
+
+// refuseUnofferedRoleSteps refuses a pipeline whose step names a defined role
+// that the workflow its steps will run under does not offer: workflow (the
+// resolved argument or definition field) when set, else the workflow governing
+// node (through governing). With neither, every defined role is offered and
+// nothing is refused here. It runs before the slot yield and any spawn, so the
+// refusal carries its reason instead of a mid-run step failure.
+func refuseUnofferedRoleSteps(p *pipeline.Pipeline, roles map[string]config.RoleConfig, workflows map[string]config.WorkflowConfig, workflow string, node *agent.AgentNode, governing workflowLookup) error {
+	var offered []string
+	where := fmt.Sprintf("workflow %q", workflow)
+	switch {
+	case workflow != "":
+		offered = workflowRoleNames(roles, workflows[workflow])
+	case governing != nil:
+		wf, ok := governing(node.ID)
+		if !ok {
+			return nil
+		}
+		offered, where = workflowRoleNames(roles, wf), "the governing workflow"
+	default:
+		return nil
+	}
+	set := make(map[string]bool, len(offered))
+	for _, n := range offered {
+		set[n] = true
+	}
+	for _, s := range p.Steps {
+		if s.Role == "" || set[s.Role] {
+			continue
+		}
+		list := "none"
+		if len(offered) > 0 {
+			list = strings.Join(offered, ", ")
+		}
+		return fmt.Errorf("step %q: role %q is not available in %s (available: %s)", s.Name, s.Role, where, list)
 	}
 	return nil
 }
@@ -885,6 +935,15 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 			workflow = p.Workflow
 		}
 		if err := refuseUnboundWorkerSteps(p, workflow, node, governing); err != nil {
+			if !sched.UnyieldSlot(ctx, node) {
+				return "", ctx.Err()
+			}
+			return "", err
+		}
+		// The palette offered every role when no workflow governed, but a plan
+		// that sets its own workflow runs under that narrower one: refuse a role
+		// it does not offer before any step spawns.
+		if err := refuseUnofferedRoleSteps(p, cfg.Roles, cfg.Workflows, workflow, node, governing); err != nil {
 			if !sched.UnyieldSlot(ctx, node) {
 				return "", ctx.Err()
 			}
