@@ -351,6 +351,7 @@ func spawnOnce(ctx context.Context, s Step, label, prompt string, sp *agent.Spaw
 		Label:  label,
 		Task:   prompt,
 		Worker: s.Worker,
+		Role:   s.Role,
 	}
 	if len(s.Expects) > 0 {
 		if schema := decodeSchema(s.Expects); schema != nil {

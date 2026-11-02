@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -685,5 +686,33 @@ func TestEngineDeadlockShapeUnderTightSlots(t *testing.T) {
 	}
 	if len(bb.Keys("a/*")) != 2 || len(bb.Keys("b/*")) != 2 {
 		t.Fatalf("fanout outputs missing: a=%v b=%v", bb.Keys("a/*"), bb.Keys("b/*"))
+	}
+}
+
+// TestEngineRoleStepForwardsRole (change 0115): a role step spawns with
+// SpawnOpts.Role set (every fanout instance alike); a plain step spawns with
+// none. Role resolution itself happens in the child builder (cmd/fuse).
+func TestEngineRoleStepForwardsRole(t *testing.T) {
+	tree := agent.NewAgentTree("root", "m")
+	bb := agent.NewBlackboard(tree)
+	var mu sync.Mutex
+	got := map[string]string{}
+	sp := fakeSpawner(t, tree, func(opts agent.SpawnOpts) (string, error) {
+		mu.Lock()
+		got[opts.Label] = opts.Role
+		mu.Unlock()
+		return "ok", nil
+	})
+	p := &Pipeline{Name: "p", Steps: []Step{
+		{Name: "rev", Role: "reviewer", Prompt: "x"},
+		{Name: "plain", Prompt: "y"},
+		{Name: "fan", Role: "writer", Prompt: "z", Fanout: 2},
+	}}
+	if _, err := Run(context.Background(), p, sp, bb); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := map[string]string{"rev": "reviewer", "plain": "", "fan-0": "writer", "fan-1": "writer"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("spawned roles = %v, want %v", got, want)
 	}
 }
