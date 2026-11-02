@@ -15,7 +15,7 @@ discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-design.md'
 plan: 'docs/superpowers/plans/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md'
-results:
+results: 'docs/results/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-design.md](../../superpowers/specs/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-design.md) |
 | Plan | [2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md](../../superpowers/plans/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md) |
+| Results | [2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-results.md](../../results/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-results.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
