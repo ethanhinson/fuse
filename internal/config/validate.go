@@ -219,6 +219,31 @@ func (c Config) Problems() []Problem {
 		}
 	}
 
+	// Roles: the same limits the harness spec's shape rules enforce, so a YAML
+	// config is held to the same contract. Role tool names and model aliases are
+	// not resolved here (tool sets are dynamic, as for workers).
+	if n := len(c.Roles); n > MaxRoles {
+		add("roles", "must define at most %d roles, got %d", MaxRoles, n)
+	}
+	for _, name := range sortedKeys(c.Roles) {
+		r := c.Roles[name]
+		if strings.TrimSpace(r.Description) == "" {
+			add("roles."+name+".description", "is required: what the main agent reads when deciding whom to hand work to")
+		} else if n := utf8.RuneCountInString(r.Description); n > MaxRoleDescriptionChars {
+			add("roles."+name+".description", "must be at most %d characters, got %d", MaxRoleDescriptionChars, n)
+		}
+		if n := utf8.RuneCountInString(r.Instructions); n > MaxInstructionsChars {
+			add("roles."+name+".instructions", "must be at most %d characters, got %d", MaxInstructionsChars, n)
+		}
+	}
+	for _, wf := range sortedKeys(c.Workflows) {
+		for i, name := range c.Workflows[wf].Roles {
+			if _, ok := c.Roles[name]; !ok {
+				add(fmt.Sprintf("workflows.%s.roles[%d]", wf, i), "%q is not a defined role (define it under roles)", name)
+			}
+		}
+	}
+
 	return ps
 }
 

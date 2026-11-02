@@ -1,19 +1,25 @@
 package config
 
-import "maps"
+import (
+	"maps"
+	"slices"
+)
 
 // clone returns a copy of c whose maps the loader's merge writes into
-// (Models.Entries, Workflows and each workflow's Workers) are its own, so
+// (Models.Entries, Roles, Workflows and each workflow's Workers and Roles) are
+// its own, so
 // OverlaySpec never mutates the operator's config. Slices and the other maps
 // are only ever replaced by the merge, never written through, so sharing them
 // is safe.
 func (c Config) clone() Config {
 	out := c
 	out.Models.Entries = maps.Clone(c.Models.Entries)
+	out.Roles = maps.Clone(c.Roles)
 	if c.Workflows != nil {
 		out.Workflows = make(map[string]WorkflowConfig, len(c.Workflows))
 		for name, w := range c.Workflows {
 			w.Workers = maps.Clone(w.Workers)
+			w.Roles = slices.Clone(w.Roles)
 			out.Workflows[name] = w
 		}
 	}
@@ -104,6 +110,9 @@ func mergeSpecWorkflows(c *Config, raw map[string]WorkflowConfig) (refused []str
 		}
 		if len(rw.Workers) > 0 {
 			cur.Workers = rw.Workers
+		}
+		if len(rw.Roles) > 0 {
+			cur.Roles = rw.Roles
 		}
 		pool := func(field string, curV *int, newV int) {
 			if tightenNumeric(curV, newV, false) {

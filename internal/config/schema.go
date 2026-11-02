@@ -506,6 +506,26 @@ type OrchestratorConfig struct {
 // HarnessSpec.instructions.
 const MaxInstructionsChars = 16384
 
+// MaxRoles caps the number of top-level roles. It matches the max_pairs rule
+// on HarnessSpec.roles.
+const MaxRoles = 32
+
+// MaxRoleDescriptionChars caps a role description, counted in characters.
+// It matches the max_len on Role.description.
+const MaxRoleDescriptionChars = 512
+
+// RoleConfig is a named, reusable helper definition: a description the main
+// agent reads when choosing whom to hand work to, a brief for the helper's
+// system prompt, and optionally a tool set (empty: inherit the parent's) and
+// a model alias (empty: inherit the parent's). The runtime does not use roles
+// yet; they are parsed, validated and carried through harness specs.
+type RoleConfig struct {
+	Description  string   `yaml:"description"`
+	Instructions string   `yaml:"instructions"`
+	Tools        []string `yaml:"tools"`
+	Model        string   `yaml:"model"`
+}
+
 // Config is the fully resolved fuse configuration.
 type Config struct {
 	// Instructions is the main agent's task brief, composed after the persona
@@ -541,6 +561,11 @@ type Config struct {
 	// config-level entry for the same name overrides it, and .fuse.local.yml may
 	// only TIGHTEN pool numbers, never loosen them (ADR-0006 trust boundary).
 	Workflows map[string]WorkflowConfig
+	// Roles are named helper definitions keyed by role name. Honored from the
+	// home file and a harness spec (an entry replaces any earlier entry with the
+	// same name); inert from .fuse.local.yml, since a role carries a tool set and
+	// a model pin.
+	Roles map[string]RoleConfig
 	// Context groups context-management knobs (change 0027). Its summarization
 	// block defaults to Tier 2 on with a 0.85 threshold and 2000-token output
 	// cap; the summarizer stays inert until a Completer is wired at the call
@@ -595,6 +620,8 @@ type WorkflowConfig struct {
 	Skill   string                  `yaml:"skill"`
 	Pool    PoolConfig              `yaml:"pool"`
 	Workers map[string]WorkerConfig `yaml:"workers"`
+	// Roles names the top-level roles that may take part in this workflow.
+	Roles []string `yaml:"roles"`
 }
 
 // PoolConfig is a workflow subtree's spawn policy. Each dimension is 0 = unset
@@ -691,6 +718,9 @@ type rawConfig struct {
 	// Workflows reuses the resolved WorkflowConfig shape on-disk (plain
 	// maps/lists/ints, no free-text scalars — so yaml.Unmarshal is safe).
 	Workflows map[string]WorkflowConfig `yaml:"workflows"`
+	// Roles mirrors Config.Roles on-disk. Descriptions and instructions are free
+	// text; yaml.Unmarshal reads quoted and block scalars exactly.
+	Roles map[string]RoleConfig `yaml:"roles"`
 	// Context mirrors ContextConfig on-disk (change 0027). Its summarization
 	// mirror uses a *bool for enabled so an omitted key keeps the true default
 	// while `enabled: false` takes effect (mirrors RespectRobots).

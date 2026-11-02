@@ -158,7 +158,7 @@ func mergePermissions(c *Config, raw rawPermissionsConfig, trusted bool) (ignore
 // safety brake and a repo-plantable file must not be able to widen it. A present
 // pool number that would loosen an existing cap is dropped and its workflow name
 // is returned for the caller's aggregated warning. Non-pool fields (skill,
-// workers) from an untrusted source are also inert (they could re-grant tools);
+// workers, roles) from an untrusted source are also inert (they could re-grant tools);
 // the workflow definition itself is human-owned config.
 //
 // "Tighten" is defined per dimension against the current value: a value is a
@@ -194,6 +194,9 @@ func mergeWorkflows(c *Config, raw map[string]WorkflowConfig, trusted bool) (loo
 			if len(rw.Workers) > 0 {
 				cur.Workers = rw.Workers
 			}
+			if len(rw.Roles) > 0 {
+				cur.Roles = rw.Roles
+			}
 			c.Workflows[name] = cur
 			continue
 		}
@@ -224,8 +227,9 @@ func mergeWorkflows(c *Config, raw map[string]WorkflowConfig, trusted bool) (loo
 		// follows the same tighten-only rule as the other pool numbers: a local
 		// file may only LOWER an already-set positive quota.
 		tightenOnly("tokens", &cur.Pool.Tokens, &rw.Pool.Tokens)
-		// skill / workers changes from an untrusted file are loosening surface.
-		if rw.Skill != "" && rw.Skill != cur.Skill || len(rw.Workers) > 0 {
+		// skill / workers / roles changes from an untrusted file are loosening
+		// surface.
+		if rw.Skill != "" && rw.Skill != cur.Skill || len(rw.Workers) > 0 || len(rw.Roles) > 0 {
 			if !flagged {
 				loosened = append(loosened, name)
 			}
@@ -510,6 +514,22 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	// warning. Only the trusted home path ever applies raw.Projects.
 	if !trusted && len(raw.Projects) > 0 {
 		ignored = append(ignored, "projects")
+	}
+	// Roles carry a tool set and a model pin, so a repo-plantable file must not
+	// redefine them: honored from the home file and a spec, inert (and named in
+	// the warning) from .fuse.local.yml. An entry replaces any earlier entry with
+	// the same name, whole.
+	if len(raw.Roles) > 0 {
+		if lvl == layerUntrusted {
+			ignored = append(ignored, "roles")
+		} else {
+			if c.Roles == nil {
+				c.Roles = map[string]RoleConfig{}
+			}
+			for name, r := range raw.Roles {
+				c.Roles[name] = r
+			}
+		}
 	}
 	if lvl == layerUntrusted && len(ignored) > 0 {
 		fmt.Fprintf(warnw, "warning: %s ignores permission-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
