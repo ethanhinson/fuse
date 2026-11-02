@@ -1,18 +1,13 @@
 # Backlog
 
-**115 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 9 proposed · ⚪ 3 deferred · ✅ 94 done · 🗑️ 7 killed
+**115 changes** — 🟢 2 in progress · 🟡 9 proposed · ⚪ 3 deferred · ✅ 94 done · 🗑️ 7 killed
 
-## 🟢 In progress (1)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
+| [0115](active/0115-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md) | Pipeline steps name a role; roles in the synthesis palette | `low` | `feat` | [spec](../superpowers/specs/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-design.md) | `feat/pipeline-steps-name-a-role-roles-in-the-synthesis-palette` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🟣 Groomed (1)
-
-| # | Title | Priority | Type | Spec | Readiness |
-|---|-------|----------|------|------|-----------|
-| [0115](active/0115-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md) | Pipeline steps name a role; roles in the synthesis palette | `low` | `feat` | [spec](../superpowers/specs/2026-11-02-pipeline-steps-name-a-role-roles-in-the-synthesis-palette-design.md) | build-ready |
 
 ## 🟡 Proposed (9)
 

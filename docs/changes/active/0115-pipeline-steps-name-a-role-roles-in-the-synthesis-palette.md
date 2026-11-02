@@ -2,7 +2,7 @@
 id: 115
 slug: 'pipeline-steps-name-a-role-roles-in-the-synthesis-palette'
 title: 'Pipeline steps name a role; roles in the synthesis palette'
-status: 'proposed'
+status: 'in-progress'
 priority: 'low'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/pipeline-steps-name-a-role-roles-in-the-synthesis-palette'
 pr:
 blocked_by:
 reconciled: false
