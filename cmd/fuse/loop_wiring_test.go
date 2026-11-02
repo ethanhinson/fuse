@@ -422,7 +422,7 @@ func TestPipelineRunFnWorkflowUsesRunner(t *testing.T) {
 	h := newWiringHarness(t)
 	sched := h.tree.Scheduler()
 	sp := h.makeSpawner(h.root, 0)
-	runFn := makePipelineRunFn(sp, h.w.bb, sched, h.root, h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing)
+	runFn := makePipelineRunFn(sp, h.w.bb, sched, h.root, h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing, nil)
 	line, err := runFn(ctx, []byte(wiringPipelineDef), "wf")
 	if err != nil {
 		t.Fatalf("workflow pipeline: %v", err)
@@ -437,7 +437,7 @@ func TestPipelineRunFnWorkflowUsesRunner(t *testing.T) {
 
 	plain := newWiringHarness(t)
 	plainFn := makePipelineRunFn(plain.makeSpawner(plain.root, 0), plain.w.bb, plain.tree.Scheduler(), plain.root,
-		plain.w.scope.runner(plain.makeSpawner, plain.root), plain.w.scope.governing)
+		plain.w.scope.runner(plain.makeSpawner, plain.root), plain.w.scope.governing, nil)
 	line, err = plainFn(ctx, []byte(wiringPlainPipelineDef), "")
 	if err != nil || line != "pipeline p: completed" {
 		t.Fatalf("plain pipeline = %q, %v; want completed", line, err)
@@ -446,7 +446,7 @@ func TestPipelineRunFnWorkflowUsesRunner(t *testing.T) {
 		t.Fatalf("plain pipeline created %d coordinator nodes, want 0", n)
 	}
 
-	none := makePipelineRunFn(sp, h.w.bb, sched, h.root, nil, nil)
+	none := makePipelineRunFn(sp, h.w.bb, sched, h.root, nil, nil, nil)
 	if _, err := none(ctx, []byte(wiringPipelineDef), "wf"); err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("nil runner err = %v, want not available", err)
 	}
@@ -541,7 +541,7 @@ func TestPipelineRunFnRefusesWorkerStepsOutsideWorkflow(t *testing.T) {
 	ctx := context.Background()
 	h := newWiringHarness(t)
 	runFn := makePipelineRunFn(h.makeSpawner(h.root, 0), h.w.bb, h.tree.Scheduler(), h.root,
-		h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing)
+		h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing, nil)
 
 	before := len(h.tree.SnapshotAll())
 	slots := h.tree.Scheduler().Snapshot().SlotsInUse
@@ -577,7 +577,7 @@ func TestPipelineRunFnRefusesWorkerStepsOutsideWorkflow(t *testing.T) {
 	sub := newWiringHarness(t)
 	lead := sub.lead()
 	subFn := makePipelineRunFn(sub.makeSpawner(lead.node, lead.node.Depth), sub.w.bb, sub.tree.Scheduler(), lead.node,
-		sub.w.scope.runner(sub.makeSpawner, lead.node), sub.w.scope.governing)
+		sub.w.scope.runner(sub.makeSpawner, lead.node), sub.w.scope.governing, nil)
 	if line, err := subFn(ctx, []byte(wiringPipelineDef), ""); err != nil || line != "pipeline p: completed" {
 		t.Fatalf("in-subtree worker pipeline = %q, %v; want completed", line, err)
 	}
@@ -591,7 +591,7 @@ func TestPipelineRunFnRefusesWorkerStepsOutsideWorkflow(t *testing.T) {
 
 	// A nil lookup is a context with no workflow scope: refused like outside.
 	nilFn := makePipelineRunFn(h.makeSpawner(h.root, 0), h.w.bb, h.tree.Scheduler(), h.root,
-		h.w.scope.runner(h.makeSpawner, h.root), nil)
+		h.w.scope.runner(h.makeSpawner, h.root), nil, nil)
 	if _, err := nilFn(ctx, []byte(wiringPipelineDef), ""); !errors.Is(err, agent.ErrWorkerOutsideWorkflow) {
 		t.Fatalf("nil lookup err = %v, want ErrWorkerOutsideWorkflow", err)
 	}
@@ -641,7 +641,7 @@ func TestPipelineSynthPaletteOutsideWorkflowOffersNoWorkers(t *testing.T) {
 	if _, err := synth(ctx, "goal", false, "wf"); err != nil {
 		t.Fatalf("wf synthesis: %v", err)
 	}
-	if !strings.Contains(prompt, "Available worker types: reader\n") || strings.Contains(prompt, "writer") {
+	if !strings.Contains(prompt, "Available worker types: reader\n") || strings.Contains(synthWorkerLine(prompt), "writer") {
 		t.Fatalf("wf synthesis palette = %q, want only reader", prompt)
 	}
 
@@ -652,9 +652,21 @@ func TestPipelineSynthPaletteOutsideWorkflowOffersNoWorkers(t *testing.T) {
 	// A synthesized plan naming wf inside the subtree is refused as nested
 	// (unchanged behavior); only the palette matters here.
 	_, _ = sub(ctx, "goal", false, "")
-	if !strings.Contains(prompt, "Available worker types: reader\n") || strings.Contains(prompt, "writer") {
+	if !strings.Contains(prompt, "Available worker types: reader\n") || strings.Contains(synthWorkerLine(prompt), "writer") {
 		t.Fatalf("in-subtree synthesis palette = %q, want only reader", prompt)
 	}
+}
+
+// synthWorkerLine is the synthesis prompt's worker palette line, or "" when it
+// has none. The harness also defines a writer role, which the role palette
+// lists, so a worker-palette check looks only at this line.
+func synthWorkerLine(prompt string) string {
+	for _, line := range strings.Split(prompt, "\n") {
+		if strings.HasPrefix(line, "Available worker types:") {
+			return line
+		}
+	}
+	return ""
 }
 
 // TestPipelineSynthFnRefusesUnboundWorkerSteps pins that a synthesized plan whose
@@ -742,5 +754,251 @@ func TestRunnerRefusesTooDeepWorkflowPipeline(t *testing.T) {
 	h.w.wirePipeline(reg, ok, nil)
 	if _, has := toolProps(t, reg, "pipeline_run")["workflow"]; !has {
 		t.Fatal("pipeline_run at a fitting depth lacks the workflow property")
+	}
+}
+
+// TestPipelineRunFnRoleStepOutsideWorkflow (change 0115): a role step is not
+// refused outside a workflow (roles are global); its child is built through
+// prepareChild's role resolution, so it gets the reviewer's tools, model pin
+// and brief, and the node records the role.
+func TestPipelineRunFnRoleStepOutsideWorkflow(t *testing.T) {
+	ctx := context.Background()
+	h := newWiringHarness(t)
+	runFn := makePipelineRunFn(h.makeSpawner(h.root, 0), h.w.bb, h.tree.Scheduler(), h.root,
+		h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing, h.w.scope)
+	const def = "name: rp\nsteps:\n  - name: rev\n    role: reviewer\n    prompt: check\n"
+	line, err := runFn(ctx, []byte(def), "")
+	if err != nil || line != "pipeline rp: completed" {
+		t.Fatalf("role pipeline = %q, %v; want completed", line, err)
+	}
+	steps := nodesLabelled(h.tree, "rev")
+	if len(steps) != 1 || steps[0].Role != "reviewer" {
+		t.Fatalf("rev steps = %+v, want one reviewer node", steps)
+	}
+	b := h.observed(steps[0].ID)
+	want := append(append([]string(nil), blackboardNames...), "grep", "read_file")
+	sort.Strings(want)
+	if got := schemaNames(b.reg); !reflect.DeepEqual(got, want) {
+		t.Fatalf("role step tools = %v, want %v", got, want)
+	}
+	if b.plan.model != "rmodel" || b.plan.instructions != "REVIEWER-BRIEF" {
+		t.Fatalf("role step plan = %+v, want rmodel pin and REVIEWER-BRIEF", b.plan)
+	}
+}
+
+// TestPipelineRunFnRoleStepUnderWorkflow: inside a workflow run the role step
+// is a child of the coordinator and resolves against the workflow's offered
+// roles (wf lists none, so every role is offered).
+func TestPipelineRunFnRoleStepUnderWorkflow(t *testing.T) {
+	ctx := context.Background()
+	h := newWiringHarness(t)
+	runFn := makePipelineRunFn(h.makeSpawner(h.root, 0), h.w.bb, h.tree.Scheduler(), h.root,
+		h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing, h.w.scope)
+	const def = "name: rp\nsteps:\n  - name: wri\n    role: writer\n    prompt: draft\n"
+	if line, err := runFn(ctx, []byte(def), "wf"); err != nil || line != "pipeline rp: completed" {
+		t.Fatalf("workflow role pipeline = %q, %v; want completed", line, err)
+	}
+	steps := nodesLabelled(h.tree, "wri")
+	if len(steps) != 1 || steps[0].Role != "writer" {
+		t.Fatalf("wri steps = %+v, want one writer node", steps)
+	}
+	if got := h.observed(steps[0].ID).plan.instructions; got != "WRITER-BRIEF" {
+		t.Fatalf("writer step instructions = %q, want WRITER-BRIEF", got)
+	}
+}
+
+// TestPipelineRunFnRefusesBadRoleSteps: an unknown role and a role+worker step
+// are parse errors, refused before any node exists.
+func TestPipelineRunFnRefusesBadRoleSteps(t *testing.T) {
+	ctx := context.Background()
+	h := newWiringHarness(t)
+	runFn := makePipelineRunFn(h.makeSpawner(h.root, 0), h.w.bb, h.tree.Scheduler(), h.root,
+		h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing, h.w.scope)
+	before := len(h.tree.SnapshotAll())
+	for def, want := range map[string]string{
+		"name: p\nsteps:\n  - name: s1\n    role: nope\n    prompt: x\n":                         `parse: pipeline: step "s1": unknown role "nope" (available: reviewer, writer)`,
+		"name: p\nsteps:\n  - name: s1\n    role: reviewer\n    worker: reader\n    prompt: x\n": `parse: pipeline: step "s1": role "reviewer" and worker "reader" cannot be combined; name one`,
+	} {
+		if _, err := runFn(ctx, []byte(def), "wf"); err == nil || err.Error() != want {
+			t.Errorf("err = %v, want %q", err, want)
+		}
+	}
+	if n := len(h.tree.SnapshotAll()); n != before {
+		t.Fatalf("refused pipelines created %d nodes, want 0", n-before)
+	}
+	// With no roles defined, any role step is an unknown role.
+	noRoles := makePipelineRunFn(h.makeSpawner(h.root, 0), h.w.bb, h.tree.Scheduler(), h.root, nil, nil, nil)
+	if _, err := noRoles(ctx, []byte("name: p\nsteps:\n  - name: s1\n    role: reviewer\n    prompt: x\n"), ""); err == nil ||
+		!strings.Contains(err.Error(), `unknown role "reviewer" (available: none configured)`) {
+		t.Fatalf("no-roles err = %v, want unknown role", err)
+	}
+}
+
+// restrictWFToWriter narrows h's wf (shared with its scope) to the writer role.
+func restrictWFToWriter(h *wiringHarness) {
+	wf := h.cfg.Workflows["wf"]
+	wf.Roles = []string{"writer"}
+	h.cfg.Workflows["wf"] = wf
+}
+
+// TestPipelineRunFnRefusesUnofferedRoleSteps: a step naming a defined role the
+// steps' workflow does not offer (through the argument, the definition field,
+// or the governing workflow) is refused before the slot yield and any spawn,
+// with the reason, rather than failing mid-run at that step.
+func TestPipelineRunFnRefusesUnofferedRoleSteps(t *testing.T) {
+	ctx := context.Background()
+	h := newWiringHarness(t)
+	restrictWFToWriter(h)
+	runFn := makePipelineRunFn(h.makeSpawner(h.root, 0), h.w.bb, h.tree.Scheduler(), h.root,
+		h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing, h.w.scope)
+	const def = "name: p\nsteps:\n  - name: up\n    role: writer\n    prompt: x\n  - name: rev\n    role: reviewer\n    depends_on: [up]\n    prompt: y\n"
+	const defField = "name: p\nworkflow: wf\nsteps:\n  - name: up\n    role: writer\n    prompt: x\n  - name: rev\n    role: reviewer\n    depends_on: [up]\n    prompt: y\n"
+	const want = `step "rev": role "reviewer" is not available in workflow "wf" (available: writer)`
+
+	before := len(h.tree.SnapshotAll())
+	slots := h.tree.Scheduler().Snapshot().SlotsInUse
+	for _, c := range []struct{ def, arg string }{{def, "wf"}, {defField, ""}} {
+		if _, err := runFn(ctx, []byte(c.def), c.arg); err == nil || err.Error() != want {
+			t.Errorf("arg %q: err = %v, want %q", c.arg, err, want)
+		}
+	}
+	if n := len(h.tree.SnapshotAll()); n != before {
+		t.Fatalf("refused pipelines created %d nodes, want 0", n-before)
+	}
+	if got := h.tree.Scheduler().Snapshot().SlotsInUse; got != slots {
+		t.Fatalf("refused pipelines left SlotsInUse %d, want %d", got, slots)
+	}
+
+	// Inside the restricted wf subtree the governing workflow limits roles.
+	sub := newWiringHarness(t)
+	restrictWFToWriter(sub)
+	lead := sub.lead()
+	subFn := makePipelineRunFn(sub.makeSpawner(lead.node, lead.node.Depth), sub.w.bb, sub.tree.Scheduler(), lead.node,
+		sub.w.scope.runner(sub.makeSpawner, lead.node), sub.w.scope.governing, sub.w.scope)
+	subBefore := len(sub.tree.SnapshotAll())
+	if _, err := subFn(ctx, []byte(def), ""); err == nil ||
+		err.Error() != `step "rev": role "reviewer" is not available in the governing workflow (available: writer)` {
+		t.Fatalf("governed err = %v, want governing-workflow refusal", err)
+	}
+	if n := len(sub.tree.SnapshotAll()); n != subBefore {
+		t.Fatalf("governed refusal created %d nodes, want 0", n-subBefore)
+	}
+}
+
+// TestPipelineSynthRefusesUnofferedRoleSteps: synthesis outside any workflow
+// offers every role, but a plan that sets its own workflow runs under it, so a
+// step naming a role that workflow does not offer is refused before any step
+// spawns.
+func TestPipelineSynthRefusesUnofferedRoleSteps(t *testing.T) {
+	ctx := context.Background()
+	h := newWiringHarness(t)
+	restrictWFToWriter(h)
+	h.reply = func(opts agent.SpawnOpts) string {
+		if opts.Label != "synthesize" {
+			return ""
+		}
+		return `{"name":"p","workflow":"wf","steps":[{"name":"up","role":"writer","prompt":"x"},{"name":"rev","role":"reviewer","depends_on":["up"],"prompt":"y"}]}`
+	}
+	sched := h.tree.Scheduler()
+	slots := sched.Snapshot().SlotsInUse
+	synth := makePipelineSynthFn(h.makeSpawner(h.root, 0), h.w.bb, sched, h.root, h.cfg, nil, nil,
+		h.w.scope.runner(h.makeSpawner, h.root), h.w.scope.governing)
+	const want = `step "rev": role "reviewer" is not available in workflow "wf" (available: writer)`
+	if _, err := synth(ctx, "goal", false, ""); err == nil || err.Error() != want {
+		t.Fatalf("synth err = %v, want %q", err, want)
+	}
+	if n := len(nodesLabelled(h.tree, "up")) + len(nodesLabelled(h.tree, "rev")); n != 0 {
+		t.Fatalf("refused synthesized pipeline spawned %d step nodes, want 0", n)
+	}
+	if got := sched.Snapshot().SlotsInUse; got != slots {
+		t.Fatalf("refused synthesis left SlotsInUse %d, want %d", got, slots)
+	}
+}
+
+// TestPipelineSynthRolePalette (change 0115): the synthesis prompt lists the
+// roles a step may take: every defined role outside a workflow, the
+// workflow's offered roles with one, and none at all when no roles are defined.
+func TestPipelineSynthRolePalette(t *testing.T) {
+	ctx := context.Background()
+	h := newWiringHarness(t)
+	var prompt string
+	h.reply = func(opts agent.SpawnOpts) string {
+		if opts.Label != "synthesize" {
+			return ""
+		}
+		prompt = opts.SystemPrompt
+		// Root synthesis requires a pool (RequirePool), so the plan names wf.
+		return `{"name":"p","workflow":"wf","steps":[{"name":"s1","role":"writer","prompt":"hi"}]}`
+	}
+	sched := h.tree.Scheduler()
+	run := h.w.scope.runner(h.makeSpawner, h.root)
+	synth := makePipelineSynthFn(h.makeSpawner(h.root, 0), h.w.bb, sched, h.root, h.cfg, nil, nil, run, h.w.scope.governing)
+
+	if line, err := synth(ctx, "goal", false, ""); err != nil || line != "pipeline p: completed" {
+		t.Fatalf("root role synthesis = %q, %v; want completed", line, err)
+	}
+	if !strings.Contains(prompt, "- reviewer — Reviews code.\n- writer — Writes prose.\n") {
+		t.Fatalf("root palette lacks both roles: %q", prompt)
+	}
+
+	wf := h.cfg.Workflows["wf"]
+	wf.Roles = []string{"writer"}
+	h.cfg.Workflows["wf"] = wf
+	synth = makePipelineSynthFn(h.makeSpawner(h.root, 0), h.w.bb, sched, h.root, h.cfg, nil, nil, run, h.w.scope.governing)
+	prompt = ""
+	if _, err := synth(ctx, "goal", false, "wf"); err != nil {
+		t.Fatalf("wf role synthesis: %v", err)
+	}
+	if !strings.Contains(prompt, "- writer — Writes prose.\n") || strings.Contains(prompt, "- reviewer") {
+		t.Fatalf("wf palette = %q, want only writer", prompt)
+	}
+
+	none := h.cfg
+	none.Roles = nil
+	h.reply = func(opts agent.SpawnOpts) string {
+		if opts.Label != "synthesize" {
+			return ""
+		}
+		prompt = opts.SystemPrompt
+		return `{"name":"p","workflow":"wf","steps":[{"name":"s1","prompt":"hi"}]}`
+	}
+	prompt = ""
+	if _, err := makePipelineSynthFn(h.makeSpawner(h.root, 0), h.w.bb, sched, h.root, none, nil, nil, run, h.w.scope.governing)(ctx, "goal", false, ""); err != nil {
+		t.Fatalf("no-roles synthesis: %v", err)
+	}
+	if strings.Contains(prompt, "Available roles") || strings.Contains(prompt, `"role"`) {
+		t.Fatalf("no-roles synthesis prompt mentions roles: %q", prompt)
+	}
+}
+
+// pipelineRunDescription returns the description of reg's pipeline_run.
+func pipelineRunDescription(t *testing.T, reg *tools.Registry) string {
+	t.Helper()
+	for _, tl := range reg.Tools() {
+		if tl.Name() == "pipeline_run" {
+			return tl.Description()
+		}
+	}
+	t.Fatal("registry has no pipeline_run")
+	return ""
+}
+
+// TestWirePipelineAdvertisesRoles: pipeline_run's description lists the roles
+// offered at the node, and is byte-identical to the role-free tool when no
+// roles are defined.
+func TestWirePipelineAdvertisesRoles(t *testing.T) {
+	h := newWiringHarness(t)
+	reg := tools.NewRegistry()
+	h.w.wirePipeline(reg, h.root, nil)
+	if d := pipelineRunDescription(t, reg); !strings.Contains(d, "\n- reviewer — Reviews code.") || !strings.Contains(d, "\n- writer — Writes prose.") {
+		t.Fatalf("root pipeline_run description lacks the roles: %q", d)
+	}
+
+	plain := newWiringHarness(t)
+	plain.w.scope = newWorkflowScope(plain.tree, plain.cfg.Workflows, nil)
+	reg = tools.NewRegistry()
+	plain.w.wirePipeline(reg, plain.root, nil)
+	if got, want := pipelineRunDescription(t, reg), tools.NewPipelineRunTool(nil, nil).Description(); got != want {
+		t.Fatalf("no-roles pipeline_run description changed:\n got %q\nwant %q", got, want)
 	}
 }

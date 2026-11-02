@@ -81,9 +81,10 @@ func (w loopWiring) wirePipeline(reg *tools.Registry, node *agent.AgentNode, req
 	sp := w.makeSpawner(node, node.Depth)
 	run := w.scope.runner(w.makeSpawner, node)
 	t := tools.NewPipelineRunTool(
-		makePipelineRunFn(sp, w.bb, sched, node, run, w.scope.governing),
+		makePipelineRunFn(sp, w.bb, sched, node, run, w.scope.governing, w.scope),
 		makePipelineSynthFn(sp, w.bb, sched, node, w.cfg, toolNames, w.traceW, run, w.scope.governing),
 	)
+	t = t.WithRoles(w.scope.roleOptions(node.ID))
 	if act, _ := w.scope.activationOf(node.ID); act == nil && pipelineWorkflowFits(node) {
 		t = t.WithWorkflows(w.scope.names())
 	}

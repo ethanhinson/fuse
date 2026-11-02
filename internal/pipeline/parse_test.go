@@ -169,3 +169,66 @@ func TestParseEmptyOnErrorDefaultsFail(t *testing.T) {
 		t.Fatalf("absent on_error should default to fail, got %+v", p.Steps[0].OnError)
 	}
 }
+
+// TestParseRoleField (change 0115): a step's optional role decodes from YAML
+// and JSON alike.
+func TestParseRoleField(t *testing.T) {
+	for _, def := range []string{
+		"name: p\nsteps:\n  - name: rev\n    role: reviewer\n    prompt: check it\n",
+		`{"name":"p","steps":[{"name":"rev","role":"reviewer","prompt":"check it"}]}`,
+	} {
+		p, err := Parse([]byte(def))
+		if err != nil {
+			t.Fatalf("Parse(%q): %v", def, err)
+		}
+		if got := p.Steps[0].Role; got != "reviewer" {
+			t.Fatalf("Parse(%q) role = %q, want reviewer", def, got)
+		}
+	}
+}
+
+// TestParseRoleAndWorkerIsError: naming both role and worker on one step is a
+// parse error naming the step.
+func TestParseRoleAndWorkerIsError(t *testing.T) {
+	_, err := Parse([]byte("name: p\nsteps:\n  - name: s\n    role: reviewer\n    worker: reader\n"))
+	if err == nil {
+		t.Fatal("role+worker step parsed without error")
+	}
+	want := `pipeline: step "s": role "reviewer" and worker "reader" cannot be combined; name one`
+	if err.Error() != want {
+		t.Fatalf("err = %q, want %q", err, want)
+	}
+}
+
+// TestCheckRoles: a role step must name a known role; steps without a role
+// always pass.
+func TestCheckRoles(t *testing.T) {
+	ok := &Pipeline{Name: "p", Steps: []Step{{Name: "a"}, {Name: "b", Role: "reviewer"}}}
+	if err := CheckRoles(ok, []string{"reviewer", "writer"}); err != nil {
+		t.Fatalf("known role refused: %v", err)
+	}
+	if err := CheckRoles(&Pipeline{Name: "p", Steps: []Step{{Name: "a"}}}, nil); err != nil {
+		t.Fatalf("role-free pipeline refused with no roles: %v", err)
+	}
+	bad := &Pipeline{Name: "p", Steps: []Step{{Name: "a"}, {Name: "b", Role: "nope"}}}
+	err := CheckRoles(bad, []string{"reviewer", "writer"})
+	if want := `pipeline: step "b": unknown role "nope" (available: reviewer, writer)`; err == nil || err.Error() != want {
+		t.Fatalf("unknown role err = %v, want %q", err, want)
+	}
+	err = CheckRoles(bad, nil)
+	if want := `pipeline: step "b": unknown role "nope" (available: none configured)`; err == nil || err.Error() != want {
+		t.Fatalf("no-roles err = %v, want %q", err, want)
+	}
+}
+
+// TestStepRoleOmittedWhenEmpty: a role-free step marshals with no role key, so
+// a published pipeline.plan is unchanged when roles are unused.
+func TestStepRoleOmittedWhenEmpty(t *testing.T) {
+	b, err := json.Marshal(Step{Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "role") {
+		t.Fatalf("role-free step marshals a role key: %s", b)
+	}
+}

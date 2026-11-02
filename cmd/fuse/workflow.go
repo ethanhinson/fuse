@@ -204,15 +204,35 @@ type childPlan struct {
 	instructions string   // the role brief for the child's instructions slot, "" when none
 }
 
-// roleNames returns every defined role name, sorted.
-func (s *workflowScope) roleNames() []string {
-	out := make([]string, 0, len(s.roles))
-	for n := range s.roles {
+// sortedRoleNames returns every defined role name, sorted.
+func sortedRoleNames(roles map[string]config.RoleConfig) []string {
+	out := make([]string, 0, len(roles))
+	for n := range roles {
 		out = append(out, n)
 	}
 	sort.Strings(out)
 	return out
 }
+
+// workflowRoleNames returns the role names offered inside a workflow
+// configured as cfg: its listed roles that are defined, or every defined role
+// when it lists none. Sorted.
+func workflowRoleNames(roles map[string]config.RoleConfig, cfg config.WorkflowConfig) []string {
+	if len(cfg.Roles) == 0 {
+		return sortedRoleNames(roles)
+	}
+	out := make([]string, 0, len(cfg.Roles))
+	for _, n := range cfg.Roles {
+		if _, ok := roles[n]; ok {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// roleNames returns every defined role name, sorted.
+func (s *workflowScope) roleNames() []string { return sortedRoleNames(s.roles) }
 
 // offeredRoles returns the role names a spawner at nodeID is offered: the
 // governing workflow's roles when it lists any, else every defined role
@@ -228,17 +248,7 @@ func (s *workflowScope) offeredRoles(nodeID string) []string {
 // cfg: its listed roles that are defined, or every defined role when it lists
 // none. Sorted.
 func (s *workflowScope) workflowRoles(cfg config.WorkflowConfig) []string {
-	if len(cfg.Roles) == 0 {
-		return s.roleNames()
-	}
-	out := make([]string, 0, len(cfg.Roles))
-	for _, n := range cfg.Roles {
-		if _, ok := s.roles[n]; ok {
-			out = append(out, n)
-		}
-	}
-	sort.Strings(out)
-	return out
+	return workflowRoleNames(s.roles, cfg)
 }
 
 // roleOptions returns the spawn tool's role enum for a spawner at nodeID.

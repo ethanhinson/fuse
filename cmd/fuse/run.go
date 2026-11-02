@@ -691,10 +691,25 @@ func spawnFuncFrom(spawner *agent.Spawner, sched *agent.Scheduler, parentNode *a
 // definition's field, or the workflow governing node (through governing). With
 // none, the pipeline is refused before any step spawns and before the slot
 // yield (agent.ErrWorkerOutsideWorkflow).
-func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, runWF workflowRunner, governing workflowLookup) tools.PipelineRunFunc {
+//
+// scope supplies the role definitions and workflow configs (change 0115); nil
+// means no roles are defined. A step naming an undefined role is refused as a
+// parse error; a step naming a role the steps' workflow (the resolved
+// argument or definition field, else the one governing node) does not offer
+// is refused too. Both refusals come before the slot yield and any spawn, so a
+// hopeless step never fails mid-run after upstream steps spent quota.
+func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agent.Scheduler, node *agent.AgentNode, runWF workflowRunner, governing workflowLookup, scope *workflowScope) tools.PipelineRunFunc {
+	var roles map[string]config.RoleConfig
+	var workflows map[string]config.WorkflowConfig
+	if scope != nil {
+		roles, workflows = scope.roles, scope.workflows
+	}
 	return func(ctx context.Context, definition []byte, workflow string) (string, error) {
 		p, err := pipeline.Parse(definition)
 		if err != nil {
+			return "", fmt.Errorf("parse: %w", err)
+		}
+		if err := pipeline.CheckRoles(p, sortedRoleNames(roles)); err != nil {
 			return "", fmt.Errorf("parse: %w", err)
 		}
 		// Authored path: structural validation only (no synthesis caps).
@@ -709,6 +724,9 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agen
 			return "", workflowPipelinesUnavailable(workflow)
 		}
 		if err := refuseUnboundWorkerSteps(p, workflow, node, governing); err != nil {
+			return "", err
+		}
+		if err := refuseUnofferedRoleSteps(p, roles, workflows, workflow, node, governing); err != nil {
 			return "", err
 		}
 		sched.YieldSlot(node)
@@ -726,6 +744,11 @@ func makePipelineRunFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *agen
 // refuseUnboundWorkerSteps refuses a pipeline whose steps name a worker that
 // no workflow will govern: no workflow argument or definition field, and node
 // outside every workflow subtree. It runs before any step spawns.
+//
+// Role steps are not refused here, because roles are global (change 0115):
+// a role step needs no workflow to bind it. Whether the steps' workflow offers
+// a role is checked before any spawn by refuseUnofferedRoleSteps (and enforced
+// again when the step spawns, by workflowScope.prepareChild's checkRole).
 func refuseUnboundWorkerSteps(p *pipeline.Pipeline, workflow string, node *agent.AgentNode, governing workflowLookup) error {
 	if workflow != "" {
 		return nil
@@ -739,6 +762,44 @@ func refuseUnboundWorkerSteps(p *pipeline.Pipeline, workflow string, node *agent
 		if s.Worker != "" {
 			return fmt.Errorf("%w: step %q names worker %q but no workflow is active; pass workflow or set the definition's workflow field", agent.ErrWorkerOutsideWorkflow, s.Name, s.Worker)
 		}
+	}
+	return nil
+}
+
+// refuseUnofferedRoleSteps refuses a pipeline whose step names a defined role
+// that the workflow its steps will run under does not offer: workflow (the
+// resolved argument or definition field) when set, else the workflow governing
+// node (through governing). With neither, every defined role is offered and
+// nothing is refused here. It runs before the slot yield and any spawn, so the
+// refusal carries its reason instead of a mid-run step failure.
+func refuseUnofferedRoleSteps(p *pipeline.Pipeline, roles map[string]config.RoleConfig, workflows map[string]config.WorkflowConfig, workflow string, node *agent.AgentNode, governing workflowLookup) error {
+	var offered []string
+	where := fmt.Sprintf("workflow %q", workflow)
+	switch {
+	case workflow != "":
+		offered = workflowRoleNames(roles, workflows[workflow])
+	case governing != nil:
+		wf, ok := governing(node.ID)
+		if !ok {
+			return nil
+		}
+		offered, where = workflowRoleNames(roles, wf), "the governing workflow"
+	default:
+		return nil
+	}
+	set := make(map[string]bool, len(offered))
+	for _, n := range offered {
+		set[n] = true
+	}
+	for _, s := range p.Steps {
+		if s.Role == "" || set[s.Role] {
+			continue
+		}
+		list := "none"
+		if len(offered) > 0 {
+			list = strings.Join(offered, ", ")
+		}
+		return fmt.Errorf("step %q: role %q is not available in %s (available: %s)", s.Name, s.Role, where, list)
 	}
 	return nil
 }
@@ -789,6 +850,8 @@ func runPipelineSteps(ctx context.Context, p *pipeline.Pipeline, spawner *agent.
 // The palette's workers are computed per call: the argument's workflow workers,
 // else the workers of the workflow governing node (through governing), else
 // none, so the synthesizer is only offered workers something can bind.
+// The role palette is computed per call the same way (change 0115): the
+// argument's or governing workflow's offered roles, else every defined role.
 //
 // With a workflow argument (change 0091) an unknown name is refused before any
 // spawn and the synthesized steps run under runWF's coordinator (the synthesis
@@ -806,9 +869,11 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 	}
 	return func(ctx context.Context, goal string, confirm bool, workflow string) (string, error) {
 		var palette []string
+		var wfCfg *config.WorkflowConfig
 		if workflow == "" && governing != nil {
 			if wf, ok := governing(node.ID); ok {
 				palette = sortedWorkerNames(wf)
+				wfCfg = &wf
 			}
 		}
 		if workflow != "" {
@@ -820,6 +885,7 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 				return "", unknownWorkflowErr(workflow, sortedWorkflowNames(cfg.Workflows))
 			}
 			palette = sortedWorkerNames(wf)
+			wfCfg = &wf
 			// Admit before synthesizing, as the authored path does before any
 			// spawn: a nested or too-deep request spawns no synthesis child,
 			// spends no quota and publishes no pipeline.plan.
@@ -839,7 +905,7 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 		// them deadlocks under slot pressure
 		// (learning: slot-cap-yield-while-blocked-on-children).
 		sched.YieldSlot(node)
-		p, err := pipeline.Synthesize(ctx, goal, pipeline.SynthContext{Workers: palette, Tools: toolNames}, spawner, synthCaps)
+		p, err := pipeline.Synthesize(ctx, goal, pipeline.SynthContext{Workers: palette, Roles: synthRolePalette(cfg.Roles, wfCfg), Tools: toolNames}, spawner, synthCaps)
 		if err != nil {
 			if !sched.UnyieldSlot(ctx, node) {
 				return "", ctx.Err()
@@ -869,6 +935,15 @@ func makePipelineSynthFn(spawner *agent.Spawner, bb *agent.Blackboard, sched *ag
 			workflow = p.Workflow
 		}
 		if err := refuseUnboundWorkerSteps(p, workflow, node, governing); err != nil {
+			if !sched.UnyieldSlot(ctx, node) {
+				return "", ctx.Err()
+			}
+			return "", err
+		}
+		// The palette offered every role when no workflow governed, but a plan
+		// that sets its own workflow runs under that narrower one: refuse a role
+		// it does not offer before any step spawns.
+		if err := refuseUnofferedRoleSteps(p, cfg.Roles, cfg.Workflows, workflow, node, governing); err != nil {
 			if !sched.UnyieldSlot(ctx, node) {
 				return "", ctx.Err()
 			}
@@ -905,11 +980,28 @@ func sortedWorkerNames(wf config.WorkflowConfig) []string {
 	return out
 }
 
+// synthRolePalette is the synthesis role palette (change 0115): the roles a
+// step may take, as name and description, sorted. Outside a workflow (wf nil)
+// it is every defined role; with one, the roles that workflow offers. Nil when
+// none, so the synthesis prompt is unchanged without roles.
+func synthRolePalette(roles map[string]config.RoleConfig, wf *config.WorkflowConfig) []pipeline.SynthRole {
+	names := sortedRoleNames(roles)
+	if wf != nil {
+		names = workflowRoleNames(roles, *wf)
+	}
+	var out []pipeline.SynthRole
+	for _, n := range names {
+		out = append(out, pipeline.SynthRole{Name: n, Description: roles[n].Description})
+	}
+	return out
+}
+
 // pipelineSynthPalette derives the synthesis palette from the resolved config
 // and the root tool registry: the worker types declared across all workflows and
 // the currently-registered tool names. Both are advisory context the synthesizer
 // draws from (change 0026). The shared wiring (loopWiring.wirePipeline) uses
-// only its tool names: the synthesis seam computes its worker palette per call.
+// only its tool names: its worker list is unused there, and the synthesis seam
+// computes both the worker and role palettes per call (makePipelineSynthFn).
 func pipelineSynthPalette(cfg config.Config, reg *tools.Registry) (workers, toolNames []string) {
 	seen := map[string]bool{}
 	for _, wf := range cfg.Workflows {

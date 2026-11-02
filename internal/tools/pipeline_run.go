@@ -36,6 +36,8 @@ type PipelineRunTool struct {
 	// workflows, when non-empty, enumerates the configured workflow names in the
 	// `workflow` param schema (change 0091).
 	workflows []string
+	// roles, when non-empty, are described in the tool description (change 0115).
+	roles []RoleOption
 }
 
 // NewPipelineRunTool constructs the tool with the authored-run and synthesis
@@ -54,17 +56,40 @@ func (t *PipelineRunTool) WithWorkflows(names []string) *PipelineRunTool {
 	return &cp
 }
 
+// WithRoles returns a copy of the tool whose description tells the model a
+// pipeline step may name one of these roles instead of a worker (change 0115),
+// sorted by name with one description line each. An empty/nil list leaves the
+// description unchanged.
+func (t *PipelineRunTool) WithRoles(opts []RoleOption) *PipelineRunTool {
+	cp := *t
+	cp.roles = normalizeRoleOptions(opts)
+	return &cp
+}
+
 // Name returns the tool name.
 func (t *PipelineRunTool) Name() string { return "pipeline_run" }
 
 // Description returns the tool description shown to the model.
 func (t *PipelineRunTool) Description() string {
-	return "Run a multi-step agent pipeline (a DAG of dependent spawns). Provide " +
+	base := "Run a multi-step agent pipeline (a DAG of dependent spawns). Provide " +
 		"exactly one of `definition` (an authored pipeline as YAML/JSON) to run it " +
 		"directly, or `goal` (a natural-language objective) to have a pipeline " +
 		"synthesized and then run. The run completes when the pipeline reaches a " +
 		"terminal state; the result is a status line and pipeline.status is written " +
 		"to the shared blackboard."
+	if len(t.roles) == 0 {
+		return base
+	}
+	var lines strings.Builder
+	for _, r := range t.roles {
+		lines.WriteString("\n- " + r.Name + " — " + r.Description)
+	}
+	desc := base + " A step may name a `role` instead of a `worker`: the role supplies the step's system prompt, " +
+		"and its tool set and model when it defines them; a role needs no workflow. "
+	if len(t.workflows) > 0 {
+		desc += "With `workflow`, a step's role must be one that workflow offers. "
+	}
+	return desc + "Roles:" + lines.String()
 }
 
 // Parameters returns the JSON schema for the tool input.

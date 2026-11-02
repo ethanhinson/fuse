@@ -548,3 +548,22 @@ func TestSpawnAgentForwardsRole(t *testing.T) {
 		t.Errorf("SpawnRequest.Role = %q, want reviewer", got.Role)
 	}
 }
+
+// TestSpawnAgentRoleNoteForWorkflow (change 0115): where the tool offers both
+// workflows and roles, the role param says a role must be one the chosen
+// workflow offers; with roles but no workflows the note is absent.
+func TestSpawnAgentRoleNoteForWorkflow(t *testing.T) {
+	const note = "With `workflow`, the role must be one that workflow offers."
+	roles := []RoleOption{{"reviewer", "Reviews."}}
+	desc := func(tool *SpawnAgentTool) string {
+		r, _ := tool.Parameters()["properties"].(map[string]any)["role"].(map[string]any)
+		s, _ := r["description"].(string)
+		return s
+	}
+	if d := desc(NewSpawnAgentTool(okSpawn("x")).WithWorkflows([]string{"wf"}).WithRoles(roles)); !strings.Contains(d, note) {
+		t.Errorf("role description with workflows lacks the note: %q", d)
+	}
+	if d := desc(NewSpawnAgentTool(okSpawn("x")).WithRoles(roles)); strings.Contains(d, note) {
+		t.Errorf("role description without workflows carries the note: %q", d)
+	}
+}
