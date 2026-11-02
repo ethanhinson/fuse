@@ -15,7 +15,7 @@ discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-02-roles-named-helper-definitions-in-the-harness-spec-design.md'
 plan: 'docs/superpowers/plans/2026-11-02-roles-named-helper-definitions-in-the-harness-spec.md'
-results:
+results: 'docs/results/2026-11-02-roles-named-helper-definitions-in-the-harness-spec-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-02-roles-named-helper-definitions-in-the-harness-spec-design.md](../../superpowers/specs/2026-11-02-roles-named-helper-definitions-in-the-harness-spec-design.md) |
 | Plan | [2026-11-02-roles-named-helper-definitions-in-the-harness-spec.md](../../superpowers/plans/2026-11-02-roles-named-helper-definitions-in-the-harness-spec.md) |
+| Results | [2026-11-02-roles-named-helper-definitions-in-the-harness-spec-results.md](../../results/2026-11-02-roles-named-helper-definitions-in-the-harness-spec-results.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
