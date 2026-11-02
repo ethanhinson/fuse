@@ -61,7 +61,7 @@ func newWiringHarnessN(t *testing.T, slots int) *wiringHarness {
 		tree: tree,
 		root: tree.Node(tree.RootID()),
 	}
-	scope := newWorkflowScope(tree, cfg.Workflows)
+	scope := newWorkflowScope(tree, cfg.Workflows, nil)
 	h.w = loopWiring{
 		cfg:         cfg,
 		tree:        tree,

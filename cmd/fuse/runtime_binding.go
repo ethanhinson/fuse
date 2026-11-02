@@ -123,7 +123,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 	// Per-loop workflow scope and shared tool wiring (change 0091): workflows
 	// activate per spawn, and the child and root tools (worker allowlist, scoped
 	// spawn_agent, blackboard, pipeline_run) all come from loopWiring.
-	scope := newWorkflowScope(tree, cfg.Workflows)
+	scope := newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
 	wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope, traceW: traceW,
 		makeSpawner: func(p *agent.AgentNode, d int) *agent.Spawner { return makeSpawner(p, d) }}
@@ -319,7 +319,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 	// scope, so workflows still activate per spawn.
 	scope := in.scope
 	if scope == nil {
-		scope = newWorkflowScope(tree, cfg.Workflows)
+		scope = newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
 	}
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
 	wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope, traceW: traceW,
@@ -547,7 +547,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 	}
 
 	// Per-loop workflow scope and shared tool wiring (change 0091).
-	scope := newWorkflowScope(tree, cfg.Workflows)
+	scope := newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
 	var makeSpawner func(parentNode *agent.AgentNode, parentDepth int) *agent.Spawner
 	wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope, traceW: traceW,
 		makeSpawner: func(p *agent.AgentNode, d int) *agent.Spawner { return makeSpawner(p, d) }}

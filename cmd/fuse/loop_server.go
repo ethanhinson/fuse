@@ -395,7 +395,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			// Per-loop workflow scope and shared tool wiring (change 0091): cfg is this
 			// loop's resolved config, so spec-supplied workflows activate per spawn here
 			// exactly as in the local bindings. traceW is nil (no trace on loop-server).
-			scope := newWorkflowScope(tree, cfg.Workflows)
+			scope := newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
 			var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
 			wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope,
 				makeSpawner: func(p *agent.AgentNode, d int) *agent.Spawner { return makeSpawner(p, d) }}

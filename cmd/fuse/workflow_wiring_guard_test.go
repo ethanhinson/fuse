@@ -111,7 +111,7 @@ func TestResearchProbeRootActivatesThroughScope(t *testing.T) {
 	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 	rootNode := tree.Node(tree.RootID())
-	scope := newWorkflowScope(tree, cfg.Workflows)
+	scope := newWorkflowScope(tree, cfg.Workflows, nil)
 	if _, err := scope.activateRoot(rootNode, "research"); err != nil {
 		t.Fatalf("activateRoot: %v", err)
 	}
