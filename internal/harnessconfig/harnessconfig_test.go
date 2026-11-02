@@ -52,9 +52,10 @@ func fullSpec() *harnessv1.HarnessSpec {
 		Agents:       &harnessv1.Agents{MaxSpawns: 10, MaxConcurrent: 4, QueueBound: 1.5, ToolTimeoutSeconds: 30},
 		Workflows: map[string]*harnessv1.Workflow{
 			// A partial override of the built-in research workflow.
-			"research": {Pool: &harnessv1.Pool{Total: 3}},
+			"research": {Pool: &harnessv1.Pool{Total: 3}, Roles: []string{"researcher"}},
 			"review": {
 				Skill: "review",
+				Roles: []string{"reviewer"},
 				Pool:  &harnessv1.Pool{Concurrent: 2, Total: 6, MaxDepth: 1, Tokens: 100000},
 				Workers: map[string]*harnessv1.Worker{
 					"reader": {Tools: []string{"read_file"}, Model: "fast"},
@@ -76,6 +77,10 @@ func fullSpec() *harnessv1.HarnessSpec {
 		MaxTurns:     &turns,
 		MaxTokens:    8192,
 		Instructions: tricky,
+		Roles: map[string]*harnessv1.Role{
+			"reviewer":   {Description: "Reviews a diff: correctness first.", Instructions: tricky, Tools: []string{"read_file", "grep"}, Model: "fast"},
+			"researcher": {Description: "Finds sources."},
+		},
 		Research: &harnessv1.Research{
 			Provider: harnessv1.ResearchProvider_RESEARCH_PROVIDER_CUSTOM, MaxQueries: 3, MaxResults: 4, MaxContentKb: 20, RespectRobots: &f,
 			Custom: &harnessv1.CustomSearchProvider{
@@ -229,7 +234,17 @@ mcp_servers:
   - {name: s1, transport: http, url: "https://s1.example.com", auth: {type: identity, scopes: [x]}, audience: aud}
 agents: {max_spawns: 5, tool_timeout_seconds: 9}
 workflows:
-  research: {pool: {concurrent: 2}}
+  research: {pool: {concurrent: 2}, roles: [reviewer]}
+roles:
+  reviewer:
+    description: "Reviews a diff: correctness first."
+    instructions: |
+      You review code.
+      # not a comment
+      - not a list
+    tools: [read_file]
+    model: glm
+  researcher: {description: Finds sources.}
 throughput: {requests_per_minute: 10}
 context:
   summarization: {threshold: 0.5}
@@ -469,5 +484,96 @@ func TestFromConfigOmitsModelMetadata(t *testing.T) {
 	}
 	if id := spec.GetModels().GetEntries()["fast"].GetId(); id != "cloud/fast" {
 		t.Fatalf("spec id = %q", id)
+	}
+}
+
+func TestToConfigMapsRoles(t *testing.T) {
+	spec := &harnessv1.HarnessSpec{
+		Roles: map[string]*harnessv1.Role{
+			"reviewer": {Description: "Reviews a diff: correctness first.", Instructions: tricky, Tools: []string{"read_file", "grep"}, Model: "fast"},
+			"inherit":  {Description: "Inherits tools and model."},
+		},
+		Workflows: map[string]*harnessv1.Workflow{"wf": {Skill: "wf", Roles: []string{"reviewer"}}},
+	}
+	cfg, err := ToConfig(spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := config.RoleConfig{Description: "Reviews a diff: correctness first.", Instructions: tricky, Tools: []string{"read_file", "grep"}, Model: "fast"}
+	if got := cfg.Roles["reviewer"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("reviewer = %+v, want %+v", got, want)
+	}
+	if got := cfg.Roles["inherit"]; got.Tools != nil || got.Model != "" || got.Description != "Inherits tools and model." {
+		t.Errorf("inherit = %+v, want nil tools and empty model", got)
+	}
+	if got := cfg.Workflows["wf"].Roles; !reflect.DeepEqual(got, []string{"reviewer"}) {
+		t.Errorf("workflow roles = %v", got)
+	}
+}
+
+func TestFromConfigCarriesRoles(t *testing.T) {
+	cfg := config.Default()
+	cfg.Roles = map[string]config.RoleConfig{
+		"reviewer": {Description: "Reviews.", Instructions: tricky, Tools: []string{"read_file"}, Model: "fast"},
+	}
+	cfg.Workflows["review"] = config.WorkflowConfig{Skill: "review", Roles: []string{"reviewer"}}
+	spec, omitted := FromConfig(cfg)
+	if len(omitted) != 0 {
+		t.Fatalf("unexpected omissions: %+v", omitted)
+	}
+	want := &harnessv1.Role{Description: "Reviews.", Instructions: tricky, Tools: []string{"read_file"}, Model: "fast"}
+	if got := spec.GetRoles()["reviewer"]; !proto.Equal(got, want) {
+		t.Errorf("reviewer = %v, want %v", got, want)
+	}
+	if got := spec.GetWorkflows()["review"].GetRoles(); !reflect.DeepEqual(got, []string{"reviewer"}) {
+		t.Errorf("workflow roles = %v", got)
+	}
+
+	spec, _ = FromConfig(config.Default())
+	if len(spec.GetRoles()) != 0 {
+		t.Errorf("default config produced roles: %v", spec.GetRoles())
+	}
+	if _, ok := spec.GetWorkflows()["research"]; ok {
+		t.Errorf("default config produced a research workflow override")
+	}
+}
+
+// TestRoleLimitsMatchProto pins the config-side role limits to the shape rules
+// on HarnessSpec.roles and Role, so both enforce the same contract.
+func TestRoleLimitsMatchProto(t *testing.T) {
+	rulesOf := func(fd protoreflect.FieldDescriptor) *validate.FieldRules {
+		return proto.GetExtension(fd.Options(), validate.E_Field).(*validate.FieldRules)
+	}
+	roles := (&harnessv1.HarnessSpec{}).ProtoReflect().Descriptor().Fields().ByName("roles")
+	if got := rulesOf(roles).GetMap().GetMaxPairs(); got != uint64(config.MaxRoles) {
+		t.Errorf("roles max_pairs = %d, config.MaxRoles = %d", got, config.MaxRoles)
+	}
+	role := (&harnessv1.Role{}).ProtoReflect().Descriptor().Fields()
+	if got := rulesOf(role.ByName("description")).GetString().GetMaxLen(); got != uint64(config.MaxRoleDescriptionChars) {
+		t.Errorf("role description max_len = %d, config.MaxRoleDescriptionChars = %d", got, config.MaxRoleDescriptionChars)
+	}
+	if got := rulesOf(role.ByName("instructions")).GetString().GetMaxLen(); got != uint64(config.MaxInstructionsChars) {
+		t.Errorf("role instructions max_len = %d, config.MaxInstructionsChars = %d", got, config.MaxInstructionsChars)
+	}
+}
+
+// TestSpecPath_ListIndexes pins that a list index renders as [N] and that the
+// walk continues into a list of messages but stops at a scalar list element.
+func TestSpecPath_ListIndexes(t *testing.T) {
+	cases := map[string]string{
+		"workflows.wf.roles[1]":       `workflows["wf"].roles[1]`,
+		"roles.reviewer.tools[0]":     `roles["reviewer"].tools[0]`,
+		"roles.reviewer.description":  `roles["reviewer"].description`,
+		"roles":                       "roles",
+		"mcp_servers[2].url":          "mcp_servers[2].url",
+		"max_tokens[0]":               "",
+		"workflows.wf.roles[x]":       "",
+		"workflows.wf.roles[1].extra": "",
+		"loop_server.auth[0].scopes":  "",
+	}
+	for in, want := range cases {
+		if got := SpecPath(in); got != want {
+			t.Errorf("SpecPath(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
