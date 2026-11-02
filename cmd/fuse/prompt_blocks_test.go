@@ -44,3 +44,51 @@ func TestWithoutUnavailableSpawnBlock(t *testing.T) {
 		t.Errorf("passthrough: got %q", got)
 	}
 }
+
+// TestRootSystemBlockNoRolesUnchanged: with no roles defined the block is the
+// bare spawn block, byte for byte.
+func TestRootSystemBlockNoRolesUnchanged(t *testing.T) {
+	var cfg config.Config
+	if got := rootSystemBlock(cfg, nil); got != spawnAgentBlock {
+		t.Fatalf("no roles: block changed:\n%q", got)
+	}
+}
+
+// TestRootSystemBlockRolesAppendsHint: with a role defined, exactly one
+// role-preference sentence follows the spawn block.
+func TestRootSystemBlockRolesAppendsHint(t *testing.T) {
+	cfg := config.Config{Roles: map[string]config.RoleConfig{"writer": {Description: "writes"}}}
+	got := rootSystemBlock(cfg, nil)
+	want := spawnAgentBlock + "\n\nPrefer a named role when one fits the task."
+	if got != want {
+		t.Fatalf("roles: got %q\nwant %q", got, want)
+	}
+	if n := strings.Count(got, "Prefer a named role when one fits the task."); n != 1 {
+		t.Fatalf("sentence count = %d, want 1", n)
+	}
+}
+
+// TestRootSystemBlockSpawnDisabledNoHint: a disabled spawn_agent drops the
+// block and the sentence together.
+func TestRootSystemBlockSpawnDisabledNoHint(t *testing.T) {
+	cfg := config.Config{Roles: map[string]config.RoleConfig{"writer": {}}}
+	cfg.Permissions.Disabled = []string{"spawn_agent"}
+	if got := rootSystemBlock(cfg, nil); got != "" {
+		t.Fatalf("disabled: want empty, got %q", got)
+	}
+}
+
+// TestWithoutUnavailableSpawnBlockStripsHint: the role-preference sentence is
+// stripped with the block when spawn_agent is unavailable, kept otherwise.
+func TestWithoutUnavailableSpawnBlockStripsHint(t *testing.T) {
+	var cfg config.Config
+	extra := "X" + spawnAgentBlock + spawnRoleHint + "Y"
+	if got := withoutUnavailableSpawnBlock(extra, cfg, tools.NewRegistry()); got != "XY" {
+		t.Errorf("unregistered: got %q", got)
+	}
+	withSpawn := tools.NewRegistry()
+	withSpawn.Register(staticTool{name: "spawn_agent"})
+	if got := withoutUnavailableSpawnBlock(extra, cfg, withSpawn); got != extra {
+		t.Errorf("available: extra changed")
+	}
+}

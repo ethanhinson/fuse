@@ -71,6 +71,12 @@ func sessionRateGate(cfg config.Config) model.RateGate {
 	return b
 }
 
+// spawnRoleHint is the one sentence added after spawnAgentBlock when roles are
+// defined. It is a separate string so spawnAgentBlock stays the exact constant
+// withoutUnavailableSpawnBlock matches. Roles themselves are listed only in the
+// spawn_agent schema, never a second time here.
+const spawnRoleHint = "\n\nPrefer a named role when one fits the task."
+
 // spawnAgentBlock is the system-prompt block that tells models to use spawn_agent.
 // Shared between one-shot and shell mode so behaviour is identical across both.
 const spawnAgentBlock = `

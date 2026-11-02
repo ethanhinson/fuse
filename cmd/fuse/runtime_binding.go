@@ -361,7 +361,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 			// Observer is installed by a.SetObserver(observer) below, not here —
 			// keeps this branch symmetric with the buildChildAgent branch above,
 			// which takes no observer at all.
-			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnAgentBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, nil)
+			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnGuidance(cfg), cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -444,7 +444,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 				tui.NewNodeRenderer(rootNode, tree),
 				logSink.Recorder("root"),
 			)
-			a, mid, err := buildAgentCore(cfg, reg, alias, rootR, spawnAgentBlock, cfg.Instructions, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate, nil, observer)
+			a, mid, err := buildAgentCore(cfg, reg, alias, rootR, spawnGuidance(cfg), cfg.Instructions, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate, nil, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}
