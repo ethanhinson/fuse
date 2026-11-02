@@ -20,6 +20,15 @@ func TestExampleSpecsAreValid(t *testing.T) {
 	if len(paths) == 0 {
 		t.Fatal("no example specs found under examples/harness")
 	}
+	foundReviewTeam := false
+	for _, p := range paths {
+		if filepath.Base(p) == "review-team.json" {
+			foundReviewTeam = true
+		}
+	}
+	if !foundReviewTeam {
+		t.Fatal("review-team.json missing from examples/harness")
+	}
 	for _, p := range paths {
 		t.Run(filepath.Base(p), func(t *testing.T) {
 			raw, err := os.ReadFile(p)
@@ -35,6 +44,15 @@ func TestExampleSpecsAreValid(t *testing.T) {
 			}
 			if filepath.Base(p) == "release-notes.json" && spec.GetInstructions() == "" {
 				t.Fatal("release-notes.json must set instructions")
+			}
+			if filepath.Base(p) == "review-team.json" {
+				if len(spec.GetRoles()) != 2 {
+					t.Fatalf("review-team.json must define two roles, got %d", len(spec.GetRoles()))
+				}
+				wf := spec.GetWorkflows()["review"]
+				if len(wf.GetRoles()) != 1 || spec.GetRoles()[wf.GetRoles()[0]] == nil {
+					t.Fatal("review-team.json must have a review workflow listing one defined role")
+				}
 			}
 		})
 	}

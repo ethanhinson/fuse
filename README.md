@@ -386,6 +386,35 @@ keep their own prompts. It is read from `~/.fuse/config.yml` and `.fuse.local.ym
 the local file wins. It may be at most 16384 characters, and a harness spec's
 `instructions` replaces it for that loop.
 
+### The `roles` config key
+
+```yaml
+roles:
+  reviewer:
+    description: Reviews one part of a change for correctness, then style.
+    instructions: |
+      You review the files you are given. Report correctness problems first.
+    tools: [read_file, grep]   # empty or omitted: inherit the main agent's tools
+    model: fast                # empty or omitted: inherit the main agent's model
+workflows:
+  review:
+    skill: review
+    roles: [reviewer]
+```
+
+A role says who a helper is; a workflow says how a big job is divided up and lists the
+roles that may take part. The description is what the main agent reads when choosing whom
+to hand work to; it is required and may be at most 512 characters. Instructions may be at
+most 16384 characters, and a config may define at most 32 roles. Role names use lowercase
+letters, digits, `-` and `_`. A non-empty `tools` list is the helper's whole tool set and
+can only narrow it; the helper can start its own helpers only when the list names
+`spawn_agent`. Tool names and model aliases are not checked when the config is loaded.
+Every name in a workflow's `roles` must be defined under `roles`. Roles are read from
+`~/.fuse/config.yml` and from a harness spec, not from `.fuse.local.yml`. Defining roles
+does not change how an agent runs yet; this release validates and carries them. See
+[`examples/harness/review-team.json`](examples/harness/review-team.json) for a harness
+spec with two roles.
+
 ### Observing the research flow — `research-probe`
 
 The research flow is emergent and prompt-driven: the model diversifies a
