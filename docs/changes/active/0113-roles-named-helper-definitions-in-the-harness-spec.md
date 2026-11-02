@@ -2,7 +2,7 @@
 id: 113
 slug: 'roles-named-helper-definitions-in-the-harness-spec'
 title: 'Roles: named helper definitions in the harness spec'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/roles-named-helper-definitions-in-the-harness-spec'
 pr:
 blocked_by:
 reconciled: false

@@ -1,18 +1,13 @@
 # Backlog
 
-**115 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 11 proposed · ⚪ 3 deferred · ✅ 92 done · 🗑️ 7 killed
+**115 changes** — 🟢 2 in progress · 🟡 11 proposed · ⚪ 3 deferred · ✅ 92 done · 🗑️ 7 killed
 
-## 🟢 In progress (1)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
+| [0113](active/0113-roles-named-helper-definitions-in-the-harness-spec.md) | Roles: named helper definitions in the harness spec | `high` | `feat` | [spec](../superpowers/specs/2026-11-02-roles-named-helper-definitions-in-the-harness-spec-design.md) | `feat/roles-named-helper-definitions-in-the-harness-spec` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🟣 Groomed (1)
-
-| # | Title | Priority | Type | Spec | Readiness |
-|---|-------|----------|------|------|-----------|
-| [0113](active/0113-roles-named-helper-definitions-in-the-harness-spec.md) | Roles: named helper definitions in the harness spec | `high` | `feat` | [spec](../superpowers/specs/2026-11-02-roles-named-helper-definitions-in-the-harness-spec-design.md) | build-ready |
 
 ## 🟡 Proposed (11)
 
