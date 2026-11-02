@@ -219,17 +219,27 @@ func (s *workflowScope) roleNames() []string {
 // governing workflow's roles when it lists any, else every defined role
 // (change 0114). Sorted.
 func (s *workflowScope) offeredRoles(nodeID string) []string {
-	if act, _ := s.activationOf(nodeID); act != nil && len(act.cfg.Roles) > 0 {
-		out := make([]string, 0, len(act.cfg.Roles))
-		for _, n := range act.cfg.Roles {
-			if _, ok := s.roles[n]; ok {
-				out = append(out, n)
-			}
-		}
-		sort.Strings(out)
-		return out
+	if act, _ := s.activationOf(nodeID); act != nil {
+		return s.workflowRoles(act.cfg)
 	}
 	return s.roleNames()
+}
+
+// workflowRoles returns the role names offered inside a workflow configured as
+// cfg: its listed roles that are defined, or every defined role when it lists
+// none. Sorted.
+func (s *workflowScope) workflowRoles(cfg config.WorkflowConfig) []string {
+	if len(cfg.Roles) == 0 {
+		return s.roleNames()
+	}
+	out := make([]string, 0, len(cfg.Roles))
+	for _, n := range cfg.Roles {
+		if _, ok := s.roles[n]; ok {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // roleOptions returns the spawn tool's role enum for a spawner at nodeID.
@@ -244,9 +254,11 @@ func (s *workflowScope) roleOptions(nodeID string) []tools.RoleOption {
 
 // checkRole refuses a role request a spawner at parentID may not make, before
 // any node exists: a role with system_prompt or worker, an unknown role, or a
-// role the parent's workflow does not offer. The offered set is the parent's,
-// since that is the schema the parent saw.
-func (s *workflowScope) checkRole(parentID, role, systemPrompt, worker string) error {
+// role the child's workflow does not offer. When the request names a workflow
+// the child is that workflow's lead and sits inside its subtree, so the offered
+// set is that workflow's; otherwise it is the parent's, since that is the
+// schema the parent saw. An unknown workflow name is left to the workflow check.
+func (s *workflowScope) checkRole(parentID, workflow, role, systemPrompt, worker string) error {
 	if systemPrompt != "" {
 		return fmt.Errorf("a role supplies the system prompt; drop system_prompt or the role")
 	}
@@ -256,15 +268,20 @@ func (s *workflowScope) checkRole(parentID, role, systemPrompt, worker string) e
 	if _, ok := s.roles[role]; !ok {
 		return unknownRoleErr(role, s.roleNames())
 	}
-	offered := s.offeredRoles(parentID)
+	var offered []string
+	name := ""
+	if workflow != "" {
+		offered, name = s.workflowRoles(s.workflows[workflow]), workflow
+	} else {
+		offered = s.offeredRoles(parentID)
+		if act, _ := s.activationOf(parentID); act != nil {
+			name = act.name
+		}
+	}
 	for _, n := range offered {
 		if n == role {
 			return nil
 		}
-	}
-	name := ""
-	if act, _ := s.activationOf(parentID); act != nil {
-		name = act.name
 	}
 	list := "none"
 	if len(offered) > 0 {
@@ -467,7 +484,7 @@ func (s *workflowScope) spawnTool(fn tools.SpawnFunc, node *agent.AgentNode) *to
 // Spawner (agent.ErrNestedWorkflow).
 func (s *workflowScope) checkRequest(parent *agent.AgentNode, req tools.SpawnRequest) error {
 	if req.Role != "" {
-		if err := s.checkRole(parent.ID, req.Role, req.SystemPrompt, req.Worker); err != nil {
+		if err := s.checkRole(parent.ID, req.Workflow, req.Role, req.SystemPrompt, req.Worker); err != nil {
 			return err
 		}
 		if _, _, err := resolveRoleTools(req.Role, s.roles[req.Role], req.Tools); err != nil {
@@ -518,10 +535,11 @@ func (s *workflowScope) spawnFunc(sp *agent.Spawner, parent *agent.AgentNode) to
 // (agent.ErrWorkerOutsideWorkflow). It repeats the name checks for paths that
 // call Spawner.Spawn directly (pipeline steps). A role child (change 0114) is
 // checked against its parent's offered roles before any activation, and its
-// plan carries the role's tools, model pin, brief and name.
+// plan carries the role's tools, model pin, brief and name. A role child that
+// roots a workflow is checked against that workflow's offered roles instead.
 func (s *workflowScope) prepareChild(opts agent.SpawnOpts, child *agent.AgentNode) (childPlan, error) {
 	if opts.Role != "" {
-		if err := s.checkRole(child.ParentID, opts.Role, opts.SystemPrompt, opts.Worker); err != nil {
+		if err := s.checkRole(child.ParentID, opts.Workflow, opts.Role, opts.SystemPrompt, opts.Worker); err != nil {
 			return childPlan{}, err
 		}
 	}
