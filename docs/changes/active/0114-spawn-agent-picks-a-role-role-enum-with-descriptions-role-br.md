@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/spawn-agent-picks-a-role-role-enum-with-descriptions-role-br'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -52,3 +52,9 @@ Change 0113 lets a spec define roles, but the runtime ignores them. Delegation s
 ## Out of scope
 
 Pipeline steps naming a role. Per-role limits. A strict "must use a role" mode or a prompt-override flag. Any change to worker semantics or the research workflow.
+
+## Reconcile log
+
+### 2026-11-02
+
+Unchanged against origin/main 90f185e (0113 merged). Spec anchors verified: the five child-builder sites (runtime_binding.go 1-3 of 4, loop_server.go 4 of 4, shell.go stale 2 of 3), checkRequest/prepareChild/resolveWorkerTools and childPlan.bound in workflow.go all present as described.
