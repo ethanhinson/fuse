@@ -279,7 +279,7 @@ func TestPipelineRunWithRolesMentionsRole(t *testing.T) {
 	if !strings.HasPrefix(desc, plain.Description()) {
 		t.Fatalf("role paragraph must extend, not replace, the description: %q", desc)
 	}
-	for _, want := range []string{"`role`", "`worker`", "With `workflow`, a step's role must be one that workflow offers."} {
+	for _, want := range []string{"`role`", "`worker`"} {
 		if !strings.Contains(desc, want) {
 			t.Errorf("description lacks %q: %q", want, desc)
 		}
@@ -294,5 +294,24 @@ func TestPipelineRunWithRolesMentionsRole(t *testing.T) {
 	}
 	if plain.Description() != NewPipelineRunTool(nil, nil).Description() {
 		t.Error("WithRoles must not mutate the receiver")
+	}
+}
+
+// TestPipelineRunRolesWorkflowSentenceGated: the "With `workflow`" sentence
+// appears only when workflows are advertised (mirrors spawn_agent); roles
+// without workflows describe roles alone.
+func TestPipelineRunRolesWorkflowSentenceGated(t *testing.T) {
+	const sentence = "With `workflow`, a step's role must be one that workflow offers."
+	roles := []RoleOption{{"writer", "Writes prose."}}
+	noWf := NewPipelineRunTool(nil, nil).WithRoles(roles).Description()
+	if strings.Contains(noWf, sentence) {
+		t.Errorf("roles without workflows must not mention the workflow constraint: %q", noWf)
+	}
+	if !strings.Contains(noWf, "\n- writer — Writes prose.") {
+		t.Errorf("roles without workflows must still list the roles: %q", noWf)
+	}
+	withWf := NewPipelineRunTool(nil, nil).WithWorkflows([]string{"wf"}).WithRoles(roles).Description()
+	if !strings.Contains(withWf, sentence) {
+		t.Errorf("roles with workflows must mention the workflow constraint: %q", withWf)
 	}
 }

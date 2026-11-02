@@ -84,9 +84,12 @@ func (t *PipelineRunTool) Description() string {
 	for _, r := range t.roles {
 		lines.WriteString("\n- " + r.Name + " — " + r.Description)
 	}
-	return base + " A step may name a `role` instead of a `worker`: the role supplies the step's system prompt, " +
-		"and its tool set and model when it defines them; a role needs no workflow. " +
-		"With `workflow`, a step's role must be one that workflow offers. Roles:" + lines.String()
+	desc := base + " A step may name a `role` instead of a `worker`: the role supplies the step's system prompt, " +
+		"and its tool set and model when it defines them; a role needs no workflow. "
+	if len(t.workflows) > 0 {
+		desc += "With `workflow`, a step's role must be one that workflow offers. "
+	}
+	return desc + "Roles:" + lines.String()
 }
 
 // Parameters returns the JSON schema for the tool input.

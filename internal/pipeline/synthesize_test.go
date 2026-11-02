@@ -168,7 +168,10 @@ func checkSynthGolden(t *testing.T, name string, got []byte) {
 }
 
 // TestSynthesisNoRolesGolden: with no roles, the synthesis system prompt and
-// the Expects schema stay byte-identical to before roles.
+// the Expects schema stay byte-identical to before roles. Provenance: both
+// goldens were checked byte-for-byte against the pre-roles base (15d827c),
+// regenerated there with synthNoRolesContext from synthesisSystemPrompt and
+// pipelineJSONSchema(); they are not merely snapshots of the new code.
 func TestSynthesisNoRolesGolden(t *testing.T) {
 	checkSynthGolden(t, "synth_prompt_noroles.golden", []byte(synthesisSystemPrompt(synthNoRolesContext)))
 	b, err := json.MarshalIndent(pipelineJSONSchema(nil), "", "  ")
