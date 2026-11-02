@@ -2,7 +2,7 @@
 id: 114
 slug: 'spawn-agent-picks-a-role-role-enum-with-descriptions-role-br'
 title: 'spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/spawn-agent-picks-a-role-role-enum-with-descriptions-role-br'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/128'
 blocked_by:
 reconciled: true
 ---
@@ -60,3 +60,12 @@ Pipeline steps naming a role. Per-role limits. A strict "must use a role" mode o
 ### 2026-11-02
 
 Unchanged against origin/main 90f185e (0113 merged). Spec anchors verified: the five child-builder sites (runtime_binding.go 1-3 of 4, loop_server.go 4 of 4, shell.go stale 2 of 3), checkRequest/prepareChild/resolveWorkerTools and childPlan.bound in workflow.go all present as described.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: d6ebe753fe3e7d6623dd3a62447bd31e26158e70
+ran_at:   2026-11-02T08:01:11Z
+<!-- docket:build-evidence:end -->
