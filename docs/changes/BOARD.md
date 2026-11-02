@@ -1,20 +1,25 @@
 # Backlog
 
-**115 changes** — 🟢 2 in progress · 🟡 11 proposed · ⚪ 3 deferred · ✅ 92 done · 🗑️ 7 killed
+**115 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 11 proposed · ⚪ 3 deferred · ✅ 92 done · 🗑️ 7 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0113](active/0113-roles-named-helper-definitions-in-the-harness-spec.md) | Roles: named helper definitions in the harness spec | `high` | `feat` | [spec](../superpowers/specs/2026-11-02-roles-named-helper-definitions-in-the-harness-spec-design.md) | `feat/roles-named-helper-definitions-in-the-harness-spec` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
+
+## 🔵 Built (1)
+
+| # | Title | Priority | Type | PR | State |
+|---|-------|----------|------|----|-------|
+| [0113](active/0113-roles-named-helper-definitions-in-the-harness-spec.md) | Roles: named helper definitions in the harness spec | `high` | `feat` | [#127](https://github.com/ethanhinson/fuse/pull/127) | awaiting merge |
 
 ## 🟡 Proposed (11)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
 | [0115](active/0115-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md) | Pipeline steps name a role; roles in the synthesis palette | `low` | `feat` | ⏳ waiting on #114 — not yet built |
-| [0114](active/0114-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md) | spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt | `high` | `feat` | ⏳ waiting on #113 — not yet built |
+| [0114](active/0114-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md) | spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt | `high` | `feat` | ⏳ waiting on #113 — needs your merge |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
 | [0110](active/0110-mark-loopsecret-value-debug-redact-once-protobuf-go-honours.md) | Mark LoopSecret.value debug_redact once protobuf-go honours it | `low` | `feat` | needs-grooming |
 | [0109](active/0109-type-based-guard-that-no-wire-request-carrying-secrets-is-ev.md) | Type-based guard that no wire request carrying secrets is ever formatted | `low` | `feat` | needs-grooming |

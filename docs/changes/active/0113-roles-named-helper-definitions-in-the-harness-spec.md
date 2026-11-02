@@ -2,7 +2,7 @@
 id: 113
 slug: 'roles-named-helper-definitions-in-the-harness-spec'
 title: 'Roles: named helper definitions in the harness spec'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/roles-named-helper-definitions-in-the-harness-spec'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/127'
 blocked_by:
 reconciled: true
 ---
@@ -57,3 +57,12 @@ Runtime use of roles (spawn_agent and pipelines are follow-ups). Deprecating wor
 ### 2026-11-02
 
 Unchanged against main 58f1e92: HarnessSpec field 15 and Workflow field 4 still free; no roles concept exists yet.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 23081739d9254e701283e2d7d0b7fcb43ee9d20a
+ran_at:   2026-11-02T05:59:08Z
+<!-- docket:build-evidence:end -->
