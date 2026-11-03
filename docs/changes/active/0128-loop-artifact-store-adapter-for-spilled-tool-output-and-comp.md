@@ -13,7 +13,7 @@ stacked_on:
 related: [30, 43, 46, 127]
 discovered_from: []
 adrs: []
-spec:
+spec: 'docs/superpowers/specs/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md'
 plan:
 results:
 auto_groomable:
@@ -28,6 +28,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md](../../superpowers/specs/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

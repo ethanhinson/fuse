@@ -1,6 +1,6 @@
 # Backlog
 
-**128 changes** — 🟢 1 in progress · 🟣 2 groomed · 🟡 17 proposed · ⚪ 3 deferred · ✅ 98 done · 🗑️ 7 killed
+**128 changes** — 🟢 1 in progress · 🟣 3 groomed · 🟡 16 proposed · ⚪ 3 deferred · ✅ 98 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -8,18 +8,18 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟣 Groomed (2)
+## 🟣 Groomed (3)
 
 | # | Title | Priority | Type | Spec | Readiness |
 |---|-------|----------|------|------|-----------|
+| [0128](active/0128-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md) | Loop artifact store adapter for spilled tool output and compaction segments | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md) | build-ready |
 | [0127](active/0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md) | build-ready |
 | [0126](active/0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) | build-ready |
 
-## 🟡 Proposed (17)
+## 🟡 Proposed (16)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0128](active/0128-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md) | Loop artifact store adapter for spilled tool output and compaction segments | `high` | `feat` | needs-grooming |
 | [0125](active/0125-stop-the-current-turn-of-an-interactive-loop-without-ending.md) | Stop the current turn of an interactive loop without ending it | `low` | `feat` | needs-grooming |
 | [0124](active/0124-the-expects-hint-composes-with-role-and-tool-less-prompts.md) | The expects hint composes with role and tool-less prompts | `medium` | `fix` | needs-grooming |
 | [0123](active/0123-observe-marks-where-replay-ends-and-live-events-begin.md) | Observe marks where replay ends and live events begin | `low` | `feat` | needs-grooming |
