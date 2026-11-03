@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0117 — Cancel RPC on the networked loop server](../../changes/active/0117-cancel-rpc-on-the-networked-loop-server.md)**
+> ↩ **[Change 0117 — Cancel RPC on the networked loop server](../../changes/archive/2026-11-03-0117-cancel-rpc-on-the-networked-loop-server.md)**
 <!-- docket:backlink:end -->
 
 # Cancel RPC on the networked loop server

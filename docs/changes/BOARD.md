@@ -1,18 +1,12 @@
 # Backlog
 
-**121 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 13 proposed · ⚪ 3 deferred · ✅ 96 done · 🗑️ 7 killed
+**121 changes** — 🟢 1 in progress · 🟡 13 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🔵 Built (1)
-
-| # | Title | Priority | Type | PR | State |
-|---|-------|----------|------|----|-------|
-| [0117](active/0117-cancel-rpc-on-the-networked-loop-server.md) | Cancel RPC on the networked loop server | `high` | `feat` | [#131](https://github.com/ethanhinson/fuse/pull/131) | awaiting merge |
 
 ## 🟡 Proposed (13)
 
@@ -56,7 +50,6 @@ graph TD
   0110
   0111
   0116
-  0117
   0119
   0120
   0121
@@ -66,11 +59,12 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (103)</summary>
+<details><summary>✅🗑️ Archive — done + killed (104)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
 | [0118](archive/2026-11-03-0118-carried-skills-a-harness-spec-may-define-a-skill-inline.md) | Carried skills: a harness spec may define a skill inline | 2026-11-03 |
+| [0117](archive/2026-11-03-0117-cancel-rpc-on-the-networked-loop-server.md) | Cancel RPC on the networked loop server | 2026-11-03 |
 | [0115](archive/2026-11-02-0115-pipeline-steps-name-a-role-roles-in-the-synthesis-palette.md) | Pipeline steps name a role; roles in the synthesis palette | 2026-11-02 |
 | [0114](archive/2026-11-02-0114-spawn-agent-picks-a-role-role-enum-with-descriptions-role-br.md) | spawn_agent picks a role: role enum with descriptions, role brief composed into the child prompt | 2026-11-02 |
 | [0113](archive/2026-11-02-0113-roles-named-helper-definitions-in-the-harness-spec.md) | Roles: named helper definitions in the harness spec | 2026-11-02 |
@@ -85,7 +79,6 @@ graph TD
 | [0096](archive/2026-10-31-0096-unparseable-shell-commands-are-denied-when-no-human-approver.md) | Unparseable shell commands are denied when no human approver is bound | 2026-10-31 |
 | [0095](archive/2026-10-31-0095-workers-must-declare-tools-and-worker-requires-an-active-wor.md) | Workers must declare tools, and worker requires an active workflow | 2026-10-31 |
 | [0094](archive/2026-10-31-0094-approval-provenance-is-per-gate-not-per-process.md) | Approval provenance is per gate, not per process | 2026-10-31 |
-| [0093](archive/2026-10-31-0093-permission-floor-and-wrapper-parity-across-modes-and-binding.md) | Permission floor and wrapper parity across modes and bindings | 2026-10-31 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
 | [0032](archive/2026-08-05-0032-shell-mode-switcher.md) | Shell permission-mode switcher — cycle smart/auto in the TUI, with a visible mode indicator | 2026-08-05 |
@@ -97,7 +90,7 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-10](archive/) | 9 done |
+| [2026-10](archive/) | 10 done |
 | [2026-09](archive/) | 7 done |
 | [2026-08](archive/) | 65 done |
 
