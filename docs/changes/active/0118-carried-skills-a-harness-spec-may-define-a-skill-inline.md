@@ -1,0 +1,43 @@
+---
+id: 118
+slug: 'carried-skills-a-harness-spec-may-define-a-skill-inline'
+title: 'Carried skills: a harness spec may define a skill inline'
+status: 'proposed'
+priority: 'high'
+type: 'feat'
+deliverable: 'pr'
+created: '2026-11-03'
+updated: '2026-11-03'
+depends_on: []
+stacked_on:
+related: [85, 102, 104, 113]
+discovered_from: []
+adrs: []
+spec:
+plan:
+results:
+auto_groomable:
+hold:
+branch_prefix:
+branch:
+pr:
+blocked_by:
+reconciled: false
+---
+
+## Artifacts
+
+<!-- docket:artifacts:start (generated — do not hand-edit) -->
+<!-- docket:artifacts:end -->
+
+## Why
+
+A harness spec references skills by name only, so the only skills a loop can use are the ones installed on the server's disk by its operator. A caller that composes specs for many principals has no way to give a loop its own skill, and no way to pin which skill content a loop ran. The spec already carries other caller-authored prompt content (instructions, roles), is digested, recorded and pinnable; skills should travel the same way.
+
+## What changes
+
+`SkillRef` gains `description` and `body`; an entry with a body is a carried skill the loop runs as carried, shadowing an installed skill of the same name for that loop only. Shape and semantic validation bound size and count; the resolver composes the loop's skill set from carried and installed entries in spec order; the skill tool and system-prompt listing treat both alike; `loop_server.spec_policy.carried_skills` lets an operator refuse them and `GetCapabilities` advertises the setting; docs, example spec and SDK shape parity updated.
+
+## Out of scope
+
+Bundled skill files, slash commands or frontmatter beyond name and description; any tool grant attached to a skill; server-aware `ValidateHarness` (0104); a structured-output tool for the root loop.
