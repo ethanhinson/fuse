@@ -30,6 +30,7 @@ import type { MessageInitShape } from "@bufbuild/protobuf";
 // map, so it is imported by relative path (matching the smoke client's import_extension=js
 // idiom). This keeps proto/package.json untouched.
 import {
+  CancelOutcome as WireCancelOutcome,
   LoopService,
   type Event as WireEvent,
 } from "../../../proto/gen/ts/fuse/loop/v1/loop_pb.js";
@@ -222,13 +223,43 @@ function terminalCodeOf(err: unknown): Code | undefined {
 /** The completion event kind for an interactive loop (see D5 in the plan). */
 export const KIND_LOOP_PARKED = "loop.parked";
 
+/** The terminal event kind of a cancelled loop. */
+export const KIND_LOOP_CANCELLED = "loop.cancelled";
+
 /**
  * isCompletion reports whether `event` is the loop's completion signal — an interactive
- * loop parking at a terminal turn boundary. Keyed on the real event kind
- * (`internal/event.KindLoopParked = "loop.parked"`), never inferred from stream shape.
+ * loop parking at a terminal turn boundary, or a cancelled loop's terminal event (its
+ * stream ends there). Keyed on the real event kind, never inferred from stream shape.
  */
 export function isCompletion(event: Event): boolean {
-  return event.kind === KIND_LOOP_PARKED;
+  return event.kind === KIND_LOOP_PARKED || event.kind === KIND_LOOP_CANCELLED;
+}
+
+/** What a {@link Client.cancel} did. */
+export type CancelOutcome = "cancelled" | "already_cancelled" | "cancelling";
+
+/** The result of {@link Client.cancel}. */
+export interface CancelResult {
+  outcome: CancelOutcome;
+  /** True when the cancel interrupted a running or parked loop. */
+  wasLive: boolean;
+  /** Seq of the loop.cancelled event; 0n when the outcome is "cancelling". */
+  terminalSeq: bigint;
+  /** The recorded reason (the first cancel's on "already_cancelled"). */
+  reason: string;
+}
+
+function cancelOutcomeOf(o: WireCancelOutcome): CancelOutcome {
+  switch (o) {
+    case WireCancelOutcome.CANCELLED:
+      return "cancelled";
+    case WireCancelOutcome.ALREADY_CANCELLED:
+      return "already_cancelled";
+    case WireCancelOutcome.CANCELLING:
+      return "cancelling";
+    default:
+      throw new Error(`fuse: server returned an unknown cancel outcome (${o})`);
+  }
 }
 
 /** Options for {@link Client.sendWith}. */
@@ -268,6 +299,12 @@ export interface Client {
    */
   observe(loopId: string, fromSeq?: bigint): AsyncIterable<Event>;
   observe(loopId: string, options: ObserveOptions): AsyncIterable<Event>;
+  /**
+   * cancel stops a loop and seals it: its work is interrupted, loop.cancelled is the
+   * last event of its stream, and it never accepts another send. Idempotent. Needs the
+   * loop:cancel scope (or loop:admin).
+   */
+  cancel(loopId: string, reason?: string): Promise<CancelResult>;
 }
 
 function bearerInterceptor(token: string): Interceptor {
@@ -382,6 +419,16 @@ export function createClient(options: ClientOptions): Client {
         interrupt: options.interrupt ?? false,
         source: options.source ?? "",
       });
+    },
+
+    async cancel(loopId: string, reason?: string): Promise<CancelResult> {
+      const resp = await wire.cancelLoop({ loopId, reason: reason ?? "", tenant });
+      return {
+        outcome: cancelOutcomeOf(resp.outcome),
+        wasLive: resp.wasLive,
+        terminalSeq: resp.terminalSeq,
+        reason: resp.reason,
+      };
     },
 
     observe(loopId: string, arg?: bigint | ObserveOptions): AsyncIterable<Event> {

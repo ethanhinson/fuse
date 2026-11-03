@@ -137,6 +137,20 @@ const (
 	// KindToolIdentityMinted records one delegated tool-identity token minted for
 	// a call made by this loop. It never holds the token.
 	KindToolIdentityMinted Kind = "tool.identity.minted"
+	// KindLoopCancelRequest asks the replica that runs a loop to cancel it. The
+	// replica that received CancelLoop does not run the loop, so it writes the
+	// request into the loop's durable stream, the same way steer.request relays a
+	// message. The owner's relay pump honours it exactly like a local cancel. An
+	// unanswered request (no loop.cancelled after it) is as good as a cancel: a
+	// resume refuses the loop and seals it.
+	KindLoopCancelRequest Kind = "loop.cancel.request"
+	// KindLoopCancelled is the terminal event of a cancelled loop: the highest seq
+	// the loop ever appends. Every event the unwinding produced precedes it. A
+	// stream holding it never runs again (Send and resume refuse it). WasLive says
+	// whether the cancel interrupted a running or parked loop, or sealed one that
+	// had already finished or been idle-reaped. Never emitted by an idle reap or a
+	// drain: those loops stay resumable.
+	KindLoopCancelled Kind = "loop.cancelled"
 )
 
 // Event is the stable envelope over every loop state transition. Payload is the
@@ -645,4 +659,24 @@ type SteerRequestPayload struct {
 	Source string `json:"source,omitempty"`
 	// Interrupt asks the owner to cancel the loop's in-flight step.
 	Interrupt bool `json:"interrupt,omitempty"`
+}
+
+// LoopCancelRequestPayload accompanies KindLoopCancelRequest.
+type LoopCancelRequestPayload struct {
+	Reason      string `json:"reason,omitempty"`
+	RequestedBy string `json:"requested_by,omitempty"` // principal subject, never a token
+}
+
+// LoopCancelledPayload accompanies KindLoopCancelled.
+type LoopCancelledPayload struct {
+	Reason      string `json:"reason,omitempty"`
+	RequestedBy string `json:"requested_by,omitempty"` // principal subject, never a token (ADR-0046)
+	WasLive     bool   `json:"was_live"`
+	// RequestSeq is the seq of the loop.cancel.request this answers; 0 for a
+	// cancel made on the owning replica.
+	RequestSeq uint64 `json:"request_seq,omitempty"`
+	// Superseded marks a loop.cancelled its writer appended knowing the stream
+	// already held an earlier one (the first is authoritative). It records the
+	// writer's own seal, never a second cancel, so it is never counted as one.
+	Superseded bool `json:"superseded,omitempty"`
 }

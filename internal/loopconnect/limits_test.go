@@ -488,3 +488,60 @@ func TestStartLoopScopeAndDigestRefusalsSpendNoStartToken(t *testing.T) {
 	}
 	refusal(t, start("unscoped", nil, ""), "starts_per_minute")
 }
+
+// cancelledResumableRuntime is resumableRuntime whose stream for one loop is
+// sealed by a cancel: it reports that loop cancelled (runtime.CancelReader) and
+// refuses to resume it, as the real runtime does for a loop it does not cache.
+type cancelledResumableRuntime struct {
+	*resumableRuntime
+	cancelled string
+}
+
+var _ runtime.CancelReader = (*cancelledResumableRuntime)(nil)
+
+func (r *cancelledResumableRuntime) IsCancelled(_ context.Context, _ event.TenantID, loopID string) (bool, error) {
+	return loopID == r.cancelled, nil
+}
+
+func (r *cancelledResumableRuntime) Resume(ctx context.Context, tenant event.TenantID, loopID string) (runtime.LoopHandle, error) {
+	if loopID == r.cancelled {
+		return nil, fmt.Errorf("%w: %q", runtime.ErrLoopCancelled, loopID)
+	}
+	return r.resumableRuntime.Resume(ctx, tenant, loopID)
+}
+
+// A Send to a cancelled loop this replica does not cache is FailedPrecondition
+// "loop cancelled" even when the tenant is at its live-loop cap: the cap guards
+// reviving a loop, and a cancelled loop is never revived, so the refusal is not
+// the answer.
+func TestSendCancelledUncachedLoopAtCapIsFailedPrecondition(t *testing.T) {
+	clk := newLimitClock()
+	reg := newFakeRegistry()
+	rt := &cancelledResumableRuntime{resumableRuntime: &resumableRuntime{registeringRuntime: newRegisteringRuntime(reg, clk)}}
+	lim := newTestLimiter(t, tenantlimit.Config{Default: tenantlimit.Limits{MaxLiveLoops: 2}}, reg, clk)
+	client := newLimitServer(t, rt, reg, lim, limitVerifier())
+
+	cancelled := mustStart(t, client, "tok-a")
+	reaped := mustStart(t, client, "tok-a")
+	for _, id := range []string{cancelled, reaped} {
+		if err := reg.SetLive(context.Background(), event.StreamKey{Tenant: "a", Loop: event.LoopID(id)}, false, "node"); err != nil {
+			t.Fatalf("SetLive: %v", err)
+		}
+	}
+	rt.cancelled = cancelled
+	mustStart(t, client, "tok-a")
+	mustStart(t, client, "tok-a") // at the cap of 2 live
+
+	err := sendAs(client, "tok-a", cancelled)
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("code = %v, want FailedPrecondition (err %v)", connect.CodeOf(err), err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "cancelled") {
+		t.Fatalf("message = %q, want it to say cancelled", msg)
+	}
+	// A loop that is merely finished still gets the cap's refusal.
+	refusal(t, sendAs(client, "tok-a", reaped), "max_live_loops")
+	if got := rt.resumeCount(); got != 0 {
+		t.Fatalf("resumes = %d, want 0", got)
+	}
+}

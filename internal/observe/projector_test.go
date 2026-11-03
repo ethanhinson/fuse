@@ -86,3 +86,75 @@ func TestFanoutReportsAllProjectorFailures(t *testing.T) {
 type assertError struct{}
 
 func (assertError) Error() string { return "test failure" }
+
+func TestProjectEventLoopCancelledIsBoundedAndPayloadFree(t *testing.T) {
+	t.Parallel()
+	key := event.StreamKey{Tenant: "acme", Loop: "loop-1"}
+	for _, tc := range []struct {
+		wasLive bool
+		want    string
+	}{{true, "true"}, {false, "false"}} {
+		payload, err := json.Marshal(event.LoopCancelledPayload{Reason: "secret reason", RequestedBy: "secret-principal", WasLive: tc.wasLive, RequestSeq: 9})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := ProjectEvent(key, event.Event{Seq: 12, Kind: event.KindLoopCancelled, Payload: payload})
+		if rec.Operation != OperationLoop || rec.Outcome != OutcomeCanceled || rec.ErrorCategory != ErrorCategoryNone {
+			t.Fatalf("was_live=%v classified as %s/%s/%s", tc.wasLive, rec.Operation, rec.Outcome, rec.ErrorCategory)
+		}
+		if rec.CancelWasLive != tc.want {
+			t.Fatalf("CancelWasLive = %q, want %q", rec.CancelWasLive, tc.want)
+		}
+		encoded, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, leaked := range []string{"secret reason", "secret-principal", "requested_by"} {
+			if strings.Contains(string(encoded), leaked) {
+				t.Fatalf("projection leaked %q: %s", leaked, encoded)
+			}
+		}
+	}
+
+	// A superseded terminal (a second loop.cancelled written knowing of an earlier
+	// one) is not a cancel: it leaves CancelWasLive empty, so the counter stays put.
+	for _, wasLive := range []bool{true, false} {
+		sp, err := json.Marshal(event.LoopCancelledPayload{WasLive: wasLive, Superseded: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := ProjectEvent(key, event.Event{Kind: event.KindLoopCancelled, Payload: sp})
+		if rec.CancelWasLive != "" {
+			t.Fatalf("superseded was_live=%v CancelWasLive = %q, want empty", wasLive, rec.CancelWasLive)
+		}
+		if rec.Outcome != OutcomeCanceled {
+			t.Fatalf("superseded terminal outcome = %s, want canceled", rec.Outcome)
+		}
+	}
+
+	// A payload that does not decode leaves CancelWasLive empty.
+	if rec := ProjectEvent(key, event.Event{Kind: event.KindLoopCancelled, Payload: []byte("{not json")}); rec.CancelWasLive != "" {
+		t.Fatalf("undecodable payload CancelWasLive = %q, want empty", rec.CancelWasLive)
+	}
+
+	reqPayload, err := json.Marshal(event.LoopCancelRequestPayload{Reason: "secret reason", RequestedBy: "secret-principal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := ProjectEvent(key, event.Event{Kind: event.KindLoopCancelRequest, Payload: reqPayload})
+	steer := ProjectEvent(key, event.Event{Kind: event.KindSteerRequest, Payload: reqPayload})
+	if req.Operation != steer.Operation || req.Outcome != steer.Outcome || req.ErrorCategory != steer.ErrorCategory {
+		t.Fatalf("loop.cancel.request = %s/%s/%s, steer.request = %s/%s/%s", req.Operation, req.Outcome, req.ErrorCategory, steer.Operation, steer.Outcome, steer.ErrorCategory)
+	}
+	if req.CancelWasLive != "" {
+		t.Fatalf("loop.cancel.request CancelWasLive = %q, want empty", req.CancelWasLive)
+	}
+
+	// Every other kind keeps CancelWasLive empty, even with a was_live field in its payload.
+	wasLive := []byte(`{"was_live":true}`)
+	for _, kind := range []event.Kind{event.KindTurnStart, event.KindTurnEnd, event.KindToolResult, event.KindLoopParked, event.KindError, event.KindSpawnDone} {
+		if rec := ProjectEvent(key, event.Event{Kind: kind, Payload: wasLive}); rec.CancelWasLive != "" {
+			t.Fatalf("%s CancelWasLive = %q, want empty", kind, rec.CancelWasLive)
+		}
+	}
+}

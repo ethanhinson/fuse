@@ -38,7 +38,8 @@ func TestScopesListIsNonNil(t *testing.T) {
 func TestPrincipalAllowsAndGrants(t *testing.T) {
 	vocabulary := []string{
 		loopauth.ScopeLoopStart, loopauth.ScopeLoopSend, loopauth.ScopeLoopObserve,
-		loopauth.ScopeLoopAdmin, loopauth.ScopeCapabilitiesRead, loopauth.ScopeSecretsInline,
+		loopauth.ScopeLoopAdmin, loopauth.ScopeLoopCancel, loopauth.ScopeCapabilitiesRead,
+		loopauth.ScopeSecretsInline,
 	}
 	cases := []struct {
 		name   string
@@ -91,6 +92,7 @@ func TestScopeVocabulary(t *testing.T) {
 		"send":    loopauth.ScopeLoopSend,
 		"observe": loopauth.ScopeLoopObserve,
 		"admin":   loopauth.ScopeLoopAdmin,
+		"cancel":  loopauth.ScopeLoopCancel,
 		"caps":    loopauth.ScopeCapabilitiesRead,
 		"secrets": loopauth.ScopeSecretsInline,
 	}
@@ -99,10 +101,31 @@ func TestScopeVocabulary(t *testing.T) {
 		"send":    "loop:send",
 		"observe": "loop:observe",
 		"admin":   "loop:admin",
+		"cancel":  "loop:cancel",
 		"caps":    "capabilities:read",
 		"secrets": "secrets:inline",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("vocabulary = %v, want %v", got, want)
+	}
+}
+
+// loop:cancel is its own grant: no start/send/observe combination implies it,
+// so a token minted for driving loops cannot stop them.
+func TestScopeLoopCancelIsNotImplied(t *testing.T) {
+	if loopauth.ScopeLoopCancel != "loop:cancel" {
+		t.Fatalf("ScopeLoopCancel = %q, want loop:cancel", loopauth.ScopeLoopCancel)
+	}
+	driver := loopauth.Principal{Scopes: loopauth.NewScopes(
+		loopauth.ScopeLoopStart, loopauth.ScopeLoopSend, loopauth.ScopeLoopObserve)}
+	if driver.Allows(loopauth.ScopeLoopCancel) {
+		t.Error("start+send+observe principal allows loop:cancel, want refused")
+	}
+	if !(loopauth.Principal{}).Allows(loopauth.ScopeLoopCancel) {
+		t.Error("unrestricted principal refuses loop:cancel, want allowed")
+	}
+	only := loopauth.Principal{Scopes: loopauth.NewScopes(loopauth.ScopeLoopCancel)}
+	if !only.Allows(loopauth.ScopeLoopCancel) {
+		t.Error("loop:cancel-only principal refuses loop:cancel, want allowed")
 	}
 }

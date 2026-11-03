@@ -1,8 +1,9 @@
 // Package loopconnect is the Connect/protobuf transport edge for the networked loop-
 // control binding (change 0055, fuse.loop.v1) — successor to the JSON-over-WebSocket
 // wire (#48, ADR-0032 superseded). It implements loopv1connect.LoopServiceHandler
-// over a runtime.Runtime: StartLoop / Send / GetCapabilities (unary) and Observe
-// (server-streaming history-then-live). It is a pure adapter - it imports internal/runtime,
+// over a runtime.Runtime: StartLoop / Send / CancelLoop / GetCapabilities (unary) and
+// Observe (server-streaming history-then-live). It is a pure adapter - it imports
+// internal/runtime,
 // internal/event, the generated loopwire stubs, the internal/capabilities answer
 // types, the internal/tenantlimit per-tenant loop limiter (change 0103), the
 // internal/loopsecret in-memory secret values (change 0102) and the
@@ -24,6 +25,8 @@ import (
 	"slices"
 	"strconv"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	"go.opentelemetry.io/otel/trace"
@@ -48,11 +51,11 @@ import (
 //
 // Each RPC requires one token scope when the authenticated principal carries a
 // scope set (an empty set is unrestricted): StartLoop needs loop:start, Send needs
-// loop:send, Observe needs loop:observe and GetCapabilities needs
-// capabilities:read. An explicitly granted loop:admin also satisfies Send and
-// Observe and lifts the owner check within the principal's tenant. The scope
-// check is the first check each RPC runs, before the tenant check and before the
-// runtime is touched.
+// loop:send, CancelLoop needs loop:cancel, Observe needs loop:observe and
+// GetCapabilities needs capabilities:read. An explicitly granted loop:admin also
+// satisfies Send, CancelLoop and Observe and lifts the owner check within the
+// principal's tenant. The scope check is the first check each RPC runs, before
+// the tenant check and before the runtime is touched.
 type Handler struct {
 	rt       runtime.Runtime
 	observer observe.Observer
@@ -321,7 +324,8 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		if cerr := harnessError(err); cerr != nil {
 			return nil, cerr
 		}
-		if errors.Is(err, runtime.ErrLoopNotFound) || errors.Is(err, runtime.ErrLoopFinished) {
+		if errors.Is(err, runtime.ErrLoopNotFound) || errors.Is(err, runtime.ErrLoopFinished) ||
+			errors.Is(err, runtime.ErrLoopCancelled) {
 			// The orchestrate target is not a loop the caller can steer: a client
 			// error, not a server fault.
 			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
@@ -428,8 +432,106 @@ func (h *Handler) recordOwner(ctx context.Context, tenant event.TenantID, loopID
 	return nil
 }
 
-// Send injects human input at the loop's next turn boundary. It maps the two client-
-// addressable seam sentinels: an unknown loop → CodeNotFound, a finished loop →
+// maxCancelReason is the most bytes a CancelLoop reason may carry.
+const maxCancelReason = 256
+
+// validCancelReason reports whether reason may be recorded: at most
+// maxCancelReason bytes of valid UTF-8 with no control character. Empty is valid.
+func validCancelReason(reason string) bool {
+	if len(reason) > maxCancelReason || !utf8.ValidString(reason) {
+		return false
+	}
+	for _, r := range reason {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// CancelLoop stops a loop and seals it so it never runs again. A scoped principal
+// needs loop:cancel, or an explicit loop:admin (which also lifts the owner check
+// within the tenant); loop:start, loop:send and loop:observe do not imply it. The
+// checks run in a fixed order, all before the runtime is touched: scope, tenant
+// spoof, empty loop_id (InvalidArgument), the per-loop owner rule Send applies
+// (NotFound across tenants, PermissionDenied for another subject's loop), then the
+// reason (at most 256 bytes of printable UTF-8, InvalidArgument otherwise). A
+// runtime without the Canceller capability answers Unimplemented. The runtime's
+// ErrLoopNotFound maps to NotFound and ErrLoopCancelled to FailedPrecondition; any
+// other error is Internal. The caller's principal subject is recorded as the
+// cancel's requested_by.
+func (h *Handler) CancelLoop(ctx context.Context, req *connect.Request[loopv1.CancelLoopRequest]) (*connect.Response[loopv1.CancelLoopResponse], error) {
+	ctx, apiSpan := h.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationAPIRequest, Name: "cancel_loop"})
+	apiOutcome := observe.OutcomeSuccess
+	defer func() { apiSpan.End(apiOutcome) }()
+	refuse := func(cerr *connect.Error) (*connect.Response[loopv1.CancelLoopResponse], error) {
+		apiOutcome = observeotel.OutcomeFromError(ctx, cerr)
+		return nil, cerr
+	}
+	if aerr := requireScope(ctx, loopauth.ScopeLoopCancel, loopauth.ScopeLoopAdmin); aerr != nil {
+		return refuse(aerr)
+	}
+	m := req.Msg
+	tenant, p, havePrincipal, aerr := h.effectiveTenant(ctx, m.Tenant)
+	if aerr != nil {
+		return refuse(aerr)
+	}
+	// An empty id is a malformed request, never a registry miss.
+	if m.LoopId == "" {
+		return refuse(connect.NewError(connect.CodeInvalidArgument, errors.New("loopconnect: loop_id is required")))
+	}
+	if aerr := h.authorizeLoop(ctx, tenant, m.LoopId, p, havePrincipal); aerr != nil {
+		return refuse(aerr)
+	}
+	if !validCancelReason(m.Reason) {
+		return refuse(connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("loopconnect: reason must be at most %d bytes of printable UTF-8", maxCancelReason)))
+	}
+	c, ok := h.rt.(runtime.Canceller)
+	if !ok {
+		return refuse(connect.NewError(connect.CodeUnimplemented, errors.New("loopconnect: this server's runtime cannot cancel loops")))
+	}
+	res, err := c.Cancel(ctx, tenant, m.LoopId, m.Reason, p.Subject)
+	if err != nil {
+		apiOutcome = observeotel.OutcomeFromError(ctx, err)
+		switch {
+		case errors.Is(err, runtime.ErrLoopNotFound):
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		case errors.Is(err, runtime.ErrLoopCancelled):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		default:
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	resp := connect.NewResponse(&loopv1.CancelLoopResponse{
+		Outcome:     cancelOutcomeToProto(res.Outcome),
+		WasLive:     res.WasLive,
+		TerminalSeq: uint64(res.TerminalSeq),
+		Reason:      res.Reason,
+	})
+	if id := observeotel.TraceID(ctx); id != "" {
+		resp.Header().Set("Fuse-Trace-Id", id)
+	}
+	return resp, nil
+}
+
+// cancelOutcomeToProto maps a runtime CancelOutcome to its wire enum value.
+func cancelOutcomeToProto(o runtime.CancelOutcome) loopv1.CancelOutcome {
+	switch o {
+	case runtime.CancelOutcomeCancelled:
+		return loopv1.CancelOutcome_CANCEL_OUTCOME_CANCELLED
+	case runtime.CancelOutcomeAlreadyCancelled:
+		return loopv1.CancelOutcome_CANCEL_OUTCOME_ALREADY_CANCELLED
+	case runtime.CancelOutcomeCancelling:
+		return loopv1.CancelOutcome_CANCEL_OUTCOME_CANCELLING
+	default:
+		return loopv1.CancelOutcome_CANCEL_OUTCOME_UNSPECIFIED
+	}
+}
+
+// Send injects human input at the loop's next turn boundary. It maps the client-
+// addressable seam sentinels: an unknown loop → CodeNotFound, a cancelled loop →
+// CodeFailedPrecondition "loop cancelled" (never resumed), a finished loop →
 // CodeFailedPrecondition (the loop exists but no longer accepts input). Any other
 // error → CodeInternal. A scoped principal needs loop:send, or an explicit
 // loop:admin (which also lifts the owner check within the tenant).
@@ -466,6 +568,12 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 	// (genuinely unknown, or live on another instance), the retry's error falls through
 	// to the mapping below unchanged.
 	//
+	// A cancelled loop is never resumed. One this process caches answers
+	// ErrLoopCancelled from Send itself and never enters this branch. One it does not
+	// cache reads as finished here, and Resume refuses it with ErrLoopCancelled; that
+	// error replaces ErrLoopFinished so the caller learns "loop cancelled", not "loop
+	// finished".
+	//
 	// Reviving a loop makes it live again, so the resume is admitted by the
 	// per-tenant limits exactly as a StartLoop is (change 0103): a tenant at its
 	// cap cannot exceed it by resuming. Only this resume path is admitted; a Send
@@ -474,6 +582,17 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 	if errors.Is(err, runtime.ErrLoopFinished) {
 		release, lerr := h.limits.Admit(ctx, tenant)
 		if lerr != nil {
+			// The cap guards reviving a loop, and a cancelled loop is never revived:
+			// when the admission is refused, a loop whose stream is sealed by a cancel
+			// still answers "loop cancelled", not the limit. Only a refusal pays for
+			// the stream read; an admitted resume learns it from Resume as before.
+			if cr, ok := h.rt.(runtime.CancelReader); ok {
+				if sealed, rerr := cr.IsCancelled(ctx, tenant, m.LoopId); rerr == nil && sealed {
+					cerr := connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%w: %q", runtime.ErrLoopCancelled, m.LoopId))
+					apiOutcome = observeotel.OutcomeFromError(ctx, cerr)
+					return nil, cerr
+				}
+			}
 			cerr := limitError(lerr)
 			apiOutcome = observeotel.OutcomeFromError(ctx, cerr)
 			return nil, cerr
@@ -483,6 +602,8 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 			// Registered live again: drop the in-flight reservation (idempotent).
 			release()
 			err = runtime.SendOrSteer(ctx, h.rt, tenant, m.LoopId, m.Input, opts)
+		} else if errors.Is(rerr, runtime.ErrLoopCancelled) {
+			err = rerr
 		}
 	}
 	if err != nil {
@@ -490,6 +611,8 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 		switch {
 		case errors.Is(err, runtime.ErrLoopNotFound):
 			return nil, connect.NewError(connect.CodeNotFound, err)
+		case errors.Is(err, runtime.ErrLoopCancelled):
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 		case errors.Is(err, runtime.ErrLoopFinished):
 			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 		default:

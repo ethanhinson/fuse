@@ -44,8 +44,8 @@ func TestCatalogLabelsAreExactAndSafe(t *testing.T) {
 			t.Fatalf("%q not forbidden", bad)
 		}
 	}
-	// 26 (change 0063) + 3 admission families (change 0077).
-	if len(Catalog()) != 29 {
+	// 26 (change 0063) + 3 admission families (change 0077) + loops cancelled.
+	if len(Catalog()) != 30 {
 		t.Fatalf("catalog size=%d", len(Catalog()))
 	}
 }
@@ -136,5 +136,49 @@ func TestProjectPermissionDecisionMetrics(t *testing.T) {
 	}
 	if strings.Contains(body, `fuse_permission_decisions_total{layer="",`) {
 		t.Error("empty-layer decision must not be counted")
+	}
+}
+
+func TestLoopsCancelledCounter(t *testing.T) {
+	if err := ValidateLabels("fuse_loops_cancelled_total", []string{"tenant_id", "was_live"}); err != nil {
+		t.Fatalf("catalog does not declare fuse_loops_cancelled_total: %v", err)
+	}
+	found := false
+	for _, d := range Catalog() {
+		if d.Name == "fuse_loops_cancelled_total" {
+			found = d.Type == "counter" && len(d.Labels) == 2 && d.Labels[0] == "tenant_id" && d.Labels[1] == "was_live"
+		}
+	}
+	if !found {
+		t.Fatal("Catalog() lacks {fuse_loops_cancelled_total counter [tenant_id was_live]}")
+	}
+
+	r := testRecorder(t)
+	ctx := context.Background()
+	for _, rec := range []observe.Record{
+		{Timestamp: time.Now(), EventName: string(event.KindLoopCancelled), TenantID: "admitted", Operation: observe.OperationLoop, Outcome: observe.OutcomeCanceled, CancelWasLive: "true"},
+		{Timestamp: time.Now(), EventName: string(event.KindLoopCancelled), TenantID: "admitted", Operation: observe.OperationLoop, Outcome: observe.OutcomeCanceled, CancelWasLive: "false"},
+		{Timestamp: time.Now(), EventName: string(event.KindLoopCancelled), TenantID: "admitted", Operation: observe.OperationLoop, Outcome: observe.OutcomeCanceled, CancelWasLive: "maybe"},
+		// No CancelWasLive: must touch nothing.
+		{Timestamp: time.Now(), EventName: string(event.KindLoopCancelRequest), TenantID: "admitted", Operation: observe.OperationLoop, Outcome: observe.OutcomeSuccess},
+	} {
+		if err := r.Project(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := httptest.NewRecorder()
+	r.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
+	body := w.Body.String()
+	for _, want := range []string{
+		`fuse_loops_cancelled_total{tenant_id="admitted",was_live="true"} 1`,
+		`fuse_loops_cancelled_total{tenant_id="admitted",was_live="false"} 1`,
+		`fuse_loops_cancelled_total{tenant_id="admitted",was_live="__overflow__"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+	if n := strings.Count(body, "fuse_loops_cancelled_total{"); n != 3 {
+		t.Errorf("fuse_loops_cancelled_total series = %d, want 3\n%s", n, body)
 	}
 }

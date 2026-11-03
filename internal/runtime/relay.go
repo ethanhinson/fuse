@@ -25,6 +25,22 @@ import (
 // Delivery is recorded in the stream too: the user.input event for the turn that read a
 // request lists it in ReqSeqs. A restarted owner (a resume) computes what is still
 // undelivered from the stream alone, so a request is neither lost nor read twice.
+//
+// A Cancel reaches the owner the same way, as a loop.cancel.request: the pump hands it
+// to onCancel, which cancels the loop as if the Cancel had been made here, and the
+// loop's terminal loop.cancelled answers it. A request already in the stream when the
+// pump starts is honoured on its first read. So is a loop.cancelled another replica
+// wrote while this one was starting the loop (it sealed the loop while it read not
+// live): a sealed loop must not keep running.
+
+// relayedCancel is a cancel the relay pump found in its loop's stream: a
+// loop.cancel.request (sealedSeq 0), or a loop.cancelled another replica already wrote
+// (sealedSeq is its seq; requestSeq, reason and requestedBy are the ones it records).
+type relayedCancel struct {
+	requestSeq          event.Seq
+	reason, requestedBy string
+	sealedSeq           event.Seq
+}
 
 // errLiveElsewhere says a loop is running on another replica. Send and Steer answer it by
 // relaying; anything else that needs the loop in THIS process treats it as not found.
@@ -86,8 +102,9 @@ func pendingRequests(evs []event.Event) []event.Event {
 
 // startRelayPump runs the owner's side of the relay until ctx is done or stop is closed.
 // It first delivers whatever the stream says is still pending (a resumed loop), then
-// delivers each new request as it appears.
-func (r *inProcRuntime) startRelayPump(ctx context.Context, key event.StreamKey, bus *agent.HumanBus, nodeID string, stop <-chan struct{}) {
+// delivers each new request as it appears. onCancel (may be nil) receives each cancel
+// the stream carries; it must not block.
+func (r *inProcRuntime) startRelayPump(ctx context.Context, key event.StreamKey, bus *agent.HumanBus, nodeID string, stop <-chan struct{}, onCancel func(relayedCancel)) {
 	ds := r.deps.DurableStore
 	go func() {
 		wake, unsub, err := ds.Subscribe(ctx, key)
@@ -105,6 +122,18 @@ func (r *inProcRuntime) startRelayPump(ctx context.Context, key event.StreamKey,
 			}
 			bus.Relay(nodeID, p.Source, p.Interrupt, p.Content, e.Seq)
 		}
+		cancelReq := func(e event.Event) {
+			var p event.LoopCancelRequestPayload
+			if onCancel == nil || json.Unmarshal(e.Payload, &p) != nil {
+				return // a malformed request is skipped, never fatal
+			}
+			onCancel(relayedCancel{requestSeq: e.Seq, reason: p.Reason, requestedBy: p.RequestedBy})
+		}
+		sealed := func(e event.Event, p event.LoopCancelledPayload) {
+			if onCancel != nil {
+				onCancel(relayedCancel{requestSeq: event.Seq(p.RequestSeq), reason: p.Reason, requestedBy: p.RequestedBy, sealedSeq: e.Seq})
+			}
+		}
 		pass := func() {
 			evs, err := ds.Replay(ctx, key, cursor)
 			if err != nil {
@@ -114,11 +143,23 @@ func (r *inProcRuntime) startRelayPump(ctx context.Context, key event.StreamKey,
 				for _, e := range pendingRequests(evs) {
 					deliver(e)
 				}
+				if e, p, ok := firstCancelled(evs); ok {
+					sealed(e, p)
+				} else if e, _, ok := pendingCancel(evs); ok {
+					cancelReq(e)
+				}
 				first = false
 			} else {
 				for _, e := range evs {
-					if e.Kind == event.KindSteerRequest {
+					switch e.Kind {
+					case event.KindSteerRequest:
 						deliver(e)
+					case event.KindLoopCancelRequest:
+						cancelReq(e)
+					case event.KindLoopCancelled:
+						if _, p, ok := firstCancelled([]event.Event{e}); ok {
+							sealed(e, p)
+						}
 					}
 				}
 			}
@@ -142,7 +183,8 @@ func (r *inProcRuntime) startRelayPump(ctx context.Context, key event.StreamKey,
 					wake = nil
 					continue
 				}
-				if ev.Kind == event.KindSteerRequest {
+				switch ev.Kind {
+				case event.KindSteerRequest, event.KindLoopCancelRequest, event.KindLoopCancelled:
 					pass()
 				}
 			case <-tick.C:

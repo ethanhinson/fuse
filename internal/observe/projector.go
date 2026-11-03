@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,6 +73,10 @@ type Record struct {
 	AdmissionOutcome string `json:"admission_outcome,omitempty"`
 	AdmissionScope   string `json:"admission_scope,omitempty"`
 	WaitMS           int64  `json:"wait_ms,omitempty"`
+	// CancelWasLive is the bounded "true"|"false" from a loop.cancelled payload:
+	// whether the cancel interrupted live work. It is set only from loop.cancelled;
+	// the cancel reason and the requesting principal are never projected.
+	CancelWasLive string `json:"cancel_was_live,omitempty"`
 	// TraceID and SpanID preserve only validated correlation identifiers from a
 	// committed envelope. The durable carrier (including tracestate) is never
 	// retained by the payload-free projection.
@@ -93,8 +98,27 @@ func ProjectEvent(key event.StreamKey, e event.Event) Record {
 		decoratePermission(&rec, e.Payload)
 	case event.KindSandboxAcquire, event.KindSandboxRelease, event.KindSandboxReap, event.KindSandboxHealth, event.KindSandboxAdmission:
 		decorateSandbox(&rec, e.Kind, e.Payload)
+	case event.KindLoopCancelled:
+		decorateCancelled(&rec, e.Payload)
 	}
 	return rec
+}
+
+// decorateCancelled extracts ONLY was_live from a loop.cancelled payload. The
+// private decode shape names nothing else, so the free-text reason and the
+// requesting principal can never reach the projection. A payload that does not
+// decode leaves CancelWasLive empty, which counts nothing; so does a superseded
+// terminal (a second loop.cancelled its writer appended knowing of an earlier
+// one), which records a seal, not another cancel.
+func decorateCancelled(rec *Record, payload []byte) {
+	var marker struct {
+		WasLive    bool `json:"was_live"`
+		Superseded bool `json:"superseded"`
+	}
+	if err := json.Unmarshal(payload, &marker); err != nil || marker.Superseded {
+		return
+	}
+	rec.CancelWasLive = strconv.FormatBool(marker.WasLive)
 }
 
 // decoratePermission extracts ONLY the bounded enum classifications from a
@@ -258,6 +282,13 @@ func classify(kind event.Kind, payload []byte) (OperationKind, Outcome, ErrorCat
 		return OperationSandbox, OutcomeSuccess, ErrorCategoryNone
 	case event.KindError, event.KindLoopTrip:
 		return OperationLoop, OutcomeError, ErrorCategoryLoop
+	case event.KindLoopCancelled:
+		// A deliberate stop by the caller is neither a success nor a fault.
+		return OperationLoop, OutcomeCanceled, ErrorCategoryNone
+	case event.KindSteerRequest, event.KindLoopCancelRequest:
+		// Control requests on the stream; the cancel request is only the relay ask,
+		// its result is the terminal loop.cancelled.
+		return OperationLoop, OutcomeSuccess, ErrorCategoryNone
 	default:
 		return OperationLoop, OutcomeSuccess, ErrorCategoryNone
 	}

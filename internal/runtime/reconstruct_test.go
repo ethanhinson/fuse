@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
@@ -108,5 +109,49 @@ func TestReconstructRoundTripEqualsLiveTranscript(t *testing.T) {
 	// empty (which would make DeepEqual trivially pass).
 	if len(got) < 5 {
 		t.Fatalf("expected a multi-turn transcript (user, assistant+call, tool, assistant, user, assistant), got %d messages: %#v", len(got), got)
+	}
+}
+
+// The cancel kinds are control records, not conversation: the stream folds that feed
+// a resume (turn index, transcript, pending relays, harness) ignore them.
+func TestFoldHelpersIgnoreCancelKinds(t *testing.T) {
+	mk := func(seq event.Seq, k event.Kind, payload any) event.Event {
+		raw, _ := json.Marshal(payload)
+		return event.Event{Seq: seq, Kind: k, Payload: raw}
+	}
+	req := mk(90, event.KindLoopCancelRequest, event.LoopCancelRequestPayload{Reason: "r", RequestedBy: "u"})
+	done := mk(91, event.KindLoopCancelled, event.LoopCancelledPayload{Reason: "r", RequestedBy: "u", WasLive: true, RequestSeq: 90})
+
+	parked := []event.Event{mk(1, event.KindUserInput, event.UserInputPayload{Content: "hi"}), {Seq: 2, Kind: event.KindLoopParked}}
+	withCancel := append(append([]event.Event{}, parked...), req, done)
+	if got, want := consumedTurns(withCancel), consumedTurns(parked); got != want {
+		t.Fatalf("consumedTurns with cancel kinds = %d, want %d", got, want)
+	}
+
+	fixture := []event.Event{
+		mk(1, event.KindUserInput, event.UserInputPayload{Content: "task"}),
+		mk(2, event.KindModelCallEnd, event.ModelCallEndPayload{Content: "answer"}),
+		mk(3, event.KindSteerRequest, event.SteerRequestPayload{Content: "more"}),
+	}
+	plain, err := reconstructMessages(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folded, err := reconstructMessages(append(append([]event.Event{}, fixture...), req, done))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(plain, folded) {
+		t.Fatalf("reconstructMessages changed by cancel kinds:\n%v\n%v", plain, folded)
+	}
+
+	pend := pendingRequests(append(append([]event.Event{}, fixture...), req, done))
+	if len(pend) != 1 || pend[0].Seq != 3 {
+		t.Fatalf("pendingRequests = %v, want only the steer.request", pend)
+	}
+
+	spec, err := harnessFromEvents([]event.Event{req, done})
+	if err != nil || spec != nil {
+		t.Fatalf("harnessFromEvents over cancel kinds = %v, %v; want nil, nil", spec, err)
 	}
 }

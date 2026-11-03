@@ -10,6 +10,7 @@
 // field (identity enforcement is #0049). The per-kind payload shapes are NOT
 // re-modeled here: payload stays raw JSON bytes (#50 owns SDK ergonomics), and
 // kind stays a string to avoid lock-stepping a proto enum with internal/event.Kind.
+// CancelLoop stops a loop the caller owns and seals it so it never runs again.
 // GetCapabilities is the read-only discovery call: it tells a client which models,
 // skills, tighten-only ceilings, secret names and spec MCP auth types the server
 // will accept before it composes a HarnessSpec.
@@ -26,7 +27,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file fuse/loop/v1/loop.proto.
  */
 export const file_fuse_loop_v1_loop: GenFile = /*@__PURE__*/
-  fileDesc("ChdmdXNlL2xvb3AvdjEvbG9vcC5wcm90bxIMZnVzZS5sb29wLnYxIssBChBTdGFydExvb3BSZXF1ZXN0EgwKBHRhc2sYASABKAkSDQoFbW9kZWwYAiABKAkSDgoGdGVuYW50GAMgASgJEhMKC2ludGVyYWN0aXZlGAQgASgIEhsKE29yY2hlc3RyYXRlX2xvb3BfaWQYBSABKAkSLQoHaGFybmVzcxgGIAEoCzIcLmZ1c2UuaGFybmVzcy52MS5IYXJuZXNzU3BlYxIpCgdzZWNyZXRzGAcgAygLMhguZnVzZS5sb29wLnYxLkxvb3BTZWNyZXQiOAoKTG9vcFNlY3JldBIMCgRuYW1lGAEgASgJEg0KBXZhbHVlGAIgASgJEg0KBWhvc3RzGAMgAygJIjwKEVN0YXJ0TG9vcFJlc3BvbnNlEg8KB2xvb3BfaWQYASABKAkSFgoOaGFybmVzc19kaWdlc3QYAiABKAkiYAoLU2VuZFJlcXVlc3QSDwoHbG9vcF9pZBgBIAEoCRINCgVpbnB1dBgCIAEoCRIOCgZ0ZW5hbnQYAyABKAkSEQoJaW50ZXJydXB0GAQgASgIEg4KBnNvdXJjZRgFIAEoCSIOCgxTZW5kUmVzcG9uc2UiQwoOT2JzZXJ2ZVJlcXVlc3QSDwoHbG9vcF9pZBgBIAEoCRIQCghmcm9tX3NlcRgCIAEoBBIOCgZ0ZW5hbnQYAyABKAkiUgoMT2JzZXJ2ZUV2ZW50EiIKBWV2ZW50GAEgASgLMhMuZnVzZS5sb29wLnYxLkV2ZW50EgsKA2dhcBgCIAEoCBIRCglrZWVwYWxpdmUYAyABKAginAEKBUV2ZW50EgsKA3NlcRgBIAEoBBImCgJ0cxgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHbm9kZV9pZBgDIAEoCRIRCglwYXJlbnRfaWQYBCABKAkSDQoFZGVwdGgYBSABKAUSDAoEdHVybhgGIAEoBRIMCgRraW5kGAcgASgJEg8KB3BheWxvYWQYCCABKAwiKAoWR2V0Q2FwYWJpbGl0aWVzUmVxdWVzdBIOCgZ0ZW5hbnQYASABKAki6QIKF0dldENhcGFiaWxpdGllc1Jlc3BvbnNlEicKBm1vZGVscxgBIAMoCzIXLmZ1c2UubG9vcC52MS5Nb2RlbEluZm8SJwoGc2tpbGxzGAIgAygLMhcuZnVzZS5sb29wLnYxLlNraWxsSW5mbxInCghjZWlsaW5ncxgDIAMoCzIVLmZ1c2UubG9vcC52MS5DZWlsaW5nEhMKC3NlY3JldF9yZWZzGAQgAygJEjkKE3NwZWNfbWNwX2F1dGhfa2luZHMYBSADKA4yHC5mdXNlLmhhcm5lc3MudjEuTWNwQXV0aFR5cGUSKAoGc2VydmVyGAYgASgLMhguZnVzZS5sb29wLnYxLlNlcnZlckluZm8SLQoLc3BlY19wb2xpY3kYByABKAsyGC5mdXNlLmxvb3AudjEuU3BlY1BvbGljeRIqCgZsaW1pdHMYCCABKAsyGi5mdXNlLmxvb3AudjEuVGVuYW50TGltaXRzInwKClNwZWNQb2xpY3kSEQoJbWNwX2hvc3RzGAEgAygJEh0KFWRlbnlfcHJpdmF0ZV9uZXR3b3JrcxgCIAEoCBIcChRtb2RlbHNfcmVnaXN0cnlfb25seRgDIAEoCBIeChZjYXJyaWVkX3NraWxsc19hbGxvd2VkGAQgASgIItsBCglNb2RlbEluZm8SDQoFYWxpYXMYASABKAkSEgoKZ2F0ZXdheV9pZBgCIAEoCRIZChFtYXhfb3V0cHV0X3Rva2VucxgDIAEoDRIWCg5jb250ZXh0X3dpbmRvdxgEIAEoDRIhChljb250ZXh0X3dpbmRvd19pc19kZWZhdWx0GAUgASgIEg8KB3BlcnNvbmEYBiABKAkSEgoKaXNfZGVmYXVsdBgHIAEoCBINCgVsYWJlbBgIIAEoCRITCgtkZXNjcmlwdGlvbhgJIAEoCRIMCgR0YWdzGAogAygJIi4KCVNraWxsSW5mbxIMCgRuYW1lGAEgASgJEhMKC2Rlc2NyaXB0aW9uGAIgASgJIo0BCgdDZWlsaW5nEhIKCmZpZWxkX3BhdGgYASABKAkSFAoMb3BlcmF0b3Jfc2V0GAIgASgIEiUKBXZhbHVlGAMgASgLMhYuZ29vZ2xlLnByb3RvYnVmLlZhbHVlEjEKCWRpcmVjdGlvbhgEIAEoDjIeLmZ1c2UubG9vcC52MS5DZWlsaW5nRGlyZWN0aW9uIjcKClNlcnZlckluZm8SDwoHdmVyc2lvbhgBIAEoCRIYChBkaWdlc3RfYWxnb3JpdGhtGAIgASgJIkEKDFRlbmFudExpbWl0cxIWCg5tYXhfbGl2ZV9sb29wcxgBIAEoDRIZChFzdGFydHNfcGVyX21pbnV0ZRgCIAEoDSprChBDZWlsaW5nRGlyZWN0aW9uEiEKHUNFSUxJTkdfRElSRUNUSU9OX1VOU1BFQ0lGSUVEEAASGQoVQ0VJTElOR19ESVJFQ1RJT05fTUFYEAESGQoVQ0VJTElOR19ESVJFQ1RJT05fTUlOEAIywQIKC0xvb3BTZXJ2aWNlEkwKCVN0YXJ0TG9vcBIeLmZ1c2UubG9vcC52MS5TdGFydExvb3BSZXF1ZXN0Gh8uZnVzZS5sb29wLnYxLlN0YXJ0TG9vcFJlc3BvbnNlEj0KBFNlbmQSGS5mdXNlLmxvb3AudjEuU2VuZFJlcXVlc3QaGi5mdXNlLmxvb3AudjEuU2VuZFJlc3BvbnNlEkUKB09ic2VydmUSHC5mdXNlLmxvb3AudjEuT2JzZXJ2ZVJlcXVlc3QaGi5mdXNlLmxvb3AudjEuT2JzZXJ2ZUV2ZW50MAESXgoPR2V0Q2FwYWJpbGl0aWVzEiQuZnVzZS5sb29wLnYxLkdldENhcGFiaWxpdGllc1JlcXVlc3QaJS5mdXNlLmxvb3AudjEuR2V0Q2FwYWJpbGl0aWVzUmVzcG9uc2VCOVo3Z2l0aHViLmNvbS9ldGhhbmhpbnNvbi9mdXNlL2ludGVybmFsL2xvb3B3aXJlL3YxO2xvb3B2MWIGcHJvdG8z", [file_fuse_harness_v1_harness, file_google_protobuf_struct, file_google_protobuf_timestamp]);
+  fileDesc("ChdmdXNlL2xvb3AvdjEvbG9vcC5wcm90bxIMZnVzZS5sb29wLnYxIssBChBTdGFydExvb3BSZXF1ZXN0EgwKBHRhc2sYASABKAkSDQoFbW9kZWwYAiABKAkSDgoGdGVuYW50GAMgASgJEhMKC2ludGVyYWN0aXZlGAQgASgIEhsKE29yY2hlc3RyYXRlX2xvb3BfaWQYBSABKAkSLQoHaGFybmVzcxgGIAEoCzIcLmZ1c2UuaGFybmVzcy52MS5IYXJuZXNzU3BlYxIpCgdzZWNyZXRzGAcgAygLMhguZnVzZS5sb29wLnYxLkxvb3BTZWNyZXQiOAoKTG9vcFNlY3JldBIMCgRuYW1lGAEgASgJEg0KBXZhbHVlGAIgASgJEg0KBWhvc3RzGAMgAygJIjwKEVN0YXJ0TG9vcFJlc3BvbnNlEg8KB2xvb3BfaWQYASABKAkSFgoOaGFybmVzc19kaWdlc3QYAiABKAkiYAoLU2VuZFJlcXVlc3QSDwoHbG9vcF9pZBgBIAEoCRINCgVpbnB1dBgCIAEoCRIOCgZ0ZW5hbnQYAyABKAkSEQoJaW50ZXJydXB0GAQgASgIEg4KBnNvdXJjZRgFIAEoCSIOCgxTZW5kUmVzcG9uc2UiRAoRQ2FuY2VsTG9vcFJlcXVlc3QSDwoHbG9vcF9pZBgBIAEoCRIOCgZ0ZW5hbnQYAiABKAkSDgoGcmVhc29uGAMgASgJInoKEkNhbmNlbExvb3BSZXNwb25zZRIsCgdvdXRjb21lGAEgASgOMhsuZnVzZS5sb29wLnYxLkNhbmNlbE91dGNvbWUSEAoId2FzX2xpdmUYAiABKAgSFAoMdGVybWluYWxfc2VxGAMgASgEEg4KBnJlYXNvbhgEIAEoCSJDCg5PYnNlcnZlUmVxdWVzdBIPCgdsb29wX2lkGAEgASgJEhAKCGZyb21fc2VxGAIgASgEEg4KBnRlbmFudBgDIAEoCSJSCgxPYnNlcnZlRXZlbnQSIgoFZXZlbnQYASABKAsyEy5mdXNlLmxvb3AudjEuRXZlbnQSCwoDZ2FwGAIgASgIEhEKCWtlZXBhbGl2ZRgDIAEoCCKcAQoFRXZlbnQSCwoDc2VxGAEgASgEEiYKAnRzGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIPCgdub2RlX2lkGAMgASgJEhEKCXBhcmVudF9pZBgEIAEoCRINCgVkZXB0aBgFIAEoBRIMCgR0dXJuGAYgASgFEgwKBGtpbmQYByABKAkSDwoHcGF5bG9hZBgIIAEoDCIoChZHZXRDYXBhYmlsaXRpZXNSZXF1ZXN0Eg4KBnRlbmFudBgBIAEoCSLpAgoXR2V0Q2FwYWJpbGl0aWVzUmVzcG9uc2USJwoGbW9kZWxzGAEgAygLMhcuZnVzZS5sb29wLnYxLk1vZGVsSW5mbxInCgZza2lsbHMYAiADKAsyFy5mdXNlLmxvb3AudjEuU2tpbGxJbmZvEicKCGNlaWxpbmdzGAMgAygLMhUuZnVzZS5sb29wLnYxLkNlaWxpbmcSEwoLc2VjcmV0X3JlZnMYBCADKAkSOQoTc3BlY19tY3BfYXV0aF9raW5kcxgFIAMoDjIcLmZ1c2UuaGFybmVzcy52MS5NY3BBdXRoVHlwZRIoCgZzZXJ2ZXIYBiABKAsyGC5mdXNlLmxvb3AudjEuU2VydmVySW5mbxItCgtzcGVjX3BvbGljeRgHIAEoCzIYLmZ1c2UubG9vcC52MS5TcGVjUG9saWN5EioKBmxpbWl0cxgIIAEoCzIaLmZ1c2UubG9vcC52MS5UZW5hbnRMaW1pdHMifAoKU3BlY1BvbGljeRIRCgltY3BfaG9zdHMYASADKAkSHQoVZGVueV9wcml2YXRlX25ldHdvcmtzGAIgASgIEhwKFG1vZGVsc19yZWdpc3RyeV9vbmx5GAMgASgIEh4KFmNhcnJpZWRfc2tpbGxzX2FsbG93ZWQYBCABKAgi2wEKCU1vZGVsSW5mbxINCgVhbGlhcxgBIAEoCRISCgpnYXRld2F5X2lkGAIgASgJEhkKEW1heF9vdXRwdXRfdG9rZW5zGAMgASgNEhYKDmNvbnRleHRfd2luZG93GAQgASgNEiEKGWNvbnRleHRfd2luZG93X2lzX2RlZmF1bHQYBSABKAgSDwoHcGVyc29uYRgGIAEoCRISCgppc19kZWZhdWx0GAcgASgIEg0KBWxhYmVsGAggASgJEhMKC2Rlc2NyaXB0aW9uGAkgASgJEgwKBHRhZ3MYCiADKAkiLgoJU2tpbGxJbmZvEgwKBG5hbWUYASABKAkSEwoLZGVzY3JpcHRpb24YAiABKAkijQEKB0NlaWxpbmcSEgoKZmllbGRfcGF0aBgBIAEoCRIUCgxvcGVyYXRvcl9zZXQYAiABKAgSJQoFdmFsdWUYAyABKAsyFi5nb29nbGUucHJvdG9idWYuVmFsdWUSMQoJZGlyZWN0aW9uGAQgASgOMh4uZnVzZS5sb29wLnYxLkNlaWxpbmdEaXJlY3Rpb24iNwoKU2VydmVySW5mbxIPCgd2ZXJzaW9uGAEgASgJEhgKEGRpZ2VzdF9hbGdvcml0aG0YAiABKAkiQQoMVGVuYW50TGltaXRzEhYKDm1heF9saXZlX2xvb3BzGAEgASgNEhkKEXN0YXJ0c19wZXJfbWludXRlGAIgASgNKpIBCg1DYW5jZWxPdXRjb21lEh4KGkNBTkNFTF9PVVRDT01FX1VOU1BFQ0lGSUVEEAASHAoYQ0FOQ0VMX09VVENPTUVfQ0FOQ0VMTEVEEAESJAogQ0FOQ0VMX09VVENPTUVfQUxSRUFEWV9DQU5DRUxMRUQQAhIdChlDQU5DRUxfT1VUQ09NRV9DQU5DRUxMSU5HEAMqawoQQ2VpbGluZ0RpcmVjdGlvbhIhCh1DRUlMSU5HX0RJUkVDVElPTl9VTlNQRUNJRklFRBAAEhkKFUNFSUxJTkdfRElSRUNUSU9OX01BWBABEhkKFUNFSUxJTkdfRElSRUNUSU9OX01JThACMpIDCgtMb29wU2VydmljZRJMCglTdGFydExvb3ASHi5mdXNlLmxvb3AudjEuU3RhcnRMb29wUmVxdWVzdBofLmZ1c2UubG9vcC52MS5TdGFydExvb3BSZXNwb25zZRI9CgRTZW5kEhkuZnVzZS5sb29wLnYxLlNlbmRSZXF1ZXN0GhouZnVzZS5sb29wLnYxLlNlbmRSZXNwb25zZRJPCgpDYW5jZWxMb29wEh8uZnVzZS5sb29wLnYxLkNhbmNlbExvb3BSZXF1ZXN0GiAuZnVzZS5sb29wLnYxLkNhbmNlbExvb3BSZXNwb25zZRJFCgdPYnNlcnZlEhwuZnVzZS5sb29wLnYxLk9ic2VydmVSZXF1ZXN0GhouZnVzZS5sb29wLnYxLk9ic2VydmVFdmVudDABEl4KD0dldENhcGFiaWxpdGllcxIkLmZ1c2UubG9vcC52MS5HZXRDYXBhYmlsaXRpZXNSZXF1ZXN0GiUuZnVzZS5sb29wLnYxLkdldENhcGFiaWxpdGllc1Jlc3BvbnNlQjlaN2dpdGh1Yi5jb20vZXRoYW5oaW5zb24vZnVzZS9pbnRlcm5hbC9sb29wd2lyZS92MTtsb29wdjFiBnByb3RvMw", [file_fuse_harness_v1_harness, file_google_protobuf_struct, file_google_protobuf_timestamp]);
 
 /**
  * StartLoopRequest carries loop-scoped secret values in clear (secrets). Never
@@ -234,6 +235,78 @@ export const SendResponseSchema: GenMessage<SendResponse> = /*@__PURE__*/
   messageDesc(file_fuse_loop_v1_loop, 4);
 
 /**
+ * @generated from message fuse.loop.v1.CancelLoopRequest
+ */
+export type CancelLoopRequest = Message<"fuse.loop.v1.CancelLoopRequest"> & {
+  /**
+   * @generated from field: string loop_id = 1;
+   */
+  loopId: string;
+
+  /**
+   * same pass-through rule as SendRequest.tenant
+   *
+   * @generated from field: string tenant = 2;
+   */
+  tenant: string;
+
+  /**
+   * reason is free text the caller records with the cancel (at most 256 bytes,
+   * no control characters; InvalidArgument otherwise). Optional.
+   *
+   * @generated from field: string reason = 3;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message fuse.loop.v1.CancelLoopRequest.
+ * Use `create(CancelLoopRequestSchema)` to create a new message.
+ */
+export const CancelLoopRequestSchema: GenMessage<CancelLoopRequest> = /*@__PURE__*/
+  messageDesc(file_fuse_loop_v1_loop, 5);
+
+/**
+ * @generated from message fuse.loop.v1.CancelLoopResponse
+ */
+export type CancelLoopResponse = Message<"fuse.loop.v1.CancelLoopResponse"> & {
+  /**
+   * @generated from field: fuse.loop.v1.CancelOutcome outcome = 1;
+   */
+  outcome: CancelOutcome;
+
+  /**
+   * true when this cancel interrupted a running or parked loop; false when it
+   * sealed a loop that had already finished or been idle-reaped.
+   *
+   * @generated from field: bool was_live = 2;
+   */
+  wasLive: boolean;
+
+  /**
+   * seq of the loop.cancelled event; 0 when outcome is CANCELLING or the store
+   * cannot report it.
+   *
+   * @generated from field: uint64 terminal_seq = 3;
+   */
+  terminalSeq: bigint;
+
+  /**
+   * The recorded reason (the original one on ALREADY_CANCELLED).
+   *
+   * @generated from field: string reason = 4;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message fuse.loop.v1.CancelLoopResponse.
+ * Use `create(CancelLoopResponseSchema)` to create a new message.
+ */
+export const CancelLoopResponseSchema: GenMessage<CancelLoopResponse> = /*@__PURE__*/
+  messageDesc(file_fuse_loop_v1_loop, 6);
+
+/**
  * @generated from message fuse.loop.v1.ObserveRequest
  */
 export type ObserveRequest = Message<"fuse.loop.v1.ObserveRequest"> & {
@@ -258,7 +331,7 @@ export type ObserveRequest = Message<"fuse.loop.v1.ObserveRequest"> & {
  * Use `create(ObserveRequestSchema)` to create a new message.
  */
 export const ObserveRequestSchema: GenMessage<ObserveRequest> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 5);
+  messageDesc(file_fuse_loop_v1_loop, 7);
 
 /**
  * ObserveEvent carries either a domain event or a keepalive/gap marker frame.
@@ -293,7 +366,7 @@ export type ObserveEvent = Message<"fuse.loop.v1.ObserveEvent"> & {
  * Use `create(ObserveEventSchema)` to create a new message.
  */
 export const ObserveEventSchema: GenMessage<ObserveEvent> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 6);
+  messageDesc(file_fuse_loop_v1_loop, 8);
 
 /**
  * Event mirrors internal/event.Event at the transport edge. payload is raw JSON
@@ -348,7 +421,7 @@ export type Event = Message<"fuse.loop.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 7);
+  messageDesc(file_fuse_loop_v1_loop, 9);
 
 /**
  * @generated from message fuse.loop.v1.GetCapabilitiesRequest
@@ -369,7 +442,7 @@ export type GetCapabilitiesRequest = Message<"fuse.loop.v1.GetCapabilitiesReques
  * Use `create(GetCapabilitiesRequestSchema)` to create a new message.
  */
 export const GetCapabilitiesRequestSchema: GenMessage<GetCapabilitiesRequest> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 8);
+  messageDesc(file_fuse_loop_v1_loop, 10);
 
 /**
  * @generated from message fuse.loop.v1.GetCapabilitiesResponse
@@ -441,7 +514,7 @@ export type GetCapabilitiesResponse = Message<"fuse.loop.v1.GetCapabilitiesRespo
  * Use `create(GetCapabilitiesResponseSchema)` to create a new message.
  */
 export const GetCapabilitiesResponseSchema: GenMessage<GetCapabilitiesResponse> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 9);
+  messageDesc(file_fuse_loop_v1_loop, 11);
 
 /**
  * SpecPolicy is what StartLoop holds a client's spec to besides the
@@ -486,7 +559,7 @@ export type SpecPolicy = Message<"fuse.loop.v1.SpecPolicy"> & {
  * Use `create(SpecPolicySchema)` to create a new message.
  */
 export const SpecPolicySchema: GenMessage<SpecPolicy> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 10);
+  messageDesc(file_fuse_loop_v1_loop, 12);
 
 /**
  * @generated from message fuse.loop.v1.ModelInfo
@@ -557,7 +630,7 @@ export type ModelInfo = Message<"fuse.loop.v1.ModelInfo"> & {
  * Use `create(ModelInfoSchema)` to create a new message.
  */
 export const ModelInfoSchema: GenMessage<ModelInfo> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 11);
+  messageDesc(file_fuse_loop_v1_loop, 13);
 
 /**
  * @generated from message fuse.loop.v1.SkillInfo
@@ -579,7 +652,7 @@ export type SkillInfo = Message<"fuse.loop.v1.SkillInfo"> & {
  * Use `create(SkillInfoSchema)` to create a new message.
  */
 export const SkillInfoSchema: GenMessage<SkillInfo> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 12);
+  messageDesc(file_fuse_loop_v1_loop, 14);
 
 /**
  * The operator limit one tighten-only spec field is held to. The limit is
@@ -620,7 +693,7 @@ export type Ceiling = Message<"fuse.loop.v1.Ceiling"> & {
  * Use `create(CeilingSchema)` to create a new message.
  */
 export const CeilingSchema: GenMessage<Ceiling> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 13);
+  messageDesc(file_fuse_loop_v1_loop, 15);
 
 /**
  * @generated from message fuse.loop.v1.ServerInfo
@@ -644,7 +717,7 @@ export type ServerInfo = Message<"fuse.loop.v1.ServerInfo"> & {
  * Use `create(ServerInfoSchema)` to create a new message.
  */
 export const ServerInfoSchema: GenMessage<ServerInfo> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 14);
+  messageDesc(file_fuse_loop_v1_loop, 16);
 
 /**
  * TenantLimits bounds one tenant's loops on this server. A StartLoop beyond
@@ -675,7 +748,45 @@ export type TenantLimits = Message<"fuse.loop.v1.TenantLimits"> & {
  * Use `create(TenantLimitsSchema)` to create a new message.
  */
 export const TenantLimitsSchema: GenMessage<TenantLimits> = /*@__PURE__*/
-  messageDesc(file_fuse_loop_v1_loop, 15);
+  messageDesc(file_fuse_loop_v1_loop, 17);
+
+/**
+ * @generated from enum fuse.loop.v1.CancelOutcome
+ */
+export enum CancelOutcome {
+  /**
+   * @generated from enum value: CANCEL_OUTCOME_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * This call sealed the loop; was_live says whether it stopped running work.
+   *
+   * @generated from enum value: CANCEL_OUTCOME_CANCELLED = 1;
+   */
+  CANCELLED = 1,
+
+  /**
+   * An earlier cancel already sealed it; reason and terminal_seq are that cancel's.
+   *
+   * @generated from enum value: CANCEL_OUTCOME_ALREADY_CANCELLED = 2;
+   */
+  ALREADY_CANCELLED = 2,
+
+  /**
+   * The loop is owned by another replica; the request is recorded in its stream
+   * and the owner will emit loop.cancelled. terminal_seq is 0.
+   *
+   * @generated from enum value: CANCEL_OUTCOME_CANCELLING = 3;
+   */
+  CANCELLING = 3,
+}
+
+/**
+ * Describes the enum fuse.loop.v1.CancelOutcome.
+ */
+export const CancelOutcomeSchema: GenEnum<CancelOutcome> = /*@__PURE__*/
+  enumDesc(file_fuse_loop_v1_loop, 0);
 
 /**
  * Ceilings are strict: a spec value equal to the ceiling's value is refused.
@@ -707,7 +818,7 @@ export enum CeilingDirection {
  * Describes the enum fuse.loop.v1.CeilingDirection.
  */
 export const CeilingDirectionSchema: GenEnum<CeilingDirection> = /*@__PURE__*/
-  enumDesc(file_fuse_loop_v1_loop, 0);
+  enumDesc(file_fuse_loop_v1_loop, 1);
 
 /**
  * LoopService is the networked loop-control surface. Unary + server-streaming only
@@ -737,6 +848,20 @@ export const LoopService: GenService<{
     methodKind: "unary";
     input: typeof SendRequestSchema;
     output: typeof SendResponseSchema;
+  },
+  /**
+   * CancelLoop stops a loop the caller owns and seals it: its in-flight work is
+   * cancelled, its resources are released, loop.cancelled is appended as the last
+   * event of its stream, and the loop never accepts another Send or resume.
+   * Idempotent. Same ownership rule as Send; requires loop:cancel (or loop:admin).
+   * A server whose runtime cannot cancel answers Unimplemented.
+   *
+   * @generated from rpc fuse.loop.v1.LoopService.CancelLoop
+   */
+  cancelLoop: {
+    methodKind: "unary";
+    input: typeof CancelLoopRequestSchema;
+    output: typeof CancelLoopResponseSchema;
   },
   /**
    * Observe streams history since from_seq then live events; a reconnecting client

@@ -225,3 +225,22 @@ func (m *memStore) Replay(from event.Seq) ([]event.Event, error) {
 	}
 	return out, nil
 }
+
+func TestWatcherReportsCancelledTarget(t *testing.T) {
+	if !significant(event.KindLoopCancelled) {
+		t.Fatal("loop.cancelled must be significant")
+	}
+	payload, _ := json.Marshal(event.LoopCancelledPayload{Reason: "operator stop"})
+	e := event.Event{Seq: 7, Kind: event.KindLoopCancelled, Payload: payload}
+	line := oneLine(e)
+	if !strings.Contains(line, "loop.cancelled") || !strings.Contains(line, "operator stop") {
+		t.Fatalf("oneLine = %q", line)
+	}
+	bare := oneLine(event.Event{Seq: 8, Kind: event.KindLoopCancelled, Payload: []byte(`{}`)})
+	if bare != "#8 loop.cancelled" {
+		t.Fatalf("empty reason should render just the head, got %q", bare)
+	}
+	if got := state([]entry{{ev: e}}); got != "cancelled - it will not run again" {
+		t.Fatalf("state = %q", got)
+	}
+}

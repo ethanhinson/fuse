@@ -37,6 +37,8 @@ func TestKindWireValues(t *testing.T) {
 		KindMCPServer:          "mcp.server",
 		KindLoopPrincipal:      "loop.principal",
 		KindToolIdentityMinted: "tool.identity.minted",
+		KindLoopCancelRequest:  "loop.cancel.request",
+		KindLoopCancelled:      "loop.cancelled",
 	}
 	for k, want := range cases {
 		if string(k) != want {
@@ -356,5 +358,32 @@ func TestSpawnStartPayloadRoleRoundTrip(t *testing.T) {
 	}
 	if out != in {
 		t.Fatalf("round trip = %+v, want %+v", out, in)
+	}
+}
+
+func TestLoopCancelledPayloadJSON(t *testing.T) {
+	b, err := json.Marshal(LoopCancelledPayload{Reason: "operator stop", RequestedBy: "alice", WasLive: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(b), `{"reason":"operator stop","requested_by":"alice","was_live":false}`; got != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+	b, err = json.Marshal(LoopCancelledPayload{Reason: "operator stop", RequestedBy: "alice", RequestSeq: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"request_seq":7`) {
+		t.Errorf("missing request_seq: %s", b)
+	}
+}
+
+func TestLoopCancelRequestPayloadJSON(t *testing.T) {
+	b, err := json.Marshal(LoopCancelRequestPayload{Reason: "r", RequestedBy: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(b), `{"reason":"r","requested_by":"bob"}`; got != want {
+		t.Errorf("got %s, want %s", got, want)
 	}
 }

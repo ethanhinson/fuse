@@ -19,9 +19,16 @@ import (
 // them; the other replica has an empty loop map and sees them only through the store.
 func twoReplicas(t *testing.T, f *steerFake, nowB func() time.Time) (a, b Runtime, store *fsstore.FSDurableStore) {
 	t.Helper()
+	return twoReplicasWith(t, f, nowB, nil)
+}
+
+// twoReplicasWith is twoReplicas with a hook that adjusts both replicas' Deps (for
+// example CancelWait) before they are built.
+func twoReplicasWith(t *testing.T, f *steerFake, nowB func() time.Time, mutate func(*Deps)) (a, b Runtime, store *fsstore.FSDurableStore) {
+	t.Helper()
 	store = fsstore.NewDurableFSStore(t.TempDir())
 	mk := func(now func() time.Time) Runtime {
-		return New(Deps{
+		d := Deps{
 			DurableStore:  store,
 			Registry:      store,
 			MaxConcurrent: 2,
@@ -30,7 +37,11 @@ func twoReplicas(t *testing.T, f *steerFake, nowB func() time.Time) (a, b Runtim
 			BuildAgent: func(s event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 				return agent.New(f.completer(modelID), execAll{reg}, nopRenderer{}, modelID, "", 1, 0), nil, modelID, nil
 			},
-		})
+		}
+		if mutate != nil {
+			mutate(&d)
+		}
+		return New(d)
 	}
 	return mk(nil), mk(nowB), store
 }
