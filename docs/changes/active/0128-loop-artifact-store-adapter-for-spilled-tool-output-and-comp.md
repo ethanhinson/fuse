@@ -2,7 +2,7 @@
 id: 128
 slug: 'loop-artifact-store-adapter-for-spilled-tool-output-and-comp'
 title: 'Loop artifact store adapter for spilled tool output and compaction segments'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/loop-artifact-store-adapter-for-spilled-tool-output-and-comp'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/133'
 blocked_by:
 reconciled: true
 ---
@@ -53,3 +53,12 @@ Object-storage (S3/GCS) implementation beyond leaving the interface blob-shaped;
 ### 2026-11-03
 
 Unchanged against main 5eb0925: spill/segment globals, nil loop-server SegmentSink and CLI SetSpillDir call sites still match the spec pointers. Change 126 (fenced ownership) builds in parallel; this branch rebases onto origin/main before the PR.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 98ca828348c24391804fb082db97a8905827151c
+ran_at:   2026-11-03T10:56:56Z
+<!-- docket:build-evidence:end -->
