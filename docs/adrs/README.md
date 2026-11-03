@@ -73,6 +73,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0074](0074-per-tenant-loop-limits-enforced-at-the-connect-edge.md) — Per-tenant loop limits enforced at the Connect edge (Accepted) ← change #103
 - [ADR-0075](0075-scoped-principals-scopes-are-a-token-claim-enforced-at-the-c.md) — Scoped principals: scopes are a token claim enforced at the Connect edge (Accepted) ← change #100
 - [ADR-0076](0076-loop-scoped-secret-values-are-host-bound-memory-only-and-nev.md) — Loop-scoped secret values are host-bound, memory-only, and never persisted (Accepted) ← change #102 · relates to ADR-0075, ADR-0073, ADR-0061
+- [ADR-0077](0077-carried-skills-travel-in-the-harness-spec-not-beside-it.md) — Carried skills travel in the harness spec, not beside it (Accepted) ← change #118
 
 ## Superseded / Reversed
 
