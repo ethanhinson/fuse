@@ -157,8 +157,23 @@ server will accept:
 - Keep each tighten-only field strictly below its `Ceiling`'s `Value`
   (`FieldPath`, `Value`, `Direction`; a value equal to it is refused), and
   leave it unset when `OperatorSet` is false.
+- `SpecFeatures` lists the HarnessSpec features the server implements. Check
+  `slices.Contains(caps.SpecFeatures, harness.SpecFeatureNoTools)` before
+  sending a spec with `NoTools`; an older server would drop the field and run
+  the loop with every tool.
 
 A local client or an older server returns `ErrCapabilitiesUnsupported`.
+
+### Tool-less loops, roles and workers (`no_tools`)
+
+`HarnessSpec.no_tools` runs the loop with no tools at all: the model request
+carries no tools key, the blackboard included, and no MCP server is started.
+`Role.no_tools` and `Worker.no_tools` do the same for a child:
+
+- A role has three states: inherit (empty `tools`), narrowed (named `tools`)
+  and none (`no_tools`).
+- A worker has two states: named (`tools`) and none (`no_tools`).
+- A spawn that names tools for a tool-less role or worker is refused.
 
 ```go
 caps, err := client.Capabilities(ctx)
