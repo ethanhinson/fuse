@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0118 — Carried skills: a harness spec may define a skill inline](../../changes/active/0118-carried-skills-a-harness-spec-may-define-a-skill-inline.md)**
+> ↩ **[Change 0118 — Carried skills: a harness spec may define a skill inline](../../changes/archive/2026-11-03-0118-carried-skills-a-harness-spec-may-define-a-skill-inline.md)**
 <!-- docket:backlink:end -->
 
 # Carried skills: a harness spec may define a skill inline

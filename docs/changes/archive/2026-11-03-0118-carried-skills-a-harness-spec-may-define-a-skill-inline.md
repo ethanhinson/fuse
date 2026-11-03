@@ -2,7 +2,7 @@
 id: 118
 slug: 'carried-skills-a-harness-spec-may-define-a-skill-inline'
 title: 'Carried skills: a harness spec may define a skill inline'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline-design.md](../../superpowers/specs/2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline-design.md) |
+| Spec (merged) | [2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline-design.md) |
 | Plan | [2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline.md](../../superpowers/plans/2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline.md) |
 | Results | [2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline-results.md](../../results/2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline-results.md) |
 | ADRs | [ADR-0077](../../adrs/0077-carried-skills-travel-in-the-harness-spec-not-beside-it.md) |
