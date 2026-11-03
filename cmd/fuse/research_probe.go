@@ -52,6 +52,9 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 		return 2
 	}
 	question := strings.Join(rest, " ")
+	// The probe drives the research flow, which needs its tools (change 0116):
+	// clear no_tools before any registry or agent is built.
+	cfg = withoutNoTools(cfg, stderr, "the research probe")
 
 	alias := *modelAlias
 	if alias == "" {

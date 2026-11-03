@@ -204,7 +204,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// their file-only off-switch applies.
 	sb, closeEgress := newSandboxService(cfg, false, stderr)
 	defer closeEgress()
-	toolReg := defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
+	// A tool-less run (no_tools, change 0116) starts from an empty registry.
+	toolReg := loopBaseRegistry(cfg, func() *tools.Registry {
+		return defaultToolRegistry(sb, cfg.Research, skillSet.Lookup)
+	})
 	tree := agent.NewAgentTreeWithConcurrency(*modelAlias, *modelAlias, cfg.Agents.MaxConcurrent)
 	// The Scheduler is the single admission/slot/budget authority (change 0036):
 	// set the lifetime budget on it and route slot yield/unyield through it.

@@ -100,10 +100,11 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 	// (explicit non-goal). The mediator reaches the gate via buildGate →
 	// buildTargetMediator. One-shot is single-loop-per-process, so one manager over the
 	// one registry; it is closed at loop completion via LoopTeardown. A no-op when no
-	// MCP server is configured (no dial, no goroutines).
+	// MCP server is configured (no dial, no goroutines), and for a tool-less run
+	// (no_tools, change 0116), whose model is offered no tools to call them with.
 	mcpOpts, _ := mcpAttach(cfg, os.Stderr)
 	var oneShotMCP *mcp.Manager
-	if mgr, err := mcp.NewManager(cfg.MCPServers, toolReg, mcpOpts...); err != nil {
+	if mgr, err := mcp.NewManager(loopMCPServers(cfg), toolReg, mcpOpts...); err != nil {
 		fmt.Fprintf(os.Stderr, "one-shot: mcp manager: %v\n", err)
 	} else {
 		oneShotMCP = mgr

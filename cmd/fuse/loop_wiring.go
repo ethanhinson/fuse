@@ -71,8 +71,12 @@ func (w loopWiring) childTools(base *tools.Registry, opts agent.SpawnOpts, child
 	return reg, plan, nil
 }
 
-// rootTools registers rootNode's spawn_agent, blackboard and pipeline_run on reg.
+// rootTools registers rootNode's spawn_agent, blackboard and pipeline_run on reg,
+// and nothing for a tool-less loop.
 func (w loopWiring) rootTools(reg *tools.Registry, rootNode *agent.AgentNode) {
+	if w.cfg.NoTools {
+		return // a tool-less loop (change 0116): no spawn_agent, blackboard or pipeline_run
+	}
 	reg.Register(w.scope.spawnTool(w.scope.spawnFunc(w.makeSpawner(rootNode, 0), rootNode), rootNode))
 	wireRootBlackboard(reg, w.bb, rootNode)
 	w.wirePipeline(reg, rootNode, nil)
