@@ -22,8 +22,11 @@ import (
 // clients, and each may start a loop from its own harness spec. The spec is
 // validated and layered over the server's trusted config, which stays the
 // floor (internal/harnessresolve): tighten-only fields may only tighten it,
-// operator-only surfaces always come from it, skill names resolve against the
-// skills installed here, and secret_refs resolve through the operator's
+// operator-only surfaces always come from it, a skill reference resolves
+// against the skills installed here while a skill the spec carries (its own
+// description and body) needs no install and shadows an installed one of the
+// same name for this loop only (unless loop_server.spec_policy.carried_skills
+// refuses carried skills), and secret_refs resolve through the operator's
 // loop_server.secrets allowlist for the loop's tenant (deny by default). Any
 // problem is returned as a *harness.ValidationError before the loop exists.
 //

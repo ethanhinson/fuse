@@ -118,7 +118,10 @@ func harnessServerWith(t *testing.T, operatorYAML string, gw http.Handler) (runt
 	// These tests point specs at loopback httptest servers and unresolvable
 	// example hosts; the spec policy has its own tests (change 0101).
 	noDeny := false
-	cfg.LoopServer.SpecPolicy = config.SpecPolicyConfig{DenyPrivateNetworks: &noDeny, AllowHTTPHosts: []string{"127.0.0.1"}}
+	// Only these two fields are set, so the rest of a test's spec_policy (for
+	// example carried_skills) survives.
+	cfg.LoopServer.SpecPolicy.DenyPrivateNetworks = &noDeny
+	cfg.LoopServer.SpecPolicy.AllowHTTPHosts = []string{"127.0.0.1"}
 	reg := registryFromConfig(cfg)
 	skillSet, err := skills.LoadWithEmbedded(skills.DefaultDirs())
 	if err != nil {
@@ -182,6 +185,151 @@ func TestLoopServerRunsALoopFromItsHarnessSpec(t *testing.T) {
 	if sys := calls[0].Messages[0].Content; !strings.Contains(sys, "- research") || !strings.Contains(sys, "- notes") {
 		t.Errorf("server loop does not list every installed skill:\n%s", sys)
 	}
+}
+
+// skillThenDone scripts the gateway: the first reply calls the skill tool for
+// name, the second ends the run.
+func skillThenDone(name string) []string {
+	return []string{
+		`{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"c1","type":"function","function":{"name":"skill","arguments":"{\"name\":\"` + name + `\"}"}}]}}]}`,
+		`{"choices":[{"message":{"role":"assistant","content":"done"}}]}`,
+	}
+}
+
+// gatewayToolResults returns the content of every tool-role message in c.
+func gatewayToolResults(c gatewayCall) []string {
+	var out []string
+	for _, m := range c.Messages {
+		if m.Role == "tool" {
+			out = append(out, m.Content)
+		}
+	}
+	return out
+}
+
+// TestLoopServerRunsACarriedSkill proves, on the production loop-server wiring,
+// that a skill carried in a harness spec reaches the model: it is listed in the
+// system prompt beside the installed skill the spec references, the skill tool
+// returns its body verbatim, and the loop.harness record holds the spec as
+// sent. "triage" is not installed on this server, so this also covers a carried
+// skill needing no installed match.
+func TestLoopServerRunsACarriedSkill(t *testing.T) {
+	rt, gw, _ := harnessServer(t, harnessOperator)
+	gw.mu.Lock()
+	gw.script = skillThenDone("triage")
+	gw.mu.Unlock()
+	turns := uint32(2)
+	spec := &harnessv1.HarnessSpec{MaxTurns: &turns, Skills: []*harnessv1.SkillRef{
+		{Name: "triage", Description: "Sort incoming issues", Body: "CARRIED-TRIAGE-BODY"},
+		{Name: "notes"},
+	}}
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: spec})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	_, _ = h.Wait()
+	calls := gw.snapshot()
+	if len(calls) != 2 {
+		t.Fatalf("loop made %d model calls, want 2", len(calls))
+	}
+	sys := calls[0].Messages[0].Content
+	if !strings.Contains(sys, "- triage: Sort incoming issues") || !strings.Contains(sys, "- notes") || strings.Contains(sys, "- research") {
+		t.Errorf("skills listing is not exactly [triage, notes]:\n%s", sys)
+	}
+	if got := gatewayToolResults(calls[1]); len(got) != 1 || got[0] != "CARRIED-TRIAGE-BODY" {
+		t.Errorf("skill tool results = %q, want exactly the carried body", got)
+	}
+	hist, err := rt.Attach(context.Background(), "", h.ID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) == 0 || hist[0].Kind != event.KindLoopHarness {
+		t.Fatalf("first event is not loop.harness: %v", hist)
+	}
+	if !strings.Contains(string(hist[0].Payload), "CARRIED-TRIAGE-BODY") {
+		t.Errorf("loop.harness does not hold the carried body: %s", hist[0].Payload)
+	}
+}
+
+// TestLoopServerCarriedSkillShadowsInstalled proves a carried skill named like
+// an installed one replaces it for that loop only.
+func TestLoopServerCarriedSkillShadowsInstalled(t *testing.T) {
+	rt, gw, _ := harnessServer(t, harnessOperator)
+	gw.mu.Lock()
+	gw.script = skillThenDone("notes")
+	gw.mu.Unlock()
+	turns := uint32(2)
+	spec := &harnessv1.HarnessSpec{MaxTurns: &turns, Skills: []*harnessv1.SkillRef{
+		{Name: "notes", Description: "carried notes", Body: "CARRIED-NOTES"},
+	}}
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: spec})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	_, _ = h.Wait()
+	calls := gw.snapshot()
+	if len(calls) != 2 {
+		t.Fatalf("loop made %d model calls, want 2", len(calls))
+	}
+	if sys := calls[0].Messages[0].Content; !strings.Contains(sys, "- notes: carried notes") || strings.Contains(sys, "- notes: take notes") {
+		t.Errorf("listing does not show the carried notes alone:\n%s", sys)
+	}
+	if got := gatewayToolResults(calls[1]); len(got) != 1 || got[0] != "CARRIED-NOTES" {
+		t.Errorf("skill tool results = %q, want the carried body, not the installed one", got)
+	}
+
+	// The same server, no spec: the installed notes is untouched.
+	h, err = rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go"})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	_, _ = h.Wait()
+	calls = gw.snapshot()[2:]
+	if len(calls) == 0 {
+		t.Fatal("the server loop made no model call")
+	}
+	if sys := calls[0].Messages[0].Content; !strings.Contains(sys, "- notes: take notes") || strings.Contains(sys, "carried notes") {
+		t.Errorf("server loop does not list the installed notes:\n%s", sys)
+	}
+	for _, c := range calls[1:] {
+		for _, r := range gatewayToolResults(c) {
+			if strings.Contains(r, "CARRIED-NOTES") {
+				t.Fatal("the carried body leaked into a loop without the spec")
+			}
+		}
+	}
+}
+
+// TestLoopServerRefusesCarriedSkillsWhenOperatorDisables drives the operator's
+// loop_server.spec_policy.carried_skills switch through the production
+// composition root: a carried skill is refused before the loop exists, while a
+// reference to an installed skill still starts.
+func TestLoopServerRefusesCarriedSkillsWhenOperatorDisables(t *testing.T) {
+	rt, gw, _ := harnessServer(t, harnessOperator+"loop_server:\n  spec_policy:\n    carried_skills: false\n")
+	spec := &harnessv1.HarnessSpec{Skills: []*harnessv1.SkillRef{{Name: "triage", Description: "d", Body: "b"}}}
+	_, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: spec})
+	var ve *harness.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want a ValidationError", err)
+	}
+	var paths []string
+	for _, v := range ve.Violations {
+		paths = append(paths, v.FieldPath+" "+v.RuleID)
+	}
+	if want := "skills[0].body fuse.skills.carried_refused"; strings.Join(paths, "|") != want {
+		t.Fatalf("violations = %v, want [%s]", paths, want)
+	}
+	if n := len(gw.snapshot()); n != 0 {
+		t.Fatalf("a refused spec reached the model %d times", n)
+	}
+
+	turns := uint32(1)
+	ref := &harnessv1.HarnessSpec{MaxTurns: &turns, Skills: []*harnessv1.SkillRef{{Name: "research"}}}
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: ref})
+	if err != nil {
+		t.Fatalf("StartLoop with an installed reference: %v", err)
+	}
+	_, _ = h.Wait()
 }
 
 func TestLoopServerRefusesAnInvalidHarnessSpec(t *testing.T) {
