@@ -14,7 +14,7 @@ related: [30, 43, 46, 127]
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md](../../superpowers/specs/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md) |
+| Plan | [2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md](../../superpowers/plans/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
