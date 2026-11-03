@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/carried-skills-a-harness-spec-may-define-a-skill-inline'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -44,3 +44,9 @@ A harness spec references skills by name only, so the only skills a loop can use
 ## Out of scope
 
 Bundled skill files, slash commands or frontmatter beyond name and description; any tool grant attached to a skill; server-aware `ValidateHarness` (0104); a structured-output tool for the root loop.
+
+## Reconcile log
+
+### 2026-11-03
+
+Unchanged against main 7ea0da7. SkillRef still name-only; SpecPolicy fields 1-3 in use, so carried_skills_allowed = 4 holds. Change 117 (CancelLoop RPC) also edits loop.proto in parallel; rebase before PR.
