@@ -13,7 +13,7 @@ stacked_on:
 related: [89, 105]
 discovered_from: []
 adrs: []
-spec:
+spec: 'docs/superpowers/specs/2026-11-03-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope-design.md'
 plan:
 results:
 auto_groomable:
@@ -28,6 +28,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-11-03-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope-design.md](../../superpowers/specs/2026-11-03-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
