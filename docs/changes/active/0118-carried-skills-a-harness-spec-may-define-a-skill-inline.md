@@ -2,7 +2,7 @@
 id: 118
 slug: 'carried-skills-a-harness-spec-may-define-a-skill-inline'
 title: 'Carried skills: a harness spec may define a skill inline'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/carried-skills-a-harness-spec-may-define-a-skill-inline'
 pr:
 blocked_by:
 reconciled: false
