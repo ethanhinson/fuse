@@ -1,6 +1,6 @@
 # Backlog
 
-**139 changes** — 🟢 2 in progress · 🔵 1 built · 🟣 4 groomed · 🟡 24 proposed · ⚪ 3 deferred · ✅ 98 done · 🗑️ 7 killed
+**140 changes** — 🟢 2 in progress · 🔵 1 built · 🟣 4 groomed · 🟡 25 proposed · ⚪ 3 deferred · ✅ 98 done · 🗑️ 7 killed
 
 ## 🟢 In progress (2)
 
@@ -24,10 +24,11 @@
 | [0133](active/0133-shared-admission-adapter-for-sandbox-concurrency-and-tenant.md) | Shared admission adapter for sandbox concurrency and tenant start rate | `medium` | `feat` | [spec](../superpowers/specs/2026-11-03-shared-admission-adapter-for-sandbox-concurrency-and-tenant-design.md) | build-ready |
 | [0127](active/0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md) | build-ready |
 
-## 🟡 Proposed (24)
+## 🟡 Proposed (25)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0140](active/0140-object-storage-backend-for-the-artifact-store.md) | Object-storage backend for the artifact store | `medium` | `feat` | needs-grooming |
 | [0139](active/0139-segment-index-is-safe-with-concurrent-writers.md) | Segment index is safe with concurrent writers | `low` | `fix` | needs-grooming |
 | [0138](active/0138-artifact-retention-spilled-output-and-segments-expire.md) | Artifact retention: spilled output and segments expire | `medium` | `feat` | needs-grooming |
 | [0137](active/0137-tool-execution-seam-with-in-process-and-remote-worker-execut.md) | Tool execution seam with in-process and remote-worker executors | `medium` | `feat` | ⏳ waiting on #128 — needs your merge |
@@ -101,6 +102,7 @@ graph TD
   0133 --> 0137
   0138
   0139
+  0140
   0012:::done
   0052:::done
   0063:::done
