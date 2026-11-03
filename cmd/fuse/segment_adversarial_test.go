@@ -16,6 +16,9 @@ import (
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/artifact"
+	artfs "github.com/ethanhinson/fuse/internal/artifact/fsstore"
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/segment"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -26,8 +29,8 @@ import (
 // with NO degradation versus the uncompressed original.
 //
 // The needle fact lives ONLY in an archived, pruned-from-context segment. Two
-// arms back that segment differently — one gzip-compressed (.md.gz), one
-// plaintext (.md) — and drive the REAL agent loop (a.Run) against a scripted
+// arms back that segment artifact differently — one gzip-compressed, one
+// plaintext — and drive the REAL agent loop (a.Run) against a scripted
 // gateway that must call segment_read to answer. The two arms MUST produce the
 // same final answer (4217). Any divergence = FAIL.
 
@@ -50,37 +53,37 @@ func renderNeedleSegment() []byte {
 	return []byte(segment.RenderSegment(seg))
 }
 
-// seedSegmentsDir writes a segments dir with ONE segment (turns 3-5) carrying
-// the needle, backed by the requested on-disk name/encoding, plus a matching
-// index.json. It returns the segments dir. gzipIt controls compression;
-// systemGzip (when true and available) uses the SYSTEM gzip binary to prove
-// cross-tool compatibility.
-func seedSegmentsDir(t *testing.T, gzipIt, systemGzip bool) string {
+// seedSegments archives ONE segment (turns 3-5) carrying the needle in an
+// artifact/fsstore under t.TempDir(), plus the matching index artifact, and
+// returns the loop's binding. The segment artifact holds the SAME rendered bytes
+// in every arm: plaintext, or gzip-compressed (gzipIt) by Go's gzip.Writer or,
+// when systemGzip is set and available, by the SYSTEM gzip binary to prove
+// cross-tool compatibility. The store adds its own at-rest compression on top;
+// recovery must see through both layers.
+func seedSegments(t *testing.T, gzipIt, systemGzip bool) artifact.Binding {
 	t.Helper()
-	base := t.TempDir()
-	segDir := segment.SegmentsDir(base, "adv-root")
-	if err := os.MkdirAll(segDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	b := artifact.Binding{Store: artfs.New(t.TempDir()), Tenant: event.DefaultTenant, Loop: "adv-root"}
 	rendered := renderNeedleSegment()
 
-	var onDiskName string
+	body := rendered
 	if gzipIt {
-		onDiskName = "3-5-1.md.gz"
-		gzPath := filepath.Join(segDir, onDiskName)
 		if systemGzip {
 			gzipBin, err := exec.LookPath("gzip")
 			if err != nil {
 				t.Skip("system gzip binary not available")
 			}
-			plain := filepath.Join(segDir, "3-5-1.md")
+			plain := filepath.Join(t.TempDir(), "3-5-1.md")
 			if err := os.WriteFile(plain, rendered, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if out, err := exec.Command(gzipBin, plain).CombinedOutput(); err != nil {
 				t.Fatalf("system gzip failed: %v (%s)", err, out)
 			}
-			// gzip leaves "3-5-1.md.gz" — the name we indexed.
+			gz, err := os.ReadFile(plain + ".gz")
+			if err != nil {
+				t.Fatal(err)
+			}
+			body = gz
 		} else {
 			var buf bytes.Buffer
 			zw := gzip.NewWriter(&buf)
@@ -90,28 +93,29 @@ func seedSegmentsDir(t *testing.T, gzipIt, systemGzip bool) string {
 			if err := zw.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(gzPath, buf.Bytes(), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			body = buf.Bytes()
 		}
-	} else {
-		onDiskName = "3-5-1.md"
-		if err := os.WriteFile(filepath.Join(segDir, onDiskName), rendered, 0o600); err != nil {
-			t.Fatal(err)
+		if len(body) < 2 || body[0] != 0x1f || body[1] != 0x8b {
+			t.Fatalf("gz arm body is not gzip (first bytes % x)", body[:min(2, len(body))])
 		}
 	}
 
+	ctx := context.Background()
+	meta, err := b.Put(ctx, artifact.KindSegment, bytes.NewReader(body), artifact.Meta{Turn: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
 	idx := segment.Index{
 		SessionID: "adv-root",
 		Segments: []segment.IndexEntry{{
-			TurnStart: 3, TurnEnd: 5, Tools: []string{"read_file"}, Path: onDiskName,
+			TurnStart: 3, TurnEnd: 5, Tools: []string{"read_file"}, Path: meta.Ref.ID,
 		}},
 	}
-	b, _ := json.Marshal(idx)
-	if err := os.WriteFile(filepath.Join(segDir, segment.IndexFileName), b, 0o600); err != nil {
+	raw, _ := json.Marshal(idx)
+	if _, err := b.PutID(ctx, artifact.KindSegmentIndex, segment.IndexArtifactID, bytes.NewReader(raw), artifact.Meta{}); err != nil {
 		t.Fatal(err)
 	}
-	return segDir
+	return b
 }
 
 // driveNeedleRecovery drives the real a.Run loop against a scripted gateway that
@@ -119,7 +123,7 @@ func seedSegmentsDir(t *testing.T, gzipIt, systemGzip bool) string {
 // answer text. The gateway plays a two-step agent: first turn it has no needle
 // in context and issues a segment_read tool call; second turn (after the tool
 // result carrying the recovered raw region is appended) it emits the answer.
-func driveNeedleRecovery(t *testing.T, segDir string) string {
+func driveNeedleRecovery(t *testing.T, b artifact.Binding) string {
 	t.Helper()
 
 	var (
@@ -163,14 +167,13 @@ func driveNeedleRecovery(t *testing.T, segDir string) string {
 	}))
 	defer srv.Close()
 
-	// Point segment_read at the seeded archive dir (the production wiring).
-	tools.SetSegmentsDir(segDir)
-	t.Cleanup(func() { tools.SetSegmentsDir("") })
-
+	// Bind the registry to the seeded loop (the production wiring): segment_read
+	// resolves through the binding the registry stamps onto each tool call.
 	reg := tools.NewRegistry()
 	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
 	}
+	reg.WithArtifacts(b.Store, b.Tenant, b.Loop)
 
 	adapter := model.NewAdapter(srv.URL, "tkn", srv.Client())
 	a := agent.New(adapter, reg, gwNopRenderer{}, "cloud/model", "", 4, 128)
@@ -209,13 +212,13 @@ func driveNeedleRecovery(t *testing.T, segDir string) string {
 // identical whether the archived segment is gzip-compressed or plaintext.
 func TestAdversarialGzVsPlaintextParity(t *testing.T) {
 	// Arm A: gz-backed archive (Go gzip.Writer).
-	gzAnswer := driveNeedleRecovery(t, seedSegmentsDir(t, true, false))
+	gzAnswer := driveNeedleRecovery(t, seedSegments(t, true, false))
 	if !strings.Contains(gzAnswer, needleAnswer) {
 		t.Fatalf("gz arm did not recover the needle: %q", gzAnswer)
 	}
 
 	// Arm B (control): plaintext-backed archive.
-	plainAnswer := driveNeedleRecovery(t, seedSegmentsDir(t, false, false))
+	plainAnswer := driveNeedleRecovery(t, seedSegments(t, false, false))
 	if !strings.Contains(plainAnswer, needleAnswer) {
 		t.Fatalf("plaintext control arm did not recover the needle: %q", plainAnswer)
 	}
@@ -229,8 +232,8 @@ func TestAdversarialGzVsPlaintextParity(t *testing.T) {
 // TestAdversarialSystemGzipParity proves cross-tool compatibility: a segment
 // compressed by the SYSTEM gzip binary recovers the SAME answer as plaintext.
 func TestAdversarialSystemGzipParity(t *testing.T) {
-	sysGzAnswer := driveNeedleRecovery(t, seedSegmentsDir(t, true, true))
-	plainAnswer := driveNeedleRecovery(t, seedSegmentsDir(t, false, false))
+	sysGzAnswer := driveNeedleRecovery(t, seedSegments(t, true, true))
+	plainAnswer := driveNeedleRecovery(t, seedSegments(t, false, false))
 	if !strings.Contains(sysGzAnswer, needleAnswer) {
 		t.Fatalf("system-gzip arm did not recover the needle: %q", sysGzAnswer)
 	}

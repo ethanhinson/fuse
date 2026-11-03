@@ -6,11 +6,13 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	artfs "github.com/ethanhinson/fuse/internal/artifact/fsstore"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/event/fsstore"
@@ -20,7 +22,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/segment"
-	"github.com/ethanhinson/fuse/internal/segment/fssink"
+	"github.com/ethanhinson/fuse/internal/segment/artsink"
 	"github.com/ethanhinson/fuse/internal/session"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -157,8 +159,10 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// AgentNode.ID (change 0030).
 	logDir := session.DefaultLogDir()
 	go session.SweepOld(logDir, 7*24*time.Hour, "*.jsonl")
-	// Segment GC (change 0030): sweep pre-compaction segment archives older than
-	// the 14-day window and prune their index entries, alongside the log sweep.
+	// Segment GC (change 0030): sweep legacy per-session segment archives (those
+	// written under ~/.fuse/sessions before segments moved to the artifact store)
+	// older than the 14-day window and prune their index entries, alongside the
+	// log sweep.
 	go session.SweepOldSegments(logDir, 14*24*time.Hour)
 
 	// Agent tree for subagent tracking. The tree-global spawn budget backstops
@@ -184,10 +188,17 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 	rootNode := tree.Node(tree.RootID())
 
-	// Session log + segment store, keyed by the root AgentNode.ID (change 0030):
-	// the log lives at ~/.fuse/sessions/<root-id>/session.jsonl and the concrete
-	// SegmentSink writes pre-compaction regions under that dir's segments/. The
-	// sink is installed for every agent built this session via installSummarizer.
+	// Artifact store: spilled tool output and compaction segments land under
+	// ~/.fuse/artifacts/_default/<root-id>/. The shell drives turns itself, so
+	// StartLoop never binds its registry: bind it here, as soon as the root id
+	// exists and before anything clones toolReg (every child registry is a Clone
+	// or Subset of it and so inherits this binding). Nothing between
+	// buildSessionRegistryNoMCP and here clones it.
+	arts := artfs.New(filepath.Join(filepath.Dir(logDir), "artifacts"))
+	toolReg.WithArtifacts(arts, event.DefaultTenant, event.LoopID(tree.RootID()))
+
+	// Session log, keyed by the root AgentNode.ID (change 0030): the log lives at
+	// ~/.fuse/sessions/<root-id>/session.jsonl.
 	sessLog, serr := session.NewSessionLogger(logDir, tree.RootID())
 	if serr != nil {
 		log.Printf("session log: %v", serr)
@@ -204,13 +215,12 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 		}()
 	}
 	// Segment sink (change 0030/0046): the shell's own per-session SegmentSink,
-	// keyed by the root id. It is threaded per-loop through the summarizer install
-	// (installSummarizer) instead of the retired setActiveSegmentSink global — the
-	// shell owns one session, so this single value flows into every agent it builds.
-	segmentSink := fssink.NewFSSegmentSink(logDir, tree.RootID())
-	// Point the segment_read tool at this session's segments dir so the model can
-	// recover raw pre-compaction regions the sink archived (change 0030).
-	tools.SetSegmentsDir(segment.SegmentsDir(logDir, tree.RootID()))
+	// archiving into the root loop's artifact binding. It is threaded per-loop
+	// through the summarizer install (installSummarizer) instead of the retired
+	// setActiveSegmentSink global — the shell owns one session, so this single
+	// value flows into every agent it builds. segment_read and the /agents
+	// overlay read the same binding back.
+	segmentSink := artsink.New(toolReg.Artifacts())
 
 	// Loop event stream (change 0043/0046): open the per-session EventStore next to
 	// the segment sink, keyed by the same root id. Every agent built this session
@@ -294,8 +304,8 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// MCP tool calls mint a per-call credential from it.
 	m = m.WithToolPrincipal(localPrincipal(cfg))
 	// Segment surface (change 0030): the /agents overlay reads this session's
-	// segments/ dir for the compaction indicator and "s" show-original.
-	m = m.WithSegmentsDir(segment.SegmentsDir(logDir, tree.RootID()))
+	// archived segments for the compaction indicator and "s" show-original.
+	m = m.WithSegments(segment.NewArtifactSource(toolReg.Artifacts()))
 	m = m.WithHumanMessaging(humanBus, handleReg, humanRouter)
 	// Hand the same shared bucket to the observability surface so the agents
 	// overlay shows live rate-gate utilization (change 0036); nil is the no-gate
@@ -374,6 +384,12 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	}
 	m = m.WithOrchestrator(newShellOrchestrator(flushCtx, m.Channel(), orchTarget,
 		func(r agent.Renderer, orchTools *tools.Registry) (*agent.Agent, error) {
+			// The orchestrator's registry is built fresh, not cloned from toolReg:
+			// bind it to the session's artifacts so its oversized results spill
+			// under ~/.fuse like every other shell loop's, beside the segments its
+			// shared segmentSink archives.
+			b := toolReg.Artifacts()
+			orchTools.WithArtifacts(b.Store, b.Tenant, b.Loop)
 			return buildChildAgent(cfg, reg, orchModel, r, orchestrator.SystemPrompt(), orchTools,
 				childBaseApprove, traceW, "orchestrator", sessionMode, true, rateGate, segmentSink)
 		}))

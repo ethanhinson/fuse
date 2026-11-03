@@ -1,7 +1,7 @@
 package fssink
 
 import (
-	"encoding/json"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,19 +9,12 @@ import (
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/artifact"
+	artfs "github.com/ethanhinson/fuse/internal/artifact/fsstore"
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/segment"
 )
-
-// compile-time: FSSegmentSink satisfies the agent.SegmentSink interface.
-var _ agent.SegmentSink = (*FSSegmentSink)(nil)
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
 func sampleRegion(ts, te int) agent.SegmentRegion {
 	return agent.SegmentRegion{
@@ -35,104 +28,96 @@ func sampleRegion(ts, te int) agent.SegmentRegion {
 	}
 }
 
-func TestFSSinkArchiveWritesFileAndIndex(t *testing.T) {
-	base := t.TempDir()
-	sink := NewFSSegmentSink(base, "sess-1")
+// source reads back what New(dir, loop) archived, through a fresh store over
+// the same directory (as another process would).
+func source(dir, loop string) segment.Source {
+	return segment.NewArtifactSource(artifact.Binding{
+		Store: artfs.New(dir), Tenant: event.DefaultTenant, Loop: event.LoopID(loop),
+	})
+}
+
+func TestNewArchivesUnderDefaultTenant(t *testing.T) {
+	dir := t.TempDir()
+	sink := New(dir, "sess-1")
+	if sink == nil {
+		t.Fatal("New returned a nil sink")
+	}
 
 	ptr, err := sink.Archive(sampleRegion(12, 18))
 	if err != nil {
 		t.Fatalf("Archive err = %v", err)
 	}
-
-	segDir := filepath.Join(base, "sess-1", "segments")
-	wantFile := filepath.Join(segDir, "12-18-1.md.gz")
-	if ptr != wantFile {
-		t.Errorf("pointer = %q, want absolute path %q", ptr, wantFile)
+	const prefix = "art://_default/sess-1/segment/"
+	if !strings.HasPrefix(ptr, prefix) {
+		t.Fatalf("pointer = %q, want prefix %q", ptr, prefix)
 	}
-	// The on-disk segment is gzip-compressed (born compressed, change 0030 scope
-	// expansion): assert the magic bytes AND that LoadSegment transparently
-	// recovers the raw body.
-	raw, err := os.ReadFile(wantFile)
+	id := strings.TrimPrefix(ptr, prefix)
+
+	// The body is under <dir>/_default/sess-1/segment/ and gzip-compressed at rest.
+	raw, err := os.ReadFile(filepath.Join(dir, "_default", "sess-1", "segment", id))
 	if err != nil {
-		t.Fatalf("segment file not written: %v", err)
+		t.Fatalf("segment body not written: %v", err)
 	}
 	if len(raw) < 2 || raw[0] != 0x1f || raw[1] != 0x8b {
-		t.Errorf("segment not gzip on disk (first bytes % x)", raw[:minInt(2, len(raw))])
-	}
-	seg, err := segment.LoadSegment(wantFile)
-	if err != nil {
-		t.Fatalf("LoadSegment: %v", err)
-	}
-	if len(seg.Messages) == 0 || !strings.Contains(seg.Messages[0].Content, "raw body") {
-		t.Errorf("raw body lost after gzip: %+v", seg.Messages)
+		t.Errorf("segment not gzip on disk (first bytes % x)", raw[:min(2, len(raw))])
 	}
 
-	// index.json: exactly one entry.
-	idxBytes, err := os.ReadFile(filepath.Join(segDir, "index.json"))
+	src := source(dir, "sess-1")
+	idx, err := src.ReadIndex(context.Background())
 	if err != nil {
-		t.Fatalf("index.json not written: %v", err)
-	}
-	var idx segment.Index
-	if err := json.Unmarshal(idxBytes, &idx); err != nil {
-		t.Fatalf("index.json bad: %v", err)
-	}
-	if idx.SessionID != "sess-1" {
-		t.Errorf("session_id = %q, want sess-1", idx.SessionID)
+		t.Fatalf("ReadIndex: %v", err)
 	}
 	if len(idx.Segments) != 1 {
 		t.Fatalf("index entries = %d, want 1", len(idx.Segments))
 	}
 	e := idx.Segments[0]
-	if e.Path != "12-18-1.md.gz" {
-		t.Errorf("index path = %q, want 12-18-1.md.gz (on-disk name relative to segments/)", e.Path)
+	if e.Path != id || e.TurnStart != 12 || e.TurnEnd != 18 {
+		t.Errorf("index entry = %+v, want path %q turns 12..18", e, id)
 	}
-	if e.TurnStart != 12 || e.TurnEnd != 18 {
-		t.Errorf("index turn range = %d..%d, want 12..18", e.TurnStart, e.TurnEnd)
+	seg, err := src.Load(context.Background(), e)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(seg.Messages) == 0 || !strings.Contains(seg.Messages[0].Content, "raw body") {
+		t.Errorf("raw body lost: %+v", seg.Messages)
 	}
 }
 
-func TestFSSinkSeqDisambiguatesRepeatedRange(t *testing.T) {
-	base := t.TempDir()
-	sink := NewFSSegmentSink(base, "sess-1")
+func TestRepeatedRangeGetsDistinctArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	sink := New(dir, "sess-1")
 
-	p1, _ := sink.Archive(sampleRegion(1, 3))
-	p2, _ := sink.Archive(sampleRegion(1, 3))
+	p1, err1 := sink.Archive(sampleRegion(1, 3))
+	p2, err2 := sink.Archive(sampleRegion(1, 3))
+	if err1 != nil || err2 != nil {
+		t.Fatalf("Archive errs = %v, %v", err1, err2)
+	}
 	if p1 == p2 {
-		t.Fatalf("repeated turn range produced identical paths: %q", p1)
+		t.Fatalf("repeated turn range produced identical pointers: %q", p1)
 	}
-	if !strings.HasSuffix(p1, "1-3-1.md.gz") {
-		t.Errorf("first path = %q, want suffix 1-3-1.md.gz", p1)
-	}
-	if !strings.HasSuffix(p2, "1-3-2.md.gz") {
-		t.Errorf("second path = %q, want suffix 1-3-2.md.gz", p2)
-	}
-	// Both indexed.
-	idxBytes, _ := os.ReadFile(filepath.Join(base, "sess-1", "segments", "index.json"))
-	var idx segment.Index
-	_ = json.Unmarshal(idxBytes, &idx)
+	idx, _ := source(dir, "sess-1").ReadIndex(context.Background())
 	if len(idx.Segments) != 2 {
 		t.Errorf("index entries = %d, want 2", len(idx.Segments))
 	}
 }
 
-func TestFSSinkLazyDirCreation(t *testing.T) {
-	base := t.TempDir()
-	sink := NewFSSegmentSink(base, "sess-lazy")
-	// No dir exists before the first Archive.
-	if _, err := os.Stat(filepath.Join(base, "sess-lazy")); !os.IsNotExist(err) {
-		t.Fatalf("session dir should not exist before first Archive")
+func TestLazyDirCreation(t *testing.T) {
+	dir := t.TempDir()
+	sink := New(dir, "sess-lazy")
+	if _, err := os.Stat(filepath.Join(dir, "_default", "sess-lazy")); !os.IsNotExist(err) {
+		t.Fatalf("loop dir should not exist before first Archive")
 	}
 	if _, err := sink.Archive(sampleRegion(1, 1)); err != nil {
 		t.Fatalf("Archive err = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(base, "sess-lazy", "segments")); err != nil {
-		t.Errorf("segments dir not lazily created: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "_default", "sess-lazy", "segment")); err != nil {
+		t.Errorf("segment dir not lazily created: %v", err)
 	}
 }
 
-func TestFSSinkConcurrentArchiveNoCorruption(t *testing.T) {
-	base := t.TempDir()
-	sink := NewFSSegmentSink(base, "sess-conc")
+func TestConcurrentArchiveNoLostEntries(t *testing.T) {
+	dir := t.TempDir()
+	sink := New(dir, "sess-conc")
 
 	const n = 20
 	var wg sync.WaitGroup
@@ -145,13 +130,9 @@ func TestFSSinkConcurrentArchiveNoCorruption(t *testing.T) {
 	}
 	wg.Wait()
 
-	idxBytes, err := os.ReadFile(filepath.Join(base, "sess-conc", "segments", "index.json"))
+	idx, err := source(dir, "sess-conc").ReadIndex(context.Background())
 	if err != nil {
-		t.Fatalf("index.json missing: %v", err)
-	}
-	var idx segment.Index
-	if err := json.Unmarshal(idxBytes, &idx); err != nil {
-		t.Fatalf("index.json corrupted under concurrency: %v", err)
+		t.Fatalf("index unreadable under concurrency: %v", err)
 	}
 	if len(idx.Segments) != n {
 		t.Errorf("index entries = %d, want %d (lost writes under concurrency)", len(idx.Segments), n)

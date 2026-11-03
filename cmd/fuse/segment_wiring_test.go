@@ -14,12 +14,14 @@ import (
 // TestInstallSummarizerThreadsPerLoopSink proves the segment sink is now a per-loop
 // VALUE threaded into installSummarizer (change 0046 — the setActiveSegmentSink /
 // currentSegmentSink process-global is retired). With summarization enabled it
-// accepts a concrete *fssink.FSSegmentSink (interface satisfaction is load-bearing:
-// the shell hands its own sink; one-shot/probe/loop-server hand nil) and with it
-// disabled it is inert regardless of the sink argument.
+// accepts a concrete store-backed sink (the shell hands its own; one-shot/probe
+// hand nil) and with it disabled it is inert regardless of the sink argument.
 func TestInstallSummarizerThreadsPerLoopSink(t *testing.T) {
 	base := t.TempDir()
-	var sink agent.SegmentSink = fssink.NewFSSegmentSink(base, "root-xyz")
+	sink := fssink.New(base, "root-xyz")
+	if sink == nil {
+		t.Fatal("fssink.New returned a nil sink")
+	}
 
 	// Disabled ⇒ inert: installSummarizer returns without wiring, whether the sink is
 	// a real value or nil. A nil-panic here would fail the test.

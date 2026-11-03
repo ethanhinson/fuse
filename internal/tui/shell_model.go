@@ -23,6 +23,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/ratelimit"
+	"github.com/ethanhinson/fuse/internal/segment"
 	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/version"
@@ -205,18 +206,18 @@ type ShellModel struct {
 	classifierAvailable bool
 
 	// Subagent tree and inline summary tracking.
-	tree        *agent.AgentTree
-	blackboard  *agent.Blackboard // session blackboard for the /agents Blackboard tab
-	segmentsDir string            // session segments/ dir for the /agents indicator + "s" (0030)
-	humanBus    *agent.HumanBus   // per-node human-message queues (ADR-0022)
-	handleReg   *agent.HandleRegistry
-	router      agent.RouterLLM     // async advisory classifier; nil ⇒ default routing only
-	orch        OrchestratorSession // the /orchestrator chat; nil ⇒ unavailable
-	orchMode    bool                // plain lines go to the orchestrator instead of the agent
-	queue       *queueState         // non-nil while the /queue editor is open
-	lister      ModelLister         // lists the gateway's models for the editor's discover view
-	catalog     CatalogLister       // lists the OpenRouter catalogue for the discover view
-	modelsEdit  *modelsEditState    // non-nil while the /models edit editor is open
+	tree       *agent.AgentTree
+	blackboard *agent.Blackboard // session blackboard for the /agents Blackboard tab
+	segments   segment.Source    // session segments for the /agents indicator + "s" (0030); nil ⇒ off
+	humanBus   *agent.HumanBus   // per-node human-message queues (ADR-0022)
+	handleReg  *agent.HandleRegistry
+	router     agent.RouterLLM     // async advisory classifier; nil ⇒ default routing only
+	orch       OrchestratorSession // the /orchestrator chat; nil ⇒ unavailable
+	orchMode   bool                // plain lines go to the orchestrator instead of the agent
+	queue      *queueState         // non-nil while the /queue editor is open
+	lister     ModelLister         // lists the gateway's models for the editor's discover view
+	catalog    CatalogLister       // lists the OpenRouter catalogue for the discover view
+	modelsEdit *modelsEditState    // non-nil while the /models edit editor is open
 	// config is non-nil while the /config screen is open. It hosts the tabbed
 	// settings surface and SHARES modelsEdit with `/models edit` rather than
 	// owning a second copy of the editor.
@@ -335,11 +336,11 @@ func (m ShellModel) WithBlackboard(bb *agent.Blackboard) ShellModel {
 	return m
 }
 
-// WithSegmentsDir attaches the session's segments/ directory so the /agents
-// overlay can show the compaction indicator and open archived raw regions via
-// "s" (change 0030). Empty ("") disables the surface.
-func (m ShellModel) WithSegmentsDir(dir string) ShellModel {
-	m.segmentsDir = dir
+// WithSegments attaches the session's segment source so the /agents overlay
+// can show the compaction indicator and open archived raw regions via "s"
+// (change 0030). Nil disables the surface.
+func (m ShellModel) WithSegments(src segment.Source) ShellModel {
+	m.segments = src
 	return m
 }
 
@@ -1300,7 +1301,7 @@ func (m ShellModel) openAgentsOverlay(onBlackboard bool) (tea.Model, tea.Cmd) {
 		m.appendLine("no agent tree active")
 		return m, nil
 	}
-	m.agentsModel = NewAgentsModel(m.tree, m.rateGate).WithBlackboard(m.blackboard).WithSegmentsDir(m.segmentsDir)
+	m.agentsModel = NewAgentsModel(m.tree, m.rateGate).WithBlackboard(m.blackboard).WithSegments(m.segments)
 	if onBlackboard {
 		m.agentsModel.ShowBlackboard()
 	}

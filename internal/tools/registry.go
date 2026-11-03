@@ -258,6 +258,6 @@ func DefaultTools(sb *sandbox.Service) []Tool {
 		NewEditFile(),
 		NewListDirectory(),
 		NewGrep(),
-		NewSegmentRead(currentSegmentsDir),
+		NewSegmentRead(),
 	}
 }
