@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/cancel-rpc-on-the-networked-loop-server'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -44,3 +44,9 @@ A `CancelLoop` RPC, guarded by a new `loop:cancel` scope (also satisfied by `loo
 ## Out of scope
 
 Cancelling individual children, tools or turns (steer-with-interrupt already covers that); an orchestrator tool that cancels its target; a `loop.cancel` method on the stdio JSON-RPC binding; terminal events for idle reaps and drains (those loops stay resumable and are not cancelled); registry-level cancelled state or listing cancelled loops; a bounded reason taxonomy as a metric label; dashboards or alerts for the new counter; any host-application specifics.
+
+## Reconcile log
+
+### 2026-11-03
+
+Unchanged against `origin/main` 7ea0da7. Spec anchors (loop.proto RPCs, loopauth scopes, InProc ErrLoopFinished/resume path, idle TTL, relay.go) hold. Change 0118 is building in parallel and also edits loop.proto (SpecPolicy.carried_skills_allowed); rebase onto origin/main before PR and regenerate protos if it lands first.
