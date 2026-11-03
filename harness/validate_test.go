@@ -427,3 +427,27 @@ func TestValidateCarriedSkillSizeLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateReportsCarriedBytes(t *testing.T) {
+	if harness.RuleSkillsCarriedBytes != "fuse.skills.carried_bytes" {
+		t.Fatalf("RuleSkillsCarriedBytes = %q", harness.RuleSkillsCarriedBytes)
+	}
+	if harness.RuleSkillsCarriedRefused != "fuse.skills.carried_refused" {
+		t.Fatalf("RuleSkillsCarriedRefused = %q", harness.RuleSkillsCarriedRefused)
+	}
+	// Shape-valid (9 <= 16 carried, each body <= 32768 bytes) but 270000
+	// bytes carried in total, over the 262144-byte semantic limit.
+	spec := &harnessv1.HarnessSpec{}
+	body := strings.Repeat("x", 30000)
+	for i := 0; i < 9; i++ {
+		spec.Skills = append(spec.Skills, &harnessv1.SkillRef{
+			Name:        fmt.Sprintf("s%d", i),
+			Description: "a carried skill",
+			Body:        body,
+		})
+	}
+	vs := harness.Validate(spec)
+	if len(vs) != 1 || vs[0].FieldPath != "skills" || vs[0].RuleID != harness.RuleSkillsCarriedBytes {
+		t.Fatalf("Validate = %+v, want only skills %s", vs, harness.RuleSkillsCarriedBytes)
+	}
+}

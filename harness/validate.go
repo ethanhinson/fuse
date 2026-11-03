@@ -59,6 +59,13 @@ const (
 	// such as an MCP auth type that needs host token state or mints
 	// fuse-signed tokens (change 0085).
 	RuleOperatorOnly = harnessconfig.RuleOperatorOnly
+	// RuleSkillsCarriedBytes marks a spec whose carried skills' bodies
+	// together exceed 262144 bytes (change 0118).
+	RuleSkillsCarriedBytes = harnessconfig.RuleSkillsCarriedBytes
+	// RuleSkillsCarriedRefused marks a carried skill sent to a server whose
+	// operator does not accept skills carried in a spec. Only a server
+	// resolving the spec reports it (change 0118).
+	RuleSkillsCarriedRefused = harnessconfig.RuleSkillsCarriedRefused
 )
 
 // Violation is one problem with a spec.
@@ -101,6 +108,7 @@ func Validate(spec *harnessv1.HarnessSpec) []Violation {
 	} else {
 		semantic = harnessconfig.SemanticProblems(cfg)
 	}
+	semantic = append(semantic, harnessconfig.SkillProblems(spec)...)
 	return fromProblems(harnessconfig.Combine(toProblems(out), semantic))
 }
 

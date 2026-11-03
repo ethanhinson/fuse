@@ -35,7 +35,17 @@ const (
 	// server's operator may configure it, e.g. an MCP auth type that uses host
 	// token state or mints fuse-signed tokens (change 0085, ADR-0061).
 	RuleOperatorOnly = "fuse.operator_only"
+	// RuleSkillsCarriedBytes marks a spec whose carried skills' bodies
+	// together exceed MaxCarriedSkillBytes (change 0118).
+	RuleSkillsCarriedBytes = "fuse.skills.carried_bytes"
+	// RuleSkillsCarriedRefused marks a carried skill sent to a server whose
+	// operator does not accept skills carried in a spec (change 0118).
+	RuleSkillsCarriedRefused = "fuse.skills.carried_refused"
 )
+
+// MaxCarriedSkillBytes is the most body bytes the carried skills of one spec
+// may hold together (change 0118).
+const MaxCarriedSkillBytes = 262144
 
 // Problem is one validation problem located at a HarnessSpec field path (empty
 // when no client-visible field is at fault). It is the internal form of the
@@ -62,6 +72,27 @@ func SemanticProblems(cfg config.Config) []Problem {
 		out = append(out, Problem{FieldPath: SpecPath(p.Path), Message: p.Message, RuleID: RuleModelRef})
 	}
 	return out
+}
+
+// SkillProblems runs the spec-level semantic rules on spec's skills list: today
+// only fuse.skills.carried_bytes, the total size of the carried skills' bodies
+// (counted in bytes). Skills have no runtime config counterpart, so this rule
+// cannot ride SemanticProblems; it is checked here and only here, and called
+// by both the public validator and a server resolving a spec, so the two can
+// never disagree. A nil spec has no problems.
+func SkillProblems(spec *harnessv1.HarnessSpec) []Problem {
+	total := 0
+	for _, ref := range spec.GetSkills() {
+		total += len(ref.GetBody())
+	}
+	if total <= MaxCarriedSkillBytes {
+		return nil
+	}
+	return []Problem{{
+		FieldPath: "skills",
+		Message:   fmt.Sprintf("carried skills total %d bytes; at most %d bytes may be carried in one spec", total, MaxCarriedSkillBytes),
+		RuleID:    RuleSkillsCarriedBytes,
+	}}
 }
 
 // Combine merges problem lists into one verdict. Every problem of primary is
