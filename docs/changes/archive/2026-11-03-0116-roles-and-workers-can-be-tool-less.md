@@ -2,7 +2,7 @@
 id: 116
 slug: 'roles-and-workers-can-be-tool-less'
 title: 'Tool-less loops, roles and workers'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-03-roles-and-workers-can-be-tool-less-design.md](../../superpowers/specs/2026-11-03-roles-and-workers-can-be-tool-less-design.md) |
+| Spec (merged) | [2026-11-03-roles-and-workers-can-be-tool-less-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-03-roles-and-workers-can-be-tool-less-design.md) |
 | Plan | [2026-11-03-roles-and-workers-can-be-tool-less.md](../../superpowers/plans/2026-11-03-roles-and-workers-can-be-tool-less.md) |
 | Results | [2026-11-03-roles-and-workers-can-be-tool-less-results.md](../../results/2026-11-03-roles-and-workers-can-be-tool-less-results.md) |
 <!-- docket:artifacts:end -->

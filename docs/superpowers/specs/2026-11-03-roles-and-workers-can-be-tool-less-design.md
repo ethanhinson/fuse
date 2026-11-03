@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0116 — Tool-less loops, roles and workers](../../changes/active/0116-roles-and-workers-can-be-tool-less.md)**
+> ↩ **[Change 0116 — Tool-less loops, roles and workers](../../changes/archive/2026-11-03-0116-roles-and-workers-can-be-tool-less.md)**
 <!-- docket:backlink:end -->
 
 # Tool-less loops, roles and workers
