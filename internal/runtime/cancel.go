@@ -111,13 +111,13 @@ func (r *inProcRuntime) Cancel(ctx context.Context, tenant event.TenantID, loopI
 // appends nothing when no request is pending. A stream that already holds
 // loop.cancelled is reported as AlreadyCancelled and left untouched.
 //
-// cancelMu makes the read and the append one step within this process, so
-// concurrent seals here append once. Two replicas sealing at once can still append
-// two; the first wins.
+// key's cancel lock (cancelLocks) makes the read and the append one step within
+// this process, so concurrent seals of one stream here append once; seals of other
+// streams do not wait on it. Two replicas sealing at once can still append two; the
+// first wins.
 func (r *inProcRuntime) sealNotLive(ctx context.Context, key event.StreamKey, by *event.LoopCancelRequestPayload) (CancelResult, error) {
 	ds := r.deps.DurableStore
-	r.cancelMu.Lock()
-	defer r.cancelMu.Unlock()
+	defer r.cancelLocks.lock(key)()
 	evs, err := ds.Replay(ctx, key, 0)
 	if err != nil {
 		return CancelResult{}, err
@@ -171,6 +171,44 @@ func (r *inProcRuntime) refuseCancelledResume(ctx context.Context, key event.Str
 	return true, refused
 }
 
+// streamLocks is a set of mutexes keyed by stream: lock(key) excludes only other
+// holders of the same key, so a cancel stalled on one stream's store round trip
+// never holds up a cancel of another stream (or another tenant's). An entry lives
+// while anyone holds or waits for it and is dropped by the last unlock.
+type streamLocks struct {
+	mu sync.Mutex // guards m and every entry's refs; never held while waiting
+	m  map[event.StreamKey]*streamLock
+}
+
+type streamLock struct {
+	mu   sync.Mutex
+	refs int // holders plus waiters; guarded by streamLocks.mu
+}
+
+// lock takes key's lock, waiting for its current holder, and returns the unlock.
+func (l *streamLocks) lock(key event.StreamKey) (unlock func()) {
+	l.mu.Lock()
+	if l.m == nil {
+		l.m = map[event.StreamKey]*streamLock{}
+	}
+	e := l.m[key]
+	if e == nil {
+		e = &streamLock{}
+		l.m[key] = e
+	}
+	e.refs++
+	l.mu.Unlock()
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		l.mu.Lock()
+		if e.refs--; e.refs == 0 {
+			delete(l.m, key)
+		}
+		l.mu.Unlock()
+	}
+}
+
 // Relay cancel bounds.
 const relayCancelRegistryPoll = 10 * time.Millisecond
 
@@ -195,32 +233,32 @@ const relayCancelRegistryPoll = 10 * time.Millisecond
 // (AlreadyCancelled) and Cancelling until then.
 func (r *inProcRuntime) relayCancel(ctx context.Context, key event.StreamKey, reason, requestedBy string) (CancelResult, error) {
 	ds := r.deps.DurableStore
-	r.cancelMu.Lock()
+	unlock := r.cancelLocks.lock(key)
 	r.mu.Lock()
 	_, pending := r.cancelPending[key]
 	r.mu.Unlock()
 	evs, err := ds.Replay(ctx, key, 0)
 	if err != nil {
-		r.cancelMu.Unlock()
+		unlock()
 		return CancelResult{}, err
 	}
 	if e, p, ok := firstCancelled(evs); ok {
-		r.cancelMu.Unlock()
+		unlock()
 		return CancelResult{Outcome: CancelOutcomeAlreadyCancelled, WasLive: p.WasLive, TerminalSeq: e.Seq, Reason: p.Reason}, nil
 	}
 	if _, _, inStream := pendingCancel(evs); pending || inStream {
-		r.cancelMu.Unlock()
+		unlock()
 		return CancelResult{Outcome: CancelOutcomeCancelling, Reason: reason}, nil
 	}
 	payload, err := json.Marshal(event.LoopCancelRequestPayload{Reason: reason, RequestedBy: requestedBy})
 	if err != nil {
-		r.cancelMu.Unlock()
+		unlock()
 		return CancelResult{}, err
 	}
 	reqSeq, err := r.appendDurableWithSeq(ctx, key,
 		event.Event{NodeID: string(key.Loop), Kind: event.KindLoopCancelRequest, Payload: payload})
 	if err != nil {
-		r.cancelMu.Unlock()
+		unlock()
 		return CancelResult{}, fmt.Errorf("runtime: relay cancel of %q: %w", key.Loop, err)
 	}
 	r.mu.Lock()
@@ -229,7 +267,7 @@ func (r *inProcRuntime) relayCancel(ctx context.Context, key event.StreamKey, re
 	}
 	r.cancelPending[key] = reqSeq
 	r.mu.Unlock()
-	r.cancelMu.Unlock()
+	unlock()
 	defer r.dropCancelPending(key)
 
 	wctx, stop := context.WithTimeout(ctx, r.cancelWait())

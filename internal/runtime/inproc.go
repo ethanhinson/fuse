@@ -174,11 +174,14 @@ type inProcRuntime struct {
 	// cancelPending holds, per stream, the seq of the loop.cancel.request this
 	// process relayed and has not yet seen answered. Guarded by mu; created lazily.
 	cancelPending map[event.StreamKey]event.Seq
-	// cancelMu serializes the read-then-append steps of cancels of loops this process
-	// does not run (a cold seal, a relayed request, a resume answering a request), so
-	// two of them in this process never both append. Never held while waiting, and
-	// taken before mu, never after.
-	cancelMu sync.Mutex
+	// cancelLocks serializes, per stream, the read-then-append steps of cancels of
+	// loops this process does not run (a cold seal, a relayed request, a resume
+	// answering a request), so two of them for one stream in this process never both
+	// append. A stream's lock is held across that step's durable-store round trips
+	// (the replay and the append), never across a wait for an owner or an unwind;
+	// cancels of other streams do not wait on it. Taken before mu, never after, and
+	// never while holding another stream's lock.
+	cancelLocks streamLocks
 }
 
 // loop holds per-loopID state: the tree, the root node, the event store, the human
