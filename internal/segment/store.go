@@ -1,13 +1,13 @@
-// Package segment implements the concrete filesystem SegmentSink for the
-// pre-compaction transcript archive (change 0030). It is deliberately OUTSIDE
-// internal/agent (which only DEFINES the SegmentSink interface) so cmd/fuse can
-// construct it and inject it without an import cycle.
+// Package segment holds the agent-free half of the pre-compaction transcript
+// archive (change 0030): the segment format (render and parse), the segment
+// index, and the store-backed Source readers use. The writer that implements
+// agent.SegmentSink lives in segment/artsink, so this package never imports
+// internal/agent.
 package segment
 
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -50,34 +50,6 @@ type Index struct {
 	SessionID string       `json:"session_id"`
 	Segments  []IndexEntry `json:"segments"`
 }
-
-// FileName is the LOGICAL segment file name for a turn range and disambiguating
-// seq: "<turnStart>-<turnEnd>-<seq>.md". This is the name recorded in the index
-// and used to probe for collisions; the ON-DISK file is written gzip-compressed
-// with the ".gz" suffix (see FileNameGz) after the change 0030 scope expansion.
-func FileName(turnStart, turnEnd, seq int) string {
-	return fmt.Sprintf("%d-%d-%d.md", turnStart, turnEnd, seq)
-}
-
-// GzSuffix is appended to the logical segment name for the on-disk compressed
-// file. Segments are born compressed (creation-time compression, change 0030
-// scope expansion): the sink writes RenderSegment output through gzip and the
-// reader gunzips transparently, so the whole recovery path is unchanged.
-const GzSuffix = ".gz"
-
-// FileNameGz is the ON-DISK segment file name: FileName + GzSuffix.
-func FileNameGz(turnStart, turnEnd, seq int) string {
-	return FileName(turnStart, turnEnd, seq) + GzSuffix
-}
-
-// SegmentsDir returns the segments directory for a session:
-// <baseDir>/<sessionID>/segments.
-func SegmentsDir(baseDir, sessionID string) string {
-	return filepath.Join(baseDir, sessionID, "segments")
-}
-
-// IndexFileName is the per-session segment index file name.
-const IndexFileName = "index.json"
 
 // rawRegionFence is the language tag on the fenced code block that carries the
 // raw region's on-disk JSON encoding inside the "## Raw region" section.

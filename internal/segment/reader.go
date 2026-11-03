@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/ethanhinson/fuse/internal/model"
@@ -18,24 +17,6 @@ import (
 // plaintext ".md" segments remain readable. LoadSegment sniffs these bytes so it
 // stays transparent to both.
 var gzMagic = [2]byte{0x1f, 0x8b}
-
-// ReadIndex reads a session's index.json from its segments directory. A missing
-// index is not an error — it returns an empty Index so callers treat "no
-// segments yet" the same as an empty selection.
-func ReadIndex(segDir string) (Index, error) {
-	b, err := os.ReadFile(filepath.Join(segDir, IndexFileName))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return Index{}, nil
-		}
-		return Index{}, err
-	}
-	var idx Index
-	if err := json.Unmarshal(b, &idx); err != nil {
-		return Index{}, err
-	}
-	return idx, nil
-}
 
 // LoadSegment reads and parses a segment file at path, reconstructing its raw
 // region messages (role + name + content + tool metadata) from the "## Raw

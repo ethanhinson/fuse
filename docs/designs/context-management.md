@@ -46,10 +46,12 @@ grok-build keeps history verbatim between full-replace compactions.
 
 Replaces the 16KB per-result chop and the 360KB hard turn-failure.
 
-- **Spill-file truncation** (`internal/tools/spill.go`), applied centrally in
+- **Spill truncation** (`internal/tools/spill.go`), applied centrally in
   `Registry.Execute`: results over 20KB keep head+tail (middle-out) and the
-  full output is written to `~/.fuse/tool-output/`; the marker carries the
-  path plus recovery guidance (grep / ranged read / spawn_agent). 7-day GC.
+  full output is saved as a spill artifact in the loop's artifact store
+  (`internal/artifact`); the marker carries its opaque ref,
+  `art://<tenant>/<loop>/<kind>/<id>`, never a filesystem path, plus recovery
+  guidance (grep / ranged read / spawn_agent). See *Artifact store* below.
 - **read_file windowing**: 1000-line default window, continuation footer,
   total-line reporting; ranged reads unchanged.
 - **Hybrid token tracking** in the agent loop: exact usage from the last
@@ -92,15 +94,37 @@ byte-identically and arms a bounded suppression window.
   window and per-attempt timeout are internal constants.
 - **Segment sink seam** (`internal/agent/segment.go`): a widened `SegmentSink`
   interface receives the raw pre-summarization region plus turn range / tool
-  names / token savings; #0027 ships only the **no-op default** (persists
-  nothing, so the summary omits the recovery pointer). The real disk-backed sink
-  (archive as markdown next to the session log with a "grep your past at <path>"
-  pointer in the summary) is **change 0030**.
+  names / token savings. With no sink the region is not persisted and the
+  summary omits the recovery pointer. The real sink (`internal/segment/artsink`,
+  change 0030, moved onto the artifact store since) archives each region as a
+  segment artifact in the loop's store and points the summary at its ref.
+
+### Artifact store — where spilled output and segments live
+
+Oversized tool results and compaction segments are **artifacts** in the loop's
+artifact store, scoped by (tenant, loop) and addressed by opaque refs of the
+form `art://<tenant>/<loop>/<kind>/<id>` (kind `spill`, `segment` or
+`segment-index`). The runtime binds every loop's tool registry to its own
+(tenant, loop) before the agent is built, on start and on resume, so a loop can
+only reach its own artifacts: a ref naming another tenant or loop reads as not
+found.
+
+- **Backends** (`artifact.Store`, selected at the composition root alongside
+  the durable event store): local runs keep artifacts under
+  `~/.fuse/artifacts` (gzip at rest); a Postgres-backed server keeps them in
+  the `artifacts` table, so a ref written on one runtime is recoverable on
+  another. An embedded runtime given no store falls back to an in-memory store
+  with a per-loop cap.
+- **Recovery**: `read_file`, `grep` and `list_directory` accept `art://` refs
+  as well as paths (ranged reads and grep work the same way on an artifact),
+  and `segment_read` lists and replays the loop's segments through the same
+  store. Callers never see or construct filesystem paths for this output.
 
 **Deferred follow-ups (depend on 0027):**
 
-- Segment store (raw archive, replay, GC): **change 0030** — implements the
-  `SegmentSink` and lights up the recovery-pointer line.
+- Segment store (raw archive, replay): **change 0030** — implemented the
+  `SegmentSink` and lit up the recovery-pointer line; segments now live in the
+  artifact store (above).
 - Semantic relevance candidate selection (replacing the recency selector):
   **change 0028**.
 - Cline-style duplicate-file-read dedup as a pre-compaction pass (30%-savings
