@@ -75,6 +75,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0076](0076-loop-scoped-secret-values-are-host-bound-memory-only-and-nev.md) — Loop-scoped secret values are host-bound, memory-only, and never persisted (Accepted) ← change #102 · relates to ADR-0075, ADR-0073, ADR-0061
 - [ADR-0077](0077-carried-skills-travel-in-the-harness-spec-not-beside-it.md) — Carried skills travel in the harness spec, not beside it (Accepted) ← change #118
 - [ADR-0078](0078-loop-cancellation-is-a-terminal-stream-event-plus-an-in-memo.md) — Loop cancellation is a terminal stream event plus an in-memory seal (Accepted) ← change #117 · relates to ADR-0031, ADR-0047
+- [ADR-0079](0079-loop-ownership-is-a-fenced-lease-with-compare-and-set-on-the.md) — Loop ownership is a fenced lease with compare-and-set on the loop registry (Accepted) ← change #126
 
 ## Superseded / Reversed
 

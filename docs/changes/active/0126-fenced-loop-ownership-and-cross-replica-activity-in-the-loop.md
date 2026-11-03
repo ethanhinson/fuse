@@ -12,7 +12,7 @@ depends_on: []
 stacked_on:
 related: [47, 54, 106, 117, 120]
 discovered_from: []
-adrs: []
+adrs: [79]
 spec: 'docs/superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md'
 plan: 'docs/superpowers/plans/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md'
 results:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md](../../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) |
 | Plan | [2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md](../../superpowers/plans/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) |
+| ADRs | [ADR-0079](../../adrs/0079-loop-ownership-is-a-fenced-lease-with-compare-and-set-on-the.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
