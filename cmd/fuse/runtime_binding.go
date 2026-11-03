@@ -138,6 +138,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		if terr != nil {
 			return "", terr
 		}
+		childCfg := cp.agentConfig(cfg) // a tool-less role or worker composes the tool-less prompt
 
 		r := tui.NewRenderer(stdout, verbose)
 		modelID := opts.ModelID
@@ -156,12 +157,12 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		// One-shot passes no session-mode source: gates default to
 		// cfg.Permissions.Mode exactly as before this seam.
 		if opts.SystemPrompt != "" {
-			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil)
+			a, aerr = buildChildAgent(childCfg, reg, modelID, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil)
 		} else {
 			// Observer is installed by a.SetObserver(observer) below, not here —
 			// keeps this branch symmetric with the buildChildAgent branch above,
 			// which takes no observer at all.
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelID, r, verbose, oneShotSystemBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil, nil)
+			a, aerr = buildAgentWithRendererAndTrace(childCfg, reg, modelID, r, verbose, oneShotSystemBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, childToolReg, childApprove, traceW, opts.Label, nil, oneShotBudget, rateGate, nil, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -332,6 +333,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		if terr != nil {
 			return "", terr
 		}
+		childCfg := cp.agentConfig(cfg) // a tool-less role or worker composes the tool-less prompt
 
 		label := childNode.Label
 		if label == "" {
@@ -356,12 +358,12 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		// research-probe is headless (no TTY, AlwaysApprove) ⇒ backstopped. Its
 		// gates are policy provenance: AlwaysApprove is a policy approver.
 		if opts.SystemPrompt != "" {
-			a, aerr = buildChildAgent(cfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false, rateGate, nil)
+			a, aerr = buildChildAgent(childCfg, reg, modelID, r, opts.SystemPrompt, childToolReg, permissions.AlwaysApprove, traceW, label, nil, false, rateGate, nil)
 		} else {
 			// Observer is installed by a.SetObserver(observer) below, not here —
 			// keeps this branch symmetric with the buildChildAgent branch above,
 			// which takes no observer at all.
-			a, _, aerr = buildAgentCore(cfg, reg, modelID, r, spawnGuidance(cfg), cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, nil)
+			a, _, aerr = buildAgentCore(childCfg, reg, modelID, r, spawnGuidance(cfg), cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, traceW, label, childToolReg, permissions.AlwaysApprove, nil, false, rateGate, nil, nil)
 		}
 		if aerr != nil {
 			return "", aerr
@@ -564,6 +566,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		if terr != nil {
 			return "", terr
 		}
+		childCfg := cp.agentConfig(cfg) // a tool-less role or worker composes the tool-less prompt
 
 		r := tui.NewNodeRenderer(childNode, childTree)
 		// Child agents inherit the parent's permission config and route their
@@ -585,12 +588,12 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		// Children spawned inside the interactive shell inherit its
 		// interactive posture — a human is reachable via the shell.
 		if opts.SystemPrompt != "" {
-			a, aerr = buildChildAgent(cfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink)
+			a, aerr = buildChildAgent(childCfg, reg, modelAlias, r, opts.SystemPrompt, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink)
 		} else {
 			// Observer is installed by a.SetObserver(observer) below, not here —
 			// keeps this branch symmetric with the buildChildAgent branch above,
 			// which takes no observer at all.
-			a, aerr = buildAgentWithRendererAndTrace(cfg, reg, modelAlias, r, verbose, skillBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink, nil)
+			a, aerr = buildAgentWithRendererAndTrace(childCfg, reg, modelAlias, r, verbose, skillBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, childToolReg, childApprove, traceW, opts.Label, sessionMode, true, rateGate, in.segmentSink, nil)
 		}
 		if aerr != nil {
 			return "", aerr

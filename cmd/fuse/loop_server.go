@@ -407,6 +407,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 				if terr != nil {
 					return "", terr
 				}
+				childCfg := cp.agentConfig(cfg) // a tool-less role or worker composes the tool-less prompt
 
 				childModelID := opts.ModelID
 				if childModelID == "" {
@@ -422,9 +423,9 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 				// child gates deny explicit asks. No segment sink installed (nil).
 				childApprove := permissions.PrefixApproval(opts.Label, rootApprove)
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, childModelID, discardRenderer{}, opts.SystemPrompt, childToolReg, childApprove, nil, opts.Label, nil, false, rateGate, nil)
+					a, aerr = buildChildAgent(childCfg, reg, childModelID, discardRenderer{}, opts.SystemPrompt, childToolReg, childApprove, nil, opts.Label, nil, false, rateGate, nil)
 				} else {
-					a, _, aerr = buildAgentCore(cfg, reg, childModelID, discardRenderer{}, systemBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, nil, observer)
+					a, _, aerr = buildAgentCore(childCfg, reg, childModelID, discardRenderer{}, systemBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, nil, observer)
 				}
 				if aerr != nil {
 					return "", aerr

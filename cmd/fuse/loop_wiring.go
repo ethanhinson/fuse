@@ -36,10 +36,19 @@ type loopWiring struct {
 // subset spawn_agent strip, the child-bound blackboard and pipeline_run. The one
 // difference is decision 3: a bound child (a worker, or a role with a non-empty
 // tool set) always gets the five blackboard tools, whatever its tool list names.
+// A tool-less role or worker (plan.none) gets nothing: an empty registry, with
+// no blackboard, spawn_agent or pipeline_run.
 func (w loopWiring) childTools(base *tools.Registry, opts agent.SpawnOpts, childNode *agent.AgentNode) (*tools.Registry, childPlan, error) {
 	plan, err := w.scope.prepareChild(opts, childNode)
 	if err != nil {
 		return nil, childPlan{}, err
+	}
+	if plan.none {
+		// A tool-less role or worker: the child is offered nothing, not even
+		// the blackboard; it answers through its spawn result. No spawn,
+		// blackboard or pipeline wiring runs. This must come before
+		// childToolRegistry, which clones the whole base for a nil tool list.
+		return tools.NewRegistry(), plan, nil
 	}
 	reg, err := childToolRegistry(base, plan.tools)
 	if err != nil {
