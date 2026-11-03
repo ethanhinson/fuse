@@ -1,13 +1,18 @@
 # Backlog
 
-**123 changes** — 🟢 2 in progress · 🟡 14 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
+**123 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 14 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Tool-less loops, roles and workers | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-roles-and-workers-can-be-tool-less-design.md) | `feat/roles-and-workers-can-be-tool-less` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
+
+## 🔵 Built (1)
+
+| # | Title | Priority | Type | PR | State |
+|---|-------|----------|------|----|-------|
+| [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Tool-less loops, roles and workers | `high` | `feat` | [#132](https://github.com/ethanhinson/fuse/pull/132) | awaiting merge |
 
 ## 🟡 Proposed (14)
 

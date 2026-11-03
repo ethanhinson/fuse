@@ -2,7 +2,7 @@
 id: 116
 slug: 'roles-and-workers-can-be-tool-less'
 title: 'Tool-less loops, roles and workers'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/roles-and-workers-can-be-tool-less'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/132'
 blocked_by:
 reconciled: true
 ---
@@ -58,3 +58,12 @@ Changing what an empty `tools` list means; it stays inherit.
 ### 2026-11-03
 
 Unchanged against `origin/main` 374384f. No `no_tools` exists yet; #0130 (carried skills) and #0131 (CancelLoop) landed since the spec but touch neither tool composition nor role/worker resolution. Scope follows the linked spec, which supersedes this record's earlier note that tool-less children still get the blackboard: they get an empty registry.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 4859c4c8b86cad866bd96a4927e628003e50f7f1
+ran_at:   2026-11-03T08:09:41Z
+<!-- docket:build-evidence:end -->
