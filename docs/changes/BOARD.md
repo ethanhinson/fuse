@@ -1,6 +1,6 @@
 # Backlog
 
-**116 changes** — 🟢 1 in progress · 🟡 10 proposed · ⚪ 3 deferred · ✅ 95 done · 🗑️ 7 killed
+**117 changes** — 🟢 1 in progress · 🟡 11 proposed · ⚪ 3 deferred · ✅ 95 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -8,10 +8,11 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟡 Proposed (10)
+## 🟡 Proposed (11)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0117](active/0117-cancel-rpc-on-the-networked-loop-server.md) | Cancel RPC on the networked loop server | `high` | `feat` | needs-grooming |
 | [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Roles and workers can be tool-less | `medium` | `feat` | needs-grooming |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
 | [0110](active/0110-mark-loopsecret-value-debug-redact-once-protobuf-go-honours.md) | Mark LoopSecret.value debug_redact once protobuf-go honours it | `low` | `feat` | needs-grooming |
@@ -47,6 +48,7 @@ graph TD
   0110
   0111
   0116
+  0117
   0012:::done
   0052:::done
   0063:::done
