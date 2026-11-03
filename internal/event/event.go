@@ -409,7 +409,8 @@ type LoopParkedPayload struct {
 // rebuilds from them, so the record survives a replica on another protobuf or
 // schema version (unknown fields are kept). Spec is the same spec as protojson,
 // for people and tools reading the stream. It names secrets but never holds
-// their values.
+// their values. It does include the bodies of any skills the spec carries (at
+// most 262144 bytes in total, change 0118).
 type LoopHarnessPayload struct {
 	Spec      json.RawMessage `json:"spec"`
 	SpecBytes []byte          `json:"spec_bytes"`
