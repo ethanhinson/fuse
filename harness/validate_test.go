@@ -200,20 +200,20 @@ func TestServiceServesValidateHarness(t *testing.T) {
 	}
 }
 
-// TestValidate_WorkerWithoutTools: a worker's allowlist is its whole tool set,
-// so an empty one is refused once (shape wins over the semantic duplicate).
+// TestValidate_WorkerWithoutTools: a worker must name its tools or set
+// no_tools. The shape layer accepts an empty allowlist (a tool-less worker has
+// one), so the refusal of a worker that is neither comes from the semantic
+// layer alone, once, as a config rule.
 func TestValidate_WorkerWithoutTools(t *testing.T) {
 	bad := &harnessv1.HarnessSpec{Workflows: map[string]*harnessv1.Workflow{
 		"wf": {Workers: map[string]*harnessv1.Worker{"reader": {}}},
 	}}
 	const path = `workflows["wf"].workers["reader"].tools`
-	for name, vs := range map[string][]harness.Violation{
-		"Validate":      harness.Validate(bad),
-		"ValidateShape": harness.ValidateShape(bad),
-	} {
-		if len(vs) != 1 || vs[0].FieldPath != path || vs[0].RuleID != "repeated.min_items" {
-			t.Errorf("%s = %+v, want one repeated.min_items at %s", name, vs, path)
-		}
+	if vs := harness.ValidateShape(bad); len(vs) != 0 {
+		t.Errorf("ValidateShape = %+v, want none", vs)
+	}
+	if vs := harness.Validate(bad); len(vs) != 1 || vs[0].FieldPath != path || vs[0].RuleID != harness.RuleConfig {
+		t.Errorf("Validate = %+v, want one %s at %s", vs, harness.RuleConfig, path)
 	}
 	ok := &harnessv1.HarnessSpec{Workflows: map[string]*harnessv1.Workflow{
 		"wf": {Workers: map[string]*harnessv1.Worker{"reader": {Tools: []string{"read_file"}}}},

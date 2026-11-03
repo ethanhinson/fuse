@@ -211,6 +211,19 @@ message HarnessSpec {
       help: "Named helpers the main agent can hand work to. A role says who a helper is; a workflow says how a big job is divided up."
     }
   ];
+  // Tool composition for the main agent. false (the default): all tools - the
+  // platform tools, the spec's MCP tools and the runtime's internal tools,
+  // minus permissions.disabled. true: none - every model call of the loop
+  // carries no tools, no MCP server this spec names is started, and the main
+  // agent cannot spawn helpers. Every other field stays valid beside it and is
+  // simply unreachable. Check GetCapabilitiesResponse.spec_features for
+  // "no_tools" first: a server that predates this field drops it and runs the
+  // loop with every tool.
+  bool no_tools = 16 [(fuse.harness.v1.ui) = {
+    label: "No tools"
+    help: "The agent answers in plain text and can call no tools at all, including the runtime's internal ones."
+    widget: WIDGET_TOGGLE
+  }];
 }
 
 // Models holds model aliases and the default alias.
@@ -696,13 +709,14 @@ message Pool {
 // Worker is a typed worker: a tool allowlist (its whole tool set) and an
 // optional model pin.
 message Worker {
-  // Tool allowlist: the worker's whole tool set. It must name at least one tool
-  // and inherits nothing from the parent. A worker-bound child always receives
-  // the five blackboard tools in addition, and it can nest exactly when the
-  // allowlist names spawn_agent.
+  // A worker's tool set has two states. Named: tools is the worker's whole
+  // allowlist; it inherits nothing from the parent, the five blackboard tools
+  // are always added, and the worker can nest exactly when the list names
+  // spawn_agent. None: no_tools true (tools must then be empty) - see
+  // no_tools. A worker must be one or the other: empty tools without no_tools
+  // is refused.
   repeated string tools = 1 [
     (buf.validate.field).repeated = {
-      min_items: 1
       items: {string: {min_len: 1}}
     },
     (fuse.harness.v1.ui) = {
@@ -718,6 +732,14 @@ message Worker {
       widget: WIDGET_MODEL_ALIAS
     }
   ];
+  // None: the worker is offered no tools at all, not even the blackboard; it
+  // answers in plain text through its spawn result. A spawn that names tools
+  // for it is refused. Setting no_tools beside a non-empty tools list is
+  // refused.
+  bool no_tools = 3 [(fuse.harness.v1.ui) = {
+    label: "No tools"
+    widget: WIDGET_TOGGLE
+  }];
 }
 
 // Role is a named, reusable helper definition.
@@ -744,11 +766,13 @@ message Role {
       widget: WIDGET_TEXTAREA
     }
   ];
-  // Empty: the helper inherits the main agent's tool set. Non-empty: the
-  // helper's whole tool set, under the same rules as Worker.tools: it can only
-  // narrow, the blackboard tools are always added, and the helper can nest
-  // exactly when the list names spawn_agent. Names are not checked against the
-  // runtime's tools at validation time (tool sets are dynamic).
+  // A role's tool set has three states. Inherit: tools empty and no_tools
+  // false - the helper gets the main agent's tool set. Narrowed: tools names
+  // the helper's whole tool set; it can only narrow, the five blackboard tools
+  // are always added, and the helper can nest exactly when the list names
+  // spawn_agent. None: no_tools true (tools must then be empty) - see no_tools.
+  // Names are not checked against the runtime's tools at validation time (tool
+  // sets are dynamic).
   repeated string tools = 3 [
     (buf.validate.field).repeated = {
       items: {
@@ -770,6 +794,15 @@ message Role {
       widget: WIDGET_MODEL_ALIAS
     }
   ];
+  // None: the helper is offered no tools at all, not even the blackboard; it
+  // answers in plain text through its spawn result. A spawn that names tools
+  // for it is refused; a model override still applies. Setting no_tools beside
+  // a non-empty tools list is refused.
+  bool no_tools = 5 [(fuse.harness.v1.ui) = {
+    label: "No tools"
+    help: "The helper only thinks and writes: it gets no tools, not even the blackboard."
+    widget: WIDGET_TOGGLE
+  }];
 }
 
 // Throughput is the turn-level rate and quota surface. 0 = unlimited.
