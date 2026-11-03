@@ -14,7 +14,7 @@ related: [47, 54, 106, 117, 120]
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md](../../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) |
+| Plan | [2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md](../../superpowers/plans/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
