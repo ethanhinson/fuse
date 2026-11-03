@@ -1,14 +1,19 @@
 # Backlog
 
-**118 changes** — 🟢 3 in progress · 🟡 10 proposed · ⚪ 3 deferred · ✅ 95 done · 🗑️ 7 killed
+**118 changes** — 🟢 2 in progress · 🔵 1 built · 🟡 10 proposed · ⚪ 3 deferred · ✅ 95 done · 🗑️ 7 killed
 
-## 🟢 In progress (3)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0118](active/0118-carried-skills-a-harness-spec-may-define-a-skill-inline.md) | Carried skills: a harness spec may define a skill inline | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline-design.md) | `feat/carried-skills-a-harness-spec-may-define-a-skill-inline` | building |
 | [0117](active/0117-cancel-rpc-on-the-networked-loop-server.md) | Cancel RPC on the networked loop server | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md) | `feat/cancel-rpc-on-the-networked-loop-server` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
+
+## 🔵 Built (1)
+
+| # | Title | Priority | Type | PR | State |
+|---|-------|----------|------|----|-------|
+| [0118](active/0118-carried-skills-a-harness-spec-may-define-a-skill-inline.md) | Carried skills: a harness spec may define a skill inline | `high` | `feat` | [#130](https://github.com/ethanhinson/fuse/pull/130) | awaiting merge |
 
 ## 🟡 Proposed (10)
 

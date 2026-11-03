@@ -2,7 +2,7 @@
 id: 118
 slug: 'carried-skills-a-harness-spec-may-define-a-skill-inline'
 title: 'Carried skills: a harness spec may define a skill inline'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/carried-skills-a-harness-spec-may-define-a-skill-inline'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/130'
 blocked_by:
 reconciled: true
 ---
@@ -53,3 +53,12 @@ Bundled skill files, slash commands or frontmatter beyond name and description; 
 ### 2026-11-03
 
 Unchanged against main 7ea0da7. SkillRef still name-only; SpecPolicy fields 1-3 in use, so carried_skills_allowed = 4 holds. Change 117 (CancelLoop RPC) also edits loop.proto in parallel; rebase before PR.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 3c94aa1cb84ee70a076e171a49d319cb20751570
+ran_at:   2026-11-03T03:40:21Z
+<!-- docket:build-evidence:end -->
