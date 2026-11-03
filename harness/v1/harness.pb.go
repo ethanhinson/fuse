@@ -1488,9 +1488,11 @@ type Worker struct {
 	// Model alias; empty inherits the parent's model.
 	Model string `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
 	// None: the worker is offered no tools at all, not even the blackboard; it
-	// answers in plain text through its spawn result. A spawn that names tools
-	// for it is refused. Setting no_tools beside a non-empty tools list is
-	// refused.
+	// answers in plain text through its spawn result. The one exception is
+	// return_result: a spawn or pipeline step that sets expects offers exactly
+	// that tool, the structured-result channel, and nothing else. A spawn that
+	// names tools for it is refused. Setting no_tools beside a non-empty tools
+	// list is refused.
 	NoTools       bool `protobuf:"varint,3,opt,name=no_tools,json=noTools,proto3" json:"no_tools,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1566,9 +1568,11 @@ type Role struct {
 	// Model alias; empty inherits the main agent's model.
 	Model string `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`
 	// None: the helper is offered no tools at all, not even the blackboard; it
-	// answers in plain text through its spawn result. A spawn that names tools
-	// for it is refused; a model override still applies. Setting no_tools beside
-	// a non-empty tools list is refused.
+	// answers in plain text through its spawn result. The one exception is
+	// return_result: a spawn or pipeline step that sets expects offers exactly
+	// that tool, the structured-result channel, and nothing else. A spawn that
+	// names tools for it is refused; a model override still applies. Setting
+	// no_tools beside a non-empty tools list is refused.
 	NoTools       bool `protobuf:"varint,5,opt,name=no_tools,json=noTools,proto3" json:"no_tools,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

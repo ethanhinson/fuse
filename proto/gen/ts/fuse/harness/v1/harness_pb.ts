@@ -775,9 +775,11 @@ export type Worker = Message<"fuse.harness.v1.Worker"> & {
 
   /**
    * None: the worker is offered no tools at all, not even the blackboard; it
-   * answers in plain text through its spawn result. A spawn that names tools
-   * for it is refused. Setting no_tools beside a non-empty tools list is
-   * refused.
+   * answers in plain text through its spawn result. The one exception is
+   * return_result: a spawn or pipeline step that sets expects offers exactly
+   * that tool, the structured-result channel, and nothing else. A spawn that
+   * names tools for it is refused. Setting no_tools beside a non-empty tools
+   * list is refused.
    *
    * @generated from field: bool no_tools = 3;
    */
@@ -834,9 +836,11 @@ export type Role = Message<"fuse.harness.v1.Role"> & {
 
   /**
    * None: the helper is offered no tools at all, not even the blackboard; it
-   * answers in plain text through its spawn result. A spawn that names tools
-   * for it is refused; a model override still applies. Setting no_tools beside
-   * a non-empty tools list is refused.
+   * answers in plain text through its spawn result. The one exception is
+   * return_result: a spawn or pipeline step that sets expects offers exactly
+   * that tool, the structured-result channel, and nothing else. A spawn that
+   * names tools for it is refused; a model override still applies. Setting
+   * no_tools beside a non-empty tools list is refused.
    *
    * @generated from field: bool no_tools = 5;
    */

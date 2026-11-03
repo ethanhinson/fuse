@@ -120,3 +120,53 @@ func TestPipelineRoleStepAtGateway(t *testing.T) {
 		t.Errorf("root pipeline_run description does not mark the drafter tool-less: %q", desc)
 	}
 }
+
+// TestPipelineToolLessStepWithExpectsOffersOnlyReturnResult (change 0116): a
+// tool-less worker's pipeline step that sets expects is offered exactly the
+// synthesized return_result tool - the structured-result channel, the one
+// documented exception to "no tools at all" - and nothing from the registry,
+// not even the blackboard. The step's structured value is still delivered.
+func TestPipelineToolLessStepWithExpectsOffersOnlyReturnResult(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	gw := &routedGateway{route: func(_ string, turn int, _ gatewayCall) string {
+		if turn == 0 {
+			return toolCallsReply(call{name: "return_result", args: map[string]any{"ok": true}})
+		}
+		return textReply("done")
+	}}
+	srv := httptest.NewServer(gw)
+	t.Cleanup(srv.Close)
+	cfg, err := config.FromYAML([]byte(roleOperatorYAML), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf := cfg.Workflows["wf"]
+	wf.Workers["drafter"] = config.WorkerConfig{NoTools: true}
+	cfg.Workflows["wf"] = wf
+	cfg.Gateway.URL, cfg.Gateway.Key = srv.URL, "tkn"
+	reg := registryFromConfig(cfg)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
+	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
+	deps, closeMCP := buildOneShotRuntimeDeps(cfg, reg, reg.Default, toolReg, tree, io.Discard, false, nil,
+		permissions.AlwaysApprove, "block", false, nil, nil)
+	t.Cleanup(closeMCP)
+	if _, _, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg); err != nil {
+		t.Fatalf("BuildAgent: %v", err)
+	}
+
+	const def = "name: rx\nworkflow: wf\nsteps:\n" +
+		"  - name: dfx\n    worker: drafter\n    prompt: DFX-PIPE-TASK\n    outputs: [verdict]\n" +
+		"    expects:\n      type: object\n      properties:\n        ok:\n          type: boolean\n      required: [ok]\n"
+	res := toolReg.Execute(context.Background(), "pipeline_run", argsJSON(map[string]any{"definition": def}))
+	if res.IsError || res.Output != "pipeline rx: completed" {
+		t.Fatalf("pipeline_run = %+v, want completed", res)
+	}
+
+	c := turnRequest(t, gw, "DFX-PIPE-TASK", 0)
+	if got, want := sortedToolNames(c), []string{"return_result"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("tool-less step with expects tools = %v, want exactly %v", got, want)
+	}
+	if got := nodeLabelled(t, tree, "dfx").Status; got != agent.StatusDone {
+		t.Errorf("dfx status = %v, want done", got)
+	}
+}
