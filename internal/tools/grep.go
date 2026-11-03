@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/ethanhinson/fuse/internal/artifact"
 )
 
 // grep result bounds. The point of this tool is cheap LOCATION of code — a
@@ -39,7 +41,7 @@ func (grepTool) Name() string { return "grep" }
 func (grepTool) Description() string {
 	return "Search file contents with a Go regex; returns path:line: text matches. " +
 		"Use this to LOCATE code, then read_file with start_line/end_line for the parts you need — " +
-		"much cheaper than reading whole files."
+		"much cheaper than reading whole files. path may also be a full art:// artifact ref (e.g. from a spilled-output marker)."
 }
 
 func (grepTool) Parameters() map[string]any {
@@ -52,7 +54,7 @@ func (grepTool) Parameters() map[string]any {
 			},
 			"path": map[string]any{
 				"type":        "string",
-				"description": "File or directory to search (default: current directory, recursive).",
+				"description": "File or directory to search (default: current directory, recursive), or a full art:// artifact ref.",
 			},
 			"glob": map[string]any{
 				"type":        "string",
@@ -104,6 +106,10 @@ func (grepTool) Execute(ctx context.Context, args string) Result {
 	}
 	if maxResults > grepMaxResults {
 		maxResults = grepMaxResults
+	}
+
+	if artifact.IsRef(a.Path) {
+		return grepArtifact(ctx, a.Path, re, maxResults)
 	}
 
 	var out []string
@@ -163,6 +169,11 @@ func (grepTool) Execute(ctx context.Context, args string) Result {
 		out = matches
 	}
 
+	return grepResult(out, truncated, maxResults)
+}
+
+// grepResult renders matches with the shared cap footer.
+func grepResult(out []string, truncated bool, maxResults int) Result {
 	if len(out) == 0 {
 		return Result{Output: "no matches"}
 	}
@@ -171,6 +182,48 @@ func (grepTool) Execute(ctx context.Context, args string) Result {
 		res += fmt.Sprintf("\n[grep: showing first %d matches — narrow the pattern, path, or glob for more precision]", len(out))
 	}
 	return Result{Output: res}
+}
+
+// grepArtifact scans one artifact's lines, resolved through the loop's binding.
+// The ref string stands in for the path in every "path:line: text" entry.
+func grepArtifact(ctx context.Context, ref string, re *regexp.Regexp, maxResults int) Result {
+	if _, err := artifact.ParseRef(ref); err != nil {
+		if _, perr := artifact.ParsePrefix(ref); perr == nil {
+			return Result{IsError: true, Output: fmt.Sprintf(
+				"grep: %s is not a full artifact ref; pass art://<tenant>/<loop>/<kind>/<id> (list_directory shows them)", ref)}
+		}
+	}
+	data, _, err := readArtifact(ctx, ref)
+	if err != nil {
+		return Result{IsError: true, Output: fmt.Sprintf("grep: %v", err)}
+	}
+	head := data
+	if len(head) > 8192 {
+		head = head[:8192]
+	}
+	if bytes.IndexByte(head, 0) >= 0 {
+		return Result{IsError: true, Output: fmt.Sprintf("grep: %s: binary file", ref)}
+	}
+	var out []string
+	for i, line := range strings.Split(string(data), "\n") {
+		if !re.MatchString(line) {
+			continue
+		}
+		out = append(out, grepEntry(ref, i+1, line))
+		if len(out) >= maxResults {
+			break
+		}
+	}
+	return grepResult(out, false, maxResults)
+}
+
+// grepEntry formats one "path:line: text" match, trimming long lines.
+func grepEntry(path string, lineNo int, line string) string {
+	text := strings.TrimSpace(line)
+	if len(text) > grepMaxLineLen {
+		text = truncateBytes(text, grepMaxLineLen) + "…"
+	}
+	return fmt.Sprintf("%s:%d: %s", path, lineNo, text)
 }
 
 // grepFile scans one file for re, returning up to limit "path:line: text"
@@ -201,11 +254,7 @@ func grepFile(path string, re *regexp.Regexp, limit int) ([]string, error) {
 		if !re.MatchString(line) {
 			continue
 		}
-		text := strings.TrimSpace(line)
-		if len(text) > grepMaxLineLen {
-			text = truncateBytes(text, grepMaxLineLen) + "…"
-		}
-		out = append(out, fmt.Sprintf("%s:%d: %s", path, lineNo, text))
+		out = append(out, grepEntry(path, lineNo, line))
 		if len(out) >= limit {
 			break
 		}

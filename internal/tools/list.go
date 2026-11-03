@@ -18,14 +18,15 @@ func NewListDirectory() Tool { return listTool{} }
 func (listTool) Name() string { return "list_directory" }
 
 func (listTool) Description() string {
-	return "List entries in a directory, optionally filtered by a shell glob pattern."
+	return "List entries in a directory, optionally filtered by a shell glob pattern. " +
+		"path may also be an art:// prefix (art://<tenant>/<loop> or art://<tenant>/<loop>/<kind>) to list this loop's artifacts."
 }
 
 func (listTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"path": map[string]any{"type": "string", "description": "Directory to list (default: current)"},
+			"path": map[string]any{"type": "string", "description": "Directory or art:// artifact prefix to list (default: current)"},
 			"glob": map[string]any{"type": "string", "description": "Optional glob to filter entries, e.g. *.go"},
 		},
 	}
@@ -40,6 +41,12 @@ func (listTool) Execute(ctx context.Context, args string) Result {
 	var a listArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return Result{IsError: true, Output: fmt.Sprintf("bad arguments: %v", err)}
+	}
+	if out, handled, err := listArtifacts(ctx, a.Path); handled {
+		if err != nil {
+			return Result{IsError: true, Output: err.Error()}
+		}
+		return Result{Output: out}
 	}
 	if a.Path == "" {
 		a.Path = "."
