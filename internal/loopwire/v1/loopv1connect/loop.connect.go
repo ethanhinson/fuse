@@ -10,6 +10,7 @@
 // field (identity enforcement is #0049). The per-kind payload shapes are NOT
 // re-modeled here: payload stays raw JSON bytes (#50 owns SDK ergonomics), and
 // kind stays a string to avoid lock-stepping a proto enum with internal/event.Kind.
+// CancelLoop stops a loop the caller owns and seals it so it never runs again.
 // GetCapabilities is the read-only discovery call: it tells a client which models,
 // skills, tighten-only ceilings, secret names and spec MCP auth types the server
 // will accept before it composes a HarnessSpec.
@@ -48,6 +49,8 @@ const (
 	LoopServiceStartLoopProcedure = "/fuse.loop.v1.LoopService/StartLoop"
 	// LoopServiceSendProcedure is the fully-qualified name of the LoopService's Send RPC.
 	LoopServiceSendProcedure = "/fuse.loop.v1.LoopService/Send"
+	// LoopServiceCancelLoopProcedure is the fully-qualified name of the LoopService's CancelLoop RPC.
+	LoopServiceCancelLoopProcedure = "/fuse.loop.v1.LoopService/CancelLoop"
 	// LoopServiceObserveProcedure is the fully-qualified name of the LoopService's Observe RPC.
 	LoopServiceObserveProcedure = "/fuse.loop.v1.LoopService/Observe"
 	// LoopServiceGetCapabilitiesProcedure is the fully-qualified name of the LoopService's
@@ -62,6 +65,12 @@ type LoopServiceClient interface {
 	StartLoop(context.Context, *connect.Request[v1.StartLoopRequest]) (*connect.Response[v1.StartLoopResponse], error)
 	// Send injects human input at the loop's next turn boundary.
 	Send(context.Context, *connect.Request[v1.SendRequest]) (*connect.Response[v1.SendResponse], error)
+	// CancelLoop stops a loop the caller owns and seals it: its in-flight work is
+	// cancelled, its resources are released, loop.cancelled is appended as the last
+	// event of its stream, and the loop never accepts another Send or resume.
+	// Idempotent. Same ownership rule as Send; requires loop:cancel (or loop:admin).
+	// A server whose runtime cannot cancel answers Unimplemented.
+	CancelLoop(context.Context, *connect.Request[v1.CancelLoopRequest]) (*connect.Response[v1.CancelLoopResponse], error)
 	// Observe streams history since from_seq then live events; a reconnecting client
 	// re-opens it from its last-seen seq (the WS-era Attach/HTTP-replay role).
 	Observe(context.Context, *connect.Request[v1.ObserveRequest]) (*connect.ServerStreamForClient[v1.ObserveEvent], error)
@@ -96,6 +105,12 @@ func NewLoopServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 			connect.WithSchema(loopServiceMethods.ByName("Send")),
 			connect.WithClientOptions(opts...),
 		),
+		cancelLoop: connect.NewClient[v1.CancelLoopRequest, v1.CancelLoopResponse](
+			httpClient,
+			baseURL+LoopServiceCancelLoopProcedure,
+			connect.WithSchema(loopServiceMethods.ByName("CancelLoop")),
+			connect.WithClientOptions(opts...),
+		),
 		observe: connect.NewClient[v1.ObserveRequest, v1.ObserveEvent](
 			httpClient,
 			baseURL+LoopServiceObserveProcedure,
@@ -115,6 +130,7 @@ func NewLoopServiceClient(httpClient connect.HTTPClient, baseURL string, opts ..
 type loopServiceClient struct {
 	startLoop       *connect.Client[v1.StartLoopRequest, v1.StartLoopResponse]
 	send            *connect.Client[v1.SendRequest, v1.SendResponse]
+	cancelLoop      *connect.Client[v1.CancelLoopRequest, v1.CancelLoopResponse]
 	observe         *connect.Client[v1.ObserveRequest, v1.ObserveEvent]
 	getCapabilities *connect.Client[v1.GetCapabilitiesRequest, v1.GetCapabilitiesResponse]
 }
@@ -127,6 +143,11 @@ func (c *loopServiceClient) StartLoop(ctx context.Context, req *connect.Request[
 // Send calls fuse.loop.v1.LoopService.Send.
 func (c *loopServiceClient) Send(ctx context.Context, req *connect.Request[v1.SendRequest]) (*connect.Response[v1.SendResponse], error) {
 	return c.send.CallUnary(ctx, req)
+}
+
+// CancelLoop calls fuse.loop.v1.LoopService.CancelLoop.
+func (c *loopServiceClient) CancelLoop(ctx context.Context, req *connect.Request[v1.CancelLoopRequest]) (*connect.Response[v1.CancelLoopResponse], error) {
+	return c.cancelLoop.CallUnary(ctx, req)
 }
 
 // Observe calls fuse.loop.v1.LoopService.Observe.
@@ -146,6 +167,12 @@ type LoopServiceHandler interface {
 	StartLoop(context.Context, *connect.Request[v1.StartLoopRequest]) (*connect.Response[v1.StartLoopResponse], error)
 	// Send injects human input at the loop's next turn boundary.
 	Send(context.Context, *connect.Request[v1.SendRequest]) (*connect.Response[v1.SendResponse], error)
+	// CancelLoop stops a loop the caller owns and seals it: its in-flight work is
+	// cancelled, its resources are released, loop.cancelled is appended as the last
+	// event of its stream, and the loop never accepts another Send or resume.
+	// Idempotent. Same ownership rule as Send; requires loop:cancel (or loop:admin).
+	// A server whose runtime cannot cancel answers Unimplemented.
+	CancelLoop(context.Context, *connect.Request[v1.CancelLoopRequest]) (*connect.Response[v1.CancelLoopResponse], error)
 	// Observe streams history since from_seq then live events; a reconnecting client
 	// re-opens it from its last-seen seq (the WS-era Attach/HTTP-replay role).
 	Observe(context.Context, *connect.Request[v1.ObserveRequest], *connect.ServerStream[v1.ObserveEvent]) error
@@ -176,6 +203,12 @@ func NewLoopServiceHandler(svc LoopServiceHandler, opts ...connect.HandlerOption
 		connect.WithSchema(loopServiceMethods.ByName("Send")),
 		connect.WithHandlerOptions(opts...),
 	)
+	loopServiceCancelLoopHandler := connect.NewUnaryHandler(
+		LoopServiceCancelLoopProcedure,
+		svc.CancelLoop,
+		connect.WithSchema(loopServiceMethods.ByName("CancelLoop")),
+		connect.WithHandlerOptions(opts...),
+	)
 	loopServiceObserveHandler := connect.NewServerStreamHandler(
 		LoopServiceObserveProcedure,
 		svc.Observe,
@@ -194,6 +227,8 @@ func NewLoopServiceHandler(svc LoopServiceHandler, opts ...connect.HandlerOption
 			loopServiceStartLoopHandler.ServeHTTP(w, r)
 		case LoopServiceSendProcedure:
 			loopServiceSendHandler.ServeHTTP(w, r)
+		case LoopServiceCancelLoopProcedure:
+			loopServiceCancelLoopHandler.ServeHTTP(w, r)
 		case LoopServiceObserveProcedure:
 			loopServiceObserveHandler.ServeHTTP(w, r)
 		case LoopServiceGetCapabilitiesProcedure:
@@ -213,6 +248,10 @@ func (UnimplementedLoopServiceHandler) StartLoop(context.Context, *connect.Reque
 
 func (UnimplementedLoopServiceHandler) Send(context.Context, *connect.Request[v1.SendRequest]) (*connect.Response[v1.SendResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("fuse.loop.v1.LoopService.Send is not implemented"))
+}
+
+func (UnimplementedLoopServiceHandler) CancelLoop(context.Context, *connect.Request[v1.CancelLoopRequest]) (*connect.Response[v1.CancelLoopResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("fuse.loop.v1.LoopService.CancelLoop is not implemented"))
 }
 
 func (UnimplementedLoopServiceHandler) Observe(context.Context, *connect.Request[v1.ObserveRequest], *connect.ServerStream[v1.ObserveEvent]) error {

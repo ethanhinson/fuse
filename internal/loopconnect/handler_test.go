@@ -336,3 +336,13 @@ func TestSendSourceValidatedAndThreaded(t *testing.T) {
 		t.Fatalf("unknown source code = %v, want InvalidArgument", connect.CodeOf(err))
 	}
 }
+
+// TestCancelLoopStubUnimplemented pins the wire contract: CancelLoop is on the
+// service and, until the edge task fills it in, answers Unimplemented.
+func TestCancelLoopStubUnimplemented(t *testing.T) {
+	client := newTestServer(t, &fakeRuntime{})
+	_, err := client.CancelLoop(context.Background(), connect.NewRequest(&loopv1.CancelLoopRequest{LoopId: "l"}))
+	if got := connect.CodeOf(err); got != connect.CodeUnimplemented {
+		t.Fatalf("CancelLoop code = %v, want Unimplemented (err %v)", got, err)
+	}
+}

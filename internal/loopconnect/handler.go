@@ -428,6 +428,12 @@ func (h *Handler) recordOwner(ctx context.Context, tenant event.TenantID, loopID
 	return nil
 }
 
+// CancelLoop is filled in by the cancel change's edge task; until then it
+// answers Unimplemented like a server whose runtime cannot cancel.
+func (h *Handler) CancelLoop(ctx context.Context, req *connect.Request[loopv1.CancelLoopRequest]) (*connect.Response[loopv1.CancelLoopResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("loopconnect: CancelLoop not implemented"))
+}
+
 // Send injects human input at the loop's next turn boundary. It maps the two client-
 // addressable seam sentinels: an unknown loop → CodeNotFound, a finished loop →
 // CodeFailedPrecondition (the loop exists but no longer accepts input). Any other

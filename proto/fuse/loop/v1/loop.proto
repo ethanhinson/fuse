@@ -8,6 +8,7 @@ syntax = "proto3";
 // field (identity enforcement is #0049). The per-kind payload shapes are NOT
 // re-modeled here: payload stays raw JSON bytes (#50 owns SDK ergonomics), and
 // kind stays a string to avoid lock-stepping a proto enum with internal/event.Kind.
+// CancelLoop stops a loop the caller owns and seals it so it never runs again.
 // GetCapabilities is the read-only discovery call: it tells a client which models,
 // skills, tighten-only ceilings, secret names and spec MCP auth types the server
 // will accept before it composes a HarnessSpec.
@@ -28,6 +29,12 @@ service LoopService {
   rpc StartLoop(StartLoopRequest) returns (StartLoopResponse);
   // Send injects human input at the loop's next turn boundary.
   rpc Send(SendRequest) returns (SendResponse);
+  // CancelLoop stops a loop the caller owns and seals it: its in-flight work is
+  // cancelled, its resources are released, loop.cancelled is appended as the last
+  // event of its stream, and the loop never accepts another Send or resume.
+  // Idempotent. Same ownership rule as Send; requires loop:cancel (or loop:admin).
+  // A server whose runtime cannot cancel answers Unimplemented.
+  rpc CancelLoop(CancelLoopRequest) returns (CancelLoopResponse);
   // Observe streams history since from_seq then live events; a reconnecting client
   // re-opens it from its last-seen seq (the WS-era Attach/HTTP-replay role).
   rpc Observe(ObserveRequest) returns (stream ObserveEvent);
@@ -117,6 +124,37 @@ message SendRequest {
 }
 
 message SendResponse {}
+
+message CancelLoopRequest {
+  string loop_id = 1;
+  string tenant = 2; // same pass-through rule as SendRequest.tenant
+  // reason is free text the caller records with the cancel (at most 256 bytes,
+  // no control characters; InvalidArgument otherwise). Optional.
+  string reason = 3;
+}
+
+enum CancelOutcome {
+  CANCEL_OUTCOME_UNSPECIFIED = 0;
+  // This call sealed the loop; was_live says whether it stopped running work.
+  CANCEL_OUTCOME_CANCELLED = 1;
+  // An earlier cancel already sealed it; reason and terminal_seq are that cancel's.
+  CANCEL_OUTCOME_ALREADY_CANCELLED = 2;
+  // The loop is owned by another replica; the request is recorded in its stream
+  // and the owner will emit loop.cancelled. terminal_seq is 0.
+  CANCEL_OUTCOME_CANCELLING = 3;
+}
+
+message CancelLoopResponse {
+  CancelOutcome outcome = 1;
+  // true when this cancel interrupted a running or parked loop; false when it
+  // sealed a loop that had already finished or been idle-reaped.
+  bool was_live = 2;
+  // seq of the loop.cancelled event; 0 when outcome is CANCELLING or the store
+  // cannot report it.
+  uint64 terminal_seq = 3;
+  // The recorded reason (the original one on ALREADY_CANCELLED).
+  string reason = 4;
+}
 
 message ObserveRequest {
   string loop_id = 1;

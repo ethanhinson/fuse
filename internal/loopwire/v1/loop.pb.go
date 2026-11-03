@@ -12,6 +12,7 @@
 // field (identity enforcement is #0049). The per-kind payload shapes are NOT
 // re-modeled here: payload stays raw JSON bytes (#50 owns SDK ergonomics), and
 // kind stays a string to avoid lock-stepping a proto enum with internal/event.Kind.
+// CancelLoop stops a loop the caller owns and seals it so it never runs again.
 // GetCapabilities is the read-only discovery call: it tells a client which models,
 // skills, tighten-only ceilings, secret names and spec MCP auth types the server
 // will accept before it composes a HarnessSpec.
@@ -35,6 +36,62 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
+
+type CancelOutcome int32
+
+const (
+	CancelOutcome_CANCEL_OUTCOME_UNSPECIFIED CancelOutcome = 0
+	// This call sealed the loop; was_live says whether it stopped running work.
+	CancelOutcome_CANCEL_OUTCOME_CANCELLED CancelOutcome = 1
+	// An earlier cancel already sealed it; reason and terminal_seq are that cancel's.
+	CancelOutcome_CANCEL_OUTCOME_ALREADY_CANCELLED CancelOutcome = 2
+	// The loop is owned by another replica; the request is recorded in its stream
+	// and the owner will emit loop.cancelled. terminal_seq is 0.
+	CancelOutcome_CANCEL_OUTCOME_CANCELLING CancelOutcome = 3
+)
+
+// Enum value maps for CancelOutcome.
+var (
+	CancelOutcome_name = map[int32]string{
+		0: "CANCEL_OUTCOME_UNSPECIFIED",
+		1: "CANCEL_OUTCOME_CANCELLED",
+		2: "CANCEL_OUTCOME_ALREADY_CANCELLED",
+		3: "CANCEL_OUTCOME_CANCELLING",
+	}
+	CancelOutcome_value = map[string]int32{
+		"CANCEL_OUTCOME_UNSPECIFIED":       0,
+		"CANCEL_OUTCOME_CANCELLED":         1,
+		"CANCEL_OUTCOME_ALREADY_CANCELLED": 2,
+		"CANCEL_OUTCOME_CANCELLING":        3,
+	}
+)
+
+func (x CancelOutcome) Enum() *CancelOutcome {
+	p := new(CancelOutcome)
+	*p = x
+	return p
+}
+
+func (x CancelOutcome) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CancelOutcome) Descriptor() protoreflect.EnumDescriptor {
+	return file_fuse_loop_v1_loop_proto_enumTypes[0].Descriptor()
+}
+
+func (CancelOutcome) Type() protoreflect.EnumType {
+	return &file_fuse_loop_v1_loop_proto_enumTypes[0]
+}
+
+func (x CancelOutcome) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CancelOutcome.Descriptor instead.
+func (CancelOutcome) EnumDescriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{0}
+}
 
 // Ceilings are strict: a spec value equal to the ceiling's value is refused.
 type CeilingDirection int32
@@ -72,11 +129,11 @@ func (x CeilingDirection) String() string {
 }
 
 func (CeilingDirection) Descriptor() protoreflect.EnumDescriptor {
-	return file_fuse_loop_v1_loop_proto_enumTypes[0].Descriptor()
+	return file_fuse_loop_v1_loop_proto_enumTypes[1].Descriptor()
 }
 
 func (CeilingDirection) Type() protoreflect.EnumType {
-	return &file_fuse_loop_v1_loop_proto_enumTypes[0]
+	return &file_fuse_loop_v1_loop_proto_enumTypes[1]
 }
 
 func (x CeilingDirection) Number() protoreflect.EnumNumber {
@@ -85,7 +142,7 @@ func (x CeilingDirection) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CeilingDirection.Descriptor instead.
 func (CeilingDirection) EnumDescriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{0}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{1}
 }
 
 // StartLoopRequest carries loop-scoped secret values in clear (secrets). Never
@@ -452,6 +509,141 @@ func (*SendResponse) Descriptor() ([]byte, []int) {
 	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{4}
 }
 
+type CancelLoopRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	LoopId string                 `protobuf:"bytes,1,opt,name=loop_id,json=loopId,proto3" json:"loop_id,omitempty"`
+	Tenant string                 `protobuf:"bytes,2,opt,name=tenant,proto3" json:"tenant,omitempty"` // same pass-through rule as SendRequest.tenant
+	// reason is free text the caller records with the cancel (at most 256 bytes,
+	// no control characters; InvalidArgument otherwise). Optional.
+	Reason        string `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelLoopRequest) Reset() {
+	*x = CancelLoopRequest{}
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelLoopRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelLoopRequest) ProtoMessage() {}
+
+func (x *CancelLoopRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelLoopRequest.ProtoReflect.Descriptor instead.
+func (*CancelLoopRequest) Descriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *CancelLoopRequest) GetLoopId() string {
+	if x != nil {
+		return x.LoopId
+	}
+	return ""
+}
+
+func (x *CancelLoopRequest) GetTenant() string {
+	if x != nil {
+		return x.Tenant
+	}
+	return ""
+}
+
+func (x *CancelLoopRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type CancelLoopResponse struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Outcome CancelOutcome          `protobuf:"varint,1,opt,name=outcome,proto3,enum=fuse.loop.v1.CancelOutcome" json:"outcome,omitempty"`
+	// true when this cancel interrupted a running or parked loop; false when it
+	// sealed a loop that had already finished or been idle-reaped.
+	WasLive bool `protobuf:"varint,2,opt,name=was_live,json=wasLive,proto3" json:"was_live,omitempty"`
+	// seq of the loop.cancelled event; 0 when outcome is CANCELLING or the store
+	// cannot report it.
+	TerminalSeq uint64 `protobuf:"varint,3,opt,name=terminal_seq,json=terminalSeq,proto3" json:"terminal_seq,omitempty"`
+	// The recorded reason (the original one on ALREADY_CANCELLED).
+	Reason        string `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelLoopResponse) Reset() {
+	*x = CancelLoopResponse{}
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelLoopResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelLoopResponse) ProtoMessage() {}
+
+func (x *CancelLoopResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelLoopResponse.ProtoReflect.Descriptor instead.
+func (*CancelLoopResponse) Descriptor() ([]byte, []int) {
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *CancelLoopResponse) GetOutcome() CancelOutcome {
+	if x != nil {
+		return x.Outcome
+	}
+	return CancelOutcome_CANCEL_OUTCOME_UNSPECIFIED
+}
+
+func (x *CancelLoopResponse) GetWasLive() bool {
+	if x != nil {
+		return x.WasLive
+	}
+	return false
+}
+
+func (x *CancelLoopResponse) GetTerminalSeq() uint64 {
+	if x != nil {
+		return x.TerminalSeq
+	}
+	return 0
+}
+
+func (x *CancelLoopResponse) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 type ObserveRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	LoopId        string                 `protobuf:"bytes,1,opt,name=loop_id,json=loopId,proto3" json:"loop_id,omitempty"`
@@ -463,7 +655,7 @@ type ObserveRequest struct {
 
 func (x *ObserveRequest) Reset() {
 	*x = ObserveRequest{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[5]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -475,7 +667,7 @@ func (x *ObserveRequest) String() string {
 func (*ObserveRequest) ProtoMessage() {}
 
 func (x *ObserveRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[5]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -488,7 +680,7 @@ func (x *ObserveRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ObserveRequest.ProtoReflect.Descriptor instead.
 func (*ObserveRequest) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{5}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ObserveRequest) GetLoopId() string {
@@ -524,7 +716,7 @@ type ObserveEvent struct {
 
 func (x *ObserveEvent) Reset() {
 	*x = ObserveEvent{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[6]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -536,7 +728,7 @@ func (x *ObserveEvent) String() string {
 func (*ObserveEvent) ProtoMessage() {}
 
 func (x *ObserveEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[6]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -549,7 +741,7 @@ func (x *ObserveEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ObserveEvent.ProtoReflect.Descriptor instead.
 func (*ObserveEvent) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{6}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ObserveEvent) GetEvent() *Event {
@@ -591,7 +783,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[7]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -603,7 +795,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[7]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -616,7 +808,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{7}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Event) GetSeq() uint64 {
@@ -687,7 +879,7 @@ type GetCapabilitiesRequest struct {
 
 func (x *GetCapabilitiesRequest) Reset() {
 	*x = GetCapabilitiesRequest{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[8]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -699,7 +891,7 @@ func (x *GetCapabilitiesRequest) String() string {
 func (*GetCapabilitiesRequest) ProtoMessage() {}
 
 func (x *GetCapabilitiesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[8]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -712,7 +904,7 @@ func (x *GetCapabilitiesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCapabilitiesRequest.ProtoReflect.Descriptor instead.
 func (*GetCapabilitiesRequest) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{8}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GetCapabilitiesRequest) GetTenant() string {
@@ -751,7 +943,7 @@ type GetCapabilitiesResponse struct {
 
 func (x *GetCapabilitiesResponse) Reset() {
 	*x = GetCapabilitiesResponse{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[9]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -763,7 +955,7 @@ func (x *GetCapabilitiesResponse) String() string {
 func (*GetCapabilitiesResponse) ProtoMessage() {}
 
 func (x *GetCapabilitiesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[9]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -776,7 +968,7 @@ func (x *GetCapabilitiesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCapabilitiesResponse.ProtoReflect.Descriptor instead.
 func (*GetCapabilitiesResponse) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{9}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GetCapabilitiesResponse) GetModels() []*ModelInfo {
@@ -855,7 +1047,7 @@ type SpecPolicy struct {
 
 func (x *SpecPolicy) Reset() {
 	*x = SpecPolicy{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[10]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -867,7 +1059,7 @@ func (x *SpecPolicy) String() string {
 func (*SpecPolicy) ProtoMessage() {}
 
 func (x *SpecPolicy) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[10]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -880,7 +1072,7 @@ func (x *SpecPolicy) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SpecPolicy.ProtoReflect.Descriptor instead.
 func (*SpecPolicy) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{10}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *SpecPolicy) GetMcpHosts() []string {
@@ -935,7 +1127,7 @@ type ModelInfo struct {
 
 func (x *ModelInfo) Reset() {
 	*x = ModelInfo{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[11]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -947,7 +1139,7 @@ func (x *ModelInfo) String() string {
 func (*ModelInfo) ProtoMessage() {}
 
 func (x *ModelInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[11]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -960,7 +1152,7 @@ func (x *ModelInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModelInfo.ProtoReflect.Descriptor instead.
 func (*ModelInfo) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{11}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ModelInfo) GetAlias() string {
@@ -1043,7 +1235,7 @@ type SkillInfo struct {
 
 func (x *SkillInfo) Reset() {
 	*x = SkillInfo{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[12]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1055,7 +1247,7 @@ func (x *SkillInfo) String() string {
 func (*SkillInfo) ProtoMessage() {}
 
 func (x *SkillInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[12]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1068,7 +1260,7 @@ func (x *SkillInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SkillInfo.ProtoReflect.Descriptor instead.
 func (*SkillInfo) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{12}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SkillInfo) GetName() string {
@@ -1102,7 +1294,7 @@ type Ceiling struct {
 
 func (x *Ceiling) Reset() {
 	*x = Ceiling{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[13]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1114,7 +1306,7 @@ func (x *Ceiling) String() string {
 func (*Ceiling) ProtoMessage() {}
 
 func (x *Ceiling) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[13]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1127,7 +1319,7 @@ func (x *Ceiling) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ceiling.ProtoReflect.Descriptor instead.
 func (*Ceiling) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{13}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Ceiling) GetFieldPath() string {
@@ -1169,7 +1361,7 @@ type ServerInfo struct {
 
 func (x *ServerInfo) Reset() {
 	*x = ServerInfo{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[14]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1181,7 +1373,7 @@ func (x *ServerInfo) String() string {
 func (*ServerInfo) ProtoMessage() {}
 
 func (x *ServerInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[14]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1194,7 +1386,7 @@ func (x *ServerInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerInfo.ProtoReflect.Descriptor instead.
 func (*ServerInfo) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{14}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ServerInfo) GetVersion() string {
@@ -1227,7 +1419,7 @@ type TenantLimits struct {
 
 func (x *TenantLimits) Reset() {
 	*x = TenantLimits{}
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[15]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1239,7 +1431,7 @@ func (x *TenantLimits) String() string {
 func (*TenantLimits) ProtoMessage() {}
 
 func (x *TenantLimits) ProtoReflect() protoreflect.Message {
-	mi := &file_fuse_loop_v1_loop_proto_msgTypes[15]
+	mi := &file_fuse_loop_v1_loop_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1252,7 +1444,7 @@ func (x *TenantLimits) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantLimits.ProtoReflect.Descriptor instead.
 func (*TenantLimits) Descriptor() ([]byte, []int) {
-	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{15}
+	return file_fuse_loop_v1_loop_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *TenantLimits) GetMaxLiveLoops() uint32 {
@@ -1297,6 +1489,15 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\tinterrupt\x18\x04 \x01(\bR\tinterrupt\x12\x16\n" +
 	"\x06source\x18\x05 \x01(\tR\x06source\"\x0e\n" +
 	"\fSendResponse\"\\\n" +
+	"\x11CancelLoopRequest\x12\x17\n" +
+	"\aloop_id\x18\x01 \x01(\tR\x06loopId\x12\x16\n" +
+	"\x06tenant\x18\x02 \x01(\tR\x06tenant\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\"\xa1\x01\n" +
+	"\x12CancelLoopResponse\x125\n" +
+	"\aoutcome\x18\x01 \x01(\x0e2\x1b.fuse.loop.v1.CancelOutcomeR\aoutcome\x12\x19\n" +
+	"\bwas_live\x18\x02 \x01(\bR\awasLive\x12!\n" +
+	"\fterminal_seq\x18\x03 \x01(\x04R\vterminalSeq\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\"\\\n" +
 	"\x0eObserveRequest\x12\x17\n" +
 	"\aloop_id\x18\x01 \x01(\tR\x06loopId\x12\x19\n" +
 	"\bfrom_seq\x18\x02 \x01(\x04R\afromSeq\x12\x16\n" +
@@ -1362,14 +1563,21 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\x10digest_algorithm\x18\x02 \x01(\tR\x0fdigestAlgorithm\"`\n" +
 	"\fTenantLimits\x12$\n" +
 	"\x0emax_live_loops\x18\x01 \x01(\rR\fmaxLiveLoops\x12*\n" +
-	"\x11starts_per_minute\x18\x02 \x01(\rR\x0fstartsPerMinute*k\n" +
+	"\x11starts_per_minute\x18\x02 \x01(\rR\x0fstartsPerMinute*\x92\x01\n" +
+	"\rCancelOutcome\x12\x1e\n" +
+	"\x1aCANCEL_OUTCOME_UNSPECIFIED\x10\x00\x12\x1c\n" +
+	"\x18CANCEL_OUTCOME_CANCELLED\x10\x01\x12$\n" +
+	" CANCEL_OUTCOME_ALREADY_CANCELLED\x10\x02\x12\x1d\n" +
+	"\x19CANCEL_OUTCOME_CANCELLING\x10\x03*k\n" +
 	"\x10CeilingDirection\x12!\n" +
 	"\x1dCEILING_DIRECTION_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15CEILING_DIRECTION_MAX\x10\x01\x12\x19\n" +
-	"\x15CEILING_DIRECTION_MIN\x10\x022\xc1\x02\n" +
+	"\x15CEILING_DIRECTION_MIN\x10\x022\x92\x03\n" +
 	"\vLoopService\x12L\n" +
 	"\tStartLoop\x12\x1e.fuse.loop.v1.StartLoopRequest\x1a\x1f.fuse.loop.v1.StartLoopResponse\x12=\n" +
-	"\x04Send\x12\x19.fuse.loop.v1.SendRequest\x1a\x1a.fuse.loop.v1.SendResponse\x12E\n" +
+	"\x04Send\x12\x19.fuse.loop.v1.SendRequest\x1a\x1a.fuse.loop.v1.SendResponse\x12O\n" +
+	"\n" +
+	"CancelLoop\x12\x1f.fuse.loop.v1.CancelLoopRequest\x1a .fuse.loop.v1.CancelLoopResponse\x12E\n" +
 	"\aObserve\x12\x1c.fuse.loop.v1.ObserveRequest\x1a\x1a.fuse.loop.v1.ObserveEvent0\x01\x12^\n" +
 	"\x0fGetCapabilities\x12$.fuse.loop.v1.GetCapabilitiesRequest\x1a%.fuse.loop.v1.GetCapabilitiesResponseB9Z7github.com/ethanhinson/fuse/internal/loopwire/v1;loopv1b\x06proto3"
 
@@ -1385,58 +1593,64 @@ func file_fuse_loop_v1_loop_proto_rawDescGZIP() []byte {
 	return file_fuse_loop_v1_loop_proto_rawDescData
 }
 
-var file_fuse_loop_v1_loop_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_fuse_loop_v1_loop_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_fuse_loop_v1_loop_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_fuse_loop_v1_loop_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_fuse_loop_v1_loop_proto_goTypes = []any{
-	(CeilingDirection)(0),           // 0: fuse.loop.v1.CeilingDirection
-	(*StartLoopRequest)(nil),        // 1: fuse.loop.v1.StartLoopRequest
-	(*LoopSecret)(nil),              // 2: fuse.loop.v1.LoopSecret
-	(*StartLoopResponse)(nil),       // 3: fuse.loop.v1.StartLoopResponse
-	(*SendRequest)(nil),             // 4: fuse.loop.v1.SendRequest
-	(*SendResponse)(nil),            // 5: fuse.loop.v1.SendResponse
-	(*ObserveRequest)(nil),          // 6: fuse.loop.v1.ObserveRequest
-	(*ObserveEvent)(nil),            // 7: fuse.loop.v1.ObserveEvent
-	(*Event)(nil),                   // 8: fuse.loop.v1.Event
-	(*GetCapabilitiesRequest)(nil),  // 9: fuse.loop.v1.GetCapabilitiesRequest
-	(*GetCapabilitiesResponse)(nil), // 10: fuse.loop.v1.GetCapabilitiesResponse
-	(*SpecPolicy)(nil),              // 11: fuse.loop.v1.SpecPolicy
-	(*ModelInfo)(nil),               // 12: fuse.loop.v1.ModelInfo
-	(*SkillInfo)(nil),               // 13: fuse.loop.v1.SkillInfo
-	(*Ceiling)(nil),                 // 14: fuse.loop.v1.Ceiling
-	(*ServerInfo)(nil),              // 15: fuse.loop.v1.ServerInfo
-	(*TenantLimits)(nil),            // 16: fuse.loop.v1.TenantLimits
-	(*v1.HarnessSpec)(nil),          // 17: fuse.harness.v1.HarnessSpec
-	(*timestamppb.Timestamp)(nil),   // 18: google.protobuf.Timestamp
-	(v1.McpAuthType)(0),             // 19: fuse.harness.v1.McpAuthType
-	(*structpb.Value)(nil),          // 20: google.protobuf.Value
+	(CancelOutcome)(0),              // 0: fuse.loop.v1.CancelOutcome
+	(CeilingDirection)(0),           // 1: fuse.loop.v1.CeilingDirection
+	(*StartLoopRequest)(nil),        // 2: fuse.loop.v1.StartLoopRequest
+	(*LoopSecret)(nil),              // 3: fuse.loop.v1.LoopSecret
+	(*StartLoopResponse)(nil),       // 4: fuse.loop.v1.StartLoopResponse
+	(*SendRequest)(nil),             // 5: fuse.loop.v1.SendRequest
+	(*SendResponse)(nil),            // 6: fuse.loop.v1.SendResponse
+	(*CancelLoopRequest)(nil),       // 7: fuse.loop.v1.CancelLoopRequest
+	(*CancelLoopResponse)(nil),      // 8: fuse.loop.v1.CancelLoopResponse
+	(*ObserveRequest)(nil),          // 9: fuse.loop.v1.ObserveRequest
+	(*ObserveEvent)(nil),            // 10: fuse.loop.v1.ObserveEvent
+	(*Event)(nil),                   // 11: fuse.loop.v1.Event
+	(*GetCapabilitiesRequest)(nil),  // 12: fuse.loop.v1.GetCapabilitiesRequest
+	(*GetCapabilitiesResponse)(nil), // 13: fuse.loop.v1.GetCapabilitiesResponse
+	(*SpecPolicy)(nil),              // 14: fuse.loop.v1.SpecPolicy
+	(*ModelInfo)(nil),               // 15: fuse.loop.v1.ModelInfo
+	(*SkillInfo)(nil),               // 16: fuse.loop.v1.SkillInfo
+	(*Ceiling)(nil),                 // 17: fuse.loop.v1.Ceiling
+	(*ServerInfo)(nil),              // 18: fuse.loop.v1.ServerInfo
+	(*TenantLimits)(nil),            // 19: fuse.loop.v1.TenantLimits
+	(*v1.HarnessSpec)(nil),          // 20: fuse.harness.v1.HarnessSpec
+	(*timestamppb.Timestamp)(nil),   // 21: google.protobuf.Timestamp
+	(v1.McpAuthType)(0),             // 22: fuse.harness.v1.McpAuthType
+	(*structpb.Value)(nil),          // 23: google.protobuf.Value
 }
 var file_fuse_loop_v1_loop_proto_depIdxs = []int32{
-	17, // 0: fuse.loop.v1.StartLoopRequest.harness:type_name -> fuse.harness.v1.HarnessSpec
-	2,  // 1: fuse.loop.v1.StartLoopRequest.secrets:type_name -> fuse.loop.v1.LoopSecret
-	8,  // 2: fuse.loop.v1.ObserveEvent.event:type_name -> fuse.loop.v1.Event
-	18, // 3: fuse.loop.v1.Event.ts:type_name -> google.protobuf.Timestamp
-	12, // 4: fuse.loop.v1.GetCapabilitiesResponse.models:type_name -> fuse.loop.v1.ModelInfo
-	13, // 5: fuse.loop.v1.GetCapabilitiesResponse.skills:type_name -> fuse.loop.v1.SkillInfo
-	14, // 6: fuse.loop.v1.GetCapabilitiesResponse.ceilings:type_name -> fuse.loop.v1.Ceiling
-	19, // 7: fuse.loop.v1.GetCapabilitiesResponse.spec_mcp_auth_kinds:type_name -> fuse.harness.v1.McpAuthType
-	15, // 8: fuse.loop.v1.GetCapabilitiesResponse.server:type_name -> fuse.loop.v1.ServerInfo
-	11, // 9: fuse.loop.v1.GetCapabilitiesResponse.spec_policy:type_name -> fuse.loop.v1.SpecPolicy
-	16, // 10: fuse.loop.v1.GetCapabilitiesResponse.limits:type_name -> fuse.loop.v1.TenantLimits
-	20, // 11: fuse.loop.v1.Ceiling.value:type_name -> google.protobuf.Value
-	0,  // 12: fuse.loop.v1.Ceiling.direction:type_name -> fuse.loop.v1.CeilingDirection
-	1,  // 13: fuse.loop.v1.LoopService.StartLoop:input_type -> fuse.loop.v1.StartLoopRequest
-	4,  // 14: fuse.loop.v1.LoopService.Send:input_type -> fuse.loop.v1.SendRequest
-	6,  // 15: fuse.loop.v1.LoopService.Observe:input_type -> fuse.loop.v1.ObserveRequest
-	9,  // 16: fuse.loop.v1.LoopService.GetCapabilities:input_type -> fuse.loop.v1.GetCapabilitiesRequest
-	3,  // 17: fuse.loop.v1.LoopService.StartLoop:output_type -> fuse.loop.v1.StartLoopResponse
-	5,  // 18: fuse.loop.v1.LoopService.Send:output_type -> fuse.loop.v1.SendResponse
-	7,  // 19: fuse.loop.v1.LoopService.Observe:output_type -> fuse.loop.v1.ObserveEvent
-	10, // 20: fuse.loop.v1.LoopService.GetCapabilities:output_type -> fuse.loop.v1.GetCapabilitiesResponse
-	17, // [17:21] is the sub-list for method output_type
-	13, // [13:17] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	20, // 0: fuse.loop.v1.StartLoopRequest.harness:type_name -> fuse.harness.v1.HarnessSpec
+	3,  // 1: fuse.loop.v1.StartLoopRequest.secrets:type_name -> fuse.loop.v1.LoopSecret
+	0,  // 2: fuse.loop.v1.CancelLoopResponse.outcome:type_name -> fuse.loop.v1.CancelOutcome
+	11, // 3: fuse.loop.v1.ObserveEvent.event:type_name -> fuse.loop.v1.Event
+	21, // 4: fuse.loop.v1.Event.ts:type_name -> google.protobuf.Timestamp
+	15, // 5: fuse.loop.v1.GetCapabilitiesResponse.models:type_name -> fuse.loop.v1.ModelInfo
+	16, // 6: fuse.loop.v1.GetCapabilitiesResponse.skills:type_name -> fuse.loop.v1.SkillInfo
+	17, // 7: fuse.loop.v1.GetCapabilitiesResponse.ceilings:type_name -> fuse.loop.v1.Ceiling
+	22, // 8: fuse.loop.v1.GetCapabilitiesResponse.spec_mcp_auth_kinds:type_name -> fuse.harness.v1.McpAuthType
+	18, // 9: fuse.loop.v1.GetCapabilitiesResponse.server:type_name -> fuse.loop.v1.ServerInfo
+	14, // 10: fuse.loop.v1.GetCapabilitiesResponse.spec_policy:type_name -> fuse.loop.v1.SpecPolicy
+	19, // 11: fuse.loop.v1.GetCapabilitiesResponse.limits:type_name -> fuse.loop.v1.TenantLimits
+	23, // 12: fuse.loop.v1.Ceiling.value:type_name -> google.protobuf.Value
+	1,  // 13: fuse.loop.v1.Ceiling.direction:type_name -> fuse.loop.v1.CeilingDirection
+	2,  // 14: fuse.loop.v1.LoopService.StartLoop:input_type -> fuse.loop.v1.StartLoopRequest
+	5,  // 15: fuse.loop.v1.LoopService.Send:input_type -> fuse.loop.v1.SendRequest
+	7,  // 16: fuse.loop.v1.LoopService.CancelLoop:input_type -> fuse.loop.v1.CancelLoopRequest
+	9,  // 17: fuse.loop.v1.LoopService.Observe:input_type -> fuse.loop.v1.ObserveRequest
+	12, // 18: fuse.loop.v1.LoopService.GetCapabilities:input_type -> fuse.loop.v1.GetCapabilitiesRequest
+	4,  // 19: fuse.loop.v1.LoopService.StartLoop:output_type -> fuse.loop.v1.StartLoopResponse
+	6,  // 20: fuse.loop.v1.LoopService.Send:output_type -> fuse.loop.v1.SendResponse
+	8,  // 21: fuse.loop.v1.LoopService.CancelLoop:output_type -> fuse.loop.v1.CancelLoopResponse
+	10, // 22: fuse.loop.v1.LoopService.Observe:output_type -> fuse.loop.v1.ObserveEvent
+	13, // 23: fuse.loop.v1.LoopService.GetCapabilities:output_type -> fuse.loop.v1.GetCapabilitiesResponse
+	19, // [19:24] is the sub-list for method output_type
+	14, // [14:19] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_fuse_loop_v1_loop_proto_init() }
@@ -1449,8 +1663,8 @@ func file_fuse_loop_v1_loop_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_fuse_loop_v1_loop_proto_rawDesc), len(file_fuse_loop_v1_loop_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   16,
+			NumEnums:      2,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
