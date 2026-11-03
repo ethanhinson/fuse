@@ -78,7 +78,7 @@ func significant(k event.Kind) bool {
 	switch k {
 	case event.KindUserInput, event.KindModelCallEnd, event.KindToolCall, event.KindToolResult,
 		event.KindSpawnStart, event.KindSpawnDone, event.KindError, event.KindLoopParked,
-		event.KindLoopTrip:
+		event.KindLoopTrip, event.KindLoopCancelled:
 		return true
 	}
 	return false
@@ -120,6 +120,8 @@ func state(ring []entry) string {
 		return "stopped on an error"
 	case event.KindModelCallStart:
 		return "waiting on the model"
+	case event.KindLoopCancelled:
+		return "cancelled - it will not run again"
 	}
 	return "between steps (thinking or about to act)"
 }
@@ -179,6 +181,13 @@ func oneLine(e event.Event) string {
 		var p event.LoopParkedPayload
 		_ = json.Unmarshal(e.Payload, &p)
 		return head + ": " + clip(p.Content)
+	case event.KindLoopCancelled:
+		var p event.LoopCancelledPayload
+		_ = json.Unmarshal(e.Payload, &p)
+		if p.Reason == "" {
+			return head
+		}
+		return head + ": " + clip(p.Reason)
 	}
 	return head
 }
