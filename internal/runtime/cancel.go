@@ -23,7 +23,10 @@ import (
 //     loop not live and tears it down;
 //   - a Cancel that lands once the completion goroutine has passed its decision
 //     point (finishing == true: the run already returned) appends
-//     loop.cancelled{was_live:false} itself.
+//     loop.cancelled{was_live:false} itself. Over a durable store the cached loop
+//     is only a leftover, so that Cancel defers to the stream and the registry
+//     instead (cancelFinished): another replica may already have sealed the stream,
+//     or resumed the loop and be running it.
 //
 // Exactly one of them appends. A second Cancel finds the seal already set and
 // reports the first one (AlreadyCancelled) without appending.
@@ -364,6 +367,12 @@ func (r *inProcRuntime) cancelLocal(ctx context.Context, lp *loop, reason, reque
 		waitClosed(wctx, lp.handle.done)
 		return CancelResult{Outcome: CancelOutcomeAlreadyCancelled, WasLive: cs.wasLive, TerminalSeq: r.terminalSeq(cs), Reason: cs.reason}, nil
 	}
+	if lp.finishing && r.deps.DurableStore != nil {
+		// The run already returned, so this process no longer decides alone: the
+		// stream and the registry it shares with other replicas do.
+		r.mu.Unlock()
+		return r.cancelFinished(wctx, lp, reason, requestedBy, requestSeq)
+	}
 	cs := &cancelState{
 		reason:      reason,
 		requestedBy: requestedBy,
@@ -384,8 +393,8 @@ func (r *inProcRuntime) cancelLocal(ctx context.Context, lp *loop, reason, reque
 		return CancelResult{Outcome: CancelOutcomeCancelled, WasLive: true, TerminalSeq: r.terminalSeq(cs), Reason: reason}, nil
 	}
 
-	// The run had already returned: nothing to interrupt, so this call writes the
-	// terminal event that seals the stream.
+	// The run had already returned and no other process shares this loop's stream:
+	// nothing to interrupt, so this call writes the terminal event that seals it.
 	seq := r.appendTerminal(lp, cs)
 	r.mu.Lock()
 	cs.terminalSeq = seq
@@ -395,6 +404,64 @@ func (r *inProcRuntime) cancelLocal(ctx context.Context, lp *loop, reason, reque
 		return CancelResult{Outcome: CancelOutcomeCancelling, Reason: reason}, nil
 	}
 	return CancelResult{Outcome: CancelOutcomeCancelled, TerminalSeq: seq, Reason: reason}, nil
+}
+
+// cancelFinished cancels a cached loop whose run already returned, over a durable
+// store. The cached loop is only a leftover of this replica's run: another replica
+// may have sealed the stream since, or resumed the loop and be running it now. So the
+// stream and the registry decide the outcome, never the cache:
+//
+//   - not live: the stream is sealed through sealNotLive, which reports a terminal
+//     event already there (AlreadyCancelled) instead of appending a second one;
+//   - live: another replica resumed the loop (this one never relaunches a loop it
+//     caches), so the cancel is relayed to it. A request the relay pump handed here
+//     is already in the stream, where that replica's own pump answers it.
+//
+// Once the stream holds the terminal event, lp is sealed in memory with it, so a
+// later cancel here reports it without reading the stream again.
+func (r *inProcRuntime) cancelFinished(ctx context.Context, lp *loop, reason, requestedBy string, requestSeq event.Seq) (CancelResult, error) {
+	// Let the completion record the loop not live first, so a live record below
+	// can only mean another replica runs it.
+	if !waitClosed(ctx, lp.handle.done) {
+		return CancelResult{Outcome: CancelOutcomeCancelling, Reason: reason}, nil
+	}
+	live := false
+	if r.deps.Registry != nil {
+		rec, _, err := r.resolveDurableForDelivery(ctx, lp.key.Tenant, string(lp.key.Loop))
+		if err != nil {
+			return CancelResult{}, err
+		}
+		live = rec.Live
+	}
+	var (
+		res CancelResult
+		err error
+	)
+	switch {
+	case live && requestSeq != 0:
+		return CancelResult{Outcome: CancelOutcomeCancelling, Reason: reason}, nil
+	case live:
+		res, err = r.relayCancel(ctx, lp.key, reason, requestedBy)
+	default:
+		res, err = r.sealNotLive(ctx, lp.key, &event.LoopCancelRequestPayload{Reason: reason, RequestedBy: requestedBy})
+	}
+	if err != nil || res.Outcome == CancelOutcomeCancelling {
+		return res, err
+	}
+	r.mu.Lock()
+	if lp.cancelled == nil {
+		cs := &cancelState{
+			reason:      res.Reason,
+			requestSeq:  requestSeq,
+			wasLive:     res.WasLive,
+			terminalSeq: res.TerminalSeq,
+			sealed:      make(chan struct{}),
+		}
+		close(cs.sealed)
+		lp.cancelled = cs
+	}
+	r.mu.Unlock()
+	return res, nil
 }
 
 // cancelRelayed honours a cancel the relay pump found in lp's stream. A request is

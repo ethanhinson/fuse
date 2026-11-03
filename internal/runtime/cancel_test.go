@@ -1217,3 +1217,113 @@ func TestRelayedSealOfFinishedLoopAppendsNothing(t *testing.T) {
 		t.Fatalf("Cancel after a relayed seal = %+v, want AlreadyCancelled cold @%d", res, seq)
 	}
 }
+
+// A replica keeps a loop that finished on it in its cache. Once another replica has
+// sealed the stream, a cancel here reports that seal (AlreadyCancelled, the stream's
+// terminal event) and appends no second loop.cancelled.
+func TestCancelFinishedCachedLoopSealedElsewhere(t *testing.T) {
+	f := &steerFake{}
+	rtA, rtB, store := twoReplicas(t, f, nil)
+	ctx := context.Background()
+	h, err := rtA.StartLoop(ctx, LoopConfig{Task: "answer", ModelID: "target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := rtB.(Canceller).Cancel(ctx, event.DefaultTenant, h.ID(), "cold", "carol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed.Outcome != CancelOutcomeCancelled || sealed.TerminalSeq == 0 {
+		t.Fatalf("seal on B = %+v, want Cancelled with a seq", sealed)
+	}
+	n := len(streamOf(t, store, event.DefaultTenant, h.ID()))
+
+	if rtA.(*inProcRuntime).loopCache(event.DefaultTenant, h.ID()) == nil {
+		t.Fatal("A must still cache its finished loop")
+	}
+	for i := 0; i < 2; i++ {
+		res, err := rtA.(Canceller).Cancel(ctx, event.DefaultTenant, h.ID(), "late", "dave")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Outcome != CancelOutcomeAlreadyCancelled || res.WasLive || res.TerminalSeq != sealed.TerminalSeq || res.Reason != "cold" {
+			t.Fatalf("cancel %d on A = %+v, want AlreadyCancelled cold @%d", i, res, sealed.TerminalSeq)
+		}
+	}
+	evs := streamOf(t, store, event.DefaultTenant, h.ID())
+	if k := countKind(evs, event.KindLoopCancelled); k != 1 || len(evs) != n {
+		t.Fatalf("A's cancel appended: %d loop.cancelled, %d -> %d events", k, n, len(evs))
+	}
+	if err := rtA.Send(ctx, event.DefaultTenant, h.ID(), "hi"); !errors.Is(err, ErrLoopCancelled) {
+		t.Fatalf("Send on A after the seal = %v, want ErrLoopCancelled", err)
+	}
+}
+
+// A loop that finished on A and was then resumed on B runs on B, though A still
+// caches the finished loop. A cancel on A is relayed to B and reports Cancelled only
+// once B unwound the loop and it reads not live.
+func TestCancelFinishedCachedLoopResumedElsewhereRelays(t *testing.T) {
+	f := &steerFake{}
+	rtA, rtB, store := twoReplicasWith(t, f, nil, withCancelWait(5*time.Second))
+	ctx := context.Background()
+	h, err := rtA.StartLoop(ctx, LoopConfig{Task: "answer", ModelID: "target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	hb, err := rtB.Resume(ctx, event.DefaultTenant, h.ID())
+	if err != nil {
+		t.Fatalf("Resume on B: %v", err)
+	}
+	if !isLive(t, store, event.DefaultTenant, h.ID()) {
+		t.Fatal("the resumed loop must read live")
+	}
+	if rtA.(*inProcRuntime).loopCache(event.DefaultTenant, h.ID()) == nil {
+		t.Fatal("A must still cache its finished loop")
+	}
+
+	res, err := rtA.(Canceller).Cancel(ctx, event.DefaultTenant, h.ID(), "stop", "erin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != CancelOutcomeCancelled || !res.WasLive || res.Reason != "stop" {
+		t.Fatalf("cancel on A = %+v, want Cancelled, was live, stop", res)
+	}
+	if isLive(t, store, event.DefaultTenant, h.ID()) {
+		t.Fatal("Cancelled reported while the loop still reads live")
+	}
+	waitDone := make(chan struct{})
+	go func() { _, _ = hb.Wait(); close(waitDone) }()
+	select {
+	case <-waitDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("B's resumed loop did not end")
+	}
+
+	evs := streamOf(t, store, event.DefaultTenant, h.ID())
+	reqs := cancelRequests(t, evs)
+	if len(reqs) != 1 || countKind(evs, event.KindLoopCancelled) != 1 || lastKind(evs) != event.KindLoopCancelled {
+		t.Fatalf("want one request and one terminal loop.cancelled, got %d / %d (last %s)",
+			len(reqs), countKind(evs, event.KindLoopCancelled), lastKind(evs))
+	}
+	last := evs[len(evs)-1]
+	if p := cancelledPayload(t, last); !p.WasLive || p.RequestSeq != uint64(reqs[0].Seq) || res.TerminalSeq != last.Seq {
+		t.Fatalf("terminal payload = %+v @%d, result %+v, request @%d", p, last.Seq, res, reqs[0].Seq)
+	}
+
+	again, err := rtA.(Canceller).Cancel(ctx, event.DefaultTenant, h.ID(), "again", "erin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Outcome != CancelOutcomeAlreadyCancelled || again.TerminalSeq != last.Seq {
+		t.Fatalf("repeat cancel on A = %+v, want AlreadyCancelled @%d", again, last.Seq)
+	}
+	if got := len(streamOf(t, store, event.DefaultTenant, h.ID())); got != len(evs) {
+		t.Fatalf("the repeat cancel appended events (%d -> %d)", len(evs), got)
+	}
+}
