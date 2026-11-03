@@ -1,6 +1,6 @@
 # Backlog
 
-**118 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 10 proposed · ⚪ 3 deferred · ✅ 96 done · 🗑️ 7 killed
+**119 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 11 proposed · ⚪ 3 deferred · ✅ 96 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|----|-------|
 | [0117](active/0117-cancel-rpc-on-the-networked-loop-server.md) | Cancel RPC on the networked loop server | `high` | `feat` | [#131](https://github.com/ethanhinson/fuse/pull/131) | awaiting merge |
 
-## 🟡 Proposed (10)
+## 🟡 Proposed (11)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0119](active/0119-send-to-a-loop-cancelled-on-another-replica-says-loop-cancel.md) | Send to a loop cancelled on another replica says loop cancelled | `low` | `fix` | needs-grooming |
 | [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Roles and workers can be tool-less | `medium` | `feat` | needs-grooming |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
 | [0110](active/0110-mark-loopsecret-value-debug-redact-once-protobuf-go-honours.md) | Mark LoopSecret.value debug_redact once protobuf-go honours it | `low` | `feat` | needs-grooming |
@@ -54,6 +55,7 @@ graph TD
   0111
   0116
   0117
+  0119
   0012:::done
   0052:::done
   0063:::done
