@@ -744,11 +744,20 @@ func TestLoopServerRunsAToolLessSpec(t *testing.T) {
 	}
 
 	// The same server, an ordinary spec: the full set, internal tools included.
-	h, err = rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: &harnessv1.HarnessSpec{MaxTurns: &one}})
+	// Positive control: the ordinary spec carries the same MCP server and does reach it.
+	h, err = rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: &harnessv1.HarnessSpec{
+		MaxTurns: &one,
+		McpServers: []*harnessv1.McpServer{{
+			Name: "probe", Transport: harnessv1.McpTransport_MCP_TRANSPORT_HTTP, Url: mcpSrv.URL,
+		}},
+	}})
 	if err != nil {
 		t.Fatalf("StartLoop (ordinary): %v", err)
 	}
 	_, _ = h.Wait()
+	if n := mcpHits.Load(); n == 0 {
+		t.Error("ordinary loop never reached its spec MCP server; the tool-less zero-hit check has no control")
+	}
 	raw.mu.Lock()
 	if len(raw.bodies) != 2 {
 		n := len(raw.bodies)

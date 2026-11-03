@@ -255,6 +255,17 @@ func TestOneShotNoToolsSendsNoTools(t *testing.T) {
 	if n := mcpHits.Load(); n != 0 {
 		t.Errorf("tool-less one-shot reached its configured MCP server %d times, want 0", n)
 	}
+
+	// Positive control: the same MCP config without no_tools does reach the server.
+	if err := os.WriteFile(filepath.Join(dir, "config.yml"), []byte(strings.TrimPrefix(body, "no_tools: true\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errb.Reset()
+	_ = run([]string{"--model", "deepseek-flash", "say hi"}, &out, &errb) // the failing MCP server may fail the run; the hit is the point
+	if n := mcpHits.Load(); n == 0 {
+		t.Errorf("ordinary one-shot never reached its configured MCP server; the tool-less zero-hit check has no control (stderr=%s)", errb.String())
+	}
 }
 
 // TestLoopBaseRegistryToolLess: a tool-less config gets an empty registry and
