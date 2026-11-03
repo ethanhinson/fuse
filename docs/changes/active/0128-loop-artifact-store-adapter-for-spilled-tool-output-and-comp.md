@@ -2,7 +2,7 @@
 id: 128
 slug: 'loop-artifact-store-adapter-for-spilled-tool-output-and-comp'
 title: 'Loop artifact store adapter for spilled tool output and compaction segments'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/loop-artifact-store-adapter-for-spilled-tool-output-and-comp'
 pr:
 blocked_by:
 reconciled: false
