@@ -15,7 +15,7 @@ discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-03-roles-and-workers-can-be-tool-less-design.md'
 plan: 'docs/superpowers/plans/2026-11-03-roles-and-workers-can-be-tool-less.md'
-results:
+results: 'docs/results/2026-11-03-roles-and-workers-can-be-tool-less-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-03-roles-and-workers-can-be-tool-less-design.md](../../superpowers/specs/2026-11-03-roles-and-workers-can-be-tool-less-design.md) |
 | Plan | [2026-11-03-roles-and-workers-can-be-tool-less.md](../../superpowers/plans/2026-11-03-roles-and-workers-can-be-tool-less.md) |
+| Results | [2026-11-03-roles-and-workers-can-be-tool-less-results.md](../../results/2026-11-03-roles-and-workers-can-be-tool-less-results.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
