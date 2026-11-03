@@ -156,7 +156,7 @@ func TestFromYAMLParseErrorNamesSource(t *testing.T) {
 // TestProblems_WorkerWithoutTools pins that a workflow worker with an empty
 // allowlist is refused: a worker inherits nothing from its parent.
 func TestProblems_WorkerWithoutTools(t *testing.T) {
-	const msg = "must name at least one tool (a worker inherits nothing; omit spawn_agent to keep it from nesting)"
+	const msg = "must name at least one tool or set no_tools (a worker inherits nothing; omit spawn_agent to keep it from nesting)"
 
 	cfg := Default()
 	cfg.Workflows["wf"] = WorkflowConfig{Workers: map[string]WorkerConfig{"reader": {Model: "house"}}}
