@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/loop-artifact-store-adapter-for-spilled-tool-output-and-comp'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -44,3 +44,9 @@ One `ArtifactStore` seam, scoped by (tenant, loop), with a local-filesystem impl
 ## Out of scope
 
 Object-storage (S3/GCS) implementation beyond leaving the interface blob-shaped; retention/purge policy; changing truncation thresholds.
+
+## Reconcile log
+
+### 2026-11-03
+
+Unchanged against main 5eb0925: spill/segment globals, nil loop-server SegmentSink and CLI SetSpillDir call sites still match the spec pointers. Change 126 (fenced ownership) builds in parallel; this branch rebases onto origin/main before the PR.
