@@ -128,6 +128,11 @@
     ]
   },
   {
+    "name": "description needs a body",
+    "spec": {"skills": [{"name": "a", "description": "orphan description"}]},
+    "want": [{"fieldPath": "skills[0]", "ruleId": "fuse.skill.description_needs_body"}]
+  },
+  {
     "name": "skill names must be unique",
     "spec": {"skills": [{"name": "a"}, {"name": "a"}]},
     "want": [{"fieldPath": "skills", "ruleId": "fuse.skills.unique_names"}]

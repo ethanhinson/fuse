@@ -325,6 +325,9 @@ func TestSkillRefFieldContract(t *testing.T) {
 	if !hasCEL(msgRules.GetCel(), "fuse.skill.carried_description") {
 		t.Errorf("SkillRef message rules lack fuse.skill.carried_description: %+v", msgRules.GetCel())
 	}
+	if !hasCEL(msgRules.GetCel(), "fuse.skill.description_needs_body") {
+		t.Errorf("SkillRef message rules lack fuse.skill.description_needs_body: %+v", msgRules.GetCel())
+	}
 
 	skills := (&harnessv1.HarnessSpec{}).ProtoReflect().Descriptor().Fields().ByName("skills")
 	listRules, ok := proto.GetExtension(skills.Options(), validate.E_Field).(*validate.FieldRules)

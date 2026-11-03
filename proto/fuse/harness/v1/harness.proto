@@ -301,6 +301,11 @@ message SkillRef {
     message: "a carried skill (one with a body) needs a description"
     expression: "this.body == '' || this.description != ''"
   };
+  option (buf.validate.message).cel = {
+    id: "fuse.skill.description_needs_body"
+    message: "a description is only allowed on a carried skill, which needs a body"
+    expression: "this.description == '' || this.body != ''"
+  };
 
   // Skill name, e.g. `research`.
   string name = 1 [
@@ -314,7 +319,8 @@ message SkillRef {
       widget: WIDGET_TEXT
     }
   ];
-  // One line the model reads when choosing a skill. Required when body is set.
+  // One line the model reads when choosing a skill. Required when body is set;
+  // allowed only when body is set (a reference entry carries no description).
   string description = 2 [
     (buf.validate.field).string = {
       max_len: 1024

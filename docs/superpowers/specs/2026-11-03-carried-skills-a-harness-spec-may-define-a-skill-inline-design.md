@@ -17,6 +17,7 @@ A `HarnessSpec` references skills by name (`SkillRef.name`), and `harnessresolve
   - `string description = 2`: one line, `max_len: 1024`, pattern `^[^\r\n]*$`, ui label "Description", `WIDGET_TEXT`.
   - `string body = 3`: the skill's instructions as markdown, `max_bytes: 32768`, ui label "Instructions", `WIDGET_TEXTAREA`.
   - A CEL rule `fuse.skill.carried_description`: when `body` is non-empty, `description` must be non-empty.
+  - A CEL rule `fuse.skill.description_needs_body`: when `description` is non-empty, `body` must be non-empty (a reference entry carries no description).
   - Message comment rewritten: an entry with only `name` is a reference the runtime resolves against installed skills; an entry with `body` is a *carried skill* the spec defines, run exactly as carried.
 - `HarnessSpec.skills` gains `max_items: 64`, CEL `fuse.skills.unique_names` (names unique, like `mcp_servers`) and CEL `fuse.skills.carried_max` (at most 16 entries with a non-empty body).
 - `GetCapabilitiesResponse.SpecPolicy` (`proto/fuse/loop/v1/loop.proto`) gains `bool carried_skills_allowed = 4`.
@@ -53,7 +54,7 @@ A `HarnessSpec` references skills by name (`SkillRef.name`), and `harnessresolve
 
 - A spec whose `skills` entry has `name`, `description` and `body` validates offline (`harness.Validate`), is accepted by `StartLoop` on a server with no installed skills, appears in the loop's system-prompt skill listing, and the `skill` tool returns its body; `StartLoopResponse.harness_digest` differs when only the body changes.
 - The same name carried and installed: the loop gets the carried body; an entry without a body naming an uninstalled skill is still refused at `skills[i].name`.
-- Shape violations with stable rule ids for: body over 32768 bytes, description over 1024 chars or containing a newline, body without description, more than 16 carried entries, duplicate names, more than 64 entries. Semantic violation for carried total over 256 KiB. `shape_parity_test` passes.
+- Shape violations with stable rule ids for: body over 32768 bytes, description over 1024 chars or containing a newline, body without description, description without body, more than 16 carried entries, duplicate names, more than 64 entries. Semantic violation for carried total over 256 KiB. `shape_parity_test` passes.
 - With `loop_server.spec_policy.carried_skills: false`, a carried entry is refused with `fuse.skills.carried_refused` and `GetCapabilities` reports `carried_skills_allowed: false`; default config reports true.
 - `loop.harness` for such a loop contains the carried skill; a digest-pinned token for the spec starts it and refuses a spec with an edited body.
 - Tests cover parser-less construction of carried skills, `Set` composition order and shadowing, resolver paths, capabilities mapping and config validation. Docs and ADR updated.

@@ -784,7 +784,8 @@ type SkillRef struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Skill name, e.g. `research`.
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// One line the model reads when choosing a skill. Required when body is set.
+	// One line the model reads when choosing a skill. Required when body is set;
+	// allowed only when body is set (a reference entry carries no description).
 	Description string `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
 	// The skill's instructions as markdown. Set: this entry is a carried skill.
 	Body          string `protobuf:"bytes,3,opt,name=body,proto3" json:"body,omitempty"`
@@ -2424,7 +2425,7 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\apersona\x18\x04 \x01(\tB\x16\xbaH\x04r\x02\x18@\xa2\x9f\x19\v\n" +
 	"\aPersona\x18\x01R\apersona\x12\x90\x01\n" +
 	"\rsystem_prefix\x18\x05 \x01(\tBk\xbaH\x05r\x03\x18\x80 \xa2\x9f\x19_\n" +
-	"\rSystem prefix\x12LText placed before the persona system prompt, for model-specific directives.\x18\x02R\fsystemPrefix\"\xd8\x02\n" +
+	"\rSystem prefix\x12LText placed before the persona system prompt, for model-specific directives.\x18\x02R\fsystemPrefix\"\xef\x03\n" +
 	"\bSkillRef\x12B\n" +
 	"\x04name\x18\x01 \x01(\tB.\xbaH\x1er\x1c\x10\x01\x18\x80\x012\x15^[a-z0-9][a-z0-9_-]*$\xa2\x9f\x19\t\n" +
 	"\x05Skill\x18\x01R\x04name\x12I\n" +
@@ -2432,8 +2433,9 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"^[^\\r\\n]*$\xa2\x9f\x19\x0f\n" +
 	"\vDescription\x18\x01R\vdescription\x121\n" +
 	"\x04body\x18\x03 \x01(\tB\x1d\xbaH\x06r\x04(\x80\x80\x02\xa2\x9f\x19\x10\n" +
-	"\fInstructions\x18\x02R\x04body:\x89\x01\xbaH\x85\x01\x1a\x82\x01\n" +
-	"\x1efuse.skill.carried_description\x125a carried skill (one with a body) needs a description\x1a)this.body == '' || this.description != ''\"\xfa\x03\n" +
+	"\fInstructions\x18\x02R\x04body:\xa0\x02\xbaH\x9c\x02\x1a\x82\x01\n" +
+	"\x1efuse.skill.carried_description\x125a carried skill (one with a body) needs a description\x1a)this.body == '' || this.description != ''\x1a\x94\x01\n" +
+	"!fuse.skill.description_needs_body\x12Da description is only allowed on a carried skill, which needs a body\x1a)this.description == '' || this.body != ''\"\xfa\x03\n" +
 	"\tMcpServer\x12F\n" +
 	"\x04name\x18\x01 \x01(\tB2\xbaH#r!\x10\x01\x18@2\x1b^[A-Za-z0-9][A-Za-z0-9_-]*$\xa2\x9f\x19\b\n" +
 	"\x04Name\x18\x01R\x04name\x12X\n" +

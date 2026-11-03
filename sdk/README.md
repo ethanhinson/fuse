@@ -121,9 +121,10 @@ and returned by the `skill` tool like an installed skill, but it has no slash co
 carried skill shadows an installed skill of the same name for that loop only. Carried
 skills grant no tools and change no permissions.
 
-Limits: `description` is one line of at most 1024 characters (required when `body` is
-set); `body` is at most 32768 bytes; a spec lists at most 64 entries, at most 16 of them
-carried, with unique names; the carried bodies together are at most 262144 bytes
+Limits: `description` is one line of at most 1024 characters, required when `body` is
+set (`fuse.skill.carried_description`) and rejected without one
+(`fuse.skill.description_needs_body`); `body` is at most 32768 bytes; a spec lists at
+most 64 entries, at most 16 of them carried, with unique names; the carried bodies together are at most 262144 bytes
 (`fuse.skills.carried_bytes`).
 
 Carried skills are part of the spec digest and the `loop.harness` record, so a
