@@ -1,6 +1,6 @@
 # Backlog
 
-**126 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 16 proposed · ⚪ 3 deferred · ✅ 98 done · 🗑️ 7 killed
+**127 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 17 proposed · ⚪ 3 deferred · ✅ 98 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|------|-----------|
 | [0126](active/0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) | build-ready |
 
-## 🟡 Proposed (16)
+## 🟡 Proposed (17)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0127](active/0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | `high` | `fix` | needs-grooming |
 | [0125](active/0125-stop-the-current-turn-of-an-interactive-loop-without-ending.md) | Stop the current turn of an interactive loop without ending it | `low` | `feat` | needs-grooming |
 | [0124](active/0124-the-expects-hint-composes-with-role-and-tool-less-prompts.md) | The expects hint composes with role and tool-less prompts | `medium` | `fix` | needs-grooming |
 | [0123](active/0123-observe-marks-where-replay-ends-and-live-events-begin.md) | Observe marks where replay ends and live events begin | `low` | `feat` | needs-grooming |
@@ -66,6 +67,7 @@ graph TD
   0124
   0125
   0126
+  0127
   0012:::done
   0052:::done
   0063:::done
