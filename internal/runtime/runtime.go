@@ -149,6 +149,16 @@ type Canceller interface {
 	Cancel(ctx context.Context, tenant event.TenantID, loopID, reason, requestedBy string) (CancelResult, error)
 }
 
+// CancelReader is an optional Runtime capability: report whether a loop is
+// sealed by a cancel, without changing anything. A loop this process caches
+// answers from its in-memory seal; any other loop reads its durable stream, where
+// loop.cancelled or a loop.cancel.request nobody answered both mean cancelled (a
+// resume would refuse it with ErrLoopCancelled). An unknown or wrong-tenant loop
+// reads not cancelled. A binding type-asserts for it.
+type CancelReader interface {
+	IsCancelled(ctx context.Context, tenant event.TenantID, loopID string) (bool, error)
+}
+
 // SendOrSteer delivers input to a loop through the Steerer capability when rt has it,
 // and through plain Send otherwise (so an interrupt request degrades to an ordinary
 // next-boundary message on a runtime that cannot interrupt). Bindings call this

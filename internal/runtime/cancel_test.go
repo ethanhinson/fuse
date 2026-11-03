@@ -1373,3 +1373,33 @@ func TestRelayedSealOfRunningLoopMarksSecondTerminalSuperseded(t *testing.T) {
 		t.Fatalf("the owner's second terminal = %+v, want superseded and was_live", p)
 	}
 }
+
+// IsCancelled reads the seal from the durable stream on a replica that never held
+// the loop: loop.cancelled or an unanswered loop.cancel.request reads cancelled,
+// without appending anything; a merely finished loop does not.
+func TestIsCancelledColdReplica(t *testing.T) {
+	f := &steerFake{}
+	rtA, rtB, store := twoReplicas(t, f, nil)
+	ctx := context.Background()
+	cr := rtB.(CancelReader)
+
+	id := parkAndShutdown(t, rtA, store)
+	if got, err := cr.IsCancelled(ctx, event.DefaultTenant, id); err != nil || got {
+		t.Fatalf("finished loop IsCancelled = %v, %v; want false, nil", got, err)
+	}
+	appendRaw(t, store, id, event.KindLoopCancelRequest, event.LoopCancelRequestPayload{Reason: "r", RequestedBy: "bob"})
+	n := len(streamOf(t, store, event.DefaultTenant, id))
+	if got, err := cr.IsCancelled(ctx, event.DefaultTenant, id); err != nil || !got {
+		t.Fatalf("unanswered request IsCancelled = %v, %v; want true, nil", got, err)
+	}
+	if got := len(streamOf(t, store, event.DefaultTenant, id)); got != n {
+		t.Fatalf("IsCancelled appended events (%d -> %d)", n, got)
+	}
+	appendRaw(t, store, id, event.KindLoopCancelled, event.LoopCancelledPayload{Reason: "r"})
+	if got, err := cr.IsCancelled(ctx, event.DefaultTenant, id); err != nil || !got {
+		t.Fatalf("cancelled stream IsCancelled = %v, %v; want true, nil", got, err)
+	}
+	if got, err := cr.IsCancelled(ctx, "other", id); err != nil || got {
+		t.Fatalf("other tenant IsCancelled = %v, %v; want false, nil", got, err)
+	}
+}

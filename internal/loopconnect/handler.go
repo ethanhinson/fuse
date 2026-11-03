@@ -582,6 +582,17 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 	if errors.Is(err, runtime.ErrLoopFinished) {
 		release, lerr := h.limits.Admit(ctx, tenant)
 		if lerr != nil {
+			// The cap guards reviving a loop, and a cancelled loop is never revived:
+			// when the admission is refused, a loop whose stream is sealed by a cancel
+			// still answers "loop cancelled", not the limit. Only a refusal pays for
+			// the stream read; an admitted resume learns it from Resume as before.
+			if cr, ok := h.rt.(runtime.CancelReader); ok {
+				if sealed, rerr := cr.IsCancelled(ctx, tenant, m.LoopId); rerr == nil && sealed {
+					cerr := connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%w: %q", runtime.ErrLoopCancelled, m.LoopId))
+					apiOutcome = observeotel.OutcomeFromError(ctx, cerr)
+					return nil, cerr
+				}
+			}
 			cerr := limitError(lerr)
 			apiOutcome = observeotel.OutcomeFromError(ctx, cerr)
 			return nil, cerr

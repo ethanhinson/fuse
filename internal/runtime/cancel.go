@@ -84,6 +84,29 @@ func (r *inProcRuntime) isCancelled(lp *loop) bool {
 	return lp.cancelled != nil
 }
 
+var _ CancelReader = (*inProcRuntime)(nil)
+
+// IsCancelled reports whether the loop is sealed by a cancel. See CancelReader.
+// Unlike a resume it never answers an unanswered loop.cancel.request: it only reads.
+func (r *inProcRuntime) IsCancelled(ctx context.Context, tenant event.TenantID, loopID string) (bool, error) {
+	if lp := r.loopCache(tenant, loopID); lp != nil {
+		return r.isCancelled(lp), nil
+	}
+	if r.deps.DurableStore == nil {
+		return false, nil
+	}
+	key := event.StreamKey{Tenant: event.NormalizeTenant(tenant), Loop: event.LoopID(loopID)}
+	evs, err := r.deps.DurableStore.Replay(ctx, key, 0)
+	if err != nil {
+		return false, fmt.Errorf("runtime: cancel read replay: %w", err)
+	}
+	if _, _, ok := firstCancelled(evs); ok {
+		return true, nil
+	}
+	_, _, ok := pendingCancel(evs)
+	return ok, nil
+}
+
 // Cancel stops a loop and seals it. See Canceller.
 func (r *inProcRuntime) Cancel(ctx context.Context, tenant event.TenantID, loopID, reason, requestedBy string) (CancelResult, error) {
 	if lp := r.loopCache(tenant, loopID); lp != nil {
