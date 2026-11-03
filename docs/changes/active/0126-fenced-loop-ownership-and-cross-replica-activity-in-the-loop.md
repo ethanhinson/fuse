@@ -2,7 +2,7 @@
 id: 126
 slug: 'fenced-loop-ownership-and-cross-replica-activity-in-the-loop'
 title: 'Fenced loop ownership and cross-replica activity in the loop registry'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/fenced-loop-ownership-and-cross-replica-activity-in-the-loop'
 pr:
 blocked_by:
 reconciled: false
