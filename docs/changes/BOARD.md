@@ -1,6 +1,6 @@
 # Backlog
 
-**123 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 14 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
+**124 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 15 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|----|-------|
 | [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Tool-less loops, roles and workers | `high` | `feat` | [#132](https://github.com/ethanhinson/fuse/pull/132) | awaiting merge |
 
-## 🟡 Proposed (14)
+## 🟡 Proposed (15)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0124](active/0124-the-expects-hint-composes-with-role-and-tool-less-prompts.md) | The expects hint composes with role and tool-less prompts | `medium` | `fix` | needs-grooming |
 | [0123](active/0123-observe-marks-where-replay-ends-and-live-events-begin.md) | Observe marks where replay ends and live events begin | `low` | `feat` | needs-grooming |
 | [0122](active/0122-spawn-start-names-the-worker-a-child-was-bound-to.md) | spawn.start names the worker a child was bound to | `low` | `feat` | needs-grooming |
 | [0121](active/0121-go-sdk-cancel-a-loop.md) | Go SDK: cancel a loop | `low` | `feat` | needs-grooming |
@@ -62,6 +63,7 @@ graph TD
   0121
   0122
   0123
+  0124
   0012:::done
   0052:::done
   0063:::done
