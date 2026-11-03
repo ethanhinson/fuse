@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -301,4 +302,57 @@ func TestFSStoreListMissingIsEmpty(t *testing.T) {
 	if err != nil || len(list) != 0 {
 		t.Fatalf("List = %v, %v; want empty, nil", list, err)
 	}
+}
+
+// rootedPath matches an absolute host path anywhere in an error string ("art://"
+// refs are not rooted: their '/' follows a ':').
+var rootedPath = regexp.MustCompile(`(^|[\s"'(=])/[^/\s]`)
+
+// TestFSStoreErrorsNameNoHostPath: an I/O failure other than "not exist"
+// (here EACCES on the kind directory) must not carry the base directory, or
+// any absolute path, into the error: tools write store errors into durable
+// tool results.
+func TestFSStoreErrorsNameNoHostPath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	ctx := context.Background()
+	base := t.TempDir()
+	s := fsstore.New(base)
+	r := ref("acme", "l1", artifact.KindSpill, "x1")
+	mustPut(t, s, r, "body")
+	kindDir := filepath.Join(base, "acme", "l1", "spill")
+	if err := os.Chmod(kindDir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(kindDir, 0o700) })
+
+	check := func(op string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatalf("%s: err = nil, want a permission failure", op)
+		}
+		if errors.Is(err, artifact.ErrNotFound) {
+			t.Fatalf("%s: err = %v, want a permission failure, not ErrNotFound", op, err)
+		}
+		if !errors.Is(err, fs.ErrPermission) {
+			t.Errorf("%s: err = %v, want errors.Is fs.ErrPermission preserved", op, err)
+		}
+		msg := err.Error()
+		if strings.Contains(msg, base) || rootedPath.MatchString(msg) {
+			t.Errorf("%s: error names a host path: %q", op, msg)
+		}
+		var pe *fs.PathError
+		var le *os.LinkError
+		if errors.As(err, &pe) || errors.As(err, &le) {
+			t.Errorf("%s: error chain still carries a path-bearing error: %#v", op, err)
+		}
+	}
+
+	_, _, err := s.Open(ctx, r)
+	check("Open", err)
+	_, err = s.List(ctx, "acme", "l1", artifact.KindSpill)
+	check("List", err)
+	_, err = s.Put(ctx, ref("acme", "l1", artifact.KindSpill, "x2"), strings.NewReader("b"), artifact.Meta{})
+	check("Put", err)
 }

@@ -78,7 +78,9 @@ func (segmentReadTool) Execute(ctx context.Context, args string) Result {
 
 	idx, err := src.ReadIndex(ctx)
 	if err != nil {
-		return Result{IsError: true, Output: fmt.Sprintf("segment_read: reading index: %v", err)}
+		// Fixed text: the store error can name a backend's host path, and the
+		// tool result is durable.
+		return Result{IsError: true, Output: "segment_read: reading the segment index failed"}
 	}
 
 	// Overlapping segments, oldest turn first for a stable, readable order.

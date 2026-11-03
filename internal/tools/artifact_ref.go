@@ -25,6 +25,28 @@ func artifactNotFound(path string) error {
 	return fmt.Errorf("artifact not found: %s", path)
 }
 
+// artifactIOError is a store or decode failure reported to the model. Its text
+// is fixed and names only the ref: the underlying error can carry a backend's
+// host path (a filesystem store's EACCES or EIO names its tenant tree), and tool
+// output is durable. The cause stays reachable through Unwrap for callers.
+type artifactIOError struct {
+	msg string
+	err error
+}
+
+func (e *artifactIOError) Error() string { return e.msg }
+func (e *artifactIOError) Unwrap() error { return e.err }
+
+// artifactFailed builds the fixed "<what> failed: <ref>" error. Only the size
+// cap, a sentinel with no path in it, is named, so the model knows to narrow.
+func artifactFailed(what, path string, err error) error {
+	msg := fmt.Sprintf("%s failed: %s", what, path)
+	if errors.Is(err, artifact.ErrTooLarge) {
+		msg += ": exceeds the artifact size cap"
+	}
+	return &artifactIOError{msg: msg, err: err}
+}
+
 // readArtifact resolves path when it is an art:// ref. handled is false for any
 // other path, so the caller falls back to the filesystem. The ref is resolved
 // only through the loop's binding on ctx, and the body is gunzipped when it
@@ -46,21 +68,21 @@ func readArtifact(ctx context.Context, path string) (data []byte, handled bool, 
 		if errors.Is(err, artifact.ErrNotFound) || errors.Is(err, artifact.ErrInvalidRef) {
 			return nil, true, artifactNotFound(path)
 		}
-		return nil, true, fmt.Errorf("artifact read failed: %s: %w", path, err)
+		return nil, true, artifactFailed("artifact read", path, err)
 	}
 	defer rc.Close()
 	body, err := readLimited(rc)
 	if err != nil {
-		return nil, true, fmt.Errorf("artifact read failed: %s: %w", path, err)
+		return nil, true, artifactFailed("artifact read", path, err)
 	}
 	if isGzipMagic(body) {
 		zr, err := gzip.NewReader(bytes.NewReader(body))
 		if err != nil {
-			return nil, true, fmt.Errorf("gzip open: %w", err)
+			return nil, true, artifactFailed("artifact read", path, err)
 		}
 		defer zr.Close()
 		if body, err = readLimited(zr); err != nil {
-			return nil, true, fmt.Errorf("gzip read: %w", err)
+			return nil, true, artifactFailed("artifact read", path, err)
 		}
 	}
 	return body, true, nil
@@ -111,7 +133,7 @@ func listArtifacts(ctx context.Context, path string) (string, bool, error) {
 	for _, k := range kinds {
 		metas, err := b.List(ctx, k)
 		if err != nil {
-			return "", true, fmt.Errorf("artifact list failed: %s: %w", path, err)
+			return "", true, artifactFailed("artifact list", path, err)
 		}
 		for _, m := range metas {
 			if p.ID != "" && m.Ref.ID != p.ID {

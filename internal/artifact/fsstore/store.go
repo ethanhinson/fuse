@@ -113,11 +113,12 @@ func (s *Store) paths(ref artifact.Ref) (body, meta string) {
 // uncompressed bytes against artifact.MaxArtifactBytes, then renames the body
 // and then the meta into place. Any failure removes the temp files, so a
 // refused or broken Put leaves no body and no meta behind.
-func (s *Store) Put(ctx context.Context, ref artifact.Ref, r io.Reader, meta artifact.Meta) (artifact.Meta, error) {
-	ref, err := checkRef(ref, true)
+func (s *Store) Put(ctx context.Context, ref artifact.Ref, r io.Reader, meta artifact.Meta) (_ artifact.Meta, err error) {
+	ref, err = checkRef(ref, true)
 	if err != nil {
 		return artifact.Meta{}, err
 	}
+	defer func() { err = scrubPath(ref.String(), err) }()
 	if err := ctx.Err(); err != nil {
 		return artifact.Meta{}, err
 	}
@@ -229,11 +230,12 @@ func writeTemp(dir, id string, fill func(io.Writer) error) (_ string, err error)
 // Open returns the gunzipped body. A missing body or meta is ErrNotFound, and
 // so is a meta that names any ref other than the one requested: the full key is
 // re-asserted against what is on disk, never inferred from the path alone.
-func (s *Store) Open(ctx context.Context, ref artifact.Ref) (io.ReadCloser, artifact.Meta, error) {
-	ref, err := checkRef(ref, false)
+func (s *Store) Open(ctx context.Context, ref artifact.Ref) (_ io.ReadCloser, _ artifact.Meta, err error) {
+	ref, err = checkRef(ref, false)
 	if err != nil {
 		return nil, artifact.Meta{}, err
 	}
+	defer func() { err = scrubPath(ref.String(), err) }()
 	if err := ctx.Err(); err != nil {
 		return nil, artifact.Meta{}, err
 	}
@@ -260,16 +262,19 @@ func (s *Store) Open(ctx context.Context, ref artifact.Ref) (io.ReadCloser, arti
 		_ = f.Close()
 		return nil, artifact.Meta{}, fmt.Errorf("artifact: %s: corrupt body: %w", ref, err)
 	}
-	return &gzipFile{Reader: zr, f: f}, meta, nil
+	return &gzipFile{Reader: zr, f: f, scope: ref.String()}, meta, nil
 }
 
 // List returns the (tenant, loop, kind) artifacts ordered by CreatedAt, then
 // ID. A directory that was never written is an empty list.
-func (s *Store) List(ctx context.Context, tenant event.TenantID, loop event.LoopID, kind artifact.Kind) ([]artifact.Meta, error) {
+func (s *Store) List(ctx context.Context, tenant event.TenantID, loop event.LoopID, kind artifact.Kind) (_ []artifact.Meta, err error) {
 	tenant = event.NormalizeTenant(tenant)
 	if err := checkScope(tenant, loop, kind); err != nil {
 		return nil, err
 	}
+	defer func() {
+		err = scrubPath(artifact.Scheme+string(tenant)+"/"+string(loop)+"/"+string(kind), err)
+	}()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -320,6 +325,28 @@ func readMeta(path string) (artifact.Meta, error) {
 	return m, nil
 }
 
+// scrubPath strips the host filesystem path from err. A *fs.PathError or
+// *os.LinkError anywhere in the chain (EACCES, EIO, ENOTDIR, ...) is replaced by
+// "artifact: <scope>: <op>: <errno>", keeping the errno so errors.Is still
+// matches fs.ErrPermission and friends. Callers write store errors into durable
+// tool results, so the base directory and tenant tree layout must never escape
+// through an error string. Errors with no path (sentinels, the caller's reader
+// failure, io.EOF) pass through unchanged.
+func scrubPath(scope string, err error) error {
+	if err == nil {
+		return nil
+	}
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return fmt.Errorf("artifact: %s: %s: %w", scope, pe.Op, pe.Err)
+	}
+	var le *os.LinkError
+	if errors.As(err, &le) {
+		return fmt.Errorf("artifact: %s: %s: %w", scope, le.Op, le.Err)
+	}
+	return err
+}
+
 func notFound(err error) error {
 	if errors.Is(err, fs.ErrNotExist) {
 		return artifact.ErrNotFound
@@ -327,16 +354,23 @@ func notFound(err error) error {
 	return err
 }
 
-// gzipFile closes both the gzip reader and the file under it.
+// gzipFile closes both the gzip reader and the file under it. Read and Close
+// errors are scrubbed of the file's host path like every other store error.
 type gzipFile struct {
 	*gzip.Reader
-	f *os.File
+	f     *os.File
+	scope string
+}
+
+func (g *gzipFile) Read(p []byte) (int, error) {
+	n, err := g.Reader.Read(p)
+	return n, scrubPath(g.scope, err)
 }
 
 func (g *gzipFile) Close() error {
 	zerr := g.Reader.Close()
 	if err := g.f.Close(); err != nil {
-		return err
+		return scrubPath(g.scope, err)
 	}
-	return zerr
+	return scrubPath(g.scope, zerr)
 }
