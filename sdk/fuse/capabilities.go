@@ -27,6 +27,11 @@ type Capabilities struct {
 	SpecPolicy SpecPolicy
 	// Server identifies the server build.
 	Server ServerInfo
+	// SpecFeatures are the HarnessSpec features the server implements, by
+	// name (harness.SpecFeatureNoTools). A server that predates a feature
+	// drops the field and runs the loop without it, so check here before
+	// StartLoop.
+	SpecFeatures []string
 	// Limits are the tenant's effective loop limits on this server, 0 meaning
 	// unlimited. A StartLoop beyond them fails, and the rate refusal tells the
 	// caller when to retry.

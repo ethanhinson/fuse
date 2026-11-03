@@ -305,6 +305,13 @@ export interface Client {
    * loop:cancel scope (or loop:admin).
    */
   cancel(loopId: string, reason?: string): Promise<CancelResult>;
+  /**
+   * specFeatures lists the HarnessSpec features the server implements beyond the fields every
+   * server accepts (today "no_tools"). A server that predates a feature drops the field and runs
+   * the loop without it, so check before startLoop. A server that does not answer
+   * GetCapabilities resolves to [] (assume no such feature).
+   */
+  specFeatures(): Promise<string[]>;
 }
 
 function bearerInterceptor(token: string): Interceptor {
@@ -429,6 +436,18 @@ export function createClient(options: ClientOptions): Client {
         terminalSeq: resp.terminalSeq,
         reason: resp.reason,
       };
+    },
+
+    async specFeatures(): Promise<string[]> {
+      try {
+        const resp = await wire.getCapabilities({ tenant });
+        return [...resp.specFeatures];
+      } catch (err) {
+        if (err instanceof ConnectError && err.code === Code.Unimplemented) {
+          return [];
+        }
+        throw err;
+      }
     },
 
     observe(loopId: string, arg?: bigint | ObserveOptions): AsyncIterable<Event> {

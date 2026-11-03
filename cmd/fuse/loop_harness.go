@@ -5,6 +5,7 @@ import (
 	"io"
 	"reflect"
 
+	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/capabilities"
@@ -71,6 +72,7 @@ func (h *loopServerHost) Capabilities(ctx context.Context, tenant event.TenantID
 		SpecMCPAuthKinds: harnessresolve.SpecMCPAuthKinds(),
 		SpecPolicy:       harnessresolve.SpecPolicyOf(h.operator.cfg.LoopServer.SpecPolicy),
 		Server:           capabilities.ServerInfo(),
+		SpecFeatures:     harness.SpecFeatures(),
 	}, nil
 }
 

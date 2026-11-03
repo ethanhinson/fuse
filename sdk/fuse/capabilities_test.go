@@ -70,6 +70,7 @@ func fullInternalCaps() capabilities.Capabilities {
 		SpecMCPAuthKinds: []harnessv1.McpAuthType{harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER},
 		SpecPolicy:       capabilities.SpecPolicy{CarriedSkillsAllowed: true},
 		Server:           capabilities.Server{Version: "v1.2.3", DigestAlgorithm: "sha256"},
+		SpecFeatures:     []string{"no_tools"},
 	}
 }
 
@@ -104,6 +105,7 @@ func TestRemoteCapabilities(t *testing.T) {
 		SpecMCPAuthKinds: []harnessv1.McpAuthType{harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER},
 		SpecPolicy:       SpecPolicy{CarriedSkillsAllowed: true},
 		Server:           ServerInfo{Version: "v1.2.3", DigestAlgorithm: "sha256"},
+		SpecFeatures:     []string{"no_tools"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Capabilities =\n %+v\nwant\n %+v", got, want)

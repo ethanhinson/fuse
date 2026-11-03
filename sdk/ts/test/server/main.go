@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -31,6 +32,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/ethanhinson/fuse/harness"
+	"github.com/ethanhinson/fuse/internal/capabilities"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/loopconnect"
 	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
@@ -151,11 +153,12 @@ func main() {
 		})
 	}
 
-	handler := loopconnect.NewHandler(f).WithKeepalive(time.Hour)
+	handler := loopconnect.NewHandler(f).WithKeepalive(time.Hour).WithCapabilities(staticCaps{})
 	var svc loopv1connect.LoopServiceHandler = handler
 	// FUSE_TEST_PREDATING=1 serves like a server from before harness specs (change
 	// 0085): proto3 drops the harness field, so the loop starts on the server's
-	// config and the response carries no harness digest.
+	// config and the response carries no harness digest. It also answers
+	// GetCapabilities with Unimplemented, as a server from before that call does.
 	if os.Getenv("FUSE_TEST_PREDATING") == "1" {
 		svc = predatingHandler{handler}
 	}
@@ -198,4 +201,17 @@ type predatingHandler struct{ *loopconnect.Handler }
 func (p predatingHandler) StartLoop(ctx context.Context, req *connect.Request[loopv1.StartLoopRequest]) (*connect.Response[loopv1.StartLoopResponse], error) {
 	req.Msg.Harness = nil
 	return p.Handler.StartLoop(ctx, req)
+}
+
+// GetCapabilities answers Unimplemented, as a server from before the call does.
+func (p predatingHandler) GetCapabilities(ctx context.Context, req *connect.Request[loopv1.GetCapabilitiesRequest]) (*connect.Response[loopv1.GetCapabilitiesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("GetCapabilities is not implemented by this server"))
+}
+
+// staticCaps advertises only the runtime's HarnessSpec features, so the node test
+// can read spec_features over the real wire.
+type staticCaps struct{}
+
+func (staticCaps) Capabilities(ctx context.Context, tenant event.TenantID) (capabilities.Capabilities, error) {
+	return capabilities.Capabilities{SpecFeatures: harness.SpecFeatures()}, nil
 }

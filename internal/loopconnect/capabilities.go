@@ -84,7 +84,8 @@ func toProtoCapabilities(c capabilities.Capabilities) *loopv1.GetCapabilitiesRes
 			ModelsRegistryOnly:   c.SpecPolicy.ModelsRegistryOnly,
 			CarriedSkillsAllowed: c.SpecPolicy.CarriedSkillsAllowed,
 		},
-		Server: &loopv1.ServerInfo{Version: c.Server.Version, DigestAlgorithm: c.Server.DigestAlgorithm},
+		Server:       &loopv1.ServerInfo{Version: c.Server.Version, DigestAlgorithm: c.Server.DigestAlgorithm},
+		SpecFeatures: slices.Clone(c.SpecFeatures),
 		// Always set (all zero when unlimited), so a client never has to tell
 		// "absent" from "unlimited".
 		Limits: &loopv1.TenantLimits{
