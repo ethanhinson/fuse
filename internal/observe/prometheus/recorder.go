@@ -38,6 +38,9 @@ var catalog = []Descriptor{
 	// signal (and the alert target) — scoped by which bound refused it. All keep
 	// the closed-enum label discipline; container_id/command/env stay forbidden.
 	{"fuse_sandbox_exec_queued_total", "counter", []string{"tenant_id", "handler"}}, {"fuse_sandbox_queue_wait_seconds", "histogram", []string{"tenant_id", "handler"}}, {"fuse_sandbox_rejected_total", "counter", []string{"tenant_id", "handler", "scope"}},
+	// Loops stopped by CancelLoop. was_live is the closed true|false enum; the
+	// cancel reason is free text and is never a label, nor is the requester.
+	{"fuse_loops_cancelled_total", "counter", []string{"tenant_id", "was_live"}},
 }
 
 func Catalog() []Descriptor { out := make([]Descriptor, len(catalog)); copy(out, catalog); return out }
@@ -75,6 +78,7 @@ type Recorder struct {
 	decisions, classifierReplies                                                                            *client.CounterVec
 	sandboxAcquire, sandboxUnhealthy, sandboxReaped                                                         *client.CounterVec
 	sandboxQueued, sandboxRejected                                                                          *client.CounterVec
+	loopsCancelled                                                                                          *client.CounterVec
 	loopActive, overrides, admitted, budget, sandboxActive                                                  *client.GaugeVec
 	loopDuration, modelDuration, attempts, toolDuration, spawnDuration, projectionDuration                  *client.HistogramVec
 	sandboxColdStart, sandboxQueueWait                                                                      *client.HistogramVec
@@ -144,10 +148,11 @@ func New(cfg Config) (*Recorder, error) {
 	r.sandboxQueued = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_exec_queued_total", Help: "Execs that waited past the note threshold for a free execution slot — the backpressure rate."}, []string{"tenant_id", "handler"})
 	r.sandboxQueueWait = client.NewHistogramVec(client.HistogramOpts{Name: "fuse_sandbox_queue_wait_seconds", Help: "Distribution of admission queue time. The high quantiles are the saturation signal.", Buckets: b}, []string{"tenant_id", "handler"})
 	r.sandboxRejected = client.NewCounterVec(client.CounterOpts{Name: "fuse_sandbox_rejected_total", Help: "Admission refusals by which bound refused (global, tenant) — the runaway signal and the alert target. Under correct configuration it should be zero."}, []string{"tenant_id", "handler", "scope"})
+	r.loopsCancelled = client.NewCounterVec(client.CounterOpts{Name: "fuse_loops_cancelled_total", Help: "Loops stopped by CancelLoop, by whether the cancel interrupted live work."}, []string{"tenant_id", "was_live"})
 	r.overflow = client.NewCounterVec(client.CounterOpts{Name: "fuse_metrics_label_overflow_total", Help: "Collapsed label observations."}, []string{"dimension", "metric"})
 	r.admitted = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_metrics_label_admitted_values", Help: "Admitted non-overflow label values."}, []string{"dimension"})
 	r.budget = client.NewGaugeVec(client.GaugeOpts{Name: "fuse_metrics_label_budget", Help: "Configured label cardinality limit, including __overflow__."}, []string{"dimension"})
-	collectors := []client.Collector{r.loopTotal, r.loopDuration, r.loopActive, r.modelTotal, r.modelDuration, r.attempts, r.toolTotal, r.toolDuration, r.spawnTotal, r.spawnDuration, r.projectionTotal, r.projectionDuration, r.exportErrors, r.dropped, r.reopens, r.overrides, r.overflow, r.admitted, r.budget, r.decisions, r.classifierReplies, r.sandboxActive, r.sandboxAcquire, r.sandboxColdStart, r.sandboxUnhealthy, r.sandboxReaped, r.sandboxQueued, r.sandboxQueueWait, r.sandboxRejected}
+	collectors := []client.Collector{r.loopTotal, r.loopDuration, r.loopActive, r.modelTotal, r.modelDuration, r.attempts, r.toolTotal, r.toolDuration, r.spawnTotal, r.spawnDuration, r.projectionTotal, r.projectionDuration, r.exportErrors, r.dropped, r.reopens, r.overrides, r.overflow, r.admitted, r.budget, r.decisions, r.classifierReplies, r.sandboxActive, r.sandboxAcquire, r.sandboxColdStart, r.sandboxUnhealthy, r.sandboxReaped, r.sandboxQueued, r.sandboxQueueWait, r.sandboxRejected, r.loopsCancelled}
 	for _, c := range collectors {
 		if err := cfg.Registerer.Register(c); err != nil {
 			return nil, err
@@ -188,6 +193,10 @@ func (r *Recorder) Project(_ context.Context, rec observe.Record) error {
 	if rec.Operation == observe.OperationSandbox {
 		r.recordSandbox(rec)
 	}
+	if rec.CancelWasLive != "" {
+		t := r.label(metricspolicy.TenantID, string(rec.TenantID), "fuse_loops_cancelled_total")
+		r.loopsCancelled.WithLabelValues(t, boundedLabel(cancelWasLive, rec.CancelWasLive)).Inc()
+	}
 	r.projectionDuration.WithLabelValues("success").Observe(time.Since(started).Seconds())
 	return nil
 }
@@ -221,6 +230,8 @@ var (
 	// event.SandboxAdmissionPayload.
 	sandboxAdmissionOutcomes = map[string]bool{"queued": true, "refused": true}
 	sandboxAdmissionScopes   = map[string]bool{"global": true, "tenant": true}
+	// cancelWasLive is closed at event.LoopCancelledPayload.WasLive (a bool).
+	cancelWasLive = map[string]bool{"true": true, "false": true}
 )
 
 // sandboxRuntimeNone is the explicit label for a handler that has no container

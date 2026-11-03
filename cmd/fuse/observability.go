@@ -562,7 +562,8 @@ var _ event.Pinger = projectingDurableStore{}
 // It exists because embedding an INTERFACE promotes only the methods of that
 // interface's static type: projectingDurableStore's method set is exactly
 // CommittedDurableStore's (Append/Subscribe/Replay/AppendCommitted) plus the
-// Append override, no matter how many extra methods the concrete inner store has.
+// Append and AppendCommitted overrides, no matter how many extra methods the
+// concrete inner store has.
 // So an OPTIONAL-interface assertion against the wrapper silently fails — and
 // readiness.probe treats a failed event.Pinger assertion as "nothing to probe, so
 // ready" (health.go). Without this method, /readyz answered 200 with the database
@@ -579,15 +580,25 @@ func (s projectingDurableStore) Ping(ctx context.Context) error {
 	return nil
 }
 
+// Append delegates to the AppendCommitted override below, which projects, so each
+// append projects exactly once.
 func (s projectingDurableStore) Append(ctx context.Context, key event.StreamKey, e event.Event) error {
-	committed, err := s.AppendCommitted(ctx, key, e)
+	_, err := s.AppendCommitted(ctx, key, e)
+	return err
+}
+
+// AppendCommitted projects too. The runtime appends some events (loop.cancelled)
+// through AppendCommitted to learn their seq; without this override they would
+// bypass projection, and every metric derived from them would stay at zero.
+func (s projectingDurableStore) AppendCommitted(ctx context.Context, key event.StreamKey, e event.Event) (event.Event, error) {
+	committed, err := s.CommittedDurableStore.AppendCommitted(ctx, key, e)
 	if err != nil {
-		return err
+		return committed, err
 	}
 	if s.projection != nil {
 		s.projection.Enqueue(observe.ProjectEvent(key, committed))
 	}
-	return nil
+	return committed, nil
 }
 
 type projectionStats struct {
