@@ -174,6 +174,11 @@ type inProcRuntime struct {
 	// cancelPending holds, per stream, the seq of the loop.cancel.request this
 	// process relayed and has not yet seen answered. Guarded by mu; created lazily.
 	cancelPending map[event.StreamKey]event.Seq
+	// cancelMu serializes the read-then-append steps of cancels of loops this process
+	// does not run (a cold seal, a relayed request, a resume answering a request), so
+	// two of them in this process never both append. Never held while waiting, and
+	// taken before mu, never after.
+	cancelMu sync.Mutex
 }
 
 // loop holds per-loopID state: the tree, the root node, the event store, the human
@@ -820,7 +825,12 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	var stopRelay chan struct{}
 	if r.deps.DurableStore != nil {
 		stopRelay = make(chan struct{})
-		r.startRelayPump(sessionCtx, key, lp.humanBus, rootNode.ID, stopRelay)
+		// A cancel relayed by another replica is honoured like a local one. In its own
+		// goroutine: a cancel waits for the run to finish, and the pump must keep going
+		// meanwhile. Cancelling is idempotent, so a further request is a no-op.
+		r.startRelayPump(sessionCtx, key, lp.humanBus, rootNode.ID, stopRelay, func(c relayedCancel) {
+			go r.cancelRelayed(lp, c)
+		})
 	}
 
 	// Idle-TTL reaper for an interactive session (change 0054, D2): once the loop is
@@ -1082,7 +1092,9 @@ func (r *inProcRuntime) Attach(ctx context.Context, tenant event.TenantID, loopI
 //  2. Resolvable in the durable registry and NOT live (finished / idle-reaped /
 //     completed on a prior process) → rehydrate: replay the durable stream, fold it
 //     to the model-facing transcript, and re-launch a re-parked loop under the SAME
-//     loop_id seeded with that transcript (launchLoop with resume opts).
+//     loop_id seeded with that transcript (launchLoop with resume opts). A stream
+//     that holds loop.cancelled, or an unanswered loop.cancel.request (answered here
+//     with loop.cancelled), is refused with ErrLoopCancelled and nothing launches.
 //  3. Resolvable and live but owned by another instance → not resumable here (this
 //     instance holds no injector for it); report ErrLoopNotFound so the caller does
 //     not double-drive a loop another instance owns.
@@ -1128,6 +1140,12 @@ func (r *inProcRuntime) Resume(ctx context.Context, tenant event.TenantID, loopI
 	events, err := r.deps.DurableStore.Replay(ctx, key, 0)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: resume replay: %w", err)
+	}
+	// A cancelled loop never runs again: refuse a stream that holds loop.cancelled,
+	// and answer a loop.cancel.request its owner never got to (it went away first)
+	// with the terminal event instead of reviving the loop.
+	if refused, err := r.refuseCancelledResume(ctx, key, events); refused {
+		return nil, err
 	}
 	seed, err := reconstructMessages(events)
 	if err != nil {

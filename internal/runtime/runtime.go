@@ -68,9 +68,11 @@ type Runtime interface {
 	// replays the durable event stream, reconstructs the model-facing transcript
 	// (single source of truth, D1/D5), builds a fresh agent seeded with it, and re-parks
 	// it under a session-scoped context so a subsequent Send drives the next turn instead
-	// of returning ErrLoopFinished. It returns ErrLoopNotFound for an unknown loop, and
-	// requires the durable Registry + DurableStore (a nil-registry binding has no cross-
-	// process identity to resume). Interactive-only: a resumed loop always parks.
+	// of returning ErrLoopFinished. It returns ErrLoopNotFound for an unknown loop and
+	// ErrLoopCancelled for a loop a Cancel sealed (or asked to stop through a
+	// loop.cancel.request nobody answered yet: Resume answers it and launches nothing),
+	// and requires the durable Registry + DurableStore (a nil-registry binding has no
+	// cross-process identity to resume). Interactive-only: a resumed loop always parks.
 	Resume(ctx context.Context, tenant event.TenantID, loopID string) (LoopHandle, error)
 }
 
@@ -138,9 +140,11 @@ type CancelResult struct {
 // Canceller is an optional Runtime capability (ADR-0047): stop a loop and seal
 // it. Its in-flight work is cancelled, loop.cancelled is appended as the last
 // event of its stream, and the loop never accepts another Send or resume
-// (ErrLoopCancelled). A binding type-asserts for it. Errors: ErrLoopNotFound for
-// an unknown or wrong-tenant loop. requestedBy is the caller's principal subject,
-// never a token.
+// (ErrLoopCancelled). A loop another replica runs is cancelled through its durable
+// stream (a loop.cancel.request its owner honours); one no process runs is sealed
+// directly. A binding type-asserts for it. Errors: ErrLoopNotFound for an unknown
+// or wrong-tenant loop. requestedBy is the caller's principal subject, never a
+// token.
 type Canceller interface {
 	Cancel(ctx context.Context, tenant event.TenantID, loopID, reason, requestedBy string) (CancelResult, error)
 }

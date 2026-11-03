@@ -27,6 +27,20 @@ import (
 //
 // Exactly one of them appends. A second Cancel finds the seal already set and
 // reports the first one (AlreadyCancelled) without appending.
+//
+// A loop this process does not hold is resolved through the durable registry:
+//
+//   - not live (finished, reaped, drained, or its owner's lease expired): the stream
+//     is sealed here by appending loop.cancelled{was_live:false}, unless it already
+//     holds one;
+//   - live on another replica: a loop.cancel.request is appended to its stream and
+//     the owner's relay pump honours it (relay.go). This side waits, bounded, for the
+//     owner's loop.cancelled and for the registry to show the loop not live.
+//
+// Resume refuses a stream that holds loop.cancelled, and answers an unanswered
+// loop.cancel.request with the terminal event instead of reviving the loop. When a
+// stream holds two loop.cancelled events (two replicas sealing it at once), every
+// reader takes the first in seq order.
 
 var _ Canceller = (*inProcRuntime)(nil)
 
@@ -63,7 +77,272 @@ func (r *inProcRuntime) Cancel(ctx context.Context, tenant event.TenantID, loopI
 	if lp := r.loopCache(tenant, loopID); lp != nil {
 		return r.cancelLocal(ctx, lp, reason, requestedBy, 0)
 	}
-	return CancelResult{}, fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
+	if r.deps.DurableStore == nil {
+		return CancelResult{}, fmt.Errorf("%w: %q", ErrLoopNotFound, loopID)
+	}
+	// Tenant-scoped, and an expired lease is marked not live (never re-owned):
+	// nothing here runs the loop.
+	rec, key, err := r.resolveDurableForDelivery(ctx, tenant, loopID)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	if !rec.Live {
+		return r.sealNotLive(ctx, key, &event.LoopCancelRequestPayload{Reason: reason, RequestedBy: requestedBy})
+	}
+	return r.relayCancel(ctx, key, reason, requestedBy)
+}
+
+// sealNotLive seals the stream of a loop no process runs by appending
+// loop.cancelled{was_live:false}, answering the stream's unanswered
+// loop.cancel.request if it has one. by is the caller sealing it; nil answers the
+// pending request under that request's own reason and requester (a resume), and
+// appends nothing when no request is pending. A stream that already holds
+// loop.cancelled is reported as AlreadyCancelled and left untouched.
+//
+// cancelMu makes the read and the append one step within this process, so
+// concurrent seals here append once. Two replicas sealing at once can still append
+// two; the first wins.
+func (r *inProcRuntime) sealNotLive(ctx context.Context, key event.StreamKey, by *event.LoopCancelRequestPayload) (CancelResult, error) {
+	ds := r.deps.DurableStore
+	r.cancelMu.Lock()
+	defer r.cancelMu.Unlock()
+	evs, err := ds.Replay(ctx, key, 0)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	if e, p, ok := firstCancelled(evs); ok {
+		r.dropCancelPending(key)
+		return CancelResult{Outcome: CancelOutcomeAlreadyCancelled, WasLive: p.WasLive, TerminalSeq: e.Seq, Reason: p.Reason}, nil
+	}
+	answer := event.LoopCancelledPayload{}
+	if req, rp, ok := pendingCancel(evs); ok {
+		answer.RequestSeq = uint64(req.Seq)
+		answer.Reason, answer.RequestedBy = rp.Reason, rp.RequestedBy
+	} else if by == nil {
+		return CancelResult{}, nil
+	}
+	if by != nil {
+		// This caller sealed it: the terminal carries the caller's reason.
+		answer.Reason, answer.RequestedBy = by.Reason, by.RequestedBy
+	}
+	payload, err := json.Marshal(answer)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	// Once decided, the seal is not abandoned because the caller went away.
+	seq, err := r.appendDurableWithSeq(context.WithoutCancel(ctx), key,
+		event.Event{NodeID: string(key.Loop), Kind: event.KindLoopCancelled, Payload: payload})
+	if err != nil {
+		return CancelResult{}, fmt.Errorf("runtime: record cancel of %q: %w", key.Loop, err)
+	}
+	r.dropCancelPending(key)
+	return CancelResult{Outcome: CancelOutcomeCancelled, TerminalSeq: seq, Reason: answer.Reason}, nil
+}
+
+// refuseCancelledResume reports whether a resume of the stream evs must be refused
+// because the loop was cancelled: the stream holds loop.cancelled, or it holds a
+// loop.cancel.request nobody answered (the owner went away first), which is answered
+// here with the terminal event. The returned error wraps ErrLoopCancelled.
+func (r *inProcRuntime) refuseCancelledResume(ctx context.Context, key event.StreamKey, evs []event.Event) (bool, error) {
+	refused := fmt.Errorf("%w: %q", ErrLoopCancelled, key.Loop)
+	if _, _, ok := firstCancelled(evs); ok {
+		return true, refused
+	}
+	if _, _, ok := pendingCancel(evs); !ok {
+		return false, nil
+	}
+	if _, err := r.sealNotLive(ctx, key, nil); err != nil {
+		// The loop was still asked to stop: refuse it even though the terminal event
+		// could not be written.
+		return true, fmt.Errorf("%w (%v)", refused, err)
+	}
+	return true, refused
+}
+
+// Relay cancel bounds.
+const relayCancelRegistryPoll = 10 * time.Millisecond
+
+// relayCancel asks the replica that runs key's loop to cancel it, through a
+// loop.cancel.request in the loop's stream, then waits (bounded by ctx and
+// CancelWait) for the owner's loop.cancelled and for the registry to show the loop
+// not live: only both make Cancelled. Otherwise it reports Cancelling.
+//
+// The request this process appended is remembered in cancelPending until its answer
+// is seen, so a repeat Cancel from here appends no second request: it reports the
+// terminal event once one exists (AlreadyCancelled) and Cancelling until then.
+func (r *inProcRuntime) relayCancel(ctx context.Context, key event.StreamKey, reason, requestedBy string) (CancelResult, error) {
+	ds := r.deps.DurableStore
+	r.cancelMu.Lock()
+	r.mu.Lock()
+	_, pending := r.cancelPending[key]
+	r.mu.Unlock()
+	evs, err := ds.Replay(ctx, key, 0)
+	if err != nil {
+		r.cancelMu.Unlock()
+		return CancelResult{}, err
+	}
+	if e, p, ok := firstCancelled(evs); ok {
+		r.cancelMu.Unlock()
+		r.dropCancelPending(key)
+		return CancelResult{Outcome: CancelOutcomeAlreadyCancelled, WasLive: p.WasLive, TerminalSeq: e.Seq, Reason: p.Reason}, nil
+	}
+	if pending {
+		r.cancelMu.Unlock()
+		return CancelResult{Outcome: CancelOutcomeCancelling, Reason: reason}, nil
+	}
+	payload, err := json.Marshal(event.LoopCancelRequestPayload{Reason: reason, RequestedBy: requestedBy})
+	if err != nil {
+		r.cancelMu.Unlock()
+		return CancelResult{}, err
+	}
+	reqSeq, err := r.appendDurableWithSeq(ctx, key,
+		event.Event{NodeID: string(key.Loop), Kind: event.KindLoopCancelRequest, Payload: payload})
+	if err != nil {
+		r.cancelMu.Unlock()
+		return CancelResult{}, fmt.Errorf("runtime: relay cancel of %q: %w", key.Loop, err)
+	}
+	r.mu.Lock()
+	if r.cancelPending == nil {
+		r.cancelPending = map[event.StreamKey]event.Seq{}
+	}
+	r.cancelPending[key] = reqSeq
+	r.mu.Unlock()
+	r.cancelMu.Unlock()
+
+	wctx, stop := context.WithTimeout(ctx, r.cancelWait())
+	defer stop()
+	term, tp, ok := r.awaitTerminal(wctx, key)
+	if !ok {
+		return CancelResult{Outcome: CancelOutcomeCancelling, Reason: reason}, nil
+	}
+	if !r.awaitNotLive(wctx, key) {
+		return CancelResult{Outcome: CancelOutcomeCancelling, WasLive: tp.WasLive, Reason: tp.Reason}, nil
+	}
+	r.dropCancelPending(key)
+	return CancelResult{Outcome: CancelOutcomeCancelled, WasLive: tp.WasLive, TerminalSeq: term.Seq, Reason: tp.Reason}, nil
+}
+
+// awaitTerminal waits until key's stream holds a loop.cancelled or ctx ends. It
+// subscribes first and then replays, so an event appended in between is not missed;
+// live events at or below the replay watermark were already read and are skipped.
+// The watermark moves only with replays, so an event the subscription dropped is
+// still found by the periodic re-read.
+func (r *inProcRuntime) awaitTerminal(ctx context.Context, key event.StreamKey) (event.Event, event.LoopCancelledPayload, bool) {
+	ds := r.deps.DurableStore
+	wake, unsub, err := ds.Subscribe(ctx, key)
+	if err != nil {
+		wake = nil // the periodic read still works
+	} else {
+		defer unsub()
+	}
+	var watermark event.Seq
+	read := func() (event.Event, event.LoopCancelledPayload, bool) {
+		evs, err := ds.Replay(ctx, key, watermark)
+		if err != nil {
+			return event.Event{}, event.LoopCancelledPayload{}, false
+		}
+		for _, e := range evs {
+			if e.Seq > watermark {
+				watermark = e.Seq
+			}
+		}
+		return firstCancelled(evs)
+	}
+	if e, p, ok := read(); ok {
+		return e, p, true
+	}
+	tick := time.NewTicker(r.relayPoll())
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return event.Event{}, event.LoopCancelledPayload{}, false
+		case ev, open := <-wake:
+			if !open {
+				wake = nil
+				continue
+			}
+			if ev.Seq <= watermark || ev.Kind != event.KindLoopCancelled {
+				continue
+			}
+			if e, p, ok := firstCancelled([]event.Event{ev}); ok {
+				return e, p, true
+			}
+		case <-tick.C:
+			if e, p, ok := read(); ok {
+				return e, p, true
+			}
+		}
+	}
+}
+
+// awaitNotLive polls the registry until key's loop reads not live or ctx ends.
+func (r *inProcRuntime) awaitNotLive(ctx context.Context, key event.StreamKey) bool {
+	tick := time.NewTicker(relayCancelRegistryPoll)
+	defer tick.Stop()
+	for {
+		if rec, err := r.deps.Registry.Resolve(ctx, key); err == nil && !rec.Live {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-tick.C:
+		}
+	}
+}
+
+func (r *inProcRuntime) dropCancelPending(key event.StreamKey) {
+	r.mu.Lock()
+	delete(r.cancelPending, key)
+	r.mu.Unlock()
+}
+
+// firstCancelled returns the first loop.cancelled in evs by seq: the authoritative
+// one if a race left two. A payload that does not decode still counts (the loop is
+// sealed either way) and yields a zero payload.
+func firstCancelled(evs []event.Event) (event.Event, event.LoopCancelledPayload, bool) {
+	var first event.Event
+	found := false
+	for _, e := range evs {
+		if e.Kind == event.KindLoopCancelled && (!found || e.Seq < first.Seq) {
+			first, found = e, true
+		}
+	}
+	if !found {
+		return event.Event{}, event.LoopCancelledPayload{}, false
+	}
+	var p event.LoopCancelledPayload
+	_ = json.Unmarshal(first.Payload, &p)
+	return first, p, true
+}
+
+// pendingCancel returns the first loop.cancel.request in evs that no loop.cancelled
+// at a higher seq answers. A request whose payload does not decode is skipped, as
+// the relay pump skips it.
+func pendingCancel(evs []event.Event) (event.Event, event.LoopCancelRequestPayload, bool) {
+	var answered event.Seq
+	for _, e := range evs {
+		if e.Kind == event.KindLoopCancelled && e.Seq > answered {
+			answered = e.Seq
+		}
+	}
+	var (
+		first event.Event
+		fp    event.LoopCancelRequestPayload
+		found bool
+	)
+	for _, e := range evs {
+		if e.Kind != event.KindLoopCancelRequest || e.Seq <= answered || (found && e.Seq > first.Seq) {
+			continue
+		}
+		var p event.LoopCancelRequestPayload
+		if json.Unmarshal(e.Payload, &p) != nil {
+			continue
+		}
+		first, fp, found = e, p, true
+	}
+	return first, fp, found
 }
 
 // cancelLocal cancels a loop held in this process's cache. It returns Cancelled
@@ -116,6 +395,41 @@ func (r *inProcRuntime) cancelLocal(ctx context.Context, lp *loop, reason, reque
 		return CancelResult{Outcome: CancelOutcomeCancelling, Reason: reason}, nil
 	}
 	return CancelResult{Outcome: CancelOutcomeCancelled, TerminalSeq: seq, Reason: reason}, nil
+}
+
+// cancelRelayed honours a cancel the relay pump found in lp's stream. A request is
+// a local cancel that records which request it answers. A loop.cancelled another
+// replica already wrote (it sealed the loop while it read not live, racing this
+// replica starting it) seals lp in memory without a second terminal event when the
+// run has already returned; a run still going is aborted, and its completion appends
+// its own loop.cancelled so the terminal event stays the last one (readers take the
+// first).
+func (r *inProcRuntime) cancelRelayed(lp *loop, c relayedCancel) {
+	if c.sealedSeq == 0 {
+		_, _ = r.cancelLocal(context.Background(), lp, c.reason, c.requestedBy, c.requestSeq)
+		return
+	}
+	r.mu.Lock()
+	if lp.cancelled != nil {
+		r.mu.Unlock()
+		return
+	}
+	cs := &cancelState{
+		reason:      c.reason,
+		requestedBy: c.requestedBy,
+		requestSeq:  c.requestSeq,
+		wasLive:     !lp.finishing,
+		sealed:      make(chan struct{}),
+	}
+	lp.cancelled = cs
+	if !cs.wasLive {
+		cs.terminalSeq = c.sealedSeq
+		close(cs.sealed)
+		r.mu.Unlock()
+		return
+	}
+	r.mu.Unlock()
+	lp.abort(ErrLoopCancelled)
 }
 
 func (r *inProcRuntime) terminalSeq(cs *cancelState) event.Seq {
@@ -194,7 +508,7 @@ func (r *inProcRuntime) appendTerminal(lp *loop, cs *cancelState) event.Seq {
 	}
 	ev := event.Event{NodeID: lp.id, Kind: event.KindLoopCancelled, Payload: payload}
 	if r.deps.DurableStore != nil {
-		seq, _ := r.appendDurableTerminal(context.Background(), lp.key, ev)
+		seq, _ := r.appendDurableWithSeq(context.Background(), lp.key, ev)
 		return seq
 	}
 	if err := lp.store.Append(ev); err != nil {
@@ -207,11 +521,11 @@ func (r *inProcRuntime) appendTerminal(lp *loop, cs *cancelState) event.Seq {
 	return lastSeqOfKind(evs, event.KindLoopCancelled)
 }
 
-// appendDurableTerminal appends a terminal event to the durable stream key and
-// returns the seq the store gave it. A store that reports its committed envelope
-// gives the seq directly; otherwise the stream is replayed to find it (0 if that
-// read fails after a successful append).
-func (r *inProcRuntime) appendDurableTerminal(ctx context.Context, key event.StreamKey, ev event.Event) (event.Seq, error) {
+// appendDurableWithSeq appends ev to the durable stream key and returns the seq
+// the store gave it. A store that reports its committed envelope gives the seq
+// directly; otherwise the stream is replayed to find it (the highest seq of ev's
+// kind; 0 if that read fails after a successful append).
+func (r *inProcRuntime) appendDurableWithSeq(ctx context.Context, key event.StreamKey, ev event.Event) (event.Seq, error) {
 	ds := r.deps.DurableStore
 	if cds, ok := ds.(event.CommittedDurableStore); ok {
 		got, err := cds.AppendCommitted(ctx, key, ev)

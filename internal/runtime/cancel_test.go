@@ -744,3 +744,476 @@ func TestCancelWhileChildRunning(t *testing.T) {
 		t.Fatalf("last event = %s, want loop.cancelled", lastKind(evs))
 	}
 }
+
+// ---- Loops not in this process's cache: cross-replica relay and resume refusal ----
+
+// appendRaw appends one event straight to the durable store, as another replica (or
+// an operator's tooling) would, and returns the seq the store gave it.
+func appendRaw(t *testing.T, store *fsstore.FSDurableStore, loopID string, k event.Kind, payload any) event.Seq {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := event.StreamKey{Tenant: event.DefaultTenant, Loop: event.LoopID(loopID)}
+	got, err := store.AppendCommitted(context.Background(), key, event.Event{NodeID: loopID, Kind: k, Payload: raw})
+	if err != nil {
+		t.Fatalf("append %s: %v", k, err)
+	}
+	return got.Seq
+}
+
+func withCancelWait(d time.Duration) func(*Deps) {
+	return func(deps *Deps) { deps.CancelWait = d }
+}
+
+func cancelRequests(t *testing.T, evs []event.Event) []event.Event {
+	t.Helper()
+	var out []event.Event
+	for _, e := range evs {
+		if e.Kind == event.KindLoopCancelRequest {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// A cancel that reaches the replica NOT running the loop is relayed to the owner
+// through the durable stream: the owner unwinds the loop and appends the terminal
+// event, and the requester reports Cancelled only once it saw that event and the
+// registry shows the loop not live.
+func TestCancelOnNonOwnerRelays(t *testing.T) {
+	f := &steerFake{targetBlock: make(chan struct{})}
+	rtA, rtB, store := twoReplicasWith(t, f, nil, withCancelWait(5*time.Second))
+	ctx := context.Background()
+	h, err := rtA.StartLoop(ctx, LoopConfig{Task: "build it", ModelID: "target", Interactive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.targetBlock // A's model call is in flight
+
+	resB, err := rtB.(Canceller).Cancel(ctx, event.DefaultTenant, h.ID(), "stop", "alice")
+	if err != nil {
+		t.Fatalf("Cancel on the other replica: %v", err)
+	}
+	liveAtReturn := isLive(t, store, event.DefaultTenant, h.ID())
+	if resB.Outcome != CancelOutcomeCancelled || !resB.WasLive || resB.Reason != "stop" {
+		t.Fatalf("relayed cancel = %+v, want Cancelled, WasLive, reason stop", resB)
+	}
+	if liveAtReturn {
+		t.Fatal("a relayed Cancelled must mean the registry shows the loop not live")
+	}
+
+	evs := streamOf(t, store, event.DefaultTenant, h.ID())
+	reqs := cancelRequests(t, evs)
+	if len(reqs) != 1 {
+		t.Fatalf("want exactly one loop.cancel.request, got %d", len(reqs))
+	}
+	var rp event.LoopCancelRequestPayload
+	if err := json.Unmarshal(reqs[0].Payload, &rp); err != nil {
+		t.Fatal(err)
+	}
+	if rp.Reason != "stop" || rp.RequestedBy != "alice" {
+		t.Fatalf("request payload = %+v", rp)
+	}
+	last := evs[len(evs)-1]
+	p := cancelledPayload(t, last)
+	if p.Reason != "stop" || p.RequestedBy != "alice" || !p.WasLive || p.RequestSeq != uint64(reqs[0].Seq) {
+		t.Fatalf("terminal payload = %+v, want stop/alice/was_live/request_seq %d", p, reqs[0].Seq)
+	}
+	if resB.TerminalSeq != last.Seq {
+		t.Fatalf("TerminalSeq = %d, want the stream's last seq %d", resB.TerminalSeq, last.Seq)
+	}
+	if n := countKind(evs, event.KindLoopCancelled); n != 1 {
+		t.Fatalf("want one loop.cancelled, got %d", n)
+	}
+
+	if err := rtA.Send(ctx, event.DefaultTenant, h.ID(), "hi"); !errors.Is(err, ErrLoopCancelled) {
+		t.Fatalf("Send on the owner = %v, want ErrLoopCancelled", err)
+	}
+	if err := rtB.Send(ctx, event.DefaultTenant, h.ID(), "hi"); !errors.Is(err, ErrLoopFinished) {
+		t.Fatalf("Send on the other replica = %v, want ErrLoopFinished", err)
+	}
+	if _, err := rtB.Resume(ctx, event.DefaultTenant, h.ID()); !errors.Is(err, ErrLoopCancelled) {
+		t.Fatalf("Resume on the other replica = %v, want ErrLoopCancelled", err)
+	}
+	if got := len(streamOf(t, store, event.DefaultTenant, h.ID())); got != len(evs) {
+		t.Fatalf("the refused resume appended events (%d -> %d)", len(evs), got)
+	}
+}
+
+// While a relayed request is unanswered, a further cancel from the same process does
+// not append another request; once the loop.cancelled lands it reports that one.
+func TestCancelRelayPendingAppendsOnce(t *testing.T) {
+	f := &steerFake{}
+	_, rtB, store := twoReplicasWith(t, f, nil, withCancelWait(30*time.Millisecond))
+	ctx := context.Background()
+	const id = "ghost-loop"
+	key := event.StreamKey{Tenant: event.DefaultTenant, Loop: id}
+	if err := store.Register(ctx, event.LoopRecord{Key: key, OwnerNodeID: "ghost", Live: true, LeaseExpiry: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	c := rtB.(Canceller)
+
+	for i := 0; i < 2; i++ {
+		res, err := c.Cancel(ctx, event.DefaultTenant, id, "stop", "alice")
+		if err != nil {
+			t.Fatalf("cancel %d: %v", i, err)
+		}
+		if res.Outcome != CancelOutcomeCancelling || res.TerminalSeq != 0 {
+			t.Fatalf("cancel %d = %+v, want Cancelling with no terminal seq", i, res)
+		}
+	}
+	if n := len(cancelRequests(t, streamOf(t, store, event.DefaultTenant, id))); n != 1 {
+		t.Fatalf("want exactly one loop.cancel.request, got %d", n)
+	}
+
+	seq := appendRaw(t, store, id, event.KindLoopCancelled, event.LoopCancelledPayload{Reason: "owner says", RequestedBy: "alice", WasLive: true, RequestSeq: 1})
+	for i := 0; i < 2; i++ {
+		res, err := c.Cancel(ctx, event.DefaultTenant, id, "again", "bob")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Outcome != CancelOutcomeAlreadyCancelled || res.Reason != "owner says" || res.TerminalSeq != seq || !res.WasLive {
+			t.Fatalf("cancel after the terminal (%d) = %+v, want AlreadyCancelled owner says @%d", i, res, seq)
+		}
+	}
+	evs := streamOf(t, store, event.DefaultTenant, id)
+	if n := len(cancelRequests(t, evs)); n != 1 {
+		t.Fatalf("a cancel after the terminal appended a request (%d)", n)
+	}
+	if lastKind(evs) != event.KindLoopCancelled {
+		t.Fatalf("stream ends with %s", lastKind(evs))
+	}
+}
+
+// parkAndShutdown starts an interactive loop on rt, waits for it to park, then shuts
+// rt down: the loop is recorded not live with no terminal event.
+func parkAndShutdown(t *testing.T, rt Runtime, store *fsstore.FSDurableStore) string {
+	t.Helper()
+	ctx := context.Background()
+	h, err := rt.StartLoop(ctx, LoopConfig{Task: "chat", ModelID: "target", Interactive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitStreamKind(t, store, event.DefaultTenant, h.ID(), event.KindLoopParked)
+	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := rt.(Shutdowner).Shutdown(sctx); err != nil {
+		t.Fatal(err)
+	}
+	if isLive(t, store, event.DefaultTenant, h.ID()) {
+		t.Fatal("a shut-down loop must be recorded not live")
+	}
+	return h.ID()
+}
+
+// A request nobody answered (the owner went away first) still seals the loop: a
+// resume answers it with the terminal event instead of reviving the loop.
+func TestResumeRefusesUnansweredCancelRequest(t *testing.T) {
+	f := &steerFake{}
+	rtA, rtB, store := twoReplicas(t, f, nil)
+	ctx := context.Background()
+	id := parkAndShutdown(t, rtA, store)
+	reqSeq := appendRaw(t, store, id, event.KindLoopCancelRequest, event.LoopCancelRequestPayload{Reason: "r", RequestedBy: "bob"})
+
+	if _, err := rtB.Resume(ctx, event.DefaultTenant, id); !errors.Is(err, ErrLoopCancelled) {
+		t.Fatalf("Resume with an unanswered cancel request = %v, want ErrLoopCancelled", err)
+	}
+	if isLive(t, store, event.DefaultTenant, id) {
+		t.Fatal("a refused resume launched the loop")
+	}
+	evs := streamOf(t, store, event.DefaultTenant, id)
+	p := cancelledPayload(t, evs[len(evs)-1])
+	if p.WasLive || p.RequestSeq != uint64(reqSeq) || p.Reason != "r" || p.RequestedBy != "bob" {
+		t.Fatalf("terminal payload = %+v, want not live, request_seq %d, r/bob", p, reqSeq)
+	}
+
+	if _, err := rtB.Resume(ctx, event.DefaultTenant, id); !errors.Is(err, ErrLoopCancelled) {
+		t.Fatalf("second Resume = %v, want ErrLoopCancelled", err)
+	}
+	if got := len(streamOf(t, store, event.DefaultTenant, id)); got != len(evs) {
+		t.Fatalf("the second resume appended events (%d -> %d)", len(evs), got)
+	}
+}
+
+// A stream that already ends in loop.cancelled is never resumed.
+func TestResumeRefusesCancelledStream(t *testing.T) {
+	f := &steerFake{}
+	rtA, rtB, store := twoReplicas(t, f, nil)
+	ctx := context.Background()
+	id := parkAndShutdown(t, rtA, store)
+	appendRaw(t, store, id, event.KindLoopCancelled, event.LoopCancelledPayload{Reason: "done with it"})
+	n := len(streamOf(t, store, event.DefaultTenant, id))
+
+	// On B, which never held the loop. (A still caches its finished loop, and Resume
+	// never relaunches a cached loop.)
+	for i := 0; i < 2; i++ {
+		if _, err := rtB.Resume(ctx, event.DefaultTenant, id); !errors.Is(err, ErrLoopCancelled) {
+			t.Fatalf("Resume of a cancelled stream = %v, want ErrLoopCancelled", err)
+		}
+	}
+	if isLive(t, store, event.DefaultTenant, id) {
+		t.Fatal("a refused resume launched the loop")
+	}
+	if got := len(streamOf(t, store, event.DefaultTenant, id)); got != n {
+		t.Fatalf("a refused resume appended events (%d -> %d)", n, got)
+	}
+}
+
+// A loop that finished on another process is sealed by a replica that never held it.
+func TestCancelNotLiveOnColdReplica(t *testing.T) {
+	f := &steerFake{}
+	rtA, rtB, store := twoReplicas(t, f, nil)
+	ctx := context.Background()
+	h, err := rtA.StartLoop(ctx, LoopConfig{Task: "answer", ModelID: "target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	c := rtB.(Canceller)
+	res, err := c.Cancel(ctx, event.DefaultTenant, h.ID(), "cleanup", "carol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evs := streamOf(t, store, event.DefaultTenant, h.ID())
+	last := evs[len(evs)-1]
+	if res.Outcome != CancelOutcomeCancelled || res.WasLive || res.Reason != "cleanup" || res.TerminalSeq != last.Seq {
+		t.Fatalf("cold cancel = %+v, want Cancelled, not live, cleanup @%d", res, last.Seq)
+	}
+	p := cancelledPayload(t, last)
+	if p.WasLive || p.Reason != "cleanup" || p.RequestedBy != "carol" || p.RequestSeq != 0 {
+		t.Fatalf("terminal payload = %+v", p)
+	}
+
+	again, err := c.Cancel(ctx, event.DefaultTenant, h.ID(), "again", "dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Outcome != CancelOutcomeAlreadyCancelled || again.TerminalSeq != last.Seq || again.Reason != "cleanup" {
+		t.Fatalf("repeat cold cancel = %+v, want AlreadyCancelled cleanup @%d", again, last.Seq)
+	}
+	if got := streamOf(t, store, event.DefaultTenant, h.ID()); len(got) != len(evs) {
+		for _, e := range got {
+			t.Logf("%d %s %s", e.Seq, e.Kind, e.Payload)
+		}
+		t.Fatalf("the repeat cancel appended events (%d -> %d)", len(evs), len(got))
+	}
+	if _, err := rtB.Resume(ctx, event.DefaultTenant, h.ID()); !errors.Is(err, ErrLoopCancelled) {
+		t.Fatalf("Resume after a cold cancel = %v, want ErrLoopCancelled", err)
+	}
+}
+
+// Concurrent cold cancels in one process seal the loop once.
+func TestCancelColdConcurrentAppendsOnce(t *testing.T) {
+	f := &steerFake{}
+	rtA, rtB, store := twoReplicas(t, f, nil)
+	ctx := context.Background()
+	h, err := rtA.StartLoop(ctx, LoopConfig{Task: "answer", ModelID: "target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	c := rtB.(Canceller)
+	const n = 8
+	results := make([]CancelResult, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			res, err := c.Cancel(ctx, event.DefaultTenant, h.ID(), "race", "erin")
+			if err != nil {
+				t.Errorf("cancel %d: %v", i, err)
+			}
+			results[i] = res
+		}(i)
+	}
+	wg.Wait()
+	cancelled := 0
+	for _, r := range results {
+		switch r.Outcome {
+		case CancelOutcomeCancelled:
+			cancelled++
+		case CancelOutcomeAlreadyCancelled:
+		default:
+			t.Fatalf("unexpected outcome %+v", r)
+		}
+	}
+	if cancelled != 1 {
+		t.Fatalf("want exactly one Cancelled, got %d", cancelled)
+	}
+	if k := countKind(streamOf(t, store, event.DefaultTenant, h.ID()), event.KindLoopCancelled); k != 1 {
+		t.Fatalf("want one loop.cancelled, got %d", k)
+	}
+}
+
+// Another tenant cannot cancel a loop it does not own, live or not.
+func TestCancelColdWrongTenant(t *testing.T) {
+	f := &steerFake{}
+	rtA, rtB, store := twoReplicas(t, f, nil)
+	ctx := context.Background()
+	h, err := rtA.StartLoop(ctx, LoopConfig{Task: "answer", ModelID: "target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	n := len(streamOf(t, store, event.DefaultTenant, h.ID()))
+	if _, err := rtB.(Canceller).Cancel(ctx, "globex", h.ID(), "x", "mallory"); !errors.Is(err, ErrLoopNotFound) {
+		t.Fatalf("wrong-tenant cold cancel = %v, want ErrLoopNotFound", err)
+	}
+	if got := len(streamOf(t, store, event.DefaultTenant, h.ID())); got != n {
+		t.Fatalf("a wrong-tenant cancel appended events (%d -> %d)", n, got)
+	}
+}
+
+func mkEv(seq event.Seq, k event.Kind, payload any) event.Event {
+	raw, _ := json.Marshal(payload)
+	return event.Event{Seq: seq, Kind: k, Payload: raw}
+}
+
+// pendingCancel finds the first request no terminal event answers; firstCancelled
+// finds the first terminal event (the authoritative one if two exist).
+func TestPendingCancelAndFirstCancelled(t *testing.T) {
+	req := func(seq event.Seq, reason string) event.Event {
+		return mkEv(seq, event.KindLoopCancelRequest, event.LoopCancelRequestPayload{Reason: reason, RequestedBy: "u"})
+	}
+	done := func(seq event.Seq, reason string) event.Event {
+		return mkEv(seq, event.KindLoopCancelled, event.LoopCancelledPayload{Reason: reason})
+	}
+	base := []event.Event{mkEv(1, event.KindUserInput, event.UserInputPayload{Content: "t"}), mkEv(2, event.KindLoopParked, nil)}
+
+	if _, _, ok := pendingCancel(base); ok {
+		t.Fatal("no request: nothing pending")
+	}
+	open := append(append([]event.Event{}, base...), req(3, "a"), req(4, "b"))
+	e, p, ok := pendingCancel(open)
+	if !ok || e.Seq != 3 || p.Reason != "a" {
+		t.Fatalf("pendingCancel = %d %+v %v, want the first request (3, a)", e.Seq, p, ok)
+	}
+	answered := append(append([]event.Event{}, open...), done(5, "a"))
+	if _, _, ok := pendingCancel(answered); ok {
+		t.Fatal("an answered request is not pending")
+	}
+	if _, _, ok := firstCancelled(open); ok {
+		t.Fatal("no terminal event yet")
+	}
+	twice := append(append([]event.Event{}, answered...), done(6, "late"))
+	e, cp, ok := firstCancelled(twice)
+	if !ok || e.Seq != 5 || cp.Reason != "a" {
+		t.Fatalf("firstCancelled = %d %+v %v, want the first terminal (5, a)", e.Seq, cp, ok)
+	}
+	malformed := append(append([]event.Event{}, base...), event.Event{Seq: 3, Kind: event.KindLoopCancelRequest, Payload: []byte("{")})
+	if _, _, ok := pendingCancel(malformed); ok {
+		t.Fatal("a malformed request is skipped")
+	}
+}
+
+// The owner's relay pump hands every cancel request to onCancel: one already in the
+// stream when the pump starts, and one that arrives later. A terminal event another
+// replica wrote while this one was starting the loop is honoured too, so a resume
+// racing a cold seal never leaves a cancelled loop running.
+func TestOwnerRelayPumpHonoursCancelRequests(t *testing.T) {
+	store := fsstore.NewDurableFSStore(t.TempDir())
+	r := New(Deps{DurableStore: store, Registry: store, RelayPoll: 20 * time.Millisecond}).(*inProcRuntime)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	var got []relayedCancel
+	onCancel := func(c relayedCancel) {
+		mu.Lock()
+		got = append(got, c)
+		mu.Unlock()
+	}
+	calls := func() []relayedCancel {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]relayedCancel(nil), got...)
+	}
+	start := func(id string) chan struct{} {
+		tree := agent.NewAgentTree("root", "m")
+		stop := make(chan struct{})
+		r.startRelayPump(ctx, event.StreamKey{Tenant: event.DefaultTenant, Loop: event.LoopID(id)}, agent.NewHumanBus(tree), tree.RootID(), stop, onCancel)
+		return stop
+	}
+
+	// A request already pending when the pump starts.
+	s1 := appendRaw(t, store, "pre", event.KindLoopCancelRequest, event.LoopCancelRequestPayload{Reason: "early", RequestedBy: "u1"})
+	stop := start("pre")
+	eventually(t, func() bool { return len(calls()) == 1 })
+	if c := calls()[0]; c.requestSeq != s1 || c.sealedSeq != 0 || c.reason != "early" || c.requestedBy != "u1" {
+		t.Fatalf("first-pass cancel = %+v", c)
+	}
+	// One that arrives while the pump runs.
+	s2 := appendRaw(t, store, "pre", event.KindLoopCancelRequest, event.LoopCancelRequestPayload{Reason: "late", RequestedBy: "u2"})
+	eventually(t, func() bool { return len(calls()) == 2 })
+	if c := calls()[1]; c.requestSeq != s2 || c.sealedSeq != 0 || c.reason != "late" {
+		t.Fatalf("later cancel = %+v", c)
+	}
+	close(stop)
+
+	// A stream someone already sealed while this replica was starting it.
+	appendRaw(t, store, "sealed", event.KindLoopCancelRequest, event.LoopCancelRequestPayload{Reason: "x"})
+	sealSeq := appendRaw(t, store, "sealed", event.KindLoopCancelled, event.LoopCancelledPayload{Reason: "cold seal", RequestedBy: "u3", RequestSeq: 1})
+	stop = start("sealed")
+	eventually(t, func() bool { return len(calls()) == 3 })
+	if c := calls()[2]; c.requestSeq != 1 || c.sealedSeq != sealSeq || c.reason != "cold seal" || c.requestedBy != "u3" {
+		t.Fatalf("sealed-stream cancel = %+v", c)
+	}
+	close(stop)
+
+	// A pump with nothing to cancel never calls onCancel.
+	appendRaw(t, store, "quiet", event.KindUserInput, event.UserInputPayload{Content: "hi"})
+	stop = start("quiet")
+	time.Sleep(100 * time.Millisecond)
+	close(stop)
+	if n := len(calls()); n != 3 {
+		t.Fatalf("a stream with no cancel triggered onCancel (%d calls)", n)
+	}
+}
+
+// A loop.cancelled another replica wrote reaches the owner's pump after the owner's
+// run already returned (the pump's last pass races its stop). The owner seals the loop
+// in memory and appends no second terminal event.
+func TestRelayedSealOfFinishedLoopAppendsNothing(t *testing.T) {
+	f := &steerFake{}
+	rtA, _, store := twoReplicas(t, f, nil)
+	ctx := context.Background()
+	h, err := rtA.StartLoop(ctx, LoopConfig{Task: "answer", ModelID: "target"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	seq := appendRaw(t, store, h.ID(), event.KindLoopCancelled, event.LoopCancelledPayload{Reason: "cold", RequestedBy: "u"})
+	n := len(streamOf(t, store, event.DefaultTenant, h.ID()))
+
+	r := rtA.(*inProcRuntime)
+	lp := r.loopCache(event.DefaultTenant, h.ID())
+	if lp == nil {
+		t.Fatal("A must still cache its finished loop")
+	}
+	r.cancelRelayed(lp, relayedCancel{reason: "cold", requestedBy: "u", sealedSeq: seq})
+
+	if got := len(streamOf(t, store, event.DefaultTenant, h.ID())); got != n {
+		t.Fatalf("a relayed seal of a finished loop appended events (%d -> %d)", n, got)
+	}
+	if err := rtA.Send(ctx, event.DefaultTenant, h.ID(), "hi"); !errors.Is(err, ErrLoopCancelled) {
+		t.Fatalf("Send after a relayed seal = %v, want ErrLoopCancelled", err)
+	}
+	res, err := r.Cancel(ctx, event.DefaultTenant, h.ID(), "again", "v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != CancelOutcomeAlreadyCancelled || res.TerminalSeq != seq || res.Reason != "cold" {
+		t.Fatalf("Cancel after a relayed seal = %+v, want AlreadyCancelled cold @%d", res, seq)
+	}
+}

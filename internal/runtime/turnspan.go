@@ -278,9 +278,13 @@ func consumedTurns(events []event.Event) int {
 	n := 0
 	trailing := false
 	for _, e := range events {
-		if e.Kind == event.KindLoopParked {
+		switch e.Kind {
+		case event.KindLoopParked:
 			n++
 			trailing = false
+			continue
+		case event.KindLoopCancelRequest, event.KindLoopCancelled:
+			// Control records, not an exchange: they never spend a turn index.
 			continue
 		}
 		trailing = true
