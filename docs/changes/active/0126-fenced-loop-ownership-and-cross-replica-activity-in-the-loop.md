@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/fenced-loop-ownership-and-cross-replica-activity-in-the-loop'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -44,3 +44,9 @@ Ownership becomes a compare-and-set on the registry contract: a heartbeat or liv
 ## Out of scope
 
 Leader election, moving a live loop between replicas on purpose, changing the lease TTL defaults, any wire-protocol change.
+
+## Reconcile log
+
+### 2026-11-03
+
+Unchanged against main 5eb0925: the registry contract, both backends and the inproc resume/renewer paths still match the spec pointers; no overlapping in-flight change (0120 stays out of scope).
