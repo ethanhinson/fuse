@@ -21,6 +21,7 @@ package main
 // regardless of how the binary was built.
 
 import (
+	"github.com/ethanhinson/fuse/internal/artifact"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 )
@@ -44,4 +45,16 @@ func selectDurableBackend(cfg config.Config) (event.DurableStore, event.LoopRegi
 	// The store IS its own registry (FSDurableStore satisfies both interfaces): return
 	// the same value for both seams so they share one on-disk tree.
 	return s, s, nil
+}
+
+// selectArtifactStore returns the process-shared artifact store (spilled tool
+// output and compaction segments) the composition root threads into
+// runtime.Deps.Artifacts. The untagged build always selects the filesystem store
+// under ~/.fuse/artifacts; cfg is accepted for parity with the pgstore selector.
+func selectArtifactStore(cfg config.Config) (artifact.Store, error) {
+	s, err := newFSArtifactStore()
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }

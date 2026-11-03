@@ -22,6 +22,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/runtime"
+	"github.com/ethanhinson/fuse/internal/segment/artsink"
 	"github.com/ethanhinson/fuse/internal/session"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/toolidentity"
@@ -119,6 +120,14 @@ func buildLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *mod
 // errors only when a DSN is configured and Postgres cannot be opened.
 var selectDurableBackendFn = selectDurableBackend
 
+// selectArtifactStoreFn is the artifact-store selector the composition root
+// consults, a package var for the same reason as selectDurableBackendFn.
+var selectArtifactStoreFn = selectArtifactStore
+
+// newLoopSegmentSink builds one hosted loop's segment sink from its bound
+// registry's artifact binding. A package var so a test can observe the binding.
+var newLoopSegmentSink = artsink.New
+
 // buildLoopServerRuntimeDepsWithObserver is the LENIENT composition variant used by
 // tests and library callers: on a selector error it falls back to nil store/registry
 // (the legacy per-loop fsstore path via BaseDir — no cross-process reattach).
@@ -136,7 +145,13 @@ func buildLoopServerRuntimeDepsWithObserver(sb *sandbox.Service, cfg config.Conf
 	if derr != nil {
 		durableStore, durableReg = nil, nil
 	}
-	return assembleLoopServerRuntimeDeps(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observer, durableStore, durableReg, nil)
+	d := assembleLoopServerRuntimeDeps(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observer, durableStore, durableReg, nil)
+	// A selector error leaves Artifacts nil, so the runtime installs its
+	// in-memory default.
+	if arts, aerr := selectArtifactStoreFn(cfg); aerr == nil {
+		d.Artifacts = arts
+	}
+	return d
 }
 
 // buildLoopServerRuntimeDepsStrict is the composition variant BOTH server bindings
@@ -156,7 +171,19 @@ func buildLoopServerRuntimeDepsStrict(sb *sandbox.Service, cfg config.Config, re
 	if derr != nil {
 		return runtime.Deps{}, fmt.Errorf("durable backend: %w — refusing to start on the filesystem store (loops would not survive a restart); fix the DSN or wait for Postgres", derr)
 	}
-	return assembleLoopServerRuntimeDeps(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observer, durableStore, durableReg, skillSet), nil
+	// The artifact store is refused the same way: a hosted loop's spilled output
+	// and compaction segments must survive a restart and be readable by every
+	// instance, which the runtime's in-memory default is not.
+	arts, aerr := selectArtifactStoreFn(cfg)
+	if errors.As(aerr, &fsErr) {
+		return runtime.Deps{}, fmt.Errorf("artifact store: %w; refusing to start without an artifact store - check that the directory can be created and written by this user", aerr)
+	}
+	if aerr != nil {
+		return runtime.Deps{}, fmt.Errorf("artifact store: %w — refusing to start without a durable artifact store; fix the DSN or wait for Postgres", aerr)
+	}
+	d := assembleLoopServerRuntimeDeps(sb, cfg, reg, modelAlias, toolReg, systemBlock, rootApprove, rateGate, observer, durableStore, durableReg, skillSet)
+	d.Artifacts = arts
+	return d, nil
 }
 
 // assembleLoopServerRuntimeDeps is the shared assembly behind both variants: the
@@ -355,6 +382,14 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			})
 		},
 		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, loopToolReg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+			// This loop's segment sink, over the artifact binding StartLoop gave its
+			// registry: the root and every child archive compacted regions under the
+			// loop's own (tenant, loop) scope. An unbound registry yields a nil sink,
+			// the agent's no-op default.
+			var segSink agent.SegmentSink
+			if loopToolReg != nil {
+				segSink = newLoopSegmentSink(loopToolReg.Artifacts())
+			}
 			sched := tree.Scheduler()
 			sched.SetMaxSpawns(cfg.Agents.MaxSpawns)
 			sched.SetQueueBound(cfg.Agents.QueueBound)
@@ -431,12 +466,12 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 				var aerr error
 				// loop-server is headless (no TTY, AlwaysApprove) ⇒ subagent approvals
 				// auto-approve too, and PrefixApproval keeps the policy provenance, so
-				// child gates deny explicit asks. No segment sink installed (nil).
+				// child gates deny explicit asks. Children share the loop's segment sink.
 				childApprove := permissions.PrefixApproval(opts.Label, rootApprove)
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(childCfg, reg, childModelID, discardRenderer{}, opts.SystemPrompt, childToolReg, childApprove, nil, opts.Label, nil, false, rateGate, nil)
+					a, aerr = buildChildAgent(childCfg, reg, childModelID, discardRenderer{}, opts.SystemPrompt, childToolReg, childApprove, nil, opts.Label, nil, false, rateGate, segSink)
 				} else {
-					a, _, aerr = buildAgentCore(childCfg, reg, childModelID, discardRenderer{}, systemBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, nil, observer)
+					a, _, aerr = buildAgentCore(childCfg, reg, childModelID, discardRenderer{}, systemBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, segSink, observer)
 				}
 				if aerr != nil {
 					return "", aerr
@@ -474,7 +509,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			// Root spawn_agent, blackboard and pipeline_run (provenance = rootNode).
 			wiring.rootTools(loopToolReg, rootNode)
 
-			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, systemBlock, cfg.Instructions, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, nil, observer)
+			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, systemBlock, cfg.Instructions, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, segSink, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/artifact"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/mcp"
@@ -63,6 +64,19 @@ func (h *eventStoreHolder) get() event.EventStore {
 // TestNoDirectEngineDriveAtCmdSites). The per-loop event store flows in as a VALUE
 // through BuildAgent + a per-Deps-instance eventStoreHolder (change 0046), never a
 // process-global.
+
+// cliArtifactStore is the artifact store of the one-shot and research-probe
+// bindings: the filesystem store under ~/.fuse/artifacts. When it cannot be
+// opened the run still proceeds; the failure is reported on stderr and nil is
+// returned, so the runtime installs its in-memory default.
+func cliArtifactStore() artifact.Store {
+	s, err := newFSArtifactStore()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "artifacts: %v; spilled tool output is kept in memory for this run\n", err)
+		return nil
+	}
+	return s
+}
 
 // buildOneShotRuntimeDeps assembles runtime.Deps for the one-shot entry point,
 // closing over the resolved cfg/reg/toolReg/renderer/approve wiring exactly as the
@@ -213,6 +227,7 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		Observer:        observer,
 		Tree:            tree,
 		BaseDir:         "", // NoopStore: one-shot writes no event log (byte-identical).
+		Artifacts:       cliArtifactStore(),
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
 		NewToolRegistry: func() *tools.Registry { return toolReg },
 		// LoopContext seeds the one-shot loop initiator as the config-derived local
@@ -417,6 +432,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		Observer:        observer,
 		Tree:            tree,
 		BaseDir:         "", // NoopStore: research-probe writes no event log (byte-identical).
+		Artifacts:       cliArtifactStore(),
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
 		NewToolRegistry: func() *tools.Registry { return toolReg },
 		// NO LoopTeardown — deliberately (review fix on change 0063).
@@ -679,6 +695,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		Tree:            tree,
 		BaseDir:         in.logDir, // present for seam symmetry; the shell's TUI drives turns, not StartLoop.
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
+		Artifacts:       in.toolReg.Artifacts().Store, // the session's own store, never the in-memory default
 		NewToolRegistry: func() *tools.Registry { return toolReg },
 		// NO LoopTeardown — deliberately (review fix on change 0063).
 		//
