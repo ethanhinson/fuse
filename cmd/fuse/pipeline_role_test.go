@@ -18,7 +18,9 @@ import (
 // child. The reviewer step gets the reviewer brief after the persona, the
 // role's model pin and the role's tools plus the blackboard tools. The writer
 // step gets its brief and the plain step's tools. The plain step gets no
-// brief. An unknown role is refused before any step spawns.
+// brief. A tool-less drafter step (change 0116) is offered no tools at all and
+// gets the tool-less persona line before its brief. An unknown role is refused
+// before any step spawns.
 func TestPipelineRoleStepAtGateway(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	gw := &routedGateway{route: func(string, int, gatewayCall) string { return textReply("done") }}
@@ -42,6 +44,7 @@ func TestPipelineRoleStepAtGateway(t *testing.T) {
 	const def = "name: rp\nsteps:\n" +
 		"  - name: rev\n    role: reviewer\n    prompt: REV-PIPE-TASK\n" +
 		"  - name: wri\n    role: writer\n    prompt: WRI-PIPE-TASK\n" +
+		"  - name: dft\n    role: drafter\n    prompt: DFT-PIPE-TASK\n" +
 		"  - name: pln\n    prompt: PLN-PIPE-TASK\n"
 	res := toolReg.Execute(context.Background(), "pipeline_run", argsJSON(map[string]any{"definition": def}))
 	if res.IsError || res.Output != "pipeline rp: completed" {
@@ -78,10 +81,17 @@ func TestPipelineRoleStepAtGateway(t *testing.T) {
 	if got, want := sortedToolNames(wri), sortedToolNames(pln); !reflect.DeepEqual(got, want) {
 		t.Errorf("writer step tools = %v, want the plain step's %v", got, want)
 	}
-	if strings.Contains(plnSys, "REVIEWER-BRIEF") || strings.Contains(plnSys, "WRITER-BRIEF") {
+	if strings.Contains(plnSys, "REVIEWER-BRIEF") || strings.Contains(plnSys, "WRITER-BRIEF") || strings.Contains(plnSys, "DRAFTER-BRIEF") {
 		t.Errorf("plain step carries a role brief:\n%s", plnSys)
 	}
-	for label, want := range map[string]string{"rev": "reviewer", "wri": "writer", "pln": ""} {
+	toolLess := toolLessPersonaFor(t, roleOperatorYAML, "fast")
+	dft := assertToolLessChild(t, gw, "DFT-PIPE-TASK", toolLess+"\n\nDRAFTER-BRIEF")
+	assertInOrder(t, dft.Messages[0].Content, toolLess, "DRAFTER-BRIEF")
+	if dft.Model != "cloud/fast" {
+		t.Errorf("drafter step model = %q, want the parent's cloud/fast", dft.Model)
+	}
+
+	for label, want := range map[string]string{"rev": "reviewer", "wri": "writer", "dft": "drafter", "pln": ""} {
 		if got := nodeLabelled(t, tree, label).Role; got != want {
 			t.Errorf("step %q Role = %q, want %q", label, got, want)
 		}
@@ -90,7 +100,7 @@ func TestPipelineRoleStepAtGateway(t *testing.T) {
 	before := len(tree.SnapshotAll())
 	bad := toolReg.Execute(context.Background(), "pipeline_run",
 		argsJSON(map[string]any{"definition": "name: bad\nsteps:\n  - name: x\n    role: nope\n    prompt: X-PIPE-TASK\n"}))
-	if !bad.IsError || !strings.Contains(bad.Output, `unknown role "nope" (available: reviewer, writer)`) {
+	if !bad.IsError || !strings.Contains(bad.Output, `unknown role "nope" (available: drafter, reviewer, writer)`) {
 		t.Fatalf("unknown-role pipeline_run = %+v, want the unknown-role refusal", bad)
 	}
 	if n := len(tree.SnapshotAll()); n != before {
@@ -105,5 +115,8 @@ func TestPipelineRoleStepAtGateway(t *testing.T) {
 	}
 	if !strings.Contains(desc, "`role`") || !strings.Contains(desc, "\n- reviewer — ") {
 		t.Errorf("root pipeline_run description does not mention roles: %q", desc)
+	}
+	if !strings.Contains(desc, "\n- drafter — Drafts text. (no tools: answers in plain text)") {
+		t.Errorf("root pipeline_run description does not mark the drafter tool-less: %q", desc)
 	}
 }
