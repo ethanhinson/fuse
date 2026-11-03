@@ -1,13 +1,18 @@
 # Backlog
 
-**118 changes** — 🟢 2 in progress · 🟡 10 proposed · ⚪ 3 deferred · ✅ 96 done · 🗑️ 7 killed
+**118 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 10 proposed · ⚪ 3 deferred · ✅ 96 done · 🗑️ 7 killed
 
-## 🟢 In progress (2)
+## 🟢 In progress (1)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0117](active/0117-cancel-rpc-on-the-networked-loop-server.md) | Cancel RPC on the networked loop server | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md) | `feat/cancel-rpc-on-the-networked-loop-server` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
+
+## 🔵 Built (1)
+
+| # | Title | Priority | Type | PR | State |
+|---|-------|----------|------|----|-------|
+| [0117](active/0117-cancel-rpc-on-the-networked-loop-server.md) | Cancel RPC on the networked loop server | `high` | `feat` | [#131](https://github.com/ethanhinson/fuse/pull/131) | awaiting merge |
 
 ## 🟡 Proposed (10)
 

@@ -2,7 +2,7 @@
 id: 117
 slug: 'cancel-rpc-on-the-networked-loop-server'
 title: 'Cancel RPC on the networked loop server'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/cancel-rpc-on-the-networked-loop-server'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/131'
 blocked_by:
 reconciled: true
 ---
@@ -53,3 +53,12 @@ Cancelling individual children, tools or turns (steer-with-interrupt already cov
 ### 2026-11-03
 
 Unchanged against `origin/main` 7ea0da7. Spec anchors (loop.proto RPCs, loopauth scopes, InProc ErrLoopFinished/resume path, idle TTL, relay.go) hold. Change 0118 is building in parallel and also edits loop.proto (SpecPolicy.carried_skills_allowed); rebase onto origin/main before PR and regenerate protos if it lands first.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 3253af684320a11f9694ce70ad20c4c0958103dc
+ran_at:   2026-11-03T04:31:01Z
+<!-- docket:build-evidence:end -->
