@@ -78,12 +78,14 @@ func (h *loopServerHost) settingsFor(res harnessresolve.Resolved) loopSettings {
 	cfg := res.Config
 	reg := registryFromConfig(cfg)
 
-	// The loop's skills: exactly the ones the spec names, or every installed
-	// skill when it names none. Both the skill tool's lookup and the system
+	// The loop's skills: exactly the ones the spec lists, in spec order (an
+	// installed skill by name, or a skill the spec carries, which shadows an
+	// installed one of the same name for this loop only), or every installed
+	// skill when it lists none. Both the skill tool's lookup and the system
 	// prompt's skill listing use this set.
 	skillSet := h.skills
 	if len(res.Skills) > 0 {
-		skillSet = skillSet.Only(res.Skills)
+		skillSet = skillSet.Compose(res.Skills)
 	}
 	var lookup func(string) (skills.Skill, bool)
 	if skillSet != nil {

@@ -7,10 +7,12 @@
 // harnessconfig.Overlay), tighten-only fields may only tighten the operator's
 // values, and operator-only surfaces always come from the server. Before any
 // loop exists the spec is validated as a whole - the shared shape and semantic
-// rules (the public harness validator's), the tighten-only floor, skill names
-// against the skills the server has installed, and every secret_ref against
-// the server's SecretResolver - and every violation is reported with its spec
-// field path in one *harness.ValidationError.
+// rules (the public harness validator's), the tighten-only floor, skill
+// references against the skills the server has installed, skills the spec
+// carries itself (change 0118) against the operator's spec_policy.carried_skills
+// switch, and every secret_ref against the server's SecretResolver - and every
+// violation is reported with its spec field path in one
+// *harness.ValidationError.
 //
 // A request may also carry loop-scoped secret values (change 0102) for its
 // secret_ref names, each bound to the hostnames it may be sent to. They reach
@@ -36,6 +38,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/harnessconfig"
 	"github.com/ethanhinson/fuse/internal/loopsecret"
+	"github.com/ethanhinson/fuse/internal/skills"
 )
 
 // Resolver resolves specs over one server's operator config.
@@ -55,9 +58,10 @@ type Resolver struct {
 type Resolved struct {
 	// Config is the loop's resolved config. It holds resolved secret values.
 	Config config.Config
-	// Skills are the names of the skills the spec makes available, in spec
-	// order; nil when the spec names none (the server's full set applies).
-	Skills []string
+	// Skills are the skills the spec lists, in spec order, each a reference
+	// to an installed skill or a skill the spec carries itself; nil when the
+	// spec lists none (the server's full set applies).
+	Skills []skills.Entry
 	// Digest identifies the spec's content (harness.Digest).
 	Digest string
 }
@@ -77,7 +81,8 @@ func (r Resolver) Resolve(ctx context.Context, tenant string, spec *harnessv1.Ha
 	}
 
 	values, secretProblems := r.resolveSecrets(ctx, tenant, spec)
-	skills, skillProblems := r.resolveSkills(spec)
+	entries, skillProblems := r.resolveSkills(spec)
+	skillProblems = append(skillProblems, harnessconfig.SkillProblems(spec)...)
 	skillProblems = append(skillProblems, operatorOnlyProblems(spec)...)
 	skillProblems = append(skillProblems, r.specPolicyProblems(ctx, spec)...)
 
@@ -100,7 +105,7 @@ func (r Resolver) Resolve(ctx context.Context, tenant string, spec *harnessv1.Ha
 	if ps := harnessconfig.Combine(shape, secretProblems, skillProblems, mapped); len(ps) > 0 {
 		return Resolved{}, &harness.ValidationError{Violations: fromProblems(ps)}
 	}
-	return Resolved{Config: cfg, Skills: skills, Digest: harness.Digest(spec)}, nil
+	return Resolved{Config: cfg, Skills: entries, Digest: harness.Digest(spec)}, nil
 }
 
 // secretRef is one secret_ref field of a spec.
@@ -221,13 +226,31 @@ func operatorOnlyProblems(spec *harnessv1.HarnessSpec) []harnessconfig.Problem {
 	return out
 }
 
-// resolveSkills checks every SkillRef against the installed skills.
-func (r Resolver) resolveSkills(spec *harnessv1.HarnessSpec) ([]string, []harnessconfig.Problem) {
-	var names []string
+// resolveSkills resolves every SkillRef to a skills.Entry, in spec order. An
+// entry with a non-empty body is carried: it needs no installed skill (it
+// shadows one of the same name for this loop only), and it is refused at its
+// body when the operator's spec_policy.carried_skills is false. Any other
+// entry is a reference, checked against the installed skills.
+func (r Resolver) resolveSkills(spec *harnessv1.HarnessSpec) ([]skills.Entry, []harnessconfig.Problem) {
+	allowed := r.Base.LoopServer.SpecPolicy.CarriedSkillsAllowed()
+	var entries []skills.Entry
 	var problems []harnessconfig.Problem
 	for i, ref := range spec.GetSkills() {
 		name := ref.GetName()
-		names = append(names, name)
+		if ref.GetBody() != "" {
+			if !allowed {
+				problems = append(problems, harnessconfig.Problem{
+					FieldPath: fmt.Sprintf("skills[%d].body", i),
+					Message:   "this server does not accept skills carried in a spec",
+					RuleID:    harness.RuleSkillsCarriedRefused,
+				})
+				continue
+			}
+			sk := skills.NewCarried(name, ref.GetDescription(), ref.GetBody())
+			entries = append(entries, skills.Entry{Name: name, Carried: &sk})
+			continue
+		}
+		entries = append(entries, skills.Entry{Name: name})
 		if r.Skills == nil || !r.Skills(name) {
 			problems = append(problems, harnessconfig.Problem{
 				FieldPath: fmt.Sprintf("skills[%d].name", i),
@@ -236,7 +259,7 @@ func (r Resolver) resolveSkills(spec *harnessv1.HarnessSpec) ([]string, []harnes
 			})
 		}
 	}
-	return names, problems
+	return entries, problems
 }
 
 // tightenProblems reports each refused tighten-only loosening at its spec path,

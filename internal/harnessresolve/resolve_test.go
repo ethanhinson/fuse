@@ -12,6 +12,7 @@ import (
 	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/skills"
 )
 
 const secretValue = "s3cr3t-VALUE-never-shown"
@@ -82,7 +83,7 @@ func TestResolveLayersAValidSpec(t *testing.T) {
 	if c.MCPServers[0].Auth.ClientSecret != secretValue {
 		t.Errorf("secret not resolved into the config")
 	}
-	if !reflect.DeepEqual(got.Skills, []string{"research"}) {
+	if !reflect.DeepEqual(got.Skills, []skills.Entry{{Name: "research"}}) {
 		t.Errorf("skills = %v", got.Skills)
 	}
 	if got.Digest != harness.Digest(spec) || !strings.HasPrefix(got.Digest, "sha256:") || len(got.Digest) != len("sha256:")+64 {
@@ -300,5 +301,99 @@ func TestResolve_RefusesWorkerWithoutTools(t *testing.T) {
 				t.Fatalf("violations = %+v, want one repeated.min_items at %s", got, tc.path)
 			}
 		})
+	}
+}
+
+func carried(name, body string) *harnessv1.SkillRef {
+	return &harnessv1.SkillRef{Name: name, Description: "d", Body: body}
+}
+
+func carriedEntry(name, body string) skills.Entry {
+	sk := skills.NewCarried(name, "d", body)
+	return skills.Entry{Name: name, Carried: &sk}
+}
+
+func TestResolveCarriedSkillNeedsNoInstall(t *testing.T) {
+	spec := &harnessv1.HarnessSpec{Skills: []*harnessv1.SkillRef{carried("triage", "b")}}
+	got, err := Resolver{Base: operator(t)}.Resolve(context.Background(), "acme", spec)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if want := []skills.Entry{carriedEntry("triage", "b")}; !reflect.DeepEqual(got.Skills, want) {
+		t.Errorf("skills = %+v, want %+v", got.Skills, want)
+	}
+}
+
+func TestResolveCarriedAndReferenceInSpecOrder(t *testing.T) {
+	spec := &harnessv1.HarnessSpec{Skills: []*harnessv1.SkillRef{carried("triage", "b"), {Name: "research"}}}
+	got, err := Resolver{Base: operator(t), Skills: installed("research")}.Resolve(context.Background(), "acme", spec)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if want := []skills.Entry{carriedEntry("triage", "b"), {Name: "research"}}; !reflect.DeepEqual(got.Skills, want) {
+		t.Errorf("skills = %+v, want %+v", got.Skills, want)
+	}
+}
+
+func TestResolveCarriedShadowsNoInstallCheck(t *testing.T) {
+	spec := &harnessv1.HarnessSpec{Skills: []*harnessv1.SkillRef{carried("research", "mine")}}
+	got, err := Resolver{Base: operator(t), Skills: installed("research")}.Resolve(context.Background(), "acme", spec)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if want := []skills.Entry{carriedEntry("research", "mine")}; !reflect.DeepEqual(got.Skills, want) {
+		t.Errorf("skills = %+v, want %+v", got.Skills, want)
+	}
+}
+
+func TestResolveUninstalledReferenceStillRefused(t *testing.T) {
+	spec := &harnessv1.HarnessSpec{Skills: []*harnessv1.SkillRef{carried("triage", "b"), {Name: "nope"}}}
+	_, err := Resolver{Base: operator(t)}.Resolve(context.Background(), "acme", spec)
+	vs := violations(t, err)
+	if len(vs) != 1 || vs[0].FieldPath != "skills[1].name" || vs[0].RuleID != harness.RuleSkillRef {
+		t.Errorf("violations = %+v", vs)
+	}
+}
+
+func TestResolveRefusesCarriedSkillsWhenPolicySaysSo(t *testing.T) {
+	off := false
+	base := operator(t)
+	base.LoopServer.SpecPolicy.CarriedSkills = &off
+	spec := &harnessv1.HarnessSpec{Skills: []*harnessv1.SkillRef{carried("a", "x"), {Name: "research"}, carried("b", "y")}}
+	_, err := Resolver{Base: base, Skills: installed("research")}.Resolve(context.Background(), "acme", spec)
+	const msg = "this server does not accept skills carried in a spec"
+	want := []harness.Violation{
+		{FieldPath: "skills[0].body", Message: msg, RuleID: harness.RuleSkillsCarriedRefused},
+		{FieldPath: "skills[2].body", Message: msg, RuleID: harness.RuleSkillsCarriedRefused},
+	}
+	if vs := violations(t, err); !reflect.DeepEqual(vs, want) {
+		t.Errorf("violations = %+v, want %+v", vs, want)
+	}
+}
+
+func TestResolveReportsCarriedBytes(t *testing.T) {
+	var refs []*harnessv1.SkillRef
+	for i := 0; i < 9; i++ {
+		refs = append(refs, carried(string(rune('a'+i)), strings.Repeat("x", 30000)))
+	}
+	_, err := Resolver{Base: operator(t)}.Resolve(context.Background(), "acme", &harnessv1.HarnessSpec{Skills: refs})
+	vs := violations(t, err)
+	if len(vs) != 1 || vs[0].FieldPath != "skills" || vs[0].RuleID != harness.RuleSkillsCarriedBytes {
+		t.Errorf("violations = %+v", vs)
+	}
+}
+
+func TestResolveDigestCoversTheBody(t *testing.T) {
+	r := Resolver{Base: operator(t)}
+	a, err := r.Resolve(context.Background(), "acme", &harnessv1.HarnessSpec{Skills: []*harnessv1.SkillRef{carried("t", "one")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := r.Resolve(context.Background(), "acme", &harnessv1.HarnessSpec{Skills: []*harnessv1.SkillRef{carried("t", "two")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Digest == b.Digest {
+		t.Errorf("digest %q ignores the carried body", a.Digest)
 	}
 }
