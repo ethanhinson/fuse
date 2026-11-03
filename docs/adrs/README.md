@@ -76,6 +76,7 @@ Immutable, numbered record of *why*. ADRs are never archived or rewritten; once 
 - [ADR-0077](0077-carried-skills-travel-in-the-harness-spec-not-beside-it.md) — Carried skills travel in the harness spec, not beside it (Accepted) ← change #118
 - [ADR-0078](0078-loop-cancellation-is-a-terminal-stream-event-plus-an-in-memo.md) — Loop cancellation is a terminal stream event plus an in-memory seal (Accepted) ← change #117 · relates to ADR-0031, ADR-0047
 - [ADR-0079](0079-loop-ownership-is-a-fenced-lease-with-compare-and-set-on-the.md) — Loop ownership is a fenced lease with compare-and-set on the loop registry (Accepted) ← change #126
+- [ADR-0080](0080-loop-artifacts-are-addressed-by-tenant-scoped-refs-never-fil.md) — Loop artifacts are addressed by tenant-scoped refs, never filesystem paths (Accepted) ← change #128 · relates to ADR-0024, ADR-0030, ADR-0031
 
 ## Superseded / Reversed
 
