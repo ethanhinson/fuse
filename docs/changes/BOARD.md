@@ -1,18 +1,13 @@
 # Backlog
 
-**122 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 13 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
+**122 changes** — 🟢 2 in progress · 🟡 13 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
 
-## 🟢 In progress (1)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
+| [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Tool-less loops, roles and workers | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-roles-and-workers-can-be-tool-less-design.md) | `feat/roles-and-workers-can-be-tool-less` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
-
-## 🟣 Groomed (1)
-
-| # | Title | Priority | Type | Spec | Readiness |
-|---|-------|----------|------|------|-----------|
-| [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Tool-less loops, roles and workers | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-roles-and-workers-can-be-tool-less-design.md) | build-ready |
 
 ## 🟡 Proposed (13)
 

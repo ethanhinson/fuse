@@ -2,7 +2,7 @@
 id: 116
 slug: 'roles-and-workers-can-be-tool-less'
 title: 'Tool-less loops, roles and workers'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/roles-and-workers-can-be-tool-less'
 pr:
 blocked_by:
 reconciled: false
