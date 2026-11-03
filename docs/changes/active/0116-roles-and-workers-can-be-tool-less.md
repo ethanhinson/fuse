@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/roles-and-workers-can-be-tool-less'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -50,3 +50,9 @@ A role's `tools` list carries two meanings in one field. A non-empty list is the
 ## Out of scope
 
 Changing what an empty `tools` list means; it stays inherit.
+
+## Reconcile log
+
+### 2026-11-03
+
+Unchanged against `origin/main` 374384f. No `no_tools` exists yet; #0130 (carried skills) and #0131 (CancelLoop) landed since the spec but touch neither tool composition nor role/worker resolution. Scope follows the linked spec, which supersedes this record's earlier note that tool-less children still get the blackboard: they get an empty registry.
