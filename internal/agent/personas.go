@@ -55,3 +55,35 @@ func ComposeSystemPrompt(persona, prefix, instructions, extra string) string {
 	}
 	return base + "\n\n" + extra
 }
+
+// toolLessPersonaPrompts is each persona's one-line form for an agent offered
+// no tools at all: it states that and asks for plain text.
+var toolLessPersonaPrompts = map[string]string{
+	"coding":    "You are a coding agent. You have no tools: answer directly in plain text.",
+	"research":  "You are a research agent. You have no tools: answer directly in plain text.",
+	"reasoning": "You are a reasoning agent. You have no tools: think step-by-step and answer directly in plain text.",
+	"general":   "You are a general-purpose agent. You have no tools: answer directly in plain text.",
+}
+
+// ToolLessPersonaPrompt returns the one-line persona prompt for a tool-less
+// agent, falling back to the general one for unknown names.
+func ToolLessPersonaPrompt(persona string) string {
+	if p, ok := toolLessPersonaPrompts[strings.ToLower(persona)]; ok {
+		return p
+	}
+	return toolLessPersonaPrompts["general"]
+}
+
+// ComposeToolLessSystemPrompt is ComposeSystemPrompt for an agent offered no
+// tools: the tool-less persona line in place of the persona prompt, and no
+// extra block, since every extra block describes a tool.
+func ComposeToolLessSystemPrompt(persona, prefix, instructions string) string {
+	base := ToolLessPersonaPrompt(persona)
+	if prefix != "" {
+		base = prefix + "\n" + base
+	}
+	if strings.TrimSpace(instructions) != "" {
+		base += "\n\n" + instructions
+	}
+	return base
+}
