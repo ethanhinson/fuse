@@ -28,7 +28,7 @@ One `bool no_tools` field, same name and meaning in all three messages, mirrored
 Why a spec field and not the alternatives:
 
 - `Permissions.disabled: ["*"]` would turn a list of exact names into a pattern language, hide a mode switch inside a deny list, and still answer nothing about the internal tools, because `disabled` filters after composition and is also the gate's defense in depth at `Execute`. It would also make `disabled` mean two different things in operator YAML and in a spec.
-- A `PermissionMode` value would conflate composition with gating. Mode governs calls that exist, can be flipped at run time through `SessionMode`, and is validated as an enum the console presents as "how to ask". A tool-less loop makes no gate decisions at all.
+- A `PermissionMode` value would conflate composition with gating. Mode governs calls that exist, can be flipped at run time through `SessionMode`, and is validated as an enum a caller presents as "how to ask". A tool-less loop makes no gate decisions at all.
 - A field reads as what it is: part of the loop's composition, carried by the spec, covered by its digest, and the same word for the loop, a role and a worker.
 
 The three states, documented in the proto comments:
@@ -77,7 +77,7 @@ Semantic rules in `internal/config/validate.go`, surfaced through `harness.Valid
 - Changing what an empty `Role.tools` means; it stays inherit.
 - Removing `segment_read` and the codeindex tools from the loop server's default registry for ordinary loops. They are dead weight there today, but that is a separate cleanup with its own blast radius.
 - Per-loop control over individual internal tools.
-- Any console or client UI.
+- Any caller UI.
 
 ## Acceptance criteria
 
