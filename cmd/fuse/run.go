@@ -452,6 +452,9 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	if err != nil {
 		return nil, fmt.Errorf("model %q: %w", alias, err)
 	}
+	if err := errToolLessCLIModel(cfg, mc.ID); err != nil {
+		return nil, err
+	}
 	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
 	if strings.HasPrefix(mc.ID, "cli/") {
 		fuseExe, err := os.Executable()
@@ -1076,6 +1079,9 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	mc, err := reg.Resolve(alias)
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
+	}
+	if err := errToolLessCLIModel(cfg, mc.ID); err != nil {
+		return nil, "", err
 	}
 	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
 	// buildAgentCore is the single chokepoint both gate construction and

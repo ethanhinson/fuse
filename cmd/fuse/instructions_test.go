@@ -353,11 +353,12 @@ func TestSpecDigestChangesWithInstructions(t *testing.T) {
 }
 
 // TestBuildAgentCoreToolLessPrompt: a tool-less config composes the one-line
-// tool-less persona plus the brief, and drops every tool-driven extra block,
-// on the gateway and the CLI paths alike.
+// tool-less persona plus the brief, and drops every tool-driven extra block.
+// A cli/ model refuses a tool-less config outright (TestNoToolsRejectsCLIModel),
+// so only gateway paths compose a tool-less prompt.
 func TestBuildAgentCoreToolLessPrompt(t *testing.T) {
 	t.Setenv("FUSE_HITL_MODE", "")
-	for _, tc := range []struct{ id, prefix string }{{"cloud/fast", ""}, {"cli/claude", "/no_think"}} {
+	for _, tc := range []struct{ id, prefix string }{{"cloud/fast", ""}, {"cloud/thinker", "/no_think"}} {
 		cfg := config.Default()
 		cfg.NoTools = true // permissions mode left at its default, so the scratch block would otherwise be appended
 		a := instructionsTestBuildCfg(t, cfg, model.ModelConfig{ID: tc.id, Persona: "research", SystemPrefix: tc.prefix}, spawnAgentBlock+"EXTRA-BLOCK", "BRIEF")

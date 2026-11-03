@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -26,6 +27,17 @@ func loopMCPServers(cfg config.Config) []config.MCPServerConfig {
 		return nil
 	}
 	return cfg.MCPServers
+}
+
+// errToolLessCLIModel fails a tool-less build on a cli/ model closed. The CLI
+// adapter's subprocess always attaches fuse's own MCP server, which offers the
+// full tool set whatever the request carries, so honouring no_tools there is
+// impossible; building anyway would hand tools to an agent told it has none.
+func errToolLessCLIModel(cfg config.Config, modelID string) error {
+	if cfg.NoTools && strings.HasPrefix(modelID, "cli/") {
+		return fmt.Errorf("no_tools is not supported with CLI model %q", modelID)
+	}
+	return nil
 }
 
 // withoutNoTools clears no_tools for an entry point that always runs with

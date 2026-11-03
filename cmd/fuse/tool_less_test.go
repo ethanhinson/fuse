@@ -18,6 +18,9 @@ import (
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
+	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
+	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
@@ -368,5 +371,38 @@ func TestResearchProbeIgnoresNoTools(t *testing.T) {
 	}
 	if len(calls[0].Messages) > 0 && strings.Contains(calls[0].Messages[0].Content, "You have no tools") {
 		t.Errorf("research probe composed the tool-less prompt:\n%s", calls[0].Messages[0].Content)
+	}
+}
+
+// TestNoToolsRejectsCLIModel: a cli/ model runs through a subprocess that
+// always attaches fuse's own tools, so a tool-less config on one fails closed
+// at build time, on the root and the child path alike, naming the model. An
+// ordinary cli/ build is unaffected.
+func TestNoToolsRejectsCLIModel(t *testing.T) {
+	t.Setenv("FUSE_HITL_MODE", "")
+	reg := model.NewRegistry("c", map[string]model.ModelConfig{"c": {ID: "cli/claude"}})
+	build := map[string]func(cfg config.Config) error{
+		"buildAgentCore": func(cfg config.Config) error {
+			_, _, err := buildAgentCore(cfg, reg, "c", discardRenderer{}, "", "", nil, "root", tools.NewRegistry(), permissions.AlwaysApprove, nil, false, nil, nil, observe.NoopObserver{})
+			return err
+		},
+		"buildChildAgent": func(cfg config.Config) error {
+			_, err := buildChildAgent(cfg, reg, "c", discardRenderer{}, "", tools.NewRegistry(), permissions.AlwaysApprove, nil, "child", nil, false, nil, nil)
+			return err
+		},
+	}
+	for name, fn := range build {
+		t.Run(name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.NoTools = true
+			err := fn(cfg)
+			if err == nil || !strings.Contains(err.Error(), "no_tools") || !strings.Contains(err.Error(), `"cli/claude"`) {
+				t.Fatalf("tool-less cli build error = %v, want a no_tools error naming \"cli/claude\"", err)
+			}
+			cfg.NoTools = false
+			if err := fn(cfg); err != nil {
+				t.Fatalf("ordinary cli build: %v", err)
+			}
+		})
 	}
 }
