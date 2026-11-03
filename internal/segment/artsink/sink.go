@@ -24,9 +24,11 @@ import (
 const archiveTimeout = 10 * time.Second
 
 // Sink archives each compacted region as a KindSegment artifact and appends an
-// entry to the loop's KindSegmentIndex artifact. The index is always re-read
-// from the store before appending, so sinks in different runtimes serving the
-// same loop extend one index rather than overwriting each other.
+// entry to the loop's KindSegmentIndex artifact. The index is re-read from the
+// store before appending, but the update is an unguarded read-modify-write: mu
+// serializes only this Sink instance. It assumes a single writer per loop (the
+// loop's lease owner is the only archiver); two overlapping sinks for one loop
+// could lose an index entry, though each segment body is still stored.
 type Sink struct {
 	b  artifact.Binding
 	mu sync.Mutex

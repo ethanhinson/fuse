@@ -153,7 +153,7 @@ func (s *Store) Open(ctx context.Context, ref artifact.Ref) (io.ReadCloser, arti
 	if err != nil {
 		return nil, artifact.Meta{}, fmt.Errorf("artifact pgstore: %s: corrupt body: %w", ref, err)
 	}
-	body, err := io.ReadAll(zr)
+	body, err := artifact.ReadCapped(zr)
 	if err != nil {
 		return nil, artifact.Meta{}, fmt.Errorf("artifact pgstore: %s: corrupt body: %w", ref, err)
 	}
