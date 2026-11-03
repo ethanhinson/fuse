@@ -14,7 +14,7 @@ related: [47, 49, 51, 53, 54, 55, 103, 106, 108]
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-03-cancel-rpc-on-the-networked-loop-server.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md](../../superpowers/specs/2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md) |
+| Plan | [2026-11-03-cancel-rpc-on-the-networked-loop-server.md](../../superpowers/plans/2026-11-03-cancel-rpc-on-the-networked-loop-server.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
