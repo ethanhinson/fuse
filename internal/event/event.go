@@ -675,4 +675,8 @@ type LoopCancelledPayload struct {
 	// RequestSeq is the seq of the loop.cancel.request this answers; 0 for a
 	// cancel made on the owning replica.
 	RequestSeq uint64 `json:"request_seq,omitempty"`
+	// Superseded marks a loop.cancelled its writer appended knowing the stream
+	// already held an earlier one (the first is authoritative). It records the
+	// writer's own seal, never a second cancel, so it is never counted as one.
+	Superseded bool `json:"superseded,omitempty"`
 }

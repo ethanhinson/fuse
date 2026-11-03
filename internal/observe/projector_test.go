@@ -116,6 +116,22 @@ func TestProjectEventLoopCancelledIsBoundedAndPayloadFree(t *testing.T) {
 		}
 	}
 
+	// A superseded terminal (a second loop.cancelled written knowing of an earlier
+	// one) is not a cancel: it leaves CancelWasLive empty, so the counter stays put.
+	for _, wasLive := range []bool{true, false} {
+		sp, err := json.Marshal(event.LoopCancelledPayload{WasLive: wasLive, Superseded: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := ProjectEvent(key, event.Event{Kind: event.KindLoopCancelled, Payload: sp})
+		if rec.CancelWasLive != "" {
+			t.Fatalf("superseded was_live=%v CancelWasLive = %q, want empty", wasLive, rec.CancelWasLive)
+		}
+		if rec.Outcome != OutcomeCanceled {
+			t.Fatalf("superseded terminal outcome = %s, want canceled", rec.Outcome)
+		}
+	}
+
 	// A payload that does not decode leaves CancelWasLive empty.
 	if rec := ProjectEvent(key, event.Event{Kind: event.KindLoopCancelled, Payload: []byte("{not json")}); rec.CancelWasLive != "" {
 		t.Fatalf("undecodable payload CancelWasLive = %q, want empty", rec.CancelWasLive)

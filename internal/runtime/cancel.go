@@ -69,8 +69,12 @@ type cancelState struct {
 	reason, requestedBy string
 	requestSeq          event.Seq // the loop.cancel.request this answers; 0 for a local cancel
 	wasLive             bool
-	terminalSeq         event.Seq     // guarded by inProcRuntime.mu
-	sealed              chan struct{} // closed once loop.cancelled is appended (or the append failed)
+	// superseded: the stream already held a loop.cancelled when this cancel was
+	// recorded, so the terminal this state appends is a second one (readers take
+	// the first) and is marked so it is never counted as a cancel.
+	superseded  bool
+	terminalSeq event.Seq     // guarded by inProcRuntime.mu
+	sealed      chan struct{} // closed once loop.cancelled is appended (or the append failed)
 }
 
 // isCancelled reports whether a Cancel has sealed lp.
@@ -526,7 +530,7 @@ func (r *inProcRuntime) cancelFinished(ctx context.Context, lp *loop, reason, re
 // replica starting it) seals lp in memory without a second terminal event when the
 // run has already returned; a run still going is aborted, and its completion appends
 // its own loop.cancelled so the terminal event stays the last one (readers take the
-// first).
+// first). That second terminal is marked superseded.
 func (r *inProcRuntime) cancelRelayed(lp *loop, c relayedCancel) {
 	if c.sealedSeq == 0 {
 		_, _ = r.cancelLocal(context.Background(), lp, c.reason, c.requestedBy, c.requestSeq)
@@ -542,6 +546,7 @@ func (r *inProcRuntime) cancelRelayed(lp *loop, c relayedCancel) {
 		requestedBy: c.requestedBy,
 		requestSeq:  c.requestSeq,
 		wasLive:     !lp.finishing,
+		superseded:  true,
 		sealed:      make(chan struct{}),
 	}
 	lp.cancelled = cs
@@ -692,6 +697,7 @@ func (r *inProcRuntime) appendTerminal(lp *loop, cs *cancelState) event.Seq {
 		RequestedBy: cs.requestedBy,
 		WasLive:     cs.wasLive,
 		RequestSeq:  uint64(cs.requestSeq),
+		Superseded:  cs.superseded,
 	})
 	if err != nil {
 		return 0

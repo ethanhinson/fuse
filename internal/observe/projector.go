@@ -107,12 +107,15 @@ func ProjectEvent(key event.StreamKey, e event.Event) Record {
 // decorateCancelled extracts ONLY was_live from a loop.cancelled payload. The
 // private decode shape names nothing else, so the free-text reason and the
 // requesting principal can never reach the projection. A payload that does not
-// decode leaves CancelWasLive empty, which counts nothing.
+// decode leaves CancelWasLive empty, which counts nothing; so does a superseded
+// terminal (a second loop.cancelled its writer appended knowing of an earlier
+// one), which records a seal, not another cancel.
 func decorateCancelled(rec *Record, payload []byte) {
 	var marker struct {
-		WasLive bool `json:"was_live"`
+		WasLive    bool `json:"was_live"`
+		Superseded bool `json:"superseded"`
 	}
-	if err := json.Unmarshal(payload, &marker); err != nil {
+	if err := json.Unmarshal(payload, &marker); err != nil || marker.Superseded {
 		return
 	}
 	rec.CancelWasLive = strconv.FormatBool(marker.WasLive)

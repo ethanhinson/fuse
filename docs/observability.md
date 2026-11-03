@@ -12,7 +12,7 @@ Run `go run ./deploy/observability/validate.go`; when installed, also run `docke
 
 ## Loop cancellation
 
-`fuse_loops_cancelled_total{tenant_id, was_live}` is a counter projected from the `loop.cancelled` event. `was_live` is `true` or `false` (whether the loop was running in this process when it was cancelled). The cancellation reason is never a label. Its per-replica series bound is `2*T`.
+`fuse_loops_cancelled_total{tenant_id, was_live}` is a counter projected from the `loop.cancelled` event. `was_live` is `true` or `false` (whether the loop was running in this process when it was cancelled). A second `loop.cancelled` its writer appended knowing the stream already held one is marked `superseded` and is not counted. The cancellation reason is never a label. Its per-replica series bound is `2*T`.
 
 ## Local run paths (`fuse shell`, one-shot, runtime bindings)
 

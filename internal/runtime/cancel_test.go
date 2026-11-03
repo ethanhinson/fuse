@@ -1332,3 +1332,44 @@ func TestCancelFinishedCachedLoopResumedElsewhereRelays(t *testing.T) {
 		t.Fatalf("the repeat cancel appended events (%d -> %d)", len(evs), got)
 	}
 }
+
+// A loop.cancelled another replica wrote reaches the owner while its run is still
+// going. The owner aborts the run and its completion appends its own loop.cancelled
+// after the foreign one; that second terminal is marked superseded so it is never
+// counted as a second cancel.
+func TestRelayedSealOfRunningLoopMarksSecondTerminalSuperseded(t *testing.T) {
+	f := &steerFake{targetBlock: make(chan struct{})}
+	rtA, _, store := twoReplicasWith(t, f, nil, withCancelWait(5*time.Second))
+	ctx := context.Background()
+	h, err := rtA.StartLoop(ctx, LoopConfig{Task: "build it", ModelID: "target", Interactive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.targetBlock // A's model call is in flight
+
+	seq := appendRaw(t, store, h.ID(), event.KindLoopCancelled, event.LoopCancelledPayload{Reason: "cold", RequestedBy: "u"})
+	r := rtA.(*inProcRuntime)
+	lp := r.loopCache(event.DefaultTenant, h.ID())
+	if lp == nil {
+		t.Fatal("A must cache its running loop")
+	}
+	r.cancelRelayed(lp, relayedCancel{reason: "cold", requestedBy: "u", sealedSeq: seq})
+	_, _ = h.Wait()
+
+	evs := streamOf(t, store, event.DefaultTenant, h.ID())
+	var terms []event.Event
+	for _, e := range evs {
+		if e.Kind == event.KindLoopCancelled {
+			terms = append(terms, e)
+		}
+	}
+	if len(terms) != 2 {
+		t.Fatalf("want the foreign and the owner's loop.cancelled, got %d", len(terms))
+	}
+	if p := cancelledPayload(t, terms[0]); p.Superseded {
+		t.Fatalf("the first terminal must not be superseded: %+v", p)
+	}
+	if p := cancelledPayload(t, terms[1]); !p.Superseded || !p.WasLive {
+		t.Fatalf("the owner's second terminal = %+v, want superseded and was_live", p)
+	}
+}
