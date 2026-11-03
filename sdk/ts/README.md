@@ -55,6 +55,7 @@ Steering a loop that is mid-turn:
 ```ts
 await client.interrupt(loopId, "stop, use the cache instead"); // cancels the current step
 await client.sendWith(loopId, "also add tests", { source: "orchestrator" });
+await client.cancel(loopId, "no longer needed"); // stops and seals the loop for good
 
 // A chat loop that watches and steers another loop (implies interactive):
 const orch = await client.startLoop({ task: "tell me what it is doing", model: "m", orchestrate: loopId });
@@ -98,7 +99,9 @@ breaking the loop and re-calling `observe(loopId, lastSeq)`.
 
 Completion is a first-class predicate `isCompletion(event)` keyed on the real event kind
 (`internal/event.KindLoopParked = "loop.parked"`), never inferred from stream shape. After
-a completion event on an interactive loop you may `send` the next turn.
+a completion event on an interactive loop you may `send` the next turn. `isCompletion` is
+also true for `loop.cancelled`, the last event of a cancelled loop, after which the loop
+never runs again.
 
 ## Tests
 
