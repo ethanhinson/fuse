@@ -2,7 +2,7 @@
 id: 117
 slug: 'cancel-rpc-on-the-networked-loop-server'
 title: 'Cancel RPC on the networked loop server'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/cancel-rpc-on-the-networked-loop-server'
 pr:
 blocked_by:
 reconciled: false
