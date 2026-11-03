@@ -504,9 +504,11 @@ type HarnessSpec struct {
 	// minus permissions.disabled. true: none - every model call of the loop
 	// carries no tools, no MCP server this spec names is started, and the main
 	// agent cannot spawn helpers. Every other field stays valid beside it and is
-	// simply unreachable. Check GetCapabilitiesResponse.spec_features for
-	// "no_tools" first: a server that predates this field drops it and runs the
-	// loop with every tool.
+	// simply unreachable. A StartLoopRequest that also sets
+	// orchestrate_loop_id is refused with InvalidArgument: an orchestrator's
+	// only tools are the watch-and-steer tools. Check
+	// GetCapabilitiesResponse.spec_features for "no_tools" first: a server that
+	// predates this field drops it and runs the loop with every tool.
 	NoTools       bool `protobuf:"varint,16,opt,name=no_tools,json=noTools,proto3" json:"no_tools,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

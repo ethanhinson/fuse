@@ -775,3 +775,29 @@ func TestLoopServerRunsAToolLessSpec(t *testing.T) {
 		}
 	}
 }
+
+// TestLoopServerReportsNoToolsToTheRuntime pins the wiring behind the
+// runtime's refusal of a tool-less orchestrator: the loop server tells the
+// runtime when its own config, or a spec's resolved config, is tool-less.
+func TestLoopServerReportsNoToolsToTheRuntime(t *testing.T) {
+	deps, host := harnessServerWith(t, harnessOperator, &recordingGateway{})
+	if deps.NoTools {
+		t.Fatal("an ordinary operator config reported no_tools")
+	}
+	f, err := host.ResolveHarness(context.Background(), "acme", &harnessv1.HarnessSpec{NoTools: true})
+	if err != nil || !f.NoTools {
+		t.Fatalf("tool-less spec factory NoTools = %v (err %v), want true", f.NoTools, err)
+	}
+	if f, err := host.ResolveHarness(context.Background(), "acme", &harnessv1.HarnessSpec{}); err != nil || f.NoTools {
+		t.Fatalf("ordinary spec factory NoTools = %v (err %v), want false", f.NoTools, err)
+	}
+
+	deps, _ = harnessServerWith(t, harnessOperator+"no_tools: true\n", &recordingGateway{})
+	if !deps.NoTools {
+		t.Fatal("a tool-less operator config did not report no_tools")
+	}
+	_, err = runtime.New(deps).StartLoop(context.Background(), runtime.LoopConfig{Task: "watch", Orchestrate: "target"})
+	if !errors.Is(err, runtime.ErrNoToolsOrchestrate) {
+		t.Fatalf("tool-less orchestrator StartLoop err = %v, want ErrNoToolsOrchestrate", err)
+	}
+}

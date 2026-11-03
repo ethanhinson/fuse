@@ -254,9 +254,11 @@ export type HarnessSpec = Message<"fuse.harness.v1.HarnessSpec"> & {
    * minus permissions.disabled. true: none - every model call of the loop
    * carries no tools, no MCP server this spec names is started, and the main
    * agent cannot spawn helpers. Every other field stays valid beside it and is
-   * simply unreachable. Check GetCapabilitiesResponse.spec_features for
-   * "no_tools" first: a server that predates this field drops it and runs the
-   * loop with every tool.
+   * simply unreachable. A StartLoopRequest that also sets
+   * orchestrate_loop_id is refused with InvalidArgument: an orchestrator's
+   * only tools are the watch-and-steer tools. Check
+   * GetCapabilitiesResponse.spec_features for "no_tools" first: a server that
+   * predates this field drops it and runs the loop with every tool.
    *
    * @generated from field: bool no_tools = 16;
    */

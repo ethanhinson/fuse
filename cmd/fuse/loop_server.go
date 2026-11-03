@@ -249,6 +249,7 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 		NewToolRegistry: server.NewToolRegistry,
 		BuildAgent:      server.BuildAgent,
 		Harness:         host,
+		NoTools:         server.NoTools,
 	}
 }
 
@@ -317,6 +318,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 	mintAudit := h.mintAudit
 	return runtime.LoopFactory{
 		MaxConcurrent: cfg.Agents.MaxConcurrent,
+		NoTools:       cfg.NoTools, // the runtime refuses a tool-less orchestrator
 		// The per-loop tool registry is built fresh per loop from the same source as the
 		// server's default, so each loop's root tool wiring binds to its own tree below.
 		// It ALSO attaches a per-loop MCP manager (change #59, Task 4): mcp.NewManager

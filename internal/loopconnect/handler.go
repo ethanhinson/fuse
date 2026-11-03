@@ -324,6 +324,10 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		if cerr := harnessError(err); cerr != nil {
 			return nil, cerr
 		}
+		if errors.Is(err, runtime.ErrNoToolsOrchestrate) {
+			// A tool-less orchestrator contradicts itself: an invalid request.
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
 		if errors.Is(err, runtime.ErrLoopNotFound) || errors.Is(err, runtime.ErrLoopFinished) ||
 			errors.Is(err, runtime.ErrLoopCancelled) {
 			// The orchestrate target is not a loop the caller can steer: a client
