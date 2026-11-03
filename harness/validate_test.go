@@ -451,3 +451,73 @@ func TestValidateReportsCarriedBytes(t *testing.T) {
 		t.Fatalf("Validate = %+v, want only skills %s", vs, harness.RuleSkillsCarriedBytes)
 	}
 }
+
+// TestValidateNoTools pins the no_tools rules through both the Go validator
+// and the ValidateHarness handler: a role or worker naming tools and no_tools
+// is refused at its no_tools path, a worker naming neither is refused at its
+// tools path, a worker with only no_tools is valid, and a tool-less spec stays
+// valid beside every block it leaves unreachable.
+func TestValidateNoTools(t *testing.T) {
+	const conflict = "names tools and no_tools; choose one"
+	worker := func(w *harnessv1.Worker) *harnessv1.HarnessSpec {
+		return &harnessv1.HarnessSpec{Workflows: map[string]*harnessv1.Workflow{
+			"wf": {Skill: "wf", Workers: map[string]*harnessv1.Worker{"w": w}},
+		}}
+	}
+	cases := []struct {
+		name      string
+		spec      *harnessv1.HarnessSpec
+		path      string // "" means valid
+		msgSubstr string
+	}{
+		{"role with tools and no_tools", &harnessv1.HarnessSpec{Roles: map[string]*harnessv1.Role{
+			"x": {Description: "d", Tools: []string{"read_file"}, NoTools: true},
+		}}, `roles["x"].no_tools`, conflict},
+		{"worker with tools and no_tools", worker(&harnessv1.Worker{Tools: []string{"read_file"}, NoTools: true}), `workflows["wf"].workers["w"].no_tools`, conflict},
+		{"worker with neither", worker(&harnessv1.Worker{}), `workflows["wf"].workers["w"].tools`, ""},
+		{"worker with only no_tools", worker(&harnessv1.Worker{NoTools: true}), "", ""},
+		{"tool-less spec beside unreachable blocks", &harnessv1.HarnessSpec{
+			NoTools:     true,
+			Permissions: &harnessv1.Permissions{Disabled: []string{"bash"}},
+			McpServers: []*harnessv1.McpServer{{
+				Name: "remote", Transport: harnessv1.McpTransport_MCP_TRANSPORT_HTTP, Url: "https://mcp.example.com",
+			}},
+			Skills: []*harnessv1.SkillRef{{Name: "research"}},
+			Roles:  map[string]*harnessv1.Role{"reviewer": {Description: "Reviews.", Tools: []string{"read_file"}}},
+			Workflows: map[string]*harnessv1.Workflow{
+				"review": {Skill: "review", Workers: map[string]*harnessv1.Worker{"reader": {Tools: []string{"read_file"}}}},
+			},
+			Pipeline: &harnessv1.Pipeline{Synthesis: &harnessv1.PipelineSynthesis{MaxSteps: 5}},
+		}, "", ""},
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle(harnessv1connect.NewHarnessServiceHandler(harness.Service{}))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	client := harnessv1connect.NewHarnessServiceClient(http.DefaultClient, srv.URL)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := client.ValidateHarness(context.Background(), connect.NewRequest(&harnessv1.ValidateHarnessRequest{Spec: tc.spec}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var served []harness.Violation
+			for _, v := range resp.Msg.GetViolations() {
+				served = append(served, harness.Violation{FieldPath: v.GetFieldPath(), RuleID: v.GetRuleId(), Message: v.GetMessage()})
+			}
+			for via, vs := range map[string][]harness.Violation{"Validate": harness.Validate(tc.spec), "ValidateHarness": served} {
+				if tc.path == "" {
+					if len(vs) != 0 {
+						t.Errorf("%s = %+v, want none", via, vs)
+					}
+					continue
+				}
+				if len(vs) != 1 || vs[0].FieldPath != tc.path || vs[0].RuleID != harness.RuleConfig || !strings.Contains(vs[0].Message, tc.msgSubstr) {
+					t.Errorf("%s = %+v, want one %s at %s containing %q", via, vs, harness.RuleConfig, tc.path, tc.msgSubstr)
+				}
+			}
+		})
+	}
+}

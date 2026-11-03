@@ -297,8 +297,11 @@ func TestResolve_RefusesWorkerWithoutTools(t *testing.T) {
 				t.Fatal("Resolve accepted a worker without tools")
 			}
 			got := violations(t, err)
-			if len(got) != 1 || got[0].FieldPath != tc.path || got[0].RuleID != "repeated.min_items" {
-				t.Fatalf("violations = %+v, want one repeated.min_items at %s", got, tc.path)
+			// The shape layer accepts an empty allowlist (a tool-less worker
+			// has one); the semantic rule refuses a worker that names neither
+			// tools nor no_tools.
+			if len(got) != 1 || got[0].FieldPath != tc.path || got[0].RuleID != harness.RuleConfig {
+				t.Fatalf("violations = %+v, want one %s at %s", got, harness.RuleConfig, tc.path)
 			}
 		})
 	}
