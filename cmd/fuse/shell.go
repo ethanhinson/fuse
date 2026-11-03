@@ -12,7 +12,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/ethanhinson/fuse/internal/agent"
-	artfs "github.com/ethanhinson/fuse/internal/artifact/fsstore"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/event/fsstore"
@@ -22,7 +21,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/segment"
-	"github.com/ethanhinson/fuse/internal/segment/artsink"
+	"github.com/ethanhinson/fuse/internal/segment/fssink"
 	"github.com/ethanhinson/fuse/internal/session"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -194,8 +193,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	// exists and before anything clones toolReg (every child registry is a Clone
 	// or Subset of it and so inherits this binding). Nothing between
 	// buildSessionRegistryNoMCP and here clones it.
-	arts := artfs.New(filepath.Join(filepath.Dir(logDir), "artifacts"))
-	toolReg.WithArtifacts(arts, event.DefaultTenant, event.LoopID(tree.RootID()))
+	//
+	// Segment sink (change 0030/0046): the shell's own per-session SegmentSink,
+	// built by fssink.Open together with that binding (one archive code path). It is
+	// threaded per-loop through the summarizer install (installSummarizer)
+	// instead of the retired setActiveSegmentSink global — the shell owns one
+	// session, so this single value flows into every agent it builds.
+	// segment_read and the /agents overlay read the same binding back.
+	segmentSink, arts := fssink.Open(filepath.Join(filepath.Dir(logDir), "artifacts"), tree.RootID())
+	toolReg.WithArtifacts(arts.Store, arts.Tenant, arts.Loop)
 
 	// Session log, keyed by the root AgentNode.ID (change 0030): the log lives at
 	// ~/.fuse/sessions/<root-id>/session.jsonl.
@@ -214,14 +220,6 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			}
 		}()
 	}
-	// Segment sink (change 0030/0046): the shell's own per-session SegmentSink,
-	// archiving into the root loop's artifact binding. It is threaded per-loop
-	// through the summarizer install (installSummarizer) instead of the retired
-	// setActiveSegmentSink global — the shell owns one session, so this single
-	// value flows into every agent it builds. segment_read and the /agents
-	// overlay read the same binding back.
-	segmentSink := artsink.New(toolReg.Artifacts())
-
 	// Loop event stream (change 0043/0046): open the per-session EventStore next to
 	// the segment sink, keyed by the same root id. Every agent built this session
 	// emits its loop events here. It flows per-loop through the Deps store holder and

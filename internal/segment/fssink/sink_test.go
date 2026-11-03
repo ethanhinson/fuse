@@ -138,3 +138,33 @@ func TestConcurrentArchiveNoLostEntries(t *testing.T) {
 		t.Errorf("index entries = %d, want %d (lost writes under concurrency)", len(idx.Segments), n)
 	}
 }
+
+// TestOpenReturnsSinkAndItsBinding: Open hands the shell the sink plus the
+// artifact binding it archives into, so the shell can bind its tool registry
+// (segment_read, spill) and the TUI to the very binding the sink writes, with
+// one code path for both.
+func TestOpenReturnsSinkAndItsBinding(t *testing.T) {
+	dir := t.TempDir()
+	sink, b := Open(dir, "sess-open")
+	if sink == nil {
+		t.Fatal("Open returned a nil sink")
+	}
+	if b.Store == nil || b.Tenant != event.DefaultTenant || b.Loop != "sess-open" {
+		t.Fatalf("binding = %+v, want store under default tenant, loop sess-open", b)
+	}
+	ptr, err := sink.Archive(sampleRegion(4, 6))
+	if err != nil {
+		t.Fatalf("Archive err = %v", err)
+	}
+	if !strings.HasPrefix(ptr, "art://_default/sess-open/segment/") {
+		t.Fatalf("pointer = %q", ptr)
+	}
+	// The returned binding reads back what the sink archived.
+	idx, err := segment.NewArtifactSource(b).ReadIndex(context.Background())
+	if err != nil || len(idx.Segments) != 1 || idx.Segments[0].TurnStart != 4 {
+		t.Fatalf("binding index = %+v, err %v; want one entry turns 4..6", idx, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "_default", "sess-open", "segment")); err != nil {
+		t.Errorf("segment not under artifactsDir: %v", err)
+	}
+}

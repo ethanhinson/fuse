@@ -21,9 +21,18 @@ import (
 // art:// ref as the recovery pointer. An empty loopID yields a nil sink, which
 // the agent treats as its no-op.
 func New(artifactsDir, loopID string) agent.SegmentSink {
-	return artsink.New(artifact.Binding{
+	sink, _ := Open(artifactsDir, loopID)
+	return sink
+}
+
+// Open is New plus the artifact binding the sink archives into, for a caller
+// (the local shell) that must also bind its tool registry — spilled tool
+// output, segment_read — and its segment reader to that same binding.
+func Open(artifactsDir, loopID string) (agent.SegmentSink, artifact.Binding) {
+	b := artifact.Binding{
 		Store:  artfs.New(artifactsDir),
 		Tenant: event.DefaultTenant,
 		Loop:   event.LoopID(loopID),
-	})
+	}
+	return artsink.New(b), b
 }
