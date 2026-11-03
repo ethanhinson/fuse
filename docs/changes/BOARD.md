@@ -1,6 +1,6 @@
 # Backlog
 
-**135 changes** — 🟢 1 in progress · 🟣 6 groomed · 🟡 20 proposed · ⚪ 3 deferred · ✅ 98 done · 🗑️ 7 killed
+**136 changes** — 🟢 1 in progress · 🟣 6 groomed · 🟡 21 proposed · ⚪ 3 deferred · ✅ 98 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -19,10 +19,11 @@
 | [0127](active/0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md) | build-ready |
 | [0126](active/0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) | build-ready |
 
-## 🟡 Proposed (20)
+## 🟡 Proposed (21)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0136](active/0136-loop-scoped-secrets-can-survive-a-move-through-an-opt-in-sec.md) | Loop-scoped secrets can survive a move through an opt-in secret store adapter | `medium` | `feat` | ⏳ waiting on #126 — not yet built |
 | [0132](active/0132-pipeline-runs-are-event-sourced-and-resumable.md) | Pipeline runs are event-sourced and resumable | `medium` | `feat` | ⏳ waiting on #127 — not yet built |
 | [0131](active/0131-the-blackboard-is-durable-and-shared-across-replicas.md) | The blackboard is durable and shared across replicas | `high` | `feat` | ⏳ waiting on #127 — not yet built |
 | [0130](active/0130-workspaces-follow-a-loop-across-replicas.md) | Workspaces follow a loop across replicas | `high` | `feat` | ⏳ waiting on #129 — not yet built |
@@ -85,6 +86,7 @@ graph TD
   0133
   0134
   0135
+  0126 --> 0136
   0012:::done
   0052:::done
   0063:::done
