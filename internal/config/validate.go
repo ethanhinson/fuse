@@ -190,7 +190,7 @@ func (c Config) Problems() []Problem {
 			if sc == "" || strings.ContainsAny(sc, " \t\r\n") {
 				add(fmt.Sprintf("loop_server.auth[%d].scopes[%d]", i, j), "%q is not a single scope name", sc)
 			} else if !knownScopes[sc] {
-				add(fmt.Sprintf("loop_server.auth[%d].scopes[%d]", i, j), "%q is not a known scope (want one of loop:start, loop:send, loop:observe, loop:admin, capabilities:read, secrets:inline)", sc)
+				add(fmt.Sprintf("loop_server.auth[%d].scopes[%d]", i, j), "%q is not a known scope (want one of loop:start, loop:send, loop:observe, loop:admin, loop:cancel, capabilities:read, secrets:inline)", sc)
 			}
 		}
 	}
@@ -304,6 +304,7 @@ var knownScopes = map[string]bool{
 	loopauth.ScopeLoopSend:         true,
 	loopauth.ScopeLoopObserve:      true,
 	loopauth.ScopeLoopAdmin:        true,
+	loopauth.ScopeLoopCancel:       true,
 	loopauth.ScopeCapabilitiesRead: true,
 	loopauth.ScopeSecretsInline:    true,
 }

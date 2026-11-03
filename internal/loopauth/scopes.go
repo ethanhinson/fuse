@@ -14,9 +14,14 @@ const (
 	ScopeLoopSend = "loop:send"
 	// ScopeLoopObserve authorizes Observe of a loop the caller owns.
 	ScopeLoopObserve = "loop:observe"
-	// ScopeLoopAdmin widens owner authorization for Send and Observe to any loop
-	// within the caller's tenant. It is honoured only when explicitly granted.
+	// ScopeLoopAdmin widens owner authorization for Send, Observe and CancelLoop
+	// to any loop within the caller's tenant. It is honoured only when explicitly
+	// granted.
 	ScopeLoopAdmin = "loop:admin"
+	// ScopeLoopCancel authorizes CancelLoop on a loop the caller owns. loop:admin
+	// also satisfies it (and lifts the owner check within the tenant). No other
+	// scope implies it: a start-only or send-only token cannot stop loops.
+	ScopeLoopCancel = "loop:cancel"
 	// ScopeCapabilitiesRead authorizes reading the server's capabilities.
 	ScopeCapabilitiesRead = "capabilities:read"
 	// ScopeSecretsInline authorizes inline secrets on a request. The loopconnect

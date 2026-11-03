@@ -58,7 +58,8 @@ func TestAuthTokenScopesValidation(t *testing.T) {
 		{"whitespace entry", []string{"loop:start loop:send"}, "loop_server.auth[0].scopes[0]", "is not a single scope name"},
 		{"empty entry", []string{""}, "loop_server.auth[0].scopes[0]", "is not a single scope name"},
 		{"unknown refused", []string{"loop:observe", "unknown:thing"}, "loop_server.auth[0].scopes[1]", "is not a known scope"},
-		{"all known", []string{"loop:start", "loop:send", "loop:observe", "loop:admin", "capabilities:read"}, "", ""},
+		{"all known", []string{"loop:start", "loop:send", "loop:observe", "loop:admin", "loop:cancel", "capabilities:read", "secrets:inline"}, "", ""},
+		{"cancel only", []string{"loop:cancel"}, "", ""},
 		{"omitted", nil, "", ""},
 	}
 	for _, tc := range cases {
@@ -116,5 +117,28 @@ loop_server:
 	err = c.Validate()
 	if err == nil || !strings.Contains(err.Error(), "loop_server.auth[0].scopes") {
 		t.Fatalf("Validate() = %v, want the explicit-empty scopes problem", err)
+	}
+}
+
+// TestUnknownScopeHintNamesEveryKnownScope keeps the operator-facing "want one
+// of" hint in step with knownScopes: a scope added to the vocabulary but left
+// out of the hint would send an operator fixing a typo to the wrong list.
+func TestUnknownScopeHintNamesEveryKnownScope(t *testing.T) {
+	c := Config{LoopServer: LoopServerConfig{Auth: []AuthTokenConfig{
+		{Token: "t", Tenant: "acme", Subject: "x", Scopes: []string{"unknown:thing"}},
+	}}}
+	var msg string
+	for _, p := range c.Problems() {
+		if p.Path == "loop_server.auth[0].scopes[0]" {
+			msg = p.Message
+		}
+	}
+	if msg == "" {
+		t.Fatal("no unknown-scope problem reported")
+	}
+	for _, sc := range sortedKeys(knownScopes) {
+		if !strings.Contains(msg, sc) {
+			t.Errorf("unknown-scope hint %q does not name known scope %q", msg, sc)
+		}
 	}
 }
