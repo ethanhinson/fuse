@@ -46,6 +46,9 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 			verbose = true
 		}
 	}
+	// The shell always runs with its tools (change 0116): no_tools is for
+	// one-shot runs and the loop server, so clear it before anything is built.
+	cfg = withoutNoTools(cfg, stderr, "the shell")
 
 	// Session observability (change 0061): construct the observe layer ONCE, here,
 	// and thread the resulting observer into every agent the shell builds — root and

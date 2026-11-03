@@ -90,6 +90,19 @@ try {
   last-seen seq. A defensive watermark drops any overlap frame, so the stream is
   **no-loss / no-dup** across the reconnect.
 
+## Spec features
+
+`client.specFeatures()` resolves to the HarnessSpec features the server implements beyond the
+fields every server accepts (today `"no_tools"`). An older server drops an unknown field and runs
+the loop without it, so check before `startLoop`. A server that does not answer `GetCapabilities`
+resolves to `[]`; treat that as "no such feature".
+
+```ts
+if ((await client.specFeatures()).includes("no_tools")) {
+  // safe to send a spec with noTools
+}
+```
+
 ## Reconnect / completion
 
 Reconnect is not a separate call — it is just `observe(loopId, fromSeq)` with the last seq

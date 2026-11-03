@@ -241,7 +241,8 @@ A client of a networked server supplies a harness spec, and that spec can name
 MCP servers, a custom search URL and model ids. `loop_server.spec_policy` in the
 operator config (`~/.fuse/config.yml`; ignored from repo-local files) is the
 floor those values are held to. `GetCapabilities` advertises `mcp_hosts`,
-`deny_private_networks`, `models_registry_only` and `carried_skills_allowed`, and `StartLoop` reports a
+`deny_private_networks`, `models_registry_only`, `carried_skills_allowed` and
+`spec_features` (the HarnessSpec features the server implements, such as `no_tools`), and `StartLoop` reports a
 violation (`fuse.operator_only`) at the offending field. The public
 `harness.Service.ValidateHarness` is not server-aware and does not apply the policy.
 

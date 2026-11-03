@@ -31,6 +31,7 @@ func composeGoldenCases() map[string]string {
 			for _, ex := range extras {
 				out[p+"|"+pre+"|"+ex.flag] = composeNoInstructions(p, pre, ex.text)
 			}
+			out[p+"|"+pre+"|tool-less"] = ComposeToolLessSystemPrompt(p, pre, "")
 		}
 	}
 	return out

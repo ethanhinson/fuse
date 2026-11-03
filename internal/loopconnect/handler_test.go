@@ -322,6 +322,17 @@ func TestStartLoopOrchestrateThreaded(t *testing.T) {
 	}
 }
 
+// A tool-less orchestrator is refused by the runtime; the caller sees an
+// invalid request, not a server fault.
+func TestStartLoopNoToolsOrchestrateIsInvalidArgument(t *testing.T) {
+	rt := &fakeRuntime{startErr: runtime.ErrNoToolsOrchestrate}
+	client := newTestServer(t, rt)
+	_, err := client.StartLoop(context.Background(), connect.NewRequest(&loopv1.StartLoopRequest{Task: "watch", OrchestrateLoopId: "target-9"}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("no_tools + orchestrate code = %v, want InvalidArgument", connect.CodeOf(err))
+	}
+}
+
 func TestSendSourceValidatedAndThreaded(t *testing.T) {
 	rt := &steeringRuntime{fakeRuntime: &fakeRuntime{}}
 	client := newTestServer(t, rt)

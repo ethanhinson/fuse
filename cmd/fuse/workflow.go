@@ -74,6 +74,9 @@ func (a *workflowActivation) workerNames() []string {
 //     and a non-empty requested subset may only NARROW it (any requested tool not
 //     in the allowlist is rejected). The allowlist is authoritative — a worker
 //     without spawn_agent cannot regain it via the subset.
+//   - worker names a known tool-less worker: no tool list (nil) and no error;
+//     the child builder gives it an empty registry. Any requested tool is
+//     refused, since there is nothing to narrow.
 //   - worker names a known worker with an empty allowlist: an error (change
 //     0095). The allowlist is the worker's whole tool set, so an empty one would
 //     otherwise fall through to "inherit all"; the config and harness validators
@@ -85,6 +88,12 @@ func resolveWorkerTools(wf config.WorkflowConfig, worker string, requested []str
 	w, ok := wf.Workers[worker]
 	if !ok {
 		return nil, fmt.Errorf("unknown worker %q", worker)
+	}
+	if w.NoTools {
+		if len(requested) > 0 {
+			return nil, fmt.Errorf("worker %q permits no tools", worker)
+		}
+		return nil, nil
 	}
 	if len(w.Tools) == 0 {
 		return nil, fmt.Errorf("worker %q declares no tools", worker)
@@ -198,10 +207,21 @@ func newWorkflowScope(tree *agent.AgentTree, workflows map[string]config.Workflo
 
 // childPlan is the workflow- and role-resolved shape of one child spawn.
 type childPlan struct {
-	tools        []string // effective tool list (nil = inherit all, only when unbound: a bound child always has a non-empty set)
+	tools        []string // effective tool list (nil = inherit all, only when unbound and not none: a bound child that is not none always has a non-empty set)
 	model        string   // worker or role model pin, "" when none
 	bound        bool     // a worker or a role with a non-empty tool set was selected
+	none         bool     // a tool-less role or worker: the child gets an empty registry, not even the blackboard
 	instructions string   // the role brief for the child's instructions slot, "" when none
+}
+
+// agentConfig is cfg as this child's agent is built from it: a tool-less
+// child composes the tool-less system prompt. cfg is a value, so the loop's
+// own config is untouched.
+func (p childPlan) agentConfig(cfg config.Config) config.Config {
+	if p.none {
+		cfg.NoTools = true
+	}
+	return cfg
 }
 
 // sortedRoleNames returns every defined role name, sorted.
@@ -256,7 +276,11 @@ func (s *workflowScope) roleOptions(nodeID string) []tools.RoleOption {
 	names := s.offeredRoles(nodeID)
 	opts := make([]tools.RoleOption, 0, len(names))
 	for _, n := range names {
-		opts = append(opts, tools.RoleOption{Name: n, Description: s.roles[n].Description})
+		desc := s.roles[n].Description
+		if s.roles[n].NoTools {
+			desc += " (no tools: answers in plain text)" // the spawn and pipeline schemas show a text-only helper
+		}
+		opts = append(opts, tools.RoleOption{Name: n, Description: desc})
 	}
 	return opts
 }
@@ -300,11 +324,22 @@ func (s *workflowScope) checkRole(parentID, workflow, role, systemPrompt, worker
 }
 
 // resolveRoleTools returns a role child's tool list and whether it is bound
-// (change 0114). A non-empty role.Tools is the child's whole tool set and the
-// requested subset may only narrow it (bound: the blackboard tools are added).
-// An empty role.Tools inherits: the requested subset passes through unchanged,
-// exactly as for a freeform spawn (not bound).
+// for a role spawn. A role is in one of three states:
+//   - tool-less (role.NoTools): no tool list and not bound; the child builder
+//     gives it an empty registry, with no blackboard. Any requested tool is
+//     refused. It is checked first: validation forbids it beside a tool set,
+//     and at run time tool-less wins.
+//   - a non-empty role.Tools is the child's whole tool set and the requested
+//     subset may only narrow it (bound: the blackboard tools are added).
+//   - an empty role.Tools inherits: the requested subset passes through
+//     unchanged, exactly as for a freeform spawn (not bound).
 func resolveRoleTools(name string, role config.RoleConfig, requested []string) ([]string, bool, error) {
+	if role.NoTools {
+		if len(requested) > 0 {
+			return nil, false, fmt.Errorf("role %q permits no tools", name)
+		}
+		return nil, false, nil
+	}
 	if len(role.Tools) == 0 {
 		return requested, false, nil
 	}
@@ -564,7 +599,7 @@ func (s *workflowScope) prepareChild(opts agent.SpawnOpts, child *agent.AgentNod
 		if err != nil {
 			return childPlan{}, err
 		}
-		return childPlan{tools: rt, bound: bound, model: role.Model, instructions: role.Instructions}, nil
+		return childPlan{tools: rt, bound: bound, none: role.NoTools, model: role.Model, instructions: role.Instructions}, nil
 	}
 	act, _ := s.activationOf(child.ID)
 	if act == nil {
@@ -579,7 +614,9 @@ func (s *workflowScope) prepareChild(opts agent.SpawnOpts, child *agent.AgentNod
 	}
 	plan := childPlan{tools: rt, bound: opts.Worker != ""}
 	if plan.bound {
-		plan.model = act.cfg.Workers[opts.Worker].Model
+		wk := act.cfg.Workers[opts.Worker]
+		plan.model = wk.Model
+		plan.none = wk.NoTools
 	}
 	return plan, nil
 }

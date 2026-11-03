@@ -153,6 +153,11 @@ type Deps struct {
 	// LoopFactory. Nil: a LoopConfig carrying a spec is refused with
 	// ErrHarnessUnsupported, and every loop is built from the collaborators above.
 	Harness HarnessResolver
+
+	// NoTools reports that the binding's own config is tool-less (no_tools), for
+	// a loop started without a harness spec. Like LoopFactory.NoTools, the runtime
+	// reads it only to refuse an orchestrating loop (ErrNoToolsOrchestrate).
+	NoTools bool
 }
 
 // defaultLeaseTTL is the owner-liveness lease duration used when Deps.LeaseTTL is zero.
@@ -408,12 +413,29 @@ func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHand
 // launchLoop is the shared construction + run-goroutine wiring behind StartLoop and
 // Resume. opts is the small delta between them (see launchOpts).
 func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts launchOpts) (LoopHandle, error) {
+	// An orchestrator holds only the watch-and-steer tools, so a tool-less one is a
+	// contradiction (its prompt would say it has no tools while it is offered
+	// some). A spec asking for both is refused before the resolver runs.
+	if cfg.Orchestrate != "" && cfg.Harness.GetNoTools() {
+		return nil, ErrNoToolsOrchestrate
+	}
 	// A loop with a harness spec (change 0085) is resolved FIRST, before any span,
 	// tree, store, registry record or event exists: an invalid spec creates
 	// nothing, and the caller gets the resolver's error (its violations) as is.
 	factory, err := r.resolveHarness(ctx, cfg)
 	if err != nil {
 		return nil, err
+	}
+	// The same refusal for a tool-less config the spec did not name itself: the
+	// resolved floor, or the binding's own config for a loop with no spec.
+	if cfg.Orchestrate != "" {
+		noTools := r.deps.NoTools
+		if factory != nil {
+			noTools = factory.NoTools
+		}
+		if noTools {
+			return nil, ErrNoToolsOrchestrate
+		}
 	}
 	// Loop-scoped secret values (change 0102) are memory-only and exist for
 	// resolution alone: nothing past this point (Deps.LoopContext, the loop, its

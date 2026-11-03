@@ -249,6 +249,7 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 		NewToolRegistry: server.NewToolRegistry,
 		BuildAgent:      server.BuildAgent,
 		Harness:         host,
+		NoTools:         server.NoTools,
 	}
 }
 
@@ -317,6 +318,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 	mintAudit := h.mintAudit
 	return runtime.LoopFactory{
 		MaxConcurrent: cfg.Agents.MaxConcurrent,
+		NoTools:       cfg.NoTools, // the runtime refuses a tool-less orchestrator
 		// The per-loop tool registry is built fresh per loop from the same source as the
 		// server's default, so each loop's root tool wiring binds to its own tree below.
 		// It ALSO attaches a per-loop MCP manager (change #59, Task 4): mcp.NewManager
@@ -326,25 +328,31 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 		// The manager is tracked by the loop's registry so LoopTeardown closes it at loop
 		// completion. Two concurrent loops get two independent managers over two registries
 		// — no shared MCP state.
+		//
+		// A tool-less loop (no_tools, change 0116) gets an empty registry instead:
+		// no clone, no bash, no MCP manager, so nothing is dialed and no sandbox
+		// pool can exist for teardown to release.
 		NewToolRegistry: func() *tools.Registry {
-			loopReg := cloneServerToolRegistry(toolReg)
-			// Registry.Clone shares TOOL POINTERS, so the cloned registry would
-			// otherwise carry the server-wide bash tool — and with it one warm
-			// pool shared by every hosted loop, which LoopTeardown could not
-			// close without tearing down another loop's live container. Rebind a
-			// fresh bash over the SAME frozen Service (containment is unchanged;
-			// only the pool is per-loop), which Register overwrites by name
-			// (learning patch-every-cloned-child-builder).
-			loopReg.Register(tools.NewBash(sb))
-			// A no-op when cfg.MCPServers is empty (no dial, no goroutines). NewManager
-			// returns a usable manager even if some servers fail to start (they are skipped
-			// with a warning), so the loop still runs its non-MCP tools.
-			if mgr, err := mcp.NewManager(cfg.MCPServers, loopReg, mcpOpts...); err != nil {
-				fmt.Fprintf(os.Stderr, "loop-server: mcp manager: %v\n", err)
-			} else {
-				loopManagers.Store(loopReg, mgr)
-			}
-			return loopReg
+			return loopBaseRegistry(cfg, func() *tools.Registry {
+				loopReg := cloneServerToolRegistry(toolReg)
+				// Registry.Clone shares TOOL POINTERS, so the cloned registry would
+				// otherwise carry the server-wide bash tool — and with it one warm
+				// pool shared by every hosted loop, which LoopTeardown could not
+				// close without tearing down another loop's live container. Rebind a
+				// fresh bash over the SAME frozen Service (containment is unchanged;
+				// only the pool is per-loop), which Register overwrites by name
+				// (learning patch-every-cloned-child-builder).
+				loopReg.Register(tools.NewBash(sb))
+				// A no-op when cfg.MCPServers is empty (no dial, no goroutines). NewManager
+				// returns a usable manager even if some servers fail to start (they are skipped
+				// with a warning), so the loop still runs its non-MCP tools.
+				if mgr, err := mcp.NewManager(loopMCPServers(cfg), loopReg, mcpOpts...); err != nil {
+					fmt.Fprintf(os.Stderr, "loop-server: mcp manager: %v\n", err)
+				} else {
+					loopManagers.Store(loopReg, mgr)
+				}
+				return loopReg
+			})
 		},
 		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, loopToolReg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			sched := tree.Scheduler()
@@ -377,17 +385,20 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 				// tool can run. teardown unbinds it.
 				mintAudit.bind(loopToolReg, tree.RootID(), store)
 				emitMCPServerEvents(store, tree.RootID(), loopManagers, loopToolReg)
-				loopToolReg.Register(tools.NewBash(sb, sandbox.WithPoolHooks(
-					tools.SandboxEventHooks(store, tree.RootID()))))
-				// The admission gate (change 0077) and the substrate-health emitter
-				// (change 0065) are both PROCESS-scoped seams on sb whose observers
-				// are per-loop, so both are installed here — the one place holding
-				// the frozen Service AND this loop's store. installSandboxLoopHooks
-				// documents why that coarseness is acceptable for both, and it is
-				// the sole production caller of SandboxGateHooks and
-				// SandboxHealthHooks: without it neither KindSandboxAdmission nor
-				// KindSandboxHealth can ever be emitted by a real fuse.
-				installSandboxLoopHooks(sb, store, tree.RootID())
+				// A tool-less loop has no bash and no sandbox pool (change 0116).
+				if !cfg.NoTools {
+					loopToolReg.Register(tools.NewBash(sb, sandbox.WithPoolHooks(
+						tools.SandboxEventHooks(store, tree.RootID()))))
+					// The admission gate (change 0077) and the substrate-health emitter
+					// (change 0065) are both PROCESS-scoped seams on sb whose observers
+					// are per-loop, so both are installed here — the one place holding
+					// the frozen Service AND this loop's store. installSandboxLoopHooks
+					// documents why that coarseness is acceptable for both, and it is
+					// the sole production caller of SandboxGateHooks and
+					// SandboxHealthHooks: without it neither KindSandboxAdmission nor
+					// KindSandboxHealth can ever be emitted by a real fuse.
+					installSandboxLoopHooks(sb, store, tree.RootID())
+				}
 			}
 			// One blackboard per loop, shared by every agent in that loop's tree (change 0023).
 			bb := agent.NewBlackboard(tree)
@@ -407,6 +418,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 				if terr != nil {
 					return "", terr
 				}
+				childCfg := cp.agentConfig(cfg) // a tool-less role or worker composes the tool-less prompt
 
 				childModelID := opts.ModelID
 				if childModelID == "" {
@@ -422,9 +434,9 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 				// child gates deny explicit asks. No segment sink installed (nil).
 				childApprove := permissions.PrefixApproval(opts.Label, rootApprove)
 				if opts.SystemPrompt != "" {
-					a, aerr = buildChildAgent(cfg, reg, childModelID, discardRenderer{}, opts.SystemPrompt, childToolReg, childApprove, nil, opts.Label, nil, false, rateGate, nil)
+					a, aerr = buildChildAgent(childCfg, reg, childModelID, discardRenderer{}, opts.SystemPrompt, childToolReg, childApprove, nil, opts.Label, nil, false, rateGate, nil)
 				} else {
-					a, _, aerr = buildAgentCore(cfg, reg, childModelID, discardRenderer{}, systemBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, nil, observer)
+					a, _, aerr = buildAgentCore(childCfg, reg, childModelID, discardRenderer{}, systemBlock, cp.instructions /* subagents never get the harness instructions; a role spawn gets its role brief (0114) */, nil, opts.Label, childToolReg, childApprove, nil, false, rateGate, nil, observer)
 				}
 				if aerr != nil {
 					return "", aerr

@@ -498,7 +498,18 @@ type HarnessSpec struct {
 	// says how a big job is divided up, and lists the roles that may take part
 	// in it. Defining roles does not change how a loop runs yet: the runtime
 	// validates and records them, and later changes hand them to subagents.
-	Roles         map[string]*Role `protobuf:"bytes,15,rep,name=roles,proto3" json:"roles,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Roles map[string]*Role `protobuf:"bytes,15,rep,name=roles,proto3" json:"roles,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Tool composition for the main agent. false (the default): all tools - the
+	// platform tools, the spec's MCP tools and the runtime's internal tools,
+	// minus permissions.disabled. true: none - every model call of the loop
+	// carries no tools, no MCP server this spec names is started, and the main
+	// agent cannot spawn helpers. Every other field stays valid beside it and is
+	// simply unreachable. A StartLoopRequest that also sets
+	// orchestrate_loop_id is refused with InvalidArgument: an orchestrator's
+	// only tools are the watch-and-steer tools. Check
+	// GetCapabilitiesResponse.spec_features for "no_tools" first: a server that
+	// predates this field drops it and runs the loop with every tool.
+	NoTools       bool `protobuf:"varint,16,opt,name=no_tools,json=noTools,proto3" json:"no_tools,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -636,6 +647,13 @@ func (x *HarnessSpec) GetRoles() map[string]*Role {
 		return x.Roles
 	}
 	return nil
+}
+
+func (x *HarnessSpec) GetNoTools() bool {
+	if x != nil {
+		return x.NoTools
+	}
+	return false
 }
 
 // Models holds model aliases and the default alias.
@@ -1462,13 +1480,22 @@ func (x *Pool) GetTokens() uint32 {
 // optional model pin.
 type Worker struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Tool allowlist: the worker's whole tool set. It must name at least one tool
-	// and inherits nothing from the parent. A worker-bound child always receives
-	// the five blackboard tools in addition, and it can nest exactly when the
-	// allowlist names spawn_agent.
+	// A worker's tool set has two states. Named: tools is the worker's whole
+	// allowlist; it inherits nothing from the parent, the five blackboard tools
+	// are always added, and the worker can nest exactly when the list names
+	// spawn_agent. None: no_tools true (tools must then be empty) - see
+	// no_tools. A worker must be one or the other: empty tools without no_tools
+	// is refused.
 	Tools []string `protobuf:"bytes,1,rep,name=tools,proto3" json:"tools,omitempty"`
 	// Model alias; empty inherits the parent's model.
-	Model         string `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
+	Model string `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
+	// None: the worker is offered no tools at all, not even the blackboard; it
+	// answers in plain text through its spawn result. The one exception is
+	// return_result: a spawn or pipeline step that sets expects offers exactly
+	// that tool, the structured-result channel, and nothing else. A spawn that
+	// names tools for it is refused. Setting no_tools beside a non-empty tools
+	// list is refused.
+	NoTools       bool `protobuf:"varint,3,opt,name=no_tools,json=noTools,proto3" json:"no_tools,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1517,6 +1544,13 @@ func (x *Worker) GetModel() string {
 	return ""
 }
 
+func (x *Worker) GetNoTools() bool {
+	if x != nil {
+		return x.NoTools
+	}
+	return false
+}
+
 // Role is a named, reusable helper definition.
 type Role struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1525,14 +1559,23 @@ type Role struct {
 	Description string `protobuf:"bytes,1,opt,name=description,proto3" json:"description,omitempty"`
 	// The helper's brief, composed into its system prompt.
 	Instructions string `protobuf:"bytes,2,opt,name=instructions,proto3" json:"instructions,omitempty"`
-	// Empty: the helper inherits the main agent's tool set. Non-empty: the
-	// helper's whole tool set, under the same rules as Worker.tools: it can only
-	// narrow, the blackboard tools are always added, and the helper can nest
-	// exactly when the list names spawn_agent. Names are not checked against the
-	// runtime's tools at validation time (tool sets are dynamic).
+	// A role's tool set has three states. Inherit: tools empty and no_tools
+	// false - the helper gets the main agent's tool set. Narrowed: tools names
+	// the helper's whole tool set; it can only narrow, the five blackboard tools
+	// are always added, and the helper can nest exactly when the list names
+	// spawn_agent. None: no_tools true (tools must then be empty) - see no_tools.
+	// Names are not checked against the runtime's tools at validation time (tool
+	// sets are dynamic).
 	Tools []string `protobuf:"bytes,3,rep,name=tools,proto3" json:"tools,omitempty"`
 	// Model alias; empty inherits the main agent's model.
-	Model         string `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`
+	Model string `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`
+	// None: the helper is offered no tools at all, not even the blackboard; it
+	// answers in plain text through its spawn result. The one exception is
+	// return_result: a spawn or pipeline step that sets expects offers exactly
+	// that tool, the structured-result channel, and nothing else. A spawn that
+	// names tools for it is refused; a model override still applies. Setting
+	// no_tools beside a non-empty tools list is refused.
+	NoTools       bool `protobuf:"varint,5,opt,name=no_tools,json=noTools,proto3" json:"no_tools,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1593,6 +1636,13 @@ func (x *Role) GetModel() string {
 		return x.Model
 	}
 	return ""
+}
+
+func (x *Role) GetNoTools() bool {
+	if x != nil {
+		return x.NoTools
+	}
+	return false
 }
 
 // Throughput is the turn-level rate and quota surface. 0 = unlimited.
@@ -2354,7 +2404,7 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\n" +
 	"field_path\x18\x01 \x01(\tR\tfieldPath\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x17\n" +
-	"\arule_id\x18\x03 \x01(\tR\x06ruleId\"\xc5\x15\n" +
+	"\arule_id\x18\x03 \x01(\tR\x06ruleId\"\xd9\x16\n" +
 	"\vHarnessSpec\x12\xa6\x01\n" +
 	"\x06models\x18\x01 \x01(\v2\x17.fuse.harness.v1.ModelsBu\xa2\x9f\x19q\n" +
 	"\x06Models\x12gModel aliases this harness can use and the default one. Aliases extend the runtime's built-in registry.R\x06models\x12\x99\x03\n" +
@@ -2395,7 +2445,9 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\finstructions\x18\x0e \x01(\tB\xbf\x01\xbaH\x06r\x04\x18\x80\x80\x01\xa2\x9f\x19\xb1\x01\n" +
 	"\fInstructions\x12\x9e\x01What this agent is for and how it should work. Added to the system prompt after the persona. Applies to the main agent only; subagents keep their own prompts.\x18\x02R\finstructions\x12\xed\x01\n" +
 	"\x05roles\x18\x0f \x03(\v2'.fuse.harness.v1.HarnessSpec.RolesEntryB\xad\x01\xbaH$\x9a\x01!\x10 \"\x1dr\x1b\x10\x01\x18@2\x15^[a-z0-9][a-z0-9_-]*$\xa2\x9f\x19\x81\x01\n" +
-	"\x05Roles\x12xNamed helpers the main agent can hand work to. A role says who a helper is; a workflow says how a big job is divided up.R\x05roles\x1aW\n" +
+	"\x05Roles\x12xNamed helpers the main agent can hand work to. A role says who a helper is; a workflow says how a big job is divided up.R\x05roles\x12\x91\x01\n" +
+	"\bno_tools\x18\x10 \x01(\bBv\xa2\x9f\x19r\n" +
+	"\bNo tools\x12dThe agent answers in plain text and can call no tools at all, including the runtime's internal ones.\x18\x04R\anoTools\x1aW\n" +
 	"\x0eWorkflowsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12/\n" +
 	"\x05value\x18\x02 \x01(\v2\x19.fuse.harness.v1.WorkflowR\x05value:\x028\x01\x1aO\n" +
@@ -2528,12 +2580,14 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\tmax_depth\x18\x03 \x01(\rB\x13\xa2\x9f\x19\x0f\n" +
 	"\tMax depth\x18\x03(\x01R\bmaxDepth\x12-\n" +
 	"\x06tokens\x18\x04 \x01(\rB\x15\xa2\x9f\x19\x11\n" +
-	"\vToken quota\x18\x03(\x01R\x06tokens\"h\n" +
-	"\x06Worker\x121\n" +
-	"\x05tools\x18\x01 \x03(\tB\x1b\xbaH\v\x92\x01\b\b\x01\"\x04r\x02\x10\x01\xa2\x9f\x19\t\n" +
+	"\vToken quota\x18\x03(\x01R\x06tokens\"\x93\x01\n" +
+	"\x06Worker\x12/\n" +
+	"\x05tools\x18\x01 \x03(\tB\x19\xbaH\t\x92\x01\x06\"\x04r\x02\x10\x01\xa2\x9f\x19\t\n" +
 	"\x05Tools\x18\x06R\x05tools\x12+\n" +
 	"\x05model\x18\x02 \x01(\tB\x15\xbaH\x05r\x03\x18\x80\x01\xa2\x9f\x19\t\n" +
-	"\x05Model\x18\tR\x05model\"\xc6\x04\n" +
+	"\x05Model\x18\tR\x05model\x12+\n" +
+	"\bno_tools\x18\x03 \x01(\bB\x10\xa2\x9f\x19\f\n" +
+	"\bNo tools\x18\x04R\anoTools\"\xc2\x05\n" +
 	"\x04Role\x12~\n" +
 	"\vdescription\x18\x01 \x01(\tB\\\xbaH\ar\x05\x10\x01\x18\x80\x04\xa2\x9f\x19N\n" +
 	"\vDescription\x12=What the main agent reads when deciding whom to hand work to.\x18\x01R\vdescription\x12r\n" +
@@ -2542,7 +2596,9 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\x05tools\x18\x03 \x03(\tB\xcc\x01\xbaH\t\x92\x01\x06\"\x04r\x02\x10\x01\xa2\x9f\x19\xbb\x01\n" +
 	"\x05Tools\x12\xaf\x01Leave empty to inherit the main agent's tools. Otherwise this is the helper's whole tool set: it can only narrow, and the helper can nest only when the list names spawn_agent.\x18\x06R\x05tools\x12d\n" +
 	"\x05model\x18\x04 \x01(\tBN\xbaH\x05r\x03\x18\x80\x01\xa2\x9f\x19B\n" +
-	"\x05Model\x127Model alias. Leave empty to use the main agent's model.\x18\tR\x05model\"\xc2\x03\n" +
+	"\x05Model\x127Model alias. Leave empty to use the main agent's model.\x18\tR\x05model\x12z\n" +
+	"\bno_tools\x18\x05 \x01(\bB_\xa2\x9f\x19[\n" +
+	"\bNo tools\x12MThe helper only thinks and writes: it gets no tools, not even the blackboard.\x18\x04R\anoTools\"\xc2\x03\n" +
 	"\n" +
 	"Throughput\x12M\n" +
 	"\x13requests_per_minute\x18\x01 \x01(\rB\x1d\xa2\x9f\x19\x19\n" +

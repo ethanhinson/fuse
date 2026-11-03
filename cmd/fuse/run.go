@@ -452,6 +452,9 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	if err != nil {
 		return nil, fmt.Errorf("model %q: %w", alias, err)
 	}
+	if err := errToolLessCLIModel(cfg, mc.ID); err != nil {
+		return nil, err
+	}
 	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
 	if strings.HasPrefix(mc.ID, "cli/") {
 		fuseExe, err := os.Executable()
@@ -1077,14 +1080,29 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	if err != nil {
 		return nil, "", fmt.Errorf("model %q: %w", alias, err)
 	}
+	if err := errToolLessCLIModel(cfg, mc.ID); err != nil {
+		return nil, "", err
+	}
 	maxTurns := resolveMaxTurns(cfg.MaxTurns, interactive)
 	// buildAgentCore is the single chokepoint both gate construction and
 	// prompt composition flow through: drop the spawn_agent instructions for an
 	// agent that cannot spawn (see prompt_blocks.go), then advertise the
 	// auto-approved scratch directory (change 0068) on every binding's prompt.
-	extra = withoutUnavailableSpawnBlock(extra, cfg, toolReg)
-	if scratchBlockWanted(cfg) {
-		extra = appendScratchBlock(extra)
+	//
+	// A tool-less agent (no_tools on the loop, or a tool-less role or worker
+	// child built from its tool-less config) is offered nothing. Every block
+	// extra can carry (skills listing, spawn guidance, scratch directory)
+	// describes a tool, so it is dropped, and the persona is its one-line
+	// tool-less form. The caller's instructions are unchanged.
+	var systemPrompt string
+	if cfg.NoTools {
+		systemPrompt = agent.ComposeToolLessSystemPrompt(mc.Persona, mc.SystemPrefix, instructions)
+	} else {
+		extra = withoutUnavailableSpawnBlock(extra, cfg, toolReg)
+		if scratchBlockWanted(cfg) {
+			extra = appendScratchBlock(extra)
+		}
+		systemPrompt = agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, instructions, extra)
 	}
 
 	// Models with ID prefix "cli/" bypass the LiteLLM gateway and route through
@@ -1098,7 +1116,6 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 		// live /mode off reaches the subprocess at the next turn as it reaches the gate.
 		cliAdapter := newCLIAdapter(fuseExe, approve, sessionGateMode(cfg, sm) == permissions.ModeOff)
 		permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
-		systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, instructions, extra)
 		// maxTokens is not forwarded to the CLI; Claude controls its own limits.
 		a := agent.New(cliAdapter, permGate, r, mc.ID, systemPrompt, maxTurns, 0)
 		a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
@@ -1114,7 +1131,6 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	}
 	permGate := buildGate(cfg, toolReg, approve, reg, traceW, sm)
 	maxTokens := effectiveMaxTokens(mc, cfg)
-	systemPrompt := agent.ComposeSystemPrompt(mc.Persona, mc.SystemPrefix, instructions, extra)
 	a := agent.New(adapter, permGate, r, mc.ID, systemPrompt, maxTurns, maxTokens)
 	a.SetMaxTurnsExplicit(cfg.MaxTurns != nil)
 	a.ContextWindow = mc.ContextWindow

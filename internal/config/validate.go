@@ -213,8 +213,12 @@ func (c Config) Problems() []Problem {
 	for _, wf := range sortedKeys(c.Workflows) {
 		workers := c.Workflows[wf].Workers
 		for _, w := range sortedKeys(workers) {
-			if len(workers[w].Tools) == 0 {
-				add("workflows."+wf+".workers."+w+".tools", "must name at least one tool (a worker inherits nothing; omit spawn_agent to keep it from nesting)")
+			wk, at := workers[w], "workflows."+wf+".workers."+w
+			switch {
+			case wk.NoTools && len(wk.Tools) > 0:
+				add(at+".no_tools", "names tools and no_tools; choose one")
+			case !wk.NoTools && len(wk.Tools) == 0:
+				add(at+".tools", "must name at least one tool or set no_tools (a worker inherits nothing; omit spawn_agent to keep it from nesting)")
 			}
 		}
 	}
@@ -242,6 +246,9 @@ func (c Config) Problems() []Problem {
 			if tool == "" {
 				add(fmt.Sprintf("roles.%s.tools[%d]", name, i), "must not be empty: name a tool, or omit tools to inherit the main agent's")
 			}
+		}
+		if r.NoTools && len(r.Tools) > 0 {
+			add("roles."+name+".no_tools", "names tools and no_tools; choose one")
 		}
 		if strings.TrimSpace(r.Description) == "" {
 			add("roles."+name+".description", "is required: what the main agent reads when deciding whom to hand work to")

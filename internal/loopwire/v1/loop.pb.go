@@ -936,7 +936,12 @@ type GetCapabilitiesResponse struct {
 	// The caller's tenant's effective loop limits (loop_server.limits, change
 	// 0103): the default with this tenant's overrides applied. 0 means unlimited.
 	// Always set; all-zero when the server configures no limits.
-	Limits        *TenantLimits `protobuf:"bytes,8,opt,name=limits,proto3" json:"limits,omitempty"`
+	Limits *TenantLimits `protobuf:"bytes,8,opt,name=limits,proto3" json:"limits,omitempty"`
+	// HarnessSpec features this server implements beyond the fields every
+	// server accepts, by name (today: "no_tools"). proto3 drops a field a server
+	// does not know, so a server that predates a feature would run the loop
+	// without it; check here before StartLoop.
+	SpecFeatures  []string `protobuf:"bytes,9,rep,name=spec_features,json=specFeatures,proto3" json:"spec_features,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1023,6 +1028,13 @@ func (x *GetCapabilitiesResponse) GetSpecPolicy() *SpecPolicy {
 func (x *GetCapabilitiesResponse) GetLimits() *TenantLimits {
 	if x != nil {
 		return x.Limits
+	}
+	return nil
+}
+
+func (x *GetCapabilitiesResponse) GetSpecFeatures() []string {
+	if x != nil {
+		return x.SpecFeatures
 	}
 	return nil
 }
@@ -1516,7 +1528,7 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\x04kind\x18\a \x01(\tR\x04kind\x12\x18\n" +
 	"\apayload\x18\b \x01(\fR\apayload\"0\n" +
 	"\x16GetCapabilitiesRequest\x12\x16\n" +
-	"\x06tenant\x18\x01 \x01(\tR\x06tenant\"\xbd\x03\n" +
+	"\x06tenant\x18\x01 \x01(\tR\x06tenant\"\xe2\x03\n" +
 	"\x17GetCapabilitiesResponse\x12/\n" +
 	"\x06models\x18\x01 \x03(\v2\x17.fuse.loop.v1.ModelInfoR\x06models\x12/\n" +
 	"\x06skills\x18\x02 \x03(\v2\x17.fuse.loop.v1.SkillInfoR\x06skills\x121\n" +
@@ -1527,7 +1539,8 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\x06server\x18\x06 \x01(\v2\x18.fuse.loop.v1.ServerInfoR\x06server\x129\n" +
 	"\vspec_policy\x18\a \x01(\v2\x18.fuse.loop.v1.SpecPolicyR\n" +
 	"specPolicy\x122\n" +
-	"\x06limits\x18\b \x01(\v2\x1a.fuse.loop.v1.TenantLimitsR\x06limits\"\xc5\x01\n" +
+	"\x06limits\x18\b \x01(\v2\x1a.fuse.loop.v1.TenantLimitsR\x06limits\x12#\n" +
+	"\rspec_features\x18\t \x03(\tR\fspecFeatures\"\xc5\x01\n" +
 	"\n" +
 	"SpecPolicy\x12\x1b\n" +
 	"\tmcp_hosts\x18\x01 \x03(\tR\bmcpHosts\x122\n" +

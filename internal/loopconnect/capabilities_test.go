@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -88,8 +89,9 @@ func fullAnswer() capabilities.Capabilities {
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER,
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_STATIC,
 		},
-		SpecPolicy: capabilities.SpecPolicy{MCPHosts: []string{"*.example.com"}, DenyPrivateNetworks: true, ModelsRegistryOnly: true, CarriedSkillsAllowed: true},
-		Server:     capabilities.Server{Version: "v1.2.3", DigestAlgorithm: "sha256"},
+		SpecPolicy:   capabilities.SpecPolicy{MCPHosts: []string{"*.example.com"}, DenyPrivateNetworks: true, ModelsRegistryOnly: true, CarriedSkillsAllowed: true},
+		Server:       capabilities.Server{Version: "v1.2.3", DigestAlgorithm: "sha256"},
+		SpecFeatures: []string{"no_tools"},
 	}
 }
 
@@ -123,9 +125,13 @@ func TestGetCapabilitiesMapsEveryField(t *testing.T) {
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER,
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_STATIC,
 		},
-		SpecPolicy: &loopv1.SpecPolicy{McpHosts: []string{"*.example.com"}, DenyPrivateNetworks: true, ModelsRegistryOnly: true, CarriedSkillsAllowed: true},
-		Server:     &loopv1.ServerInfo{Version: "v1.2.3", DigestAlgorithm: "sha256"},
-		Limits:     &loopv1.TenantLimits{},
+		SpecPolicy:   &loopv1.SpecPolicy{McpHosts: []string{"*.example.com"}, DenyPrivateNetworks: true, ModelsRegistryOnly: true, CarriedSkillsAllowed: true},
+		Server:       &loopv1.ServerInfo{Version: "v1.2.3", DigestAlgorithm: "sha256"},
+		Limits:       &loopv1.TenantLimits{},
+		SpecFeatures: []string{"no_tools"},
+	}
+	if got := resp.Msg.GetSpecFeatures(); !slices.Equal(got, []string{"no_tools"}) {
+		t.Fatalf("spec_features = %v, want [no_tools]", got)
 	}
 	// spec_policy (7) and limits (8) are both advertised side by side.
 	if resp.Msg.GetSpecPolicy() == nil || resp.Msg.GetLimits() == nil {
@@ -199,6 +205,7 @@ func TestToProtoCapabilitiesClampsAndCopies(t *testing.T) {
 		},
 		SecretRefs:       []string{"S"},
 		SpecMCPAuthKinds: []harnessv1.McpAuthType{harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER},
+		SpecFeatures:     []string{"no_tools"},
 	}
 	got := toProtoCapabilities(c)
 	if m := got.Models[0]; m.MaxOutputTokens != 0 || m.ContextWindow != 0 {
@@ -216,8 +223,10 @@ func TestToProtoCapabilitiesClampsAndCopies(t *testing.T) {
 	c.Models[0].Tags[0] = "mutated"
 	c.SecretRefs[0] = "mutated"
 	c.SpecMCPAuthKinds[0] = harnessv1.McpAuthType_MCP_AUTH_TYPE_OAUTH2
+	c.SpecFeatures[0] = "mutated"
 	if got.Models[0].Tags[0] != "tools" || got.SecretRefs[0] != "S" ||
-		got.SpecMcpAuthKinds[0] != harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER {
+		got.SpecMcpAuthKinds[0] != harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER ||
+		len(got.SpecFeatures) != 1 || got.SpecFeatures[0] != "no_tools" {
 		t.Fatalf("mapped answer aliases the caller's slices: %v", got)
 	}
 }

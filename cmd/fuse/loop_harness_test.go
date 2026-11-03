@@ -12,10 +12,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
+	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/harnessresolve"
@@ -673,5 +675,138 @@ func TestRedactMCPError(t *testing.T) {
 		if strings.Contains(got, "pw@") || strings.Contains(got, "s3cret") || strings.Contains(got, "token=") {
 			t.Errorf("secret survived: %q", got)
 		}
+	}
+}
+
+// TestLoopServerRunsAToolLessSpec (change 0116): on the production loop-server
+// wiring, a spec with no_tools makes its one model call with no tools key at
+// all (no platform, MCP or internal tools), carries the tool-less persona line,
+// and starts no MCP server it names; the same server still runs an ordinary
+// spec with its full tool set.
+func TestLoopServerRunsAToolLessSpec(t *testing.T) {
+	var mcpHits atomic.Int32
+	mcpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mcpHits.Add(1)
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	t.Cleanup(mcpSrv.Close)
+
+	raw := &rawCapture{next: &recordingGateway{}}
+	deps, _ := harnessServerWith(t, harnessOperator, raw)
+	rt := runtime.New(deps)
+	one := uint32(1)
+	spec := &harnessv1.HarnessSpec{
+		NoTools:  true,
+		MaxTurns: &one,
+		McpServers: []*harnessv1.McpServer{{
+			Name: "probe", Transport: harnessv1.McpTransport_MCP_TRANSPORT_HTTP, Url: mcpSrv.URL,
+		}},
+	}
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: spec})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	_, _ = h.Wait() // the turn cap ends the run; its error is not the point
+
+	raw.mu.Lock()
+	bodies := append([][]byte(nil), raw.bodies...)
+	raw.mu.Unlock()
+	if len(bodies) != 1 {
+		t.Fatalf("tool-less loop made %d model calls, want 1 (max_turns: 1)", len(bodies))
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(bodies[0], &wire); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	for _, key := range []string{"tools", "tool_choice"} {
+		if v, ok := wire[key]; ok {
+			t.Errorf("tool-less request carries %q on the wire: %s", key, v)
+		}
+	}
+	var c gatewayCall
+	if err := json.Unmarshal(bodies[0], &c); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	if len(c.Messages) == 0 || c.Messages[0].Role != "system" {
+		t.Fatal("first message is not the system prompt")
+	}
+	sys := c.Messages[0].Content
+	if want := agent.ComposeToolLessSystemPrompt(personaOf(t, harnessOperator, "fast"), "", ""); sys != want {
+		t.Errorf("tool-less system prompt:\n got: %q\nwant: %q", sys, want)
+	}
+	for _, banned := range []string{"file and shell tools", "## Skills", "Scratch directory"} {
+		if strings.Contains(sys, banned) {
+			t.Errorf("tool-less system prompt mentions %q:\n%s", banned, sys)
+		}
+	}
+	if n := mcpHits.Load(); n != 0 {
+		t.Errorf("tool-less loop reached its spec MCP server %d times, want 0", n)
+	}
+
+	// The same server, an ordinary spec: the full set, internal tools included.
+	// Positive control: the ordinary spec carries the same MCP server and does reach it.
+	h, err = rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: &harnessv1.HarnessSpec{
+		MaxTurns: &one,
+		McpServers: []*harnessv1.McpServer{{
+			Name: "probe", Transport: harnessv1.McpTransport_MCP_TRANSPORT_HTTP, Url: mcpSrv.URL,
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("StartLoop (ordinary): %v", err)
+	}
+	_, _ = h.Wait()
+	if n := mcpHits.Load(); n == 0 {
+		t.Error("ordinary loop never reached its spec MCP server; the tool-less zero-hit check has no control")
+	}
+	raw.mu.Lock()
+	if len(raw.bodies) != 2 {
+		n := len(raw.bodies)
+		raw.mu.Unlock()
+		t.Fatalf("model calls after the ordinary loop = %d, want 2", n)
+	}
+	var ord gatewayCall
+	err = json.Unmarshal(raw.bodies[1], &ord)
+	raw.mu.Unlock()
+	if err != nil {
+		t.Fatalf("decode ordinary request: %v", err)
+	}
+	have := map[string]bool{}
+	for _, n := range ord.toolNames() {
+		have[n] = true
+	}
+	for _, want := range []string{
+		"bash", "read_file", "segment_read", "codeindex_impact", "codeindex_callers",
+		"blackboard_read", "blackboard_write", "blackboard_keys", "blackboard_wait", "blackboard_delete",
+		"spawn_agent", "pipeline_run",
+	} {
+		if !have[want] {
+			t.Errorf("ordinary spec loop is not offered %q (offered %v)", want, ord.toolNames())
+		}
+	}
+}
+
+// TestLoopServerReportsNoToolsToTheRuntime pins the wiring behind the
+// runtime's refusal of a tool-less orchestrator: the loop server tells the
+// runtime when its own config, or a spec's resolved config, is tool-less.
+func TestLoopServerReportsNoToolsToTheRuntime(t *testing.T) {
+	deps, host := harnessServerWith(t, harnessOperator, &recordingGateway{})
+	if deps.NoTools {
+		t.Fatal("an ordinary operator config reported no_tools")
+	}
+	f, err := host.ResolveHarness(context.Background(), "acme", &harnessv1.HarnessSpec{NoTools: true})
+	if err != nil || !f.NoTools {
+		t.Fatalf("tool-less spec factory NoTools = %v (err %v), want true", f.NoTools, err)
+	}
+	if f, err := host.ResolveHarness(context.Background(), "acme", &harnessv1.HarnessSpec{}); err != nil || f.NoTools {
+		t.Fatalf("ordinary spec factory NoTools = %v (err %v), want false", f.NoTools, err)
+	}
+
+	deps, _ = harnessServerWith(t, harnessOperator+"no_tools: true\n", &recordingGateway{})
+	if !deps.NoTools {
+		t.Fatal("a tool-less operator config did not report no_tools")
+	}
+	_, err = runtime.New(deps).StartLoop(context.Background(), runtime.LoopConfig{Task: "watch", Orchestrate: "target"})
+	if !errors.Is(err, runtime.ErrNoToolsOrchestrate) {
+		t.Fatalf("tool-less orchestrator StartLoop err = %v, want ErrNoToolsOrchestrate", err)
 	}
 }

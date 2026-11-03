@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
+	loopv1 "github.com/ethanhinson/fuse/internal/loopwire/v1"
 )
 
 // fieldUI reads the (fuse.harness.v1.ui) option of a field, nil when absent.
@@ -168,25 +169,11 @@ func TestInstructionsFieldContract(t *testing.T) {
 func TestRolesFieldContract(t *testing.T) {
 	rulesOf := func(fd protoreflect.FieldDescriptor) *validate.FieldRules {
 		t.Helper()
-		rules, ok := proto.GetExtension(fd.Options(), validate.E_Field).(*validate.FieldRules)
-		if !ok || rules == nil {
-			t.Fatalf("%s has no buf.validate field rules", fd.FullName())
-		}
-		return rules
+		return contractRules(t, fd)
 	}
 	field := func(md protoreflect.MessageDescriptor, name string, number protoreflect.FieldNumber) protoreflect.FieldDescriptor {
 		t.Helper()
-		fd := md.Fields().ByName(protoreflect.Name(name))
-		if fd == nil {
-			t.Fatalf("%s has no %s field", md.FullName(), name)
-		}
-		if fd.Number() != number {
-			t.Errorf("%s number = %d, want %d", fd.FullName(), fd.Number(), number)
-		}
-		if fieldUI(fd) == nil {
-			t.Fatalf("%s has no ui option", fd.FullName())
-		}
-		return fd
+		return contractField(t, md, name, number)
 	}
 
 	roles := field((&harnessv1.HarnessSpec{}).ProtoReflect().Descriptor(), "roles", 15)
@@ -262,6 +249,14 @@ func TestRolesFieldContract(t *testing.T) {
 		t.Errorf("model widget = %v, want WIDGET_MODEL_ALIAS", got)
 	}
 
+	noTools := field(role, "no_tools", 5)
+	if noTools.Kind() != protoreflect.BoolKind {
+		t.Errorf("Role.no_tools kind = %v", noTools.Kind())
+	}
+	if got := fieldUI(noTools).GetWidget(); got != harnessv1.Widget_WIDGET_TOGGLE {
+		t.Errorf("Role.no_tools widget = %v, want WIDGET_TOGGLE", got)
+	}
+
 	wfRoles := field((&harnessv1.Workflow{}).ProtoReflect().Descriptor(), "roles", 4)
 	if !wfRoles.IsList() || wfRoles.Kind() != protoreflect.StringKind {
 		t.Errorf("Workflow.roles is not repeated string")
@@ -271,6 +266,77 @@ func TestRolesFieldContract(t *testing.T) {
 	}
 	if got := fieldUI(wfRoles).GetWidget(); got != harnessv1.Widget_WIDGET_LIST {
 		t.Errorf("Workflow.roles widget = %v, want WIDGET_LIST", got)
+	}
+}
+
+// contractRules reads the buf.validate field rules of fd, failing the test
+// when it has none.
+func contractRules(t *testing.T, fd protoreflect.FieldDescriptor) *validate.FieldRules {
+	t.Helper()
+	rules, ok := proto.GetExtension(fd.Options(), validate.E_Field).(*validate.FieldRules)
+	if !ok || rules == nil {
+		t.Fatalf("%s has no buf.validate field rules", fd.FullName())
+	}
+	return rules
+}
+
+// contractField looks up a spec field by name, pins its number and requires a
+// ui option on it.
+func contractField(t *testing.T, md protoreflect.MessageDescriptor, name string, number protoreflect.FieldNumber) protoreflect.FieldDescriptor {
+	t.Helper()
+	fd := md.Fields().ByName(protoreflect.Name(name))
+	if fd == nil {
+		t.Fatalf("%s has no %s field", md.FullName(), name)
+	}
+	if fd.Number() != number {
+		t.Errorf("%s number = %d, want %d", fd.FullName(), fd.Number(), number)
+	}
+	if fieldUI(fd) == nil {
+		t.Fatalf("%s has no ui option", fd.FullName())
+	}
+	return fd
+}
+
+// TestNoToolsFieldContract pins the wire contract of tool-less composition:
+// the no_tools toggles on HarnessSpec and Worker, Worker.tools no longer
+// requiring an item at the shape layer, and the spec_features list callers
+// check on GetCapabilities before relying on no_tools.
+func TestNoToolsFieldContract(t *testing.T) {
+	for _, c := range []struct {
+		md     protoreflect.MessageDescriptor
+		number protoreflect.FieldNumber
+	}{
+		{(&harnessv1.HarnessSpec{}).ProtoReflect().Descriptor(), 16},
+		{(&harnessv1.Worker{}).ProtoReflect().Descriptor(), 3},
+	} {
+		fd := contractField(t, c.md, "no_tools", c.number)
+		if fd.Kind() != protoreflect.BoolKind || fd.IsList() {
+			t.Errorf("%s is not a singular bool", fd.FullName())
+		}
+		if got := fieldUI(fd).GetWidget(); got != harnessv1.Widget_WIDGET_TOGGLE {
+			t.Errorf("%s widget = %v, want WIDGET_TOGGLE", fd.FullName(), got)
+		}
+	}
+
+	tools := contractField(t, (&harnessv1.Worker{}).ProtoReflect().Descriptor(), "tools", 1)
+	rep := contractRules(t, tools).GetRepeated()
+	if rep.GetMinItems() != 0 {
+		t.Errorf("Worker.tools min_items = %d, want 0", rep.GetMinItems())
+	}
+	if got := rep.GetItems().GetString().GetMinLen(); got != 1 {
+		t.Errorf("Worker.tools item min_len = %d, want 1", got)
+	}
+
+	caps := (&loopv1.GetCapabilitiesResponse{}).ProtoReflect().Descriptor()
+	sf := caps.Fields().ByName("spec_features")
+	if sf == nil {
+		t.Fatal("GetCapabilitiesResponse has no spec_features field")
+	}
+	if sf.Number() != 9 {
+		t.Errorf("spec_features number = %d, want 9", sf.Number())
+	}
+	if !sf.IsList() || sf.Kind() != protoreflect.StringKind {
+		t.Errorf("spec_features is not repeated string")
 	}
 }
 

@@ -484,6 +484,11 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	if strings.TrimSpace(raw.Instructions) != "" {
 		c.Instructions = raw.Instructions
 	}
+	// no_tools only ever removes tools, so it is honored from every layer, and
+	// an omitted key never clears a true set by an earlier layer (change 0116).
+	if raw.NoTools {
+		c.NoTools = true
+	}
 	if len(raw.SkillPaths) > 0 {
 		c.SkillPaths = raw.SkillPaths
 	}

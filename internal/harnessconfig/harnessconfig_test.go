@@ -58,7 +58,8 @@ func fullSpec() *harnessv1.HarnessSpec {
 				Roles: []string{"reviewer"},
 				Pool:  &harnessv1.Pool{Concurrent: 2, Total: 6, MaxDepth: 1, Tokens: 100000},
 				Workers: map[string]*harnessv1.Worker{
-					"reader": {Tools: []string{"read_file"}, Model: "fast"},
+					"reader":  {Tools: []string{"read_file"}, Model: "fast"},
+					"drafter": {NoTools: true},
 				},
 			},
 		},
@@ -80,7 +81,9 @@ func fullSpec() *harnessv1.HarnessSpec {
 		Roles: map[string]*harnessv1.Role{
 			"reviewer":   {Description: "Reviews a diff: correctness first.", Instructions: tricky, Tools: []string{"read_file", "grep"}, Model: "fast"},
 			"researcher": {Description: "Finds sources."},
+			"judge":      {Description: "Judges without tools.", NoTools: true},
 		},
+		NoTools: true,
 		Research: &harnessv1.Research{
 			Provider: harnessv1.ResearchProvider_RESEARCH_PROVIDER_CUSTOM, MaxQueries: 3, MaxResults: 4, MaxContentKb: 20, RespectRobots: &f,
 			Custom: &harnessv1.CustomSearchProvider{
@@ -235,6 +238,7 @@ mcp_servers:
 agents: {max_spawns: 5, tool_timeout_seconds: 9}
 workflows:
   research: {pool: {concurrent: 2}, roles: [reviewer]}
+  draft: {skill: draft, workers: {drafter: {no_tools: true}, reader: {tools: [read_file]}}}
 roles:
   reviewer:
     description: "Reviews a diff: correctness first."
@@ -245,6 +249,8 @@ roles:
     tools: [read_file]
     model: glm
   researcher: {description: Finds sources.}
+  judge: {description: Judges without tools., no_tools: true}
+no_tools: true
 throughput: {requests_per_minute: 10}
 context:
   summarization: {threshold: 0.5}
@@ -314,8 +320,65 @@ func TestFromConfigOmitsOperatorOnly(t *testing.T) {
 	}
 }
 
+func TestToConfigMapsNoTools(t *testing.T) {
+	spec := &harnessv1.HarnessSpec{
+		NoTools: true,
+		Roles:   map[string]*harnessv1.Role{"judge": {Description: "d", NoTools: true}},
+		Workflows: map[string]*harnessv1.Workflow{
+			"wf": {Skill: "wf", Workers: map[string]*harnessv1.Worker{"drafter": {NoTools: true}}},
+		},
+	}
+	cfg, err := ToConfig(spec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.NoTools {
+		t.Error("cfg.NoTools = false, want true")
+	}
+	if !cfg.Roles["judge"].NoTools {
+		t.Errorf("roles[judge] = %+v, want NoTools", cfg.Roles["judge"])
+	}
+	if !cfg.Workflows["wf"].Workers["drafter"].NoTools {
+		t.Errorf("workflows[wf].workers[drafter] = %+v, want NoTools", cfg.Workflows["wf"].Workers["drafter"])
+	}
+
+	plain, err := ToConfig(&harnessv1.HarnessSpec{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.NoTools {
+		t.Error("an empty spec set cfg.NoTools")
+	}
+}
+
+func TestFromConfigCarriesNoTools(t *testing.T) {
+	cfg := config.Default()
+	cfg.NoTools = true
+	cfg.Roles = map[string]config.RoleConfig{"judge": {Description: "d", NoTools: true}}
+	cfg.Workflows["wf"] = config.WorkflowConfig{Skill: "wf", Workers: map[string]config.WorkerConfig{"drafter": {NoTools: true}}}
+	spec, omitted := FromConfig(cfg)
+	if len(omitted) != 0 {
+		t.Fatalf("unexpected omissions: %+v", omitted)
+	}
+	if !spec.GetNoTools() {
+		t.Error("spec.no_tools = false, want true")
+	}
+	if !spec.GetRoles()["judge"].GetNoTools() {
+		t.Errorf("roles[judge] = %v, want no_tools", spec.GetRoles()["judge"])
+	}
+	if !spec.GetWorkflows()["wf"].GetWorkers()["drafter"].GetNoTools() {
+		t.Errorf("workers[drafter] = %v, want no_tools", spec.GetWorkflows()["wf"].GetWorkers()["drafter"])
+	}
+	if spec, _ := FromConfig(config.Default()); spec.GetNoTools() {
+		t.Error("default config produced no_tools")
+	}
+}
+
 func TestSpecPath(t *testing.T) {
 	cases := map[string]string{
+		"no_tools":                            "no_tools",
+		"roles.x.no_tools":                    `roles["x"].no_tools`,
+		"workflows.wf.workers.w.no_tools":     `workflows["wf"].workers["w"].no_tools`,
 		"models.default":                      "models.default_alias",
 		"max_tokens":                          "max_tokens",
 		"context.summarization.threshold":     "context.summarization.threshold",

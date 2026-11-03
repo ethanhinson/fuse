@@ -18,7 +18,9 @@ import (
 // child. The reviewer step gets the reviewer brief after the persona, the
 // role's model pin and the role's tools plus the blackboard tools. The writer
 // step gets its brief and the plain step's tools. The plain step gets no
-// brief. An unknown role is refused before any step spawns.
+// brief. A tool-less drafter step (change 0116) is offered no tools at all and
+// gets the tool-less persona line before its brief. An unknown role is refused
+// before any step spawns.
 func TestPipelineRoleStepAtGateway(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	gw := &routedGateway{route: func(string, int, gatewayCall) string { return textReply("done") }}
@@ -42,6 +44,7 @@ func TestPipelineRoleStepAtGateway(t *testing.T) {
 	const def = "name: rp\nsteps:\n" +
 		"  - name: rev\n    role: reviewer\n    prompt: REV-PIPE-TASK\n" +
 		"  - name: wri\n    role: writer\n    prompt: WRI-PIPE-TASK\n" +
+		"  - name: dft\n    role: drafter\n    prompt: DFT-PIPE-TASK\n" +
 		"  - name: pln\n    prompt: PLN-PIPE-TASK\n"
 	res := toolReg.Execute(context.Background(), "pipeline_run", argsJSON(map[string]any{"definition": def}))
 	if res.IsError || res.Output != "pipeline rp: completed" {
@@ -78,10 +81,17 @@ func TestPipelineRoleStepAtGateway(t *testing.T) {
 	if got, want := sortedToolNames(wri), sortedToolNames(pln); !reflect.DeepEqual(got, want) {
 		t.Errorf("writer step tools = %v, want the plain step's %v", got, want)
 	}
-	if strings.Contains(plnSys, "REVIEWER-BRIEF") || strings.Contains(plnSys, "WRITER-BRIEF") {
+	if strings.Contains(plnSys, "REVIEWER-BRIEF") || strings.Contains(plnSys, "WRITER-BRIEF") || strings.Contains(plnSys, "DRAFTER-BRIEF") {
 		t.Errorf("plain step carries a role brief:\n%s", plnSys)
 	}
-	for label, want := range map[string]string{"rev": "reviewer", "wri": "writer", "pln": ""} {
+	toolLess := toolLessPersonaFor(t, roleOperatorYAML, "fast")
+	dft := assertToolLessChild(t, gw, "DFT-PIPE-TASK", toolLess+"\n\nDRAFTER-BRIEF")
+	assertInOrder(t, dft.Messages[0].Content, toolLess, "DRAFTER-BRIEF")
+	if dft.Model != "cloud/fast" {
+		t.Errorf("drafter step model = %q, want the parent's cloud/fast", dft.Model)
+	}
+
+	for label, want := range map[string]string{"rev": "reviewer", "wri": "writer", "dft": "drafter", "pln": ""} {
 		if got := nodeLabelled(t, tree, label).Role; got != want {
 			t.Errorf("step %q Role = %q, want %q", label, got, want)
 		}
@@ -90,7 +100,7 @@ func TestPipelineRoleStepAtGateway(t *testing.T) {
 	before := len(tree.SnapshotAll())
 	bad := toolReg.Execute(context.Background(), "pipeline_run",
 		argsJSON(map[string]any{"definition": "name: bad\nsteps:\n  - name: x\n    role: nope\n    prompt: X-PIPE-TASK\n"}))
-	if !bad.IsError || !strings.Contains(bad.Output, `unknown role "nope" (available: reviewer, writer)`) {
+	if !bad.IsError || !strings.Contains(bad.Output, `unknown role "nope" (available: drafter, reviewer, writer)`) {
 		t.Fatalf("unknown-role pipeline_run = %+v, want the unknown-role refusal", bad)
 	}
 	if n := len(tree.SnapshotAll()); n != before {
@@ -105,5 +115,58 @@ func TestPipelineRoleStepAtGateway(t *testing.T) {
 	}
 	if !strings.Contains(desc, "`role`") || !strings.Contains(desc, "\n- reviewer — ") {
 		t.Errorf("root pipeline_run description does not mention roles: %q", desc)
+	}
+	if !strings.Contains(desc, "\n- drafter — Drafts text. (no tools: answers in plain text)") {
+		t.Errorf("root pipeline_run description does not mark the drafter tool-less: %q", desc)
+	}
+}
+
+// TestPipelineToolLessStepWithExpectsOffersOnlyReturnResult (change 0116): a
+// tool-less worker's pipeline step that sets expects is offered exactly the
+// synthesized return_result tool - the structured-result channel, the one
+// documented exception to "no tools at all" - and nothing from the registry,
+// not even the blackboard. The step's structured value is still delivered.
+func TestPipelineToolLessStepWithExpectsOffersOnlyReturnResult(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	gw := &routedGateway{route: func(_ string, turn int, _ gatewayCall) string {
+		if turn == 0 {
+			return toolCallsReply(call{name: "return_result", args: map[string]any{"ok": true}})
+		}
+		return textReply("done")
+	}}
+	srv := httptest.NewServer(gw)
+	t.Cleanup(srv.Close)
+	cfg, err := config.FromYAML([]byte(roleOperatorYAML), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf := cfg.Workflows["wf"]
+	wf.Workers["drafter"] = config.WorkerConfig{NoTools: true}
+	cfg.Workflows["wf"] = wf
+	cfg.Gateway.URL, cfg.Gateway.Key = srv.URL, "tkn"
+	reg := registryFromConfig(cfg)
+	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
+	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
+	deps, closeMCP := buildOneShotRuntimeDeps(cfg, reg, reg.Default, toolReg, tree, io.Discard, false, nil,
+		permissions.AlwaysApprove, "block", false, nil, nil)
+	t.Cleanup(closeMCP)
+	if _, _, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg); err != nil {
+		t.Fatalf("BuildAgent: %v", err)
+	}
+
+	const def = "name: rx\nworkflow: wf\nsteps:\n" +
+		"  - name: dfx\n    worker: drafter\n    prompt: DFX-PIPE-TASK\n    outputs: [verdict]\n" +
+		"    expects:\n      type: object\n      properties:\n        ok:\n          type: boolean\n      required: [ok]\n"
+	res := toolReg.Execute(context.Background(), "pipeline_run", argsJSON(map[string]any{"definition": def}))
+	if res.IsError || res.Output != "pipeline rx: completed" {
+		t.Fatalf("pipeline_run = %+v, want completed", res)
+	}
+
+	c := turnRequest(t, gw, "DFX-PIPE-TASK", 0)
+	if got, want := sortedToolNames(c), []string{"return_result"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("tool-less step with expects tools = %v, want exactly %v", got, want)
+	}
+	if got := nodeLabelled(t, tree, "dfx").Status; got != agent.StatusDone {
+		t.Errorf("dfx status = %v, want done", got)
 	}
 }

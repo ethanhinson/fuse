@@ -540,6 +540,9 @@ type RoleConfig struct {
 	Instructions string   `yaml:"instructions"`
 	Tools        []string `yaml:"tools"`
 	Model        string   `yaml:"model"`
+	// NoTools builds the role's child with no tools at all, the blackboard
+	// included. It conflicts with a non-empty Tools.
+	NoTools bool `yaml:"no_tools"`
 }
 
 // Config is the fully resolved fuse configuration.
@@ -548,9 +551,13 @@ type Config struct {
 	// prompt. Empty leaves the system prompt unchanged. It is not a permission,
 	// so it is honored from every layer, .fuse.local.yml included.
 	Instructions string
-	Gateway      Gateway
-	Models       ModelsConfig
-	SkillPaths   []string
+	// NoTools composes the main agent with no tools at all (change 0116): no
+	// platform, MCP or internal tools, no spawn. Honored from every layer: it
+	// only removes tools.
+	NoTools    bool
+	Gateway    Gateway
+	Models     ModelsConfig
+	SkillPaths []string
 	// MaxTurns is a pointer so an omitted `max_turns` (nil) is distinguishable
 	// from an explicit `max_turns: 0`. nil = unset ⇒ the call site applies the
 	// context-aware backstop (unlimited in the interactive shell, 100 headless);
@@ -681,12 +688,16 @@ type ProviderThroughput struct {
 
 // WorkerConfig is a typed worker: a tool allowlist and an optional model pin
 // (empty: inherit the parent's model). The allowlist is the worker's whole tool
-// set: it must name at least one tool and inherits nothing from the parent. A
-// worker-bound child also always receives the five blackboard tools, and it can
-// nest exactly when its allowlist names spawn_agent.
+// set: it must name at least one tool (or set NoTools) and inherits nothing
+// from the parent. A worker-bound child with tools also always receives the
+// five blackboard tools, and it can nest exactly when its allowlist names
+// spawn_agent.
 type WorkerConfig struct {
 	Tools []string `yaml:"tools"`
 	Model string   `yaml:"model"`
+	// NoTools builds the worker-bound child with no tools at all, the
+	// blackboard included. It conflicts with a non-empty Tools.
+	NoTools bool `yaml:"no_tools"`
 }
 
 // AgentsConfig controls the subagent runtime. MaxSpawns is a tree-global
@@ -720,6 +731,7 @@ type rawConfig struct {
 	MaxTurns     *int                   `yaml:"max_turns"`
 	MaxTokens    int                    `yaml:"max_tokens"`
 	Instructions string                 `yaml:"instructions"`
+	NoTools      bool                   `yaml:"no_tools"`
 	Permissions  rawPermissionsConfig   `yaml:"permissions"`
 	// Orchestrator is the steering side-channel's model choice (trusted-only).
 	Orchestrator OrchestratorConfig `yaml:"orchestrator"`

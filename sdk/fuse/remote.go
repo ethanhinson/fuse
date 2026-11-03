@@ -213,6 +213,7 @@ func fromProtoCapabilities(m *loopv1.GetCapabilitiesResponse) Capabilities {
 			Version:         m.GetServer().GetVersion(),
 			DigestAlgorithm: m.GetServer().GetDigestAlgorithm(),
 		},
+		SpecFeatures: append([]string(nil), m.GetSpecFeatures()...),
 		Limits: Limits{
 			MaxLiveLoops:    int(m.GetLimits().GetMaxLiveLoops()),
 			StartsPerMinute: int(m.GetLimits().GetStartsPerMinute()),

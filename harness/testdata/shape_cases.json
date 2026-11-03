@@ -81,9 +81,15 @@
     ]
   },
   {
-    "name": "worker without tools",
+    "name": "worker without tools passes the shape layer",
     "spec": {"workflows": {"wf": {"workers": {"reader": {}, "ok": {"tools": ["read_file"]}}}}},
-    "want": [{"fieldPath": "workflows[\"wf\"].workers[\"reader\"].tools", "ruleId": "repeated.min_items"}]
+    "want": []
+  },
+  {
+    "name": "worker with only no_tools",
+    "spec": {"workflows": {"wf": {"workers": {"drafter": {"noTools": true}}}}, "noTools": true,
+             "roles": {"judge": {"description": "d", "noTools": true}}},
+    "want": []
   },
   {
     "name": "roles shapes",

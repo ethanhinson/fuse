@@ -52,12 +52,35 @@ func newWiringHarness(t *testing.T) *wiringHarness {
 // newWiringHarnessN is newWiringHarness with a max_concurrent of slots.
 func newWiringHarnessN(t *testing.T, slots int) *wiringHarness {
 	t.Helper()
+	return newWiringHarnessCfg(t, slots, nil)
+}
+
+// newToolLessWiringHarness is newWiringHarness plus a tool-less judge role and
+// a tool-less drafter worker in wf. They live here, not in the shared
+// fixtures, so the role and worker enums other tests pin stay as they are.
+func newToolLessWiringHarness(t *testing.T) *wiringHarness {
+	t.Helper()
+	return newWiringHarnessCfg(t, 4, func(cfg *config.Config) {
+		cfg.Roles["judge"] = config.RoleConfig{Description: "Judges.", NoTools: true}
+		wf := cfg.Workflows["wf"]
+		wf.Workers["drafter"] = config.WorkerConfig{NoTools: true}
+		cfg.Workflows["wf"] = wf
+	})
+}
+
+// newWiringHarnessCfg builds the wiring harness, letting edit adjust the
+// fixture config before the scope is built from it. A nil edit is a no-op.
+func newWiringHarnessCfg(t *testing.T, slots int, edit func(*config.Config)) *wiringHarness {
+	t.Helper()
 	cfg := config.Default()
 	cfg.Workflows = scopeWF()
 	cfg.Roles = scopeRoles()
 	writer := cfg.Roles["writer"]
 	writer.Instructions = "WRITER-BRIEF"
 	cfg.Roles["writer"] = writer
+	if edit != nil {
+		edit(&cfg)
+	}
 	tree := agent.NewAgentTreeWithConcurrency("m", "m", slots)
 	h := &wiringHarness{
 		t:    t,
@@ -310,6 +333,103 @@ func TestRootToolsRegistersScopedTools(t *testing.T) {
 	}
 	if _, ok := toolProps(t, reg, "pipeline_run")["workflow"]; !ok {
 		t.Fatal("root pipeline_run lacks a workflow property")
+	}
+}
+
+// TestChildToolsToolLessRole: a tool-less role child gets an empty registry:
+// no tools, no blackboard, no spawn_agent and no pipeline_run, and its plan is
+// marked none so every child builder composes the tool-less prompt.
+func TestChildToolsToolLessRole(t *testing.T) {
+	h := newToolLessWiringHarness(t)
+	j := h.spawn(h.root, agent.SpawnOpts{Label: "j", Task: "t", Role: "judge"})
+
+	if n := len(j.reg.Tools()); n != 0 {
+		t.Fatalf("tool-less role registry has %d tools %v, want none", n, schemaNames(j.reg))
+	}
+	if !j.plan.none {
+		t.Fatalf("tool-less role plan = %+v, want none", j.plan)
+	}
+	if j.plan.bound || j.plan.tools != nil {
+		t.Fatalf("tool-less role plan = %+v, want unbound with no tool list", j.plan)
+	}
+	if !j.plan.agentConfig(h.cfg).NoTools {
+		t.Fatal("tool-less role agentConfig does not set NoTools")
+	}
+	if h.cfg.NoTools {
+		t.Fatal("agentConfig mutated the loop's own config")
+	}
+
+	// The ordinary children beside it keep their tools.
+	rev := h.spawn(h.root, agent.SpawnOpts{Label: "rev", Task: "t", Role: "reviewer"})
+	if rev.plan.none || rev.plan.agentConfig(h.cfg).NoTools || len(rev.reg.Tools()) == 0 {
+		t.Fatalf("reviewer plan = %+v with %v, want an ordinary bound child", rev.plan, schemaNames(rev.reg))
+	}
+	free := h.spawn(h.root, agent.SpawnOpts{Label: "free", Task: "t"})
+	if free.plan.none || !contains(schemaNames(free.reg), "spawn_agent") {
+		t.Fatalf("freeform plan = %+v with %v, want an ordinary child with spawn_agent", free.plan, schemaNames(free.reg))
+	}
+}
+
+// TestChildToolsToolLessWorker: a tool-less worker child gets an empty
+// registry, while a tooled worker in the same workflow keeps its allowlist plus
+// the five blackboard tools.
+func TestChildToolsToolLessWorker(t *testing.T) {
+	h := newToolLessWiringHarness(t)
+	lead := h.lead()
+	d := h.spawn(lead.node, agent.SpawnOpts{Label: "d", Task: "t", Worker: "drafter"})
+
+	if n := len(d.reg.Tools()); n != 0 {
+		t.Fatalf("tool-less worker registry has %d tools %v, want none", n, schemaNames(d.reg))
+	}
+	if !d.plan.none || !d.plan.agentConfig(h.cfg).NoTools {
+		t.Fatalf("tool-less worker plan = %+v, want none", d.plan)
+	}
+
+	r := h.spawn(lead.node, agent.SpawnOpts{Label: "r", Task: "t", Worker: "reader"})
+	if got := schemaNames(r.reg); !reflect.DeepEqual(got, readerSchema) {
+		t.Fatalf("reader schema = %v, want %v", got, readerSchema)
+	}
+	if r.plan.none {
+		t.Fatalf("reader plan = %+v, want not none", r.plan)
+	}
+}
+
+// TestToolLessRoleSpawnRefusesTools: the root's spawn_agent refuses a tool
+// list for a tool-less role before any node exists.
+func TestToolLessRoleSpawnRefusesTools(t *testing.T) {
+	h := newToolLessWiringHarness(t)
+	reg := tools.NewRegistry()
+	h.w.rootTools(reg, h.root)
+	before := len(h.tree.SnapshotAll())
+
+	res := reg.Execute(context.Background(), "spawn_agent",
+		argsJSON(map[string]any{"label": "j", "task": "t", "role": "judge", "tools": []string{"read_file"}}))
+	if !res.IsError || !strings.Contains(res.Output, `role "judge" permits no tools`) {
+		t.Fatalf("spawn_agent = %+v, want a permits-no-tools refusal", res)
+	}
+	if after := len(h.tree.SnapshotAll()); after != before {
+		t.Fatalf("tree has %d nodes after the refusal, want %d (no node created)", after, before)
+	}
+}
+
+// TestToolLessRoleOptionDescription: the role enum marks a tool-less role as
+// answering in plain text and leaves every other role's description alone.
+func TestToolLessRoleOptionDescription(t *testing.T) {
+	h := newToolLessWiringHarness(t)
+	got := map[string]string{}
+	for _, o := range h.w.scope.roleOptions(h.root.ID) {
+		got[o.Name] = o.Description
+	}
+	if want := "Judges. (no tools: answers in plain text)"; got["judge"] != want {
+		t.Fatalf("judge description = %q, want %q", got["judge"], want)
+	}
+	for name, role := range h.cfg.Roles {
+		if role.NoTools {
+			continue
+		}
+		if got[name] != role.Description {
+			t.Fatalf("%s description = %q, want it unchanged %q", name, got[name], role.Description)
+		}
 	}
 }
 

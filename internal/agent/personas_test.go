@@ -87,3 +87,29 @@ func TestAgentSystemPromptGetter(t *testing.T) {
 		t.Fatalf("SystemPrompt() = %q", got)
 	}
 }
+
+func TestToolLessPersonaNeverClaimsTools(t *testing.T) {
+	for _, p := range []string{"coding", "research", "reasoning", "general", "nope"} {
+		got := ToolLessPersonaPrompt(p)
+		if strings.Contains(got, "access to") || strings.Contains(got, "file and shell") {
+			t.Errorf("%s: tool-less persona claims tools: %q", p, got)
+		}
+		if !strings.Contains(got, "no tools") || strings.Contains(got, "\n") {
+			t.Errorf("%s: want one line stating no tools, got %q", p, got)
+		}
+	}
+	if ToolLessPersonaPrompt("nope") != ToolLessPersonaPrompt("general") {
+		t.Error("unknown persona does not fall back to general")
+	}
+}
+
+func TestComposeToolLessSystemPrompt(t *testing.T) {
+	got := ComposeToolLessSystemPrompt("coding", "/no_think", "  BRIEF  ")
+	want := "/no_think\n" + ToolLessPersonaPrompt("coding") + "\n\n  BRIEF  "
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if ComposeToolLessSystemPrompt("coding", "", "") != ToolLessPersonaPrompt("coding") {
+		t.Error("blank prefix and instructions must add nothing")
+	}
+}

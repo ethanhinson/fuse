@@ -256,6 +256,7 @@ func toDocument(s *harnessv1.HarnessSpec, secrets SecretResolver) (doc, error) {
 			wd := doc{}
 			wd.set("tools", wk.GetTools())
 			wd.set("model", wk.GetModel())
+			wd.set("no_tools", wk.GetNoTools())
 			workers[wn] = wd
 		}
 		d.set("workers", workers)
@@ -271,6 +272,7 @@ func toDocument(s *harnessv1.HarnessSpec, secrets SecretResolver) (doc, error) {
 		rd.set("instructions", r.GetInstructions())
 		rd.set("tools", r.GetTools())
 		rd.set("model", r.GetModel())
+		rd.set("no_tools", r.GetNoTools())
 		roles[name] = rd
 	}
 	root.set("roles", roles)
@@ -329,6 +331,7 @@ func toDocument(s *harnessv1.HarnessSpec, secrets SecretResolver) (doc, error) {
 	}
 	root.set("max_tokens", s.GetMaxTokens())
 	root.set("instructions", s.GetInstructions())
+	root.set("no_tools", s.GetNoTools())
 
 	r := s.GetResearch()
 	rs := doc{}
@@ -572,7 +575,7 @@ func FromConfig(cfg config.Config) (*harnessv1.HarnessSpec, []Omission) {
 				if out.Workers == nil {
 					out.Workers = map[string]*harnessv1.Worker{}
 				}
-				out.Workers[wn] = &harnessv1.Worker{Tools: wk.Tools, Model: wk.Model}
+				out.Workers[wn] = &harnessv1.Worker{Tools: wk.Tools, Model: wk.Model, NoTools: wk.NoTools}
 			}
 		}
 		if !builtin || !slices.Equal(w.Roles, dw.Roles) {
@@ -591,7 +594,7 @@ func FromConfig(cfg config.Config) (*harnessv1.HarnessSpec, []Omission) {
 		if s.Roles == nil {
 			s.Roles = map[string]*harnessv1.Role{}
 		}
-		s.Roles[name] = &harnessv1.Role{Description: r.Description, Instructions: r.Instructions, Tools: r.Tools, Model: r.Model}
+		s.Roles[name] = &harnessv1.Role{Description: r.Description, Instructions: r.Instructions, Tools: r.Tools, Model: r.Model, NoTools: r.NoTools}
 	}
 
 	t := cfg.Throughput
@@ -687,6 +690,7 @@ func FromConfig(cfg config.Config) (*harnessv1.HarnessSpec, []Omission) {
 	if cfg.Instructions != def.Instructions {
 		s.Instructions = cfg.Instructions
 	}
+	s.NoTools = cfg.NoTools
 
 	r, dr := cfg.Research, def.Research
 	res := &harnessv1.Research{}

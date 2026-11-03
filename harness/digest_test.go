@@ -112,3 +112,34 @@ func TestDigestCoversRoles(t *testing.T) {
 		t.Error("specs differing only in a workflow's roles share a digest")
 	}
 }
+
+// TestDigestCoversNoTools pins that no_tools on the spec, a role and a worker
+// is part of the digest, and that an unset flag moves no existing digest.
+func TestDigestCoversNoTools(t *testing.T) {
+	if got := Digest(rolelessSpec()); got != rolelessDigest {
+		t.Fatalf("Digest(rolelessSpec()) = %s, want %s", got, rolelessDigest)
+	}
+	base := Digest(rolesSpec())
+	spec := rolesSpec()
+	spec.NoTools = true
+	if Digest(spec) == base {
+		t.Error("flipping HarnessSpec.no_tools leaves the digest unchanged")
+	}
+	role := rolesSpec()
+	role.Roles["researcher"].NoTools = true
+	if Digest(role) == base {
+		t.Error("flipping Role.no_tools leaves the digest unchanged")
+	}
+	// rolesSpec's review workflow has a worker with tools; flipping its
+	// no_tools (and keeping its tools: coverage does not depend on validity)
+	// must move the digest.
+	worker := rolesSpec()
+	w := worker.Workflows["review"].Workers["reader"]
+	if len(w.GetTools()) == 0 {
+		t.Fatal("rolesSpec's reader worker has no tools")
+	}
+	w.NoTools = true
+	if Digest(worker) == base {
+		t.Error("flipping Worker.no_tools leaves the digest unchanged")
+	}
+}

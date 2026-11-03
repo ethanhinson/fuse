@@ -355,6 +355,9 @@ func TestLoopServerHostAdvertisesItsCapabilities(t *testing.T) {
 	if !c.SpecPolicy.CarriedSkillsAllowed {
 		t.Error("carried skills are not advertised as allowed by default")
 	}
+	if !slices.Contains(c.SpecFeatures, harness.SpecFeatureNoTools) {
+		t.Errorf("spec features = %v, want them to include %s", c.SpecFeatures, harness.SpecFeatureNoTools)
+	}
 }
 
 // TestLoopCapabilitiesAdvertiseCarriedSkillsDisabled proves GetCapabilities
@@ -423,5 +426,8 @@ func TestServeNetMountsTheCapabilitySource(t *testing.T) {
 	}
 	if len(resp.Msg.Models) == 0 || len(resp.Msg.Ceilings) == 0 {
 		t.Errorf("GetCapabilities models %v or ceilings %v are empty", resp.Msg.Models, resp.Msg.Ceilings)
+	}
+	if !slices.Contains(resp.Msg.GetSpecFeatures(), harness.SpecFeatureNoTools) {
+		t.Errorf("GetCapabilities spec_features = %v, want them to include %s", resp.Msg.GetSpecFeatures(), harness.SpecFeatureNoTools)
 	}
 }

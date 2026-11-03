@@ -28,6 +28,12 @@ func instructionsTestBuild(t *testing.T, mc model.ModelConfig, extra, instructio
 	t.Helper()
 	cfg := config.Default()
 	cfg.Permissions.Mode = "off"
+	return instructionsTestBuildCfg(t, cfg, mc, extra, instructions)
+}
+
+// instructionsTestBuildCfg is instructionsTestBuild with a caller-built config.
+func instructionsTestBuildCfg(t *testing.T, cfg config.Config, mc model.ModelConfig, extra, instructions string) *agent.Agent {
+	t.Helper()
 	reg := model.NewRegistry("fast", map[string]model.ModelConfig{"fast": mc})
 	a, _, err := buildAgentCore(cfg, reg, "fast", discardRenderer{}, extra, instructions, nil, "root",
 		tools.NewRegistry(), permissions.AlwaysApprove, nil, false, nil, nil, observe.NoopObserver{})
@@ -343,5 +349,22 @@ func TestSpecDigestChangesWithInstructions(t *testing.T) {
 	b := digest(&harnessv1.HarnessSpec{MaxTurns: &turns, Instructions: "brief B"})
 	if a == base || b == base || a == b {
 		t.Errorf("digests must differ by instructions: base %s, A %s, B %s", base, a, b)
+	}
+}
+
+// TestBuildAgentCoreToolLessPrompt: a tool-less config composes the one-line
+// tool-less persona plus the brief, and drops every tool-driven extra block.
+// A cli/ model refuses a tool-less config outright (TestNoToolsRejectsCLIModel),
+// so only gateway paths compose a tool-less prompt.
+func TestBuildAgentCoreToolLessPrompt(t *testing.T) {
+	t.Setenv("FUSE_HITL_MODE", "")
+	for _, tc := range []struct{ id, prefix string }{{"cloud/fast", ""}, {"cloud/thinker", "/no_think"}} {
+		cfg := config.Default()
+		cfg.NoTools = true // permissions mode left at its default, so the scratch block would otherwise be appended
+		a := instructionsTestBuildCfg(t, cfg, model.ModelConfig{ID: tc.id, Persona: "research", SystemPrefix: tc.prefix}, spawnAgentBlock+"EXTRA-BLOCK", "BRIEF")
+		want := agent.ComposeToolLessSystemPrompt("research", tc.prefix, "BRIEF")
+		if got := a.SystemPrompt(); got != want {
+			t.Errorf("%s:\n got: %q\nwant: %q", tc.id, got, want)
+		}
 	}
 }

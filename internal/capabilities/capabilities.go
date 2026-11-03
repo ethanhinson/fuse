@@ -31,6 +31,9 @@ type Capabilities struct {
 	SpecPolicy SpecPolicy
 	// Server identifies the server build.
 	Server Server
+	// SpecFeatures are the HarnessSpec features this server implements
+	// (harness.SpecFeatures).
+	SpecFeatures []string
 	// Limits are the tenant's effective loop limits (0 = unlimited). The
 	// source does not fill them; the Connect edge does, from the limiter that
 	// enforces them (change 0103), so both read one source.

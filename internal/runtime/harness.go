@@ -22,6 +22,14 @@ import (
 // binding cannot run a client-supplied harness (change 0085).
 var ErrHarnessUnsupported = errors.New("runtime: this runtime does not run harness specs")
 
+// ErrNoToolsOrchestrate is returned by StartLoop for a loop that both
+// orchestrates another loop (LoopConfig.Orchestrate) and runs tool-less
+// (no_tools from its spec, its resolved LoopFactory or Deps.NoTools). An
+// orchestrator's only tools are the watch-and-steer tools, so the two cannot
+// both hold; the loop is refused before anything is created. Callers report it
+// as an invalid request.
+var ErrNoToolsOrchestrate = errors.New("runtime: no_tools cannot be combined with orchestrate_loop_id")
+
 // HarnessResolver resolves the harness spec a loop is started with into that
 // loop's own construction (change 0085, ADR-0061). The runtime stays policy-free: it
 // never interprets a spec, it only asks the binding's resolver for the factory
@@ -49,6 +57,10 @@ type LoopFactory struct {
 	BuildAgent func(store event.EventStore, tree *agent.AgentTree, modelID string, toolReg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error)
 	// MaxConcurrent seeds the loop tree's scheduler concurrency.
 	MaxConcurrent int
+	// NoTools reports that the loop's resolved config is tool-less (no_tools).
+	// The runtime reads it only to refuse an orchestrating loop
+	// (ErrNoToolsOrchestrate); the tool set itself is NewToolRegistry's.
+	NoTools bool
 }
 
 // resolveHarness returns the loop factory for cfg's harness spec, or nil when
