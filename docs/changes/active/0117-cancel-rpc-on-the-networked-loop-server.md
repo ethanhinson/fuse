@@ -15,7 +15,7 @@ discovered_from: []
 adrs: [78]
 spec: 'docs/superpowers/specs/2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md'
 plan: 'docs/superpowers/plans/2026-11-03-cancel-rpc-on-the-networked-loop-server.md'
-results:
+results: 'docs/results/2026-11-03-cancel-rpc-on-the-networked-loop-server-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md](../../superpowers/specs/2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md) |
 | Plan | [2026-11-03-cancel-rpc-on-the-networked-loop-server.md](../../superpowers/plans/2026-11-03-cancel-rpc-on-the-networked-loop-server.md) |
+| Results | [2026-11-03-cancel-rpc-on-the-networked-loop-server-results.md](../../results/2026-11-03-cancel-rpc-on-the-networked-loop-server-results.md) |
 | ADRs | [ADR-0078](../../adrs/0078-loop-cancellation-is-a-terminal-stream-event-plus-an-in-memo.md) |
 <!-- docket:artifacts:end -->
 
