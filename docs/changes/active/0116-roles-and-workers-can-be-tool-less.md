@@ -1,0 +1,49 @@
+---
+id: 116
+slug: 'roles-and-workers-can-be-tool-less'
+title: 'Roles and workers can be tool-less'
+status: 'proposed'
+priority: 'medium'
+type: 'feat'
+deliverable: 'pr'
+created: '2026-11-03'
+updated: '2026-11-03'
+depends_on: []
+stacked_on:
+related: [113, 114]
+discovered_from: []
+adrs: []
+spec:
+plan:
+results:
+auto_groomable:
+hold:
+branch_prefix:
+branch:
+pr:
+blocked_by:
+reconciled: false
+---
+
+## Artifacts
+
+<!-- docket:artifacts:start (generated — do not hand-edit) -->
+<!-- docket:artifacts:end -->
+
+## Why
+
+A role's `tools` list carries two meanings in one field. A non-empty list is the child's whole, bound tool set; an empty list means "inherit the parent's tools". So there is no way to define a helper that should only think and write, such as a drafter, summarizer, classifier or judge. The narrowest set you can express is one real tool, which widens the helper's blast radius and tempts the model to use a tool it was never meant to.
+
+## What changes
+
+- Add an explicit tool-less form to `Role`, and to `Worker`, which follows the same rule. This could be a `no_tools: true` boolean, or one equivalent sentinel.
+- Validation rejects it when a non-empty `tools` list is also set.
+- `resolveRoleTools` maps it to an empty bound set, so a spawn-time `tools` request can only narrow to nothing.
+- The `spawn_agent` and pipeline tool descriptions show that the helper is text-only.
+- The blackboard tools are still always added, as for any bound child.
+- The proto comments document the three states: inherit, narrowed and none.
+- Tests: a validator test, and a spawn test asserting that the child is offered only the blackboard tools.
+
+## Out of scope
+
+Changing what an empty `tools` list means; it stays inherit.
