@@ -39,7 +39,11 @@ import (
 //     holds one;
 //   - live on another replica: a loop.cancel.request is appended to its stream and
 //     the owner's relay pump honours it (relay.go). This side waits, bounded, for the
-//     owner's loop.cancelled and for the registry to show the loop not live.
+//     owner's loop.cancelled and for the registry to show the loop not live. An owner
+//     that stops running the loop without answering (its run finished before its
+//     pump read the request, or it died and its lease expired) never will, so once
+//     the loop reads not live with no loop.cancelled this side seals the stream
+//     itself, answering the request.
 //
 // Resume refuses a stream that holds loop.cancelled, and answers an unanswered
 // loop.cancel.request with the terminal event instead of reviving the loop. When a
@@ -171,9 +175,20 @@ const relayCancelRegistryPoll = 10 * time.Millisecond
 // CancelWait) for the owner's loop.cancelled and for the registry to show the loop
 // not live: only both make Cancelled. Otherwise it reports Cancelling.
 //
-// The request this process appended is remembered in cancelPending until its answer
-// is seen, so a repeat Cancel from here appends no second request: it reports the
-// terminal event once one exists (AlreadyCancelled) and Cancelling until then.
+// The owner may stop running the loop without answering: its relay pump stops before
+// the run's cancel decision point, so a request that lands after the pump's last read
+// and before the run ends is never seen, and an owner that dies answers nothing. The
+// owner's completion appends its loop.cancelled before it marks the loop not live, so
+// a loop that reads not live (an expired lease counts) with no loop.cancelled will
+// never get one from its owner: this side then seals the stream, answering the
+// request with loop.cancelled{was_live:false}, and reports Cancelled.
+//
+// While the request this process appended is being waited on it is held in
+// cancelPending, so a concurrent Cancel from here appends no second request and
+// reports Cancelling. The entry is dropped when the wait ends, however it ends; after
+// that the stream itself shows the request is pending, which a repeat Cancel also
+// honours by appending nothing. A repeat reports the terminal event once one exists
+// (AlreadyCancelled) and Cancelling until then.
 func (r *inProcRuntime) relayCancel(ctx context.Context, key event.StreamKey, reason, requestedBy string) (CancelResult, error) {
 	ds := r.deps.DurableStore
 	r.cancelMu.Lock()
@@ -187,10 +202,9 @@ func (r *inProcRuntime) relayCancel(ctx context.Context, key event.StreamKey, re
 	}
 	if e, p, ok := firstCancelled(evs); ok {
 		r.cancelMu.Unlock()
-		r.dropCancelPending(key)
 		return CancelResult{Outcome: CancelOutcomeAlreadyCancelled, WasLive: p.WasLive, TerminalSeq: e.Seq, Reason: p.Reason}, nil
 	}
-	if pending {
+	if _, _, inStream := pendingCancel(evs); pending || inStream {
 		r.cancelMu.Unlock()
 		return CancelResult{Outcome: CancelOutcomeCancelling, Reason: reason}, nil
 	}
@@ -212,26 +226,47 @@ func (r *inProcRuntime) relayCancel(ctx context.Context, key event.StreamKey, re
 	r.cancelPending[key] = reqSeq
 	r.mu.Unlock()
 	r.cancelMu.Unlock()
+	defer r.dropCancelPending(key)
 
 	wctx, stop := context.WithTimeout(ctx, r.cancelWait())
 	defer stop()
-	term, tp, ok := r.awaitTerminal(wctx, key)
+	term, tp, ok := r.awaitTerminal(wctx, key, func() bool { return r.loopNotLive(wctx, key) })
 	if !ok {
-		return CancelResult{Outcome: CancelOutcomeCancelling, Reason: reason}, nil
+		if wctx.Err() != nil {
+			return CancelResult{Outcome: CancelOutcomeCancelling, Reason: reason}, nil
+		}
+		// Not live and unanswered: nobody else will answer the request.
+		res, err := r.sealNotLive(ctx, key, nil)
+		if err != nil {
+			return CancelResult{}, err
+		}
+		switch res.Outcome {
+		case CancelOutcomeCancelled:
+			return res, nil
+		case CancelOutcomeAlreadyCancelled:
+			// A loop.cancelled landed since the last read; with the loop not live it
+			// answers this request as well as the owner's would have.
+			res.Outcome = CancelOutcomeCancelled
+			return res, nil
+		default:
+			// The request no longer reads as pending (it did not decode): nothing to answer.
+			return CancelResult{Outcome: CancelOutcomeCancelling, Reason: reason}, nil
+		}
 	}
 	if !r.awaitNotLive(wctx, key) {
 		return CancelResult{Outcome: CancelOutcomeCancelling, WasLive: tp.WasLive, Reason: tp.Reason}, nil
 	}
-	r.dropCancelPending(key)
 	return CancelResult{Outcome: CancelOutcomeCancelled, WasLive: tp.WasLive, TerminalSeq: term.Seq, Reason: tp.Reason}, nil
 }
 
-// awaitTerminal waits until key's stream holds a loop.cancelled or ctx ends. It
-// subscribes first and then replays, so an event appended in between is not missed;
-// live events at or below the replay watermark were already read and are skipped.
-// The watermark moves only with replays, so an event the subscription dropped is
-// still found by the periodic re-read.
-func (r *inProcRuntime) awaitTerminal(ctx context.Context, key event.StreamKey) (event.Event, event.LoopCancelledPayload, bool) {
+// awaitTerminal waits until key's stream holds a loop.cancelled, or ctx ends, or
+// gone reports (on a periodic check, after a stream read that found none) that
+// nobody will append one; ok is false in the last two cases. It subscribes first and
+// then replays, so an event appended in between is not missed; live events at or
+// below the replay watermark were already read and are skipped. The watermark moves
+// only with replays, so an event the subscription dropped is still found by the
+// periodic re-read.
+func (r *inProcRuntime) awaitTerminal(ctx context.Context, key event.StreamKey, gone func() bool) (event.Event, event.LoopCancelledPayload, bool) {
 	ds := r.deps.DurableStore
 	wake, unsub, err := ds.Subscribe(ctx, key)
 	if err != nil {
@@ -276,6 +311,9 @@ func (r *inProcRuntime) awaitTerminal(ctx context.Context, key event.StreamKey) 
 			if e, p, ok := read(); ok {
 				return e, p, true
 			}
+			if gone != nil && gone() && ctx.Err() == nil {
+				return event.Event{}, event.LoopCancelledPayload{}, false
+			}
 		}
 	}
 }
@@ -285,7 +323,7 @@ func (r *inProcRuntime) awaitNotLive(ctx context.Context, key event.StreamKey) b
 	tick := time.NewTicker(relayCancelRegistryPoll)
 	defer tick.Stop()
 	for {
-		if rec, err := r.deps.Registry.Resolve(ctx, key); err == nil && !rec.Live {
+		if r.loopNotLive(ctx, key) {
 			return true
 		}
 		select {
@@ -294,6 +332,17 @@ func (r *inProcRuntime) awaitNotLive(ctx context.Context, key event.StreamKey) b
 		case <-tick.C:
 		}
 	}
+}
+
+// loopNotLive reports whether the registry shows key's loop not live, marking it so
+// first when its owner's lease has expired (the owner is gone).
+func (r *inProcRuntime) loopNotLive(ctx context.Context, key event.StreamKey) bool {
+	rec, err := r.deps.Registry.Resolve(ctx, key)
+	if err != nil {
+		return false
+	}
+	rec, err = r.reapIfAbandoned(ctx, key, rec)
+	return err == nil && !rec.Live
 }
 
 func (r *inProcRuntime) dropCancelPending(key event.StreamKey) {
