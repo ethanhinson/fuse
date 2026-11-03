@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/ethanhinson/fuse/internal/artifact"
 )
 
 type fakeTool struct{ name string }
@@ -120,4 +122,54 @@ func TestRegistryConcurrentReadWrite(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// bindingProbe records the artifact binding its context carries.
+type bindingProbe struct {
+	got   artifact.Binding
+	found bool
+}
+
+func (p *bindingProbe) Name() string               { return "probe" }
+func (p *bindingProbe) Description() string        { return "probe" }
+func (p *bindingProbe) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (p *bindingProbe) Execute(ctx context.Context, _ string) Result {
+	p.got, p.found = artifact.BindingFrom(ctx)
+	return Result{Output: "ok"}
+}
+
+func TestCloneAndSubsetCarryBinding(t *testing.T) {
+	store := artifact.NewMemStore()
+	r := NewRegistry().WithArtifacts(store, "acme", "loop1")
+	r.Register(fakeTool{name: "alpha"})
+	want := r.Artifacts()
+	if !want.Valid() || want.Store != store || want.Tenant != "acme" || want.Loop != "loop1" {
+		t.Fatalf("binding not set: %+v", want)
+	}
+	if got := r.Clone().Artifacts(); got != want {
+		t.Errorf("Clone binding = %+v, want %+v", got, want)
+	}
+	sub, _ := r.Subset([]string{"alpha"})
+	if got := sub.Artifacts(); got != want {
+		t.Errorf("Subset binding = %+v, want %+v", got, want)
+	}
+}
+
+func TestExecuteStampsBinding(t *testing.T) {
+	store := artifact.NewMemStore()
+	r := NewRegistry().WithArtifacts(store, "acme", "loop1")
+	p := &bindingProbe{}
+	r.Register(p)
+	r.Execute(t.Context(), "probe", `{}`)
+	if !p.found || p.got != r.Artifacts() {
+		t.Errorf("tool saw binding %+v (found=%v), want %+v", p.got, p.found, r.Artifacts())
+	}
+
+	unbound := NewRegistry()
+	p2 := &bindingProbe{}
+	unbound.Register(p2)
+	unbound.Execute(t.Context(), "probe", `{}`)
+	if p2.found {
+		t.Error("an unbound registry must not stamp a binding")
+	}
 }

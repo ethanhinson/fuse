@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -152,10 +151,6 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	if glamourStyle == "" {
 		glamourStyle = "dark"
 	}
-
-	// Spill dir: full copies of truncated tool outputs, recoverable by the
-	// model via grep/read_file (see docs/designs/context-management.md).
-	tools.SetSpillDir(filepath.Join(filepath.Dir(session.DefaultLogDir()), "tool-output"))
 
 	// Session log: sweep stale files. The log itself opens after the agent tree
 	// exists, so it can live under the per-session directory keyed by the root

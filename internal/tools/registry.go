@@ -8,6 +8,8 @@ import (
 	"runtime/debug"
 	"sync"
 
+	"github.com/ethanhinson/fuse/internal/artifact"
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
@@ -40,12 +42,16 @@ type Tool interface {
 // It is safe for concurrent use: the fuse mcp-server's config-watch goroutine
 // reconciles the registry in-place (Register/Unregister) while the MCP Serve
 // loop concurrently reads it (tools/list -> Schemas, tools/call -> Has+Execute,
-// resources/read -> Schemas). mu guards order and byName: read methods take an
-// RLock, write methods a Lock.
+// resources/read -> Schemas). mu guards order, byName and art: read methods
+// take an RLock, write methods a Lock.
 type Registry struct {
 	mu     sync.RWMutex
 	order  []string
 	byName map[string]Tool
+	// art scopes the loop's artifact store: oversized results spill through
+	// it, and Execute stamps it onto every tool's context so file tools can
+	// resolve art:// refs. The zero value means "unbound" (truncate only).
+	art artifact.Binding
 }
 
 // NewRegistry returns an empty registry.
@@ -77,6 +83,23 @@ func (r *Registry) Unregister(name string) {
 			break
 		}
 	}
+}
+
+// WithArtifacts binds the registry to store under (tenant, loop) — tenant is
+// normalized — replacing any earlier binding, and returns r. The runtime calls
+// it for every loop it starts or resumes.
+func (r *Registry) WithArtifacts(store artifact.Store, tenant event.TenantID, loop event.LoopID) *Registry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.art = artifact.Binding{Store: store, Tenant: event.NormalizeTenant(tenant), Loop: loop}
+	return r
+}
+
+// Artifacts returns the registry's artifact binding (zero when unbound).
+func (r *Registry) Artifacts() artifact.Binding {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.art
 }
 
 // Has reports whether a tool is registered under name.
@@ -116,13 +139,14 @@ func (r *Registry) Schemas() []model.ToolSchema {
 
 // Execute runs the named tool, returning an error Result if it is unknown.
 // Oversized outputs are spill-truncated centrally (head+tail inline, full
-// output to a recoverable spill file) so no single result can flood the
+// output to a spill artifact in the loop's store) so no single result can flood the
 // conversation context. A panicking tool becomes an error Result — tool
 // calls run on agent goroutines, where an unrecovered panic kills the whole
 // process (observed live: an inverted read range took down the TUI).
 func (r *Registry) Execute(ctx context.Context, name, args string) (res Result) {
 	r.mu.RLock()
 	t, ok := r.byName[name]
+	b := r.art
 	r.mu.RUnlock()
 	if !ok {
 		return Result{IsError: true, Output: fmt.Sprintf("unknown tool %q", name)}
@@ -136,8 +160,11 @@ func (r *Registry) Execute(ctx context.Context, name, args string) (res Result) 
 			res = Result{IsError: true, Output: fmt.Sprintf("tool %s panicked: %v\n%s", name, rec, stack)}
 		}
 	}()
+	if b.Valid() {
+		ctx = artifact.WithBinding(ctx, b)
+	}
 	res = t.Execute(ctx, args)
-	res.Output = SpillOutput(name, res.Output)
+	res.Output = spillOutput(ctx, b, name, res.Output)
 	return res
 }
 
@@ -154,6 +181,7 @@ func (r *Registry) Subset(names []string) (*Registry, []string) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := NewRegistry()
+	out.art = r.art
 	var unknown []string
 	for _, n := range names {
 		if t, ok := r.byName[n]; ok {
@@ -172,6 +200,7 @@ func (r *Registry) Clone() *Registry {
 	out := &Registry{
 		order:  make([]string, len(r.order)),
 		byName: make(map[string]Tool, len(r.byName)),
+		art:    r.art,
 	}
 	copy(out.order, r.order)
 	for k, v := range r.byName {

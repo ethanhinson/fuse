@@ -16,7 +16,7 @@ import (
 
 // segmentsDir holds the running session's segments directory, set once at
 // session start (keyed by the root AgentNode.ID) via SetSegmentsDir and read by
-// the segment_read tool DefaultTools() registers. Mirrors SetSpillDir's
+// the segment_read tool DefaultTools() registers. A
 // package-level model — one process serves one session. Empty ⇒ segment
 // archiving is off / no session, and segment_read returns a clean "no segments"
 // result rather than an error.
