@@ -1,6 +1,6 @@
 # Backlog
 
-**122 changes** — 🟢 1 in progress · 🟡 14 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
+**122 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 13 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -8,7 +8,13 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟡 Proposed (14)
+## 🟣 Groomed (1)
+
+| # | Title | Priority | Type | Spec | Readiness |
+|---|-------|----------|------|------|-----------|
+| [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Tool-less loops, roles and workers | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-roles-and-workers-can-be-tool-less-design.md) | build-ready |
+
+## 🟡 Proposed (13)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -16,7 +22,6 @@
 | [0121](active/0121-go-sdk-cancel-a-loop.md) | Go SDK: cancel a loop | `low` | `feat` | needs-grooming |
 | [0120](active/0120-at-most-one-loop-cancelled-per-loop-under-replica-races.md) | At most one loop.cancelled per loop under replica races | `low` | `fix` | needs-grooming |
 | [0119](active/0119-send-to-a-loop-cancelled-on-another-replica-says-loop-cancel.md) | Send to a loop cancelled on another replica says loop cancelled | `low` | `fix` | needs-grooming |
-| [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Roles and workers can be tool-less | `medium` | `feat` | needs-grooming |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
 | [0110](active/0110-mark-loopsecret-value-debug-redact-once-protobuf-go-honours.md) | Mark LoopSecret.value debug_redact once protobuf-go honours it | `low` | `feat` | needs-grooming |
 | [0109](active/0109-type-based-guard-that-no-wire-request-carrying-secrets-is-ev.md) | Type-based guard that no wire request carrying secrets is ever formatted | `low` | `feat` | needs-grooming |

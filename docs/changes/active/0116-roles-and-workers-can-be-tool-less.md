@@ -1,19 +1,19 @@
 ---
 id: 116
 slug: 'roles-and-workers-can-be-tool-less'
-title: 'Roles and workers can be tool-less'
+title: 'Tool-less loops, roles and workers'
 status: 'proposed'
-priority: 'medium'
+priority: 'high'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
 updated: '2026-11-03'
 depends_on: []
 stacked_on:
-related: [113, 114]
+related: [113, 114, 115]
 discovered_from: []
 adrs: []
-spec:
+spec: 'docs/superpowers/specs/2026-11-03-roles-and-workers-can-be-tool-less-design.md'
 plan:
 results:
 auto_groomable:
@@ -28,6 +28,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-11-03-roles-and-workers-can-be-tool-less-design.md](../../superpowers/specs/2026-11-03-roles-and-workers-can-be-tool-less-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
