@@ -83,11 +83,25 @@ message HarnessSpec {
     help: "Model aliases this harness can use and the default one. Aliases extend the runtime's built-in registry."
   }];
 
-  // Skills the harness uses, by reference.
-  repeated SkillRef skills = 2 [(fuse.harness.v1.ui) = {
-    label: "Skills"
-    help: "Skills referenced by name. The runtime resolves names against the skills it has installed."
-  }];
+  // Skills the harness uses: references to installed skills, or skills
+  // carried in the spec.
+  repeated SkillRef skills = 2 [
+    (buf.validate.field).repeated.max_items = 64,
+    (buf.validate.field).cel = {
+      id: "fuse.skills.unique_names"
+      message: "skill names must be unique"
+      expression: "this.map(s, s.name).unique()"
+    },
+    (buf.validate.field).cel = {
+      id: "fuse.skills.carried_max"
+      message: "at most 16 skills may be carried in a spec"
+      expression: "this.filter(s, s.body != '').size() <= 16"
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Skills"
+      help: "Skills by name, resolved against the skills the runtime has installed, or carried in the spec with a description and instructions."
+    }
+  ];
 
   // Remote MCP servers (connectors).
   repeated McpServer mcp_servers = 3 [
@@ -276,9 +290,18 @@ message Model {
   ];
 }
 
-// SkillRef references a skill by name. It is a reference, never a path: the
-// runtime resolves the name against the skills it has installed.
+// SkillRef names a skill the harness uses. It is never a path. An entry with
+// only a name is a reference: the runtime resolves the name against the skills
+// it has installed. An entry with a body is a carried skill the spec defines:
+// it runs exactly as carried, shadows an installed skill of the same name for
+// that loop only, and grants no tools.
 message SkillRef {
+  option (buf.validate.message).cel = {
+    id: "fuse.skill.carried_description"
+    message: "a carried skill (one with a body) needs a description"
+    expression: "this.body == '' || this.description != ''"
+  };
+
   // Skill name, e.g. `research`.
   string name = 1 [
     (buf.validate.field).string = {
@@ -289,6 +312,25 @@ message SkillRef {
     (fuse.harness.v1.ui) = {
       label: "Skill"
       widget: WIDGET_TEXT
+    }
+  ];
+  // One line the model reads when choosing a skill. Required when body is set.
+  string description = 2 [
+    (buf.validate.field).string = {
+      max_len: 1024
+      pattern: "^[^\\r\\n]*$"
+    },
+    (fuse.harness.v1.ui) = {
+      label: "Description"
+      widget: WIDGET_TEXT
+    }
+  ];
+  // The skill's instructions as markdown. Set: this entry is a carried skill.
+  string body = 3 [
+    (buf.validate.field).string.max_bytes = 32768,
+    (fuse.harness.v1.ui) = {
+      label: "Instructions"
+      widget: WIDGET_TEXTAREA
     }
   ];
 }

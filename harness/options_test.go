@@ -273,3 +273,79 @@ func TestRolesFieldContract(t *testing.T) {
 		t.Errorf("Workflow.roles widget = %v, want WIDGET_LIST", got)
 	}
 }
+
+// TestSkillRefFieldContract pins the wire contract of carried skills: the
+// SkillRef description and body fields, the message rule that a carried entry
+// needs a description, and the list rules on HarnessSpec.skills.
+func TestSkillRefFieldContract(t *testing.T) {
+	md := (&harnessv1.SkillRef{}).ProtoReflect().Descriptor()
+	field := func(name string, number protoreflect.FieldNumber) (protoreflect.FieldDescriptor, *validate.FieldRules) {
+		t.Helper()
+		fd := md.Fields().ByName(protoreflect.Name(name))
+		if fd == nil {
+			t.Fatalf("SkillRef has no %s field", name)
+		}
+		if fd.Number() != number {
+			t.Errorf("%s number = %d, want %d", name, fd.Number(), number)
+		}
+		if fd.Kind() != protoreflect.StringKind {
+			t.Errorf("%s kind = %v, want string", name, fd.Kind())
+		}
+		rules, ok := proto.GetExtension(fd.Options(), validate.E_Field).(*validate.FieldRules)
+		if !ok || rules == nil {
+			t.Fatalf("%s has no buf.validate field rules", name)
+		}
+		return fd, rules
+	}
+	field("name", 1)
+
+	desc, descRules := field("description", 2)
+	if ui := fieldUI(desc); ui == nil || ui.GetLabel() != "Description" || ui.GetWidget() != harnessv1.Widget_WIDGET_TEXT {
+		t.Errorf("description ui = %+v, want label Description, WIDGET_TEXT", ui)
+	}
+	if got := descRules.GetString().GetMaxLen(); got != 1024 {
+		t.Errorf("description string.max_len = %d, want 1024", got)
+	}
+	if got := descRules.GetString().GetPattern(); got != `^[^\r\n]*$` {
+		t.Errorf("description string.pattern = %q", got)
+	}
+
+	body, bodyRules := field("body", 3)
+	if ui := fieldUI(body); ui == nil || ui.GetLabel() != "Instructions" || ui.GetWidget() != harnessv1.Widget_WIDGET_TEXTAREA {
+		t.Errorf("body ui = %+v, want label Instructions, WIDGET_TEXTAREA", ui)
+	}
+	if got := bodyRules.GetString().GetMaxBytes(); got != 32768 {
+		t.Errorf("body string.max_bytes = %d, want 32768", got)
+	}
+
+	msgRules, ok := proto.GetExtension(md.Options(), validate.E_Message).(*validate.MessageRules)
+	if !ok || msgRules == nil {
+		t.Fatal("SkillRef has no buf.validate message rules")
+	}
+	if !hasCEL(msgRules.GetCel(), "fuse.skill.carried_description") {
+		t.Errorf("SkillRef message rules lack fuse.skill.carried_description: %+v", msgRules.GetCel())
+	}
+
+	skills := (&harnessv1.HarnessSpec{}).ProtoReflect().Descriptor().Fields().ByName("skills")
+	listRules, ok := proto.GetExtension(skills.Options(), validate.E_Field).(*validate.FieldRules)
+	if !ok || listRules == nil {
+		t.Fatal("HarnessSpec.skills has no buf.validate field rules")
+	}
+	if got := listRules.GetRepeated().GetMaxItems(); got != 64 {
+		t.Errorf("skills repeated.max_items = %d, want 64", got)
+	}
+	for _, id := range []string{"fuse.skills.unique_names", "fuse.skills.carried_max"} {
+		if !hasCEL(listRules.GetCel(), id) {
+			t.Errorf("skills lacks CEL rule %s", id)
+		}
+	}
+}
+
+func hasCEL(rules []*validate.Rule, id string) bool {
+	for _, r := range rules {
+		if r.GetId() == id {
+			return true
+		}
+	}
+	return false
+}

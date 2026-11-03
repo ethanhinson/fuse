@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
@@ -269,5 +270,20 @@ func TestGetCapabilitiesLimitsZeroWithoutLimiter(t *testing.T) {
 	l := resp.Msg.Limits
 	if l == nil || l.MaxLiveLoops != 0 || l.StartsPerMinute != 0 {
 		t.Fatalf("limits = %v, want present and all zero", l)
+	}
+}
+
+// TestSpecPolicyCarriedSkillsAllowedField pins the wire contract of the
+// advertised carried-skills switch: SpecPolicy field 4, a bool.
+func TestSpecPolicyCarriedSkillsAllowedField(t *testing.T) {
+	fd := (&loopv1.SpecPolicy{}).ProtoReflect().Descriptor().Fields().ByName("carried_skills_allowed")
+	if fd == nil {
+		t.Fatal("SpecPolicy has no carried_skills_allowed field")
+	}
+	if fd.Number() != 4 {
+		t.Errorf("number = %d, want 4", fd.Number())
+	}
+	if fd.Kind() != protoreflect.BoolKind {
+		t.Errorf("kind = %v, want bool", fd.Kind())
 	}
 }

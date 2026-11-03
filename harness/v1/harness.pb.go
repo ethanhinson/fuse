@@ -460,7 +460,8 @@ type HarnessSpec struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Model aliases and the default model.
 	Models *Models `protobuf:"bytes,1,opt,name=models,proto3" json:"models,omitempty"`
-	// Skills the harness uses, by reference.
+	// Skills the harness uses: references to installed skills, or skills
+	// carried in the spec.
 	Skills []*SkillRef `protobuf:"bytes,2,rep,name=skills,proto3" json:"skills,omitempty"`
 	// Remote MCP servers (connectors).
 	McpServers []*McpServer `protobuf:"bytes,3,rep,name=mcp_servers,json=mcpServers,proto3" json:"mcp_servers,omitempty"`
@@ -774,12 +775,19 @@ func (x *Model) GetSystemPrefix() string {
 	return ""
 }
 
-// SkillRef references a skill by name. It is a reference, never a path: the
-// runtime resolves the name against the skills it has installed.
+// SkillRef names a skill the harness uses. It is never a path. An entry with
+// only a name is a reference: the runtime resolves the name against the skills
+// it has installed. An entry with a body is a carried skill the spec defines:
+// it runs exactly as carried, shadows an installed skill of the same name for
+// that loop only, and grants no tools.
 type SkillRef struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Skill name, e.g. `research`.
-	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// One line the model reads when choosing a skill. Required when body is set.
+	Description string `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	// The skill's instructions as markdown. Set: this entry is a carried skill.
+	Body          string `protobuf:"bytes,3,opt,name=body,proto3" json:"body,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -817,6 +825,20 @@ func (*SkillRef) Descriptor() ([]byte, []int) {
 func (x *SkillRef) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *SkillRef) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *SkillRef) GetBody() string {
+	if x != nil {
+		return x.Body
 	}
 	return ""
 }
@@ -2331,12 +2353,14 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\n" +
 	"field_path\x18\x01 \x01(\tR\tfieldPath\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x17\n" +
-	"\arule_id\x18\x03 \x01(\tR\x06ruleId\"\xc7\x13\n" +
+	"\arule_id\x18\x03 \x01(\tR\x06ruleId\"\xc5\x15\n" +
 	"\vHarnessSpec\x12\xa6\x01\n" +
 	"\x06models\x18\x01 \x01(\v2\x17.fuse.harness.v1.ModelsBu\xa2\x9f\x19q\n" +
-	"\x06Models\x12gModel aliases this harness can use and the default one. Aliases extend the runtime's built-in registry.R\x06models\x12\x9b\x01\n" +
-	"\x06skills\x18\x02 \x03(\v2\x19.fuse.harness.v1.SkillRefBh\xa2\x9f\x19d\n" +
-	"\x06Skills\x12ZSkills referenced by name. The runtime resolves names against the skills it has installed.R\x06skills\x12\xec\x01\n" +
+	"\x06Models\x12gModel aliases this harness can use and the default one. Aliases extend the runtime's built-in registry.R\x06models\x12\x99\x03\n" +
+	"\x06skills\x18\x02 \x03(\v2\x19.fuse.harness.v1.SkillRefB\xe5\x02\xbaH\xcf\x01\xba\x01T\n" +
+	"\x18fuse.skills.unique_names\x12\x1askill names must be unique\x1a\x1cthis.map(s, s.name).unique()\xba\x01p\n" +
+	"\x17fuse.skills.carried_max\x12*at most 16 skills may be carried in a spec\x1a)this.filter(s, s.body != '').size() <= 16\x92\x01\x02\x10@\xa2\x9f\x19\x8d\x01\n" +
+	"\x06Skills\x12\x82\x01Skills by name, resolved against the skills the runtime has installed, or carried in the spec with a description and instructions.R\x06skills\x12\xec\x01\n" +
 	"\vmcp_servers\x18\x03 \x03(\v2\x1a.fuse.harness.v1.McpServerB\xae\x01\xbaHf\xba\x01^\n" +
 	"\x1dfuse.mcp_servers.unique_names\x12\x1fMCP server names must be unique\x1a\x1cthis.map(s, s.name).unique()\x92\x01\x02\x10@\xa2\x9f\x19A\n" +
 	"\vMCP servers\x122Remote MCP servers whose tools the agent may call.R\n" +
@@ -2400,10 +2424,16 @@ const file_fuse_harness_v1_harness_proto_rawDesc = "" +
 	"\apersona\x18\x04 \x01(\tB\x16\xbaH\x04r\x02\x18@\xa2\x9f\x19\v\n" +
 	"\aPersona\x18\x01R\apersona\x12\x90\x01\n" +
 	"\rsystem_prefix\x18\x05 \x01(\tBk\xbaH\x05r\x03\x18\x80 \xa2\x9f\x19_\n" +
-	"\rSystem prefix\x12LText placed before the persona system prompt, for model-specific directives.\x18\x02R\fsystemPrefix\"N\n" +
+	"\rSystem prefix\x12LText placed before the persona system prompt, for model-specific directives.\x18\x02R\fsystemPrefix\"\xd8\x02\n" +
 	"\bSkillRef\x12B\n" +
 	"\x04name\x18\x01 \x01(\tB.\xbaH\x1er\x1c\x10\x01\x18\x80\x012\x15^[a-z0-9][a-z0-9_-]*$\xa2\x9f\x19\t\n" +
-	"\x05Skill\x18\x01R\x04name\"\xfa\x03\n" +
+	"\x05Skill\x18\x01R\x04name\x12I\n" +
+	"\vdescription\x18\x02 \x01(\tB'\xbaH\x11r\x0f\x18\x80\b2\n" +
+	"^[^\\r\\n]*$\xa2\x9f\x19\x0f\n" +
+	"\vDescription\x18\x01R\vdescription\x121\n" +
+	"\x04body\x18\x03 \x01(\tB\x1d\xbaH\x06r\x04(\x80\x80\x02\xa2\x9f\x19\x10\n" +
+	"\fInstructions\x18\x02R\x04body:\x89\x01\xbaH\x85\x01\x1a\x82\x01\n" +
+	"\x1efuse.skill.carried_description\x125a carried skill (one with a body) needs a description\x1a)this.body == '' || this.description != ''\"\xfa\x03\n" +
 	"\tMcpServer\x12F\n" +
 	"\x04name\x18\x01 \x01(\tB2\xbaH#r!\x10\x01\x18@2\x1b^[A-Za-z0-9][A-Za-z0-9_-]*$\xa2\x9f\x19\b\n" +
 	"\x04Name\x18\x01R\x04name\x12X\n" +
