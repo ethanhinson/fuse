@@ -603,6 +603,7 @@ issuer token). Each RPC requires one:
 | `StartLoop` | `loop:start` |
 | `Send` | `loop:send` (or `loop:admin`) |
 | `Observe` | `loop:observe` (or `loop:admin`) |
+| `CancelLoop` | `loop:cancel` (or `loop:admin`) |
 | `GetCapabilities` | `capabilities:read` |
 
 - `loop:admin` acts on any loop in the token's tenant regardless of owner
@@ -613,6 +614,8 @@ issuer token). Each RPC requires one:
   still restricts the token; an unknown name in a static `scopes:` entry is a config
   validation error. An explicitly empty scope (`scope: ""`, `scopes: []`) is refused.
   The `scope` claim must be a space-separated string; the JSON array form is refused.
+- `loop:cancel` is implied by no other scope, so a start-only token cannot stop
+  loops; an unrestricted token has it.
 - A refusal is `PermissionDenied` naming the missing scope.
 
 **Harness digest pin.** A token with `harness_digest: sha256:<hex>` (the
@@ -762,7 +765,7 @@ loop_server:
 
 Like `auth` and `issuers`, `limits` is honored only from `~/.fuse/config.yml`.
 
-The service is four RPCs:
+The service is five RPCs:
 
 - `StartLoop` / `Send` — unary. The authoritative tenant is the authenticated
   token's; the wire `tenant` field, when set, must match it (a mismatch is a
@@ -818,6 +821,10 @@ The service is four RPCs:
   store) simply re-opens `Observe` from its last-seen seq — this single stream
   subsumes both the live tail and catch-up replay. Idle streams receive periodic
   `keepalive` frames so a parked loop survives a gateway idle timeout.
+- `CancelLoop` — unary. Stops a loop the caller owns and releases its resources;
+  `loop.cancelled` is the last event on its stream, and a `Send` afterwards fails
+  `FailedPrecondition` ("loop cancelled"). It is idempotent: the outcome is
+  `CANCELLED`, `ALREADY_CANCELLED`, or `CANCELLING` (relayed to the owning replica).
 
 The wire stubs are generate-and-commit (`make proto`, requires `buf` +
 `protoc-gen-go`/`protoc-gen-connect-go` on PATH and `cd proto && npm ci` for the
