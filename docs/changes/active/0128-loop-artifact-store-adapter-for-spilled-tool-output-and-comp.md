@@ -15,7 +15,7 @@ discovered_from: []
 adrs: [80]
 spec: 'docs/superpowers/specs/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md'
 plan: 'docs/superpowers/plans/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md'
-results:
+results: 'docs/results/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md](../../superpowers/specs/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md) |
 | Plan | [2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md](../../superpowers/plans/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md) |
+| Results | [2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-results.md](../../results/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-results.md) |
 | ADRs | [ADR-0080](../../adrs/0080-loop-artifacts-are-addressed-by-tenant-scoped-refs-never-fil.md) |
 <!-- docket:artifacts:end -->
 
