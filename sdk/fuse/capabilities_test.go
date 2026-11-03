@@ -68,6 +68,7 @@ func fullInternalCaps() capabilities.Capabilities {
 		},
 		SecretRefs:       []string{"search-key"},
 		SpecMCPAuthKinds: []harnessv1.McpAuthType{harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER},
+		SpecPolicy:       capabilities.SpecPolicy{CarriedSkillsAllowed: true},
 		Server:           capabilities.Server{Version: "v1.2.3", DigestAlgorithm: "sha256"},
 	}
 }
@@ -101,6 +102,7 @@ func TestRemoteCapabilities(t *testing.T) {
 		},
 		SecretRefs:       []string{"search-key"},
 		SpecMCPAuthKinds: []harnessv1.McpAuthType{harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER},
+		SpecPolicy:       SpecPolicy{CarriedSkillsAllowed: true},
 		Server:           ServerInfo{Version: "v1.2.3", DigestAlgorithm: "sha256"},
 	}
 	if !reflect.DeepEqual(got, want) {

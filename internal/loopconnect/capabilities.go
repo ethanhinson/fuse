@@ -79,9 +79,10 @@ func toProtoCapabilities(c capabilities.Capabilities) *loopv1.GetCapabilitiesRes
 		SecretRefs:       slices.Clone(c.SecretRefs),
 		SpecMcpAuthKinds: slices.Clone(c.SpecMCPAuthKinds),
 		SpecPolicy: &loopv1.SpecPolicy{
-			McpHosts:            slices.Clone(c.SpecPolicy.MCPHosts),
-			DenyPrivateNetworks: c.SpecPolicy.DenyPrivateNetworks,
-			ModelsRegistryOnly:  c.SpecPolicy.ModelsRegistryOnly,
+			McpHosts:             slices.Clone(c.SpecPolicy.MCPHosts),
+			DenyPrivateNetworks:  c.SpecPolicy.DenyPrivateNetworks,
+			ModelsRegistryOnly:   c.SpecPolicy.ModelsRegistryOnly,
+			CarriedSkillsAllowed: c.SpecPolicy.CarriedSkillsAllowed,
 		},
 		Server: &loopv1.ServerInfo{Version: c.Server.Version, DigestAlgorithm: c.Server.DigestAlgorithm},
 		// Always set (all zero when unlimited), so a client never has to tell

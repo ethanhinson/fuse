@@ -88,7 +88,7 @@ func fullAnswer() capabilities.Capabilities {
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER,
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_STATIC,
 		},
-		SpecPolicy: capabilities.SpecPolicy{MCPHosts: []string{"*.example.com"}, DenyPrivateNetworks: true, ModelsRegistryOnly: true},
+		SpecPolicy: capabilities.SpecPolicy{MCPHosts: []string{"*.example.com"}, DenyPrivateNetworks: true, ModelsRegistryOnly: true, CarriedSkillsAllowed: true},
 		Server:     capabilities.Server{Version: "v1.2.3", DigestAlgorithm: "sha256"},
 	}
 }
@@ -123,7 +123,7 @@ func TestGetCapabilitiesMapsEveryField(t *testing.T) {
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_BEARER,
 			harnessv1.McpAuthType_MCP_AUTH_TYPE_STATIC,
 		},
-		SpecPolicy: &loopv1.SpecPolicy{McpHosts: []string{"*.example.com"}, DenyPrivateNetworks: true, ModelsRegistryOnly: true},
+		SpecPolicy: &loopv1.SpecPolicy{McpHosts: []string{"*.example.com"}, DenyPrivateNetworks: true, ModelsRegistryOnly: true, CarriedSkillsAllowed: true},
 		Server:     &loopv1.ServerInfo{Version: "v1.2.3", DigestAlgorithm: "sha256"},
 		Limits:     &loopv1.TenantLimits{},
 	}
@@ -270,6 +270,25 @@ func TestGetCapabilitiesLimitsZeroWithoutLimiter(t *testing.T) {
 	l := resp.Msg.Limits
 	if l == nil || l.MaxLiveLoops != 0 || l.StartsPerMinute != 0 {
 		t.Fatalf("limits = %v, want present and all zero", l)
+	}
+}
+
+// An operator who refuses carried skills is advertised as refusing them: the
+// false answer is not lost or defaulted on the way to the wire.
+func TestGetCapabilitiesCarriedSkillsDisallowed(t *testing.T) {
+	ans := fullAnswer()
+	ans.SpecPolicy.CarriedSkillsAllowed = false
+	resp, err := capsServer(t, &fakeCaps{answer: ans}, testVerifier()).GetCapabilities(context.Background(),
+		bearer(connect.NewRequest(&loopv1.GetCapabilitiesRequest{}), testToken))
+	if err != nil {
+		t.Fatalf("GetCapabilities: %v", err)
+	}
+	sp := resp.Msg.GetSpecPolicy()
+	if sp == nil || sp.GetCarriedSkillsAllowed() {
+		t.Fatalf("spec_policy = %v, want carried_skills_allowed false", sp)
+	}
+	if !sp.GetModelsRegistryOnly() {
+		t.Fatalf("spec_policy = %v, want the rest of the policy kept", sp)
 	}
 }
 

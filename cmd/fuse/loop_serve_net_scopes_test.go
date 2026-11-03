@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/ethanhinson/fuse/harness"
 	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
@@ -223,6 +224,49 @@ func TestDigestPinEndToEnd(t *testing.T) {
 		if len(recs) != 0 {
 			t.Fatalf("%s: refused StartLoop left %d registry records", name, len(recs))
 		}
+	}
+
+	sr, err := alice.StartLoop(ctx, connect.NewRequest(&loopv1.StartLoopRequest{Task: "hi", Harness: spec}))
+	if err != nil {
+		t.Fatalf("pinned StartLoop with its own spec: %v", err)
+	}
+	if sr.Msg.HarnessDigest != pin {
+		t.Fatalf("harness_digest = %q, want %q", sr.Msg.HarnessDigest, pin)
+	}
+	waitForTurnEndByObserve(t, alice, sr.Msg.LoopId)
+}
+
+// TestDigestPinCoversACarriedSkill proves through the real Connect edge that a
+// digest-pinned token pins the bodies of the skills a spec carries: editing a
+// carried body changes the digest, so the pinned token refuses the edited
+// spec. It is a regression proof, green once the carried SkillRef fields exist
+// (the digest covers every spec field), not a test of new pinning code.
+func TestDigestPinCoversACarriedSkill(t *testing.T) {
+	base, registry := scopedServer(t, scopesTestConfig())
+	ctx := context.Background()
+
+	one := uint32(1)
+	spec := &harnessv1.HarnessSpec{
+		MaxTurns: &one,
+		Skills:   []*harnessv1.SkillRef{{Name: "triage", Description: "Sort incoming issues", Body: "v1"}},
+	}
+	edited := proto.Clone(spec).(*harnessv1.HarnessSpec)
+	edited.Skills[0].Body = "v2"
+	pin := harness.Digest(spec)
+	if pin == harness.Digest(edited) {
+		t.Fatal("editing a carried skill body left the digest unchanged")
+	}
+
+	alice := bearerClient(base, scopedToken(t, "cms-user-alice", "acme", map[string]any{"harness_digest": pin}))
+
+	_, err := alice.StartLoop(ctx, connect.NewRequest(&loopv1.StartLoopRequest{Task: "hi", Harness: edited}))
+	assertDenied(t, "edited carried skill", err, "")
+	recs, lerr := registry.List(ctx, "acme")
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("refused StartLoop left %d registry records", len(recs))
 	}
 
 	sr, err := alice.StartLoop(ctx, connect.NewRequest(&loopv1.StartLoopRequest{Task: "hi", Harness: spec}))
