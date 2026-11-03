@@ -13,7 +13,7 @@ stacked_on:
 related: [85, 102, 104, 113]
 discovered_from: []
 adrs: []
-spec:
+spec: 'docs/superpowers/specs/2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline-design.md'
 plan:
 results:
 auto_groomable:
@@ -28,6 +28,9 @@ reconciled: false
 ## Artifacts
 
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
+| Artifact | Link |
+|---|---|
+| Spec | [2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline-design.md](../../superpowers/specs/2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline-design.md) |
 <!-- docket:artifacts:end -->
 
 ## Why

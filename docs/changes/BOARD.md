@@ -1,6 +1,6 @@
 # Backlog
 
-**118 changes** — 🟢 1 in progress · 🟣 1 groomed · 🟡 11 proposed · ⚪ 3 deferred · ✅ 95 done · 🗑️ 7 killed
+**118 changes** — 🟢 1 in progress · 🟣 2 groomed · 🟡 10 proposed · ⚪ 3 deferred · ✅ 95 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -8,17 +8,17 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟣 Groomed (1)
+## 🟣 Groomed (2)
 
 | # | Title | Priority | Type | Spec | Readiness |
 |---|-------|----------|------|------|-----------|
+| [0118](active/0118-carried-skills-a-harness-spec-may-define-a-skill-inline.md) | Carried skills: a harness spec may define a skill inline | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-carried-skills-a-harness-spec-may-define-a-skill-inline-design.md) | build-ready |
 | [0117](active/0117-cancel-rpc-on-the-networked-loop-server.md) | Cancel RPC on the networked loop server | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md) | build-ready |
 
-## 🟡 Proposed (11)
+## 🟡 Proposed (10)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0118](active/0118-carried-skills-a-harness-spec-may-define-a-skill-inline.md) | Carried skills: a harness spec may define a skill inline | `high` | `feat` | needs-grooming |
 | [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Roles and workers can be tool-less | `medium` | `feat` | needs-grooming |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
 | [0110](active/0110-mark-loopsecret-value-debug-redact-once-protobuf-go-honours.md) | Mark LoopSecret.value debug_redact once protobuf-go honours it | `low` | `feat` | needs-grooming |
