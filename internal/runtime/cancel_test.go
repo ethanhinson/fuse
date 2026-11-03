@@ -36,6 +36,8 @@ type cancelRigOpts struct {
 	// build, when set, runs inside BuildAgent with the loop's store, tree and tool
 	// registry (for tools that need them, such as a spawning tool).
 	build func(store event.EventStore, tree *agent.AgentTree, reg *tools.Registry)
+	// teardown, when set, runs inside LoopTeardown (after the count is taken).
+	teardown func(reg *tools.Registry)
 }
 
 func newCancelRig(t *testing.T, o cancelRigOpts) *cancelRig {
@@ -54,10 +56,13 @@ func newCancelRig(t *testing.T, o cancelRigOpts) *cancelRig {
 		CancelWait:    o.cancelWait,
 		IdleTTL:       o.idleTTL,
 		MaxConcurrent: 2,
-		LoopTeardown: func(*tools.Registry) {
+		LoopTeardown: func(reg *tools.Registry) {
 			g.mu.Lock()
 			g.teardowns++
 			g.mu.Unlock()
+			if o.teardown != nil {
+				o.teardown(reg)
+			}
 		},
 		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			for _, tl := range o.tools {

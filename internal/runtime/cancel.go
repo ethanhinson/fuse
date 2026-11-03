@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
@@ -395,7 +396,7 @@ func (r *inProcRuntime) cancelLocal(ctx context.Context, lp *loop, reason, reque
 
 	// The run had already returned and no other process shares this loop's stream:
 	// nothing to interrupt, so this call writes the terminal event that seals it.
-	seq := r.appendTerminal(lp, cs)
+	seq := r.sealTerminal(lp, cs)
 	r.mu.Lock()
 	cs.terminalSeq = seq
 	r.mu.Unlock()
@@ -443,7 +444,13 @@ func (r *inProcRuntime) cancelFinished(ctx context.Context, lp *loop, reason, re
 	case live:
 		res, err = r.relayCancel(ctx, lp.key, reason, requestedBy)
 	default:
-		res, err = r.sealNotLive(ctx, lp.key, &event.LoopCancelRequestPayload{Reason: reason, RequestedBy: requestedBy})
+		// Sealed in the same step as the stream, so an emitter still bound to this
+		// leftover loop's store cannot write after loop.cancelled. A seal attempt
+		// that ends without a terminal event in the stream leaves the sink open.
+		lp.sink.sealWith(func() bool {
+			res, err = r.sealNotLive(ctx, lp.key, &event.LoopCancelRequestPayload{Reason: reason, RequestedBy: requestedBy})
+			return err == nil && res.Outcome != CancelOutcomeCancelling
+		})
 	}
 	if err != nil || res.Outcome == CancelOutcomeCancelling {
 		return res, err
@@ -493,6 +500,9 @@ func (r *inProcRuntime) cancelRelayed(lp *loop, c relayedCancel) {
 		cs.terminalSeq = c.sealedSeq
 		close(cs.sealed)
 		r.mu.Unlock()
+		// The stream already holds loop.cancelled: nothing from this leftover loop
+		// may follow it.
+		lp.sink.sealWith(func() bool { return true })
 		return
 	}
 	r.mu.Unlock()
@@ -559,10 +569,74 @@ func (r *inProcRuntime) awaitChildren(tree *agent.AgentTree) {
 	}
 }
 
+// sealTerminal appends lp's loop.cancelled event and seals lp's sink in one step:
+// it waits out any append already in flight, and every append after it is
+// refused, so the terminal event is the last one this loop writes. It returns the
+// event's seq, as appendTerminal does; the sink is sealed even when the append
+// failed, matching the in-memory seal.
+func (r *inProcRuntime) sealTerminal(lp *loop, cs *cancelState) event.Seq {
+	var seq event.Seq
+	lp.sink.sealWith(func() bool {
+		seq = r.appendTerminal(lp, cs)
+		return true
+	})
+	return seq
+}
+
+// errSinkSealed is what an append to a cancelled loop's sealed store returns.
+var errSinkSealed = fmt.Errorf("%w: its event stream is sealed", ErrLoopCancelled)
+
+// sealableSink wraps a loop's event store so a cancel can seal it: once sealed,
+// Append refuses every event with errSinkSealed. It exists because loop.cancelled
+// must stay the highest seq of the loop's stream (spec §3.2), yet the loop's store
+// outlives the run: LoopTeardown runs after the terminal append and releases the
+// sandbox pool, whose Reaped hook writes to this store, the pool's idle reaper may
+// fire before that, and process-scoped hooks keep the last loop's store until
+// another loop rebinds them. Subscribe, Replay and Close pass through unchanged.
+//
+// Appends hold the read lock while they run, and sealWith the write lock, so the
+// seal waits for any append already under way and none can land after the event
+// sealWith writes. An Append must therefore never call back into the same sink.
+type sealableSink struct {
+	event.EventStore
+
+	mu     sync.RWMutex
+	sealed bool
+}
+
+func (s *sealableSink) Append(e event.Event) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.sealed {
+		return errSinkSealed
+	}
+	return s.EventStore.Append(e)
+}
+
+// Close closes the wrapped store when it has a Close.
+func (s *sealableSink) Close() error {
+	if c, ok := s.EventStore.(interface{ Close() error }); ok {
+		return c.Close()
+	}
+	return nil
+}
+
+// sealWith runs write with every other append to the sink excluded, then seals
+// the sink if write reports true. write must append through the wrapped store
+// (or the durable store directly), never through s.
+func (s *sealableSink) sealWith(write func() bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if write() {
+		s.sealed = true
+	}
+}
+
 // appendTerminal appends lp's loop.cancelled event and returns its seq (0 when the
 // store cannot report it or the append failed; the in-memory seal holds either
 // way). It writes straight to the store under context.Background(), not through
 // the loop's sink, whose context is the session context the completion path ends.
+// Callers hold lp.sink's seal (sealTerminal), so it bypasses that wrapper too.
 func (r *inProcRuntime) appendTerminal(lp *loop, cs *cancelState) event.Seq {
 	payload, err := json.Marshal(event.LoopCancelledPayload{
 		Reason:      cs.reason,
@@ -578,10 +652,11 @@ func (r *inProcRuntime) appendTerminal(lp *loop, cs *cancelState) event.Seq {
 		seq, _ := r.appendDurableWithSeq(context.Background(), lp.key, ev)
 		return seq
 	}
-	if err := lp.store.Append(ev); err != nil {
+	inner := lp.sink.EventStore
+	if err := inner.Append(ev); err != nil {
 		return 0
 	}
-	evs, err := lp.store.Replay(0)
+	evs, err := inner.Replay(0)
 	if err != nil {
 		return 0
 	}

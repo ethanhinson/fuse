@@ -190,6 +190,7 @@ type loop struct {
 	tree       *agent.AgentTree
 	node       *agent.AgentNode
 	store      event.EventStore
+	sink       *sealableSink // store's sealable wrapper (store is sink); a cancel seals it
 	humanBus   *agent.HumanBus
 	buildChild agent.ChildBuilder
 	handle     *loopHandle
@@ -595,6 +596,12 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		}
 		store = fs
 	}
+	// Every append this loop makes goes through sink, and so does every emitter a
+	// binding attaches to the store it is handed in BuildAgent. A cancel seals it in
+	// the same step that writes loop.cancelled, so nothing reaches the stream after
+	// the terminal event (see sealableSink).
+	sink := &sealableSink{EventStore: store}
+	store = sink
 
 	// Register the loop's existence + mark it live BEFORE the run goroutine starts, so a
 	// concurrent cold instance can resolve it (and observe live) immediately. Register is
@@ -760,6 +767,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		tree:       tree,
 		node:       rootNode,
 		store:      store,
+		sink:       sink,
 		humanBus:   agent.NewHumanBus(tree),
 		buildChild: buildChild,
 		handle:     h,
@@ -909,8 +917,11 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		// run, so it appends the terminal event itself (was_live=false); before here a
 		// Cancel fired abort and this goroutine appends it (was_live=true). Exactly one
 		// of the two appends. The append comes before the session cancel, SetLive(false),
-		// the store Close and LoopTeardown, so loop.cancelled is the highest seq this
-		// loop ever writes and a Cancel that waits for h.done sees the loop not live.
+		// the store Close and LoopTeardown, so a Cancel that waits for h.done sees the
+		// loop not live. It also seals the loop's sink in the same step, so what those
+		// later steps release (LoopTeardown closing the sandbox pool, whose Reaped hook
+		// writes to this store) and any emitter still bound to it cannot append after
+		// it: loop.cancelled stays the highest seq this loop ever writes.
 		// A drain or an idle reap sets no cancelState and appends nothing.
 		r.mu.Lock()
 		lp.finishing = true
@@ -918,7 +929,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		r.mu.Unlock()
 		if cs != nil {
 			r.awaitChildren(tree)
-			seq := r.appendTerminal(lp, cs)
+			seq := r.sealTerminal(lp, cs)
 			r.mu.Lock()
 			cs.terminalSeq = seq
 			r.mu.Unlock()
