@@ -31,8 +31,10 @@ type Segment struct {
 	Messages     []model.Message
 }
 
-// IndexEntry is one segment's row in a session's index.json. Path is relative to
-// the session's segments/ directory.
+// IndexEntry is one segment's row in a segment index. For the legacy on-disk
+// layout, Path is relative to the session's segments/ directory. For an index
+// read through a Source (the artifact store), Path holds the segment artifact's
+// ID under the same JSON key "path".
 type IndexEntry struct {
 	TurnStart    int       `json:"turn_start"`
 	TurnEnd      int       `json:"turn_end"`

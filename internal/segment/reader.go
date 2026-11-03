@@ -57,8 +57,15 @@ func LoadSegment(path string) (Segment, error) {
 			return Segment{}, err
 		}
 	}
+	return ParseSegment(b)
+}
+
+// ParseSegment parses a segment's rendered bytes, gunzipping them first when
+// they carry the gzip magic, so gzip and plaintext segments parse identically.
+// It is the byte-level half of LoadSegment and serves store-backed readers.
+func ParseSegment(b []byte) (Segment, error) {
 	// Transparent decompression: new segments are gzip; old ones are plaintext.
-	b, err = gunzipIfNeeded(b)
+	b, err := gunzipIfNeeded(b)
 	if err != nil {
 		return Segment{}, err
 	}
