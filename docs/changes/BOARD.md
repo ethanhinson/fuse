@@ -1,6 +1,6 @@
 # Backlog
 
-**122 changes** — 🟢 2 in progress · 🟡 13 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
+**123 changes** — 🟢 2 in progress · 🟡 14 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
 
 ## 🟢 In progress (2)
 
@@ -9,10 +9,11 @@
 | [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Tool-less loops, roles and workers | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-roles-and-workers-can-be-tool-less-design.md) | `feat/roles-and-workers-can-be-tool-less` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟡 Proposed (13)
+## 🟡 Proposed (14)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0123](active/0123-observe-marks-where-replay-ends-and-live-events-begin.md) | Observe marks where replay ends and live events begin | `low` | `feat` | needs-grooming |
 | [0122](active/0122-spawn-start-names-the-worker-a-child-was-bound-to.md) | spawn.start names the worker a child was bound to | `low` | `feat` | needs-grooming |
 | [0121](active/0121-go-sdk-cancel-a-loop.md) | Go SDK: cancel a loop | `low` | `feat` | needs-grooming |
 | [0120](active/0120-at-most-one-loop-cancelled-per-loop-under-replica-races.md) | At most one loop.cancelled per loop under replica races | `low` | `fix` | needs-grooming |
@@ -55,6 +56,7 @@ graph TD
   0120
   0121
   0122
+  0123
   0012:::done
   0052:::done
   0063:::done
