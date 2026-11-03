@@ -12,7 +12,7 @@ depends_on: []
 stacked_on:
 related: [47, 49, 51, 53, 54, 55, 103, 106, 108]
 discovered_from: []
-adrs: []
+adrs: [78]
 spec: 'docs/superpowers/specs/2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md'
 plan: 'docs/superpowers/plans/2026-11-03-cancel-rpc-on-the-networked-loop-server.md'
 results:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md](../../superpowers/specs/2026-11-03-cancel-rpc-on-the-networked-loop-server-design.md) |
 | Plan | [2026-11-03-cancel-rpc-on-the-networked-loop-server.md](../../superpowers/plans/2026-11-03-cancel-rpc-on-the-networked-loop-server.md) |
+| ADRs | [ADR-0078](../../adrs/0078-loop-cancellation-is-a-terminal-stream-event-plus-an-in-memo.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
