@@ -352,6 +352,23 @@ func TestLoopServerHostAdvertisesItsCapabilities(t *testing.T) {
 	if c.SpecPolicy.DenyPrivateNetworks || c.SpecPolicy.ModelsRegistryOnly || len(c.SpecPolicy.MCPHosts) != 0 {
 		t.Errorf("spec policy = %+v, want the fixture's: private networks allowed, nothing else", c.SpecPolicy)
 	}
+	if !c.SpecPolicy.CarriedSkillsAllowed {
+		t.Error("carried skills are not advertised as allowed by default")
+	}
+}
+
+// TestLoopCapabilitiesAdvertiseCarriedSkillsDisabled proves GetCapabilities
+// reports the operator's carried_skills switch from the same spec_policy config
+// the resolver enforces.
+func TestLoopCapabilitiesAdvertiseCarriedSkillsDisabled(t *testing.T) {
+	_, _, host := harnessServer(t, harnessOperator+"loop_server:\n  spec_policy:\n    carried_skills: false\n")
+	c, err := host.Capabilities(context.Background(), event.DefaultTenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SpecPolicy.CarriedSkillsAllowed {
+		t.Fatalf("spec policy = %+v, want carried skills refused", c.SpecPolicy)
+	}
 }
 
 // TestLoopCapabilitySourceFromProductionDeps proves the composition root takes

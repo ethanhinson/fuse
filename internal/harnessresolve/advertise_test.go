@@ -129,3 +129,13 @@ func TestSecretRefsWithoutAListerOrResolver(t *testing.T) {
 		t.Errorf("resolve-only resolver lists %v", got)
 	}
 }
+
+func TestSpecPolicyOfAdvertisesCarriedSkills(t *testing.T) {
+	if !SpecPolicyOf(config.SpecPolicyConfig{}).CarriedSkillsAllowed {
+		t.Error("default policy must advertise carried skills as allowed")
+	}
+	off := false
+	if SpecPolicyOf(config.SpecPolicyConfig{CarriedSkills: &off}).CarriedSkillsAllowed {
+		t.Error("carried_skills: false must advertise CarriedSkillsAllowed false")
+	}
+}

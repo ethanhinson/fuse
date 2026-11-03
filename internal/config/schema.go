@@ -296,6 +296,8 @@ const (
 //   - AllowHTTPHosts are hosts where http:// is accepted (same patterns as
 //     MCPHosts); every other URL must be https.
 //   - Models is "any" (default) or "registry-only".
+//   - CarriedSkills accepts skills carried in a spec (SkillRef.body); nil
+//     means true (change 0118).
 //
 // Operator-configured MCP servers are exempt: they are the operator's own.
 type SpecPolicyConfig struct {
@@ -303,6 +305,7 @@ type SpecPolicyConfig struct {
 	DenyPrivateNetworks *bool    `yaml:"deny_private_networks"`
 	AllowHTTPHosts      []string `yaml:"allow_http_hosts"`
 	Models              string   `yaml:"models"`
+	CarriedSkills       *bool    `yaml:"carried_skills"`
 }
 
 // DenyPrivate resolves DenyPrivateNetworks, defaulting to true.
@@ -310,12 +313,17 @@ func (p SpecPolicyConfig) DenyPrivate() bool {
 	return p.DenyPrivateNetworks == nil || *p.DenyPrivateNetworks
 }
 
+// CarriedSkillsAllowed resolves CarriedSkills, defaulting to true.
+func (p SpecPolicyConfig) CarriedSkillsAllowed() bool {
+	return p.CarriedSkills == nil || *p.CarriedSkills
+}
+
 // RegistryOnly reports whether spec model ids are limited to the registry.
 func (p SpecPolicyConfig) RegistryOnly() bool { return p.Models == SpecModelsRegistryOnly }
 
 func (p SpecPolicyConfig) isZero() bool {
-	return len(p.MCPHosts) == 0 && p.DenyPrivateNetworks == nil && len(p.AllowHTTPHosts) == 0 && p.Models == ""
-
+	return len(p.MCPHosts) == 0 && p.DenyPrivateNetworks == nil && len(p.AllowHTTPHosts) == 0 && p.Models == "" &&
+		p.CarriedSkills == nil
 }
 
 // LoopLimitsConfig is loop_server.limits (change 0103): per-tenant bounds on

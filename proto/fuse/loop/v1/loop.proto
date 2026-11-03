@@ -185,6 +185,9 @@ message SpecPolicy {
   bool deny_private_networks = 2;
   // A spec's model ids must be gateway ids of the models listed above.
   bool models_registry_only = 3;
+  // Skills carried in a spec (SkillRef.body) are accepted
+  // (loop_server.spec_policy.carried_skills).
+  bool carried_skills_allowed = 4;
 }
 
 message ModelInfo {

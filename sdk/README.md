@@ -54,8 +54,9 @@ Sentinel errors: `ErrUnauthenticated`, `ErrPermissionDenied`, `ErrLoopNotFound`,
 (`github.com/ethanhinson/fuse/harness/v1`) so the loop runs that harness instead of the
 server's config. The server's trusted config stays the floor: fields marked `tighten_only`
 may only tighten the server's values, and operator-only settings (gateway, sandbox,
-observability, auth) always come from the server. Skill names resolve against the skills
-installed on the server; `secret_ref` names resolve through the server operator's
+observability, auth) always come from the server. A `skills` entry is either a reference,
+resolved against the skills installed on the server, or a carried skill the spec defines
+itself (see Skills below); `secret_ref` names resolve through the server operator's
 `loop_server.secrets` allowlist for your tenant.
 
 ```go
@@ -111,6 +112,39 @@ id, err := c.StartLoop(ctx, fuse.StartLoopConfig{Task: "write the release notes"
 }})
 ```
 
+### Skills
+
+A `skills` entry with only `name` references a skill installed on the server; a name the
+server does not have fails with `fuse.skill_ref`. An entry with `description` and `body`
+is a carried skill: the loop runs it exactly as sent. It is listed in the system prompt
+and returned by the `skill` tool like an installed skill, but it has no slash command. A
+carried skill shadows an installed skill of the same name for that loop only. Carried
+skills grant no tools and change no permissions.
+
+Limits: `description` is one line of at most 1024 characters, required when `body` is
+set (`fuse.skill.carried_description`) and rejected without one
+(`fuse.skill.description_needs_body`); `body` is at most 32768 bytes; a spec lists at
+most 64 entries, at most 16 of them carried, with unique names; the carried bodies together are at most 262144 bytes
+(`fuse.skills.carried_bytes`).
+
+Carried skills are part of the spec digest and the `loop.harness` record, so a
+digest-pinned token pins their content too. A server may refuse them: each carried
+entry then fails with `fuse.skills.carried_refused` at `skills[i].body`. Check
+`Capabilities(ctx)`'s `SpecPolicy.CarriedSkillsAllowed` first. See
+`examples/harness/carried-skill.json` for a full spec.
+
+```go
+id, err := c.StartLoop(ctx, fuse.StartLoopConfig{Task: "add a changelog entry for the retry fix", Harness: &harnessv1.HarnessSpec{
+    Models:   &harnessv1.Models{DefaultAlias: "glm"},
+    MaxTurns: &turns,
+    Skills: []*harnessv1.SkillRef{
+        {Name: "changelog-entry", Description: "Adds one entry to CHANGELOG.md for a described change.",
+            Body: "# Changelog entry\n\n1. Read CHANGELOG.md and find the Unreleased section.\n2. Add one line."},
+        {Name: "research"},
+    },
+}})
+```
+
 ### Pre-flighting a spec
 
 Call `Capabilities(ctx)` before `StartLoop` to check a spec against what the
@@ -118,7 +152,8 @@ server will accept:
 
 - Build a model picker from `Models` (`Alias`, `Label`, `Description`, `Tags`,
   `IsDefault`, `ContextWindow`).
-- Reference only the listed `Skills` and `SecretRefs`.
+- Reference only the listed `Skills` and `SecretRefs`, or carry a skill when
+  `SpecPolicy.CarriedSkillsAllowed` is true.
 - Keep each tighten-only field strictly below its `Ceiling`'s `Value`
   (`FieldPath`, `Value`, `Direction`; a value equal to it is refused), and
   leave it unset when `OperatorSet` is false.

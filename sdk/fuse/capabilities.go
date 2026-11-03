@@ -54,6 +54,9 @@ type SpecPolicy struct {
 	// ModelsRegistryOnly reports that a spec's model ids must be gateway ids
 	// of Models.
 	ModelsRegistryOnly bool
+	// CarriedSkillsAllowed reports that a spec may carry its own skills
+	// (SkillRef.body).
+	CarriedSkillsAllowed bool
 }
 
 // ModelInfo is one routable model as the server advertises it.

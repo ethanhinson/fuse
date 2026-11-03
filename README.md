@@ -774,7 +774,7 @@ The service is four RPCs:
   - models: alias, gateway id, effective context window, effective max output
     (the entry's `max_tokens`, else the top-level `max_tokens`), persona,
     default flag, and the optional `label` / `description` / `tags`
-  - installed skills
+  - installed skills (a spec may also carry its own; see `sdk/README.md`)
   - one ceiling per tighten-only field, keyed by the refusal field path
     (`operator_set: false` means a spec cannot set that field). Ceilings are
     strict: a spec value must be strictly below the ceiling's value, and a
@@ -782,6 +782,8 @@ The service is four RPCs:
   - `secret_ref` names for the tenant, names only (a host-restricted secret
     still resolves only for its hosts)
   - spec MCP auth kinds
+  - the spec policy (`mcp_hosts`, `deny_private_networks`,
+    `models_registry_only`, `carried_skills_allowed`)
   - server version and digest algorithm
   - `limits`: the caller's effective `max_live_loops` and `starts_per_minute`
     (0 means unlimited)

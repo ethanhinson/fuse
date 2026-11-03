@@ -241,7 +241,7 @@ A client of a networked server supplies a harness spec, and that spec can name
 MCP servers, a custom search URL and model ids. `loop_server.spec_policy` in the
 operator config (`~/.fuse/config.yml`; ignored from repo-local files) is the
 floor those values are held to. `GetCapabilities` advertises `mcp_hosts`,
-`deny_private_networks` and `models_registry_only`, and `StartLoop` reports a
+`deny_private_networks`, `models_registry_only` and `carried_skills_allowed`, and `StartLoop` reports a
 violation (`fuse.operator_only`) at the offending field. The public
 `harness.Service.ValidateHarness` is not server-aware and does not apply the policy.
 
@@ -252,6 +252,7 @@ loop_server:
     deny_private_networks: true    # default true
     allow_http_hosts: [localhost]  # hosts where http:// is accepted; else https only
     models: registry-only          # any (default) | registry-only
+    carried_skills: true           # default true; false refuses skills carried in a spec
 ```
 
 - `mcp_hosts` patterns are exact hostnames or `*.suffix` (subdomains only). It
@@ -265,6 +266,10 @@ loop_server:
   rebinding protection.
 - `models: registry-only` requires each spec `models.entries[*].id` to equal the
   gateway id of an advertised registry model.
+- `carried_skills: false` refuses every spec `skills` entry with a `body`
+  (`fuse.skills.carried_refused` at `skills[i].body`); references to installed
+  skills still work. A loop started earlier with a carried skill cannot be
+  resumed after the switch is turned off, because resume re-resolves its spec.
 - MCP servers in the operator's own config are exempt.
 - Local development: `allow_http_hosts: [localhost]` plus
   `deny_private_networks: false`.

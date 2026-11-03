@@ -55,6 +55,8 @@ type SpecPolicy struct {
 	DenyPrivateNetworks bool
 	// ModelsRegistryOnly limits a spec's model ids to the registry.
 	ModelsRegistryOnly bool
+	// CarriedSkillsAllowed accepts skills carried in a spec.
+	CarriedSkillsAllowed bool
 }
 
 // Model is one routable model as a client sees it.

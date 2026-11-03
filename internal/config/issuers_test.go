@@ -199,3 +199,98 @@ func TestLoopServerSpecPolicyIgnoredFromUntrustedLocal(t *testing.T) {
 		t.Errorf("expected a warning naming loop_server, got: %q", warnings())
 	}
 }
+
+// carriedSkillsHome points HOME at a fresh temp home (and cwd at its parent)
+// and writes home and local config files when non-empty.
+func carriedSkillsHome(t *testing.T, homeCfg, localCfg string) {
+	t.Helper()
+	cwd := chdirTemp(t)
+	home := filepath.Join(cwd, "home")
+	if err := os.MkdirAll(filepath.Join(home, ".fuse"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	os.Unsetenv("LLM_GATEWAY_URL")
+	os.Unsetenv("LLM_GATEWAY_KEY")
+	if homeCfg != "" {
+		if err := os.WriteFile(filepath.Join(home, ".fuse", "config.yml"), []byte(homeCfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if localCfg != "" {
+		if err := os.WriteFile(filepath.Join(cwd, ".fuse.local.yml"), []byte(localCfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestSpecPolicyCarriedSkillsDefaultsTrue pins loop_server.spec_policy.carried_skills:
+// unset means carried skills are accepted; an explicit bool is honored.
+func TestSpecPolicyCarriedSkillsDefaultsTrue(t *testing.T) {
+	if !(SpecPolicyConfig{}).CarriedSkillsAllowed() {
+		t.Fatal("zero SpecPolicyConfig must allow carried skills")
+	}
+	carriedSkillsHome(t, "", "")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.LoopServer.SpecPolicy.CarriedSkillsAllowed() {
+		t.Fatal("a config with no spec_policy block must allow carried skills")
+	}
+	for doc, want := range map[string]bool{
+		"loop_server:\n  spec_policy: {carried_skills: false}\n": false,
+		"loop_server:\n  spec_policy: {carried_skills: true}\n":  true,
+	} {
+		c, err := FromYAML([]byte(doc), "test.yml")
+		if err != nil {
+			t.Fatalf("%q: %v", doc, err)
+		}
+		if got := c.LoopServer.SpecPolicy.CarriedSkillsAllowed(); got != want {
+			t.Errorf("%q: CarriedSkillsAllowed() = %v, want %v", doc, got, want)
+		}
+	}
+}
+
+// TestSpecPolicyCarriedSkillsOnlyKeyIsKept guards the trusted merge: a
+// spec_policy block whose only key is carried_skills is not treated as empty.
+func TestSpecPolicyCarriedSkillsOnlyKeyIsKept(t *testing.T) {
+	carriedSkillsHome(t, "loop_server:\n  spec_policy:\n    carried_skills: false\n", "")
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.LoopServer.SpecPolicy.CarriedSkillsAllowed() {
+		t.Fatalf("trusted carried_skills: false was dropped, got %+v", c.LoopServer.SpecPolicy)
+	}
+}
+
+// TestSpecPolicyCarriedSkillsIgnoredFromUntrustedLocal: like the other
+// spec_policy keys, carried_skills is honored only from the trusted home file.
+func TestSpecPolicyCarriedSkillsIgnoredFromUntrustedLocal(t *testing.T) {
+	carriedSkillsHome(t, "", "loop_server:\n  spec_policy: {carried_skills: false}\n")
+	warnings := captureWarnings(t)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.LoopServer.SpecPolicy.CarriedSkillsAllowed() {
+		t.Fatalf("untrusted carried_skills must be dropped, got %+v", c.LoopServer.SpecPolicy)
+	}
+	if !strings.Contains(warnings(), "loop_server") {
+		t.Errorf("expected a warning naming loop_server, got: %q", warnings())
+	}
+}
+
+// TestSpecPolicyCarriedSkillsMustBeABool: a non-bool value is a load error,
+// reported exactly as a non-bool deny_private_networks is.
+func TestSpecPolicyCarriedSkillsMustBeABool(t *testing.T) {
+	_, sibling := FromYAML([]byte("loop_server:\n  spec_policy: {deny_private_networks: maybe}\n"), "test.yml")
+	_, err := FromYAML([]byte("loop_server:\n  spec_policy: {carried_skills: maybe}\n"), "test.yml")
+	if sibling == nil || err == nil {
+		t.Fatalf("non-bool spec_policy values must fail to load: sibling=%v carried=%v", sibling, err)
+	}
+	if err.Error() != sibling.Error() {
+		t.Errorf("carried_skills error %q differs from sibling %q", err, sibling)
+	}
+}

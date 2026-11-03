@@ -384,3 +384,70 @@ func TestValidateRolesDoNotResolveToolsOrModels(t *testing.T) {
 		t.Fatalf("Validate = %+v", vs)
 	}
 }
+
+// TestValidateCarriedSkillSizeLimits pins the size limits on carried skills:
+// a body of at most 32768 bytes, a description of at most 1024 characters and
+// at most 64 skill entries.
+func TestValidateCarriedSkillSizeLimits(t *testing.T) {
+	carried := func(desc, body string) *harnessv1.HarnessSpec {
+		return &harnessv1.HarnessSpec{Skills: []*harnessv1.SkillRef{{Name: "a", Description: desc, Body: body}}}
+	}
+	for name, spec := range map[string]*harnessv1.HarnessSpec{
+		"body at limit":        carried("d", strings.Repeat("b", 32768)),
+		"description at limit": carried(strings.Repeat("d", 1024), "b"),
+	} {
+		if vs := harness.Validate(spec); len(vs) != 0 {
+			t.Errorf("%s: unexpected violations %+v", name, vs)
+		}
+	}
+	many := make([]*harnessv1.SkillRef, 65)
+	for i := range many {
+		many[i] = &harnessv1.SkillRef{Name: fmt.Sprintf("s%d", i)}
+	}
+	for name, tc := range map[string]struct {
+		spec       *harnessv1.HarnessSpec
+		path, rule string
+	}{
+		"body over limit":        {carried("d", strings.Repeat("b", 32769)), "skills[0].body", "string.max_bytes"},
+		"description over limit": {carried(strings.Repeat("d", 1025), "b"), "skills[0].description", "string.max_len"},
+		"too many entries":       {&harnessv1.HarnessSpec{Skills: many}, "skills", "repeated.max_items"},
+	} {
+		got := byPath(t, harness.Validate(tc.spec))
+		if len(got) != 1 {
+			t.Errorf("%s: got %d violations, want 1: %+v", name, len(got), got)
+			continue
+		}
+		v, ok := got[tc.path]
+		if !ok {
+			t.Errorf("%s: no violation at %s: %+v", name, tc.path, got)
+			continue
+		}
+		if v.RuleID != tc.rule {
+			t.Errorf("%s: rule = %q, want %q", name, v.RuleID, tc.rule)
+		}
+	}
+}
+
+func TestValidateReportsCarriedBytes(t *testing.T) {
+	if harness.RuleSkillsCarriedBytes != "fuse.skills.carried_bytes" {
+		t.Fatalf("RuleSkillsCarriedBytes = %q", harness.RuleSkillsCarriedBytes)
+	}
+	if harness.RuleSkillsCarriedRefused != "fuse.skills.carried_refused" {
+		t.Fatalf("RuleSkillsCarriedRefused = %q", harness.RuleSkillsCarriedRefused)
+	}
+	// Shape-valid (9 <= 16 carried, each body <= 32768 bytes) but 270000
+	// bytes carried in total, over the 262144-byte semantic limit.
+	spec := &harnessv1.HarnessSpec{}
+	body := strings.Repeat("x", 30000)
+	for i := 0; i < 9; i++ {
+		spec.Skills = append(spec.Skills, &harnessv1.SkillRef{
+			Name:        fmt.Sprintf("s%d", i),
+			Description: "a carried skill",
+			Body:        body,
+		})
+	}
+	vs := harness.Validate(spec)
+	if len(vs) != 1 || vs[0].FieldPath != "skills" || vs[0].RuleID != harness.RuleSkillsCarriedBytes {
+		t.Fatalf("Validate = %+v, want only skills %s", vs, harness.RuleSkillsCarriedBytes)
+	}
+}

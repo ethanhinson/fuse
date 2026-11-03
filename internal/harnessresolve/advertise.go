@@ -55,8 +55,9 @@ func (r Resolver) SecretRefs(ctx context.Context, tenant string) []string {
 // SpecPolicyOf maps the operator's spec policy to its advertisement.
 func SpecPolicyOf(p config.SpecPolicyConfig) capabilities.SpecPolicy {
 	return capabilities.SpecPolicy{
-		MCPHosts:            slices.Clone(p.MCPHosts),
-		DenyPrivateNetworks: p.DenyPrivate(),
-		ModelsRegistryOnly:  p.RegistryOnly(),
+		MCPHosts:             slices.Clone(p.MCPHosts),
+		DenyPrivateNetworks:  p.DenyPrivate(),
+		ModelsRegistryOnly:   p.RegistryOnly(),
+		CarriedSkillsAllowed: p.CarriedSkillsAllowed(),
 	}
 }

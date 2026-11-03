@@ -22,8 +22,11 @@ import (
 // clients, and each may start a loop from its own harness spec. The spec is
 // validated and layered over the server's trusted config, which stays the
 // floor (internal/harnessresolve): tighten-only fields may only tighten it,
-// operator-only surfaces always come from it, skill names resolve against the
-// skills installed here, and secret_refs resolve through the operator's
+// operator-only surfaces always come from it, a skill reference resolves
+// against the skills installed here while a skill the spec carries (its own
+// description and body) needs no install and shadows an installed one of the
+// same name for this loop only (unless loop_server.spec_policy.carried_skills
+// refuses carried skills), and secret_refs resolve through the operator's
 // loop_server.secrets allowlist for the loop's tenant (deny by default). Any
 // problem is returned as a *harness.ValidationError before the loop exists.
 //
@@ -78,12 +81,14 @@ func (h *loopServerHost) settingsFor(res harnessresolve.Resolved) loopSettings {
 	cfg := res.Config
 	reg := registryFromConfig(cfg)
 
-	// The loop's skills: exactly the ones the spec names, or every installed
-	// skill when it names none. Both the skill tool's lookup and the system
+	// The loop's skills: exactly the ones the spec lists, in spec order (an
+	// installed skill by name, or a skill the spec carries, which shadows an
+	// installed one of the same name for this loop only), or every installed
+	// skill when it lists none. Both the skill tool's lookup and the system
 	// prompt's skill listing use this set.
 	skillSet := h.skills
 	if len(res.Skills) > 0 {
-		skillSet = skillSet.Only(res.Skills)
+		skillSet = skillSet.Compose(res.Skills)
 	}
 	var lookup func(string) (skills.Skill, bool)
 	if skillSet != nil {

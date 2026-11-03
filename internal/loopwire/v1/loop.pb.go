@@ -846,8 +846,11 @@ type SpecPolicy struct {
 	DenyPrivateNetworks bool `protobuf:"varint,2,opt,name=deny_private_networks,json=denyPrivateNetworks,proto3" json:"deny_private_networks,omitempty"`
 	// A spec's model ids must be gateway ids of the models listed above.
 	ModelsRegistryOnly bool `protobuf:"varint,3,opt,name=models_registry_only,json=modelsRegistryOnly,proto3" json:"models_registry_only,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Skills carried in a spec (SkillRef.body) are accepted
+	// (loop_server.spec_policy.carried_skills).
+	CarriedSkillsAllowed bool `protobuf:"varint,4,opt,name=carried_skills_allowed,json=carriedSkillsAllowed,proto3" json:"carried_skills_allowed,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *SpecPolicy) Reset() {
@@ -897,6 +900,13 @@ func (x *SpecPolicy) GetDenyPrivateNetworks() bool {
 func (x *SpecPolicy) GetModelsRegistryOnly() bool {
 	if x != nil {
 		return x.ModelsRegistryOnly
+	}
+	return false
+}
+
+func (x *SpecPolicy) GetCarriedSkillsAllowed() bool {
+	if x != nil {
+		return x.CarriedSkillsAllowed
 	}
 	return false
 }
@@ -1316,12 +1326,13 @@ const file_fuse_loop_v1_loop_proto_rawDesc = "" +
 	"\x06server\x18\x06 \x01(\v2\x18.fuse.loop.v1.ServerInfoR\x06server\x129\n" +
 	"\vspec_policy\x18\a \x01(\v2\x18.fuse.loop.v1.SpecPolicyR\n" +
 	"specPolicy\x122\n" +
-	"\x06limits\x18\b \x01(\v2\x1a.fuse.loop.v1.TenantLimitsR\x06limits\"\x8f\x01\n" +
+	"\x06limits\x18\b \x01(\v2\x1a.fuse.loop.v1.TenantLimitsR\x06limits\"\xc5\x01\n" +
 	"\n" +
 	"SpecPolicy\x12\x1b\n" +
 	"\tmcp_hosts\x18\x01 \x03(\tR\bmcpHosts\x122\n" +
 	"\x15deny_private_networks\x18\x02 \x01(\bR\x13denyPrivateNetworks\x120\n" +
-	"\x14models_registry_only\x18\x03 \x01(\bR\x12modelsRegistryOnly\"\xd3\x02\n" +
+	"\x14models_registry_only\x18\x03 \x01(\bR\x12modelsRegistryOnly\x124\n" +
+	"\x16carried_skills_allowed\x18\x04 \x01(\bR\x14carriedSkillsAllowed\"\xd3\x02\n" +
 	"\tModelInfo\x12\x14\n" +
 	"\x05alias\x18\x01 \x01(\tR\x05alias\x12\x1d\n" +
 	"\n" +
