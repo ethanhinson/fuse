@@ -1,6 +1,6 @@
 # Backlog
 
-**120 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 12 proposed · ⚪ 3 deferred · ✅ 96 done · 🗑️ 7 killed
+**121 changes** — 🟢 1 in progress · 🔵 1 built · 🟡 13 proposed · ⚪ 3 deferred · ✅ 96 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -14,10 +14,11 @@
 |---|-------|----------|------|----|-------|
 | [0117](active/0117-cancel-rpc-on-the-networked-loop-server.md) | Cancel RPC on the networked loop server | `high` | `feat` | [#131](https://github.com/ethanhinson/fuse/pull/131) | awaiting merge |
 
-## 🟡 Proposed (12)
+## 🟡 Proposed (13)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0121](active/0121-go-sdk-cancel-a-loop.md) | Go SDK: cancel a loop | `low` | `feat` | needs-grooming |
 | [0120](active/0120-at-most-one-loop-cancelled-per-loop-under-replica-races.md) | At most one loop.cancelled per loop under replica races | `low` | `fix` | needs-grooming |
 | [0119](active/0119-send-to-a-loop-cancelled-on-another-replica-says-loop-cancel.md) | Send to a loop cancelled on another replica says loop cancelled | `low` | `fix` | needs-grooming |
 | [0116](active/0116-roles-and-workers-can-be-tool-less.md) | Roles and workers can be tool-less | `medium` | `feat` | needs-grooming |
@@ -58,6 +59,7 @@ graph TD
   0117
   0119
   0120
+  0121
   0012:::done
   0052:::done
   0063:::done
