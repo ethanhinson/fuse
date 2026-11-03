@@ -1,6 +1,6 @@
 # Backlog
 
-**121 changes** — 🟢 1 in progress · 🟡 13 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
+**122 changes** — 🟢 1 in progress · 🟡 14 proposed · ⚪ 3 deferred · ✅ 97 done · 🗑️ 7 killed
 
 ## 🟢 In progress (1)
 
@@ -8,10 +8,11 @@
 |---|-------|----------|------|------|--------|-------|
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟡 Proposed (13)
+## 🟡 Proposed (14)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0122](active/0122-spawn-start-names-the-worker-a-child-was-bound-to.md) | spawn.start names the worker a child was bound to | `low` | `feat` | needs-grooming |
 | [0121](active/0121-go-sdk-cancel-a-loop.md) | Go SDK: cancel a loop | `low` | `feat` | needs-grooming |
 | [0120](active/0120-at-most-one-loop-cancelled-per-loop-under-replica-races.md) | At most one loop.cancelled per loop under replica races | `low` | `fix` | needs-grooming |
 | [0119](active/0119-send-to-a-loop-cancelled-on-another-replica-says-loop-cancel.md) | Send to a loop cancelled on another replica says loop cancelled | `low` | `fix` | needs-grooming |
@@ -53,6 +54,7 @@ graph TD
   0119
   0120
   0121
+  0122
   0012:::done
   0052:::done
   0063:::done
