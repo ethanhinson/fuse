@@ -493,7 +493,15 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int, spa
 	// The goroutine now owns slot release for both the granted (fast-path) and
 	// parked (awaitSlot) cases; the synchronous guard above no longer applies.
 	slotHeld = false
+	if s.tree != nil {
+		s.tree.spawning.Add(1)
+	}
 	go func() {
+		// Registered first so it runs last: after the slot release, spawn.done and
+		// the handle send (AgentTree.SpawnsInFlight).
+		if s.tree != nil {
+			defer s.tree.spawning.Add(-1)
+		}
 		defer cancel()
 		// If the slot was already granted synchronously, release it when this
 		// goroutine exits. For the parked case the release defer is registered

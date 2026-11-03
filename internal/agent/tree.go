@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -257,7 +258,16 @@ type AgentTree struct {
 	out    chan TreeUpdate // buffered 256
 	dirty  map[string]bool
 	sched  *Scheduler // the single admission/slot/budget authority (0036)
+	// spawning counts spawn goroutines that have not yet exited. It drops only
+	// after the goroutine has emitted spawn.done and released its slot, which a
+	// node's status cannot tell: Finish runs before spawn.done is emitted.
+	spawning atomic.Int64
 }
+
+// SpawnsInFlight reports how many spawned children's goroutines are still
+// running. Zero means every spawn has recorded its spawn.done (when it emits
+// one) and released its scheduler slot.
+func (t *AgentTree) SpawnsInFlight() int { return int(t.spawning.Load()) }
 
 // Scheduler returns the tree's admission, slot, and budget authority. Every path
 // that admits a spawn, takes or frees a slot, or reads the budget goes through

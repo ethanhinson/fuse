@@ -139,9 +139,44 @@ func waitClosed(ctx context.Context, ch <-chan struct{}) bool {
 	}
 }
 
-// awaitChildren is where a cancelled loop waits for its spawned children to
-// record spawn.done before the terminal event. It does not wait yet.
-func (r *inProcRuntime) awaitChildren(*agent.AgentTree) {}
+// Bounds for awaitChildren's poll.
+const (
+	awaitChildrenPoll = 5 * time.Millisecond
+	awaitChildrenCap  = 5 * time.Second
+)
+
+// awaitChildren holds a cancelled loop's terminal event until its spawned
+// children have unwound, so every spawn.done precedes loop.cancelled and every
+// scheduler slot is free once Cancel reports Cancelled. A child's node status
+// flips before its spawn.done is emitted, so the wait keys on the tree's in-flight
+// spawn count as well as its running/pending nodes. It gives up after
+// awaitChildrenCap: a child that ignores cancellation must not hold the seal.
+func (r *inProcRuntime) awaitChildren(tree *agent.AgentTree) {
+	if tree == nil {
+		return
+	}
+	idle := func() bool {
+		running, pending := tree.ActiveCounts()
+		return running == 0 && pending == 0 && tree.SpawnsInFlight() == 0
+	}
+	if idle() {
+		return
+	}
+	deadline := time.NewTimer(awaitChildrenCap)
+	defer deadline.Stop()
+	tick := time.NewTicker(awaitChildrenPoll)
+	defer tick.Stop()
+	for {
+		select {
+		case <-tick.C:
+			if idle() {
+				return
+			}
+		case <-deadline.C:
+			return
+		}
+	}
+}
 
 // appendTerminal appends lp's loop.cancelled event and returns its seq (0 when the
 // store cannot report it or the append failed; the in-memory seal holds either

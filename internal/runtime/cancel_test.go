@@ -33,6 +33,9 @@ type cancelRigOpts struct {
 	tools      []tools.Tool
 	idleTTL    time.Duration
 	cancelWait time.Duration
+	// build, when set, runs inside BuildAgent with the loop's store, tree and tool
+	// registry (for tools that need them, such as a spawning tool).
+	build func(store event.EventStore, tree *agent.AgentTree, reg *tools.Registry)
 }
 
 func newCancelRig(t *testing.T, o cancelRigOpts) *cancelRig {
@@ -59,6 +62,9 @@ func newCancelRig(t *testing.T, o cancelRigOpts) *cancelRig {
 		BuildAgent: func(store event.EventStore, tree *agent.AgentTree, modelID string, reg *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
 			for _, tl := range o.tools {
 				reg.Register(tl)
+			}
+			if o.build != nil {
+				o.build(store, tree, reg)
 			}
 			return agent.New(o.completer, execAll{reg}, nopRenderer{}, modelID, "", 0, 0), nil, modelID, nil
 		},
@@ -639,4 +645,102 @@ func TestDrainAndReapEmitNoTerminal(t *testing.T) {
 			t.Fatalf("a reap emitted %d loop.cancelled", n)
 		}
 	})
+}
+
+// spawnChildTool spawns one child through a real Spawner and returns as soon as its
+// own ctx ends, without waiting for the child: the child is still unwinding when
+// the root run returns, so only the runtime's wait orders its spawn.done first.
+type spawnChildTool struct {
+	store event.EventStore
+	tree  *agent.AgentTree
+	cb    agent.ChildBuilder
+}
+
+func (s *spawnChildTool) Name() string               { return "spawn_child" }
+func (s *spawnChildTool) Description() string        { return "spawns a child" }
+func (s *spawnChildTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (s *spawnChildTool) Execute(ctx context.Context, _ string) tools.Result {
+	sp := agent.NewSpawner(
+		agent.WithTree(s.tree),
+		agent.WithNode(s.tree.Node(s.tree.RootID())),
+		agent.WithSpawnDepth(0),
+		agent.WithEventStore(s.store),
+		agent.WithChildBuilder(s.cb),
+	)
+	if _, err := sp.Spawn(ctx, agent.SpawnOpts{Label: "kid", Task: "wait"}); err != nil {
+		return tools.Result{Output: err.Error(), IsError: true}
+	}
+	<-ctx.Done()
+	return tools.Result{Output: "parent stopped"}
+}
+
+// Criterion 7: a child running when the loop is cancelled records spawn.done (with
+// its cancellation error) before loop.cancelled, and its scheduler slot is free
+// once Cancel returns.
+func TestCancelWhileChildRunning(t *testing.T) {
+	childStarted := make(chan struct{})
+	var once sync.Once
+	cb := func(ctx context.Context, _ agent.SpawnOpts, _ *agent.AgentNode, _ *agent.AgentTree) (string, error) {
+		once.Do(func() { close(childStarted) })
+		<-ctx.Done()
+		// Linger past the cancel so the root run finishes first.
+		time.Sleep(100 * time.Millisecond)
+		return "", ctx.Err()
+	}
+	var mu sync.Mutex
+	var tree *agent.AgentTree
+	g := newCancelRig(t, cancelRigOpts{
+		completer: script(modelToolCall("c1", "spawn_child", "{}")),
+		build: func(store event.EventStore, tr *agent.AgentTree, reg *tools.Registry) {
+			mu.Lock()
+			tree = tr
+			mu.Unlock()
+			reg.Register(&spawnChildTool{store: store, tree: tr, cb: cb})
+		},
+	})
+	ctx := context.Background()
+	h, err := g.rt.StartLoop(ctx, LoopConfig{Task: "work", ModelID: "m", Tenant: acme})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-childStarted
+	res, err := g.c.Cancel(ctx, acme, h.ID(), "stop the family", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Outcome != CancelOutcomeCancelled || !res.WasLive {
+		t.Fatalf("result = %+v", res)
+	}
+	mu.Lock()
+	tr := tree
+	mu.Unlock()
+	if n := tr.Scheduler().Snapshot().SlotsInUse; n != 0 {
+		t.Fatalf("SlotsInUse = %d after Cancel returned, want 0", n)
+	}
+	if running, pending := tr.ActiveCounts(); running != 0 || pending != 0 {
+		t.Fatalf("ActiveCounts = (%d, %d) after Cancel returned, want (0, 0)", running, pending)
+	}
+	_, _ = h.Wait()
+	evs := streamOf(t, g.store, acme, h.ID())
+	doneAt := -1
+	for i, e := range evs {
+		if e.Kind != event.KindSpawnDone {
+			continue
+		}
+		var p event.SpawnDonePayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatal(err)
+		}
+		if p.Err == "" {
+			t.Fatalf("spawn.done = %+v, want a cancellation error", p)
+		}
+		doneAt = i
+	}
+	cancelledAt := indexOfKind(evs, event.KindLoopCancelled)
+	if doneAt < 0 || cancelledAt < 0 || doneAt > cancelledAt {
+		t.Fatalf("spawn.done (index %d) must precede loop.cancelled (index %d)", doneAt, cancelledAt)
+	}
+	if lastKind(evs) != event.KindLoopCancelled {
+		t.Fatalf("last event = %s, want loop.cancelled", lastKind(evs))
+	}
 }
