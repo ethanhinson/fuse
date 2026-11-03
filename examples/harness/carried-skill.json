@@ -1,0 +1,13 @@
+{
+  "models": {"defaultAlias": "fast", "entries": {"fast": {"id": "cloud/deepseek-v4-flash", "persona": "coding"}}},
+  "maxTurns": 20,
+  "instructions": "You maintain a project's changelog. When a change is described to you, add an entry for it.",
+  "skills": [
+    {
+      "name": "changelog-entry",
+      "description": "Adds one entry to CHANGELOG.md for a described change.",
+      "body": "# Changelog entry\n\n1. Read CHANGELOG.md and find the Unreleased section.\n2. Pick the heading that fits the change: Added, Changed or Fixed.\n3. Write one line under that heading, in the present tense, under 100 characters.\n4. Do not edit released sections."
+    },
+    {"name": "research"}
+  ]
+}

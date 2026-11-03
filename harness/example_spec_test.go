@@ -20,14 +20,20 @@ func TestExampleSpecsAreValid(t *testing.T) {
 	if len(paths) == 0 {
 		t.Fatal("no example specs found under examples/harness")
 	}
-	foundReviewTeam := false
+	foundReviewTeam, foundCarriedSkill := false, false
 	for _, p := range paths {
-		if filepath.Base(p) == "review-team.json" {
+		switch filepath.Base(p) {
+		case "review-team.json":
 			foundReviewTeam = true
+		case "carried-skill.json":
+			foundCarriedSkill = true
 		}
 	}
 	if !foundReviewTeam {
 		t.Fatal("review-team.json missing from examples/harness")
+	}
+	if !foundCarriedSkill {
+		t.Fatal("carried-skill.json missing from examples/harness")
 	}
 	for _, p := range paths {
 		t.Run(filepath.Base(p), func(t *testing.T) {
@@ -52,6 +58,20 @@ func TestExampleSpecsAreValid(t *testing.T) {
 				wf := spec.GetWorkflows()["review"]
 				if len(wf.GetRoles()) != 1 || spec.GetRoles()[wf.GetRoles()[0]] == nil {
 					t.Fatal("review-team.json must have a review workflow listing one defined role")
+				}
+			}
+			if filepath.Base(p) == "carried-skill.json" {
+				carried, reference := false, false
+				for _, sk := range spec.GetSkills() {
+					if sk.GetBody() != "" && sk.GetDescription() != "" {
+						carried = true
+					}
+					if sk.GetBody() == "" {
+						reference = true
+					}
+				}
+				if !carried || !reference {
+					t.Fatalf("carried-skill.json must define one carried skill and one reference (carried=%v reference=%v)", carried, reference)
 				}
 			}
 		})
