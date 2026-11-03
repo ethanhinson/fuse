@@ -36,8 +36,9 @@ type Runtime interface {
 	// Send injects human input at the loop's next turn boundary (ADR-0022 human-bus).
 	// It is tenant-scoped: resolution (cache hit AND durable fall-through) is keyed on
 	// (tenant, loopID), so a Send under tenant X never lands on tenant Y's loop. It
-	// returns ErrLoopNotFound for an unknown loop and ErrLoopFinished when the loop's
-	// run goroutine has already completed (its injector no longer drains, so enqueuing
+	// returns ErrLoopNotFound for an unknown loop, ErrLoopCancelled for a loop a
+	// Cancel sealed (it is never resumed), and ErrLoopFinished when the loop's run
+	// goroutine has already completed (its injector no longer drains, so enqueuing
 	// would strand the message); a still-running loop enqueues and returns nil.
 	// Single-tenant callers pass event.DefaultTenant (or "" — NormalizeTenant maps it
 	// to the default) for byte-identical behavior.
@@ -110,6 +111,38 @@ type Steerer interface {
 // the loop looking alive until its lease expires.
 type Shutdowner interface {
 	Shutdown(ctx context.Context) error
+}
+
+// CancelOutcome says what a Cancel did. The values line up with the wire enum.
+type CancelOutcome int
+
+const (
+	CancelOutcomeUnspecified CancelOutcome = iota
+	// CancelOutcomeCancelled: this call sealed the loop.
+	CancelOutcomeCancelled
+	// CancelOutcomeAlreadyCancelled: an earlier cancel sealed it.
+	CancelOutcomeAlreadyCancelled
+	// CancelOutcomeCancelling: the cancel is recorded but its terminal event has
+	// not been seen yet (another replica owns the loop, or the unwind is slow).
+	CancelOutcomeCancelling
+)
+
+// CancelResult reports one Cancel.
+type CancelResult struct {
+	Outcome     CancelOutcome
+	WasLive     bool      // the cancel interrupted a running or parked loop
+	TerminalSeq event.Seq // seq of loop.cancelled; 0 when not yet known
+	Reason      string    // the recorded reason (the first one on AlreadyCancelled)
+}
+
+// Canceller is an optional Runtime capability (ADR-0047): stop a loop and seal
+// it. Its in-flight work is cancelled, loop.cancelled is appended as the last
+// event of its stream, and the loop never accepts another Send or resume
+// (ErrLoopCancelled). A binding type-asserts for it. Errors: ErrLoopNotFound for
+// an unknown or wrong-tenant loop. requestedBy is the caller's principal subject,
+// never a token.
+type Canceller interface {
+	Cancel(ctx context.Context, tenant event.TenantID, loopID, reason, requestedBy string) (CancelResult, error)
 }
 
 // SendOrSteer delivers input to a loop through the Steerer capability when rt has it,

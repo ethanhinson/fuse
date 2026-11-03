@@ -27,6 +27,12 @@ var ErrLoopNotFound = errors.New("runtime: loop not found")
 // condition instead of silently accepting the input.
 var ErrLoopFinished = errors.New("runtime: loop finished")
 
+// ErrLoopCancelled is returned by Send, Steer and Resume for a loop that a Cancel
+// sealed. It is distinct from ErrLoopFinished on purpose: a finished loop is
+// resumed by the next message, a cancelled one never runs again. It is also the
+// cause Cancel gives the loop's run context.
+var ErrLoopCancelled = errors.New("runtime: loop cancelled")
+
 // Deps are the binding-supplied collaborators the Runtime composes. None are
 // renderer/TUI/gate types; a binding wires those around the Runtime, not into it.
 type Deps struct {
@@ -137,6 +143,11 @@ type Deps struct {
 	// connection-pinned in a way this changes).
 	IdleTTL time.Duration
 
+	// CancelWait bounds how long Cancel waits (within the caller's ctx) for a local
+	// loop to unwind, or for a relayed cancel to be answered, before it reports
+	// CancelOutcomeCancelling instead of CancelOutcomeCancelled. Zero means 10s.
+	CancelWait time.Duration
+
 	// Harness, when non-nil, lets a loop run a client-supplied harness spec
 	// (LoopConfig.Harness, change 0085): it resolves the spec into that loop's own
 	// LoopFactory. Nil: a LoopConfig carrying a spec is refused with
@@ -159,6 +170,10 @@ type inProcRuntime struct {
 	deps  Deps
 	mu    sync.Mutex
 	loops map[string]*loop
+
+	// cancelPending holds, per stream, the seq of the loop.cancel.request this
+	// process relayed and has not yet seen answered. Guarded by mu; created lazily.
+	cancelPending map[event.StreamKey]event.Seq
 }
 
 // loop holds per-loopID state: the tree, the root node, the event store, the human
@@ -183,6 +198,18 @@ type loop struct {
 	// cancel ends the loop's run: the session cancel of an interactive loop. Nil for a
 	// one-shot loop, which runs under the caller's context.
 	cancel context.CancelFunc
+
+	// abort cancels this loop's run with a cause (ErrLoopCancelled). Every loop,
+	// one-shot or interactive, has one. Only Cancel fires it: the idle reaper and
+	// Shutdown keep using cancel (the session cancel, no cause).
+	abort context.CancelCauseFunc
+	// cancelled is the first cancel's record; nil until a cancel lands. Guarded
+	// by inProcRuntime.mu.
+	cancelled *cancelState
+	// finishing is set (under inProcRuntime.mu) by the completion goroutine when
+	// it decides whether to append loop.cancelled. A cancel that finds it set
+	// appends the terminal event itself (was_live=false).
+	finishing bool
 }
 
 // New builds an in-process Runtime. deps carries the collaborators a binding
@@ -715,6 +742,13 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	a.SetUsageSink(rootNode.UpdateTokens) // the agent owns usage accounting (change 0090)
 	a.SetCallGate(func() error { return tree.Scheduler().TokenQuotaDenied(rootNode.ID) })
 
+	// The per-loop abort (a caller Cancel) wraps the loop's own lifetime: the session
+	// context for an interactive loop, the request context for a one-shot. It is
+	// created here, after the last early return, so no failure path can leak it; the
+	// completion goroutine releases it. The loop is fully formed (handle, cancel,
+	// abort) before it enters r.loops, so a concurrent Cancel never sees a nil field.
+	abortCtx, abort := context.WithCancelCause(sessionCtx)
+	h := &loopHandle{id: rootID, done: make(chan struct{})}
 	lp := &loop{
 		id:         rootID,
 		key:        key,
@@ -723,6 +757,9 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		store:      store,
 		humanBus:   agent.NewHumanBus(tree),
 		buildChild: buildChild,
+		handle:     h,
+		cancel:     sessionCancel,
+		abort:      abort,
 	}
 	r.mu.Lock()
 	if r.loops == nil {
@@ -763,10 +800,6 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	if opts.seeded {
 		a.SetSeeded(true)
 	}
-
-	h := &loopHandle{id: rootID, done: make(chan struct{})}
-	lp.handle = h
-	lp.cancel = sessionCancel
 
 	// Owner-liveness lease renewer (change 0049 Task 7): while the loop runs, refresh
 	// LeaseExpiry every ~⅓ TTL so a cold instance can tell a live owner from an
@@ -810,11 +843,16 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// loops derive independent contexts and never cross. It decorates sessionCtx (the
 	// disconnect-detached run ctx for interactive loops; == loopCtx for one-shots), so
 	// identity survives a resume/re-park unchanged.
-	runCtx := sessionCtx
+	//
+	// The run itself derives from abortCtx (a child of sessionCtx), so a caller Cancel
+	// unwinds the model call, tools and children while the durable sink, lease renewer,
+	// relay pump and idle reaper stay on sessionCtx: the events the unwinding emits
+	// still land.
+	runCtx := context.Context(abortCtx)
 	if r.deps.LoopContext != nil {
 		loopCfg := cfg
 		loopCfg.LoopID = rootID
-		runCtx = r.deps.LoopContext(sessionCtx, loopCfg)
+		runCtx = r.deps.LoopContext(abortCtx, loopCfg)
 	}
 
 	go func() {
@@ -857,6 +895,26 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		if stopReap != nil {
 			close(stopReap)
 		}
+		// Cancel decision point. From here on a Cancel can no longer interrupt this
+		// run, so it appends the terminal event itself (was_live=false); before here a
+		// Cancel fired abort and this goroutine appends it (was_live=true). Exactly one
+		// of the two appends. The append comes before the session cancel, SetLive(false),
+		// the store Close and LoopTeardown, so loop.cancelled is the highest seq this
+		// loop ever writes and a Cancel that waits for h.done sees the loop not live.
+		// A drain or an idle reap sets no cancelState and appends nothing.
+		r.mu.Lock()
+		lp.finishing = true
+		cs := lp.cancelled
+		r.mu.Unlock()
+		if cs != nil {
+			r.awaitChildren(tree)
+			seq := r.appendTerminal(lp, cs)
+			r.mu.Lock()
+			cs.terminalSeq = seq
+			r.mu.Unlock()
+			close(cs.sealed)
+		}
+		abort(nil) // release the abort context's resources
 		if sessionCancel != nil {
 			sessionCancel()
 		}
@@ -1019,7 +1077,8 @@ func (r *inProcRuntime) Attach(ctx context.Context, tenant event.TenantID, loopI
 // Runtime interface for the contract. Three cases:
 //
 //  1. Live in THIS instance's cache (tenant-matched) → no-op: the loop is still
-//     parked, so resume is just "re-open your Observe". Return the live handle.
+//     parked, so resume is just "re-open your Observe". Return the live handle. A
+//     cached loop a Cancel sealed is refused with ErrLoopCancelled instead.
 //  2. Resolvable in the durable registry and NOT live (finished / idle-reaped /
 //     completed on a prior process) → rehydrate: replay the durable stream, fold it
 //     to the model-facing transcript, and re-launch a re-parked loop under the SAME
@@ -1032,8 +1091,12 @@ func (r *inProcRuntime) Attach(ctx context.Context, tenant event.TenantID, loopI
 // process identity to resume (a nil-registry single-loop binding never evicts a loop
 // it still holds, so case 1 covers it, and an unknown loop is ErrLoopNotFound).
 func (r *inProcRuntime) Resume(ctx context.Context, tenant event.TenantID, loopID string) (LoopHandle, error) {
-	// Case 1: still live locally under the requested tenant.
+	// Case 1: still live locally under the requested tenant. A cancelled loop is
+	// sealed and never revived.
 	if lp := r.loopCache(tenant, loopID); lp != nil {
+		if r.isCancelled(lp) {
+			return nil, fmt.Errorf("%w: %q", ErrLoopCancelled, loopID)
+		}
 		if lp.touch != nil {
 			lp.touch()
 		}
@@ -1120,10 +1183,11 @@ func modelFromEvents(events []event.Event) string {
 // at the next turn boundary. ModeRespond = a direct reply to that node (not a
 // broadcast).
 //
-// Send distinguishes three cases: an unknown loop returns ErrLoopNotFound; a loop
-// whose run goroutine has already finished returns ErrLoopFinished (its injector no
-// longer drains, so enqueuing would strand the message forever); a still-running
-// loop enqueues and returns nil.
+// Send distinguishes four cases: an unknown loop returns ErrLoopNotFound; a loop a
+// Cancel sealed returns ErrLoopCancelled (it never runs again); a loop whose run
+// goroutine has already finished returns ErrLoopFinished (its injector no longer
+// drains, so enqueuing would strand the message forever); a still-running loop
+// enqueues and returns nil.
 func (r *inProcRuntime) Send(ctx context.Context, tenant event.TenantID, loopID string, input string) error {
 	lp, err := r.liveLoop(ctx, tenant, loopID)
 	if errors.Is(err, errLiveElsewhere) {
@@ -1157,10 +1221,11 @@ func (r *inProcRuntime) Steer(ctx context.Context, tenant event.TenantID, loopID
 }
 
 // liveLoop resolves the loop a Send or Steer targets and refuses one that cannot
-// take input: ErrLoopNotFound for an unknown loop (or a wrong-tenant hit), and
-// ErrLoopFinished for a loop whose run goroutine has completed, since its injector
-// will never drain another message and enqueuing would strand it. It also counts the
-// call as session activity, resetting the idle-reap window.
+// take input: ErrLoopNotFound for an unknown loop (or a wrong-tenant hit),
+// ErrLoopCancelled for a cached loop a Cancel sealed, and ErrLoopFinished for a loop
+// whose run goroutine has completed, since its injector will never drain another
+// message and enqueuing would strand it. It also counts the call as session activity,
+// resetting the idle-reap window.
 func (r *inProcRuntime) liveLoop(ctx context.Context, tenant event.TenantID, loopID string) (*loop, error) {
 	lp := r.loopCache(tenant, loopID)
 	if lp == nil {
@@ -1181,6 +1246,11 @@ func (r *inProcRuntime) liveLoop(ctx context.Context, tenant event.TenantID, loo
 		// Live and owned by a replica that is still renewing its lease: the caller
 		// relays through the durable stream.
 		return nil, fmt.Errorf("%w: %q: %w", errLiveElsewhere, loopID, ErrLoopNotFound)
+	}
+	// A cancelled loop is sealed: report that, not "finished", so no caller tries
+	// to resume it. Checked before the done check, which a cancelled loop also hits.
+	if r.isCancelled(lp) {
+		return nil, fmt.Errorf("%w: %q", ErrLoopCancelled, loopID)
 	}
 	if lp.handle != nil {
 		select {
