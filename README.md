@@ -422,6 +422,15 @@ brief, in the place the top-level `instructions` takes for the main agent. A non
 `tools` may only narrow it. The call's `model` wins over the role's. `role` cannot be
 combined with `system_prompt` or `worker`.
 
+`no_tools: true` makes an agent tool-less: it is offered no tools at all and its requests
+carry none. At the top level of a config it makes the loop tool-less. A role has three
+states: an empty `tools` list inherits the main agent's tools, a non-empty list narrows
+them (plus the blackboard tools), and `no_tools: true` gives it none. A worker has two:
+its named tools, or none when `no_tools` is set. The key is honoured from every config
+layer. The interactive shell and `research-probe` ignore it and print a warning, and
+`cli/` models refuse it. A tool-less helper started with `expects` is offered only
+`return_result`, so callers still get a structured result back.
+
 ### Observing the research flow — `research-probe`
 
 The research flow is emergent and prompt-driven: the model diversifies a
