@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/add-a-clear-command-to-reset-the-conversation-between-tasks'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -44,3 +44,9 @@ Add a `/clear` slash command to the interactive shell that performs a clean-slat
 ## Out of scope
 
 Resetting the agent tree or blackboard state; resetting the model registry or permission mode; a one-shot CLI flag; automatic context clearing on task boundaries.
+
+## Reconcile log
+
+### 2026-11-04
+
+Re-read internal/tui/shell_model.go and internal/tui/builtin_provider.go against the spec. Ctrl+L (tea.KeyCtrlL, ~line 808) clears m.lines/m.pendingCalls/m.inlineByLabel/m.inlineByNode and calls refreshViewport(true) but leaves m.history untouched — matches the spec premise. startPrompt (~line 1173) appends to m.history and captures history := m.history into the run closure, so the running guard is correct. NewBuiltinProvider has no /clear entry; handleSlash has no /clear case. No ADRs needed (small, self-contained TUI feature). Design holds as written.
