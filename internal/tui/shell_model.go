@@ -1000,6 +1000,23 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		return m.orchestratorCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
 	case "/interrupt":
 		return m.interruptCommand(strings.TrimSpace(strings.TrimPrefix(line, cmd)))
+	case "/clear":
+		// Clean-slate reset between tasks: refuse while a turn is running.
+		if m.running {
+			m.appendLine(headerStyle.Render("cannot clear while a turn is running — wait or /interrupt first"))
+			return m, nil
+		}
+		m.history = nil
+		m.lines = nil
+		m.pendingCalls = nil
+		m.inlineByLabel = make(map[string]*inlineAgentState)
+		m.inlineByNode = make(map[string]*inlineAgentState)
+		m.approvalLog = nil
+		m.askLog = nil
+		m.approvals = nil
+		m.refreshViewport(true)
+		m.appendLine(headerStyle.Render("conversation cleared"))
+		return m, nil
 	case "/agents":
 		return m.enterAgentsView()
 	case "/blackboard":

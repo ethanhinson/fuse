@@ -889,6 +889,63 @@ func TestCtrlLClears(t *testing.T) {
 	}
 }
 
+func TestClearCommand(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	m.history = []model.Message{{Role: "user", Content: "do a thing"}}
+	m.appendLine("some content")
+	m.approvalLog = []approvalRecord{{ts: time.Now(), tool: "bash", preview: "rm -rf /tmp/x", decision: "allowed", approved: true}}
+	m.askLog = []askRecord{{ts: time.Now(), header: "DB", question: "which database?", answer: "postgres"}}
+	aliasBefore := m.alias
+
+	m = typeLine(m, "/clear")
+	m, _ = enter(m)
+
+	if len(m.history) != 0 {
+		t.Errorf("history should be cleared, got %+v", m.history)
+	}
+	if len(m.lines) != 1 {
+		t.Errorf("lines should hold only the confirmation, got %d: %v", len(m.lines), flattenLines(m))
+	}
+	if m.approvalLog != nil {
+		t.Errorf("approvalLog should be nil, got %+v", m.approvalLog)
+	}
+	if m.askLog != nil {
+		t.Errorf("askLog should be nil, got %+v", m.askLog)
+	}
+	if m.alias != aliasBefore {
+		t.Errorf("alias changed: %q → %q", aliasBefore, m.alias)
+	}
+	if !strings.Contains(strings.Join(flattenLines(m), "\n"), "conversation cleared") {
+		t.Errorf("expected confirmation line, got %v", flattenLines(m))
+	}
+}
+
+func TestClearCommandRefusesWhileRunning(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+	m.running = true
+	m.history = []model.Message{{Role: "user", Content: "in flight"}}
+	m.appendLine("some content")
+	histBefore := len(m.history)
+
+	// Typed lines are dropped by the KeyEnter busy-guard while a turn runs, so
+	// reach handleSlash directly to exercise the /clear refusal guard.
+	next, cmd := m.handleSlash("/clear")
+	m = next.(ShellModel)
+	if cmd != nil {
+		t.Error("refused /clear should not return a cmd")
+	}
+	if len(m.history) != histBefore {
+		t.Errorf("history should be unchanged while running, got %d entries: %+v", len(m.history), m.history)
+	}
+	joined := strings.Join(flattenLines(m), "\n")
+	if !strings.Contains(joined, "some content") {
+		t.Errorf("pre-existing transcript should be preserved while running, got %v", flattenLines(m))
+	}
+	if !strings.Contains(joined, "cannot clear while a turn is running") {
+		t.Errorf("expected refusal line, got %v", flattenLines(m))
+	}
+}
+
 func TestCtrlCQuits(t *testing.T) {
 	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})

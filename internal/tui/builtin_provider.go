@@ -22,6 +22,7 @@ func NewBuiltinProvider() *BuiltinProvider {
 			{Command: "/questions", Description: "Show this session's answered ask_user questions", Kind: KindBuiltin, expand: func() string { return "/questions" }},
 			{Command: "/orchestrator", Syntax: "[off|MESSAGE]", Description: "Talk to a model that watches and steers the agent", Kind: KindBuiltin, expand: func() string { return "/orchestrator" }},
 			{Command: "/interrupt", Syntax: "MESSAGE", Description: "Stop the agent's current step and redirect it", Kind: KindBuiltin, expand: func() string { return "/interrupt " }},
+			{Command: "/clear", Description: "Clear the conversation history and screen (start a fresh task)", Kind: KindBuiltin, expand: func() string { return "/clear" }},
 			{Command: "/queue", Description: "Open the pending human-message queue editor (edit/reorder/delete)", Kind: KindBuiltin, expand: func() string { return "/queue" }},
 		},
 	}
