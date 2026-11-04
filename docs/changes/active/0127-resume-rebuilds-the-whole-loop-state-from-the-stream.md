@@ -14,7 +14,7 @@ related: [54, 108, 122, 126]
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md](../../superpowers/specs/2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md) |
+| Plan | [2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream.md](../../superpowers/plans/2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
