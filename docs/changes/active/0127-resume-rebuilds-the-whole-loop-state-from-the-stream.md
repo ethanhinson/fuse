@@ -2,12 +2,12 @@
 id: 127
 slug: 'resume-rebuilds-the-whole-loop-state-from-the-stream'
 title: 'Resume rebuilds the whole loop state from the stream'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-04'
 depends_on: []
 stacked_on:
 related: [54, 108, 122, 126]
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'fix/resume-rebuilds-the-whole-loop-state-from-the-stream'
 pr:
 blocked_by:
 reconciled: false
