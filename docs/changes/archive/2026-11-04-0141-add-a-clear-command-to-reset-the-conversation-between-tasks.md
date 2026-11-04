@@ -2,7 +2,7 @@
 id: 141
 slug: 'add-a-clear-command-to-reset-the-conversation-between-tasks'
 title: 'Add a /clear command to reset the conversation between tasks'
-status: 'implemented'
+status: 'done'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks-design.md](../../superpowers/specs/2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks-design.md) |
+| Spec (merged) | [2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks-design.md) |
 | Plan | [2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks.md](../../superpowers/plans/2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks.md) |
 | Results | [2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks.md](../../results/2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks.md) |
 <!-- docket:artifacts:end -->

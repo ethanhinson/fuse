@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0141 — Add a /clear command to reset the conversation between tasks](../../changes/active/0141-add-a-clear-command-to-reset-the-conversation-between-tasks.md)**
+> ↩ **[Change 0141 — Add a /clear command to reset the conversation between tasks](../../changes/archive/2026-11-04-0141-add-a-clear-command-to-reset-the-conversation-between-tasks.md)**
 <!-- docket:backlink:end -->
 
 # Spec: Add a `/clear` command to reset the conversation between tasks
