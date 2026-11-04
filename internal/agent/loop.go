@@ -400,8 +400,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// Tier 2 summarization state (change 0027), loop-scoped so concurrent agents
 	// never share it: previousSummary is the single living ODSNF document carried
 	// forward (D3, anchoring); suppressUntil is the turn index through which the
-	// summarizer is skipped after a failure (D2).
-	previousSummary := ""
+	// summarizer is skipped after a failure (D2). On a RESUME, previousSummary
+	// starts from the seed summary reconstructed from the stream (change 0127,
+	// Task 5) so the next compaction anchors against the last summary the
+	// original session produced, exactly as a never-moved loop would.
+	previousSummary := a.seedSummary
 	suppressUntil := 0
 
 	// Structured-delegation state (change 0042): when expects is set, the loop
@@ -514,6 +517,8 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 							TokensBefore: tokensBefore,
 							TokensAfter:  len(summary) / bytesPerToken,
 							Pointer:      pointer,
+							Summary:      summary,
+							InsertAt:     insertAt,
 						})
 						// Anchoring (D3): the new summary folds the previous one in, so the
 						// prior injected summary message is removed before the new one is

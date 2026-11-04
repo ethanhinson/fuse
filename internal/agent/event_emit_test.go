@@ -231,7 +231,8 @@ func TestEmitMaxTurns(t *testing.T) {
 }
 
 // TestEmitSummarize: a Tier-2 summarization pass emits a context.summarize event
-// carrying the turn span and token accounting (coverage for the summarize kind).
+// carrying the turn span, token accounting, the summarized text, and the insert
+// index (coverage for the summarize kind).
 func TestEmitSummarize(t *testing.T) {
 	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}}}
 	rec := &recordingStore{}
@@ -254,6 +255,18 @@ func TestEmitSummarize(t *testing.T) {
 	}
 	if pl.TokensBefore == 0 {
 		t.Errorf("summarize payload missing token accounting: %+v", pl)
+	}
+	// The payload must carry the exact summary text and the transcript index it
+	// was inserted at, so a resume fold can rebuild the compaction layout.
+	if pl.Summary != sc.summary {
+		t.Errorf("summarize payload summary = %q, want %q", pl.Summary, sc.summary)
+	}
+	// insertAt is the boundary just after the last summarized tool result:
+	// overBudgetHistory's unprotected span is indices 2 and 4 (the two oldest
+	// big tool results), so the summary lands at index 5, before the protected
+	// grep-result tail.
+	if pl.InsertAt != 5 {
+		t.Errorf("summarize payload insert_at = %d, want 5 (boundary after the unprotected span)", pl.InsertAt)
 	}
 }
 

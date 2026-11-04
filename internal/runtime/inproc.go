@@ -409,6 +409,8 @@ type launchOpts struct {
 	// continue the sequence across a resume rather than restarting it and colliding
 	// with the pre-reap turns of the same loop_id. Zero for a fresh start.
 	turnIndex int
+	// seedState carries the full reconstructed loop state for a resume (nil for fresh start).
+	seedState *loopState
 }
 
 // StartLoop constructs and drives one agent loop from cfg (see the Runtime
@@ -556,6 +558,15 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		// opts.rootID pins the id on a resume so the re-parked loop keeps its original
 		// loop_id (empty ⇒ a fresh id for a normal start).
 		tree = agent.NewAgentTreeWithRootID(cfg.ModelID, cfg.ModelID, maxConcurrent, opts.rootID)
+	}
+	// Seed the tree from the reconstructed state BEFORE the agent runs (change
+	// 0127, Task 5): a resumed loop's fresh tree starts at zero, losing the spawn
+	// count and session tokens folded from the stream. Seeding restores them so
+	// the loop reports the same budgets as a never-moved loop — childCount()
+	// backs the spawn-budget `used` figure and SessionTokens() the session spend
+	// the scheduler's token ceiling is measured against.
+	if opts.resume && opts.seedState != nil {
+		tree.SeedResume(opts.seedState.budgets.spawnsUsed, opts.seedState.budgets.sessionTokens, opts.seedState.budgets.poolTokens)
 	}
 	rootID := tree.RootID()
 	rootNode := tree.Node(rootID)
@@ -747,6 +758,16 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		}
 		failLaunch()
 		return nil, fmt.Errorf("runtime: build agent: %w", err)
+	}
+	// Seed the agent's previous summary from the reconstructed state (change 0127,
+	// Task 5): a resumed loop's fresh Agent starts with previousSummary "", so the
+	// next compaction would anchor against nothing instead of the summary the
+	// original session last wrote to the stream. The latest summaryAnchor in the
+	// fold is that last summary — hand it to the agent so Run's first compaction
+	// anchors against it (see Agent.seedSummary).
+	if opts.resume && opts.seedState != nil && len(opts.seedState.summaries) > 0 {
+		latest := opts.seedState.summaries[len(opts.seedState.summaries)-1]
+		a.SetSeedSummary(latest.summary)
 	}
 	// The FIRST turn span of a resumed session opens here, after the last early return
 	// in this function (learnings:
@@ -1197,10 +1218,28 @@ func (r *inProcRuntime) Resume(ctx context.Context, tenant event.TenantID, loopI
 	if refused, err := r.refuseCancelledResume(ctx, key, events); refused {
 		return nil, err
 	}
-	seed, err := reconstructMessages(events)
+	state, err := reconstructLoopState(events, loopID)
 	if err != nil {
 		return nil, fmt.Errorf("runtime: resume reconstruct: %w", err)
 	}
+	// Orphan repair (change 0127, D3): the owner that went away mid-flight left the
+	// stream in a shape no provider accepts — a spawn.start with no spawn.done, and a
+	// root tool call with no tool.result. Close both DURABLY on the stream now, before
+	// anything new launches, so every later replica (and the transcript this resume
+	// seeds) reads a finished conversation instead of retrying or hanging on work the
+	// dead owner abandoned. Nothing is retried: a synthetic completion/result is a
+	// failed one, recorded as such.
+	//
+	// Timing is the safety property: this runs only after the lease re-ownership above
+	// (case 2 never reaches here with another instance still holding a fresh lease), so
+	// a resume that loses the race appends nothing. The outer `events` snapshot is left
+	// pre-repair on purpose — harness, model, trace carrier and the consumed turn index
+	// all derive from the real history and are unaffected by synthetic repair records.
+	state, err = repairOrphans(ctx, r.deps.DurableStore, key, loopID, state)
+	if err != nil {
+		return nil, err
+	}
+	seed := state.messages
 	// A loop started from a harness spec is rebuilt from the spec it recorded
 	// (change 0085), re-resolved over this replica's operator config, so every
 	// replica revives the same harness rather than its process config.
@@ -1228,8 +1267,135 @@ func (r *inProcRuntime) Resume(ctx context.Context, tenant event.TenantID, loopI
 		resume:    true,
 		carrier:   carrierFromEvents(events),
 		turnIndex: consumedTurns(events),
+		seedState: &state,
 	})
 }
+
+// repairOrphans closes, durably, the two shapes a mid-flight owner death leaves
+// behind in a loop's stream, and returns the state re-folded from the repaired
+// stream (change 0127, D3):
+//
+//   - every spawn.start with no spawn.done (an ORPHAN child) gets a synthetic
+//     spawn.done{Orphaned:true, Err:"owner lost before completion"}, stamped with
+//     the same node identity the real Spawner emits (NodeID = child, ParentID =
+//     its parent, Depth = its depth) so the projection, the tree and the resume
+//     budget all read one consistent record;
+//   - every ROOT assistant tool call with no matching tool message gets a
+//     synthetic tool.result{Synthetic:true, IsError:true}. Without it the seeded
+//     transcript ends in an assistant message with unanswered tool calls, which
+//     providers reject outright; with it the resumed loop sees an honest failed
+//     call and can decide what to do next.
+//
+// Nothing is retried. An orphaned child is recorded as failed, never re-run: the
+// work it was doing belongs to an owner that is gone, and replaying it could
+// duplicate side effects. A clean stream appends nothing and skips the re-replay
+// entirely, so an ordinary resume pays no extra cost.
+//
+// The repair is idempotent: a repair record already on the stream makes its target
+// terminal/matched on the next fold, so a resume that itself died after appending
+// a subset does not append the same records twice.
+func repairOrphans(ctx context.Context, store event.DurableStore, key event.StreamKey, rootID string, state loopState) (loopState, error) {
+	if store == nil {
+		return state, nil
+	}
+
+	var synthetic []event.Event
+
+	// Orphaned children: a spawn.start whose spawn.done never arrived.
+	for _, node := range state.tree.nodes {
+		if !node.orphaned {
+			continue
+		}
+		parent := node.parent
+		if parent == "" {
+			parent = rootID
+		}
+		payload, err := event.MarshalPayload(event.SpawnDonePayload{
+			ChildNodeID: node.id,
+			ParentID:    parent,
+			Label:       node.label,
+			Depth:       node.depth,
+			Err:         orphanedSpawnErr,
+			Orphaned:    true,
+		})
+		if err != nil {
+			return state, fmt.Errorf("runtime: resume orphan repair (spawn.done %q): %w", node.id, err)
+		}
+		synthetic = append(synthetic, event.Event{
+			NodeID:   node.id,
+			ParentID: parent,
+			Depth:    node.depth,
+			Kind:     event.KindSpawnDone,
+			Payload:  payload,
+		})
+	}
+
+	// Root tool calls that never got a result. Build the set of call IDs that DO
+	// have a tool message, then manufacture a result for every call left over.
+	answered := map[string]bool{}
+	for _, m := range state.messages {
+		if m.Role == "tool" && m.ToolCallID != "" {
+			answered[m.ToolCallID] = true
+		}
+	}
+	for _, m := range state.messages {
+		if m.Role != "assistant" {
+			continue
+		}
+		for _, call := range m.ToolCalls {
+			if answered[call.ID] {
+				continue
+			}
+			payload, err := event.MarshalPayload(event.ToolResultPayload{
+				ID:        call.ID,
+				Name:      call.Name,
+				Result:    syntheticToolResultText,
+				IsError:   true,
+				Synthetic: true,
+			})
+			if err != nil {
+				return state, fmt.Errorf("runtime: resume orphan repair (tool.result %q): %w", call.ID, err)
+			}
+			synthetic = append(synthetic, event.Event{
+				NodeID:  rootID,
+				Kind:    event.KindToolResult,
+				Payload: payload,
+			})
+		}
+	}
+
+	if len(synthetic) == 0 {
+		return state, nil
+	}
+
+	for _, e := range synthetic {
+		if err := store.Append(ctx, key, e); err != nil {
+			return state, fmt.Errorf("runtime: resume orphan repair append (%s): %w", e.Kind, err)
+		}
+	}
+
+	// Re-replay so the repaired stream is what this resume actually seeds from: the
+	// synthetic records are durable history now, and the fold must observe them
+	// exactly as a later replica would.
+	events, err := store.Replay(ctx, key, 0)
+	if err != nil {
+		return state, fmt.Errorf("runtime: resume orphan repair replay: %w", err)
+	}
+	repaired, err := reconstructLoopState(events, rootID)
+	if err != nil {
+		return state, fmt.Errorf("runtime: resume orphan repair reconstruct: %w", err)
+	}
+	return repaired, nil
+}
+
+const (
+	// orphanedSpawnErr is the error a synthetic spawn.done carries: it names the
+	// cause (the owner died) rather than pretending the child failed on its own.
+	orphanedSpawnErr = "owner lost before completion"
+	// syntheticToolResultText is the result text a manufactured tool.result carries.
+	// It is a failure the model can read, not a silent gap.
+	syntheticToolResultText = "tool did not complete: the loop was resumed on another instance"
+)
 
 // modelFromEvents recovers the gateway model id a loop ran under from its durable
 // stream (the model.call.start payload carries it), so a resumed loop re-parks under

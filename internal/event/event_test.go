@@ -387,3 +387,74 @@ func TestLoopCancelRequestPayloadJSON(t *testing.T) {
 		t.Errorf("got %s, want %s", got, want)
 	}
 }
+
+// TestPayloadAdditionsRoundTrip (change 0127, task 1) covers the additive payload
+// fields added for stream-rebuilt loop state: SummarizePayload.Summary/InsertAt,
+// SpawnDonePayload.Orphaned, ToolResultPayload.Synthetic, and
+// SpawnStartPayload.Pool. Each is a new-field-set value round-tripped through
+// MarshalPayload/ParseEvent, and each is decoded back into zero-value form via
+// json.Unmarshal so the assertion is field-by-field, not raw-bytes equality.
+func TestPayloadAdditionsRoundTrip(t *testing.T) {
+	cases := []any{
+		SummarizePayload{TurnStart: 0, TurnEnd: 3, TokensBefore: 100, TokensAfter: 20, Summary: "[compacted summary of turns 0..3]", InsertAt: 5},
+		SpawnDonePayload{ChildNodeID: "n2", ParentID: "n1", Result: "done", Orphaned: true},
+		ToolResultPayload{ID: "c1", Name: "read_file", Result: "data", Synthetic: true},
+		SpawnStartPayload{ChildNodeID: "n2", Label: "researcher", Task: "do it", Pool: "workers"},
+	}
+	for i, in := range cases {
+		raw, err := MarshalPayload(in)
+		if err != nil {
+			t.Fatalf("case %d marshal: %v", i, err)
+		}
+		out := reflect.New(reflect.TypeOf(in)).Interface()
+		if err := json.Unmarshal(raw, out); err != nil {
+			t.Fatalf("case %d unmarshal: %v", i, err)
+		}
+		if !reflect.DeepEqual(reflect.ValueOf(out).Elem().Interface(), in) {
+			t.Errorf("case %d round trip = %+v, want %+v", i, reflect.ValueOf(out).Elem().Interface(), in)
+		}
+	}
+}
+
+// TestPayloadAdditionsAbsentAreZero (change 0127, task 1) simulates an OLD
+// stream: a payload that never emitted the new fields. Decoding it must not
+// error and the new fields must be zero-valued, so old events.jsonl replays
+// unchanged against the widened payload structs.
+func TestPayloadAdditionsAbsentAreZero(t *testing.T) {
+	old := []json.RawMessage{
+		// Pre-0127 SummarizePayload: no summary, no insert_at.
+		json.RawMessage(`{"turn_start":0,"turn_end":3,"tool_names":["bash"],"tokens_before":100,"tokens_after":20,"pointer":"/p"}`),
+		// Pre-0127 SpawnDonePayload: no orphaned.
+		json.RawMessage(`{"child_node_id":"n2","parent_id":"n1","label":"researcher","depth":1,"result":"done"}`),
+		// Pre-0127 ToolResultPayload: no synthetic.
+		json.RawMessage(`{"id":"c1","name":"read_file","result":"data","is_error":false}`),
+		// Pre-0127 SpawnStartPayload: no pool.
+		json.RawMessage(`{"child_node_id":"n2","label":"researcher","task":"do it"}`),
+	}
+	targets := []reflect.Value{
+		reflect.ValueOf(&SummarizePayload{}),
+		reflect.ValueOf(&SpawnDonePayload{}),
+		reflect.ValueOf(&ToolResultPayload{}),
+		reflect.ValueOf(&SpawnStartPayload{}),
+	}
+	newFields := map[string][]string{
+		"SummarizePayload": {"Summary", "InsertAt"},
+		"SpawnDonePayload": {"Orphaned"},
+		"ToolResultPayload": {"Synthetic"},
+		"SpawnStartPayload": {"Pool"},
+	}
+	for i, raw := range old {
+		tgt := targets[i]
+		if err := json.Unmarshal(raw, tgt.Interface()); err != nil {
+			t.Fatalf("case %d unmarshal old stream: %v", i, err)
+		}
+		orig := tgt.Elem()
+		for _, name := range newFields[orig.Type().Name()] {
+			field := orig.FieldByName(name)
+			zero := reflect.Zero(field.Type())
+			if got := field.Interface(); !reflect.DeepEqual(got, zero.Interface()) {
+				t.Errorf("case %d %s.%s = %#v, want zero", i, orig.Type().Name(), name, got)
+			}
+		}
+	}
+}

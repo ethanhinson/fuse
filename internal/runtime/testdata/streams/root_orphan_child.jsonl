@@ -1,0 +1,6 @@
+{"seq":1,"node_id":"root","depth":0,"turn":0,"kind":"user.input","payload":{"content":"Hello","turn":0}}
+{"seq":2,"node_id":"root","depth":0,"turn":0,"kind":"model.call.end","payload":{"content":"Let me spawn a helper","input_tokens":10,"output_tokens":20,"tool_calls":[{"id":"call1","name":"spawn_agent"}]}}
+{"seq":3,"node_id":"root","depth":0,"turn":0,"kind":"tool.call","payload":{"id":"call1","name":"spawn_agent","args":{"task":"do something"}}}
+{"seq":4,"node_id":"child1","parent_id":"root","depth":1,"turn":0,"kind":"spawn.start","payload":{"child_node_id":"child1","label":"helper","pool":"default","task":"do something","role":"assistant"}}
+{"seq":5,"node_id":"child1","depth":1,"turn":0,"kind":"model.call.end","payload":{"content":"child result","input_tokens":5,"output_tokens":10}}
+{"seq":6,"node_id":"root","depth":0,"turn":0,"kind":"loop.parked","payload":{"turn":0,"content":"All done"}}
