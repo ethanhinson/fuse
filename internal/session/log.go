@@ -177,8 +177,9 @@ func SweepOld(dir string, maxAge time.Duration, pattern string) {
 }
 
 // SweepOldSegments is the NON-DESTRUCTIVE segment GC (change 0030 scope
-// correction). New segments are born gzip-compressed as "*.md.gz" (see
-// fssink.Archive), so the common case is a no-op. This sweep exists only to
+// correction). New segments live in the artifact store
+// (<artifacts>/<tenant>/<loop>/segment/, via fssink/artsink), never under
+// baseDir, so the common case is a no-op. This sweep exists only to
 // retroactively compress LEGACY plaintext "*.md" segments older than maxAge
 // (baseDir/*/segments/*.md, 14-day window at the call site): it gzips each in
 // place to "<name>.md.gz", removes the plaintext original, and re-points that

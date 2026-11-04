@@ -4,42 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
+	"github.com/ethanhinson/fuse/internal/artifact"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/segment"
 )
-
-// segmentsDir holds the running session's segments directory, set once at
-// session start (keyed by the root AgentNode.ID) via SetSegmentsDir and read by
-// the segment_read tool DefaultTools() registers. Mirrors SetSpillDir's
-// package-level model — one process serves one session. Empty ⇒ segment
-// archiving is off / no session, and segment_read returns a clean "no segments"
-// result rather than an error.
-var (
-	segmentsMu  sync.RWMutex
-	segmentsDir string
-)
-
-// SetSegmentsDir installs the running session's segments directory for the
-// segment_read tool. Empty disables recovery (clean "no segments" result).
-func SetSegmentsDir(dir string) {
-	segmentsMu.Lock()
-	segmentsDir = dir
-	segmentsMu.Unlock()
-}
-
-// currentSegmentsDir returns the installed session segments dir (empty when
-// unset).
-func currentSegmentsDir() string {
-	segmentsMu.RLock()
-	defer segmentsMu.RUnlock()
-	return segmentsDir
-}
 
 // segmentReadMaxBytes bounds the raw-region text segment_read returns up front,
 // before the registry's central spill truncation. Sized to a few big tool
@@ -47,18 +19,14 @@ func currentSegmentsDir() string {
 const segmentReadMaxBytes = 32 << 10
 
 // segmentReadTool recovers raw pre-compaction transcript regions the summarizer
-// archived (change 0030). It reads ONLY the running session's segments/ dir,
-// resolved lazily via dirFn so it always sees the current session (the dir is
-// keyed by the root AgentNode.ID at session start).
-type segmentReadTool struct {
-	dirFn func() string
-}
+// archived. It reads ONLY the running loop's segments, resolved per call through
+// the artifact binding the registry stamps onto the tool's context, so a loop
+// sees its own (tenant, loop) archive on whichever runtime serves it.
+type segmentReadTool struct{}
 
-// NewSegmentRead builds the segment_read tool. dirFn returns the running
-// session's segments directory (empty ⇒ segment archiving is off / no session).
-func NewSegmentRead(dirFn func() string) Tool {
-	return segmentReadTool{dirFn: dirFn}
-}
+// NewSegmentRead builds the segment_read tool. A call whose context carries no
+// valid artifact binding reports that segment archiving is not active.
+func NewSegmentRead() Tool { return segmentReadTool{} }
 
 func (segmentReadTool) Name() string { return "segment_read" }
 
@@ -92,7 +60,7 @@ type segmentReadArgs struct {
 	ToolFilter string `json:"tool_filter"`
 }
 
-func (t segmentReadTool) Execute(ctx context.Context, args string) Result {
+func (segmentReadTool) Execute(ctx context.Context, args string) Result {
 	var a segmentReadArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return Result{IsError: true, Output: fmt.Sprintf("bad arguments: %v", err)}
@@ -102,17 +70,17 @@ func (t segmentReadTool) Execute(ctx context.Context, args string) Result {
 		return Result{IsError: true, Output: fmt.Sprintf("segment_read: bad turn_range %q — use \"12\" or \"12-18\"", a.TurnRange)}
 	}
 
-	segDir := ""
-	if t.dirFn != nil {
-		segDir = t.dirFn()
-	}
-	if segDir == "" {
+	binding, ok := artifact.BindingFrom(ctx)
+	if !ok || !binding.Valid() {
 		return Result{Output: "no segments — segment archiving is not active for this session"}
 	}
+	src := segment.NewArtifactSource(binding)
 
-	idx, err := segment.ReadIndex(segDir)
+	idx, err := src.ReadIndex(ctx)
 	if err != nil {
-		return Result{IsError: true, Output: fmt.Sprintf("segment_read: reading index: %v", err)}
+		// Fixed text: the store error can name a backend's host path, and the
+		// tool result is durable.
+		return Result{IsError: true, Output: "segment_read: reading the segment index failed"}
 	}
 
 	// Overlapping segments, oldest turn first for a stable, readable order.
@@ -136,7 +104,7 @@ func (t segmentReadTool) Execute(ctx context.Context, args string) Result {
 		if ctx.Err() != nil {
 			break
 		}
-		seg, lerr := segment.LoadSegment(filepath.Join(segDir, e.Path))
+		seg, lerr := src.Load(ctx, e)
 		if lerr != nil {
 			continue // skip an unreadable segment rather than fail the whole call
 		}

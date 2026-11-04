@@ -256,8 +256,8 @@ func gatewayAdapter(cfg config.Config, gate model.RateGate) *model.Adapter {
 //
 // segSink is the loop's own SegmentSink (change 0046 — threaded as a value instead
 // of the retired process-global currentSegmentSink()); nil ⇒ the agent's no-op
-// default (persists nothing, omits the recovery pointer). Only the interactive
-// shell installs a real sink; one-shot / probe / loop-server pass nil.
+// default (persists nothing, omits the recovery pointer). The interactive shell
+// and the loop server install a real sink; one-shot and probe pass nil.
 func installSummarizer(a *agent.Agent, cfg config.Config, mainModelID string, traceW io.Writer, gate model.RateGate, segSink agent.SegmentSink) {
 	s := cfg.Context.Summarization
 	if !s.Enabled {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/artifact"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/event/fsstore"
 	"github.com/ethanhinson/fuse/internal/model"
@@ -57,6 +58,11 @@ type Deps struct {
 	// by the binding via BuildAgent's closure over the same registry). May be nil,
 	// in which case an empty registry is used.
 	NewToolRegistry func() *tools.Registry
+	// Artifacts is the per-(tenant, loop) artifact store for spill + segments; nil ⇒
+	// an in-memory store with a per-loop cap. StartLoop binds every loop's tool
+	// registry to it under the loop's own key, overriding any binding the registry
+	// factory supplied: the runtime is the authoritative, last writer.
+	Artifacts artifact.Store
 	// BaseDir is where per-loop fsstore event logs live (e.g. session.DefaultLogDir()).
 	// When "", StartLoop uses event.NoopStore{} instead of opening an fsstore — the
 	// one-shot binding uses this so its behavior stays byte-identical (no new files).
@@ -234,6 +240,9 @@ type loop struct {
 func New(deps Deps) Runtime {
 	if deps.Observer == nil {
 		deps.Observer = observe.NoopObserver{}
+	}
+	if deps.Artifacts == nil {
+		deps.Artifacts = artifact.NewMemStore(artifact.WithPerLoopCap(artifact.DefaultMemLoopCap))
 	}
 	return &inProcRuntime{deps: deps, loops: map[string]*loop{}}
 }
@@ -713,6 +722,11 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	} else {
 		toolReg = tools.NewRegistry()
 	}
+	// Bind the loop's registry to its own (tenant, loop) artifact key. Every path -
+	// orchestrator, binding factory, harness-resolved factory, resume - passes
+	// through here, and the runtime writes last so a factory-supplied binding never
+	// survives into the loop.
+	toolReg.WithArtifacts(r.deps.Artifacts, tenant, event.LoopID(rootID))
 
 	// BuildAgent is the per-loop factory: it binds the root agent AND the loop's
 	// child-builder to THIS loop's own store + tree (change 0046 de-globalization).

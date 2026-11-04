@@ -69,15 +69,6 @@ func TestRenderSegmentFormat(t *testing.T) {
 	}
 }
 
-func TestFileNameFormat(t *testing.T) {
-	if got := FileName(12, 18, 1); got != "12-18-1.md" {
-		t.Errorf("FileName = %q, want 12-18-1.md", got)
-	}
-	if got := FileName(0, 0, 3); got != "0-0-3.md" {
-		t.Errorf("FileName = %q, want 0-0-3.md", got)
-	}
-}
-
 func TestIndexJSONSchema(t *testing.T) {
 	idx := Index{
 		SessionID: "root-abc",

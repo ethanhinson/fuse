@@ -1,34 +1,41 @@
 package tui
 
 import (
-	"os"
-	"path/filepath"
+	"context"
 	"strings"
+	"time"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/segment"
 )
 
+// segCacheTTL bounds how long a read segment index serves the header before the
+// store is read again: long enough that a per-frame render is not a store read
+// every frame, short enough that a new archive shows up promptly.
+const segCacheTTL = time.Second
+
+// segReadTimeout bounds one store read from the render path, so a slow store
+// cannot stall the UI.
+const segReadTimeout = 2 * time.Second
+
 // segmentSummary returns the session's segment count and total tokens
-// before/after, reading the session index.json but caching the parse keyed by
-// the index file's mod time so a per-render header read is not a fresh disk hit
-// every frame. Returns nil when segment archiving is off or no segments exist.
+// before/after, reading the session index through the segment source but
+// caching the result for segCacheTTL. Returns nil when segment archiving is off
+// or no segments exist.
 func (m *AgentsModel) segmentSummary() *segmentSummaryData {
-	if m.segmentsDir == "" {
+	if m.segments == nil {
 		return nil
 	}
-	idxPath := filepath.Join(m.segmentsDir, segment.IndexFileName)
-	info, err := os.Stat(idxPath)
-	if err != nil {
-		return nil
-	}
-	if m.segCache != nil && info.ModTime().Equal(m.segCacheMod) {
+	now := time.Now()
+	if !m.segCacheAt.IsZero() && now.Sub(m.segCacheAt) < segCacheTTL {
 		return m.segCache
 	}
-	idx, err := segment.ReadIndex(m.segmentsDir)
+	ctx, cancel := context.WithTimeout(context.Background(), segReadTimeout)
+	defer cancel()
+	idx, err := m.segments.ReadIndex(ctx)
+	m.segCacheAt = now
 	if err != nil || len(idx.Segments) == 0 {
 		m.segCache = nil
-		m.segCacheMod = info.ModTime()
 		return nil
 	}
 	sum := &segmentSummaryData{count: len(idx.Segments)}
@@ -37,7 +44,6 @@ func (m *AgentsModel) segmentSummary() *segmentSummaryData {
 		sum.tokensAfter += e.TokensAfter
 	}
 	m.segCache = sum
-	m.segCacheMod = info.ModTime()
 	return sum
 }
 
@@ -60,16 +66,18 @@ func (m *AgentsModel) segmentIndicatorLine(n agent.NodeView) string {
 // loadSegmentRegions reads every archived segment's raw region into one text
 // blob for the "s" drill-in. Best-effort: unreadable segments are skipped.
 func (m *AgentsModel) loadSegmentRegions() string {
-	if m.segmentsDir == "" {
+	if m.segments == nil {
 		return ""
 	}
-	idx, err := segment.ReadIndex(m.segmentsDir)
+	ctx, cancel := context.WithTimeout(context.Background(), segReadTimeout)
+	defer cancel()
+	idx, err := m.segments.ReadIndex(ctx)
 	if err != nil || len(idx.Segments) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	for _, e := range idx.Segments {
-		seg, lerr := segment.LoadSegment(filepath.Join(m.segmentsDir, e.Path))
+		seg, lerr := m.segments.Load(ctx, e)
 		if lerr != nil {
 			continue
 		}

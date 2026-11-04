@@ -11,8 +11,8 @@ package main
 // `-tags pgstore` binary still works locally without a database. The DSN is read
 // from the environment (FUSE_PG_DSN, else DATABASE_URL) so config.Config stays
 // unchanged — the tagged path never mutates the shared schema. This file is the ONLY
-// place cmd/fuse imports pgstore (and thus pgx), keeping the untagged binary
-// Postgres-free (ADR-0030 composition-root selection).
+// place cmd/fuse imports a pgstore (event or artifact, and thus pgx), keeping the
+// untagged binary Postgres-free (ADR-0030 composition-root selection).
 //
 // pgstore.Open is a value returned into runtime.Deps (never a construction-time
 // shared global): one *pgstore.PGStore satisfies BOTH event.DurableStore and
@@ -22,6 +22,8 @@ import (
 	"context"
 	"os"
 
+	"github.com/ethanhinson/fuse/internal/artifact"
+	artpg "github.com/ethanhinson/fuse/internal/artifact/pgstore"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/event/pgstore"
@@ -54,4 +56,23 @@ func selectDurableBackend(cfg config.Config) (event.DurableStore, event.LoopRegi
 		return nil, nil, err
 	}
 	return s, s, nil
+}
+
+// selectArtifactStore (pgstore build) selects the Postgres artifact store when a
+// DSN is configured, so every instance sharing the database reads one loop's
+// spill and segments; with no DSN it falls through to the filesystem store. It
+// opens its own pool, separate from the event store's.
+func selectArtifactStore(cfg config.Config) (artifact.Store, error) {
+	if dsn := pgDSN(); dsn != "" {
+		s, err := artpg.Open(context.Background(), dsn)
+		if err != nil {
+			return nil, err
+		}
+		return s, nil
+	}
+	s, err := newFSArtifactStore()
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
 }

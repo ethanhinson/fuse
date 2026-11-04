@@ -14,6 +14,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/ratelimit"
+	"github.com/ethanhinson/fuse/internal/segment"
 )
 
 // agentsExitMsg is returned to the parent ShellModel when AgentsModel exits.
@@ -77,14 +78,15 @@ type AgentsModel struct {
 	// pane so the overlay shows the throughput brake alongside the pool counters.
 	rateGate *ratelimit.Bucket
 
-	// segmentsDir is the session's segments/ directory (change 0030), or "" when
-	// segment archiving is off. The header reads its index.json (cached) to show
-	// the segments indicator, and "s" reads the archived raw regions into the
-	// existing event drill-in. segCache/segCacheMod cache the last parsed index so
-	// the per-render header read is not a fresh disk hit every frame.
-	segmentsDir   string
+	// segments reads the session's archived compaction segments (change 0030),
+	// or is nil when segment archiving is off. The header reads its index
+	// (cached) to show the segments indicator, and "s" reads the archived raw
+	// regions into the existing event drill-in. segCache/segCacheAt cache the
+	// last read index for segCacheTTL so a per-frame render does not re-read the
+	// store every frame.
+	segments      segment.Source
 	segCache      *segmentSummaryData
-	segCacheMod   time.Time
+	segCacheAt    time.Time
 	inSegmentView bool               // showing archived raw region in the drill-in
 	segEvents     []agent.AgentEvent // synthetic single event feeding buildEventViewLines
 }
@@ -113,11 +115,11 @@ func (m *AgentsModel) WithBlackboard(bb *agent.Blackboard) *AgentsModel {
 	return m
 }
 
-// WithSegmentsDir attaches the session's segments/ directory (change 0030) so
-// the detail header can show the compaction indicator and "s" can open the
-// archived raw region in the drill-in. Empty ("") is the no-segments path.
-func (m *AgentsModel) WithSegmentsDir(dir string) *AgentsModel {
-	m.segmentsDir = dir
+// WithSegments attaches the session's segment source (change 0030) so the
+// detail header can show the compaction indicator and "s" can open the archived
+// raw region in the drill-in. Nil is the no-segments path.
+func (m *AgentsModel) WithSegments(src segment.Source) *AgentsModel {
+	m.segments = src
 	return m
 }
 

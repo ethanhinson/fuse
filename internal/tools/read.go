@@ -25,14 +25,15 @@ const readDefaultWindow = 1000
 func (readTool) Description() string {
 	return "Read a file's contents with 1-based inclusive line ranges. " +
 		"Without a range, the first 1000 lines are returned; the footer says how to continue. " +
-		"Prefer grep to locate, then read just the ranges you need."
+		"Prefer grep to locate, then read just the ranges you need. " +
+		"path may also be an art:// artifact ref (e.g. from a spilled-output marker)."
 }
 
 func (readTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"path":       map[string]any{"type": "string", "description": "File path to read"},
+			"path":       map[string]any{"type": "string", "description": "File path or art:// artifact ref to read"},
 			"start_line": map[string]any{"type": "integer", "description": "First line (1-based, inclusive)"},
 			"end_line":   map[string]any{"type": "integer", "description": "Last line (1-based, inclusive)"},
 		},
@@ -55,10 +56,20 @@ func (readTool) Execute(ctx context.Context, args string) Result {
 	// "<path>.gz" archive) is gunzipped so the model's generic read_file keeps
 	// working on archived spill/log files. Plaintext files pass through unchanged.
 	// A truncated/corrupt gzip returns an error, never a panic.
-	data, err := archive.Open(a.Path)
+	// An art:// ref resolves through the loop's artifact binding instead.
+	data, handled, err := readArtifact(ctx, a.Path)
+	if !handled {
+		data, err = archive.Open(a.Path)
+	}
 	if err != nil {
 		return Result{IsError: true, Output: err.Error()}
 	}
+	return renderRead(a.Path, data, a)
+}
+
+// renderRead applies the binary refusal and line-range windowing shared by
+// filesystem paths and artifact refs.
+func renderRead(path string, data []byte, a readArgs) Result {
 	// Refuse binaries: raw executable bytes poison the model context and the
 	// control characters corrupt terminal rendering. The check runs on the
 	// DECOMPRESSED bytes so a gzipped binary is still refused.
@@ -69,7 +80,7 @@ func (readTool) Execute(ctx context.Context, args string) Result {
 	if bytes.IndexByte(head, 0) >= 0 {
 		return Result{IsError: true, Output: fmt.Sprintf(
 			"%s appears to be a binary file (%d bytes) — not readable as text. Use bash (file, strings, otool, xxd) for binary inspection.",
-			a.Path, len(data))}
+			path, len(data))}
 	}
 	lines := strings.Split(string(data), "\n")
 	total := len(lines)

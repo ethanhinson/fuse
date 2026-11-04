@@ -13,23 +13,28 @@ import (
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/artifact"
+	artfs "github.com/ethanhinson/fuse/internal/artifact/fsstore"
+	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/segment"
-	"github.com/ethanhinson/fuse/internal/segment/fssink"
+	"github.com/ethanhinson/fuse/internal/segment/artsink"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
 
 // TestSegmentGatewaySeamArchivesAndRecovers drives a real agent turn through the
 // production segment wiring (real model.Adapters POSTing to a scripted httptest
-// gateway, the concrete FSSegmentSink threaded per-loop into EnableSummarization
-// exactly as installSummarizer now does with its segSink value, change 0046) and
-// asserts the loop wiring end-to-end at the gateway seam (learning
-// verify-tool-loop-at-gateway-seam):
+// gateway, the store-backed artsink threaded per-loop into EnableSummarization
+// exactly as installSummarizer does with its segSink value, and the registry
+// bound to the same loop as the shell binds it) and asserts the loop wiring
+// end-to-end at the gateway seam (learning verify-tool-loop-at-gateway-seam):
 //
-//	(a) a segment file + index.json entry are written under ~/.fuse/sessions/<id>/
+//	(a) one index entry, and the segment body under
+//	    <base>/<tenant>/<loop>/segment/ is gzip at rest
 //	(b) the post-compaction MAIN request carries the summary WITH the
-//	    "Recovery: grep your past at <path>" line
-//	(c) a subsequent segment_read call round-trips the archived raw content.
+//	    "Recovery: grep your past at art://" line
+//	(c) a subsequent segment_read call round-trips the archived raw content
+//	(d) grep on the recovery pointer ref finds the raw content.
 func TestSegmentGatewaySeamArchivesAndRecovers(t *testing.T) {
 	const cannedSummary = "Objective: verify seam\nState: compacted\nNext: proceed\nFiles: none"
 
@@ -57,18 +62,18 @@ func TestSegmentGatewaySeamArchivesAndRecovers(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Session dir keyed by a fixed root id, wired the production way.
+	// One loop's store binding keyed by a fixed root id, wired the shell's way:
+	// the registry is bound first and the sink is built from its binding.
 	base := t.TempDir()
 	const rootID = "root-seam"
-	sink := fssink.NewFSSegmentSink(base, rootID)
-
-	segDir := segment.SegmentsDir(base, rootID)
-	tools.SetSegmentsDir(segDir)
-	t.Cleanup(func() { tools.SetSegmentsDir("") })
-
 	reg := tools.NewRegistry()
 	for _, tl := range tools.DefaultTools(nil) {
 		reg.Register(tl)
+	}
+	reg.WithArtifacts(artfs.New(base), event.DefaultTenant, rootID)
+	sink := artsink.New(reg.Artifacts())
+	if sink == nil {
+		t.Fatal("artsink.New returned nil for the bound registry")
 	}
 
 	mainAdapter := model.NewAdapter(srv.URL, "tkn", srv.Client())
@@ -94,29 +99,18 @@ func TestSegmentGatewaySeamArchivesAndRecovers(t *testing.T) {
 		t.Fatalf("agent run: %v", err)
 	}
 
-	// (a) segment file + index.json under the session dir.
-	entries, err := os.ReadDir(segDir)
-	if err != nil {
-		t.Fatalf("segments dir not created: %v", err)
-	}
-	var mdFile, idxFile string
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".md.gz") {
-			mdFile = e.Name()
-		}
-		if e.Name() == segment.IndexFileName {
-			idxFile = e.Name()
-		}
-	}
-	if mdFile == "" {
-		t.Fatal("no segment .md.gz file written under the session dir")
-	}
-	if idxFile == "" {
-		t.Fatal("no index.json written under the session dir")
-	}
-	idx, err := segment.ReadIndex(segDir)
+	// (a) one index entry; its segment body is gzip at rest on disk.
+	idx, err := segment.NewArtifactSource(reg.Artifacts()).ReadIndex(context.Background())
 	if err != nil || len(idx.Segments) != 1 {
-		t.Fatalf("index.json should have exactly 1 entry, got %+v (err %v)", idx, err)
+		t.Fatalf("index should have exactly 1 entry, got %+v (err %v)", idx, err)
+	}
+	segID := idx.Segments[0].Path
+	raw, err := os.ReadFile(filepath.Join(base, string(event.DefaultTenant), rootID, string(artifact.KindSegment), segID))
+	if err != nil {
+		t.Fatalf("segment body not under <base>/<tenant>/<loop>/segment/: %v", err)
+	}
+	if len(raw) < 2 || raw[0] != 0x1f || raw[1] != 0x8b {
+		t.Errorf("segment body not gzip at rest (first bytes % x)", raw[:min(2, len(raw))])
 	}
 
 	// (b) post-compaction main request carries the summary + recovery pointer.
@@ -129,32 +123,31 @@ func TestSegmentGatewaySeamArchivesAndRecovers(t *testing.T) {
 	if !strings.Contains(body, "Objective: verify seam") {
 		t.Errorf("post-compaction main request missing the injected summary")
 	}
-	if !strings.Contains(body, "Recovery: grep your past at ") {
-		t.Errorf("post-compaction main request missing the recovery pointer line:\n%s", body)
+	pointer := artifact.Ref{Tenant: event.DefaultTenant, Loop: rootID, Kind: artifact.KindSegment, ID: segID}.String()
+	if !strings.Contains(body, "Recovery: grep your past at art://") {
+		t.Errorf("post-compaction main request missing the art:// recovery pointer line:\n%s", body)
 	}
-	wantPath := filepath.Join(segDir, mdFile)
-	if !strings.Contains(body, wantPath) {
-		t.Errorf("recovery pointer does not point at the written segment file %q", wantPath)
+	if !strings.Contains(body, pointer) {
+		t.Errorf("recovery pointer does not name the archived segment %q", pointer)
 	}
 
-	// (c) segment_read round-trips the raw content the sink archived.
-	var readTool tools.Tool
-	for _, tl := range reg.Tools() {
-		if tl.Name() == "segment_read" {
-			readTool = tl
-		}
-	}
-	if readTool == nil {
-		t.Fatal("segment_read not registered")
-	}
+	// (c) segment_read round-trips the raw content the sink archived, resolved
+	// through the binding the registry stamps onto the call.
 	e := idx.Segments[0]
 	args := `{"turn_range":"` + itoaTest(e.TurnStart) + `-` + itoaTest(e.TurnEnd) + `"}`
-	res := readTool.Execute(context.Background(), args)
+	res := reg.Execute(context.Background(), "segment_read", args)
 	if res.IsError {
 		t.Fatalf("segment_read error: %s", res.Output)
 	}
 	if !strings.Contains(res.Output, "RAWDATA-") {
 		t.Errorf("segment_read did not round-trip the archived raw region; got:\n%s", tailStr(res.Output, 200))
+	}
+
+	// (d) grep on the recovery pointer finds the raw content.
+	gargs, _ := json.Marshal(map[string]string{"pattern": "RAWDATA", "path": pointer})
+	gres := reg.Execute(context.Background(), "grep", string(gargs))
+	if gres.IsError || !strings.Contains(gres.Output, "RAWDATA") {
+		t.Errorf("grep on %s did not find the raw content: %s", pointer, tailStr(gres.Output, 200))
 	}
 }
 

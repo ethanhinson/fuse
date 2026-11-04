@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/probe"
 	"github.com/ethanhinson/fuse/internal/runtime"
-	"github.com/ethanhinson/fuse/internal/session"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
 )
@@ -73,9 +71,6 @@ func runResearchProbe(args []string, cfg config.Config, reg *model.Registry, std
 		defer closeTrace()
 		traceW = w
 	}
-
-	// Spill dir for truncated tool outputs, exactly as the real shell sets it.
-	tools.SetSpillDir(filepath.Join(filepath.Dir(session.DefaultLogDir()), "tool-output"))
 
 	// Load skills WITH the embedded research skill folded in, so the flow the
 	// probe drives is byte-for-byte the one /research runs.

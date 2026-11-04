@@ -7,14 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	goruntime "runtime"
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/banner"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/runtime"
-	"github.com/ethanhinson/fuse/internal/session"
 	"github.com/ethanhinson/fuse/internal/skills"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/version"
@@ -182,9 +180,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// hook stays nil so a trip aborts instead of auto-continuing forever.
 	// Explicit max_turns config still wins. (0038, review CONCERN)
 	oneShotBudget := oneShotBudgetInteractive(oneShotInteractive, *approveAll)
-
-	// Spill dir for truncated tool outputs (recoverable via grep/read_file).
-	tools.SetSpillDir(filepath.Join(filepath.Dir(session.DefaultLogDir()), "tool-output"))
 
 	// Skills: load the real set (including the embedded research skill) so
 	// one-shot mode can invoke a matching skill, exactly like shell mode. The
