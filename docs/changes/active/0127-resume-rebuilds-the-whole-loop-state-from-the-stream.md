@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'fix/resume-rebuilds-the-whole-loop-state-from-the-stream'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -44,3 +44,9 @@ Resume replays the stream but folds only the four transcript kinds. Child turns 
 ## Out of scope
 
 Re-dispatching orphaned children or pipelines (they are failed, not retried); durable blackboard (0131); pipeline run events (0132); remote spawning (0137).
+
+## Reconcile log
+
+### 2026-11-04
+
+Reconciled against origin/main f01f122. All spec code references verified present. No design changes needed.
