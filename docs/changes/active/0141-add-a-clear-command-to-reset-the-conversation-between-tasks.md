@@ -2,7 +2,7 @@
 id: 141
 slug: 'add-a-clear-command-to-reset-the-conversation-between-tasks'
 title: 'Add a /clear command to reset the conversation between tasks'
-status: 'proposed'
+status: 'in-progress'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/add-a-clear-command-to-reset-the-conversation-between-tasks'
 pr:
 blocked_by:
 reconciled: false
