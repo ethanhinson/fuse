@@ -1006,6 +1006,15 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 			m.appendLine(headerStyle.Render("cannot clear while a turn is running — wait or /interrupt first"))
 			return m, nil
 		}
+		// Drain the pending approval and ask queues through their dedicated
+		// helpers first: a bare `= nil` would orphan the gate/tool goroutines
+		// blocked on each entry's RespCh (the deadlock behind the historical
+		// TUI freezes — see drainApprovals/drainAsks). Clearing the logs
+		// afterwards keeps the recallable history (/approvals, /questions)
+		// empty as the spec requires, without leaking the channel writes into
+		// the fresh transcript.
+		m.drainApprovals()
+		m.drainAsks()
 		m.history = nil
 		m.lines = nil
 		m.pendingCalls = nil
@@ -1013,7 +1022,6 @@ func (m ShellModel) handleSlash(line string) (tea.Model, tea.Cmd) {
 		m.inlineByNode = make(map[string]*inlineAgentState)
 		m.approvalLog = nil
 		m.askLog = nil
-		m.approvals = nil
 		m.refreshViewport(true)
 		m.appendLine(headerStyle.Render("conversation cleared"))
 		return m, nil
