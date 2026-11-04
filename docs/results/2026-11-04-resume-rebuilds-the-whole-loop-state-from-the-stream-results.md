@@ -4,35 +4,27 @@
 
 # Results — Resume rebuilds the whole loop state from the stream (#0127)
 
+Human action: review and merge PR #134 (https://github.com/ethanhinson/fuse/pull/134) — the resume fold, orphan repair, and budget seeding are implemented, tested, and gated green.
+
 ## Summary
 
-`reconstructMessages` grew into `reconstructLoopState`, a full fold of the durable event stream that filters by node, builds a tree view, seeds budgets, carries summaries, and repairs orphans durably — so a loop that moves between replicas is identical to one that never moved.
+reconstructMessages grew into reconstructLoopState, a full fold of the durable event stream that filters by node, builds a tree view, seeds budgets, carries summaries, and repairs orphans durably — so a loop that moves between replicas is identical to one that never moved.
 
 ## What was done
 
-- **Payload additions** (additive, `omitempty`): `SummarizePayload.Summary`/`InsertAt`, `SpawnDonePayload.Orphaned`, `ToolResultPayload.Synthetic`, `SpawnStartPayload.Pool`.
-- **Full fold** (`reconstructLoopState`): root-node filtering, tree view from spawn.start/done, budgets (spawns, session tokens, pool tokens), summaries.
-- **Orphan repair on resume**: synthetic `spawn.done{Orphaned:true}` and `tool.result{Synthetic:true,IsError:true}` appended durably before the fresh agent launches.
-- **Seeding**: `AgentTree.SeedResume` populates node count + token totals; `Agent.SetSeedSummary` seeds `previousSummary`.
-- **Summary emission**: live path emits `Summary` text and `InsertAt` in `context.summarize`.
+- Payload additions (additive, omitempty): SummarizePayload.Summary/InsertAt, SpawnDonePayload.Orphaned, ToolResultPayload.Synthetic, SpawnStartPayload.Pool.
+- Full fold (reconstructLoopState): root-node filtering, tree view from spawn.start/done, budgets, summaries.
+- Orphan repair on resume: synthetic spawn.done and tool.result appended durably before the fresh agent launches.
+- Seeding: AgentTree.SeedResume populates node count + token totals; Agent.SetSeedSummary seeds previousSummary.
+- Summary emission: live path emits Summary text and InsertAt in context.summarize.
 
 ## Tests
 
-- Golden stream tests (4 `.jsonl` files under `internal/runtime/testdata/streams/`)
-- `TestReconstructLoopStateGolden` — verifies fold, filtering, tree, budgets, summaries
-- `TestRepairOrphansMakesTheTranscriptAPIValid` — orphan repair via real fsstore
-- `TestRepairOrphansCleanStreamAppendsNothing` — no-op on clean stream
-- `TestRepairOrphansIsIdempotent` — second repair adds nothing
-- `TestResumeRepairsOrphansOnTheStream` — full Resume path with fsstore
-- `TestSeedResume` — tree seeding correctness
-- `TestPayloadAdditionsRoundTrip` / `TestPayloadAdditionsAbsentAreZero` — payload backward compat
-- Existing `reconstruct_test.go`, `resume_test.go`, cancel tests — unchanged in outcome
+Golden stream tests, TestReconstructLoopStateGolden, TestRepairOrphansMakesTheTranscriptAPIValid, TestRepairOrphansCleanStreamAppendsNothing, TestRepairOrphansIsIdempotent, TestResumeRepairsOrphansOnTheStream, TestSeedResume, TestPayloadAdditionsRoundTrip, TestPayloadAdditionsAbsentAreZero. Existing reconstruct/resume/cancel tests unchanged in outcome.
 
 ## Build evidence
 
-- `make test` — green
-- `go build ./...` — clean
-- `go vet ./...` — clean
+make test green, go build clean, go vet clean.
 
 ## ADR
 
