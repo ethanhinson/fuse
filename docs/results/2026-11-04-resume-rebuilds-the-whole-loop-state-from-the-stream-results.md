@@ -6,9 +6,13 @@
 
 Human action: review and merge PR #134 (https://github.com/ethanhinson/fuse/pull/134) — the resume fold, orphan repair, and budget seeding are implemented, tested, and gated green.
 
+## Outcome
+
+Implemented and verified: reconstructLoopState replaces reconstructMessages as a full fold of the durable event stream. Root-node filtering keeps child turns out of the root transcript. Orphan repair appends synthetic spawn.done and tool.result events durably so the seed transcript is always API-valid. Budget seeding (SeedResume + SetSeedSummary) restores spawn count, session tokens, pool tokens, and previous summary. make test green. PR #134 open.
+
 ## Summary
 
-reconstructMessages grew into reconstructLoopState, a full fold of the durable event stream that filters by node, builds a tree view, seeds budgets, carries summaries, and repairs orphans durably — so a loop that moves between replicas is identical to one that never moved.
+reconstructMessages grew into reconstructLoopState, a full fold of the durable event stream that filters by node, builds a tree view, seeds budgets, carries summaries, and repairs orphans durably.
 
 ## What was done
 
