@@ -8,33 +8,70 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 )
 
-// reconstructMessages folds a durable event slice back into the model-facing
-// []model.Message transcript (change 0054, D5). It is the correctness core of
-// resume: a loop whose in-memory transcript was discarded on disconnect is rebuilt
-// purely from its durable #47 event stream — the single source of truth (D1) — so a
-// re-parked agent continues with the same history the live loop held.
+// ---------------------------------------------------------------------------
+// Types for reconstructLoopState
+// ---------------------------------------------------------------------------
+
+// loopState is the full reconstructed state of a loop from its durable event
+// stream: the model-facing transcript, a tree of spawned child nodes, budgets
+// (spawn/token counts), and summaries.
+type loopState struct {
+	messages  []model.Message
+	tree      treeView
+	budgets   budgets
+	summaries []summaryAnchor
+}
+
+type treeView struct {
+	nodes []treeNode
+}
+
+type treeNode struct {
+	id, parent, label, role string
+	depth                   int
+	terminal                bool   // has matching spawn.done
+	orphaned                bool   // spawn.start without spawn.done
+}
+
+type budgets struct {
+	spawnsUsed    int
+	sessionTokens int
+	poolTokens    map[string]int // pool ID -> total tokens
+}
+
+type summaryAnchor struct {
+	summary  string
+	insertAt int
+}
+
+// ---------------------------------------------------------------------------
+// reconstructLoopState — full loop state rebuild from a durable event stream
+// ---------------------------------------------------------------------------
 //
-// The mapping is pinned by the spec's event-kind → message-role table; every other
-// kind (turn boundaries, model.call.start, park/keepalive/summarize/gap markers) is
-// model-internal and explicitly SKIPPED. Events must arrive in Seq order (Replay's
-// contract), which is also transcript order, so the fold is a single forward pass:
+// reconstructLoopState folds a durable event slice back into the full loop
+// state the agent loop needs to resume: the model-facing transcript, the spawn
+// tree, budget counters, and summaries (change 0127).
 //
-//   - KindUserInput   → {Role:"user", Content}. User turns are otherwise absent from
-//     the stream; change 0054 added this kind precisely so the fold is lossless.
-//   - KindModelCallEnd → {Role:"assistant", Content, ToolCalls}. The payload's
-//     ToolCalls are refs (ID+Name only); the raw Arguments live in the following
-//     KindToolCall events of the SAME turn, so the assistant message is held pending
-//     and its tool-call Arguments are filled in as those events arrive, then flushed.
-//   - KindToolCall    → fills Arguments (by call ID) into the pending assistant msg.
-//   - KindToolResult  → {Role:"tool", ToolCallID, Name, Content}, flushing any pending
-//     assistant message first (the assistant turn precedes its tool results).
+// The transcript fold is the same logic as the original reconstructMessages
+// (user.input → user message, model.call.end → assistant message, tool.call
+// backfills arguments, tool.result → tool message). NodeID/Depth filtering
+// (3a) skips child-node events when rootID is non-empty, so only root events
+// contribute to the transcript.
 //
-// The result is byte-equal to the live in-memory transcript (guarded by the D6
-// round-trip test), because each reconstructed message is built to the exact shape
-// the loop appends: CompletionResp.AsMessage for assistant turns, the executeTools
-// tool-message shape for results, and the injector's user message for input.
-func reconstructMessages(events []event.Event) ([]model.Message, error) {
-	var out []model.Message
+// The tree view (3b) is built from spawn.start and spawn.done events: every
+// spawn.start produces a treeNode, and the matching spawn.done marks it
+// terminal. Any spawn.start without a matching spawn.done is orphaned.
+//
+// Budgets (3c) count spawn.start events, accumulate model token usage across
+// all nodes, and track per-pool token sums.
+//
+// Summaries (3d) collect context.summarize events with non-empty Summary into
+// summaryAnchor records.
+func reconstructLoopState(events []event.Event, rootID string) (loopState, error) {
+	var state loopState
+	state.tree = treeView{nodes: []treeNode{}}
+	state.budgets = budgets{spawnsUsed: 0, sessionTokens: 0, poolTokens: map[string]int{}}
+	state.summaries = []summaryAnchor{}
 
 	// pending holds the assistant message for the current turn while its tool-call
 	// Arguments are still arriving (tool.call events follow model.call.end). It is
@@ -44,71 +81,171 @@ func reconstructMessages(events []event.Event) ([]model.Message, error) {
 	// event fills the Arguments the model.call.end ref left empty.
 	callIdx := map[string]int{}
 
+	// Per-node token totals for pool attribution (3c).
+	nodeTokens := map[string]int{}
+
 	flush := func() {
 		if pending != nil {
-			out = append(out, *pending)
+			state.messages = append(state.messages, *pending)
 			pending = nil
 			callIdx = map[string]int{}
 		}
 	}
 
+	// isRootEvent returns true when the event should be included in the transcript
+	// fold. When rootID is "", all events pass (backward-compatible). When rootID is
+	// non-empty, only events whose NodeID is empty (older streams) or equals rootID.
+	isRootEvent := func(e event.Event) bool {
+		return rootID == "" || e.NodeID == "" || e.NodeID == rootID
+	}
+
 	for _, e := range events {
+		// --- 3a: Transcript fold — root events only ---
+		if isRootEvent(e) {
+			switch e.Kind {
+			case event.KindUserInput:
+				flush()
+				var p event.UserInputPayload
+				if err := json.Unmarshal(e.Payload, &p); err != nil {
+					return loopState{}, fmt.Errorf("reconstruct: user.input payload (seq %d): %w", e.Seq, err)
+				}
+				state.messages = append(state.messages, model.Message{Role: "user", Content: p.Content})
+
+			case event.KindModelCallEnd:
+				flush()
+				var p event.ModelCallEndPayload
+				if err := json.Unmarshal(e.Payload, &p); err != nil {
+					return loopState{}, fmt.Errorf("reconstruct: model.call.end payload (seq %d): %w", e.Seq, err)
+				}
+				msg := model.Message{Role: "assistant", Content: p.Content}
+				for _, ref := range p.ToolCalls {
+					callIdx[ref.ID] = len(msg.ToolCalls)
+					msg.ToolCalls = append(msg.ToolCalls, model.ToolCall{ID: ref.ID, Name: ref.Name})
+				}
+				pending = &msg
+
+			case event.KindToolCall:
+				var p event.ToolCallPayload
+				if err := json.Unmarshal(e.Payload, &p); err != nil {
+					return loopState{}, fmt.Errorf("reconstruct: tool.call payload (seq %d): %w", e.Seq, err)
+				}
+				if pending != nil {
+					if i, ok := callIdx[p.ID]; ok {
+						pending.ToolCalls[i].Arguments = string(p.Args)
+					}
+				}
+
+			case event.KindToolResult:
+				flush()
+				var p event.ToolResultPayload
+				if err := json.Unmarshal(e.Payload, &p); err != nil {
+					return loopState{}, fmt.Errorf("reconstruct: tool.result payload (seq %d): %w", e.Seq, err)
+				}
+				state.messages = append(state.messages, model.Message{
+					Role:       "tool",
+					ToolCallID: p.ID,
+					Name:       p.Name,
+					Content:    p.Result,
+				})
+
+			default:
+				// Other kinds are not transcript content; skip.
+			}
+		}
+
+		// --- 3b/3c/3d: Non-transcript processing (ALL events, regardless of NodeID) ---
 		switch e.Kind {
-		case event.KindUserInput:
-			flush()
-			var p event.UserInputPayload
+		case event.KindSpawnStart:
+			state.budgets.spawnsUsed++
+			var p event.SpawnStartPayload
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("reconstruct: user.input payload (seq %d): %w", e.Seq, err)
+				return loopState{}, fmt.Errorf("reconstruct: spawn.start payload (seq %d): %w", e.Seq, err)
 			}
-			out = append(out, model.Message{Role: "user", Content: p.Content})
+			state.tree.nodes = append(state.tree.nodes, treeNode{
+				id:       p.ChildNodeID,
+				parent:   e.ParentID,
+				label:    p.Label,
+				depth:    e.Depth,
+				role:     p.Role,
+				terminal: false,
+				orphaned: false,
+			})
 
-		case event.KindModelCallEnd:
-			flush()
-			var p event.ModelCallEndPayload
+		case event.KindSpawnDone:
+			var p event.SpawnDonePayload
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("reconstruct: model.call.end payload (seq %d): %w", e.Seq, err)
+				return loopState{}, fmt.Errorf("reconstruct: spawn.done payload (seq %d): %w", e.Seq, err)
 			}
-			msg := model.Message{Role: "assistant", Content: p.Content}
-			for _, ref := range p.ToolCalls {
-				callIdx[ref.ID] = len(msg.ToolCalls)
-				// Arguments are backfilled from the matching tool.call event below.
-				msg.ToolCalls = append(msg.ToolCalls, model.ToolCall{ID: ref.ID, Name: ref.Name})
-			}
-			pending = &msg
-
-		case event.KindToolCall:
-			var p event.ToolCallPayload
-			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("reconstruct: tool.call payload (seq %d): %w", e.Seq, err)
-			}
-			// Backfill the raw Arguments into the pending assistant message's matching
-			// tool call. If there is no pending assistant (malformed/partial stream), the
-			// call is dropped rather than fabricating an orphan.
-			if pending != nil {
-				if i, ok := callIdx[p.ID]; ok {
-					pending.ToolCalls[i].Arguments = string(p.Args)
+			// Mark the matching node terminal.
+			for i := 0; i < len(state.tree.nodes); i++ {
+				if state.tree.nodes[i].id == p.ChildNodeID {
+					state.tree.nodes[i].terminal = true
+					break
 				}
 			}
 
-		case event.KindToolResult:
-			flush()
-			var p event.ToolResultPayload
+		case event.KindModelCallEnd:
+			var p event.ModelCallEndPayload
 			if err := json.Unmarshal(e.Payload, &p); err != nil {
-				return nil, fmt.Errorf("reconstruct: tool.result payload (seq %d): %w", e.Seq, err)
+				return loopState{}, fmt.Errorf("reconstruct: model.call.end payload (seq %d): %w", e.Seq, err)
 			}
-			out = append(out, model.Message{
-				Role:       "tool",
-				ToolCallID: p.ID,
-				Name:       p.Name,
-				Content:    p.Result,
-			})
+			state.budgets.sessionTokens += p.InputTokens + p.OutputTokens
+			nodeTokens[e.NodeID] = nodeTokens[e.NodeID] + p.InputTokens + p.OutputTokens
+
+		case event.KindSummarize:
+			var p event.SummarizePayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return loopState{}, fmt.Errorf("reconstruct: summarize payload (seq %d): %w", e.Seq, err)
+			}
+			if p.Summary != "" {
+				state.summaries = append(state.summaries, summaryAnchor{
+					summary:  p.Summary,
+					insertAt: p.InsertAt,
+				})
+			}
 
 		default:
-			// turn.start / turn.end / model.call.start / model.delta / spawn.* /
-			// context.summarize / loop.detector.trip / error / loop.parked / user
-			// keepalive-style markers: not model-facing transcript content. Skipped.
+			// Other kinds: skip.
 		}
 	}
 	flush()
-	return out, nil
+
+	// --- Post-processing ---
+
+	// 3b — Mark orphaned nodes: any treeNode that is not terminal is orphaned.
+	for i := 0; i < len(state.tree.nodes); i++ {
+		if !state.tree.nodes[i].terminal {
+			state.tree.nodes[i].orphaned = true
+		}
+	}
+
+	// 3c — Pool token resolution: attribute each child's token total to its pool.
+	for _, e := range events {
+		if e.Kind == event.KindSpawnStart {
+			var p event.SpawnStartPayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return loopState{}, fmt.Errorf("reconstruct: spawn.start payload (seq %d): %w", e.Seq, err)
+			}
+			if p.Pool != "" {
+				state.budgets.poolTokens[p.Pool] = state.budgets.poolTokens[p.Pool] + nodeTokens[p.ChildNodeID]
+			}
+		}
+	}
+
+	return state, nil
+}
+
+// ---------------------------------------------------------------------------
+// reconstructMessages — backward-compatible wrapper
+// ---------------------------------------------------------------------------
+//
+// reconstructMessages folds events into just the model-facing transcript,
+// with NO NodeID filtering (rootID=""). This preserves the original behaviour
+// for existing callers and tests that do not pass a rootID.
+func reconstructMessages(events []event.Event) ([]model.Message, error) {
+	state, err := reconstructLoopState(events, "")
+	if err != nil {
+		return nil, err
+	}
+	return state.messages, nil
 }

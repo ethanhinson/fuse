@@ -155,6 +155,12 @@ type Agent struct {
 	nodeID   string
 	parentID string
 	depth    int
+
+	// seedSummary, when non-empty, initializes previousSummary in Run so a resumed
+	// loop's next compaction anchors against the last summary from the stream.
+	// Set via SetSeedSummary by the runtime on a resume (change 0127, Task 5);
+	// empty for a fresh start, whose previousSummary begins at "" as before.
+	seedSummary string
 }
 
 // SetObserver installs provider-neutral timing observation. Nil selects a no-op.
@@ -256,6 +262,9 @@ func (a *Agent) SetInteractive(v bool) { a.interactive = v }
 // emits and the from-scratch stream stays complete for a later fold. Setting it has
 // no effect on new post-resume Send turns, which always emit.
 func (a *Agent) SetSeeded(v bool) { a.seeded = v }
+
+// SetSeedSummary sets the initial previousSummary for a resumed loop.
+func (a *Agent) SetSeedSummary(text string) { a.seedSummary = text }
 
 // SetMaxTurns overrides the per-run turn cap after construction. A value <= 0 means
 // unlimited. An interactive (persistent conversational) loop MUST be uncapped: each

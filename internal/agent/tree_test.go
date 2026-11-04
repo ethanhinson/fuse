@@ -521,3 +521,28 @@ func TestBeginTurnWithPromptStoresRawUnsanitized(t *testing.T) {
 		t.Errorf("stored Prompt = %q, want the raw bytes %q", got, raw)
 	}
 }
+
+// TestSeedResume: a tree seeded from a stream reconstruction reports the same
+// spawn budget used and session token total as the loop that originally wrote
+// those numbers (change 0127, Task 5).
+func TestSeedResume(t *testing.T) {
+	tree := NewAgentTreeWithRootID("root", "model", 10, "root-id")
+	tree.SeedResume(3, 600, nil)
+	used, _ := tree.SpawnBudget()
+	if used != 3 {
+		t.Errorf("childCount after seed = %d, want 3", used)
+	}
+	if got := tree.SessionTokens(); got != 600 {
+		t.Errorf("SessionTokens after seed = %d, want 600", got)
+	}
+	// Each seeded child must be marked finished — both terminal and orphaned
+	// stream children are "done" from the tree's perspective.
+	for _, v := range tree.SnapshotAll() {
+		if v.Depth == 0 {
+			continue
+		}
+		if v.Status != StatusDone {
+			t.Errorf("seeded child %s status = %v, want %v", v.ID, v.Status, StatusDone)
+		}
+	}
+}

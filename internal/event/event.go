@@ -359,6 +359,10 @@ type ToolResultPayload struct {
 	Name    string `json:"name"`
 	Result  string `json:"result"`
 	IsError bool   `json:"is_error,omitempty"`
+	// Synthetic marks a result injected by the loop machinery rather than
+	// produced by a real tool execution (e.g. a manufactured failure for an
+	// orphaned spawn).
+	Synthetic bool `json:"synthetic,omitempty"`
 }
 
 type SpawnStartPayload struct {
@@ -366,6 +370,9 @@ type SpawnStartPayload struct {
 	Label       string `json:"label,omitempty"`
 	Task        string `json:"task,omitempty"`
 	Role        string `json:"role,omitempty"`
+	// Pool names the child pool/queue the spawn was dispatched to, when the
+	// loop runs workers in a structured pool rather than ad hoc goroutines.
+	Pool string `json:"pool,omitempty"`
 }
 
 // SpawnDonePayload carries everything the session-log projection needs to
@@ -379,6 +386,9 @@ type SpawnDonePayload struct {
 	Result      string          `json:"result,omitempty"`
 	Err         string          `json:"err,omitempty"`
 	Structured  json.RawMessage `json:"structured,omitempty"`
+	// Orphaned marks a completion that arrived after the parent loop stopped
+	// tracking the child — the rebuild must not wait on or count it.
+	Orphaned bool `json:"orphaned,omitempty"`
 }
 
 type SummarizePayload struct {
@@ -388,6 +398,11 @@ type SummarizePayload struct {
 	TokensBefore int      `json:"tokens_before"`
 	TokensAfter  int      `json:"tokens_after"`
 	Pointer      string   `json:"pointer,omitempty"`
+	// Summary carries the actual summarized text (rebuilt from the stream by the
+	// resume fold). InsertAt is the transcript position the rebuilt summary was
+	// inserted at, so a rebuild reproduces the exact compaction layout.
+	Summary  string `json:"summary,omitempty"`
+	InsertAt int    `json:"insert_at,omitempty"`
 }
 
 type LoopTripPayload struct {
