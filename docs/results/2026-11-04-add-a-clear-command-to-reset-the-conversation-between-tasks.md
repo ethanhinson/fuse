@@ -6,6 +6,10 @@
 
 Human action: review and merge PR #135 (https://github.com/ethanhinson/fuse/pull/135) — the /clear slash command is implemented, tested, and the build gate is green at 7bebc49.
 
+## Outcome
+
+Shipped: PR #135 open against main with the /clear command implemented, three tests passing, and the build gate green.
+
 ## Summary
 
 Implemented and shipped. The interactive shell (`internal/tui`) now has a
