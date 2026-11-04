@@ -15,7 +15,7 @@ discovered_from: []
 adrs: [81]
 spec: 'docs/superpowers/specs/2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md'
 plan: 'docs/superpowers/plans/2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream.md'
-results:
+results: 'docs/results/2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md](../../superpowers/specs/2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md) |
 | Plan | [2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream.md](../../superpowers/plans/2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream.md) |
+| Results | [2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream-results.md](../../results/2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream-results.md) |
 | ADRs | [ADR-0081](../../adrs/0081-resume-is-a-full-fold-of-the-stream-orphans-are-failed-durab.md) |
 <!-- docket:artifacts:end -->
 
