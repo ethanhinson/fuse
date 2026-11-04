@@ -1,19 +1,19 @@
 # Backlog
 
-**141 changes** — 🟢 3 in progress · 🔵 1 built · 🟣 4 groomed · 🟡 24 proposed · ⚪ 3 deferred · ✅ 99 done · 🗑️ 7 killed
+**141 changes** — 🟢 2 in progress · 🔵 2 built · 🟣 4 groomed · 🟡 24 proposed · ⚪ 3 deferred · ✅ 99 done · 🗑️ 7 killed
 
-## 🟢 In progress (3)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0141](active/0141-add-a-clear-command-to-reset-the-conversation-between-tasks.md) | Add a /clear command to reset the conversation between tasks | `medium` | `feat` | [spec](../superpowers/specs/2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks-design.md) | `feat/add-a-clear-command-to-reset-the-conversation-between-tasks` | building |
 | [0126](active/0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) | `fix/fenced-loop-ownership-and-cross-replica-activity-in-the-loop` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (1)
+## 🔵 Built (2)
 
 | # | Title | Priority | Type | PR | State |
 |---|-------|----------|------|----|-------|
+| [0141](active/0141-add-a-clear-command-to-reset-the-conversation-between-tasks.md) | Add a /clear command to reset the conversation between tasks | `medium` | `feat` | [#135](https://github.com/ethanhinson/fuse/pull/135) | awaiting merge |
 | [0127](active/0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | `high` | `fix` | [#134](https://github.com/ethanhinson/fuse/pull/134) | awaiting merge |
 
 ## 🟣 Groomed (4)

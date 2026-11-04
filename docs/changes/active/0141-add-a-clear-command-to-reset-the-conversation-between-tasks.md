@@ -2,7 +2,7 @@
 id: 141
 slug: 'add-a-clear-command-to-reset-the-conversation-between-tasks'
 title: 'Add a /clear command to reset the conversation between tasks'
-status: 'in-progress'
+status: 'implemented'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/add-a-clear-command-to-reset-the-conversation-between-tasks'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/135'
 blocked_by:
 reconciled: true
 ---
@@ -52,3 +52,12 @@ Resetting the agent tree or blackboard state; resetting the model registry or pe
 ### 2026-11-04
 
 Re-read internal/tui/shell_model.go and internal/tui/builtin_provider.go against the spec. Ctrl+L (tea.KeyCtrlL, ~line 808) clears m.lines/m.pendingCalls/m.inlineByLabel/m.inlineByNode and calls refreshViewport(true) but leaves m.history untouched — matches the spec premise. startPrompt (~line 1173) appends to m.history and captures history := m.history into the run closure, so the running guard is correct. NewBuiltinProvider has no /clear entry; handleSlash has no /clear case. No ADRs needed (small, self-contained TUI feature). Design holds as written.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 7bebc49d1dbec5cfd7cda9448b505a211e7a4029
+ran_at:   2026-11-04T04:46:37Z
+<!-- docket:build-evidence:end -->
