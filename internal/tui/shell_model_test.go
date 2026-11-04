@@ -16,6 +16,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/version"
 )
 
@@ -915,6 +916,12 @@ func TestClearCommand(t *testing.T) {
 	if m.alias != aliasBefore {
 		t.Errorf("alias changed: %q → %q", aliasBefore, m.alias)
 	}
+	if m.verbose {
+		t.Errorf("verbose should be preserved (false), got %v", m.verbose)
+	}
+	if m.sessionMode == nil || m.sessionMode.Get() != permissions.ModeSmart {
+		t.Errorf("sessionMode should be preserved (smart), got %v", m.sessionMode)
+	}
 	if !strings.Contains(strings.Join(flattenLines(m), "\n"), "conversation cleared") {
 		t.Errorf("expected confirmation line, got %v", flattenLines(m))
 	}
@@ -943,6 +950,78 @@ func TestClearCommandRefusesWhileRunning(t *testing.T) {
 	}
 	if !strings.Contains(joined, "cannot clear while a turn is running") {
 		t.Errorf("expected refusal line, got %v", flattenLines(m))
+	}
+}
+
+// TestClearCommandDrainsPendingApprovalsAndAsks verifies that /clear does not
+// orphan the gate/tool goroutines blocked on a pending approval or ask's
+// RespCh. Draining must send the cancellation so the goroutine unblocks, and
+// the recallable logs are cleared afterwards.
+func TestClearCommandDrainsPendingApprovalsAndAsks(t *testing.T) {
+	m := sized(NewShellModel("alpha", false, "dark", testRegistry(), nil, nilBuilder, permissions.NewSessionMode(permissions.ModeSmart), true))
+
+	// Queue a pending approval with a buffered RespCh the gate goroutine reads.
+	approvalResp := make(chan approvalResponse, 1)
+	next, _ := m.Update(PermissionRequestMsg{
+		Request: permissions.ApprovalRequest{ToolName: "bash", Preview: "bash: rm -rf /tmp/x"},
+		RespCh:  approvalResp,
+	})
+	m = next.(ShellModel)
+	if len(m.approvals) != 1 {
+		t.Fatalf("setup: approval not queued, got %d", len(m.approvals))
+	}
+
+	// Queue a pending ask with a buffered RespCh the tool goroutine reads.
+	askResp := make(chan tools.Answer, 1)
+	next, _ = m.Update(AskQuestionMsg{
+		Question: tools.Question{Header: "DB", Question: "which database?", Options: []tools.Option{{Label: "pgx"}}},
+		RespCh:   askResp,
+	})
+	m = next.(ShellModel)
+	if len(m.asks) != 1 {
+		t.Fatalf("setup: ask not queued, got %d", len(m.asks))
+	}
+
+	// A pending approval/ask is an overlay that intercepts keystrokes, so a
+	// typed /clear never reaches handleSlash while one is pending — the
+	// approval/ask handler consumes the keys first. The drain is a defensive
+	// guard for the paths that DO reach handleSlash with a stale queue
+	// (slash-menu/completer dispatch, or a turn that ended while an approval
+	// was still in flight). Exercise it directly, mirroring the refusal test.
+	next, cmd := m.handleSlash("/clear")
+	m = next.(ShellModel)
+	if cmd != nil {
+		t.Error("clear should not return a cmd")
+	}
+
+	// The gate goroutine must have received its cancellation.
+	select {
+	case <-approvalResp:
+	default:
+		t.Error("pending approval RespCh was orphaned — drainApprovals not called")
+	}
+	// The tool goroutine must have received its cancellation.
+	select {
+	case <-askResp:
+	default:
+		t.Error("pending ask RespCh was orphaned — drainAsks not called")
+	}
+	if m.approvals != nil {
+		t.Errorf("approvals should be nil after clear, got %+v", m.approvals)
+	}
+	if m.asks != nil {
+		t.Errorf("asks should be nil after clear, got %+v", m.asks)
+	}
+	if m.askResp != nil {
+		t.Errorf("askResp should be nil after clear, got %+v", m.askResp)
+	}
+	// The drain writes a "denied" record into the log before /clear nils it,
+	// but the spec wants the recallable log empty for the fresh task.
+	if m.approvalLog != nil {
+		t.Errorf("approvalLog should be nil after clear, got %+v", m.approvalLog)
+	}
+	if m.askLog != nil {
+		t.Errorf("askLog should be nil after clear, got %+v", m.askLog)
 	}
 }
 
