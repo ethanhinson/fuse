@@ -1,14 +1,19 @@
 # Backlog
 
-**140 changes** — 🟢 3 in progress · 🟣 4 groomed · 🟡 24 proposed · ⚪ 3 deferred · ✅ 99 done · 🗑️ 7 killed
+**140 changes** — 🟢 2 in progress · 🔵 1 built · 🟣 4 groomed · 🟡 24 proposed · ⚪ 3 deferred · ✅ 99 done · 🗑️ 7 killed
 
-## 🟢 In progress (3)
+## 🟢 In progress (2)
 
 | # | Title | Priority | Type | Spec | Branch | State |
 |---|-------|----------|------|------|--------|-------|
-| [0127](active/0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md) | `fix/resume-rebuilds-the-whole-loop-state-from-the-stream` | building |
 | [0126](active/0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) | `fix/fenced-loop-ownership-and-cross-replica-activity-in-the-loop` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
+
+## 🔵 Built (1)
+
+| # | Title | Priority | Type | PR | State |
+|---|-------|----------|------|----|-------|
+| [0127](active/0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | `high` | `fix` | [#134](https://github.com/ethanhinson/fuse/pull/134) | awaiting merge |
 
 ## 🟣 Groomed (4)
 
@@ -28,8 +33,8 @@
 | [0138](active/0138-artifact-retention-spilled-output-and-segments-expire.md) | Artifact retention: spilled output and segments expire | `medium` | `feat` | needs-grooming |
 | [0137](active/0137-tool-execution-seam-with-in-process-and-remote-worker-execut.md) | Tool execution seam with in-process and remote-worker executors | `medium` | `feat` | ⏳ waiting on #129 — not yet built |
 | [0136](active/0136-loop-scoped-secrets-can-survive-a-move-through-an-opt-in-sec.md) | Loop-scoped secrets can survive a move through an opt-in secret store adapter | `medium` | `feat` | ⏳ waiting on #126 — not yet built |
-| [0132](active/0132-pipeline-runs-are-event-sourced-and-resumable.md) | Pipeline runs are event-sourced and resumable | `medium` | `feat` | ⏳ waiting on #127 — not yet built |
-| [0131](active/0131-the-blackboard-is-durable-and-shared-across-replicas.md) | The blackboard is durable and shared across replicas | `high` | `feat` | ⏳ waiting on #127 — not yet built |
+| [0132](active/0132-pipeline-runs-are-event-sourced-and-resumable.md) | Pipeline runs are event-sourced and resumable | `medium` | `feat` | ⏳ waiting on #127 — needs your merge |
+| [0131](active/0131-the-blackboard-is-durable-and-shared-across-replicas.md) | The blackboard is durable and shared across replicas | `high` | `feat` | ⏳ waiting on #127 — needs your merge |
 | [0130](active/0130-workspaces-follow-a-loop-across-replicas.md) | Workspaces follow a loop across replicas | `high` | `feat` | ⏳ waiting on #129 — not yet built |
 | [0125](active/0125-stop-the-current-turn-of-an-interactive-loop-without-ending.md) | Stop the current turn of an interactive loop without ending it | `low` | `feat` | needs-grooming |
 | [0124](active/0124-the-expects-hint-composes-with-role-and-tool-less-prompts.md) | The expects hint composes with role and tool-less prompts | `medium` | `fix` | needs-grooming |

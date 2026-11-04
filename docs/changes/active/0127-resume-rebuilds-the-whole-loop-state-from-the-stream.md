@@ -2,7 +2,7 @@
 id: 127
 slug: 'resume-rebuilds-the-whole-loop-state-from-the-stream'
 title: 'Resume rebuilds the whole loop state from the stream'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'fix/resume-rebuilds-the-whole-loop-state-from-the-stream'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/134'
 blocked_by:
 reconciled: true
 ---
@@ -53,3 +53,12 @@ Re-dispatching orphaned children or pipelines (they are failed, not retried); du
 ### 2026-11-04
 
 Reconciled against origin/main f01f122. All spec code references verified present. No design changes needed.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 0258fcc358aff8729b0b33a4a71d3e8049fb8ebf
+ran_at:   2026-11-04T02:52:28Z
+<!-- docket:build-evidence:end -->
