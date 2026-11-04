@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0128 — Loop artifact store adapter for spilled tool output and compaction segments](../../changes/active/0128-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md)**
+> ↩ **[Change 0128 — Loop artifact store adapter for spilled tool output and compaction segments](../../changes/archive/2026-11-04-0128-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md)**
 <!-- docket:backlink:end -->
 
 # Loop artifact store adapter for spilled tool output and compaction segments — Implementation Plan

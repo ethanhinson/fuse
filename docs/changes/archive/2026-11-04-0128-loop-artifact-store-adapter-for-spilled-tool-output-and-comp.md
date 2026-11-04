@@ -2,12 +2,12 @@
 id: 128
 slug: 'loop-artifact-store-adapter-for-spilled-tool-output-and-comp'
 title: 'Loop artifact store adapter for spilled tool output and compaction segments'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-04'
 depends_on: []
 stacked_on:
 related: [30, 43, 46, 127]
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md](../../superpowers/specs/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md) |
+| Spec (merged) | [2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-design.md) |
 | Plan | [2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md](../../superpowers/plans/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md) |
 | Results | [2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-results.md](../../results/2026-11-03-loop-artifact-store-adapter-for-spilled-tool-output-and-comp-results.md) |
 | ADRs | [ADR-0080](../../adrs/0080-loop-artifacts-are-addressed-by-tenant-scoped-refs-never-fil.md) |
