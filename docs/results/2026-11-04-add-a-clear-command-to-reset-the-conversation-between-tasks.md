@@ -4,6 +4,8 @@
 
 # Results: Add a `/clear` command to reset the conversation between tasks
 
+Human action: review and merge PR #135 (https://github.com/ethanhinson/fuse/pull/135) — the /clear slash command is implemented, tested, and the build gate is green at 7bebc49.
+
 ## Summary
 
 Implemented and shipped. The interactive shell (`internal/tui`) now has a
