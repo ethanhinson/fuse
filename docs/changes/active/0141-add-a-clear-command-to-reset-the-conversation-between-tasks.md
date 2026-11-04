@@ -14,7 +14,7 @@ related: [81]
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks-design.md](../../superpowers/specs/2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks-design.md) |
+| Plan | [2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks.md](../../superpowers/plans/2026-11-04-add-a-clear-command-to-reset-the-conversation-between-tasks.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
