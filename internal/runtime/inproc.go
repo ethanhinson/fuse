@@ -16,6 +16,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/observe"
 	"github.com/ethanhinson/fuse/internal/tools"
+	"github.com/ethanhinson/fuse/internal/workspace"
 )
 
 // ErrLoopNotFound is returned by Observe/Attach/Send/Spawn when the loopID is not
@@ -63,6 +64,14 @@ type Deps struct {
 	// registry to it under the loop's own key, overriding any binding the registry
 	// factory supplied: the runtime is the authoritative, last writer.
 	Artifacts artifact.Store
+	// Workspaces is the per-loop workspace provider (change 0129): every hosted
+	// loop opens one workspace keyed by (tenant, loop) and its file tools are
+	// confined to the workspace's FileSystem. The workspace identity is recorded
+	// as a loop.workspace event on the loop's durable stream so a resume re-opens
+	// the same one. nil ⇒ a local.Provider over BaseDir/workspaces when BaseDir
+	// is set, or a no-op mem provider (one-shot binding stays byte-identical —
+	// no host directory is created, no loop.workspace event is recorded).
+	Workspaces workspace.Provider
 	// BaseDir is where per-loop fsstore event logs live (e.g. session.DefaultLogDir()).
 	// When "", StartLoop uses event.NoopStore{} instead of opening an fsstore — the
 	// one-shot binding uses this so its behavior stays byte-identical (no new files).
@@ -208,6 +217,10 @@ type loop struct {
 	humanBus   *agent.HumanBus
 	buildChild agent.ChildBuilder
 	handle     *loopHandle
+	// ws is the loop's workspace (change 0129); nil for a loop started without a
+	// workspace provider. Released in the completion goroutine alongside
+	// LoopTeardown.
+	ws workspace.Workspace
 
 	// touch resets the interactive session's idle-reap timer (change 0054, D2). It is
 	// called on every Send and every Observe so an actively-used session is never
@@ -713,6 +726,48 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		}
 	}
 
+	// Open the loop's workspace (change 0129): every hosted loop gets one
+	// confined FileSystem rooted at its own directory, and the file tools are
+	// re-bound to it below (after NewToolRegistry builds the base registry). The
+	// workspace identity is recorded as a loop.workspace event on the loop's
+	// durable stream right after loop.harness/loop.principal so a resume on any
+	// replica re-opens the same one. A loop with no workspace provider (one-shot,
+	// orchestrator) skips this — no event, no confinement — and stays
+	// byte-identical to before. A resume re-opens the workspace by the ID the
+	// stream recorded (Task 3); a fresh start opens by (tenant, loop).
+	var ws workspace.Workspace
+	if wp := r.deps.Workspaces; wp != nil && cfg.Orchestrate == "" {
+		ws, err = r.openWorkspace(ctx, wp, tenant, event.LoopID(rootID), opts)
+		if err != nil {
+			if c, ok := store.(interface{ Close() error }); ok {
+				_ = c.Close()
+			}
+			failLaunch()
+			return nil, fmt.Errorf("runtime: open workspace: %w", err)
+		}
+		// Record the workspace identity on the stream, once, right after the
+		// harness/principal records. A resume does NOT record again — the stream
+		// already has it.
+		if !opts.resume {
+			wev := event.Event{
+				NodeID: rootID,
+				Kind:   event.KindLoopWorkspace,
+				Payload: mustMarshalPayload(event.LoopWorkspacePayload{
+					ID:       string(ws.ID()),
+					Provider: wp.Name(),
+				}),
+			}
+			if werr := store.Append(wev); werr != nil {
+				if c, ok := store.(interface{ Close() error }); ok {
+					_ = c.Close()
+				}
+				_ = ws.Release(ctx)
+				failLaunch()
+				return nil, fmt.Errorf("runtime: record workspace: %w", werr)
+			}
+		}
+	}
+
 	var toolReg *tools.Registry
 	if cfg.Orchestrate != "" {
 		// An orchestrator holds ONLY the watch-and-steer tools - never the binding's
@@ -738,6 +793,22 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// through here, and the runtime writes last so a factory-supplied binding never
 	// survives into the loop.
 	toolReg.WithArtifacts(r.deps.Artifacts, tenant, event.LoopID(rootID))
+
+	// Re-bind the file tools to the loop's workspace FileSystem (change 0129):
+	// NewToolRegistry built the base registry with zero-value file tools (raw
+	// os.* fallback); here the runtime overwrites them with confined instances
+	// over ws.FS() — the same rebind-by-name pattern BuildAgent uses for bash.
+	// Register overwrites by name, so no stale tool pointer survives. An
+	// orchestrator or a loop with no workspace provider skips this (no file tools
+	// to confine, or the base registry's raw-os tools are correct for a shell).
+	if ws != nil {
+		fsys := ws.FS()
+		toolReg.Register(tools.NewReadFile(fsys))
+		toolReg.Register(tools.NewWriteFile(fsys))
+		toolReg.Register(tools.NewEditFile(fsys))
+		toolReg.Register(tools.NewListDirectory(fsys))
+		toolReg.Register(tools.NewGrep(fsys))
+	}
 
 	// BuildAgent is the per-loop factory: it binds the root agent AND the loop's
 	// child-builder to THIS loop's own store + tree (change 0046 de-globalization).
@@ -833,6 +904,7 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		handle:     h,
 		cancel:     sessionCancel,
 		abort:      abort,
+		ws:         ws,
 	}
 	r.mu.Lock()
 	if r.loops == nil {
@@ -1020,6 +1092,13 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		// so no manager (and its read-pump/notify goroutines) outlives its loop.
 		if r.deps.LoopTeardown != nil {
 			r.deps.LoopTeardown(toolReg)
+		}
+		// Release the loop's workspace (change 0129): a no-op for the local provider
+		// in this change (contents are never deleted), but the contract is honored
+		// so a future provider (object storage, k8s volume) can clean up here. Safe
+		// when nil (a loop started without a workspace provider).
+		if ws != nil {
+			_ = ws.Release(ctx)
 		}
 	}()
 	return h, nil
@@ -1688,4 +1767,53 @@ func (r *inProcRuntime) Shutdown(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// openWorkspace opens the loop's workspace (change 0129). On a fresh start it
+// opens by (tenant, loop); on a resume it re-opens by the ID the stream
+// recorded (opts.seedState.workspaceID), refusing if the provider name differs
+// from the runtime's configured provider. A resume with no recorded workspace
+// (a loop started without a provider) opens none — byte-identical to before.
+func (r *inProcRuntime) openWorkspace(ctx context.Context, p workspace.Provider, tenant event.TenantID, loop event.LoopID, opts launchOpts) (workspace.Workspace, error) {
+	if opts.resume && opts.seedState != nil {
+		wid := opts.seedState.workspaceID
+		if wid == "" {
+			return nil, nil // started without a workspace provider; resume none
+		}
+		if name := opts.seedState.workspaceProvider; name != "" && name != p.Name() {
+			return nil, fmt.Errorf("workspace provider %q does not match resume record %q", p.Name(), name)
+		}
+		// Re-open by the recorded ID: split "<tenant>/<loop>" back out so the
+		// provider's Open derives the same directory.
+		t, l, ok := splitWorkspaceID(wid)
+		if !ok {
+			return nil, fmt.Errorf("workspace: malformed recorded workspace ID %q", wid)
+		}
+		return p.Open(ctx, event.TenantID(t), event.LoopID(l))
+	}
+	return p.Open(ctx, tenant, loop)
+}
+
+// mustMarshalPayload encodes a payload for an event the runtime constructs
+// internally (never user input), failing the launch on a marshal error rather
+// than propagating a partial event.
+func mustMarshalPayload(v any) json.RawMessage {
+	b, err := event.MarshalPayload(v)
+	if err != nil {
+		// A struct the runtime controls cannot fail to marshal unless the type
+		// itself is broken; surface it loudly rather than emitting a nil payload.
+		panic(fmt.Sprintf("runtime: marshal event payload: %v", err))
+	}
+	return b
+}
+
+// splitWorkspaceID splits a workspace ID "<tenant>/<loop>" back into its
+// components. It returns ok=false when the ID is not the expected shape.
+func splitWorkspaceID(id string) (tenant, loop string, ok bool) {
+	for i := 0; i < len(id); i++ {
+		if id[i] == '/' {
+			return id[:i], id[i+1:], true
+		}
+	}
+	return "", "", false
 }

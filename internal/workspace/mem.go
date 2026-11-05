@@ -25,6 +25,9 @@ func NewMemProvider() *MemProvider {
 	return &MemProvider{open: map[ID]*memWorkspace{}}
 }
 
+// Name returns the provider identity for the loop.workspace stream record.
+func (p *MemProvider) Name() string { return "mem" }
+
 // Open returns the (tenant, loop) workspace, creating its MapFS on first open.
 // Idempotent: a second open returns a workspace over the same MapFS.
 func (p *MemProvider) Open(ctx context.Context, tenant event.TenantID, loop event.LoopID) (Workspace, error) {

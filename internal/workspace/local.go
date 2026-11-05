@@ -26,6 +26,9 @@ type LocalProvider struct {
 	Parent string
 }
 
+// Name returns the provider identity for the loop.workspace stream record.
+func (p *LocalProvider) Name() string { return "local" }
+
 // Open returns the workspace at <Parent>/<tenant>/<loop>, creating the tenant
 // and loop directories (0700) on first open. It is idempotent: a second open
 // returns a fresh Workspace over the same directory with the same contents.

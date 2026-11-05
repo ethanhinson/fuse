@@ -20,6 +20,13 @@ type loopState struct {
 	tree      treeView
 	budgets   budgets
 	summaries []summaryAnchor
+	// workspaceID is the loop.workspace event's ID, recovered from the stream so
+	// a resume re-opens the same workspace (change 0129). Empty when the loop was
+	// started without a workspace provider.
+	workspaceID string
+	// workspaceProvider is the provider NAME from the loop.workspace event; a
+	// resume refuses if it does not match the runtime's configured provider.
+	workspaceProvider string
 }
 
 type treeView struct {
@@ -209,6 +216,23 @@ func reconstructLoopState(events []event.Event, rootID string) (loopState, error
 		}
 	}
 	flush()
+
+	// --- Workspace identity (change 0129): harvest the single loop.workspace
+	// event so a resume re-opens the same workspace by ID. The event carries the
+	// workspace ID and provider name; a resume with no event (a loop started
+	// without a workspace provider) leaves both empty, and the launch opens no
+	// workspace — byte-identical to before. Take the LAST event if multiple
+	// somehow exist (defensive — the launch records exactly one).
+	for _, e := range events {
+		if e.Kind == event.KindLoopWorkspace {
+			var p event.LoopWorkspacePayload
+			if err := json.Unmarshal(e.Payload, &p); err != nil {
+				return loopState{}, fmt.Errorf("reconstruct: loop.workspace payload (seq %d): %w", e.Seq, err)
+			}
+			state.workspaceID = p.ID
+			state.workspaceProvider = p.Provider
+		}
+	}
 
 	// --- Post-processing ---
 

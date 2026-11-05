@@ -64,8 +64,12 @@ type Workspace interface {
 
 // Provider opens a workspace for a (tenant, loop) pair. Open is idempotent:
 // it returns the same files on every call. First open creates the workspace.
+// Name is the provider's identity for the loop.workspace stream record so a
+// resume on another replica can refuse a provider mismatch ("local" vs
+// "mem"); it is a stable, short string, never a host path.
 type Provider interface {
 	Open(ctx context.Context, tenant event.TenantID, loop event.LoopID) (Workspace, error)
+	Name() string
 }
 
 // ErrEscape is returned by every FileSystem method for a name that would leave
