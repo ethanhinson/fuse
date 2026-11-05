@@ -1,6 +1,6 @@
 # Backlog
 
-**141 changes** — 🟢 2 in progress · 🔵 1 built · 🟣 4 groomed · 🟡 24 proposed · ⚪ 3 deferred · ✅ 100 done · 🗑️ 7 killed
+**141 changes** — 🟢 2 in progress · 🟣 5 groomed · 🟡 23 proposed · ⚪ 3 deferred · ✅ 101 done · 🗑️ 7 killed
 
 ## 🟢 In progress (2)
 
@@ -9,22 +9,17 @@
 | [0126](active/0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) | `fix/fenced-loop-ownership-and-cross-replica-activity-in-the-loop` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (1)
-
-| # | Title | Priority | Type | PR | State |
-|---|-------|----------|------|----|-------|
-| [0127](active/0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | `high` | `fix` | [#134](https://github.com/ethanhinson/fuse/pull/134) | awaiting merge |
-
-## 🟣 Groomed (4)
+## 🟣 Groomed (5)
 
 | # | Title | Priority | Type | Spec | Readiness |
 |---|-------|----------|------|------|-----------|
 | [0135](active/0135-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope.md) | MCP OAuth tokens live in a token store adapter and never open a browser on a server | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope-design.md) | build-ready |
 | [0134](active/0134-installed-skills-come-from-a-skill-source-adapter-consistent.md) | Installed skills come from a skill source adapter, consistent across replicas | `medium` | `feat` | [spec](../superpowers/specs/2026-11-03-installed-skills-come-from-a-skill-source-adapter-consistent-design.md) | build-ready |
 | [0133](active/0133-shared-admission-adapter-for-sandbox-concurrency-and-tenant.md) | Shared admission adapter for sandbox concurrency and tenant start rate | `medium` | `feat` | [spec](../superpowers/specs/2026-11-03-shared-admission-adapter-for-sandbox-concurrency-and-tenant-design.md) | build-ready |
+| [0131](active/0131-the-blackboard-is-durable-and-shared-across-replicas.md) | The blackboard is durable and shared across replicas | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-the-blackboard-is-durable-and-shared-across-replicas-design.md) | build-ready |
 | [0129](active/0129-per-loop-workspace-adapter-and-confined-file-tools.md) | Per-loop workspace adapter and confined file tools | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-per-loop-workspace-adapter-and-confined-file-tools-design.md) | build-ready |
 
-## 🟡 Proposed (24)
+## 🟡 Proposed (23)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -33,8 +28,7 @@
 | [0138](active/0138-artifact-retention-spilled-output-and-segments-expire.md) | Artifact retention: spilled output and segments expire | `medium` | `feat` | needs-grooming |
 | [0137](active/0137-tool-execution-seam-with-in-process-and-remote-worker-execut.md) | Tool execution seam with in-process and remote-worker executors | `medium` | `feat` | ⏳ waiting on #129 — not yet built |
 | [0136](active/0136-loop-scoped-secrets-can-survive-a-move-through-an-opt-in-sec.md) | Loop-scoped secrets can survive a move through an opt-in secret store adapter | `medium` | `feat` | ⏳ waiting on #126 — not yet built |
-| [0132](active/0132-pipeline-runs-are-event-sourced-and-resumable.md) | Pipeline runs are event-sourced and resumable | `medium` | `feat` | ⏳ waiting on #127 — needs your merge |
-| [0131](active/0131-the-blackboard-is-durable-and-shared-across-replicas.md) | The blackboard is durable and shared across replicas | `high` | `feat` | ⏳ waiting on #127 — needs your merge |
+| [0132](active/0132-pipeline-runs-are-event-sourced-and-resumable.md) | Pipeline runs are event-sourced and resumable | `medium` | `feat` | ⏳ waiting on #131 — not yet built |
 | [0130](active/0130-workspaces-follow-a-loop-across-replicas.md) | Workspaces follow a loop across replicas | `high` | `feat` | ⏳ waiting on #129 — not yet built |
 | [0125](active/0125-stop-the-current-turn-of-an-interactive-loop-without-ending.md) | Stop the current turn of an interactive loop without ending it | `low` | `feat` | needs-grooming |
 | [0124](active/0124-the-expects-hint-composes-with-role-and-tool-less-prompts.md) | The expects hint composes with role and tool-less prompts | `medium` | `fix` | needs-grooming |
@@ -84,7 +78,6 @@ graph TD
   0124
   0125
   0126
-  0127
   0128 --> 0129
   0129 --> 0130
   0127 --> 0131
@@ -104,14 +97,16 @@ graph TD
   0012:::done
   0052:::done
   0063:::done
+  0127:::done
   0128:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (107)</summary>
+<details><summary>✅🗑️ Archive — done + killed (108)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0127](archive/2026-11-05-0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | 2026-11-05 |
 | [0141](archive/2026-11-04-0141-add-a-clear-command-to-reset-the-conversation-between-tasks.md) | Add a /clear command to reset the conversation between tasks | 2026-11-04 |
 | [0128](archive/2026-11-04-0128-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md) | Loop artifact store adapter for spilled tool output and compaction segments | 2026-11-04 |
 | [0118](archive/2026-11-03-0118-carried-skills-a-harness-spec-may-define-a-skill-inline.md) | Carried skills: a harness spec may define a skill inline | 2026-11-03 |
@@ -126,7 +121,6 @@ graph TD
 | [0101](archive/2026-11-01-0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | 2026-11-01 |
 | [0100](archive/2026-11-01-0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | 2026-11-01 |
 | [0099](archive/2026-11-01-0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md) | Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes | 2026-11-01 |
-| [0098](archive/2026-10-31-0098-permission-deny-reasons-bound-and-redact-the-command-they-ec.md) | Permission deny reasons bound and redact the command they echo | 2026-10-31 |
 | [0097](archive/2026-10-31-0097-approve-all-carries-across-the-cli-model-relay-and-policy-de.md) | Approve-all carries across the CLI-model relay, and policy denials say who denied | 2026-10-31 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
@@ -139,7 +133,7 @@ graph TD
 
 | Month | Done |
 |-------|------|
-| [2026-10](archive/) | 13 done |
+| [2026-10](archive/) | 14 done |
 | [2026-09](archive/) | 7 done |
 | [2026-08](archive/) | 65 done |
 

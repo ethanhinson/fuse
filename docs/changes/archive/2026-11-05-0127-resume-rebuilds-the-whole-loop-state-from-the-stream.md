@@ -2,12 +2,12 @@
 id: 127
 slug: 'resume-rebuilds-the-whole-loop-state-from-the-stream'
 title: 'Resume rebuilds the whole loop state from the stream'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-04'
+updated: '2026-11-05'
 depends_on: []
 stacked_on:
 related: [54, 108, 122, 126]
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md](../../superpowers/specs/2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md) |
+| Spec (merged) | [2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-03-resume-rebuilds-the-whole-loop-state-from-the-stream-design.md) |
 | Plan | [2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream.md](../../superpowers/plans/2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream.md) |
 | Results | [2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream-results.md](../../results/2026-11-04-resume-rebuilds-the-whole-loop-state-from-the-stream-results.md) |
 | ADRs | [ADR-0081](../../adrs/0081-resume-is-a-full-fold-of-the-stream-orphans-are-failed-durab.md) |

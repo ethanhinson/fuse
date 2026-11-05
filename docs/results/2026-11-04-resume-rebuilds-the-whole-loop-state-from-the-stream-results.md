@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0127 — Resume rebuilds the whole loop state from the stream](../changes/active/0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md)**
+> ↩ **[Change 0127 — Resume rebuilds the whole loop state from the stream](../changes/archive/2026-11-05-0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md)**
 <!-- docket:backlink:end -->
 
 # Results — Resume rebuilds the whole loop state from the stream (#0127)
