@@ -15,7 +15,7 @@ discovered_from: []
 adrs: [5, 6]
 spec: 'docs/superpowers/specs/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-design.md'
 plan: 'docs/superpowers/plans/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-plan.md'
-results:
+results: 'docs/results/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-results.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-design.md](../../superpowers/specs/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-design.md) |
 | Plan | [2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-plan.md](../../superpowers/plans/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-plan.md) |
+| Results | [2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-results.md](../../results/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-results.md) |
 | ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](../../adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
 <!-- docket:artifacts:end -->
 
