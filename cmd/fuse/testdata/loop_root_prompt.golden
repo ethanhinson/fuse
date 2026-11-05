@@ -45,4 +45,4 @@ Children can coordinate through a shared, session-wide blackboard (`blackboard_w
 - Either omit `tools` entirely (the child inherits the blackboard), or explicitly include the `blackboard_*` tools you need in the subset.
 - Pattern: instruct each child to WRITE its findings/position to a shared key (e.g. `review/<name>`), then after they return, READ `review/*` and synthesise.
 
-Scratch directory for throwaway files only (probes, drafts, temporary output), auto-approved in auto mode: <SCRATCH>. Files the task asks for belong in the working directory, never there.
+Scratch directory for throwaway files only (probes, drafts, temporary output), auto-approved in auto mode: scratch/. Files the task asks for belong in the working directory, never there.
