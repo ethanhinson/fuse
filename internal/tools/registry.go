@@ -12,6 +12,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
+	"github.com/ethanhinson/fuse/internal/workspace"
 )
 
 // Result is the outcome of a tool execution.
@@ -250,14 +251,22 @@ func ReleaseSandboxes(ctx context.Context, r *Registry) error {
 // the composition root: the bash tool runs every command through it. A nil sb
 // yields a bash tool that REFUSES — never one that runs commands on the host
 // with an inherited environment.
-func DefaultTools(sb *sandbox.Service) []Tool {
+//
+// fsys is the workspace FileSystem the file tools operate on. When nil or
+// omitted, the file tools fall back to raw os.* — preserving existing
+// behaviour for shells and test contexts that haven't wired a workspace yet.
+func DefaultTools(sb *sandbox.Service, fsys ...workspace.FileSystem) []Tool {
+	var f workspace.FileSystem
+	if len(fsys) > 0 {
+		f = fsys[0]
+	}
 	return []Tool{
 		NewBash(sb),
-		NewReadFile(),
-		NewWriteFile(),
-		NewEditFile(),
-		NewListDirectory(),
-		NewGrep(),
+		NewReadFile(f),
+		NewWriteFile(f),
+		NewEditFile(f),
+		NewListDirectory(f),
+		NewGrep(f),
 		NewSegmentRead(),
 	}
 }

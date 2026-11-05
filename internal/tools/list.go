@@ -8,12 +8,23 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/ethanhinson/fuse/internal/workspace"
 )
 
-type listTool struct{}
+type listTool struct {
+	fsys workspace.FileSystem
+}
 
 // NewListDirectory returns the list_directory tool with optional glob filter.
-func NewListDirectory() Tool { return listTool{} }
+// When fsys is nil the tool falls back to raw os.*.
+func NewListDirectory(fsys ...workspace.FileSystem) Tool {
+	t := listTool{}
+	if len(fsys) > 0 {
+		t.fsys = fsys[0]
+	}
+	return t
+}
 
 func (listTool) Name() string { return "list_directory" }
 
@@ -37,7 +48,7 @@ type listArgs struct {
 	Glob string `json:"glob"`
 }
 
-func (listTool) Execute(ctx context.Context, args string) Result {
+func (t listTool) Execute(ctx context.Context, args string) Result {
 	var a listArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return Result{IsError: true, Output: fmt.Sprintf("bad arguments: %v", err)}
@@ -48,30 +59,59 @@ func (listTool) Execute(ctx context.Context, args string) Result {
 		}
 		return Result{Output: out}
 	}
-	if a.Path == "" {
-		a.Path = "."
+	p := stripWorkspacePrefix(a.Path)
+	if p == "" {
+		p = "."
 	}
-	entries, err := os.ReadDir(a.Path)
-	if err != nil {
-		return Result{IsError: true, Output: err.Error()}
-	}
-	var names []string
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() {
-			name += "/"
+
+	var entries []string
+	if t.fsys != nil {
+		des, err := t.fsys.ReadDir(p)
+		if err != nil {
+			return Result{IsError: true, Output: err.Error()}
 		}
-		if a.Glob != "" {
-			ok, err := filepath.Match(a.Glob, e.Name())
-			if err != nil {
-				return Result{IsError: true, Output: fmt.Sprintf("bad glob: %v", err)}
+		for _, e := range des {
+			name := e.Name()
+			if e.IsDir() {
+				name += "/"
 			}
-			if !ok {
-				continue
+			if a.Glob != "" {
+				ok, err := filepath.Match(a.Glob, e.Name())
+				if err != nil {
+					return Result{IsError: true, Output: fmt.Sprintf("bad glob: %v", err)}
+				}
+				if !ok {
+					continue
+				}
 			}
+			entries = append(entries, name)
 		}
-		names = append(names, name)
+	} else {
+		p2 := a.Path
+		if p2 == "" {
+			p2 = "."
+		}
+		des, err := os.ReadDir(p2)
+		if err != nil {
+			return Result{IsError: true, Output: err.Error()}
+		}
+		for _, e := range des {
+			name := e.Name()
+			if e.IsDir() {
+				name += "/"
+			}
+			if a.Glob != "" {
+				ok, err := filepath.Match(a.Glob, e.Name())
+				if err != nil {
+					return Result{IsError: true, Output: fmt.Sprintf("bad glob: %v", err)}
+				}
+				if !ok {
+					continue
+				}
+			}
+			entries = append(entries, name)
+		}
 	}
-	sort.Strings(names)
-	return Result{Output: strings.Join(names, "\n")}
+	sort.Strings(entries)
+	return Result{Output: strings.Join(entries, "\n")}
 }

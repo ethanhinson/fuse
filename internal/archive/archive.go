@@ -102,6 +102,11 @@ func Open(path string) ([]byte, error) {
 	return gunzipIfNeeded(b)
 }
 
+// Gunzip decompresses b when it starts with the gzip magic, else returns b
+// unchanged. It is the exported version of gunzipIfNeeded, used by callers
+// that read from a workspace FileSystem rather than through archive.Open.
+func Gunzip(b []byte) ([]byte, error) { return gunzipIfNeeded(b) }
+
 // gunzipIfNeeded decompresses b when it starts with the gzip magic, else returns
 // b unchanged. This keeps OLD plaintext files readable alongside new .gz ones.
 func gunzipIfNeeded(b []byte) ([]byte, error) {

@@ -5,15 +5,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/ethanhinson/fuse/internal/archive"
+	"github.com/ethanhinson/fuse/internal/workspace"
 )
 
-type readTool struct{}
+type readTool struct {
+	fsys workspace.FileSystem
+}
 
 // NewReadFile returns the read_file tool with optional 1-based line range.
-func NewReadFile() Tool { return readTool{} }
+// When fsys is nil the tool falls back to raw os.* (preserving existing
+// behaviour for contexts without a workspace).
+func NewReadFile(fsys ...workspace.FileSystem) Tool {
+	t := readTool{}
+	if len(fsys) > 0 {
+		t.fsys = fsys[0]
+	}
+	return t
+}
 
 func (readTool) Name() string { return "read_file" }
 
@@ -47,7 +59,7 @@ type readArgs struct {
 	EndLine   int    `json:"end_line"`
 }
 
-func (readTool) Execute(ctx context.Context, args string) Result {
+func (t readTool) Execute(ctx context.Context, args string) Result {
 	var a readArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return Result{IsError: true, Output: fmt.Sprintf("bad arguments: %v", err)}
@@ -59,12 +71,51 @@ func (readTool) Execute(ctx context.Context, args string) Result {
 	// An art:// ref resolves through the loop's artifact binding instead.
 	data, handled, err := readArtifact(ctx, a.Path)
 	if !handled {
-		data, err = archive.Open(a.Path)
+		data, err = t.readFileSys(a.Path)
 	}
 	if err != nil {
 		return Result{IsError: true, Output: err.Error()}
 	}
 	return renderRead(a.Path, data, a)
+}
+
+// readFileSys reads a file through the workspace FileSystem when available,
+// falling back to raw os.* via archive.Open when no workspace is wired.
+func (t readTool) readFileSys(path string) ([]byte, error) {
+	p := stripWorkspacePrefix(path)
+	if t.fsys == nil {
+		return archive.Open(p)
+	}
+	return readFileViaFS(t.fsys, p)
+}
+
+// readFileViaFS reads a file from a workspace FileSystem, handling transparent
+// decompression and the .gz fallback when the exact path is missing.
+func readFileViaFS(fsys workspace.FileSystem, path string) ([]byte, error) {
+	f, err := fsys.Open(path)
+	if err == nil {
+		defer f.Close()
+		data, readErr := io.ReadAll(f)
+		if readErr != nil {
+			return nil, readErr
+		}
+		return archive.Gunzip(data)
+	}
+	// If the file doesn't exist and path doesn't end in .gz, try path+".gz".
+	// This mirrors archive.Open's fallback.
+	if !strings.HasSuffix(path, ".gz") {
+		gzPath := path + ".gz"
+		f, err2 := fsys.Open(gzPath)
+		if err2 == nil {
+			defer f.Close()
+			data, readErr := io.ReadAll(f)
+			if readErr != nil {
+				return nil, readErr
+			}
+			return archive.Gunzip(data)
+		}
+	}
+	return nil, err
 }
 
 // renderRead applies the binary refusal and line-range windowing shared by

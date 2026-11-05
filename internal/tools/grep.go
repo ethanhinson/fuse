@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/ethanhinson/fuse/internal/artifact"
+	"github.com/ethanhinson/fuse/internal/workspace"
 )
 
 // grep result bounds. The point of this tool is cheap LOCATION of code — a
@@ -31,10 +33,19 @@ var grepSkipDirs = map[string]bool{
 	".idea": true, ".vscode": true, "dist": true, "build": true,
 }
 
-type grepTool struct{}
+type grepTool struct {
+	fsys workspace.FileSystem
+}
 
 // NewGrep returns the grep tool: regex content search over a file tree.
-func NewGrep() Tool { return grepTool{} }
+// When fsys is nil the tool falls back to raw os.*.
+func NewGrep(fsys ...workspace.FileSystem) Tool {
+	t := grepTool{}
+	if len(fsys) > 0 {
+		t.fsys = fsys[0]
+	}
+	return t
+}
 
 func (grepTool) Name() string { return "grep" }
 
@@ -81,7 +92,7 @@ type grepArgs struct {
 	MaxResults      int    `json:"max_results"`
 }
 
-func (grepTool) Execute(ctx context.Context, args string) Result {
+func (t grepTool) Execute(ctx context.Context, args string) Result {
 	var a grepArgs
 	if err := json.Unmarshal([]byte(args), &a); err != nil {
 		return Result{IsError: true, Output: fmt.Sprintf("bad arguments: %v", err)}
@@ -112,9 +123,85 @@ func (grepTool) Execute(ctx context.Context, args string) Result {
 		return grepArtifact(ctx, a.Path, re, maxResults)
 	}
 
+	p := stripWorkspacePrefix(a.Path)
+
+	if t.fsys != nil {
+		return t.grepFS(ctx, p, re, a.Glob, maxResults)
+	}
+	return t.grepOS(ctx, p, re, a.Glob, maxResults)
+}
+
+// grepFS searches using the workspace FileSystem.
+func (t grepTool) grepFS(ctx context.Context, root string, re *regexp.Regexp, glob string, maxResults int) Result {
 	var out []string
 	truncated := false
-	scanned := 0
+
+	walk := func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // permission-denied-like errors are silently skipped
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if len(out) >= maxResults {
+			truncated = true
+			return filepath.SkipAll
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		if glob != "" {
+			if ok, _ := filepath.Match(glob, d.Name()); !ok {
+				return nil
+			}
+		}
+		info, err := d.Info()
+		if err != nil || info.Size() > grepMaxFileSize {
+			return nil
+		}
+		matches, merr := grepFileFS(t.fsys, path, re, maxResults-len(out))
+		if merr != nil {
+			return nil // unreadable/binary files are silently skipped
+		}
+		out = append(out, matches...)
+		return nil
+	}
+
+	// Check if root is a file or directory.
+	info, err := t.fsys.Stat(root)
+	if err != nil {
+		return Result{IsError: true, Output: fmt.Sprintf("grep: %v", err)}
+	}
+	if info.IsDir() {
+		err = t.fsys.Walk(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				if grepSkipDirs[d.Name()] || (strings.HasPrefix(d.Name(), ".") && path != root) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			return walk(path, d, nil)
+		})
+		if err != nil && err != filepath.SkipAll && ctx.Err() == nil {
+			return Result{IsError: true, Output: fmt.Sprintf("grep: %v", err)}
+		}
+	} else {
+		matches, merr := grepFileFS(t.fsys, root, re, maxResults)
+		if merr != nil {
+			return Result{IsError: true, Output: fmt.Sprintf("grep: %v", merr)}
+		}
+		out = matches
+	}
+	return grepResult(out, truncated, maxResults)
+}
+
+// grepOS searches using raw os.* (fallback when no workspace is wired).
+func (t grepTool) grepOS(ctx context.Context, root string, re *regexp.Regexp, glob string, maxResults int) Result {
+	var out []string
+	truncated := false
 
 	walk := func(path string, d fs.DirEntry) error {
 		if err := ctx.Err(); err != nil {
@@ -124,34 +211,33 @@ func (grepTool) Execute(ctx context.Context, args string) Result {
 			truncated = true
 			return filepath.SkipAll
 		}
-		if a.Glob != "" {
-			if ok, _ := filepath.Match(a.Glob, d.Name()); !ok {
+		if glob != "" {
+			if ok, _ := filepath.Match(glob, d.Name()); !ok {
 				return nil
 			}
 		}
 		if info, err := d.Info(); err != nil || info.Size() > grepMaxFileSize {
 			return nil
 		}
-		matches, err := grepFile(path, re, maxResults-len(out))
+		matches, err := grepFileOS(path, re, maxResults-len(out))
 		if err != nil {
 			return nil // unreadable/binary files are silently skipped
 		}
-		scanned++
 		out = append(out, matches...)
 		return nil
 	}
 
-	info, err := os.Stat(a.Path)
+	info, err := os.Stat(root)
 	if err != nil {
 		return Result{IsError: true, Output: fmt.Sprintf("grep: %v", err)}
 	}
 	if info.IsDir() {
-		err = filepath.WalkDir(a.Path, func(path string, d fs.DirEntry, err error) error {
+		err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return nil
 			}
 			if d.IsDir() {
-				if grepSkipDirs[d.Name()] || (strings.HasPrefix(d.Name(), ".") && path != a.Path) {
+				if grepSkipDirs[d.Name()] || (strings.HasPrefix(d.Name(), ".") && path != root) {
 					return filepath.SkipDir
 				}
 				return nil
@@ -162,13 +248,12 @@ func (grepTool) Execute(ctx context.Context, args string) Result {
 			return Result{IsError: true, Output: fmt.Sprintf("grep: %v", err)}
 		}
 	} else {
-		matches, merr := grepFile(a.Path, re, maxResults)
+		matches, merr := grepFileOS(root, re, maxResults)
 		if merr != nil {
 			return Result{IsError: true, Output: fmt.Sprintf("grep: %v", merr)}
 		}
 		out = matches
 	}
-
 	return grepResult(out, truncated, maxResults)
 }
 
@@ -226,9 +311,41 @@ func grepEntry(path string, lineNo int, line string) string {
 	return fmt.Sprintf("%s:%d: %s", path, lineNo, text)
 }
 
-// grepFile scans one file for re, returning up to limit "path:line: text"
-// entries. Binary files (NUL in the first 8KB) are skipped with an error.
-func grepFile(path string, re *regexp.Regexp, limit int) ([]string, error) {
+// grepFileFS scans one file through the workspace FileSystem for re.
+func grepFileFS(fsys workspace.FileSystem, path string, re *regexp.Regexp, limit int) ([]string, error) {
+	f, err := fsys.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	// Check for binary content in first 8KB.
+	head := make([]byte, 8192)
+	n, _ := f.Read(head)
+	if bytes.IndexByte(head[:n], 0) >= 0 {
+		return nil, fmt.Errorf("binary file")
+	}
+
+	var out []string
+	scanner := bufio.NewScanner(io.MultiReader(bytes.NewReader(head[:n]), f))
+	scanner.Buffer(make([]byte, 64<<10), 1<<20)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := scanner.Text()
+		if !re.MatchString(line) {
+			continue
+		}
+		out = append(out, grepEntry(path, lineNo, line))
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// grepFileOS scans one file on the host filesystem for re (nil-fsys fallback).
+func grepFileOS(path string, re *regexp.Regexp, limit int) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
