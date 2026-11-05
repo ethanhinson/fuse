@@ -726,6 +726,15 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		}
 	}
 
+	// A tool-less loop (no_tools, change 0116) gets an empty registry: the
+	// runtime must NOT re-bind file tools (or codeindex) onto a tool-less
+	// loop's registry, or the wire would carry tools the spec said to omit.
+	noTools := r.deps.NoTools
+	if factory != nil {
+		noTools = factory.NoTools
+	}
+	noTools = noTools || cfg.Harness.GetNoTools()
+
 	// Open the loop's workspace (change 0129): every hosted loop gets one
 	// confined FileSystem rooted at its own directory, and the file tools are
 	// re-bound to it below (after NewToolRegistry builds the base registry). The
@@ -794,14 +803,15 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// survives into the loop.
 	toolReg.WithArtifacts(r.deps.Artifacts, tenant, event.LoopID(rootID))
 
-	// Re-bind the file tools to the loop's workspace FileSystem (change 0129):
+		// Re-bind the file tools to the loop's workspace FileSystem (change 0129):
 	// NewToolRegistry built the base registry with zero-value file tools (raw
 	// os.* fallback); here the runtime overwrites them with confined instances
 	// over ws.FS() — the same rebind-by-name pattern BuildAgent uses for bash.
-	// Register overwrites by name, so no stale tool pointer survives. An
-	// orchestrator or a loop with no workspace provider skips this (no file tools
-	// to confine, or the base registry's raw-os tools are correct for a shell).
-	if ws != nil {
+	// Register overwrites by name, so no stale tool pointer survives. A tool-less
+	// loop (no_tools), an orchestrator, or a loop with no workspace provider
+	// skips this (no file tools to confine, or the base registry's raw-os tools
+	// are correct for a shell).
+	if ws != nil && !noTools {
 		fsys := ws.FS()
 		toolReg.Register(tools.NewReadFile(fsys))
 		toolReg.Register(tools.NewWriteFile(fsys))

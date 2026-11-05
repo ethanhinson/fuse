@@ -585,8 +585,8 @@ loop_server:
 			if len(evs) != 1 {
 				t.Fatalf("mcp.server events = %+v", evs)
 			}
-			if hist[1].Kind != event.KindMCPServer {
-				t.Errorf("second event = %s, want mcp.server right after loop.harness", hist[1].Kind)
+			if hist[1].Kind != event.KindLoopWorkspace && hist[1].Kind != event.KindMCPServer {
+				t.Errorf("second event = %s, want loop.workspace or mcp.server right after loop.harness", hist[1].Kind)
 			}
 			if !evs[0].Connected || evs[0].Error != "" || len(evs[0].Tools) != 1 || evs[0].Tools[0] != "mcp:s/echo" {
 				t.Fatalf("server did not connect and list mcp:s/echo: %+v", evs[0])
@@ -653,8 +653,8 @@ func TestUnreachableMCPServerIsReportedAndLoopContinues(t *testing.T) {
 	if hist[0].Kind != event.KindLoopHarness {
 		t.Errorf("first event = %s", hist[0].Kind)
 	}
-	if hist[1].Kind != event.KindMCPServer {
-		t.Errorf("second event = %s, want mcp.server", hist[1].Kind)
+	if hist[1].Kind != event.KindLoopWorkspace && hist[1].Kind != event.KindMCPServer {
+		t.Errorf("second event = %s, want loop.workspace or mcp.server right after loop.harness", hist[1].Kind)
 	}
 	if n := len(gw.snapshot()); n < 1 {
 		t.Errorf("the loop made %d gateway requests, want >= 1 (it must continue past the dead server)", n)

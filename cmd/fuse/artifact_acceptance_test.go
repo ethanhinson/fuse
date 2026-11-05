@@ -139,6 +139,12 @@ func TestSpillRefRecoveredOnAnotherRuntime(t *testing.T) {
 		d.Artifacts = sharedArts
 		d.BaseDir = ""
 		d.IdleTTL = idleTTL
+		// This test exercises the art:// spill mechanism (change 0128), not the
+		// workspace confinement (0129): the fixture is an absolute host path the
+		// model reads with read_file, which the confined file tools would refuse.
+		// A nil Workspaces leaves the file tools on raw os.* for this test's
+		// absolute-path fixture read, preserving its intent.
+		d.Workspaces = nil
 		return d
 	}
 	rtA := runtime.New(buildDeps(150 * time.Millisecond))
