@@ -1,7 +1,7 @@
 ---
 id: 142
 slug: 'compound-shell-commands-reach-the-auto-mode-classifier-with'
-title: 'Compound shell commands reach the auto-mode classifier with decomposed structure'
+title: 'Compound shell commands: parse-layer decomposition with per-part deterministic evaluation'
 status: 'proposed'
 priority: 'high'
 type: 'feat'
