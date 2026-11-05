@@ -245,6 +245,44 @@ func TestAutoMode_CompoundRedirectInRoot_AutoApproves(t *testing.T) {
 	}
 }
 
+// TestAutoMode_CompoundCdEdgeCases pins two edges of the cd widening the review
+// flagged (change 0142):
+//
+//   - A cd segment carrying an OUT-of-root redirect write target. The cd branch
+//     sits AFTER WriteTargets scoping in classifyHeuristic, so the redirect is
+//     caught by the redirect check, not the cd branch. That ordering is
+//     load-bearing: a future edit moving the cd check before WriteTargets would
+//     silently auto-approve the write. Pin it.
+//   - A bare cd (no args — cd to $HOME) in a compound: pathArgs is empty, the
+//     cd branch is a no-op, and the compound auto-approves. Benign and worth
+//     pinning so a pathArgs/cd change cannot regress it silently.
+func TestAutoMode_CompoundCdEdgeCases(t *testing.T) {
+	// cd with an out-of-root redirect must NOT auto-approve.
+	approve, called := newApproveRecorder(true)
+	g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
+		WithWorkspaceRoot(t.TempDir()))
+	res := g.Execute(context.Background(), "bash", bashArgs("cd /etc > /etc/passwd && ls"))
+	if !res.IsError && !*called {
+		t.Fatalf("cd /etc > /etc/passwd must not auto-approve")
+	}
+
+	// Bare cd (no args) in a compound auto-approves.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	approve2, called2 := newApproveRecorder(false)
+	g2 := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve2),
+		WithWorkspaceRoot(root))
+	res2 := g2.Execute(context.Background(), "bash", bashArgs("cd && ls -la"))
+	if res2.IsError {
+		t.Fatalf("bare-cd compound should auto-approve, got error: %s", res2.Output)
+	}
+	if *called2 {
+		t.Fatalf("bare-cd compound must not invoke the approval func")
+	}
+}
+
 // TestAutoMode_CompoundProcessSubstitution_FailsClosed pins that process
 // substitution (`<(…)`) still fails closed — the parser cannot honestly
 // decompose it and the whole command refuses.
