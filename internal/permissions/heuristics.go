@@ -66,6 +66,33 @@ func classifyHeuristic(segments []Segment, roots []string) Verdict {
 			continue // a read-only segment mutates nothing else to scope.
 		}
 
+		// cd is a non-mutating command (change 0142): it changes the shell's
+		// logical cwd but does not read, write, create, or delete any
+		// filesystem object. The gate resolves every segment's path args
+		// against the ORIGINAL allowed roots regardless of any preceding cd, so
+		// a cd — even to an unknown directory — does not widen what the gate
+		// can prove for the segments around it. A cd is therefore allowed
+		// through the mutating loop on the same terms a read-only segment is:
+		// a literal in-root target is already proven by the path-arg scoping
+		// below, and an opaque target (cd "$(pwd)", cd $VAR) is non-mutating
+		// and provokes nothing. A literal OUT-of-root cd (cd /etc) still asks —
+		// not because the cd is dangerous, but because the gate does not track
+		// cwd and an out-of-root cd is where a future cwd-aware gate would need
+		// to draw the line, so the conservative ask is kept here.
+		//
+		// This is the load-bearing widening: before it, cd "$(pwd)" carried an
+		// opaque arg and hit the hasOpaqueArg ask below, which escalated the
+		// WHOLE compound — discarding the individually-provable-safe segments
+		// around it — to one human ask. That was 79% of the parse-layer asks.
+		if seg.Name == "cd" {
+			for _, arg := range pathArgs(seg) {
+				if !withinAnyRoot(arg, roots) {
+					return VerdictAsk
+				}
+			}
+			continue
+		}
+
 		// THE INVARIANT of change 0070 D5, and the single most important line in
 		// it. This segment MUTATES and carries at least one opaque argument — a
 		// word whose value is not statically known ($VAR, $(…)). There is
@@ -120,6 +147,86 @@ func classifyHeuristic(segments []Segment, roots []string) Verdict {
 		}
 	}
 	return VerdictAllow
+}
+
+// segmentVerdicts evaluates each parsed segment through the deterministic
+// layers (rules, safelist, heuristic) INDEPENDENTLY and returns one
+// SegmentVerdict per segment (change 0142). It is the per-segment decomposition
+// the gate carries into the classifier's pending-call context and onto the
+// Decision event for a compound bash command, so a compound outcome stays
+// attributable to the specific part that drove an ask or deny — not just the
+// raw string.
+//
+// It mirrors classifyHeuristic's per-segment reasoning but returns a verdict
+// PER segment rather than reducing the whole compound to one. A segment that
+// is read-only-safe, a non-mutating cd, or a mutating command whose path args
+// all stay in-root is VerdictAllow; anything the deterministic layers cannot
+// prove safe (egress, an out-of-root write, an opaque mutating arg) is
+// VerdictAsk with a layer-naming reason. The deny verdict is reserved for the
+// rules layer (isDangerous / a deny pattern), evaluated separately by
+// evalRulesDetail before this is consulted — a segment that is not
+// catastrophically dangerous but is otherwise unprovable is an ask, not a deny,
+// exactly as classifyHeuristic treats it.
+func segmentVerdicts(segments []Segment, roots []string) []SegmentVerdict {
+	out := make([]SegmentVerdict, len(segments))
+	for i, seg := range segments {
+		v, r := segmentHeuristicVerdict(seg, roots)
+		out[i] = SegmentVerdict{Name: seg.Name, Verdict: v, Reason: r}
+	}
+	return out
+}
+
+// segmentHeuristicVerdict evaluates one segment through the deterministic
+// heuristic layers (egress / read-only / write-target / cd / opaque / kill /
+// docker / path scoping) and returns its verdict and a layer-named reason
+// (change 0142). It mirrors classifyHeuristic's per-segment reasoning for a
+// SINGLE segment so a compound's residual gray-area segments are individually
+// attributable. A segment that is read-only-safe, a non-mutating cd, or a
+// mutating command whose path args all stay in-root is VerdictAllow; anything
+// the heuristic cannot prove safe is VerdictAsk.
+func segmentHeuristicVerdict(seg Segment, roots []string) (Verdict, string) {
+	if isEgress(seg) && !isLoopbackFetch(seg, roots) {
+		return VerdictAsk, LayerHeuristic + ": egress"
+	}
+	if isReadOnlySafe(seg) {
+		return VerdictAllow, ""
+	}
+	for _, target := range seg.WriteTargets {
+		if !withinAnyRoot(target, roots) {
+			return VerdictAsk, LayerHeuristic + ": out-of-root write target"
+		}
+	}
+	if seg.Name == "cd" {
+		for _, arg := range pathArgs(seg) {
+			if !withinAnyRoot(arg, roots) {
+				return VerdictAsk, LayerHeuristic + ": cd out-of-root"
+			}
+		}
+		return VerdictAllow, ""
+	}
+	if seg.hasOpaqueArg() {
+		return VerdictAsk, LayerHeuristic + ": opaque argument"
+	}
+	switch seg.Name {
+	case "kill":
+		if isProvablyBenignKill(seg) {
+			return VerdictAllow, ""
+		}
+		return VerdictAsk, LayerHeuristic + ": kill"
+	case "pkill", "killall":
+		return VerdictAsk, LayerHeuristic + ": " + seg.Name
+	case "docker":
+		return VerdictAsk, LayerHeuristic + ": docker"
+	}
+	if isLoopbackFetch(seg, roots) {
+		return VerdictAllow, ""
+	}
+	for _, arg := range pathArgs(seg) {
+		if !withinAnyRoot(arg, roots) {
+			return VerdictAsk, LayerHeuristic + ": out-of-root path"
+		}
+	}
+	return VerdictAllow, ""
 }
 
 // withinAnyRoot reports whether arg, resolved symlink-aware, stays within any

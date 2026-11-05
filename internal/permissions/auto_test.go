@@ -492,7 +492,7 @@ func TestAutoMode_RedirectWriteTargets_EndToEnd(t *testing.T) {
 			approve, _ := newApproveRecorder(false)
 			g := New(autoCfg(config.AutoConfig{}, nil, nil), newTestRegistry("bash"), Human(approve),
 				WithWorkspaceRoot(canon))
-			got, layer, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs(tc.cmd))
+			got, layer, _, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs(tc.cmd))
 			if got != tc.want {
 				t.Errorf("resolveAuto(%q) = %v, want %v", tc.cmd, got, tc.want)
 			}
@@ -604,7 +604,7 @@ func TestAutoMode_OpaqueArgs_EndToEnd(t *testing.T) {
 			approve, _ := newApproveRecorder(false)
 			g := New(autoCfg(config.AutoConfig{}, tc.autoApprove, nil), newTestRegistry("bash"), Human(approve),
 				WithWorkspaceRoot(canon))
-			got, layer, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs(tc.cmd))
+			got, layer, _, _, _ := g.resolveAuto(context.Background(), "bash", bashArgs(tc.cmd))
 			if got != tc.want {
 				t.Errorf("resolveAuto(%q) = %v (layer %q), want %v", tc.cmd, got, layer, tc.want)
 			}
