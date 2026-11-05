@@ -255,9 +255,6 @@ func TestAutoModeOptionsWiresWorkspaceContext(t *testing.T) {
 	if root := workspaceRoot(); root != "" && !strings.Contains(line, root) {
 		t.Errorf("context line must name the workspace root %q; got %q", root, line)
 	}
-	if s := sessionScratchDir(); s != "" && !strings.Contains(line, s) {
-		t.Errorf("context line must name the session scratch dir %q; got %q", s, line)
-	}
 	if !strings.Contains(line, canonExtra) {
 		t.Errorf("context line must name every configured write root (%q), matching the gate's allowedRoots(); got %q", canonExtra, line)
 	}

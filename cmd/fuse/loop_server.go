@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -28,6 +29,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
+	"github.com/ethanhinson/fuse/internal/workspace"
 )
 
 // stdinForLoopServer is the reader loop-server drains for JSON-RPC frames. It is
@@ -246,6 +248,11 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 		Registry:      durableReg,
 		BaseDir:       session.DefaultLogDir(),
 		MaxConcurrent: server.MaxConcurrent,
+		// Workspaces (change 0129): every hosted loop opens one confined workspace
+		// rooted at <session.DefaultLogDir()>/../workspaces/<tenant>/<loop>, and its
+		// file tools are confined to it. The workspace identity is recorded as a
+		// loop.workspace event so a resume re-opens the same one.
+		Workspaces: &workspace.LocalProvider{Parent: filepath.Join(filepath.Dir(session.DefaultLogDir()), "workspaces")},
 		// LoopContext threads the REAL authenticated loop-initiator principal onto the
 		// run context (change #59, Task 3). The Connect edge resolved the principal and
 		// carried its tenant + subject on LoopConfig; here — at the composition root, not

@@ -191,9 +191,6 @@ func TestLoopServerBlankInstructionsMatchGolden(t *testing.T) {
 	rt, gw, _ := harnessServer(t, harnessOperator)
 	turns := uint32(1)
 	sys := loopRootSystem(t, rt, gw, &harnessv1.HarnessSpec{MaxTurns: &turns, Instructions: "  \n\t "})
-	if dir := sessionScratchDir(); dir != "" {
-		sys = strings.ReplaceAll(sys, dir, "<SCRATCH>")
-	}
 	want, err := os.ReadFile(loopRootPromptGolden)
 	if err != nil {
 		t.Fatal(err)

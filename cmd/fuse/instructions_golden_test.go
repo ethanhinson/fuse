@@ -33,9 +33,6 @@ func TestLoopRootPromptGolden(t *testing.T) {
 		t.Fatalf("no model call recorded")
 	}
 	sys := calls[0].Messages[0].Content
-	if dir := sessionScratchDir(); dir != "" {
-		sys = strings.ReplaceAll(sys, dir, "<SCRATCH>")
-	}
 	if *updateGoldenPrompt {
 		if err := os.MkdirAll(filepath.Dir(loopRootPromptGolden), 0o755); err != nil {
 			t.Fatal(err)
@@ -95,11 +92,10 @@ func TestLoopSpecFirstRequestGolden(t *testing.T) {
 }
 
 // normalizeRequestBody replaces per-process values in a request body: the
-// session scratch directory and the per-test HOME (a t.TempDir path).
+// per-test HOME (a t.TempDir path). The process-global scratch dir is retired
+// (change 0129): the system prompt advertises "scratch/" (workspace-relative),
+// never an absolute host path, so there is nothing to normalize out.
 func normalizeRequestBody(s string) string {
-	if dir := sessionScratchDir(); dir != "" {
-		s = strings.ReplaceAll(s, dir, "<SCRATCH>")
-	}
 	if home := os.Getenv("HOME"); home != "" {
 		s = strings.ReplaceAll(s, home, "<HOME>")
 	}

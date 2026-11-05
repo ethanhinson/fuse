@@ -5,47 +5,30 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ethanhinson/fuse/internal/config"
 )
 
-// TestCreateScratchDir proves the change-0068 scratch creation: one
-// canonicalized directory under the given base. (sessionScratchDir itself is a
-// sync.Once over this against the real home — not assertable in a shared test
-// process where earlier tests ran under a since-deleted temp HOME.)
-func TestCreateScratchDir(t *testing.T) {
-	base := t.TempDir()
-	dir := createScratchDir(base)
-	if dir == "" {
-		t.Fatal("createScratchDir returned empty")
-	}
-	if canon, err := filepath.EvalSymlinks(dir); err != nil || canon != dir {
-		t.Errorf("scratch dir not canonicalized: %q vs %q (%v)", dir, canon, err)
-	}
-	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
-		t.Fatalf("scratch dir not created: %v", err)
-	}
-}
-
-// TestScratchAdvertisedAndInRoots proves the process-level surface is stable
-// and consistent: whatever sessionScratchDir resolved to, gateWriteRoots leads
-// with it and appendScratchBlock advertises it.
-func TestScratchAdvertisedAndInRoots(t *testing.T) {
-	dir := sessionScratchDir()
-	if again := sessionScratchDir(); again != dir {
-		t.Errorf("scratch dir not stable across calls: %q vs %q", again, dir)
-	}
-	if dir == "" {
-		t.Skip("scratch creation unavailable in this environment")
-	}
-	roots := gateWriteRoots(config.Config{})
-	if len(roots) == 0 || roots[0] != dir {
-		t.Errorf("gateWriteRoots = %v, want scratch dir first", roots)
-	}
+// TestScratchAdvertisedRelative proves the change-0129 scratch advertisement
+// is workspace-relative ("scratch/") and never an absolute host path, and that
+// it still draws the scratch/deliverable line. The process-global scratch dir
+// is retired (criterion 6: grep -rn sessionScratchDir is empty).
+func TestScratchAdvertisedRelative(t *testing.T) {
 	extra := appendScratchBlock("existing block")
-	if !strings.Contains(extra, dir) || !strings.Contains(extra, "existing block") {
-		t.Errorf("appendScratchBlock lost content: %q", extra)
+	if !strings.Contains(extra, "existing block") {
+		t.Errorf("appendScratchBlock lost existing content: %q", extra)
+	}
+	if !strings.Contains(extra, "scratch/") {
+		t.Errorf("appendScratchBlock does not advertise scratch/: %q", extra)
+	}
+	// No absolute host path — the advertised path is relative.
+	if strings.Contains(extra, ":/") || filepath.IsAbs(strings.TrimSpace(strings.Split(extra, ": ")[len(strings.Split(extra, ": "))-1])) {
+		// Heuristic: the block should not contain a Windows drive or a Unix
+		// absolute path in the advertisement. Check the block does not name
+		// a path starting with "/" or "~".
+		if strings.Contains(extra, ": /") || strings.Contains(extra, "~/") {
+			t.Errorf("appendScratchBlock advertises an absolute/host path: %q", extra)
+		}
 	}
 	// The block must say where deliverables go, not only where scratch is.
 	if !strings.Contains(extra, "working directory") || !strings.Contains(extra, "throwaway") {
@@ -54,17 +37,19 @@ func TestScratchAdvertisedAndInRoots(t *testing.T) {
 }
 
 // TestGateWriteRoots_ConfigRootsCanonicalized proves config write_roots are
-// canonicalized and unresolvable roots are skipped.
+// canonicalized and unresolvable roots are skipped. The process-global scratch
+// dir is no longer a write root (change 0129: scratch/ is under the workspace
+// root, which the gate already scopes via WithWorkspaceRoot).
 func TestGateWriteRoots_ConfigRootsCanonicalized(t *testing.T) {
-	real := t.TempDir()
+	real2 := t.TempDir()
 	link := filepath.Join(t.TempDir(), "link")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(real2, link); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Config{}
 	cfg.Permissions.Auto.WriteRoots = []string{link, "/does/not/exist"}
 	roots := gateWriteRoots(cfg)
-	canonReal, _ := filepath.EvalSymlinks(real)
+	canonReal, _ := filepath.EvalSymlinks(real2)
 	found := false
 	for _, r := range roots {
 		if r == canonReal {
@@ -76,29 +61,6 @@ func TestGateWriteRoots_ConfigRootsCanonicalized(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("canonicalized config root missing from %v", roots)
-	}
-}
-
-// TestSweepScratch removes only stale entries.
-func TestSweepScratch(t *testing.T) {
-	base := t.TempDir()
-	old := filepath.Join(base, "session-old")
-	fresh := filepath.Join(base, "session-fresh")
-	for _, d := range []string{old, fresh} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	stale := time.Now().Add(-scratchMaxAge - time.Hour)
-	if err := os.Chtimes(old, stale, stale); err != nil {
-		t.Fatal(err)
-	}
-	sweepScratch(base)
-	if _, err := os.Stat(old); !os.IsNotExist(err) {
-		t.Error("stale scratch dir survived the sweep")
-	}
-	if _, err := os.Stat(fresh); err != nil {
-		t.Error("fresh scratch dir was swept")
 	}
 }
 
