@@ -1,6 +1,6 @@
 # Backlog
 
-**141 changes** — 🟢 3 in progress · 🟣 4 groomed · 🟡 23 proposed · ⚪ 3 deferred · ✅ 101 done · 🗑️ 7 killed
+**142 changes** — 🟢 3 in progress · 🟣 4 groomed · 🟡 24 proposed · ⚪ 3 deferred · ✅ 101 done · 🗑️ 7 killed
 
 ## 🟢 In progress (3)
 
@@ -19,10 +19,11 @@
 | [0133](active/0133-shared-admission-adapter-for-sandbox-concurrency-and-tenant.md) | Shared admission adapter for sandbox concurrency and tenant start rate | `medium` | `feat` | [spec](../superpowers/specs/2026-11-03-shared-admission-adapter-for-sandbox-concurrency-and-tenant-design.md) | build-ready |
 | [0131](active/0131-the-blackboard-is-durable-and-shared-across-replicas.md) | The blackboard is durable and shared across replicas | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-the-blackboard-is-durable-and-shared-across-replicas-design.md) | build-ready |
 
-## 🟡 Proposed (23)
+## 🟡 Proposed (24)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
+| [0142](active/0142-compound-shell-commands-reach-the-auto-mode-classifier-with.md) | Compound shell commands reach the auto-mode classifier with decomposed structure | `high` | `feat` | needs-grooming |
 | [0140](active/0140-object-storage-backend-for-the-artifact-store.md) | Object-storage backend for the artifact store | `medium` | `feat` | needs-grooming |
 | [0139](active/0139-segment-index-is-safe-with-concurrent-writers.md) | Segment index is safe with concurrent writers | `low` | `fix` | needs-grooming |
 | [0138](active/0138-artifact-retention-spilled-output-and-segments-expire.md) | Artifact retention: spilled output and segments expire | `medium` | `feat` | needs-grooming |
@@ -94,9 +95,11 @@ graph TD
   0138
   0139
   0140
+  0070 --> 0142
   0012:::done
   0052:::done
   0063:::done
+  0070:::done
   0127:::done
   0128:::done
   classDef done fill:#d3f9d8;
