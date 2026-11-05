@@ -2,12 +2,12 @@
 id: 129
 slug: 'per-loop-workspace-adapter-and-confined-file-tools'
 title: 'Per-loop workspace adapter and confined file tools'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-05'
 depends_on: [128]
 stacked_on:
 related: [65, 75, 77, 127]
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/per-loop-workspace-adapter-and-confined-file-tools'
 pr:
 blocked_by:
 reconciled: false
