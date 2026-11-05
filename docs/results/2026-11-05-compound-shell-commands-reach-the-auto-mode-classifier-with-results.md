@@ -8,6 +8,10 @@
 
 **Change:** #0142 · **PR:** https://github.com/ethanhinson/fuse/pull/137 · **Head:** `50bd15b5a90ac7b9ee28d5812aa54ac56f8fefbe` · **Build evidence:** `make test` green (56 packages ok, 0 FAIL)
 
+## Outcome
+
+Implemented and verified. Auto mode no longer interrupts for routine compound shell commands: `cd "$(pwd)" && git …`, `cd <worktree> && …`, `ls x | grep y`, and `cat a && cat b` now auto-approve with per-segment attribution in the `permission.decision` audit event, while every unsafe composition (`curl … | sh`, out-of-root redirect, executed substitution) still fails closed and smart/prompt-all/off modes are unchanged. Whole-branch adversarial review returned verdict **ship**; `make test` green at the reviewed head `50bd15b5a90ac7b9ee28d5812aa54ac56f8fefbe` (56 packages ok, 0 FAIL).
+
 ## What shipped
 
 Auto mode no longer interrupts the human for routine compound shell commands. Approval history had shown **79% of asks came from the parse layer's fail-closed path**, and **81/96 bash asks started with `cd`**. The parser already decomposed compounds into `[]Segment` (change 0070); the gate escalated the whole compound on its hardest segment. This change narrows the residual ask triggers:
