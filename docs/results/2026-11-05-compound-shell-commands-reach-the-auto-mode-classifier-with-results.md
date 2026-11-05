@@ -4,6 +4,8 @@
 
 # Results — Compound shell commands: parse-layer decomposition with per-part deterministic evaluation
 
+**Human action:** review and merge PR #137 (https://github.com/ethanhinson/fuse/pull/137).
+
 **Change:** #0142 · **PR:** https://github.com/ethanhinson/fuse/pull/137 · **Head:** `50bd15b5a90ac7b9ee28d5812aa54ac56f8fefbe` · **Build evidence:** `make test` green (56 packages ok, 0 FAIL)
 
 ## What shipped
@@ -33,5 +35,3 @@ Whole-branch adversarial review returned verdict **ship** (no blockers, no impor
 
 1. **Cwd tracking across `cd` segments.** The gate scopes path args against the original roots, not a `cd`-adjusted cwd (pre-existing limitation, unchanged). A future cwd-aware gate would re-scope subsequent path args and narrow this.
 2. **Deferred System 1 typed-decision classifier (Laya).** Sequenced after this change so the classifier's workload — and its fine-tuning corpus — is the genuine gray area. Spike: export post-0142 `permission.decision` history, fine-tune Laya, measure allow/deny/ask accuracy + calibration against a confidence-gated fail-closed.
-
-**Human action:** review and merge PR #137.
