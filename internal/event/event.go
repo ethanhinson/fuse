@@ -134,6 +134,13 @@ const (
 	// claims only, never token material. It is absent for loops started without
 	// an authenticated principal (stdio binding, local CLI).
 	KindLoopPrincipal Kind = "loop.principal"
+	// KindLoopWorkspace records the loop's workspace identity, once, right after
+	// loop.harness on start. It is what makes a loop's workspace durable: a resume
+	// on any replica reads the ID back from the stream and re-opens the same
+	// workspace (change 0129). It carries the workspace ID ("<tenant>/<loop>") and
+	// the provider NAME ("local"/"mem"/"" — never a host path), never the
+	// contents. Absent from a loop started without a workspace provider.
+	KindLoopWorkspace Kind = "loop.workspace"
 	// KindToolIdentityMinted records one delegated tool-identity token minted for
 	// a call made by this loop. It never holds the token.
 	KindToolIdentityMinted Kind = "tool.identity.minted"
@@ -465,6 +472,15 @@ type LoopPrincipalPayload struct {
 	Issuer   string   `json:"issuer"`
 	Scopes   []string `json:"scopes"` // [] = unrestricted
 	TokenID  string   `json:"token_id"`
+}
+
+// LoopWorkspacePayload accompanies KindLoopWorkspace. ID is the workspace identity
+// ("<tenant>/<loop>"); Provider is the provider NAME — "local", "mem", or "" —
+// never a host path. A resume compares Provider against the runtime's configured
+// provider and refuses to re-open if they differ (change 0129).
+type LoopWorkspacePayload struct {
+	ID       string `json:"id"`
+	Provider string `json:"provider"`
 }
 
 // ToolIdentityMintedPayload accompanies KindToolIdentityMinted. Scope is the

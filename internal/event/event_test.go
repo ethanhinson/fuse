@@ -36,6 +36,7 @@ func TestKindWireValues(t *testing.T) {
 		KindLoopHarness:        "loop.harness",
 		KindMCPServer:          "mcp.server",
 		KindLoopPrincipal:      "loop.principal",
+		KindLoopWorkspace:      "loop.workspace",
 		KindToolIdentityMinted: "tool.identity.minted",
 		KindLoopCancelRequest:  "loop.cancel.request",
 		KindLoopCancelled:      "loop.cancelled",
@@ -126,6 +127,36 @@ func TestPayloadWithHeaderShapedLines(t *testing.T) {
 	}
 }
 
+// TestLoopWorkspacePayloadRoundTrip round-trips a LoopWorkspacePayload through the
+// store envelope and asserts the identity and provider survive (change 0129, the
+// loop.workspace event a resume re-opens the same workspace from).
+func TestLoopWorkspacePayloadRoundTrip(t *testing.T) {
+	want := LoopWorkspacePayload{ID: "tenant-a/loop-1", Provider: "local"}
+	raw, err := MarshalPayload(want)
+	if err != nil {
+		t.Fatalf("MarshalPayload: %v", err)
+	}
+	e := Event{Seq: 1, Kind: KindLoopWorkspace, Payload: raw}
+	line, err := e.MarshalJSONL()
+	if err != nil {
+		t.Fatalf("MarshalJSONL: %v", err)
+	}
+	got, err := ParseEvent(line)
+	if err != nil {
+		t.Fatalf("ParseEvent: %v", err)
+	}
+	if got.Kind != KindLoopWorkspace {
+		t.Fatalf("kind = %q, want loop.workspace", got.Kind)
+	}
+	var p LoopWorkspacePayload
+	if err := json.Unmarshal(got.Payload, &p); err != nil {
+		t.Fatalf("payload unmarshal: %v", err)
+	}
+	if p.ID != want.ID || p.Provider != want.Provider {
+		t.Errorf("payload round-trip:\n got %+v\nwant %+v", p, want)
+	}
+}
+
 // TestPayloadKindsRoundTrip exercises every payload struct through the envelope.
 func TestPayloadKindsRoundTrip(t *testing.T) {
 	payloads := []any{
@@ -150,6 +181,7 @@ func TestPayloadKindsRoundTrip(t *testing.T) {
 		SandboxHealthPayload{Handler: "container", ContainerID: "9f2c1a3b", Healthy: false, Reason: "oom"},
 		SandboxAdmissionPayload{Handler: "container", Outcome: "queued", Scope: "tenant", WaitMS: 4200},
 		SandboxAdmissionPayload{Handler: "container", Outcome: "refused", Scope: "global"},
+		LoopWorkspacePayload{ID: "tenant-a/loop-1", Provider: "local"},
 	}
 	for i, p := range payloads {
 		raw, err := MarshalPayload(p)
