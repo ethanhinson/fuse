@@ -15,7 +15,7 @@ discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-03-per-loop-workspace-adapter-and-confined-file-tools-design.md'
 plan: 'docs/superpowers/plans/2026-11-03-per-loop-workspace-adapter-and-confined-file-tools.md'
-results:
+results: 'docs/results/2026-11-04-0129-per-loop-workspace-adapter-and-confined-file-tools.md'
 auto_groomable:
 hold:
 branch_prefix:
@@ -32,6 +32,7 @@ reconciled: true
 |---|---|
 | Spec | [2026-11-03-per-loop-workspace-adapter-and-confined-file-tools-design.md](../../superpowers/specs/2026-11-03-per-loop-workspace-adapter-and-confined-file-tools-design.md) |
 | Plan | [2026-11-03-per-loop-workspace-adapter-and-confined-file-tools.md](../../superpowers/plans/2026-11-03-per-loop-workspace-adapter-and-confined-file-tools.md) |
+| Results | [2026-11-04-0129-per-loop-workspace-adapter-and-confined-file-tools.md](../../results/2026-11-04-0129-per-loop-workspace-adapter-and-confined-file-tools.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
