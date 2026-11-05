@@ -14,7 +14,7 @@ related: [67, 68, 69]
 discovered_from: []
 adrs: [5, 6]
 spec: 'docs/superpowers/specs/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-plan.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: false
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-design.md](../../superpowers/specs/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-design.md) |
+| Plan | [2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-plan.md](../../superpowers/plans/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-plan.md) |
 | ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](../../adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
 <!-- docket:artifacts:end -->
 
