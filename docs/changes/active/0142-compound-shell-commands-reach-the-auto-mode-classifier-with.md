@@ -2,7 +2,7 @@
 id: 142
 slug: 'compound-shell-commands-reach-the-auto-mode-classifier-with'
 title: 'Compound shell commands: parse-layer decomposition with per-part deterministic evaluation'
-status: 'in-progress'
+status: 'implemented'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/compound-shell-commands-reach-the-auto-mode-classifier-with'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/137'
 blocked_by:
 reconciled: true
 ---
@@ -53,3 +53,12 @@ Widening the deterministic scoped-allow rules themselves (new provable-safe comm
 ### 2026-11-05
 
 2026-11-05 — Reconciled against origin/main before planning. The spec's premise ("compound == unparseable") needed narrowing: change 0070 already decomposes compounds into []Segment (redirect WriteTargets + per-arg Opaque captured, fail-closed on what it cannot honestly decompose) and resolveAuto already runs every segment through evalRulesDetail → allSegmentsReadOnlySafe → classifyHeuristic → classifyOrAsk. The real residual ask triggers are (1) genuinely-unparseable writes — left fail-closed, (2) `cd <dir>` treated as mutating/opaque — the dominant interrupt, (3) a gray per-segment heuristic verdict escalating the whole compound, discarding provable-safe segments. Plan and build target triggers 2–3; trigger 1 and smart/prompt-all/off modes unchanged. No spec edit required — design stands, reframed by this log and the plan's reconcile-refinement section.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 50bd15b5a90ac7b9ee28d5812aa54ac56f8fefbe
+ran_at:   2026-11-05T04:04:59Z
+<!-- docket:build-evidence:end -->
