@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/compound-shell-commands-reach-the-auto-mode-classifier-with'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -46,3 +46,9 @@ When the gate's parser decomposes a compound command into parts (pipeline stages
 ## Out of scope
 
 Widening the deterministic scoped-allow rules themselves (new provable-safe command shapes — that is a 0068-style follow-up). Session-scoped or remembered approvals ('always allow this shape') — a separate grant-model change. Retuning the classifier's risk bias beyond passing the new structural context (0069 owns the base prompt contract). Changes to smart / prompt-all / off modes, the permission floor, or the human prompt UX itself.
+
+## Reconcile log
+
+### 2026-11-05
+
+2026-11-05 — Reconciled against origin/main before planning. The spec's premise ("compound == unparseable") needed narrowing: change 0070 already decomposes compounds into []Segment (redirect WriteTargets + per-arg Opaque captured, fail-closed on what it cannot honestly decompose) and resolveAuto already runs every segment through evalRulesDetail → allSegmentsReadOnlySafe → classifyHeuristic → classifyOrAsk. The real residual ask triggers are (1) genuinely-unparseable writes — left fail-closed, (2) `cd <dir>` treated as mutating/opaque — the dominant interrupt, (3) a gray per-segment heuristic verdict escalating the whole compound, discarding provable-safe segments. Plan and build target triggers 2–3; trigger 1 and smart/prompt-all/off modes unchanged. No spec edit required — design stands, reframed by this log and the plan's reconcile-refinement section.
