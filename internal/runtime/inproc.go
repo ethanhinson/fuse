@@ -808,6 +808,15 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 		toolReg.Register(tools.NewEditFile(fsys))
 		toolReg.Register(tools.NewListDirectory(fsys))
 		toolReg.Register(tools.NewGrep(fsys))
+		// codeindex shells out on the workspace's host path; it answers about
+		// the WRONG filesystem when the workspace has no MountSource (the mem
+		// provider). Unregister it so the model never sees a tool that
+		// answers about a filesystem it cannot reach (criterion 7).
+		if mount, _ := ws.MountSource(ctx); mount == "" {
+			for _, t := range tools.CodeindexTools() {
+				toolReg.Unregister(t.Name())
+			}
+		}
 	}
 
 	// BuildAgent is the per-loop factory: it binds the root agent AND the loop's
