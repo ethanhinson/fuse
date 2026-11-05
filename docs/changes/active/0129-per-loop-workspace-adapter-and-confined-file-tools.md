@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/per-loop-workspace-adapter-and-confined-file-tools'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -44,3 +44,9 @@ A `Workspace` seam with a local implementation keyed by (tenant, loop): file too
 ## Out of scope
 
 Moving workspace contents between nodes (0130 adds snapshot/restore and the Kubernetes volume spec); permission-mode changes; the orchestrator/shell bindings beyond compiling.
+
+## Reconcile log
+
+### 2026-11-05
+
+Re-read internal/tools/{read,write,edit,list,grep}.go, registry.go, cmd/fuse/scratch.go, cmd/fuse/run.go, cmd/fuse/sandbox.go, internal/runtime/*.go against the spec. File tools still call raw os.* on the model path (write.go:47/50, edit.go:46/59, list.go:54, grep.go:144/232) and register zero-value constructors (registry.go:253-260 DefaultTools(*sandbox.Service)). sessionScratchDir/scratchOnce/appendScratchBlock exist in cmd/fuse/scratch.go. No workspace.Provider field in runtime.Deps yet. sandbox.Pool keyed by tenant/principal, no per-loop mount source; TenantRoots is the fallback. The Go 1.24 os.Root API the spec leans on is available (go.mod toolchain >= 1.24). Design holds as written — the new internal/workspace package, file-tool FileSystem signature change, runtime.Deps.Workspaces wiring, conformance suite, and two-runtime resume test are all greenfield against current main (now at 0cd6a74 with #127 merged). No ADRs needed beyond the workspace-adapter one the spec names in acceptance criterion 8.
