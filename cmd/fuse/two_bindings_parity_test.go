@@ -160,6 +160,13 @@ func normalizeStream(t *testing.T, evs []event.Event) []normEvent {
 	t.Helper()
 	out := make([]normEvent, 0, len(evs))
 	for _, e := range evs {
+		// loop.workspace is a server-binding-only event (change 0129): the
+		// loop-server wires a workspace provider, the CLI bindings do not. Drop
+		// it so the streams stay comparable — it carries workspace identity,
+		// not turn or model state.
+		if e.Kind == event.KindLoopWorkspace {
+			continue
+		}
 		out = append(out, normEvent{Kind: e.Kind, Turn: e.Turn, Payload: normalizePayload(t, e)})
 	}
 	return out
