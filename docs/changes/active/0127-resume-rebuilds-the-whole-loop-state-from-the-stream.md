@@ -59,6 +59,6 @@ Reconciled against origin/main f01f122. All spec code references verified presen
 <!-- docket:build-evidence:start -->
 command:  make test
 result:   green
-head_sha: 0258fcc358aff8729b0b33a4a71d3e8049fb8ebf
-ran_at:   2026-11-04T02:52:28Z
+head_sha: 95a81a8b0928fbb88f873737a9ee3951b6d5275e
+ran_at:   2026-11-05T00:25:18Z
 <!-- docket:build-evidence:end -->
