@@ -2,7 +2,7 @@
 id: 142
 slug: 'compound-shell-commands-reach-the-auto-mode-classifier-with'
 title: 'Compound shell commands: parse-layer decomposition with per-part deterministic evaluation'
-status: 'proposed'
+status: 'in-progress'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/compound-shell-commands-reach-the-auto-mode-classifier-with'
 pr:
 blocked_by:
 reconciled: false
