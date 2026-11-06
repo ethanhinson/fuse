@@ -296,6 +296,9 @@ func installRelevance(a *agent.Agent, cfg config.Config, traceW io.Writer, gate 
 		return
 	}
 	adapter := gatewayAdapter(cfg, gate)
+	if adapter.RequestTimeout == 0 {
+		adapter.RequestTimeout = model.HelperRequestTimeout // optional scoring, with a heuristic to fall back on
+	}
 	if traceW != nil {
 		adapter = adapter.WithTraceLabel(traceW, "relevance-classifier")
 	}
@@ -374,6 +377,8 @@ func autoModeOptions(cfg config.Config, reg *model.Registry, traceW io.Writer) [
 		return nil
 	}
 	clsAdapter := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
+	// A tool call is blocked on this verdict, so it gets a limit on total time.
+	clsAdapter.RequestTimeout = model.HelperRequestTimeout
 	if traceW != nil {
 		clsAdapter = clsAdapter.WithTraceLabel(traceW, permissions.ClassifierTraceLabel)
 	}

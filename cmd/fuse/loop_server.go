@@ -30,6 +30,20 @@ import (
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
 
+// hostedRequestTimeout limits one model attempt on a hosted loop. Locally a human
+// can cancel a call that never ends; on a server nobody is watching, and a stream
+// that trickles forever holds a slot and keeps spending.
+const hostedRequestTimeout = "30m"
+
+// withHostedRequestTimeout applies hostedRequestTimeout unless the operator set
+// gateway.request_timeout, which always wins.
+func withHostedRequestTimeout(cfg config.Config) config.Config {
+	if cfg.Gateway.RequestTimeout == "" {
+		cfg.Gateway.RequestTimeout = hostedRequestTimeout
+	}
+	return cfg
+}
+
 // stdinForLoopServer is the reader loop-server drains for JSON-RPC frames. It is
 // os.Stdin in production; a test swaps it for an immediately-EOF pipe to prove the
 // dispatch wiring returns exit 0 without a real stdio session.
@@ -206,6 +220,7 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 	if observer == nil {
 		observer = observe.NoopObserver{}
 	}
+	cfg = withHostedRequestTimeout(cfg)
 
 	// Resolve the shared MCP attach options ONCE (change #59, Task 4): they are derived
 	// from trusted config (the identity-propagation egress CredentialSource + the posture

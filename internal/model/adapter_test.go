@@ -621,9 +621,36 @@ func TestStreamIdleTimeoutEndsAStalledStream(t *testing.T) {
 	}
 }
 
-func TestDefaultTimeoutsSurviveLongReasoning(t *testing.T) {
+// A model turn has no default limit on total time, and only silence ends it.
+func TestAdapterDefaultsHaveNoTotalLimit(t *testing.T) {
 	a := NewAdapter("http://x", "k", nil)
-	if a.RequestTimeout < 20*time.Minute || a.StreamIdleTimeout <= 0 || a.StreamIdleTimeout >= a.RequestTimeout {
-		t.Errorf("request = %v, idle = %v", a.RequestTimeout, a.StreamIdleTimeout)
+	if a.RequestTimeout != 0 {
+		t.Errorf("RequestTimeout = %v, want no default limit", a.RequestTimeout)
+	}
+	if a.StreamIdleTimeout <= 0 {
+		t.Errorf("StreamIdleTimeout = %v, want a silence limit", a.StreamIdleTimeout)
+	}
+}
+
+// A slow response must outlive the old limits when none is set, and silence must
+// also end a gateway that ignored stream and answers with one buffered body.
+func TestIdleTimeoutCoversBufferedResponses(t *testing.T) {
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, "{")
+		w.(http.Flusher).Flush()
+		select {
+		case <-block:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(block)
+	a := NewAdapter(srv.URL, "k", srv.Client())
+	a.StreamIdleTimeout = 50 * time.Millisecond
+	a.MaxAttempts = 1
+	if _, err := a.Complete(context.Background(), CompletionReq{Model: "m"}); err == nil || !strings.Contains(err.Error(), "silent") {
+		t.Fatalf("err = %v, want a silent-response error", err)
 	}
 }

@@ -23,12 +23,17 @@ import (
 // bounds silence inside a stream, and failed
 // attempts are retried with backoff up to MaxAttempts.
 const (
-	// defaultRequestTimeout is long because a reasoning model can legitimately
-	// think for many minutes on one call, and retrying a call that was only slow
-	// spends the same time again. Stalls are StreamIdleTimeout's job.
-	defaultRequestTimeout = 30 * time.Minute
-	// defaultStreamIdleTimeout ends an attempt whose stream has gone silent, so a
-	// dead provider costs minutes rather than the whole request timeout.
+	// HelperRequestTimeout bounds a short helper call (permission classifier,
+	// relevance scorer, human router). The caller is blocked on a small decision,
+	// so unlike a model turn, it has a reason to give up on total time.
+	HelperRequestTimeout = 5 * time.Minute
+	// listModelsTimeout bounds the catalogue lookup, which is never a long call.
+	listModelsTimeout = time.Minute
+	// defaultStreamIdleTimeout ends an attempt whose response has gone silent, so
+	// a dead provider fails in minutes. There is deliberately no default limit on
+	// total time: a reasoning model can legitimately think for a long time, and a
+	// response that is still arriving is not stalled. A binding with nobody there
+	// to cancel sets RequestTimeout itself.
 	defaultStreamIdleTimeout = 10 * time.Minute
 	defaultMaxAttempts       = 3
 	defaultRetryBackoff      = time.Second
@@ -45,8 +50,10 @@ var defaultGatewayClient = &http.Client{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		// Streaming sends headers promptly, but a busy gateway or provider queue
+		// can take minutes to start, and that is not yet a failure.
+		ResponseHeaderTimeout: 10 * time.Minute,
 		ExpectContinueTimeout: 1 * time.Second,
 		MaxIdleConnsPerHost:   32,
 		IdleConnTimeout:       90 * time.Second,
@@ -87,9 +94,10 @@ type Adapter struct {
 	key     string
 	hc      *http.Client
 
-	// RequestTimeout bounds a single attempt (connect through full body read).
+	// RequestTimeout bounds a single attempt (connect through full body read). 0,
+	// the default, sets no limit on total time.
 	RequestTimeout time.Duration
-	// StreamIdleTimeout ends an attempt when a started stream sends nothing for
+	// StreamIdleTimeout ends an attempt when a started response sends nothing for
 	// this long. 0 disables it.
 	StreamIdleTimeout time.Duration
 	// MaxAttempts is the total number of tries (1 = no retries).
@@ -128,7 +136,6 @@ func NewAdapter(baseURL, key string, hc *http.Client) *Adapter {
 		baseURL:           strings.TrimRight(baseURL, "/"),
 		key:               key,
 		hc:                hc,
-		RequestTimeout:    defaultRequestTimeout,
 		StreamIdleTimeout: defaultStreamIdleTimeout,
 		MaxAttempts:       defaultMaxAttempts,
 		RetryBackoff:      defaultRetryBackoff,
@@ -485,23 +492,26 @@ func (a *Adapter) completeOnce(ctx context.Context, body []byte, tools []ToolSch
 	// Branch on the response shape: a streamed (text/event-stream) body is
 	// parsed incrementally; a buffered JSON body (a gateway that ignored
 	// stream, or a test double) is parsed whole. Both return the same result.
-	if strings.Contains(res.Header.Get("Content-Type"), "text/event-stream") {
-		if a.StreamIdleTimeout <= 0 {
-			return a.readStream(res.Body, tools)
-		}
-		var stalled atomic.Bool
+	var respBody io.Reader = res.Body
+	var stalled atomic.Bool
+	if a.StreamIdleTimeout > 0 {
 		watchdog := time.AfterFunc(a.StreamIdleTimeout, func() {
 			stalled.Store(true)
 			cancelAttempt()
 		})
 		defer watchdog.Stop()
-		out, err, retryable := a.readStream(idleResetReader{r: res.Body, watchdog: watchdog, idle: a.StreamIdleTimeout}, tools)
-		if err != nil && stalled.Load() {
-			return CompletionResp{}, fmt.Errorf("gateway stream silent for %s: %w", a.StreamIdleTimeout, err), true
-		}
-		return out, err, retryable
+		respBody = idleResetReader{r: res.Body, watchdog: watchdog, idle: a.StreamIdleTimeout}
 	}
-	return a.readBuffered(res.Body, tools)
+	var out CompletionResp
+	if strings.Contains(res.Header.Get("Content-Type"), "text/event-stream") {
+		out, err, retryable = a.readStream(respBody, tools)
+	} else {
+		out, err, retryable = a.readBuffered(respBody, tools)
+	}
+	if err != nil && stalled.Load() {
+		return CompletionResp{}, fmt.Errorf("gateway response silent for %s: %w", a.StreamIdleTimeout, err), true
+	}
+	return out, err, retryable
 }
 
 // idleResetReader pushes the stream's idle watchdog back whenever bytes arrive.
@@ -676,15 +686,19 @@ func (a *Adapter) traceReassembled(marker string, out CompletionResp) {
 
 // ListModels asks the gateway which model IDs it serves (GET {base}/models, the
 // OpenAI-compatible listing LiteLLM exposes). IDs come back sorted and
-// de-duplicated. A single attempt bounded by RequestTimeout: this is an
+// de-duplicated. A single attempt bounded by listModelsTimeout: this is an
 // interactive lookup, so a failure is reported rather than retried.
 func (a *Adapter) ListModels(ctx context.Context) ([]string, error) {
 	if a.baseURL == "" {
 		return nil, errors.New("no gateway configured")
 	}
-	if a.RequestTimeout > 0 {
+	limit := a.RequestTimeout
+	if limit <= 0 || limit > listModelsTimeout {
+		limit = listModelsTimeout
+	}
+	{
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, a.RequestTimeout)
+		ctx, cancel = context.WithTimeout(ctx, limit)
 		defer cancel()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL+"/models", nil)

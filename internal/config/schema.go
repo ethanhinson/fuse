@@ -9,11 +9,11 @@ type Gateway struct {
 	URL string `yaml:"url"`
 	Key string `yaml:"key"`
 	// RequestTimeout bounds ONE gateway attempt (connect through the full
-	// streamed body) as a Go duration string ("5m", "20m"). Empty ⇒ the
-	// adapter's built-in 30m. Reasoning models served through OpenRouter can
-	// stream 30k–60k thinking tokens before their first visible byte, so this
-	// bound must be generous; a stream that goes silent ends sooner through the
-	// adapter's idle timeout. Not a credential or permission surface, so it is
+	// streamed body) as a Go duration string ("5m", "20m"). Empty means no limit
+	// on total time for a local run and 30m on a hosted loop server, where nobody
+	// can cancel a call that never ends. Reasoning models can stream 30k–60k
+	// thinking tokens before their first visible byte, so a slow response is not
+	// a failure; a silent one ends through the adapter's idle timeout. Not a credential or permission surface, so it is
 	// honored from .fuse.local.yml as well (the worst case is a longer wait).
 	RequestTimeout string `yaml:"request_timeout"`
 }

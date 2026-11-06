@@ -51,8 +51,10 @@ func newHumanRouter(cfg config.Config, reg *model.Registry) agent.RouterLLM {
 	if _, err := reg.Resolve(modelID); err != nil {
 		modelID = ""
 	}
+	client := model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil)
+	client.RequestTimeout = model.HelperRequestTimeout
 	return &humanRouter{
-		client:  model.NewAdapter(cfg.Gateway.URL, cfg.Gateway.Key, nil),
+		client:  client,
 		modelID: modelID,
 	}
 }
