@@ -515,6 +515,93 @@ func assignsAreBenign(assigns []*syntax.Assign) bool {
 	return true
 }
 
+// plainVarName reports whether an assignment-only statement setting NAME can be
+// admitted without a prompt.
+//
+// This is an allowlist, not a denylist, because an assigned name may already be
+// exported in the caller's environment: a variable that some parent process
+// exported and a program reads cannot be proven safe by listing the dangerous
+// ones, since the dangerous set is exactly "whatever anything might read" and
+// is therefore not enumerable. Only names we can reason about up front pass.
+//
+// The deny-side prefixes and names below are the ones where a plain assignment
+// is known to be load-bearing for a program we might go on to run, or where the
+// name is read by the shell itself between the assignment and any use.
+func plainVarName(name string) bool {
+	for _, p := range []string{
+		"GIT_", "LD_", "DYLD_", "BASH", "PYTHON", "NODE_", "npm_", "NPM_", "GO", "PG",
+	} {
+		if strings.HasPrefix(name, p) {
+			return false
+		}
+	}
+	switch name {
+	case "PS1", "PS2", "PS4", "PWD", "OLDPWD", "HOME", "PATH", "CDPATH", "IFS",
+		"ENV", "SHELL", "SHELLOPTS", "PAGER", "EDITOR", "VISUAL", "MAKEFLAGS",
+		"PROMPT_COMMAND", "TMPDIR", "GLOBIGNORE":
+		return false
+	}
+	if len(name) == 1 && (name[0] >= 'A' && name[0] <= 'Z' || name[0] >= 'a' && name[0] <= 'z') {
+		return true
+	}
+	switch name {
+	case "REV", "SHA", "HEADSHA", "PID", "RC", "BRANCH", "COMMIT", "rc", "status":
+		return true
+	}
+	for _, suffix := range []string{"_REV", "_SHA", "_PID", "_COMMIT", "_BRANCH"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// assignOnlyIsSafe reports whether an assignment-only statement (no command
+// after the assignments) is safe to let through with no segment emitted.
+//
+// Every assign must pass the same shape guard as assignsAreBenign: no nil node,
+// no `+=` append, no naked NAME, no subscript, no array.
+//
+// From there, two routes to safe, either of which must hold per assign:
+//
+//   - plainVarName(NAME) is true. A nil value is fine (`REV=`), and any other
+//     value must survive classifyWord, so a substitution inside the value —
+//     `REV=$(git rev-parse HEAD)` — still gets the normal evaluation: its inner
+//     commands are appended to out and the substitution itself must be
+//     read-only, exactly as if it had appeared in an argument;
+//   - otherwise the existing inert-name and literal-value rule from
+//     assignsAreBenign applies unchanged: NAME must be on the inert allowlist
+//     and the value must be statically literal.
+func assignOnlyIsSafe(src string, assigns []*syntax.Assign, out *[]Segment) bool {
+	for _, a := range assigns {
+		if a == nil || a.Name == nil {
+			return false
+		}
+		if a.Append || a.Naked || a.Index != nil || a.Array != nil {
+			return false
+		}
+		if plainVarName(a.Name.Value) {
+			if a.Value == nil {
+				continue
+			}
+			if _, _, ok := classifyWord(src, a.Value, out); !ok {
+				return false
+			}
+			continue
+		}
+		if !envAssignNameIsInert(a.Name.Value) {
+			return false
+		}
+		if a.Value == nil {
+			continue
+		}
+		if _, ok := literalWord(a.Value); !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // splitSegments parses cmd as a bash program and enumerates every
 // simple-command segment across &&, ||, ;, |, |&, `&`, and newlines, including
 // the script bodies of `bash -c "…"` / `sh -c "…"` and the statement lists of
@@ -919,15 +1006,22 @@ func collectCall(src string, call *syntax.CallExpr, out *[]Segment) error {
 	// proven-inert allowlist is dropped and the inner command is classified on
 	// its own merits (change 0070 D1); anything else — including any name we
 	// simply do not recognise — fails closed at the parse floor.
+	//
+	// An assignment-ONLY statement (`REV=abc`) runs no command, so it is judged
+	// first and on its own terms (assignOnlyIsSafe): a plain variable name with
+	// a literal or read-only value passes, and any other shape fails closed. A
+	// statement that DOES carry a command after the assignments keeps the
+	// environment-prefix treatment above.
 	// The assignments are DROPPED, never appended to Args: they are not
 	// arguments, and a downstream path-scoper or deny matcher must not see them.
+	if len(call.Args) == 0 {
+		if !assignOnlyIsSafe(src, call.Assigns, out) {
+			return ErrUnparseable
+		}
+		return nil
+	}
 	if !assignsAreBenign(call.Assigns) {
 		return ErrUnparseable
-	}
-	if len(call.Args) == 0 {
-		// An assignment-only statement (`CI=1`) runs no command, so there is
-		// nothing for any layer to classify; likewise an empty call.
-		return nil
 	}
 
 	// Classify every word as literal or OPAQUE, failing closed on any expansion
