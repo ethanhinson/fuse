@@ -267,6 +267,67 @@ func (l *Limiter) Admit(ctx context.Context, tenant event.TenantID) (release fun
 	}, nil
 }
 
+// Sweep drops the per-tenant bookkeeping of every tenant whose start-rate
+// bucket has refilled to capacity and whose admission lock is unheld with no
+// in-flight start reservation. The per-tenant maps are keyed by tenant ids the
+// operator does not bound (a prefix-admitted tenant can be anyone), so without
+// a sweep they grow monotonically with every tenant that ever started a loop.
+// A swept tenant is not blocked or re-burst in any way a refilled idle tenant
+// would not already be: its bucket restarts full — exactly the state refill
+// reaches on its own — and its lock is re-created on demand. Registry records
+// are never touched: the live-loop cap counts the durable registry, not this
+// process's maps. It returns how many tenants were pruned.
+func (l *Limiter) Sweep(now time.Time) int {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	pruned := 0
+	for t, b := range l.buckets {
+		if len(l.locks[t]) > 0 || l.pending[t] != 0 {
+			continue // admission in flight: never prune mid-start
+		}
+		if !b.full(now) {
+			continue // bucket still draining: the tenant is not idle yet
+		}
+		delete(l.buckets, t)
+		delete(l.locks, t)
+		pruned++
+	}
+	// Tenants with a lock but no bucket (a cap with no start rate) are pruned
+	// on the same unheld-and-unreserved condition.
+	for t, sem := range l.locks {
+		if _, ok := l.buckets[t]; ok || len(sem) > 0 || l.pending[t] != 0 {
+			continue
+		}
+		delete(l.locks, t)
+		pruned++
+	}
+	return pruned
+}
+
+// StartSweeper runs Sweep every interval until ctx is done. A non-positive
+// interval or a nil Limiter starts nothing. The goroutine is the only state
+// it owns, so stopping ctx is a full cleanup.
+func (l *Limiter) StartSweeper(ctx context.Context, every time.Duration) {
+	if l == nil || every <= 0 {
+		return
+	}
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-t.C:
+				l.Sweep(now)
+			}
+		}
+	}()
+}
+
 // tokenEpsilon absorbs float rounding so a caller who waits exactly the
 // advertised Retry-After is admitted.
 const tokenEpsilon = 1e-9
@@ -282,6 +343,15 @@ type bucket struct {
 
 func newBucket(perMinute int, now time.Time) *bucket {
 	return &bucket{perMinute: float64(perMinute), tokens: float64(perMinute), last: now}
+}
+
+// full reports whether the bucket has refilled to its capacity at now. Callers
+// hold Limiter.mu.
+func (b *bucket) full(now time.Time) bool {
+	if elapsed := now.Sub(b.last); elapsed > 0 {
+		return b.tokens+elapsed.Seconds()*b.perMinute/60 >= b.perMinute-tokenEpsilon
+	}
+	return b.tokens >= b.perMinute-tokenEpsilon
 }
 
 // take refills to now and spends one token. When none is available it returns
