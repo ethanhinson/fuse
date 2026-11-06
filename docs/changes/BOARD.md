@@ -1,6 +1,6 @@
 # Backlog
 
-**142 changes** — 🟢 3 in progress · 🔵 2 built · 🟣 3 groomed · 🟡 23 proposed · ⚪ 3 deferred · ✅ 101 done · 🗑️ 7 killed
+**142 changes** — 🟢 3 in progress · 🔵 1 built · 🟣 3 groomed · 🟡 23 proposed · ⚪ 3 deferred · ✅ 102 done · 🗑️ 7 killed
 
 ## 🟢 In progress (3)
 
@@ -10,12 +10,11 @@
 | [0126](active/0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) | `fix/fenced-loop-ownership-and-cross-replica-activity-in-the-loop` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🔵 Built (2)
+## 🔵 Built (1)
 
 | # | Title | Priority | Type | PR | State |
 |---|-------|----------|------|----|-------|
 | [0134](active/0134-installed-skills-come-from-a-skill-source-adapter-consistent.md) | Installed skills come from a skill source adapter, consistent across replicas | `medium` | `feat` | [#138](https://github.com/ethanhinson/fuse/pull/138) | awaiting merge |
-| [0142](active/0142-compound-shell-commands-reach-the-auto-mode-classifier-with.md) | Compound shell commands: parse-layer decomposition with per-part deterministic evaluation | `high` | `feat` | [#137](https://github.com/ethanhinson/fuse/pull/137) | awaiting merge |
 
 ## 🟣 Groomed (3)
 
@@ -100,20 +99,19 @@ graph TD
   0138
   0139
   0140
-  0070 --> 0142
   0012:::done
   0052:::done
   0063:::done
-  0070:::done
   0127:::done
   0128:::done
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (108)</summary>
+<details><summary>✅🗑️ Archive — done + killed (109)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
+| [0142](archive/2026-11-06-0142-compound-shell-commands-reach-the-auto-mode-classifier-with.md) | Compound shell commands: parse-layer decomposition with per-part deterministic evaluation | 2026-11-06 |
 | [0127](archive/2026-11-05-0127-resume-rebuilds-the-whole-loop-state-from-the-stream.md) | Resume rebuilds the whole loop state from the stream | 2026-11-05 |
 | [0141](archive/2026-11-04-0141-add-a-clear-command-to-reset-the-conversation-between-tasks.md) | Add a /clear command to reset the conversation between tasks | 2026-11-04 |
 | [0128](archive/2026-11-04-0128-loop-artifact-store-adapter-for-spilled-tool-output-and-comp.md) | Loop artifact store adapter for spilled tool output and compaction segments | 2026-11-04 |
@@ -128,7 +126,6 @@ graph TD
 | [0102](archive/2026-11-01-0102-loop-scoped-secret-values-on-startloop-host-bound-and-never.md) | Loop-scoped secret values on StartLoop, host-bound and never recorded | 2026-11-01 |
 | [0101](archive/2026-11-01-0101-operator-spec-policy-mcp-host-allowlist-private-network-deny.md) | Operator spec policy: MCP host allowlist, private-network deny, registry-only models | 2026-11-01 |
 | [0100](archive/2026-11-01-0100-scoped-principals-rpc-scopes-harness-digest-pin-and-principa.md) | Scoped principals: RPC scopes, harness digest pin and principal record on every loop | 2026-11-01 |
-| [0099](archive/2026-11-01-0099-trusted-issuers-verify-jwks-asymmetric-keys-with-kid-selecti.md) | Trusted issuers verify JWKS asymmetric keys with kid selection and tenant prefixes | 2026-11-01 |
 | [0097](archive/2026-10-31-0097-approve-all-carries-across-the-cli-model-relay-and-policy-de.md) | Approve-all carries across the CLI-model relay, and policy denials say who denied | 2026-10-31 |
 | [0025](archive/2026-08-08-0025-agent-to-agent-messaging.md) | Agent-to-agent messaging — note passing for debate/refine patterns | 2026-08-08 |
 | [0022](archive/2026-08-08-0022-mcp-websocket-transport.md) | WebSocket transport for MCP | 2026-08-08 |
@@ -141,6 +138,7 @@ graph TD
 
 | Month | Done |
 |-------|------|
+| [2026-11](archive/) | 1 done |
 | [2026-10](archive/) | 14 done |
 | [2026-09](archive/) | 7 done |
 | [2026-08](archive/) | 65 done |

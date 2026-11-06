@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0142 — Compound shell commands: parse-layer decomposition with per-part deterministic evaluation](../../changes/active/0142-compound-shell-commands-reach-the-auto-mode-classifier-with.md)**
+> ↩ **[Change 0142 — Compound shell commands: parse-layer decomposition with per-part deterministic evaluation](../../changes/archive/2026-11-06-0142-compound-shell-commands-reach-the-auto-mode-classifier-with.md)**
 <!-- docket:backlink:end -->
 
 # Plan — Compound shell commands: parse-layer decomposition with per-part deterministic evaluation

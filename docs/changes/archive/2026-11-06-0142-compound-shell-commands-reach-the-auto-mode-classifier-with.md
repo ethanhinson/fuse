@@ -2,12 +2,12 @@
 id: 142
 slug: 'compound-shell-commands-reach-the-auto-mode-classifier-with'
 title: 'Compound shell commands: parse-layer decomposition with per-part deterministic evaluation'
-status: 'implemented'
+status: 'done'
 priority: 'high'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-05'
-updated: '2026-11-05'
+updated: '2026-11-06'
 depends_on: [70]
 stacked_on:
 related: [67, 68, 69]
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-design.md](../../superpowers/specs/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-design.md) |
+| Spec (merged) | [2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-design.md](https://github.com/ethanhinson/fuse/blob/main/docs/superpowers/specs/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-design.md) |
 | Plan | [2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-plan.md](../../superpowers/plans/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-plan.md) |
 | Results | [2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-results.md](../../results/2026-11-05-compound-shell-commands-reach-the-auto-mode-classifier-with-results.md) |
 | ADRs | [ADR-0005](../../adrs/0005-per-segment-allow-rule-evaluation.md), [ADR-0006](../../adrs/0006-fuse-local-yml-tighten-only-trust-boundary.md) |
