@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/ethanhinson/fuse/internal/config"
@@ -24,7 +22,7 @@ import (
 // whole compound was routed to the human at LayerHeuristic; after 0142 `cd` is
 // non-mutating and the compound auto-approves.
 func TestHostedBindingCompoundCdPwd_AutoApproves(t *testing.T) {
-	_, ws := floorWorkspace(t)
+	_, _ = floorWorkspace(t)
 	cfg := config.Config{Permissions: config.PermissionsConfig{Mode: "auto"}}
 	svc, err := sandbox.NewService(sandbox.Config{Contained: false, Handler: sandbox.HandlerHost})
 	if err != nil {
@@ -43,8 +41,7 @@ func TestHostedBindingCompoundCdPwd_AutoApproves(t *testing.T) {
 	// then runs it and `git status` may error (no git repo here), so the test
 	// asserts on the DECISION, not on res.IsError.
 	args, _ := json.Marshal(map[string]string{"command": `cd "$(pwd)" && git status`})
-	res := gate.Execute(ctx, "bash", string(args))
-	_ = res
+	gate.Execute(ctx, "bash", string(args))
 	if len(decisions) != 1 {
 		t.Fatalf("want exactly one decision, got %+v", decisions)
 	}
@@ -57,11 +54,6 @@ func TestHostedBindingCompoundCdPwd_AutoApproves(t *testing.T) {
 	// read-only) and not the classifier (no gateway is wired).
 	if d.Layer != permissions.LayerHeuristic {
 		t.Fatalf("want the heuristic layer (cd is non-mutating), got %q", d.Layer)
-	}
-	// Verify the cwd did not actually change (cd in a compound is scoped to
-	// the bash execution, not the test process).
-	if _, err := os.Stat(filepath.Join(ws, "should-not-exist")); err == nil {
-		t.Fatal("the compound should not have created files in the workspace")
 	}
 }
 

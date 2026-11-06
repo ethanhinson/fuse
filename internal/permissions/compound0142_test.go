@@ -45,24 +45,24 @@ func TestAutoMode_CompoundCdPwd_AutoApproves(t *testing.T) {
 	}
 }
 
-// TestAutoMode_CompoundCdPwd_GrayArea_ReachesClassifier covers the `docket`
-// shape from the spec: `cd "$(pwd)" && docket status` is not safelisted, so it
-// reaches the classifier rather than being blocked at the heuristic layer.
-// Before 0142 the opaque `cd` arg blocked the whole compound at the heuristic
-// layer (a deterministic ask with no classifier context); after 0142 the cd is
-// allowed through and the compound reaches the classifier with the per-segment
-// decomposition. With a classifier that allows, it auto-approves.
+// TestAutoMode_CompoundCdPwd_GrayArea_ReachesClassifier covers a compound whose
+// cd is benign but whose other segment is genuinely gray: the egress segment
+// reaches the classifier rather than being blocked at the heuristic layer, and
+// an allowing classifier auto-approves it. The root is the cwd, as it is in the
+// bindings; without that, relative arguments look out-of-root and any command
+// reaches the classifier for the wrong reason.
 func TestAutoMode_CompoundCdPwd_GrayArea_ReachesClassifier(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Chdir(root)
 	stub := &stubCompleter{resp: model.CompletionResp{Content: `{"verdict":"allow","reason":"ok"}`}}
 	cls := newTestClassifier(t, stub)
 	approve, called := newApproveRecorder(false)
 	g := New(autoCfg(config.AutoConfig{ClassifierModel: "m"}, nil, nil), newTestRegistry("bash"), Human(approve),
 		WithWorkspaceRoot(root), WithClassifier(cls))
-	cmd := `cd "$(pwd)" && docket status`
+	cmd := `cd "$(pwd)" && curl https://example.com`
 	res := g.Execute(context.Background(), "bash", bashArgs(cmd))
 	if res.IsError {
 		t.Fatalf("compound %q with an allowing classifier should auto-approve, got error: %s", cmd, res.Output)
