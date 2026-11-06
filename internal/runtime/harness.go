@@ -85,14 +85,16 @@ func (r *inProcRuntime) resolveHarness(ctx context.Context, cfg LoopConfig) (*Lo
 }
 
 // harnessEvent is the loop.harness record of spec: its deterministic encoding,
-// the digest over it, and a protojson rendering for readers.
-func harnessEvent(rootID string, spec *harnessv1.HarnessSpec) (event.Event, error) {
+// the digest over it, and a protojson rendering for readers. installedSkillsDigest
+// (change 0134) is the digest of the server's installed skill set at start —
+// empty when the binding does not track one.
+func harnessEvent(rootID string, spec *harnessv1.HarnessSpec, installedSkillsDigest string) (event.Event, error) {
 	js, err := protojson.Marshal(spec)
 	if err != nil {
 		return event.Event{}, fmt.Errorf("runtime: encode harness spec: %w", err)
 	}
 	b := harness.Encode(spec)
-	payload, err := event.MarshalPayload(event.LoopHarnessPayload{Spec: js, SpecBytes: b, Digest: harness.DigestBytes(b)})
+	payload, err := event.MarshalPayload(event.LoopHarnessPayload{Spec: js, SpecBytes: b, Digest: harness.DigestBytes(b), InstalledSkillsDigest: installedSkillsDigest})
 	if err != nil {
 		return event.Event{}, fmt.Errorf("runtime: encode harness record: %w", err)
 	}
@@ -114,28 +116,45 @@ func principalEvent(rootID string, p *event.LoopPrincipalPayload) (event.Event, 
 	return event.Event{NodeID: rootID, Kind: event.KindLoopPrincipal, Payload: payload}, nil
 }
 
+// appendSkillsDrift appends a non-fatal skills_drift warning to the loop's
+// stream (change 0134): the loop was started when the installed skills digest
+// was recorded, and the replica that resumed it holds a different set. It is
+// recorded as an "error" kind event whose Err names the reason, following the
+// spec's `error{reason:"skills_drift"}` shape; the resume itself succeeds.
+func (r *inProcRuntime) appendSkillsDrift(ctx context.Context, key event.StreamKey, rootID string, recorded, current string) error {
+	payload, err := event.MarshalPayload(event.ErrorPayload{
+		Err: fmt.Sprintf("skills_drift: installed skills digest changed since this loop was started (%s -> %s)", recorded, current),
+	})
+	if err != nil {
+		return err
+	}
+	return r.deps.DurableStore.Append(ctx, key, event.Event{NodeID: rootID, Kind: event.KindError, Payload: payload})
+}
+
 // harnessFromEvents recovers the harness spec a loop was started with from its
 // durable stream: the recorded bytes, after checking the recorded digest over
-// them. It returns nil for a loop started without one. A record that does not
-// decode, or whose digest does not match, is an error: a resume must never
-// rebuild a loop from a harness other than the one it was started with.
-func harnessFromEvents(events []event.Event) (*harnessv1.HarnessSpec, error) {
+// them, plus the installed skills digest recorded at start (change 0134; empty
+// for a loop started before digest tracking). It returns nil for a loop started
+// without one. A record that does not decode, or whose digest does not match,
+// is an error: a resume must never rebuild a loop from a harness other than the
+// one it was started with.
+func harnessFromEvents(events []event.Event) (*harnessv1.HarnessSpec, string, error) {
 	for _, e := range events {
 		if e.Kind != event.KindLoopHarness {
 			continue
 		}
 		var p event.LoopHarnessPayload
 		if err := json.Unmarshal(e.Payload, &p); err != nil {
-			return nil, fmt.Errorf("runtime: decode harness record: %w", err)
+			return nil, "", fmt.Errorf("runtime: decode harness record: %w", err)
 		}
 		if got := harness.DigestBytes(p.SpecBytes); got != p.Digest {
-			return nil, fmt.Errorf("runtime: harness record digest %q does not match its spec (%q)", p.Digest, got)
+			return nil, "", fmt.Errorf("runtime: harness record digest %q does not match its spec (%q)", p.Digest, got)
 		}
 		spec := &harnessv1.HarnessSpec{}
 		if err := proto.Unmarshal(p.SpecBytes, spec); err != nil {
-			return nil, fmt.Errorf("runtime: decode harness spec: %w", err)
+			return nil, "", fmt.Errorf("runtime: decode harness spec: %w", err)
 		}
-		return spec, nil
+		return spec, p.InstalledSkillsDigest, nil
 	}
-	return nil, nil
+	return nil, "", nil
 }

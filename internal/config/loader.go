@@ -450,6 +450,7 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 		// cannot express them, and this drops them should a document carry one.
 		raw.Gateway = Gateway{}
 		raw.SkillPaths = nil
+		raw.Skills = SkillsConfig{}
 		raw.Projects = nil
 		raw.LoopServer = LoopServerConfig{}
 		raw.Observability = rawObservabilityConfig{}
@@ -491,6 +492,22 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	}
 	if len(raw.SkillPaths) > 0 {
 		c.SkillPaths = raw.SkillPaths
+	}
+	// skills.source / skills.dirs / skills.refresh (change 0134): the source
+	// adapter selection, its filesystem directories (operator-only surface —
+	// cleared for a spec layer below), and the server refresh interval.
+	if raw.Skills.Source != "" {
+		c.Skills.Source = raw.Skills.Source
+	}
+	if len(raw.Skills.Dirs) > 0 {
+		c.Skills.Dirs = raw.Skills.Dirs
+	}
+	if raw.Skills.Refresh != "" {
+		d, err := time.ParseDuration(raw.Skills.Refresh)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("%s: skills.refresh %q is not a positive duration (e.g. \"30s\")", path, raw.Skills.Refresh)
+		}
+		c.Skills.Refresh = raw.Skills.Refresh
 	}
 	// Permission-loosening keys are honored only from a trusted source. From an
 	// untrusted (repo-plantable) source they are inert and each present one is

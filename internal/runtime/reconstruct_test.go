@@ -150,7 +150,7 @@ func TestFoldHelpersIgnoreCancelKinds(t *testing.T) {
 		t.Fatalf("pendingRequests = %v, want only the steer.request", pend)
 	}
 
-	spec, err := harnessFromEvents([]event.Event{req, done})
+	spec, _, err := harnessFromEvents([]event.Event{req, done})
 	if err != nil || spec != nil {
 		t.Fatalf("harnessFromEvents over cancel kinds = %v, %v; want nil, nil", spec, err)
 	}

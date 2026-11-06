@@ -50,12 +50,28 @@ func (h *loopServerHost) resolver() harnessresolve.Resolver {
 		Secrets: harnessresolve.ConfigSecrets(h.operator.cfg.LoopServer.Secrets),
 	}
 	if h.skills != nil {
+		set, _ := h.skills.Load()
 		r.Skills = func(name string) bool {
-			_, ok := h.skills.Lookup(name)
+			if set == nil {
+				return false
+			}
+			_, ok := set.Lookup(name)
 			return ok
 		}
 	}
 	return r
+}
+
+// CurrentSkillsDigest is the installed-skills digest the server holds now
+// (change 0134). The runtime calls it on resume to compare against the digest
+// recorded at the loop's start; a mismatch appends the non-fatal skills_drift
+// warning. "" means the server does not track a digest (no source wired).
+func (h *loopServerHost) CurrentSkillsDigest() string {
+	if h.skills == nil {
+		return ""
+	}
+	_, digest := h.skills.Load()
+	return digest
 }
 
 // Capabilities implements loopconnect.CapabilitySource. Every part reads what
@@ -64,9 +80,11 @@ func (h *loopServerHost) resolver() harnessresolve.Resolver {
 // secret names and spec MCP auth kinds.
 func (h *loopServerHost) Capabilities(ctx context.Context, tenant event.TenantID) (capabilities.Capabilities, error) {
 	r := h.resolver()
+	set, digest := h.skills.Load()
 	return capabilities.Capabilities{
 		Models:           capabilities.Models(h.operator.reg, agent.DefaultContextWindow, h.operator.cfg.MaxTokens),
-		Skills:           capabilities.Skills(h.skills),
+		Skills:           capabilities.Skills(set),
+		SkillsDigest:     digest,
 		Ceilings:         r.Ceilings(),
 		SecretRefs:       r.SecretRefs(ctx, string(tenant)),
 		SpecMCPAuthKinds: harnessresolve.SpecMCPAuthKinds(),
@@ -87,9 +105,14 @@ func (h *loopServerHost) settingsFor(res harnessresolve.Resolved) loopSettings {
 	// installed skill by name, or a skill the spec carries, which shadows an
 	// installed one of the same name for this loop only), or every installed
 	// skill when it lists none. Both the skill tool's lookup and the system
-	// prompt's skill listing use this set.
-	skillSet := h.skills
-	if len(res.Skills) > 0 {
+	// prompt's skill listing use this set. The installed set is read live from
+	// the atomicSkills so a refresh is visible to a new loop immediately.
+	var skillSet *skills.Set
+	if h.skills != nil {
+		set, _ := h.skills.Load()
+		skillSet = set
+	}
+	if len(res.Skills) > 0 && skillSet != nil {
 		skillSet = skillSet.Compose(res.Skills)
 	}
 	var lookup func(string) (skills.Skill, bool)

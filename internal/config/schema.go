@@ -43,6 +43,35 @@ type ModelsConfig struct {
 	Entries map[string]ModelConfig
 }
 
+// SkillsConfig is the installed-skills source selection (change 0134). Source
+// names the adapter: "fs" (filesystem directories, the default) or "postgres"
+// (the skills table in the configured Postgres, under the pgstore build).
+// Dirs is the filesystem directory list — empty falls back to
+// skills.DefaultDirs(). Refresh is how often the server bindings reload the
+// source to follow installed-skill changes; a failed refresh keeps the last
+// good set.
+type SkillsConfig struct {
+	Source  string   `yaml:"source"`
+	Dirs    []string `yaml:"dirs"`
+	Refresh string   `yaml:"refresh"`
+}
+
+// DefaultSkillsRefresh is the refresh interval used when skills.refresh is
+// unset (change 0134).
+const DefaultSkillsRefresh = 30 * time.Second
+
+// RefreshDuration resolves Refresh; zero duration (unset) means the default.
+func (s SkillsConfig) RefreshDuration() time.Duration {
+	if s.Refresh == "" {
+		return DefaultSkillsRefresh
+	}
+	d, err := time.ParseDuration(s.Refresh)
+	if err != nil || d <= 0 {
+		return DefaultSkillsRefresh
+	}
+	return d
+}
+
 // PermissionsConfig controls the HITL gate behaviour.
 type PermissionsConfig struct {
 	Mode         string     `yaml:"mode"`          // off | prompt-all | smart | auto (default: smart)
@@ -558,6 +587,11 @@ type Config struct {
 	Gateway    Gateway
 	Models     ModelsConfig
 	SkillPaths []string
+	// Skills configures where the installed skill set comes from (change 0134):
+	// a filesystem directory list or a Postgres table, with a refresh interval
+	// the server bindings use to follow the source. When Dirs is empty the
+	// call site falls back to skills.DefaultDirs().
+	Skills SkillsConfig
 	// MaxTurns is a pointer so an omitted `max_turns` (nil) is distinguishable
 	// from an explicit `max_turns: 0`. nil = unset ⇒ the call site applies the
 	// context-aware backstop (unlimited in the interactive shell, 100 headless);
@@ -728,6 +762,7 @@ type rawConfig struct {
 	Gateway      Gateway                `yaml:"gateway"`
 	Models       map[string]interface{} `yaml:"models"`
 	SkillPaths   []string               `yaml:"skill_paths"`
+	Skills       SkillsConfig           `yaml:"skills"`
 	MaxTurns     *int                   `yaml:"max_turns"`
 	MaxTokens    int                    `yaml:"max_tokens"`
 	Instructions string                 `yaml:"instructions"`
@@ -991,5 +1026,9 @@ func Default() Config {
 				},
 			},
 		},
+		// Installed skills come from the filesystem by default (change 0134):
+		// dirs fall back to skills.DefaultDirs() at the call site, refresh is
+		// 30s.
+		Skills: SkillsConfig{Source: "fs", Refresh: "30s"},
 	}
 }

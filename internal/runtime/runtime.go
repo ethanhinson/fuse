@@ -210,6 +210,14 @@ type LoopConfig struct {
 	// harness. Nil keeps today's behavior: the Deps collaborators build the loop.
 	Harness *harnessv1.HarnessSpec
 
+	// InstalledSkillsDigest is the digest of the server's installed skill set at
+	// start (change 0134), recorded on the loop.harness payload so a resume on a
+	// replica can detect that the set drifted since the loop began. The runtime
+	// records it verbatim; the binding computes it (skills.DigestOf over the
+	// source it loads). Empty for a loop without a harness or a binding that does
+	// not track a digest.
+	InstalledSkillsDigest string
+
 	// Secrets are the loop-scoped secret values the request carried (change
 	// 0102). The runtime never reads them: it hands them to Deps.Harness on the
 	// resolution context only (loopsecret.WithSecrets) and drops them right
