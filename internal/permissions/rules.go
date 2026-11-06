@@ -195,8 +195,8 @@ func allSegmentsAllowed(segments []Segment, autoApprove []string, allowPush bool
 
 // isGitPush reports whether a segment is a git push invocation.
 //
-// Leading `-C <dir>` pairs are stripped first (gitAfterC) — git runs push from
-// the -C directory, so the subcommand is the first word of that view. That view
+// Leading global options are stripped first (gitAfterGlobals) — git runs push
+// after them, so the subcommand is the first word of that view. That view
 // is taken regardless of the value: a push from `git -C /outside push` is
 // still a push.
 //
@@ -211,7 +211,7 @@ func isGitPush(seg Segment) bool {
 	if seg.Name != "git" {
 		return false
 	}
-	view := gitAfterC(seg.Args)
+	view := gitAfterGlobals(seg.Args)
 	return len(view) > 0 && view[0] == "push"
 }
 
@@ -522,14 +522,33 @@ func isSafeGit(args []string) bool {
 	// subcommand is still judged against the same scoping the rest of the
 	// command already proved. A value that escapes (absolute, `~`, `-`, `..`)
 	// is refused here rather than stripped, which drops the segment back into
-	// the normal path scoping in the heuristic where it asks. No other flag is
-	// stripped: `-c` takes a value too but positions the subcommand differently,
-	// and modelling it is not proven read-only.
-	for len(args) >= 2 && args[0] == "-C" {
-		if !inPlaceRelativePath(args[1]) {
+	// the normal path scoping in the heuristic where it asks. The same loop
+	// also strips a `-c <word>` pair and the inert single-word globals from
+	// gitGlobals, in any order; anything else stops the loop and is judged as
+	// the subcommand, as before.
+	for {
+		if len(args) == 0 {
 			return false
 		}
-		args = args[2:]
+		if args[0] == "-C" {
+			if len(args) < 2 || !inPlaceRelativePath(args[1]) {
+				return false
+			}
+			args = args[2:]
+			continue
+		}
+		if args[0] == "-c" {
+			if len(args) < 2 {
+				return false
+			}
+			args = args[2:]
+			continue
+		}
+		if gitGlobals[args[0]] {
+			args = args[1:]
+			continue
+		}
+		break
 	}
 	if len(args) == 0 {
 		return false

@@ -418,22 +418,43 @@ var gitEgressSubcommands = map[string]bool{
 	"push":  true,
 }
 
-// gitAfterC returns the git argument list with every LEADING `-C <value>` pair
-// stripped, whatever the value is. git runs its subcommand from the last -C
-// directory, so the subcommand and its operands sit after those pairs; the
-// egress checks below read the view rather than the raw list so `git -C sub
-// push` is seen as a push and `git -C /outside push` as well.
+// gitGlobals is the set of single-word git global options that neither run a
+// command nor move the repository, so they can be stepped over freely.
+var gitGlobals = map[string]bool{
+	"--no-pager":           true,
+	"-P":                   true,
+	"--no-optional-locks":  true,
+	"--no-replace-objects": true,
+	"--literal-pathspecs":  true,
+}
+
+// gitAfterGlobals returns the git argument list with every LEADING `-C <word>`
+// and `-c <word>` pair stripped, and every leading single word from gitGlobals,
+// stopping at the first other word. git runs its subcommand after those
+// globals, so the subcommand and its operands sit at the end of that walk; the
+// egress checks below read the view rather than the raw list so
+// `git -C sub push` is seen as a push and `git -C /outside push` as well.
 //
 // Unlike isSafeGit's -C handling this makes no claim about the VALUE: whether
 // the directory is inside or outside the workspace decides where a read lands,
 // not whether a push is a push. The egress boundary is the operation, and a
 // `-C /outside` that escaped the read-only allowance is exactly the shape that
-// must still be recognised here. Flags that take a value but do not relocate
-// (-c, --git-dir, …) are not stripped — only -C pairs are.
-func gitAfterC(args []string) []string {
+// must still be recognised here.
+func gitAfterGlobals(args []string) []string {
 	i := 0
-	for i+1 < len(args) && args[i] == "-C" {
-		i += 2
+	for i < len(args) {
+		if args[i] == "-C" || args[i] == "-c" {
+			if i+1 >= len(args) {
+				break
+			}
+			i += 2
+			continue
+		}
+		if gitGlobals[args[i]] {
+			i++
+			continue
+		}
+		break
 	}
 	return args[i:]
 }
@@ -453,7 +474,7 @@ func isEgress(seg Segment) bool {
 		return true
 	}
 	if seg.Name == "git" && len(seg.Args) > 0 {
-		view := gitAfterC(seg.Args)
+		view := gitAfterGlobals(seg.Args)
 		// Offset back into the raw Args/Opaque slices: isOpaque is indexed
 		// against the ORIGINAL argument list, so every index the view yields
 		// must be shifted by the pairs stripped above to stay a correct

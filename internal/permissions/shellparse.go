@@ -275,6 +275,122 @@ func refusesShellState(name string, args []string, opaque []bool) bool {
 	return true
 }
 
+// gitOptionKeys are the only -c keys a git invocation may set and still be
+// parsed: cosmetic or identity settings that cannot run a command or move the
+// repository.
+var gitOptionKeys = map[string]bool{
+	"user.name":           true,
+	"user.email":          true,
+	"commit.gpgsign":      true,
+	"tag.gpgsign":         true,
+	"color.ui":            true,
+	"column.ui":           true,
+	"core.quotepath":      true,
+	"init.defaultBranch":  true,
+	"advice.detachedHead": true,
+}
+
+// refusesGitOptions reports whether git's leading words — the global options
+// before the subcommand — cannot be modelled: these options run commands or
+// move the repository, and they sit before the subcommand where no other rule
+// looks.
+func refusesGitOptions(args []string, opaque []bool) bool {
+	isLiteral := func(i int) bool {
+		if len(opaque) != len(args) {
+			return false
+		}
+		return !opaque[i]
+	}
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") {
+			// A word not starting with - is the subcommand: the rest of the
+			// argument list belongs to it, and the other rules take over. An
+			// OPAQUE word standing there could expand to any global option,
+			// so it refuses when it is the first word and a subcommand
+			// follows (git $X status); alone it occupies the subcommand
+			// position itself (git $SUB) and is judged by the other rules,
+			// as today.
+			if !isLiteral(i) && i == 0 && i+1 < len(args) {
+				return true
+			}
+			return false
+		}
+		if !isLiteral(i) {
+			// An option-shaped word whose value is not known can be any of
+			// the unmodellable globals (-ckey=value, --git-dir, …).
+			return true
+		}
+		switch {
+		case a == "-C":
+			// -C consumes one more word; a missing value stops the walk. The
+			// value may be opaque — it is a directory the scoping layers
+			// judge, and that handling is unchanged.
+			if i+1 >= len(args) {
+				return false
+			}
+			i += 2
+		case a == "-c":
+			// -c consumes one more word, which must be a literal key=value
+			// with a key on the safe list.
+			if i+1 >= len(args) {
+				return false
+			}
+			if !isLiteral(i + 1) {
+				return true
+			}
+			key, _, ok := strings.Cut(args[i+1], "=")
+			if !ok || !gitOptionKeys[key] {
+				return true
+			}
+			i += 2
+		case gitGlobals[a]:
+			i++
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// gitOutputTargets extracts the literal file targets of git's --output flag
+// forms (including git's abbreviations such as --ou, --out) and reports whether
+// every one of them was nameable. An opaque --output value cannot be scoped,
+// so it refuses instead of being recorded.
+func gitOutputTargets(seg Segment) (targets []string, ok bool) {
+	for i := 0; i < len(seg.Args); i++ {
+		a := seg.Args[i]
+		if seg.isOpaque(i) {
+			continue
+		}
+		if eq := strings.IndexByte(a, '='); eq >= 0 {
+			if isGitOutputFlag(a[:eq]) {
+				targets = append(targets, a[eq+1:])
+			}
+			continue
+		}
+		if isGitOutputFlag(a) {
+			if i+1 >= len(seg.Args) {
+				continue
+			}
+			if seg.isOpaque(i + 1) {
+				return nil, false
+			}
+			targets = append(targets, seg.Args[i+1])
+			i++
+		}
+	}
+	return targets, true
+}
+
+// isGitOutputFlag reports whether flag is the git --output flag, accepting git's
+// unambiguous abbreviations: a word with the prefix --ou that is itself a
+// prefix of --output.
+func isGitOutputFlag(flag string) bool {
+	return strings.HasPrefix(flag, "--ou") && strings.HasPrefix("--output", flag)
+}
+
 // wrapperSpec models ONE peelable wrapper's own option grammar, so the peel can
 // tell a flag from the flag's VALUE from the inner command.
 //
@@ -1155,6 +1271,14 @@ peel:
 	}
 
 	args := words.drop(1)
+
+	// git global options run commands or move the repository, and they sit
+	// before the subcommand where no other rule looks, so an unmodellable one
+	// must fail closed rather than be stepped over.
+	if name == "git" && refusesGitOptions(args.text, args.opaque) {
+		return ErrUnparseable
+	}
+
 	seg := Segment{
 		Name: name,
 		Args: append([]string(nil), args.text...),
@@ -1165,6 +1289,13 @@ peel:
 	// Segment keeps reading as fully literal (see Segment.isOpaque).
 	if args.anyOpaque() {
 		seg.Opaque = append([]bool(nil), args.opaque...)
+	}
+	if name == "git" {
+		targets, ok := gitOutputTargets(seg)
+		if !ok {
+			return ErrUnparseable
+		}
+		seg.WriteTargets = append(seg.WriteTargets, targets...)
 	}
 	if len(seg.Args) == 0 {
 		seg.Args = nil
