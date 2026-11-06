@@ -199,6 +199,82 @@ var arbitraryArgWrappers = map[string]bool{
 	"exec":  true,
 }
 
+// shellStateNames are the shell builtins that mutate the shell's own parsing
+// or execution state. These change what later words and commands mean, so the
+// parser must not reason past them.
+var shellStateNames = map[string]bool{
+	"alias":    true,
+	"unalias":  true,
+	"shopt":    true,
+	"set":      true,
+	"enable":   true,
+	"builtin":  true,
+	"command":  true,
+	"trap":     true,
+	"read":     true,
+	"typeset":  true,
+	"declare":  true,
+	"readonly": true,
+	"export":   true,
+	"eval":     true,
+	"exec":     true,
+	"source":   true,
+	".":        true,
+}
+
+// refusesShellState reports whether the settled command name plus its
+// arguments must fail closed because it changes the shell's state. These
+// change what later words and commands mean, so the parser must not reason
+// past them.
+func refusesShellState(name string, args []string, opaque []bool) bool {
+	if !shellStateNames[name] {
+		return false
+	}
+	isLiteral := func(i int) bool {
+		if len(opaque) != len(args) {
+			return false
+		}
+		return !opaque[i]
+	}
+	switch name {
+	case "set":
+		// Only the pure exit-status/pipefail spellings are inert: every
+		// argument must be literal and drawn from the recognised set.
+		for i, a := range args {
+			if !isLiteral(i) {
+				return true
+			}
+			switch a {
+			case "-e", "-u", "-x", "-eu", "-ue", "-ex", "-xe", "-ux", "-xu",
+				"-eux", "-eo", "-oe", "-euo", "-ueo", "-o", "pipefail":
+				// -o must be followed by pipefail, and pipefail must follow
+				// -o, -eo, -euo or -ueo.
+				if a == "-o" {
+					if i+1 >= len(args) || args[i+1] != "pipefail" {
+						return true
+					}
+				}
+				if a == "pipefail" {
+					if i == 0 || (args[i-1] != "-o" && args[i-1] != "-eo" && args[i-1] != "-euo" && args[i-1] != "-ueo") {
+						return true
+					}
+				}
+			default:
+				return true
+			}
+		}
+		return false
+	case "command":
+		// `command -v NAME` / `command -V NAME` only inspects; anything else
+		// may run a builtin or alias lookup whose effect we cannot see.
+		if len(args) > 0 && isLiteral(0) && (args[0] == "-v" || args[0] == "-V") {
+			return false
+		}
+		return true
+	}
+	return true
+}
+
 // wrapperSpec models ONE peelable wrapper's own option grammar, so the peel can
 // tell a flag from the flag's VALUE from the inner command.
 //
@@ -974,6 +1050,13 @@ peel:
 
 	// Any other arbitrary-arg wrapper as argv[0] fails closed.
 	if arbitraryArgWrappers[name] {
+		return ErrUnparseable
+	}
+
+	// Shell-state builtins (alias, set, export, …) also fail closed, checked
+	// here — after peeling — so a wrapper cannot hide them: these change what
+	// later words and commands mean, so the parser must not reason past them.
+	if refusesShellState(name, words.drop(1).text, words.drop(1).opaque) {
 		return ErrUnparseable
 	}
 
