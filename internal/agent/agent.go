@@ -33,6 +33,10 @@ type Renderer interface {
 
 // Agent binds a model, a tool set, a renderer, and run limits.
 type Agent struct {
+	// ReasoningEffort is sent on the agent's own model calls when set. The
+	// summarizer and classifier keep their own settings.
+	ReasoningEffort string
+
 	observer     observe.Observer
 	model        Completer
 	tools        ToolExecutor

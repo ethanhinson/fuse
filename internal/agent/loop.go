@@ -576,10 +576,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			schemas = withReturnResultTool(schemas, a.expectsSchema)
 		}
 		req := model.CompletionReq{
-			Model:     a.modelID,
-			Messages:  a.withSystem(messages),
-			Tools:     schemas,
-			MaxTokens: a.maxTokens,
+			Model:           a.modelID,
+			Messages:        a.withSystem(messages),
+			Tools:           schemas,
+			MaxTokens:       a.maxTokens,
+			ReasoningEffort: a.ReasoningEffort,
 		}
 		// model.call.start (change 0043): the model-call boundary opens here.
 		a.emit(event.KindModelCallStart, turn, event.ModelCallStartPayload{
@@ -617,12 +618,13 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		}
 		// model.call.end (change 0043): full assistant response + usage + tool refs.
 		a.emit(event.KindModelCallEnd, turn, event.ModelCallEndPayload{
-			Content:      resp.Content,
-			InputTokens:  resp.InputTokens,
-			CachedTokens: resp.CachedTokens,
-			OutputTokens: resp.OutputTokens,
-			ToolCalls:    toolCallRefs(resp.ToolCalls),
-			FinishReason: resp.FinishReason,
+			Content:         resp.Content,
+			InputTokens:     resp.InputTokens,
+			CachedTokens:    resp.CachedTokens,
+			OutputTokens:    resp.OutputTokens,
+			ReasoningTokens: resp.ReasoningTokens,
+			ToolCalls:       toolCallRefs(resp.ToolCalls),
+			FinishReason:    resp.FinishReason,
 		})
 		a.renderer.Tokens(resp.InputTokens, resp.OutputTokens)
 		if a.usageSink != nil {

@@ -98,3 +98,13 @@ func TestValidateSpecPolicyHostPatterns(t *testing.T) {
 		t.Errorf("valid patterns rejected: %v", err)
 	}
 }
+
+func TestValidate_ReasoningEffort(t *testing.T) {
+	for effort, wantErr := range map[string]bool{"": false, "none": false, "low": false, "high": false, "xhigh": false, "LOW": true, "turbo": true} {
+		c := Default()
+		c.Models.Entries = map[string]ModelConfig{"m": {ID: "x", ReasoningEffort: effort}}
+		if err := c.Validate(); (err != nil) != wantErr {
+			t.Errorf("effort %q: got err %v, want error=%v", effort, err, wantErr)
+		}
+	}
+}
