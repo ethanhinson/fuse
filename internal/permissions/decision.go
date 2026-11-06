@@ -44,6 +44,25 @@ type Decision struct {
 	// degraded verdict — truncation, parse failure — is distinguishable from a
 	// considered one. Nil when no classifier ran.
 	Classifier *ClassifierCall
+	// SegmentVerdicts carries the per-segment deterministic verdict for a
+	// COMPOUND bash command (change 0142): each element names one parsed
+	// segment and the verdict the deterministic layers reached for it, so a
+	// compound decision stays attributable to the specific part — not just the
+	// raw string. Nil for non-compound commands and for non-bash tools. The
+	// element that drove an ask or deny is exactly the one whose Verdict is
+	// not VerdictAllow; an all-allow compound is attributed to the whole.
+	SegmentVerdicts []SegmentVerdict
+}
+
+// SegmentVerdict is one parsed segment's deterministic verdict, carried on the
+// Decision for a compound bash command so the outcome stays attributable to the
+// specific part (change 0142). Name is the segment's argv[0] basename; Verdict
+// is what the deterministic layers (rules / safelist / heuristic) reached for
+// that segment alone; Reason names the layer when the verdict is not allow.
+type SegmentVerdict struct {
+	Name    string
+	Verdict Verdict
+	Reason  string
 }
 
 // DecisionSink receives every gate decision. Installed per tool call by the

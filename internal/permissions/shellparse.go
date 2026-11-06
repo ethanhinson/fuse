@@ -199,6 +199,198 @@ var arbitraryArgWrappers = map[string]bool{
 	"exec":  true,
 }
 
+// shellStateNames are the shell builtins that mutate the shell's own parsing
+// or execution state. These change what later words and commands mean, so the
+// parser must not reason past them.
+var shellStateNames = map[string]bool{
+	"alias":    true,
+	"unalias":  true,
+	"shopt":    true,
+	"set":      true,
+	"enable":   true,
+	"builtin":  true,
+	"command":  true,
+	"trap":     true,
+	"read":     true,
+	"typeset":  true,
+	"declare":  true,
+	"readonly": true,
+	"export":   true,
+	"eval":     true,
+	"exec":     true,
+	"source":   true,
+	".":        true,
+}
+
+// refusesShellState reports whether the settled command name plus its
+// arguments must fail closed because it changes the shell's state. These
+// change what later words and commands mean, so the parser must not reason
+// past them.
+func refusesShellState(name string, args []string, opaque []bool) bool {
+	if !shellStateNames[name] {
+		return false
+	}
+	isLiteral := func(i int) bool {
+		if len(opaque) != len(args) {
+			return false
+		}
+		return !opaque[i]
+	}
+	switch name {
+	case "set":
+		// Only the pure exit-status/pipefail spellings are inert: every
+		// argument must be literal and drawn from the recognised set.
+		for i, a := range args {
+			if !isLiteral(i) {
+				return true
+			}
+			switch a {
+			case "-e", "-u", "-x", "-eu", "-ue", "-ex", "-xe", "-ux", "-xu",
+				"-eux", "-eo", "-oe", "-euo", "-ueo", "-o", "pipefail":
+				// -o must be followed by pipefail, and pipefail must follow
+				// -o, -eo, -euo or -ueo.
+				if a == "-o" {
+					if i+1 >= len(args) || args[i+1] != "pipefail" {
+						return true
+					}
+				}
+				if a == "pipefail" {
+					if i == 0 || (args[i-1] != "-o" && args[i-1] != "-eo" && args[i-1] != "-euo" && args[i-1] != "-ueo") {
+						return true
+					}
+				}
+			default:
+				return true
+			}
+		}
+		return false
+	case "command":
+		// `command -v NAME` / `command -V NAME` only inspects; anything else
+		// may run a builtin or alias lookup whose effect we cannot see.
+		if len(args) > 0 && isLiteral(0) && (args[0] == "-v" || args[0] == "-V") {
+			return false
+		}
+		return true
+	}
+	return true
+}
+
+// gitOptionKeys are the only -c keys a git invocation may set and still be
+// parsed: cosmetic or identity settings that cannot run a command or move the
+// repository.
+var gitOptionKeys = map[string]bool{
+	"user.name":           true,
+	"user.email":          true,
+	"commit.gpgsign":      true,
+	"tag.gpgsign":         true,
+	"color.ui":            true,
+	"column.ui":           true,
+	"core.quotepath":      true,
+	"init.defaultBranch":  true,
+	"advice.detachedHead": true,
+}
+
+// refusesGitOptions reports whether git's leading words — the global options
+// before the subcommand — cannot be modelled: these options run commands or
+// move the repository, and they sit before the subcommand where no other rule
+// looks.
+func refusesGitOptions(args []string, opaque []bool) bool {
+	isLiteral := func(i int) bool {
+		if len(opaque) != len(args) {
+			return false
+		}
+		return !opaque[i]
+	}
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") {
+			// A word not starting with - is the subcommand: the rest of the
+			// argument list belongs to it, and the other rules take over. An
+			// OPAQUE word standing there could expand to any global option,
+			// so it refuses when it is the first word and a subcommand
+			// follows (git $X status); alone it occupies the subcommand
+			// position itself (git $SUB) and is judged by the other rules,
+			// as today.
+			if !isLiteral(i) && i == 0 && i+1 < len(args) {
+				return true
+			}
+			return false
+		}
+		if !isLiteral(i) {
+			// An option-shaped word whose value is not known can be any of
+			// the unmodellable globals (-ckey=value, --git-dir, …).
+			return true
+		}
+		switch {
+		case a == "-C":
+			// -C consumes one more word; a missing value stops the walk. The
+			// value may be opaque — it is a directory the scoping layers
+			// judge, and that handling is unchanged.
+			if i+1 >= len(args) {
+				return false
+			}
+			i += 2
+		case a == "-c":
+			// -c consumes one more word, which must be a literal key=value
+			// with a key on the safe list.
+			if i+1 >= len(args) {
+				return false
+			}
+			if !isLiteral(i + 1) {
+				return true
+			}
+			key, _, ok := strings.Cut(args[i+1], "=")
+			if !ok || !gitOptionKeys[key] {
+				return true
+			}
+			i += 2
+		case gitGlobals[a]:
+			i++
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// gitOutputTargets extracts the literal file targets of git's --output flag
+// forms (including git's abbreviations such as --ou, --out) and reports whether
+// every one of them was nameable. An opaque --output value cannot be scoped,
+// so it refuses instead of being recorded.
+func gitOutputTargets(seg Segment) (targets []string, ok bool) {
+	for i := 0; i < len(seg.Args); i++ {
+		a := seg.Args[i]
+		if seg.isOpaque(i) {
+			continue
+		}
+		if eq := strings.IndexByte(a, '='); eq >= 0 {
+			if isGitOutputFlag(a[:eq]) {
+				targets = append(targets, a[eq+1:])
+			}
+			continue
+		}
+		if isGitOutputFlag(a) {
+			if i+1 >= len(seg.Args) {
+				continue
+			}
+			if seg.isOpaque(i + 1) {
+				return nil, false
+			}
+			targets = append(targets, seg.Args[i+1])
+			i++
+		}
+	}
+	return targets, true
+}
+
+// isGitOutputFlag reports whether flag is the git --output flag, accepting git's
+// unambiguous abbreviations: a word with the prefix --ou that is itself a
+// prefix of --output.
+func isGitOutputFlag(flag string) bool {
+	return strings.HasPrefix(flag, "--ou") && strings.HasPrefix("--output", flag)
+}
+
 // wrapperSpec models ONE peelable wrapper's own option grammar, so the peel can
 // tell a flag from the flag's VALUE from the inner command.
 //
@@ -425,6 +617,93 @@ func assignsAreBenign(assigns []*syntax.Assign) bool {
 		}
 		if a.Append || a.Naked || a.Index != nil || a.Array != nil {
 			return false
+		}
+		if !envAssignNameIsInert(a.Name.Value) {
+			return false
+		}
+		if a.Value == nil {
+			continue
+		}
+		if _, ok := literalWord(a.Value); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// plainVarName reports whether an assignment-only statement setting NAME can be
+// admitted without a prompt.
+//
+// This is an allowlist, not a denylist, because an assigned name may already be
+// exported in the caller's environment: a variable that some parent process
+// exported and a program reads cannot be proven safe by listing the dangerous
+// ones, since the dangerous set is exactly "whatever anything might read" and
+// is therefore not enumerable. Only names we can reason about up front pass.
+//
+// The deny-side prefixes and names below are the ones where a plain assignment
+// is known to be load-bearing for a program we might go on to run, or where the
+// name is read by the shell itself between the assignment and any use.
+func plainVarName(name string) bool {
+	for _, p := range []string{
+		"GIT_", "LD_", "DYLD_", "BASH", "PYTHON", "NODE_", "npm_", "NPM_", "GO", "PG",
+	} {
+		if strings.HasPrefix(name, p) {
+			return false
+		}
+	}
+	switch name {
+	case "PS1", "PS2", "PS4", "PWD", "OLDPWD", "HOME", "PATH", "CDPATH", "IFS",
+		"ENV", "SHELL", "SHELLOPTS", "PAGER", "EDITOR", "VISUAL", "MAKEFLAGS",
+		"PROMPT_COMMAND", "TMPDIR", "GLOBIGNORE":
+		return false
+	}
+	if len(name) == 1 && (name[0] >= 'A' && name[0] <= 'Z' || name[0] >= 'a' && name[0] <= 'z') {
+		return true
+	}
+	switch name {
+	case "REV", "SHA", "HEADSHA", "PID", "RC", "BRANCH", "COMMIT", "rc", "status":
+		return true
+	}
+	for _, suffix := range []string{"_REV", "_SHA", "_PID", "_COMMIT", "_BRANCH"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+// assignOnlyIsSafe reports whether an assignment-only statement (no command
+// after the assignments) is safe to let through with no segment emitted.
+//
+// Every assign must pass the same shape guard as assignsAreBenign: no nil node,
+// no `+=` append, no naked NAME, no subscript, no array.
+//
+// From there, two routes to safe, either of which must hold per assign:
+//
+//   - plainVarName(NAME) is true. A nil value is fine (`REV=`), and any other
+//     value must survive classifyWord, so a substitution inside the value —
+//     `REV=$(git rev-parse HEAD)` — still gets the normal evaluation: its inner
+//     commands are appended to out and the substitution itself must be
+//     read-only, exactly as if it had appeared in an argument;
+//   - otherwise the existing inert-name and literal-value rule from
+//     assignsAreBenign applies unchanged: NAME must be on the inert allowlist
+//     and the value must be statically literal.
+func assignOnlyIsSafe(src string, assigns []*syntax.Assign, out *[]Segment) bool {
+	for _, a := range assigns {
+		if a == nil || a.Name == nil {
+			return false
+		}
+		if a.Append || a.Naked || a.Index != nil || a.Array != nil {
+			return false
+		}
+		if plainVarName(a.Name.Value) {
+			if a.Value == nil {
+				continue
+			}
+			if _, _, ok := classifyWord(src, a.Value, out); !ok {
+				return false
+			}
+			continue
 		}
 		if !envAssignNameIsInert(a.Name.Value) {
 			return false
@@ -843,15 +1122,22 @@ func collectCall(src string, call *syntax.CallExpr, out *[]Segment) error {
 	// proven-inert allowlist is dropped and the inner command is classified on
 	// its own merits (change 0070 D1); anything else — including any name we
 	// simply do not recognise — fails closed at the parse floor.
+	//
+	// An assignment-ONLY statement (`REV=abc`) runs no command, so it is judged
+	// first and on its own terms (assignOnlyIsSafe): a plain variable name with
+	// a literal or read-only value passes, and any other shape fails closed. A
+	// statement that DOES carry a command after the assignments keeps the
+	// environment-prefix treatment above.
 	// The assignments are DROPPED, never appended to Args: they are not
 	// arguments, and a downstream path-scoper or deny matcher must not see them.
+	if len(call.Args) == 0 {
+		if !assignOnlyIsSafe(src, call.Assigns, out) {
+			return ErrUnparseable
+		}
+		return nil
+	}
 	if !assignsAreBenign(call.Assigns) {
 		return ErrUnparseable
-	}
-	if len(call.Args) == 0 {
-		// An assignment-only statement (`CI=1`) runs no command, so there is
-		// nothing for any layer to classify; likewise an empty call.
-		return nil
 	}
 
 	// Classify every word as literal or OPAQUE, failing closed on any expansion
@@ -977,7 +1263,22 @@ peel:
 		return ErrUnparseable
 	}
 
+	// Shell-state builtins (alias, set, export, …) also fail closed, checked
+	// here — after peeling — so a wrapper cannot hide them: these change what
+	// later words and commands mean, so the parser must not reason past them.
+	if refusesShellState(name, words.drop(1).text, words.drop(1).opaque) {
+		return ErrUnparseable
+	}
+
 	args := words.drop(1)
+
+	// git global options run commands or move the repository, and they sit
+	// before the subcommand where no other rule looks, so an unmodellable one
+	// must fail closed rather than be stepped over.
+	if name == "git" && refusesGitOptions(args.text, args.opaque) {
+		return ErrUnparseable
+	}
+
 	seg := Segment{
 		Name: name,
 		Args: append([]string(nil), args.text...),
@@ -988,6 +1289,13 @@ peel:
 	// Segment keeps reading as fully literal (see Segment.isOpaque).
 	if args.anyOpaque() {
 		seg.Opaque = append([]bool(nil), args.opaque...)
+	}
+	if name == "git" {
+		targets, ok := gitOutputTargets(seg)
+		if !ok {
+			return ErrUnparseable
+		}
+		seg.WriteTargets = append(seg.WriteTargets, targets...)
 	}
 	if len(seg.Args) == 0 {
 		seg.Args = nil
@@ -1032,16 +1340,53 @@ func classifyWord(src string, w *syntax.Word, out *[]Segment) (string, bool, boo
 	if w == nil {
 		return "", false, false
 	}
-	return classifyWordParts(src, w.Parts, out)
+	return classifyWordParts(src, w.Parts, out, false)
 }
 
-func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment) (string, bool, bool) {
+// decodeLit removes the backslash escapes the shell WOULD have removed from a
+// *syntax.Lit value, so the gate reasons about the text bash actually sees.
+// mvdan.cc/sh leaves backslashes in Lit.Value, so without this the gate would
+// match a path like <cwd>/\\x2f that never exists. ANSI-C quoting ($'…') is a
+// different, deliberately undecoded case — see the note in classifyWordParts.
+func decodeLit(value string, inDouble bool) string {
+	var b strings.Builder
+	b.Grow(len(value))
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if c != '\\' || i+1 >= len(value) {
+			b.WriteByte(c)
+			continue
+		}
+		next := value[i+1]
+		switch {
+		case next == '\n':
+			// A line continuation: both characters vanish.
+			i++
+		case !inDouble:
+			// Unquoted, every backslash-escaped character is just itself.
+			b.WriteByte(next)
+			i++
+		case next == '$' || next == '`' || next == '"' || next == '\\':
+			// Inside double quotes only these four keep their escape; any other
+			// backslash is literal text.
+			b.WriteByte(next)
+			i++
+		default:
+			b.WriteByte(c)
+			b.WriteByte(next)
+			i++
+		}
+	}
+	return b.String()
+}
+
+func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment, inDouble bool) (string, bool, bool) {
 	var b strings.Builder
 	opaque := false
 	for _, part := range parts {
 		switch p := part.(type) {
 		case *syntax.Lit:
-			b.WriteString(p.Value)
+			b.WriteString(decodeLit(p.Value, inDouble))
 		case *syntax.SglQuoted:
 			// Plain '…' is the one quoting form bash performs NO processing
 			// inside: the value IS the text, so it stays literal.
@@ -1076,7 +1421,7 @@ func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment) (str
 			// A double-quoted run can itself carry expansions; classify its
 			// parts on exactly the same terms so `"pre$VAR"` is opaque rather
 			// than fail-closed, and `"literal"` stays literal.
-			s, innerOpaque, ok := classifyWordParts(src, p.Parts, out)
+			s, innerOpaque, ok := classifyWordParts(src, p.Parts, out, true)
 			if !ok {
 				return "", false, false
 			}
@@ -1164,20 +1509,40 @@ func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment) (str
 //     command. The recursion's text is discarded: the opaque token we hand
 //     upward is the outer expansion's raw source, never a half-resolved value.
 //
-//   - ARITHMETIC and non-bash shapes — a `${a[i]}` subscript, a `${X:off:len}`
-//     slice, a zsh flag/modifier list, a nested-parameter form — fail closed
-//     wholesale. An ArithmExpr can itself carry a substitution that runs
+//   - ARITHMETIC and non-bash shapes — a `${X:off:len}` slice, a zsh
+//     flag/modifier list, a nested-parameter form — fail closed wholesale.
+//     An ArithmExpr can itself carry a substitution that runs
 //     (`${X:$(rm -rf /):2}`), and this parser has never modelled arithmetic
 //     (see the *syntax.ArithmExp arm). Refusing the whole class costs at most
 //     a human prompt on a shape agents rarely emit; modelling half of it is
 //     how a bypass gets in.
 //
-// The Excl/Length/Width/Names forms (`${!a}`, `${#a}`, `${%a}`,
-// `${!prefix*}`) carry no nested word at all and need no proof: they stay
-// plain opaque, as they were before.
+//     The one exception is the `${a[i]}` SUBSCRIPT, which is admitted only as
+//     a literal word that is all ASCII digits or exactly `@`/`*` — an index
+//     the shell resolves to a fixed element or to the whole array with no
+//     arithmetic to run. See safeParamIndex.
+//
+//   - INDIRECT and operator forms — `p.Excl` (`${!X}`, `${!a[0]}`) and any
+//     `p.Exp` whose Op is OtherParamOps (`${X@P}`, `${X@Q}`) — are refused
+//     outright. ${!X} expands a SECOND dereference (the value of X read as a
+//     name) that this proof has no model for, and the @ operator forms
+//     transform the value in ways we never inspect. Failing closed here costs
+//     a prompt; allowing them would prove something we never checked.
+//
+// The Length and Width forms (`${#a}`, `${%a}`) carry no nested word at all and
+// need no proof: they stay plain opaque, as they were before.
 func paramExpWordsSafe(src string, p *syntax.ParamExp, out *[]Segment) bool {
-	if p.Index != nil || p.Slice != nil || p.NestedParam != nil ||
+	if p.Excl {
+		return false
+	}
+	if p.Index != nil && !safeParamIndex(p.Index) {
+		return false
+	}
+	if p.Slice != nil || p.NestedParam != nil ||
 		p.Flags != nil || len(p.Modifiers) > 0 {
+		return false
+	}
+	if p.Exp != nil && p.Exp.Op == syntax.OtherParamOps {
 		return false
 	}
 	words := make([]*syntax.Word, 0, 3)
@@ -1196,7 +1561,46 @@ func paramExpWordsSafe(src string, p *syntax.ParamExp, out *[]Segment) bool {
 		if !litPartsInert(w.Parts) {
 			return false
 		}
-		if _, _, ok := classifyWordParts(src, w.Parts, out); !ok {
+		if _, _, ok := classifyWordParts(src, w.Parts, out, false); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// safeParamIndex reports whether a `${a[...]}` subscript may be admitted as
+// inert. p.Index is an ArithmExpr — bash parses whatever sits between the
+// brackets as arithmetic — and this parser has no model for arithmetic, so the
+// default is refusal. The literal exceptions are the subscripts whose value
+// never depends on arithmetic or a substitution:
+//
+//   - all-ASCII-digits — a fixed element (`${a[0]}`, `${a[12]}`);
+//   - exactly `@` or `*` — the whole array (`${a[@]}`, `${a[*]}`).
+//
+// Anything else — `${a[i]}`, `${a[1+1]}`, `${a[$(x)]}` — is refused by the
+// caller. The subscript must arrive as a *syntax.Word that literalWord can
+// resolve: a quoted `"0"` is still the fixed element, while anything the
+// parser hands us as arithmetic-only nodes has no literal answer to give.
+func safeParamIndex(idx syntax.ArithmExpr) bool {
+	w, ok := idx.(*syntax.Word)
+	if !ok {
+		return false
+	}
+	if w == nil {
+		return false
+	}
+	text, ok := literalWord(w)
+	if !ok {
+		return false
+	}
+	if text == "@" || text == "*" {
+		return true
+	}
+	if text == "" {
+		return false
+	}
+	for i := 0; i < len(text); i++ {
+		if text[i] < '0' || text[i] > '9' {
 			return false
 		}
 	}
@@ -1282,11 +1686,15 @@ func nodeText(src string, n syntax.Node) (string, bool) {
 // Do not "unify" these onto classifyWord. The three callers above need
 // ok=false, not an opaque token.
 func literalWord(w *syntax.Word) (string, bool) {
+	return literalWordParts(w, false)
+}
+
+func literalWordParts(w *syntax.Word, inDouble bool) (string, bool) {
 	var b strings.Builder
 	for _, part := range w.Parts {
 		switch p := part.(type) {
 		case *syntax.Lit:
-			b.WriteString(p.Value)
+			b.WriteString(decodeLit(p.Value, inDouble))
 		case *syntax.SglQuoted:
 			// ANSI-C quoting ($'…') carries an UNDECODED Value (see the matching
 			// arm in classifyWordParts), so it is not a literal value and there is
@@ -1302,7 +1710,7 @@ func literalWord(w *syntax.Word) (string, bool) {
 			b.WriteString(p.Value)
 		case *syntax.DblQuoted:
 			inner := &syntax.Word{Parts: p.Parts}
-			s, ok := literalWord(inner)
+			s, ok := literalWordParts(inner, true)
 			if !ok {
 				return "", false
 			}

@@ -482,19 +482,29 @@ func (g *PermissionGate) Execute(ctx context.Context, name, args string) tools.R
 // ("human" | "policy"), cls only when the classifier was consulted for this
 // resolution.
 func (g *PermissionGate) emitDecision(ctx context.Context, mode PermissionMode, name, args, verdict, layer, reason, decidedBy string, cls *ClassifierCall) {
+	g.emitDecisionWithSegments(ctx, mode, name, args, verdict, layer, reason, decidedBy, cls, nil)
+}
+
+// emitDecisionWithSegments is emitDecision with the per-segment decomposition
+// for a compound bash command (change 0142), so the permission.decision event
+// carries each segment's deterministic verdict and the outcome stays
+// attributable to the specific part. Nil segs leaves the event byte-identical
+// to the pre-0142 shape (a non-compound or non-bash tool).
+func (g *PermissionGate) emitDecisionWithSegments(ctx context.Context, mode PermissionMode, name, args, verdict, layer, reason, decidedBy string, cls *ClassifierCall, segs []SegmentVerdict) {
 	sink := decisionSinkFrom(ctx)
 	if sink == nil {
 		return
 	}
 	sink(Decision{
-		Tool:       name,
-		Verdict:    verdict,
-		Layer:      layer,
-		Reason:     reason,
-		Mode:       mode.String(),
-		Command:    commandPreview(name, args),
-		DecidedBy:  decidedBy,
-		Classifier: cls,
+		Tool:            name,
+		Verdict:         verdict,
+		Layer:           layer,
+		Reason:          reason,
+		Mode:            mode.String(),
+		Command:         commandPreview(name, args),
+		DecidedBy:       decidedBy,
+		Classifier:      cls,
+		SegmentVerdicts: segs,
 	})
 }
 
@@ -559,12 +569,16 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	// subsequent human-layer) decision events, so a degraded classifier reply
 	// that fell to the human stays attributable in the audit trail.
 	var askClassifier *ClassifierCall
+	// askSegs carries the per-segment decomposition for a compound bash
+	// command (change 0142) through the ask fallthrough, so the human-layer
+	// decision event also attributes the compound to its parts.
+	var askSegs []SegmentVerdict
 
 	if mode == ModeAuto {
-		verdict, layer, reason, cls := g.resolveAuto(ctx, name, args)
+		verdict, layer, reason, cls, segs := g.resolveAuto(ctx, name, args)
 		switch verdict {
 		case VerdictAllow:
-			g.emitDecision(ctx, mode, name, args, "allow", layer, reason, "", cls)
+			g.emitDecisionWithSegments(ctx, mode, name, args, "allow", layer, reason, "", cls, segs)
 			policy.AutoApprove = true
 			return policy, nil
 		case VerdictDeny:
@@ -577,13 +591,14 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 			if layer == LayerRules && policyForcedDeny(reason) {
 				decidedBy = g.approvalProvenance
 			}
-			g.emitDecision(ctx, mode, name, args, "deny", layer, reason, decidedBy, cls)
+			g.emitDecisionWithSegments(ctx, mode, name, args, "deny", layer, reason, decidedBy, cls, segs)
 			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: layer}, nil
 		default:
 			// VerdictAsk ⇒ fall through to the shared human-approval block below.
 			askLayer = layer
 			askReason = reason
 			askClassifier = cls
+			askSegs = segs
 		}
 	}
 
@@ -650,7 +665,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	// Human approval required. The ask is emitted BEFORE g.approve runs so asks
 	// are countable regardless of the gate's approver - an AlwaysApprove
 	// (headless policy) gate shows as back-to-back ask→allow events.
-	g.emitDecision(ctx, mode, name, args, "ask", askLayer, askReason, "", askClassifier)
+	g.emitDecisionWithSegments(ctx, mode, name, args, "ask", askLayer, askReason, "", askClassifier, askSegs)
 	req := ApprovalRequest{
 		ToolName: name,
 		Args:     args,
@@ -662,13 +677,13 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	}
 	if !approved {
 		reason := approverDenyReason(g.approvalProvenance)
-		g.emitDecision(ctx, mode, name, args, "deny", LayerHuman, reason, g.approvalProvenance, askClassifier)
+		g.emitDecisionWithSegments(ctx, mode, name, args, "deny", LayerHuman, reason, g.approvalProvenance, askClassifier, askSegs)
 		return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerHuman}, nil
 	}
 	if allowSession {
 		g.cache.Allow(name, args)
 	}
-	g.emitDecision(ctx, mode, name, args, "allow", LayerHuman, "", g.approvalProvenance, askClassifier)
+	g.emitDecisionWithSegments(ctx, mode, name, args, "allow", LayerHuman, "", g.approvalProvenance, askClassifier, askSegs)
 	policy.AutoApprove = true
 	return policy, nil
 }
@@ -738,10 +753,10 @@ func explicitAskReason(pat string, policy bool) string {
 //
 // The returned layer names the deciding pipeline stage (Layer* constants) for
 // the permission.decision event and the typed denial (change 0067).
-func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (verdict Verdict, layer, reason string, cls *ClassifierCall) {
+func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (verdict Verdict, layer, reason string, cls *ClassifierCall, segs []SegmentVerdict) {
 	if name != "bash" {
 		if onSafeList(name) {
-			return VerdictAllow, LayerSafelist, "", nil
+			return VerdictAllow, LayerSafelist, "", nil, nil
 		}
 		// Edit tools carry a single "path" arg rather than a shell command: scope it
 		// against the allowed roots (workspace + scratch/write_roots, change 0068)
@@ -752,12 +767,12 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 		if isEditTool(name) {
 			path, ok := editPath(args)
 			if !ok {
-				return VerdictAsk, LayerEditScope, "", nil
+				return VerdictAsk, LayerEditScope, "", nil, nil
 			}
 			if withinAnyRoot(path, g.allowedRoots()) {
-				return VerdictAllow, LayerEditScope, "", nil
+				return VerdictAllow, LayerEditScope, "", nil, nil
 			}
-			return VerdictAsk, LayerEditScope, "", nil
+			return VerdictAsk, LayerEditScope, "", nil, nil
 		}
 		// web_fetch carries a URL rather than a shell command: apply the static host
 		// floor first (SSRF / config deny/ask / blocklist / known-good), and only a
@@ -767,14 +782,14 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 			r := classifyFetchHost(fetchURL(args), g.cfg.Auto.FetchDeny, g.cfg.Auto.FetchAsk)
 			switch r.Verdict {
 			case VerdictDeny:
-				return VerdictDeny, LayerFetchFloor, "denied by auto-mode web_fetch host floor (" + r.DecidedBy + "): " + r.Host, nil
+				return VerdictDeny, LayerFetchFloor, "denied by auto-mode web_fetch host floor (" + r.DecidedBy + "): " + r.Host, nil, nil
 			case VerdictAsk:
 				// Ask reasons are threaded too, so the prompt-side decision event
 				// says WHY the floor stopped a call it did not deny — a
 				// credentialed-URL ask is otherwise indistinguishable from a
 				// garbled-URL one. The reason names the shape and the canonical
 				// host only; it never echoes the URL, which is where the secret is.
-				return VerdictAsk, LayerFetchFloor, fetchFloorAskReason(r), nil
+				return VerdictAsk, LayerFetchFloor, fetchFloorAskReason(r), nil, nil
 			default:
 				// A known-good host is a positive floor decision (change 0069):
 				// allow without consulting the classifier at all. This
@@ -783,13 +798,15 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 				// classifier non-block, so it must neither reset the
 				// consecutive counter nor otherwise move the counts.
 				if r.DecidedBy == "known-good" {
-					return VerdictAllow, LayerFetchFloor, "", nil
+					return VerdictAllow, LayerFetchFloor, "", nil, nil
 				}
 				// Fallthrough host ⇒ reputation-aware classifier (valve-enforced).
-				return g.classifyWebFetch(ctx, args, r)
+				v, l, rr, c := g.classifyWebFetch(ctx, args, r)
+				return v, l, rr, c, nil
 			}
 		}
-		return g.classifyOrAsk(ctx, name, args)
+		v, l, rr, c := g.classifyOrAsk(ctx, name, args, nil)
+		return v, l, rr, c, nil
 	}
 
 	command := bashCommand(args)
@@ -806,23 +823,36 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 		uv, pat := evalUnparseable(command, g.cfg.Auto, g.cfg.AlwaysPrompt)
 		switch {
 		case uv == VerdictDeny:
-			return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + reasonCommand(command), nil
+			return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + reasonCommand(command), nil, nil
 		case uv == VerdictAskExplicit && g.approvalProvenance == DecidedByPolicy:
-			return VerdictDeny, LayerRules, explicitAskReason(pat, true), nil
+			return VerdictDeny, LayerRules, explicitAskReason(pat, true), nil, nil
 		case uv == VerdictAskExplicit:
-			return VerdictAsk, LayerRules, explicitAskReason(pat, false), nil
+			return VerdictAsk, LayerRules, explicitAskReason(pat, false), nil, nil
 		case g.approvalProvenance == DecidedByPolicy:
-			return VerdictDeny, LayerRules, unparseableDenyPrefix + reasonCommand(command), nil
+			return VerdictDeny, LayerRules, unparseableDenyPrefix + reasonCommand(command), nil, nil
 		default:
-			return VerdictAsk, LayerParse, "", nil
+			return VerdictAsk, LayerParse, "", nil, nil
 		}
+	}
+
+	// Per-segment decomposition (change 0142). Computed ONCE, for a COMPOUND
+	// bash command only (more than one parsed segment), and threaded through
+	// every decision this pipeline emits — rules deny, safelist allow,
+	// heuristic allow, classifier ask, classifier deny — so the audit record
+	// attributes a compound outcome to the specific segment that drove it
+	// (Defect 4). A single-segment command never carries segments on any
+	// decision: the field is documented nil for non-compound commands, which
+	// is what keeps those events byte-identical.
+	var compoundSegs []SegmentVerdict
+	if len(segments) > 1 {
+		compoundSegs = segmentVerdicts(segments, g.allowedRoots())
 	}
 
 	// 2. Deterministic rules. Deny is terminal; allow is a positive auto-approve.
 	rv, askPattern := evalRulesDetail(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt, g.workspaceRoot)
 	switch rv {
 	case VerdictDeny:
-		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + reasonCommand(command), nil
+		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + reasonCommand(command), nil, compoundSegs
 	case VerdictAskExplicit:
 		// An operator-written ask is its own verdict: it never falls through to
 		// the safelist, heuristics or classifier. With a human bound it prompts
@@ -832,28 +862,32 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 		// piped-stdin one-shot. Not --approve-all, which is mode off and returns
 		// at LayerModeOff before any rule is evaluated.
 		if g.approvalProvenance == DecidedByPolicy {
-			return VerdictDeny, LayerRules, explicitAskReason(askPattern, true), nil
+			return VerdictDeny, LayerRules, explicitAskReason(askPattern, true), nil, compoundSegs
 		}
-		return VerdictAsk, LayerRules, explicitAskReason(askPattern, false), nil
+		return VerdictAsk, LayerRules, explicitAskReason(askPattern, false), nil, compoundSegs
 	case VerdictAllow:
-		return VerdictAllow, LayerRules, "", nil
+		return VerdictAllow, LayerRules, "", nil, compoundSegs
 	}
 
 	// 3. Read-only safe list short-circuit.
 	if allSegmentsReadOnlySafe(segments) {
-		return VerdictAllow, LayerSafelist, "", nil
+		return VerdictAllow, LayerSafelist, "", nil, compoundSegs
 	}
 
 	// 4. Heuristics: egress boundary / path scoping. Ask ⇒ continue to classifier.
 	switch classifyHeuristic(segments, g.allowedRoots()) {
 	case VerdictDeny:
-		return VerdictDeny, LayerHeuristic, "denied by auto-mode heuristic layer: " + reasonCommand(command), nil
+		return VerdictDeny, LayerHeuristic, "denied by auto-mode heuristic layer: " + reasonCommand(command), nil, compoundSegs
 	case VerdictAllow:
-		return VerdictAllow, LayerHeuristic, "", nil
+		return VerdictAllow, LayerHeuristic, "", nil, compoundSegs
 	}
 
-	// 5. Classifier (final) or fail-closed ask.
-	return g.classifyOrAsk(ctx, name, command)
+	// 5. Classifier (final) or fail-closed ask. The per-segment decomposition
+	// (change 0142) rides into the classifier's pending-call prompt so the
+	// model verdicts the genuinely-hard segment rather than the whole opaque
+	// string; it is also emitted on the Decision for audit attribution.
+	v, l, rr, c := g.classifyOrAsk(ctx, name, command, compoundSegs)
+	return v, l, rr, c, compoundSegs
 }
 
 // fetchFloorAskReason renders the human-facing reason for a web_fetch floor ASK.
@@ -885,7 +919,11 @@ func fetchFloorAskReason(r fetchFloorResult) string {
 // the trip and the counts. Otherwise the classifier's verdict is recorded — a
 // deny is a block (advancing/tripping the valve), an allow or ask resets the
 // consecutive counter.
-func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string) (verdict Verdict, layer, reason string, cls *ClassifierCall) {
+// segs carries the per-segment decomposition for a compound bash command (change
+// 0142), rendered into the classifier's pending-call prompt so the model
+// verdicts the genuinely-hard segment. Nil leaves the prompt byte-identical to
+// the pre-0142 single-command shape.
+func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string, segs []SegmentVerdict) (verdict Verdict, layer, reason string, cls *ClassifierCall) {
 	if g.classifier == nil {
 		return VerdictAsk, LayerClassifier, "", nil
 	}
@@ -903,7 +941,7 @@ func (g *PermissionGate) classifyOrAsk(ctx context.Context, name, command string
 	// wired them, this is nil and the classifier functions from the pending-call
 	// turn alone. The classifier itself re-filters to user turns as defense in
 	// depth (buildMessages drops non-user roles).
-	out := g.classifier.Classify(ctx, userMessagesFrom(ctx), name, command)
+	out := g.classifier.ClassifyWithSegments(ctx, userMessagesFrom(ctx), name, command, segs)
 	call := out.Call
 	switch out.Verdict {
 	case VerdictAllow:

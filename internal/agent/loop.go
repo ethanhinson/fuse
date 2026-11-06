@@ -1035,6 +1035,19 @@ func (a *Agent) executeToolBounded(ctx context.Context, turn int, call model.Too
 				Cached:       d.Classifier.Cached,
 			}
 		}
+		// Compound bash command (change 0142): carry the per-segment
+		// deterministic verdicts onto the wire event so the audit record
+		// attributes a compound outcome to the specific part that drove it.
+		if len(d.SegmentVerdicts) > 0 {
+			payload.Segments = make([]event.SegmentVerdictPayload, len(d.SegmentVerdicts))
+			for i, sv := range d.SegmentVerdicts {
+				payload.Segments[i] = event.SegmentVerdictPayload{
+					Name:    sv.Name,
+					Verdict: sv.Verdict.String(),
+					Reason:  sv.Reason,
+				}
+			}
+		}
 		a.emit(event.KindPermissionDecision, turn, payload)
 	})
 	ctx, span := a.observer.Start(ctx, observe.Descriptor{Kind: observe.OperationTool, Name: "execute", Fields: []observe.Field{{Key: "tool", Value: call.Name}}})
