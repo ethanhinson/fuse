@@ -1115,16 +1115,53 @@ func classifyWord(src string, w *syntax.Word, out *[]Segment) (string, bool, boo
 	if w == nil {
 		return "", false, false
 	}
-	return classifyWordParts(src, w.Parts, out)
+	return classifyWordParts(src, w.Parts, out, false)
 }
 
-func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment) (string, bool, bool) {
+// decodeLit removes the backslash escapes the shell WOULD have removed from a
+// *syntax.Lit value, so the gate reasons about the text bash actually sees.
+// mvdan.cc/sh leaves backslashes in Lit.Value, so without this the gate would
+// match a path like <cwd>/\\x2f that never exists. ANSI-C quoting ($'…') is a
+// different, deliberately undecoded case — see the note in classifyWordParts.
+func decodeLit(value string, inDouble bool) string {
+	var b strings.Builder
+	b.Grow(len(value))
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if c != '\\' || i+1 >= len(value) {
+			b.WriteByte(c)
+			continue
+		}
+		next := value[i+1]
+		switch {
+		case next == '\n':
+			// A line continuation: both characters vanish.
+			i++
+		case !inDouble:
+			// Unquoted, every backslash-escaped character is just itself.
+			b.WriteByte(next)
+			i++
+		case next == '$' || next == '`' || next == '"' || next == '\\':
+			// Inside double quotes only these four keep their escape; any other
+			// backslash is literal text.
+			b.WriteByte(next)
+			i++
+		default:
+			b.WriteByte(c)
+			b.WriteByte(next)
+			i++
+		}
+	}
+	return b.String()
+}
+
+func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment, inDouble bool) (string, bool, bool) {
 	var b strings.Builder
 	opaque := false
 	for _, part := range parts {
 		switch p := part.(type) {
 		case *syntax.Lit:
-			b.WriteString(p.Value)
+			b.WriteString(decodeLit(p.Value, inDouble))
 		case *syntax.SglQuoted:
 			// Plain '…' is the one quoting form bash performs NO processing
 			// inside: the value IS the text, so it stays literal.
@@ -1159,7 +1196,7 @@ func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment) (str
 			// A double-quoted run can itself carry expansions; classify its
 			// parts on exactly the same terms so `"pre$VAR"` is opaque rather
 			// than fail-closed, and `"literal"` stays literal.
-			s, innerOpaque, ok := classifyWordParts(src, p.Parts, out)
+			s, innerOpaque, ok := classifyWordParts(src, p.Parts, out, true)
 			if !ok {
 				return "", false, false
 			}
@@ -1279,7 +1316,7 @@ func paramExpWordsSafe(src string, p *syntax.ParamExp, out *[]Segment) bool {
 		if !litPartsInert(w.Parts) {
 			return false
 		}
-		if _, _, ok := classifyWordParts(src, w.Parts, out); !ok {
+		if _, _, ok := classifyWordParts(src, w.Parts, out, false); !ok {
 			return false
 		}
 	}
@@ -1365,11 +1402,15 @@ func nodeText(src string, n syntax.Node) (string, bool) {
 // Do not "unify" these onto classifyWord. The three callers above need
 // ok=false, not an opaque token.
 func literalWord(w *syntax.Word) (string, bool) {
+	return literalWordParts(w, false)
+}
+
+func literalWordParts(w *syntax.Word, inDouble bool) (string, bool) {
 	var b strings.Builder
 	for _, part := range w.Parts {
 		switch p := part.(type) {
 		case *syntax.Lit:
-			b.WriteString(p.Value)
+			b.WriteString(decodeLit(p.Value, inDouble))
 		case *syntax.SglQuoted:
 			// ANSI-C quoting ($'…') carries an UNDECODED Value (see the matching
 			// arm in classifyWordParts), so it is not a literal value and there is
@@ -1385,7 +1426,7 @@ func literalWord(w *syntax.Word) (string, bool) {
 			b.WriteString(p.Value)
 		case *syntax.DblQuoted:
 			inner := &syntax.Word{Parts: p.Parts}
-			s, ok := literalWord(inner)
+			s, ok := literalWordParts(inner, true)
 			if !ok {
 				return "", false
 			}
