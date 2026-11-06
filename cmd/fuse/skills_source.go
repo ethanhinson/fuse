@@ -19,21 +19,11 @@ import (
 	"github.com/ethanhinson/fuse/internal/skills"
 )
 
-// skillSourceConfig is the source kind a cfg.Skills.Source names, resolved by
-// skillSourceFromConfig. consumers switch on it.
-type skillSourceConfig int
-
-const (
-	skillSourceFS skillSourceConfig = iota
-	skillSourcePostgres
-)
-
 // skillSourceFromConfig resolves cfg.Skills.Source ("fs" or "postgres") into
 // the concrete skills.Source the bindings load from. The postgres adapter is
 // only compiled in under the pgstore build tag; an untagged binary that asks
-// for it gets a clear error. The returned Source is already composed with the
-// embedded skills (ComposeEmbedded), so a Load returns the full system prompt
-// set and its digest.
+// for it gets a clear error. Composition with embedded skills (ComposeEmbedded)
+// is applied by startSkillsRefresh / ComposeSkills, not by this function.
 func skillSourceFromConfig(cfg config.Config) (skills.Source, error) {
 	switch cfg.Skills.Source {
 	case "", "fs":

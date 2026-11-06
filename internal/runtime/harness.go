@@ -122,6 +122,9 @@ func principalEvent(rootID string, p *event.LoopPrincipalPayload) (event.Event, 
 // recorded as an "error" kind event whose Err names the reason, following the
 // spec's `error{reason:"skills_drift"}` shape; the resume itself succeeds.
 func (r *inProcRuntime) appendSkillsDrift(ctx context.Context, key event.StreamKey, rootID string, recorded, current string) error {
+	if r.deps.DurableStore == nil {
+		return nil
+	}
 	payload, err := event.MarshalPayload(event.ErrorPayload{
 		Err: fmt.Sprintf("skills_drift: installed skills digest changed since this loop was started (%s -> %s)", recorded, current),
 	})
