@@ -2,7 +2,7 @@
 id: 134
 slug: 'installed-skills-come-from-a-skill-source-adapter-consistent'
 title: 'Installed skills come from a skill source adapter, consistent across replicas'
-status: 'in-progress'
+status: 'implemented'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
@@ -20,7 +20,7 @@ auto_groomable:
 hold:
 branch_prefix:
 branch: 'feat/installed-skills-come-from-a-skill-source-adapter-consistent'
-pr:
+pr: 'https://github.com/ethanhinson/fuse/pull/138'
 blocked_by:
 reconciled: true
 ---
@@ -52,3 +52,12 @@ Skill bundle files beyond `SKILL.md` (they are not served today either); carried
 ### 2026-11-06
 
 Resume after contended reconcile: reconciled against origin/main. No in-flight changes affect the skills package.
+
+## Build evidence
+
+<!-- docket:build-evidence:start -->
+command:  make test
+result:   green
+head_sha: 0d7c8bee40e535815a9e36ffc75eef55c4fe41ad
+ran_at:   2026-11-06T09:21:25Z
+<!-- docket:build-evidence:end -->
