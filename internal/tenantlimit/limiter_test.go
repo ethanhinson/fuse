@@ -634,3 +634,68 @@ func TestSweeperStopsOnContextDone(t *testing.T) {
 	var nilL *Limiter
 	nilL.StartSweeper(context.Background(), time.Millisecond)
 }
+
+// TestSweepDuringAdmitWindowKeepsLock reproduces the review bug: a caller in
+// Admit's window between looking up its admission lock and acquiring it leaves
+// the tenant looking idle — the lock is unheld, pending is 0 — so Sweep
+// deleted the lock. The next Admit then built a second semaphore for the
+// tenant and both callers could be in the critical section at once, exceeding
+// the live-loop cap. Everything is channel-synchronized: no timing luck.
+func TestSweepDuringAdmitWindowKeepsLock(t *testing.T) {
+	// Cap only, no start rate: nothing but the admission lock protects the
+	// cap, which is exactly the case the review calls out.
+	clk := newFakeClock()
+	counts := newFakeCounts()
+	l := mustNew(t, Config{Default: Limits{MaxLiveLoops: 1}}, counts.count, clk.Now)
+
+	// Park the first caller inside Admit's lookup-to-acquire window; only the
+	// hook decides when it proceeds, so the interleaving is forced, not raced.
+	inWindow := make(chan struct{})
+	releaseWindow := make(chan struct{})
+	l.mu.Lock()
+	l.admitWindowHook = func() {
+		l.admitWindowHook = nil // one shot: only the first Admit parks
+		close(inWindow)
+		<-releaseWindow
+	}
+	l.mu.Unlock()
+	admitted1 := make(chan error, 1)
+	go func() {
+		rel, err := l.Admit(context.Background(), "a")
+		if err == nil {
+			rel()
+		}
+		admitted1 <- err
+	}()
+	<-inWindow
+
+	// While that caller sits in the window the tenant is idle by every signal
+	// Sweep had: no bucket, lock unheld, pending 0. The pre-fix Sweep pruned
+	// the lock here; with the fix it must report the waiter and prune nothing.
+	if n := l.Sweep(clk.Now()); n != 0 {
+		t.Fatalf("Sweep pruned %d tenants while an admit was in its window, want 0", n)
+	}
+
+	// Let the first caller proceed and finish; its admission must have held
+	// the one and only lock and counted against the cap.
+	close(releaseWindow)
+	if err := <-admitted1; err != nil {
+		t.Fatalf("first admit: %v", err)
+	}
+
+	// Now the tenant really is idle: the sweep after it must prune it.
+	if n := l.Sweep(clk.Now()); n != 1 {
+		t.Fatalf("post-release Sweep pruned %d tenants, want 1", n)
+	}
+
+	// The second start must still be refused at the cap by the original lock:
+	// with the bug, the mid-window sweep had deleted it, so this Admit created
+	// a second semaphore and admitted alongside the first caller.
+	counts.set("a", 1) // the first loop is now live in the registry
+	rel2, err := l.Admit(context.Background(), "a")
+	if err == nil {
+		rel2()
+		t.Fatal("second admit succeeded, want a cap refusal")
+	}
+	asRefused(t, err)
+}
