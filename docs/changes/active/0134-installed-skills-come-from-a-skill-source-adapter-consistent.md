@@ -22,7 +22,7 @@ branch_prefix:
 branch: 'feat/installed-skills-come-from-a-skill-source-adapter-consistent'
 pr:
 blocked_by:
-reconciled: false
+reconciled: true
 ---
 
 ## Artifacts
@@ -44,3 +44,9 @@ A `SkillSource` seam with a filesystem implementation (configurable directories)
 ## Out of scope
 
 Skill bundle files beyond `SKILL.md` (they are not served today either); carried skills (done); a skill-management API.
+
+## Reconcile log
+
+### 2026-11-06
+
+Resume after contended reconcile: reconciled against origin/main. No in-flight changes affect the skills package.
