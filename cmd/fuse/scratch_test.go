@@ -21,14 +21,12 @@ func TestScratchAdvertisedRelative(t *testing.T) {
 	if !strings.Contains(extra, "scratch/") {
 		t.Errorf("appendScratchBlock does not advertise scratch/: %q", extra)
 	}
-	// No absolute host path — the advertised path is relative.
-	if strings.Contains(extra, ":/") || filepath.IsAbs(strings.TrimSpace(strings.Split(extra, ": ")[len(strings.Split(extra, ": "))-1])) {
-		// Heuristic: the block should not contain a Windows drive or a Unix
-		// absolute path in the advertisement. Check the block does not name
-		// a path starting with "/" or "~".
-		if strings.Contains(extra, ": /") || strings.Contains(extra, "~/") {
-			t.Errorf("appendScratchBlock advertises an absolute/host path: %q", extra)
-		}
+	// No absolute host path: the advertised location is the literal relative one.
+	if !strings.Contains(extra, "auto-approved in auto mode: scratch/.") {
+		t.Errorf("appendScratchBlock does not advertise the relative scratch/: %q", extra)
+	}
+	if strings.Contains(extra, ": /") || strings.Contains(extra, "~/") {
+		t.Errorf("appendScratchBlock advertises an absolute/host path: %q", extra)
 	}
 	// The block must say where deliverables go, not only where scratch is.
 	if !strings.Contains(extra, "working directory") || !strings.Contains(extra, "throwaway") {
