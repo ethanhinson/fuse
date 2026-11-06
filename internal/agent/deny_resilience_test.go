@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -202,6 +203,43 @@ func TestPermissionDecisionEmitted(t *testing.T) {
 	for _, want := range []string{`"tool_call_id":"call-7"`, `"verdict":"allow"`, `"mode":"auto"`, `"command":"git status"`} {
 		if !strings.Contains(p, want) {
 			t.Errorf("decision payload missing %s: %s", want, p)
+		}
+	}
+}
+
+// TestPermissionDecisionCarriesSegments is the same seam for change 0142: the
+// loop must copy the gate's per-segment verdicts onto the wire event. Unit tests
+// cover the gate and the payload struct separately, but not this mapping.
+func TestPermissionDecisionCarriesSegments(t *testing.T) {
+	reg := tools.NewRegistry()
+	reg.Register(stubBashTool{})
+	root := t.TempDir()
+	t.Chdir(root)
+	gate := permissions.New(config.PermissionsConfig{Mode: "auto"}, reg, permissions.AlwaysApprove,
+		permissions.WithWorkspaceRoot(root))
+	args, err := json.Marshal(map[string]string{"command": "curl https://example.com && git status"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	comp := &scriptedCompleter{responses: []model.CompletionResp{
+		{ToolCalls: []model.ToolCall{{ID: "call-8", Name: "bash", Arguments: string(args)}}},
+		{Content: "done"},
+	}}
+	rec := &recordingStore{}
+	a := New(comp, gate, nopRenderer{}, "m", "", 10, 100)
+	a.SetEventSink(rec)
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "hi"}}); err != nil {
+		t.Fatal(err)
+	}
+	var last string
+	for _, e := range rec.events {
+		if e.Kind == event.KindPermissionDecision {
+			last = string(e.Payload)
+		}
+	}
+	for _, want := range []string{`"name":"curl","verdict":"ask"`, `"name":"git","verdict":"allow"`} {
+		if !strings.Contains(last, want) {
+			t.Errorf("decision payload missing %s: %s", want, last)
 		}
 	}
 }

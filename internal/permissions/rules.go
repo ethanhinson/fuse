@@ -195,13 +195,24 @@ func allSegmentsAllowed(segments []Segment, autoApprove []string, allowPush bool
 
 // isGitPush reports whether a segment is a git push invocation.
 //
+// Leading global options are stripped first (gitAfterGlobals) — git runs push
+// after them, so the subcommand is the first word of that view. That view
+// is taken regardless of the value: a push from `git -C /outside push` is
+// still a push.
+//
 // No opaque guard is needed (change 0070 D5): an opaque arg's stored text is
 // the word's raw SOURCE ("$SUB", "pu$X"), which can never equal the literal
-// "push", so `git $SUB` is not a git push here. Both consumers get the answer
-// they want from that — isEgress falls through to the mutating scope where the
-// opaque arg asks, and allSegmentsAllowed declines the allow_push allowance.
+// "push", so `git $SUB` is not a git push here. The subcommand word is read
+// at its post--C position and must be the literal "push", as it must be today.
+// Both consumers get the answer they want from that — isEgress falls through
+// to the mutating scope where the opaque arg asks, and allSegmentsAllowed
+// declines the allow_push allowance.
 func isGitPush(seg Segment) bool {
-	return seg.Name == "git" && len(seg.Args) > 0 && seg.Args[0] == "push"
+	if seg.Name != "git" {
+		return false
+	}
+	view := gitAfterGlobals(seg.Args)
+	return len(view) > 0 && view[0] == "push"
 }
 
 // isDangerous reports whether a segment is catastrophic: on the built-in
@@ -504,6 +515,44 @@ func isSafeGit(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+	// A leading `-C <dir>` changes which working tree git reads before it
+	// reads anything else, and it can be repeated. Strip each pair only when
+	// the value is a relative path that stays in place — not empty, not
+	// absolute, not `~`- or `-`-anchored, and with no `..` component — so the
+	// subcommand is still judged against the same scoping the rest of the
+	// command already proved. A value that escapes (absolute, `~`, `-`, `..`)
+	// is refused here rather than stripped, which drops the segment back into
+	// the normal path scoping in the heuristic where it asks. The same loop
+	// also strips a `-c <word>` pair and the inert single-word globals from
+	// gitGlobals, in any order; anything else stops the loop and is judged as
+	// the subcommand, as before.
+	for {
+		if len(args) == 0 {
+			return false
+		}
+		if args[0] == "-C" {
+			if len(args) < 2 || !inPlaceRelativePath(args[1]) {
+				return false
+			}
+			args = args[2:]
+			continue
+		}
+		if args[0] == "-c" {
+			if len(args) < 2 {
+				return false
+			}
+			args = args[2:]
+			continue
+		}
+		if gitGlobals[args[0]] {
+			args = args[1:]
+			continue
+		}
+		break
+	}
+	if len(args) == 0 {
+		return false
+	}
 	sub := args[0]
 	rest := args[1:]
 	if readOnlyGitSubcommands[sub] {
@@ -521,6 +570,22 @@ func isSafeGit(args []string) bool {
 	default:
 		return false
 	}
+}
+
+// inPlaceRelativePath reports whether v is a relative path that cannot move a
+// `-C` target outside the current directory: not empty, not starting with
+// `/`, `~` or `-`, and containing no `..` component. `.` and names like `a`
+// qualify; `a/../..` does not.
+func inPlaceRelativePath(v string) bool {
+	if v == "" || v[0] == '/' || v[0] == '~' || v[0] == '-' {
+		return false
+	}
+	for _, part := range strings.Split(v, "/") {
+		if part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // isSafeGitBranch is safe only as a list: no args, or only list flags. Any

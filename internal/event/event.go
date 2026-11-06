@@ -502,6 +502,23 @@ type PermissionDecisionPayload struct {
 	// this resolution: the audit record of which model judged and whether its
 	// reply was usable. Bounded fields only; never prompt or reply text.
 	Classifier *ClassifierCallPayload `json:"classifier,omitempty"`
+	// Segments carries the per-segment deterministic verdict for a COMPOUND
+	// bash command (change 0142): one element per parsed segment, so a compound
+	// decision stays attributable to the specific part that drove an ask or
+	// deny — not just the raw command string. Omitted for non-compound commands
+	// and non-bash tools. Bounded: the parser caps segment count by construction.
+	Segments []SegmentVerdictPayload `json:"segments,omitempty"`
+}
+
+// SegmentVerdictPayload is one segment of a compound bash command's
+// deterministic decomposition (change 0142): the segment's command name, the
+// verdict the deterministic layers reached for it, and the layer-naming reason
+// when it did not allow. Bounded identity only — never the segment's args or
+// raw text beyond the name.
+type SegmentVerdictPayload struct {
+	Name    string `json:"name"`
+	Verdict string `json:"verdict"`
+	Reason  string `json:"reason,omitempty"`
 }
 
 // ClassifierCallPayload is the classifier-consultation slice of a

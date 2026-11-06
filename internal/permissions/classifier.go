@@ -287,19 +287,30 @@ type ClassifierOutcome struct {
 // unparseable reply, resolves to VerdictAsk (never allow). Any verdict other
 // than a clean allow/deny is treated as ask.
 func (c *Classifier) Classify(ctx context.Context, userMessages []model.Message, toolName, command string) ClassifierOutcome {
+	return c.ClassifyWithSegments(ctx, userMessages, toolName, command, nil)
+}
+
+// ClassifyWithSegments is Classify with an optional per-segment decomposition
+// for a compound bash command (change 0142). The segments are rendered into
+// the pending-call prompt so the model verdicts the genuinely-hard segment
+// rather than the whole opaque string. Nil or single-element segs produce a
+// prompt byte-identical to Classify, so the existing single-command behavior
+// is unchanged. The cache key is still (toolName, normalized command) — the
+// decomposition is derived from the command, so a cache hit is still correct.
+func (c *Classifier) ClassifyWithSegments(ctx context.Context, userMessages []model.Message, toolName, command string, segs []SegmentVerdict) ClassifierOutcome {
 	if v, ok := c.cache.Lookup(toolName, command); ok {
 		v.Call.Cached = true
 		return v
 	}
-	v := c.classifyUncached(ctx, userMessages, toolName, command)
+	v := c.classifyUncached(ctx, userMessages, toolName, command, segs)
 	c.storeVerdict(toolName, command, v)
 	return v
 }
 
 // classifyUncached performs the single bounded verdict call and parses the
 // reply, without consulting or updating the cache.
-func (c *Classifier) classifyUncached(ctx context.Context, userMessages []model.Message, toolName, command string) ClassifierOutcome {
-	return c.completeVerdict(ctx, c.buildMessages(userMessages, toolName, command))
+func (c *Classifier) classifyUncached(ctx context.Context, userMessages []model.Message, toolName, command string, segs []SegmentVerdict) ClassifierOutcome {
+	return c.completeVerdict(ctx, c.buildMessagesWithSegments(userMessages, toolName, command, segs))
 }
 
 // completeVerdict makes the bounded verdict call, retrying once with more room
@@ -470,6 +481,14 @@ func webFetchPendingPrompt(host string, knownGood bool) string {
 // reach the classifier, so a malicious tool result or actor rationalization
 // cannot steer the verdict.
 func (c *Classifier) buildMessages(userMessages []model.Message, toolName, command string) []model.Message {
+	return c.buildMessagesWithSegments(userMessages, toolName, command, nil)
+}
+
+// buildMessagesWithSegments is buildMessages with an optional per-segment
+// decomposition threaded into the pending-call prompt (change 0142). Nil segs
+// produce a prompt byte-identical to buildMessages, so single-command behavior
+// is unchanged.
+func (c *Classifier) buildMessagesWithSegments(userMessages []model.Message, toolName, command string, segs []SegmentVerdict) []model.Message {
 	msgs := make([]model.Message, 0, len(userMessages)+2)
 	msgs = append(msgs, model.Message{Role: "system", Content: classifierSystemPrompt})
 	for _, m := range userMessages {
@@ -481,7 +500,7 @@ func (c *Classifier) buildMessages(userMessages []model.Message, toolName, comma
 		}
 		msgs = append(msgs, model.Message{Role: "user", Content: m.Content})
 	}
-	msgs = append(msgs, model.Message{Role: "user", Content: c.pendingCallPrompt(toolName, command)})
+	msgs = append(msgs, model.Message{Role: "user", Content: c.pendingCallPromptWithSegments(toolName, command, segs)})
 	return msgs
 }
 
@@ -493,10 +512,36 @@ func (c *Classifier) buildMessages(userMessages []model.Message, toolName, comma
 // than no context at all. The pending-call shape and the trailing JSON
 // instruction are the load-bearing parts and are unchanged.
 func (c *Classifier) pendingCallPrompt(toolName, command string) string {
+	return c.pendingCallPromptWithSegments(toolName, command, nil)
+}
+
+// pendingCallPromptWithSegments renders the pending tool call as the final user
+// turn, optionally prefixing a per-segment decomposition of a compound bash
+// command (change 0142). The decomposition names each parsed segment and the
+// deterministic verdict it earned, so the model verdicts the genuinely-hard
+// segment rather than the whole opaque string: the deterministic layers have
+// already proven the safe parts, and the classifier's job is the residual gray
+// area, not re-deriving what was already decided. The decomposition is emitted
+// ONLY when there is more than one segment (a compound) and at least one
+// segment is not a clean deterministic allow — an all-allow compound is
+// auto-approved by the heuristic layer and never reaches here.
+func (c *Classifier) pendingCallPromptWithSegments(toolName, command string, segs []SegmentVerdict) string {
 	var b strings.Builder
 	if line := c.workspaceContextLine(); line != "" {
 		b.WriteString(line)
 		b.WriteString("\n\n")
+	}
+	if len(segs) > 1 {
+		b.WriteString("Decomposed segments (deterministic verdict per segment):\n")
+		for _, sv := range segs {
+			v := sv.Verdict.String()
+			if sv.Reason != "" {
+				v += " (" + sv.Reason + ")"
+			}
+			fmt.Fprintf(&b, "  - %s: %s\n", sv.Name, v)
+		}
+		b.WriteString("The deterministic layers above have already resolved the named segments. ")
+		b.WriteString("Your verdict is for the compound as a whole; the segments you cannot prove safe are your gray area.\n\n")
 	}
 	fmt.Fprintf(&b, "Pending tool call to classify:\ntool: %s\ncommand: %s\n\nRespond with the JSON verdict object.", toolName, command)
 	return b.String()
