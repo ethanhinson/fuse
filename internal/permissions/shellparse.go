@@ -1378,20 +1378,40 @@ func classifyWordParts(src string, parts []syntax.WordPart, out *[]Segment, inDo
 //     command. The recursion's text is discarded: the opaque token we hand
 //     upward is the outer expansion's raw source, never a half-resolved value.
 //
-//   - ARITHMETIC and non-bash shapes — a `${a[i]}` subscript, a `${X:off:len}`
-//     slice, a zsh flag/modifier list, a nested-parameter form — fail closed
-//     wholesale. An ArithmExpr can itself carry a substitution that runs
+//   - ARITHMETIC and non-bash shapes — a `${X:off:len}` slice, a zsh
+//     flag/modifier list, a nested-parameter form — fail closed wholesale.
+//     An ArithmExpr can itself carry a substitution that runs
 //     (`${X:$(rm -rf /):2}`), and this parser has never modelled arithmetic
 //     (see the *syntax.ArithmExp arm). Refusing the whole class costs at most
 //     a human prompt on a shape agents rarely emit; modelling half of it is
 //     how a bypass gets in.
 //
-// The Excl/Length/Width/Names forms (`${!a}`, `${#a}`, `${%a}`,
-// `${!prefix*}`) carry no nested word at all and need no proof: they stay
-// plain opaque, as they were before.
+//     The one exception is the `${a[i]}` SUBSCRIPT, which is admitted only as
+//     a literal word that is all ASCII digits or exactly `@`/`*` — an index
+//     the shell resolves to a fixed element or to the whole array with no
+//     arithmetic to run. See safeParamIndex.
+//
+//   - INDIRECT and operator forms — `p.Excl` (`${!X}`, `${!a[0]}`) and any
+//     `p.Exp` whose Op is OtherParamOps (`${X@P}`, `${X@Q}`) — are refused
+//     outright. ${!X} expands a SECOND dereference (the value of X read as a
+//     name) that this proof has no model for, and the @ operator forms
+//     transform the value in ways we never inspect. Failing closed here costs
+//     a prompt; allowing them would prove something we never checked.
+//
+// The Length and Width forms (`${#a}`, `${%a}`) carry no nested word at all and
+// need no proof: they stay plain opaque, as they were before.
 func paramExpWordsSafe(src string, p *syntax.ParamExp, out *[]Segment) bool {
-	if p.Index != nil || p.Slice != nil || p.NestedParam != nil ||
+	if p.Excl {
+		return false
+	}
+	if p.Index != nil && !safeParamIndex(p.Index) {
+		return false
+	}
+	if p.Slice != nil || p.NestedParam != nil ||
 		p.Flags != nil || len(p.Modifiers) > 0 {
+		return false
+	}
+	if p.Exp != nil && p.Exp.Op == syntax.OtherParamOps {
 		return false
 	}
 	words := make([]*syntax.Word, 0, 3)
@@ -1411,6 +1431,45 @@ func paramExpWordsSafe(src string, p *syntax.ParamExp, out *[]Segment) bool {
 			return false
 		}
 		if _, _, ok := classifyWordParts(src, w.Parts, out, false); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// safeParamIndex reports whether a `${a[...]}` subscript may be admitted as
+// inert. p.Index is an ArithmExpr — bash parses whatever sits between the
+// brackets as arithmetic — and this parser has no model for arithmetic, so the
+// default is refusal. The literal exceptions are the subscripts whose value
+// never depends on arithmetic or a substitution:
+//
+//   - all-ASCII-digits — a fixed element (`${a[0]}`, `${a[12]}`);
+//   - exactly `@` or `*` — the whole array (`${a[@]}`, `${a[*]}`).
+//
+// Anything else — `${a[i]}`, `${a[1+1]}`, `${a[$(x)]}` — is refused by the
+// caller. The subscript must arrive as a *syntax.Word that literalWord can
+// resolve: a quoted `"0"` is still the fixed element, while anything the
+// parser hands us as arithmetic-only nodes has no literal answer to give.
+func safeParamIndex(idx syntax.ArithmExpr) bool {
+	w, ok := idx.(*syntax.Word)
+	if !ok {
+		return false
+	}
+	if w == nil {
+		return false
+	}
+	text, ok := literalWord(w)
+	if !ok {
+		return false
+	}
+	if text == "@" || text == "*" {
+		return true
+	}
+	if text == "" {
+		return false
+	}
+	for i := 0; i < len(text); i++ {
+		if text[i] < '0' || text[i] > '9' {
 			return false
 		}
 	}

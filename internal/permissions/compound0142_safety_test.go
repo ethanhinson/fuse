@@ -161,6 +161,8 @@ func TestParseLayer_RoutineCompoundsDecompose(t *testing.T) {
 		`cd "$(pwd)" && git status 2>&1 | tail -30; echo "===EXIT: ${PIPESTATUS[0]}==="`,
 		`for f in a.txt b.txt; do cat "$f"; done`,
 		`cd "$(pwd)" && docket change attach-plan --id 129 --revision "$(git -C '.docket' rev-parse HEAD)"`,
+		// Reaches the classifier, not auto-approve: an opaque word could expand to git log --output=x.
+		`git log --oneline -1 "$(git rev-parse HEAD)"`,
 		"cd \"$(pwd)\" && cat <<EOF | docket change attach-result --request - --repo-dir \"$(pwd)\" --json 2>&1 | tail -5\n{\"sha\":\"abc\"}\nEOF",
 	} {
 		t.Run(cmd, func(t *testing.T) {

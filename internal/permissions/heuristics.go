@@ -418,6 +418,26 @@ var gitEgressSubcommands = map[string]bool{
 	"push":  true,
 }
 
+// gitAfterC returns the git argument list with every LEADING `-C <value>` pair
+// stripped, whatever the value is. git runs its subcommand from the last -C
+// directory, so the subcommand and its operands sit after those pairs; the
+// egress checks below read the view rather than the raw list so `git -C sub
+// push` is seen as a push and `git -C /outside push` as well.
+//
+// Unlike isSafeGit's -C handling this makes no claim about the VALUE: whether
+// the directory is inside or outside the workspace decides where a read lands,
+// not whether a push is a push. The egress boundary is the operation, and a
+// `-C /outside` that escaped the read-only allowance is exactly the shape that
+// must still be recognised here. Flags that take a value but do not relocate
+// (-c, --git-dir, …) are not stripped — only -C pairs are.
+func gitAfterC(args []string) []string {
+	i := 0
+	for i+1 < len(args) && args[i] == "-C" {
+		i += 2
+	}
+	return args[i:]
+}
+
 // isEgress reports whether a segment performs network egress: a known egress
 // tool, or a git remote operation given a host-qualified URL. `git push` is
 // egress UNCONDITIONALLY (change 0068): its usual operands (`origin`, a branch
@@ -432,15 +452,23 @@ func isEgress(seg Segment) bool {
 	if isGitPush(seg) {
 		return true
 	}
-	if seg.Name == "git" && len(seg.Args) > 0 && !seg.isOpaque(0) && gitEgressSubcommands[seg.Args[0]] {
-		for i, a := range seg.Args[1:] {
-			// An OPAQUE remote argument counts as host-qualified (change 0070
-			// D5): isHostQualified inspects the text for "://", "@" and ":"
-			// markers, and "$REMOTE" carries none of them — so `git clone $URL`
-			// would read as a LOCAL remote name and skip the egress boundary
-			// entirely. Unprovable means we take the stricter reading.
-			if seg.isOpaque(i+1) || isHostQualified(a) {
-				return true
+	if seg.Name == "git" && len(seg.Args) > 0 {
+		view := gitAfterC(seg.Args)
+		// Offset back into the raw Args/Opaque slices: isOpaque is indexed
+		// against the ORIGINAL argument list, so every index the view yields
+		// must be shifted by the pairs stripped above to stay a correct
+		// opacity answer rather than an off-by-two read of the wrong word.
+		off := len(seg.Args) - len(view)
+		if len(view) > 0 && !seg.isOpaque(off) && gitEgressSubcommands[seg.Args[off]] {
+			for i, a := range view[1:] {
+				// An OPAQUE remote argument counts as host-qualified (change 0070
+				// D5): isHostQualified inspects the text for "://", "@" and ":"
+				// markers, and "$REMOTE" carries none of them — so `git clone $URL`
+				// would read as a LOCAL remote name and skip the egress boundary
+				// entirely. Unprovable means we take the stricter reading.
+				if seg.isOpaque(off+i+1) || isHostQualified(a) {
+					return true
+				}
 			}
 		}
 	}
