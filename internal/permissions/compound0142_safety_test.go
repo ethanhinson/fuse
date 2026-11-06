@@ -204,3 +204,45 @@ func TestPromptAllMode_CompoundStillPrompts(t *testing.T) {
 		t.Error("prompt-all must prompt for every bash call")
 	}
 }
+
+// TestShellStateChange_NotAutoApproved pins what the $(pwd) exemption relies on:
+// that pwd, cd and the commands after them mean what they usually mean. An alias
+// on an earlier line is honored by /bin/sh, so these really do run elsewhere, and
+// assignments that steer resolution are unsafe however the parser comes to accept
+// them. The assignments are refused today only because the parser fails closed.
+func TestShellStateChange_NotAutoApproved(t *testing.T) {
+	_, decide := gateInRoot(t)
+	for _, cmd := range []string{
+		"alias pwd='echo /outside'\ncd \"$(pwd)\" && rm -f victim",
+		"alias pwd='echo /outside'; cd \"$(pwd)\" && rm -f victim",
+		"alias cd='cd /outside'\ncd \"$(pwd)\" && rm -f victim",
+		"alias rm='rm -rf /outside'\nrm x",
+		"alias ls='rm -rf /outside'\nls",
+		"unalias -a; cd \"$(pwd)\" && rm -f victim",
+		"shopt -s expand_aliases\nalias rm='rm -rf /outside'\nrm x",
+		"pwd() { echo /outside; }\ncd \"$(pwd)\" && rm -f victim",
+		"cd() { builtin cd /outside; }\ncd \"$(pwd)\" && rm -f victim",
+		"PWD=/outside; cd \"$PWD\" && rm -f victim",
+		"PWD=/outside\ncd \"$PWD\" && rm -f victim",
+		"export PWD=/outside && cd \"$PWD\" && rm -f victim",
+		"OLDPWD=/outside; cd - && rm -f victim",
+		"HOME=/outside; cd && rm -f victim",
+		"CDPATH=/outside; cd sub && rm -f victim",
+		"export CDPATH=/outside && cd sub && rm -f victim",
+		"PATH=/outside:$PATH; make test",
+		"export PATH=/outside && make test",
+		"IFS=/; make test",
+		"LD_PRELOAD=/outside/x.so; make test",
+		"export BASH_ENV=/outside/x && bash -c ls",
+		"ENV=/outside/x; sh -c ls",
+		"FOO=/outside; cd \"$FOO\" && rm -f victim",
+		"FOO=$(echo /outside); cd \"$FOO\" && rm -f victim",
+		"FOO=/outside; rm -f \"$FOO/victim\"",
+	} {
+		t.Run(cmd, func(t *testing.T) {
+			if d, _ := decide(cmd); d.Verdict == "allow" {
+				t.Errorf("auto-approved at layer %q: the command changes what later segments mean", d.Layer)
+			}
+		})
+	}
+}
