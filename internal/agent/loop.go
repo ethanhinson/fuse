@@ -630,6 +630,12 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		if a.usageSink != nil {
 			a.usageSink(resp.InputTokens, resp.OutputTokens)
 		}
+		if used := progress.tokens.Add(int64(resp.InputTokens + resp.OutputTokens)); a.maxRunTokens > 0 && used >= a.maxRunTokens {
+			lerr := fmt.Errorf("%w: %d of %d tokens used", ErrRunTokenLimit, used, a.maxRunTokens)
+			a.renderer.Errorf("%v", lerr)
+			a.emit(event.KindError, turn, event.ErrorPayload{Err: lerr.Error(), Turn: turn})
+			return messages, lerr
+		}
 		// Only the prompt side of usage is trusted for the context estimate. The
 		// completion count includes reasoning tokens that never re-enter the
 		// conversation: a reasoning model can spend 110k tokens on a turn whose
@@ -637,12 +643,6 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		// aborted a run with ErrContextTooLarge at ~4k tokens of real history.
 		// The assistant message is measured by size like any unaccounted message.
 		lastUsage = resp.InputTokens
-		if used := progress.tokens.Add(int64(resp.InputTokens + resp.OutputTokens)); a.maxRunTokens > 0 && used >= a.maxRunTokens {
-			lerr := fmt.Errorf("%w: %d of %d tokens used", ErrRunTokenLimit, used, a.maxRunTokens)
-			a.renderer.Errorf("%v", lerr)
-			a.emit(event.KindError, turn, event.ErrorPayload{Err: lerr.Error(), Turn: turn})
-			return messages, lerr
-		}
 
 		if resp.Content != "" {
 			a.renderer.Assistant(resp.Content)
