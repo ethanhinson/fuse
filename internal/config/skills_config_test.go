@@ -1,7 +1,6 @@
 package config
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -93,8 +92,9 @@ skills:
 		// A strict-ish unmarshal error is fine.
 		return
 	}
-	_ = c
-	if strings.Contains(err.Error(), "") {
-		t.Log("unmarshal accepted numeric refresh")
+	// FromYAML accepted the numeric value via type coercion. Check what the
+	// Refresh field resolved to rather than dereferencing a nil error.
+	if c.Skills.Refresh != "" {
+		t.Fatalf("numeric refresh silently accepted as %q", c.Skills.Refresh)
 	}
 }
