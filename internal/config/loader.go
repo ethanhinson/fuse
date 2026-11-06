@@ -493,30 +493,49 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	if len(raw.SkillPaths) > 0 {
 		c.SkillPaths = raw.SkillPaths
 	}
+	// ignored collects the keys an untrusted (repo-plantable) layer is refused,
+	// for one aggregated startup warning: the permission-loosening keys, plus
+	// the operator-only skills.* keys below.
+	var ignored []string
 	// skills.source / skills.dirs / skills.refresh (change 0134): the source
-	// adapter selection, its filesystem directories (operator-only surface —
-	// cleared for a spec layer below), and the server refresh interval.
+	// adapter selection, its filesystem directories, and the server refresh
+	// interval. All three are operator-only: a skill body is an instruction the
+	// model is told to follow, and the refresh interval drives how often it is
+	// re-read, so a repo-plantable file must never steer any of them. From an
+	// untrusted layer they are inert and each present one is named in the
+	// aggregated warning (the same mechanism as the permission-loosening keys).
 	if raw.Skills.Source != "" {
-		c.Skills.Source = raw.Skills.Source
+		if trusted {
+			c.Skills.Source = raw.Skills.Source
+		} else {
+			ignored = append(ignored, "skills.source")
+		}
 	}
 	if len(raw.Skills.Dirs) > 0 {
-		c.Skills.Dirs = raw.Skills.Dirs
+		if trusted {
+			c.Skills.Dirs = raw.Skills.Dirs
+		} else {
+			ignored = append(ignored, "skills.dirs")
+		}
 	}
 	if raw.Skills.Refresh != "" {
 		d, err := time.ParseDuration(raw.Skills.Refresh)
 		if err != nil || d <= 0 {
 			return nil, fmt.Errorf("%s: skills.refresh %q is not a positive duration (e.g. \"30s\")", path, raw.Skills.Refresh)
 		}
-		c.Skills.Refresh = raw.Skills.Refresh
+		if trusted {
+			c.Skills.Refresh = raw.Skills.Refresh
+		} else {
+			ignored = append(ignored, "skills.refresh")
+		}
 	}
 	// Permission-loosening keys are honored only from a trusted source. From an
 	// untrusted (repo-plantable) source they are inert and each present one is
-	// collected for a single aggregated startup warning.
-	var ignored []string
+	// collected for one aggregated startup warning.
 	if spec {
 		mergeSpecPermissions(c, raw.Permissions)
 	} else {
-		ignored = mergePermissions(c, raw.Permissions, trusted)
+		ignored = append(ignored, mergePermissions(c, raw.Permissions, trusted)...)
 	}
 	// orchestrator.model picks which model may steer the agent: trusted-only
 	// from a config file, client-settable in a spec (ADR-0060).

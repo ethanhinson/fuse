@@ -47,21 +47,32 @@ func skillDirsFromConfig(cfg config.Config) []string {
 // atomicSkills is the server bindings' live skill set. It is safe for
 // concurrent Load (a loop start, a capability query, a resume) and refresh
 // (the ticker goroutine), and it carries the digest of the current set so the
-// harness stream and resume drift share one authority.
+// harness stream and resume drift share one authority. The set and its digest
+// travel in ONE atomically-swapped snapshot: a reader can never observe a set
+// paired with a stale digest from an earlier refresh (or a nil set with a
+// non-empty digest).
 type atomicSkills struct {
-	set    atomic.Pointer[skills.Set]
-	digest atomic.Value // string
+	cur atomic.Pointer[atomicSkillsSnapshot]
 }
 
-// Load returns the current set and its digest.
+// atomicSkillsSnapshot is the immutable (set, digest) pair atomicSkills holds.
+type atomicSkillsSnapshot struct {
+	set    *skills.Set
+	digest string
+}
+
+// Load returns the current set and its digest. An empty holder (never
+// Snapshotted) returns nil and "".
 func (a *atomicSkills) Load() (*skills.Set, string) {
-	return a.set.Load(), a.digest.Load().(string)
+	if s := a.cur.Load(); s != nil {
+		return s.set, s.digest
+	}
+	return nil, ""
 }
 
 // Snapshot replaces the held set and digest together.
 func (a *atomicSkills) Snapshot(set *skills.Set, digest string) {
-	a.set.Store(set)
-	a.digest.Store(digest)
+	a.cur.Store(&atomicSkillsSnapshot{set: set, digest: digest})
 }
 
 // startSkillsRefresh loads the source immediately (failing the caller when the
@@ -85,6 +96,10 @@ func startSkillsRefresh(ctx context.Context, src skills.Source, refresh time.Dur
 	go func() {
 		t := time.NewTicker(refresh)
 		defer t.Stop()
+		// failed tracks the current failure streak so a long outage logs once
+		// (the first miss) rather than once per tick, and the recovery logs
+		// once when the streak ends.
+		failed := false
 		for {
 			select {
 			case <-stop:
@@ -94,8 +109,15 @@ func startSkillsRefresh(ctx context.Context, src skills.Source, refresh time.Dur
 			case <-t.C:
 				next, nextDigest, err := ComposeSkills(src)
 				if err != nil {
-					log.Printf("[skills] refresh failed, keeping last good set: %v", err)
+					if !failed {
+						failed = true
+						log.Printf("[skills] refresh failed, keeping last good set: %v", err)
+					}
 					continue
+				}
+				if failed {
+					failed = false
+					log.Printf("[skills] refresh recovered")
 				}
 				if nextDigest != digest {
 					out.Snapshot(next, nextDigest)

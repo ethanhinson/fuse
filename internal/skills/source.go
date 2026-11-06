@@ -24,7 +24,10 @@ type Source interface {
 func DigestOf(set *Set) string {
 	var pairs []string
 	for _, sk := range set.All() {
-		pairs = append(pairs, sk.Name + "\x00" + sk.Body)
+		// Description is part of the digest (change 0134): it is model-visible
+		// (loader.go renders it into the brief), so a description-only edit is
+		// a real change the drift stream must pick up.
+		pairs = append(pairs, sk.Name+"\x00"+sk.Description+"\x00"+sk.Body)
 	}
 	sort.Strings(pairs)
 	h := sha256.New()
