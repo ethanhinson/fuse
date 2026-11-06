@@ -2,12 +2,12 @@
 id: 134
 slug: 'installed-skills-come-from-a-skill-source-adapter-consistent'
 title: 'Installed skills come from a skill source adapter, consistent across replicas'
-status: 'proposed'
+status: 'in-progress'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-06'
 depends_on: []
 stacked_on:
 related: [86, 118, 128]
@@ -19,7 +19,7 @@ results:
 auto_groomable:
 hold:
 branch_prefix:
-branch:
+branch: 'feat/installed-skills-come-from-a-skill-source-adapter-consistent'
 pr:
 blocked_by:
 reconciled: false
