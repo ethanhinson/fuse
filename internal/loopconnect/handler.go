@@ -610,6 +610,18 @@ func (h *Handler) Send(ctx context.Context, req *connect.Request[loopv1.SendRequ
 			err = rerr
 		}
 	}
+
+	// When the resume attempt fails and the error is still ErrLoopFinished,
+	// the loop may have been cancelled by another replica. Consult the
+	// CancelReader so the caller learns "loop cancelled", not "loop finished".
+	if errors.Is(err, runtime.ErrLoopFinished) {
+		if cr, ok := h.rt.(runtime.CancelReader); ok {
+			if sealed, cerr := cr.IsCancelled(ctx, tenant, m.LoopId); cerr == nil && sealed {
+				err = runtime.ErrLoopCancelled
+			}
+		}
+	}
+
 	if err != nil {
 		apiOutcome = observeotel.OutcomeFromError(ctx, err)
 		switch {
