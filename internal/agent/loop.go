@@ -361,6 +361,8 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// Every emitted transition then carries the same causal context without pulling
 	// a telemetry vendor into the agent package.
 	a.eventTrace = observe.TraceCarrier(a.observer, ctx)
+	ctx, progress := withRunProgress(ctx)
+	var lastNudgeAt int64
 	messages := history
 	// Record the seed's user turn(s) into the durable stream (change 0054) so a
 	// transcript rebuilt purely from events includes them — user input is otherwise
@@ -635,6 +637,12 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		// aborted a run with ErrContextTooLarge at ~4k tokens of real history.
 		// The assistant message is measured by size like any unaccounted message.
 		lastUsage = resp.InputTokens
+		if used := progress.tokens.Add(int64(resp.InputTokens + resp.OutputTokens)); a.maxRunTokens > 0 && used >= a.maxRunTokens {
+			lerr := fmt.Errorf("%w: %d of %d tokens used", ErrRunTokenLimit, used, a.maxRunTokens)
+			a.renderer.Errorf("%v", lerr)
+			a.emit(event.KindError, turn, event.ErrorPayload{Err: lerr.Error(), Turn: turn})
+			return messages, lerr
+		}
 
 		if resp.Content != "" {
 			a.renderer.Assistant(resp.Content)
@@ -862,6 +870,23 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			// The nudge changes the conversation; give the model a fresh detector
 			// window to act on it.
 			detector.reset()
+		}
+
+		// No-progress check: counted across the whole agent tree, and every loop
+		// tracks when it was last nudged so a parent waiting on children hears too.
+		// An interactive session has a person watching, so it is not nudged.
+		if a.noProgressCalls > 0 && !a.interactive {
+			since := progress.recordCalls(results)
+			if since < lastNudgeAt {
+				lastNudgeAt = 0
+			}
+			if since-lastNudgeAt >= int64(a.noProgressCalls) {
+				lastNudgeAt = since
+				content := noProgressNudge(since)
+				messages = append(messages, model.Message{Role: "user", Content: content})
+				a.emit(event.KindNoProgress, turn, event.NoProgressPayload{Turn: turn, Calls: since, Threshold: a.noProgressCalls})
+				a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: content})
+			}
 		}
 
 		// turn.end (change 0043): the tool-dispatch path completed this turn.

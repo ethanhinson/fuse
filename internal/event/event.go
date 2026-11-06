@@ -40,7 +40,10 @@ const (
 	KindSpawnDone      Kind = "spawn.done"
 	KindSummarize      Kind = "context.summarize"
 	KindLoopTrip       Kind = "loop.detector.trip"
-	KindError          Kind = "error"
+	// KindNoProgress fires when a run has gone too many tool calls without a file
+	// change and the loop nudges the model. It never ends the run.
+	KindNoProgress Kind = "no.progress"
+	KindError      Kind = "error"
 	// KindLoopParked marks an interactive (persistent conversational) loop reaching a
 	// terminal turn and PARKING to await the next human input, rather than finishing.
 	// It is the deterministic "this exchange is complete, send your next message"
@@ -711,4 +714,12 @@ type LoopCancelledPayload struct {
 	// already held an earlier one (the first is authoritative). It records the
 	// writer's own seal, never a second cancel, so it is never counted as one.
 	Superseded bool `json:"superseded,omitempty"`
+}
+
+// NoProgressPayload accompanies KindNoProgress: Calls tool calls across the agent
+// tree since the last file change, against a nudge interval of Threshold.
+type NoProgressPayload struct {
+	Turn      int   `json:"turn"`
+	Calls     int64 `json:"calls"`
+	Threshold int   `json:"threshold"`
 }

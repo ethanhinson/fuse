@@ -476,6 +476,12 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	if raw.MaxTurns != nil {
 		c.MaxTurns = raw.MaxTurns
 	}
+	if raw.NoProgressCalls != nil {
+		c.NoProgressCalls = raw.NoProgressCalls
+	}
+	if raw.MaxRunTokens != 0 {
+		c.MaxRunTokens = raw.MaxRunTokens
+	}
 	if raw.MaxTokens != 0 {
 		c.MaxTokens = raw.MaxTokens
 	}

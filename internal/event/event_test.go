@@ -24,6 +24,7 @@ func TestKindWireValues(t *testing.T) {
 		KindSpawnDone:          "spawn.done",
 		KindSummarize:          "context.summarize",
 		KindLoopTrip:           "loop.detector.trip",
+		KindNoProgress:         "no.progress",
 		KindError:              "error",
 		KindLoopParked:         "loop.parked",
 		KindUserInput:          "user.input",
@@ -140,6 +141,7 @@ func TestPayloadKindsRoundTrip(t *testing.T) {
 		SpawnDonePayload{ChildNodeID: "n2", ParentID: "n1", Label: "researcher", Depth: 1, Result: "done", Err: ""},
 		SummarizePayload{TurnStart: 0, TurnEnd: 3, ToolNames: []string{"bash"}, TokensBefore: 100, TokensAfter: 20, Pointer: "/p"},
 		LoopTripPayload{Turn: 9},
+		NoProgressPayload{Turn: 12, Calls: 100, Threshold: 100},
 		LoopTripPayload{Turn: 9, Reason: "policy-denied call repeated after nudge"},
 		ErrorPayload{Err: "boom", Turn: 2},
 		PermissionDecisionPayload{ToolCallID: "c1", Tool: "bash", Verdict: "deny", Layer: "rules", Reason: "denied by auto-mode rules layer: curl x", Mode: "auto", Command: "curl x"},
@@ -438,8 +440,8 @@ func TestPayloadAdditionsAbsentAreZero(t *testing.T) {
 		reflect.ValueOf(&SpawnStartPayload{}),
 	}
 	newFields := map[string][]string{
-		"SummarizePayload": {"Summary", "InsertAt"},
-		"SpawnDonePayload": {"Orphaned"},
+		"SummarizePayload":  {"Summary", "InsertAt"},
+		"SpawnDonePayload":  {"Orphaned"},
 		"ToolResultPayload": {"Synthetic"},
 		"SpawnStartPayload": {"Pool"},
 	}
