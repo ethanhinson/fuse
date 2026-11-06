@@ -204,3 +204,90 @@ func TestMaxRunTokens_OffByDefault(t *testing.T) {
 		t.Fatalf("no cap configured, got %v", err)
 	}
 }
+
+func finishChecks(msgs []model.Message) int {
+	n := 0
+	for _, m := range msgs {
+		if m.Role == "user" && m.Content == finishCheckPrompt {
+			n++
+		}
+	}
+	return n
+}
+
+// toolsExec advertises a tool, as any agent that can do work does.
+type toolsExec struct{ fakeExec }
+
+func (*toolsExec) Schemas() []model.ToolSchema { return []model.ToolSchema{{Name: "bash"}} }
+
+// TestFinishCheck_ContinuesARunThatStoppedMidTask is the failure this exists for: the
+// model says what it will do next, with no tool call, and then does it when asked.
+func TestFinishCheck_ContinuesARunThatStoppedMidTask(t *testing.T) {
+	exec := &toolsExec{}
+	comp := &scriptedCompleter{responses: []model.CompletionResp{
+		{Content: "Let me run the tests now:"},
+		{ToolCalls: []model.ToolCall{{ID: "1", Name: "bash", Arguments: `{"command":"go test"}`}}},
+		{Content: "Tests pass. Done."},
+		{Content: "Done."},
+	}}
+	a := New(comp, exec, nopRenderer{}, "m", "", 10, 100)
+	a.SetFinishCheck(true)
+	msgs, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exec.calls) != 1 {
+		t.Fatalf("the check should get the tests run, tool calls = %v", exec.calls)
+	}
+	if finishChecks(msgs) != 1 {
+		t.Fatalf("want exactly one check over a whole run, got %d", finishChecks(msgs))
+	}
+	if comp.i != 3 {
+		t.Fatalf("the run should end on the reply after the check is spent; %d model calls", comp.i)
+	}
+}
+
+func TestFinishCheck_SkipsChildren(t *testing.T) {
+	ctx, _ := withRunProgress(context.Background())
+	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "child result"}, {Content: "again"}}}
+	a := New(comp, &toolsExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.SetFinishCheck(true)
+	if _, err := a.Run(ctx, []model.Message{{Role: "user", Content: "go"}}); err != nil {
+		t.Fatal(err)
+	}
+	if comp.i != 1 {
+		t.Fatalf("a child's reply is its result; it must not be asked again, got %d calls", comp.i)
+	}
+}
+
+func TestFinishCheck_CannotLoop(t *testing.T) {
+	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}, {Content: "done"}, {Content: "done"}}}
+	a := New(comp, &toolsExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.SetFinishCheck(true)
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "go"}}); err != nil {
+		t.Fatal(err)
+	}
+	if comp.i != 2 {
+		t.Fatalf("want the first reply and one after the check, got %d calls", comp.i)
+	}
+}
+
+func TestFinishCheck_OffByDefaultInTheAgentAndSkipsToolLess(t *testing.T) {
+	comp := &scriptedCompleter{responses: []model.CompletionResp{{Content: "done"}, {Content: "again"}}}
+	a := New(comp, &toolsExec{}, nopRenderer{}, "m", "", 10, 100)
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "go"}}); err != nil {
+		t.Fatal(err)
+	}
+	if comp.i != 1 {
+		t.Fatalf("an agent that did not opt in must end on the first reply, got %d calls", comp.i)
+	}
+	comp = &scriptedCompleter{responses: []model.CompletionResp{{Content: "answer"}, {Content: "again"}}}
+	a = New(comp, &fakeExec{}, nopRenderer{}, "m", "", 10, 100)
+	a.SetFinishCheck(true)
+	if _, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "go"}}); err != nil {
+		t.Fatal(err)
+	}
+	if comp.i != 1 {
+		t.Fatalf("an agent with no tools has nothing to continue with, got %d calls", comp.i)
+	}
+}

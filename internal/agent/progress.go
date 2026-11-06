@@ -54,6 +54,11 @@ func (p *runProgress) recordCalls(results []toolResult) int64 {
 	return p.callsSinceChange.Add(int64(len(results)))
 }
 
+// finishCheckPrompt is sent once when a headless run first replies with no tool call.
+const finishCheckPrompt = "[finish-check] Your last reply had no tool call, which ends this run. " +
+	"If any work remains, including anything you just said you would do, continue now with a tool call. " +
+	"If the task is complete and verified, reply with your final report."
+
 // noProgressNudge is the message injected when a run has gone too long without a
 // file change. It never ends the run: investigation is a legitimate task.
 func noProgressNudge(calls int64) string {

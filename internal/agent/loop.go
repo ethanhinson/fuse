@@ -361,8 +361,10 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// Every emitted transition then carries the same causal context without pulling
 	// a telemetry vendor into the agent package.
 	a.eventTrace = observe.TraceCarrier(a.observer, ctx)
+	_, isChild := ctx.Value(runProgressKey{}).(*runProgress)
 	ctx, progress := withRunProgress(ctx)
 	var lastNudgeAt int64
+	finishChecked := false
 	messages := history
 	// Record the seed's user turn(s) into the durable stream (change 0054) so a
 	// transcript rebuilt purely from events includes them — user input is otherwise
@@ -679,6 +681,16 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 					continue
 				}
 				// errNoBus or ctx cancellation: end the run like a normal terminal turn.
+			}
+			// A headless run has nobody to notice it stopped mid-task, and models do:
+			// "Let me run the tests now:" with no tool call ended runs that exited 0
+			// with the work unfinished. Ask once; a second reply with no tool call ends
+			// the run, so this costs one model call and cannot loop.
+			if a.finishCheck && !isChild && !a.interactive && !finishChecked && ctx.Err() == nil && len(a.tools.Schemas()) > 0 {
+				finishChecked = true
+				messages = append(messages, model.Message{Role: "user", Content: finishCheckPrompt})
+				a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: finishCheckPrompt})
+				continue
 			}
 			// A steer that arrived while this final answer was being produced would
 			// otherwise be stranded: Send has already reported it accepted. Give it

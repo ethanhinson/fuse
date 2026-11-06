@@ -567,6 +567,9 @@ type Config struct {
 	// NoProgressCalls is how many tool calls a headless run may make without a
 	// file change before the model is nudged. nil = the agent default; 0 = off.
 	NoProgressCalls *int
+	// FinishCheck asks a headless root agent once whether it is really done when it
+	// first replies with no tool call. Off by default: it adds one model call per run.
+	FinishCheck bool
 	// MaxRunTokens caps the input and output tokens one run's whole agent tree may
 	// use. 0 = no cap.
 	MaxRunTokens int64
@@ -737,6 +740,7 @@ type rawConfig struct {
 	MaxTurns        *int                   `yaml:"max_turns"`
 	NoProgressCalls *int                   `yaml:"no_progress_calls"`
 	MaxRunTokens    int64                  `yaml:"max_run_tokens"`
+	FinishCheck     bool                   `yaml:"finish_check"`
 	MaxTokens       int                    `yaml:"max_tokens"`
 	Instructions    string                 `yaml:"instructions"`
 	NoTools         bool                   `yaml:"no_tools"`

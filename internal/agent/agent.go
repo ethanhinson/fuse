@@ -36,6 +36,7 @@ type Agent struct {
 	// noProgressCalls and maxRunTokens guard a run against spending without
 	// producing anything; see progress.go.
 	noProgressCalls int
+	finishCheck     bool
 	maxRunTokens    int64
 
 	observer     observe.Observer
@@ -289,6 +290,10 @@ func (a *Agent) SetNoProgressCalls(n *int) {
 	}
 	a.noProgressCalls = *n
 }
+
+// SetFinishCheck turns on asking a headless run once whether it is really done when
+// it first replies with no tool call.
+func (a *Agent) SetFinishCheck(on bool) { a.finishCheck = on }
 
 // SetMaxRunTokens caps the input and output tokens the whole agent tree may use in
 // one run. 0, the default, means no cap.
