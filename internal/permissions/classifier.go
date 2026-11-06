@@ -39,13 +39,16 @@ type resolver interface {
 
 // classifierMaxTokens bounds the verdict reply. The classifier asks for a
 // one-object JSON verdict, but on a reasoning model the completion budget also
-// funds chain-of-thought before any content appears: at 128, deepseek-flash
-// deterministically truncated mid-reasoning on the web_fetch fallthrough
-// prompt (empty content → fail-closed ask), silently defeating the allow-bias
-// for every fallthrough host. Observed real usage is 101–213 completion
-// tokens; 512 leaves ~2.4x headroom while a truncated reply still fails to
-// parse and falls closed to ask.
-const classifierMaxTokens = 512
+// funds chain-of-thought before any content appears, and a reply with no verdict
+// falls closed to ask, interrupting the human for a budget problem rather than a
+// risk. Recorded usage on deepseek-flash has a median of 99 tokens, but at the
+// previous cap of 512, 12% of calls were cut off, and those made up 72 of the 111
+// classifier asks. A reply that still misses gets one retry at
+// classifierRetryMaxTokens before falling closed.
+const classifierMaxTokens = 1024
+
+// classifierRetryMaxTokens is the cap for the one retry of a cut-off verdict.
+const classifierRetryMaxTokens = 4096
 
 // ClassifierTraceLabel labels the classifier's gateway calls in a shared trace
 // file so its verdict calls stay attributable alongside actor-model calls.
@@ -252,7 +255,7 @@ type ClassifierCall struct {
 	LatencyMS    int64
 	InputTokens  int
 	OutputTokens int
-	// Truncated marks a reply that hit classifierMaxTokens — on a reasoning
+	// Truncated marks a reply that hit its token cap — on a reasoning
 	// model this usually means chain-of-thought consumed the budget before any
 	// verdict content appeared.
 	Truncated bool
@@ -289,38 +292,62 @@ func (c *Classifier) Classify(ctx context.Context, userMessages []model.Message,
 		return v
 	}
 	v := c.classifyUncached(ctx, userMessages, toolName, command)
-	c.cache.Store(toolName, command, v)
+	c.storeVerdict(toolName, command, v)
 	return v
 }
 
 // classifyUncached performs the single bounded verdict call and parses the
 // reply, without consulting or updating the cache.
 func (c *Classifier) classifyUncached(ctx context.Context, userMessages []model.Message, toolName, command string) ClassifierOutcome {
-	req := model.CompletionReq{
-		Model:     c.modelID,
-		Messages:  c.buildMessages(userMessages, toolName, command),
-		MaxTokens: classifierMaxTokens,
-	}
+	return c.completeVerdict(ctx, c.buildMessages(userMessages, toolName, command))
+}
+
+// completeVerdict makes the bounded verdict call, retrying once with more room
+// when the reply was cut off before it carried a verdict. Any failure resolves to
+// ask, and tokens from both attempts are recorded so the audit trail shows the
+// full cost.
+func (c *Classifier) completeVerdict(ctx context.Context, msgs []model.Message) ClassifierOutcome {
 	started := time.Now()
+	req := model.CompletionReq{Model: c.modelID, Messages: msgs, MaxTokens: classifierMaxTokens}
 	resp, err := c.client.Complete(ctx, req)
-	out := ClassifierOutcome{Call: ClassifierCall{Model: c.modelID, LatencyMS: time.Since(started).Milliseconds()}}
+	out := ClassifierOutcome{Call: ClassifierCall{Model: c.modelID}}
 	if err != nil {
 		// Timeout/error ⇒ fail closed to the fallback surface.
 		out.Verdict = VerdictAsk
 		out.Reason = "classifier call failed; fail-closed to ask"
+		out.Call.LatencyMS = time.Since(started).Milliseconds()
 		return out
 	}
-	fillOutcome(&out, resp)
+	fillOutcome(&out, resp, classifierMaxTokens)
+	if !out.Call.ParseOK && out.Call.Truncated {
+		spentIn, spentOut := out.Call.InputTokens, out.Call.OutputTokens
+		req.MaxTokens = classifierRetryMaxTokens
+		if retried, rerr := c.client.Complete(ctx, req); rerr == nil {
+			fillOutcome(&out, retried, classifierRetryMaxTokens)
+			out.Call.InputTokens += spentIn
+			out.Call.OutputTokens += spentOut
+		}
+	}
+	out.Call.LatencyMS = time.Since(started).Milliseconds()
 	return out
+}
+
+// storeVerdict caches a considered verdict. A failed call or an unparseable reply
+// says nothing about the command, so caching it would turn one transient problem
+// into a human prompt for every repeat of that command this session.
+func (c *Classifier) storeVerdict(toolName, command string, v ClassifierOutcome) {
+	if v.Call.ParseOK {
+		c.cache.Store(toolName, command, v)
+	}
 }
 
 // fillOutcome parses a completed classifier reply into out: verdict, retained
 // rationale, token accounting, and the truncation/parse health bits the audit
 // trail needs to tell a considered ask from a degraded one.
-func fillOutcome(out *ClassifierOutcome, resp model.CompletionResp) {
+func fillOutcome(out *ClassifierOutcome, resp model.CompletionResp, limit int) {
 	out.Call.InputTokens = resp.InputTokens
 	out.Call.OutputTokens = resp.OutputTokens
-	out.Call.Truncated = resp.OutputTokens >= classifierMaxTokens
+	out.Call.Truncated = resp.FinishReason == "length" || resp.OutputTokens >= limit
 	verdict, reason, ok := parseVerdictReason(resp.Content)
 	out.Verdict = verdict
 	out.Reason = reason
@@ -364,21 +391,8 @@ func (c *Classifier) ClassifyWebFetch(ctx context.Context, userMessages []model.
 		v.Call.Cached = true
 		return v
 	}
-	req := model.CompletionReq{
-		Model:     c.modelID,
-		Messages:  c.buildWebFetchMessages(userMessages, host, knownGood),
-		MaxTokens: classifierMaxTokens,
-	}
-	started := time.Now()
-	resp, err := c.client.Complete(ctx, req)
-	out := ClassifierOutcome{Call: ClassifierCall{Model: c.modelID, LatencyMS: time.Since(started).Milliseconds()}}
-	if err != nil {
-		out.Verdict = VerdictAsk
-		out.Reason = "classifier call failed; fail-closed to ask"
-	} else {
-		fillOutcome(&out, resp)
-	}
-	c.cache.Store("web_fetch", rawArgs, out)
+	out := c.completeVerdict(ctx, c.buildWebFetchMessages(userMessages, host, knownGood))
+	c.storeVerdict("web_fetch", rawArgs, out)
 	return out
 }
 

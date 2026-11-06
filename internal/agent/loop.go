@@ -51,6 +51,11 @@ const (
 	// pruneThresholdPct: prune when the estimated request exceeds this
 	// percentage of the context window.
 	pruneThresholdPct = 85
+	// abortThresholdPct: end the run only when, after every pruning pass, the
+	// request still exceeds this percentage of the window. It sits above
+	// pruneThresholdPct so that the point where cleanup starts is not also the
+	// point where the run dies.
+	abortThresholdPct = 95
 	// pruneProtectTokens caps how many estimated tokens of the newest tool
 	// results are protected from pruning (recency protection). The effective
 	// protection also scales down with small context windows.
@@ -93,9 +98,9 @@ func messagesSize(msgs []model.Message) int {
 }
 
 // pruneOldToolResults stubs tool results outside the protected budget and
-// returns the estimated tokens freed. Only "tool" role messages are touched —
-// user intent and assistant tool_calls stay intact, so provider tool pairing
-// remains valid.
+// returns the estimated tokens freed. User intent and assistant text are never
+// touched. The arguments of a call whose result is stubbed are shrunk by
+// pruneOldToolArgs and stay valid JSON, so provider tool pairing remains valid.
 //
 // Relevance-aware selection (change 0028): the protection budget is spent in
 // two phases. A guaranteed recency floor (floorPct of protectTokens) protects
@@ -132,7 +137,7 @@ func pruneOldToolResults(messages []model.Message, protectTokens int, scorer Rel
 		cands = append(cands, cand{idx: i, tok: len(m.Content) / bytesPerToken})
 	}
 	if len(cands) == 0 {
-		return 0
+		return pruneOldToolArgs(messages)
 	}
 
 	protected := make(map[int]bool, len(cands))
@@ -191,7 +196,7 @@ func pruneOldToolResults(messages []model.Message, protectTokens int, scorer Rel
 		freed += c.tok
 		messages[c.idx].Content = prunedStub
 	}
-	return freed
+	return freed + pruneOldToolArgs(messages)
 }
 
 // summarizationRegion identifies the candidate span for Tier 2 summarization:
@@ -390,6 +395,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		window = DefaultContextWindow
 	}
 	budget := window * pruneThresholdPct / 100
+	abortAt := window * abortThresholdPct / 100
+	// outputCap starts at the configured max_tokens and rises when a reply is cut
+	// off. It stays raised for the run: the model that needed more room on this
+	// turn usually needs it on the next, and a cap is only a limit, not a spend.
+	outputCap := a.maxTokens
 
 	// Hybrid token accounting: exact usage from the last response, plus a
 	// bytes/4 estimate of only the messages appended since.
@@ -555,7 +565,15 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 				a.renderer.Errorf("context: ~%dk/%dk tokens — cleared ~%dk of old tool results", estimate/1000, window/1000, freed/1000)
 			}
 			estimate -= freed
+			// Still over: spend the recency protection before giving up, the same
+			// harder pass a provider length rejection gets.
 			if estimate > budget {
+				if hard := pruneOldToolResults(messages, protectBudget(window, true), a.relevanceScorer, a.recencyFloorPct()); hard > 0 {
+					a.renderer.Errorf("context: ~%dk/%dk tokens — cleared ~%dk more, including recent tool results", estimate/1000, window/1000, hard/1000)
+					estimate -= hard
+				}
+			}
+			if estimate > abortAt {
 				err := fmt.Errorf("%w: ~%dk tokens against a %dk window even after pruning — delegate to spawn_agent children or start a fresh session",
 					ErrContextTooLarge, estimate/1000, window/1000)
 				a.renderer.Errorf("%v", err)
@@ -579,7 +597,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			Model:     a.modelID,
 			Messages:  a.withSystem(messages),
 			Tools:     schemas,
-			MaxTokens: a.maxTokens,
+			MaxTokens: clampOutputCap(outputCap, window, estimate),
 		}
 		// model.call.start (change 0043): the model-call boundary opens here.
 		a.emit(event.KindModelCallStart, turn, event.ModelCallStartPayload{
@@ -599,6 +617,14 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			turn--
 			continue
 		}
+		if err != nil && outputCap > a.maxTokens && !isContextLengthErr(err) && isOutputCapErr(err) {
+			// A raised cap the provider will not accept: this model cannot be given
+			// more room, so the truncation that raised it stands.
+			terr := fmt.Errorf("%w: the provider refused a cap of %d (%v); lower max_tokens_ceiling for this model", ErrOutputTruncated, req.MaxTokens, err)
+			a.renderer.Errorf("%v", terr)
+			a.emit(event.KindError, turn, event.ErrorPayload{Err: terr.Error(), Turn: turn})
+			return messages, terr
+		}
 		if err != nil {
 			// The estimate said we fit but the provider disagreed: prune hard
 			// (deterministic — recovery must not depend on another LLM call)
@@ -615,6 +641,17 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
 			return messages, err
 		}
+		// A reply cut off before it decided anything is not an answer. Retry the same
+		// turn with more room, or fail the run; never treat it as the end of the work.
+		unusable := replyUnusable(resp, req.MaxTokens)
+		nextCap := req.MaxTokens
+		if unusable {
+			nextCap = nextOutputCap(req.MaxTokens, a.outputCeiling(), window, estimate)
+		}
+		retrying := unusable && nextCap > req.MaxTokens
+		// Partial text survives the final failure so the human can see it. A cut-off
+		// tool call never enters history: its arguments are not what the model meant.
+		keepPartial := unusable && !retrying && resp.Content != "" && len(resp.ToolCalls) == 0
 		// model.call.end (change 0043): full assistant response + usage + tool refs.
 		a.emit(event.KindModelCallEnd, turn, event.ModelCallEndPayload{
 			Content:      resp.Content,
@@ -623,10 +660,28 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			OutputTokens: resp.OutputTokens,
 			ToolCalls:    toolCallRefs(resp.ToolCalls),
 			FinishReason: resp.FinishReason,
+			Discarded:    unusable && !keepPartial,
 		})
 		a.renderer.Tokens(resp.InputTokens, resp.OutputTokens)
 		if a.usageSink != nil {
 			a.usageSink(resp.InputTokens, resp.OutputTokens)
+		}
+		if retrying {
+			a.renderer.Errorf("model reply cut off at %d output tokens; retrying with a cap of %d", req.MaxTokens, nextCap)
+			outputCap = nextCap
+			turn--
+			exchangeTurns--
+			continue
+		}
+		if unusable {
+			err := fmt.Errorf("%w: %d output tokens used, no higher cap is allowed; raise max_tokens_ceiling for this model or narrow the task", ErrOutputTruncated, req.MaxTokens)
+			if keepPartial {
+				a.renderer.Assistant(resp.Content)
+				messages = append(messages, resp.AsMessage())
+			}
+			a.renderer.Errorf("%v", err)
+			a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
+			return messages, err
 		}
 		// Only the prompt side of usage is trusted for the context estimate. The
 		// completion count includes reasoning tokens that never re-enter the
@@ -634,12 +689,18 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		// visible reply is one tool call, and counting that against the window
 		// aborted a run with ErrContextTooLarge at ~4k tokens of real history.
 		// The assistant message is measured by size like any unaccounted message.
-		lastUsage = resp.InputTokens
+		//
+		// A gateway that reports no usage leaves both markers where they were, so
+		// the unreported history stays in the size estimate instead of counting as
+		// zero tokens and disabling the context guard.
+		if resp.InputTokens > 0 {
+			lastUsage = resp.InputTokens
+			accounted = len(messages) // covered by lastUsage: exactly what this request sent
+		}
 
 		if resp.Content != "" {
 			a.renderer.Assistant(resp.Content)
 		}
-		accounted = len(messages) // covered by lastUsage: exactly what this request sent
 		messages = append(messages, resp.AsMessage())
 
 		if len(resp.ToolCalls) == 0 {

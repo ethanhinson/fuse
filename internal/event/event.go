@@ -341,6 +341,10 @@ type ModelCallEndPayload struct {
 	// FinishReason is the gateway's finish_reason for the reply ("stop",
 	// "length", ...); "length" marks a reply cut at the output cap.
 	FinishReason string `json:"finish_reason,omitempty"`
+	// Discarded marks a reply the loop threw away because it was cut off and
+	// unusable. Its tokens still count, but it never enters the transcript, so a
+	// resume must not fold it back in.
+	Discarded bool `json:"discarded,omitempty"`
 }
 
 // ModelDeltaPayload carries one incremental token chunk (Stage B).

@@ -155,3 +155,39 @@ func TestFoldHelpersIgnoreCancelKinds(t *testing.T) {
 		t.Fatalf("harnessFromEvents over cancel kinds = %v, %v; want nil, nil", spec, err)
 	}
 }
+
+// A discarded reply was never in the live transcript, so a resume must not put it
+// there; a stream from before the marker can hold an empty cut-off reply. Their
+// tokens were still paid for.
+func TestReconstructSkipsDiscardedReplies(t *testing.T) {
+	const root = "root"
+	mk := func(seq event.Seq, k event.Kind, p any) event.Event {
+		b, err := event.MarshalPayload(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return event.Event{Seq: seq, NodeID: root, Kind: k, Payload: b}
+	}
+	events := []event.Event{
+		mk(1, event.KindUserInput, event.UserInputPayload{Content: "task"}),
+		mk(2, event.KindModelCallEnd, event.ModelCallEndPayload{Content: "half", FinishReason: "length", Discarded: true, OutputTokens: 10}),
+		mk(3, event.KindModelCallEnd, event.ModelCallEndPayload{FinishReason: "length", OutputTokens: 20}),
+		mk(4, event.KindModelCallEnd, event.ModelCallEndPayload{Content: "whole", FinishReason: "stop", OutputTokens: 5}),
+	}
+	state, err := reconstructLoopState(events, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, m := range state.messages {
+		if m.Role == "assistant" {
+			got = append(got, m.Content)
+		}
+	}
+	if len(got) != 1 || got[0] != "whole" {
+		t.Errorf("assistant turns = %q, want only the kept reply", got)
+	}
+	if state.budgets.sessionTokens != 35 {
+		t.Errorf("sessionTokens = %d, want discarded replies counted", state.budgets.sessionTokens)
+	}
+}

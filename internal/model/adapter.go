@@ -13,17 +13,25 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 // Default request bounds. A stalled gateway connection must never hang an
 // agent turn forever: the transport bounds the wait for response headers,
-// RequestTimeout bounds one full attempt (headers + body), and failed
+// RequestTimeout bounds one full attempt (headers + body), StreamIdleTimeout
+// bounds silence inside a stream, and failed
 // attempts are retried with backoff up to MaxAttempts.
 const (
-	defaultRequestTimeout = 5 * time.Minute
-	defaultMaxAttempts    = 3
-	defaultRetryBackoff   = time.Second
+	// defaultRequestTimeout is long because a reasoning model can legitimately
+	// think for many minutes on one call, and retrying a call that was only slow
+	// spends the same time again. Stalls are StreamIdleTimeout's job.
+	defaultRequestTimeout = 30 * time.Minute
+	// defaultStreamIdleTimeout ends an attempt whose stream has gone silent, so a
+	// dead provider costs minutes rather than the whole request timeout.
+	defaultStreamIdleTimeout = 10 * time.Minute
+	defaultMaxAttempts       = 3
+	defaultRetryBackoff      = time.Second
 )
 
 // defaultGatewayClient bounds connection setup and the wait for response
@@ -81,6 +89,9 @@ type Adapter struct {
 
 	// RequestTimeout bounds a single attempt (connect through full body read).
 	RequestTimeout time.Duration
+	// StreamIdleTimeout ends an attempt when a started stream sends nothing for
+	// this long. 0 disables it.
+	StreamIdleTimeout time.Duration
 	// MaxAttempts is the total number of tries (1 = no retries).
 	MaxAttempts int
 	// RetryBackoff is the base sleep between attempts (grows linearly).
@@ -114,12 +125,13 @@ func NewAdapter(baseURL, key string, hc *http.Client) *Adapter {
 		hc = defaultGatewayClient
 	}
 	return &Adapter{
-		baseURL:        strings.TrimRight(baseURL, "/"),
-		key:            key,
-		hc:             hc,
-		RequestTimeout: defaultRequestTimeout,
-		MaxAttempts:    defaultMaxAttempts,
-		RetryBackoff:   defaultRetryBackoff,
+		baseURL:           strings.TrimRight(baseURL, "/"),
+		key:               key,
+		hc:                hc,
+		RequestTimeout:    defaultRequestTimeout,
+		StreamIdleTimeout: defaultStreamIdleTimeout,
+		MaxAttempts:       defaultMaxAttempts,
+		RetryBackoff:      defaultRetryBackoff,
 	}
 }
 
@@ -437,10 +449,11 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 // completeOnce performs a single bounded request attempt. retryable reports
 // whether the failure class is worth another attempt.
 func (a *Adapter) completeOnce(ctx context.Context, body []byte, tools []ToolSchema) (_ CompletionResp, err error, retryable bool) {
-	attemptCtx := ctx
+	attemptCtx, cancelAttempt := context.WithCancel(ctx)
+	defer cancelAttempt()
 	if a.RequestTimeout > 0 {
 		var cancel context.CancelFunc
-		attemptCtx, cancel = context.WithTimeout(ctx, a.RequestTimeout)
+		attemptCtx, cancel = context.WithTimeout(attemptCtx, a.RequestTimeout)
 		defer cancel()
 	}
 
@@ -473,9 +486,37 @@ func (a *Adapter) completeOnce(ctx context.Context, body []byte, tools []ToolSch
 	// parsed incrementally; a buffered JSON body (a gateway that ignored
 	// stream, or a test double) is parsed whole. Both return the same result.
 	if strings.Contains(res.Header.Get("Content-Type"), "text/event-stream") {
-		return a.readStream(res.Body, tools)
+		if a.StreamIdleTimeout <= 0 {
+			return a.readStream(res.Body, tools)
+		}
+		var stalled atomic.Bool
+		watchdog := time.AfterFunc(a.StreamIdleTimeout, func() {
+			stalled.Store(true)
+			cancelAttempt()
+		})
+		defer watchdog.Stop()
+		out, err, retryable := a.readStream(idleResetReader{r: res.Body, watchdog: watchdog, idle: a.StreamIdleTimeout}, tools)
+		if err != nil && stalled.Load() {
+			return CompletionResp{}, fmt.Errorf("gateway stream silent for %s: %w", a.StreamIdleTimeout, err), true
+		}
+		return out, err, retryable
 	}
 	return a.readBuffered(res.Body, tools)
+}
+
+// idleResetReader pushes the stream's idle watchdog back whenever bytes arrive.
+type idleResetReader struct {
+	r        io.Reader
+	watchdog *time.Timer
+	idle     time.Duration
+}
+
+func (i idleResetReader) Read(p []byte) (int, error) {
+	n, err := i.r.Read(p)
+	if n > 0 {
+		i.watchdog.Reset(i.idle)
+	}
+	return n, err
 }
 
 // readBuffered parses a whole non-streamed chat-completion JSON body.
