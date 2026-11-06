@@ -279,4 +279,3 @@ func TestGate_ParseReason_DoesNotChangePolicyDeny(t *testing.T) {
 		t.Errorf("emitted decision reason = %q, want %q (unchanged)", (*rec)[0].Reason, want)
 	}
 }
-
