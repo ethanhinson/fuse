@@ -665,7 +665,7 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	// Human approval required. The ask is emitted BEFORE g.approve runs so asks
 	// are countable regardless of the gate's approver - an AlwaysApprove
 	// (headless policy) gate shows as back-to-back ask→allow events.
-	g.emitDecision(ctx, mode, name, args, "ask", askLayer, askReason, "", askClassifier)
+	g.emitDecisionWithSegments(ctx, mode, name, args, "ask", askLayer, askReason, "", askClassifier, askSegs)
 	req := ApprovalRequest{
 		ToolName: name,
 		Args:     args,
@@ -835,11 +835,24 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 		}
 	}
 
+	// Per-segment decomposition (change 0142). Computed ONCE, for a COMPOUND
+	// bash command only (more than one parsed segment), and threaded through
+	// every decision this pipeline emits — rules deny, safelist allow,
+	// heuristic allow, classifier ask, classifier deny — so the audit record
+	// attributes a compound outcome to the specific segment that drove it
+	// (Defect 4). A single-segment command never carries segments on any
+	// decision: the field is documented nil for non-compound commands, which
+	// is what keeps those events byte-identical.
+	var compoundSegs []SegmentVerdict
+	if len(segments) > 1 {
+		compoundSegs = segmentVerdicts(segments, g.allowedRoots())
+	}
+
 	// 2. Deterministic rules. Deny is terminal; allow is a positive auto-approve.
 	rv, askPattern := evalRulesDetail(segments, g.cfg.Auto, g.cfg.AutoApprove, g.cfg.AlwaysPrompt, g.workspaceRoot)
 	switch rv {
 	case VerdictDeny:
-		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + reasonCommand(command), nil, nil
+		return VerdictDeny, LayerRules, "denied by auto-mode rules layer: " + reasonCommand(command), nil, compoundSegs
 	case VerdictAskExplicit:
 		// An operator-written ask is its own verdict: it never falls through to
 		// the safelist, heuristics or classifier. With a human bound it prompts
@@ -849,33 +862,32 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 		// piped-stdin one-shot. Not --approve-all, which is mode off and returns
 		// at LayerModeOff before any rule is evaluated.
 		if g.approvalProvenance == DecidedByPolicy {
-			return VerdictDeny, LayerRules, explicitAskReason(askPattern, true), nil, nil
+			return VerdictDeny, LayerRules, explicitAskReason(askPattern, true), nil, compoundSegs
 		}
-		return VerdictAsk, LayerRules, explicitAskReason(askPattern, false), nil, nil
+		return VerdictAsk, LayerRules, explicitAskReason(askPattern, false), nil, compoundSegs
 	case VerdictAllow:
-		return VerdictAllow, LayerRules, "", nil, nil
+		return VerdictAllow, LayerRules, "", nil, compoundSegs
 	}
 
 	// 3. Read-only safe list short-circuit.
 	if allSegmentsReadOnlySafe(segments) {
-		return VerdictAllow, LayerSafelist, "", nil, nil
+		return VerdictAllow, LayerSafelist, "", nil, compoundSegs
 	}
 
 	// 4. Heuristics: egress boundary / path scoping. Ask ⇒ continue to classifier.
 	switch classifyHeuristic(segments, g.allowedRoots()) {
 	case VerdictDeny:
-		return VerdictDeny, LayerHeuristic, "denied by auto-mode heuristic layer: " + reasonCommand(command), nil, nil
+		return VerdictDeny, LayerHeuristic, "denied by auto-mode heuristic layer: " + reasonCommand(command), nil, compoundSegs
 	case VerdictAllow:
-		return VerdictAllow, LayerHeuristic, "", nil, nil
+		return VerdictAllow, LayerHeuristic, "", nil, compoundSegs
 	}
 
 	// 5. Classifier (final) or fail-closed ask. The per-segment decomposition
 	// (change 0142) rides into the classifier's pending-call prompt so the
 	// model verdicts the genuinely-hard segment rather than the whole opaque
 	// string; it is also emitted on the Decision for audit attribution.
-	segs = segmentVerdicts(segments, g.allowedRoots())
-	v, l, rr, c := g.classifyOrAsk(ctx, name, command, segs)
-	return v, l, rr, c, segs
+	v, l, rr, c := g.classifyOrAsk(ctx, name, command, compoundSegs)
+	return v, l, rr, c, compoundSegs
 }
 
 // fetchFloorAskReason renders the human-facing reason for a web_fetch floor ASK.

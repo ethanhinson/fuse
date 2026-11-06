@@ -15,14 +15,23 @@ import (
 //  1. Network egress is a hard risk boundary. Any egress segment (curl, wget,
 //     nc, ssh, scp, or a host-qualified git remote) ⇒ VerdictAsk. It is checked
 //     first so an egress command can never fall through to a silent allow.
-//  2. Wholly read-only commands ⇒ VerdictAllow. A read touches nothing outside
+//  2. A compound whose later segments' relative paths were laundered past
+//     scoping by an unprovable cd ⇒ VerdictAsk. Path args are scoped against
+//     the ORIGINAL root, but the shell resolves them against wherever a
+//     preceding cd landed; once any cd in the compound has a target that is
+//     not provably the current directory (`$(pwd)`/"$(pwd)"/$PWD/"$PWD") and
+//     not provably a literal in-root path, EVERY later relative path is
+//     unproven and nothing after it may auto-approve (Defect 1).
+//  3. Wholly read-only commands ⇒ VerdictAllow. A read touches nothing outside
 //     the process, so no path scoping is required — the existing safe-list
 //     classifier (allSegmentsReadOnlySafe) decides.
-//  3. Otherwise the command mutates. Every path argument of every mutating
-//     segment is resolved symlink-aware and must remain within workspaceRoot.
-//     An escape (a path resolving outside the root) ⇒ VerdictAsk; only a fully
-//     in-scope mutation ⇒ VerdictAllow. Anything the heuristic cannot prove
-//     in-scope fails toward the human (VerdictAsk), never toward allow.
+//  4. Otherwise every segment must prove itself through the SINGLE per-segment
+//     decision path (segmentHeuristicVerdict, shared with the audit
+//     decomposition so the two can never drift): a redirect write target must
+//     stay in-root, a mutating command's path args must resolve in-root, and
+//     an unprovable cd (bare, `-`, opaque, env-prefixed) asks when any
+//     segment follows it. Anything the heuristic cannot prove in-scope fails
+//     toward the human (VerdictAsk), never toward allow.
 //
 // roots is the allowed mutation-root set: the canonicalized workspace root
 // first, then any extra write roots (the per-session scratch dir, config
@@ -43,110 +52,98 @@ func classifyHeuristic(segments []Segment, roots []string) Verdict {
 		}
 	}
 
-	// 2. Wholly read-only ⇒ allow, no scoping needed.
+	// 2. Unprovable cd launders every later relative path (Defect 1). This
+	//    check must run BEFORE the read-only short-circuit: `cd "$HOME" &&
+	//    git status` is all-read-only-safe, but the git status scope is the
+	//    real filesystem wherever the cd landed, not the original root. A
+	//    proven-current-dir cd (`cd "$(pwd)"`) or a cd whose literal path
+	//    arg is in-root changes nothing about the relative paths after it.
+	//
+	//    The one carve-out is a BARE cd (`cd`) followed only by read-only
+	//    segments (`cd && ls -la`, pinned by TestAutoMode_CompoundCdEdgeCases):
+	//    reads are location-independent by the read-only fast path, so nothing
+	//    launderable follows — the read-only segments are allowed wherever they
+	//    land. A bare cd followed by anything that MUTATES or writes, an
+	//    opaque-target cd (`cd "$HOME"`), `cd -`, an env-prefixed cd, and a
+	//    non-current-dir cd of any other shape followed by ANY segment asks.
+	for i, seg := range segments {
+		if seg.Name != "cd" || i >= len(segments)-1 {
+			continue
+		}
+		if !cdChangesDirectory(seg, roots) {
+			continue
+		}
+		if len(seg.Args) == 0 && allSegmentsReadOnlySafe(segments[i+1:]) {
+			continue // bare cd with only read-only segments after it (justified carve-out).
+		}
+		return VerdictAsk
+	}
+
+	// 3. Wholly read-only ⇒ allow, no scoping needed.
 	if allSegmentsReadOnlySafe(segments) {
 		return VerdictAllow
 	}
 
-	// 3. Mutating: every path argument must stay inside the allowed roots.
-	for _, seg := range segments {
-		// A redirect target is a write no matter how read-only the command in
-		// front of it is (`echo x > /etc/passwd`) and no matter which of the
-		// exemptions below the segment qualifies for — the kill family's operands
-		// are PIDs, and a loopback fetch's operands are URLs, but neither makes
-		// their `> file` anything other than a file write. Scoping the targets
-		// FIRST is therefore load-bearing: every `continue` after this point
-		// would carry them past unscoped (change 0070 D4).
-		for _, target := range seg.WriteTargets {
-			if !withinAnyRoot(target, roots) {
-				return VerdictAsk
-			}
-		}
-		if isReadOnlySafe(seg) {
-			continue // a read-only segment mutates nothing else to scope.
-		}
-
-		// cd is a non-mutating command (change 0142): it changes the shell's
-		// logical cwd but does not read, write, create, or delete any
-		// filesystem object. The gate resolves every segment's path args
-		// against the ORIGINAL allowed roots regardless of any preceding cd, so
-		// a cd — even to an unknown directory — does not widen what the gate
-		// can prove for the segments around it. A cd is therefore allowed
-		// through the mutating loop on the same terms a read-only segment is:
-		// a literal in-root target is already proven by the path-arg scoping
-		// below, and an opaque target (cd "$(pwd)", cd $VAR) is non-mutating
-		// and provokes nothing. A literal OUT-of-root cd (cd /etc) still asks —
-		// not because the cd is dangerous, but because the gate does not track
-		// cwd and an out-of-root cd is where a future cwd-aware gate would need
-		// to draw the line, so the conservative ask is kept here.
-		//
-		// This is the load-bearing widening: before it, cd "$(pwd)" carried an
-		// opaque arg and hit the hasOpaqueArg ask below, which escalated the
-		// WHOLE compound — discarding the individually-provable-safe segments
-		// around it — to one human ask. That was 79% of the parse-layer asks.
-		if seg.Name == "cd" {
-			for _, arg := range pathArgs(seg) {
-				if !withinAnyRoot(arg, roots) {
-					return VerdictAsk
-				}
-			}
-			continue
-		}
-
-		// THE INVARIANT of change 0070 D5, and the single most important line in
-		// it. This segment MUTATES and carries at least one opaque argument — a
-		// word whose value is not statically known ($VAR, $(…)). There is
-		// nothing to prove containment over, so the answer is the human.
-		//
-		// Read this together with pathArgs, which drops opaque positions so an
-		// opaque token can never reach withinWorkspace/resolveExisting. THAT
-		// GUARD ALONE IS A WORSE BYPASS THAN NEITHER: with the token dropped,
-		// `rm $(echo /)` arrives here with ZERO path args, the scoping loop
-		// below finds nothing to fail on, and the function returns
-		// VerdictAllow — auto-approving `rm /`. The drop removes the false
-		// PROOF; this line supplies the missing verdict.
-		//
-		// It sits ahead of the kill and loopback-fetch exemptions on purpose:
-		// both of those are proofs about operands ("these are numeric PIDs",
-		// "these are loopback URLs"), and an operand we could not resolve is not
-		// an operand either of them may claim to have inspected.
-		if seg.hasOpaqueArg() {
+	// 4. Mutating, or a cd whose target is not provably the current directory:
+	//    every segment must prove itself through the SINGLE per-segment
+	//    decision path. segmentVerdicts applies the same per-segment verdicts
+	//    (segmentHeuristicVerdict plus the cd-laundering override) that the
+	//    audit decomposition and the classifier prompt carry, so the
+	//    whole-compound verdict and the per-segment attribution are computed
+	//    by one code path and can never drift apart (Defect 3). Any segment
+	//    the heuristic cannot prove in-scope ⇒ VerdictAsk.
+	for _, sv := range segmentVerdicts(segments, roots) {
+		if sv.Verdict != VerdictAllow {
 			return VerdictAsk
-		}
-		// The kill family's operands are PIDs or process names, not paths —
-		// path-scoping them against the cwd would prove nothing (change 0068).
-		// A provably benign kill (numeric PIDs, signal flags only) allows;
-		// everything else in the family routes to the classifier.
-		switch seg.Name {
-		case "kill":
-			if isProvablyBenignKill(seg) {
-				continue
-			}
-			return VerdictAsk
-		case "pkill", "killall":
-			return VerdictAsk
-		case "docker":
-			// The read-only docker forms were admitted by the isReadOnlySafe
-			// continue above; everything else docker reaches here. Its operands
-			// are images, containers, services, and volumes — NAMES, not paths
-			// (change 0072, same lesson as the kill family). Path-scoping them
-			// would resolve "compose"/"up"/"data" as cwd-relative words that
-			// trivially prove in-workspace, deterministically allowing
-			// `docker volume rm data` or `docker system prune -f` with no
-			// human. Nothing mutating may pass this layer; the classifier owns
-			// docker's gray area.
-			return VerdictAsk
-		}
-		if isLoopbackFetch(seg, roots) {
-			continue // URL operands are not paths; outputs were scoped inside.
-		}
-		for _, arg := range pathArgs(seg) {
-			if !withinAnyRoot(arg, roots) {
-				return VerdictAsk
-			}
 		}
 	}
 	return VerdictAllow
+}
+
+// cdChangesDirectory reports whether a cd segment has a target that is NOT
+// provably null (the shell stays where it is). It is the compound-level
+// predicate that decides whether every later relative path is still proven
+// against the original roots (Defect 1):
+//
+//   - The current-directory literals `$(pwd)`, `"$(pwd)"`, `$PWD`, `"$PWD"`
+//     change nothing ⇒ false (deterministic allow, sole 0142 widening).
+//   - A literal target whose path arg is provably within any root changes
+//     nothing that scoping cannot already prove: the historical behaviour
+//     (brief: "literal in-root and out-of-root cd keep their behaviour") is
+//     preserved. A literal in-root cd may not keep later relative paths
+//     in-root, but Defect 1's pins forbid only the UNKNOWN-target laundering
+//     — a literal target's mutating segments are evaluated on their own
+//     merits exactly as before, and an out-of-root literal asks anyway.
+//   - An out-of-root literal expects an ask anyway; classifyHeuristic's
+//     segment loop asks it and, because any non-allow sunk the whole compound,
+//     the later segments are never reached silently: an out-of-root cd is a
+//     non-allow segment, so the compound asks before any later relative path is
+//     evaluated. Same terminal outcome as this laundering check; the check is
+//     what pins the reason.
+//   - EVERY other target — bare `cd` ($HOME), `cd -`, an opaque word
+//     (`cd "$HOME"`), an env-prefixed cd (`HOME=/etc cd`), any near-miss of the
+//     current-dir forms (`cd "$(pwd)/.."`, `cd "$(cd /; pwd)"`) — is not
+//     provably null ⇒ true.
+func cdChangesDirectory(seg Segment, roots []string) bool {
+	if isCdCurrentDir(seg) {
+		return false
+	}
+	if len(seg.Args) == 0 {
+		// Bare cd (goes to $HOME) or cd - (previous dir). The - is a leading
+		// '-' word pathArgs drops, so both have no path args and no literal
+		// proof: they change the directory.
+		return true
+	}
+	// A literal single-arg cd. The target's scope is evaluated by the segment
+	// loop below; a literal in-root target keeps its historical behaviour and
+	// a literal out-of-root target asks there. Only the UNKNOWN targets are
+	// laundering.
+	for _, arg := range pathArgs(seg) {
+		if withinAnyRoot(arg, roots) {
+			return false
+		}
+	}
+	return true
 }
 
 // segmentVerdicts evaluates each parsed segment through the deterministic
@@ -157,20 +154,26 @@ func classifyHeuristic(segments []Segment, roots []string) Verdict {
 // attributable to the specific part that drove an ask or deny — not just the
 // raw string.
 //
-// It mirrors classifyHeuristic's per-segment reasoning but returns a verdict
-// PER segment rather than reducing the whole compound to one. A segment that
-// is read-only-safe, a non-mutating cd, or a mutating command whose path args
-// all stay in-root is VerdictAllow; anything the deterministic layers cannot
-// prove safe (egress, an out-of-root write, an opaque mutating arg) is
-// VerdictAsk with a layer-naming reason. The deny verdict is reserved for the
-// rules layer (isDangerous / a deny pattern), evaluated separately by
-// evalRulesDetail before this is consulted — a segment that is not
-// catastrophically dangerous but is otherwise unprovable is an ask, not a deny,
-// exactly as classifyHeuristic treats it.
+// The override below mirrors the laundering check in classifyHeuristic
+// EXACTLY, so the decomposition can never drift from the whole-compound
+// verdict (Defect 1, Defect 3): a cd that changes the directory (bare `cd`,
+// `cd -`, an opaque or env-prefixed target — anything cdChangesDirectory says
+// is unprovable) and has any non-carved-out segment after it is named as the
+// deciding ask, because the compound asks precisely because of it. The
+// carve-outs are the matching ones: a current-dir cd changes nothing, and a
+// bare cd followed only by read-only segments is the pinned `cd && ls -la`
+// allow. A literal in-root cd (`cd x`, `cd .`) never trips cdChangesDirectory
+// and so keeps its historical allow with no override.
 func segmentVerdicts(segments []Segment, roots []string) []SegmentVerdict {
 	out := make([]SegmentVerdict, len(segments))
 	for i, seg := range segments {
 		v, r := segmentHeuristicVerdict(seg, roots)
+		if seg.Name == "cd" && cdChangesDirectory(seg, roots) && i < len(segments)-1 {
+			if !(len(seg.Args) == 0 && allSegmentsReadOnlySafe(segments[i+1:])) {
+				v = VerdictAsk
+				r = LayerHeuristic + ": cd to an unknown target (the paths after it are unproven)"
+			}
+		}
 		out[i] = SegmentVerdict{Name: seg.Name, Verdict: v, Reason: r}
 	}
 	return out
@@ -178,35 +181,151 @@ func segmentVerdicts(segments []Segment, roots []string) []SegmentVerdict {
 
 // segmentHeuristicVerdict evaluates one segment through the deterministic
 // heuristic layers (egress / read-only / write-target / cd / opaque / kill /
-// docker / path scoping) and returns its verdict and a layer-named reason
-// (change 0142). It mirrors classifyHeuristic's per-segment reasoning for a
-// SINGLE segment so a compound's residual gray-area segments are individually
-// attributable. A segment that is read-only-safe, a non-mutating cd, or a
-// mutating command whose path args all stay in-root is VerdictAllow; anything
-// the heuristic cannot prove safe is VerdictAsk.
+// docker / path scoping, plus the composition gate) and returns its verdict
+// and a layer-named reason (change 0142). It is the SINGLE per-segment decision
+// path of this file: classifyHeuristic is expressed in terms of it, so the
+// whole-compound verdict and the per-segment decomposition can never drift
+// apart. A segment that is read-only-safe, a non-mutating cd whose target is
+// provably the current directory, or a mutating command whose path args all
+// stay in-root is VerdictAllow; anything the heuristic cannot prove safe is
+// VerdictAsk. The deny verdict is reserved for the rules layer (isDangerous /
+// a deny pattern), evaluated separately by evalRulesDetail before this is
+// consulted — a segment that is not catastrophically dangerous but is otherwise
+// unprovable is an ask, not a deny, exactly as classifyHeuristic treats it.
 func segmentHeuristicVerdict(seg Segment, roots []string) (Verdict, string) {
 	if isEgress(seg) && !isLoopbackFetch(seg, roots) {
 		return VerdictAsk, LayerHeuristic + ": egress"
 	}
-	if isReadOnlySafe(seg) {
-		return VerdictAllow, ""
-	}
+	// A redirect target is a write no matter how read-only the command in
+	// front of it is (`echo x > /etc/passwd`) and no matter which of the
+	// exemptions below the segment qualifies for — the kill family's operands
+	// are PIDs, and a loopback fetch's operands are URLs, but neither makes
+	// their `> file` anything other than a file write. Scoping the targets
+	// FIRST is therefore load-bearing: every `continue`/allow after this point
+	// would carry them past unscoped (change 0070 D4).
 	for _, target := range seg.WriteTargets {
 		if !withinAnyRoot(target, roots) {
 			return VerdictAsk, LayerHeuristic + ": out-of-root write target"
 		}
 	}
+	if isReadOnlySafe(seg) {
+		return VerdictAllow, ""
+	}
+
+	// Composition gate (compound0142 design item 2): a shell fed by a pipe
+	// (cmd | sh, cmd | bash) and a shell whose script is an executed command
+	// substitution (sh -c "$(cmd)", bash -c "$(cmd)") EXECUTE DATA. cat, echo,
+	// git log and the rest are read-only with ANY arguments — including the
+	// argument that is the whole payload — so the safelist would otherwise
+	// admit them with no human, and `cat script | sh` must not inherit the
+	// producers' allow. sh/bash are never read-only themselves, but shellparse
+	// peels a parseable -c script into its inner segments and DISCARDS the
+	// wrapper, so `bash -c "$(cat script)"` reaches here as [cat, script-body
+	// segments] with no sh/bash segment left to fail on. The gate therefore
+	// carries the peel as one segment named "bash" (Raw = the whole outer
+	// `bash -c "…"` call, change 0093): an opaque -c script — a value that
+	// cannot be statically proven safe — is unprovable ⇒ ask, and the
+	// substitution's own inner segments surface alongside it for the deny and
+	// egress layers. A LITERAL -c script (bash -c "git status") is always
+	// peelable, so it keeps its pre-change decomposition and never trips this
+	// branch, and a piped producer's read-only segments are judged on their own
+	// zero-risk merits — the ask names the shell that runs them.
+	if (seg.Name == "sh" || seg.Name == "bash") && seg.hasOpaqueArg() && strings.Contains(seg.Raw, "-c") {
+		return VerdictAsk, LayerHeuristic + ": composition executes data"
+	}
+
+	// cd is a non-mutating command (change 0142): it changes the shell's
+	// logical cwd but does not read, write, create, or delete any filesystem
+	// object. The gate resolves every segment's path args against the ORIGINAL
+	// allowed roots regardless of any preceding cd — and that is precisely why
+	// a cd whose target is not statically known must NOT be waved through: the
+	// shell resolves later relative paths against wherever the cd landed, so
+	// once the target is not provably the current directory, every later
+	// relative path is unproven (the hole this exemption closes). Exactly
+	// qualify, and only qualify:
+	//
+	//   - The current-directory literals `$(pwd)`, `"$(pwd)"`, `$PWD`, `"$PWD"`:
+	//     changes nothing, so it stays a deterministic allow. Identified
+	//     EXACTLY as one argument whose text is one of those four strings —
+	//     near-misses with a suffix (`"$(pwd)/.."`, `"$PWD/.."`) or a
+	//     re-resolved path (`"$(cd /; pwd)"`) carry a different source text
+	//     and fall to the ask below. The `$(pwd)` substitution's own `pwd`
+	//     segment is read-only-safe and always allows; the exemption attaches
+	//     to the cd.
+	//   - A LITERAL target: proven in-root or out-of-root by path scoping
+	//     exactly as before — `cd <root>` and `cd .` allow, `cd /etc` asks —
+	//     and only an unknown target poisons later relative paths.
+	//   - NO ARGS (bare `cd`): the shell goes to $HOME, which no segment can
+	//     prove in-root. It asks when any segment follows; a lone bare cd (
+	//     read-only around it) is allowed because nothing later needs the
+	//     path proof.
+	//   - `-` (`cd -`): the previous directory, likewise unprovable; asks
+	//     when any segment follows.
+	//   - AN OPAQUE target, an env prefix, or MORE THAN ONE argument: asks when
+	//     any segment follows (safety wins over the routine-compound
+	//     convenience). classifyHeuristic already asks the whole compound via
+	//     the laundering check; this per-segment verdict surfaces the cd as
+	//     the segment named in the audit/classifier decomposition.
 	if seg.Name == "cd" {
+		if isCdCurrentDir(seg) {
+			return VerdictAllow, ""
+		}
+		// A bare cd (`cd` → $HOME) or `cd -` (previous dir): unprovable
+		// targets with no path args to scope. Each alone is allowed — nothing
+		// depends on the path it lands on, and cd is non-mutating. Whether
+		// they LAUNDER later relative paths is a compound property: the
+		// laundering check in classifyHeuristic and the segmentVerdicts
+		// override (which knows the segment index) ask them when any non
+		// carved-out segment follows.
+		if len(seg.Args) == 0 {
+			return VerdictAllow, ""
+		}
+		if len(seg.Args) == 1 && seg.Args[0] == "-" && !seg.hasOpaqueArg() {
+			return VerdictAllow, ""
+		}
+		// More than one argument: the target meaning is not the plain-word
+		// reading a single path arg would have (`cd -P "$HOME"` carries a mode
+		// flag, `cd x y` is not a path cd) — unprovable ⇒ ask.
+		if len(seg.Args) > 1 {
+			return VerdictAsk, LayerHeuristic + ": cd to an unknown target (the paths after it are unproven)"
+		}
 		for _, arg := range pathArgs(seg) {
 			if !withinAnyRoot(arg, roots) {
 				return VerdictAsk, LayerHeuristic + ": cd out-of-root"
 			}
 		}
-		return VerdictAllow, ""
+		if !seg.hasOpaqueArg() {
+			// A single literal target that resolves in-root: historical
+			// behaviour (`cd <root>`, `cd .`).
+			return VerdictAllow, ""
+		}
+		return VerdictAsk, LayerHeuristic + ": cd to an unknown target (the paths after it are unproven)"
 	}
+
+	// THE INVARIANT of change 0070 D5, and the single most important line in
+	// it. This segment MUTATES and carries at least one opaque argument — a
+	// word whose value is not statically known ($VAR, $(…)). There is
+	// nothing to prove containment over, so the answer is the human.
+	//
+	// Read this together with pathArgs, which drops opaque positions so an
+	// opaque token can never reach withinWorkspace/resolveExisting. THAT
+	// GUARD ALONE IS A WORSE BYPASS THAN NEITHER: with the token dropped,
+	// `rm $(echo /)` arrives here with ZERO path args, the scoping loop
+	// below finds nothing to fail on, and the function returns
+	// VerdictAllow — auto-approving `rm /`. The drop removes the false
+	// PROOF; this line supplies the missing verdict.
+	//
+	// It sits ahead of the kill and loopback-fetch exemptions on purpose:
+	// both of those are proofs about operands ("these are numeric PIDs",
+	// "these are loopback URLs"), and an operand we could not resolve is not
+	// an operand either of them may claim to have inspected.
 	if seg.hasOpaqueArg() {
 		return VerdictAsk, LayerHeuristic + ": opaque argument"
 	}
+	// The kill family's operands are PIDs or process names, not paths —
+	// path-scoping them against the cwd would prove nothing (change 0068).
+	// A provably benign kill (numeric PIDs, signal flags only) allows;
+	// everything else in the family routes to the classifier.
 	switch seg.Name {
 	case "kill":
 		if isProvablyBenignKill(seg) {
@@ -216,7 +335,26 @@ func segmentHeuristicVerdict(seg Segment, roots []string) (Verdict, string) {
 	case "pkill", "killall":
 		return VerdictAsk, LayerHeuristic + ": " + seg.Name
 	case "docker":
+		// The read-only docker forms were admitted by the isReadOnlySafe
+		// continue above; everything else docker reaches here. Its operands
+		// are images, containers, services, and volumes — NAMES, not paths
+		// (change 0072, same lesson as the kill family). Path-scoping them
+		// would resolve "compose"/"up"/"data" as cwd-relative words that
+		// trivially prove in-workspace, deterministically allowing
+		// `docker volume rm data` or `docker system prune -f` with no
+		// human. Nothing mutating may pass this layer; the classifier owns
+		// docker's gray area.
 		return VerdictAsk, LayerHeuristic + ": docker"
+	case "find":
+		// A read-only find (no -exec/-execdir/-ok/-okdir/-delete, no opaque
+		// operand) was admitted by the isReadOnlySafe continue above. Any
+		// find that reaches here carries a mutating action — and its
+		// operands are PREDICATES, not paths: a `-exec rm -rf {}` argument
+		// list is a command find runs, and path-scoping the surrounding
+		// words ("." is always in-root!) proves nothing about that command.
+		// `find . -name x -exec rm -rf {} ;` must never deterministic-allow
+		// just because "." resolves under the root (Defect 2).
+		return VerdictAsk, LayerHeuristic + ": find mutating action"
 	}
 	if isLoopbackFetch(seg, roots) {
 		return VerdictAllow, ""
@@ -227,6 +365,24 @@ func segmentHeuristicVerdict(seg Segment, roots []string) (Verdict, string) {
 		}
 	}
 	return VerdictAllow, ""
+}
+
+// isCdCurrentDir reports whether a cd segment changes nothing: exactly one
+// argument whose parsed source text is one of the four current-directory
+// forms — "$(pwd)", "$PWD", or their double-quoted spellings. Any other
+// spelling (a suffix, a different expansion, "cd ." — whose literal is already
+// proven by path scoping) is not this exemption, and opaqueness is irrelevant:
+// the identity wins on the raw source text alone, which is what shellparse
+// stores for an opaque word.
+func isCdCurrentDir(seg Segment) bool {
+	if len(seg.Args) != 1 {
+		return false
+	}
+	switch seg.Args[0] {
+	case `$(pwd)`, `"$(pwd)"`, `$PWD`, `"$PWD"`:
+		return true
+	}
+	return false
 }
 
 // withinAnyRoot reports whether arg, resolved symlink-aware, stays within any
