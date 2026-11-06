@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/skills"
 )
 
@@ -69,7 +70,47 @@ func TestAtomicSkillsLoadAndSnapshotAreConcurrentSafe(t *testing.T) {
 	<-done
 }
 
-// ---- refresh streak logging ----
+// ---- live root system block ----
+
+// TestRootBlockFollowsLiveSkills proves a loop built from server-startup
+// settings (liveSkills) names the skills the atomicSkills hold at loop-build
+// time, not the ones captured when the server started: snapshotting a different
+// set changes what rootBlock returns, while settings without liveSkills keep
+// the fixed systemBlock.
+func TestRootBlockFollowsLiveSkills(t *testing.T) {
+	live := &atomicSkills{}
+	setA := skills.NewSet([]skills.Skill{skills.NewCarried("skill-a", "does a", "A body.")})
+	setB := skills.NewSet([]skills.Skill{skills.NewCarried("skill-b", "does b", "B body.")})
+	live.Snapshot(setA, skills.DigestOf(setA))
+
+	cfg, err := config.FromYAML([]byte("models:\n  default: fast\n"), "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := &loopServerHost{skills: live}
+	started := rootSystemBlock(cfg, setA)
+	settings := loopSettings{cfg: cfg, systemBlock: started, liveSkills: true}
+
+	if got := host.rootBlock(settings); !strings.Contains(got, "skill-a") {
+		t.Fatalf("rootBlock before snapshot does not name skill-a:\n%s", got)
+	}
+
+	// A refresh swaps the installed set; the very same settings now see skill B.
+	live.Snapshot(setB, skills.DigestOf(setB))
+	got := host.rootBlock(settings)
+	if !strings.Contains(got, "skill-b") {
+		t.Fatalf("rootBlock after snapshot does not name skill-b:\n%s", got)
+	}
+	if strings.Contains(got, "skill-a") {
+		t.Fatalf("rootBlock after snapshot still names skill-a:\n%s", got)
+	}
+
+	// Without liveSkills the captured systemBlock is returned verbatim.
+	plain := loopSettings{cfg: cfg, systemBlock: started}
+	if g := host.rootBlock(plain); g != started {
+		t.Fatalf("rootBlock without liveSkills = %q, want the fixed systemBlock %q", g, started)
+	}
+}
 
 // fakeStreakSource is a skills.Source whose Load fails until succeedsAfter
 // calls have elapsed, then returns the given single-skill set.

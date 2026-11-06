@@ -10,10 +10,15 @@ package pgsource
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
@@ -62,23 +67,53 @@ func getenvFUSE_TEST_PG_DSN() string {
 	return os.Getenv("FUSE_TEST_PG_DSN")
 }
 
-// pgSourceFactory wipes the skills table, seeds it, and returns a fresh
-// pgsource Store over the shared harness DSN.
+// pgSchemaSeq names a fresh schema per factory call, so each source the
+// conformance suite builds is backed by its own table (the contract says each
+// call produces an independent source) rather than one shared, wiped one.
+var pgSchemaSeq atomic.Uint64
+
+// pgSourceFactory creates a new schema with a unique name from the counter,
+// seeds it, and returns a fresh pgsource Store whose search_path is that
+// schema. Seeds are first-wins: a repeated name is skipped, because the
+// schema's skills table holds one row per name.
 func pgSourceFactory() func(t *testing.T, seed []skills.Skill) (skills.Source, func()) {
 	dsn, skip := getPGHarness()
 	return func(t *testing.T, seed []skills.Skill) (skills.Source, func()) {
 		if skip != "" {
 			t.Skipf("skills pgsource: %s", skip)
 		}
-		s, err := Open(context.Background(), dsn)
+		schema := fmt.Sprintf("skills_conf_%d", pgSchemaSeq.Add(1))
+		ctx := context.Background()
+		// A short-lived connection creates the schema; the Store's own pool
+		// then never needs DDL rights beyond Open's idempotent apply.
+		conn, err := pgx.Connect(ctx, dsn)
+		if err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+		if _, err := conn.Exec(ctx, fmt.Sprintf("CREATE SCHEMA %s", pgx.Identifier{schema}.Sanitize())); err != nil {
+			_ = conn.Close(context.Background())
+			t.Fatalf("create schema: %v", err)
+		}
+		if err := conn.Close(ctx); err != nil {
+			t.Fatalf("close schema conn: %v", err)
+		}
+		// Open the Store on the DSN with search_path set to the schema, joining
+		// with ? or & as the DSN requires.
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		s, err := Open(ctx, dsn+sep+"search_path="+schema)
 		if err != nil {
 			t.Fatalf("Open: %v", err)
 		}
-		if _, err := s.pool.Exec(context.Background(), `DELETE FROM skills`); err != nil {
-			t.Fatalf("wipe: %v", err)
-		}
+		seen := map[string]bool{}
 		for _, sk := range seed {
-			if err := s.Upsert(context.Background(), sk.Name, sk.Description, sk.Body); err != nil {
+			if seen[sk.Name] {
+				continue // a table holds one row per name; the first seed wins
+			}
+			seen[sk.Name] = true
+			if err := s.Upsert(ctx, sk.Name, sk.Description, sk.Body); err != nil {
 				t.Fatalf("seed %s: %v", sk.Name, err)
 			}
 		}

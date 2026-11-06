@@ -164,6 +164,10 @@ type Deps struct {
 	// a loop started without a harness spec. Like LoopFactory.NoTools, the runtime
 	// reads it only to refuse an orchestrating loop (ErrNoToolsOrchestrate).
 	NoTools bool
+
+	// CurrentSkillsDigest returns the installed-skills digest the binding holds
+	// right now, recorded on loop.harness at loop start; nil means "".
+	CurrentSkillsDigest func() string
 }
 
 // defaultLeaseTTL is the owner-liveness lease duration used when Deps.LeaseTTL is zero.
@@ -682,7 +686,11 @@ func (r *inProcRuntime) launchLoop(ctx context.Context, cfg LoopConfig, opts lau
 	// before the agent can emit anything: a resume on any replica rebuilds the loop
 	// from this record. A resume does not record again - the stream already has it.
 	if cfg.Harness != nil && !opts.resume {
-		ev, herr := harnessEvent(rootID, cfg.Harness, cfg.InstalledSkillsDigest)
+		installedDigest := ""
+		if r.deps.CurrentSkillsDigest != nil {
+			installedDigest = r.deps.CurrentSkillsDigest()
+		}
+		ev, herr := harnessEvent(rootID, cfg.Harness, installedDigest)
 		if herr == nil {
 			herr = store.Append(ev)
 		}

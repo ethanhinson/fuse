@@ -104,21 +104,6 @@ func NewHandler(rt runtime.Runtime) *Handler {
 	return &Handler{rt: rt, baseCtx: context.Background(), observer: observe.NoopObserver{}}
 }
 
-// skillsDigest returns the installed-skills digest the capabilities source
-// advertises (change 0134), or "" when no source is wired (the transport-only
-// tests). It is best-effort: a failing source returns "" rather than failing
-// the start.
-func (h *Handler) skillsDigest(ctx context.Context, tenant event.TenantID) string {
-	if h.caps == nil {
-		return ""
-	}
-	caps, err := h.caps.Capabilities(ctx, tenant)
-	if err != nil {
-		return ""
-	}
-	return caps.SkillsDigest
-}
-
 func (h *Handler) WithObserver(o observe.Observer) *Handler {
 	if o != nil {
 		h.observer = o
@@ -333,9 +318,6 @@ func (h *Handler) StartLoop(ctx context.Context, req *connect.Request[loopv1.Sta
 		Harness:     m.Harness,
 		Secrets:     secrets,
 		Principal:   principalRec,
-		// Installed-skills digest at start (change 0134), recorded on loop.harness so a
-		// resume on a replica can detect drift. Empty when the source is not wired.
-		InstalledSkillsDigest: h.skillsDigest(ctx, tenant),
 	})
 	if err != nil {
 		apiOutcome = observeotel.OutcomeFromError(ctx, err)

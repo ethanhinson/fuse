@@ -254,6 +254,7 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 			systemBlock: systemBlock,
 			rateGate:    rateGate,
 			mcpOpts:     mcpOpts,
+			liveSkills:  true, // the operator floor is built at startup; roots read the live set
 		},
 	}
 	server := host.factory(host.operator)
@@ -299,6 +300,9 @@ func assembleLoopServerRuntimeDeps(sb *sandbox.Service, cfg config.Config, reg *
 		BuildAgent:      server.BuildAgent,
 		Harness:         host,
 		NoTools:         server.NoTools,
+		// The installed-skills digest recorded on loop.harness is taken at loop
+		// start from the host's live set, not captured at assembly time.
+		CurrentSkillsDigest: host.CurrentSkillsDigest,
 	}
 }
 
@@ -315,6 +319,13 @@ type loopSettings struct {
 	systemBlock string
 	rateGate    model.RateGate
 	mcpOpts     []mcp.ManagerOption
+
+	// liveSkills marks settings whose systemBlock was captured at server
+	// startup over the then-current installed set: the root agent's skills
+	// listing must follow the live atomicSkills instead, so a refresh between
+	// server start and a loop start is visible. settingsFor leaves it false —
+	// it already derives its block from the live set per loop.
+	liveSkills bool
 }
 
 // loopServerHost is the per-server state every hosted loop's construction
@@ -346,7 +357,22 @@ type loopServerHost struct {
 	mintAudit *loopMintAudit
 }
 
-// teardown releases what a loop's NewToolRegistry attached to its registry.
+// rootBlock returns the root agent's system block for a loop built from s.
+// Server-startup settings carry a systemBlock captured over the installed set
+// at startup; their root agent must instead see the CURRENT set, so a skills
+// refresh between server start and a loop start is reflected. Settings
+// resolved per loop (settingsFor) already read the live set, so theirs is
+// returned as captured.
+func (h *loopServerHost) rootBlock(s loopSettings) string {
+	if s.liveSkills && h.skills != nil {
+		set, _ := h.skills.Load()
+		return rootSystemBlock(s.cfg, set)
+	}
+	return s.systemBlock
+}
+
+// teardown releases what a loop's NewToolRegistry attached to its registry:
+// the per-loop MCP manager and the per-loop bash sandbox pool.
 func (h *loopServerHost) teardown(loopReg *tools.Registry) {
 	if v, ok := h.loopManagers.LoadAndDelete(loopReg); ok {
 		v.(*mcp.Manager).Close()
@@ -365,6 +391,7 @@ func (h *loopServerHost) teardown(loopReg *tools.Registry) {
 func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 	sb, cfg, reg, modelAlias, toolReg, systemBlock := h.sb, s.cfg, s.reg, s.modelAlias, s.toolReg, s.systemBlock
 	rootApprove, rateGate, observer, mcpOpts := h.rootApprove, s.rateGate, h.observer, s.mcpOpts
+	settings := s
 	loopManagers := &h.loopManagers
 	mintAudit := h.mintAudit
 	return runtime.LoopFactory{
@@ -533,7 +560,7 @@ func (h *loopServerHost) factory(s loopSettings) runtime.LoopFactory {
 			// Root spawn_agent, blackboard and pipeline_run (provenance = rootNode).
 			wiring.rootTools(loopToolReg, rootNode)
 
-			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, systemBlock, cfg.Instructions, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, segSink, observer)
+			a, mid, err := buildAgentCore(cfg, reg, modelAlias, discardRenderer{}, h.rootBlock(settings), cfg.Instructions, nil, "root", loopToolReg, rootApprove, nil, false, rateGate, segSink, observer)
 			if err != nil {
 				return nil, nil, "", err
 			}

@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -33,11 +34,14 @@ func hostWithSkills(host *loopServerHost, installed []skills.Skill) *loopServerH
 }
 
 // resilientDeps is a production deps pair sharing one durable store, with the
-// host forced to `installed`.
+// host forced to `installed`. It wires CurrentSkillsDigest to the host's own
+// method (it bypasses assembleLoopServerRuntimeDeps by re-pointing the host's
+// live set after assembly), so the drift path runs through the real seam.
 func resilientDeps(t *testing.T, operatorYAML string, gw *recordingGateway, store *fsstore.FSDurableStore, installed []skills.Skill) (runtime.Deps, *loopServerHost) {
 	t.Helper()
 	deps, host := harnessServerWith(t, operatorYAML, gw)
 	deps.DurableStore, deps.Registry = store, store
+	deps.CurrentSkillsDigest = host.CurrentSkillsDigest
 	if installed != nil {
 		hostWithSkills(host, installed)
 	}
@@ -67,9 +71,8 @@ func TestResumeOnDriftedSkillsRecordsSkillsDriftAndStillResolves(t *testing.T) {
 	turns := uint32(1)
 	spec := &harnessv1.HarnessSpec{MaxTurns: &turns, Skills: []*harnessv1.SkillRef{{Name: "notes"}}}
 	h, err := rtA.StartLoop(context.Background(), runtime.LoopConfig{
-		Task:                  "go",
-		Harness:               spec,
-		InstalledSkillsDigest: startDigest,
+		Task:    "go",
+		Harness: spec,
 	})
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
@@ -117,15 +120,14 @@ func TestResumeOnDriftedMissingSkillStillRefuses(t *testing.T) {
 	store := fsstore.NewDurableFSStore(t.TempDir())
 
 	start := []skills.Skill{skills.NewCarried("notes", "take notes", "Take notes.")}
-	depsA, hostA := resilientDeps(t, harnessOperator, gw, store, start)
+	depsA, _ := resilientDeps(t, harnessOperator, gw, store, start)
 	rtA := runtime.New(depsA)
 
 	turns := uint32(1)
 	spec := &harnessv1.HarnessSpec{MaxTurns: &turns, Skills: []*harnessv1.SkillRef{{Name: "notes"}}}
 	h, err := rtA.StartLoop(context.Background(), runtime.LoopConfig{
-		Task:                  "go",
-		Harness:               spec,
-		InstalledSkillsDigest: hostA.CurrentSkillsDigest(),
+		Task:    "go",
+		Harness: spec,
 	})
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
@@ -148,6 +150,54 @@ func TestResumeOnDriftedMissingSkillStillRefuses(t *testing.T) {
 		}
 	}
 	t.Fatalf("violations = %+v, want skills[0].name RuleSkillRef", ve.Violations)
+}
+
+// TestLoopHarnessRecordsLiveSkillsDigest proves the digest on the loop.harness
+// record comes from the runtime's Deps.CurrentSkillsDigest (taken at loop
+// start) rather than a caller-supplied field: a loop started with no digest
+// passed in still records a non-empty one equal to the host's.
+func TestLoopHarnessRecordsLiveSkillsDigest(t *testing.T) {
+	gw := &recordingGateway{}
+	store := fsstore.NewDurableFSStore(t.TempDir())
+
+	installed := []skills.Skill{
+		skills.NewCarried("notes", "take notes", "Take notes."),
+	}
+	deps, host := resilientDeps(t, harnessOperator, gw, store, installed)
+	rt := runtime.New(deps)
+
+	turns := uint32(1)
+	spec := &harnessv1.HarnessSpec{MaxTurns: &turns, Skills: []*harnessv1.SkillRef{{Name: "notes"}}}
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{
+		Task:    "go",
+		Harness: spec,
+	})
+	if err != nil {
+		t.Fatalf("StartLoop: %v", err)
+	}
+	_, _ = h.Wait()
+
+	hist, err := rt.Attach(context.Background(), "", h.ID(), 0)
+	if err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	var found string
+	for _, e := range hist {
+		if e.Kind != event.KindLoopHarness {
+			continue
+		}
+		var p event.LoopHarnessPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			t.Fatalf("decode loop.harness: %v", err)
+		}
+		found = p.InstalledSkillsDigest
+	}
+	if found == "" {
+		t.Fatalf("loop.harness has no installed-skills digest (kinds: %v)", eventKinds(hist))
+	}
+	if want := host.CurrentSkillsDigest(); found != want {
+		t.Fatalf("loop.harness digest = %q, want the host's %q", found, want)
+	}
 }
 
 // waitParked waits for the loop to end (up to 10s) so a resume can rehydrate.
