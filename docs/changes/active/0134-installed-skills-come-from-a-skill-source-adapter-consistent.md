@@ -14,7 +14,7 @@ related: [86, 118, 128]
 discovered_from: []
 adrs: []
 spec: 'docs/superpowers/specs/2026-11-03-installed-skills-come-from-a-skill-source-adapter-consistent-design.md'
-plan:
+plan: 'docs/superpowers/plans/2026-11-05-installed-skills-come-from-a-skill-source-adapter-consistent-plan.md'
 results:
 auto_groomable:
 hold:
@@ -31,6 +31,7 @@ reconciled: true
 | Artifact | Link |
 |---|---|
 | Spec | [2026-11-03-installed-skills-come-from-a-skill-source-adapter-consistent-design.md](../../superpowers/specs/2026-11-03-installed-skills-come-from-a-skill-source-adapter-consistent-design.md) |
+| Plan | [2026-11-05-installed-skills-come-from-a-skill-source-adapter-consistent-plan.md](../../superpowers/plans/2026-11-05-installed-skills-come-from-a-skill-source-adapter-consistent-plan.md) |
 <!-- docket:artifacts:end -->
 
 ## Why
