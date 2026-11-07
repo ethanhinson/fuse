@@ -2,12 +2,12 @@
 id: 106
 slug: 'loop-registry-live-count-method-for-the-per-tenant-live-loop'
 title: 'Loop registry live-count method for the per-tenant live-loop cap'
-status: 'proposed'
+status: 'killed'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-01'
-updated: '2026-11-01'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [103]
@@ -45,3 +45,7 @@ The per-tenant live-loop cap counts a tenant's live loops by listing its whole r
 
 - Pruning finished loop records.
 - Cross-replica exact admission.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Only needed for the shared server or fleet.
