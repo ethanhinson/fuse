@@ -432,6 +432,9 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		attempts = attempt
 		resp, err, retryable := a.completeOnce(ctx, body, req.Tools)
+		if err == nil && replyEmpty(resp) {
+			resp = a.completeUnstreamed(ctx, payload, req.Tools, resp)
+		}
 		if err == nil {
 			// Reconcile the pre-dispatch estimate with the gateway's reported usage so
 			// the tpm axis reflects real spend without double-charging the estimate
@@ -466,6 +469,35 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 		req.Model, attempts, time.Since(start).Round(time.Second), len(body)>>10, len(body)/4/1000, lastErr)
 	a.tracef("ERROR", []byte(finalErr.Error()))
 	return CompletionResp{}, finalErr
+}
+
+// replyEmpty reports a reply with nothing the agent can use. A reply cut off at the
+// output cap is excluded: the agent loop raises the cap for that, and asking again at
+// the same cap would only repeat it.
+func replyEmpty(r CompletionResp) bool {
+	return strings.TrimSpace(r.Content) == "" && len(r.ToolCalls) == 0 && r.FinishReason != "length"
+}
+
+// completeUnstreamed asks once more without streaming after a streamed reply came
+// back empty. Some gateway routes end a reasoning stream early with a normal stop
+// and [DONE] while the same request answers fully when buffered, so the empty stream
+// says nothing about the model. It returns the original reply if this fails too, and
+// the agent loop decides what to do about an empty reply.
+func (a *Adapter) completeUnstreamed(ctx context.Context, payload wireReq, tools []ToolSchema, empty CompletionResp) CompletionResp {
+	payload.Stream = false
+	payload.StreamOptions = nil
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return empty
+	}
+	a.tracef("RETRY", []byte("empty streamed reply; asking again without streaming"))
+	a.tracef("REQ", prettyJSON(body))
+	resp, err, _ := a.completeOnce(ctx, body, tools)
+	if err != nil {
+		a.tracef("ERROR", []byte(err.Error()))
+		return empty
+	}
+	return resp
 }
 
 // completeOnce performs a single bounded request attempt. retryable reports

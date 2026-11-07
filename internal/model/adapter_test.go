@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -652,5 +653,61 @@ func TestIdleTimeoutCoversBufferedResponses(t *testing.T) {
 	a.MaxAttempts = 1
 	if _, err := a.Complete(context.Background(), CompletionReq{Model: "m"}); err == nil || !strings.Contains(err.Error(), "silent") {
 		t.Fatalf("err = %v, want a silent-response error", err)
+	}
+}
+
+// A gateway route can end a reasoning stream early with a normal stop and [DONE],
+// while the same request answers fully when buffered.
+func TestEmptyStreamedReplyAsksAgainWithoutStreaming(t *testing.T) {
+	var streamed, buffered int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Stream bool `json:"stream"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		defer mu.Unlock()
+		if req.Stream {
+			streamed++
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, `data: {"choices":[{"delta":{"reasoning_content":"thinking"},"finish_reason":"stop"}]}`+"\n\n")
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			return
+		}
+		buffered++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"the answer"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+	a := NewAdapter(srv.URL, "tkn", srv.Client())
+	resp, err := a.Complete(context.Background(), CompletionReq{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Content != "the answer" {
+		t.Fatalf("content = %q", resp.Content)
+	}
+	if streamed != 1 || buffered != 1 {
+		t.Fatalf("streamed = %d, buffered = %d, want 1 and 1", streamed, buffered)
+	}
+}
+
+// A streamed reply with content must not cost a second request.
+func TestNonEmptyStreamedReplyIsNotRepeated(t *testing.T) {
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	a := NewAdapter(srv.URL, "tkn", srv.Client())
+	if _, err := a.Complete(context.Background(), CompletionReq{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("requests = %d, want 1", n)
 	}
 }
