@@ -53,7 +53,6 @@ func TestSpawn_BudgetEnforced_AcrossTurns(t *testing.T) {
 // Parallel spawns from one response race the check: used is counted from tree
 // nodes, added only after the check, so every spawn can see room.
 func TestSpawn_BudgetEnforced_ParallelBatch(t *testing.T) {
-	defect(t, "max_spawns is check-then-act: parallel spawn_agent calls in one response overshoot the budget (internal/agent/spawn.go:317; used comes from childCount, nodes added later at spawn.go:409)")
 	t.Parallel()
 	// A race: any single attempt may happen to land under budget, so one overshoot
 	// in any attempt is the failure.
