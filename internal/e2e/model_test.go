@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -453,4 +454,37 @@ func TestEmptyReply_RecoversOnRetry(t *testing.T) {
 	r := h.run()
 	wantCode(t, r, 0)
 	wantContains(t, r.stdout, "recovered", "stdout")
+}
+
+// A reply that degenerates into repetition must be cut off early — the
+// cancellation reaching the server so it stops generating — and retried, with
+// the run finishing on the good second reply.
+func TestRunawayReply_StoppedAndRetried(t *testing.T) {
+	t.Parallel()
+	var chunks atomic.Int64
+	runaway := func(w http.ResponseWriter, r *http.Request) {
+		sseHeader(w)
+		for {
+			sse(w, contentChunk("of the value "))
+			chunks.Add(1)
+			select {
+			case <-r.Context().Done():
+				return // the watchdog cancelled the request
+			default:
+			}
+		}
+	}
+	srv := newServer(t, runaway, text("clean answer"))
+	h := newHarness(t, srv)
+	r := h.run()
+	wantCode(t, r, 0)
+	wantContains(t, r.stdout, "clean answer", "stdout")
+	if srv.count() != 2 {
+		t.Fatalf("requests = %d, want the runaway reply retried once", srv.count())
+	}
+	// An uncut runaway fills the whole output cap (tens of thousands of these
+	// chunks). The watchdog must stop it after a few hundred.
+	if got := chunks.Load(); got > 10000 {
+		t.Fatalf("server streamed %d repetition chunks; the reply was not cut early", got)
+	}
 }
