@@ -42,18 +42,18 @@ def main():
                    help="leave out matching tasks on every arm (repeatable)")
     args = p.parse_args()
 
-    key = os.environ["LLM_GATEWAY_KEY"]
-    bin_dir = Path(args.jobs).resolve() / args.name / "bin"
-    build(bin_dir)
-    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True, text=True).stdout.strip()
-    start = credit()
-    print(f"{args.name}: fuse {sha}, credit {start}, budget {args.budget}, fuse options {opts}", flush=True)
     opts = []
     for o in args.fuse_option:
         k, sep, v = o.partition("=")
         if not sep or not k.replace("_", "").isalnum() or "\n" in v or ";" in v:
             sys.exit(f"--fuse-option wants KEY=VALUE, got {o!r}")
         opts.append(f"{k}: {v}")
+    key = os.environ["LLM_GATEWAY_KEY"]
+    bin_dir = Path(args.jobs).resolve() / args.name / "bin"
+    build(bin_dir)
+    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True, text=True).stdout.strip()
+    start = credit()
+    print(f"{args.name}: fuse {sha}, credit {start}, budget {args.budget}, fuse options {opts}", flush=True)
     common = ["-d", args.dataset, "-o", args.jobs, "-m", "openai/" + args.model, "-y", "--quiet",
               "-k", str(args.attempts), "-n", str(args.concurrency)]
     for g in args.exclude_task:
