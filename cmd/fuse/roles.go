@@ -53,6 +53,17 @@ func (p childPlan) agentConfig(cfg config.Config) config.Config {
 	return cfg
 }
 
+// reportInstructions is the child's instructions slot — the role brief, or ""
+// for a plain spawn — with the concise-report guidance appended for every
+// child that can call tools. A tool-less child keeps the one-line tool-less
+// prompt plus its brief, byte-exact.
+func (p childPlan) reportInstructions() string {
+	if p.none {
+		return p.instructions
+	}
+	return p.instructions + childReportGuidance
+}
+
 // sortedRoleNames returns every defined role name, sorted.
 func sortedRoleNames(roles map[string]config.RoleConfig) []string {
 	out := make([]string, 0, len(roles))

@@ -169,6 +169,43 @@ func TestSpawn_ChildHungBash_BoundedByToolTimeout(t *testing.T) {
 	wantContains(t, out, "child gave up", "spawn result")
 }
 
+// TestSpawn_LargeReportKeptOutOfParentContext: a child returns a 15KB report
+// — under the ordinary 20KB inline budget, over the spawn_agent 6KB budget —
+// and the next request the parent sends holds at most about 7KB of it plus an
+// art:// reference to the full report. The budget line fuse appends to every
+// spawn result survives inline in the spilled tail.
+func TestSpawn_LargeReportKeptOutOfParentContext(t *testing.T) {
+	t.Parallel()
+	// Varied 15KB: uniform filler trips the loop detector on the child's reply.
+	var b strings.Builder
+	for b.Len() < 15<<10 {
+		fmt.Fprintf(&b, "report line %04d: finding with path internal/x.go:%d\n", b.Len()/64, b.Len()%97)
+	}
+	report := b.String()
+	srv := newRouter(t, func(r *request) step {
+		if r.firstUser() != "e2e task" {
+			return text(report)
+		}
+		if hasToolResult(r) {
+			return text("root done")
+		}
+		return tools(spawnCall("s1", "big", "child-big-report"))
+	})
+	h := newHarness(t, srv)
+	wantCode(t, h.run(), 0)
+
+	out, ok := h.lastRequest().toolResult("s1")
+	if !ok {
+		t.Fatal("no spawn result reached the parent")
+	}
+	if len(out) > 7<<10 {
+		t.Fatalf("15KB report reached the parent at %d bytes, want at most ~7KB", len(out))
+	}
+	wantContains(t, out, "art://", "spawn result")
+	wantContains(t, out, "Full output saved as artifact", "spawn result")
+	wantContains(t, out, "agent budget: 1/", "spawn result (budget line must survive in the tail)")
+}
+
 // --- MCP ------------------------------------------------------------------
 
 const mcpTool = "mcp:h/echo"
