@@ -74,6 +74,22 @@ func sessionRateGate(cfg config.Config) model.RateGate {
 // spawn_agent schema, never a second time here.
 const spawnRoleHint = "\n\nPrefer a named role when one fits the task."
 
+// childReportGuidance is appended to every spawned child's system prompt when
+// the child can call tools. A child's final report lands in the parent's
+// context and is re-sent on every later model call, and spawn_agent results
+// spill at a tighter inline budget (internal/tools spill.go), so children are
+// told to keep their report short and point at files instead of quoting them.
+const childReportGuidance = "\n\nEnd with a concise report of what the parent needs to know, ideally under 4KB. Name file paths and line numbers instead of quoting file contents."
+
+// childReportGuidanceIf returns childReportGuidance for a child built with
+// tools, "" for a tool-less child (whose one-line prompt must stay exact).
+func childReportGuidanceIf(cfg config.Config) string {
+	if cfg.NoTools {
+		return ""
+	}
+	return childReportGuidance
+}
+
 // spawnAgentBlock is the system-prompt block that tells models to use spawn_agent.
 // Shared between one-shot and shell mode so behaviour is identical across both.
 const spawnAgentBlock = `

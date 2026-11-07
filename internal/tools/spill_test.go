@@ -120,6 +120,85 @@ func TestSpillStoreFailureFallsBack(t *testing.T) {
 	}
 }
 
+// TestSpawnResultSpillsAt6KB: a spawn_agent result gets the tighter inline
+// budget — a 15KB child report (under the ordinary 20KB threshold) is cut to
+// about 6KB with an artifact ref, the report's head and tail (including the
+// machine-appended budget line) survive inline, and the full report reads
+// back through the ref.
+func TestSpawnResultSpillsAt6KB(t *testing.T) {
+	report := strings.Repeat("R", 5<<10) + spillNeedle + strings.Repeat("R", 5<<10) +
+		strings.Repeat("R", 5<<10) + "\n\nagent budget: 1/16 used (15 remaining)"
+	if len(report) < 15<<10 {
+		t.Fatalf("test report is %d bytes, want at least 15KB", len(report))
+	}
+	store := artifact.NewMemStore()
+	reg := NewRegistry().WithArtifacts(store, "acme", "loop1")
+	reg.Register(bigTool{name: "spawn_agent", out: report})
+
+	res := reg.Execute(t.Context(), "spawn_agent", `{}`)
+	if res.IsError {
+		t.Fatal(res.Output)
+	}
+	if len(res.Output) > 7<<10 {
+		t.Errorf("spawn_agent result not bounded to ~6KB: %d bytes", len(res.Output))
+	}
+	if !strings.HasPrefix(res.Output, "R") || !strings.HasSuffix(res.Output, "agent budget: 1/16 used (15 remaining)") {
+		t.Error("report head and the budget line in its tail must survive inline")
+	}
+	if strings.Contains(res.Output, spillNeedle) {
+		t.Error("the report's middle should be elided inline")
+	}
+	if !strings.Contains(res.Output, "Full output saved as artifact art://acme/loop1/spill/") {
+		t.Fatalf("marker missing artifact ref:\n%s", res.Output[spawnSpillKeep:spawnSpillKeep+600])
+	}
+
+	// The complete report reads back through the marker's ref.
+	metas, err := store.List(t.Context(), "acme", "loop1", artifact.KindSpill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 {
+		t.Fatalf("want 1 spill artifact, got %d", len(metas))
+	}
+	if metas[0].Tool != "spawn_agent" {
+		t.Errorf("Meta.Tool = %q, want spawn_agent", metas[0].Tool)
+	}
+	if !strings.Contains(res.Output, metas[0].Ref.String()) {
+		t.Errorf("marker does not name the stored ref %s", metas[0].Ref)
+	}
+	rc, _, err := store.Open(t.Context(), metas[0].Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	body, _ := io.ReadAll(rc)
+	if string(body) != report {
+		t.Error("spilled artifact must hold the complete original report")
+	}
+}
+
+// TestOtherToolResultUntouchedBelow20KB: a non-spawn tool's 15KB result — over
+// the spawn budget, under the ordinary one — passes through unchanged and is
+// not stored.
+func TestOtherToolResultUntouchedBelow20KB(t *testing.T) {
+	out := strings.Repeat("y", 15<<10)
+	store := artifact.NewMemStore()
+	reg := NewRegistry().WithArtifacts(store, "acme", "loop1")
+	reg.Register(bigTool{name: "read_file", out: out})
+
+	res := reg.Execute(t.Context(), "read_file", `{}`)
+	if res.Output != out {
+		t.Errorf("15KB read_file result must pass through unchanged, got %d bytes", len(res.Output))
+	}
+	metas, err := store.List(t.Context(), "acme", "loop1", artifact.KindSpill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 0 {
+		t.Errorf("15KB non-spawn result must not be stored, got %d artifacts", len(metas))
+	}
+}
+
 func TestSmallOutputPassesThrough(t *testing.T) {
 	store := artifact.NewMemStore()
 	reg := NewRegistry().WithArtifacts(store, "acme", "loop1")

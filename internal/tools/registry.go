@@ -156,7 +156,9 @@ func (r *Registry) WithFileTracker(ft *FileTracker) *Registry {
 // Execute runs the named tool, returning an error Result if it is unknown.
 // Oversized outputs are spill-truncated centrally (head+tail inline, full
 // output to a spill artifact in the loop's store) so no single result can flood the
-// conversation context. A panicking tool becomes an error Result — tool
+// conversation context; spawn_agent results spill at a tighter 6KB budget so a
+// child's report cannot flood the parent's context turn after turn. A panicking
+// tool becomes an error Result — tool
 // calls run on agent goroutines, where an unrecovered panic kills the whole
 // process (observed live: an inverted read range took down the TUI).
 func (r *Registry) Execute(ctx context.Context, name, args string) (res Result) {
