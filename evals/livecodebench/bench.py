@@ -809,7 +809,7 @@ def main():
                     help="fuse binary (default: this checkout's ./fuse, else PATH)")
     ap.add_argument("--tag", default="", help="suffix for the run name")
     ap.add_argument("--fuse-local-extra", default="",
-                    help='fuse arms: JSON merged into the run's private ~/.fuse/config.yml, e.g. '
+                    help='fuse arms: JSON merged into the private per-run ~/.fuse/config.yml, e.g. '
                          '\'{"context":{"history":{"elide_assistant_after_turns":4}}}\'')
     ap.add_argument("--run-name", default=None)
     ap.add_argument("--grade-procs", type=int, default=8)

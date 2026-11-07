@@ -329,8 +329,8 @@ instructions: |
 ```
 
 The text is added to the main agent's system prompt after the persona prompt; subagents
-keep their own prompts. It is read from `~/.fuse/config.yml`, not `.fuse.local.yml`, and
-the local file wins. It may be at most 16384 characters.
+keep their own prompts. It is read from `~/.fuse/config.yml`, not `.fuse.local.yml`.
+It may be at most 16384 characters.
 
 ### The `roles` config key
 
