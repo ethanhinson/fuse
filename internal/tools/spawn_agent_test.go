@@ -27,22 +27,6 @@ func okSpawn(result string) SpawnFunc {
 	}
 }
 
-// TestSpawnAgentTool_ToolsParamWarnsAboutBlackboard pins the prompting fix in the
-// tools param schema: a narrow subset silently strips blackboard access from the
-// child, so the description must warn the model about it. Guards against regress.
-func TestSpawnAgentTool_ToolsParamWarnsAboutBlackboard(t *testing.T) {
-	tool := NewSpawnAgentTool(okSpawn("ok"))
-	params := tool.Parameters()
-	props, _ := params["properties"].(map[string]any)
-	toolsProp, _ := props["tools"].(map[string]any)
-	desc, _ := toolsProp["description"].(string)
-	for _, want := range []string{"blackboard", "subset"} {
-		if !strings.Contains(strings.ToLower(desc), want) {
-			t.Errorf("tools param description must warn about %q; got: %q", want, desc)
-		}
-	}
-}
-
 func TestSpawnAgentTool_NoBudgetFuncOmitsLine(t *testing.T) {
 	tool := NewSpawnAgentTool(okSpawn("child said hi"))
 	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
@@ -204,77 +188,7 @@ func TestSpawnAgentTool_NoWorkerParamByDefault(t *testing.T) {
 	}
 }
 
-func TestSpawnAgentTool_WithWorkersAddsEnum(t *testing.T) {
-	tool := NewSpawnAgentTool(okSpawn("x")).WithWorkers([]string{"facet-researcher", "summarizer"})
-	props := tool.Parameters()["properties"].(map[string]any)
-	w, ok := props["worker"].(map[string]any)
-	if !ok {
-		t.Fatal("worker param should be present when workers are configured")
-	}
-	enum, ok := w["enum"].([]any)
-	if !ok || len(enum) != 2 {
-		t.Fatalf("worker enum = %v, want 2 entries", w["enum"])
-	}
-	if enum[0] != "facet-researcher" || enum[1] != "summarizer" {
-		t.Errorf("worker enum = %v, want [facet-researcher summarizer]", enum)
-	}
-}
-
-func TestSpawnAgentTool_WorkerThreadedToSpawnFunc(t *testing.T) {
-	var got SpawnRequest
-	spawn := func(_ context.Context, req SpawnRequest) (SpawnHandle, error) {
-		got = req
-		return fakeHandle{res: SpawnResult{Result: "ok"}}, nil
-	}
-	tool := NewSpawnAgentTool(spawn).WithWorkers([]string{"facet-researcher"})
-	res := tool.Execute(context.Background(), `{"label":"c","task":"do","worker":"facet-researcher"}`)
-	if res.IsError {
-		t.Fatalf("unexpected error: %s", res.Output)
-	}
-	if got.Worker != "facet-researcher" {
-		t.Errorf("SpawnRequest.Worker = %q, want facet-researcher", got.Worker)
-	}
-}
-
 // --- change 0034: tighter-of-two budget for workflow children ---
-
-func TestTighterBudget_ReportsFewerRemaining(t *testing.T) {
-	global := func() (used, max int) { return 10, 64 } // 54 remaining
-	workflow := func() (used, max int) { return 6, 8 } // 2 remaining (tighter)
-
-	used, max := TighterBudget(global, workflow)()
-	if used != 6 || max != 8 {
-		t.Errorf("TighterBudget = (%d,%d), want (6,8) — the workflow-total is tighter", used, max)
-	}
-}
-
-func TestTighterBudget_GlobalTighter(t *testing.T) {
-	global := func() (used, max int) { return 60, 64 } // 4 remaining (tighter)
-	workflow := func() (used, max int) { return 1, 8 } // 7 remaining
-	used, max := TighterBudget(global, workflow)()
-	if used != 60 || max != 64 {
-		t.Errorf("TighterBudget = (%d,%d), want (60,64) — global is tighter", used, max)
-	}
-}
-
-func TestTighterBudget_SkipsUnsetOperand(t *testing.T) {
-	global := func() (used, max int) { return 10, 64 }
-	unset := func() (used, max int) { return 0, 0 } // unset => ignored
-	used, max := TighterBudget(global, unset)()
-	if used != 10 || max != 64 {
-		t.Errorf("TighterBudget = (%d,%d), want (10,64) — unset operand ignored", used, max)
-	}
-}
-
-func TestTighterBudget_ShowsTighterInLine(t *testing.T) {
-	global := func() (used, max int) { return 10, 64 }
-	workflow := func() (used, max int) { return 6, 8 }
-	tool := NewSpawnAgentToolWithBudget(okSpawn("x"), TighterBudget(global, workflow))
-	res := tool.Execute(context.Background(), `{"label":"c","task":"do"}`)
-	if !strings.Contains(res.Output, "6/8 used (2 remaining)") {
-		t.Errorf("budget line should report the tighter 6/8, got:\n%s", res.Output)
-	}
-}
 
 // --- change 0042 (D7): freeform spawn_agent is prose-only ---
 
@@ -381,26 +295,6 @@ func TestSpawnAgentTool_HandleErrorIsErrorResult(t *testing.T) {
 
 // --- change 0091: workflow param ---
 
-func TestSpawnAgentWorkflowParamAdvertisesNames(t *testing.T) {
-	tool := NewSpawnAgentTool(okSpawn("x")).WithWorkflows([]string{"wf", "research"})
-	props := tool.Parameters()["properties"].(map[string]any)
-	w, ok := props["workflow"].(map[string]any)
-	if !ok {
-		t.Fatal("workflow param should be present when workflows are configured")
-	}
-	enum, ok := w["enum"].([]any)
-	if !ok || len(enum) != 2 || enum[0] != "research" || enum[1] != "wf" {
-		t.Fatalf("workflow enum = %v, want [research wf]", w["enum"])
-	}
-	desc, _ := w["description"].(string)
-	if !strings.Contains(desc, "research") || !strings.Contains(desc, "wf") {
-		t.Errorf("workflow description missing names: %q", desc)
-	}
-	if d := tool.Description(); !strings.Contains(d, "research") || !strings.Contains(d, "wf") {
-		t.Errorf("Description missing workflow names: %q", d)
-	}
-}
-
 func TestSpawnAgentNoWorkflowsNoParam(t *testing.T) {
 	tool := NewSpawnAgentTool(okSpawn("x"))
 	props := tool.Parameters()["properties"].(map[string]any)
@@ -411,22 +305,6 @@ func TestSpawnAgentNoWorkflowsNoParam(t *testing.T) {
 		"The child runs to completion and returns its findings as prose."
 	if got := tool.Description(); got != want {
 		t.Errorf("Description changed without workflows:\n got %q\nwant %q", got, want)
-	}
-}
-
-func TestSpawnAgentForwardsWorkflow(t *testing.T) {
-	var got SpawnRequest
-	spawn := func(_ context.Context, req SpawnRequest) (SpawnHandle, error) {
-		got = req
-		return fakeHandle{res: SpawnResult{Result: "ok"}}, nil
-	}
-	tool := NewSpawnAgentTool(spawn)
-	res := tool.Execute(context.Background(), `{"label":"l","task":"t","workflow":"wf"}`)
-	if res.IsError {
-		t.Fatalf("unexpected error: %s", res.Output)
-	}
-	if got.Workflow != "wf" {
-		t.Errorf("SpawnRequest.Workflow = %q, want wf", got.Workflow)
 	}
 }
 
@@ -446,64 +324,7 @@ func schemaGolden(t *testing.T, tool *SpawnAgentTool) []byte {
 	return append(b, '\n')
 }
 
-// TestSpawnAgentSchemaGolden pins the spawn_agent schema and description byte
-// for byte for each shape a binding builds without roles: plain, outside a
-// workflow (workflow enum), and inside one (worker enum).
-func TestSpawnAgentSchemaGolden(t *testing.T) {
-	for _, tc := range []struct {
-		file string
-		tool *SpawnAgentTool
-	}{
-		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x"))},
-		{"testdata/spawn_agent_schema_workflows.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkflows([]string{"wf", "research"})},
-		{"testdata/spawn_agent_schema_workers.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkers([]string{"reader"})},
-	} {
-		t.Run(tc.file, func(t *testing.T) {
-			got := schemaGolden(t, tc.tool)
-			if *updateGolden {
-				if err := os.MkdirAll(filepath.Dir(tc.file), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(tc.file, got, 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			want, err := os.ReadFile(tc.file)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(got, want) {
-				t.Errorf("spawn_agent schema differs from %s:\n got: %s\nwant: %s", tc.file, got, want)
-			}
-		})
-	}
-}
-
 // --- change 0114: role param ---
-
-// TestSpawnAgentNoRolesNoParam pins that WithRoles(nil) changes nothing: every
-// no-roles golden stays byte-identical.
-func TestSpawnAgentNoRolesNoParam(t *testing.T) {
-	for _, tc := range []struct {
-		file string
-		tool *SpawnAgentTool
-	}{
-		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x")).WithRoles(nil)},
-		{"testdata/spawn_agent_schema_workflows.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkflows([]string{"wf", "research"}).WithRoles(nil)},
-		{"testdata/spawn_agent_schema_workers.golden", NewSpawnAgentTool(okSpawn("x")).WithWorkers([]string{"reader"}).WithRoles(nil)},
-		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x")).WithRoles([]RoleOption{})},
-	} {
-		t.Run(tc.file, func(t *testing.T) {
-			want, err := os.ReadFile(tc.file)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := schemaGolden(t, tc.tool); !bytes.Equal(got, want) {
-				t.Errorf("WithRoles(nil) changed the schema for %s:\n got: %s\nwant: %s", tc.file, got, want)
-			}
-		})
-	}
-}
 
 func TestSpawnAgentWithRolesAddsEnumAndLines(t *testing.T) {
 	plain := NewSpawnAgentTool(okSpawn("x"))
@@ -549,21 +370,54 @@ func TestSpawnAgentForwardsRole(t *testing.T) {
 	}
 }
 
-// TestSpawnAgentRoleNoteForWorkflow (change 0115): where the tool offers both
-// workflows and roles, the role param says a role must be one the chosen
-// workflow offers; with roles but no workflows the note is absent.
-func TestSpawnAgentRoleNoteForWorkflow(t *testing.T) {
-	const note = "With `workflow`, the role must be one that workflow offers."
-	roles := []RoleOption{{"reviewer", "Reviews."}}
-	desc := func(tool *SpawnAgentTool) string {
-		r, _ := tool.Parameters()["properties"].(map[string]any)["role"].(map[string]any)
-		s, _ := r["description"].(string)
-		return s
+// TestSpawnAgentSchemaGolden pins the spawn_agent schema and description byte
+// for byte for the shape a binding builds without roles.
+func TestSpawnAgentSchemaGolden(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		tool *SpawnAgentTool
+	}{
+		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x"))},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			got := schemaGolden(t, tc.tool)
+			if *updateGolden {
+				if err := os.MkdirAll(filepath.Dir(tc.file), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(tc.file, got, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Errorf("spawn_agent schema differs from %s:\n got: %s\nwant: %s", tc.file, got, want)
+			}
+		})
 	}
-	if d := desc(NewSpawnAgentTool(okSpawn("x")).WithWorkflows([]string{"wf"}).WithRoles(roles)); !strings.Contains(d, note) {
-		t.Errorf("role description with workflows lacks the note: %q", d)
-	}
-	if d := desc(NewSpawnAgentTool(okSpawn("x")).WithRoles(roles)); strings.Contains(d, note) {
-		t.Errorf("role description without workflows carries the note: %q", d)
+}
+
+// TestSpawnAgentNoRolesNoParam pins that WithRoles(nil) changes nothing: every
+// no-roles golden stays byte-identical.
+func TestSpawnAgentNoRolesNoParam(t *testing.T) {
+	for _, tc := range []struct {
+		file string
+		tool *SpawnAgentTool
+	}{
+		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x")).WithRoles(nil)},
+		{"testdata/spawn_agent_schema.golden", NewSpawnAgentTool(okSpawn("x")).WithRoles([]RoleOption{})},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			want, err := os.ReadFile(tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := schemaGolden(t, tc.tool); !bytes.Equal(got, want) {
+				t.Errorf("WithRoles(nil) changed the schema for %s:\n got: %s\nwant: %s", tc.file, got, want)
+			}
+		})
 	}
 }

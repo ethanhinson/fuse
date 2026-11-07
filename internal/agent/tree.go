@@ -116,12 +116,6 @@ type AgentNode struct {
 	EndedAt   time.Time
 	TokensIn  int
 	TokensOut int
-	// WorkflowRoot names the workflow this node is the ROOT of, when non-empty.
-	// Set at node creation from SpawnOpts.Workflow (change 0091), or on a
-	// not-yet-running root by the research probe; its whole subtree is then
-	// governed by that workflow's pool. Empty on every other node. It is never
-	// mutated after that, so it needs no lock. (0034)
-	WorkflowRoot string
 	// Role is the role this node was spawned as, if any (0114). Set at node
 	// creation from SpawnOpts.Role and never mutated after, so it needs no lock.
 	Role   string
@@ -198,18 +192,17 @@ func (n *AgentNode) Finish(status NodeStatus, errMsg string) {
 // Events are deliberately NOT included — they can be large and most consumers
 // only need counters; call CopyEvents when the log itself is needed.
 type NodeView struct {
-	ID           string
-	ParentID     string
-	Label        string
-	Model        string
-	Status       NodeStatus
-	Depth        int
-	StartedAt    time.Time
-	EndedAt      time.Time
-	TokensIn     int
-	TokensOut    int
-	WorkflowRoot string // the workflow this node roots, if any (0034)
-	Role         string // the role this node was spawned as, if any (0114)
+	ID        string
+	ParentID  string
+	Label     string
+	Model     string
+	Status    NodeStatus
+	Depth     int
+	StartedAt time.Time
+	EndedAt   time.Time
+	TokensIn  int
+	TokensOut int
+	Role      string // the role this node was spawned as, if any (0114)
 	// Turns is a defensive copy of the node's conversational turn marks, taken
 	// under the node lock: a consumer cannot mutate node state through it, and
 	// the slice header cannot race a concurrent BeginTurn append. Empty for every
@@ -235,7 +228,6 @@ func (n *AgentNode) Snapshot() NodeView {
 		EndedAt:       n.EndedAt,
 		TokensIn:      n.TokensIn,
 		TokensOut:     n.TokensOut,
-		WorkflowRoot:  n.WorkflowRoot,
 		Role:          n.Role,
 		Turns:         append([]TurnMark(nil), n.Turns...),
 		SpawnedInTurn: n.SpawnedInTurn,
@@ -284,80 +276,6 @@ func (t *AgentTree) childCount() int {
 		n = 0
 	}
 	return n
-}
-
-// SeedResume populates the tree with child nodes and token totals recovered from
-// a stream reconstruction, so a resumed loop reports the same childCount() and
-// SessionTokens() as a never-moved loop. Each seeded child is marked finished
-// (terminal or orphaned — both are "done" from the tree's perspective). Called
-// once at construction time, before any spawn. Root tokens are set to the
-// remaining sessionTokens after distributing per-child amounts.
-func (t *AgentTree) SeedResume(childCount int, sessionTokens int, poolTokens map[string]int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	// Add placeholder child nodes so childCount() returns the right figure.
-	// Each child gets an equal share of sessionTokens for simplicity; the exact
-	// per-node split doesn't matter for budget enforcement (only the total does).
-	root := t.nodes[t.rootID]
-	if root == nil {
-		return
-	}
-	perChild := 0
-	if childCount > 0 {
-		perChild = sessionTokens / childCount
-	}
-	rootTokens := sessionTokens - perChild*childCount
-	root.mu.Lock()
-	defer root.mu.Unlock()
-	root.TokensIn = rootTokens / 2
-	root.TokensOut = rootTokens - root.TokensIn
-	// Distribute pool token totals across the seeded children. When a pool
-	// carried tokens on the stream, the first children are assigned to that
-	// pool (WorkflowRoot set) so SubtreeTokens — the pool enforcement term —
-	// accounts for the pre-resume spend. Pool assignment is best-effort: the
-	// children are assigned round-robin to pools until each pool's token total
-	// is exhausted, then remaining children (if any) are left unassigned.
-	poolOrder := make([]string, 0, len(poolTokens))
-	for poolID := range poolTokens {
-		if poolTokens[poolID] > 0 {
-			poolOrder = append(poolOrder, poolID)
-		}
-	}
-	poolIdx := 0
-	poolRemaining := map[string]int{}
-	for _, p := range poolOrder {
-		poolRemaining[p] = poolTokens[p]
-	}
-	for i := 0; i < childCount; i++ {
-		id := fmt.Sprintf("seed-child-%d", i)
-		child := &AgentNode{
-			ID:       id,
-			ParentID: t.rootID,
-			Status:   StatusDone,
-			Depth:    1,
-		}
-		// Assign this child to a pool if there are still tokens to attribute.
-		// Each pool child gets perChild tokens (the same per-child share); we
-		// move to the next pool when this one's allocation is used up.
-		child.TokensIn = perChild / 2
-		child.TokensOut = perChild - perChild/2
-		for poolIdx < len(poolOrder) && poolRemaining[poolOrder[poolIdx]] <= 0 {
-			poolIdx++
-		}
-		if poolIdx < len(poolOrder) {
-			poolID := poolOrder[poolIdx]
-			child.WorkflowRoot = poolID
-			poolRemaining[poolID] -= perChild
-			if poolRemaining[poolID] <= 0 {
-				poolIdx++
-			}
-		}
-		t.nodes[id] = child
-		// Register under the root so SnapshotAll (which walks parent.children)
-		// sees the seed children and SessionTokens() sums their tokens — the
-		// direct t.nodes insert alone would zero their contribution.
-		root.children = append(root.children, id)
-	}
 }
 
 // SetMaxSpawns sets the tree-global spawn budget — the total number of child

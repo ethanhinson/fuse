@@ -98,9 +98,8 @@ type Agent struct {
 
 	// toolTimeout bounds a single leaf tool call. A hanging tool (e.g. a bash
 	// command that never returns) must not block the whole agent loop forever.
-	// 0 selects DefaultToolTimeout. Orchestration tools that legitimately run
-	// for a long time (spawn_agent, pipeline_run — they await child agents) are
-	// exempt via toolTimeoutExempt; capping them would break multi-agent runs.
+	// 0 selects DefaultToolTimeout. spawn_agent legitimately runs for a long
+	// time (it awaits child agents) and is exempt via toolTimeoutExempt; capping them would break multi-agent runs.
 	toolTimeout time.Duration
 
 	// humanInjector, when set, is polled at the top of every turn: it drains this
@@ -110,14 +109,6 @@ type Agent struct {
 	// push into a running node, honoring ADR-0016's run-to-completion contract.
 	humanInjector *HumanInjector
 
-	// interactive, when true, turns the root loop's terminal path (a model response
-	// with no tool calls) into a PARK instead of a return: the run blocks at the turn
-	// boundary awaiting the next human message (humanInjector.Wait), so one loop_id
-	// carries a full multi-turn conversation with server-authoritative history. The
-	// loop still exits on ctx cancellation (client disconnect / shutdown) or when no
-	// bus is wired. False ⇒ byte-identical single-task run-to-completion (ADR-0016).
-	// Only meaningful with humanInjector set; a spawned child is never interactive.
-	interactive bool
 	// usageSink receives each model call's token usage; the agent owns usage
 	// accounting so every host (not only the TUI renderer) feeds the tree (change 0090).
 	usageSink func(in, out int)
@@ -127,16 +118,6 @@ type Agent struct {
 	// maxTurnsExplicit is true when the turn cap came from the spec/operator
 	// config rather than a binding's headless backstop (change 0090).
 	maxTurnsExplicit bool
-
-	// seeded, when true, marks that Run's seed history was reconstructed from a
-	// durable event stream that ALREADY contains those turns (change 0054 resume):
-	// the runtime folded events → transcript and handed it back as the seed. Run
-	// therefore SUPPRESSES the KindUserInput emission for the seed's user turns —
-	// re-emitting them would duplicate events the stream already holds. NEW user
-	// turns injected after resume (each Send) still emit KindUserInput normally.
-	// False (the default, a fresh StartLoop) emits the initial task's user turn, so
-	// a from-scratch run's stream is complete for a later fold.
-	seeded bool
 
 	// expectsSchema, when non-nil, is the JSON Schema the spawner declared for this
 	// child's structured result (change 0042). When set, Run offers a synthesized
@@ -167,12 +148,6 @@ type Agent struct {
 	nodeID   string
 	parentID string
 	depth    int
-
-	// seedSummary, when non-empty, initializes previousSummary in Run so a resumed
-	// loop's next compaction anchors against the last summary from the stream.
-	// Set via SetSeedSummary by the runtime on a resume (change 0127, Task 5);
-	// empty for a fresh start, whose previousSummary begins at "" as before.
-	seedSummary string
 }
 
 // SetObserver installs provider-neutral timing observation. Nil selects a no-op.
@@ -260,24 +235,6 @@ func (a *Agent) SystemPrompt() string { return a.systemPrompt }
 // nil is a no-op (the field stays nil). Set once at build time, before Run.
 func (a *Agent) SetHumanInjector(inj *HumanInjector) { a.humanInjector = inj }
 
-// SetInteractive enables persistent conversational mode on the root loop: at the
-// terminal turn boundary (no tool calls) the run parks awaiting the next human
-// message instead of returning (see the interactive field). It is a no-op posture
-// unless a HumanInjector with a bus is also wired. Default false preserves the
-// single-task run-to-completion contract for every existing binding.
-func (a *Agent) SetInteractive(v bool) { a.interactive = v }
-
-// SetSeeded marks that Run's seed history came from a durable-stream reconstruction
-// (change 0054 resume), so Run must NOT re-emit KindUserInput for the seed's user
-// turns — those events already exist in the stream. The runtime sets it before
-// re-parking a resumed loop; a fresh StartLoop leaves it false so the initial task
-// emits and the from-scratch stream stays complete for a later fold. Setting it has
-// no effect on new post-resume Send turns, which always emit.
-func (a *Agent) SetSeeded(v bool) { a.seeded = v }
-
-// SetSeedSummary sets the initial previousSummary for a resumed loop.
-func (a *Agent) SetSeedSummary(text string) { a.seedSummary = text }
-
 // SetMaxTurns overrides the per-run turn cap after construction. A value <= 0 means
 // unlimited. An interactive (persistent conversational) loop MUST be uncapped: each
 // resumed exchange consumes real turns, so a finite cap would end the whole
@@ -321,11 +278,11 @@ const DefaultToolTimeout = 120 * time.Second
 
 // toolTimeoutExempt reports whether a tool is exempt from the per-tool-call
 // timeout because it legitimately runs long by awaiting other agents. These are
-// bounded by their own budgets/scheduler, the parent context, and (for
-// pipelines) per-step controls — not by the leaf-tool watchdog.
+// bounded by their own budgets/scheduler and the parent context, not by the
+// leaf-tool watchdog.
 func toolTimeoutExempt(name string) bool {
 	switch name {
-	case "spawn_agent", "pipeline_run":
+	case "spawn_agent":
 		return true
 	default:
 		return false

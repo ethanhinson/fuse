@@ -6,8 +6,8 @@
 //
 // A source implementation's own test calls RunSourceConformance with a factory
 // that builds a FRESH source over the given seed skills (replacing whatever its
-// backing store held), so the suite runs against FSSource (a directory),
-// StaticSource (a pre-loaded set) and the Postgres source (a table) alike.
+// backing store held), so the suite runs against FSSource (a directory) and StaticSource (a pre-loaded
+// set) alike.
 package skillstest
 
 import (
@@ -28,9 +28,14 @@ type SourceFactory func(t *testing.T, seed []skills.Skill) (skills.Source, func(
 // with. A factory that cannot install skills dynamically (StaticSource) still
 // satisfies them, because seed arrives before the source is constructed.
 var (
-	ConformanceSkillA = skills.NewCarried("skill-a", "first", "body a")
-	ConformanceSkillB = skills.NewCarried("skill-b", "second", "body b")
+	ConformanceSkillA = newSkill("skill-a", "first", "body a")
+	ConformanceSkillB = newSkill("skill-b", "second", "body b")
 )
+
+// newSkill builds a seed skill from its parts, with no SKILL.md file behind it.
+func newSkill(name, description, body string) skills.Skill {
+	return skills.Skill{Name: name, Description: description, Body: body}
+}
 
 // RunSourceConformance runs the full source contract against the factory.
 func RunSourceConformance(t *testing.T, factory SourceFactory) {
@@ -176,7 +181,7 @@ func nameUniqueness(t *testing.T, factory SourceFactory) {
 // embedded skills appear when the source lacks them.
 func composeEmbeddedBelowSource(t *testing.T, factory SourceFactory) {
 	t.Helper()
-	userResearch := skills.NewCarried("research", "user-defined research", "user body")
+	userResearch := newSkill("research", "user-defined research", "user body")
 	src, close := factory(t, []skills.Skill{userResearch})
 	if close != nil {
 		defer close()

@@ -6,7 +6,6 @@ import "context"
 // verdict. They are a durable vocabulary — permission.decision events carry
 // them on the wire — so values are never renamed, only added.
 const (
-	LayerMediation   = "mediation"    // complete-mediation target denial (change #52 D5)
 	LayerDisabled    = "disabled"     // permissions.disabled list
 	LayerModeOff     = "mode_off"     // mode: off auto-approve
 	LayerCache       = "cache"        // session approval-cache hit

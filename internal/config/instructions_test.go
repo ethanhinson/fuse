@@ -65,28 +65,6 @@ func TestInstructionsLocalLayerWithoutKeyKeepsHome(t *testing.T) {
 	}
 }
 
-func TestOverlaySpecInstructions(t *testing.T) {
-	base := Default()
-	base.Instructions = "operator"
-	c, refused, err := OverlaySpec(base, []byte("instructions: spec\n"), "s")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Instructions != "spec" || len(refused) != 0 {
-		t.Errorf("Instructions = %q refused = %v, want spec and none", c.Instructions, refused)
-	}
-	c, _, err = OverlaySpec(base, []byte("max_tokens: 5\n"), "s")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Instructions != "operator" {
-		t.Errorf("Instructions = %q, want operator", c.Instructions)
-	}
-	if base.Instructions != "operator" {
-		t.Errorf("base mutated: %q", base.Instructions)
-	}
-}
-
 func TestProblemsInstructionsLength(t *testing.T) {
 	c := Default()
 	c.Instructions = strings.Repeat("a", MaxInstructionsChars+1)
@@ -111,17 +89,5 @@ func TestInstructionsWhitespaceLayerKeepsInherited(t *testing.T) {
 	}
 	if c.Instructions != "home" {
 		t.Errorf("Instructions = %q, want home", c.Instructions)
-	}
-}
-
-func TestOverlaySpecWhitespaceInstructionsKeepsOperator(t *testing.T) {
-	base := Default()
-	base.Instructions = "operator"
-	c, _, err := OverlaySpec(base, []byte("instructions: \"  \\n\\t \"\n"), "s")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Instructions != "operator" {
-		t.Errorf("Instructions = %q, want operator", c.Instructions)
 	}
 }

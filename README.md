@@ -1,15 +1,15 @@
 # fuse
 
-fuse is a terminal-based, multi-model AI agent harness: an interactive shell
-that drives LLMs (via a LiteLLM gateway) with tools, a hardened subagent
-runtime, human-in-the-loop permissions, MCP integration, and an embedded skill
-system.
+fuse is a multi-model coding agent you control: it drives LLMs through a
+LiteLLM-compatible gateway with file, shell and research tools, a subagent runtime,
+human-in-the-loop permissions, MCP servers and skills. Use it as an interactive shell,
+or give it a task and let it run to completion. There is no server: one process does one
+job, which also makes it simple to run as one container per task.
 
 ## Installing
 
-Releases ship prebuilt `fuse` binaries for darwin and linux on amd64 and arm64,
-a multi-arch container image on GHCR, and SHA-256 checksums with build
-provenance attestations. No Go toolchain is required.
+Releases ship prebuilt `fuse` binaries for darwin and linux on amd64 and arm64, with
+SHA-256 checksums and build provenance attestations. No Go toolchain is required.
 
 ### Install script (recommended)
 
@@ -20,8 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/ethanhinson/fuse/main/scripts/insta
 The script detects your OS/arch, resolves the latest release, downloads the
 archive **and** its checksums file, verifies the SHA-256 digest, and refuses to
 install anything on a mismatch, a missing entry, or a malformed digest. It
-installs three binaries — `fuse` plus both egress forwarders (see the caveat
-below) — into `$HOME/.local/bin` by default, warns if that directory is not on
+installs `fuse` into `$HOME/.local/bin` by default, warns if that directory is not on
 your `PATH`, and never invokes `sudo`. It does not read or write
 `~/.fuse/config.yml`.
 
@@ -51,76 +50,13 @@ gh attestation verify "fuse_${VERSION}_darwin_arm64.tar.gz" --repo ethanhinson/f
 tar -xzf "fuse_${VERSION}_darwin_arm64.tar.gz"
 ```
 
-Every archive contains `fuse`, `fuse-egress-forward-linux-amd64`,
-`fuse-egress-forward-linux-arm64`, and `README.md` at its root — the darwin
-archives included, because the forwarder that matters is the one matching the
-*sandbox image's* architecture, not the host's. Keep the three binaries in the
-same directory.
-
-### Container image
-
-```sh
-docker run --rm ghcr.io/ethanhinson/fuse:latest version
-docker run --rm -p 8787:8787 ghcr.io/ethanhinson/fuse:latest \
-  loop-serve-net --addr 0.0.0.0:8787
-```
-
-`loop-serve-net` defaults to `--addr 127.0.0.1:8787`, which a published port
-cannot reach from outside the container, so bind `0.0.0.0` explicitly when you
-publish it.
-
-Tags are `:X.Y.Z`, `:X.Y`, and `:latest`, each a multi-arch manifest over
-linux/amd64 and linux/arm64. A pre-release tag (`v0.2.0-rc.1`) publishes
-`:X.Y.Z` **only** — it moves neither of the floating tags, `:X.Y` or `:latest`,
-so pinning `:X.Y` never gets you a release candidate. The entrypoint is `/fuse`,
-so arguments to `docker run` are fuse's own subcommands.
-
-The image is `gcr.io/distroless/static-debian12:nonroot` (UID 65532) with no
-shell and **no container runtime** inside it. Because the bash tool's security
-boundary is a container (ADR-0044), a bash tool used by a fuse running *inside*
-this image needs either the remote sandbox substrate (change #75) or a mounted
-container socket — and a mounted socket is approximately host root, a tradeoff
-the deployment change (#76) owns rather than inherits silently. See the comment
-block in [`Dockerfile`](Dockerfile).
-
-**Deploying the server.** A docker-compose dev stack and a Helm chart both ship
-in [`deploy/`](deploy) and run this image unmodified — see
-[docs/deploying.md](docs/deploying.md) for both quickstarts, the config-as-Secret
-model, the bash-tool tri-state, and the rolling-update semantics.
+Every archive contains `fuse` and `README.md` at its root.
 
 ### From source
 
 ```sh
 go install github.com/ethanhinson/fuse/cmd/fuse@latest
 ```
-
-**Postgres needs a build tag.** The `pgstore` event store is behind `-tags
-pgstore`. The released binaries, the image, and `make build` all carry it; a
-plain `go install` does not, so it produces an **fsstore-only** binary that
-ignores a Postgres DSN. `fuse version` prints the truth on its third line
-(`backends: fsstore,pgstore` vs `backends: fsstore`). If you want Postgres from
-source:
-
-```sh
-go install -tags pgstore github.com/ethanhinson/fuse/cmd/fuse@latest
-```
-
-**Forwarder caveat.** `go install` builds only the `fuse` binary. fuse locates
-the in-container egress forwarder beside its own executable and nowhere else —
-`<exeDir>/dist/fuse-egress-forward-linux-<arch>`, then
-`<exeDir>/fuse-egress-forward-linux-<arch>` (see the `egress-forwarder` comment
-in [`Makefile`](Makefile) and `defaultEgressForwarderCandidates` in
-[`cmd/fuse/sandbox.go`](cmd/fuse/sandbox.go)). Without it, `egress.mode: enforce`
-is still *safe* but is **deny-all**: containers run with `--network none` and no
-declared destination is reachable. fuse says so loudly on stderr at startup
-rather than looking like a broken network. Build and place the artifact with:
-
-```sh
-make egress-forwarder                                  # writes dist/fuse-egress-forward-linux-{amd64,arm64}
-cp dist/fuse-egress-forward-linux-* "$(dirname "$(command -v fuse)")/"
-```
-
-The install script and the release archives do this for you.
 
 ## Building
 
@@ -135,9 +71,10 @@ Configuration lives in `~/.fuse/config.yml` (with an optional per-repo
 
 Cutting a release is documented in [docs/releasing.md](docs/releasing.md).
 
-## Loop observability
+## Tracing
 
-`loop-serve-net` can independently expose Prometheus metrics, OpenTelemetry traces, and payload-free structured logs. The source-controlled [development-only reference stack](docs/observability.md) provisions Prometheus, Grafana, an OTEL Collector, and Tempo (intentionally not Loki). See [observability operations](docs/observability.md) for cardinality limits, rotation, authenticated replay, and the Grafana-to-Tempo workflow.
+fuse can export OpenTelemetry traces of its runs over OTLP. It is off by default. See
+[docs/observability.md](docs/observability.md).
 
 ## Research
 
@@ -259,15 +196,15 @@ fires in every mode for wrapper forms the shell parser accepts (`timeout`,
 Commands the parser refuses (`sudo`, `npx`, `xargs`, a path-qualified argv0,
 `env` with non-inert assignments, `bash` without `-c`) are matched by protective
 rules against the command text as written in every mode. With a human approver
-bound they prompt; with only a policy stand-in (the loop servers, the headless
+bound they prompt; with only a policy stand-in (the headless
 mcp-server, the research probe, piped stdin) they are denied at the rules layer
 with `unparseable command denied; no approver bound: <command>`, or with the
 matching rule's reason when one fires. `auto_approve` never admits them in auto
 mode; in smart mode only a first-token `auto_approve` entry such as `bash:sudo`
 does. The command in every deny reason is trimmed, capped at 200 characters with "…", and has URL credentials replaced with `***@`, matching the decision event's `command` field. A matching `always_prompt` or
 `auto.ask` rule is final in smart and auto mode alike: it prompts a human when
-one is bound, and when the gate's approver is a policy stand-in (the loop servers, the headless
-mcp-server, the research probe, piped stdin, the orchestrator's deny stand-in) it is denied with the matched pattern in the reason
+one is bound, and when the gate's approver is a policy stand-in (the headless
+mcp-server, the research probe, piped stdin) it is denied with the matched pattern in the reason
 (`matched ask rule <pattern>; no approver bound`). No later layer (the read-only
 safelist, smart mode's allow step, heuristics or classifier) can override it. Allow patterns (`auto_approve`) are strict: their `*` stops at
 `/`, so `bash:git *` does not approve `git clone https://host/repo` and
@@ -355,7 +292,7 @@ research:
 
 ```yaml
 agents:
-  max_spawns: 64        # tree-global spawn budget: the total number of child
+  max_spawns: 16        # tree-global spawn budget: the total number of child
                         # agents one root turn may create, ever. The runtime
                         # appends a line like `agent budget: 7/64 used (57
                         # remaining)` to every spawn_agent result so the model
@@ -365,7 +302,7 @@ agents:
                         # exhausted the spawn_agent tool is stripped from the
                         # model's schema for the rest of the session (a permanent
                         # brake, since the tree is append-only).
-  max_concurrent: 16    # live-concurrency cap: the number of child agents that
+  max_concurrent: 8     # live-concurrency cap: the number of child agents that
                         # may RUN at once, bounded by a semaphore, independently
                         # of the total max_spawns budget. When the active child
                         # count (running + pending) reaches this cap the
@@ -383,8 +320,7 @@ instructions: |
 
 The text is added to the main agent's system prompt after the persona prompt; subagents
 keep their own prompts. It is read from `~/.fuse/config.yml` and `.fuse.local.yml`, and
-the local file wins. It may be at most 16384 characters, and a harness spec's
-`instructions` replaces it for that loop.
+the local file wins. It may be at most 16384 characters.
 
 ### The `roles` config key
 
@@ -396,37 +332,25 @@ roles:
       You review the files you are given. Report correctness problems first.
     tools: [read_file, grep]   # empty or omitted: inherit the main agent's tools
     model: fast                # empty or omitted: inherit the main agent's model
-workflows:
-  review:
-    skill: review
-    roles: [reviewer]
 ```
 
-A role says who a helper is; a workflow says how a big job is divided up and lists the
-roles that may take part. The description is what the main agent reads when choosing whom
-to hand work to; it is required and may be at most 512 characters. Instructions may be at
-most 16384 characters, and a config may define at most 32 roles. Role names use lowercase
+A role says who a helper is. The description is what the main agent reads when choosing
+whom to hand work to; it is required and may be at most 512 characters. Instructions may be
+at most 16384 characters, and a config may define at most 32 roles. Role names use lowercase
 letters, digits, `-` and `_`. A non-empty `tools` list is the helper's whole tool set and
 can only narrow it; the helper can start its own helpers only when the list names
 `spawn_agent`. Tool names and model aliases are not checked when the config is loaded.
-Every name in a workflow's `roles` must be defined under `roles`. Roles are read from
-`~/.fuse/config.yml` and from a harness spec, not from `.fuse.local.yml`. See
-[`examples/harness/review-team.json`](examples/harness/review-team.json) for a harness
-spec with two roles.
+Roles are read from `~/.fuse/config.yml`, not from `.fuse.local.yml`.
 
 When roles are defined, `spawn_agent` offers a `role` parameter that lists each role's
-description. Outside a workflow every role is offered; inside one, the workflow's `roles`
-are offered (every role when it lists none). The role's instructions become the helper's
-brief, in the place the top-level `instructions` takes for the main agent. A non-empty
-`tools` list is the helper's whole tool set plus the blackboard tools, and the call's
-`tools` may only narrow it. The call's `model` wins over the role's. `role` cannot be
-combined with `system_prompt` or `worker`.
+description. The role's instructions become the helper's brief, in the place the top-level
+`instructions` takes for the main agent. The call's `tools` may only narrow a role's list.
+The call's `model` wins over the role's. `role` cannot be combined with `system_prompt`.
 
 `no_tools: true` makes an agent tool-less: it is offered no tools at all and its requests
-carry none. At the top level of a config it makes the loop tool-less. A role has three
+carry none. At the top level of a config it makes the run tool-less. A role has three
 states: an empty `tools` list inherits the main agent's tools, a non-empty list narrows
-them (plus the blackboard tools), and `no_tools: true` gives it none. A worker has two:
-its named tools, or none when `no_tools` is set. The key is honoured from every config
+them, and `no_tools: true` gives it none. The key is honoured from every config
 layer. The interactive shell and `research-probe` ignore it and print a warning, and
 `cli/` models refuse it. A tool-less helper started with `expects` is offered only
 `return_result`, so callers still get a structured result back.
@@ -467,414 +391,25 @@ production wiring, so what you see is exactly what `/research` does.
 
 ## Steering a running agent
 
-You can talk to an agent while it works, and you can hand that job to an
-**orchestrator**: a second model that watches the agent and steers it for you.
-This works in every way you can run fuse.
+In `fuse shell` you can talk to an agent while it works. A message you type is read at the
+agent's next step. `/interrupt MESSAGE` cancels what the agent is doing right now (the model
+call or the running command) so the message lands at once. Steps the agent had not started
+yet are skipped, and every tool call still gets a result, so the conversation stays valid.
 
-Two things to know first:
+## MCP servers
 
-- **A steer** is a message to a running agent. It is read at the agent's next
-  step. Add **interrupt** and fuse cancels what the agent is doing right now
-  (the model call or the running command) so the message lands at once. Steps
-  the agent had not started yet are skipped, and every tool call still gets a
-  result, so the conversation stays valid.
-- **The orchestrator** is a chat. It has three tools: look at what the agent is
-  doing, read one event in full, and steer the agent. It has no shell and no
-  file access. Its messages reach the agent labelled as guidance from the
-  orchestrator, spoken for you, and newer than the agent's earlier instructions.
-
-| How you run fuse | Steer | Chat with the orchestrator |
-|---|---|---|
-| `fuse shell` | type while it works; `/interrupt MESSAGE` to cut in | `/orchestrator` (stays on until `/orchestrator off`), or `/orchestrator MESSAGE` for one message |
-| `fuse "task"` | start with `--control /tmp/run.sock`, then `fuse steer --socket /tmp/run.sock --loop ID [--interrupt] "msg"` | `fuse orchestrate --socket /tmp/run.sock --loop ID` |
-| `fuse loop-serve-net` (Docker, compose, Helm) | `fuse steer --url URL --token T --loop ID`, or `Send` with `interrupt` | `fuse orchestrate --url URL --token T --loop ID`, or start a loop with `orchestrate` set (below) |
-| `fuse loop-server` (stdio) | `loop.send` with `"interrupt": true` | `loop.start` with `"orchestrate": "<loop id>"` |
-| Go and TypeScript SDKs | `client.Interrupt` / `client.SendWith` (Go), `client.interrupt` / `client.sendWith` (TS) | `StartLoopConfig.Orchestrate` (Go), `orchestrate` in `startLoop` (TS) |
-
-The one-shot run prints the exact `fuse steer` line, with its loop id, when it
-starts with `--control`. The control socket is private to your user (mode 0600).
-
-Starting an orchestrator on a server makes it a loop like any other. It lives in
-the same tenant as the loop it watches and needs the same permission to drive
-it, then you chat with it through `Send` and `Observe`:
-
-```go
-worker, _ := client.StartLoop(ctx, fuse.StartLoopConfig{Task: "migrate the schema", Model: "minimax", Interactive: true})
-orch, _ := client.StartLoop(ctx, fuse.StartLoopConfig{Task: "Tell me what it is doing.", Model: "deepseek-flash", Orchestrate: worker})
-client.Send(ctx, orch, "Tell it to run the tests before it finishes. Interrupt it if it is mid-edit.")
-```
-
-Pick the orchestrator's model in `~/.fuse/config.yml` (home file only, so a
-repository cannot choose which model steers your agent):
+The shell and one-shot runs attach the MCP servers in `mcp_servers`, and their tools are
+offered to the model as `mcp:<server>/<tool>`. A server that cannot connect is skipped and
+logged; the run continues. Authentication is `none`, `bearer` or `static` (both send
+`client_secret` as a bearer token), or `oauth2`.
 
 ```yaml
-orchestrator:
-  model: deepseek-flash   # an alias from `fuse models`; empty means the session's model
+mcp_servers:
+  - name: docs
+    transport: streamable-http
+    url: https://mcp.example.com
+    auth: {type: bearer, client_secret: "${DOCS_TOKEN}"}
 ```
-
-`fuse orchestrate` runs the orchestrator model on your machine, using your
-gateway config, and reaches the agent only through the wire. `--model` overrides
-the alias for one session.
-
-### More than one replica
-
-A hosted fuse can run as many replicas as you like (the Helm chart ships an
-autoscaler), and a steer or a chat message can reach any of them.
-
-- **Each loop runs on one replica**, the one that started it. The replicas share
-  Postgres, so every replica can read every loop.
-- **A message that lands on a different replica is not lost or refused.** That
-  replica writes it into the loop's stream (a `steer.request` event) and answers
-  right away. The replica that runs the loop picks it up within a moment. The
-  request is stored before you are told it was accepted, and the agent's next
-  `user.input` event records that it was delivered, so nothing is delivered twice,
-  even across a restart. An orchestrator on one replica can steer a loop on
-  another the same way.
-- **When a replica goes away, its chat loops move.** On a clean shutdown (a
-  scale-down or rollout) the replica marks its loops as no longer running before
-  it exits. After a crash, the loop is treated as abandoned once its lease runs
-  out (30 seconds by default). Either way, the next message to any replica
-  resumes the loop from its stream, with its full conversation. Work that was
-  half done on the replica that went away is not continued; a non-chat run that
-  was in progress is lost.
-- **Use Postgres.** Replicas on the filesystem store share nothing in a normal
-  cluster. The Helm chart will not render without a database (`postgres.dsn`,
-  `postgres.existingSecret` or the dev-only `postgres.dev.enabled`). Raise
-  `replicaCount`, or set `autoscaling.enabled: true`, to run more than one.
-
-## Networked loop-control — `loop-serve-net` (Connect/protobuf)
-
-`fuse loop-serve-net` exposes the same policy-free multi-loop runtime that
-`loop-server` serves over stdio, but over the network as a
-[Connect](https://connectrpc.com) service (`fuse.loop.v1`, IDL in
-`proto/fuse/loop/v1/loop.proto`). It is browser-reachable over HTTP/2 with no
-proxy and speaks Connect, gRPC, and gRPC-Web (served over h2c):
-
-Neither `loop-server` nor `loop-serve-net` has a human approver, so an operator
-`always_prompt` or `auto.ask` rule cannot prompt anyone: a matching call is
-denied with the pattern in the reason, in smart mode (the default) and auto mode
-alike, and the model sees that reason as the tool result. To let such a command
-run unattended, move its pattern to `auto_approve` or remove it.
-A command the permission parser refuses (`sudo`, `npx`, `xargs`, a
-path-qualified binary, `env` with non-inert assignments) is denied the same way,
-with `unparseable command denied; no approver bound: <command>`: a hosted loop
-cannot run one unless the loop runs in smart mode with a first-token
-`auto_approve` rule naming it, such as `bash:sudo`.
-
-```sh
-fuse loop-serve-net --addr 127.0.0.1:8787
-```
-
-### Authentication and multi-tenancy (change #49)
-
-Unlike the stdio `loop-server` and the local CLI paths, this networked binding
-**requires a bearer token on every request** — identity and authorization live at
-the Connect edge, never in the policy-free runtime seam. Present the credential as
-an `Authorization: Bearer <token>` header; a missing or unknown token is rejected
-with `Unauthenticated` before the handler runs.
-
-The token→principal map and the owner-liveness lease TTL come from the trusted
-`~/.fuse/config.yml` `loop_server:` block (a credential-bearing surface — a
-repo-plantable `.fuse.local.yml` cannot mint tokens):
-
-```yaml
-loop_server:
-  lease_ttl: "30s"            # owner-liveness lease; empty ⇒ 30s runtime default
-  auth:
-    - token: s3cr3t-alice     # the bearer credential a client presents
-      tenant: acme            # isolation boundary; empty ⇒ the _default tenant
-      subject: alice          # authorization subject, recorded as a loop's owner
-      observability_operator: true # grants global logging reload/reopen
-    - token: s3cr3t-bob
-      tenant: acme
-      subject: bob
-      scopes: [loop:observe]  # optional; omitted means unrestricted
-```
-
-Each principal resolves to a `tenant` (the isolation boundary every store/registry
-op is keyed by) and a `subject` (recorded as a loop's owner). Authorization is then:
-
-- **Tenant spoof** — a request whose wire `tenant` differs from the token's tenant
-  is rejected `PermissionDenied`.
-- **Cross-tenant** — reaching a loop under a different tenant returns `NotFound`
-  (the tenant-scoped resolve simply misses it; a tenant cannot even learn another
-  tenant's loop exists).
-- **Cross-owner** — a same-tenant caller that is not the loop's recorded owner is
-  rejected `PermissionDenied`.
-
-#### Scopes
-
-A token may carry scopes (`scopes:` on a static entry, the `scope` claim on an
-issuer token). Each RPC requires one:
-
-| RPC | Required scope |
-| --- | --- |
-| `StartLoop` | `loop:start` |
-| `Send` | `loop:send` (or `loop:admin`) |
-| `Observe` | `loop:observe` (or `loop:admin`) |
-| `CancelLoop` | `loop:cancel` (or `loop:admin`) |
-| `GetCapabilities` | `capabilities:read` |
-
-- `loop:admin` acts on any loop in the token's tenant regardless of owner
-  (cross-tenant is still `NotFound`). It is never implied by an unrestricted token.
-- `secrets:inline` is required to send `StartLoopRequest.secrets` (loop-scoped secret
-  values); an unrestricted token has it.
-- No scopes means unrestricted. An unknown scope name in a token claim is ignored but
-  still restricts the token; an unknown name in a static `scopes:` entry is a config
-  validation error. An explicitly empty scope (`scope: ""`, `scopes: []`) is refused.
-  The `scope` claim must be a space-separated string; the JSON array form is refused.
-- `loop:cancel` is implied by no other scope, so a start-only token cannot stop
-  loops; an unrestricted token has it.
-- A refusal is `PermissionDenied` naming the missing scope.
-
-**Harness digest pin.** A token with `harness_digest: sha256:<hex>` (the
-`harness_digest` `StartLoop` returns, `harness.Digest`) can only start a loop
-whose spec has exactly that digest. No spec or a different spec is
-`PermissionDenied`, and nothing is created. The pin is checked on `StartLoop` only: a
-pinned token without a scope can still `Send` to and `Observe` loops its subject owns,
-so pair `harness_digest` with `scope: loop:start` for a start-only credential.
-
-**Audit records.** Every networked `StartLoop` appends `loop.principal`
-(`subject`, `client_id`, `issuer`, `scopes`, `token_id`) right after
-`loop.harness`. Each delegated tool token mint appends `tool.identity.minted`
-(`subject`, `audience`, `scope`, `loop_id`). Neither event holds a token.
-
-The **lease TTL** is the owner-liveness window: the owning instance renews the
-lease while a loop is live, and a loop whose lease has expired is treated as
-abandoned and re-ownable by a cold instance on reconnect (so a crashed owner does
-not strand a loop). Reconnecting a dropped `Observe` is just re-opening
-`Observe(from_seq)` with the same token — the stream dedups replay/live at the
-watermark, so there is no loss or duplication across the handoff.
-
-If neither `loop_server.auth` nor `loop_server.issuers` is set, a single built-in dev token (`fuse-dev-token`,
-mapped to the `_default` tenant) is synthesized so local development works out of
-the box — the server still authenticates every request; it never runs open.
-Configure real tokens for any shared or deployed server.
-
-#### Trusted token issuers
-
-Static tokens need a config change and a restart for every new caller. When
-another service (a CMS, a web app) signs its own users in and starts loops on
-their behalf, declare it as a **trusted issuer** instead: it shares an HS256
-secret with fuse and mints a short-lived token per request that names the user.
-New users then need no change on the fuse side.
-
-```yaml
-loop_server:
-  auth: [...]                       # static tokens keep working and are checked first
-  issuers:
-    - issuer: cms                   # must equal the token's iss
-      signing_key: <random secret>  # HS256 shared secret, at least 32 bytes
-      audience: fuse-loop           # must equal the token's aud
-      tenants: [_default]           # tenants this issuer may assert; empty means only _default
-      max_ttl: 1h                   # refuse tokens whose exp - iat is longer (default 1h)
-      observability_operator: false # granted to every principal of this issuer (default false)
-```
-
-The bearer token is a compact JWS. fuse refuses it unless all of this holds:
-
-| Part | Rule |
-| --- | --- |
-| header `alg` | exactly `HS256` (`none`, `RS256`, a missing alg and every other value are refused) |
-| `iss` | names a configured issuer; that issuer's key must verify the signature |
-| `sub` | non-empty string; becomes the principal's subject, recorded as the loop's owner |
-| `aud` | equals the issuer's `audience` (a string, or an array that contains it) |
-| `iat`, `exp` | both required; `exp` in the future, `iat` at most 30s in the future, `exp - iat` at most `max_ttl` |
-| `nbf` | optional; honored when present |
-| `tenant` | optional, default `_default`; must be in the issuer's `tenants` |
-| `scope` | optional space-separated string of scopes (see Scopes); a non-string or empty value is refused |
-| `harness_digest` | optional string; pins `StartLoop` to that harness digest |
-| `azp` | optional string, recorded as `client_id` |
-| `jti` | optional string, recorded as `token_id`; not a replay cache |
-
-The result is the same `{tenant, subject}` principal a static entry gives, so
-ownership and tenant checks work unchanged. A token cannot grant
-`observability_operator`; only the issuer's config entry can. Every refusal is
-the same `Unauthenticated` error with no detail. Configuring any issuer also
-turns off the built-in dev token. Like `auth`, `issuers` is honored only from
-`~/.fuse/config.yml`.
-
-Instead of a shared `signing_key`, an issuer may hold asymmetric keys, so the
-server never sees the private key and rotation needs no restart. Set exactly one
-of `signing_key`, `jwks` (inline public JWKs: `kid` plus EC P-256 or Ed25519
-`kty`/`crv`/`x`/`y`) or `jwks_url` (an https JWKS document, cached and refetched
-every `jwks_refresh`, default `5m`, and at most once a minute on an unknown
-`kid`). Tokens then carry a `kid` header and `alg` `ES256` (EC) or `EdDSA`
-(Ed25519); an `alg` that does not match the key type, a missing or unknown `kid`
-and `alg: none` are all refused. `tenant_prefix: team-` additionally accepts any
-valid tenant id (lowercase letters, digits, `-`, `_`) that starts with the
-prefix, so a service creating tenants on demand needs no config change; the
-tool-identity signing key for each such tenant is derived on first use.
-
-Minting a token in TypeScript (Node, no library needed):
-
-```ts
-import { createHmac } from "node:crypto";
-
-function fuseLoopToken(secret: string, sub: string, tenant?: string): string {
-  const b64 = (v: object) => Buffer.from(JSON.stringify(v)).toString("base64url");
-  const now = Math.floor(Date.now() / 1000);
-  // Optional: add scope: "loop:start loop:observe" to restrict the token.
-  const claims = { iss: "cms", sub, aud: "fuse-loop", iat: now, exp: now + 300, ...(tenant ? { tenant } : {}) };
-  const input = `${b64({ alg: "HS256", typ: "JWT" })}.${b64(claims)}`;
-  return `${input}.${createHmac("sha256", secret).update(input).digest("base64url")}`;
-}
-
-// fetch(`${fuseUrl}/fuse.loop.v1.LoopService/StartLoop`, {
-//   method: "POST",
-//   headers: { Authorization: `Bearer ${fuseLoopToken(secret, user.id)}`, "Content-Type": "application/json" },
-//   body: JSON.stringify({ task: "..." }),
-// });
-```
-
-Mint a fresh token per call (or cache one for less than its lifetime). A
-long-running `Observe` stream is authenticated once, when it opens.
-
-#### Per-tenant loop limits
-
-`loop_server.limits` bounds how many loops each tenant keeps alive and how fast
-it starts new ones:
-
-```yaml
-loop_server:
-  limits:
-    default:                  # applies to every tenant
-      max_live_loops: 20      # live (not finished) loops per tenant
-      starts_per_minute: 30   # StartLoop attempts per tenant per minute
-    tenants:
-      team-big:
-        max_live_loops: 200   # overrides only this axis; starts_per_minute inherits 30
-```
-
-- **Zero means unlimited.** An omitted or `0` axis in `default` is unlimited.
-- **Overrides are per axis.** A tenant entry's axis above zero replaces the
-  default's; `0` or omitted inherits it. An override therefore cannot unset one
-  axis back to unlimited: use a large value instead.
-- **Refusals.** A start over either limit fails with `ResourceExhausted`; a rate
-  refusal carries a `Retry-After` hint for when the next start token is due.
-- **Check order.** The start rate is checked before the live-loop cap, and every
-  authenticated start attempt spends a start token, including one the cap then
-  refuses.
-- **Scope.** The start rate is counted per server process (with several replicas
-  it applies per pod). The live-loop cap counts the tenant's live loops in the
-  shared loop registry: it is exact within one process and a soft bound across
-  replicas, where concurrent starts on different replicas can overshoot it by at
-  most the replica count.
-- **Registry scans.** Each cap check scans the tenant's registry records, so
-  `max_live_loops` alone leaves those scans unthrottled. Set `starts_per_minute`
-  as well to bound them.
-- **Crashed replicas.** Loops owned by a replica that crashed still count
-  against the cap until their lease expires (`lease_ttl`, default 30s).
-- **Tenant keys.** `limits.tenants` keys are exact tenant ids; there is no prefix
-  or pattern form.
-- **Resumes.** A `Send` that resumes a finished loop is admitted like a start:
-  it spends a start token and may fail `ResourceExhausted` when the tenant is at
-  its live-loop cap. A `Send` to a loop that is still live is never refused and
-  takes no slot.
-
-Like `auth` and `issuers`, `limits` is honored only from `~/.fuse/config.yml`.
-
-The service is five RPCs:
-
-- `StartLoop` / `Send` — unary. The authoritative tenant is the authenticated
-  token's; the wire `tenant` field, when set, must match it (a mismatch is a
-  spoof, see above). `StartLoop`, and a `Send` that resumes a finished loop,
-  may fail `ResourceExhausted` when the tenant is over its loop limits (see
-  Per-tenant loop limits).
-- `GetCapabilities` - unary and read-only, with the same authentication as
-  `StartLoop`. It starts no loop. For the authenticated tenant it returns:
-  - models: alias, gateway id, effective context window, effective max output
-    (the entry's `max_tokens`, else the top-level `max_tokens`), persona,
-    default flag, and the optional `label` / `description` / `tags`
-  - installed skills (a spec may also carry its own; see `sdk/README.md`)
-  - one ceiling per tighten-only field, keyed by the refusal field path
-    (`operator_set: false` means a spec cannot set that field). Ceilings are
-    strict: a spec value must be strictly below the ceiling's value, and a
-    value equal to it is refused
-  - `secret_ref` names for the tenant, names only (a host-restricted secret
-    still resolves only for its hosts)
-  - spec MCP auth kinds
-  - the spec policy (`mcp_hosts`, `deny_private_networks`,
-    `models_registry_only`, `carried_skills_allowed`)
-  - server version and digest algorithm
-  - `limits`: the caller's effective `max_live_loops` and `starts_per_minute`
-    (0 means unlimited)
-
-  `cli/` routes are never listed. Model entries carry optional display keys,
-  and `advertise: false` hides an entry from the listing:
-
-  ```yaml
-  models:
-    # Well-known tags: tools, vision, reasoning, long-context.
-    fast: {id: cloud/fast, label: Fast coder, description: Cheap and quick, tags: [tools, long-context]}
-    internal: {id: cloud/internal, advertise: false}
-  ```
-
-  Loop-scoped secrets: a client may send `secrets: [{name, value, hosts}]` with
-  `StartLoop` to satisfy its harness spec's `secret_ref` names. Values are kept in
-  memory only and are never recorded or logged. An operator `loop_server.secrets`
-  entry for the tenant wins over a client entry of the same name. The value resolves
-  only for a destination whose hostname is listed in its `hosts`, which is required,
-  and the MCP and custom research clients refuse an SSE endpoint event that names
-  another host and any redirect to another host or from https to http, so the value is
-  never sent past the listed hosts. At most 32 entries are accepted, 16 KiB per value,
-  253 bytes per name, and 16 hosts per entry of 253 bytes each; each host must be a
-  bare hostname. They are ignored without a harness spec, and `GetCapabilities` never
-  lists them. A loop whose spec depends on loop-scoped secrets cannot be resumed,
-  because resume re-resolves the spec without them: the client's `Send` fails with
-  `FailedPrecondition` ("loop finished").
-- `Observe(from_seq)` — server-streaming history-then-live: it replays durable
-  history since `from_seq`, then live-tails, deduping the replay/live overlap at
-  the watermark and flagging a `gap` when a sequence hole is detected. A
-  reconnecting client (any instance, resolved cross-instance via the durable
-  store) simply re-opens `Observe` from its last-seen seq — this single stream
-  subsumes both the live tail and catch-up replay. Idle streams receive periodic
-  `keepalive` frames so a parked loop survives a gateway idle timeout.
-- `CancelLoop` — unary. Stops a loop the caller owns and releases its resources;
-  `loop.cancelled` is the last event on its stream, and a `Send` afterwards fails
-  `FailedPrecondition` ("loop cancelled"). It is idempotent: the outcome is
-  `CANCELLED`, `ALREADY_CANCELLED`, or `CANCELLING` (relayed to the owning replica).
-
-The wire stubs are generate-and-commit (`make proto`, requires `buf` +
-`protoc-gen-go`/`protoc-gen-connect-go` on PATH and `cd proto && npm ci` for the
-TS `protoc-gen-es` plugin); committed Go stubs live in `internal/loopwire/v1`
-and TS stubs in `proto/gen/ts`.
-
-This replaces the earlier JSON-over-WebSocket wire (change #48, ADR-0032
-superseded): there is no `/ws` or `/loops/{id}/events` route anymore.
-
-### MCP on every binding, with the real per-principal identity (change #59)
-
-MCP tool execution is attached on **every** loop binding — the shell, the one-shot
-CLI, the research probe, and both loop-servers — through one composition-root helper,
-`mcpAttach(cfg, w)` in `cmd/fuse`. It resolves, together, the identity-propagation
-egress seam (`mcp.WithCredentialSource`, when an identity-propagating MCP server is
-configured — change #52) **and** the complete-mediation `TargetMediator` gate, so no
-binding can wire a manager without also wiring the egress credential seam and the
-target-allowlist gate. A misconfiguration is logged loud at startup, never silent.
-
-On the **loop-server** paths this is first-class and **per-loop**: each hosted loop
-gets its **own** `mcp.Manager`, its tools registered into **that loop's own** cloned
-tool registry, and the manager closed at loop teardown — two concurrent loops never
-share a manager, a registry, or a credential. Crucially, the loop-server threads the
-**real authenticated principal** the Connect edge resolved (`sub` = the initiating
-user, `act` = fuse) into the egress, so each outbound MCP `tools/call` presents a
-short-lived, **audience-bound, per-principal delegation token** minted for that user
-and tenant — never a shared static token and never the `_default` shim. The minted
-token lives only on the outbound transport header: it never appears in the event
-stream, the durable store, logs, or model context.
-
-The identity travels as a **context value** stamped by the composition root
-(`toolidentity.WithPrincipal`) through the runtime's policy-free `LoopContext` /
-`LoopTeardown` seams — `internal/runtime` imports no auth, MCP, or `cmd/fuse` type
-(ADR-0030 preserved). A permanent CI acceptance lane
-(`cmd/fuse/loop_serve_net_rentals_acceptance_test.go`) drives two authenticated
-principals concurrently through the loop-server binding against a real stateful
-rentals MCP server (`internal/mcpdemo/rentals`, importable by Wander), under `-race`,
-asserting the full #52 checklist — distinct per-principal tokens, downstream 403 as a
-distinguishable tool error, per-principal write isolation, wrong-audience rejection,
-complete mediation of an undeclared target even under auto-approve, and no credential
-leak — so a regression kills the build.
 
 ## License
 

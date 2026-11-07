@@ -1,258 +1,197 @@
-// Package runtime is the policy-free composition seam over the agent engine. It
-// names loop mechanics only — start / send / spawn / observe / attach — and
-// composes internal/agent + internal/event + internal/event/fsstore +
-// internal/model + internal/tools into one concrete in-process implementation.
+// Package runtime drives one agent loop in this process: it builds the loop's root
+// agent through the binding's factory, runs it in a goroutine, and owns the loop's
+// event store and teardown. The one-shot and research-probe bindings go through it.
 //
-// Import direction is load-bearing (learning break-import-cycle-with-agent-free-
-// subpackage): runtime imports the heavy packages and is imported ONLY by the
-// composition root (cmd/fuse). It must NEVER be imported by internal/agent or
-// internal/tools — that would form an import cycle. It also imports NO renderer /
-// TUI / MCP / CLI type: those are each binding's business and never appear here
-// (model + agent + event + tools + fsstore are allowed; a TUI/MCP import is not).
+// It is policy-free: renderers, approval gates and MCP stay in the binding, which
+// reaches the runtime only through the Deps closures.
 package runtime
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sync"
 
-	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/agent"
+	"github.com/ethanhinson/fuse/internal/artifact"
 	"github.com/ethanhinson/fuse/internal/event"
-	"github.com/ethanhinson/fuse/internal/loopsecret"
+	"github.com/ethanhinson/fuse/internal/event/fsstore"
 	"github.com/ethanhinson/fuse/internal/model"
+	"github.com/ethanhinson/fuse/internal/observe"
+	"github.com/ethanhinson/fuse/internal/tools"
 )
 
-// Runtime is the policy-free composition seam over the agent engine. It names loop
-// mechanics only — no renderer, TUI, approval gate, or MCP/CLI vocabulary appears
-// here. Every method keys on loopID = (*agent.AgentTree).RootID(); the interface is
-// designed for N loops though this change implements one loop per process (see plan
-// Decision Note D-1).
+// Runtime starts agent loops.
 type Runtime interface {
-	// StartLoop constructs and drives one agent loop from cfg, returning a handle
-	// whose ID() is the tree RootID. It wraps agent.New + SetEventSink/
-	// SetNodeIdentity + Agent.Run. The run executes in a goroutine; the handle
-	// awaits it.
+	// StartLoop constructs one agent loop from cfg, runs it in a goroutine, and
+	// returns a handle to await it. A construction failure is returned here and no
+	// run starts.
 	StartLoop(ctx context.Context, cfg LoopConfig) (LoopHandle, error)
-
-	// Send injects human input at the loop's next turn boundary (ADR-0022 human-bus).
-	// It is tenant-scoped: resolution (cache hit AND durable fall-through) is keyed on
-	// (tenant, loopID), so a Send under tenant X never lands on tenant Y's loop. It
-	// returns ErrLoopNotFound for an unknown loop, ErrLoopCancelled for a loop a
-	// Cancel sealed (it is never resumed), and ErrLoopFinished when the loop's run
-	// goroutine has already completed (its injector no longer drains, so enqueuing
-	// would strand the message); a still-running loop enqueues and returns nil.
-	// Single-tenant callers pass event.DefaultTenant (or "" — NormalizeTenant maps it
-	// to the default) for byte-identical behavior.
-	Send(ctx context.Context, tenant event.TenantID, loopID string, input string) error
-
-	// Spawn starts a child agent under the loop and returns a handle wrapping
-	// agent.AgentHandle (ADR-0026: Wait()/Result()/Done).
-	Spawn(ctx context.Context, loopID string, opts SpawnOpts) (SpawnHandle, error)
-
-	// Observe returns a live event tail plus an idempotent unsubscribe. It resolves
-	// the (tenant, loopID) stream: a locally-running loop subscribes to its own store;
-	// a loop known only via the durable registry (started by a prior process/another
-	// instance) subscribes to the durable store's cross-instance channel.
-	Observe(ctx context.Context, tenant event.TenantID, loopID string) (<-chan event.Event, func(), error)
-
-	// Attach returns durable history with Seq > from for reconnect. It resolves the
-	// (tenant, loopID) stream against the durable registry when present, so a cold
-	// instance can replay a loop a prior process finished.
-	Attach(ctx context.Context, tenant event.TenantID, loopID string, from event.Seq) ([]event.Event, error)
-
-	// Resume revives a persistent conversational session so a client can keep chatting
-	// after a disconnect that outlived even the idle-TTL reaper — or on a cold instance
-	// that never held the loop (change 0054, D4). It resolves the (tenant, loopID)
-	// record tenant-scoped (ADR-0034: a cross-tenant resume is ErrLoopNotFound, never a
-	// leak). If the loop is still live here it is a no-op returning the existing handle
-	// (resume then just means "re-open your Observe"). If it is finished/evicted, Resume
-	// replays the durable event stream, reconstructs the model-facing transcript
-	// (single source of truth, D1/D5), builds a fresh agent seeded with it, and re-parks
-	// it under a session-scoped context so a subsequent Send drives the next turn instead
-	// of returning ErrLoopFinished. It returns ErrLoopNotFound for an unknown loop and
-	// ErrLoopCancelled for a loop a Cancel sealed (or asked to stop through a
-	// loop.cancel.request nobody answered yet: Resume answers it and launches nothing),
-	// and requires the durable Registry + DurableStore (a nil-registry binding has no
-	// cross-process identity to resume). Interactive-only: a resumed loop always parks.
-	Resume(ctx context.Context, tenant event.TenantID, loopID string) (LoopHandle, error)
 }
 
-// Message sources for SteerOpts.Source. They are the agent's own labels, re-exported so
-// a binding names them without importing the agent package.
-const (
-	SourceHuman        = agent.SourceHuman
-	SourceOrchestrator = agent.SourceOrchestrator
-)
-
-// ValidSource reports whether s is an accepted message source ("" reads as human).
-func ValidSource(s string) bool {
-	return s == "" || s == SourceHuman || s == SourceOrchestrator
-}
-
-// SteerOpts qualifies one steering message.
-type SteerOpts struct {
-	// Source says who is speaking (agent.SourceHuman, the default, or
-	// agent.SourceOrchestrator). The agent sees it as a label on the message.
-	Source string
-	// Interrupt cancels the loop's in-flight model call or tool batch so the message
-	// lands now instead of at the next turn boundary.
-	Interrupt bool
-}
-
-// Steerer is an optional Runtime capability (ADR-0047): Send with a source label and
-// an interrupt. A binding type-asserts for it and falls back to Send, so a Runtime
-// that does not steer (a test fake) still works everywhere. The in-process runtime
-// implements it. Errors match Send's: ErrLoopNotFound, ErrLoopFinished.
-type Steerer interface {
-	Steer(ctx context.Context, tenant event.TenantID, loopID string, input string, opts SteerOpts) error
-}
-
-// Shutdowner is an optional Runtime capability (ADR-0047): end every loop this runtime
-// runs and wait, until ctx is done, for each to record that it is no longer live. A server
-// calls it at the end of a graceful drain so its loops are handed off at once - the next
-// message to any replica sees ErrLoopFinished and the edge resumes the loop - instead of
-// the loop looking alive until its lease expires.
-type Shutdowner interface {
-	Shutdown(ctx context.Context) error
-}
-
-// CancelOutcome says what a Cancel did. The values line up with the wire enum.
-type CancelOutcome int
-
-const (
-	CancelOutcomeUnspecified CancelOutcome = iota
-	// CancelOutcomeCancelled: this call sealed the loop.
-	CancelOutcomeCancelled
-	// CancelOutcomeAlreadyCancelled: an earlier cancel sealed it.
-	CancelOutcomeAlreadyCancelled
-	// CancelOutcomeCancelling: the cancel is recorded but its terminal event has
-	// not been seen yet (another replica owns the loop, or the unwind is slow).
-	CancelOutcomeCancelling
-)
-
-// CancelResult reports one Cancel.
-type CancelResult struct {
-	Outcome     CancelOutcome
-	WasLive     bool      // the cancel interrupted a running or parked loop
-	TerminalSeq event.Seq // seq of loop.cancelled; 0 when not yet known
-	Reason      string    // the recorded reason (the first one on AlreadyCancelled)
-}
-
-// Canceller is an optional Runtime capability (ADR-0047): stop a loop and seal
-// it. Its in-flight work is cancelled, loop.cancelled is appended as the last
-// event of its stream, and the loop never accepts another Send or resume
-// (ErrLoopCancelled). A loop another replica runs is cancelled through its durable
-// stream (a loop.cancel.request its owner honours); one no process runs is sealed
-// directly. A binding type-asserts for it. Errors: ErrLoopNotFound for an unknown
-// or wrong-tenant loop. requestedBy is the caller's principal subject, never a
-// token.
-type Canceller interface {
-	Cancel(ctx context.Context, tenant event.TenantID, loopID, reason, requestedBy string) (CancelResult, error)
-}
-
-// CancelReader is an optional Runtime capability: report whether a loop is
-// sealed by a cancel, without changing anything. A loop this process caches
-// answers from its in-memory seal; any other loop reads its durable stream, where
-// loop.cancelled or a loop.cancel.request nobody answered both mean cancelled (a
-// resume would refuse it with ErrLoopCancelled). An unknown or wrong-tenant loop
-// reads not cancelled. A binding type-asserts for it.
-type CancelReader interface {
-	IsCancelled(ctx context.Context, tenant event.TenantID, loopID string) (bool, error)
-}
-
-// SendOrSteer delivers input to a loop through the Steerer capability when rt has it,
-// and through plain Send otherwise (so an interrupt request degrades to an ordinary
-// next-boundary message on a runtime that cannot interrupt). Bindings call this
-// instead of type-asserting themselves.
-func SendOrSteer(ctx context.Context, rt Runtime, tenant event.TenantID, loopID, input string, opts SteerOpts) error {
-	if st, ok := rt.(Steerer); ok && (opts.Interrupt || opts.Source != "") {
-		return st.Steer(ctx, tenant, loopID, input, opts)
-	}
-	return rt.Send(ctx, tenant, loopID, input)
-}
-
-// LoopConfig is the policy-free description of one loop to start. It carries loop
-// mechanics inputs only; renderer/gate/transport are the binding's business and
-// never appear here.
+// LoopConfig describes one loop to start.
 type LoopConfig struct {
-	Task    string         // the initial user task
-	ModelID string         // resolved gateway model id; "" ⇒ the binding resolves the default first
-	Tenant  event.TenantID // isolation boundary; empty ⇒ event.DefaultTenant
-
-	// Subject is the authenticated loop-initiator's subject (the `sub` of the
-	// per-call delegation token minted at the MCP egress). It is a BARE string here
-	// on purpose: the runtime seam must not import an auth package (ADR-0030), so the
-	// principal travels as primitives (Tenant + Subject) that the composition root's
-	// Deps.LoopContext hook reconstitutes into a loopauth.Principal via
-	// toolidentity.WithPrincipal. Empty on the local CLI paths (they supply their own
-	// principal through LoopContext instead).
-	Subject string
-
-	// Interactive requests persistent conversational mode: the loop parks at each
-	// terminal turn boundary awaiting the next Send instead of finishing, so one
-	// loop_id carries a multi-turn conversation with server-authoritative history
-	// (the transcript is retained in-memory across turns). The loop still ends on
-	// context cancellation. Default false ⇒ single-task run-to-completion, so every
-	// existing binding is unaffected.
-	Interactive bool
-
-	// Orchestrate, when set to another loop's id (in the same tenant), starts this
-	// loop as that loop's ORCHESTRATOR: a persistent chat loop whose only tools watch
-	// and steer the target (internal/orchestrator), so a client chats with it through
-	// the ordinary Send and Observe. It implies Interactive. ModelID picks the
-	// orchestrator's own model, independent of the target's.
-	Orchestrate string
-
-	// Harness, when non-nil, is the harness this loop runs (change 0085): the
-	// runtime hands it to Deps.Harness, which validates it, layers it over the
-	// binding's trusted config, and returns the factory this loop is built with
-	// (root agent, subagents, workflows and pools alike). The spec is recorded in
-	// the loop's durable stream (loop.harness) so a resume rebuilds the same
-	// harness. Nil keeps today's behavior: the Deps collaborators build the loop.
-	Harness *harnessv1.HarnessSpec
-
-	// Secrets are the loop-scoped secret values the request carried (change
-	// 0102). The runtime never reads them: it hands them to Deps.Harness on the
-	// resolution context only (loopsecret.WithSecrets) and drops them right
-	// after, so Deps.LoopContext, the loop and its stream never hold them.
-	// Ignored without a Harness. A resumed loop has none.
-	Secrets []loopsecret.Secret
-
-	// Principal, when non-nil, is the authenticated credential that started this
-	// loop, recorded as the loop.principal event right after loop.harness. It is a
-	// plain event payload, not an auth type: the runtime seam never imports auth
-	// (ADR-0030). The Connect edge sets it; the stdio and local bindings leave it nil.
-	Principal *event.LoopPrincipalPayload
-
-	// LoopID is the loop's own id (the tree RootID), set by the runtime just before it
-	// calls Deps.LoopContext - callers starting a loop leave it empty. It lets the
-	// composition root stamp the loop onto the run context (toolidentity.WithLoop), so a
-	// downstream service told "the user, through fuse" by a per-call delegation token is
-	// also told which loop the call comes from.
-	LoopID string
+	Task    string // the initial user task
+	ModelID string // resolved gateway model id; passed to the agent factory
 }
 
-// LoopHandle observes and awaits one running loop.
+// LoopHandle is a running loop.
 type LoopHandle interface {
-	ID() string                     // the loop id = tree RootID
-	Wait() ([]model.Message, error) // blocks until the loop's Run returns; memoized
+	// ID is the loop's id (the tree root id).
+	ID() string
+	// Wait blocks until the run ends and returns its messages and error. It may be
+	// called more than once.
+	Wait() ([]model.Message, error)
 }
 
-// SpawnOpts describes one child spawn at the seam (mirrors agent.SpawnOpts' public
-// fields without importing agent vocabulary into bindings).
-type SpawnOpts struct {
-	Label        string
-	Task         string
-	SystemPrompt string
-	ModelID      string
-	Tools        []string
-	Worker       string
-	Expects      any
+// Deps are the binding-supplied collaborators the Runtime composes. None are
+// renderer/TUI/gate types; a binding wires those around the Runtime, not into it.
+type Deps struct {
+	// Observer receives timing-only lifecycle signals. Nil is identical to a no-op.
+	Observer observe.Observer
+	// BuildAgent builds the loop's root agent, bound to the loop's own event store,
+	// tree and tool registry.
+	BuildAgent func(store event.EventStore, tree *agent.AgentTree, modelID string, toolReg *tools.Registry) (*agent.Agent, error)
+	// NewToolRegistry builds the loop's tool registry. Nil means an empty one.
+	NewToolRegistry func() *tools.Registry
+	// Artifacts is the store for spilled tool output and compaction segments. Nil
+	// means an in-memory store with a per-loop cap. StartLoop binds the loop's tool
+	// registry to it under the loop's own key, overriding any earlier binding.
+	Artifacts artifact.Store
+	// BaseDir is where the loop's fsstore event log lives. Empty means no event log.
+	BaseDir string
+	// MaxConcurrent seeds the tree's scheduler concurrency when Tree is nil.
+	MaxConcurrent int
+	// Tree, when non-nil, is the agent tree StartLoop drives instead of creating one.
+	// A binding that reads the tree after the run supplies its own.
+	Tree *agent.AgentTree
+	// LoopTeardown, when non-nil, runs once when the loop ends, with the loop's tool
+	// registry, to release what the binding attached to it. It also runs when
+	// construction fails after the registry was built.
+	LoopTeardown func(toolReg *tools.Registry)
 }
 
-// SpawnHandle wraps agent.AgentHandle (ADR-0026) so a binding awaits a child
-// without importing internal/agent's async internals directly at the call site.
-type SpawnHandle interface {
-	NodeID() string
-	Wait() agent.SpawnDone
-	Result() (any, error)
+// inProcRuntime is the concrete Runtime.
+type inProcRuntime struct {
+	deps Deps
+}
+
+// New builds an in-process Runtime.
+func New(deps Deps) Runtime {
+	if deps.Observer == nil {
+		deps.Observer = observe.NoopObserver{}
+	}
+	if deps.Artifacts == nil {
+		deps.Artifacts = artifact.NewMemStore(artifact.WithPerLoopCap(artifact.DefaultMemLoopCap))
+	}
+	return &inProcRuntime{deps: deps}
+}
+
+// StartLoop implements Runtime.
+func (r *inProcRuntime) StartLoop(ctx context.Context, cfg LoopConfig) (LoopHandle, error) {
+	loopCtx, loopSpan := r.deps.Observer.Start(ctx, observe.Descriptor{
+		Kind:   observe.OperationLoop,
+		Name:   "run",
+		Fields: []observe.Field{{Key: "tenant", Value: string(event.DefaultTenant)}},
+	})
+	end := endOnce(loopSpan)
+
+	tree := r.deps.Tree
+	if tree == nil {
+		tree = agent.NewAgentTreeWithConcurrency(cfg.ModelID, cfg.ModelID, r.deps.MaxConcurrent)
+	}
+	rootID := tree.RootID()
+	rootNode := tree.Node(rootID)
+
+	var store event.EventStore = event.NoopStore{}
+	if r.deps.BaseDir != "" {
+		fs, err := fsstore.NewFSEventStore(r.deps.BaseDir, rootID)
+		if err != nil {
+			end(observe.OutcomeError)
+			return nil, fmt.Errorf("runtime: open event store: %w", err)
+		}
+		store = fs
+	}
+
+	toolReg := tools.NewRegistry()
+	if r.deps.NewToolRegistry != nil {
+		toolReg = r.deps.NewToolRegistry()
+	}
+	toolReg.WithArtifacts(r.deps.Artifacts, event.DefaultTenant, event.LoopID(rootID))
+
+	a, err := r.deps.BuildAgent(store, tree, cfg.ModelID, toolReg)
+	if err != nil {
+		closeStore(store)
+		if r.deps.LoopTeardown != nil {
+			r.deps.LoopTeardown(toolReg)
+		}
+		end(observe.OutcomeError)
+		return nil, fmt.Errorf("runtime: build agent: %w", err)
+	}
+	a.SetObserver(r.deps.Observer)
+	a.SetEventSink(store)
+	a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
+	// The runtime owns the root's usage sink and call gate (it holds the tree);
+	// children are wired in their builders.
+	a.SetUsageSink(rootNode.UpdateTokens)
+	a.SetCallGate(func() error { return tree.Scheduler().TokenQuotaDenied(rootNode.ID) })
+
+	h := &loopHandle{id: rootID, done: make(chan struct{})}
+	go func() {
+		defer close(h.done)
+		msgs, rerr := a.Run(loopCtx, []model.Message{{Role: "user", Content: cfg.Task}})
+		end(observeOutcome(rerr))
+		h.msgs, h.err = msgs, rerr
+		closeStore(store)
+		if r.deps.LoopTeardown != nil {
+			r.deps.LoopTeardown(toolReg)
+		}
+	}()
+	return h, nil
+}
+
+// closeStore releases the loop's event store: the fsstore write handle and its live
+// subscribers. The no-op store has nothing to close.
+func closeStore(store event.EventStore) {
+	if c, ok := store.(interface{ Close() error }); ok {
+		_ = c.Close()
+	}
+}
+
+// observeOutcome maps a run error to the outcome recorded on the loop span.
+func observeOutcome(err error) observe.Outcome {
+	switch {
+	case err == nil:
+		return observe.OutcomeSuccess
+	case errors.Is(err, context.DeadlineExceeded):
+		return observe.OutcomeTimeout
+	case errors.Is(err, context.Canceled):
+		return observe.OutcomeCanceled
+	default:
+		return observe.OutcomeError
+	}
+}
+
+// endOnce wraps a span handle so it ends at most once.
+func endOnce(h observe.Handle) func(observe.Outcome) {
+	var once sync.Once
+	return func(out observe.Outcome) {
+		once.Do(func() { h.End(out) })
+	}
+}
+
+// loopHandle awaits one running loop. done is closed exactly once, after which msgs
+// and err are stable.
+type loopHandle struct {
+	id   string
+	done chan struct{}
+	msgs []model.Message
+	err  error
+}
+
+func (h *loopHandle) ID() string { return h.id }
+
+func (h *loopHandle) Wait() ([]model.Message, error) {
+	<-h.done
+	return h.msgs, h.err
 }

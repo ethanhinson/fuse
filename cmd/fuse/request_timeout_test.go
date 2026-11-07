@@ -21,23 +21,6 @@ func TestLocalModelCallsHaveNoTotalLimit(t *testing.T) {
 	}
 }
 
-// A hosted loop has nobody to cancel it, so the production wiring gets a limit,
-// and the operator's own value wins. Specs resolve from this config, so they
-// inherit it.
-func TestHostedLoopsHaveATotalLimit(t *testing.T) {
-	_, host := harnessServerWith(t, harnessOperator, &recordingGateway{})
-	if got := host.operator.cfg.Gateway.RequestTimeout; got != hostedRequestTimeout {
-		t.Errorf("hosted RequestTimeout = %q, want %q", got, hostedRequestTimeout)
-	}
-	if got := gatewayAdapter(host.operator.cfg, nil).RequestTimeout; got != 30*time.Minute {
-		t.Errorf("hosted adapter limit = %v", got)
-	}
-	_, host = harnessServerWith(t, harnessOperator+"\ngateway: {request_timeout: 9m}\n", &recordingGateway{})
-	if got := host.operator.cfg.Gateway.RequestTimeout; got != "9m" {
-		t.Errorf("operator setting overridden: %q", got)
-	}
-}
-
 // Helper calls block something small, so they keep a limit in every binding.
 func TestHelperCallsKeepATotalLimit(t *testing.T) {
 	if model.HelperRequestTimeout <= 0 || model.HelperRequestTimeout > 10*time.Minute {

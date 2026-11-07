@@ -228,59 +228,6 @@ func TestQueueBoundOverBoundVerdict(t *testing.T) {
 	}
 }
 
-// TestQueueBoundUsesPoolConcurrent asserts a registered workflow pool bounds its
-// pending queue on its own Concurrent figure (ceil(2.0 * concurrent)), not the
-// global cap. The global slot cap must be saturated first (that is what forces
-// spawns to queue at all); then a pool with a small Concurrent has a
-// correspondingly small pending ceiling even though the global cap is larger.
-func TestQueueBoundUsesPoolConcurrent(t *testing.T) {
-	const cap = 1
-	tr := NewAgentTreeWithConcurrency("root", "m", cap)
-	sc := tr.Scheduler()
-	root := tr.Node(tr.RootID())
-	root.WorkflowRoot = "research"
-	sc.RegisterPool(root.ID, WorkflowPool{Concurrent: 1})
-
-	// Saturate the single global slot so subsequent acquires queue.
-	if err := sc.acquireSlot(context.Background(), ""); err != nil {
-		t.Fatal("hold the global slot")
-	}
-
-	// Pool slots = pool.Concurrent = 1, bound = ceil(2.0 * 1) = 2. Park 2 waiters.
-	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := sc.acquireSlot(context.Background(), root.ID); err != nil {
-				return
-			}
-			sc.releaseSlot()
-		}()
-	}
-	if err := waitForQueueDepth(sc, root.ID, 2, time.Second); err != nil {
-		t.Fatalf("pool queue did not reach bound: %v", err)
-	}
-
-	v, err := sc.Admit(AdmitRequest{Depth: root.Depth, PoolID: root.ID})
-	if err != nil {
-		t.Fatalf("Admit err=%v", err)
-	}
-	if v != OverBound {
-		t.Fatalf("verdict=%v, want OverBound (pool bound 2 reached)", v)
-	}
-
-	// Drain: free the held global slot; the two waiters complete in turn.
-	sc.releaseSlot()
-	done := make(chan struct{})
-	go func() { wg.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("pool bound queue did not drain")
-	}
-}
-
 // TestSpawnRefusedOverBound is the call-time side of Acceptance 3: a spawn that
 // races through while its pool is over-bound is denied with ErrQueueBoundExceeded
 // rather than growing the queue past the bound.

@@ -22,27 +22,9 @@ var ErrMaxDepthExceeded = errors.New("agent: max spawn depth exceeded")
 // the ceiling anyway this refuses rather than letting fan-out run away.
 var ErrSpawnBudgetExhausted = errors.New("agent: spawn budget exhausted")
 
-// ErrWorkflowQuotaExhausted is returned by a workflow spawn backstop when a
-// spawn would exceed the workflow pool's total quota or depth limit (change
-// 0034). It is the per-call race/batch safety net behind the per-turn schema
-// strip: a model that emits a batch of spawns in one turn (all seeing the tool
-// present at turn start) is still checked call-by-call, so the pool cannot be
-// overshot within a turn.
-var ErrWorkflowQuotaExhausted = errors.New("agent: workflow spawn quota exhausted")
-
-// ErrNestedWorkflow refuses a workflow activation requested from inside an
-// active workflow subtree (change 0091): workflows do not nest.
-var ErrNestedWorkflow = errors.New("agent: nested workflow activation refused")
-
-// ErrWorkerOutsideWorkflow refuses a worker named where no workflow is active
-// (change 0095): a worker resolves only against a workflow, so outside one the
-// name has no meaning and is refused rather than ignored.
-var ErrWorkerOutsideWorkflow = errors.New("agent: worker requires an active workflow")
-
 // ErrTokenQuotaExhausted is returned by the spawn backstop when a spawn would
-// proceed past a hard TOKEN quota — either the workflow pool's lifetime token
-// quota (pool.tokens) for the spawning node's subtree, or the global session
-// token ceiling (throughput.session_tokens) — both change 0036. It mirrors
+// proceed past the global session token ceiling (throughput.session_tokens,
+// change 0036). It mirrors
 // ErrSpawnBudgetExhausted's identity discipline: the per-turn schema strip
 // (Visible) hides spawn_agent once the quota is hit, and this is the call-time
 // race backstop for a spawn committed within a turn before the strip took hold.
@@ -65,14 +47,6 @@ type SpawnOpts struct {
 	ModelID      string
 	MaxTurns     int
 	MaxTokens    int
-	// Worker names a workflow worker type (change 0034); empty for freeform
-	// spawns. The child builder resolves it to the worker's tool allowlist.
-	Worker string
-	// Workflow names a workflow the child becomes the ROOT of (change 0091). The
-	// Spawner marks the new node's WorkflowRoot at creation; the binding's child
-	// builder registers the pool. Empty for every other spawn. Refused from inside
-	// an active workflow subtree (ErrNestedWorkflow).
-	Workflow string
 	// Role names a top-level role (change 0114); empty for every other spawn.
 	// The binding's child builder resolves it to the role's brief, tool set and
 	// model.
@@ -251,13 +225,6 @@ func WithSpawnDepth(depth int) Option { return func(s *Spawner) { s.depth = dept
 // WithChildBuilder injects the local child-agent runner into a Spawner.
 func WithChildBuilder(fn ChildBuilder) Option { return func(s *Spawner) { s.buildChild = fn } }
 
-// WithSpawnBackstop installs an optional per-call workflow backstop, invoked
-// after the global depth/budget checks with the child's would-be depth. A
-// non-nil error refuses the spawn (change 0034). Nil (default) is a no-op.
-func WithSpawnBackstop(fn func(newDepth int) error) Option {
-	return func(s *Spawner) { s.backstop = fn }
-}
-
 // WithHumanBus installs the human-message bus so a spawned child's undelivered
 // queue is bubbled to its parent when the child finishes (ADR-0022 completion
 // hook). Nil (default) is a no-op.
@@ -317,19 +284,9 @@ func NewSpawner(opts ...Option) *Spawner {
 	return s
 }
 
-// WithBuilder returns a copy of the Spawner whose children run through fn
-// instead (change 0091). Tree, node, depth, backstop, bus, store and observer
-// are shared; the receiver is unchanged. Spawner holds no lock and no
-// per-instance mutable state, so a shallow copy is safe.
-func (s *Spawner) WithBuilder(fn ChildBuilder) *Spawner {
-	cp := *s
-	cp.buildChild = fn
-	return &cp
-}
-
 // Spawn creates a child agent running locally in a goroutine.
 func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (h AgentHandle, err error) {
-	fields := []observe.Field{{Key: "worker", Value: opts.Worker}}
+	var fields []observe.Field
 	if opts.Role != "" {
 		fields = append(fields, observe.Field{Key: "role", Value: opts.Role})
 	}
@@ -353,17 +310,6 @@ func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (h AgentHandle, err
 	if newDepth > MaxDepth {
 		return AgentHandle{}, fmt.Errorf("%w: depth %d > %d", ErrMaxDepthExceeded, newDepth, MaxDepth)
 	}
-	// Nested-workflow refusal (change 0091): a workflow activation requested from
-	// inside an active workflow subtree is refused before any node exists.
-	if opts.Workflow != "" && s.tree != nil && s.node != nil {
-		if rootID := s.tree.WorkflowRootOf(s.node.ID); rootID != "" {
-			active := ""
-			if n := s.tree.Node(rootID); n != nil {
-				active = n.Snapshot().WorkflowRoot
-			}
-			return AgentHandle{}, fmt.Errorf("%w: cannot start workflow %q inside workflow %q", ErrNestedWorkflow, opts.Workflow, active)
-		}
-	}
 	// Tree-global spawn budget backstop. The injected budget line should make
 	// this rare; the refusal makes runaway fan-out impossible. Only enforced
 	// when a budget is configured (max > 0).
@@ -375,29 +321,17 @@ func (s *Spawner) Spawn(ctx context.Context, opts SpawnOpts) (h AgentHandle, err
 		// while its pool queue has since filled to the bound is refused rather than
 		// growing the queue past ceil(queue_bound × pool slots). The per-turn strip
 		// (Task 3) makes this rare; this is the race safety net.
-		poolID := ""
-		if s.node != nil {
-			poolID = s.tree.WorkflowRootOf(s.node.ID)
-		}
-		if v, _ := s.tree.Scheduler().Admit(AdmitRequest{Depth: s.depth, PoolID: poolID}); v == OverBound {
+		if v, _ := s.tree.Scheduler().Admit(AdmitRequest{Depth: s.depth}); v == OverBound {
 			return AgentHandle{}, fmt.Errorf("%w: pool queue at bound — proceed with the results you already have", ErrQueueBoundExceeded)
 		}
 		// Token-quota backstop (change 0036): the call-time race safety net behind
-		// the per-turn strip for the session ceiling and the workflow pool.tokens
-		// quota. A spawn committed within a turn before the strip took hold is
+		// the per-turn strip for the session ceiling. A spawn committed within a turn before the strip took hold is
 		// refused rather than allowed to spend past a hard token ceiling.
 		nodeID := ""
 		if s.node != nil {
 			nodeID = s.node.ID
 		}
 		if err := s.tree.Scheduler().TokenQuotaDenied(nodeID); err != nil {
-			return AgentHandle{}, err
-		}
-	}
-	// Workflow pool backstop (change 0034): the per-call safety net behind the
-	// per-turn strip, so a within-turn batch cannot overshoot the pool.
-	if s.backstop != nil {
-		if err := s.backstop(newDepth); err != nil {
 			return AgentHandle{}, err
 		}
 	}
@@ -414,18 +348,11 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int, spa
 
 	// Slot admission goes through the scheduler (change 0036); a nil tree (a
 	// Spawner used without one) has no scheduler and thus no cap. The child queues
-	// into its parent's pool — the parent's workflow root, or "" for the implicit
-	// session pool. A workflow-root child (SpawnOpts.Workflow, change 0091) does
-	// carry its own workflow-root label, but it still queues into its parent's
-	// pool: poolID is derived from s.node (the spawner), never from the new node,
-	// matching the Spawn-time Admit check.
+	// into the implicit session pool "", matching the Spawn-time Admit check.
 	var sched *Scheduler
 	poolID := ""
 	if s.tree != nil {
 		sched = s.tree.Scheduler()
-		if s.node != nil {
-			poolID = s.tree.WorkflowRootOf(s.node.ID)
-		}
 	}
 
 	// Enqueue for a slot SYNCHRONOUSLY, before the node is added to the tree, so a
@@ -469,7 +396,6 @@ func (s *Spawner) spawnLocal(ctx context.Context, opts SpawnOpts, depth int, spa
 		Status:        StatusPending,
 		Depth:         depth,
 		SpawnedInTurn: spawnedInTurn,
-		WorkflowRoot:  opts.Workflow,
 		Role:          opts.Role,
 	}
 	doneCh := make(chan SpawnDone, 1)

@@ -19,23 +19,6 @@ func (c *toolsForever) Complete(ctx context.Context, req model.CompletionReq) (m
 	}, nil
 }
 
-// A bus-less interactive agent behaves exactly like a non-interactive one at the turn
-// cap: it returns ErrMaxTurns instead of silently ending with nil.
-func TestBuslessInteractiveReturnsErrMaxTurns(t *testing.T) {
-	comp := &toolsForever{}
-	a := New(comp, &fakeExec{}, nopRenderer{}, "m", "", 2, 0)
-	a.SetInteractive(true)
-	a.SetMaxTurnsExplicit(true)
-	a.SetHumanInjector(NewHumanInjector("n", nil))
-	_, err := a.Run(context.Background(), []model.Message{{Role: "user", Content: "go"}})
-	if !errors.Is(err, ErrMaxTurns) {
-		t.Fatalf("err = %v, want ErrMaxTurns", err)
-	}
-	if comp.n != 2 {
-		t.Fatalf("model calls = %d, want 2", comp.n)
-	}
-}
-
 // The call gate refuses the model call for a non-interactive agent.
 func TestCallGateStopsNonInteractive(t *testing.T) {
 	comp := &toolsForever{}

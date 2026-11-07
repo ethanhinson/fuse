@@ -11,11 +11,6 @@ func TestNoToolsFromYAML(t *testing.T) {
 no_tools: true
 roles:
   quiet: {description: d, no_tools: true}
-workflows:
-  wf:
-    skill: wf
-    workers:
-      w: {no_tools: true}
 `
 	c, err := FromYAML([]byte(doc), "test")
 	if err != nil {
@@ -26,9 +21,6 @@ workflows:
 	}
 	if !c.Roles["quiet"].NoTools {
 		t.Error("Roles[quiet].NoTools = false, want true")
-	}
-	if !c.Workflows["wf"].Workers["w"].NoTools {
-		t.Error("Workers[w].NoTools = false, want true")
 	}
 	if Default().NoTools {
 		t.Error("Default().NoTools = true, want false")
@@ -87,9 +79,6 @@ func TestProblemsNoTools(t *testing.T) {
 		wantPath string // "" means no problem beyond the default baseline
 		wantMsg  string
 	}
-	worker := func(c *Config, w WorkerConfig) {
-		c.Workflows["wf"] = WorkflowConfig{Skill: "wf", Workers: map[string]WorkerConfig{"w": w}}
-	}
 	cases := []tc{
 		{"role names tools and no_tools", func(c *Config) {
 			c.Roles = map[string]RoleConfig{"x": {Description: "d", Tools: []string{"read_file"}, NoTools: true}}
@@ -97,19 +86,11 @@ func TestProblemsNoTools(t *testing.T) {
 		{"tool-less role", func(c *Config) {
 			c.Roles = map[string]RoleConfig{"x": {Description: "d", NoTools: true}}
 		}, "", ""},
-		{"worker names tools and no_tools", func(c *Config) {
-			worker(c, WorkerConfig{Tools: []string{"read_file"}, NoTools: true})
-		}, "workflows.wf.workers.w.no_tools", "names tools and no_tools; choose one"},
-		{"tool-less worker", func(c *Config) { worker(c, WorkerConfig{NoTools: true}) }, "", ""},
-		{"empty worker", func(c *Config) { worker(c, WorkerConfig{}) },
-			"workflows.wf.workers.w.tools", "must name at least one tool or set no_tools"},
 		{"top-level no_tools beside everything", func(c *Config) {
-			// pipeline keeps Default()'s valid caps.
 			c.NoTools = true
 			c.Permissions.Disabled = []string{"bash"}
 			c.MCPServers = []MCPServerConfig{{Name: "m", Transport: "stdio", Command: []string{"true"}}}
 			c.Roles = map[string]RoleConfig{"x": {Description: "d", Tools: []string{"read_file"}}}
-			worker(c, WorkerConfig{Tools: []string{"read_file"}})
 		}, "", ""},
 	}
 	baseline := len(Default().Problems())

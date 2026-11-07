@@ -144,7 +144,6 @@ const (
 	AsideUnknown  AsideKind = iota
 	AsideStatus             // "is X running", "X status", "did X finish"
 	AsideLastTool           // "what is X doing", "X's last tool"
-	AsideWrites             // "what did X write", "X's blackboard"
 	AsideCount              // "how many running", "active count"
 	AsideTree               // "show the tree", "who's spawned"
 )
@@ -176,8 +175,6 @@ func ParseAside(text string) AsideQuery {
 		q.Kind = AsideTree
 	case containsAny(lower, "doing", "last tool", "working on", "current tool"):
 		q.Kind = AsideLastTool
-	case containsAny(lower, "wrote", "write", "blackboard", "output"):
-		q.Kind = AsideWrites
 	case containsAny(lower, "running", "status", "still going", "finished", "done", "stuck"):
 		q.Kind = AsideStatus
 	default:
@@ -195,10 +192,10 @@ func containsAny(s string, subs ...string) bool {
 	return false
 }
 
-// AnswerAside answers a parsed /btw query from live tree/blackboard state with NO
+// AnswerAside answers a parsed /btw query from live tree state with NO
 // model call and NO node interruption — it reads only race-safe snapshots. The
 // returned string is rendered as a transcript line and never delivered to a node.
-func AnswerAside(q AsideQuery, tree *AgentTree, bb *Blackboard, reg *HandleRegistry) string {
+func AnswerAside(q AsideQuery, tree *AgentTree, reg *HandleRegistry) string {
 	switch q.Kind {
 	case AsideCount:
 		running, pending := tree.ActiveCounts()
@@ -229,26 +226,8 @@ func AnswerAside(q AsideQuery, tree *AgentTree, bb *Blackboard, reg *HandleRegis
 		}
 		return fmt.Sprintf("%s: no tool calls yet", handleOf(nv.ID, reg, nv.Label))
 
-	case AsideWrites:
-		nv, ok := resolveNode(q.Target, tree, reg)
-		if !ok {
-			return asideNoTarget(q.Target, tree, reg, "writes")
-		}
-		var keys []string
-		for k, e := range bb.Snapshot() {
-			if e.WriterID == nv.ID || e.WriterLabel == nv.Label {
-				keys = append(keys, k)
-			}
-		}
-		sort.Strings(keys)
-		if len(keys) == 0 {
-			return fmt.Sprintf("%s wrote no blackboard keys", handleOf(nv.ID, reg, nv.Label))
-		}
-		return fmt.Sprintf("%s wrote %d blackboard key(s): %s",
-			handleOf(nv.ID, reg, nv.Label), len(keys), strings.Join(keys, ", "))
-
 	default: // AsideUnknown
-		return "/btw can report: status, last-tool, writes, count, tree. " +
+		return "/btw can report: status, last-tool, count, tree. " +
 			"Examples: /btw status of @coder · /btw what is @coder doing · /btw how many running · /btw show tree"
 	}
 }

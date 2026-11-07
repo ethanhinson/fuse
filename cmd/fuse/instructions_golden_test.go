@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	harnessv1 "github.com/ethanhinson/fuse/harness/v1"
 	"github.com/ethanhinson/fuse/internal/runtime"
 )
 
@@ -22,7 +21,7 @@ const loopSpecFirstRequestGolden = "testdata/loop_spec_first_request.golden"
 // receives for the root of a loop started on the production loop-server wiring
 // without a harness spec. The per-process scratch directory is normalized.
 func TestLoopRootPromptGolden(t *testing.T) {
-	rt, gw, _ := harnessServer(t, harnessOperator)
+	rt, gw := harnessServer(t, harnessOperator)
 	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go"})
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
@@ -58,12 +57,10 @@ func TestLoopRootPromptGolden(t *testing.T) {
 // chat-completions request body an ordinary harness spec (one that does not ask
 // for a tool-less loop) sends on the production loop-server wiring: model,
 // messages and every tool schema. Per-process values are normalized.
-func TestLoopSpecFirstRequestGolden(t *testing.T) {
+func TestLoopFirstRequestGolden(t *testing.T) {
 	raw := &rawCapture{next: &recordingGateway{}}
-	deps, _ := harnessServerWith(t, harnessOperator, raw)
-	rt := runtime.New(deps)
-	one := uint32(1)
-	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go", Harness: &harnessv1.HarnessSpec{MaxTurns: &one}})
+	rt := runtime.New(harnessServerWith(t, harnessOperator, raw))
+	h, err := rt.StartLoop(context.Background(), runtime.LoopConfig{Task: "go"})
 	if err != nil {
 		t.Fatalf("StartLoop: %v", err)
 	}

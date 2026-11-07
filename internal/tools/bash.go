@@ -8,8 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethanhinson/fuse/internal/loopauth"
-	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools/sandbox"
 )
 
@@ -30,8 +28,8 @@ var errNoSubstrate = errors.New("no sandbox substrate is configured; the bash to
 // daemon. It deliberately cannot widen containment: everything it can hand out
 // was selected by the frozen sandbox.Service the pool sits on.
 type bashSubstrate interface {
-	Acquire(ctx context.Context, p loopauth.Principal) (sandbox.Runner, error)
-	Release(ctx context.Context, p loopauth.Principal, r sandbox.Runner, cause sandbox.ReleaseCause) error
+	Acquire(ctx context.Context, p sandbox.Principal) (sandbox.Runner, error)
+	Release(ctx context.Context, p sandbox.Principal, r sandbox.Runner, cause sandbox.ReleaseCause) error
 	Close(ctx context.Context) error
 }
 
@@ -39,8 +37,8 @@ type bashSubstrate interface {
 //
 // It owns a warm pool over the Service it was built with. The pool is created
 // LAZILY, on first use, because sandbox.NewPool starts a reaper goroutine and
-// most registries built in a process (the loop-server's base registry, every
-// registry a test constructs) never run a command.
+// many registries built in a process (every registry a test constructs) never
+// run a command.
 type bashTool struct {
 	// svc is the frozen substrate selection, resolved ONCE at the composition
 	// root against a trusted repo root. The tool never re-reads config, never
@@ -74,8 +72,7 @@ type bashTool struct {
 // NewBash returns the bash tool bound to the process's sandbox Service.
 //
 // sb is the SELECTION, already made: container by default, host only where an
-// operator's file-only off-switch authorized it and the hosted posture is not
-// active. A nil sb is a fail-CLOSED tool, never a host fallback.
+// operator's file-only off-switch authorized it. A nil sb is a fail-CLOSED tool, never a host fallback.
 //
 // opts configure the warm pool the tool creates on first use. A composition
 // root that owns the loop's event store passes
@@ -188,14 +185,10 @@ func (b *bashTool) Execute(ctx context.Context, args string) Result {
 		return Result{IsError: true, Output: fmt.Sprintf("bash is unavailable: %v", err)}
 	}
 
-	// THE POOL KEY. It comes from the authenticated principal the composition
-	// root stamped on the loop context — never from `command`, never from
-	// `working_dir`, never from any other model-authored field. A model that
-	// could steer this key could check out another tenant's warm execution
-	// context. A missing principal resolves to the zero principal LOCALLY (the
-	// CLI bindings before they stamp one); it is not an error and it is not
-	// guessed from the arguments.
-	principal, _ := toolidentity.PrincipalFrom(ctx)
+	// THE POOL KEY. One task runs per process, so every command uses the zero
+	// principal; it never comes from `command`, `working_dir` or any other
+	// model-authored field.
+	var principal sandbox.Principal
 
 	runner, err := sub.Acquire(ctx, principal)
 	if err != nil {

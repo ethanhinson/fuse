@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/ethanhinson/fuse/internal/loopauth"
 )
 
 // recordingHandler is a Handler double that records every Acquire, and whose
@@ -36,7 +34,7 @@ type recordingHandler struct {
 
 func (h *recordingHandler) Name() string { return h.name }
 
-func (h *recordingHandler) Acquire(context.Context, loopauth.Principal, Env) (Runner, error) {
+func (h *recordingHandler) Acquire(context.Context, Principal, Env) (Runner, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.acquires++
@@ -131,142 +129,6 @@ func assertHandlerRoutes(t *testing.T, svc *Service, want string) {
 		}
 	default:
 		t.Errorf("Acquire returned unexpected Runner type %T", runner)
-	}
-}
-
-// TestServiceSelectionMatrix is the full contained/hosted decision table.
-//
-// The hosted rows are the ones that matter most: under the hosted (loop-server)
-// posture the file-only off-switch is structurally INERT, so an operator file
-// — or an agent that managed to author one — cannot turn containment off for
-// someone else's workload.
-func TestServiceSelectionMatrix(t *testing.T) {
-	tests := []struct {
-		name   string
-		file   string // "" means no config file at all
-		hosted bool
-		want   string
-	}{
-		{name: "absent config is contained", want: HandlerContainer},
-		{name: "absent config is contained when hosted", hosted: true, want: HandlerContainer},
-		{name: "contained true is contained", file: "contained: true\n", want: HandlerContainer},
-		{name: "handler container is contained", file: "handler: container\n", want: HandlerContainer},
-
-		// The off-switch, honoured: local operator, local machine.
-		{name: "contained false selects host", file: "contained: false\n", want: HandlerHost},
-		{name: "handler host selects host", file: "handler: host\n", want: HandlerHost},
-
-		// The off-switch, inert: hosted posture ignores it ENTIRELY.
-		{name: "hosted ignores contained false", file: "contained: false\n", hosted: true, want: HandlerContainer},
-		{name: "hosted ignores handler host", file: "handler: host\n", hosted: true, want: HandlerContainer},
-
-		// A file we could not understand must not become an off-switch.
-		{name: "malformed config is contained", file: "contained: [not, a, bool]\n", want: HandlerContainer},
-		{name: "unknown handler is contained", file: "handler: vm\n", want: HandlerContainer},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			if tc.file != "" {
-				writeConfigFile(t, root, tc.file)
-			}
-
-			svc, _, err := NewServiceFromRoot(root,
-				WithHostedPosture(tc.hosted),
-				withContainerLookPath(fakeLookPath("docker")),
-			)
-			if err != nil {
-				t.Fatalf("NewServiceFromRoot: %v", err)
-			}
-
-			assertHandlerRoutes(t, svc, tc.want)
-		})
-	}
-}
-
-// TestServiceFailsClosedWithoutContainerRuntime is the fail-closed rule: when
-// the container substrate could not be constructed and no local operator
-// authorized the host, Acquire REFUSES. It never degrades to the host, because
-// "docker isn't installed" must not be a way to turn containment off.
-func TestServiceFailsClosedWithoutContainerRuntime(t *testing.T) {
-	tests := []struct {
-		name   string
-		file   string
-		hosted bool
-	}{
-		{name: "no cli and no authorization"},
-		{name: "no cli and contained true", file: "contained: true\n"},
-		// Hosted makes the off-switch inert, so these are unauthorized too —
-		// and a refusal, never a host fallback.
-		{name: "hosted with contained false", file: "contained: false\n", hosted: true},
-		{name: "hosted with handler host", file: "handler: host\n", hosted: true},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			if tc.file != "" {
-				writeConfigFile(t, root, tc.file)
-			}
-
-			host := &recordingHandler{name: HandlerHost}
-			cli := &recordingExec{}
-
-			svc, _, err := NewServiceFromRoot(root,
-				WithHostedPosture(tc.hosted),
-				withContainerLookPath(fakeLookPath()), // nothing on PATH
-				withContainerExec(cli.run),
-				withHostHandler(host),
-			)
-			if err != nil {
-				// Construction must NOT fail: an error return here invites the
-				// caller to write a fallback. The refusal belongs at Acquire.
-				t.Fatalf("NewServiceFromRoot: unexpected construction error: %v", err)
-			}
-
-			if svc.Available() {
-				t.Errorf("Available() = true, want false with no container runtime and no host authorization")
-			}
-			if got := svc.HandlerName(); got != "" {
-				t.Errorf("HandlerName() = %q, want %q when nothing was selected", got, "")
-			}
-
-			// Deliberately Errorf, not Fatalf: a fallback that acquires a host
-			// Runner must still be caught by the did-anything-run assertions
-			// below, and a Fatalf here would skip exactly the check that sees a
-			// silent host acquisition.
-			runner, err := svc.Acquire(context.Background(), testPrincipal())
-			switch {
-			case err == nil:
-				t.Errorf("Acquire succeeded (%T), want a refusal", runner)
-			default:
-				if runner != nil {
-					t.Errorf("Acquire returned a non-nil Runner (%T) alongside the refusal", runner)
-				}
-				if !errors.Is(err, ErrRefusedUncontained) {
-					t.Errorf("Acquire error = %v, want it to wrap ErrRefusedUncontained", err)
-				}
-				if want := "refusing to run bash uncontained"; !strings.Contains(err.Error(), want) {
-					t.Errorf("Acquire error = %q, want it to contain %q", err.Error(), want)
-				}
-			}
-			if _, isHost := runner.(*hostRunner); isHost {
-				// Note we do NOT Exec it: the point is that this Runner should
-				// not exist, and running a command through it to prove that
-				// would be the very thing under test.
-				t.Errorf("Acquire handed out a real host Runner on the refusal path")
-			}
-
-			// The load-bearing assertion: nothing ran anywhere.
-			if acquires, execs := host.counts(); acquires != 0 || len(execs) != 0 {
-				t.Errorf("host handler saw %d Acquire and %d Exec calls, want 0 and 0 — the refusal path must never touch the host",
-					acquires, len(execs))
-			}
-			if n := cli.count(); n != 0 {
-				t.Errorf("container CLI was invoked %d times on the refusal path, want 0", n)
-			}
-		})
 	}
 }
 
@@ -416,48 +278,6 @@ func TestServiceSurfacesConfigWarnings(t *testing.T) {
 	assertHandlerRoutes(t, svc, HandlerContainer)
 }
 
-// The hosted posture is a property of how this process was deployed. It is
-// supplied by the composition root and must never be derivable from anything an
-// agent (or a config file) can influence.
-func TestServiceHostedPostureIsNotConfigurable(t *testing.T) {
-	root := t.TempDir()
-	// Every spelling someone might reach for to smuggle the posture in through
-	// the file. All are unknown keys, so the loader rejects the file wholesale.
-	writeConfigFile(t, root, "hosted: true\ncontained: false\n")
-
-	svc, warns, err := NewServiceFromRoot(root, withContainerLookPath(fakeLookPath("docker")))
-	if err != nil {
-		t.Fatalf("NewServiceFromRoot: %v", err)
-	}
-	if len(warns) == 0 {
-		t.Errorf("want a warning for the unrecognised hosted: key")
-	}
-	assertHandlerRoutes(t, svc, HandlerContainer)
-
-	// Structural: no on-disk config field feeds the posture.
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "service.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse service.go: %v", err)
-	}
-	forbidden := map[string]bool{"Getenv": true, "LookupEnv": true, "Environ": true, "ExpandEnv": true}
-	ast.Inspect(file, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok || !forbidden[sel.Sel.Name] {
-			return true
-		}
-		if sel.Sel.Name == "LookupEnv" {
-			// os.LookupEnv is the default env-SCRUB lookup (what a command may
-			// observe). That is not the off-switch; allow it and keep the guard
-			// on the rest.
-			return true
-		}
-		t.Errorf("service.go references %s at %s: the hosted posture and containment come from the composition root and the file, never the environment",
-			sel.Sel.Name, fset.Position(sel.Pos()))
-		return true
-	})
-}
-
 // The Env a Service hands to its Handler is the scrubbed allowlist, resolved
 // from the operator's declared passthrough — not the process environment.
 func TestServiceResolvesScrubbedEnvForTheHandler(t *testing.T) {
@@ -588,5 +408,123 @@ func TestServiceThreadsTrustedRootToTheContainerMount(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("argv mounts nothing; the trusted root never reached the substrate: %#v", argv)
+	}
+}
+
+// TestServiceSelectionMatrix is the full containment decision table.
+func TestServiceSelectionMatrix(t *testing.T) {
+	tests := []struct {
+		name string
+		file string // "" means no config file at all
+		want string
+	}{
+		{name: "absent config is contained", want: HandlerContainer},
+		{name: "contained true is contained", file: "contained: true\n", want: HandlerContainer},
+		{name: "handler container is contained", file: "handler: container\n", want: HandlerContainer},
+
+		// The off-switch, honoured: local operator, local machine.
+		{name: "contained false selects host", file: "contained: false\n", want: HandlerHost},
+		{name: "handler host selects host", file: "handler: host\n", want: HandlerHost},
+
+		// A file we could not understand must not become an off-switch.
+		{name: "malformed config is contained", file: "contained: [not, a, bool]\n", want: HandlerContainer},
+		{name: "unknown handler is contained", file: "handler: vm\n", want: HandlerContainer},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.file != "" {
+				writeConfigFile(t, root, tc.file)
+			}
+
+			svc, _, err := NewServiceFromRoot(root,
+				withContainerLookPath(fakeLookPath("docker")),
+			)
+			if err != nil {
+				t.Fatalf("NewServiceFromRoot: %v", err)
+			}
+
+			assertHandlerRoutes(t, svc, tc.want)
+		})
+	}
+}
+
+// TestServiceFailsClosedWithoutContainerRuntime is the fail-closed rule: when
+// the container substrate could not be constructed and no local operator
+// authorized the host, Acquire REFUSES. It never degrades to the host, because
+// "docker isn't installed" must not be a way to turn containment off.
+func TestServiceFailsClosedWithoutContainerRuntime(t *testing.T) {
+	tests := []struct {
+		name string
+		file string
+	}{
+		{name: "no cli and no authorization"},
+		{name: "no cli and contained true", file: "contained: true\n"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.file != "" {
+				writeConfigFile(t, root, tc.file)
+			}
+
+			host := &recordingHandler{name: HandlerHost}
+			cli := &recordingExec{}
+
+			svc, _, err := NewServiceFromRoot(root,
+				withContainerLookPath(fakeLookPath()), // nothing on PATH
+				withContainerExec(cli.run),
+				withHostHandler(host),
+			)
+			if err != nil {
+				// Construction must NOT fail: an error return here invites the
+				// caller to write a fallback. The refusal belongs at Acquire.
+				t.Fatalf("NewServiceFromRoot: unexpected construction error: %v", err)
+			}
+
+			if svc.Available() {
+				t.Errorf("Available() = true, want false with no container runtime and no host authorization")
+			}
+			if got := svc.HandlerName(); got != "" {
+				t.Errorf("HandlerName() = %q, want %q when nothing was selected", got, "")
+			}
+
+			// Deliberately Errorf, not Fatalf: a fallback that acquires a host
+			// Runner must still be caught by the did-anything-run assertions
+			// below, and a Fatalf here would skip exactly the check that sees a
+			// silent host acquisition.
+			runner, err := svc.Acquire(context.Background(), testPrincipal())
+			switch {
+			case err == nil:
+				t.Errorf("Acquire succeeded (%T), want a refusal", runner)
+			default:
+				if runner != nil {
+					t.Errorf("Acquire returned a non-nil Runner (%T) alongside the refusal", runner)
+				}
+				if !errors.Is(err, ErrRefusedUncontained) {
+					t.Errorf("Acquire error = %v, want it to wrap ErrRefusedUncontained", err)
+				}
+				if want := "refusing to run bash uncontained"; !strings.Contains(err.Error(), want) {
+					t.Errorf("Acquire error = %q, want it to contain %q", err.Error(), want)
+				}
+			}
+			if _, isHost := runner.(*hostRunner); isHost {
+				// Note we do NOT Exec it: the point is that this Runner should
+				// not exist, and running a command through it to prove that
+				// would be the very thing under test.
+				t.Errorf("Acquire handed out a real host Runner on the refusal path")
+			}
+
+			// The load-bearing assertion: nothing ran anywhere.
+			if acquires, execs := host.counts(); acquires != 0 || len(execs) != 0 {
+				t.Errorf("host handler saw %d Acquire and %d Exec calls, want 0 and 0 — the refusal path must never touch the host",
+					acquires, len(execs))
+			}
+			if n := cli.count(); n != 0 {
+				t.Errorf("container CLI was invoked %d times on the refusal path, want 0", n)
+			}
+		})
 	}
 }

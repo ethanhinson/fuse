@@ -1,6 +1,5 @@
-// Package netguard holds the one private-address predicate shared by the
-// web_fetch permission floor and the loop server's spec policy, so the two
-// cannot drift apart. It also holds the one host spelling and the one
+// Package netguard holds the private-address predicate behind the web_fetch
+// permission floor. It also holds the one host spelling and the one
 // same-host rule that credential-bearing HTTP clients enforce at the transport.
 package netguard
 

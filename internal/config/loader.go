@@ -17,7 +17,7 @@ var warnw io.Writer = os.Stderr
 
 // tightenNumeric applies the ADR-0006 tighten-only merge rule for a single
 // numeric axis where a SMALLER positive value is the stronger (more restrictive)
-// setting — throughput rates, session-token ceilings, pipeline caps, queue
+// setting — throughput rates, session-token ceilings, queue
 // bounds, tool timeouts. It is the one place that rule lives, so every axis
 // behaves identically:
 //
@@ -151,100 +151,11 @@ func mergePermissions(c *Config, raw rawPermissionsConfig, trusted bool) (ignore
 	return ignored
 }
 
-// mergeWorkflows merges a source's workflows: map into c. A config-level entry
-// overrides any prior one for the same name (trusted sources set every present
-// field). From an UNTRUSTED source (.fuse.local.yml) pool numbers may only
-// TIGHTEN — lower an existing, already-set cap — because a workflow pool is a
-// safety brake and a repo-plantable file must not be able to widen it. A present
-// pool number that would loosen an existing cap is dropped and its workflow name
-// is returned for the caller's aggregated warning. Non-pool fields (skill,
-// workers, roles) from an untrusted source are also inert (they could re-grant tools);
-// the workflow definition itself is human-owned config.
-//
-// "Tighten" is defined per dimension against the current value: a value is a
-// tightening only when the current value is already set (>0) and the new value
-// is a positive number strictly lower than it. Everything else from an untrusted
-// source — introducing a new workflow, setting a previously-unset dimension, or
-// raising a cap — is a loosening and ignored.
-func mergeWorkflows(c *Config, raw map[string]WorkflowConfig, trusted bool) (loosened []string) {
-	if len(raw) == 0 {
-		return nil
-	}
-	if c.Workflows == nil {
-		c.Workflows = map[string]WorkflowConfig{}
-	}
-	for name, rw := range raw {
-		if trusted {
-			cur := c.Workflows[name]
-			if rw.Skill != "" {
-				cur.Skill = rw.Skill
-			}
-			if rw.Pool.Concurrent != 0 {
-				cur.Pool.Concurrent = rw.Pool.Concurrent
-			}
-			if rw.Pool.Total != 0 {
-				cur.Pool.Total = rw.Pool.Total
-			}
-			if rw.Pool.MaxDepth != 0 {
-				cur.Pool.MaxDepth = rw.Pool.MaxDepth
-			}
-			if rw.Pool.Tokens != 0 {
-				cur.Pool.Tokens = rw.Pool.Tokens
-			}
-			if len(rw.Workers) > 0 {
-				cur.Workers = rw.Workers
-			}
-			if len(rw.Roles) > 0 {
-				cur.Roles = rw.Roles
-			}
-			c.Workflows[name] = cur
-			continue
-		}
-		// Untrusted: only tightening pool numbers on an EXISTING workflow apply.
-		cur, exists := c.Workflows[name]
-		if !exists {
-			loosened = append(loosened, name)
-			continue
-		}
-		flagged := false
-		tightenOnly := func(field string, curV, newV *int) {
-			if *newV == 0 {
-				return // omitted dimension
-			}
-			if *curV > 0 && *newV > 0 && *newV < *curV {
-				*curV = *newV // strictly-lower positive = tighten, honored
-				return
-			}
-			if !flagged {
-				loosened = append(loosened, name)
-				flagged = true
-			}
-		}
-		tightenOnly("concurrent", &cur.Pool.Concurrent, &rw.Pool.Concurrent)
-		tightenOnly("total", &cur.Pool.Total, &rw.Pool.Total)
-		tightenOnly("max_depth", &cur.Pool.MaxDepth, &rw.Pool.MaxDepth)
-		// pool.tokens (change 0036) is a permanent subtree quota; 0 = unset. It
-		// follows the same tighten-only rule as the other pool numbers: a local
-		// file may only LOWER an already-set positive quota.
-		tightenOnly("tokens", &cur.Pool.Tokens, &rw.Pool.Tokens)
-		// skill / workers / roles changes from an untrusted file are loosening
-		// surface.
-		if rw.Skill != "" && rw.Skill != cur.Skill || len(rw.Workers) > 0 || len(rw.Roles) > 0 {
-			if !flagged {
-				loosened = append(loosened, name)
-			}
-		}
-		c.Workflows[name] = cur
-	}
-	return loosened
-}
-
 // mergeThroughput merges a source's throughput: block onto c (change 0036).
 // Every axis is 0 = unlimited/unset. From a trusted source a present positive
 // value overrides the current one and the per-provider overrides map replaces
 // wholesale. From an UNTRUSTED source (.fuse.local.yml) each global rate/quota
-// axis may only TIGHTEN — lower an already-set positive limit — mirroring the
-// workflow-pool rule: a tightening is honored only when the current value is
+// axis may only TIGHTEN — lower an already-set positive limit : a tightening is honored only when the current value is
 // already set (>0) and the new value is a positive number strictly lower than
 // it. Everything else from an untrusted source (setting a previously-unset
 // 0=unlimited axis, raising a set one, or any providers: override) is a
@@ -272,28 +183,6 @@ func mergeThroughput(c *Config, raw rawThroughputConfig, trusted bool) (loosened
 			loosened = append(loosened, "throughput.providers")
 		}
 	}
-	return loosened
-}
-
-// mergePipeline merges a source's pipeline.synthesis caps onto c (change 0026).
-// Each cap is 0 = unset. From a trusted source a present positive value
-// overrides the current one. From an UNTRUSTED source (.fuse.local.yml) each cap
-// may only TIGHTEN — lower an already-set positive value — mirroring the
-// workflow-pool and throughput tighten-only rules (ADR-0006): a tightening is
-// honored only when the current value is already set (>0) and the new value is a
-// positive number strictly lower than it. Everything else from an untrusted
-// source (raising a set cap, or setting a previously-unset axis) is a loosening,
-// dropped with its key name returned for the aggregated warning.
-func mergePipeline(c *Config, raw rawPipelineSynthesisConfig, trusted bool) (loosened []string) {
-	tighten := func(key string, cur *int, newV int) {
-		if tightenNumeric(cur, newV, trusted) {
-			loosened = append(loosened, key)
-		}
-	}
-	tighten("pipeline.synthesis.max_steps", &c.Pipeline.Synthesis.MaxSteps, raw.MaxSteps)
-	tighten("pipeline.synthesis.max_fanout", &c.Pipeline.Synthesis.MaxFanout, raw.MaxFanout)
-	tighten("pipeline.synthesis.max_depth", &c.Pipeline.Synthesis.MaxDepth, raw.MaxDepth)
-	tighten("pipeline.synthesis.max_attempts", &c.Pipeline.Synthesis.MaxAttempts, raw.MaxAttempts)
 	return loosened
 }
 
@@ -364,9 +253,9 @@ func mergeFile(c *Config, path string, trusted bool, projects *map[string]Projec
 // home file: Default() with data merged over it as a TRUSTED source (every key
 // honored, no projects: capture, no .fuse.local.yml, no environment overrides).
 // source names the document in errors. It exists so a caller holding a document
-// that is not a file on disk (the harness-spec mapping, change 0084) gets the
-// loader's exact merge semantics (defaults, omitted-key discipline, clamps)
-// from the one place they live instead of a re-implementation.
+// that is not a file on disk gets the loader's exact merge semantics (defaults,
+// omitted-key discipline, clamps) from the one place they live instead of a
+// re-implementation.
 func FromYAML(data []byte, source string) (Config, error) {
 	c := Default()
 	if err := mergeData(&c, data, source, true, nil); err != nil {
@@ -375,90 +264,13 @@ func FromYAML(data []byte, source string) (Config, error) {
 	return c, nil
 }
 
-// OverlaySpec resolves a harness-spec document over base, the operator's
-// trusted config (change 0085, ADR-0061). The document is the one the harness-spec
-// mapping renders (internal/harnessconfig); the merge is the loader's own, at a
-// third trust level between the trusted home file and the untrusted
-// .fuse.local.yml:
-//
-//   - client-settable keys (models, max_turns, permissions, MCP servers,
-//     research, context, agents brakes, providers, workflows the operator does
-//     not define, ...) are honored like a trusted source: the spec's value
-//     where it sets one, the operator's where it does not;
-//   - the ADR-0006 tighten-only axes (agents.queue_bound,
-//     agents.tool_timeout_seconds, the throughput axes, the pipeline synthesis
-//     caps, and the pool numbers of an operator-defined workflow) follow the
-//     untrusted rule unchanged: a spec may only lower a value the operator set.
-//     Every refused loosening is returned as its config key path, and nothing is
-//     written to the warning stream - the caller reports them;
-//   - the ADR-0006 tightening lists (permissions.disabled, always_prompt,
-//     auto.fetch_deny, auto.fetch_ask) are unioned with the operator's, so a
-//     spec can add a denial but never drop one;
-//   - operator-only surfaces (gateway, skill_paths, projects, loop_server,
-//     observability, tool_identity, permissions.auto.write_roots) are ignored.
-//
-// base is never mutated.
-func OverlaySpec(base Config, data []byte, source string) (Config, []string, error) {
-	c := base.clone()
-	refused, err := mergeLayer(&c, data, source, layerSpec, nil)
-	if err != nil {
-		return Config{}, nil, err
-	}
-	return c, refused, nil
-}
-
-// layer is the trust level a merged document is applied with.
-type layer int
-
-const (
-	// layerUntrusted is a repo-plantable file (.fuse.local.yml): loosening keys
-	// are dropped with an aggregated warning (ADR-0006).
-	layerUntrusted layer = iota
-	// layerTrusted is the operator's home file: every key is honored.
-	layerTrusted
-	// layerSpec is a client-supplied harness spec over the operator's config
-	// (change 0085); see OverlaySpec.
-	layerSpec
-)
-
 // mergeData is mergeFile's body over already-read bytes; path names the source
 // in errors and warnings.
 func mergeData(c *Config, data []byte, path string, trusted bool, projects *map[string]ProjectConfig) error {
-	lvl := layerUntrusted
-	if trusted {
-		lvl = layerTrusted
-	}
-	_, err := mergeLayer(c, data, path, lvl, projects)
-	return err
-}
-
-// mergeLayer merges one document onto c at trust level lvl. For layerSpec it
-// returns the config key paths of refused tighten-only loosenings (see
-// OverlaySpec); the other levels report through the warning stream instead and
-// return nil.
-func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[string]ProjectConfig) ([]string, error) {
 	var raw rawConfig
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parse config %s: %w", path, err)
+		return fmt.Errorf("parse config %s: %w", path, err)
 	}
-	trusted := lvl == layerTrusted
-	spec := lvl == layerSpec
-	// refused collects a spec layer's tighten-only loosenings.
-	var refused []string
-	if spec {
-		// Operator-only surfaces never come from a spec (ADR-0060): the spec type
-		// cannot express them, and this drops them should a document carry one.
-		raw.Gateway = Gateway{}
-		raw.SkillPaths = nil
-		raw.Skills = SkillsConfig{}
-		raw.Projects = nil
-		raw.LoopServer = LoopServerConfig{}
-		raw.Observability = rawObservabilityConfig{}
-		raw.ToolIdentity = ToolIdentityConfig{}
-		raw.Permissions.Auto.WriteRoots = nil
-		raw.MCPServers = specMCPServers(raw.MCPServers)
-	}
-
 	if raw.Gateway.URL != "" {
 		c.Gateway.URL = raw.Gateway.URL
 	}
@@ -468,7 +280,7 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	if raw.Gateway.RequestTimeout != "" {
 		d, err := time.ParseDuration(raw.Gateway.RequestTimeout)
 		if err != nil || d <= 0 {
-			return nil, fmt.Errorf("%s: gateway.request_timeout %q is not a positive duration (e.g. \"20m\")", path, raw.Gateway.RequestTimeout)
+			return fmt.Errorf("%s: gateway.request_timeout %q is not a positive duration (e.g. \"20m\")", path, raw.Gateway.RequestTimeout)
 		}
 		c.Gateway.RequestTimeout = raw.Gateway.RequestTimeout
 	}
@@ -506,20 +318,8 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	// for one aggregated startup warning: the permission-loosening keys, plus
 	// the operator-only skills.* keys below.
 	var ignored []string
-	// skills.source / skills.dirs / skills.refresh (change 0134): the source
-	// adapter selection, its filesystem directories, and the server refresh
-	// interval. All three are operator-only: a skill body is an instruction the
-	// model is told to follow, and the refresh interval drives how often it is
-	// re-read, so a repo-plantable file must never steer any of them. From an
-	// untrusted layer they are inert and each present one is named in the
-	// aggregated warning (the same mechanism as the permission-loosening keys).
-	if raw.Skills.Source != "" {
-		if trusted {
-			c.Skills.Source = raw.Skills.Source
-		} else {
-			ignored = append(ignored, "skills.source")
-		}
-	}
+	// skills.dirs names which directories load skills, so it is honored only from a
+	// trusted source.
 	if len(raw.Skills.Dirs) > 0 {
 		if trusted {
 			c.Skills.Dirs = raw.Skills.Dirs
@@ -527,34 +327,10 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 			ignored = append(ignored, "skills.dirs")
 		}
 	}
-	if raw.Skills.Refresh != "" {
-		d, err := time.ParseDuration(raw.Skills.Refresh)
-		if err != nil || d <= 0 {
-			return nil, fmt.Errorf("%s: skills.refresh %q is not a positive duration (e.g. \"30s\")", path, raw.Skills.Refresh)
-		}
-		if trusted {
-			c.Skills.Refresh = raw.Skills.Refresh
-		} else {
-			ignored = append(ignored, "skills.refresh")
-		}
-	}
 	// Permission-loosening keys are honored only from a trusted source. From an
 	// untrusted (repo-plantable) source they are inert and each present one is
 	// collected for one aggregated startup warning.
-	if spec {
-		mergeSpecPermissions(c, raw.Permissions)
-	} else {
-		ignored = append(ignored, mergePermissions(c, raw.Permissions, trusted)...)
-	}
-	// orchestrator.model picks which model may steer the agent: trusted-only
-	// from a config file, client-settable in a spec (ADR-0060).
-	if m := strings.TrimSpace(raw.Orchestrator.Model); m != "" {
-		if trusted || spec {
-			c.Orchestrator.Model = m
-		} else {
-			ignored = append(ignored, "orchestrator.model")
-		}
-	}
+	ignored = append(ignored, mergePermissions(c, raw.Permissions, trusted)...)
 	// Capture the trusted home file's projects: map for applyProjectOverride.
 	if projects != nil {
 		*projects = raw.Projects
@@ -566,11 +342,10 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 		ignored = append(ignored, "projects")
 	}
 	// Roles carry a tool set and a model pin, so a repo-plantable file must not
-	// redefine them: honored from the home file and a spec, inert (and named in
-	// the warning) from .fuse.local.yml. An entry replaces any earlier entry with
+	// redefine them: honored from the home file, inert (and named in the warning) from .fuse.local.yml. An entry replaces any earlier entry with
 	// the same name, whole.
 	if len(raw.Roles) > 0 {
-		if lvl == layerUntrusted {
+		if !trusted {
 			ignored = append(ignored, "roles")
 		} else {
 			if c.Roles == nil {
@@ -581,7 +356,7 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 			}
 		}
 	}
-	if lvl == layerUntrusted && len(ignored) > 0 {
+	if !trusted && len(ignored) > 0 {
 		fmt.Fprintf(warnw, "warning: %s ignores permission-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
 			path, strings.Join(ignored, ", "))
 	}
@@ -643,10 +418,10 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 		c.Agents.MaxSpawns = raw.Agents.MaxSpawns
 	}
 	if c.Agents.MaxSpawns < 0 {
-		c.Agents.MaxSpawns = 64
+		c.Agents.MaxSpawns = 16
 	}
 	// Agents concurrency: a nonzero override replaces the default; an omitted
-	// key (zero) keeps the built-in 16. A negative override is clamped to the
+	// key (zero) keeps the built-in 8. A negative override is clamped to the
 	// default for the same reason as MaxSpawns: the scheduler guards its slot
 	// brake on a positive cap, so a raw negative would silently disable the
 	// active-child queueing even though NewAgentTreeWithConcurrency clamps its
@@ -656,18 +431,16 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 		c.Agents.MaxConcurrent = raw.Agents.MaxConcurrent
 	}
 	if c.Agents.MaxConcurrent < 0 {
-		c.Agents.MaxConcurrent = 16
+		c.Agents.MaxConcurrent = 8
 	}
 
 	// queue_bound (change 0036): the per-pool pending-queue multiplier. 0 = unset
 	// (the scheduler applies its 2.0 default where consumed). From a trusted
 	// source a present positive value overrides; from an untrusted source it may
-	// only TIGHTEN — lower an already-set positive bound — mirroring the
-	// workflow-pool tighten-only rule (ADR-0006). A negative value is nonsensical
+	// only TIGHTEN — lower an already-set positive bound (ADR-0006). A negative value is nonsensical
 	// for a queue multiplier (it would zero the pool queue), so it is dropped.
 	if tightenNumeric(&c.Agents.QueueBound, raw.Agents.QueueBound, trusted) {
 		ignoredThroughput = append(ignoredThroughput, "agents.queue_bound")
-		refused = append(refused, "agents.queue_bound")
 	}
 
 	// tool_timeout_seconds: the per-leaf-tool-call watchdog. 0 = unset (the agent
@@ -677,18 +450,6 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	// raise or introduce one. A negative value is nonsensical and is dropped.
 	if tightenNumeric(&c.Agents.ToolTimeoutSeconds, raw.Agents.ToolTimeoutSeconds, trusted) {
 		ignoredThroughput = append(ignoredThroughput, "agents.tool_timeout_seconds")
-		refused = append(refused, "agents.tool_timeout_seconds")
-	}
-
-	// Workflows: a config-level entry overrides any prior one for the same name.
-	// From an untrusted source (.fuse.local.yml) pool numbers may only TIGHTEN
-	// (lower an existing cap); a loosening value is ignored and the workflow is
-	// named in the aggregated warning (ADR-0006 trust boundary).
-	if spec {
-		refused = append(refused, mergeSpecWorkflows(c, raw.Workflows)...)
-	} else if loosened := mergeWorkflows(c, raw.Workflows, trusted); !trusted && len(loosened) > 0 {
-		fmt.Fprintf(warnw, "warning: %s ignores workflow pool-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
-			path, strings.Join(loosened, ", "))
 	}
 
 	// throughput: (change 0036). Every axis is 0 = unlimited/unset. From a
@@ -697,71 +458,10 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 	// pool-number tighten-only rule. Per-provider overrides are a trusted-only
 	// surface (they widen the effective limit for that provider, so an untrusted
 	// file setting them is a loosening).
-	if spec {
-		// Per-provider overrides are client-settable in a spec (ADR-0060): the
-		// server's shared rate gate still applies to every loop, so they can
-		// only slow the loop that set them. The global axes are tighten-only.
-		providers := raw.Throughput.Providers
-		raw.Throughput.Providers = nil
-		refused = append(refused, mergeThroughput(c, raw.Throughput, false)...)
-		if len(providers) > 0 {
-			c.Throughput.Providers = providers
-		}
-	} else {
-		ignoredThroughput = append(ignoredThroughput, mergeThroughput(c, raw.Throughput, trusted)...)
-	}
-	if lvl == layerUntrusted && len(ignoredThroughput) > 0 {
+	ignoredThroughput = append(ignoredThroughput, mergeThroughput(c, raw.Throughput, trusted)...)
+	if !trusted && len(ignoredThroughput) > 0 {
 		fmt.Fprintf(warnw, "warning: %s ignores throughput-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
 			path, strings.Join(ignoredThroughput, ", "))
-	}
-
-	// pipeline.synthesis caps (change 0026). Each cap is 0 = unset. From a trusted
-	// source a present positive value overrides; from an untrusted source each may
-	// only TIGHTEN — lower an already-set positive cap — matching the pool-number
-	// tighten-only rule (ADR-0006). A loosening value is dropped and named.
-	if loosened := mergePipeline(c, raw.Pipeline.Synthesis, trusted); spec {
-		refused = append(refused, loosened...)
-	} else if !trusted && len(loosened) > 0 {
-		fmt.Fprintf(warnw, "warning: %s ignores pipeline-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
-			path, strings.Join(loosened, ", "))
-	}
-
-	// loop_server (change 0049): the networked binding's bearer token→principal
-	// verifier map + lease TTL. This is a CREDENTIAL surface — a token grants
-	// access to a tenant/subject — so it is honored ONLY from the trusted home
-	// file. A repo-plantable .fuse.local.yml that set loop_server.auth could mint
-	// itself a token or re-point a tenant, so an untrusted source's block is
-	// dropped and named in the aggregated permission warning (ADR-0006).
-	// loop_server.issuers is the same surface: an issuer's signing key mints
-	// tokens for any subject in its tenants.
-	// loop_server.limits (change 0103) is operator policy, not a credential, but
-	// it lives in the same trusted-only block: a repo file must neither loosen
-	// nor tighten a tenant's loop limits.
-	if len(raw.LoopServer.Auth) > 0 || len(raw.LoopServer.Issuers) > 0 || raw.LoopServer.LeaseTTL != "" || len(raw.LoopServer.Secrets) > 0 || !raw.LoopServer.SpecPolicy.isZero() || raw.LoopServer.Limits.Configured() {
-		if trusted {
-			if !raw.LoopServer.SpecPolicy.isZero() {
-				c.LoopServer.SpecPolicy = raw.LoopServer.SpecPolicy
-			}
-			if raw.LoopServer.Limits.Configured() {
-				c.LoopServer.Limits = raw.LoopServer.Limits
-			}
-			// loop_server.secrets (change 0085) names the host secrets a harness
-			// spec may reference: a credential surface like the rest of the block.
-			if len(raw.LoopServer.Secrets) > 0 {
-				c.LoopServer.Secrets = raw.LoopServer.Secrets
-			}
-			if len(raw.LoopServer.Auth) > 0 {
-				c.LoopServer.Auth = raw.LoopServer.Auth
-			}
-			if len(raw.LoopServer.Issuers) > 0 {
-				c.LoopServer.Issuers = raw.LoopServer.Issuers
-			}
-			if raw.LoopServer.LeaseTTL != "" {
-				c.LoopServer.LeaseTTL = raw.LoopServer.LeaseTTL
-			}
-		} else {
-			fmt.Fprintf(warnw, "warning: %s ignores loop_server (a bearer-credential surface); set it in ~/.fuse/config.yml instead\n", path)
-		}
 	}
 
 	// Observability can open network listeners, emit tenant-sensitive telemetry,
@@ -771,28 +471,6 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 			c.Observability = raw.Observability.resolve()
 		} else {
 			fmt.Fprintf(warnw, "warning: %s ignores observability (a telemetry egress/access-policy surface); set it in ~/.fuse/config.yml instead\n", path)
-		}
-	}
-
-	// tool_identity (change #52): the built-in STS signing key + local subject for
-	// tool/resource identity propagation. This is a CREDENTIAL surface — the
-	// signing key mints tokens fuse's own downstreams trust — so it is honored
-	// ONLY from the trusted home file, exactly like loop_server. A repo-plantable
-	// .fuse.local.yml that set a signing key could mint downstream-trusted tokens,
-	// so an untrusted source's block is dropped and named (ADR-0006).
-	if raw.ToolIdentity.SigningKey != "" || raw.ToolIdentity.TTL != "" || raw.ToolIdentity.LocalSubject != "" {
-		if trusted {
-			if raw.ToolIdentity.SigningKey != "" {
-				c.ToolIdentity.SigningKey = raw.ToolIdentity.SigningKey
-			}
-			if raw.ToolIdentity.TTL != "" {
-				c.ToolIdentity.TTL = raw.ToolIdentity.TTL
-			}
-			if raw.ToolIdentity.LocalSubject != "" {
-				c.ToolIdentity.LocalSubject = raw.ToolIdentity.LocalSubject
-			}
-		} else {
-			fmt.Fprintf(warnw, "warning: %s ignores tool_identity (a signing-key credential surface); set it in ~/.fuse/config.yml instead\n", path)
 		}
 	}
 
@@ -853,21 +531,19 @@ func mergeLayer(c *Config, data []byte, path string, lvl layer, projects *map[st
 		}
 		mc, err := decodeModelEntry(v)
 		if err != nil {
-			return nil, fmt.Errorf("parse model %q in %s: %w", k, path, err)
+			return fmt.Errorf("parse model %q in %s: %w", k, path, err)
 		}
 		if c.Models.Entries == nil {
 			c.Models.Entries = map[string]ModelConfig{}
 		}
 		c.Models.Entries[k] = mc
 	}
-	return refused, nil
+	return nil
 }
 
 func observabilityConfigured(o rawObservabilityConfig) bool {
-	return o.Metrics.Enabled || o.Metrics.Path != "" || o.Metrics.Bind != "" || o.Metrics.Access != "" || len(o.Metrics.HistogramBuckets) > 0 || len(o.Metrics.Labels) > 0 ||
-		o.Traces.Enabled || o.Traces.Endpoint != "" || o.Traces.Protocol != "" || o.Traces.Insecure || len(o.Traces.Headers) > 0 || o.Traces.QueueSize != 0 || o.Traces.BatchSize != 0 || o.Traces.ExportTimeout != "" || o.Traces.BatchTimeout != "" || o.Traces.SampleRatio != nil ||
-		o.Logging.Enabled || o.Logging.Output != "" || o.Logging.File != "" || o.Logging.Level != "" || o.Logging.MaxOverrideTTL != "" ||
-		o.Cardinality.HashVersion != "" || o.Cardinality.Salt != "" || o.Cardinality.Tenant.Budget != 0 || o.Cardinality.Model.Budget != 0 || o.Cardinality.Tool.Budget != 0 || o.InstanceID != ""
+	return o.Traces.Enabled || o.Traces.Endpoint != "" || o.Traces.Protocol != "" || o.Traces.Insecure || len(o.Traces.Headers) > 0 || o.Traces.QueueSize != 0 || o.Traces.BatchSize != 0 || o.Traces.ExportTimeout != "" || o.Traces.BatchTimeout != "" || o.Traces.SampleRatio != nil ||
+		o.InstanceID != ""
 }
 
 // decodeModelEntry converts a single YAML model node into a ModelConfig.

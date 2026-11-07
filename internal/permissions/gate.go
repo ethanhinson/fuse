@@ -121,13 +121,6 @@ type PermissionGate struct {
 	// child's classifier blocks count toward the same session valve. It is nil
 	// outside auto mode wiring only if never constructed; New always allocates it.
 	valve *escalationValve
-
-	// mediator, when wired (WithTargetMediator), is the complete-mediation seam
-	// (change #52 D5): every tool call is checked against the principal/tenant
-	// target allowlist + scope ceilings BEFORE any mode/approval logic, and a
-	// denial there is terminal — even ModeOff cannot bypass it. Nil ⇒ no mediation
-	// in the path (byte-identical to pre-#52 behavior).
-	mediator TargetMediator
 }
 
 // escalationValve tracks classifier-layer block verdicts across a session and
@@ -518,21 +511,6 @@ func (g *PermissionGate) resolve(ctx context.Context, name, args string) (ToolPo
 	// itself remains mode-independent and terminal.)
 	mode := g.currentMode()
 
-	// Complete mediation (change #52 D5) runs FIRST and is terminal: a tool that
-	// reaches a downstream target not on the principal's allowlist — or requesting
-	// scope beyond the ceiling — is denied regardless of mode or approval, because
-	// "the tool exists and its args are schema-valid" is not authorization. This
-	// enforces authority, not user preference, so even ModeOff cannot bypass it.
-	if g.mediator != nil {
-		if allowed, reason := g.mediator.MediateTarget(ctx, name, args); !allowed {
-			if reason == "" {
-				reason = "tool target denied by policy (not on the caller's allowlist)"
-			}
-			g.emitDecision(ctx, mode, name, args, "deny", LayerMediation, reason, "", nil)
-			return ToolPolicy{Enabled: true, AutoApprove: false, DenyReason: reason, DenyLayer: LayerMediation}, nil
-		}
-	}
-
 	// Disabled list overrides everything.
 	for _, d := range g.cfg.Disabled {
 		if d == name {
@@ -892,8 +870,8 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 		// the safelist, heuristics or classifier. With a human bound it prompts
 		// like any ask; with only a policy stand-in it is denied (the stand-in
 		// would otherwise auto-approve what the operator asked to be asked about).
-		// Bindings that reach this: loop servers, the headless mcp-server and the
-		// piped-stdin one-shot. Not --approve-all, which is mode off and returns
+		// Bindings that reach this: the headless mcp-server and the piped-stdin
+		// one-shot. Not --approve-all, which is mode off and returns
 		// at LayerModeOff before any rule is evaluated.
 		if g.approvalProvenance == DecidedByPolicy {
 			return VerdictDeny, LayerRules, explicitAskReason(askPattern, true), nil, compoundSegs
@@ -1168,7 +1146,6 @@ func (g *PermissionGate) CloneForChild(label string) *PermissionGate {
 		valve: g.valve,
 		// The complete-mediation seam is shared by reference: a child agent's
 		// downstream tool calls inherit the same principal/tenant target ceiling.
-		mediator: g.mediator,
 	}
 	return child
 }

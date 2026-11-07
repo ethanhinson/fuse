@@ -19,7 +19,6 @@ import (
 	"github.com/ethanhinson/fuse/internal/probe"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/session"
-	"github.com/ethanhinson/fuse/internal/toolidentity"
 	"github.com/ethanhinson/fuse/internal/tools"
 	"github.com/ethanhinson/fuse/internal/tui"
 )
@@ -93,32 +92,23 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 
 	sched := tree.Scheduler()
 	rootNode := tree.Node(tree.RootID())
-	// One blackboard per session, shared by every agent in the tree (change 0023).
-	bb := agent.NewBlackboard(tree)
 	// Per-loop store holder (change 0046): BuildAgent sets it from the Runtime-owned
 	// store; the child-builder/spawner closures below read it instead of a global.
 	storeHolder := &eventStoreHolder{}
 	// Session observer (change 0061): supplied by the entry point so root and every
-	// child share ONE instance. Nil is the pre-0061 default — mirrors
-	// buildLoopServerRuntimeDepsWithObserver.
+	// child share ONE instance. Nil is the pre-0061 default.
 	if observer == nil {
 		observer = observe.NoopObserver{}
 	}
 
-	// MCP attach on the one-shot path (change #59, Task 5): route through the SAME
-	// shared helper every binding uses, so one-shot can list + invoke MCP tools with
-	// #52 identity propagation. mcp.NewManager registers the configured servers' tools
-	// into the one-shot registry (mcpOpts carry the egress CredentialSource); the loop
-	// initiator is seeded as localPrincipal(cfg) (→ DefaultTenant) via LoopContext
-	// below, mirroring the shell's local-identity model — NO new CLI identity flag
-	// (explicit non-goal). The mediator reaches the gate via buildGate →
-	// buildTargetMediator. One-shot is single-loop-per-process, so one manager over the
-	// one registry; it is closed at loop completion via LoopTeardown. A no-op when no
-	// MCP server is configured (no dial, no goroutines), and for a tool-less run
-	// (no_tools, change 0116), whose model is offered no tools to call them with.
-	mcpOpts, _ := mcpAttach(cfg, os.Stderr)
+	// MCP attach on the one-shot path. mcp.NewManager registers the configured
+	// servers' tools into the one-shot registry. One-shot is single-loop-per-process,
+	// so one manager over the one registry; it is closed at loop completion via
+	// LoopTeardown. A no-op when no MCP server is configured (no dial, no goroutines),
+	// and for a tool-less run (no_tools, change 0116), whose model is offered no tools
+	// to call them with.
 	var oneShotMCP *mcp.Manager
-	if mgr, err := mcp.NewManager(loopMCPServers(cfg), toolReg, mcpOpts...); err != nil {
+	if mgr, err := mcp.NewManager(loopMCPServers(cfg), toolReg); err != nil {
 		fmt.Fprintf(os.Stderr, "one-shot: mcp manager: %v\n", err)
 	} else {
 		oneShotMCP = mgr
@@ -135,12 +125,10 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		})
 	}
 
-	// Per-loop workflow scope and shared tool wiring (change 0091): workflows
-	// activate per spawn, and the child and root tools (worker allowlist, scoped
-	// spawn_agent, blackboard, pipeline_run) all come from loopWiring.
-	scope := newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
+	// Per-loop role scope and shared tool wiring.
+	scope := newRoleScope(tree, cfg.Roles)
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
-	wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope, traceW: traceW,
+	wiring := loopWiring{cfg: cfg, scope: scope,
 		makeSpawner: func(p *agent.AgentNode, d int) *agent.Spawner { return makeSpawner(p, d) }}
 	// childBuilder is the loop's per-child runner (cloned child-builder site 1 of 4,
 	// wired through loopWiring; learning patch-every-cloned-child-builder). It is BOTH
@@ -153,12 +141,12 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		if terr != nil {
 			return "", terr
 		}
-		childCfg := cp.agentConfig(cfg) // a tool-less role or worker composes the tool-less prompt
+		childCfg := cp.agentConfig(cfg) // a tool-less role composes the tool-less prompt
 
 		r := tui.NewRenderer(stdout, verbose)
 		modelID := opts.ModelID
 		if modelID == "" {
-			modelID = cp.model // worker or role model pin (changes 0034, 0114)
+			modelID = cp.model // role model pin (change 0114)
 		}
 		if modelID == "" {
 			modelID = modelAlias
@@ -210,13 +198,10 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// point that emits spawn.start/spawn.done onto the loop's own store.
 			agent.WithEventStore(storeHolder.get()),
 			agent.WithObserver(observer),
-			// Workflow pool backstop (change 0091): lazy, so a spawner built before
-			// its subtree activated still enforces pool.total and max_depth.
-			agent.WithSpawnBackstop(scope.backstop(parentNode)),
 			agent.WithChildBuilder(childBuilder),
 		)
 	}
-	// Root spawn_agent, blackboard and pipeline_run (provenance = rootNode).
+	// Root spawn_agent (provenance = rootNode).
 	wiring.rootTools(toolReg, rootNode)
 
 	return runtime.Deps{
@@ -230,15 +215,6 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 		Artifacts:       cliArtifactStore(),
 		MaxConcurrent:   cfg.Agents.MaxConcurrent,
 		NewToolRegistry: func() *tools.Registry { return toolReg },
-		// LoopContext seeds the one-shot loop initiator as the config-derived local
-		// principal (change #59, Task 5) — subject from cfg.ToolIdentity.LocalSubject,
-		// DefaultTenant — exactly the shell's local-identity model, so identity-propagating
-		// MCP calls mint a per-call credential from it. No per-invocation tenant/principal
-		// input (explicit non-goal). Stamped at the composition root, not the runtime seam
-		// (ADR-0030).
-		LoopContext: func(ctx context.Context, _ runtime.LoopConfig) context.Context {
-			return toolidentity.WithPrincipal(ctx, localPrincipal(cfg))
-		},
 		// LoopTeardown closes the one-shot MCP manager at loop completion so its
 		// read-pump/notify goroutines do not outlive the run. Idempotent (sync.Once):
 		// it runs on the normal completion goroutine AND may be invoked once more on a
@@ -256,14 +232,14 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// (learning per-instance-resource-needs-teardown-on-every-early-return).
 			_ = tools.ReleaseSandboxes(context.Background(), loopReg)
 		},
-		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, error) {
 			// Publish the Runtime-owned store to the per-loop holder so the eagerly-wired
 			// child-builder/spawner closures above emit onto THIS loop's store (change
 			// 0046). One-shot is single-loop-per-process; the holder is instance state.
 			storeHolder.set(store)
-			a, mid, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, cfg.Instructions, traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate, nil, observer)
+			a, _, err := buildAgentCore(cfg, reg, modelAlias, tui.NewRenderer(stdout, verbose), oneShotSystemBlock, cfg.Instructions, traceW, "root", reg2, rootApprove, nil, oneShotBudget, rateGate, nil, observer)
 			if err != nil {
-				return nil, nil, "", err
+				return nil, err
 			}
 			a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
 			// Event stream wiring (change 0043/0046): the root emits onto the loop's own
@@ -271,22 +247,20 @@ func buildOneShotRuntimeDeps(cfg config.Config, reg *model.Registry, modelAlias 
 			// symmetric, inert here.
 			a.SetEventSink(store)
 			a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
-			return a, childBuilder, mid, nil
+			return a, nil
 		},
 	}, oneShotMCPClose
 }
 
 // researchProbeDepsInput carries the research-probe binding's wiring into its Deps
-// builder (many params - a struct keeps the call site readable). scope is the
-// loop's workflow scope (the probe activates research on its root through it); nil
-// builds a fresh one over cfg.Workflows. logSink is the shared probe recorder Log.
+// builder (many params - a struct keeps the call site readable). logSink is the shared
+// probe recorder Log.
 type researchProbeDepsInput struct {
 	cfg      config.Config
 	reg      *model.Registry
 	alias    string
 	toolReg  *tools.Registry
 	tree     *agent.AgentTree
-	scope    *workflowScope
 	logSink  *probe.Log
 	traceW   io.Writer
 	rateGate model.RateGate
@@ -297,22 +271,15 @@ type researchProbeDepsInput struct {
 
 // buildResearchProbeRuntimeDeps assembles runtime.Deps for the research-probe entry
 // point. It preserves the probe's unique wiring: MultiRenderer (tree node +
-// recorder), workflow activation (worker allowlists, pool backstop), AlwaysApprove
-// (headless; a policy approver, so the probe's root and child gates are policy
+// recorder), AlwaysApprove // (headless; a policy approver, so the probe's root and child gates are policy
 // provenance and deny explicit asks at the rules layer). BaseDir is ""
 // (NoopStore - the probe writes no event log). The tree is supplied by the caller (Deps.Tree) so probe.Summarize still sees it after
 // h.Wait(). Cloned child-builder site 3 of 4, wired through loopWiring (learning
 // patch-every-cloned-child-builder).
 //
-// MCP attach choice (change #59, Task 5): the research-probe deliberately does NOT
-// attach an MCP manager. It is a bounded web-research fan-out over a fixed,
-// research-specific tool palette (web_search/web_fetch + spawn/blackboard/pipeline)
-// driving workflow workers; it exposes no configured downstream MCP target and has no
-// authenticated per-user identity to propagate (it runs under AlwaysApprove with no
-// principal surface). Attaching MCP here would add downstream reach the probe's role
-// does not call for. The two loop bindings that DO carry MCP — the shell and the
-// loop-server (and the one-shot local path) — go through mcpAttach; this site is the
-// documented exception, not an accidental omission.
+// The research-probe deliberately does NOT attach an MCP manager: it is a bounded
+// web-research fan-out over a fixed palette (web_search/web_fetch + spawn), and
+// attaching MCP would add downstream reach its role does not call for.
 func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 	cfg, reg, alias := in.cfg, in.reg, in.alias
 	toolReg, tree := in.toolReg, in.tree
@@ -320,8 +287,6 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 
 	sched := tree.Scheduler()
 	rootNode := tree.Node(tree.RootID())
-	// One blackboard per session, shared by every agent in the tree (change 0023).
-	bb := agent.NewBlackboard(tree)
 	// Per-loop store holder (change 0046): set by BuildAgent from the Runtime-owned
 	// store; read by the child-builder/spawner closures below.
 	storeHolder := &eventStoreHolder{}
@@ -331,25 +296,17 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		observer = observe.NoopObserver{}
 	}
 
-	// Per-loop workflow scope (change 0091). runResearchProbe passes the scope it
-	// activated research on the root through; a caller without one gets a fresh
-	// scope, so workflows still activate per spawn.
-	scope := in.scope
-	if scope == nil {
-		scope = newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
-	}
+	scope := newRoleScope(tree, cfg.Roles)
 	var makeSpawner func(parentNode *agent.AgentNode, depth int) *agent.Spawner
-	wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope, traceW: traceW,
+	wiring := loopWiring{cfg: cfg, scope: scope,
 		makeSpawner: func(p *agent.AgentNode, d int) *agent.Spawner { return makeSpawner(p, d) }}
 	childBuilder := func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
-		// The shared wiring resolves the effective tool list: inside a workflow a
-		// selected worker's allowlist is authoritative (opts.Tools may only narrow
-		// it); outside, opts.Tools is the freeform subset (change 0034).
+		// The shared wiring resolves the effective tool list.
 		childToolReg, cp, terr := wiring.childTools(toolReg, opts, childNode)
 		if terr != nil {
 			return "", terr
 		}
-		childCfg := cp.agentConfig(cfg) // a tool-less role or worker composes the tool-less prompt
+		childCfg := cp.agentConfig(cfg) // a tool-less role composes the tool-less prompt
 
 		label := childNode.Label
 		if label == "" {
@@ -361,10 +318,9 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		)
 
 		modelID := opts.ModelID
-		// A worker or role model pin applies when the caller did not pick a
-		// model explicitly (changes 0034, 0114).
+		// A role model pin applies when the caller did not pick a model explicitly.
 		if modelID == "" {
-			modelID = cp.model // worker or role model pin (changes 0034, 0114)
+			modelID = cp.model // role model pin (change 0114)
 		}
 		if modelID == "" {
 			modelID = alias
@@ -385,9 +341,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 			return "", aerr
 		}
 		// Unified visibility predicate (change 0036): the scheduler folds
-		// the global brakes, the workflow pool (when the node is inside a
-		// registered subtree), and the queue bound into one rule — tighter
-		// scope wins.
+		// the global brakes and the queue bound into one rule.
 		a.SetStripSpawn(sched.StripPredicate(childNode.ID))
 		a.SetExpects(opts.ExpectsSchema(), opts.ExpectsSink()) // 0042: structured-delegation return_result channel
 		// Event stream wiring (change 0043/0046) - cloned child-builder site 3 of 4:
@@ -409,8 +363,6 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 			agent.WithTree(tree),
 			agent.WithNode(parentNode),
 			agent.WithSpawnDepth(depth),
-			// Workflow pool backstop (change 0091), resolved lazily per spawn.
-			agent.WithSpawnBackstop(scope.backstop(parentNode)),
 			// Spawn lifecycle events (change 0044/0046): emitted by the Spawner choke
 			// point onto the loop's own store.
 			agent.WithEventStore(storeHolder.get()),
@@ -418,10 +370,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 			agent.WithChildBuilder(childBuilder),
 		)
 	}
-	// Root spawn_agent, blackboard and pipeline_run (provenance = rootNode). When
-	// the root roots research, its spawn_agent offers the workflow's typed workers
-	// so the model selects a facet-researcher per facet instead of hand-assembling
-	// a toolset.
+	// Root spawn_agent (provenance = rootNode).
 	wiring.rootTools(toolReg, rootNode)
 
 	return runtime.Deps{
@@ -441,9 +390,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		// Registry.Clone shares TOOL POINTERS, so there is exactly ONE bash tool and
 		// ONE warm pool behind it. A LoopTeardown calling ReleaseSandboxes here would
 		// therefore make one loop's completion close a pool another live loop is
-		// checked out of — the loop-server carries a LoopTeardown precisely because it
-		// rebinds tools.NewBash(sb) into a per-loop CLONE first, giving each loop a
-		// pool of its own to close.
+		// checked out of.
 		//
 		// The probe is structurally single-loop: Deps.Tree pins ONE tree (and with it
 		// one rootID and one StreamKey), and runResearchProbe drives exactly one
@@ -453,7 +400,7 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 		// per-instance-resource-needs-teardown-on-every-early-return). Deps.MaxConcurrent
 		// does not bear on this: it seeds the agent TREE's scheduler concurrency, and
 		// only when Deps.Tree is nil — it is not a loop-concurrency knob.
-		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
+		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, error) {
 			// Publish the Runtime-owned store so the eagerly-wired child-builder/spawner
 			// closures emit onto THIS loop's store (change 0046). Research-probe is
 			// single-loop-per-process; the holder is instance state.
@@ -463,39 +410,29 @@ func buildResearchProbeRuntimeDeps(in researchProbeDepsInput) runtime.Deps {
 				tui.NewNodeRenderer(rootNode, tree),
 				logSink.Recorder("root"),
 			)
-			a, mid, err := buildAgentCore(cfg, reg, alias, rootR, spawnGuidance(cfg), cfg.Instructions, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate, nil, observer)
+			a, _, err := buildAgentCore(cfg, reg, alias, rootR, spawnGuidance(cfg), cfg.Instructions, traceW, "root", reg2, permissions.AlwaysApprove, nil, false, rateGate, nil, observer)
 			if err != nil {
-				return nil, nil, "", err
+				return nil, err
 			}
-			// The root is the workflow root: its own spawn schema is governed by the
-			// workflow pool composed with the global brakes, folded into the
-			// scheduler's unified visibility predicate (change 0036).
 			a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
 			// Event stream wiring (change 0043/0046): symmetric with the child sites.
 			a.SetEventSink(store)
 			a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
-			return a, childBuilder, mid, nil
+			return a, nil
 		},
 	}
 }
 
-// shellDepsInput carries the interactive shell's wiring into its Deps builder. The
-// shell is unique among the three bindings: the bubbletea TUI owns the turn cadence
-// and per-turn renderer, so its root agent is built by the TUI's own AgentBuilder
-// seam (which needs the per-turn renderer). buildShellRuntimeDeps therefore routes
-// the CHILD builder + tool registration + store ownership through runtime.Deps while
-// the TUI keeps rendering/turn cadence, human messaging, projected-log consumer, and
-// segment sink exactly as before (plan NOTE on shell.go).
+// shellDepsInput carries the interactive shell's wiring. The bubbletea TUI owns the
+// turn cadence and per-turn renderer, so its root agent is built by the TUI's own
+// AgentBuilder seam and the Runtime never drives it. wireShellTools therefore wires
+// only the child builder and the root's spawn_agent.
 type shellDepsInput struct {
-	cfg     config.Config
-	reg     *model.Registry
-	alias   string
-	toolReg *tools.Registry
-	tree    *agent.AgentTree
-	// bb is the session blackboard the TUI's /agents overlay also reads — it MUST be
-	// the same instance the shell passes to m.WithBlackboard, so the tools wired here
-	// write into the blackboard the overlay observes. May be nil in the wiring test.
-	bb          *agent.Blackboard
+	cfg         config.Config
+	reg         *model.Registry
+	alias       string
+	toolReg     *tools.Registry
+	tree        *agent.AgentTree
 	verbose     bool
 	skillBlock  string
 	sessionMode *permissions.SessionMode
@@ -504,7 +441,6 @@ type shellDepsInput struct {
 	sessLog     *session.Logger
 	traceW      io.Writer
 	rateGate    model.RateGate
-	logDir      string
 	// eventStore is the shell's own session event store, opened in shell.go BEFORE this
 	// builder runs (the TUI — not StartLoop — drives shell turns, so the shell owns the
 	// store lifecycle). It seeds the per-loop holder directly so the child-builder /
@@ -517,27 +453,18 @@ type shellDepsInput struct {
 	// global (change 0046). Nil ⇒ the agent's no-op default. It is the sink the shell's
 	// own root build closure (shell.go) also uses, so root and children share one sink.
 	segmentSink agent.SegmentSink
-	// childApprove is the per-child base approval func (the TUI channel); rootApprove
-	// is the build-seam approval used by BuildAgent for the root construction. In the
-	// wiring-assertion test both may be nil.
+	// childApprove is the per-child base approval func (the TUI channel). In the
+	// wiring-assertion test it may be nil.
 	childApprove permissions.Approver
-	rootApprove  permissions.Approver
 	// observer is the session-shared observe.Observer built once in runShell
 	// (change 0061). Nil selects observe.NoopObserver{} — today's behavior.
 	observer observe.Observer
 }
 
-// buildShellRuntimeDeps assembles runtime.Deps for the interactive shell. It wires
-// the child-builder closure (cloned child-builder site 2 of 4, wired through
-// loopWiring), registers the root's
-// spawn_agent / blackboard / pipeline tools on toolReg (side effect the TUI relies
-// on), and seeds the per-loop store holder from the shell's OWN event store (the shell
-// owns its store lifecycle because the TUI — not StartLoop — drives turns, change
-// 0046). BuildAgent builds a root agent with a discarding default renderer — the TUI's
-// own AgentBuilder seam
-// (which owns the per-turn renderer) is what actually drives shell turns; BuildAgent
-// exists for seam symmetry and binding-#2 reuse.
-func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
+// wireShellTools wires the interactive shell's child builder and registers the root's
+// spawn_agent on toolReg, seeding the per-loop store holder from the shell's OWN event
+// store (the shell owns its store lifecycle because the TUI drives turns, change 0046).
+func wireShellTools(in shellDepsInput) {
 	cfg, reg, alias := in.cfg, in.reg, in.alias
 	toolReg, tree := in.toolReg, in.tree
 	verbose, skillBlock := in.verbose, in.skillBlock
@@ -546,13 +473,6 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 
 	sched := tree.Scheduler()
 	rootNode := tree.Node(tree.RootID())
-	// The session blackboard is supplied by the shell so the TUI's /agents overlay
-	// and the tools wired here share ONE instance (change 0023). In the wiring test
-	// it may be nil, so fall back to a fresh one.
-	bb := in.bb
-	if bb == nil {
-		bb = agent.NewBlackboard(tree)
-	}
 	// Per-loop store holder (change 0046): the shell owns its store lifecycle (the TUI
 	// drives turns, not StartLoop), so the holder is seeded directly from the shell's
 	// own store here rather than by BuildAgent. The child-builder/spawner closures read
@@ -565,10 +485,10 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		observer = observe.NoopObserver{}
 	}
 
-	// Per-loop workflow scope and shared tool wiring (change 0091).
-	scope := newWorkflowScope(tree, cfg.Workflows, cfg.Roles)
+	// Per-loop role scope and shared tool wiring.
+	scope := newRoleScope(tree, cfg.Roles)
 	var makeSpawner func(parentNode *agent.AgentNode, parentDepth int) *agent.Spawner
-	wiring := loopWiring{cfg: cfg, tree: tree, bb: bb, scope: scope, traceW: traceW,
+	wiring := loopWiring{cfg: cfg, scope: scope,
 		makeSpawner: func(p *agent.AgentNode, d int) *agent.Spawner { return makeSpawner(p, d) }}
 	childBuilder := func(ctx context.Context, opts agent.SpawnOpts, childNode *agent.AgentNode, childTree *agent.AgentTree) (string, error) {
 		// Register a human-typeable @handle for this child (auto-derived from
@@ -576,14 +496,13 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 		if handleReg != nil {
 			handleReg.Register(childNode.ID, opts.Label)
 		}
-		// Child-specific tool registry (clone, subset or worker allowlist) with the
-		// child-bound spawn_agent, blackboard and pipeline_run; unknown tool, worker
-		// or workflow names fail the spawn so the model can self-correct.
+		// Child-specific tool registry (clone or subset) with the child-bound
+		// spawn_agent; unknown tool names fail the spawn so the model can self-correct.
 		childToolReg, cp, terr := wiring.childTools(toolReg, opts, childNode)
 		if terr != nil {
 			return "", terr
 		}
-		childCfg := cp.agentConfig(cfg) // a tool-less role or worker composes the tool-less prompt
+		childCfg := cp.agentConfig(cfg) // a tool-less role composes the tool-less prompt
 
 		r := tui.NewNodeRenderer(childNode, childTree)
 		// Child agents inherit the parent's permission config and route their
@@ -594,7 +513,7 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 
 		modelAlias := opts.ModelID
 		if modelAlias == "" {
-			modelAlias = cp.model // worker or role model pin (changes 0034, 0114)
+			modelAlias = cp.model // role model pin (change 0114)
 		}
 		if modelAlias == "" {
 			modelAlias = alias
@@ -676,69 +595,11 @@ func buildShellRuntimeDeps(in shellDepsInput) runtime.Deps {
 			// point onto the shell's own store via the per-loop holder.
 			agent.WithEventStore(storeHolder.get()),
 			agent.WithObserver(observer),
-			// Workflow pool backstop (change 0091), resolved lazily per spawn.
-			agent.WithSpawnBackstop(scope.backstop(parentNode)),
 			agent.WithChildBuilder(childBuilder),
 		)
 	}
 
-	// Register the root spawn_agent, blackboard and pipeline_run tools in the tool
-	// registry before any agent runs (provenance = rootNode).
+	// Register the root spawn_agent in the tool registry before any agent runs
+	// (provenance = rootNode).
 	wiring.rootTools(toolReg, rootNode)
-
-	return runtime.Deps{
-		// The Runtime installs Deps.Observer on the root agent it builds and on the
-		// Spawner it wires (inproc.go), so the session observer MUST be published here
-		// too — BuildAgent's own SetObserver would otherwise be overwritten with the
-		// noop default on the StartLoop path (change 0061).
-		Observer:        observer,
-		Tree:            tree,
-		BaseDir:         in.logDir, // present for seam symmetry; the shell's TUI drives turns, not StartLoop.
-		MaxConcurrent:   cfg.Agents.MaxConcurrent,
-		Artifacts:       in.toolReg.Artifacts().Store, // the session's own store, never the in-memory default
-		NewToolRegistry: func() *tools.Registry { return toolReg },
-		// NO LoopTeardown — deliberately (review fix on change 0063).
-		//
-		// The shell hands EVERY loop the same shared registry above, and
-		// Registry.Clone shares TOOL POINTERS, so there is exactly ONE bash tool and
-		// ONE warm pool behind it — shared with the TUI-driven turns and every child,
-		// which do not go through StartLoop at all. A LoopTeardown calling
-		// ReleaseSandboxes here would make one loop's completion close a pool another
-		// live loop (or the TUI's own next turn) is still using. The loop-server
-		// carries a LoopTeardown precisely because it rebinds tools.NewBash(sb) into a
-		// per-loop CLONE first, giving each loop a pool of its own to close.
-		//
-		// The pool is a SESSION resource here, so runShell releases it with a deferred
-		// ReleaseSandboxes over that same registry, covering every path out of the
-		// session (learning per-instance-resource-needs-teardown-on-every-early-return)
-		// — including today's reality that the shell's Runtime never drives StartLoop,
-		// which left this LoopTeardown unreachable and the pool never released at all.
-		// Deps.MaxConcurrent does not bear on this: it seeds the agent TREE's scheduler
-		// concurrency, and only when Deps.Tree is nil — it is not a loop-concurrency knob.
-		BuildAgent: func(store event.EventStore, _ *agent.AgentTree, modelID string, reg2 *tools.Registry) (*agent.Agent, agent.ChildBuilder, string, error) {
-			// The TUI's own AgentBuilder seam builds the per-turn root with the live
-			// renderer; BuildAgent here builds a root with a discarding renderer for
-			// seam symmetry / binding-#2 reuse. It honors the same wiring the shell's
-			// build closure applies (strip predicate, injector, event sink). The shell
-			// owns its store lifecycle, so if StartLoop DID drive this loop the Runtime's
-			// store is published to the holder; otherwise the holder keeps the shell's
-			// own store (seeded above).
-			if store != nil {
-				storeHolder.set(store)
-			}
-			a, err := buildAgentWithRendererAndTrace(cfg, reg, alias, tui.NewRenderer(io.Discard, verbose), verbose, skillBlock, cfg.Instructions, reg2, in.rootApprove, traceW, "root", sessionMode, true, rateGate, in.segmentSink, observer)
-			if err != nil {
-				return nil, nil, "", err
-			}
-			a.SetStripSpawn(sched.StripPredicate(rootNode.ID))
-			// The runtime wires the root usage sink and call gate (inproc.go);
-			// wiring them here too would count the root's tokens twice.
-			if humanBus != nil {
-				a.SetHumanInjector(agent.NewHumanInjector(rootNode.ID, humanBus))
-			}
-			a.SetEventSink(storeHolder.get())
-			a.SetNodeIdentity(rootNode.ID, rootNode.ParentID, rootNode.Depth)
-			return a, childBuilder, modelID, nil
-		},
-	}
 }

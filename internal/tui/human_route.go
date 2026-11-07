@@ -60,7 +60,7 @@ type routedInput struct {
 // session state) — then everything is routeNormal. busy reports whether an agent
 // turn is in flight; hasAsk reports whether an ask_user overlay is open. selected
 // is the /agents-selected node ID (or "" for root).
-func classifyInput(line string, tree *agent.AgentTree, reg *agent.HandleRegistry, bb *agent.Blackboard, busy, hasAsk bool, selected string) routedInput {
+func classifyInput(line string, tree *agent.AgentTree, reg *agent.HandleRegistry, busy, hasAsk bool, selected string) routedInput {
 	trimmed := strings.TrimSpace(line)
 
 	// Rung 0: /rename admin (works any time).
@@ -78,7 +78,7 @@ func classifyInput(line string, tree *agent.AgentTree, reg *agent.HandleRegistry
 	if rest, ok := stripPrefix(trimmed, "/btw"); ok {
 		ans := ""
 		if tree != nil {
-			ans = agent.AnswerAside(agent.ParseAside(rest), tree, bb, reg)
+			ans = agent.AnswerAside(agent.ParseAside(rest), tree, reg)
 		}
 		return routedInput{Kind: routeAside, Text: rest, AsideAnswer: ans}
 	}

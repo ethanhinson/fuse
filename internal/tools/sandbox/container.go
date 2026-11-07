@@ -11,8 +11,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/ethanhinson/fuse/internal/loopauth"
 )
 
 // DefaultContainerImage is the image used when the operator configured none.
@@ -165,32 +163,6 @@ func withEgress(e Egress) containerOption {
 	return func(h *containerHandler) { h.egress = e }
 }
 
-// withEgressDatapath supplies the two halves of the hole through the
-// `--network none` floor (change 0064, task 6): the source of the principal's
-// host-side proxy socket, and the host path of the statically linked forwarder
-// binary that is bind-mounted into the container to reach it.
-//
-// SECURITY-CRITICAL, and for a sharper reason than its neighbours. The floor is
-// a subtraction — the worst a lost withEgress does is leave the container with
-// the network it had before 0064. This is an ADDITION: it names a binary fuse
-// bind-mounts into the container and then EXECUTES as the command's parent
-// process, and a socket that is one principal's authenticated path off the box.
-// A caller who could supply either would be choosing what runs inside the
-// sandbox and whose policy it runs under. So, like withTrustedRoot and
-// withEgress, both values come from the COMPOSITION ROOT and are applied LAST in
-// the options chain (see NewService / WithEgressProxy), and neither this option
-// nor the interface it takes is exported.
-//
-// Both halves are required: with either missing the datapath is not emitted at
-// all and enforcement stays deny-all (see resolveForwarderBinary), which is the
-// fail-closed direction.
-func withEgressDatapath(src egressSocketSource, forwarderPath string) containerOption {
-	return func(h *containerHandler) {
-		h.egressSockets = src
-		h.egressForwarder = forwarderPath
-	}
-}
-
 // withTrustedRoot sets the host directory this handler bind-mounts.
 //
 // SECURITY-CRITICAL: the value comes from the COMPOSITION ROOT — the repo root
@@ -200,52 +172,6 @@ func withEgressDatapath(src egressSocketSource, forwarderPath string) containerO
 // method that can change it afterwards.
 func withTrustedRoot(root string) containerOption {
 	return func(h *containerHandler) { h.root = root }
-}
-
-// tenantRootSource yields the HOST directory ONE principal's containers are
-// allowed to see — the bind-mount source, chosen as a function of
-// Principal.Tenant and nothing else (change 0065).
-//
-// The interface is UNEXPORTED, and so is the option that accepts one
-// (withTenantRoots), for exactly the reason egressSocketSource is: a
-// caller-suppliable root source IS a caller-suppliable bind-mount into the
-// container, which is the hole this package exists to close. The exported seam
-// lives at the composition root, where host layout policy belongs; the package
-// itself stays layout-agnostic.
-//
-// The Principal handed in is the AUTHENTICATED one, established at the Connect
-// edge and fixed at Acquire. It is never derived from command, working_dir, or
-// any other tool argument: a tenant the model can select is not an isolation
-// boundary.
-//
-// An implementation that cannot resolve a root returns ("", err) or ("", nil).
-// Both are DEGRADED-SAFE and mean "mount nothing" — never a shared root, never
-// a parent of some other tenant's tree.
-//
-// THE MICROVM BINDING. This seam is the container expression of a boundary
-// ADR-0044's 2026-08-16 Update requires of every substrate, including the
-// microVM handler that does not exist yet. The three conditions such a handler
-// must satisfy — a per-tenant VM-native backing (a virtio-fs share OR a block
-// image, one mechanism), a HOST-side canonicalise-then-compare working_dir
-// check rather than a guest-side one, and warm/snapshot pools that stay
-// strictly per-principal and reset — are recorded in full beside the seam-
-// conformance stub, in microvm_conformance_test.go ("THE MICROVM FILESYSTEM
-// CONTRACT"). They are written down there rather than rediscovered when the
-// handler is built.
-type tenantRootSource interface {
-	Root(loopauth.Principal) (string, error)
-}
-
-// withTenantRoots supplies the per-tenant mount-root resolver (change 0065).
-//
-// SECURITY-CRITICAL, and for the same reason as withTrustedRoot: this names the
-// host directory fuse bind-mounts into a container the model drives. The value
-// comes from the COMPOSITION ROOT, resolved from trusted operator config before
-// any model has run, and is applied LAST in the options chain so no
-// caller-supplied containerOption can swap the isolation boundary out from
-// under it. Applied once, at construction; no method changes it afterwards.
-func withTenantRoots(src tenantRootSource) containerOption {
-	return func(h *containerHandler) { h.tenantRoots = src }
 }
 
 // containerHandler runs commands inside a throwaway OCI container.
@@ -280,21 +206,6 @@ type containerHandler struct {
 	// EgressAllowAll, which renders no network flag at all — byte-for-byte the
 	// pre-0064 argv. Never model-derived; see withEgress.
 	egress Egress
-
-	// egressSockets yields the per-principal host socket the container's
-	// forwarder relays to, and egressForwarder is the canonicalised host path of
-	// that forwarder binary. Both are resolved once at construction from the
-	// composition root; either being absent means NO datapath is emitted and
-	// EgressEnforce stays deny-all. Never model-derived; see withEgressDatapath.
-	egressSockets   egressSocketSource
-	egressForwarder string
-
-	// tenantRoots resolves the per-principal bind-mount source (change 0065).
-	// Nil — the default, and the whole local single-tenant path — means the
-	// handler's single trusted root is used unchanged, so an operator who never
-	// configured a resolver gets byte-for-byte today's argv. Never
-	// model-derived; see withTenantRoots.
-	tenantRoots tenantRootSource
 
 	// pullOnce guards the single-flight pre-pull, and pullErr records its
 	// outcome. A failed pull is retried on a later Acquire rather than cached as
@@ -341,12 +252,6 @@ func newContainerHandler(cfg Config, opts ...containerOption) (*containerHandler
 	// than something re-derived per Exec from whatever the filesystem looks
 	// like by then.
 	h.root = resolveMountRoot(h.root)
-	// Same discipline for the forwarder binary, and for the same reason: the
-	// artifact fuse mounts and executes inside the container is proved to exist
-	// ONCE, here, rather than being re-stat'ed per Exec — or, worse, handed to
-	// the daemon unproven, which would have it invented as a root-owned
-	// directory. "" means no datapath; see resolveForwarderBinary.
-	h.egressForwarder = resolveForwarderBinary(h.egressForwarder)
 	// Applied only if no test injected its own execRunner (withExecRunner sets
 	// h.run directly), so the client-env lookup wiring never overrides an
 	// explicit test double.
@@ -404,21 +309,13 @@ func (h *containerHandler) Runtime() string { return h.runtime }
 // field on this handler follows.
 func (h *containerHandler) setHealthHooks(hooks HealthHooks) { h.health = hooks }
 
-// tenantScoped satisfies the tenantScoped interface Service.TenantScoped reads
-// through. It reports the substrate's ACTUAL posture — whether Acquire will
-// resolve a per-principal mount source — rather than whether an option was once
-// passed, so a resolver lost to the trusted-last ordering or to the
-// nil-interface trap reports false. That is what makes the composition root's
-// wiring assertion honest rather than a restatement of its own argument.
-func (h *containerHandler) tenantScoped() bool { return h != nil && h.tenantRoots != nil }
-
 // Acquire returns a Runner bound to p and to env.
 //
 // The environment is rendered here, once, from the allowlist the caller
 // resolved. The Runner never consults the process environment afterwards, which
 // is what makes it structurally impossible for an ambient variable to reach a
 // container.
-func (h *containerHandler) Acquire(ctx context.Context, p loopauth.Principal, env Env) (Runner, error) {
+func (h *containerHandler) Acquire(ctx context.Context, p Principal, env Env) (Runner, error) {
 	// Bounded, single-flight pre-pull (change 0077). With --pull=never on the run
 	// argv, the image must be acquired here or `run` fails; doing it under the
 	// pull's own timeout is what keeps a cold image from hanging an Exec on the
@@ -445,90 +342,12 @@ func (h *containerHandler) Acquire(ctx context.Context, p loopauth.Principal, en
 		return nil, fmt.Errorf("%s pull %s: %w: %w", h.runtime, h.image, errPullFailed, err)
 	}
 
-	// The datapath's one per-run value (change 0064, task 6): the HOST path of
-	// THIS principal's proxy socket.
-	//
-	// It is resolved HERE, at Acquire, and not in argv, because that is where the
-	// principal is — argv is built per Exec from a Runner whose principal was
-	// fixed at Acquire and is never reassigned, so a socket resolved here belongs
-	// to exactly one principal for the Runner's whole life. Proxy.Listen is
-	// idempotent per principal, so concurrent sandboxes for one principal share
-	// one socket and a pooled Runner re-checked-out for its own principal
-	// (pool.go's certifyPrincipal forbids any other) gets the same one back.
-	//
-	// A failure is an ACQUIRE failure, loudly. The alternative — degrading to the
-	// datapath-less deny-all — would turn "the proxy could not open a socket"
-	// into "every network call in this loop mysteriously fails", which is the
-	// same containment but an unreadable one.
-	socket := ""
-	if h.egressDatapathWired() {
-		var err error
-		socket, err = h.egressSockets.Listen(p, h.egress)
-		if err != nil {
-			return nil, fmt.Errorf("sandbox: open egress socket: %w", err)
-		}
-	}
-
-	// The mount source for THIS principal (change 0065).
-	//
-	// Resolved HERE, at Acquire, and for exactly the reason the egress socket
-	// above is: this is where the AUTHENTICATED Principal is in hand. The
-	// trust direction is the whole point — the tenant comes from
-	// Principal.Tenant, established at the Connect edge before this package is
-	// reached, and never from `command`, from `working_dir`, or from any other
-	// tool argument. A tenant a model could name is a tenant a model could
-	// switch, and a switchable tenant is not an isolation boundary. argv is
-	// built per Exec from a Runner whose principal was fixed at Acquire and is
-	// never reassigned, so a root resolved here belongs to exactly one
-	// principal for that Runner's whole life and cannot drift between Execs.
-	//
-	// With no resolver configured — the default, and the whole local
-	// single-tenant path — this is skipped entirely and the handler's single
-	// trusted root is used unchanged, so argv stays byte-for-byte today's.
-	root := h.root
-	if h.tenantRoots != nil {
-		resolved, err := h.tenantRoots.Root(p)
-		if err != nil {
-			// A resolver ERROR is an ACQUIRE failure, loudly — the same posture
-			// the egress socket takes just above, and for the same reason. The
-			// alternative, degrading to some other root, is the one outcome
-			// forbidden here: it would run this tenant's commands against a
-			// tree it was never granted, which is a cross-tenant disclosure
-			// dressed up as resilience. Degrading to NO root would be safe but
-			// unreadable ("my workspace is mysteriously empty"), so the error
-			// is surfaced instead.
-			return nil, fmt.Errorf("sandbox: resolve tenant mount root: %w", err)
-		}
-		// One canonicalisation, through the SAME function that canonicalises
-		// the single trusted root at construction — never a second
-		// canonicaliser. The later working_dir containment check compares a
-		// canonical candidate against this root, and two paths canonicalised
-		// differently is precisely how an escape comes to look in-tree.
-		//
-		// "" — whether the resolver returned it, or resolveMountRoot rejected
-		// what it did return — is DEGRADED-SAFE and means "mount nothing". It
-		// must never fall back to h.root, to a shared root, or to a parent of
-		// some other tenant's tree: an unmounted container is a broken
-		// workspace, a wrongly-mounted one is a disclosure, and only one of
-		// those is recoverable.
-		root = resolveMountRoot(resolved)
-	}
-
 	return &containerRunner{
-		handler:      h,
-		principal:    p,
-		env:          renderEnv(env),
-		egressSocket: socket,
-		root:         root,
+		handler:   h,
+		principal: p,
+		env:       renderEnv(env),
+		root:      h.root,
 	}, nil
-}
-
-// egressDatapathWired reports whether BOTH halves of the hole are present under
-// an enforcing posture. All three conditions are required, and the conjunction is
-// the fail-closed statement: no mode, no source, or no forwarder binary means no
-// datapath is emitted and enforcement is deny-all.
-func (h *containerHandler) egressDatapathWired() bool {
-	return h.egress.Mode == EgressEnforce && h.egressSockets != nil && h.egressForwarder != ""
 }
 
 // containerRunner is one principal's container execution context.
@@ -537,39 +356,12 @@ type containerRunner struct {
 	// principal is fixed at Acquire and never reassigned: a Runner belongs to
 	// exactly one principal for its whole life, which is what lets the warm
 	// pool re-assert ownership on checkout (see acquiredFor).
-	principal loopauth.Principal
+	principal Principal
 
-	// egressSocket is the HOST path of this principal's proxy socket, resolved
-	// once at Acquire alongside principal and equally immutable. "" means no
-	// datapath was wired, in which case argv emits none of it.
-	//
-	// Acquire took a LEASE on that listener and this Runner holds it until
-	// Release. It is deliberately not a close: the listener is per-PRINCIPAL and
-	// several sandboxes may share it, so closing it here would cut a live tunnel
-	// belonging to another Exec. Dropping the lease lets the proxy tear it down
-	// when the LAST holder lets go — see Release below and Proxy.Release.
-	egressSocket string
-
-	// root is the HOST directory THIS Runner's containers bind-mount, resolved
-	// once at Acquire alongside principal and equally immutable (change 0065).
-	// With no tenant resolver configured it is the handler's single trusted
-	// root; with one, it is the tree that resolver granted this principal's
-	// tenant.
-	//
-	// It lives on the Runner rather than being re-derived per Exec so that it
-	// is a settled fact for the Runner's whole life: a root re-resolved inside
-	// argv could drift between two Execs of one checked-out Runner, and a mount
-	// that changes underneath a principal is a mount nobody can reason about.
-	// "" means mount nothing — the degraded-safe state — and is never a
+	// root is the HOST directory THIS Runner's containers bind-mount: the handler's
+	// trusted root, fixed at Acquire. "" means mount nothing — the degraded-safe state — and is never a
 	// substitute root; see workspace.
 	root string
-
-	// releaseOnce makes the lease drop happen at most once however many times
-	// Release is called. Callers legitimately release twice (bash.go's explicit
-	// call plus its defer), and a second drop would be a lease this Runner never
-	// held — which, if some other sandbox had since taken one, would tear down a
-	// listener that is in use.
-	releaseOnce sync.Once
 
 	// mu guards env. A pooled Runner is re-environed on checkout (ResetEnv)
 	// while a previous Exec may still be unwinding, so the environment is not
@@ -583,7 +375,7 @@ type containerRunner struct {
 // acquiredFor reports the principal this Runner was acquired for, so a pool can
 // verify — against the Runner itself, not only against its own bookkeeping —
 // that it is about to hand the right context to the right principal.
-func (r *containerRunner) acquiredFor() loopauth.Principal { return r.principal }
+func (r *containerRunner) acquiredFor() Principal { return r.principal }
 
 // mountRoot reports the HOST directory this Runner's containers bind-mount, so
 // a pool can verify — against the Runner itself, not only against its own
@@ -649,9 +441,7 @@ func (h *containerHandler) workspace(root string, workingDir string) (mount stri
 // that cannot be contained is a REFUSAL, and a refusal must be unable to
 // produce argv at all, so there is nothing for Exec to accidentally run.
 func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) {
-	// The Runner's own root — fixed at Acquire for its authenticated principal
-	// (change 0065) — is the ONLY root argv ever mounts. Never h.root here: on
-	// the per-tenant path that is a wider tree this principal was not granted.
+	// The Runner's own root, fixed at Acquire, is the ONLY root argv ever mounts.
 	mount, workdir, err := r.handler.workspace(r.root, workingDir)
 	if err != nil {
 		return nil, err
@@ -680,8 +470,7 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 
 	// The egress FLOOR (change 0064). Under EgressEnforce the container gets
 	// `--network none`: loopback only, no route off the box, so nothing the
-	// command runs can reach the network except through the hole the trusted
-	// side opens for it. Under EgressAllowAll — the default, and the zero value
+	// command runs can reach the network. Under EgressAllowAll — the default, and the zero value
 	// — nothing is emitted at all, so an operator who never configured egress
 	// gets byte-for-byte the pre-0064 argv.
 	//
@@ -699,34 +488,13 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 	//     registry, and with --pull=never below, a floored pull would take the
 	//     whole substrate down on every cold image.
 	//
-	// The DATAPATH through the floor (change 0064, task 6) lands here, between
-	// the floor and the --env pairs: the two read-only mounts, then the injected
-	// proxy environment. See egress_forwarder.go for the shape and the rejected
-	// alternatives.
 	if r.handler.egress.Mode == EgressEnforce {
 		args = append(args, "--network", "none")
 
-		// Stripped whether or not a datapath follows. Under enforcement these
-		// eight variables are the TRUSTED SIDE's, and an operator's
-		// env_passthrough naming one of them must not be able to redirect egress
-		// (HTTP_PROXY) or exempt destinations from it (NO_PROXY). Doing it before
-		// the injection below means no duplicate key ever reaches the runtime, so
-		// which of docker/nerdctl/podman is in use cannot change the answer.
+		// Under enforcement a proxy variable can only point somewhere the
+		// container cannot reach, so an operator's env_passthrough naming one is
+		// dropped rather than left to make clients fail confusingly.
 		env = stripProxyEnv(env)
-
-		if r.egressSocket != "" {
-			// Read-only, both of them. The socket only needs connect(2), which a
-			// read-only mount permits for a socket inode; the forwarder only
-			// needs execute, and must not be replaceable by the very command it
-			// is about to parent.
-			args = append(args,
-				"-v", r.egressSocket+":"+containerEgressSocket+":ro",
-				"-v", r.handler.egressForwarder+":"+containerEgressForwarder+":ro",
-			)
-			for _, kv := range egressProxyEnv() {
-				args = append(args, "--env", kv)
-			}
-		}
 	}
 
 	for _, kv := range env {
@@ -740,16 +508,9 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 		args = append(args, "--env", kv)
 	}
 
-	// Per-TENANT subdivision of this mount landed in change 0065: the source is
-	// the root resolved for this Runner's authenticated Principal.Tenant at
-	// Acquire (r.root), not a process-wide one.
-	//
-	// The INVARIANT this site has always carried is unchanged by that, and is
-	// what a reader must not lose: the source is the trusted root and only ever
-	// the trusted root. mount is "" only when no trusted root was resolved for
-	// this principal at all, in which case nothing is mounted — never a
-	// substitute derived from the command's arguments, and never a wider root
-	// borrowed because this principal's own could not be resolved.
+	// The source is the trusted root and only ever the trusted root. mount is ""
+	// only when no trusted root was resolved at all, in which case nothing is
+	// mounted — never a substitute derived from the command's arguments.
 	if mount != "" {
 		args = append(args, "-v", mount+":"+containerWorkspace)
 	}
@@ -763,15 +524,7 @@ func (r *containerRunner) argv(cmd string, workingDir string) ([]string, error) 
 	args = append(args, "--pull=never")
 
 	args = append(args, r.handler.image)
-	if r.egressSocket != "" {
-		// The forwarder EXEC-WRAPS the shell rather than being backgrounded
-		// beside it, so the loopback listener is already bound when the command's
-		// first byte runs. cmd itself is untouched and still reaches
-		// `/bin/sh -c` as one argument. See egressForwarderCommand.
-		args = append(args, egressForwarderCommand(cmd)...)
-	} else {
-		args = append(args, "/bin/sh", "-c", cmd)
-	}
+	args = append(args, "/bin/sh", "-c", cmd)
 	return args, nil
 }
 
@@ -935,39 +688,9 @@ func (r *containerRunner) Exec(ctx context.Context, cmd string, workingDir strin
 	return out, nil
 }
 
-// Release drops this Runner's EGRESS LEASE and does nothing else.
-//
-// There is no container to stop: `run --rm` already tears one down when the
-// command exits, and warm reuse is the pool's concern. What there IS, under an
-// enforcing posture, is the per-principal listener this Runner's Acquire leased
-// — a goroutine, a listening FD, a 0700 directory and a socket inode on the
-// host. This is where the lease goes back.
-//
-// It is the seam that makes those reclaimable at all. A Runner's life is exactly
-// the span in which its container can reach the socket, and the warm pool
-// already calls this on every teardown it performs (the idle-TTL reaper,
-// Pool.Close, a failed reuse certification, a principal mismatch), so a
-// long-lived multi-tenant process reclaims a principal's listener when that
-// principal's last sandbox goes rather than at process exit. Dropping a lease is
-// not closing a listener: the proxy closes it only when the last holder lets go,
-// so this can never cut a tunnel belonging to another Exec.
-//
-// It stays idempotent (releaseOnce) and non-blocking on every ordinary path, so
-// callers may release unconditionally on every early return without branching on
-// which substrate they hold. The error is reported rather than swallowed — a
-// socket directory that could not be removed is worth surfacing — but every
-// current caller treats teardown as best-effort, which is right: a failed
-// reclaim must not deny anyone a fresh sandbox.
-func (r *containerRunner) Release(context.Context) error {
-	var err error
-	r.releaseOnce.Do(func() {
-		if r.egressSocket == "" || r.handler == nil || r.handler.egressSockets == nil {
-			return
-		}
-		err = r.handler.egressSockets.Release(r.principal)
-	})
-	return err
-}
+// Release is a no-op: each Exec's container is `--rm`, so there is nothing held
+// between commands.
+func (r *containerRunner) Release(context.Context) error { return nil }
 
 // runClientCommand is the default execRunner, bound to h so that the CLI
 // client's own environment is resolved through the SAME lookup seam
@@ -1022,4 +745,52 @@ func runCommand(ctx context.Context, name string, lookup func(string) (string, b
 	}
 
 	return combined, -1, err
+}
+
+// stripProxyEnv removes every proxy-controlling key from an already-rendered
+// `K=V` environment, returning a fresh slice.
+//
+// This runs under EgressEnforce whether or not a datapath was wired, because the
+// two reasons are independent: with a datapath, a passthrough value must not
+// compete with the injected one; without a datapath, an inherited HTTP_PROXY
+// naming a host-side proxy is a description of an escape route that no longer
+// exists, and handing it to the command only produces confusing failures.
+//
+// It is a STRIP and not a re-ordering. `--env K=V1 --env K=V2` resolves last-wins
+// on docker, but this builder serves nerdctl and podman from the same argv, and
+// making a trust boundary depend on how three runtimes each resolve a duplicate
+// key is not a boundary. After this, no duplicate exists for them to resolve.
+func stripProxyEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if isProxyEnvKey(key) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
+func isProxyEnvKey(key string) bool {
+	for _, k := range proxyEnvKeys {
+		if key == k {
+			return true
+		}
+	}
+	return false
+}
+
+// proxyEnvKeys are every variable that decides whether — and through what — a
+// process in the container uses a proxy. All eight are trusted-side territory
+// under enforcement: they are stripped from the resolved passthrough environment
+// and re-injected from egressProxyEnv, so the operator's env_passthrough list can
+// neither redirect egress at a host of its choosing (HTTP_PROXY) nor exempt
+// destinations from it (NO_PROXY).
+//
+// Both cases are the same defect wearing different clothes, which is why the list
+// is one list: a variable this package injects is a variable this package owns.
+var proxyEnvKeys = [...]string{
+	"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+	"http_proxy", "https_proxy", "all_proxy", "no_proxy",
 }

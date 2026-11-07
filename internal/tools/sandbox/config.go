@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/fs"
 	"math"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,8 +14,6 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/ethanhinson/fuse/internal/permissions/reputation"
 )
 
 // HandlerContainer is the bounded handler identifier for the container
@@ -27,19 +24,6 @@ import (
 // container handler is built; the constant is the closed enum value, not the
 // implementation.
 const HandlerContainer = "container"
-
-// HandlerKubernetes is the bounded handler identifier for the Kubernetes
-// warm-Pod substrate (change 0075) — the first REMOTE substrate, reached through
-// a control plane rather than owned on this host.
-//
-// It is declared here beside HandlerContainer for the same reason that one is:
-// the loader must be able to name the substrate whether or not a Kubernetes
-// handler was compiled in or registered. Naming it here does NOT make it
-// buildable — selectHandler needs a factory registered for it by the composition
-// root, and a name with no factory REFUSES rather than falling back (see
-// WithHandlerFactory). That split is deliberate: the loader reports what the
-// operator asked for, and selection decides whether it can be had.
-const HandlerKubernetes = "kubernetes"
 
 const (
 	// configDirName and configFileName locate the operator's off-switch file
@@ -61,33 +45,16 @@ const (
 // allowed to become the zero value by omission.
 const DefaultIdleTTL = 5 * time.Minute
 
-// Posture defaults for the resource caps and the admission gate. These are the
-// values NewService applies to fields the operator left unset (change 0077).
+// Defaults for the pull timeout and the admission gate, applied to fields the operator
+// left unset. Unset resource caps stay unset: no cap flags are emitted, since capping a
+// developer's own build defends the machine from its operator against no threat model.
 //
-// The CAPS split by posture: an unconfigured hosted process is bounded by these
-// built-ins ("forgot to configure it" is still bounded), while an unconfigured
-// local process gets NO cap flags at all — matching #0063's allow-all-locally
-// stance, since capping a developer's local build defends the machine from its
-// own operator against no threat model.
-//
-// The CONCURRENCY backstop and the PULL TIMEOUT do NOT split: they apply in both
-// postures. A queue that never refuses under ordinary load costs a laptop
-// nothing and protects it from a runaway just as usefully as it protects a host.
-//
-// The numbers are sized to comfortably run a typical build/test command and are
-// each overridable in one line of the trusted-local config; they are the
-// cheapest thing here to change.
+// The numbers are each overridable in one line of the trusted-local config.
 const (
-	defaultHostedMemoryBytes int64 = 2 << 30 // 2 GiB
-	defaultHostedCPUs              = "2.0"
-	defaultHostedPids        int64 = 512
-	defaultHostedNoFile      int64 = 4096
-	defaultHostedFsizeBytes  int64 = 2 << 30 // 2 GiB
-
-	// DefaultPullTimeout bounds the explicit pre-pull, in BOTH postures.
+	// DefaultPullTimeout bounds the explicit pre-pull.
 	DefaultPullTimeout = 2 * time.Minute
 
-	// Admission gate defaults, applied in BOTH postures.
+	// Admission gate defaults.
 	defaultMaxInflight          int64 = 64
 	defaultMaxInflightPerTenant int64 = 16
 	defaultMaxQueued            int64 = 256
@@ -96,38 +63,11 @@ const (
 	DefaultNoteThreshold = 2 * time.Second
 )
 
-// resolveDefaults fills every unset Limits/Concurrency field on cfg with its
-// posture-appropriate default, in place. It is idempotent and only ever fills
-// NIL fields — an operator's explicit value is honoured identically in both
-// postures. It is the one place the fail-safe posture decision is made, called
-// by NewService (which is where the hosted posture is known); LoadConfig stays
-// deliberately posture-free.
-func (cfg *Config) resolveDefaults(hosted bool) {
+// resolveDefaults fills the unset pull timeout and Concurrency fields on cfg with their
+// defaults, in place. It is idempotent and only ever fills NIL fields. It is called by
+// NewService.
+func (cfg *Config) resolveDefaults() {
 	l := &cfg.Limits
-	if hosted {
-		// Caps default ON when hosted. Local leaves them nil ⇒ no flag emitted.
-		if l.MemoryBytes == nil {
-			v := defaultHostedMemoryBytes
-			l.MemoryBytes = &v
-		}
-		if l.CPUs == nil {
-			v := defaultHostedCPUs
-			l.CPUs = &v
-		}
-		if l.Pids == nil {
-			v := defaultHostedPids
-			l.Pids = &v
-		}
-		if l.NoFile == nil {
-			v := defaultHostedNoFile
-			l.NoFile = &v
-		}
-		if l.FsizeBytes == nil {
-			v := defaultHostedFsizeBytes
-			l.FsizeBytes = &v
-		}
-	}
-	// The pull timeout is always resolved — it applies in both postures.
 	if l.PullTimeout == nil {
 		v := DefaultPullTimeout
 		l.PullTimeout = &v
@@ -151,9 +91,6 @@ func (cfg *Config) resolveDefaults(hosted bool) {
 		c.NoteThreshold = &v
 	}
 
-	// cfg.Egress is ABSENT here on purpose: egress posture is selected by the
-	// explicit egress.mode knob and never derived from hosted detection, so it
-	// must not join this posture split (change 0064). Do not "fix" the omission.
 }
 
 // Config is the resolved sandbox configuration.
@@ -193,105 +130,20 @@ type Config struct {
 	// Limits are the per-container cgroup caps (container handler only). Every
 	// field is OPTIONAL and carries its own presence: an unset field emits no
 	// flag, and an explicit zero is distinguishable from absent. LoadConfig fills
-	// only what the operator wrote; NewService applies posture defaults to unset
-	// fields, because posture (hosted vs local) is not known to the loader.
+	// only what the operator wrote.
 	Limits Limits
 
 	// Concurrency is the admission gate's configuration — the concurrency
-	// backstop and the pull timeout. Unlike Limits, its defaults do NOT split by
-	// posture: a queue that never refuses under ordinary load costs a laptop
-	// nothing and protects it just as usefully as a host.
+	// backstop and the pull timeout. A queue that never refuses under ordinary
+	// load costs a laptop nothing.
 	Concurrency Concurrency
 
 	// Egress is the container's network posture (change 0064). Its zero value
-	// is allow-all — default container networking, no floor and no proxy — so a
-	// Config nobody configured behaves exactly as it did before 0064.
+	// is allow-all — default container networking.
 	//
 	// Egress posture is selected by the EXPLICIT egress.mode knob only. It is
-	// never derived from hosted detection, from a wire field, or from model
-	// output; see the note in resolveDefaults.
+	// never derived from model output.
 	Egress Egress
-
-	// Kubernetes is the Kubernetes substrate's configuration (change 0075),
-	// honoured by a registered kubernetes handler only. Every field is OPTIONAL
-	// and carries its own presence, exactly like Limits: an unset field means the
-	// substrate's own default applies, and the loader fills only what the operator
-	// wrote.
-	//
-	// Its zero value is the SAFE one and means "nothing configured". The one
-	// non-pointer field, Refused, is the load-time verdict a handler factory must
-	// consult: true means the operator's block could not be honoured and the
-	// substrate must not be built from it. See Kubernetes.Refused.
-	Kubernetes Kubernetes
-}
-
-// Kubernetes is the resolved kubernetes: block (change 0075).
-//
-// Every configurable field is a pointer so "unset" (the operator said nothing)
-// is distinguishable from an explicit zero or empty value — the same discipline
-// Limits uses, and for the same reason: the substrate's default for an unset
-// field is not the zero value, and a zero namespace prefix or a zero startup
-// timeout would be a posture nobody chose.
-type Kubernetes struct {
-	// Refused records that the operator's kubernetes: block could not be
-	// honoured, so the whole block was DISCARDED (WarnBadKubernetes).
-	//
-	// It is the one non-pointer field, and it is deliberately a positive
-	// assertion of failure rather than the absence of data: a handler factory
-	// cannot tell "the operator wrote nothing" from "the operator's block was
-	// thrown away" by looking at nil fields, and those two must resolve
-	// differently. An absent block means "use the substrate's defaults"; a
-	// refused one means "build NOTHING", because the handler was named and the
-	// posture it was to be built with is unknown.
-	//
-	// Its zero value is false, which is the safe direction for a hand-built
-	// Config: a caller who never went through LoadConfig has no discarded block.
-	Refused bool
-
-	// Kubeconfig is the path to a kubeconfig file. nil ⇒ unset ⇒ in-cluster
-	// configuration, which is the hosted default.
-	Kubeconfig *string
-	// Context names a context within Kubeconfig. nil ⇒ unset ⇒ the current one.
-	Context *string
-	// NamespacePrefix is the first label of every tenant namespace fuse creates.
-	// It is validated as a DNS-1123 label, because a value that is not one makes
-	// every namespace creation fail at the API server rather than here.
-	NamespacePrefix *string
-	// Image is the workload image. nil ⇒ unset ⇒ the top-level image:, then the
-	// substrate's pinned default.
-	Image *string
-	// SidecarImage is the egress forwarder's image. nil ⇒ unset ⇒ fuse's own
-	// published image at this binary's version.
-	SidecarImage *string
-	// RuntimeClass names a hardened runtime (gVisor, Kata). nil ⇒ unset ⇒ the
-	// cluster's default runtime.
-	RuntimeClass *string
-	// ServiceAccount is the ZERO-PERMISSION identity sandbox Pods run as. nil ⇒
-	// unset ⇒ the substrate's default (fuse-sandbox). It is never fuse's own
-	// service account: ADR-0058 rule 6 keeps the provisioning credential out of
-	// the sandbox.
-	ServiceAccount *string
-	// StartupTimeout bounds provision-to-confirmed. nil ⇒ unset. Always positive
-	// when set.
-	StartupTimeout *time.Duration
-	// PodMaxLifetime becomes activeDeadlineSeconds — the GC backstop that ends a
-	// Pod even with no fuse instance alive to reap it. nil ⇒ unset. Always
-	// positive when set.
-	PodMaxLifetime *time.Duration
-	// ProxyListen is the address fuse's own TLS listener binds. nil ⇒ unset.
-	// Validated as host:port when set.
-	ProxyListen *string
-	// ProxyAdvertiseAddress is the address a sandbox reaches that listener on. It
-	// must name the OWNING instance, because policy and delegated credentials
-	// live in that instance's memory. nil ⇒ unset ⇒ $FUSE_POD_IP.
-	ProxyAdvertiseAddress *string
-	// TenantQuotaMaxPods sizes the per-tenant ResourceQuota. nil ⇒ unset ⇒
-	// concurrency.max_inflight_per_tenant. Never negative when set; an explicit 0
-	// is honoured and means "derive it".
-	TenantQuotaMaxPods *int64
-	// WorkspaceSizeLimitBytes bounds the per-Pod emptyDir workspace. nil ⇒ unset.
-	// Always positive when set.
-	WorkspaceSizeLimitBytes *int64
 }
 
 // EgressMode is the bounded egress posture selector. It is a closed enum, and
@@ -306,8 +158,7 @@ const (
 	// EgressAllowAll is the default: no floor, no proxy, default container
 	// networking. It is the local-dev experience and the containment default.
 	EgressAllowAll EgressMode = iota
-	// EgressEnforce turns on the --network none floor, the host-side proxy, and
-	// the declared allowlist. Everything undeclared is denied.
+	// EgressEnforce turns on the --network none floor. Nothing reaches the network.
 	EgressEnforce
 )
 
@@ -324,53 +175,10 @@ func (m EgressMode) String() string {
 	}
 }
 
-// Egress is the resolved egress policy: a posture plus, under EgressEnforce, the
-// declared allowlist. An empty Allow under EgressEnforce is the DENY-ALL state,
-// and it is a legitimate resolved outcome — both when the operator declared no
-// entries and when the loader could not trust the ones they declared.
+// Egress is the resolved egress posture.
 type Egress struct {
 	// Mode is the posture.
 	Mode EgressMode
-	// Allow is the declared allowlist, in declaration order. It is meaningful
-	// only under EgressEnforce; under EgressAllowAll there is no proxy to
-	// consult it, and the loader leaves it nil.
-	Allow []AllowEntry
-}
-
-// AllowEntry is one declared egress destination: exactly one of Host or CIDR is
-// set, plus a required exact port and an optional #52 credential audience.
-//
-// Per ADR-0048 rule 3, Host is stored ALREADY CANONICAL (reputation.CanonicalHost
-// — lowercased, trailing root dot stripped), so the matcher never compares a raw
-// spelling against a declared one. A bare IP literal in the config is stored as a
-// full-mask CIDR (/32 or /128) rather than as a Host, so the matcher compares IP
-// values and no alternate IPv6 spelling can miss a declared entry.
-type AllowEntry struct {
-	// Host is the canonical hostname. Empty exactly when CIDR is set.
-	Host string
-	// CIDR is the declared address block. nil exactly when Host is set. A CIDR
-	// entry matches only a literal IP destination: a hostname is never resolved
-	// to test membership, because DNS is attacker-influenced (plan Q4).
-	CIDR *net.IPNet
-	// Port is the exact destination port, 1..65535. There are no ranges and no
-	// "any port" wildcard: both the address and the port must match.
-	Port int
-	// Credential optionally names the #52 CredentialSource audience to bind on
-	// the upstream connection. Empty means plain allow-through.
-	//
-	// A credentialed entry is reachable over PLAINTEXT `http://` only. Injecting
-	// the delegated Authorization header means terminating the request, which the
-	// proxy can do for the absolute-form requests a client sends for an `http://`
-	// destination but not inside the opaque CONNECT tunnel it opens for an
-	// `https://` one — that would need TLS interception, which is not built.
-	// A CONNECT to a credentialed destination is refused explicitly
-	// (RefusedCredentialTunnel), never silently downgraded or dropped.
-	//
-	// The loader WARNS (WarnCredentialPlaintextOnly) rather than rejects when it
-	// sees this field set — the entry is still honoured — because the operator
-	// naming this constraint should learn it at load time, not discover it the
-	// first time a CONNECT to the destination is refused.
-	Credential string
 }
 
 // Limits are the per-container cgroup caps. Each field is a pointer so "unset"
@@ -463,46 +271,9 @@ const (
 	// exist. The posture resolves to enforcement with an EMPTY allowlist: an
 	// unparseable posture must never resolve to the permissive one.
 	WarnUnknownEgressMode WarnReason = "unknown_egress_mode"
-	// WarnBadEgress means an egress.allow entry could not be honoured. The WHOLE
-	// allowlist is discarded, never partially honoured — a partly-honoured
-	// allowlist is the fail-open shape this reason exists to prevent.
+	// WarnBadEgress means the file declares an egress.allow list. fuse has no egress
+	// proxy to honour one, so the list is ignored: enforce stays deny-all.
 	WarnBadEgress WarnReason = "bad_egress"
-	// WarnCredentialPlaintextOnly means an egress.allow entry declared a
-	// credential: audience. The entry is honoured — this is a WARN, not a
-	// rejection — but a credentialed destination is reachable only over
-	// PLAINTEXT http through the forward-proxy path, because injecting the
-	// delegated Authorization header requires terminating the request. A
-	// CONNECT (https) to the same destination is refused explicitly
-	// (RefusedCredentialTunnel), never TLS-intercepted. See AllowEntry.Credential.
-	WarnCredentialPlaintextOnly WarnReason = "credential_plaintext_only"
-
-	// WarnBadKubernetes means a value in the kubernetes: block could not be
-	// honoured. The WHOLE block is discarded and marked Refused, never partially
-	// honoured — and if the handler was NAMED kubernetes, construction refuses.
-	//
-	// Whole-block discard rather than per-field degradation is the fail-safe
-	// direction HERE, which is the opposite of limits:. A bad cap degrades to a
-	// posture default that is at least as tight, so the resolved Config is still
-	// a posture someone chose. A half-honoured kubernetes: block is not: the
-	// wrong namespace prefix puts a tenant's Pods somewhere nobody audited, an
-	// unset service account is a different RBAC identity, an unbounded workspace
-	// is no disk bound at all. There is no "at least as tight" default to fall
-	// back to, so the safe answer is to build nothing.
-	WarnBadKubernetes WarnReason = "bad_kubernetes"
-
-	// WarnLimitNotEnforceable means the operator configured a limits.* cap the
-	// SELECTED substrate cannot express — today, pids and nofile under the
-	// kubernetes handler, which core Kubernetes has no per-Pod expression for
-	// (the operator's lever is the kubelet's podPidsLimit; see
-	// docs/sandbox-kubernetes.md).
-	//
-	// The cap is NOT discarded: the operator's value stands in the resolved
-	// Config. Dropping it would turn a configured limit into a fiction, and this
-	// warning exists precisely so the operator learns the cap is unenforced at
-	// LOAD time rather than inferring it from a Pod that outlived its fork bomb.
-	// It is emitted ONCE, naming every affected field, rather than once per
-	// field.
-	WarnLimitNotEnforceable WarnReason = "limit_not_enforceable"
 )
 
 // Warning is a LOUD but non-fatal diagnostic from a config load.
@@ -557,58 +328,13 @@ type rawConfig struct {
 	Limits         *rawLimits      `yaml:"limits"`
 	Concurrency    *rawConcurrency `yaml:"concurrency"`
 	Egress         *rawEgress      `yaml:"egress"`
-	Kubernetes     *rawKubernetes  `yaml:"kubernetes"`
-}
-
-// rawKubernetes mirrors the kubernetes: block. Durations and byte sizes decode as
-// STRINGS so a value YAML happens to read as a number ("60") degrades to a
-// warning rather than to a silently different meaning — the same reason
-// pool.idle_ttl and limits.memory do. Every field is a pointer so absent is
-// distinguishable from an explicit empty or zero value.
-type rawKubernetes struct {
-	Kubeconfig      *string                 `yaml:"kubeconfig"`
-	Context         *string                 `yaml:"context"`
-	NamespacePrefix *string                 `yaml:"namespace_prefix"`
-	Image           *string                 `yaml:"image"`
-	SidecarImage    *string                 `yaml:"sidecar_image"`
-	RuntimeClass    *string                 `yaml:"runtime_class"`
-	ServiceAccount  *string                 `yaml:"service_account"`
-	StartupTimeout  *string                 `yaml:"startup_timeout"`
-	PodMaxLifetime  *string                 `yaml:"pod_max_lifetime"`
-	Proxy           *rawKubernetesProxy     `yaml:"proxy"`
-	TenantQuota     *rawKubernetesQuota     `yaml:"tenant_quota"`
-	Workspace       *rawKubernetesWorkspace `yaml:"workspace"`
-}
-
-type rawKubernetesProxy struct {
-	Listen           *string `yaml:"listen"`
-	AdvertiseAddress *string `yaml:"advertise_address"`
-}
-
-type rawKubernetesQuota struct {
-	MaxPods *int64 `yaml:"max_pods"`
-}
-
-type rawKubernetesWorkspace struct {
-	SizeLimit *string `yaml:"size_limit"`
 }
 
 // rawEgress mirrors the egress: block. mode is a string so an unrecognised
 // posture is REPORTED rather than coerced, exactly like handler:.
 type rawEgress struct {
-	Mode  *string         `yaml:"mode"`
-	Allow []rawAllowEntry `yaml:"allow"`
-}
-
-// rawAllowEntry mirrors one egress.allow entry. Both host and port are pointers
-// so an omitted field is distinguishable from an empty or zero one — each is
-// rejected, but the diagnostic names which mistake was made. port is a plain
-// integer: a quoted port is a type error and is caught by the file-level
-// malformed path, which is contained.
-type rawAllowEntry struct {
-	Host       *string `yaml:"host"`
-	Port       *int    `yaml:"port"`
-	Credential *string `yaml:"credential"`
+	Mode  *string `yaml:"mode"`
+	Allow []any   `yaml:"allow"`
 }
 
 type rawPool struct {
@@ -882,7 +608,7 @@ func (raw rawConfig) resolve(path string) (Config, []Warning) {
 			return discardedConfig(egress), append(warns, Warning{
 				Reason: WarnUnknownHandler,
 				Path:   path,
-				Detail: fmt.Sprintf("handler: %q is not %q, %q or %q", *raw.Handler, HandlerContainer, HandlerHost, HandlerKubernetes),
+				Detail: fmt.Sprintf("handler: %q is not %q or %q", *raw.Handler, HandlerContainer, HandlerHost),
 				Effect: "unknown substrate named; the whole config was discarded and the sandbox is running contained on the container substrate" + egressEffect(egress),
 			})
 		}
@@ -968,324 +694,35 @@ func (raw rawConfig) resolve(path string) (Config, []Warning) {
 		warns = raw.Egress.resolve(path, &cfg.Egress, warns)
 	}
 
-	// --- kubernetes -------------------------------------------------------
-	//
-	// FAIL SAFE BY DISCARDING THE WHOLE BLOCK, not by degrading a field. See
-	// WarnBadKubernetes for why this is the opposite choice from limits: — there
-	// is no "at least as tight" default for a sandbox posture to fall back to.
-	//
-	// It is resolved regardless of which handler was named: an operator who
-	// configures the block and then flips `handler:` back must not have their
-	// configuration silently dropped, because being ignored is what sends people
-	// looking for an env-var opt-out that must never exist. The REFUSAL is what
-	// is handler-sensitive, and that decision belongs to selection, not here.
-	if raw.Kubernetes != nil {
-		warns = raw.Kubernetes.resolve(path, &cfg.Kubernetes, warns)
-	}
-
-	// Caps the SELECTED substrate cannot express are reported once, here, where
-	// both the handler and the resolved caps are known. It is deliberately last:
-	// it reads cfg.Limits after every degradation above has run, so a cap that
-	// did not survive parsing is not reported as unenforceable — it is already
-	// unset, and naming it would point the operator at a value their file does not
-	// carry.
-	warns = warnUnenforceableLimits(path, cfg, warns)
-
 	return cfg, warns
 }
 
-// dns1123LabelMax is the DNS-1123 label ceiling. A namespace_prefix longer than
-// this cannot be the first label of a namespace name, so every namespace creation
-// would fail at the API server rather than here.
-const dns1123LabelMax = 63
-
-// validDNS1123Label reports whether s is a valid DNS-1123 label: 1..63 bytes of
-// lowercase alphanumerics and hyphens, starting and ending alphanumeric.
-//
-// It is spelled out rather than pulled from a regexp so this package needs no new
-// dependency to validate the one value whose invalidity is otherwise discovered
-// at the API server, and so the rule reads exactly as the operator's error
-// message states it.
-func validDNS1123Label(s string) bool {
-	if s == "" || len(s) > dns1123LabelMax {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		alnum := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-		switch {
-		case alnum:
-		case c == '-':
-			// A leading or trailing hyphen is invalid, and so is a name made only
-			// of them.
-			if i == 0 || i == len(s)-1 {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// resolve fills out from a parsed kubernetes: block.
-//
-// It is ALL-OR-NOTHING. The first unusable value discards the whole block — every
-// field, including the ones that parsed — and records Refused so a handler
-// factory has a load-time fact to refuse on. Returning early on the first fault
-// would be tempting but wrong for the operator: the loop below collects EVERY
-// fault so one load tells them about all of them, and only then discards.
-func (raw rawKubernetes) resolve(path string, out *Kubernetes, warns []Warning) []Warning {
-	var faults []string
-	bad := func(field, detail string) {
-		faults = append(faults, fmt.Sprintf("kubernetes.%s: %s", field, detail))
-	}
-
-	// Resolved into a LOCAL, copied into out only if the block is clean. That is
-	// what makes the all-or-nothing property structural rather than a matter of
-	// remembering to undo partial writes.
-	var k Kubernetes
-
-	// The free-form string fields. They are trimmed and taken as written: they
-	// name an image, a path, a context, or an identity in someone else's
-	// namespace, and this loader is not the authority on any of those spellings.
-	// An EMPTY value is "unset" rather than a fault, because an empty string is
-	// how the documented schema itself spells "use the default".
-	optional := func(in *string) *string {
-		if in == nil {
-			return nil
-		}
-		v := strings.TrimSpace(*in)
-		if v == "" {
-			return nil
-		}
-		return &v
-	}
-	k.Kubeconfig = optional(raw.Kubeconfig)
-	k.Context = optional(raw.Context)
-	k.Image = optional(raw.Image)
-	k.SidecarImage = optional(raw.SidecarImage)
-	k.RuntimeClass = optional(raw.RuntimeClass)
-	k.ServiceAccount = optional(raw.ServiceAccount)
-
-	// namespace_prefix is the one string this loader DOES validate, because it is
-	// the only one whose invalidity is not the API server's to report politely:
-	// it becomes the first label of every tenant namespace, so a bad value fails
-	// every single Provision, for every tenant, forever.
-	if raw.NamespacePrefix != nil {
-		v := strings.TrimSpace(*raw.NamespacePrefix)
-		if validDNS1123Label(v) {
-			k.NamespacePrefix = &v
-		} else {
-			bad("namespace_prefix", fmt.Sprintf("%q is not a DNS-1123 label (lowercase alphanumerics and hyphens, 1-%d bytes, starting and ending alphanumeric)", *raw.NamespacePrefix, dns1123LabelMax))
-		}
-	}
-
-	if raw.StartupTimeout != nil {
-		if d, ok := parsePositiveDuration(*raw.StartupTimeout); ok {
-			k.StartupTimeout = &d
-		} else {
-			bad("startup_timeout", fmt.Sprintf("%q is not a positive duration (want e.g. 60s)", *raw.StartupTimeout))
-		}
-	}
-	if raw.PodMaxLifetime != nil {
-		if d, ok := parsePositiveDuration(*raw.PodMaxLifetime); ok {
-			k.PodMaxLifetime = &d
-		} else {
-			bad("pod_max_lifetime", fmt.Sprintf("%q is not a positive duration (want e.g. 4h)", *raw.PodMaxLifetime))
-		}
-	}
-
-	if raw.Proxy != nil {
-		if raw.Proxy.Listen != nil {
-			v := strings.TrimSpace(*raw.Proxy.Listen)
-			if _, port, err := net.SplitHostPort(v); err != nil || strings.TrimSpace(port) == "" {
-				bad("proxy.listen", fmt.Sprintf("%q is not host:port (want e.g. 0.0.0.0:3129)", *raw.Proxy.Listen))
-			} else {
-				k.ProxyListen = &v
-			}
-		}
-		// advertise_address is NOT validated here: it is an address without a
-		// port (the port comes from listen), and both of its faults belong to
-		// construction, which is the only place that can see the egress posture's
-		// datapath wiring. Unset under `enforce` is refused there, and so is a
-		// NON-IP value — it must be an IP literal, not a hostname, because it is
-		// interpolated into the per-Pod NetworkPolicy ipBlock that pins a
-		// sandbox's egress to the owning instance.
-		k.ProxyAdvertiseAddress = optional(raw.Proxy.AdvertiseAddress)
-	}
-
-	if raw.TenantQuota != nil && raw.TenantQuota.MaxPods != nil {
-		if v := *raw.TenantQuota.MaxPods; v >= 0 {
-			// Zero is HONOURED and documented as "derive it from
-			// concurrency.max_inflight_per_tenant", so unlike a limits: cap it is
-			// not a fault. Negative is nonsense and is.
-			k.TenantQuotaMaxPods = &v
-		} else {
-			bad("tenant_quota.max_pods", fmt.Sprintf("%d is negative (0 means derive it from concurrency.max_inflight_per_tenant)", v))
-		}
-	}
-
-	if raw.Workspace != nil && raw.Workspace.SizeLimit != nil {
-		if b, ok := parseBytes(*raw.Workspace.SizeLimit); ok {
-			k.WorkspaceSizeLimitBytes = &b
-		} else {
-			bad("workspace.size_limit", fmt.Sprintf("%q is not a positive byte size (want e.g. 2g)", *raw.Workspace.SizeLimit))
-		}
-	}
-
-	if len(faults) > 0 {
-		// THE WHOLE BLOCK GOES, and Refused is the only thing left. A named
-		// kubernetes handler is then unbuildable, which is the point: the
-		// operator asked for a substrate and did not say — understandably — which
-		// posture to build it with.
-		*out = Kubernetes{Refused: true}
-		return append(warns, Warning{
-			Reason: WarnBadKubernetes,
-			Path:   path,
-			Detail: strings.Join(faults, "; "),
-			Effect: "the whole kubernetes: block was discarded; if handler: kubernetes was named, the sandbox REFUSES to run rather than building a Pod posture nobody configured — fix the values above",
-		})
-	}
-
-	*out = k
-	return warns
-}
-
-// warnUnenforceableLimits reports, once, every configured cap the selected
-// substrate cannot express.
-//
-// The cap is left in the resolved Config deliberately — see
-// WarnLimitNotEnforceable. One warning naming every affected field, rather than
-// one per field, because an operator configuring a whole limits: block is making
-// ONE mistake (choosing a substrate that cannot honour it) and should read one
-// diagnostic about it.
-func warnUnenforceableLimits(path string, cfg Config, warns []Warning) []Warning {
-	if cfg.Handler != HandlerKubernetes {
-		// The container substrate expresses every cap in the schema, so warning
-		// there would be noise on the common path.
-		return warns
-	}
-
-	var fields []string
-	if cfg.Limits.Pids != nil {
-		fields = append(fields, "pids")
-	}
-	if cfg.Limits.NoFile != nil {
-		fields = append(fields, "nofile")
-	}
-	if len(fields) == 0 {
-		return warns
-	}
-	return append(warns, Warning{
-		Reason: WarnLimitNotEnforceable,
-		Path:   path,
-		Detail: fmt.Sprintf("limits.%s cannot be expressed per Pod by core Kubernetes", strings.Join(fields, " and limits.")),
-		Effect: "the cap is recorded but NOT enforced by this substrate; set the kubelet's podPidsLimit on the sandbox node pool instead (see docs/sandbox-kubernetes.md)",
-	})
-}
-
-// resolve fills out from a parsed egress: block.
-//
-// FAIL TOWARD DENY, NEVER TOWARD THE INTERNET. There are exactly three outcomes:
-//
-//   - a fully understood block is honoured as written;
-//   - an unrecognised mode resolves to EgressEnforce with an EMPTY allowlist,
-//     because an unparseable posture must never resolve to the permissive one;
-//   - any unusable allow entry discards the WHOLE allowlist, leaving the
-//     operator's declared mode in force with nothing declared. Under enforce
-//     that is deny-all; under allow-all there is no floor to keep on, so it
-//     degrades to the containment default.
-//
-// Partial honouring is the one shape that is never produced. An operator who
-// mistypes one entry of five must not silently get the other four plus a hole
-// where the fifth was meant to be, and must not get a policy they never wrote.
+// resolve applies the egress: block. A posture the loader cannot read degrades to
+// enforcement, never to the permissive default. An allow list is ignored loudly:
+// there is no proxy to honour one, so enforce is always deny-all.
 func (raw rawEgress) resolve(path string, out *Egress, warns []Warning) []Warning {
 	if raw.Mode != nil {
 		mode, ok := parseEgressMode(*raw.Mode)
 		if !ok {
-			// We cannot tell what posture was meant. The allowlist is discarded
-			// with it: it was written by the same hand, and honouring it under a
-			// posture nobody asked for would be inventing policy.
 			*out = Egress{Mode: EgressEnforce}
 			return append(warns, Warning{
 				Reason: WarnUnknownEgressMode,
 				Path:   path,
 				Detail: fmt.Sprintf("egress.mode: %q is not %q or %q", *raw.Mode, EgressAllowAll, EgressEnforce),
-				Effect: "unknown egress mode named; egress is ENFORCED with an empty allowlist, so every destination is denied",
+				Effect: "unknown egress mode named; egress is ENFORCED, so every destination is denied",
 			})
 		}
 		out.Mode = mode
 	}
-
-	if len(raw.Allow) == 0 {
-		return warns
-	}
-
-	allow := make([]AllowEntry, 0, len(raw.Allow))
-	for i, rawEntry := range raw.Allow {
-		entry, detail, ok := rawEntry.resolve()
-		if !ok {
-			// Discard the whole list, not just this entry.
-			out.Allow = nil
-			effect := "the whole egress allowlist was discarded; egress is ENFORCED with an empty allowlist, so every destination is denied"
-			if out.Mode == EgressAllowAll {
-				effect = "the whole egress block was discarded; egress is unrestricted (mode: allow-all, no proxy) — fix the entry and declare mode: enforce to contain it"
-			}
-			return append(warns, Warning{
-				Reason: WarnBadEgress,
-				Path:   path,
-				Detail: fmt.Sprintf("egress.allow[%d]: %s", i, detail),
-				Effect: effect,
-			})
-		}
-		if entry.Credential != "" {
-			// The entry is honoured, not discarded: this is a WARN naming a real
-			// constraint, not a rejection. See WarnCredentialPlaintextOnly and
-			// AllowEntry.Credential.
-			warns = append(warns, Warning{
-				Reason: WarnCredentialPlaintextOnly,
-				Path:   path,
-				Detail: fmt.Sprintf("egress.allow[%d]: %q port %d declares credential: %q", i, *rawEntry.Host, entry.Port, entry.Credential),
-				Effect: "the credential is usable only over plaintext http through the forward-proxy path; a CONNECT (https) to this destination is refused (RefusedCredentialTunnel), never TLS-intercepted",
-			})
-		}
-		allow = append(allow, entry)
-	}
-
-	// The allowlist is only meaningful under enforcement: there is no proxy in
-	// allow-all to consult it, and carrying it would invite a later reader to
-	// treat it as one.
-	if out.Mode == EgressEnforce {
-		out.Allow = allow
+	if len(raw.Allow) > 0 {
+		warns = append(warns, Warning{
+			Reason: WarnBadEgress,
+			Path:   path,
+			Detail: "egress.allow is not supported",
+			Effect: "the allow list was ignored; mode enforce is deny-all and mode allow-all is unrestricted",
+		})
 	}
 	return warns
-}
-
-// resolve validates one declared entry into an AllowEntry. On failure it returns
-// a human diagnostic naming the specific mistake; it never returns a partially
-// populated entry.
-func (raw rawAllowEntry) resolve() (AllowEntry, string, bool) {
-	if raw.Host == nil {
-		return AllowEntry{}, "no host: (want a hostname or a CIDR)", false
-	}
-	if raw.Port == nil {
-		return AllowEntry{}, fmt.Sprintf("host %q has no port: (the port is exact and required)", *raw.Host), false
-	}
-	if *raw.Port < 1 || *raw.Port > 65535 {
-		return AllowEntry{}, fmt.Sprintf("port %d is not in 1..65535", *raw.Port), false
-	}
-
-	host, cidr, ok := parseAllowHost(*raw.Host)
-	if !ok {
-		return AllowEntry{}, fmt.Sprintf("host %q is neither a hostname nor a CIDR", *raw.Host), false
-	}
-
-	entry := AllowEntry{Host: host, CIDR: cidr, Port: *raw.Port}
-	if raw.Credential != nil {
-		entry.Credential = strings.TrimSpace(*raw.Credential)
-	}
-	return entry, "", true
 }
 
 // parseEgressMode maps a configured posture name onto the closed enum.
@@ -1304,78 +741,8 @@ func parseEgressMode(v string) (EgressMode, bool) {
 	}
 }
 
-// parseAllowHost resolves a declared host: value into exactly one of a canonical
-// hostname or a CIDR block.
-//
-// A bare IP literal becomes a full-mask CIDR rather than a Host, so the matcher
-// compares IP values: "2001:db8::1" and "2001:0DB8:0:0:0:0:0:1" are the same
-// destination, and a string comparison would say otherwise.
-//
-// Hostnames are canonicalized ONCE, here, through reputation.CanonicalHost —
-// ADR-0048 rule 3. Do not add a second normalization at the matcher: two
-// normalizers that drift is exactly the bug that ADR records.
-func parseAllowHost(v string) (host string, cidr *net.IPNet, ok bool) {
-	s := strings.TrimSpace(v)
-	if s == "" {
-		return "", nil, false
-	}
-
-	if strings.Contains(s, "/") {
-		_, block, err := net.ParseCIDR(s)
-		if err != nil || block == nil {
-			return "", nil, false
-		}
-		return "", block, true
-	}
-
-	if ip := net.ParseIP(s); ip != nil {
-		bits := 8 * net.IPv6len
-		if v4 := ip.To4(); v4 != nil {
-			ip, bits = v4, 8*net.IPv4len
-		}
-		return "", &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}, true
-	}
-
-	h := reputation.CanonicalHost(s)
-	if !validHostname(h) {
-		return "", nil, false
-	}
-	return h, nil, true
-}
-
-// validHostname reports whether h is shaped like a DNS hostname: 1..253 bytes of
-// dot-separated labels, each 1..63 bytes of [a-z0-9-] and not hyphen-bounded.
-//
-// It is deliberately strict, and rejection is deliberately cheap: a rejected host
-// discards the allowlist toward denial with a loud warning, so the failure
-// direction of any strictness bug here is an operator who is told their config is
-// wrong, never a destination that is reachable when it should not be. h must
-// already be canonical.
-func validHostname(h string) bool {
-	if h == "" || len(h) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(h, ".") {
-		if len(label) == 0 || len(label) > 63 {
-			return false
-		}
-		if label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for i := 0; i < len(label); i++ {
-			c := label[i]
-			switch {
-			case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-':
-			default:
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// resolve fills out from a parsed limits: block, appending a WarnBadLimit for
-// every field it could not honour. It receives out by pointer and appends to
+// resolve fills out from a parsed limits: block, appending a Warning for
+// every field it could not honour. It receives out by pointer and returns
 // warns so the caller's diagnostics accumulate.
 func (raw rawLimits) resolve(path string, out *Limits, warns []Warning) []Warning {
 	bad := func(field, detail string) {
@@ -1482,12 +849,6 @@ func parseHandler(v string) (string, bool) {
 		return HandlerContainer, true
 	case HandlerHost:
 		return HandlerHost, true
-	case HandlerKubernetes:
-		// A remote substrate is a recognised NAME here and a refusal at
-		// selection unless the composition root registered a factory for it. The
-		// loader's job is to report what the operator asked for, not to decide
-		// whether this binary can provide it.
-		return HandlerKubernetes, true
 	default:
 		return "", false
 	}

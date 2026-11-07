@@ -44,11 +44,10 @@ const mcpServerConfigDebounce = 200 * time.Millisecond
 func runMCPServer(_ []string, cfg config.Config, _ io.Writer, stderr io.Writer) int {
 	// Sandbox substrate (ADR-0044, change 0063): resolved ONCE at startup and
 	// threaded into the reload path too, so a config live-reload can never
-	// re-resolve containment. hosted=false — `fuse mcp-server` is launched by the
+	// re-resolve containment. `fuse mcp-server` is launched by the
 	// operator on their own machine over stdio (the same trust model as the
 	// shell), so their file-only off-switch applies.
-	sb, closeEgress := newSandboxService(cfg, false, stderr)
-	defer closeEgress()
+	sb := newSandboxService(stderr)
 	toolReg := defaultToolRegistry(sb, cfg.Research, nil) // native tools only; no skill tool in MCP server mode
 
 	sock := os.Getenv("FUSE_HITL_SOCKET")

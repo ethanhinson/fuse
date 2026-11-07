@@ -168,7 +168,7 @@ func runStructuredDelegationSeam(t *testing.T, childJSON string) string {
 		_ = json.Unmarshal([]byte(expectsSchema), &expects)
 		h, herr := spawner.Spawn(ctx, agent.SpawnOpts{
 			Label: req.Label, Task: req.Task, SystemPrompt: req.SystemPrompt,
-			ModelID: req.Model, Tools: req.Tools, Worker: req.Worker, Expects: expects,
+			ModelID: req.Model, Tools: req.Tools, Expects: expects,
 		})
 		if herr != nil {
 			return nil, herr

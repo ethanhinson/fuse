@@ -94,20 +94,3 @@ func TestObserverHierarchyAndTerminalMapping(t *testing.T) {
 		t.Fatalf("api name=%q", spans[1].Name)
 	}
 }
-
-func TestOutcomeFromError(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if got := OutcomeFromError(ctx, ctx.Err()); got != observe.OutcomeCanceled {
-		t.Fatalf("got %q", got)
-	}
-	if got := OutcomeFromError(context.Background(), context.DeadlineExceeded); got != observe.OutcomeTimeout {
-		t.Fatalf("got %q", got)
-	}
-	if got := OutcomeFromError(context.Background(), errors.New("boom")); got != observe.OutcomeError {
-		t.Fatalf("got %q", got)
-	}
-	if got := OutcomeFromError(context.Background(), nil); got != observe.OutcomeSuccess {
-		t.Fatalf("got %q", got)
-	}
-}

@@ -102,46 +102,6 @@ func TestWheelDetailScrollsOffsetNotSelection(t *testing.T) {
 	}
 }
 
-// TestWheelBlackboardRegression is the reported bug: with the blackboard focused,
-// wheel-down N times increases m.bbScroll and leaves m.selected unchanged.
-func TestWheelBlackboardRegression(t *testing.T) {
-	prev := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(prev)
-
-	tree := agent.NewAgentTree("root", "m")
-	root := tree.Node(tree.RootID())
-	bb := agent.NewBlackboard(tree)
-	for i := 0; i < 30; i++ {
-		bb.Put(fmt.Sprintf("k%02d", i), map[string]any{"v": i}, root.ID, "root")
-	}
-	m := NewAgentsModel(tree, nil).WithBlackboard(bb)
-	m.width, m.height = 100, 12
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // blackboard
-	m.View()
-
-	selBefore := m.selected
-	bbBefore := m.bbScroll
-	for i := 0; i < 4; i++ {
-		wheel(m, true)
-		m.View()
-	}
-	if m.selected != selBefore {
-		t.Errorf("wheel over blackboard moved tree selection: %d -> %d", selBefore, m.selected)
-	}
-	if m.bbScroll <= bbBefore {
-		t.Errorf("wheel down did not increase bbScroll: %d -> %d", bbBefore, m.bbScroll)
-	}
-
-	// Clamp at top.
-	for i := 0; i < 50; i++ {
-		wheel(m, false)
-	}
-	if m.bbScroll != 0 {
-		t.Errorf("wheel up to top should clamp bbScroll at 0, got %d", m.bbScroll)
-	}
-}
-
 // TestDetailReentryFollowsTailAfterWheel is the finding-2 regression: after the
 // wheel sets detailManual on the detail list, tabbing back to the tree and
 // re-entering detail must follow the tail (newest event selected, followTail

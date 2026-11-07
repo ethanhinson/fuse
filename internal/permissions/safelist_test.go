@@ -19,7 +19,6 @@ func TestOnSafeList_D2Additions(t *testing.T) {
 		{"segment_read", true},
 		{"web_search", true},
 		{"skill", true},
-		{"pipeline_run", true},
 		// web_fetch is deliberately excluded: its endpoint is model-chosen, so it is
 		// an arbitrary-egress surface that must reach the classifier/human, not the
 		// safe list.

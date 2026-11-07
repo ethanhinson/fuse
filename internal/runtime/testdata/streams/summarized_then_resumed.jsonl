@@ -1,6 +1,0 @@
-{"seq":1,"node_id":"root","depth":0,"turn":0,"kind":"user.input","payload":{"content":"Tell me a story","turn":0}}
-{"seq":2,"node_id":"root","depth":0,"turn":0,"kind":"model.call.end","payload":{"content":"Once upon a time...","input_tokens":10,"output_tokens":100}}
-{"seq":3,"node_id":"root","depth":0,"turn":0,"kind":"context.summarize","payload":{"turn_start":0,"turn_end":0,"summary":"Summary text","insert_at":2,"tokens_before":200,"tokens_after":50}}
-{"seq":4,"node_id":"root","depth":0,"turn":1,"kind":"user.input","payload":{"content":"Continue the story","turn":1}}
-{"seq":5,"node_id":"root","depth":0,"turn":1,"kind":"model.call.end","payload":{"content":"The story continues...","input_tokens":60,"output_tokens":80}}
-{"seq":6,"node_id":"root","depth":0,"turn":1,"kind":"loop.parked","payload":{"turn":1,"content":"The story continues..."}}

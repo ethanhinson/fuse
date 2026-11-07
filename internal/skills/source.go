@@ -8,8 +8,8 @@ import (
 )
 
 // Source is the abstract skill-installation seam. A Source loads the skill set
-// the operator installed — from a filesystem directory, a Postgres table, or a
-// test fixture — and returns them as a loading-time Set plus a Digest that lets
+// the operator installed — from a filesystem directory or a test
+// fixture — and returns them as a loading-time Set plus a Digest that lets
 // the caller detect changes without re-reading every skill body.
 type Source interface {
 	// Load returns the installed skill set and its digest. It must be safe to
@@ -39,8 +39,7 @@ func DigestOf(set *Set) string {
 }
 
 // NewSet returns a Set over skills in the given order, deduplicating by name
-// (first wins). It is the construction seam Source implementations (FSSource,
-// the Postgres source) use to hand a loaded set back.
+// (first wins). It is the construction seam Source implementations (FSSource) use to hand a loaded set back.
 func NewSet(skills []Skill) *Set {
 	out := &Set{}
 	seen := map[string]bool{}

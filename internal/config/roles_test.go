@@ -29,51 +29,6 @@ func writeRoleLayers(t *testing.T, home, local string) {
 	}
 }
 
-func TestRolesFromYAML(t *testing.T) {
-	doc := `
-roles:
-  reviewer:
-    description: "Reviews a diff: correctness first."
-    instructions: |
-      You review code.
-      Flag: correctness, then style.
-    tools: [read_file, grep]
-    model: fast
-  researcher:
-    description: Finds sources.
-workflows:
-  review: {skill: review, roles: [reviewer]}
-`
-	c, err := FromYAML([]byte(doc), "test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := RoleConfig{
-		Description:  "Reviews a diff: correctness first.",
-		Instructions: "You review code.\nFlag: correctness, then style.\n",
-		Tools:        []string{"read_file", "grep"},
-		Model:        "fast",
-	}
-	if got := c.Roles["reviewer"]; !reflect.DeepEqual(got, want) {
-		t.Errorf("reviewer = %#v, want %#v", got, want)
-	}
-	r := c.Roles["researcher"]
-	if r.Description != "Finds sources." || r.Tools != nil || r.Model != "" {
-		t.Errorf("researcher = %#v, want description only", r)
-	}
-	if got := c.Workflows["review"].Roles; !reflect.DeepEqual(got, []string{"reviewer"}) {
-		t.Errorf("workflows.review.roles = %v, want [reviewer]", got)
-	}
-
-	d := Default()
-	if len(d.Roles) != 0 {
-		t.Errorf("Default().Roles = %v, want empty", d.Roles)
-	}
-	if got := d.Workflows["research"].Roles; len(got) != 0 {
-		t.Errorf("Default().Workflows[research].Roles = %v, want empty", got)
-	}
-}
-
 func TestRolesHomeLayerReplacesByName(t *testing.T) {
 	c := Default()
 	first := "roles:\n  reviewer: {description: home, tools: [read_file]}\n  other: {description: kept}\n"
@@ -111,68 +66,49 @@ func TestRolesIgnoredFromLocalLayer(t *testing.T) {
 	}
 }
 
-func TestWorkflowRolesFromLocalLayerAreInert(t *testing.T) {
-	writeRoleLayers(t,
-		"roles:\n  reviewer: {description: home}\nworkflows:\n  review: {skill: review, roles: [reviewer]}\n",
-		"workflows:\n  review: {roles: [other]}\n")
-	warnings := captureWarnings(t)
-	c, err := Load()
-	if err != nil {
-		t.Fatal(err)
+func TestRoleLimitsAreConstants(t *testing.T) {
+	if MaxRoles != 32 {
+		t.Errorf("MaxRoles = %d, want 32", MaxRoles)
 	}
-	if got := c.Workflows["review"].Roles; !reflect.DeepEqual(got, []string{"reviewer"}) {
-		t.Errorf("workflows.review.roles = %v, want [reviewer]", got)
-	}
-	w := warnings()
-	if !strings.Contains(w, "workflow pool-loosening keys") || !strings.Contains(w, "review") {
-		t.Errorf("warning = %q, want the workflow warning naming review", w)
+	if MaxRoleDescriptionChars != 512 {
+		t.Errorf("MaxRoleDescriptionChars = %d, want 512", MaxRoleDescriptionChars)
 	}
 }
 
-func TestOverlaySpecRoles(t *testing.T) {
-	base := Default()
-	base.Roles = map[string]RoleConfig{
-		"ops":      {Description: "operator"},
-		"reviewer": {Description: "operator reviewer", Tools: []string{"read_file"}},
-	}
-	base.Workflows["review"] = WorkflowConfig{Skill: "review", Roles: []string{"ops"}}
-
-	doc := "roles:\n  reviewer: {description: spec}\nworkflows:\n  review: {roles: [reviewer]}\n"
-	c, refused, err := OverlaySpec(base, []byte(doc), "spec")
+func TestRolesFromYAML(t *testing.T) {
+	doc := `
+roles:
+  reviewer:
+    description: "Reviews a diff: correctness first."
+    instructions: |
+      You review code.
+      Flag: correctness, then style.
+    tools: [read_file, grep]
+    model: fast
+  researcher:
+    description: Finds sources.
+`
+	c, err := FromYAML([]byte(doc), "test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(refused) != 0 {
-		t.Errorf("refused = %v, want none", refused)
+	want := RoleConfig{
+		Description:  "Reviews a diff: correctness first.",
+		Instructions: "You review code.\nFlag: correctness, then style.\n",
+		Tools:        []string{"read_file", "grep"},
+		Model:        "fast",
 	}
-	if got := c.Roles["reviewer"]; !reflect.DeepEqual(got, RoleConfig{Description: "spec"}) {
-		t.Errorf("reviewer = %#v, want the spec entry", got)
+	if got := c.Roles["reviewer"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("reviewer = %#v, want %#v", got, want)
 	}
-	if got := c.Roles["ops"].Description; got != "operator" {
-		t.Errorf("ops.description = %q, want operator role kept", got)
-	}
-	if got := c.Workflows["review"].Roles; !reflect.DeepEqual(got, []string{"reviewer"}) {
-		t.Errorf("workflows.review.roles = %v, want [reviewer]", got)
+	r := c.Roles["researcher"]
+	if r.Description != "Finds sources." || r.Tools != nil || r.Model != "" {
+		t.Errorf("researcher = %#v, want description only", r)
 	}
 
-	// base is untouched: clone() copied Roles and each workflow's Roles.
-	if got := base.Roles["reviewer"].Description; got != "operator reviewer" {
-		t.Errorf("base reviewer mutated: %q", got)
-	}
-	if got := base.Workflows["review"].Roles; !reflect.DeepEqual(got, []string{"ops"}) {
-		t.Errorf("base workflows.review.roles mutated: %v", got)
-	}
-}
-
-func TestOverlaySpecDoesNotWriteThroughRoleMap(t *testing.T) {
-	base := Default()
-	base.Roles = map[string]RoleConfig{"ops": {Description: "operator"}}
-	doc := "roles:\n  added: {description: spec}\n"
-	if _, _, err := OverlaySpec(base, []byte(doc), "spec"); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := base.Roles["added"]; ok {
-		t.Errorf("OverlaySpec wrote a spec role into the operator's Roles map")
+	d := Default()
+	if len(d.Roles) != 0 {
+		t.Errorf("Default().Roles = %v, want empty", d.Roles)
 	}
 }
 
@@ -204,17 +140,8 @@ func TestProblemsRoles(t *testing.T) {
 		}, "roles.a.instructions", "16384"},
 		{"too many roles", func(c *Config) { c.Roles = roles(33) }, "roles", "32"},
 		{"roles at limit", func(c *Config) { c.Roles = roles(32) }, "", ""},
-		{"unresolved workflow role", func(c *Config) {
-			c.Roles = map[string]RoleConfig{"a": {Description: "d"}}
-			c.Workflows["wf"] = WorkflowConfig{Skill: "wf", Roles: []string{"a", "ghost"}}
-		}, "workflows.wf.roles[1]", `"ghost"`},
-		{"duplicate workflow role", func(c *Config) {
-			c.Roles = map[string]RoleConfig{"a": {Description: "d"}, "b": {Description: "e"}}
-			c.Workflows["wf"] = WorkflowConfig{Skill: "wf", Roles: []string{"a", "b", "a"}}
-		}, "workflows.wf.roles[2]", "duplicate"},
 		{"valid two-role config", func(c *Config) {
 			c.Roles = map[string]RoleConfig{"a": {Description: "d"}, "b": {Description: "e", Instructions: "brief"}}
-			c.Workflows["wf"] = WorkflowConfig{Skill: "wf", Roles: []string{"b"}}
 		}, "", ""},
 		{"uppercase role name", func(c *Config) { c.Roles = map[string]RoleConfig{"Reviewer": {Description: "d"}} }, "roles.Reviewer", "^[a-z0-9][a-z0-9_-]*$"},
 		{"leading dash role name", func(c *Config) { c.Roles = map[string]RoleConfig{"-a": {Description: "d"}} }, "roles.-a", "must match"},
@@ -242,7 +169,7 @@ func TestProblemsRoles(t *testing.T) {
 			ps := c.Problems()
 			var roleProblems []Problem
 			for _, p := range ps {
-				if p.Path == "roles" || strings.HasPrefix(p.Path, "roles.") || strings.Contains(p.Path, ".roles[") {
+				if p.Path == "roles" || strings.HasPrefix(p.Path, "roles.") {
 					roleProblems = append(roleProblems, p)
 				}
 			}
@@ -262,14 +189,5 @@ func TestProblemsRoles(t *testing.T) {
 				t.Errorf("message = %q, want it to mention %s", roleProblems[0].Message, tt.wantMsg)
 			}
 		})
-	}
-}
-
-func TestRoleLimitsAreConstants(t *testing.T) {
-	if MaxRoles != 32 {
-		t.Errorf("MaxRoles = %d, want 32", MaxRoles)
-	}
-	if MaxRoleDescriptionChars != 512 {
-		t.Errorf("MaxRoleDescriptionChars = %d, want 512", MaxRoleDescriptionChars)
 	}
 }

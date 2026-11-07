@@ -16,6 +16,7 @@ import (
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
+	"github.com/ethanhinson/fuse/internal/probe"
 )
 
 // TestOneShotRuntimeParity drives the REAL one-shot binary (run([]string{...}))
@@ -112,41 +113,25 @@ func TestResearchProbeRuntimeParity(t *testing.T) {
 	}
 }
 
-// TestBuildShellRuntimeDeps is a wiring assertion (matching the
+// TestWireShellToolsRegistersSpawnAgent is a wiring assertion (matching the
 // blackboard_wiring_test.go / spawn_func_from_test.go style): buildShellRuntimeDeps
 // returns a Deps whose BuildAgent (the per-loop factory, change 0046) produces a
 // non-nil *agent.Agent AND a non-nil per-loop child-builder. A headless bubbletea
 // assertion is impractical; the shell's end-to-end behavior stays covered by the
 // existing shell_test.go teatest.
-func TestBuildShellRuntimeDeps(t *testing.T) {
+func TestWireShellToolsRegistersSpawnAgent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cfg := config.Default()
 	reg := model.DefaultRegistry()
 	toolReg := defaultToolRegistry(nil, cfg.Research, nil)
 	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
 
-	// The shell binds the TUI channel, a human approver. Building the root agent
-	// builds its gate, which needs a labelled approver; nothing here calls it.
-	shellApprove := permissions.Human(permissions.AlwaysApprove.Answer)
-	deps := buildShellRuntimeDeps(shellDepsInput{
+	wireShellTools(shellDepsInput{
 		cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
-		verbose: false, skillBlock: "block", childApprove: shellApprove, rootApprove: shellApprove,
+		verbose: false, skillBlock: "block", childApprove: permissions.Human(permissions.AlwaysApprove.Answer),
 	})
-	if deps.BuildAgent == nil {
-		t.Fatal("BuildAgent is nil")
-	}
-	// BuildAgent now returns the loop's child-builder as its second result (the field
-	// Deps.BuildChild is retired). The shell owns its own store, so pass its holder's
-	// no-op default here (nil store ⇒ the shell's seeded store stays in use).
-	a, childBuilder, _, err := deps.BuildAgent(nil, tree, reg.Default, toolReg)
-	if err != nil {
-		t.Fatalf("BuildAgent: %v", err)
-	}
-	if a == nil {
-		t.Fatal("BuildAgent returned nil agent")
-	}
-	if childBuilder == nil {
-		t.Fatal("BuildAgent returned nil child-builder")
+	if !toolReg.Has("spawn_agent") {
+		t.Fatal("wireShellTools did not register the root's spawn_agent")
 	}
 }
 
@@ -189,5 +174,56 @@ func TestNoDirectEngineDriveAtCmdSites(t *testing.T) {
 	}
 	if checked != len(entrypoints) {
 		t.Fatalf("checked %d entrypoints, expected %d — a binding file was renamed/moved", checked, len(entrypoints))
+	}
+}
+
+// TestCLIBindingsWireArtifacts: one-shot and research-probe hand the runtime the
+// filesystem artifact store, so their spilled output is recoverable under
+// ~/.fuse/artifacts.
+func TestCLIBindingsWireArtifacts(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := config.Default()
+	reg := registryFromConfig(cfg)
+
+	tree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
+	deps, closeMCP := buildOneShotRuntimeDeps(cfg, reg, reg.Default, defaultToolRegistry(nil, cfg.Research, nil), tree, io.Discard, false, nil,
+		permissions.AlwaysApprove, "block", false, nil, nil)
+	t.Cleanup(closeMCP)
+	if deps.Artifacts == nil {
+		t.Fatal("one-shot deps left Artifacts nil")
+	}
+
+	ptree := agent.NewAgentTreeWithConcurrency(reg.Default, reg.Default, cfg.Agents.MaxConcurrent)
+	pdeps := buildResearchProbeRuntimeDeps(researchProbeDepsInput{
+		cfg: cfg, reg: reg, alias: reg.Default, toolReg: defaultToolRegistry(nil, cfg.Research, nil), tree: ptree,
+		logSink: probe.NewLog(),
+	})
+	if pdeps.Artifacts == nil {
+		t.Fatal("research-probe deps left Artifacts nil")
+	}
+}
+
+// TestEveryChildBuilderUsesSharedWiring: role rules are only real if every binding
+// builds its child and root tools through loopWiring. A file holding N child-builder
+// closures must call .childTools( and .rootTools( at least N times.
+func TestEveryChildBuilderUsesSharedWiring(t *testing.T) {
+	sites := 0
+	for f, src := range nonTestGoFiles(t) {
+		n := strings.Count(src, "agent.WithChildBuilder(")
+		if n == 0 {
+			continue
+		}
+		sites += n
+		if got := strings.Count(src, ".childTools("); got < n {
+			t.Errorf("%s holds %d child-builder closures but calls .childTools( %d times", f, n, got)
+		}
+		if got := strings.Count(src, ".rootTools("); got < n {
+			t.Errorf("%s holds %d child-builder closures but calls .rootTools( %d times", f, n, got)
+		}
+	}
+	// One-shot, research probe and shell. Fewer means the marker moved and the guard
+	// would pass vacuously.
+	if sites < 3 {
+		t.Errorf("expected >=3 child-builder closures with agent.WithChildBuilder, found %d", sites)
 	}
 }

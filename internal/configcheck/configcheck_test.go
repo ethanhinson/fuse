@@ -36,9 +36,8 @@ func TestModelRefProblemsPathsAndText(t *testing.T) {
 	cfg.Context.Summarization.Model = "ghost"
 	cfg.Context.Relevance.ClassifierModel = "ghost"
 	cfg.Permissions.Auto.ClassifierModel = "ghost"
-	cfg.Orchestrator.Model = "ghost"
 	ps := ModelRefProblems(cfg, Registry(cfg))
-	want := []string{"models.default", "context.summarization.model", "context.relevance.classifier_model", "permissions.auto.classifier_model", "orchestrator.model"}
+	want := []string{"models.default", "context.summarization.model", "context.relevance.classifier_model", "permissions.auto.classifier_model"}
 	if len(ps) != len(want) {
 		t.Fatalf("got %d problems: %+v", len(ps), ps)
 	}
@@ -58,9 +57,9 @@ func TestModelRefProblemsPathsAndText(t *testing.T) {
 func TestProblemsCombinesStructuralAndModelRefs(t *testing.T) {
 	cfg := config.Default()
 	cfg.MaxTokens = -1
-	cfg.Orchestrator.Model = "ghost"
+	cfg.Permissions.Auto.ClassifierModel = "ghost"
 	ps := Problems(cfg)
-	if len(ps) != 2 || ps[0].Path != "max_tokens" || ps[1].Path != "orchestrator.model" {
+	if len(ps) != 2 || ps[0].Path != "max_tokens" || ps[1].Path != "permissions.auto.classifier_model" {
 		t.Fatalf("Problems = %+v", ps)
 	}
 	if len(Problems(config.Default())) != 0 {

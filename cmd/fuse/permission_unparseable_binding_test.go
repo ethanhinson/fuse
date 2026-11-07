@@ -173,7 +173,7 @@ func TestLoopServerDeniesUnparseableCommandEndToEnd(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.desc, func(t *testing.T) {
 			floorWorkspace(t)
-			rt, gw, _ := harnessServer(t, harnessOperator+tc.yaml)
+			rt, gw := harnessServer(t, harnessOperator+tc.yaml)
 			probe := tc.probe
 			if probe == "" {
 				probe = unparseableProbe

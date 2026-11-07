@@ -16,11 +16,8 @@ import (
 // right-pane sub-view, and false again after backing out to the tree.
 func TestFocusRightFocused(t *testing.T) {
 	tree := agent.NewAgentTree("root", "m")
-	root := tree.Node(tree.RootID())
-	bb := agent.NewBlackboard(tree)
-	bb.Put("k", "v", root.ID, "root")
 
-	m := NewAgentsModel(tree, nil).WithBlackboard(bb)
+	m := NewAgentsModel(tree, nil)
 	m.width, m.height = 120, 30
 
 	if m.rightFocused() {
@@ -36,16 +33,6 @@ func TestFocusRightFocused(t *testing.T) {
 	m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	if m.rightFocused() {
 		t.Fatal("after tab back, tree should be left-focused")
-	}
-
-	// b → blackboard
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
-	if !m.inBlackboard || !m.rightFocused() {
-		t.Fatalf("after b, blackboard should be right-focused: inBlackboard=%v", m.inBlackboard)
-	}
-	m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if m.rightFocused() {
-		t.Fatal("after esc from blackboard, tree should be left-focused")
 	}
 
 	// event view
@@ -127,18 +114,14 @@ func TestFocusWidthInvariant(t *testing.T) {
 	defer lipgloss.SetColorProfile(prev)
 
 	tree := agent.NewAgentTree("root", "m")
-	root := tree.Node(tree.RootID())
-	bb := agent.NewBlackboard(tree)
-	bb.Put("plan/outline", map[string]any{"steps": float64(3)}, root.ID, "root")
 
 	for _, w := range []int{80, 100, 120} {
-		m := NewAgentsModel(tree, nil).WithBlackboard(bb)
+		m := NewAgentsModel(tree, nil)
 		m.width, m.height = w, 20
-		// Exercise both left and right focus and the blackboard.
+		// Exercise both left and right focus.
 		for _, focus := range []func(){
 			func() {},
 			func() { m.Update(tea.KeyMsg{Type: tea.KeyTab}) },
-			func() { m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) },
 		} {
 			focus()
 			view := m.View()

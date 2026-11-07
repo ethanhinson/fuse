@@ -10,7 +10,7 @@ import (
 // AskFunc is the seam the ask_user tool reaches the human through. It is defined
 // here (not in internal/tui) to break the import cycle — internal/agent imports
 // internal/tools, and the tool must be constructed alongside every other tool —
-// exactly as BlackboardStore and permissions.ApprovalFunc are seams the concrete
+// exactly as permissions.ApprovalFunc is a seam the concrete
 // TUI (or a test stub) fills. In `fuse shell` the implementation sends an
 // AskQuestionMsg onto the model channel and blocks until the user answers; in
 // one-shot / non-interactive mode it is nil and the tool reports that no human

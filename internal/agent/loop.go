@@ -44,8 +44,7 @@ const returnResultCap = 2
 // the delta appended since is estimated at bytes/4, so the estimate resets to
 // ground truth every turn and error never compounds.
 const (
-	// DefaultContextWindow is used when the model config does not set one. The
-	// loop server advertises it as a model's effective context window.
+	// DefaultContextWindow is used when the model config does not set one.
 	DefaultContextWindow = 128_000
 	bytesPerToken        = 4
 	// pruneThresholdPct: prune when the estimated request exceeds this
@@ -371,17 +370,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	var lastNudgeAt int64
 	finishChecked := false
 	messages := history
-	// Record the seed's user turn(s) into the durable stream (change 0054) so a
-	// transcript rebuilt purely from events includes them — user input is otherwise
-	// never emitted (the injector only appends to the in-memory transcript). Skipped
-	// when a.seeded: a resumed loop's seed IS a reconstruction of events that already
-	// exist, so re-emitting would duplicate them. Emitted at turn 0 (the seed precedes
-	// the first turn); new Send turns emit at their own turn boundary below.
-	if !a.seeded {
-		for _, m := range history {
-			if m.Role == "user" {
-				a.emit(event.KindUserInput, 0, event.UserInputPayload{Turn: 0, Content: m.Content})
-			}
+	// Record the seed's user turn(s) into the event stream, so a transcript rebuilt
+	// purely from events includes them.
+	for _, m := range history {
+		if m.Role == "user" {
+			a.emit(event.KindUserInput, 0, event.UserInputPayload{Turn: 0, Content: m.Content})
 		}
 	}
 	detector := newLoopDetector(loopLimit)
@@ -414,11 +407,8 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// Tier 2 summarization state (change 0027), loop-scoped so concurrent agents
 	// never share it: previousSummary is the single living ODSNF document carried
 	// forward (D3, anchoring); suppressUntil is the turn index through which the
-	// summarizer is skipped after a failure (D2). On a RESUME, previousSummary
-	// starts from the seed summary reconstructed from the stream (change 0127,
-	// Task 5) so the next compaction anchors against the last summary the
-	// original session produced, exactly as a never-moved loop would.
-	previousSummary := a.seedSummary
+	// summarizer is skipped after a failure (D2).
+	previousSummary := ""
 	suppressUntil := 0
 
 	// Structured-delegation state (change 0042): when expects is set, the loop
@@ -431,22 +421,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	// a.maxTurns <= 0 means unlimited: the loop runs until the model stops
 	// calling tools, context is exhausted, or the doom-loop detector trips.
 	// A positive maxTurns caps the run and returns ErrMaxTurns. See change 0038.
-	//
-	// In interactive mode maxTurns is a PER-EXCHANGE cap (change 0090): the turns
-	// that run in answer to one user message. On the cap the loop parks with
-	// reason max_turns instead of ending the session; the next message gets a
-	// fresh allowance.
-	exchangeTurns := 0
-	for turn := 0; (a.interactive && a.humanInjector.hasBus()) || a.maxTurns <= 0 || turn < a.maxTurns; turn++ {
-		if a.interactive && a.maxTurns > 0 && a.humanInjector.hasBus() && exchangeTurns >= a.maxTurns {
-			a.emit(event.KindLoopParked, turn, event.LoopParkedPayload{Turn: turn, Reason: "max_turns"})
-			if werr := a.humanInjector.Wait(ctx); werr != nil {
-				// Teardown of a parked conversation ends cleanly, as the normal park does.
-				return messages, nil
-			}
-			exchangeTurns = 0
-		}
-		exchangeTurns++
+	for turn := 0; a.maxTurns <= 0 || turn < a.maxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			a.emit(event.KindError, turn, event.ErrorPayload{Err: err.Error(), Turn: turn})
 			return messages, err
@@ -458,37 +433,21 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		// them as a single batched user turn before the model is called (ADR-0022).
 		// This is a self-pull — the node reads its own queue at a point where it is
 		// between model calls — so ADR-0016's run-to-completion contract holds.
-		if hm, pd, ok := a.humanInjector.pollDetail(); ok {
+		if hm, ok := a.humanInjector.Poll(); ok {
 			messages = append(messages, hm)
 			// Record the injected human turn in the durable stream (change 0054): the
 			// exact batched/prefixed text that entered the transcript, so a later fold
 			// rebuilds this user turn identically. Emitted at THIS turn (unlike the seed,
 			// which is turn 0) so replay order matches conversation order.
-			a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content, Source: pd.Source, ReqSeqs: pd.ReqSeqs})
+			a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content})
 		}
 
-		// Per-call token gate: a spent session or pool token budget stops the model
-		// being called at all, whether or not the loop can spawn. Non-interactive
-		// loops end with ErrTokenQuotaExhausted; an interactive loop with a bus parks
-		// (reason session_tokens) and stays attached, re-checking on every wake. The
-		// counters are append-only, so a parked loop never calls the model again.
-		for a.callGate != nil {
-			gerr := a.callGate()
-			if gerr == nil {
-				break
-			}
-			if !(a.interactive && a.humanInjector.hasBus()) {
+		// Per-call token gate: a spent session token budget stops the model being
+		// called at all, whether or not the loop can spawn.
+		if a.callGate != nil {
+			if gerr := a.callGate(); gerr != nil {
 				a.emit(event.KindError, turn, event.ErrorPayload{Err: gerr.Error(), Turn: turn})
 				return messages, gerr
-			}
-			a.emit(event.KindLoopParked, turn, event.LoopParkedPayload{Turn: turn, Reason: "session_tokens"})
-			if werr := a.humanInjector.Wait(ctx); werr != nil {
-				return messages, nil
-			}
-			// Consume the message that woke us so the next Wait blocks again.
-			if hm, pd, ok := a.humanInjector.pollDetail(); ok {
-				messages = append(messages, hm)
-				a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content, Source: pd.Source, ReqSeqs: pd.ReqSeqs})
 			}
 		}
 
@@ -682,7 +641,6 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			a.renderer.Errorf("model reply cut off at %d output tokens; retrying with a cap of %d", req.MaxTokens, nextCap)
 			outputCap = nextCap
 			turn--
-			exchangeTurns--
 			continue
 		}
 		if unusable {
@@ -730,26 +688,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			// shutdown) or when there is no bus to await (Wait returns errNoBus) — both
 			// fall through to the normal terminal return, so a non-interactive loop and a
 			// bus-less interactive loop are byte-identical to the pre-change behavior.
-			if a.interactive && a.humanInjector != nil {
-				// Announce the park FIRST: a deterministic "exchange complete, awaiting
-				// your next message" signal carrying the final answer, so a conversational
-				// client renders the reply and re-enables input without guessing which
-				// model.call.end was terminal.
-				a.emit(event.KindLoopParked, turn, event.LoopParkedPayload{Turn: turn, Content: resp.Content})
-				if werr := a.humanInjector.Wait(ctx); werr == nil {
-					// A message is pending; loop back so the top-of-turn Poll injects it.
-					// A new exchange starts: maxTurns caps turns per exchange, so the
-					// allowance resets (change 0090).
-					exchangeTurns = 0
-					continue
-				}
-				// errNoBus or ctx cancellation: end the run like a normal terminal turn.
-			}
 			// A headless run has nobody to notice it stopped mid-task, and models do:
 			// "Let me run the tests now:" with no tool call ended runs that exited 0
 			// with the work unfinished. Ask once; a second reply with no tool call ends
 			// the run, so this costs one model call and cannot loop.
-			if a.finishCheck && !isChild && !a.interactive && !finishChecked && ctx.Err() == nil && len(a.tools.Schemas()) > 0 {
+			if a.finishCheck && !isChild && !finishChecked && ctx.Err() == nil && len(a.tools.Schemas()) > 0 {
 				finishChecked = true
 				messages = append(messages, model.Message{Role: "user", Content: finishCheckPrompt})
 				a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: finishCheckPrompt})
@@ -758,9 +701,9 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			// A steer that arrived while this final answer was being produced would
 			// otherwise be stranded: Send has already reported it accepted. Give it
 			// one more turn instead of dropping it.
-			if hm, pd, ok := a.humanInjector.pollDetail(); ok && ctx.Err() == nil {
+			if hm, ok := a.humanInjector.Poll(); ok && ctx.Err() == nil {
 				messages = append(messages, hm)
-				a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content, Source: pd.Source, ReqSeqs: pd.ReqSeqs})
+				a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: hm.Content})
 				continue
 			}
 			return messages, nil
@@ -950,7 +893,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		// No-progress check: counted across the whole agent tree, and every loop
 		// tracks when it was last nudged so a parent waiting on children hears too.
 		// An interactive session has a person watching, so it is not nudged.
-		if a.noProgressCalls > 0 && !a.interactive {
+		if a.noProgressCalls > 0 {
 			since := progress.recordCalls(results)
 			if since < lastNudgeAt {
 				lastNudgeAt = 0
@@ -1101,9 +1044,9 @@ func userTurns(msgs []model.Message) []model.Message {
 
 // executeToolBounded runs one tool call under the per-tool-call timeout so a
 // hung leaf tool (e.g. a bash command that never returns) cannot block the whole
-// agent loop indefinitely. Orchestration tools (spawn_agent, pipeline_run) are
-// exempt — they legitimately run long by awaiting child agents and are bounded
-// by their own budgets and the parent context. On timeout the tool's derived
+// agent loop indefinitely. spawn_agent is
+// exempt — it legitimately runs long by awaiting child agents and is bounded
+// by its own budget and the parent context. On timeout the tool's derived
 // context is cancelled (so a well-behaved tool unwinds) and an error Result is
 // returned to the model describing what happened; the underlying goroutine is
 // left to observe cancellation on its own rather than blocking the loop.

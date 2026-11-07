@@ -33,12 +33,8 @@ func compactTokens(n int) string {
 // `research 3/5 slots · 2 queued · 310k/500k tokens`, omitting any axis that is
 // unset (SlotTotal 0 ⇒ no slots segment, Queued 0 ⇒ no queued segment,
 // TokenQuota 0 ⇒ no tokens segment) so an idle or unlimited axis adds no noise.
-// The pool label is the workflow name, or "session" for the implicit pool.
 func poolSummaryLine(p agent.PoolSnapshot) string {
-	label := p.Workflow
-	if label == "" {
-		label = "session"
-	}
+	label := "session"
 	var segs []string
 	if p.SlotTotal > 0 {
 		segs = append(segs, fmt.Sprintf("%d/%d slots", p.SlotsInUse, p.SlotTotal))
@@ -77,18 +73,10 @@ func rateGateLine(u ratelimit.ProviderUtilization) string {
 }
 
 // schedulerSummaryLines renders the full multi-line observability block for the
-// agents overlay: one line per non-empty pool (workflow pools first by name, the
-// implicit session pool last), then one line per rate-gate provider. Empty when
+// agents overlay: one line per non-empty pool, then one line per rate-gate provider. Empty when
 // nothing is engaged. util may be nil (no rate gate configured).
 func schedulerSummaryLines(snap agent.SchedulerSnapshot, util []ratelimit.ProviderUtilization) []string {
 	pools := append([]agent.PoolSnapshot(nil), snap.Pools...)
-	// Workflow pools sorted by name; the implicit session pool ("") sorts last.
-	sort.SliceStable(pools, func(i, j int) bool {
-		if (pools[i].Workflow == "") != (pools[j].Workflow == "") {
-			return pools[j].Workflow == "" // non-implicit before implicit
-		}
-		return pools[i].Workflow < pools[j].Workflow
-	})
 	var out []string
 	for _, p := range pools {
 		if line := poolSummaryLine(p); line != "" {
@@ -107,8 +95,7 @@ func schedulerSummaryLines(snap agent.SchedulerSnapshot, util []ratelimit.Provid
 
 // schedulerStatusSegment renders the compact single-segment scheduler summary for
 // the status bar: the busiest engaged pool's line. "Busiest" is the pool with the
-// most SlotsInUse, ties broken by more Queued, then by name (the implicit session
-// pool sorts last, matching the overlay). Only pools with a renderable axis
+// most SlotsInUse, ties broken by more Queued. Only pools with a renderable axis
 // (slots/queue/token) are considered; empty when none is engaged. Kept to one
 // pool so the status line stays narrow — the full per-pool block lives in the
 // agents overlay.
@@ -129,8 +116,7 @@ func schedulerStatusSegment(snap agent.SchedulerSnapshot) string {
 }
 
 // busierPool reports whether a is the busier pool to surface than b: more
-// SlotsInUse wins; on a tie, more Queued; on a further tie, the earlier name
-// (with the implicit session pool "" sorting last, mirroring the overlay order).
+// SlotsInUse wins; on a tie, more Queued.
 func busierPool(a, b agent.PoolSnapshot) bool {
 	if a.SlotsInUse != b.SlotsInUse {
 		return a.SlotsInUse > b.SlotsInUse
@@ -138,9 +124,5 @@ func busierPool(a, b agent.PoolSnapshot) bool {
 	if a.Queued != b.Queued {
 		return a.Queued > b.Queued
 	}
-	// Name tiebreak: implicit session pool ("") sorts last; otherwise lexical.
-	if (a.Workflow == "") != (b.Workflow == "") {
-		return b.Workflow == "" // a non-implicit beats the implicit pool
-	}
-	return a.Workflow < b.Workflow
+	return false
 }

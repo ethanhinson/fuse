@@ -9,7 +9,7 @@ Features:
 2. **@agent-direct** — address a live node by auto-derived `@handle` (rename with
    `/rename @old @new`).
 3. **/btw** — a read-only status aside answered by the harness from live tree/
-   blackboard state (no model call, no agent interruption).
+   agent state (no model call, no agent interruption).
 4. **queued + editable messages** — messages typed while an agent is busy queue
    and deliver at the next turn boundary; `/queue` opens an editor to
    reorder/edit/delete them; the async LLM router may re-target bare prose.

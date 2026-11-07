@@ -11,7 +11,6 @@ import (
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
 	"github.com/ethanhinson/fuse/internal/model"
-	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/probe"
 	"github.com/ethanhinson/fuse/internal/runtime"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -85,14 +84,6 @@ func TestSharedRegistryBindingsDoNotCloseAnotherLoopsSubstrate(t *testing.T) {
 		name  string
 		build func(toolReg *tools.Registry, tree *agent.AgentTree) runtime.Deps
 	}{
-		{"shell", func(toolReg *tools.Registry, tree *agent.AgentTree) runtime.Deps {
-			return buildShellRuntimeDeps(shellDepsInput{
-				cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,
-				skillBlock:   "block",
-				childApprove: permissions.AlwaysApprove,
-				rootApprove:  permissions.AlwaysApprove,
-			})
-		}},
 		{"research-probe", func(toolReg *tools.Registry, tree *agent.AgentTree) runtime.Deps {
 			return buildResearchProbeRuntimeDeps(researchProbeDepsInput{
 				cfg: cfg, reg: reg, alias: reg.Default, toolReg: toolReg, tree: tree,

@@ -6,8 +6,7 @@
 // host itself. A Runner is one acquired execution context for a single
 // principal.
 //
-// The package is deliberately a LEAF. It may import internal/loopauth and
-// internal/event; it must never import internal/agent, internal/observe, or
+// The package is deliberately a LEAF. It may import internal/event; it must never import internal/agent, internal/observe, or
 // internal/tools. Keeping it agent-free is what lets internal/tools depend on it
 // without an import cycle, and what keeps the substrate testable without the
 // agent runtime.
@@ -17,8 +16,15 @@ import (
 	"context"
 	"time"
 
-	"github.com/ethanhinson/fuse/internal/loopauth"
+	"github.com/ethanhinson/fuse/internal/event"
 )
+
+// Principal names who a Runner is acquired for. fuse runs one task per process, so
+// every caller today uses the zero value; the warm pool still keys on it.
+type Principal struct {
+	Tenant  event.TenantID
+	Subject string
+}
 
 // Handler is a substrate mechanism capable of handing out execution contexts.
 //
@@ -32,7 +38,7 @@ type Handler interface {
 
 	// Acquire returns an execution context for p, with env as the complete set
 	// of environment variables the command may observe.
-	Acquire(ctx context.Context, p loopauth.Principal, env Env) (Runner, error)
+	Acquire(ctx context.Context, p Principal, env Env) (Runner, error)
 }
 
 // Runner is a single acquired execution context. Every Runner obtained from

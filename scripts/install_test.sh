@@ -9,8 +9,7 @@
 #   fuse_<version>_checksums.txt
 #
 # Produce one with either:
-#   goreleaser release --snapshot --clean --skip=publish,docker
-#   make build && make egress-forwarder   (then this script builds the archive)
+#   goreleaser release --snapshot --clean --skip=publish
 #
 # The whole point of FUSE_RELEASE_BASE_URL is that this test never touches the
 # network and never touches the real $HOME/.local/bin. Every case installs into
@@ -73,7 +72,7 @@ esac
 
 [ -d "${DIST_DIR}" ] || {
 	printf 'install_test: %s does not exist.\n' "${DIST_DIR}" >&2
-	printf "  Build one with: goreleaser release --snapshot --clean --skip=publish,docker\n" >&2
+	printf "  Build one with: goreleaser release --snapshot --clean --skip=publish\n" >&2
 	exit 1
 }
 
@@ -96,7 +95,7 @@ if [ "${CHECKSUM_COUNT}" -ne 1 ]; then
 	printf 'install_test: expected exactly one fuse_*_checksums.txt in %s, found %d\n' \
 		"${DIST_DIR}" "${CHECKSUM_COUNT}" >&2
 	printf "  The installer's discover_version_from_dir requires exactly one too;\n" >&2
-	printf '  rebuild with: goreleaser release --snapshot --clean --skip=publish,docker\n' >&2
+	printf '  rebuild with: goreleaser release --snapshot --clean --skip=publish\n' >&2
 	exit 1
 fi
 
@@ -147,14 +146,8 @@ case1() {
 		return
 	fi
 
-	missing=
-	for bin in fuse fuse-egress-forward-linux-amd64 fuse-egress-forward-linux-arm64; do
-		if [ ! -x "${dest}/${bin}" ]; then
-			missing="${missing} ${bin}"
-		fi
-	done
-	if [ -n "${missing}" ]; then
-		fail "${name}: not installed or not executable:${missing}"
+	if [ ! -x "${dest}/fuse" ]; then
+		fail "${name}: fuse not installed or not executable"
 		return
 	fi
 

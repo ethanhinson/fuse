@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -11,9 +10,7 @@ import (
 
 	"github.com/ethanhinson/fuse/internal/agent"
 	"github.com/ethanhinson/fuse/internal/config"
-	"github.com/ethanhinson/fuse/internal/event"
 	"github.com/ethanhinson/fuse/internal/hitl"
-	"github.com/ethanhinson/fuse/internal/model"
 	"github.com/ethanhinson/fuse/internal/permissions"
 	"github.com/ethanhinson/fuse/internal/probe"
 	"github.com/ethanhinson/fuse/internal/tools"
@@ -236,72 +233,6 @@ func (provenanceProbeTool) Parameters() map[string]any { return map[string]any{"
 func (p provenanceProbeTool) Execute(context.Context, string) tools.Result {
 	*p.ran = true
 	return tools.Result{Output: "ran"}
-}
-
-// TestOrchestratorStandInIsPolicy drives the agent orchestrateCLIBuilder
-// returns against a scripted gateway. The model calls a prompting tool, so the
-// gate inside that agent asks its approver; the orchestrator binds a policy
-// stand-in, so the durable permission.decision records a deny with decided_by:
-// policy, the tool never runs, and the gateway sees the denial as the tool
-// result. Asserting through the built agent, not a gate rebuilt from package
-// vars, is what catches the builder wiring a different approver.
-func TestOrchestratorStandInIsPolicy(t *testing.T) {
-	gw := &routedGateway{route: func(task string, turn int, _ gatewayCall) string {
-		if strings.Contains(task, "ORCH-TASK") && turn == 0 {
-			return toolCallsReply(call{name: "orch_probe", args: map[string]any{}})
-		}
-		return textReply("done")
-	}}
-	srv := httptest.NewServer(gw)
-	t.Cleanup(srv.Close)
-	cfg := config.Default()
-	cfg.Gateway.URL, cfg.Gateway.Key = srv.URL, "tkn"
-
-	var ran bool
-	orchTools := tools.NewRegistry()
-	orchTools.Register(provenanceProbeTool{ran: &ran})
-
-	reg := registryFromConfig(cfg)
-	ag, err := orchestrateCLIBuilder(cfg, reg, reg.Default, nil)(discardRenderer{}, orchTools)
-	if err != nil {
-		t.Fatalf("orchestrateCLIBuilder: %v", err)
-	}
-	store := event.NewMemStore(1024)
-	ag.SetEventSink(store)
-	if _, err := ag.Run(context.Background(), []model.Message{{Role: "user", Content: "ORCH-TASK"}}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if ran {
-		t.Fatal("denied orchestrator tool ran")
-	}
-
-	evs, err := store.Replay(0)
-	if err != nil {
-		t.Fatalf("Replay: %v", err)
-	}
-	var decisions []event.PermissionDecisionPayload
-	for _, ev := range evs {
-		if ev.Kind != event.KindPermissionDecision {
-			continue
-		}
-		var d event.PermissionDecisionPayload
-		if err := json.Unmarshal(ev.Payload, &d); err != nil {
-			t.Fatalf("decode permission.decision: %v", err)
-		}
-		decisions = append(decisions, d)
-	}
-	if len(decisions) == 0 {
-		t.Fatalf("orchestrator agent recorded no permission.decision events; events=%d", len(evs))
-	}
-	last := decisions[len(decisions)-1]
-	if last.Tool != "orch_probe" || last.Verdict != "deny" || last.Layer != permissions.LayerHuman || last.DecidedBy != permissions.DecidedByPolicy || last.Reason != "tool call denied by policy approver" {
-		t.Fatalf("final decision = %+v, want orch_probe deny/%s/%s with reason %q", last, permissions.LayerHuman, permissions.DecidedByPolicy, "tool call denied by policy approver")
-	}
-
-	second := turnRequest(t, gw, "ORCH-TASK", 1)
-	if countContaining(toolResults(second), "denied") == 0 {
-		t.Fatalf("ORCH-TASK turn 1 tool results = %q, want the denial", toolResults(second))
-	}
 }
 
 // TestResearchProbeGatesArePolicy drives a research-probe child through the
