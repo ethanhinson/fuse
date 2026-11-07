@@ -13,7 +13,7 @@ stacked_on:
 related: [42, 124]
 discovered_from: []
 adrs: [23]
-spec:
+spec: 'docs/superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md'
 plan:
 results:
 auto_groomable:
@@ -30,6 +30,7 @@ reconciled: false
 <!-- docket:artifacts:start (generated — do not hand-edit) -->
 | Artifact | Link |
 |---|---|
+| Spec | [2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md](../../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) |
 | ADRs | [ADR-0023](../../adrs/0023-structured-delegation-return-result-tool.md) |
 <!-- docket:artifacts:end -->
 

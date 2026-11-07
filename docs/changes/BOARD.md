@@ -1,6 +1,6 @@
 # Backlog
 
-**143 changes** — 🟢 3 in progress · 🟣 3 groomed · 🟡 24 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 7 killed
+**143 changes** — 🟢 3 in progress · 🟣 4 groomed · 🟡 23 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 7 killed
 
 ## 🟢 In progress (3)
 
@@ -10,19 +10,19 @@
 | [0126](active/0126-fenced-loop-ownership-and-cross-replica-activity-in-the-loop.md) | Fenced loop ownership and cross-replica activity in the loop registry | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-fenced-loop-ownership-and-cross-replica-activity-in-the-loop-design.md) | `fix/fenced-loop-ownership-and-cross-replica-activity-in-the-loop` | building |
 | [0081](active/0081-shell-transcript-command-breaks.md) | Echo executed slash commands + rule breaks between transcript blocks | `medium` | `feat` | [spec](../) | `feat/shell-transcript-command-breaks` | building |
 
-## 🟣 Groomed (3)
+## 🟣 Groomed (4)
 
 | # | Title | Priority | Type | Spec | Readiness |
 |---|-------|----------|------|------|-----------|
+| [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | [spec](../superpowers/specs/2026-11-07-headless-runs-finish-through-a-structured-report-and-a-plain-design.md) | build-ready |
 | [0135](active/0135-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope.md) | MCP OAuth tokens live in a token store adapter and never open a browser on a server | `high` | `fix` | [spec](../superpowers/specs/2026-11-03-mcp-oauth-tokens-live-in-a-token-store-adapter-and-never-ope-design.md) | build-ready |
 | [0133](active/0133-shared-admission-adapter-for-sandbox-concurrency-and-tenant.md) | Shared admission adapter for sandbox concurrency and tenant start rate | `medium` | `feat` | [spec](../superpowers/specs/2026-11-03-shared-admission-adapter-for-sandbox-concurrency-and-tenant-design.md) | build-ready |
 | [0131](active/0131-the-blackboard-is-durable-and-shared-across-replicas.md) | The blackboard is durable and shared across replicas | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-the-blackboard-is-durable-and-shared-across-replicas-design.md) | build-ready |
 
-## 🟡 Proposed (24)
+## 🟡 Proposed (23)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
-| [0143](active/0143-headless-runs-finish-through-a-structured-report-and-a-plain.md) | Headless runs finish through a structured report, and a plain stop is never success | `high` | `feat` | needs-grooming |
 | [0140](active/0140-object-storage-backend-for-the-artifact-store.md) | Object-storage backend for the artifact store | `medium` | `feat` | needs-grooming |
 | [0139](active/0139-segment-index-is-safe-with-concurrent-writers.md) | Segment index is safe with concurrent writers | `low` | `fix` | needs-grooming |
 | [0138](active/0138-artifact-retention-spilled-output-and-segments-expire.md) | Artifact retention: spilled output and segments expire | `medium` | `feat` | needs-grooming |
