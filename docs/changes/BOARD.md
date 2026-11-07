@@ -1,6 +1,6 @@
 # Backlog
 
-**143 changes** — 🟢 3 in progress · 🟣 4 groomed · 🟡 19 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 11 killed
+**143 changes** — 🟢 3 in progress · 🟣 4 groomed · 🟡 18 proposed · ⚪ 3 deferred · ✅ 103 done · 🗑️ 12 killed
 
 ## 🟢 In progress (3)
 
@@ -19,7 +19,7 @@
 | [0133](active/0133-shared-admission-adapter-for-sandbox-concurrency-and-tenant.md) | Shared admission adapter for sandbox concurrency and tenant start rate | `medium` | `feat` | [spec](../superpowers/specs/2026-11-03-shared-admission-adapter-for-sandbox-concurrency-and-tenant-design.md) | build-ready |
 | [0131](active/0131-the-blackboard-is-durable-and-shared-across-replicas.md) | The blackboard is durable and shared across replicas | `high` | `feat` | [spec](../superpowers/specs/2026-11-03-the-blackboard-is-durable-and-shared-across-replicas-design.md) | build-ready |
 
-## 🟡 Proposed (19)
+## 🟡 Proposed (18)
 
 | # | Title | Priority | Type | Readiness |
 |---|-------|----------|------|-----------|
@@ -39,7 +39,6 @@
 | [0119](active/0119-send-to-a-loop-cancelled-on-another-replica-says-loop-cancel.md) | Send to a loop cancelled on another replica says loop cancelled | `low` | `fix` | needs-grooming |
 | [0111](active/0111-one-shared-redirect-policy-for-every-client-that-carries-cre.md) | One shared redirect policy for every client that carries credentials | `medium` | `fix` | needs-grooming |
 | [0110](active/0110-mark-loopsecret-value-debug-redact-once-protobuf-go-honours.md) | Mark LoopSecret.value debug_redact once protobuf-go honours it | `low` | `feat` | needs-grooming |
-| [0109](active/0109-type-based-guard-that-no-wire-request-carrying-secrets-is-ev.md) | Type-based guard that no wire request carrying secrets is ever formatted | `low` | `feat` | needs-grooming |
 | [0105](active/0105-pin-spec-mcp-server-dials-to-the-addresses-checked-at-startl.md) | Pin spec MCP server dials to the addresses checked at StartLoop | `medium` | `fix` | needs-grooming |
 | [0083](active/0083-fix-two-race-lane-flakes-in-internal-runtime-turn-span-topol.md) | Fix two race-lane flakes in internal/runtime — turn-span topology and Send-enqueue tests | `medium` | `fix` | needs-grooming |
 
@@ -59,7 +58,6 @@ graph TD
   0081
   0083
   0105
-  0109
   0110
   0111
   0119
@@ -94,11 +92,12 @@ graph TD
   classDef done fill:#d3f9d8;
 ```
 
-<details><summary>✅🗑️ Archive — done + killed (114)</summary>
+<details><summary>✅🗑️ Archive — done + killed (115)</summary>
 
 | # | Title | Closed |
 |---|-------|--------|
 | [0134](archive/2026-11-07-0134-installed-skills-come-from-a-skill-source-adapter-consistent.md) | Installed skills come from a skill source adapter, consistent across replicas | 2026-11-07 |
+| [0109](archive/2026-11-07-0109-type-based-guard-that-no-wire-request-carrying-secrets-is-ev.md) | Type-based guard that no wire request carrying secrets is ever formatted | 2026-11-07 |
 | [0108](archive/2026-11-07-0108-send-surfaces-a-resume-refusal-instead-of-loop-finished.md) | Send surfaces a resume refusal instead of loop finished | 2026-11-07 |
 | [0107](archive/2026-11-07-0107-evict-idle-per-tenant-limiter-buckets-and-admission-locks.md) | Evict idle per-tenant limiter buckets and admission locks | 2026-11-07 |
 | [0106](archive/2026-11-07-0106-loop-registry-live-count-method-for-the-per-tenant-live-loop.md) | Loop registry live-count method for the per-tenant live-loop cap | 2026-11-07 |
