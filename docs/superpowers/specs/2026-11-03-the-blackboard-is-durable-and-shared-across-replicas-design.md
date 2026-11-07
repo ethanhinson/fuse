@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0131 — The blackboard is durable and shared across replicas](../../changes/active/0131-the-blackboard-is-durable-and-shared-across-replicas.md)**
+> ↩ **[Change 0131 — The blackboard is durable and shared across replicas](../../changes/archive/2026-11-07-0131-the-blackboard-is-durable-and-shared-across-replicas.md)**
 <!-- docket:backlink:end -->
 
 # The blackboard is durable and shared across replicas
