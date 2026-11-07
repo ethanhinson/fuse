@@ -369,6 +369,7 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 	ctx, progress := withRunProgress(ctx)
 	var lastNudgeAt int64
 	finishChecked := false
+	emptyReplies := 0
 	messages := history
 	// Record the seed's user turn(s) into the event stream, so a transcript rebuilt
 	// purely from events includes them.
@@ -671,6 +672,19 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		if resp.Content != "" {
 			a.renderer.Assistant(resp.Content)
 		}
+		// A reasoning model can return nothing visible and no tool call. That is not
+		// an answer, and treating it as one ended real runs with exit 0 and no work
+		// done. Ask again a bounded number of times, then fail.
+		if len(resp.ToolCalls) == 0 && strings.TrimSpace(resp.Content) == "" && ctx.Err() == nil {
+			emptyReplies++
+			if emptyReplies > maxEmptyReplies {
+				return messages, ErrEmptyReply
+			}
+			messages = append(messages, model.Message{Role: "user", Content: emptyReplyPrompt})
+			a.emit(event.KindUserInput, turn, event.UserInputPayload{Turn: turn, Content: emptyReplyPrompt})
+			continue
+		}
+		emptyReplies = 0
 		messages = append(messages, resp.AsMessage())
 
 		if len(resp.ToolCalls) == 0 {

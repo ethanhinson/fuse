@@ -294,7 +294,6 @@ func TestFinishReasonLength_CutToolCall_NotExecuted(t *testing.T) {
 }
 
 func TestEmptyReply_FailsRun(t *testing.T) {
-	defect(t, "an empty 200 reply (no content, no tool calls) ends the run with exit 0 and no output (internal/agent/loop.go:676-709)")
 	t.Parallel()
 	for name, st := range map[string]step{
 		"finish_stop": func(w http.ResponseWriter, r *http.Request) {
@@ -429,4 +428,30 @@ func TestToolCallsAsOtherTextDialects_EndRunUnexecuted_Documented(t *testing.T) 
 			}
 		})
 	}
+}
+
+// A reasoning model's empty reply must not end the run when asking again works.
+func TestEmptyReply_RecoversOnRetry(t *testing.T) {
+	t.Parallel()
+	empty := func(w http.ResponseWriter, r *http.Request) {
+		sseHeader(w)
+		sse(w, finishChunk("stop"))
+		sse(w, usageChunk(10, 0))
+		done(w)
+	}
+	var mu sync.Mutex
+	n := 0
+	srv := newRouter(t, func(*request) step {
+		mu.Lock()
+		defer mu.Unlock()
+		n++
+		if n == 1 {
+			return empty
+		}
+		return text("recovered")
+	})
+	h := newHarness(t, srv)
+	r := h.run()
+	wantCode(t, r, 0)
+	wantContains(t, r.stdout, "recovered", "stdout")
 }
