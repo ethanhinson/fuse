@@ -1,5 +1,5 @@
 <!-- docket:backlink:start (generated — do not hand-edit) -->
-> ↩ **[Change 0136 — Loop-scoped secrets can survive a move through an opt-in secret store adapter](../../changes/active/0136-loop-scoped-secrets-can-survive-a-move-through-an-opt-in-sec.md)**
+> ↩ **[Change 0136 — Loop-scoped secrets can survive a move through an opt-in secret store adapter](../../changes/archive/2026-11-07-0136-loop-scoped-secrets-can-survive-a-move-through-an-opt-in-sec.md)**
 <!-- docket:backlink:end -->
 
 # Loop-scoped secrets can survive a move through an opt-in secret store adapter

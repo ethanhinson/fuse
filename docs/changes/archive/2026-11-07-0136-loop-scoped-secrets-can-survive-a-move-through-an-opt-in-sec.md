@@ -2,12 +2,12 @@
 id: 136
 slug: 'loop-scoped-secrets-can-survive-a-move-through-an-opt-in-sec'
 title: 'Loop-scoped secrets can survive a move through an opt-in secret store adapter'
-status: 'proposed'
+status: 'killed'
 priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: [126]
 stacked_on:
 related: [102, 108, 110]
@@ -44,3 +44,7 @@ A `LoopSecretStore` seam (memory-only default = today; Postgres implementation e
 ## Out of scope
 
 Changing precedence or host-binding rules; exposing values through any RPC; a KMS integration beyond the key seam.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Only needed for the shared server or fleet.
