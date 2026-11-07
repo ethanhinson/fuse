@@ -1,6 +1,7 @@
 package permissions
 
 import (
+	"encoding/json"
 	"net"
 	"net/url"
 	"os"
@@ -394,6 +395,68 @@ func withinAnyRoot(arg string, roots []string) bool {
 		}
 	}
 	return false
+}
+
+// readScopeAllowed reports whether a safe-listed read tool's target is one the
+// model may reach with no person involved. Reads move data into the model's context
+// and from there to the gateway, so a read outside the allowed roots needs approval,
+// and so does a credential file even when the working directory contains it.
+func readScopeAllowed(name, args string, roots []string) bool {
+	if !isReadTool(name) {
+		return true
+	}
+	var v struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(args), &v); err != nil {
+		return false
+	}
+	switch {
+	case v.Path == "" && name == "read_file":
+		return true // nothing to read: the tool itself reports the missing path.
+	case v.Path == "":
+		v.Path = "." // grep and list_directory default to the working directory.
+	case strings.HasPrefix(v.Path, "art://"):
+		return true // resolved through the loop's own artifact binding, not the filesystem.
+	}
+	return withinAnyRoot(v.Path, roots) && !sensitiveRead(v.Path)
+}
+
+// isReadTool names the safe-listed tools that take a filesystem path.
+func isReadTool(name string) bool {
+	return name == "read_file" || name == "grep" || name == "list_directory"
+}
+
+// sensitiveRead reports whether path falls in the home directory's credential
+// locations. These are named because running from the home directory would otherwise
+// put them inside the workspace.
+func sensitiveRead(path string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	if real, err := filepath.EvalSymlinks(home); err == nil {
+		home = real
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return true
+	}
+	resolved, ok := resolveExisting(abs)
+	if !ok {
+		return true
+	}
+	for _, rel := range []string{
+		".ssh", ".aws", ".gnupg", ".netrc", ".docker/config.json", ".kube",
+		".config/gcloud", ".config/gh",
+		".fuse/config.yml", ".fuse/sandbox.local.yml", ".fuse/mcp-tokens",
+	} {
+		if isWithin(resolved, filepath.Join(home, rel)) {
+			return true
+		}
+	}
+	// A directory holding those locations would list or search them too.
+	return resolved == home
 }
 
 // protectedInRoot reports whether path, once resolved, sits in a part of an allowed
@@ -815,10 +878,15 @@ func resolveExisting(p string) (string, bool) {
 		return resolved, true
 	}
 	// The leaf (or deeper) does not exist. Walk up to the deepest ancestor that
-	// does, resolve it, then re-append the missing tail.
+	// does, resolve it, then re-append the missing tail. Something that exists but
+	// will not resolve is a dangling link or a loop: a write would follow it to a
+	// target this function cannot see, so it proves nothing.
 	dir := p
 	var missing []string
 	for {
+		if _, err := os.Lstat(dir); err == nil {
+			return "", false
+		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			return "", false // reached the root without finding an existing ancestor.
