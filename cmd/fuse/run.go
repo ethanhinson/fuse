@@ -305,6 +305,13 @@ func installRelevance(a *agent.Agent, cfg config.Config, traceW io.Writer, gate 
 	a.EnableRelevanceClassifier(adapter, rc.ClassifierModel, rc.ClassifierBatchSize, rc.BorderlineLo, rc.BorderlineHi)
 }
 
+// applyRunGuards installs the configured limits on a run that spends without
+// producing anything.
+func applyRunGuards(a *agent.Agent, cfg config.Config) {
+	a.SetNoProgressCalls(cfg.NoProgressCalls)
+	a.SetMaxRunTokens(cfg.MaxRunTokens)
+}
+
 // applyToolTimeout installs the configured per-leaf-tool-call timeout. A zero
 // (unset) config value leaves the agent's built-in default in place; a positive
 // value overrides it. Orchestration tools stay exempt inside the agent.
@@ -486,6 +493,7 @@ func buildChildAgent(cfg config.Config, reg *model.Registry, alias string, r age
 	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
 	installRelevance(a, cfg, traceW, gate)
 	applyToolTimeout(a, cfg)
+	applyRunGuards(a, cfg)
 	return a, nil
 }
 
@@ -1145,6 +1153,7 @@ func buildAgentCore(cfg config.Config, reg *model.Registry, alias string, r agen
 	installSummarizer(a, cfg, mc.ID, traceW, gate, segSink)
 	installRelevance(a, cfg, traceW, gate)
 	applyToolTimeout(a, cfg)
+	applyRunGuards(a, cfg)
 	// Session observer (change 0061). Installed AFTER installSummarizer /
 	// installRelevance so SetObserver can propagate it into the auxiliary
 	// model callers too. Nil maps to NoopObserver inside SetObserver.

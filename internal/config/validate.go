@@ -101,6 +101,12 @@ func (c Config) Problems() []Problem {
 	if n := utf8.RuneCountInString(c.Instructions); n > MaxInstructionsChars {
 		add("instructions", "must be at most %d characters, got %d", MaxInstructionsChars, n)
 	}
+	if c.NoProgressCalls != nil && *c.NoProgressCalls < 0 {
+		add("no_progress_calls", "must be >= 0 (0 = off), got %d", *c.NoProgressCalls)
+	}
+	if c.MaxRunTokens < 0 {
+		add("max_run_tokens", "must be >= 0 (0 = no cap), got %d", c.MaxRunTokens)
+	}
 	if c.MaxTurns != nil && *c.MaxTurns < 0 {
 		add("max_turns", "must be >= 0 (0 = unlimited), got %d", *c.MaxTurns)
 	}

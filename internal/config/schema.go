@@ -601,9 +601,15 @@ type Config struct {
 	// context-aware backstop (unlimited in the interactive shell, 100 headless);
 	// a non-nil 0 = explicitly unlimited everywhere; a non-nil N>0 caps every
 	// context. Same omitted-key discipline as Permissions.SessionAllow. (0038)
-	MaxTurns    *int
-	MaxTokens   int
-	Permissions PermissionsConfig
+	MaxTurns *int
+	// NoProgressCalls is how many tool calls a headless run may make without a
+	// file change before the model is nudged. nil = the agent default; 0 = off.
+	NoProgressCalls *int
+	// MaxRunTokens caps the input and output tokens one run's whole agent tree may
+	// use. 0 = no cap.
+	MaxRunTokens int64
+	MaxTokens    int
+	Permissions  PermissionsConfig
 	// Orchestrator configures the steering side-channel (/orchestrator).
 	Orchestrator OrchestratorConfig
 	MCPServers   []MCPServerConfig
@@ -763,15 +769,17 @@ type AgentsConfig struct {
 
 // rawConfig mirrors the on-disk YAML shape before normalization.
 type rawConfig struct {
-	Gateway      Gateway                `yaml:"gateway"`
-	Models       map[string]interface{} `yaml:"models"`
-	SkillPaths   []string               `yaml:"skill_paths"`
-	Skills       SkillsConfig           `yaml:"skills"`
-	MaxTurns     *int                   `yaml:"max_turns"`
-	MaxTokens    int                    `yaml:"max_tokens"`
-	Instructions string                 `yaml:"instructions"`
-	NoTools      bool                   `yaml:"no_tools"`
-	Permissions  rawPermissionsConfig   `yaml:"permissions"`
+	Gateway         Gateway                `yaml:"gateway"`
+	Models          map[string]interface{} `yaml:"models"`
+	SkillPaths      []string               `yaml:"skill_paths"`
+	Skills          SkillsConfig           `yaml:"skills"`
+	MaxTurns        *int                   `yaml:"max_turns"`
+	NoProgressCalls *int                   `yaml:"no_progress_calls"`
+	MaxRunTokens    int64                  `yaml:"max_run_tokens"`
+	MaxTokens       int                    `yaml:"max_tokens"`
+	Instructions    string                 `yaml:"instructions"`
+	NoTools         bool                   `yaml:"no_tools"`
+	Permissions     rawPermissionsConfig   `yaml:"permissions"`
 	// Orchestrator is the steering side-channel's model choice (trusted-only).
 	Orchestrator OrchestratorConfig `yaml:"orchestrator"`
 	MCPServers   []MCPServerConfig  `yaml:"mcp_servers"`
