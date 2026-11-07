@@ -10,19 +10,24 @@ import (
 
 // unparseableRows are bash commands the shell parser refuses (change 0096),
 // one per refusal shape. None is ever executed: every gate in this file wraps
-// the stub registry from newTestRegistry.
-var unparseableRows = []struct{ desc, cmd string }{
-	{"arbitrary-arg wrapper sudo", "sudo rm -rf /"},
-	{"absolute path-qualified argv0", "/bin/rm -rf /"},
-	{"relative path-qualified argv0", "./rm -rf x"},
-	{"non-inert env assignment prefix", "FOO=$(id) make"},
-	{"arbitrary-arg wrapper npx", "npx evil"},
-	{"arbitrary-arg wrapper xargs", "xargs rm"},
-	{"opaque command word", "$CMD x"},
-	{"bash without -c", "bash script.sh"},
-	{"process substitution", "make <(ls)"},
+// the stub registry from newTestRegistry. expectReason names the shell
+// construct or command responsible for the refusal — the same string the
+// parser returns inside *ParseError.Reason and that the gate now surfaces on
+// the parse-layer permission decision so the audit trail can attribute a
+// refusal to a shape rather than reading every refusal as the same opaque
+// string.
+var unparseableRows = []struct{ desc, cmd, expectReason string }{
+	{"arbitrary-arg wrapper sudo", "sudo rm -rf /", "arbitrary-arg wrapper (sudo)"},
+	{"absolute path-qualified argv0", "/bin/rm -rf /", "path-qualified argv0 (basename matching must not collapse a path to a bare name)"},
+	{"relative path-qualified argv0", "./rm -rf x", "path-qualified argv0 (basename matching must not collapse a path to a bare name)"},
+	{"non-inert env assignment prefix", "FOO=$(id) make", "env-var assignment prefix not on the inert allowlist"},
+	{"arbitrary-arg wrapper npx", "npx evil", "arbitrary-arg wrapper (npx)"},
+	{"arbitrary-arg wrapper xargs", "xargs rm", "arbitrary-arg wrapper (xargs)"},
+	{"opaque command word", "$CMD x", "opaque command name"},
+	{"bash without -c", "bash script.sh", "bash/sh invocation without a parseable -c script"},
+	{"process substitution", "make <(ls)", "word not statically resolvable"},
 	// "echo " (5 bytes) plus maxCommandBytes-4 bytes is one byte over the cap.
-	{"command over the length cap", "echo " + strings.Repeat("a", maxCommandBytes-4)},
+	{"command over the length cap", "echo " + strings.Repeat("a", maxCommandBytes-4), "command over the length cap"},
 }
 
 // failIfCalled is an approver body that fails the test when the gate consults
@@ -73,8 +78,12 @@ func TestAutoMode_Unparseable_PolicyDenies(t *testing.T) {
 }
 
 // TestAutoMode_Unparseable_HumanStillAsks pins the attended path: with a human
-// bound the events are exactly what they were before change 0096, an ask at
-// the parse layer with no reason, then the human's allow.
+// bound the events are an ask at the parse layer naming the shell construct
+// responsible for the refusal, then the human's allow. The reason was empty
+// before the parse-reason widening; now it carries the *ParseError.Reason so
+// the audit trail can attribute each refusal to a shape (construct, command
+// name, redirect target, etc.) instead of reading every refusal as the same
+// opaque "permissions: command is unparseable".
 func TestAutoMode_Unparseable_HumanStillAsks(t *testing.T) {
 	for _, r := range unparseableRows {
 		t.Run(r.desc, func(t *testing.T) {
@@ -97,8 +106,9 @@ func TestAutoMode_Unparseable_HumanStillAsks(t *testing.T) {
 				t.Fatalf("want ask then allow, got %+v", *rec)
 			}
 			ask, allow := (*rec)[0], (*rec)[1]
-			if ask.Verdict != "ask" || ask.Layer != LayerParse || ask.Reason != "" || ask.DecidedBy != "" {
-				t.Errorf("want ask/parse with no reason, got %+v", ask)
+			wantAskReason := parseFloorReason(r.expectReason)
+			if ask.Verdict != "ask" || ask.Layer != LayerParse || ask.Reason != wantAskReason || ask.DecidedBy != "" {
+				t.Errorf("want ask/parse with reason %q, got %+v", wantAskReason, ask)
 			}
 			if allow.Verdict != "allow" || allow.Layer != LayerHuman || allow.DecidedBy != DecidedByHuman {
 				t.Errorf("want allow/human/human, got %+v", allow)
@@ -145,13 +155,13 @@ func TestAutoMode_Unparseable_ProtectiveRulesSeeRawText(t *testing.T) {
 		{
 			desc: "a rule naming the inner command does not peel a refused wrapper",
 			auto: config.AutoConfig{Deny: []string{"bash:rm *"}}, cmd: "sudo rm -rf /",
-			human:  want{"ask", LayerParse, "", "", true},
+			human:  want{"ask", LayerParse, parseFloorReason("arbitrary-arg wrapper (sudo)"), "", true},
 			policy: want{"deny", LayerRules, unparseableDenyPrefix + "sudo rm -rf /", DecidedByPolicy, false},
 		},
 		{
 			desc:        "auto_approve never admits an unparseable command in auto mode",
 			autoApprove: []string{"bash:sudo"}, cmd: "sudo ls",
-			human:  want{"ask", LayerParse, "", "", true},
+			human:  want{"ask", LayerParse, parseFloorReason("arbitrary-arg wrapper (sudo)"), "", true},
 			policy: want{"deny", LayerRules, unparseableDenyPrefix + "sudo ls", DecidedByPolicy, false},
 		},
 	}
@@ -250,15 +260,19 @@ func TestSmartMode_Unparseable_PolicyDenies(t *testing.T) {
 
 // TestSmartMode_Unparseable_HumanAsksAtParseLayer: with a human bound, a
 // refused command still prompts, and the smart-mode ask now names the parse
-// layer, as auto mode's does (change 0096).
+// layer, as auto mode's does (change 0096). The reason carried on the ask
+// names the shell construct responsible for the refusal (the parse-reason
+// widening) so the audit trail can attribute it to a shape rather than reading
+// every refusal as the same opaque string.
 func TestSmartMode_Unparseable_HumanAsksAtParseLayer(t *testing.T) {
 	approve, called := newApproveRecorder(true)
 	denied, ds := smartUnparseableRun(t, nil, nil, Human(approve), "sudo ls")
 	if denied || !*called || len(ds) != 2 {
 		t.Fatalf("want ask then the human's allow, got denied=%v called=%v %+v", denied, *called, ds)
 	}
-	if ds[0].Verdict != "ask" || ds[0].Layer != LayerParse || ds[0].Reason != "" || ds[0].Mode != "smart" {
-		t.Errorf("want ask/parse/smart with no reason, got %+v", ds[0])
+	wantAskReason := parseFloorReason("arbitrary-arg wrapper (sudo)")
+	if ds[0].Verdict != "ask" || ds[0].Layer != LayerParse || ds[0].Reason != wantAskReason || ds[0].Mode != "smart" {
+		t.Errorf("want ask/parse/smart with reason %q, got %+v", wantAskReason, ds[0])
 	}
 	if ds[1].Verdict != "allow" || ds[1].Layer != LayerHuman || ds[1].DecidedBy != DecidedByHuman {
 		t.Errorf("want allow/human/human, got %+v", ds[1])

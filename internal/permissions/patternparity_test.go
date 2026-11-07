@@ -151,18 +151,24 @@ func TestProtectivePatterns_SameVerdictInSmartAndAuto(t *testing.T) {
 // and auto mode has no allow for an unparseable command. smartWitness is the
 // smart-mode legacy first-token allow (the boundary ADR-0068 pinned); nil
 // means no allow in either mode. The stub registry means no row is executed.
+//
+// expectReason is the shell construct or command name the parser identifies as
+// responsible for the refusal — the string the *ParseError carries on Reason
+// and that the gate surfaces on the parse-layer ask so the audit trail can
+// attribute each refusal to a shape.
 var unparseableProtectiveRows = []struct {
 	desc         string
 	pattern      string
 	cmd          string
 	smartWitness []string
 	hit          bool
+	expectReason string
 }{
-	{"wrapper glob reaches sudo as written", "bash:sudo*", "sudo ls", []string{"bash:sudo"}, true},
-	{"slash-spanning glob reaches a path-qualified argv0", "bash:/bin/*", "/bin/rm -rf /", []string{"bash:/bin/rm"}, true},
-	{"env rule reaches a non-inert assignment", "bash:env *", "env FOO=$(id) make", []string{"bash:env"}, true},
-	{"npx rule reaches npx", "bash:npx *", "npx create-x", []string{"bash:npx"}, true},
-	{"a rule naming the inner command does not reach a refused wrapper", "bash:rm *", "sudo rm -rf /", nil, false},
+	{"wrapper glob reaches sudo as written", "bash:sudo*", "sudo ls", []string{"bash:sudo"}, true, "arbitrary-arg wrapper (sudo)"},
+	{"slash-spanning glob reaches a path-qualified argv0", "bash:/bin/*", "/bin/rm -rf /", []string{"bash:/bin/rm"}, true, "path-qualified argv0 (basename matching must not collapse a path to a bare name)"},
+	{"env rule reaches a non-inert assignment", "bash:env *", "env FOO=$(id) make", []string{"bash:env"}, true, "env-var assignment prefix not on the inert allowlist"},
+	{"npx rule reaches npx", "bash:npx *", "npx create-x", []string{"bash:npx"}, true, "arbitrary-arg wrapper (npx)"},
+	{"a rule naming the inner command does not reach a refused wrapper", "bash:rm *", "sudo rm -rf /", nil, false, "arbitrary-arg wrapper (sudo)"},
 }
 
 // TestProtectivePatterns_Unparseable_SameMatchInSmartAndAuto checks the
@@ -227,7 +233,7 @@ func TestProtectivePatterns_Unparseable_SameVerdictInSmartAndAuto(t *testing.T) 
 				}
 			}
 
-			wantLayer, wantReason := LayerParse, ""
+			wantLayer, wantReason := LayerParse, parseFloorReason(r.expectReason)
 			if r.hit {
 				wantLayer, wantReason = LayerRules, explicitAskReason(r.pattern, false)
 			}

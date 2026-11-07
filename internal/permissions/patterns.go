@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 )
 
@@ -152,15 +153,25 @@ func catastrophicSegment(toolName, args, workspaceRoot string) (string, bool) {
 // unparseableBash reports whether a tool call is a bash command the shell
 // parser refuses, and returns the command for the decision reason (change
 // 0096). An empty command parses (to no segments), so it is never reported.
-func unparseableBash(toolName, args string) (string, bool) {
+//
+// When the parser refuses the command the rich *ParseError it returns carries
+// a Reason naming the shell construct responsible, which is surfaced on the
+// parse-layer permission decision so the audit trail can attribute the refusal
+// to a shape rather than reporting "permissions: command is unparseable" for
+// every refused call. reason is the empty string when the command parses.
+func unparseableBash(toolName, args string) (command string, reason string, unparseable bool) {
 	if toolName != "bash" {
-		return "", false
+		return "", "", false
 	}
-	command := bashCommand(args)
+	command = bashCommand(args)
 	if _, err := splitSegments(command); err != nil {
-		return command, true
+		var pe *ParseError
+		if errors.As(err, &pe) {
+			return command, pe.Reason, true
+		}
+		return command, "", true
 	}
-	return "", false
+	return "", "", false
 }
 
 // subjects returns the match candidates for a tool call. For bash it adds
