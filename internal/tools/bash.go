@@ -43,7 +43,7 @@ type bashTool struct {
 	// svc is the frozen substrate selection, resolved ONCE at the composition
 	// root against a trusted repo root. The tool never re-reads config, never
 	// re-selects a handler, and has no path back to the filesystem — a model
-	// that writes .fuse/sandbox.local.yml mid-loop cannot change what this is.
+	// that writes ~/.fuse/sandbox.local.yml mid-loop cannot change what this is.
 	// Nil means no substrate: every Execute refuses (see errNoSubstrate).
 	svc *sandbox.Service
 

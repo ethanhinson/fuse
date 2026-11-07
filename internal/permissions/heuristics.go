@@ -396,6 +396,56 @@ func withinAnyRoot(arg string, roots []string) bool {
 	return false
 }
 
+// protectedInRoot reports whether path, once resolved, sits in a part of an allowed
+// root that a later process trusts: .git (hooks and config run on the host, outside
+// any sandbox) and fuse's own .fuse and .fuse.local.yml. A write there can outlive
+// this run, so it needs a person even though it is inside the workspace. An
+// unresolvable path counts as protected, failing toward the human.
+func protectedInRoot(path string, roots []string) bool {
+	resolved, ok := resolveForWrite(path)
+	if !ok {
+		return true
+	}
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		base, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			base = root
+		}
+		rel, err := filepath.Rel(base, resolved)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		for _, seg := range strings.Split(rel, string(filepath.Separator)) {
+			if seg == ".git" || seg == ".fuse" || seg == ".fuse.local.yml" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// resolveForWrite resolves symlinks in path, walking up to the nearest existing
+// ancestor so a file that does not exist yet still resolves through its parents.
+func resolveForWrite(path string) (string, bool) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	rest := ""
+	for dir := abs; ; dir = filepath.Dir(dir) {
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(real, rest), true
+		}
+		if dir == filepath.Dir(dir) {
+			return "", false
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+	}
+}
+
 // egressNames are argv[0] basenames that open a network connection to an
 // arbitrary host. Their egress is a hard risk boundary regardless of arguments.
 var egressNames = map[string]bool{
