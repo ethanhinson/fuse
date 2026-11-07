@@ -7,7 +7,7 @@ priority: 'medium'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [128]
@@ -32,15 +32,15 @@ reconciled: false
 
 ## Why
 
-Loop artifacts (spilled tool output and compaction segments) now live in an artifact store addressed by tenant-scoped refs. The old 7-day spill sweep was removed with the process-global spill directory, so nothing deletes artifacts and the store grows without bound.
+Spilled tool output and compaction segments live in the local artifact store under `~/.fuse`. The old 7-day spill sweep was removed, so nothing deletes artifacts and the directory grows without bound on a long-lived machine.
 
 ## What changes
 
-- A retention policy on the artifact store: a configurable TTL, plus deletion when a loop's stream is purged.
-- A sweeper that runs safely on many replicas (claimed work, idempotent deletes), for every backend.
+- A configurable TTL for the artifact store.
+- A sweep at startup, in the same style as the session-log and scratch sweeps, that is safe when two fuse processes run at once.
 - An expired ref reads as not found with a clear message.
-- Conformance tests cover expiry.
+- Tests cover expiry.
 
 ## Out of scope
 
-Object-storage backends (a separate change).
+Address pinning and object storage.
