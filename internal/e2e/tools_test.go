@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -76,9 +77,7 @@ func TestRead_HugeFile_MemoryBounded(t *testing.T) {
 	srv.script(tool("read_file", map[string]any{"path": path, "start_line": 1, "end_line": 2}), text("done"))
 	r := h.run()
 	wantCode(t, r, 0)
-	if r.maxRSS > memLimit {
-		t.Fatalf("peak RSS %dMB reading two lines of a 1GB file, limit %dMB", r.maxRSS>>20, memLimit>>20)
-	}
+	wantRSSBelowLimit(t, r, "reading two lines of a 1GB file")
 }
 
 // A FIFO blocks os.ReadFile forever. The tool timeout has to bound it.
@@ -396,9 +395,7 @@ func TestBash_HugeOutput_MemoryBounded(t *testing.T) {
 	srv.script(tool("bash", map[string]string{"command": `head -c 300000000 /dev/zero | tr '\0' x`}), text("done"))
 	r := h.run("--approve-all")
 	wantCode(t, r, 0)
-	if r.maxRSS > memLimit {
-		t.Fatalf("peak RSS %dMB for 300MB of output, limit %dMB", r.maxRSS>>20, memLimit>>20)
-	}
+	wantRSSBelowLimit(t, r, "for 300MB of output")
 }
 
 // A bare command: the shell execs into it, so killing the shell kills it.
@@ -465,4 +462,22 @@ func TestBash_ExitStatusReported(t *testing.T) {
 	out := runOneTool(t, srv, h, "bash", map[string]string{"command": "echo oops; exit 7"}, "--approve-all")
 	wantContains(t, out, "oops", "tool result")
 	wantContains(t, out, "exit status 7", "tool result")
+}
+
+// wantRSSBelowLimit fails a run that used too much memory. On Linux a child starts
+// with the peak RSS of the process that forked it, so once this test binary has grown
+// past the limit the child's figure proves nothing. That happens on later rounds of
+// -count. The test then skips rather than report the parent's memory as the child's.
+func wantRSSBelowLimit(t *testing.T, r result, what string) {
+	t.Helper()
+	if r.maxRSS <= memLimit {
+		return
+	}
+	if runtime.GOOS == "linux" {
+		var self syscall.Rusage
+		if err := syscall.Getrusage(syscall.RUSAGE_SELF, &self); err == nil && self.Maxrss*1024 > memLimit {
+			t.Skipf("inconclusive: this test process peaked at %dMB, which the child inherits", self.Maxrss>>10)
+		}
+	}
+	t.Fatalf("peak RSS %dMB %s, limit %dMB", r.maxRSS>>20, what, memLimit>>20)
 }
