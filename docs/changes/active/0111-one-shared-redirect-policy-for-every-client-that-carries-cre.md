@@ -7,7 +7,7 @@ priority: 'medium'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-01'
-updated: '2026-11-01'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [102]
@@ -32,7 +32,7 @@ reconciled: false
 
 ## Why
 
-MCP clients, research providers and web_fetch each decide redirect handling separately; credentials or secret headers can follow a redirect to another host in paths not covered by the loop-scoped secret fix.
+MCP clients, research providers and web_fetch each decide redirect handling separately, so credentials or secret headers can follow a redirect to another host.
 
 ## What changes
 
@@ -41,4 +41,4 @@ MCP clients, research providers and web_fetch each decide redirect handling sepa
 
 ## Out of scope
 
-- Address pinning (see change 105).
+Address pinning and object storage.
