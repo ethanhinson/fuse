@@ -596,10 +596,11 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 			schemas = withReturnResultTool(schemas, a.expectsSchema)
 		}
 		req := model.CompletionReq{
-			Model:     a.modelID,
-			Messages:  a.withSystem(messages),
-			Tools:     schemas,
-			MaxTokens: clampOutputCap(outputCap, window, estimate),
+			Model:           a.modelID,
+			Messages:        a.withSystem(messages),
+			Tools:           schemas,
+			MaxTokens:       clampOutputCap(outputCap, window, estimate),
+			ReasoningEffort: a.ReasoningEffort,
 		}
 		// model.call.start (change 0043): the model-call boundary opens here.
 		a.emit(event.KindModelCallStart, turn, event.ModelCallStartPayload{
@@ -656,13 +657,14 @@ func (a *Agent) Run(ctx context.Context, history []model.Message) ([]model.Messa
 		keepPartial := unusable && !retrying && resp.Content != "" && len(resp.ToolCalls) == 0
 		// model.call.end (change 0043): full assistant response + usage + tool refs.
 		a.emit(event.KindModelCallEnd, turn, event.ModelCallEndPayload{
-			Content:      resp.Content,
-			InputTokens:  resp.InputTokens,
-			CachedTokens: resp.CachedTokens,
-			OutputTokens: resp.OutputTokens,
-			ToolCalls:    toolCallRefs(resp.ToolCalls),
-			FinishReason: resp.FinishReason,
-			Discarded:    unusable && !keepPartial,
+			Content:         resp.Content,
+			InputTokens:     resp.InputTokens,
+			CachedTokens:    resp.CachedTokens,
+			OutputTokens:    resp.OutputTokens,
+			ToolCalls:       toolCallRefs(resp.ToolCalls),
+			FinishReason:    resp.FinishReason,
+			Discarded:       unusable && !keepPartial,
+			ReasoningTokens: resp.ReasoningTokens,
 		})
 		a.renderer.Tokens(resp.InputTokens, resp.OutputTokens)
 		if a.usageSink != nil {

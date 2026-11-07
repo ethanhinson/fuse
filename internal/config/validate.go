@@ -107,6 +107,13 @@ func (c Config) Problems() []Problem {
 	if c.MaxRunTokens < 0 {
 		add("max_run_tokens", "must be >= 0 (0 = no cap), got %d", c.MaxRunTokens)
 	}
+	for alias, m := range c.Models.Entries {
+		switch m.ReasoningEffort {
+		case "", "none", "minimal", "low", "medium", "high", "xhigh":
+		default:
+			add("models."+alias+".reasoning_effort", "must be none, minimal, low, medium, high or xhigh, got %q", m.ReasoningEffort)
+		}
+	}
 	if c.MaxTurns != nil && *c.MaxTurns < 0 {
 		add("max_turns", "must be >= 0 (0 = unlimited), got %d", *c.MaxTurns)
 	}

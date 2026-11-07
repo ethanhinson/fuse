@@ -16,6 +16,8 @@ type ModelConfig struct {
 	ContextWindow    int // model context size in tokens; 0 = harness default (128k)
 	Persona          string
 	SystemPrefix     string // prepended before the persona system prompt; for model-specific directives
+	// ReasoningEffort is sent as reasoning_effort on agent calls; empty sends nothing.
+	ReasoningEffort string
 	// Operator display metadata advertised by GetCapabilities; nothing else
 	// reads it.
 	Label       string
