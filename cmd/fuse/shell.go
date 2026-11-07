@@ -244,11 +244,15 @@ func runShell(args []string, cfg config.Config, reg *model.Registry, stdout, std
 	handleReg.Register(rootNode.ID, alias)
 	humanRouter := newHumanRouter(cfg, reg)
 
+	// Read once, before the session starts. build runs again on /model, and re-reading
+	// there would let an agent rewrite its own instructions mid-session.
+	rootIns := rootInstructions(cfg, os.Stderr)
+
 	build := func(a string, r agent.Renderer, approve permissions.ApprovalFunc) (*agent.Agent, error) {
 		// The interactive shell reaches a human, so max_turns unset ⇒ unlimited.
 		// segmentSink is threaded per-loop (change 0046) rather than read from a global.
 		// approve is the TUI channel: a person answers it, so it is human provenance.
-		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, cfg.Instructions, toolReg, permissions.Human(approve), traceW, "root", sessionMode, true, rateGate, segmentSink, obs.observer)
+		ag, err := buildAgentWithRendererAndTrace(cfg, reg, a, r, verbose, skillBlock, rootIns, toolReg, permissions.Human(approve), traceW, "root", sessionMode, true, rateGate, segmentSink, obs.observer)
 		if err != nil {
 			return nil, err
 		}

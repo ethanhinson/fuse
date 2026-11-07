@@ -348,6 +348,24 @@ The text is added to the main agent's system prompt after the persona prompt; su
 keep their own prompts. It is read from `~/.fuse/config.yml`, not `.fuse.local.yml`.
 It may be at most 16384 characters.
 
+### AGENTS.md
+
+At the start of a one-shot run or a shell session, fuse also adds project instructions
+to the main agent's system prompt, in this order: `~/.fuse/AGENTS.md` if present, then
+every `AGENTS.md` from the repository root (the nearest ancestor containing `.git`,
+including a linked worktree's `.git` file) down to the working directory. With no
+repository, only the working directory's file is read, and the walk never goes above
+the repository root. Each file is wrapped in a `<project_instructions path="...">` tag
+so the model can see where it came from. Spawned subagents do not receive it.
+
+A missing or empty file changes nothing. The total is capped at 32KB; past that the last
+file is truncated with a visible note and a warning on stderr. A repository `AGENTS.md`
+that resolves through a symlink outside the repository is skipped with a warning.
+
+Like `.fuse.local.yml`, an `AGENTS.md` comes from the repository, so it is untrusted
+input to the model: it steers the model's behaviour but grants no permissions, and the
+permission rules above decide what tool calls are actually allowed.
+
 ### The `roles` config key
 
 ```yaml
