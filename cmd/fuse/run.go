@@ -232,6 +232,12 @@ func gatewayAdapter(cfg config.Config, gate model.RateGate) *model.Adapter {
 	if d, err := time.ParseDuration(cfg.Gateway.RequestTimeout); err == nil && d > 0 {
 		a.RequestTimeout = d
 	}
+	if cfg.Gateway.MaxAttempts > 0 {
+		a.MaxAttempts = cfg.Gateway.MaxAttempts
+	}
+	if d, err := time.ParseDuration(cfg.Gateway.RetryBackoff); err == nil {
+		a.RetryBackoff = d
+	}
 	if gate != nil {
 		a = a.WithRateGate(gate)
 	}

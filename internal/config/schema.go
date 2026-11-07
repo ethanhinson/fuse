@@ -10,9 +10,14 @@ type Gateway struct {
 	// streamed body) as a Go duration string ("5m", "20m"). Empty means no limit
 	// on total time. Reasoning models can stream 30k–60k
 	// thinking tokens before their first visible byte, so a slow response is not
-	// a failure; a silent one ends through the adapter's idle timeout. Not a credential or permission surface, so it is
-	// honored from .fuse.local.yml as well (the worst case is a longer wait).
+	// a failure; a silent one ends through the adapter's idle timeout.
 	RequestTimeout string `yaml:"request_timeout"`
+	// MaxAttempts is the total tries per model request, 1 meaning no retries. 0 keeps
+	// the adapter's default.
+	MaxAttempts int `yaml:"max_attempts"`
+	// RetryBackoff is the base wait between attempts as a Go duration string. It
+	// doubles each attempt. Empty keeps the adapter's default.
+	RetryBackoff string `yaml:"retry_backoff"`
 }
 
 // ModelConfig is a single named model entry.
