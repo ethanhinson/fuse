@@ -2,12 +2,12 @@
 id: 120
 slug: 'at-most-one-loop-cancelled-per-loop-under-replica-races'
 title: 'At most one loop.cancelled per loop under replica races'
-status: 'proposed'
+status: 'killed'
 priority: 'low'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [117]
@@ -43,3 +43,7 @@ In rare races between replicas, two `loop.cancelled` events can be written witho
 ## Out of scope
 
 Registry schema changes.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Only needed for the shared server or fleet.
