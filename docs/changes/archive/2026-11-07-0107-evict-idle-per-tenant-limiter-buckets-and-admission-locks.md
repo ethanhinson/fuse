@@ -2,12 +2,12 @@
 id: 107
 slug: 'evict-idle-per-tenant-limiter-buckets-and-admission-locks'
 title: 'Evict idle per-tenant limiter buckets and admission locks'
-status: 'proposed'
+status: 'killed'
 priority: 'low'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-01'
-updated: '2026-11-01'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [103]
@@ -43,3 +43,7 @@ The per-tenant limiter keeps a token bucket and an admission lock for every tena
 
 - Changing limit semantics.
 - Registry record pruning.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Merged work (PR #145) targets per-tenant limits, which are being removed.
