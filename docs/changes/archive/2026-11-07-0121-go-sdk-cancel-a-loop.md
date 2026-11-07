@@ -2,12 +2,12 @@
 id: 121
 slug: 'go-sdk-cancel-a-loop'
 title: 'Go SDK: cancel a loop'
-status: 'proposed'
+status: 'killed'
 priority: 'low'
 type: 'feat'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [117]
@@ -43,3 +43,7 @@ The networked loop server has a `CancelLoop` RPC and the TypeScript SDK exposes 
 ## Out of scope
 
 New server behaviour.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Merged work (PR #146) targets the Go SDK, which no longer applies.
