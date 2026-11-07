@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -264,12 +265,48 @@ func FromYAML(data []byte, source string) (Config, error) {
 	return c, nil
 }
 
+// stripUntrusted clears every key a repo-plantable file may not set and names the
+// ones it found. It is an allowlist in effect: permissions, throughput,
+// agents.queue_bound, projects, roles and observability have their own trust
+// handling further on, and no_tools and finish_check can only restrict a run. A key added to rawConfig later must be
+// cleared here unless it can only tighten.
+func stripUntrusted(raw *rawConfig) (ignored []string) {
+	drop := func(present bool, key string, clear func()) {
+		if present {
+			ignored = append(ignored, key)
+			clear()
+		}
+	}
+	drop(raw.Gateway != (Gateway{}), "gateway", func() { raw.Gateway = Gateway{} })
+	drop(len(raw.Models) > 0, "models", func() { raw.Models = nil })
+	drop(len(raw.SkillPaths) > 0, "skill_paths", func() { raw.SkillPaths = nil })
+	drop(!reflect.DeepEqual(raw.Skills, SkillsConfig{}), "skills", func() { raw.Skills = SkillsConfig{} })
+	drop(raw.MaxTurns != nil, "max_turns", func() { raw.MaxTurns = nil })
+	drop(raw.NoProgressCalls != nil, "no_progress_calls", func() { raw.NoProgressCalls = nil })
+	drop(raw.MaxRunTokens != 0, "max_run_tokens", func() { raw.MaxRunTokens = 0 })
+	drop(raw.MaxTokens != 0, "max_tokens", func() { raw.MaxTokens = 0 })
+	drop(raw.Instructions != "", "instructions", func() { raw.Instructions = "" })
+	drop(len(raw.MCPServers) > 0, "mcp_servers", func() { raw.MCPServers = nil })
+	drop(!reflect.DeepEqual(raw.Research, rawResearchConfig{}), "research", func() { raw.Research = rawResearchConfig{} })
+	drop(raw.Agents.MaxSpawns != 0, "agents.max_spawns", func() { raw.Agents.MaxSpawns = 0 })
+	drop(raw.Agents.MaxConcurrent != 0, "agents.max_concurrent", func() { raw.Agents.MaxConcurrent = 0 })
+	drop(raw.Agents.ToolTimeoutSeconds != 0, "agents.tool_timeout_seconds", func() { raw.Agents.ToolTimeoutSeconds = 0 })
+	drop(!reflect.DeepEqual(raw.Context, rawContextConfig{}), "context", func() { raw.Context = rawContextConfig{} })
+	return ignored
+}
+
 // mergeData is mergeFile's body over already-read bytes; path names the source
 // in errors and warnings.
 func mergeData(c *Config, data []byte, path string, trusted bool, projects *map[string]ProjectConfig) error {
 	var raw rawConfig
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("parse config %s: %w", path, err)
+	}
+	// A repo can ship .fuse.local.yml, so nothing in it may choose what runs, where
+	// prompts and keys are sent, or how much a run may spend.
+	var ignored []string
+	if !trusted {
+		ignored = stripUntrusted(&raw)
 	}
 	if raw.Gateway.URL != "" {
 		c.Gateway.URL = raw.Gateway.URL
@@ -317,7 +354,6 @@ func mergeData(c *Config, data []byte, path string, trusted bool, projects *map[
 	// ignored collects the keys an untrusted (repo-plantable) layer is refused,
 	// for one aggregated startup warning: the permission-loosening keys, plus
 	// the operator-only skills.* keys below.
-	var ignored []string
 	// skills.dirs names which directories load skills, so it is honored only from a
 	// trusted source.
 	if len(raw.Skills.Dirs) > 0 {
@@ -357,7 +393,7 @@ func mergeData(c *Config, data []byte, path string, trusted bool, projects *map[
 		}
 	}
 	if !trusted && len(ignored) > 0 {
-		fmt.Fprintf(warnw, "warning: %s ignores permission-loosening keys (%s); set these in ~/.fuse/config.yml instead\n",
+		fmt.Fprintf(warnw, "warning: %s ignores keys it may not set (%s); set these in ~/.fuse/config.yml instead\n",
 			path, strings.Join(ignored, ", "))
 	}
 	if len(raw.MCPServers) > 0 {

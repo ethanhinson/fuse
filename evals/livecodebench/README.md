@@ -45,7 +45,7 @@ prompt block is not injected.
 **Output caps and timeouts.** Reasoning models spend tens of thousands of
 tokens thinking before they answer, so the fuse arms default to a 128k
 per-call cap and a 40-minute gateway attempt timeout, set per run through
-the workspace's `.fuse.local.yml`. Use `--fuse-max-tokens` where a route
+a private `HOME` beside each workspace, which fuse reads as its own `~/.fuse`. Use `--fuse-max-tokens` where a route
 refuses 128k (DeepSeek V4 Flash runs at 64k).
 
 ## Running
@@ -257,7 +257,5 @@ truncations). fuse 50.0 on the 20 problems finished before credits ran out.
 - **Skills are loaded by description and by name.** Open-weight models call
   the skill tool on their own when the skill holds knowledge they lack;
   naming the skill in the request loads it every time.
-- **The per-run cap override works from a repo-local file.** A workspace
-  `.fuse.local.yml` `models:` entry replaces the alias wholesale (it must
-  carry the `id`), so the "untrusted" local file can raise a model's output
-  cap.
+- **Per-run settings live in a private `HOME`.** A repo-local `.fuse.local.yml` can no
+  longer set models or limits, so each run gets its own `~/.fuse/config.yml`.

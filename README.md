@@ -224,13 +224,23 @@ allow rules match strictly because a match grants permission. Provenance belongs
 
 **`--approve-all` and `cli/` models.** `--approve-all` runs the session at mode off. With a `cli/` model, approve-all is carried to the `fuse mcp-server` tool subprocess, which runs with permissions off for that call. The relay environment is `FUSE_HITL_SOCKET`, `FUSE_HITL_PROVENANCE` and `FUSE_HITL_MODE`; `fuse mcp-server` honors `FUSE_HITL_MODE` only when `FUSE_HITL_SOCKET` is also set and only for the value `off`. That check tests only that the socket variable is non-empty, so `FUSE_HITL_MODE=off` is a permission-loosening path trusted from whoever controls the server's process environment; the parent fuse relay normally sets both.
 
-**Trust boundary.** The permission-*loosening* keys — `mode`, `session_allow`,
-`auto_approve`, and the entire `auto` block — are honored **only** from the
-trusted `~/.fuse/config.yml`. A repo-plantable `.fuse.local.yml` cannot weaken
-the gate: those keys are ignored there (with a startup warning), so a checked-in
-file cannot flip a clone into `auto` mode or self-approve. Only the *tightening*
-keys `always_prompt` and `disabled` take effect from `.fuse.local.yml`. Set
-anything that grants trust in your own `~/.fuse/config.yml`. One loosening
+**Trust boundary.** Anyone can ship a `.fuse.local.yml` in a repository, so that
+file is untrusted. It cannot choose the gateway, models, MCP servers, skills,
+instructions, research endpoints, summarizer, roles, spawn or token limits, or any
+permission-loosening key such as `mode`, `session_allow`, `auto_approve` or the `auto`
+block. Those are ignored there with a startup warning naming them. It can only
+tighten: `permissions.always_prompt`, `permissions.disabled`, `auto.fetch_deny`,
+`auto.fetch_ask`, lower throughput limits, `no_tools` and `finish_check`. Put anything
+that grants trust in your own `~/.fuse/config.yml`, and put repository guidance for
+the agent in `AGENTS.md`.
+
+Sandbox settings are read only from `~/.fuse/sandbox.local.yml`. A
+`.fuse/sandbox.local.yml` in a repository is ignored with a warning, so cloning a
+repository cannot turn off bash containment. Auto mode also asks before an edit tool
+writes inside `.git`, `.fuse` or `.fuse.local.yml`, because those affect later
+processes, including git hooks that run outside any sandbox.
+
+One loosening
 path does not come from config: `fuse mcp-server` runs at mode off when its
 environment has `FUSE_HITL_MODE=off` and any non-empty `FUSE_HITL_SOCKET`, so
 it trusts whoever controls that process environment (normally the parent fuse
@@ -319,8 +329,8 @@ instructions: |
 ```
 
 The text is added to the main agent's system prompt after the persona prompt; subagents
-keep their own prompts. It is read from `~/.fuse/config.yml` and `.fuse.local.yml`, and
-the local file wins. It may be at most 16384 characters.
+keep their own prompts. It is read from `~/.fuse/config.yml`, not `.fuse.local.yml`.
+It may be at most 16384 characters.
 
 ### The `roles` config key
 

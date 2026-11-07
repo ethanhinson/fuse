@@ -761,7 +761,7 @@ func (g *PermissionGate) resolveAuto(ctx context.Context, name, args string) (ve
 			if !ok {
 				return VerdictAsk, LayerEditScope, "", nil, nil
 			}
-			if withinAnyRoot(path, g.allowedRoots()) {
+			if withinAnyRoot(path, g.allowedRoots()) && !protectedInRoot(path, g.allowedRoots()) {
 				return VerdictAllow, LayerEditScope, "", nil, nil
 			}
 			return VerdictAsk, LayerEditScope, "", nil, nil

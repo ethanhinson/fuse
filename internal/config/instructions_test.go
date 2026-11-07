@@ -39,18 +39,20 @@ func writeInstructionsLayers(t *testing.T, local string) {
 	}
 }
 
-func TestInstructionsHonoredFromLocalLayer(t *testing.T) {
+// Repo-level guidance belongs in AGENTS.md, which is plainly repo content. This key
+// reads as the operator's own instructions, so a repo may not set it.
+func TestInstructionsIgnoredFromLocalLayer(t *testing.T) {
 	writeInstructionsLayers(t, "instructions: local\n")
 	warnings := captureWarnings(t)
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Instructions != "local" {
-		t.Errorf("Instructions = %q, want local", c.Instructions)
+	if c.Instructions != "home" {
+		t.Errorf("Instructions = %q, want home", c.Instructions)
 	}
-	if strings.Contains(warnings(), "instructions") {
-		t.Errorf("unexpected warning mentioning instructions: %q", warnings())
+	if !strings.Contains(warnings(), "instructions") {
+		t.Errorf("warning does not name instructions: %q", warnings())
 	}
 }
 
