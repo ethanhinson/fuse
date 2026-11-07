@@ -37,6 +37,12 @@ type ModelConfig struct {
 	// none, minimal, low, medium, high or xhigh. Empty sends nothing and leaves
 	// the provider's default. Providers differ in how they honour it.
 	ReasoningEffort string `yaml:"reasoning_effort,omitempty"`
+	// ReplayReasoning sends the model's earlier reasoning back with each of its
+	// messages, in the field the provider returned it in. Chat templates that
+	// keep reasoning inside a tool-call loop (DeepSeek, Kimi and others) then
+	// see it; otherwise every call starts without it. Off by default: it adds
+	// prompt tokens.
+	ReplayReasoning bool `yaml:"replay_reasoning,omitempty"`
 	// Operator display metadata shown by the model listings (change 0086);
 	// nothing else reads it. Well-known tags: tools, vision, reasoning,
 	// long-context; other strings pass through.

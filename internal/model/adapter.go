@@ -176,6 +176,45 @@ type wireMessage struct {
 	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	Name       string         `json:"name,omitempty"`
+	// Reasoning arrives in one of these depending on the gateway and provider
+	// (LiteLLM sends the same text in reasoning_content and reasoning). A
+	// replayed message sets only the field its reasoning arrived in.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+	Reasoning        string `json:"reasoning,omitempty"`
+	ReasoningText    string `json:"reasoning_text,omitempty"`
+}
+
+// Reasoning wire fields, in the order a reply's reasoning is read from them.
+const (
+	fieldReasoningContent = "reasoning_content"
+	fieldReasoning        = "reasoning"
+	fieldReasoningText    = "reasoning_text"
+)
+
+// pickReasoning returns the first non-empty reasoning field and its name.
+func pickReasoning(content, reasoning, text string) (string, string) {
+	switch {
+	case content != "":
+		return content, fieldReasoningContent
+	case reasoning != "":
+		return reasoning, fieldReasoning
+	case text != "":
+		return text, fieldReasoningText
+	}
+	return "", ""
+}
+
+// setReasoning puts text in the wire field named by field (reasoning_content
+// when unknown).
+func (w *wireMessage) setReasoning(text, field string) {
+	switch field {
+	case fieldReasoning:
+		w.Reasoning = text
+	case fieldReasoningText:
+		w.ReasoningText = text
+	default:
+		w.ReasoningContent = text
+	}
 }
 
 type wireToolCall struct {
@@ -265,9 +304,12 @@ type wireResp struct {
 type wireStreamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Role      string              `json:"role"`
-			Content   string              `json:"content"`
-			ToolCalls []wireDeltaToolCall `json:"tool_calls"`
+			Role             string              `json:"role"`
+			Content          string              `json:"content"`
+			ReasoningContent string              `json:"reasoning_content"`
+			Reasoning        string              `json:"reasoning"`
+			ReasoningText    string              `json:"reasoning_text"`
+			ToolCalls        []wireDeltaToolCall `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -376,6 +418,9 @@ func (a *Adapter) Complete(ctx context.Context, req CompletionReq) (CompletionRe
 	}
 	for _, m := range req.Messages {
 		wm := wireMessage{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
+		if req.ReplayReasoning && m.Role == "assistant" && m.Reasoning != "" {
+			wm.setReasoning(m.Reasoning, m.ReasoningField)
+		}
 		for _, tc := range m.ToolCalls {
 			w := wireToolCall{ID: tc.ID, Type: "function"}
 			w.Function.Name = tc.Name
@@ -652,8 +697,11 @@ func (a *Adapter) readBuffered(body io.Reader, tools []ToolSchema) (_ Completion
 		return CompletionResp{}, fmt.Errorf("gateway returned no choices"), false
 	}
 	msg := wr.Choices[0].Message
+	reasoning, field := pickReasoning(msg.ReasoningContent, msg.Reasoning, msg.ReasoningText)
 	out := CompletionResp{
 		Content:         msg.Content,
+		Reasoning:       reasoning,
+		ReasoningField:  field,
 		InputTokens:     wr.Usage.PromptTokens,
 		CachedTokens:    wr.Usage.cachedTokens(),
 		OutputTokens:    wr.Usage.CompletionTokens,
@@ -741,6 +789,9 @@ func repeatsAtTail(s string) bool {
 // aborts the request so the provider stops generating.
 func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionResp, err error, retryable bool) {
 	var content strings.Builder
+	// Each reasoning field is collected separately: a gateway may send the same
+	// text in several, and only one is kept.
+	var rContent, rReasoning, rText strings.Builder
 	byIndex := map[int]*ToolCall{}
 	var order []int
 	var finishReason string
@@ -781,6 +832,9 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 		}
 		d := chunk.Choices[0].Delta
 		content.WriteString(d.Content)
+		rContent.WriteString(d.ReasoningContent)
+		rReasoning.WriteString(d.Reasoning)
+		rText.WriteString(d.ReasoningText)
 		// Watch only the visible reply for degenerate repetition: tool-call
 		// arguments can legitimately hold a repetitive file, and reasoning is
 		// not shown to the caller, so neither is checked.
@@ -816,8 +870,11 @@ func (a *Adapter) readStream(body io.Reader, tools []ToolSchema) (_ CompletionRe
 		return CompletionResp{}, errors.New("gateway stream ended before the reply finished"), true
 	}
 
+	reasoning, field := pickReasoning(rContent.String(), rReasoning.String(), rText.String())
 	out := CompletionResp{
 		Content:         content.String(),
+		Reasoning:       reasoning,
+		ReasoningField:  field,
 		InputTokens:     usage.PromptTokens,
 		CachedTokens:    usage.cachedTokens(),
 		OutputTokens:    usage.CompletionTokens,
@@ -844,6 +901,7 @@ func (a *Adapter) traceReassembled(marker string, out CompletionResp) {
 	wr.Choices = make([]wireChoice, 1)
 	wr.Choices[0].Message.Role = "assistant"
 	wr.Choices[0].Message.Content = out.Content
+	wr.Choices[0].Message.setReasoning(out.Reasoning, out.ReasoningField)
 	wr.Choices[0].FinishReason = out.FinishReason
 	for _, tc := range out.ToolCalls {
 		var w wireToolCall

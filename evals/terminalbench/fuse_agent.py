@@ -27,7 +27,8 @@ class FuseAgent(BaseInstalledAgent):
         env = self._extra_env
         model = self.model_name.split("/", 1)[1]
         # The task container is the sandbox, so bash runs directly in it. No output cap
-        # or other tuning is set here: this measures fuse's defaults.
+        # or other tuning is set here unless run.py --fuse-option asks: by default this
+        # measures fuse's defaults.
         config = (
             "gateway:\n"
             f"  url: {env['FUSE_BENCH_GATEWAY']}\n"
@@ -36,6 +37,9 @@ class FuseAgent(BaseInstalledAgent):
             "  baseline:\n"
             f"    id: {model}\n"
         )
+        # run.py --fuse-option: model settings under test, "key: value" pairs joined by ";".
+        for opt in filter(None, env.get("FUSE_BENCH_MODEL_OPTS", "").split(";")):
+            config += f"    {opt}\n"
         cmd = (
             'mkdir -p "$HOME/.fuse" && '
             f'printf %s {shlex.quote(config)} > "$HOME/.fuse/config.yml" && '

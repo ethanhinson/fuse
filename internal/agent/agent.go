@@ -41,6 +41,9 @@ type Agent struct {
 	// ReasoningEffort is sent on the agent's own model calls when set. The
 	// summarizer and classifier keep their own settings.
 	ReasoningEffort string
+	// ReplayReasoning keeps each reply's reasoning in history and sends it back
+	// on the agent's own calls. Off, reasoning is dropped as replies arrive.
+	ReplayReasoning bool
 
 	observer     observe.Observer
 	model        Completer

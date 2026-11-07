@@ -10,6 +10,15 @@ python3 run.py --harbor .venv/bin/harbor --name 2026-11-07 --attempts 3 --budget
 python3 report.py jobs/2026-11-07-fuse jobs/2026-11-07-pi jobs/2026-11-07-opencode
 ```
 
+To compare a fuse setting against its default, run the fuse arm twice under different names, once
+with `--fuse-option KEY=VALUE` (repeatable; written under the model's config entry). `--exclude-task
+GLOB` leaves tasks out on every arm, for example `'qemu-*'`, which cannot boot under emulation on arm64.
+
+```sh
+python3 run.py --arms fuse --name replay-off --exclude-task 'qemu-*'
+python3 run.py --arms fuse --name replay-on --exclude-task 'qemu-*' --fuse-option replay_reasoning=true
+```
+
 `LLM_GATEWAY_KEY` must be set, and `OPENROUTER_API_KEY` too for the budget stop. Run arms one at a
 time: that is what `run.py` does, so a shared rate limit does not favour one arm.
 
