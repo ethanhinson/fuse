@@ -2,12 +2,12 @@
 id: 119
 slug: 'send-to-a-loop-cancelled-on-another-replica-says-loop-cancel'
 title: 'Send to a loop cancelled on another replica says loop cancelled'
-status: 'proposed'
+status: 'killed'
 priority: 'low'
 type: 'fix'
 deliverable: 'pr'
 created: '2026-11-03'
-updated: '2026-11-03'
+updated: '2026-11-07'
 depends_on: []
 stacked_on:
 related: [117, 108]
@@ -42,3 +42,7 @@ Suppose another replica cancels a loop, and this replica still holds that loop i
 ## Out of scope
 
 Changing the resume semantics.
+
+## Why killed
+
+Out of scope after the 2026-11-06 refocus: fuse is a coding harness run as one container per task, with no shared multi-tenant server or harness specs. Merged work (PR #147) targets multi-replica Send, which no longer applies.
